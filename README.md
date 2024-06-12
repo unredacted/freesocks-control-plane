@@ -1,6 +1,6 @@
 # FreeSocks Control Plane (FCP)
 
-This is the (control plane) code behind [FreeSocks.org](https://freesocks.org) a service that provides free, open & uncensored Outline (Shadowsocks) proxies to people in countries experiencing a high level of Internet censorship.
+This is the (control plane) code behind [FreeSocks](https://freesocks.org) a service that provides free, open & uncensored Outline (Shadowsocks) proxies to people in countries experiencing a high level of Internet censorship.
 
 The FreeSocks Control Plane (FCP) utilizes [Cloudflare Workers](https://workers.cloudflare.com/) and is written in JavaScript. This repository allows you to stand up your own FreeSocks-like Outline access key distribution platform, and provides insight into how FreeSocks works.
 
