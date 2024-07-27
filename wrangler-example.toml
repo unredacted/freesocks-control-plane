@@ -23,7 +23,7 @@ kv_namespaces = [
 #TURNSTILE_SECRET_KEY = "" # Cloudflare Turnstile secret key, manage with `wrangler secret` https://developers.cloudflare.com/workers/wrangler/commands/#secret
 #TURNSTILE_SITE_KEY = "" # Cloudflare Turnstile site key, manage with `wrangler secret` https://developers.cloudflare.com/workers/wrangler/commands/#secret
 VAR_EXPIRATION_DAYS = "90" # Set the expiration period in days
-VAR_PREFIX_DISGUISE = "&prefix=<%16%03%01%00%C2%A8%01%01>" # Custom text to append after the access URL
+VAR_PREFIX_DISGUISE = "&prefix=%16%03%01%00%C2%A8%01%01" # Custom text to append after the access URL
 VAR_WEIGHT_LATENCY = "0.8" # Weight for latency in the score calculation
 VAR_WEIGHT_ACCESS_KEY_COUNT = "0.2" # Weight for access key count in the score calculation
 VAR_API_ENDPOINT_TIMEOUT = "5000" # Timeout duration for API endpoint requests (in milliseconds)
