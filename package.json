@@ -10,7 +10,6 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.1.0",
-    "@tsndr/cloudflare-worker-router": "^3.2.4",
     "vitest": "1.3.0",
     "wrangler": "^3.0.0"
   }
