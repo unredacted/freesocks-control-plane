@@ -4,10 +4,12 @@ This is the (control plane) code behind [FreeSocks](https://freesocks.org) a ser
 
 The FreeSocks Control Plane (FCP) utilizes [Cloudflare Workers](https://workers.cloudflare.com/) and is written in JavaScript. This repository allows you to stand up your own FreeSocks-like Outline access key distribution platform, and provides insight into how FreeSocks works.
 
-The FreeSocks Control Plane consists of 2 components:
+The FreeSocks Control Plane consists of several core components:
 
-- GET Worker (src/get.js) - distributes Outline access keys to users.
-- DELETE Worker (src/delete.js) - deletes access keys that have not been used after a defined number of days.
+- GET Script (src/handlers/get.js) - distributes Outline access keys to users.
+- DELETE Script (src/handlers/delete.js) - deletes access keys that have not been used after a defined number of days.
+- UPDATE Script (src/handlers/update.js) - updates KV JSON data to track the state of access keys (creation, deletion, last used and if a key is currently in use).
+- LIST Script (src/handlers/list.js) - lists access key data from KV for admins.
 
 ## Prerequisites
 
