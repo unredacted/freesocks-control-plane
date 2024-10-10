@@ -171,3 +171,6 @@ dist
 .dev.vars
 .wrangler/
 wrangler.toml
+
+# Misc
+.DS_Store
