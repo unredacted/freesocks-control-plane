@@ -17,7 +17,7 @@ import {
   } from '../config/constants.js';
   import { verifyTurnstile } from '../utils/authentication.js';
   import { handleError, logError, logInfo } from '../utils/errorHandling.js';
-  import { parseS3Providers, uploadToMultipleS3, extractServerName } from '../utils/s3Storage.js';
+  import { parseS3Providers, uploadToMultipleS3, extractServerName, getOptimalS3Url } from '../utils/s3Storage.js';
   
   // Main request handling function
   export async function handleRequest(request, env) {
@@ -97,8 +97,10 @@ import {
                 logInfo('Starting S3 uploads...');
                 s3Urls = await uploadToMultipleS3(s3Providers, serverName, accessKeyData.id, yamlContent);
                 logInfo(`S3 upload successful. URLs: ${JSON.stringify(s3Urls)}`);
-                // Use the first successful upload URL in ssconf format
-                finalAccessKeyUrl = `ssconf://${s3Urls[0].replace('https://', '')}`;
+                
+                // Test latency and select optimal S3 URL
+                const optimalUrl = await getOptimalS3Url(s3Urls);
+                finalAccessKeyUrl = `ssconf://${optimalUrl.replace('https://', '')}`;
                 logInfo(`Final access key URL: ${finalAccessKeyUrl}`);
               } else {
                 logError('No S3 providers configured');

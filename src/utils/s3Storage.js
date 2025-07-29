@@ -339,6 +339,68 @@ export async function deleteFromS3(provider, path) {
 }
 
 /**
+ * Test S3 endpoint latency and return the optimal URL
+ */
+export async function getOptimalS3Url(s3Urls, timeout = 5000) {
+  if (s3Urls.length === 0) {
+    throw new Error('No S3 URLs provided');
+  }
+  
+  if (s3Urls.length === 1) {
+    return s3Urls[0];
+  }
+  
+  logInfo(`Testing latency for ${s3Urls.length} S3 URLs...`);
+  const latencyScores = [];
+  
+  const testPromises = s3Urls.map(async (url) => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
+      const startTime = performance.now();
+      // Use HEAD request to test latency without downloading content
+      const response = await fetch(url, { 
+        method: 'HEAD',
+        signal: controller.signal 
+      });
+      const endTime = performance.now();
+      const latency = endTime - startTime;
+      
+      clearTimeout(timeoutId);
+      
+      if (response.ok || response.status === 403) {
+        // 403 is OK for latency testing - it means the server responded
+        latencyScores.push({ url, latency });
+        logInfo(`S3 latency test for ${new URL(url).hostname}: ${latency.toFixed(0)}ms`);
+      } else {
+        logError(`Failed to test S3 latency for ${url}. Status: ${response.status}`);
+      }
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        logError(`S3 latency test timed out for ${url}`);
+      } else {
+        logError(`Error testing S3 latency for ${url}:`, error);
+      }
+    }
+  });
+  
+  await Promise.all(testPromises);
+  
+  if (latencyScores.length === 0) {
+    // If all latency tests failed, return the first URL as fallback
+    logError('All S3 latency tests failed, using first URL as fallback');
+    return s3Urls[0];
+  }
+  
+  // Sort by latency (lowest first)
+  latencyScores.sort((a, b) => a.latency - b.latency);
+  
+  logInfo(`Optimal S3 URL selected: ${latencyScores[0].url} (${latencyScores[0].latency.toFixed(0)}ms)`);
+  return latencyScores[0].url;
+}
+
+/**
  * Delete object from multiple S3 providers
  */
 export async function deleteFromMultipleS3(providers, s3Urls) {
