@@ -1,7 +1,7 @@
 import {
   AUTH_TOKEN,
   ACCESS_KEYS_NAMESPACE,
-  PROM_API_ENDPOINTS_NAMESPACE,
+  API_ENDPOINTS_NAMESPACE,
   CF_ACCESS_CLIENT_ID,
   CF_ACCESS_CLIENT_SECRET,
   MAX_KEYS_PER_RUN,
@@ -79,7 +79,22 @@ async function updateTargetKey(targetKey, isDryRun, isDebug) {
 
   try {
     const [hostname] = targetKey.split('-key-');
-    const promApiEndpoint = await retry(() => PROM_API_ENDPOINTS_NAMESPACE.get(hostname));
+    const endpointDataStr = await retry(() => API_ENDPOINTS_NAMESPACE.get(hostname));
+    
+    if (!endpointDataStr) {
+      updateResults.errors.push(`Endpoint not found for hostname: ${hostname}`);
+      return updateResults;
+    }
+    
+    let promApiEndpoint;
+    try {
+      const endpointData = JSON.parse(endpointDataStr);
+      promApiEndpoint = endpointData.prometheusUrl;
+    } catch (e) {
+      updateResults.errors.push(`Invalid endpoint data for hostname: ${hostname}`);
+      return updateResults;
+    }
+    
     logInfo(`Processing target key: ${targetKey}, Prometheus endpoint: ${promApiEndpoint}`);
     
     const activeKeysResult = await queryActiveKeys(promApiEndpoint, targetKey);
@@ -111,7 +126,7 @@ async function updateAccessKeys(isDryRun, startCursor, isDebug) {
   };
 
   let globalKeyCount = 0;
-  const hostnames = await retry(() => PROM_API_ENDPOINTS_NAMESPACE.list());
+  const hostnames = await retry(() => API_ENDPOINTS_NAMESPACE.list());
   let startHostname = null;
   let currentCursor = null;
 
@@ -124,7 +139,22 @@ async function updateAccessKeys(isDryRun, startCursor, isDebug) {
     startHostname = null;
 
     try {
-      const promApiEndpoint = await retry(() => PROM_API_ENDPOINTS_NAMESPACE.get(hostname.name));
+      const endpointDataStr = await retry(() => API_ENDPOINTS_NAMESPACE.get(hostname.name));
+      
+      if (!endpointDataStr) {
+        updateResults.errors.push(`Endpoint not found for hostname: ${hostname.name}`);
+        continue;
+      }
+      
+      let promApiEndpoint;
+      try {
+        const endpointData = JSON.parse(endpointDataStr);
+        promApiEndpoint = endpointData.prometheusUrl;
+      } catch (e) {
+        updateResults.errors.push(`Invalid endpoint data for hostname: ${hostname.name}`);
+        continue;
+      }
+      
       logInfo(`Processing hostname: ${hostname.name}, Prometheus endpoint: ${promApiEndpoint}`);
       const activeKeysResult = await queryActiveKeys(promApiEndpoint);
       

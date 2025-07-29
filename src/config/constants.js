@@ -19,3 +19,19 @@ export const MAX_KEYS_PER_RUN = VAR_MAX_KEYS_PER_RUN;
 export const MINIMUM_BYTES_THRESHOLD = VAR_MINIMUM_BYTES_THRESHOLD;
 export const MAX_RETRIES = VAR_MAX_RETRIES;
 export const RETRY_DELAY = VAR_RETRY_DELAY;
+
+// WebSocket configuration
+export const WEBSOCKET_ENABLED = VAR_WEBSOCKET_ENABLED === 'true';
+export const WEBSOCKET_TCP_PATH = VAR_WEBSOCKET_TCP_PATH || '/tcp';
+export const WEBSOCKET_UDP_PATH = VAR_WEBSOCKET_UDP_PATH || '/udp';
+export const WEBSOCKET_TLS = VAR_WEBSOCKET_TLS !== 'false';
+// Note: WEBSOCKET_DOMAIN is now read from KV namespace per server
+
+// S3 storage configuration
+export const S3_PROVIDERS_ENABLED = VAR_S3_PROVIDERS_ENABLED === 'true';
+export const S3_PROVIDER_COUNT = parseInt(VAR_S3_PROVIDER_COUNT || '0');
+export const S3_UPLOAD_MAX_RETRIES = parseInt(VAR_S3_UPLOAD_MAX_RETRIES || '3');
+
+// Delete operation configuration
+export const DELETE_DRY_RUN = VAR_DELETE_DRY_RUN !== 'false'; // Default to true
+export const DELETE_S3_OBJECTS = VAR_DELETE_S3_OBJECTS === 'true'; // Default to false

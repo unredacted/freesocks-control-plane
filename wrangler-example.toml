@@ -20,7 +20,19 @@ kv_namespaces = [
 ]
 
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["* * * * *"]
+
+### Secrets - manage these with `wrangler secret put <SECRET_NAME>`
+# [secrets]
+# TURNSTILE_SECRET_KEY = ""
+# TURNSTILE_SITE_KEY = ""
+# SECRET_AUTH_TOKEN = ""
+# VAR_CF_ACCESS_CLIENT_ID = ""
+# VAR_CF_ACCESS_CLIENT_SECRET = ""
+# S3_PROVIDER_1_ACCESS_KEY_ID = ""
+# S3_PROVIDER_1_SECRET_ACCESS_KEY = ""
+# S3_PROVIDER_2_ACCESS_KEY_ID = ""
+# S3_PROVIDER_2_SECRET_ACCESS_KEY = ""
 
 [vars]
 
@@ -44,3 +56,37 @@ VAR_MAX_KEYS_PER_RUN = "5000" # Cursor-based pagination - how many keys will be 
 VAR_MINIMUM_BYTES_THRESHOLD = "1000" # Minimum number of bytes transferred to consider a key active
 VAR_MAX_RETRIES = "2" # Maximum number of retry attempts for operations
 VAR_RETRY_DELAY = "1000" # Delay in milliseconds between retry attempts
+
+### WebSocket configuration variables
+VAR_WEBSOCKET_ENABLED = "false" # Set to "true" to enable WebSocket support for access keys
+# Note: WEBSOCKET_DOMAIN is now read from KV namespace per server (in endpoint JSON data)
+VAR_WEBSOCKET_TCP_PATH = "/tcp" # Path for TCP over WebSocket
+VAR_WEBSOCKET_UDP_PATH = "/udp" # Path for UDP over WebSocket
+VAR_WEBSOCKET_TLS = "true" # Use WSS (true) or WS (false)
+
+### S3 storage configuration
+VAR_S3_PROVIDERS_ENABLED = "false" # Set to "true" to enable S3 storage for WebSocket keys
+VAR_S3_PROVIDER_COUNT = "0" # Number of S3 providers configured
+VAR_S3_UPLOAD_MAX_RETRIES = "3" # Max retries for S3 uploads
+
+### S3 Provider 1 Example (Cloudflare R2)
+# VAR_S3_PROVIDER_1_NAME = "r2"
+# VAR_S3_PROVIDER_1_ENDPOINT = "https://account.r2.cloudflarestorage.com"
+# VAR_S3_PROVIDER_1_BUCKET = "freesocks-keys"
+# VAR_S3_PROVIDER_1_PUBLIC_URL = "https://freesocks-keys.account.r2.cloudflarestorage.com"
+# VAR_S3_PROVIDER_1_REGION = "auto"
+# S3_PROVIDER_1_ACCESS_KEY_ID = "" # Manage with `wrangler secret`
+# S3_PROVIDER_1_SECRET_ACCESS_KEY = "" # Manage with `wrangler secret`
+
+### S3 Provider 2 Example (Backblaze B2)
+# VAR_S3_PROVIDER_2_NAME = "backblaze"
+# VAR_S3_PROVIDER_2_ENDPOINT = "https://s3.us-west-002.backblazeb2.com"
+# VAR_S3_PROVIDER_2_BUCKET = "freesocks-keys"
+# VAR_S3_PROVIDER_2_PUBLIC_URL = "https://f002.backblazeb2.com/file/freesocks-keys"
+# VAR_S3_PROVIDER_2_REGION = "us-west-002"
+# S3_PROVIDER_2_ACCESS_KEY_ID = "" # Manage with `wrangler secret`
+# S3_PROVIDER_2_SECRET_ACCESS_KEY = "" # Manage with `wrangler secret`
+
+### Delete operation configuration
+VAR_DELETE_DRY_RUN = "true" # Default to dry run mode for safety
+VAR_DELETE_S3_OBJECTS = "false" # Set to "true" to delete S3 objects when keys are deleted
