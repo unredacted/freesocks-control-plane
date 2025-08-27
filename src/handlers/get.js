@@ -64,10 +64,10 @@ import {
           let s3Urls = [];
           
           // Handle WebSocket keys with S3 upload
-          if (accessKeyData.dynamicAccessKeyUrl && S3_PROVIDERS_ENABLED) {
+          if (accessKeyData.websocket && accessKeyData.websocket.enabled && S3_PROVIDERS_ENABLED) {
             try {
               logInfo(`Processing WebSocket key: ${accessKeyData.id}`);
-              logInfo(`Dynamic URL returned by API: ${accessKeyData.dynamicAccessKeyUrl}`);
+              logInfo(`WebSocket configuration:`, JSON.stringify(accessKeyData.websocket));
               logInfo(`WebSocket domain: ${websocketDomain}`);
               
               // Construct the correct URL using our apiUrl from KV
@@ -115,7 +115,7 @@ import {
                 name: error.name,
                 websocketDomain: websocketDomain,
                 keyId: accessKeyData.id,
-                originalDynamicUrl: accessKeyData.dynamicAccessKeyUrl,
+                websocketConfig: accessKeyData.websocket,
                 correctedUrl: `${apiEndpointUrl}/access-keys/${accessKeyData.id}`,
                 apiEndpointUrl: apiEndpointUrl
               }));
@@ -145,7 +145,7 @@ import {
           };
           await ACCESS_KEYS_NAMESPACE.put(keyId, JSON.stringify(keyData));
   
-          const output = generateHtmlOutput(currentDate, finalAccessKeyUrl, accessKeyData.dynamicAccessKeyUrl ? true : false);
+          const output = generateHtmlOutput(currentDate, finalAccessKeyUrl, accessKeyData.websocket && accessKeyData.websocket.enabled ? true : false);
           return new Response(output, { headers: { 'content-type': 'text/html' } });
         } else {
           return new Response('Failed to create access key', { status: 500 });
