@@ -58,6 +58,20 @@ bunx convex dev --once
 
 For CI / non-interactive deploys: `bun run convex:deploy`.
 
+## 5. Function environment variables
+
+Convex functions read config from **deployment** env vars (separate from the
+SPA's `.env.local`). Set them with `npx convex env set NAME value` (or in the
+dashboard → Settings → Environment Variables). Accumulated so far:
+
+| Var | Used by |
+| --- | --- |
+| `REMNAWAVE_BASE_URL`, `REMNAWAVE_API_TOKEN` | Remnawave backend actions (P4a) |
+| `S3_PROVIDER_COUNT`, `S3_PROVIDER_<i>_{NAME,ENDPOINT,BUCKET,PUBLIC_URL,REGION,ACCESS_KEY_ID,SECRET_ACCESS_KEY}` | S3 mirror Node action (P4c) — one block per mirror; `count=0` disables mirroring |
+
+Outline server `apiUrl`s live per-row in the `outlineServers` table, not env.
+Later phases add session-signing, Turnstile, and admin-bootstrap secrets.
+
 ## Stop / reset
 
 ```sh
