@@ -43,6 +43,30 @@ export const activeForUser = query({
   },
 });
 
+/**
+ * The resolver shared by /account + /subscription (replaces
+ * lib/current-subscription.resolveActiveSubscription): prefer the user's
+ * `currentSubscriptionId` (so a freshly regenerated key shows immediately), but
+ * only if it's still active — never a tombstoned row during the 24h grace
+ * window. Falls back to the newest active row.
+ */
+export const resolveCurrentOrActive = query({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }) => {
+    const user = await ctx.db.get(userId);
+    if (!user) return null;
+    if (user.currentSubscriptionId) {
+      const cur = await ctx.db.get(user.currentSubscriptionId);
+      if (cur && cur.state === 'active') return cur;
+    }
+    const rows = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    return rows.filter((s) => s.state === 'active').sort((a, b) => b._creationTime - a._creationTime)[0] ?? null;
+  },
+});
+
 // --- write mutations (issuance saga, P5c) ---
 
 /** Persist a freshly-issued subscription. Returns its id. */
