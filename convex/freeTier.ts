@@ -125,7 +125,7 @@ export const issueOrReissue = internalAction({
   },
   handler: async (ctx, a): Promise<IssueOrReissueResult> => {
     const salt = process.env.IP_HASH_SALT;
-    if (!salt) throw new Error('IP_HASH_SALT must be set (npx convex env set ...)');
+    if (!salt) throw new Error('IP_HASH_SALT must be set (bunx convex env set ...)');
     const ipHash = await hmacSha256Hex(salt, a.ip);
     const dayBucket = Math.floor(Date.now() / 86_400_000);
     const cap = Number(process.env.FREE_TIER_DAILY_CAP ?? '1');

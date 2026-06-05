@@ -61,8 +61,8 @@ For CI / non-interactive deploys: `bun run convex:deploy`.
 ## 5. Function environment variables
 
 Convex functions read config from **deployment** env vars (separate from the
-SPA's build-time `VITE_*`). Set with `npx convex env set NAME value` (or the
-dashboard → Settings → Environment Variables). `npx convex env list` shows what's set.
+SPA's build-time `VITE_*`). Set with `bunx convex env set NAME value` (or the
+dashboard → Settings → Environment Variables). `bunx convex env list` shows what's set.
 
 **Required for a functioning deploy:**
 

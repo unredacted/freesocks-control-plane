@@ -69,7 +69,7 @@ function remnawaveConfig(): RemnawaveConfig {
   const baseUrl = process.env.REMNAWAVE_BASE_URL;
   const apiToken = process.env.REMNAWAVE_API_TOKEN;
   if (!baseUrl || !apiToken) {
-    throw new Error('REMNAWAVE_BASE_URL and REMNAWAVE_API_TOKEN must be set (npx convex env set ...)');
+    throw new Error('REMNAWAVE_BASE_URL and REMNAWAVE_API_TOKEN must be set (bunx convex env set ...)');
   }
   return { baseUrl, apiToken };
 }

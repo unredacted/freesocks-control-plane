@@ -71,7 +71,7 @@
         <CardDescription>
           No admin account exists yet, and <code>ADMIN_BOOTSTRAP_SECRET</code> isn't set on this
           deployment. Set the secret with
-          <code>npx convex env set ADMIN_BOOTSTRAP_SECRET</code>{' '}and reload this page.
+          <code>bunx convex env set ADMIN_BOOTSTRAP_SECRET</code>{' '}and reload this page.
         </CardDescription>
       </CardHeader>
     </Card>

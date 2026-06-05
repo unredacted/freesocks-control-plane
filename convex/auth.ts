@@ -53,7 +53,7 @@ export const accountLogin = internalAction({
     // 1. Turnstile — independent of account validity, so a fast distinct return
     //    here is fine (it's not an enumeration oracle).
     const secret = process.env.TURNSTILE_SECRET_KEY;
-    if (!secret) throw new Error('TURNSTILE_SECRET_KEY must be set (npx convex env set ...)');
+    if (!secret) throw new Error('TURNSTILE_SECRET_KEY must be set (bunx convex env set ...)');
     const ts = await verifyTurnstile(secret, turnstileToken, ip);
     if (!ts.success) return { ok: false, reason: 'turnstile' };
 

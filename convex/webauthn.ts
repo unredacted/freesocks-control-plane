@@ -37,7 +37,7 @@ function webauthnConfig() {
   const rpName = process.env.WEBAUTHN_RP_NAME ?? 'FreeSocks Admin';
   const originRaw = process.env.WEBAUTHN_ORIGIN;
   if (!rpId || !originRaw) {
-    throw new Error('WEBAUTHN_RP_ID and WEBAUTHN_ORIGIN must be set (npx convex env set ...)');
+    throw new Error('WEBAUTHN_RP_ID and WEBAUTHN_ORIGIN must be set (bunx convex env set ...)');
   }
   const origins = originRaw
     .split(',')

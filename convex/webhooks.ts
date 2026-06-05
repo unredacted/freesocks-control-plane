@@ -22,7 +22,7 @@ export const ingest = internalAction({
   args: { rawBody: v.string(), signature: v.optional(v.string()) },
   handler: async (ctx, { rawBody, signature }): Promise<IngestResult> => {
     const secret = process.env.WEBHOOK_SIGNING_SECRET;
-    if (!secret) throw new Error('WEBHOOK_SIGNING_SECRET must be set (npx convex env set ...)');
+    if (!secret) throw new Error('WEBHOOK_SIGNING_SECRET must be set (bunx convex env set ...)');
     const expected = await hmacSha256Hex(secret, rawBody);
     if (!signature || !timingSafeEqual(expected, signature)) {
       throw new Error('invalid signature');
