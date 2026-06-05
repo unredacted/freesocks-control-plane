@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="FreeSocks - free, open & uncensored proxies for users in heavily-censored regions"
+    />
+    <title>FreeSocks</title>
+
+    <!--
+      FOUC-prevention script. Runs synchronously before paint, BEFORE the
+      Vite bundle even starts parsing, so the user never sees a flash of
+      the wrong theme. mode-watcher itself injects a similar script via
+      <svelte:head> at runtime, but that fires too late in a pure SPA —
+      the <html class="..."> needs to be correct on the first paint, not
+      after the bundle mounts.
+
+      Without this, `<html class="dark">` was hardcoded on the document and
+      light-mode users saw a dark-mode flash on every load — making the
+      light theme feel "broken" even though the toggle did update the class.
+
+      Logic mirrors mode-watcher's `setInitialMode`:
+        1. Read mode-watcher-mode from localStorage; default to 'dark'.
+        2. Resolve 'system' against the OS preference.
+        3. Add or remove the `dark` class on <html> accordingly.
+        4. Set `color-scheme` so native form widgets and scrollbars match.
+
+      Keep the storage key (`mode-watcher-mode`) and class name (`dark`) in
+      sync with the mode-watcher config in App.svelte. If you change either
+      there, change them here too.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('mode-watcher-mode');
+          var mode = stored || 'dark';
+          var prefersDark =
+            window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var dark = mode === 'dark' || (mode === 'system' && prefersDark);
+          var root = document.documentElement;
+          if (dark) root.classList.add('dark');
+          else root.classList.remove('dark');
+          root.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (_) {
+          // localStorage / matchMedia unavailable (e.g. restrictive privacy
+          // settings). Fall through to dark by default.
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+
+    <!--
+      Fonts (Inter for body, Inter Tight for display headings, JetBrains
+      Mono for code) ship bundled with the SPA via @fontsource/* — see
+      src/client/main.ts for the imports. We deliberately do NOT preconnect
+      to fonts.googleapis.com or fonts.gstatic.com from this document. No
+      third-party host should be contacted by the browser to render this
+      page; everything is served from our own origin.
+    -->
+  </head>
+  <body class="bg-background text-foreground">
+    <div id="app"></div>
+    <script type="module" src="/src/client/main.ts"></script>
+  </body>
+</html>

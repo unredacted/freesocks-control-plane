@@ -1,0 +1,34 @@
+# Local development secrets for `bun run dev` (Cloudflare Workers Vite plugin).
+# Copy to `.dev.vars` (gitignored) and fill in.
+#
+# Production / beta secrets are set via:
+#   bunx wrangler secret put NAME --config wrangler.toml
+#   bunx wrangler secret put NAME --config wrangler.beta.toml
+# This file is for local development only.
+
+# HMAC keys (generate fresh per env: openssl rand -hex 32)
+SESSION_SIGNING_KEY=local-dev-session-signing-key-must-be-32-chars-min-aaaa
+ADMIN_SESSION_SIGNING_KEY=local-dev-admin-signing-key-must-be-distinct-bbbb
+ADMIN_BOOTSTRAP_SECRET=local-bootstrap-rotate-after-first-admin-cccc
+IP_HASH_SALT=local-ip-hash-salt-do-not-rotate-without-care-dddd
+
+# Cloudflare Turnstile (use the test secret for dev: always passes)
+# https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+
+# External services — placeholder values are fine in dev; the worker will
+# fail outbound calls but most flows still exercise correctly.
+REMNAWAVE_API_TOKEN=dev-not-real
+AUTHENTIK_CLIENT_SECRET=dev-not-real
+
+# Optional — only needed if testing the corresponding flow
+# Shared secret gating POST /api/internal/cron/run-task — only needed when an
+# EXTERNAL scheduler drives cron (Fastly Compute, or Node/Bun behind one).
+# Workers cron triggers and the built-in node-cron/setInterval paths don't use it.
+# CRON_TRIGGER_SECRET=dev-cron-secret
+# RESEND_API_KEY=               # if EMAIL_PROVIDER=resend
+# AWS_ACCESS_KEY_ID=            # if EMAIL_PROVIDER=ses
+# AWS_SECRET_ACCESS_KEY=
+# AWS_SES_REGION=us-east-1
+# S3_PROVIDER_1_ACCESS_KEY_ID=
+# S3_PROVIDER_1_SECRET_ACCESS_KEY=

@@ -1,0 +1,26 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+      - name: Generate worker types
+        run: bun run types
+      - name: Drizzle no-drift check
+        run: bun run db:generate --check
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run test
+      - name: Build (production)
+        run: bun run build:prod
+      - name: Build (beta)
+        run: bun run build:beta

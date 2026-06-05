@@ -1,0 +1,90 @@
+#:schema node_modules/wrangler/config-schema.json
+# Beta / staging template. Copy to wrangler.beta.toml, fill REPLACE_ME values,
+# then build/deploy with:
+#   npm run build:beta
+#   npm run deploy:beta
+name = "freesocks-control-plane-beta"
+main = "src-entries/workers.ts"
+compatibility_date = "2026-04-29"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "beta.freesocks.org/*", zone_name = "freesocks.org" }
+]
+
+[observability]
+enabled = true
+
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# Force every /api/* request through the worker BEFORE the asset binding
+# checks for a matching file. Without this, Workers Static Assets in SPA
+# mode can intercept API paths (e.g. /api/auth/login) and return the SPA
+# shell, which then shows the client-side "Not found" page.
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "freesocks-control-plane-beta"
+database_id = "REPLACE_ME"
+migrations_dir = "src/server/db/migrations"
+
+[[kv_namespaces]]
+binding = "FS_SESSIONS_KV"
+id = "REPLACE_ME"
+
+[[kv_namespaces]]
+binding = "FS_CACHE_KV"
+id = "REPLACE_ME"
+
+[[kv_namespaces]]
+binding = "FS_RATELIMIT_KV"
+id = "REPLACE_ME"
+
+[[send_email]]
+name = "SEND_EMAIL"
+destination_address = "noreply@freesocks.org"
+
+[triggers]
+crons = [
+  "*/5 * * * *",
+  "*/10 * * * *",
+  "0 3 * * *"
+]
+
+[vars]
+ENVIRONMENT = "staging"
+LOG_LEVEL = "debug"
+
+REMNAWAVE_BASE_URL = "https://<remnawave-staging-host>"
+AUTHENTIK_ISSUER = "https://<authentik-host>/application/o/freesocks/"
+AUTHENTIK_CLIENT_ID = "freesocks-control-plane-beta"
+AUTHENTIK_REDIRECT_URI = "https://<your-beta-host>/api/auth/callback"
+AUTHENTIK_SCOPES = "openid email profile"
+
+EMAIL_PROVIDER = "console"
+EMAIL_FROM = "noreply@freesocks.org"
+EMAIL_REPLY_TO = "support@freesocks.org"
+
+FREE_TIER_TURNSTILE_SITE_KEY = "REPLACE_ME"
+FREE_TIER_DAILY_CAP = "100"
+FREE_TIER_EXPIRY_DAYS = "30"
+
+SUBSCRIPTION_DEFAULT_FORMAT = "auto"
+
+S3_MIRRORS_ENABLED = "false"
+S3_PROVIDER_COUNT = "0"
+
+WEBAUTHN_RP_ID = "freesocks.org"
+WEBAUTHN_RP_NAME = "FreeSocks Admin (beta)"
+WEBAUTHN_ORIGIN = "https://beta.freesocks.org"
+
+MEMBERS_JOIN_URL = "https://members.unredacted.org/join"
+MEMBERS_ACCOUNT_URL = "https://members.unredacted.org/account"
+
+# Secrets — set via `wrangler secret put <NAME> --config wrangler.beta.toml`
+#   SESSION_SIGNING_KEY, ADMIN_SESSION_SIGNING_KEY, ADMIN_BOOTSTRAP_SECRET,
+#   IP_HASH_SALT, TURNSTILE_SECRET_KEY, REMNAWAVE_API_TOKEN,
+#   AUTHENTIK_CLIENT_SECRET

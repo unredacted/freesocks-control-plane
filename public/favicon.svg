@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img" aria-label="FreeSocks">
+  <rect x="1" y="1" width="30" height="30" rx="7" fill="#18181b" stroke="#3f3f46" stroke-width="1" />
+  <!-- Keyhole = secure proxy access. Monochrome to match the app's zinc theme. -->
+  <circle cx="16" cy="13" r="4" fill="#fafafa" />
+  <path d="M14.7 13.2h2.6l1.7 9.1a.7.7 0 0 1-.69.83h-4.62a.7.7 0 0 1-.69-.83z" fill="#fafafa" />
+</svg>

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://shadcn-svelte.com/schema.json",
+  "style": "default",
+  "tailwind": {
+    "css": "src/client/styles/globals.css",
+    "baseColor": "zinc"
+  },
+  "aliases": {
+    "components": "@client/components",
+    "utils": "@client/lib/utils",
+    "ui": "@client/components/ui",
+    "hooks": "@client/hooks",
+    "lib": "@client/lib"
+  },
+  "typescript": true,
+  "registry": "https://shadcn-svelte.com/registry"
+}

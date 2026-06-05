@@ -1,0 +1,120 @@
+#:schema node_modules/wrangler/config-schema.json
+# Production template. Copy to wrangler.toml, fill REPLACE_ME values, then:
+#   bun run build:prod
+#   bun run deploy:prod
+# A separate wrangler.beta.example.toml exists for the beta/staging env.
+name = "freesocks-control-plane"
+main = "src-entries/workers.ts"
+compatibility_date = "2026-04-29"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "app.freesocks.org/*", zone_name = "freesocks.org" }
+]
+
+[observability]
+enabled = true
+
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# Force every /api/* request through the worker BEFORE the asset binding
+# checks for a matching file. Without this, Workers Static Assets in SPA
+# mode can intercept API paths (e.g. /api/auth/login) and return the SPA
+# shell, which then shows the client-side "Not found" page.
+run_worker_first = ["/api/*"]
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "freesocks-control-plane"
+database_id = "REPLACE_ME"
+migrations_dir = "src/server/db/migrations"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "FS_SESSIONS_KV"
+id = "REPLACE_ME"
+
+[[kv_namespaces]]
+binding = "FS_CACHE_KV"
+id = "REPLACE_ME"
+
+[[kv_namespaces]]
+binding = "FS_RATELIMIT_KV"
+id = "REPLACE_ME"
+
+# Cloudflare Email Sending (public beta)
+[[send_email]]
+name = "SEND_EMAIL"
+destination_address = "noreply@freesocks.org"
+
+# Cron triggers
+[triggers]
+crons = [
+  "*/5 * * * *",   # reconcile-memberships
+  "*/10 * * * *",  # grace-sweep + outline-healthcheck
+  "0 3 * * *"      # cleanup-expired-free
+]
+
+# Public, non-secret variables
+[vars]
+ENVIRONMENT = "production"
+LOG_LEVEL = "info"
+
+# Remnawave
+REMNAWAVE_BASE_URL = "https://<remnawave-host>"
+
+# Authentik (OIDC)
+AUTHENTIK_ISSUER = "https://<authentik-host>/application/o/freesocks/"
+AUTHENTIK_CLIENT_ID = "freesocks-control-plane"
+AUTHENTIK_REDIRECT_URI = "https://<your-app-host>/api/auth/callback"
+AUTHENTIK_SCOPES = "openid email profile"
+
+# Email
+EMAIL_PROVIDER = "cloudflare"   # cloudflare | resend | ses | console
+EMAIL_FROM = "noreply@freesocks.org"
+EMAIL_REPLY_TO = "support@freesocks.org"
+
+# Free tier
+FREE_TIER_TURNSTILE_SITE_KEY = "REPLACE_ME"
+FREE_TIER_DAILY_CAP = "1"
+FREE_TIER_EXPIRY_DAYS = "90"
+
+# Subscription delivery
+SUBSCRIPTION_DEFAULT_FORMAT = "auto"   # auto | clash | singbox | v2ray | ssconf
+
+# S3 mirroring
+S3_MIRRORS_ENABLED = "true"
+S3_PROVIDER_COUNT = "0"
+# Per-provider:
+# S3_PROVIDER_1_NAME = "r2"
+# S3_PROVIDER_1_ENDPOINT = "https://account.r2.cloudflarestorage.com"
+# S3_PROVIDER_1_BUCKET = "freesocks-keys"
+# S3_PROVIDER_1_PUBLIC_URL = "https://keys.freesocks.org"
+# S3_PROVIDER_1_REGION = "auto"
+
+# WebAuthn (admin passkey)
+WEBAUTHN_RP_ID = "freesocks.org"
+WEBAUTHN_RP_NAME = "FreeSocks Admin"
+WEBAUTHN_ORIGIN = "https://app.freesocks.org"
+
+# Member portal — surfaced to the SPA via /api/v1/config so CTAs can link
+# to the right place without a redeploy.
+MEMBERS_JOIN_URL = "https://members.unredacted.org/join"
+MEMBERS_ACCOUNT_URL = "https://members.unredacted.org/account"
+
+# Secrets - set via `wrangler secret put <NAME>`
+#   SESSION_SIGNING_KEY              - HMAC key for member session cookies (>=32 bytes)
+#   ADMIN_SESSION_SIGNING_KEY        - HMAC key for admin session cookies (distinct, >=32 bytes)
+#   ADMIN_BOOTSTRAP_SECRET           - one-time secret enabling first admin passkey registration
+#   IP_HASH_SALT                     - salt for hashing client IPs (do not rotate without forethought)
+#   TURNSTILE_SECRET_KEY             - Cloudflare Turnstile server-side secret
+#   REMNAWAVE_API_TOKEN              - Bearer token for Remnawave API
+#   AUTHENTIK_CLIENT_SECRET          - OIDC client secret
+#   RESEND_API_KEY                   - if EMAIL_PROVIDER=resend
+#   AWS_ACCESS_KEY_ID                - if EMAIL_PROVIDER=ses (or for SES via S3 creds)
+#   AWS_SECRET_ACCESS_KEY            - paired with the above
+#   S3_PROVIDER_<N>_ACCESS_KEY_ID    - per S3 mirror
+#   S3_PROVIDER_<N>_SECRET_ACCESS_KEY
