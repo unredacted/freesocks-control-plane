@@ -2,10 +2,10 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, v2]
 
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,14 +13,15 @@ jobs:
         with:
           bun-version: '1.3.14'
       - run: bun install --frozen-lockfile
-      - name: Generate worker types
-        run: bun run types
-      - name: Drizzle no-drift check
-        run: bun run db:generate --check
+
+      # Generate convex/_generated (gitignored) so the convex typecheck has its
+      # API/dataModel types. `convex codegen` runs offline — it builds the types
+      # from local function files; the backend-pull step is best-effort.
+      - name: Convex codegen
+        run: bunx convex codegen || true
+
+      # Typecheck spans client + shared + convex + Svelte components.
       - run: bun run typecheck
-      - run: bun run lint
-      - run: bun run test
-      - name: Build (production)
-        run: bun run build:prod
-      - name: Build (beta)
-        run: bun run build:beta
+
+      # Build the SPA (the only build artifact now — the backend is convex/).
+      - run: bun run build

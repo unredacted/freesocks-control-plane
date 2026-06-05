@@ -9,13 +9,6 @@ export const AuthMeResponse = z.object({
       email: z.string().email().optional(),
       displayName: z.string().optional(),
       tier: z.object({ slug: TierSlug, name: z.string() }),
-      /**
-       * How this member authenticated: 'oidc' (Authentik cookie/JWT) or
-       * 'account-id' (account-number cookie). The SPA uses it to label the
-       * sign-out control and decide whether to offer the link-to-membership
-       * CTA. Optional for back-compat with older clients.
-       */
-      identitySource: z.enum(['oidc', 'account-id']).optional(),
     })
     .optional(),
 });

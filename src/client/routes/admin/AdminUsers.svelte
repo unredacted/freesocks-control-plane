@@ -94,7 +94,7 @@
   <h1 class="text-2xl font-bold mb-6">Users</h1>
   <div class="flex gap-2 mb-6">
     <Input
-      placeholder="Search by email or Authentik subject..."
+      placeholder="Search by email or account-number prefix..."
       bind:value={inputText}
       onkeydown={(e) => {
         if (e.key === 'Enter') activeQuery = inputText;

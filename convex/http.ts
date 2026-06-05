@@ -308,7 +308,6 @@ http.route({
         contactId: null,
         email: user.email ?? undefined,
         tier: { slug: tier.slug, name: tier.name },
-        identitySource: 'account-id',
       },
     });
   }),

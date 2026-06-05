@@ -112,7 +112,7 @@
             id="boot-secret"
             type="password"
             bind:value={bootstrap}
-            placeholder="paste from `wrangler secret put ADMIN_BOOTSTRAP_SECRET`"
+            placeholder="paste from `npx convex env set ADMIN_BOOTSTRAP_SECRET`"
           />
         </div>
         <div>
