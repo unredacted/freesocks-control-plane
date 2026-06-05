@@ -8,7 +8,8 @@ export const BackendId = z.enum(['remnawave', 'outline']);
 export type BackendId = z.infer<typeof BackendId>;
 
 export const TierAdmin = z.object({
-  id: z.number().int(),
+  // Convex document ids are opaque strings (was an integer PK under SQLite).
+  id: z.string(),
   slug: z.string().min(1).max(64),
   name: z.string().min(1).max(128),
   description: z.string().nullable(),
@@ -36,7 +37,8 @@ export const TierUpsert = TierAdmin.omit({
 export type TierUpsert = z.infer<typeof TierUpsert>;
 
 export const UserAdmin = z.object({
-  id: z.number().int(),
+  id: z.string(),
+  // Always null post-OIDC-removal (kept so the SPA's display fallback compiles).
   authentikSubject: z.string().nullable(),
   email: z.string().email().nullable(),
   status: UserStatus,
@@ -60,7 +62,7 @@ export const UserSearchQuery = z.object({
 export type UserSearchQuery = z.infer<typeof UserSearchQuery>;
 
 export const AuditEntry = z.object({
-  id: z.number().int(),
+  id: z.string(),
   actorType: z.enum(['system', 'admin', 'member', 'anonymous', 'webhook']),
   actorId: z.string().nullable(),
   action: z.string(),
@@ -87,7 +89,7 @@ export type AppSettingsRecord = z.infer<typeof AppSettingsRecord>;
  * and the server stores it — they never read it back.
  */
 export const OutlineServerAdmin = z.object({
-  id: z.number().int(),
+  id: z.string(),
   name: z.string().min(1).max(128),
   slug: z.string().min(1).max(64),
   apiUrlMasked: z.string(),

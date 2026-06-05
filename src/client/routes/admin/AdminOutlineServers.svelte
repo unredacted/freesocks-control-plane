@@ -22,7 +22,7 @@
   let pendingDelete = $state<z.infer<typeof OutlineServerAdmin> | null>(null);
 
   const remove = createMutation(() => ({
-    mutationFn: async (id: number) => {
+    mutationFn: async (id: string) => {
       await apiClient.delete(
         `/api/v1/admin/outline-servers/${id}`,
         zod.object({ ok: zod.boolean() }),

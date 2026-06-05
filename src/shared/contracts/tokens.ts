@@ -2,12 +2,13 @@ import { z } from 'zod';
 import { ApiScopeArray } from './scopes';
 
 export const TokenSummary = z.object({
-  id: z.number().int(),
+  // Convex document ids are opaque strings.
+  id: z.string(),
   name: z.string(),
   tokenPrefix: z.string(),
   scopes: ApiScopeArray,
   subjectType: z.enum(['service', 'user']),
-  subjectUserId: z.number().int().nullable(),
+  subjectUserId: z.string().nullable(),
   expiresAt: z.string().datetime().nullable(),
   lastUsedAt: z.string().datetime().nullable(),
   revokedAt: z.string().datetime().nullable(),
@@ -19,7 +20,7 @@ export const CreateTokenRequest = z.object({
   name: z.string().min(1).max(128),
   scopes: ApiScopeArray.min(1),
   subjectType: z.enum(['service', 'user']).default('service'),
-  subjectUserId: z.number().int().nullable().optional(),
+  subjectUserId: z.string().nullable().optional(),
   expiresInDays: z.number().int().positive().nullable().optional(),
 });
 export type CreateTokenRequest = z.infer<typeof CreateTokenRequest>;

@@ -17,10 +17,10 @@
 
   let creating = $state(false);
   let revealed = $state<{ plaintext: string; name: string } | null>(null);
-  let pendingRevoke = $state<{ id: number; name: string } | null>(null);
+  let pendingRevoke = $state<{ id: string; name: string } | null>(null);
 
   const revoke = createMutation(() => ({
-    mutationFn: (id: number) =>
+    mutationFn: (id: string) =>
       apiClient.delete(`/api/v1/admin/tokens/${id}`, z.object({ ok: z.boolean() })),
     onSuccess: (_data, id) => {
       void qc.invalidateQueries({ queryKey: queryKeys.adminTokens });
