@@ -30,3 +30,23 @@ export function randomHex(bytes: number): string {
   crypto.getRandomValues(buf);
   return toHex(buf);
 }
+
+/** URL-safe base64 of random bytes — the `fsv1_` token body + opaque ids. */
+export function base64UrlEncode(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let str = '';
+  for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]!);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Length-checked constant-time string compare (HMAC sigs, bootstrap secret).
+ * Matches src/server/lib/crypto.timingSafeEqual so signed cookies verify
+ * identically across the migration.
+ */
+export function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return result === 0;
+}
