@@ -6,6 +6,8 @@
  * `outlineServerId` is a Convex `Id<"outlineServers">` (a string) here, not the
  * old SQLite integer.
  */
+import type { Id } from '../../_generated/dataModel';
+
 export type BackendId = 'remnawave' | 'outline';
 export type TrafficLimitStrategy = 'NO_RESET' | 'DAY' | 'WEEK' | 'MONTH';
 export type BackendUserStatus = 'active' | 'disabled' | 'limited' | 'expired' | 'unknown';
@@ -21,15 +23,15 @@ export interface IssueUserSpec {
   trafficLimitStrategy?: TrafficLimitStrategy;
   remnawaveSquadUuid?: string | null;
   // Outline-only pool hints (used from P4b):
-  outlineServerId?: string;
-  outlineServerPoolIds?: string[];
+  outlineServerId?: Id<'outlineServers'>;
+  outlineServerPoolIds?: Id<'outlineServers'>[];
 }
 
 export interface IssuedUser {
   backendUserId: string;
   backendShortId: string;
   subscriptionUrl: string;
-  outlineServerId?: string;
+  outlineServerId?: Id<'outlineServers'>;
   raw: unknown;
 }
 

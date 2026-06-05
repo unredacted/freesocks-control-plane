@@ -1,5 +1,12 @@
-import { query } from './_generated/server';
+import { internalMutation, query } from './_generated/server';
 import { v } from 'convex/values';
+
+const mirror = v.object({
+  provider: v.string(),
+  publicUrl: v.string(),
+  objectPath: v.optional(v.string()),
+  status: v.optional(v.union(v.literal('ok'), v.literal('failed'))),
+});
 
 export const get = query({
   args: { id: v.id('subscriptions') },
@@ -33,5 +40,54 @@ export const activeForUser = query({
         .filter((s) => s.state === 'active')
         .sort((a, b) => b._creationTime - a._creationTime)[0] ?? null
     );
+  },
+});
+
+// --- write mutations (issuance saga, P5c) ---
+
+/** Persist a freshly-issued subscription. Returns its id. */
+export const insertSubscription = internalMutation({
+  args: {
+    userId: v.id('users'),
+    backend: v.union(v.literal('remnawave'), v.literal('outline')),
+    backendUserId: v.string(),
+    backendShortId: v.string(),
+    outlineServerId: v.optional(v.id('outlineServers')),
+    subscriptionUrl: v.string(),
+    subscriptionMirrors: v.array(mirror),
+    rawContentHash: v.optional(v.string()),
+  },
+  handler: (ctx, a) =>
+    ctx.db.insert('subscriptions', { ...a, state: 'active', updatedAt: Date.now() }),
+});
+
+/** Point a user at their current subscription. */
+export const setCurrentSubscription = internalMutation({
+  args: { userId: v.id('users'), subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { userId, subscriptionId }) => {
+    await ctx.db.patch(userId, { currentSubscriptionId: subscriptionId, updatedAt: Date.now() });
+    return null;
+  },
+});
+
+/**
+ * Soft-delete a subscription with a grace window: state→disabled,
+ * deletedAt = now + graceMs; the backend user is left alive so the URL keeps
+ * working until the tombstone sweep (P5d) hard-deletes it. Re-tombstoning a
+ * non-active row is a no-op (returns its existing deletedAt) so a double
+ * regenerate can't reset the grace clock.
+ */
+export const tombstoneWithGrace = internalMutation({
+  args: { backendUserId: v.string(), graceMs: v.number() },
+  handler: async (ctx, { backendUserId, graceMs }) => {
+    const sub = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_backend_user_id', (q) => q.eq('backendUserId', backendUserId))
+      .unique();
+    if (!sub) return null;
+    if (sub.state !== 'active') return sub.deletedAt != null ? { deletedAt: sub.deletedAt } : null;
+    const deletedAt = Date.now() + graceMs;
+    await ctx.db.patch(sub._id, { state: 'disabled', deletedAt, updatedAt: Date.now() });
+    return { deletedAt };
   },
 });
