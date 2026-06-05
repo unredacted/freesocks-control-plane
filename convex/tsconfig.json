@@ -1,0 +1,18 @@
+{
+  "//": "Isolated TS config for Convex functions. The Convex CLI typechecks this directory against convex/_generated; it is deliberately NOT part of the root `tsc -b` project graph.",
+  "compilerOptions": {
+    "allowJs": true,
+    "strict": true,
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "target": "ESNext",
+    "lib": ["ESNext", "dom"],
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["./**/*"],
+  "exclude": ["./_generated"]
+}

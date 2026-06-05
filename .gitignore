@@ -29,6 +29,9 @@ wrangler.beta.toml
 # Drizzle
 drizzle/
 
+# Convex — generated client/server code, rebuilt via `convex codegen`
+convex/_generated/
+
 # Environment
 .env
 .env.local
