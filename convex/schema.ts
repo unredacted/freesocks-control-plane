@@ -185,6 +185,20 @@ export default defineSchema({
     consumedAt: v.optional(v.number()),
   }).index('by_admin_expires', ['adminUserId', 'expiresAt']),
 
+  // Short-lived passkey ASSERTION challenges (was the `webauthn:assert:<id>` KV
+  // entry). Keyed by an opaque challengeId; `adminUserId` is absent for the
+  // unknown/inactive-user sentinel so verify fails like any wrong passkey
+  // without revealing whether the username existed. Daily-swept by expiresAt.
+  webauthnAuthChallenges: defineTable({
+    challengeId: v.string(),
+    challenge: v.string(),
+    adminUserId: v.optional(v.id('adminUsers')),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
+  })
+    .index('by_challenge_id', ['challengeId'])
+    .index('by_expires', ['expiresAt']),
+
   emailLog: defineTable({
     toEmail: v.string(),
     subject: v.string(),
