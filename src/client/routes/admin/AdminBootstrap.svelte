@@ -51,7 +51,7 @@
       }
       const { options, adminId } = (await optsRes.json()) as {
         options: Parameters<typeof startRegistration>[0]['optionsJSON'];
-        adminId: number;
+        adminId: string;
       };
 
       const reg = await startRegistration({ optionsJSON: options });
