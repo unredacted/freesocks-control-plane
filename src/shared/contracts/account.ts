@@ -5,7 +5,8 @@ import { BackendId } from './admin';
 
 export const AccountResponse = z.object({
   user: z.object({
-    id: z.number().int(),
+    // Convex document id (string) since the P10 migration — was an integer PK.
+    id: z.string(),
     email: z.string().email().optional(),
     status: UserStatus,
     tier: z.object({

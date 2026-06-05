@@ -88,6 +88,33 @@
       </p>
     </header>
 
+    {#if result.accountId}
+      <div class="rounded-xl border-2 border-primary bg-primary/5 p-5 space-y-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-primary">
+          Save your account number
+        </h2>
+        <p class="font-mono text-2xl md:text-3xl tracking-wider tabular-nums select-all">
+          {result.accountId.replace(/(\d{4})(?=\d)/g, '$1 ')}
+        </p>
+        <p class="text-xs text-muted-foreground">
+          This is the <strong>only</strong> way to sign back in — there's no email or password, and it
+          can't be recovered. Store it somewhere safe. It's shown only once.
+        </p>
+        <div class="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onclick={() => {
+              if (result?.accountId) navigator.clipboard?.writeText(result.accountId);
+              toast.success('Copied');
+            }}
+          >
+            Copy number
+          </Button>
+        </div>
+      </div>
+    {/if}
+
     <SubscriptionHero
       eyebrow="New subscription"
       title={result.backend === 'outline' ? 'Access key' : 'Subscription URL'}

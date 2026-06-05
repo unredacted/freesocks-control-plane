@@ -22,8 +22,10 @@
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
   import { apiClient, ApiCallError } from '../lib/api';
   import { accountQuery, configQuery, queryKeys } from '../lib/queries';
+  import { router } from '../stores/router.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
+  import { AccountIdRevealResponse } from '../../shared/contracts/subscription';
 
   const account = accountQuery();
   const config = configQuery();
@@ -42,11 +44,11 @@
   let pendingSwitchTarget = $state<'remnawave' | 'outline' | null>(null);
 
   // 401 from /api/v1/account means the cookie session is missing or expired —
-  // force a fresh OIDC round-trip so the user lands back here logged in.
+  // bounce to the account-number sign-in form (no OIDC anymore).
   $effect(() => {
     const err = account.error;
     if (err instanceof ApiCallError && err.status === 401) {
-      window.location.href = '/api/auth/login?returnTo=/account';
+      router.navigate('/login');
     }
   });
 
@@ -146,9 +148,33 @@
   }));
 
   async function logout() {
-    await apiClient.post('/api/auth/logout', {}, z.object({ ok: z.boolean() }));
+    await apiClient.post('/api/v1/auth/logout', {}, z.object({ ok: z.boolean() }));
     window.location.href = '/';
   }
+
+  // One-time reveal of a freshly rotated account number. Held in volatile state
+  // only — never re-fetchable (the server stores just a hash). The old number
+  // stops working immediately.
+  let revealedAccountId = $state<string | null>(null);
+  let rotateConfirmOpen = $state(false);
+  let formattedRevealed = $derived(
+    revealedAccountId ? revealedAccountId.replace(/(\d{4})(?=\d)/g, '$1 ') : '',
+  );
+  const rotateAccountId = createMutation(() => ({
+    mutationFn: () =>
+      apiClient.post('/api/v1/account/account-id/rotate', {}, AccountIdRevealResponse),
+    onSuccess: (result) => {
+      rotateConfirmOpen = false;
+      revealedAccountId = result.accountId;
+      toast.success('New account number generated', {
+        description: 'Save it now — the old number no longer works and this is the only time it’s shown.',
+      });
+    },
+    onError: (err) => {
+      const msg = err instanceof ApiCallError ? err.payload.error.message : String(err);
+      toast.error('Rotate failed', { description: msg });
+    },
+  }));
 
   // Compute membership state explicitly so the UI can render the right CTA.
   // States:
@@ -248,11 +274,66 @@
           {/if}
         </p>
       </div>
-      <Button onclick={logout} variant="ghost" size="sm" class="shrink-0">
-        <LogOut class="size-4" />
-        Sign out
-      </Button>
+      <div class="flex items-center gap-1 shrink-0">
+        <Button onclick={() => (rotateConfirmOpen = true)} variant="ghost" size="sm">
+          <RotateCcw class="size-4" />
+          <span class="hidden sm:inline">Rotate number</span>
+        </Button>
+        <Button onclick={logout} variant="ghost" size="sm">
+          <LogOut class="size-4" />
+          Sign out
+        </Button>
+      </div>
     </header>
+
+    <!-- One-time reveal of a freshly rotated account number (volatile state). -->
+    {#if revealedAccountId}
+      <div class="rounded-xl border-2 border-primary bg-primary/5 p-5 space-y-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wider text-primary">
+          Your new account number — save it now
+        </h2>
+        <p class="font-mono text-2xl tracking-wider tabular-nums select-all">{formattedRevealed}</p>
+        <p class="text-xs text-muted-foreground">
+          This is the only time it's shown, and your old number no longer works. Store it somewhere
+          safe — it's the only way to sign in, and it can't be recovered.
+        </p>
+        <div class="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onclick={() => {
+              if (revealedAccountId) navigator.clipboard?.writeText(revealedAccountId);
+              toast.success('Copied');
+            }}
+          >
+            Copy
+          </Button>
+          <Button size="sm" onclick={() => (revealedAccountId = null)}>I've saved it</Button>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Rotate confirmation. -->
+    {#if rotateConfirmOpen}
+      <div class="rounded-xl border border-destructive/40 bg-destructive/5 p-5 space-y-3">
+        <h2 class="text-sm font-semibold">Rotate your account number?</h2>
+        <p class="text-xs text-muted-foreground">
+          A new 16-digit number is generated and shown once. Your current number stops working
+          immediately — anyone who has it loses access. Do this if your number may have leaked.
+        </p>
+        <div class="flex gap-2">
+          <Button
+            size="sm"
+            variant="destructive"
+            onclick={() => rotateAccountId.mutate()}
+            disabled={rotateAccountId.isPending}
+          >
+            {rotateAccountId.isPending ? 'Rotating…' : 'Yes, rotate'}
+          </Button>
+          <Button size="sm" variant="ghost" onclick={() => (rotateConfirmOpen = false)}>Cancel</Button>
+        </div>
+      </div>
+    {/if}
 
     <!-- Membership-state callouts: only shown when there's something to say. -->
     {#if membershipState === 'no-membership'}

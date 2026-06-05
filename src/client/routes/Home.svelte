@@ -106,9 +106,9 @@
             <Button size="lg" variant="outline" class="text-base">My account</Button>
           </Link>
         {:else}
-          <a href="/api/auth/login?returnTo=/account">
+          <Link href="/login">
             <Button size="lg" variant="outline" class="text-base">Sign in</Button>
-          </a>
+          </Link>
         {/if}
       </div>
     </div>

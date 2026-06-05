@@ -65,12 +65,12 @@
           </Button>
         </Link>
       {:else}
-        <a href="/api/auth/login?returnTo=/account">
+        <Link href="/login">
           <Button variant="outline" size="sm">
             <LogIn class="size-4" />
             Sign in
           </Button>
-        </a>
+        </Link>
       {/if}
       <ThemeToggle />
     </nav>

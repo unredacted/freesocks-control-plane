@@ -7,7 +7,7 @@
   import Home from './routes/Home.svelte';
   import GetKey from './routes/GetKey.svelte';
   import Account from './routes/Account.svelte';
-  import AuthCallback from './routes/AuthCallback.svelte';
+  import Login from './routes/Login.svelte';
   import AdminEntry from './routes/admin/AdminEntry.svelte';
   import AdminTiers from './routes/admin/AdminTiers.svelte';
   import AdminUsers from './routes/admin/AdminUsers.svelte';
@@ -58,8 +58,8 @@
               <GetKey />
             {:else if router.pathname === '/account'}
               <Account />
-            {:else if router.pathname === '/auth/callback-landing'}
-              <AuthCallback />
+            {:else if router.pathname === '/login'}
+              <Login />
             {:else if router.pathname === '/admin'}
               <AdminEntry />
             {:else if router.pathname === '/admin/tiers'}
