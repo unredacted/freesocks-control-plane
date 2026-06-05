@@ -1,13 +1,284 @@
-import { defineSchema } from 'convex/server';
+import { defineSchema, defineTable } from 'convex/server';
+import { v } from 'convex/values';
 
 /**
- * Convex schema for FreeSocks Control Plane (migration target).
+ * Convex schema for FreeSocks Control Plane — the migration target
+ * (`.claude/plans/...`, phase P2). Ported from `src/server/db/schema.ts` with
+ * Convex idioms:
  *
- * Intentionally EMPTY for migration phase P1: deploying an empty schema to the
- * self-hosted backend verifies the backend + CLI wiring end-to-end before any
- * tables exist. Phase P2 ports the 16 tables from `src/server/db/schema.ts`
- * here — integer PKs/FKs become `Id<>` references, uniqueness is enforced in
- * mutations (Convex has no UNIQUE constraint), and JSON-as-TEXT columns become
- * nested validators. See `.claude/plans/how-hard-or-feasible-harmonic-dahl.md`.
+ *  - Integer PKs/FKs become `_id` / `v.id("table")`. No referential enforcement
+ *    (Convex has none) — code keeps the existing best-effort delete semantics.
+ *  - `created_at` columns are dropped in favour of the built-in `_creationTime`;
+ *    explicit timestamps are kept ONLY where they're indexed or mutated
+ *    (updatedAt, membershipExpiresAt, grantedAt, expiresAt, …).
+ *  - There are NO UNIQUE constraints in Convex. Uniqueness (slug, tokenHash,
+ *    accountIdHash, backendUserId, …) is enforced inside transactional mutations
+ *    via a by-field index read-check (serializable OCC makes it race-free).
+ *  - Partial indexes don't exist; the predicate moves into the query filter.
+ *  - JSON-as-TEXT columns become nested validators (subscriptionMirrors, scopes).
+ *  - Identity is the account-number system ONLY: no `authentik_subject` /
+ *    `civicrm_contact_id`. `kv_table` is gone (KV → Convex tables); `sessions`
+ *    and `rateLimits` replace the former KvStore namespaces.
  */
-export default defineSchema({});
+
+// Reusable enum validators (Drizzle text-enums → unions of literals).
+const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
+const trafficStrategy = v.union(
+  v.literal('NO_RESET'),
+  v.literal('DAY'),
+  v.literal('WEEK'),
+  v.literal('MONTH'),
+);
+const userStatus = v.union(
+  v.literal('active'),
+  v.literal('grace'),
+  v.literal('disabled'),
+  v.literal('deleted'),
+);
+const subscriptionState = v.union(
+  v.literal('active'),
+  v.literal('disabled'),
+  v.literal('deleted'),
+);
+const actorType = v.union(
+  v.literal('system'),
+  v.literal('admin'),
+  v.literal('member'),
+  v.literal('anonymous'),
+  v.literal('webhook'),
+);
+
+// On-disk subscription-mirror entry (see src/server/lib/mirrors.ts).
+const subscriptionMirror = v.object({
+  provider: v.string(),
+  publicUrl: v.string(),
+  objectPath: v.optional(v.string()),
+  status: v.optional(v.union(v.literal('ok'), v.literal('failed'))),
+});
+
+export default defineSchema({
+  tiers: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+    backend: backendId,
+    monthlyTrafficGb: v.number(),
+    deviceLimit: v.number(),
+    hwidLimit: v.number(),
+    hwidEnabled: v.boolean(),
+    trafficStrategy,
+    remnawaveSquadUuid: v.optional(v.string()),
+    isDefaultFree: v.boolean(),
+    isActive: v.boolean(),
+    priority: v.number(),
+    expirationDaysAfterMembershipLapse: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_slug', ['slug']) // uniqueness enforced in mutations
+    .index('by_active', ['isActive']),
+
+  users: defineTable({
+    email: v.optional(v.string()),
+    tierId: v.id('tiers'),
+    currentSubscriptionId: v.optional(v.id('subscriptions')),
+    status: userStatus,
+    disabledReason: v.optional(v.string()),
+    membershipExpiresAt: v.optional(v.number()),
+    suspendedAt: v.optional(v.number()),
+    // Account-number auth: store only the SHA-256 hash + a 4-digit plaintext
+    // prefix (admin search). Uniqueness of the hash is enforced in mutations.
+    accountIdHash: v.optional(v.string()),
+    accountIdPrefix: v.optional(v.string()),
+    accountIdCreatedAt: v.optional(v.number()),
+    accountIdRotatedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_account_id_hash', ['accountIdHash'])
+    .index('by_account_id_prefix', ['accountIdPrefix'])
+    .index('by_status_expires', ['status', 'membershipExpiresAt'])
+    .index('by_tier', ['tierId']),
+
+  subscriptions: defineTable({
+    userId: v.id('users'),
+    backend: backendId,
+    backendUserId: v.string(),
+    backendShortId: v.string(),
+    outlineServerId: v.optional(v.id('outlineServers')),
+    subscriptionUrl: v.string(),
+    subscriptionMirrors: v.array(subscriptionMirror),
+    rawContentHash: v.optional(v.string()),
+    state: subscriptionState,
+    updatedAt: v.number(),
+    deletedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_state', ['state'])
+    .index('by_backend_user_id', ['backendUserId'])
+    .index('by_backend_short_id', ['backendShortId']),
+
+  tierHistory: defineTable({
+    userId: v.id('users'),
+    fromTierId: v.optional(v.id('tiers')),
+    toTierId: v.id('tiers'),
+    reason: v.string(),
+    triggeredBy: v.string(),
+  }).index('by_user', ['userId']),
+
+  freeGrants: defineTable({
+    userId: v.id('users'),
+    ipHash: v.string(),
+    ipCountry: v.optional(v.string()),
+    asn: v.optional(v.number()),
+    tlsFingerprint: v.optional(v.string()),
+    turnstileAction: v.optional(v.string()),
+    turnstileCdata: v.optional(v.string()),
+    userAgentHash: v.optional(v.string()),
+    grantedAt: v.number(),
+    grantedDayBucket: v.number(),
+    // NOTE: the old `slot` column + composite UNIQUE index are intentionally
+    // gone. The free-tier cap is now enforced by a serializable mutation
+    // (read count over by_ip_day, then insert) — see migration plan §2.
+  })
+    .index('by_ip_day', ['ipHash', 'grantedDayBucket'])
+    .index('by_granted_at', ['grantedAt']),
+
+  auditLog: defineTable({
+    actorType,
+    actorId: v.optional(v.string()),
+    action: v.string(),
+    targetType: v.optional(v.string()),
+    targetId: v.optional(v.string()),
+    payload: v.optional(v.any()),
+    requestId: v.optional(v.string()),
+    ipHash: v.optional(v.string()),
+  })
+    .index('by_target', ['targetType', 'targetId'])
+    .index('by_actor', ['actorType', 'actorId'])
+    .index('by_action', ['action']),
+
+  adminUsers: defineTable({
+    username: v.string(),
+    displayName: v.string(),
+    email: v.optional(v.string()),
+    isActive: v.boolean(),
+    updatedAt: v.number(),
+    lastLoginAt: v.optional(v.number()),
+  }).index('by_username', ['username']),
+
+  passkeyCredentials: defineTable({
+    adminUserId: v.id('adminUsers'),
+    credentialId: v.string(),
+    publicKey: v.string(),
+    counter: v.number(),
+    transports: v.optional(v.string()),
+    deviceLabel: v.optional(v.string()),
+    aaguid: v.optional(v.string()),
+    lastUsedAt: v.optional(v.number()),
+  })
+    .index('by_admin', ['adminUserId'])
+    .index('by_credential_id', ['credentialId']),
+
+  webauthnRegistrationChallenges: defineTable({
+    adminUserId: v.id('adminUsers'),
+    challenge: v.string(),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
+  }).index('by_admin_expires', ['adminUserId', 'expiresAt']),
+
+  emailLog: defineTable({
+    toEmail: v.string(),
+    subject: v.string(),
+    templateKey: v.string(),
+    params: v.any(),
+    status: v.union(v.literal('sent'), v.literal('failed'), v.literal('suppressed')),
+    providerMessageId: v.optional(v.string()),
+    error: v.optional(v.string()),
+    dedupeKey: v.optional(v.string()),
+    sentAt: v.optional(v.number()),
+  })
+    .index('by_dedupe', ['dedupeKey']) // uniqueness enforced in mutations
+    .index('by_to', ['toEmail']),
+
+  // Generic singleton key/value state (e.g. tier-propagation cursors).
+  appState: defineTable({
+    key: v.string(),
+    value: v.string(),
+    updatedAt: v.number(),
+  }).index('by_key', ['key']),
+
+  webhookEvents: defineTable({
+    // `eventId` is the dedupe hash (was the string PK in SQLite). Convex PKs
+    // are opaque `_id`s, so dedupe is via this indexed field.
+    eventId: v.string(),
+    source: v.string(),
+    payload: v.string(),
+    processedAt: v.optional(v.number()),
+  })
+    .index('by_event_id', ['eventId'])
+    .index('by_source', ['source']),
+
+  apiTokens: defineTable({
+    name: v.string(),
+    tokenHash: v.string(),
+    tokenPrefix: v.string(),
+    createdByAdminId: v.id('adminUsers'),
+    scopes: v.array(v.string()),
+    subjectType: v.union(v.literal('service'), v.literal('user')),
+    subjectUserId: v.optional(v.id('users')),
+    expiresAt: v.optional(v.number()),
+    lastUsedAt: v.optional(v.number()),
+    revokedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_token_hash', ['tokenHash'])
+    .index('by_creator', ['createdByAdminId'])
+    .index('by_active', ['revokedAt', 'expiresAt']),
+
+  outlineServers: defineTable({
+    name: v.string(),
+    slug: v.string(),
+    apiUrl: v.string(),
+    websocketEnabled: v.boolean(),
+    websocketDomain: v.optional(v.string()),
+    prometheusUrl: v.optional(v.string()),
+    isActive: v.boolean(),
+    priority: v.number(),
+    lastHealthOkAt: v.optional(v.number()),
+    accessKeyCount: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_slug', ['slug'])
+    .index('by_active_priority', ['isActive', 'priority']),
+
+  appSettings: defineTable({
+    key: v.string(),
+    value: v.string(),
+    updatedByAdminId: v.optional(v.id('adminUsers')),
+    updatedAt: v.number(),
+  }).index('by_key', ['key']),
+
+  // --- new tables replacing the former KvStore namespaces ---
+
+  // Member + admin sessions (was the `sessions` KV namespace + signed cookie).
+  sessions: defineTable({
+    sid: v.string(),
+    kind: v.union(v.literal('member'), v.literal('admin')),
+    userId: v.optional(v.id('users')),
+    adminUserId: v.optional(v.id('adminUsers')),
+    expiresAt: v.number(),
+  })
+    .index('by_sid', ['sid'])
+    .index('by_expires', ['expiresAt']),
+
+  // Anti-abuse counters (was the `rateLimit` KV namespace). The `bucket` key
+  // encodes the subject + window (e.g. "account-login:ip:<hash>:<hour>"); a
+  // daily cron sweeps rows past `expiresAt`. The strict free-tier cap lives in
+  // the issuance mutation, not here.
+  rateLimits: defineTable({
+    bucket: v.string(),
+    count: v.number(),
+    expiresAt: v.number(),
+  })
+    .index('by_bucket', ['bucket'])
+    .index('by_expires', ['expiresAt']),
+});
