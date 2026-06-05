@@ -1,29 +1,42 @@
 # Design: Self-service account-number authentication
 
-Every issued user (free-tier or member) gets a unique, opaque account number
-they can use to sign back into their account without email, OIDC, or any
-external identity provider. If they later upgrade to a paid membership, the same
-account links to their CiviCRM/Authentik identity — the subscription history is
-preserved across the transition.
+Every issued user gets a unique, opaque account number they use to sign back into
+their account without email or any external identity provider. It is the **only**
+member credential.
 
-> **Implementation status (2026-06).** The **foundation is built and shipping
-> dark** behind the `account_id.enabled` app setting (default `false`):
+> **Implementation status (2026-06).** Account-number auth is now **THE member
+> identity and is LIVE** on the Convex backend. The format / entropy / storage /
+> rate-limit / timing design below is what got built. Implemented:
 >
-> - **S1 Contracts** ✅ — `AccountLoginRequest`, `AccountIdRevealResponse`,
->   `SubscriptionResponse.{accountId,accountIdAvailable}`, `AuthMeResponse.member.identitySource`.
-> - **S2 Migration** ✅ — `0011_account_identifiers.sql` + Drizzle schema columns/indexes.
-> - **S3 Service** ✅ — `AccountIdService` (mint/hash/verify/rotate/normalize), DI-registered, unit-tested.
-> - **S11 Feature flag** ✅ — `account_id.enabled` in AppSettings (admin-toggleable).
+> - **Login** — `POST /api/v1/auth/account-login` (`convex/http.ts` →
+>   `convex/auth.ts:accountLogin`): Turnstile-gated, strict per-prefix (30/day) +
+>   per-IP (10/h) rate limits, always-hash + ~300ms failure floor (constant-time),
+>   one generic failure shape (no existence oracle) → signed `fs_session` cookie.
+> - **Mint-at-issuance + reveal-once** — free-tier issuance mints a number
+>   (`convex/accountId.ts:mintForUser`, CSPRNG) and returns it once in the
+>   `POST /api/v1/subscription` response (`accountId` on first issue;
+>   `accountIdAvailable:false` on a same-IP/day reissue). Only the SHA-256 hash +
+>   4-digit prefix are persisted (`users.accountIdHash` / `accountIdPrefix`).
+> - **Rotate** — `POST /api/v1/account/account-id/rotate`
+>   (`convex/auth.ts:rotateAccountId`): new number revealed once, old hash
+>   overwritten, audited.
+> - **Admin prefix search** — `GET /api/v1/admin/users?q=` matches the stored
+>   4-digit prefix (`convex/adminApi.ts`); full-number lookup is never permitted.
+> - **SPA** — reveal-once panel on `/get-key`, account-number sign-in on `/login`,
+>   rotate dialog on `/account`.
 >
-> **Not yet wired (no behavior change yet):** **§4** mint-at-issuance + return the
-> number in `SubscriptionResponse`; **S4** `POST /api/v1/auth/account-login` route
-> (Turnstile + rate-limit + constant-time); **S5** session integration
-> (`MemberSession.source: 'account-id'`, `/me.identitySource`); **S6** OIDC
-> link / user+admin rotate / admin merge; **S7–S9** all SPA UI (reveal panel,
-> login tab, rotate dialog); **S10** admin prefix search + rotate button; **S12**
-> backfill script + `docs/account-number.md` runbook; **S13** e2e + security tests.
-> The building blocks (service, flag, contracts, columns) exist and are tested, so
-> the next pass is pure wiring + UI on a green base. Estimated remaining ≈ 30h.
+> **NOT APPLICABLE — OIDC was removed.** The original design assumed an Authentik
+> OIDC / CiviCRM identity that an account number would *link* to. That stack is
+> gone: there is no OIDC, no CiviCRM, no JWT path. **§6 (member-link flow) in its
+> entirety, and every OIDC/CiviCRM/JWT mention in §4, §5, §8, §10, and §11 below,
+> do not apply.** Account numbers stand alone; there is no link/merge and no second
+> recovery path (see §7 — "forgot my number" is irrecoverable by design). The
+> entitlement source is now the billing webhook seam (`POST /api/webhooks/billing`),
+> not a linked external identity.
+>
+> Below, sections describing the (removed) OIDC/CiviCRM/Drizzle-migration mechanics
+> are kept for historical context only — the design intent that survived is the
+> format, storage, rate-limit, timing, and security content.
 
 ## 1. Identifier format
 
@@ -127,13 +140,18 @@ downloadable `.txt` option, single-checkbox "I've saved it" gate before the
 panel collapses. The panel only appears on first reveal; refreshing the page
 does NOT reshow it (SPA holds it in volatile state only).
 
-**OIDC members at first login**: auto-mint an account number in the OIDC
-callback (`upsertMemberUser`). Add a one-time banner to `/account`
-("Your account number is X — save it") that the user must dismiss. This gives
-every member a second login path in case Authentik is unavailable, and supports
-the link-flow downward direction (see §6).
+**OIDC members at first login** *(NOT APPLICABLE — OIDC removed)*: this
+subsection assumed an Authentik callback that minted a number as a second login
+path. There is no OIDC callback; every user gets a number at key issuance
+instead, and it is the only path.
 
 ## 5. Account page changes
+
+> **Partially NOT APPLICABLE.** There is no "Sign in with Unredacted" OIDC tab.
+> The sign-in page (`/login`) has a single account-number form (number input +
+> Turnstile) that posts to `/api/v1/auth/account-login`; on success it
+> invalidates `queryKeys.me` / `queryKeys.account` and renders the member view.
+> The two-tab design below is historical.
 
 `/account` (unauthenticated): two tabs.
 
@@ -144,7 +162,14 @@ Submit posts to `/api/v1/auth/account-login`. On success: invalidate
 `queryKeys.me` and `queryKeys.account`. After login the route renders
 identically to the existing OIDC-session view.
 
-## 6. Member-link flow
+## 6. Member-link flow — NOT APPLICABLE (OIDC removed)
+
+> **This entire section does not apply.** There is no OIDC identity to link to and
+> no admin merge flow. Account numbers stand alone. The transitions below
+> ((a) link an account-number session to OIDC, (b) reveal/rotate for an OIDC user,
+> (c) admin merge of two anonymous accounts) were never built and are not planned
+> in this form. Rotation (`POST /api/v1/account/account-id/rotate`) is the only
+> credential-management operation that shipped. Retained for historical context.
 
 Three transitions, all converging on one user row:
 
@@ -194,14 +219,13 @@ else's account if exposed end-user-side.
   the response to the issuing call, in TLS-protected transport.
 - **Forgot my number**: irrecoverable by design. UX states this once at
   issuance ("You won't be able to recover this. Save it now."). **Do NOT** offer
-  email-based recovery, even for paid members — adds an email-account-takeover
-  dependency the system specifically avoids. Paid members who lose access
-  re-auth via OIDC and rotate.
-- **Account takeover**: if a number leaks, the legitimate user logs in via OIDC
-  (members) or starts fresh (free users) and rotates via
-  `POST /api/v1/account/account-id/rotate`. Document recovery plainly at
-  issuance: for free-tier users, the account is gone; for members, OIDC is the
-  recovery path.
+  email-based recovery — it would add an email-account-takeover dependency the
+  system specifically avoids. *(The original "members re-auth via OIDC" fallback
+  no longer exists — OIDC was removed. There is no second recovery path.)*
+- **Account takeover**: if a number leaks, the legitimate user (while still
+  signed in) rotates via `POST /api/v1/account/account-id/rotate`, which
+  immediately invalidates the old number. If they've already lost access, the
+  account is unrecoverable by design. *(The original OIDC recovery path is gone.)*
 - **2FA / device association**: future work. Note in `docs/account-id.md` as
   out of scope for v1.
 
@@ -232,6 +256,14 @@ else's account if exposed end-user-side.
 
 ## 10. Integration with existing flows
 
+> **Mostly NOT APPLICABLE — OIDC/JWT removed.** There is no `bearer-auth`
+> middleware, no OIDC cookie, and no JWT path. Identity is resolved per-route in
+> `convex/lib/http.ts` (`resolveMember` = the `fs_session` cookie OR an `fsv1_`
+> token with `subjectType:'user'`). The account-number session uses the same
+> `fs_session` cookie the rest of the member surface reads, so `/api/v1/account`,
+> `/api/v1/me`, etc. work unchanged. `fsv1_` tokens (service or user) remain the
+> programmatic path. The OIDC/JWT-specific points below are historical.
+
 - `bearer-auth.ts` is untouched. Account-number auth is cookie-only at v1;
   mobile clients use existing OIDC/JWT paths. (If mobile-without-OIDC becomes a
   requirement, add `POST /api/v1/auth/account-login` returning a bearer token
@@ -251,6 +283,13 @@ else's account if exposed end-user-side.
   point the OIDC callback path mints one.
 
 ## 11. Migration / rollout
+
+> **Largely NOT APPLICABLE on Convex.** The Convex cutover started fresh (no data
+> migrated — see `convex-self-hosting.md §6`), so there were no existing users to
+> backfill, and there is no OIDC-member population. The schema is `convex/schema.ts`
+> (no SQL migration). The `account_id.enabled` flag still exists in
+> `SETTINGS_DEFAULTS` but is **vestigial** — account-number auth is unconditionally
+> the member identity and does not gate on it. The bullets below are historical.
 
 - **Existing anonymous free-tier users**: do NOT backfill. They never saw an
   account number; minting one now and hiding it serves no one. Document as a

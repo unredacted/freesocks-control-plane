@@ -11,6 +11,32 @@ push).
 The audit itself is fresh in the conversation history; this file is the
 durable record for the next maintainer who picks any of these up.
 
+> **Convex-migration re-annotation (2026-06-05).** This audit predates the move to
+> the self-hosted Convex backend. The original findings reference `src/server/…`
+> paths and Hono/Drizzle/D1/KV/CiviCRM/OIDC constructs that **no longer exist**.
+> Each finding is re-tagged below as one of:
+>
+> - **CLOSED** — fixed (or made impossible) by the Convex rewrite.
+> - **MOOT** — the subsystem it lived in was deleted (CiviCRM, KV-locks, OIDC, the
+>   `idempotency_keys`/`kv_table` tables, the per-platform cron triad, …), so the
+>   bug can't recur.
+> - **STILL APPLIES** — the logic was ported and the concern carries over; re-check
+>   against the Convex code.
+> - **RE-REVIEW** — possibly relevant but needs fresh analysis on Convex semantics.
+>
+> The detailed historical sections below are retained verbatim for context; read
+> them through the tag at each heading.
+>
+> **Headline:** **H1 (free-tier over-issuance race) is now CLOSED *by
+> construction*.** The per-(ipHash, dayBucket) cap is the serializable Convex
+> mutation `freeTier.claimFreeSlot` (`convex/freeTier.ts`): it reads the
+> `freeGrants` for the bucket over the `by_ip_day` index, then inserts only if
+> under cap. Convex mutations run under serializable OCC, so two concurrent claims
+> have a read/write conflict — the loser aborts, retries, re-reads the larger
+> count, and sees the cap. Two racers can therefore **never** both observe
+> `< cap`. No slot column, no modulo, no UNIQUE trick. Proven by a 12-concurrent-
+> claims-@-cap-3 → exactly-3 test in `convex/freeTier.test.ts`.
+
 ## Why these aren't fixed yet
 
 The audit cycle landed during the lead-up to a production deploy. Cherry-picking
@@ -25,40 +51,43 @@ history):
 
 - **M1** (PRNG → CSPRNG), **M2** (cookie separator), **M3** (audit-payload scrub),
   **M4** (admin-auth enumeration + per-IP throttle).
-- **H1** (free-tier race) — now an ATOMIC cap via a `free_grants.slot` column +
-  `UNIQUE(ip_hash, granted_day_bucket, slot)` (migration `0009`), claimed with
-  `slot = COUNT(...) % cap` + `onConflictDoNothing().returning()`. Loss is detected
-  by an empty returned array — the portable signal across the D1/better-sqlite3/libSQL
-  driver union, which can't read affected-rows uniformly. The slot is claimed before
-  any backend work, so a lost race rolls back only a bare user row. (Supersedes the
-  Durable-Object / D1-stored-proc options floated in the H1 section below.)
+- **H1** (free-tier race) — **CLOSED by construction on Convex.** The old D1
+  `free_grants.slot` + `UNIQUE(ip_hash, granted_day_bucket, slot)` trick is itself
+  now obsolete (no D1); the cap is the serializable `freeTier.claimFreeSlot`
+  mutation described in the migration banner at the top of this file. The slot is
+  claimed before any backend work, and `releaseFreeSlot` compensates on issuance
+  failure, so a lost race or transient error rolls back only a bare user row.
 - **Bug 5** (per-tier grace), **Bug 10** (tier_history ordering), **Bug 11**
-  (cleanupExpired join), **Bug 14** (Remnawave squad clear).
-- **Bug 6** (dual-backend tier disambiguation) — `applyMembership` now passes the
-  user's active `sub.backend` to `findForMembership`. Latent (single backend) but correct.
-- **Bug 8** (propagate overlap) — `propagateTierChanges` is now wrapped in a
-  best-effort KV lock. **Bug 9** — reconcile lock TTL raised 60s→300s to cover
-  worst-case pagination. NB: both locks are still KV get/put, NOT atomic CAS — a rare
-  cross-isolate overlap remains possible and is accepted as harmless (applyMembership /
-  propagate PATCHes are idempotent; self-host also has the in-process `runGuarded`). A
-  true CAS/lease primitive remains a nice-to-have.
-- **Bug 13** (idempotency_keys dead table) — dropped in migration `0010` along with the
-  dead `SubscriptionRequest.idempotencyKey` field.
-- Outline (latent, backend disabled): `accessKeyCount` is now incremented on issue.
+  (cleanupExpired join), **Bug 14** (Remnawave squad clear) — all re-confirmed
+  CLOSED on the Convex port (see each section).
 
-**Still open / deferred:** **Bug 15** (Outline WSS `accessUrl`, latent — needs the
-fork's response contract); remaining Outline-hardening — scoring **RTT capture** (needs
-a new latency column + migration) and a **hard-cutoff disable** path — both latent while
-Outline is disabled; **L2** (Authentik self-provisioning, accepted). **Test gaps still
-open:** CiviCRM client, email factory/providers, S3 storage, WebAuthn ceremonies
-(Remnawave client + backend, webhook HMAC, and the Authentik JWT verifier are now
-covered).
+Made obsolete by the Convex migration (now **MOOT** — see each section): **Bug 6**
+(CiviCRM membership→tier matching gone), **Bug 8 / Bug 9** (CiviCRM reconcile cron +
+KV locks gone; serialized writes are now serializable mutations), **Bug 13**
+(`idempotency_keys` table never ported). **M1** (PRNG), **M2** (cookie separator),
+**M4** (admin-auth enumeration) are CLOSED on Convex; **L2** (Authentik
+self-provisioning) is MOOT (no OIDC).
+
+**Still open / deferred on Convex:** **Bug 15** (Outline WSS `accessUrl`, latent —
+needs the fork's response contract); Outline scoring **RTT capture** (the
+`pickCandidatesForIssue` latency term is a `0` placeholder) — latent while Outline is
+disabled; **M3** (audit-payload allowlist — re-review the `audit.record` callers in
+`convex/adminApi.ts`). **Test gaps:** the `convex-test` suite covers auth/free-tier/
+lifecycle/subscriptions/webhooks/admin-API + the lib units; not yet covered — the
+proxy-backend HTTP fns (Remnawave/Outline), S3 storage, and the WebAuthn ceremonies
+(the `"use node"` modules are awkward under `convex-test`). The deferred email
+subsystem has nothing to test yet.
 
 ## Security — deferred
 
-### H1. Free-tier rate-limit race
+### H1. Free-tier rate-limit race — CLOSED (Convex)
 
-**Location** `src/server/services/rate-limit.ts:54-65`, `src/server/services/free-tier.ts:64-95`
+> **CLOSED by construction.** See the migration banner at the top: the cap is the
+> serializable `freeTier.claimFreeSlot` mutation. The KV-counter TOCTOU described
+> below cannot occur in a serializable Convex mutation. The Durable-Object /
+> D1-stored-proc options floated here are no longer relevant. Historical text:
+
+**Location** `src/server/services/rate-limit.ts:54-65`, `src/server/services/free-tier.ts:64-95` *(files removed in the Convex migration)*
 
 **The issue.** `checkAndIncrement` reads the KV counter, increments, then
 compares against `max`. Two concurrent requests can both observe `current=cap-1`
@@ -84,9 +113,13 @@ NAT'd users sharing an IP can hit the cap without being attackers.
 
 ---
 
-### M1. PRNG: `Math.random()` for Outline server selection
+### M1. PRNG: `Math.random()` for Outline server selection — CLOSED (Convex)
 
-**Location** `src/server/services/outline-pool.ts:65`, `src/server/lib/retry.ts:26`
+> **CLOSED.** The Convex Outline pick uses a CSPRNG (`crypto.getRandomValues` over
+> a `Uint32Array`) in `convex/backends.ts`. Account-number minting and token
+> minting also use the CSPRNG (`convex/lib/accountId.ts`, `convex/lib/crypto.ts`).
+
+**Location** `src/server/services/outline-pool.ts:65`, `src/server/lib/retry.ts:26` *(files removed)*
 
 **The issue.** Top-3 server selection and retry jitter use `Math.random()`.
 Not security-critical (these aren't selecting secrets) but `Math.random()` is
@@ -96,9 +129,13 @@ predictable. Belt-and-braces would be `crypto.getRandomValues()`.
 
 ---
 
-### M2. Cookie signed-value separator
+### M2. Cookie signed-value separator — CLOSED (Convex)
 
-**Location** `src/server/lib/cookies.ts:24-36`
+> **CLOSED.** `convex/lib/cookies.ts` ported the format AND the fix: `signValue`
+> now `throw`s if the value contains `.` before signing, and `verifySignedValue`
+> splits on the last `.`. Session ids are hex-only, so the parse is unambiguous.
+
+**Location** `src/server/lib/cookies.ts:24-36` *(now `convex/lib/cookies.ts`)*
 
 **The issue.** `signValue` joins value and signature with `.`, then
 `verifySignedValue` splits on `lastIndexOf('.')`. Session ids from
@@ -111,9 +148,17 @@ signing. Small, contained change — bundled with the next session-related work.
 
 ---
 
-### M3. Audit log payload scrubbing
+### M3. Audit log payload scrubbing — STILL APPLIES (re-review on Convex)
 
-**Location** `src/server/services/audit.ts:22-33`, callers in `routes/api/admin/*.ts`
+> **STILL APPLIES.** `convex/audit.record` still takes `payload: v.any()` and the
+> admin write paths in `convex/adminApi.ts` are the callers. Some callers already
+> pass curated payloads (e.g. `subscription.switch_backend` logs a fixed object),
+> but there is no enforced per-action key allowlist. Re-review each
+> `audit.record` call in `convex/adminApi.ts` + `convex/account.ts` +
+> `convex/lifecycle.ts` and confirm none writes raw request bodies. The fix shape
+> is unchanged (per-action allowlist).
+
+**Location** `src/server/services/audit.ts:22-33` *(now `convex/audit.ts` + callers in `convex/adminApi.ts`)*
 
 **The issue.** `payload: data` writes the entire request body to the audit
 table. Anyone with `admin:audit:read` can read what other admins typed,
@@ -129,9 +174,15 @@ with consistent allowlists rather than piecemeal.
 
 ---
 
-### M4. Admin authentication endpoint enables username enumeration
+### M4. Admin authentication endpoint enables username enumeration — CLOSED (Convex)
 
-**Location** `src/server/routes/api/admin/auth.ts:144-158`
+> **CLOSED.** `convex/webauthn.ts:authenticateOptions` returns well-formed options
+> with an empty `allowCredentials` for an unknown/inactive username (verify then
+> fails like any wrong passkey) — identical shape + similar timing to the valid
+> case — and applies a per-IP throttle (`admin-auth:ip:<ipHash>`, 20/h) via the
+> strict `rateLimits.checkAndIncrement`.
+
+**Location** `src/server/routes/api/admin/auth.ts:144-158` *(now `convex/webauthn.ts`)*
 
 **The issue.** `/authenticate/options` returns distinct responses for "username
 unknown" (`No such admin`) vs valid username (returns options + credentials
@@ -149,9 +200,15 @@ hardening pass.
 
 ---
 
-### L1 / L2. Cookie `timingSafeEqual` length-leak; Authentik auto-provisioning guard
+### L1 / L2. Cookie `timingSafeEqual` length-leak; Authentik auto-provisioning guard — L1 STILL APPLIES (informational) / L2 MOOT
 
-**Location** `src/server/lib/crypto.ts:38`, `src/server/middleware/bearer-auth.ts:82-110`
+> **L1 STILL APPLIES (informational).** `timingSafeEqual` is ported to
+> `convex/lib/crypto.ts`; the signature length is fixed so there's no real leak.
+> **L2 is MOOT** — there is no Authentik/OIDC/JWT path and no `bearer-auth`
+> auto-provisioning anymore (OIDC was removed). The only programmatic identities
+> are `fsv1_` tokens that an admin explicitly minted.
+
+**Location** `src/server/lib/crypto.ts:38`, `src/server/middleware/bearer-auth.ts:82-110` *(bearer-auth removed)*
 
 **Status.** L1 is informational (cookie sig length is fixed so no real leak).
 L2 is partially mitigated by H4's audience-required fix that just shipped —
@@ -163,9 +220,13 @@ trusts the Authentik member list).
 
 ## Bugs — deferred
 
-### Bug 5. `runGraceSweep` ignores per-tier `expirationDaysAfterMembershipLapse`
+### Bug 5. `runGraceSweep` ignores per-tier `expirationDaysAfterMembershipLapse` — CLOSED (Convex)
 
-**Location** `src/server/services/membership-sync.ts:294`
+> **CLOSED.** `convex/lifecycle.ts:findDisableTransitions` reads each grace user's
+> tier and uses that tier's `expirationDaysAfterMembershipLapse` for the cutoff —
+> no hardcoded 7-day constant.
+
+**Location** `src/server/services/membership-sync.ts:294` *(now `convex/lifecycle.ts`)*
 
 **The issue.** Disable transition is hardcoded to 7 days; the grace-warning
 email uses each tier's configured value. If an admin configures a 14-day grace
@@ -182,9 +243,15 @@ unaffected. Worth fixing before any tier ships with a non-default grace.
 
 ---
 
-### Bug 6. `applyMembership` doesn't disambiguate dual-backend tiers
+### Bug 6. `applyMembership` doesn't disambiguate dual-backend tiers — MOOT (Convex)
 
-**Location** `src/server/services/membership-sync.ts:121-125`
+> **MOOT.** CiviCRM-driven `applyMembership` / `findForMembership` (membership-type
+> → tier matching) is gone. Entitlements are now set via
+> `convex/lifecycle.ts:setMembership(userId, tierId, …)` with an **explicit
+> tierId** — there is no by-CiviCRM-type tier resolution to disambiguate. (When the
+> billing portal/webhook resolves a tier it does so by an explicit `tierSlug`.)
+
+**Location** `src/server/services/membership-sync.ts:121-125` *(removed; CiviCRM gone)*
 
 **The issue.** `findForMembership` is called with no backend filter. The schema
 explicitly allows two active tiers per `civicrm_membership_type_id` (one per
@@ -201,9 +268,15 @@ Pair with the first Outline-paid-tier rollout.
 
 ---
 
-### Bug 8. `propagateTierChanges` has no overlap lock
+### Bug 8. `propagateTierChanges` has no overlap lock — MOOT (Convex)
 
-**Location** `src/server/jobs/propagate-tier-change.ts` + `src/server/jobs/dispatcher.ts:24,54`
+> **MOOT.** Tier propagation is no longer a cron-chained batch with a shared
+> cursor. `convex/lifecycle.ts:setMembership` schedules a per-user
+> `pushTierToBackend` via `ctx.scheduler.runAfter(0, …)` on each tier change —
+> event-driven, one user at a time. There is no overlapping cron run and no KV
+> lock to race; the PATCH is idempotent.
+
+**Location** `src/server/jobs/propagate-tier-change.ts` + `src/server/jobs/dispatcher.ts:24,54` *(removed)*
 
 **The issue.** The `reconcile-memberships` cron runs every 5 min and chains
 `propagateTierChanges` after `runReconcile`. If a previous reconcile run
@@ -221,9 +294,14 @@ below).
 
 ---
 
-### Bug 9. Membership-sync `tryAcquireLock` is racey and lock TTL is short
+### Bug 9. Membership-sync `tryAcquireLock` is racey and lock TTL is short — MOOT (Convex)
 
-**Location** `src/server/services/membership-sync.ts:351-360`
+> **MOOT.** The CiviCRM reconcile cron and its KV soft-lock are gone. Where the
+> Convex code does need a serialized check-then-write (the free-tier cap, the
+> rate-limit counter, uniqueness checks), it uses a serializable mutation, which
+> is atomic by construction — no get/put-CAS workaround needed.
+
+**Location** `src/server/services/membership-sync.ts:351-360` *(removed; CiviCRM gone)*
 
 **The issue.** `kv.get` then `kv.put` is not atomic — two simultaneous cron
 firings both see no lock and both acquire. Lock TTL is 60s but the reconcile
@@ -239,9 +317,14 @@ together.
 
 ---
 
-### Bug 10. `tier_history` written before `users.tierId` update
+### Bug 10. `tier_history` written before `users.tierId` update — CLOSED (Convex)
 
-**Location** `src/server/services/membership-sync.ts:190-207`
+> **CLOSED.** `convex/lifecycle.ts:setMembership` patches the user's tier FIRST,
+> then inserts the `tierHistory` row + audit — and it's all one serializable
+> mutation, so a partial-failure split between the two writes can't happen (the
+> whole mutation commits or aborts atomically).
+
+**Location** `src/server/services/membership-sync.ts:190-207` *(now `convex/lifecycle.ts`)*
 
 **The issue.** If the `users` update fails after the `tier_history` insert
 succeeds, the history row records a change that didn't happen; retry then
@@ -255,9 +338,13 @@ back-to-back D1 writes on the same connection. Real but low probability.
 
 ---
 
-### Bug 11. `free-tier.cleanupExpired` join is latent-buggy
+### Bug 11. `free-tier.cleanupExpired` join is latent-buggy — CLOSED (Convex)
 
-**Location** `src/server/services/free-tier.ts:233-265`
+> **CLOSED.** `convex/lifecycle.ts:findExpiredFree` selects a single active sub per
+> user (`subs.find((s) => s.state === 'active')`) rather than iterating every sub
+> row, so the multiple-sub-row over-delete can't occur.
+
+**Location** `src/server/services/free-tier.ts:233-265` *(now `convex/lifecycle.ts`)*
 
 **The issue.** `innerJoin(subscriptions, ...)` has no `subscriptions.state`
 filter; if a user has multiple sub rows (e.g. after a backend switch on a paid
@@ -272,9 +359,13 @@ on next sweep through the cleanup path.
 
 ---
 
-### Bug 13. Dead schema: `idempotency_keys` table
+### Bug 13. Dead schema: `idempotency_keys` table — MOOT (Convex)
 
-**Location** `src/server/db/schema.ts:319-334`
+> **MOOT.** The Convex schema (`convex/schema.ts`) has no `idempotency_keys` table.
+> (Webhook idempotency is handled by the `webhookEvents` dedupe table, which is
+> actively read/written by `convex/webhooks.ts`.)
+
+**Location** `src/server/db/schema.ts:319-334` *(removed)*
 
 **The issue.** Table exists but no code reads or writes it. If a future path
 populates it without removing the unused indexes, write cost is higher than
@@ -288,9 +379,13 @@ issuance — see plan doc).
 
 ---
 
-### Bug 14. `RemnawaveBackend.updateUser` cannot clear a squad
+### Bug 14. `RemnawaveBackend.updateUser` cannot clear a squad — CLOSED (Convex)
 
-**Location** `src/server/providers/remnawave/backend.ts:90-92`
+> **CLOSED.** `convex/lib/backends/remnawave.ts` (the `remnawaveUpdateUser` PATCH)
+> distinguishes "field absent" (skip) from "field present and null/''" (clears via
+> `activeInternalSquads: []`); a value sets it.
+
+**Location** `src/server/providers/remnawave/backend.ts:90-92` *(now `convex/lib/backends/remnawave.ts`)*
 
 **The issue.** `patch.remnawaveSquadUuid === null` skips the squad assignment
 entirely; admins can't unset a squad once configured.
@@ -303,9 +398,18 @@ the tier editor surfaces squad management directly.
 
 ---
 
-### Bug 15. Outline WSS keys assume a required `accessUrl` (found 2026-05-29)
+### Bug 15. Outline WSS keys assume a required `accessUrl` (found 2026-05-29) — STILL APPLIES (Convex)
 
-**Location** `src/server/providers/outline/types.ts:22`, `src/server/providers/outline/client.ts` (`createKey` parse), `src/server/providers/outline/backend.ts:44-89`
+> **STILL APPLIES.** Ported intact: in `convex/lib/backends/outline.ts` the
+> `OutlineAccessKey` schema still declares `accessUrl: z.string()` (required), and
+> `outlineIssue` reads `key.accessUrl` unconditionally as the subscription URL. A
+> WSS/`ssconf://` key lacking an inline `ss://` `accessUrl` would fail the Zod
+> parse. Still latent (Outline disabled by default, `websocketEnabled` off), still
+> blocked on the FreeSocks Outline fork's real WSS create-key response shape.
+> **Must be resolved before any WSS-enabled Outline server is registered and routed
+> to.**
+
+**Location** `src/server/providers/outline/types.ts:22` etc. *(now `convex/lib/backends/outline.ts`)*
 
 **The issue.** `OutlineAccessKey.accessUrl` is a required `z.string()`. `OutlineBackend.issueUser` sends a `websocket` body when `server.websocketEnabled` is set, then reads `created.accessUrl` unconditionally as the subscription URL. The FreeSocks Outline fork's WSS-wrapped (dynamic-config / `ssconf://`) keys are expected NOT to carry an inline `ss://` `accessUrl` — the YAML config is uploaded to S3 and served as an `ssconf://` URL (see the `0005_outline_servers.sql` migration comment). A WSS key response without `accessUrl` fails the Zod parse in `createKey` and throws a generic "Outline schema mismatch" before issuance can complete.
 

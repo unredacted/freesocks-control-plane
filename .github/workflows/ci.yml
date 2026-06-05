@@ -23,5 +23,8 @@ jobs:
       # Typecheck spans client + shared + convex + Svelte components.
       - run: bun run typecheck
 
+      # convex-test suite (in-memory; no backend needed).
+      - run: bun run test
+
       # Build the SPA (the only build artifact now — the backend is convex/).
       - run: bun run build
