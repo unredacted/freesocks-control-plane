@@ -292,7 +292,9 @@
         <h2 class="text-sm font-semibold uppercase tracking-wider text-primary">
           Your new account number — save it now
         </h2>
-        <p class="font-mono text-2xl tracking-wider tabular-nums select-all">{formattedRevealed}</p>
+        <p class="font-mono text-lg md:text-xl tracking-normal tabular-nums select-all break-words leading-relaxed">
+          {formattedRevealed}
+        </p>
         <p class="text-xs text-muted-foreground">
           This is the only time it's shown, and your old number no longer works. Store it somewhere
           safe — it's the only way to sign in, and it can't be recovered.
@@ -318,7 +320,7 @@
       <div class="rounded-xl border border-destructive/40 bg-destructive/5 p-5 space-y-3">
         <h2 class="text-sm font-semibold">Rotate your account number?</h2>
         <p class="text-xs text-muted-foreground">
-          A new 16-digit number is generated and shown once. Your current number stops working
+          A new 32-digit number is generated and shown once. Your current number stops working
           immediately — anyone who has it loses access. Do this if your number may have leaked.
         </p>
         <div class="flex gap-2">

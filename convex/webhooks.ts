@@ -14,7 +14,8 @@
 import { internalAction, internalMutation } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { v } from 'convex/values';
-import { hmacSha256Hex, sha256Hex, timingSafeEqual } from './lib/crypto';
+import { hmacSha256Hex, timingSafeEqual } from './lib/crypto';
+import { hashAccountId } from './lib/accountId';
 
 type IngestResult = { ok: true; duplicate?: boolean; applied: boolean; reason?: string };
 
@@ -46,7 +47,7 @@ export const ingest = internalAction({
     if (dedupe.duplicate) return { ok: true, duplicate: true, applied: false };
 
     // Map account number → user (status-blind so a lapsed account can renew).
-    const accountHash = await sha256Hex(accountId.replace(/[\s-]/g, ''));
+    const accountHash = await hashAccountId(accountId);
     const user = await ctx.runQuery(internal.users.byAccountIdHashInternal, { accountIdHash: accountHash });
     if (!user) return { ok: true, applied: false, reason: 'unknown_user' };
 

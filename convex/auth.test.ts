@@ -47,6 +47,7 @@ describe('auth.accountLogin', () => {
     vi.stubEnv('TURNSTILE_SECRET_KEY', 'x');
     vi.stubEnv('SESSION_SIGNING_KEY', 'test-sign');
     vi.stubEnv('IP_HASH_SALT', 'test-salt');
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -97,7 +98,7 @@ describe('auth.accountLogin', () => {
     const t = convexTest(schema, modules);
     await seedUserWithAccount(t);
     const res = await t.action(internal.auth.accountLogin, {
-      accountId: '0000000000000000',
+      accountId: '00000000000000000000000000000000',
       turnstileToken: 'tok',
       ip: '203.0.113.9',
     });
@@ -134,7 +135,7 @@ describe('auth.accountLogin', () => {
     await seedUserWithAccount(t);
     const start = Date.now();
     const res = await t.action(internal.auth.accountLogin, {
-      accountId: '0000000000000000',
+      accountId: '00000000000000000000000000000000',
       turnstileToken: 'tok',
       ip: '203.0.113.12',
     });

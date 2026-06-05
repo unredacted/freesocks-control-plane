@@ -40,25 +40,35 @@ member credential.
 
 ## 1. Identifier format
 
-**Choice: 16 decimal digits, displayed as four groups of four** (e.g. `1234 5678
-9012 3456`).
+> **Current values (supersede the historical 16-digit/SHA-256 numbers below):**
+> **32 decimal digits** and a **peppered keyed hash** — see the bolded items in
+> this section. The rest of the section's rationale is unchanged.
 
-- **Entropy**: 16 decimal digits ≈ 53.15 bits. With 100M issued users, collision
-  odds via birthday-bound ≈ 5×10⁻¹⁰. Sufficient.
+**Choice: 32 decimal digits, displayed as eight groups of four** (e.g.
+`1234 5678 9012 3456 7890 1234 5678 9012`).
+
+- **Entropy**: 32 decimal digits ≈ **106 bits** (10³²). It's the member's *sole*
+  login credential, so it's sized to be unguessable even against offline
+  brute-force of a leaked hash column — not just online guessing (which Turnstile
+  + the rate limits already make infeasible). Birthday-collision odds at any
+  realistic user count are negligible; the uniqueness check retries on the
+  (astronomically rare) clash.
 - **Alphabet**: digits only.
-  - Base32 / Crockford-32 (~10–13 chars for ~50 bits) is shorter but mixes
-    letters/digits — confusable on paper or over phone dictation. Rejected.
+  - Base32 / Crockford-32 mixes letters/digits — confusable on paper or over
+    phone dictation. Rejected.
   - Base58 / hex — same readability concern. Rejected.
-  - 16 digits: keyboard-easy, dictation-easy, copy-paste-easy, language-neutral.
-- **Stored format**: digits only, no spaces (`1234567890123456`). Server
-  normalizes input by stripping `\s` and `-` before lookup.
-- **Storage strategy**: store a SHA-256 hash of the canonical form in
-  `users.account_id_hash`. Also store a 4-digit plaintext prefix in
-  `users.account_id_prefix` so admins can recognize/search numbers without
-  exposing them. Plaintext is never persisted server-side after issuance.
-- **Comparison on login**: hash the submitted (normalized) input with the same
-  scheme, look up `users.account_id_hash`. Single indexed lookup; no
-  enumeration.
+  - Decimal: keyboard-easy, dictation-easy, copy-paste-easy, language-neutral.
+    The number is shown once with copy + `.txt` download, so 32 digits is fine to save.
+- **Stored format**: digits only, no spaces. Server normalizes input by
+  stripping `\s` and `-` before hashing.
+- **Storage strategy**: store **`HMAC-SHA256(ACCOUNT_ID_PEPPER, canonical)`** in
+  `users.accountIdHash` — a *keyed* hash, not a bare digest. The pepper is a
+  required deployment secret (env, never in the DB), so a DB-only leak can't be
+  brute-forced offline without it. Also store a 4-digit plaintext prefix in
+  `users.accountIdPrefix` for admin search. Plaintext is never persisted.
+- **Comparison on login**: HMAC the submitted (normalized) input with the same
+  pepper, look up `accountIdHash` via the `by_account_id_hash` index. Still a
+  single indexed lookup (the hash is deterministic); no enumeration.
 
 ## 2. Database changes
 
@@ -122,7 +132,7 @@ artificial floor on failures.
 
 `POST /api/v1/subscription` (anonymous path in `free-tier.ts`):
 
-1. Generate a fresh 16-digit identifier inside `FreeTierService.issueOrReissue`.
+1. Generate a fresh 32-digit identifier inside the free-tier issuance flow.
    Use `crypto.getRandomValues` over `Uint8Array(8)`; reduce each byte mod-10
    with rejection sampling to avoid modulo bias.
 2. Hash, store in `users.account_id_hash`; store the prefix in
@@ -287,9 +297,9 @@ else's account if exposed end-user-side.
 > **Largely NOT APPLICABLE on Convex.** The Convex cutover started fresh (no data
 > migrated — see `convex-self-hosting.md §6`), so there were no existing users to
 > backfill, and there is no OIDC-member population. The schema is `convex/schema.ts`
-> (no SQL migration). The `account_id.enabled` flag still exists in
-> `SETTINGS_DEFAULTS` but is **vestigial** — account-number auth is unconditionally
-> the member identity and does not gate on it. The bullets below are historical.
+> (no SQL migration). The `account_id.enabled` flag has been **removed** from
+> `SETTINGS_DEFAULTS` — account-number auth is unconditionally the member identity,
+> with no flag and no toggle anywhere. The bullets below are historical.
 
 - **Existing anonymous free-tier users**: do NOT backfill. They never saw an
   account number; minting one now and hiding it serves no one. Document as a
@@ -301,10 +311,9 @@ else's account if exposed end-user-side.
   `triggered_by=backfill`). They learn their number via the `/account` reveal
   banner on next sign-in; if they never sign in, the number stays sealed
   (acceptable).
-- **Feature flag**: add `app_settings.account_id_enabled: boolean` (default
-  `false` in migration; admin toggles via existing AppSettings CMS). Both the
-  login route and the SPA "Sign in with account number" tab key off this flag.
-  Lets the feature ship dark, then enable in staging, then prod.
+- **Feature flag**: ~~add `app_settings.account_id_enabled`~~ **(Removed.)** The
+  feature did not ship dark — account-number auth is unconditionally the only
+  member identity on Convex, so there is no flag and no toggle.
 
 ## 12. Naming
 

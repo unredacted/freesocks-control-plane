@@ -23,10 +23,11 @@
   // Display helper: group the digits the user types into 4s, like the reveal
   // panel shows them. Stored/submitted value is digits-only (server normalizes
   // again defensively).
+  const ACCOUNT_ID_LEN = 32;
   let formatted = $derived(
     accountId
       .replace(/\D/g, '')
-      .slice(0, 16)
+      .slice(0, ACCOUNT_ID_LEN)
       .replace(/(\d{4})(?=\d)/g, '$1 '),
   );
 
@@ -52,7 +53,9 @@
     },
   }));
 
-  let canSubmit = $derived(accountId.replace(/\D/g, '').length === 16 && !!token && !login.isPending);
+  let canSubmit = $derived(
+    accountId.replace(/\D/g, '').length === ACCOUNT_ID_LEN && !!token && !login.isPending,
+  );
 </script>
 
 <div class="max-w-md mx-auto py-10 md:py-16 space-y-8">
@@ -67,7 +70,7 @@
       Sign in with your account number
     </h1>
     <p class="text-sm text-muted-foreground">
-      Enter the 16-digit account number you saved when you got your key. It's the only way to sign
+      Enter the 32-digit account number you saved when you got your key. It's the only way to sign
       in — there's no email or password to recover.
     </p>
   </header>
@@ -82,13 +85,13 @@
         inputmode="numeric"
         autocomplete="off"
         spellcheck="false"
-        placeholder="1234 5678 9012 3456"
+        placeholder="1234 5678 9012 3456 7890 1234 5678 9012"
         value={formatted}
         oninput={(e) => (accountId = (e.currentTarget as HTMLInputElement).value)}
         onkeydown={(e) => {
           if (e.key === 'Enter' && canSubmit) login.mutate();
         }}
-        class="w-full rounded-md border border-border bg-background px-3 py-2.5 font-mono text-lg tracking-wide tabular-nums focus:outline-none focus:ring-2 focus:ring-primary"
+        class="w-full rounded-md border border-border bg-background px-3 py-2.5 font-mono text-base tracking-normal tabular-nums focus:outline-none focus:ring-2 focus:ring-primary"
       />
     </div>
 

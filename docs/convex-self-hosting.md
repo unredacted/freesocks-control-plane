@@ -72,6 +72,7 @@ dashboard → Settings → Environment Variables). `bunx convex env list` shows 
 | `ADMIN_SESSION_SIGNING_KEY` | admin `fs_admin_session` cookie HMAC — `openssl rand -hex 32` |
 | `ADMIN_BOOTSTRAP_SECRET` | first-run admin passkey bootstrap gate — `openssl rand -hex 32` |
 | `IP_HASH_SALT` | HMAC salt for free-tier IP keying + login rate-limit — `openssl rand -hex 32` |
+| `ACCOUNT_ID_PEPPER` | keyed-hash pepper for account numbers (a leaked hash column is useless without it) — `openssl rand -hex 32`. **Set once before launch; changing it invalidates every account number.** |
 | `TURNSTILE_SECRET_KEY` | Turnstile siteverify (free issuance + account login) |
 | `WEBAUTHN_RP_ID` | passkey RP id = the bare domain (e.g. `freesocks.org`) |
 | `WEBAUTHN_ORIGIN` | allowed page origin(s), comma-separated (e.g. `https://app.freesocks.org`) |

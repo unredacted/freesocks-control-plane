@@ -21,8 +21,8 @@ import { internalAction } from './_generated/server';
 import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
-import { isValidAccountId, normalizeAccountId } from './lib/accountId';
-import { hmacSha256Hex, randomHex, sha256Hex } from './lib/crypto';
+import { hashAccountId, isValidAccountId, normalizeAccountId } from './lib/accountId';
+import { hmacSha256Hex, randomHex } from './lib/crypto';
 import { signValue } from './lib/cookies';
 import { verifyTurnstile } from './lib/turnstile';
 
@@ -60,7 +60,7 @@ export const accountLogin = internalAction({
     // 2. Normalize + ALWAYS hash (keeps timing constant regardless of validity).
     const normalized = normalizeAccountId(accountId);
     const validFormat = isValidAccountId(normalized);
-    const hash = await sha256Hex(normalized);
+    const hash = await hashAccountId(normalized);
     const prefix = normalized.slice(0, 4);
 
     // 3. Strict per-prefix + per-IP limits. A denial is folded into the generic

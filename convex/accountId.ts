@@ -8,7 +8,7 @@
 import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
-import { accountIdPrefix, generateAccountId, sha256Hex } from './lib/accountId';
+import { accountIdPrefix, generateAccountId, hashAccountId } from './lib/accountId';
 
 /**
  * Mint (or rotate) an account number for a user. Returns the one-time
@@ -20,7 +20,7 @@ export const mintForUser = internalAction({
     let lastErr: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
       const plaintext = generateAccountId();
-      const hash = await sha256Hex(plaintext);
+      const hash = await hashAccountId(plaintext);
       try {
         await ctx.runMutation(internal.accountId.setAccountId, {
           userId,

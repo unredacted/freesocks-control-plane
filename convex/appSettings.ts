@@ -14,7 +14,6 @@ export const SETTINGS_DEFAULTS = {
   'subscription.backend_labels': { remnawave: 'Xray', outline: 'Outline' },
   'outline.scoring.latency_weight': 1,
   'outline.scoring.key_count_weight': 100,
-  'account_id.enabled': false,
 } as const;
 
 /** All settings rows (the SPA + services read these; Convex caches reactively). */

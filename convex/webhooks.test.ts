@@ -55,7 +55,10 @@ async function seedUserAndTiers(
 }
 
 describe('webhooks.ingest', () => {
-  beforeEach(() => vi.stubEnv('WEBHOOK_SIGNING_SECRET', SECRET));
+  beforeEach(() => {
+    vi.stubEnv('WEBHOOK_SIGNING_SECRET', SECRET);
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+  });
   afterEach(() => vi.unstubAllEnvs());
 
   test('a valid event applies the tier change', async () => {
@@ -105,7 +108,7 @@ describe('webhooks.ingest', () => {
     await seedUserAndTiers(t);
     const body = JSON.stringify({
       eventId: 'evt-unknown',
-      accountId: '9999888877776666',
+      accountId: '99998888777766665555444433332222',
       tierSlug: 'member',
     });
     const signature = await hmacSha256Hex(SECRET, body);

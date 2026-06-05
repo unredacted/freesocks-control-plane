@@ -36,8 +36,9 @@ Detailed companions, referenced rather than duplicated here:
 
 ### 1.1 Identity & authentication — three schemes, NO OIDC
 
-- **Account number** (members) — a random 16-digit credential minted once at key issuance
-  (reveal-once), the **only** member identity. `POST /api/v1/auth/account-login` (Turnstile +
+- **Account number** (members) — a random **32-digit** credential (~106 bits), minted once at
+  key issuance (reveal-once), stored only as a peppered keyed hash
+  (`HMAC-SHA256(ACCOUNT_ID_PEPPER, number)`), the **only** member identity. `POST /api/v1/auth/account-login` (Turnstile +
   strict per-prefix/per-IP rate limits + constant-time, generic-failure) → signed `fs_session`
   cookie. Rotatable (`POST /api/v1/account/account-id/rotate`). `convex/auth.ts`,
   `convex/accountId.ts`, `convex/lib/accountId.ts`. **Live.** See `account-number-design.md`.
@@ -168,7 +169,6 @@ the companion docs. Sizes: S/M/L.
 | `webhooks.ingest` billing seam                                                     | `convex/webhooks.ts`, `convex/http.ts`                               | The single inbound point for the future billing portal; HMAC + dedupe + `setMembership` are all live, but no portal calls it today.                                     | **Keep** (seam ready)        |
 | Entire **Outline** subsystem                                                       | `convex/backends.ts` (outline branches), `convex/lib/backends/outline.ts`, `convex/outlineServers.ts`, admin server routes/UI | Fully wired but unreachable until `outline.enabled=true` + a server is registered. Within it: pool scoring uses a `latency*0` placeholder; `prometheusUrl` is reserved. | **Keep** (dormant)           |
 | S3 mirroring (`storage.ts`)                                                         | `convex/storage.ts`, `convex/lib/issuance.ts`                        | Skipped entirely unless `S3_MIRRORS_ENABLED=true` + providers configured.                                                                                               | **Keep** (dormant)           |
-| `account_id.enabled` app setting                                                   | `convex/appSettings.ts`                                              | A residual flag in `SETTINGS_DEFAULTS` (default `false`). Account-number auth is now **always** the member identity and does **not** gate on it — the flag is currently vestigial. | **Keep** (harmless; remove deliberately) |
 | `appState` table                                                                   | `convex/schema.ts`                                                   | Generic singleton key/value (e.g. tier-propagation cursors). Forward-compat for cursored sweeps.                                                                        | **Keep** (scaffolding)       |
 | `components/ui/label/`, other unused shadcn primitives                             | `src/client/components/ui/`                                          | shadcn primitives are kept as a complete kit even when a given primitive has no current import.                                                                          | **Keep** (kit completeness)  |
 | `fetchSubscriptionContent` (Remnawave/Outline)                                     | `convex/backends.ts`, `convex/lib/backends/*`                        | Only invoked when S3 mirroring is on; part of the backend interface contract regardless.                                                                                | **Keep** (interface + dormant) |
