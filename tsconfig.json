@@ -25,25 +25,15 @@
     "paths": {
       "@/*": ["./src/*"],
       "@client/*": ["./src/client/*"],
-      "@server/*": ["./src/server/*"],
       "@shared/*": ["./src/shared/*"]
     }
   },
-  "include": [
-    "src/**/*.ts",
-    "src/**/*.d.ts",
-    "src/**/*.svelte",
-    "src-entries/**/*.ts",
-    "vite.config.ts",
-    "drizzle.config.ts",
-    "worker-configuration.d.ts"
-  ],
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.svelte", "vite.config.ts"],
   "exclude": [
     "node_modules",
     "dist",
-    ".wrangler",
+    "convex",
     "src/client/**/*.svelte",
-    "src/client/components/ui/**/index.ts",
-    "src-entries/fastly.ts"
+    "src/client/components/ui/**/index.ts"
   ]
 }
