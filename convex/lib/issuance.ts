@@ -11,7 +11,7 @@
  */
 import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
-import { internal } from '../_generated/api';
+import { api, internal } from '../_generated/api';
 import { sha256Hex } from './crypto';
 import type { IssueUserSpec } from './backends/types';
 
@@ -88,5 +88,42 @@ export async function issueNewSubscription(
       /* best-effort compensation */
     }
     throw err;
+  }
+}
+
+/**
+ * Tear a subscription down everywhere: drop its S3 mirrors, delete the backend
+ * user, and mark the local row deleted. Best-effort on the external legs (the
+ * local row is always marked). Used by free-tier cleanup + the tombstone sweep.
+ */
+export async function deleteSubscriptionEverywhere(
+  ctx: ActionCtx,
+  input: { backend: 'remnawave' | 'outline'; backendUserId: string },
+): Promise<void> {
+  const sub = await ctx.runQuery(api.subscriptions.byBackendUserId, {
+    backendUserId: input.backendUserId,
+  });
+  if (sub) {
+    const items = sub.subscriptionMirrors
+      .filter((m): m is typeof m & { objectPath: string } => typeof m.objectPath === 'string')
+      .map((m) => ({ provider: m.provider, objectPath: m.objectPath }));
+    if (items.length > 0) {
+      try {
+        await ctx.runAction(internal.storage.deleteMirrors, { items });
+      } catch {
+        /* best-effort */
+      }
+    }
+    await ctx.runMutation(internal.subscriptions.markSubscriptionDeleted, {
+      subscriptionId: sub._id,
+    });
+  }
+  try {
+    await ctx.runAction(internal.backends.deleteUser, {
+      backend: input.backend,
+      backendUserId: input.backendUserId,
+    });
+  } catch {
+    /* best-effort */
   }
 }

@@ -61,6 +61,19 @@ export const insertSubscription = internalMutation({
     ctx.db.insert('subscriptions', { ...a, state: 'active', updatedAt: Date.now() }),
 });
 
+/** Hard-delete marker: state→deleted (used by cleanup + tombstone sweep). */
+export const markSubscriptionDeleted = internalMutation({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }) => {
+    await ctx.db.patch(subscriptionId, {
+      state: 'deleted',
+      deletedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
 /** Point a user at their current subscription. */
 export const setCurrentSubscription = internalMutation({
   args: { userId: v.id('users'), subscriptionId: v.id('subscriptions') },

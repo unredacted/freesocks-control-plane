@@ -30,3 +30,31 @@ export const seedDefaultFreeTier = internalMutation({
     });
   },
 });
+
+/** Insert a 'member' (paid) tier if absent; return its id. */
+export const seedMemberTier = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const existing = await ctx.db
+      .query('tiers')
+      .withIndex('by_slug', (q) => q.eq('slug', 'member'))
+      .unique();
+    if (existing) return existing._id;
+    return ctx.db.insert('tiers', {
+      slug: 'member',
+      name: 'Member',
+      description: 'Standard FreeSocks supporters',
+      backend: 'remnawave',
+      monthlyTrafficGb: 500,
+      deviceLimit: 3,
+      hwidLimit: 3,
+      hwidEnabled: true,
+      trafficStrategy: 'MONTH',
+      isDefaultFree: false,
+      isActive: true,
+      priority: 10,
+      expirationDaysAfterMembershipLapse: 7,
+      updatedAt: Date.now(),
+    });
+  },
+});
