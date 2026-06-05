@@ -27,6 +27,7 @@
     "selfhost:up": "docker compose -f self-hosted/docker-compose.yml --env-file self-hosted/.env up -d",
     "selfhost:down": "docker compose -f self-hosted/docker-compose.yml --env-file self-hosted/.env down",
     "selfhost:admin-key": "docker compose -f self-hosted/docker-compose.yml exec backend ./generate_admin_key.sh",
+    "selfhost:env": "bash scripts/selfhost-env.sh",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local --config wrangler.dev.toml",
     "db:migrate:beta": "wrangler d1 migrations apply DB --remote --config wrangler.beta.toml",

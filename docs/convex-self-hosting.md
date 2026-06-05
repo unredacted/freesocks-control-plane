@@ -31,18 +31,22 @@ Data persists in the `data` Docker volume (SQLite). Set `POSTGRES_URL` in
 `self-hosted/.env` to move to Postgres when single-box write throughput is
 outgrown.
 
-## 3. Generate an admin key and point the CLI at it
+## 3. Point the CLI at the backend
 
 ```sh
-bun run selfhost:admin-key    # prints an admin key
+bun run selfhost:env          # generates an admin key + writes .env.local for you
 ```
 
-Create `.env.local` (gitignored) in the repo root:
+This writes `.env.local` (gitignored) with `CONVEX_SELF_HOSTED_URL` +
+`CONVEX_SELF_HOSTED_ADMIN_KEY` (and the `VITE_CONVEX_*` URLs the SPA uses from P9).
 
-```sh
-CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210
-CONVEX_SELF_HOSTED_ADMIN_KEY=<the key from the previous step>
-```
+> **Do not** run a bare `convex dev` and pick **"Start without an account (run
+> Convex locally)"** — that boots a *separate* CLI-managed backend (on a
+> different port) instead of this docker one, and writes a conflicting
+> `CONVEX_DEPLOYMENT` into `.env.local` (you'll then hit
+> *"CONVEX_SELF_HOSTED_URL … must not be set when CONVEX_DEPLOYMENT is set"*).
+> Always run the step above first; `.env.local` must contain the
+> `CONVEX_SELF_HOSTED_*` vars and **no** `CONVEX_DEPLOYMENT`.
 
 ## 4. Deploy functions + schema
 
