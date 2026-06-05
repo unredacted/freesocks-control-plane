@@ -131,6 +131,22 @@ export async function outlineIssue(
   };
 }
 
+/**
+ * Connectivity + auth probe for the healthcheck cron. Lists access keys (the
+ * cheapest authenticated endpoint) and returns the live key count. Throws on
+ * any failure — the cron treats a throw as "unhealthy". The `call` helper
+ * scrubs the secret apiUrl from errors.
+ */
+const OutlineAccessKeyList = z.object({ accessKeys: z.array(z.unknown()) }).passthrough();
+export async function outlineHealth(cfg: OutlineServerConfig): Promise<{ keyCount: number }> {
+  const list = await call(cfg, {
+    method: 'GET',
+    path: '/access-keys',
+    schema: OutlineAccessKeyList,
+  });
+  return { keyCount: list.accessKeys.length };
+}
+
 export async function outlineGetState(
   cfg: OutlineServerConfig,
   backendUserId: string,

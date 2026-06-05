@@ -8,8 +8,7 @@
  * Tier propagation is NOT a cron: it's event-driven — lifecycle.setMembership
  * schedules pushTierToBackend via ctx.scheduler.runAfter on each tier change.
  *
- * Deferred: outline-healthcheck (needs an Outline ping action; Outline is the
- * secondary backend and ships disabled by default) and the email subsystem.
+ * Deferred: the email subsystem (welcome / grace-warning / disabled).
  */
 import { cronJobs } from 'convex/server';
 import { internal } from './_generated/api';
@@ -21,6 +20,9 @@ crons.interval('grace-sweep', { minutes: 10 }, internal.lifecycle.runGraceSweep,
 
 // Hard-delete subscriptions whose 24h regenerate/switch-backend grace elapsed.
 crons.interval('tombstone-sweep', { minutes: 10 }, internal.lifecycle.sweepTombstones, {});
+
+// Ping active Outline servers; stamp lastHealthOkAt (feeds pool selection).
+crons.interval('outline-healthcheck', { minutes: 10 }, internal.outlineServers.healthcheck, {});
 
 // Delete free-tier users (+ backend/S3) past the expiry window.
 crons.daily('cleanup-expired-free', { hourUTC: 3, minuteUTC: 0 }, internal.lifecycle.cleanupExpiredFree, {});

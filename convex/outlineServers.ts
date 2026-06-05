@@ -5,9 +5,11 @@
  * query. The dispatch action (convex/backends.ts) calls them, does the HTTP
  * (convex/lib/backends/outline.ts), and — for issuance — the random pick.
  */
-import { internalMutation, internalQuery } from './_generated/server';
+import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import { internal } from './_generated/api';
 import { v } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
+import { outlineHealth } from './lib/backends/outline';
 
 const DEFAULT_LATENCY_WEIGHT = 1;
 const DEFAULT_KEY_COUNT_WEIGHT = 100;
@@ -89,5 +91,59 @@ export const bumpAccessKeyCount = internalMutation({
       updatedAt: Date.now(),
     });
     return null;
+  },
+});
+
+// --- healthcheck (cron, P11 follow-up) -------------------------------------
+
+/** All active servers WITH their secret apiUrl — internal-only (the cron pings them). */
+export const listActiveWithSecret = internalQuery({
+  args: {},
+  handler: (ctx) =>
+    ctx.db
+      .query('outlineServers')
+      .withIndex('by_active_priority', (q) => q.eq('isActive', true))
+      .collect(),
+});
+
+/** Stamp a server healthy: refresh lastHealthOkAt + the live access-key count. */
+export const markHealthy = internalMutation({
+  args: { id: v.id('outlineServers'), keyCount: v.number() },
+  handler: async (ctx, { id, keyCount }) => {
+    await ctx.db.patch(id, {
+      lastHealthOkAt: Date.now(),
+      accessKeyCount: keyCount,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/**
+ * Cron: ping each active Outline server. On success, stamp lastHealthOkAt (which
+ * keeps it in `pickCandidatesForIssue`'s 30-min "fresh" set) + refresh its key
+ * count. A failing server is NOT deactivated — it simply ages out of the fresh
+ * window and is deprioritized, with all-servers fallback preserved, so a
+ * transient blip can't take the whole pool offline.
+ */
+export const healthcheck = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ checked: number; healthy: number }> => {
+    const servers = await ctx.runQuery(internal.outlineServers.listActiveWithSecret, {});
+    let healthy = 0;
+    for (const s of servers) {
+      try {
+        const { keyCount } = await outlineHealth({
+          apiUrl: s.apiUrl,
+          websocketEnabled: s.websocketEnabled,
+          websocketDomain: s.websocketDomain ?? null,
+        });
+        await ctx.runMutation(internal.outlineServers.markHealthy, { id: s._id, keyCount });
+        healthy++;
+      } catch {
+        /* unhealthy — ages out of the fresh window; never logs the secret apiUrl */
+      }
+    }
+    return { checked: servers.length, healthy };
   },
 });
