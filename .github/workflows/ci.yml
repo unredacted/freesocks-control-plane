@@ -14,11 +14,9 @@ jobs:
           bun-version: '1.3.14'
       - run: bun install --frozen-lockfile
 
-      # Generate convex/_generated (gitignored) so the convex typecheck has its
-      # API/dataModel types. `convex codegen` runs offline — it builds the types
-      # from local function files; the backend-pull step is best-effort.
-      - name: Convex codegen
-        run: bunx convex codegen || true
+      # Note: convex/_generated is committed (it can't be regenerated in CI
+      # without a Convex deployment, and Convex recommends committing it), so the
+      # convex typecheck + the convex-test suite work here with no backend.
 
       # Typecheck spans client + shared + convex + Svelte components.
       - run: bun run typecheck
