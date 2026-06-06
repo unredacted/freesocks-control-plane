@@ -251,7 +251,10 @@ export const sweepTombstones = internalAction({
     let removed = 0;
     for (const d of due) {
       try {
-        await deleteSubscriptionEverywhere(ctx, { backend: d.backend, backendUserId: d.backendUserId });
+        await deleteSubscriptionEverywhere(ctx, {
+          backend: d.backend,
+          backendUserId: d.backendUserId,
+        });
         removed++;
       } catch {
         /* best-effort; retried next sweep */
@@ -312,7 +315,10 @@ export const cleanupExpiredFree = internalAction({
     let removed = 0;
     for (const e of expired) {
       try {
-        await deleteSubscriptionEverywhere(ctx, { backend: e.backend, backendUserId: e.backendUserId });
+        await deleteSubscriptionEverywhere(ctx, {
+          backend: e.backend,
+          backendUserId: e.backendUserId,
+        });
         await ctx.runMutation(internal.lifecycle.markUserDeleted, { userId: e.userId });
         removed++;
       } catch {

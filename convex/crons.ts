@@ -25,10 +25,20 @@ crons.interval('tombstone-sweep', { minutes: 10 }, internal.lifecycle.sweepTombs
 crons.interval('outline-healthcheck', { minutes: 10 }, internal.outlineServers.healthcheck, {});
 
 // Delete free-tier users (+ backend/S3) past the expiry window.
-crons.daily('cleanup-expired-free', { hourUTC: 3, minuteUTC: 0 }, internal.lifecycle.cleanupExpiredFree, {});
+crons.daily(
+  'cleanup-expired-free',
+  { hourUTC: 3, minuteUTC: 0 },
+  internal.lifecycle.cleanupExpiredFree,
+  {},
+);
 
 // Drop expired session + rate-limit rows (the tables that replaced KV TTLs).
 crons.daily('session-sweep', { hourUTC: 3, minuteUTC: 15 }, internal.sessions.sweepExpired, {});
-crons.daily('rate-limit-sweep', { hourUTC: 3, minuteUTC: 30 }, internal.rateLimits.sweepExpired, {});
+crons.daily(
+  'rate-limit-sweep',
+  { hourUTC: 3, minuteUTC: 30 },
+  internal.rateLimits.sweepExpired,
+  {},
+);
 
 export default crons;

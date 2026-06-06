@@ -25,7 +25,13 @@ interface AccountView {
     id: Id<'users'>;
     email?: string;
     status: 'active' | 'grace' | 'disabled' | 'deleted';
-    tier: { slug: string; name: string; monthlyTrafficGb: number; deviceLimit: number; backend: Backend };
+    tier: {
+      slug: string;
+      name: string;
+      monthlyTrafficGb: number;
+      deviceLimit: number;
+      backend: Backend;
+    };
     membership: { expiresAt: string | null; isCurrent: boolean } | null;
     createdAt: string;
   };
@@ -50,7 +56,8 @@ export const getAccountView = internalAction({
     if (!tier) return null;
     const sub = await ctx.runQuery(api.subscriptions.resolveCurrentOrActive, { userId });
 
-    const trafficLimitFromTier = tier.monthlyTrafficGb > 0 ? tier.monthlyTrafficGb * 1_000_000_000 : null;
+    const trafficLimitFromTier =
+      tier.monthlyTrafficGb > 0 ? tier.monthlyTrafficGb * 1_000_000_000 : null;
     let subscription: AccountView['subscription'] = null;
     if (sub) {
       // Best-effort live state; degrade to local data if the backend is down.
@@ -77,7 +84,10 @@ export const getAccountView = internalAction({
       subscription = {
         url: sub.subscriptionUrl,
         shortUuid: sub.backendShortId,
-        mirrors: sub.subscriptionMirrors.map((m) => ({ provider: m.provider, publicUrl: m.publicUrl })),
+        mirrors: sub.subscriptionMirrors.map((m) => ({
+          provider: m.provider,
+          publicUrl: m.publicUrl,
+        })),
         expiresAt: live.expireAt,
         trafficLimitBytes: live.trafficLimitBytes,
         trafficUsedBytes: live.usedTrafficBytes,
@@ -103,7 +113,10 @@ export const getAccountView = internalAction({
           backend: tier.backend,
         },
         membership: user.membershipExpiresAt
-          ? { expiresAt: new Date(user.membershipExpiresAt).toISOString(), isCurrent: user.status === 'active' }
+          ? {
+              expiresAt: new Date(user.membershipExpiresAt).toISOString(),
+              isCurrent: user.status === 'active',
+            }
           : null,
         createdAt: new Date(user._creationTime).toISOString(),
       },
@@ -171,15 +184,25 @@ type SwitchResult =
   | { ok: false; code: string; message: string; status: number };
 
 export const switchBackend = internalAction({
-  args: { userId: v.id('users'), target: v.union(v.literal('remnawave'), v.literal('outline')), requestId: v.optional(v.string()) },
+  args: {
+    userId: v.id('users'),
+    target: v.union(v.literal('remnawave'), v.literal('outline')),
+    requestId: v.optional(v.string()),
+  },
   handler: async (ctx, { userId, target, requestId }): Promise<SwitchResult> => {
     const user = await ctx.runQuery(api.users.get, { id: userId });
     if (!user) return { ok: false, code: 'not_found', message: 'user not found', status: 404 };
     const currentTier = await ctx.runQuery(api.tiers.get, { id: user.tierId });
-    if (!currentTier) return { ok: false, code: 'not_found', message: 'tier not found', status: 404 };
+    if (!currentTier)
+      return { ok: false, code: 'not_found', message: 'tier not found', status: 404 };
 
     if (currentTier.backend === target) {
-      return { ok: false, code: 'validation', message: 'Already on the requested backend', status: 400 };
+      return {
+        ok: false,
+        code: 'validation',
+        message: 'Already on the requested backend',
+        status: 400,
+      };
     }
     const settings = await ctx.runQuery(api.appSettings.resolved, {});
     if (!settings[`${target}.enabled`]) {
@@ -211,7 +234,8 @@ export const switchBackend = internalAction({
       backend: peerTier.backend,
       spec: {
         username: `freesocks-${peerTier.slug}-${randomHex(8)}`,
-        trafficLimitBytes: peerTier.monthlyTrafficGb > 0 ? peerTier.monthlyTrafficGb * 1_000_000_000 : null,
+        trafficLimitBytes:
+          peerTier.monthlyTrafficGb > 0 ? peerTier.monthlyTrafficGb * 1_000_000_000 : null,
         trafficLimitStrategy: peerTier.trafficStrategy,
         expireAt: null,
         hwidDeviceLimit: peerTier.hwidEnabled ? peerTier.hwidLimit : null,
@@ -226,7 +250,12 @@ export const switchBackend = internalAction({
       action: 'subscription.switch_backend',
       targetType: 'subscription',
       targetId: issued.subscriptionId,
-      payload: { fromBackend: currentTier.backend, toBackend: peerTier.backend, fromTier: currentTier.slug, toTier: peerTier.slug },
+      payload: {
+        fromBackend: currentTier.backend,
+        toBackend: peerTier.backend,
+        fromTier: currentTier.slug,
+        toTier: peerTier.slug,
+      },
       requestId,
     });
 
@@ -243,7 +272,12 @@ export const switchBackend = internalAction({
       subscriptionUrl: issued.subscriptionUrl,
       shortUuid: issued.backendShortId,
       backend: issued.backend,
-      tier: { slug: peerTier.slug, name: peerTier.name, monthlyTrafficGb: peerTier.monthlyTrafficGb, deviceLimit: peerTier.deviceLimit },
+      tier: {
+        slug: peerTier.slug,
+        name: peerTier.name,
+        monthlyTrafficGb: peerTier.monthlyTrafficGb,
+        deviceLimit: peerTier.deviceLimit,
+      },
       oldSubscriptionDeletedAt: oldDeletedAt !== null ? new Date(oldDeletedAt).toISOString() : null,
     };
   },
@@ -255,7 +289,12 @@ export const refreshMembership = internalAction({
   handler: async (
     ctx,
     { userId },
-  ): Promise<{ tierSlug: string; tierName: string; membershipExpiresAt: string | null; isCurrent: boolean }> => {
+  ): Promise<{
+    tierSlug: string;
+    tierName: string;
+    membershipExpiresAt: string | null;
+    isCurrent: boolean;
+  }> => {
     const user = await ctx.runQuery(api.users.get, { id: userId });
     const tier = user ? await ctx.runQuery(api.tiers.get, { id: user.tierId }) : null;
     const effective = tier ?? (await ctx.runQuery(api.tiers.getDefaultFree, {}));
@@ -263,7 +302,9 @@ export const refreshMembership = internalAction({
     return {
       tierSlug: effective.slug,
       tierName: effective.name,
-      membershipExpiresAt: user?.membershipExpiresAt ? new Date(user.membershipExpiresAt).toISOString() : null,
+      membershipExpiresAt: user?.membershipExpiresAt
+        ? new Date(user.membershipExpiresAt).toISOString()
+        : null,
       isCurrent: (user?.status ?? 'active') === 'active',
     };
   },

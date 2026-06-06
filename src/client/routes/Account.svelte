@@ -167,7 +167,8 @@
       rotateConfirmOpen = false;
       revealedAccountId = result.accountId;
       toast.success('New account number generated', {
-        description: 'Save it now — the old number no longer works and this is the only time it’s shown.',
+        description:
+          'Save it now — the old number no longer works and this is the only time it’s shown.',
       });
     },
     onError: (err) => {
@@ -292,7 +293,9 @@
         <h2 class="text-sm font-semibold uppercase tracking-wider text-primary">
           Your new account number — save it now
         </h2>
-        <p class="font-mono text-lg md:text-xl tracking-normal tabular-nums select-all break-words leading-relaxed">
+        <p
+          class="font-mono text-lg md:text-xl tracking-normal tabular-nums select-all break-words leading-relaxed"
+        >
           {formattedRevealed}
         </p>
         <p class="text-xs text-muted-foreground">
@@ -332,7 +335,9 @@
           >
             {rotateAccountId.isPending ? 'Rotating…' : 'Yes, rotate'}
           </Button>
-          <Button size="sm" variant="ghost" onclick={() => (rotateConfirmOpen = false)}>Cancel</Button>
+          <Button size="sm" variant="ghost" onclick={() => (rotateConfirmOpen = false)}
+            >Cancel</Button
+          >
         </div>
       </div>
     {/if}

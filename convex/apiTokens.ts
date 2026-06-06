@@ -90,10 +90,7 @@ export const createToken = internalAction({
     expiresInDays: v.optional(v.number()),
     createdByAdminId: v.id('adminUsers'),
   },
-  handler: async (
-    ctx,
-    a,
-  ): Promise<{ id: Id<'apiTokens'>; plaintext: string; prefix: string }> => {
+  handler: async (ctx, a): Promise<{ id: Id<'apiTokens'>; plaintext: string; prefix: string }> => {
     const random = new Uint8Array(TOKEN_RANDOM_BYTES);
     crypto.getRandomValues(random);
     const plaintext = `${TOKEN_PREFIX}${base64UrlEncode(random)}`;

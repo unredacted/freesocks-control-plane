@@ -93,7 +93,9 @@
         <h2 class="text-sm font-semibold uppercase tracking-wider text-primary">
           Save your account number
         </h2>
-        <p class="font-mono text-lg md:text-xl tracking-normal tabular-nums select-all break-words leading-relaxed">
+        <p
+          class="font-mono text-lg md:text-xl tracking-normal tabular-nums select-all break-words leading-relaxed"
+        >
           {result.accountId.replace(/(\d{4})(?=\d)/g, '$1 ')}
         </p>
         <p class="text-xs text-muted-foreground">

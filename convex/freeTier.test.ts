@@ -118,8 +118,18 @@ describe('freeTier.grantsForIpDay', () => {
     const t = convexTest(schema, modules);
     const tierId = await seedFreeTier(t);
     const dayBucket = Math.floor(Date.now() / 86_400_000);
-    await t.mutation(internal.freeTier.claimFreeSlot, { ipHash: 'ip-count', dayBucket, cap: 5, tierId });
-    await t.mutation(internal.freeTier.claimFreeSlot, { ipHash: 'ip-count', dayBucket, cap: 5, tierId });
+    await t.mutation(internal.freeTier.claimFreeSlot, {
+      ipHash: 'ip-count',
+      dayBucket,
+      cap: 5,
+      tierId,
+    });
+    await t.mutation(internal.freeTier.claimFreeSlot, {
+      ipHash: 'ip-count',
+      dayBucket,
+      cap: 5,
+      tierId,
+    });
     // A different day bucket must not be counted.
     await t.mutation(internal.freeTier.claimFreeSlot, {
       ipHash: 'ip-count',
@@ -128,7 +138,10 @@ describe('freeTier.grantsForIpDay', () => {
       tierId,
     });
 
-    const grants = await t.query(internal.freeTier.grantsForIpDay, { ipHash: 'ip-count', dayBucket });
+    const grants = await t.query(internal.freeTier.grantsForIpDay, {
+      ipHash: 'ip-count',
+      dayBucket,
+    });
     expect(grants).toHaveLength(2);
   });
 });

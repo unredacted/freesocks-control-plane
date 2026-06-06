@@ -77,7 +77,10 @@
 
   <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
     <div class="space-y-2">
-      <label for="account-number" class="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
+      <label
+        for="account-number"
+        class="text-xs uppercase tracking-wider text-muted-foreground font-semibold"
+      >
         Account number
       </label>
       <input
@@ -101,7 +104,9 @@
       <div
         class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive"
       >
-        {login.error instanceof ApiCallError ? login.error.payload.error.message : String(login.error)}
+        {login.error instanceof ApiCallError
+          ? login.error.payload.error.message
+          : String(login.error)}
       </div>
     {/if}
 

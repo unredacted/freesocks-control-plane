@@ -23,9 +23,9 @@ openssl rand -hex 32          # paste the result into INSTANCE_SECRET in self-ho
 bun run selfhost:up
 ```
 
-- Backend API  → http://127.0.0.1:3210
+- Backend API → http://127.0.0.1:3210
 - HTTP actions → http://127.0.0.1:3211
-- Dashboard    → http://localhost:6791
+- Dashboard → http://localhost:6791
 
 Data persists in the `data` Docker volume (SQLite). Set `POSTGRES_URL` in
 `self-hosted/.env` to move to Postgres when single-box write throughput is
@@ -41,10 +41,10 @@ This writes `.env.local` (gitignored) with `CONVEX_SELF_HOSTED_URL` +
 `CONVEX_SELF_HOSTED_ADMIN_KEY` (and the `VITE_CONVEX_*` URLs the SPA uses from P9).
 
 > **Do not** run a bare `convex dev` and pick **"Start without an account (run
-> Convex locally)"** — that boots a *separate* CLI-managed backend (on a
+> Convex locally)"** — that boots a _separate_ CLI-managed backend (on a
 > different port) instead of this docker one, and writes a conflicting
 > `CONVEX_DEPLOYMENT` into `.env.local` (you'll then hit
-> *"CONVEX_SELF_HOSTED_URL … must not be set when CONVEX_DEPLOYMENT is set"*).
+> _"CONVEX_SELF_HOSTED_URL … must not be set when CONVEX_DEPLOYMENT is set"_).
 > Always run the step above first; `.env.local` must contain the
 > `CONVEX_SELF_HOSTED_*` vars and **no** `CONVEX_DEPLOYMENT`.
 
@@ -66,31 +66,31 @@ dashboard → Settings → Environment Variables). `bunx convex env list` shows 
 
 **Required for a functioning deploy:**
 
-| Var | Used by |
-| --- | --- |
-| `SESSION_SIGNING_KEY` | member `fs_session` cookie HMAC — `openssl rand -hex 32` |
-| `ADMIN_SESSION_SIGNING_KEY` | admin `fs_admin_session` cookie HMAC — `openssl rand -hex 32` |
-| `ADMIN_BOOTSTRAP_SECRET` | first-run admin passkey bootstrap gate — `openssl rand -hex 32` |
-| `IP_HASH_SALT` | HMAC salt for free-tier IP keying + login rate-limit — `openssl rand -hex 32` |
-| `ACCOUNT_ID_PEPPER` | keyed-hash pepper for account numbers (a leaked hash column is useless without it) — `openssl rand -hex 32`. **Set once before launch; changing it invalidates every account number.** |
-| `TURNSTILE_SECRET_KEY` | Turnstile siteverify (free issuance + account login) |
-| `WEBAUTHN_RP_ID` | passkey RP id = the bare domain (e.g. `freesocks.org`) |
-| `WEBAUTHN_ORIGIN` | allowed page origin(s), comma-separated (e.g. `https://app.freesocks.org`) |
-| `REMNAWAVE_BASE_URL`, `REMNAWAVE_API_TOKEN` | Remnawave ("Xray") backend actions |
+| Var                                         | Used by                                                                                                                                                                                |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SESSION_SIGNING_KEY`                       | member `fs_session` cookie HMAC — `openssl rand -hex 32`                                                                                                                               |
+| `ADMIN_SESSION_SIGNING_KEY`                 | admin `fs_admin_session` cookie HMAC — `openssl rand -hex 32`                                                                                                                          |
+| `ADMIN_BOOTSTRAP_SECRET`                    | first-run admin passkey bootstrap gate — `openssl rand -hex 32`                                                                                                                        |
+| `IP_HASH_SALT`                              | HMAC salt for free-tier IP keying + login rate-limit — `openssl rand -hex 32`                                                                                                          |
+| `ACCOUNT_ID_PEPPER`                         | keyed-hash pepper for account numbers (a leaked hash column is useless without it) — `openssl rand -hex 32`. **Set once before launch; changing it invalidates every account number.** |
+| `TURNSTILE_SECRET_KEY`                      | Turnstile siteverify (free issuance + account login)                                                                                                                                   |
+| `WEBAUTHN_RP_ID`                            | passkey RP id = the bare domain (e.g. `freesocks.org`)                                                                                                                                 |
+| `WEBAUTHN_ORIGIN`                           | allowed page origin(s), comma-separated (e.g. `https://app.freesocks.org`)                                                                                                             |
+| `REMNAWAVE_BASE_URL`, `REMNAWAVE_API_TOKEN` | Remnawave ("Xray") backend actions                                                                                                                                                     |
 
 **Optional / feature-gated:**
 
-| Var | Default | Used by |
-| --- | --- | --- |
-| `ENVIRONMENT` | `production` | set to `development` ONLY for local http (drops the cookie `Secure` flag) |
-| `WEBAUTHN_RP_NAME` | `FreeSocks Admin` | passkey display name |
-| `TURNSTILE_SITE_KEY` | — | echoed to the SPA via `/api/v1/config` so it renders the widget |
-| `TRUSTED_PROXY` | unset | set `true` ONLY behind a reverse proxy that overwrites `X-Forwarded-For` (fail-closed client-IP) |
-| `FREE_TIER_DAILY_CAP` | `1` | per-IP/day free-key cap |
-| `FREE_TIER_EXPIRY_DAYS` | `90` | free-user cleanup window |
-| `WEBHOOK_SIGNING_SECRET` | — | HMAC for `POST /api/webhooks/billing` (the billing seam) |
-| `MEMBERS_JOIN_URL`, `MEMBERS_ACCOUNT_URL` | — | optional member-portal links surfaced in `/api/v1/config` |
-| `S3_MIRRORS_ENABLED`, `S3_PROVIDER_COUNT`, `S3_PROVIDER_<i>_{NAME,ENDPOINT,BUCKET,PUBLIC_URL,REGION,ACCESS_KEY_ID,SECRET_ACCESS_KEY}` | off | S3 subscription mirrors — one block per mirror; count `0`/unset disables |
+| Var                                                                                                                                   | Default           | Used by                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
+| `ENVIRONMENT`                                                                                                                         | `production`      | set to `development` ONLY for local http (drops the cookie `Secure` flag)                        |
+| `WEBAUTHN_RP_NAME`                                                                                                                    | `FreeSocks Admin` | passkey display name                                                                             |
+| `TURNSTILE_SITE_KEY`                                                                                                                  | —                 | echoed to the SPA via `/api/v1/config` so it renders the widget                                  |
+| `TRUSTED_PROXY`                                                                                                                       | unset             | set `true` ONLY behind a reverse proxy that overwrites `X-Forwarded-For` (fail-closed client-IP) |
+| `FREE_TIER_DAILY_CAP`                                                                                                                 | `1`               | per-IP/day free-key cap                                                                          |
+| `FREE_TIER_EXPIRY_DAYS`                                                                                                               | `90`              | free-user cleanup window                                                                         |
+| `WEBHOOK_SIGNING_SECRET`                                                                                                              | —                 | HMAC for `POST /api/webhooks/billing` (the billing seam)                                         |
+| `MEMBERS_JOIN_URL`, `MEMBERS_ACCOUNT_URL`                                                                                             | —                 | optional member-portal links surfaced in `/api/v1/config`                                        |
+| `S3_MIRRORS_ENABLED`, `S3_PROVIDER_COUNT`, `S3_PROVIDER_<i>_{NAME,ENDPOINT,BUCKET,PUBLIC_URL,REGION,ACCESS_KEY_ID,SECRET_ACCESS_KEY}` | off               | S3 subscription mirrors — one block per mirror; count `0`/unset disables                         |
 
 The SPA build reads `VITE_CONVEX_SITE_URL` (the public HTTP-actions origin that
 `/api` is proxied to). Outline server `apiUrl`s live per-row in the

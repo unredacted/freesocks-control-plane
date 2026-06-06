@@ -247,7 +247,8 @@ export async function remnawaveFetchSubscription(
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 8000);
   try {
     const res = await fetch(url, { headers, signal: controller.signal });
-    if (!res.ok) throw await RemnawaveApiError.fromResponse(res, `/api/subscriptions/${backendShortId}`);
+    if (!res.ok)
+      throw await RemnawaveApiError.fromResponse(res, `/api/subscriptions/${backendShortId}`);
     return {
       content: await res.text(),
       contentType: res.headers.get('content-type') ?? 'text/plain',

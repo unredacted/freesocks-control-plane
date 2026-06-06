@@ -63,7 +63,11 @@ export const resolveCurrentOrActive = query({
       .query('subscriptions')
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .collect();
-    return rows.filter((s) => s.state === 'active').sort((a, b) => b._creationTime - a._creationTime)[0] ?? null;
+    return (
+      rows
+        .filter((s) => s.state === 'active')
+        .sort((a, b) => b._creationTime - a._creationTime)[0] ?? null
+    );
   },
 });
 

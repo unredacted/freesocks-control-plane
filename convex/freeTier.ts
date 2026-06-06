@@ -29,7 +29,12 @@ type FreeIssueOutcome = {
     url: string;
     shortUuid: string;
     backend: 'remnawave' | 'outline';
-    mirrors: { provider: string; publicUrl: string; objectPath?: string; status?: 'ok' | 'failed' }[];
+    mirrors: {
+      provider: string;
+      publicUrl: string;
+      objectPath?: string;
+      status?: 'ok' | 'failed';
+    }[];
     expireAt: string;
     trafficLimitBytes: number | null;
   };
@@ -148,7 +153,11 @@ export const issueOrReissue = internalAction({
     });
 
     if (!claim.claimed) {
-      const reissue = await ctx.runQuery(internal.freeTier.tryReissue, { ipHash, dayBucket, expiryDays });
+      const reissue = await ctx.runQuery(internal.freeTier.tryReissue, {
+        ipHash,
+        dayBucket,
+        expiryDays,
+      });
       if (reissue) return { reissued: true as const, ...reissue };
       throw new Error('rate_limit: daily free-tier cap reached on this network');
     }

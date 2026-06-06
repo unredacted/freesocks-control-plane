@@ -26,7 +26,7 @@ member credential.
 >   rotate dialog on `/account`.
 >
 > **NOT APPLICABLE — OIDC was removed.** The original design assumed an Authentik
-> OIDC / CiviCRM identity that an account number would *link* to. That stack is
+> OIDC / CiviCRM identity that an account number would _link_ to. That stack is
 > gone: there is no OIDC, no CiviCRM, no JWT path. **§6 (member-link flow) in its
 > entirety, and every OIDC/CiviCRM/JWT mention in §4, §5, §8, §10, and §11 below,
 > do not apply.** Account numbers stand alone; there is no link/merge and no second
@@ -47,12 +47,12 @@ member credential.
 **Choice: 32 decimal digits, displayed as eight groups of four** (e.g.
 `1234 5678 9012 3456 7890 1234 5678 9012`).
 
-- **Entropy**: 32 decimal digits ≈ **106 bits** (10³²). It's the member's *sole*
+- **Entropy**: 32 decimal digits ≈ **106 bits** (10³²). It's the member's _sole_
   login credential, so it's sized to be unguessable even against offline
   brute-force of a leaked hash column — not just online guessing (which Turnstile
-  + the rate limits already make infeasible). Birthday-collision odds at any
-  realistic user count are negligible; the uniqueness check retries on the
-  (astronomically rare) clash.
+  - the rate limits already make infeasible). Birthday-collision odds at any
+    realistic user count are negligible; the uniqueness check retries on the
+    (astronomically rare) clash.
 - **Alphabet**: digits only.
   - Base32 / Crockford-32 mixes letters/digits — confusable on paper or over
     phone dictation. Rejected.
@@ -62,7 +62,7 @@ member credential.
 - **Stored format**: digits only, no spaces. Server normalizes input by
   stripping `\s` and `-` before hashing.
 - **Storage strategy**: store **`HMAC-SHA256(ACCOUNT_ID_PEPPER, canonical)`** in
-  `users.accountIdHash` — a *keyed* hash, not a bare digest. The pepper is a
+  `users.accountIdHash` — a _keyed_ hash, not a bare digest. The pepper is a
   required deployment secret (env, never in the DB), so a DB-only leak can't be
   brute-forced offline without it. Also store a 4-digit plaintext prefix in
   `users.accountIdPrefix` for admin search. Plaintext is never persisted.
@@ -150,7 +150,7 @@ downloadable `.txt` option, single-checkbox "I've saved it" gate before the
 panel collapses. The panel only appears on first reveal; refreshing the page
 does NOT reshow it (SPA holds it in volatile state only).
 
-**OIDC members at first login** *(NOT APPLICABLE — OIDC removed)*: this
+**OIDC members at first login** _(NOT APPLICABLE — OIDC removed)_: this
 subsection assumed an Authentik callback that minted a number as a second login
 path. There is no OIDC callback; every user gets a number at key issuance
 instead, and it is the only path.
@@ -230,12 +230,12 @@ else's account if exposed end-user-side.
 - **Forgot my number**: irrecoverable by design. UX states this once at
   issuance ("You won't be able to recover this. Save it now."). **Do NOT** offer
   email-based recovery — it would add an email-account-takeover dependency the
-  system specifically avoids. *(The original "members re-auth via OIDC" fallback
-  no longer exists — OIDC was removed. There is no second recovery path.)*
+  system specifically avoids. _(The original "members re-auth via OIDC" fallback
+  no longer exists — OIDC was removed. There is no second recovery path.)_
 - **Account takeover**: if a number leaks, the legitimate user (while still
   signed in) rotates via `POST /api/v1/account/account-id/rotate`, which
   immediately invalidates the old number. If they've already lost access, the
-  account is unrecoverable by design. *(The original OIDC recovery path is gone.)*
+  account is unrecoverable by design. _(The original OIDC recovery path is gone.)_
 - **2FA / device association**: future work. Note in `docs/account-id.md` as
   out of scope for v1.
 

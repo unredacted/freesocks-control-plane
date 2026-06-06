@@ -23,12 +23,12 @@ Detailed companions, referenced rather than duplicated here:
 
 **Status legend**
 
-| Tag             | Meaning                                                                                                       |
-| --------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Live**        | Wired and active in the default config.                                                                       |
-| **Dormant**     | Fully implemented and wired, but off by default behind a flag/setting. Keep it.                               |
-| **Deferred**    | Intentionally not built yet; a known follow-up. The seam/hook exists. Keep it.                               |
-| **Scaffolding** | Deliberately-retained forward-compat surface with no current caller. **Keep it** — see §3.                   |
+| Tag             | Meaning                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------ |
+| **Live**        | Wired and active in the default config.                                                    |
+| **Dormant**     | Fully implemented and wired, but off by default behind a flag/setting. Keep it.            |
+| **Deferred**    | Intentionally not built yet; a known follow-up. The seam/hook exists. Keep it.             |
+| **Scaffolding** | Deliberately-retained forward-compat surface with no current caller. **Keep it** — see §3. |
 
 ---
 
@@ -43,7 +43,7 @@ Detailed companions, referenced rather than duplicated here:
   cookie. Rotatable (`POST /api/v1/account/account-id/rotate`). `convex/auth.ts`,
   `convex/accountId.ts`, `convex/lib/accountId.ts`. **Live.** See `account-number-design.md`.
 - **WebAuthn passkeys** (admins) — first-run **bootstrap wizard** (gated by
-  `ADMIN_BOOTSTRAP_SECRET`, re-checked at options *and* verify, **locks forever** once any
+  `ADMIN_BOOTSTRAP_SECRET`, re-checked at options _and_ verify, **locks forever** once any
   credential exists) + authenticate; signed `fs_admin_session` cookie; per-IP throttle +
   anti-enumeration (well-formed options for unknown usernames). `convex/webauthn.ts`
   (`"use node"`) + `convex/admins.ts`. **Live.**
@@ -146,13 +146,13 @@ Convex runs these natively (no Workers triggers, no node-cron):
 There are **no `TODO`/`FIXME` markers in `convex/` or `src/`** — open work lives here and in
 the companion docs. Sizes: S/M/L.
 
-| Item                                                                                                                                                                              | Size | Where it's tracked              |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------- |
-| **Email subsystem** — welcome / grace-warning / disabled notifications. The lifecycle transitions fire + audit but send nothing; the `emailLog` table is the only foundation. Pick a provider, add a `"use node"` action, wire it into `lifecycle.ts`. | M    | this file (§1.7)                |
-| **Billing portal integration** — the webhook seam (`/api/webhooks/billing` → `setMembership`) is ready; the in-house portal that calls it is the future entitlement source.       | L    | this file (§1.7)                |
-| **Paid cross-backend switch** — `account.switchBackend` returns 409 for paid tiers until the billing portal defines cross-backend tier linkage. Needs the portal's tier model.    | M    | `convex/account.ts`            |
-| **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent) — needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.   | M    | `deferred-security-bugs.md`     |
-| **Outline scoring RTT** — `pickCandidatesForIssue` uses a `latency*0` placeholder; real RTT capture would need the healthcheck to record per-server latency. Latent (backend off).  | M    | `outline-setup.md` + §3         |
+| Item                                                                                                                                                                                                                                                   | Size | Where it's tracked          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---- | --------------------------- |
+| **Email subsystem** — welcome / grace-warning / disabled notifications. The lifecycle transitions fire + audit but send nothing; the `emailLog` table is the only foundation. Pick a provider, add a `"use node"` action, wire it into `lifecycle.ts`. | M    | this file (§1.7)            |
+| **Billing portal integration** — the webhook seam (`/api/webhooks/billing` → `setMembership`) is ready; the in-house portal that calls it is the future entitlement source.                                                                            | L    | this file (§1.7)            |
+| **Paid cross-backend switch** — `account.switchBackend` returns 409 for paid tiers until the billing portal defines cross-backend tier linkage. Needs the portal's tier model.                                                                         | M    | `convex/account.ts`         |
+| **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent) — needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                        | M    | `deferred-security-bugs.md` |
+| **Outline scoring RTT** — `pickCandidatesForIssue` uses a `latency*0` placeholder; real RTT capture would need the healthcheck to record per-server latency. Latent (backend off).                                                                     | M    | `outline-setup.md` + §3     |
 
 ---
 
@@ -163,15 +163,15 @@ the companion docs. Sizes: S/M/L.
 > dormant subsystems. They are intentionally retained. If you believe one should go, decide
 > it deliberately and update this table.
 
-| Symbol / artifact                                                                  | Location                                                              | Why it has no (full) caller                                                                                                                                              | Disposition                  |
-| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| `emailLog` table + `EmailDelivery` shape                                           | `convex/schema.ts`                                                    | Foundation for the deferred email subsystem; lifecycle transitions fire but nothing sends yet.                                                                          | **Keep** (deferred — §1.7)   |
-| `webhooks.ingest` billing seam                                                     | `convex/webhooks.ts`, `convex/http.ts`                               | The single inbound point for the future billing portal; HMAC + dedupe + `setMembership` are all live, but no portal calls it today.                                     | **Keep** (seam ready)        |
-| Entire **Outline** subsystem                                                       | `convex/backends.ts` (outline branches), `convex/lib/backends/outline.ts`, `convex/outlineServers.ts`, admin server routes/UI | Fully wired but unreachable until `outline.enabled=true` + a server is registered. Within it: pool scoring uses a `latency*0` placeholder; `prometheusUrl` is reserved. | **Keep** (dormant)           |
-| S3 mirroring (`storage.ts`)                                                         | `convex/storage.ts`, `convex/lib/issuance.ts`                        | Skipped entirely unless `S3_MIRRORS_ENABLED=true` + providers configured.                                                                                               | **Keep** (dormant)           |
-| `appState` table                                                                   | `convex/schema.ts`                                                   | Generic singleton key/value (e.g. tier-propagation cursors). Forward-compat for cursored sweeps.                                                                        | **Keep** (scaffolding)       |
-| `components/ui/label/`, other unused shadcn primitives                             | `src/client/components/ui/`                                          | shadcn primitives are kept as a complete kit even when a given primitive has no current import.                                                                          | **Keep** (kit completeness)  |
-| `fetchSubscriptionContent` (Remnawave/Outline)                                     | `convex/backends.ts`, `convex/lib/backends/*`                        | Only invoked when S3 mirroring is on; part of the backend interface contract regardless.                                                                                | **Keep** (interface + dormant) |
+| Symbol / artifact                                      | Location                                                                                                                      | Why it has no (full) caller                                                                                                                                             | Disposition                    |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `emailLog` table + `EmailDelivery` shape               | `convex/schema.ts`                                                                                                            | Foundation for the deferred email subsystem; lifecycle transitions fire but nothing sends yet.                                                                          | **Keep** (deferred — §1.7)     |
+| `webhooks.ingest` billing seam                         | `convex/webhooks.ts`, `convex/http.ts`                                                                                        | The single inbound point for the future billing portal; HMAC + dedupe + `setMembership` are all live, but no portal calls it today.                                     | **Keep** (seam ready)          |
+| Entire **Outline** subsystem                           | `convex/backends.ts` (outline branches), `convex/lib/backends/outline.ts`, `convex/outlineServers.ts`, admin server routes/UI | Fully wired but unreachable until `outline.enabled=true` + a server is registered. Within it: pool scoring uses a `latency*0` placeholder; `prometheusUrl` is reserved. | **Keep** (dormant)             |
+| S3 mirroring (`storage.ts`)                            | `convex/storage.ts`, `convex/lib/issuance.ts`                                                                                 | Skipped entirely unless `S3_MIRRORS_ENABLED=true` + providers configured.                                                                                               | **Keep** (dormant)             |
+| `appState` table                                       | `convex/schema.ts`                                                                                                            | Generic singleton key/value (e.g. tier-propagation cursors). Forward-compat for cursored sweeps.                                                                        | **Keep** (scaffolding)         |
+| `components/ui/label/`, other unused shadcn primitives | `src/client/components/ui/`                                                                                                   | shadcn primitives are kept as a complete kit even when a given primitive has no current import.                                                                         | **Keep** (kit completeness)    |
+| `fetchSubscriptionContent` (Remnawave/Outline)         | `convex/backends.ts`, `convex/lib/backends/*`                                                                                 | Only invoked when S3 mirroring is on; part of the backend interface contract regardless.                                                                                | **Keep** (interface + dormant) |
 
 ---
 

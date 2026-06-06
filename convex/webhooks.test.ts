@@ -9,9 +9,12 @@ import { hmacSha256Hex } from './lib/crypto';
 const modules = import.meta.glob('./**/*.*s');
 const SECRET = 'test-webhook';
 
-async function seedUserAndTiers(
-  t: ReturnType<typeof convexTest>,
-): Promise<{ userId: Id<'users'>; accountId: string; freeTierId: Id<'tiers'>; memberTierId: Id<'tiers'> }> {
+async function seedUserAndTiers(t: ReturnType<typeof convexTest>): Promise<{
+  userId: Id<'users'>;
+  accountId: string;
+  freeTierId: Id<'tiers'>;
+  memberTierId: Id<'tiers'>;
+}> {
   const { userId, freeTierId, memberTierId } = await t.run(async (ctx) => {
     const freeTierId = await ctx.db.insert('tiers', {
       slug: 'free',

@@ -75,7 +75,11 @@ export const seedAppSettings = internalMutation({
         .withIndex('by_key', (q) => q.eq('key', key))
         .unique();
       if (existing) continue;
-      await ctx.db.insert('appSettings', { key, value: JSON.stringify(value), updatedAt: Date.now() });
+      await ctx.db.insert('appSettings', {
+        key,
+        value: JSON.stringify(value),
+        updatedAt: Date.now(),
+      });
       inserted++;
     }
     return { inserted };
@@ -89,7 +93,9 @@ export const seedAppSettings = internalMutation({
  */
 export const seedCutover = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ freeTierId: string; memberTierId: string; settingsInserted: number }> => {
+  handler: async (
+    ctx,
+  ): Promise<{ freeTierId: string; memberTierId: string; settingsInserted: number }> => {
     const freeTierId = await ctx.runMutation(internal.seed.seedDefaultFreeTier, {});
     const memberTierId = await ctx.runMutation(internal.seed.seedMemberTier, {});
     const settings = await ctx.runMutation(internal.seed.seedAppSettings, {});

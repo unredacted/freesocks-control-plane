@@ -14,7 +14,13 @@ import { internalAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
-import type { IssueUserSpec, IssuedUser, SubscriptionContent, UpdateUserPatch, UserState } from './lib/backends/types';
+import type {
+  IssueUserSpec,
+  IssuedUser,
+  SubscriptionContent,
+  UpdateUserPatch,
+  UserState,
+} from './lib/backends/types';
 import {
   remnawaveDeleteUser,
   remnawaveFetchSubscription,
@@ -69,7 +75,9 @@ function remnawaveConfig(): RemnawaveConfig {
   const baseUrl = process.env.REMNAWAVE_BASE_URL;
   const apiToken = process.env.REMNAWAVE_API_TOKEN;
   if (!baseUrl || !apiToken) {
-    throw new Error('REMNAWAVE_BASE_URL and REMNAWAVE_API_TOKEN must be set (bunx convex env set ...)');
+    throw new Error(
+      'REMNAWAVE_BASE_URL and REMNAWAVE_API_TOKEN must be set (bunx convex env set ...)',
+    );
   }
   return { baseUrl, apiToken };
 }
@@ -94,7 +102,8 @@ async function resolveOutlineServer(ctx: ActionCtx, backendUserId: string) {
 export const issueUser = internalAction({
   args: { backend: backendId, spec: issueSpec },
   handler: async (ctx, { backend, spec }): Promise<IssuedUser> => {
-    if (backend === 'remnawave') return remnawaveIssueUser(remnawaveConfig(), spec as IssueUserSpec);
+    if (backend === 'remnawave')
+      return remnawaveIssueUser(remnawaveConfig(), spec as IssueUserSpec);
 
     // Outline: resolve a server (admin hint, else pick from the scored pool).
     let server;
@@ -105,7 +114,8 @@ export const issueUser = internalAction({
       const candidates = await ctx.runQuery(internal.outlineServers.pickCandidatesForIssue, {
         poolIds: spec.outlineServerPoolIds,
       });
-      if (candidates.length === 0) throw new Error('No active Outline servers available to issue a key');
+      if (candidates.length === 0)
+        throw new Error('No active Outline servers available to issue a key');
       // Random pick among the top candidates (CSPRNG — can't live in the query).
       const idx = new Uint32Array(1);
       crypto.getRandomValues(idx);
@@ -128,7 +138,13 @@ export const getUser = internalAction({
     if (!server) {
       // READ-path tolerance: an unresolved key (e.g. row mid-write) shouldn't
       // crash /account — return a sentinel "active/unknown" state.
-      return { trafficLimitBytes: null, usedTrafficBytes: 0, expireAt: null, status: 'active', devices: [] };
+      return {
+        trafficLimitBytes: null,
+        usedTrafficBytes: 0,
+        expireAt: null,
+        status: 'active',
+        devices: [],
+      };
     }
     return outlineGetState(outlineCfg(server), backendUserId);
   },

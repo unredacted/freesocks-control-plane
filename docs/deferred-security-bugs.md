@@ -27,8 +27,8 @@ durable record for the next maintainer who picks any of these up.
 > The detailed historical sections below are retained verbatim for context; read
 > them through the tag at each heading.
 >
-> **Headline:** **H1 (free-tier over-issuance race) is now CLOSED *by
-> construction*.** The per-(ipHash, dayBucket) cap is the serializable Convex
+> **Headline:** **H1 (free-tier over-issuance race) is now CLOSED _by
+> construction_.** The per-(ipHash, dayBucket) cap is the serializable Convex
 > mutation `freeTier.claimFreeSlot` (`convex/freeTier.ts`): it reads the
 > `freeGrants` for the bucket over the `by_ip_day` index, then inserts only if
 > under cap. Convex mutations run under serializable OCC, so two concurrent claims
@@ -87,7 +87,7 @@ subsystem has nothing to test yet.
 > below cannot occur in a serializable Convex mutation. The Durable-Object /
 > D1-stored-proc options floated here are no longer relevant. Historical text:
 
-**Location** `src/server/services/rate-limit.ts:54-65`, `src/server/services/free-tier.ts:64-95` *(files removed in the Convex migration)*
+**Location** `src/server/services/rate-limit.ts:54-65`, `src/server/services/free-tier.ts:64-95` _(files removed in the Convex migration)_
 
 **The issue.** `checkAndIncrement` reads the KV counter, increments, then
 compares against `max`. Two concurrent requests can both observe `current=cap-1`
@@ -119,7 +119,7 @@ NAT'd users sharing an IP can hit the cap without being attackers.
 > a `Uint32Array`) in `convex/backends.ts`. Account-number minting and token
 > minting also use the CSPRNG (`convex/lib/accountId.ts`, `convex/lib/crypto.ts`).
 
-**Location** `src/server/services/outline-pool.ts:65`, `src/server/lib/retry.ts:26` *(files removed)*
+**Location** `src/server/services/outline-pool.ts:65`, `src/server/lib/retry.ts:26` _(files removed)_
 
 **The issue.** Top-3 server selection and retry jitter use `Math.random()`.
 Not security-critical (these aren't selecting secrets) but `Math.random()` is
@@ -135,7 +135,7 @@ predictable. Belt-and-braces would be `crypto.getRandomValues()`.
 > now `throw`s if the value contains `.` before signing, and `verifySignedValue`
 > splits on the last `.`. Session ids are hex-only, so the parse is unambiguous.
 
-**Location** `src/server/lib/cookies.ts:24-36` *(now `convex/lib/cookies.ts`)*
+**Location** `src/server/lib/cookies.ts:24-36` _(now `convex/lib/cookies.ts`)_
 
 **The issue.** `signValue` joins value and signature with `.`, then
 `verifySignedValue` splits on `lastIndexOf('.')`. Session ids from
@@ -158,7 +158,7 @@ signing. Small, contained change — bundled with the next session-related work.
 > `convex/lifecycle.ts` and confirm none writes raw request bodies. The fix shape
 > is unchanged (per-action allowlist).
 
-**Location** `src/server/services/audit.ts:22-33` *(now `convex/audit.ts` + callers in `convex/adminApi.ts`)*
+**Location** `src/server/services/audit.ts:22-33` _(now `convex/audit.ts` + callers in `convex/adminApi.ts`)_
 
 **The issue.** `payload: data` writes the entire request body to the audit
 table. Anyone with `admin:audit:read` can read what other admins typed,
@@ -182,7 +182,7 @@ with consistent allowlists rather than piecemeal.
 > case — and applies a per-IP throttle (`admin-auth:ip:<ipHash>`, 20/h) via the
 > strict `rateLimits.checkAndIncrement`.
 
-**Location** `src/server/routes/api/admin/auth.ts:144-158` *(now `convex/webauthn.ts`)*
+**Location** `src/server/routes/api/admin/auth.ts:144-158` _(now `convex/webauthn.ts`)_
 
 **The issue.** `/authenticate/options` returns distinct responses for "username
 unknown" (`No such admin`) vs valid username (returns options + credentials
@@ -208,7 +208,7 @@ hardening pass.
 > auto-provisioning anymore (OIDC was removed). The only programmatic identities
 > are `fsv1_` tokens that an admin explicitly minted.
 
-**Location** `src/server/lib/crypto.ts:38`, `src/server/middleware/bearer-auth.ts:82-110` *(bearer-auth removed)*
+**Location** `src/server/lib/crypto.ts:38`, `src/server/middleware/bearer-auth.ts:82-110` _(bearer-auth removed)_
 
 **Status.** L1 is informational (cookie sig length is fixed so no real leak).
 L2 is partially mitigated by H4's audience-required fix that just shipped —
@@ -226,7 +226,7 @@ trusts the Authentik member list).
 > tier and uses that tier's `expirationDaysAfterMembershipLapse` for the cutoff —
 > no hardcoded 7-day constant.
 
-**Location** `src/server/services/membership-sync.ts:294` *(now `convex/lifecycle.ts`)*
+**Location** `src/server/services/membership-sync.ts:294` _(now `convex/lifecycle.ts`)_
 
 **The issue.** Disable transition is hardcoded to 7 days; the grace-warning
 email uses each tier's configured value. If an admin configures a 14-day grace
@@ -251,7 +251,7 @@ unaffected. Worth fixing before any tier ships with a non-default grace.
 > tierId** — there is no by-CiviCRM-type tier resolution to disambiguate. (When the
 > billing portal/webhook resolves a tier it does so by an explicit `tierSlug`.)
 
-**Location** `src/server/services/membership-sync.ts:121-125` *(removed; CiviCRM gone)*
+**Location** `src/server/services/membership-sync.ts:121-125` _(removed; CiviCRM gone)_
 
 **The issue.** `findForMembership` is called with no backend filter. The schema
 explicitly allows two active tiers per `civicrm_membership_type_id` (one per
@@ -276,7 +276,7 @@ Pair with the first Outline-paid-tier rollout.
 > event-driven, one user at a time. There is no overlapping cron run and no KV
 > lock to race; the PATCH is idempotent.
 
-**Location** `src/server/jobs/propagate-tier-change.ts` + `src/server/jobs/dispatcher.ts:24,54` *(removed)*
+**Location** `src/server/jobs/propagate-tier-change.ts` + `src/server/jobs/dispatcher.ts:24,54` _(removed)_
 
 **The issue.** The `reconcile-memberships` cron runs every 5 min and chains
 `propagateTierChanges` after `runReconcile`. If a previous reconcile run
@@ -301,7 +301,7 @@ below).
 > rate-limit counter, uniqueness checks), it uses a serializable mutation, which
 > is atomic by construction — no get/put-CAS workaround needed.
 
-**Location** `src/server/services/membership-sync.ts:351-360` *(removed; CiviCRM gone)*
+**Location** `src/server/services/membership-sync.ts:351-360` _(removed; CiviCRM gone)_
 
 **The issue.** `kv.get` then `kv.put` is not atomic — two simultaneous cron
 firings both see no lock and both acquire. Lock TTL is 60s but the reconcile
@@ -324,7 +324,7 @@ together.
 > mutation, so a partial-failure split between the two writes can't happen (the
 > whole mutation commits or aborts atomically).
 
-**Location** `src/server/services/membership-sync.ts:190-207` *(now `convex/lifecycle.ts`)*
+**Location** `src/server/services/membership-sync.ts:190-207` _(now `convex/lifecycle.ts`)_
 
 **The issue.** If the `users` update fails after the `tier_history` insert
 succeeds, the history row records a change that didn't happen; retry then
@@ -344,7 +344,7 @@ back-to-back D1 writes on the same connection. Real but low probability.
 > user (`subs.find((s) => s.state === 'active')`) rather than iterating every sub
 > row, so the multiple-sub-row over-delete can't occur.
 
-**Location** `src/server/services/free-tier.ts:233-265` *(now `convex/lifecycle.ts`)*
+**Location** `src/server/services/free-tier.ts:233-265` _(now `convex/lifecycle.ts`)_
 
 **The issue.** `innerJoin(subscriptions, ...)` has no `subscriptions.state`
 filter; if a user has multiple sub rows (e.g. after a backend switch on a paid
@@ -365,7 +365,7 @@ on next sweep through the cleanup path.
 > (Webhook idempotency is handled by the `webhookEvents` dedupe table, which is
 > actively read/written by `convex/webhooks.ts`.)
 
-**Location** `src/server/db/schema.ts:319-334` *(removed)*
+**Location** `src/server/db/schema.ts:319-334` _(removed)_
 
 **The issue.** Table exists but no code reads or writes it. If a future path
 populates it without removing the unused indexes, write cost is higher than
@@ -385,7 +385,7 @@ issuance — see plan doc).
 > distinguishes "field absent" (skip) from "field present and null/''" (clears via
 > `activeInternalSquads: []`); a value sets it.
 
-**Location** `src/server/providers/remnawave/backend.ts:90-92` *(now `convex/lib/backends/remnawave.ts`)*
+**Location** `src/server/providers/remnawave/backend.ts:90-92` _(now `convex/lib/backends/remnawave.ts`)_
 
 **The issue.** `patch.remnawaveSquadUuid === null` skips the squad assignment
 entirely; admins can't unset a squad once configured.
@@ -409,7 +409,7 @@ the tier editor surfaces squad management directly.
 > **Must be resolved before any WSS-enabled Outline server is registered and routed
 > to.**
 
-**Location** `src/server/providers/outline/types.ts:22` etc. *(now `convex/lib/backends/outline.ts`)*
+**Location** `src/server/providers/outline/types.ts:22` etc. _(now `convex/lib/backends/outline.ts`)_
 
 **The issue.** `OutlineAccessKey.accessUrl` is a required `z.string()`. `OutlineBackend.issueUser` sends a `websocket` body when `server.websocketEnabled` is set, then reads `created.accessUrl` unconditionally as the subscription URL. The FreeSocks Outline fork's WSS-wrapped (dynamic-config / `ssconf://`) keys are expected NOT to carry an inline `ss://` `accessUrl` — the YAML config is uploaded to S3 and served as an `ssconf://` URL (see the `0005_outline_servers.sql` migration comment). A WSS key response without `accessUrl` fails the Zod parse in `createKey` and throws a generic "Outline schema mismatch" before issuance can complete.
 

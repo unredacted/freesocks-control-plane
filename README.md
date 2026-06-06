@@ -189,11 +189,11 @@ Highlights:
 
 Three accepted mechanisms; each `httpAction` resolves identity via `convex/lib/http.ts`:
 
-| Path                | Format                                              | Used by                       |
-| ------------------- | --------------------------------------------------- | ----------------------------- |
-| Member cookie       | `Cookie: fs_session=…`                              | Web SPA (account-number login) |
-| Admin cookie        | `Cookie: fs_admin_session=…`                        | Admin CMS (WebAuthn passkey)   |
-| Bearer token        | `Authorization: Bearer fsv1_<random>`               | Services, automation, monitoring |
+| Path          | Format                                | Used by                          |
+| ------------- | ------------------------------------- | -------------------------------- |
+| Member cookie | `Cookie: fs_session=…`                | Web SPA (account-number login)   |
+| Admin cookie  | `Cookie: fs_admin_session=…`          | Admin CMS (WebAuthn passkey)     |
+| Bearer token  | `Authorization: Bearer fsv1_<random>` | Services, automation, monitoring |
 
 A `fsv1_` token can be a **service** token (acts with its own scopes) or a **user** token
 (`subjectType: user`, acts as a specific member). There is **no OIDC / JWT path**.

@@ -29,14 +29,20 @@ export const ingest = internalAction({
       throw new Error('invalid signature');
     }
 
-    let payload: { eventId?: string; accountId?: string; tierSlug?: string; expiresAtMs?: number | null };
+    let payload: {
+      eventId?: string;
+      accountId?: string;
+      tierSlug?: string;
+      expiresAtMs?: number | null;
+    };
     try {
       payload = JSON.parse(rawBody);
     } catch {
       throw new Error('invalid JSON body');
     }
     const { eventId, accountId, tierSlug, expiresAtMs } = payload;
-    if (!eventId || !accountId || !tierSlug) throw new Error('eventId, accountId, tierSlug required');
+    if (!eventId || !accountId || !tierSlug)
+      throw new Error('eventId, accountId, tierSlug required');
 
     // Dedupe first — a replayed eventId never reapplies.
     const dedupe = await ctx.runMutation(internal.webhooks.recordEvent, {
@@ -48,7 +54,9 @@ export const ingest = internalAction({
 
     // Map account number → user (status-blind so a lapsed account can renew).
     const accountHash = await hashAccountId(accountId);
-    const user = await ctx.runQuery(internal.users.byAccountIdHashInternal, { accountIdHash: accountHash });
+    const user = await ctx.runQuery(internal.users.byAccountIdHashInternal, {
+      accountIdHash: accountHash,
+    });
     if (!user) return { ok: true, applied: false, reason: 'unknown_user' };
 
     const tier = await ctx.runQuery(api.tiers.getBySlug, { slug: tierSlug });

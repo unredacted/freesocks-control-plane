@@ -1,0 +1,7 @@
+# Convex codegen owns these (its own formatting) — leave them alone so prettier
+# and `convex dev`/`deploy` don't fight over the generated files.
+convex/_generated
+
+# Build output + lockfile.
+dist
+bun.lock

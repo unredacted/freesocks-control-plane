@@ -35,11 +35,7 @@ const userStatus = v.union(
   v.literal('disabled'),
   v.literal('deleted'),
 );
-const subscriptionState = v.union(
-  v.literal('active'),
-  v.literal('disabled'),
-  v.literal('deleted'),
-);
+const subscriptionState = v.union(v.literal('active'), v.literal('disabled'), v.literal('deleted'));
 const actorType = v.union(
   v.literal('system'),
   v.literal('admin'),

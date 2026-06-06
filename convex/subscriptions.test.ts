@@ -27,7 +27,11 @@ async function seedTier(t: ReturnType<typeof convexTest>): Promise<Id<'tiers'>> 
   );
 }
 
-function subFields(userId: Id<'users'>, backendUserId: string, state: 'active' | 'disabled' | 'deleted') {
+function subFields(
+  userId: Id<'users'>,
+  backendUserId: string,
+  state: 'active' | 'disabled' | 'deleted',
+) {
   return {
     userId,
     backend: 'remnawave' as const,
@@ -45,7 +49,11 @@ describe('subscriptions.resolveCurrentOrActive', () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);
     const { userId, currentId } = await t.run(async (ctx) => {
-      const userId = await ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
       // Newest row is "other"; current points at an older but active row.
       const currentId = await ctx.db.insert('subscriptions', subFields(userId, 'cur', 'active'));
       await ctx.db.insert('subscriptions', subFields(userId, 'newer', 'active'));
@@ -61,7 +69,11 @@ describe('subscriptions.resolveCurrentOrActive', () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);
     const { userId, newerId } = await t.run(async (ctx) => {
-      const userId = await ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
       await ctx.db.insert('subscriptions', subFields(userId, 'older', 'active'));
       const newerId = await ctx.db.insert('subscriptions', subFields(userId, 'newer', 'active'));
       return { userId, newerId };
@@ -74,7 +86,11 @@ describe('subscriptions.resolveCurrentOrActive', () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);
     const { userId, activeId } = await t.run(async (ctx) => {
-      const userId = await ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
       const deletedId = await ctx.db.insert('subscriptions', subFields(userId, 'gone', 'deleted'));
       const activeId = await ctx.db.insert('subscriptions', subFields(userId, 'live', 'active'));
       await ctx.db.patch(userId, { currentSubscriptionId: deletedId });
@@ -89,7 +105,11 @@ describe('subscriptions.resolveCurrentOrActive', () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);
     const userId = await t.run(async (ctx) => {
-      const userId = await ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
       await ctx.db.insert('subscriptions', subFields(userId, 'd1', 'deleted'));
       return userId;
     });

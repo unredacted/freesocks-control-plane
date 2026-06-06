@@ -25,7 +25,6 @@
   // gives the operator a clear signal that they haven't unsaved edits and
   // prevents accidental tier-propagation jobs from no-op saves.
   let isPristine = $derived(JSON.stringify(draft) === JSON.stringify(tier));
-
 </script>
 
 <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">

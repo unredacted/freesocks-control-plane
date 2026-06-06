@@ -1,11 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import {
-  base64UrlEncode,
-  hmacSha256Hex,
-  randomHex,
-  sha256Hex,
-  timingSafeEqual,
-} from './crypto';
+import { base64UrlEncode, hmacSha256Hex, randomHex, sha256Hex, timingSafeEqual } from './crypto';
 
 describe('sha256Hex', () => {
   test('matches the known SHA-256("abc") vector', async () => {

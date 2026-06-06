@@ -63,7 +63,10 @@ export const registerBootstrapOptions = internalAction({
       throw new ConvexError({ code: 'auth.forbidden', message: 'Bootstrap secret required' });
     }
     if (await ctx.runQuery(internal.admins.hasActiveAdmin, {})) {
-      throw new ConvexError({ code: 'auth.forbidden', message: 'Bootstrap closed: an admin already exists' });
+      throw new ConvexError({
+        code: 'auth.forbidden',
+        message: 'Bootstrap closed: an admin already exists',
+      });
     }
     if (!username) throw new ConvexError({ code: 'validation', message: 'username required' });
 
@@ -100,7 +103,10 @@ export const registerBootstrapVerify = internalAction({
     // Defence in depth: a TOCTOU window exists between options→verify. Lock here
     // too so two parties racing through options can still only register one admin.
     if (await ctx.runQuery(internal.admins.hasActiveAdmin, {})) {
-      throw new ConvexError({ code: 'auth.forbidden', message: 'Bootstrap closed: an admin already exists' });
+      throw new ConvexError({
+        code: 'auth.forbidden',
+        message: 'Bootstrap closed: an admin already exists',
+      });
     }
     const consumed = await ctx.runMutation(internal.admins.consumeLatestRegistrationChallenge, {
       adminUserId: adminId,
@@ -150,7 +156,10 @@ export const authenticateOptions = internalAction({
         windowMs: 3_600_000,
       });
       if (!rl.allowed) {
-        throw new ConvexError({ code: 'rate_limit.exceeded', message: 'Too many sign-in attempts' });
+        throw new ConvexError({
+          code: 'rate_limit.exceeded',
+          message: 'Too many sign-in attempts',
+        });
       }
     }
     if (!username) throw new ConvexError({ code: 'validation', message: 'username required' });
@@ -188,7 +197,8 @@ export const authenticateVerify = internalAction({
     { challengeId, response, requestId },
   ): Promise<{ ok: true; username: string; signedCookieValue: string; maxAgeSec: number }> => {
     const consumed = await ctx.runMutation(internal.admins.consumeAuthChallenge, { challengeId });
-    if (!consumed) throw new ConvexError({ code: 'validation', message: 'Invalid or expired challenge' });
+    if (!consumed)
+      throw new ConvexError({ code: 'validation', message: 'Invalid or expired challenge' });
 
     const resp = response as AuthenticationResponseJSON;
     const credRow = await ctx.runQuery(internal.admins.credentialByCredentialId, {
@@ -208,7 +218,8 @@ export const authenticateVerify = internalAction({
         counter: credRow.counter,
       },
     });
-    if (!verification.verified) throw new ConvexError({ code: 'validation', message: 'Verification failed' });
+    if (!verification.verified)
+      throw new ConvexError({ code: 'validation', message: 'Verification failed' });
 
     await ctx.runMutation(internal.admins.bumpCredentialCounter, {
       credentialId: credRow.credentialId,
@@ -235,6 +246,11 @@ export const authenticateVerify = internalAction({
     const signingKey = process.env.ADMIN_SESSION_SIGNING_KEY;
     if (!signingKey) throw new Error('ADMIN_SESSION_SIGNING_KEY must be set');
     const signedCookieValue = await signValue(sid, signingKey);
-    return { ok: true, username: admin.username, signedCookieValue, maxAgeSec: ADMIN_TTL_MS / 1000 };
+    return {
+      ok: true,
+      username: admin.username,
+      signedCookieValue,
+      maxAgeSec: ADMIN_TTL_MS / 1000,
+    };
   },
 });

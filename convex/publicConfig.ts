@@ -44,8 +44,14 @@ export const get = query({
         deviceLimit: t.deviceLimit,
       }));
 
-    const labels = settings['subscription.backend_labels'] as { remnawave: string; outline: string };
-    const environment = (process.env.ENVIRONMENT ?? 'production') as 'production' | 'development' | 'test';
+    const labels = settings['subscription.backend_labels'] as {
+      remnawave: string;
+      outline: string;
+    };
+    const environment = (process.env.ENVIRONMENT ?? 'production') as
+      | 'production'
+      | 'development'
+      | 'test';
 
     return {
       membersJoinUrl: process.env.MEMBERS_JOIN_URL || undefined,

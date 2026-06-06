@@ -38,8 +38,7 @@ export async function issueNewSubscription(
     let mirrors: IssueResult['mirrors'] = [];
     let rawContentHash: string | undefined;
     const s3On =
-      process.env.S3_MIRRORS_ENABLED === 'true' &&
-      Number(process.env.S3_PROVIDER_COUNT ?? '0') > 0;
+      process.env.S3_MIRRORS_ENABLED === 'true' && Number(process.env.S3_PROVIDER_COUNT ?? '0') > 0;
     if (s3On) {
       const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
         backend: input.backend,

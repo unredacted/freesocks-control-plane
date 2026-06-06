@@ -44,7 +44,12 @@ class OutlineApiError extends Error {
 
 async function call<T>(
   cfg: OutlineServerConfig,
-  args: { method: 'GET' | 'POST' | 'PUT' | 'DELETE'; path: string; body?: unknown; schema: z.ZodType<T> },
+  args: {
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+    path: string;
+    body?: unknown;
+    schema: z.ZodType<T>;
+  },
 ): Promise<T> {
   // apiUrl already includes the secret path segment; append to its trailing slash.
   const base = cfg.apiUrl.endsWith('/') ? cfg.apiUrl : `${cfg.apiUrl}/`;
@@ -75,7 +80,11 @@ async function call<T>(
   }
 }
 
-async function setDataLimit(cfg: OutlineServerConfig, id: string, bytes: number | null): Promise<void> {
+async function setDataLimit(
+  cfg: OutlineServerConfig,
+  id: string,
+  bytes: number | null,
+): Promise<void> {
   if (bytes === null) {
     await call(cfg, {
       method: 'DELETE',
@@ -181,7 +190,8 @@ export async function outlineUpdate(
   backendUserId: string,
   patch: UpdateUserPatch,
 ): Promise<void> {
-  if (patch.trafficLimitBytes !== undefined) await setDataLimit(cfg, backendUserId, patch.trafficLimitBytes);
+  if (patch.trafficLimitBytes !== undefined)
+    await setDataLimit(cfg, backendUserId, patch.trafficLimitBytes);
   // No native disable: 0-byte limit is the closest soft cutoff (use delete for hard).
   if (patch.status === 'disabled') await setDataLimit(cfg, backendUserId, 0);
   if (patch.status === 'active' && patch.trafficLimitBytes === undefined) {
@@ -190,7 +200,10 @@ export async function outlineUpdate(
   // hwid / strategy / squad / tag / description / expireAt: not applicable to Outline.
 }
 
-export async function outlineDelete(cfg: OutlineServerConfig, backendUserId: string): Promise<void> {
+export async function outlineDelete(
+  cfg: OutlineServerConfig,
+  backendUserId: string,
+): Promise<void> {
   await call(cfg, {
     method: 'DELETE',
     path: `/access-keys/${encodeURIComponent(backendUserId)}`,
