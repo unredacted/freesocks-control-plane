@@ -119,6 +119,23 @@ describe('webhooks.ingest', () => {
     expect(res).toEqual({ ok: true, applied: false, reason: 'unknown_user' });
   });
 
+  test('the stored event payload redacts the account-number plaintext', async () => {
+    const t = convexTest(schema, modules);
+    const { accountId } = await seedUserAndTiers(t);
+    const body = JSON.stringify({ eventId: 'evt-redact', accountId, tierSlug: 'member' });
+    const signature = await hmacSha256Hex(SECRET, body);
+    await t.action(internal.webhooks.ingest, { rawBody: body, signature });
+    await t.run(async (ctx) => {
+      const ev = await ctx.db
+        .query('webhookEvents')
+        .withIndex('by_event_id', (q) => q.eq('eventId', 'evt-redact'))
+        .unique();
+      expect(ev).not.toBeNull();
+      expect(ev!.payload).not.toContain(accountId); // full plaintext never stored
+      expect(ev!.payload).toContain(accountId.slice(0, 4)); // 4-digit prefix retained
+    });
+  });
+
   test('an unknown tierSlug is ACKed as applied:false', async () => {
     const t = convexTest(schema, modules);
     const { accountId } = await seedUserAndTiers(t);

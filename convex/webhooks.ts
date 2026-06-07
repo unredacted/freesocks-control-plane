@@ -15,7 +15,7 @@ import { internalAction, internalMutation } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { v } from 'convex/values';
 import { hmacSha256Hex, timingSafeEqual } from './lib/crypto';
-import { hashAccountId } from './lib/accountId';
+import { hashAccountId, normalizeAccountId } from './lib/accountId';
 
 type IngestResult = { ok: true; duplicate?: boolean; applied: boolean; reason?: string };
 
@@ -44,11 +44,19 @@ export const ingest = internalAction({
     if (!eventId || !accountId || !tierSlug)
       throw new Error('eventId, accountId, tierSlug required');
 
-    // Dedupe first — a replayed eventId never reapplies.
+    // Dedupe first — a replayed eventId never reapplies. Persist a REDACTED
+    // payload: the raw body carries the account-number plaintext, which must
+    // never be stored — keep only the 4-digit prefix for tracing.
+    const safePayload = JSON.stringify({
+      eventId,
+      accountIdPrefix: normalizeAccountId(accountId).slice(0, 4),
+      tierSlug,
+      expiresAtMs: expiresAtMs ?? null,
+    });
     const dedupe = await ctx.runMutation(internal.webhooks.recordEvent, {
       eventId,
       source: 'billing',
-      payload: rawBody,
+      payload: safePayload,
     });
     if (dedupe.duplicate) return { ok: true, duplicate: true, applied: false };
 

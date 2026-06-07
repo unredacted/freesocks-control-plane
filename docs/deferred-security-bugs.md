@@ -148,15 +148,17 @@ signing. Small, contained change — bundled with the next session-related work.
 
 ---
 
-### M3. Audit log payload scrubbing — STILL APPLIES (re-review on Convex)
+### M3. Audit log payload scrubbing — ADDRESSED (Convex)
 
-> **STILL APPLIES.** `convex/audit.record` still takes `payload: v.any()` and the
-> admin write paths in `convex/adminApi.ts` are the callers. Some callers already
-> pass curated payloads (e.g. `subscription.switch_backend` logs a fixed object),
-> but there is no enforced per-action key allowlist. Re-review each
-> `audit.record` call in `convex/adminApi.ts` + `convex/account.ts` +
-> `convex/lifecycle.ts` and confirm none writes raw request bodies. The fix shape
-> is unchanged (per-action allowlist).
+> **ADDRESSED.** Re-reviewed every audit write in `convex/{adminApi,account,
+lifecycle,freeTier}.ts`: each logs a curated, explicit object (or no payload) —
+> none dumps a raw request body, so the leak vector is gone. The related (worse)
+> issue surfaced during the review: the billing webhook persisted the **raw body**
+> into `webhookEvents.payload`, and that body carries the **account-number
+> plaintext**. Fixed — `webhooks.ingest` now stores a redacted payload (eventId +
+> tierSlug + the 4-digit prefix only). Covered by `convex/webhooks.test.ts`.
+> `audit.record` still takes `payload: v.any()`; a future per-action allowlist
+> would harden against new callers, but no current caller leaks.
 
 **Location** `src/server/services/audit.ts:22-33` _(now `convex/audit.ts` + callers in `convex/adminApi.ts`)_
 
@@ -398,16 +400,18 @@ the tier editor surfaces squad management directly.
 
 ---
 
-### Bug 15. Outline WSS keys assume a required `accessUrl` (found 2026-05-29) — STILL APPLIES (Convex)
+### Bug 15. Outline WSS keys assume a required `accessUrl` (found 2026-05-29) — MITIGATED (Convex)
 
-> **STILL APPLIES.** Ported intact: in `convex/lib/backends/outline.ts` the
-> `OutlineAccessKey` schema still declares `accessUrl: z.string()` (required), and
-> `outlineIssue` reads `key.accessUrl` unconditionally as the subscription URL. A
-> WSS/`ssconf://` key lacking an inline `ss://` `accessUrl` would fail the Zod
-> parse. Still latent (Outline disabled by default, `websocketEnabled` off), still
-> blocked on the FreeSocks Outline fork's real WSS create-key response shape.
-> **Must be resolved before any WSS-enabled Outline server is registered and routed
-> to.**
+> **MITIGATED — full WSS support still blocked.** `OutlineAccessKey.accessUrl` is
+> now `z.string().optional()`, so a WSS/`ssconf://` key lacking an inline `ss://`
+> URL no longer fails the Zod parse; and `outlineIssue` / `outlineFetchContent`
+> throw a clear "WSS/dynamic-config issuance is not supported yet" error instead of
+> a confusing generic schema-mismatch (regression test: `convex/lib/backends/outline.test.ts`).
+> What's still NOT done: actually issuing a WSS key — deriving the subscription URL
+> from the fork's dynamic-config / `ssconf://` output — which remains blocked on the
+> FreeSocks Outline fork's real WSS create-key response shape (not in this repo).
+> Latent anyway (Outline disabled by default, `websocketEnabled` off). **Resolve the
+> full path before registering + routing to a WSS-enabled Outline server.**
 
 **Location** `src/server/providers/outline/types.ts:22` etc. _(now `convex/lib/backends/outline.ts`)_
 

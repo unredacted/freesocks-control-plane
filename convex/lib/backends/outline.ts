@@ -23,7 +23,10 @@ const OutlineAccessKey = z
   .object({
     id: z.string(),
     name: z.string().nullable().optional(),
-    accessUrl: z.string(),
+    // Optional: a WSS / dynamic-config (ssconf://) key may not carry an inline
+    // ss:// accessUrl, so requiring it would fail the parse before issuance
+    // (Bug 15). Readers that need a URL guard for its absence.
+    accessUrl: z.string().optional(),
     dataLimit: z.object({ bytes: z.number().int().nonnegative() }).optional(),
   })
   .passthrough();
@@ -132,6 +135,15 @@ export async function outlineIssue(
       /* noop — key is still usable */
     }
   }
+  if (!key.accessUrl) {
+    // WSS / dynamic-config (ssconf://) keys carry no inline ss:// accessUrl;
+    // deriving the URL from the fork's WSS response isn't implemented yet
+    // (Bug 15). Fail clearly rather than issuing a key with an empty URL.
+    throw new OutlineApiError(
+      'Outline key has no accessUrl — WSS/dynamic-config issuance is not supported yet',
+      { path: '/access-keys' },
+    );
+  }
   return {
     backendUserId: key.id,
     backendShortId: key.id, // Outline has no separate short form.
@@ -222,5 +234,10 @@ export async function outlineFetchContent(
   });
   // An Outline key IS its content — the ss:// URL is everything the client needs.
   // Returned as text so the S3 mirror flow has something to upload.
+  if (!key.accessUrl) {
+    throw new OutlineApiError('Outline key has no accessUrl to mirror (WSS not supported yet)', {
+      path: '/access-keys',
+    });
+  }
   return { content: `${key.accessUrl}\n`, contentType: 'text/plain' };
 }
