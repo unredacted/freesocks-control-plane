@@ -196,19 +196,8 @@ export default defineSchema({
     .index('by_challenge_id', ['challengeId'])
     .index('by_expires', ['expiresAt']),
 
-  emailLog: defineTable({
-    toEmail: v.string(),
-    subject: v.string(),
-    templateKey: v.string(),
-    params: v.any(),
-    status: v.union(v.literal('sent'), v.literal('failed'), v.literal('suppressed')),
-    providerMessageId: v.optional(v.string()),
-    error: v.optional(v.string()),
-    dedupeKey: v.optional(v.string()),
-    sentAt: v.optional(v.number()),
-  })
-    .index('by_dedupe', ['dedupeKey']) // uniqueness enforced in mutations
-    .index('by_to', ['toEmail']),
+  // (No email tables — accounts are anonymous by design; there is no email
+  // subsystem and no member email is ever collected or sent.)
 
   // Generic singleton key/value state (e.g. tier-propagation cursors).
   appState: defineTable({
