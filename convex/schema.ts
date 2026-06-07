@@ -81,8 +81,9 @@ export default defineSchema({
     disabledReason: v.optional(v.string()),
     membershipExpiresAt: v.optional(v.number()),
     suspendedAt: v.optional(v.number()),
-    // Account-number auth: store only the SHA-256 hash + a 4-digit plaintext
-    // prefix (admin search). Uniqueness of the hash is enforced in mutations.
+    // Account-number auth: store only a peppered keyed hash
+    // (HMAC-SHA256(ACCOUNT_ID_PEPPER, number)) + a 4-digit plaintext prefix
+    // (admin search). Uniqueness of the hash is enforced in mutations.
     accountIdHash: v.optional(v.string()),
     accountIdPrefix: v.optional(v.string()),
     accountIdCreatedAt: v.optional(v.number()),
