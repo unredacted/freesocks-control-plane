@@ -68,15 +68,20 @@ KV locks gone; serialized writes are now serializable mutations), **Bug 13**
 **M4** (admin-auth enumeration) are CLOSED on Convex; **L2** (Authentik
 self-provisioning) is MOOT (no OIDC).
 
-**Still open / deferred on Convex:** **Bug 15** (Outline WSS `accessUrl`, latent —
-needs the fork's response contract); Outline scoring **RTT capture** (the
+**Recently resolved (2026-06 hardening pass):** **M3** — audit writes re-reviewed
+(all curated) + the billing webhook now redacts the account-number plaintext from
+its stored payload. **Bug 15** — Outline `accessUrl` made optional + parse-safe with
+a clear error (regression test added); full WSS _issuance_ is the only piece left
+and it stays blocked on the fork's response contract.
+
+**Still open / deferred on Convex:** **Bug 15 (full WSS issuance only)** — latent
+while Outline is disabled; Outline scoring **RTT capture** (the
 `pickCandidatesForIssue` latency term is a `0` placeholder) — latent while Outline is
-disabled; **M3** (audit-payload allowlist — re-review the `audit.record` callers in
-`convex/adminApi.ts`). **Test gaps:** the `convex-test` suite covers auth/free-tier/
-lifecycle/subscriptions/webhooks/admin-API + the lib units; not yet covered — the
-proxy-backend HTTP fns (Remnawave/Outline), S3 storage, and the WebAuthn ceremonies
-(the `"use node"` modules are awkward under `convex-test`). The deferred email
-subsystem has nothing to test yet.
+disabled. **Test gaps:** the `convex-test` suite covers auth/free-tier/lifecycle/
+subscriptions/webhooks/admin-API + the lib units (incl. the Outline accessUrl path);
+not yet covered — most proxy-backend HTTP fns (Remnawave), S3 storage, and the
+WebAuthn ceremonies (the `"use node"` modules are awkward under `convex-test`). The
+email subsystem was **removed** (accounts are anonymous — no email at all).
 
 ## Security — deferred
 
