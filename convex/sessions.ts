@@ -17,14 +17,21 @@ export const create = internalMutation({
     userId: v.optional(v.id('users')),
     adminUserId: v.optional(v.id('adminUsers')),
     ttlMs: v.number(),
+    // Proof-of-possession binding (CDN-blinding Phase 2). When the client
+    // minted a session key it posts the raw P-256 public point here; the
+    // session is then PoP-bound (cookie alone is insufficient). Absent for
+    // clients that could not run the signing worker (legacy fallback).
+    popPublicKey: v.optional(v.string()),
+    popAlg: v.optional(v.string()),
   },
-  handler: async (ctx, { sid, kind, userId, adminUserId, ttlMs }) => {
+  handler: async (ctx, { sid, kind, userId, adminUserId, ttlMs, popPublicKey, popAlg }) => {
     await ctx.db.insert('sessions', {
       sid,
       kind,
       userId,
       adminUserId,
       expiresAt: Date.now() + ttlMs,
+      ...(popPublicKey ? { popPublicKey, popAlg: popAlg ?? 'ES256', popBoundAt: Date.now() } : {}),
     });
     return null;
   },

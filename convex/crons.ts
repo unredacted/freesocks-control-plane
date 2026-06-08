@@ -39,4 +39,12 @@ crons.daily(
   {},
 );
 
+// Drop consumed PoP request nonces past their freshness window (Phase 2).
+crons.daily(
+  'replay-guard-sweep',
+  { hourUTC: 3, minuteUTC: 45 },
+  internal.replayGuard.sweepExpired,
+  {},
+);
+
 export default crons;

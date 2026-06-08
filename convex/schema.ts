@@ -258,14 +258,42 @@ export default defineSchema({
   // --- new tables replacing the former KvStore namespaces ---
 
   // Member + admin sessions (was the `sessions` KV namespace + signed cookie).
+  //
+  // Proof-of-possession (CDN-blinding Phase 2): a session MAY be bound to an
+  // asymmetric PoP key minted client-side at login. `popPublicKey` is the raw
+  // uncompressed P-256 point (65 bytes, base64url) the client posted; the
+  // private half is a non-extractable CryptoKey the browser holds and the CDN
+  // never sees. Once a session carries `popPublicKey`, the signed cookie alone
+  // is NOT sufficient: each request must also carry a fresh signature over its
+  // canonical form (see convex/lib/pop.ts + the re-bind rule in lib/http.ts).
+  // Sessions minted before Phase 2 leave these unset and authenticate by cookie
+  // only until POP_REQUIRED is enabled.
   sessions: defineTable({
     sid: v.string(),
     kind: v.union(v.literal('member'), v.literal('admin')),
     userId: v.optional(v.id('users')),
     adminUserId: v.optional(v.id('adminUsers')),
     expiresAt: v.number(),
+    popPublicKey: v.optional(v.string()),
+    popAlg: v.optional(v.string()),
+    popBoundAt: v.optional(v.number()),
   })
     .index('by_sid', ['sid'])
+    .index('by_expires', ['expiresAt']),
+
+  // Single-use PoP request nonces (CDN-blinding Phase 2). Each authenticated,
+  // PoP-signed request carries a 16-byte nonce; `consumeNonce` inserts
+  // (sid, nonceHash) exactly once via a serializable mutation, so a passive CDN
+  // that captured a request cannot replay it inside its freshness window. Rows
+  // are keyed by the per-session sid + a SHA-256 hash of the nonce (the raw
+  // nonce is never stored) and swept daily by `expiresAt`. Kept separate from
+  // the rateLimits table (different lifetime, different access pattern).
+  replayGuard: defineTable({
+    sid: v.string(),
+    nonceHash: v.string(),
+    expiresAt: v.number(),
+  })
+    .index('by_sid_nonce', ['sid', 'nonceHash'])
     .index('by_expires', ['expiresAt']),
 
   // Anti-abuse counters (was the `rateLimit` KV namespace). The `bucket` key

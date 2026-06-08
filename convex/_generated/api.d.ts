@@ -35,6 +35,7 @@ import type * as lifecycle from "../lifecycle.js";
 import type * as outlineServers from "../outlineServers.js";
 import type * as publicConfig from "../publicConfig.js";
 import type * as rateLimits from "../rateLimits.js";
+import type * as replayGuard from "../replayGuard.js";
 import type * as seed from "../seed.js";
 import type * as sessions from "../sessions.js";
 import type * as storage from "../storage.js";
@@ -78,6 +79,7 @@ declare const fullApi: ApiFromModules<{
   outlineServers: typeof outlineServers;
   publicConfig: typeof publicConfig;
   rateLimits: typeof rateLimits;
+  replayGuard: typeof replayGuard;
   seed: typeof seed;
   sessions: typeof sessions;
   storage: typeof storage;
