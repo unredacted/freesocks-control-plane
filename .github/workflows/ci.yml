@@ -32,3 +32,17 @@ jobs:
 
       # Build the SPA (the only build artifact now; the backend is convex/).
       - run: bun run build
+
+  # Reproducible build (CDN-blinding Phase 3f): build twice from a clean checkout
+  # and assert byte-for-byte identical output. The printed dist-sha256 is the hash
+  # we publish out of band and an independent rebuilder reproduces (see
+  # docs/oob-verification.md).
+  reproducible-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+      - run: bash scripts/verify-reproducible.sh | tee -a "$GITHUB_STEP_SUMMARY"

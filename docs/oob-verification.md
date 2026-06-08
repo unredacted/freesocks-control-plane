@@ -1,0 +1,109 @@
+# Out-of-band verification and reproducible build (CDN-blinding Phase 3f)
+
+This is the runbook for the active-adversary tier of the CDN-blinding feature.
+Phases 1 to 3 defeat a PASSIVE CDN: the crown-jewel secrets are sealed, sessions
+are bound to a proof-of-possession key, and the login seals to a short-lived
+manifest-signed epoch key. None of that stops an ACTIVE CDN that rewrites the JS
+bundle we serve, because a browser runs whatever script the CDN hands it. The
+pinned key proves nothing on its own: a tampered bundle can carry the real key as
+a string yet seal to an attacker key.
+
+The defenses against that are (a) letting a user confirm, through a trust path
+that does NOT run through the CDN, that the key and bundle they received match
+what we published, and (b) a reproducible build so anyone can check the published
+bundle was built from the public source. This doc covers both. The strongest
+active defense, a signed verifier extension or native app, is Phase 4.
+
+Most of this is operator action at release time; what the repo automates is
+noted as such.
+
+## Anchors (independent trust paths)
+
+Publish, on every release, two values:
+
+- the **manifest public-key fingerprint** (`bun scripts/e2ee-fingerprint.mjs`),
+  which anchors the epoch keys and the revoked-kid list, and
+- the **reproducible `dist-sha256`** (`bash scripts/verify-reproducible.sh`),
+  which identifies the exact served bundle.
+
+through as many of these independent channels as are available:
+
+1. **Signed GitHub release (primary).** Tag the release with a signed git tag
+   (`git tag -s`) and put both values in the release notes. GitHub is a different
+   trust domain from the CDN, and the release is the home of the reproducible
+   hash. A user (or a journalist, or a mirror) can compare the fingerprint baked
+   into their bundle against the signed release.
+2. **Tor `.onion` mirror (high priority).** Serve the same `dist/` from an
+   `.onion` whose address is published in the signed release. The address is
+   self-authenticating (it is the service public key), it bypasses the CDN
+   entirely for the sensitive flows, and it answers the IP-correlation metadata
+   gap that the CDN otherwise has. A user who can reach Tor can fetch the bundle
+   without the CDN ever seeing the request.
+3. **DNSSEC TXT (only if DNS is independent of the CDN).** A signed TXT record
+   carrying the fingerprint. CAVEAT: if the CDN also runs your DNS, this is not an
+   independent path and adds nothing; flag that in the release notes. Skip it
+   unless DNS is hosted separately and DNSSEC-signed.
+4. **Verifier extension / native app (Phase 4).** The real active-CDN defense:
+   the trusted code ships through the browser web store or an app store, not the
+   CDN, and verifies the served content against the pinned key + hash. Tracked
+   for Phase 4 (MEGA model: the update channel is the store, not our CDN).
+
+## Reproducible build
+
+The build is deterministic given a pinned toolchain. `scripts/verify-reproducible.sh`
+builds the SPA twice from the current checkout and asserts byte-for-byte identical
+output, then prints the canonical `dist-sha256`. CI runs it on every push (the
+`reproducible-build` job in `.github/workflows/ci.yml`), so a regression in
+determinism fails the build.
+
+Recipe for a publishable hash:
+
+1. Clean checkout at the release tag (no local edits): `git clean -fdx` then
+   `bun install --frozen-lockfile` (the lockfile pins every dependency).
+2. Pinned toolchain: bun `1.3.14` (`packageManager` in `package.json`); CI uses
+   the same via `oven-sh/setup-bun`.
+3. `bash scripts/verify-reproducible.sh` and record the `dist-sha256`.
+
+Determinism notes / current limits:
+
+- Same toolchain + lockfile gives a stable hash (verified: two builds match, and
+  CI enforces it). A DIFFERENT OS/arch or bun version MAY produce a different
+  hash; pin the rebuild environment to match CI (ubuntu-latest, bun 1.3.14).
+- The SPA build embeds no wall-clock timestamps; the `VITE_*` values (including
+  the baked keys) are build inputs, so the published hash is specific to a given
+  key set. Re-publish the hash whenever the baked keys change.
+- Stronger provenance (npm/Sigstore-style attestation to Rekor, plus at least one
+  independent third-party rebuilder publishing agreement or dissent) is the next
+  increment. The repo gives the deterministic recipe + the CI double-build; the
+  Rekor attestation and the recruited rebuilder are operator/community actions.
+
+### Independent-rebuilder protocol
+
+A third party who does not trust us (or the CDN) reproduces a release:
+
+1. Check out the signed release tag; verify the tag signature.
+2. Run the recipe above; confirm `dist-sha256` matches the signed release.
+3. Optionally fetch the live bundle (via the `.onion`, off-CDN) and confirm its
+   hash matches too.
+4. Publish the result. Agreement raises confidence; any mismatch is a public
+   alarm that the served bundle diverges from the source.
+
+## Per-release operator checklist
+
+1. From a clean checkout at the tag: `bun install --frozen-lockfile`.
+2. `bun scripts/e2ee-fingerprint.mjs` -> record the manifest + static-key fingerprints.
+3. `bash scripts/verify-reproducible.sh` -> record `dist-sha256`.
+4. `git tag -s <version>` and publish a GitHub release with both values.
+5. Deploy the same `dist/` to the CDN origin and to the `.onion` mirror.
+6. If DNS is independent + DNSSEC-signed, update the TXT record.
+7. On an emergency key compromise, run
+   `bunx convex run lib/e2eeCrypto:signRevocation '{"revokedKids":["<kid>"]}'`
+   and announce the new revoked-kid list version through the same channels.
+
+## Status
+
+- Automated in the repo: SRI on entry assets, the reproducible double-build (local
+  script + CI job), the fingerprint script, the revocation break-glass action.
+- Operator action: the signed release, the `.onion` mirror, the DNSSEC TXT, the
+  Rekor attestation, and recruiting an independent rebuilder.
+- Phase 4: the verifier extension / native app + the ML-DSA manifest-key migration.

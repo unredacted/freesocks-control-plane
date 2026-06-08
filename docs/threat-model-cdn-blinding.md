@@ -2,7 +2,8 @@
 
 Design + status for the CDN-blinding feature. Full plan: `.claude/plans/`. Phase 0 gate
 artifact: `docs/e2ee-phase0-spike.md`. This doc is the standing "what is and is not protected"
-reference. Status: Phase 0 + 1 + 2 shipped on `v2`; Phase 3 + 4 are roadmap (see end).
+reference. Status: Phase 0 to 3 shipped on `v2` (Phase 3's out-of-band publication + reproducible
+rebuilder are operator runbook items, see `docs/oob-verification.md`); Phase 4 is roadmap (see end).
 
 ## Why
 
@@ -43,8 +44,9 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
 - **Runtime split (Phase 0 finding):** the Convex default V8 isolate lacks `crypto.subtle` HKDF, so
   server seal/open runs in a `"use node"` action (`convex/lib/e2eeCrypto.ts`); the public
   `httpAction`s delegate via `ctx.runAction`. The browser uses native WebCrypto.
-- **Login request leg:** the client HPKE-seals the login body (the account number) to the server's
-  pinned static key. Defeats a passive log of the login.
+- **Login request leg:** the client HPKE-seals the login body (the account number). It seals to the
+  current **epoch key** when one is available (Layer 3), else to the pinned static key. Defeats a
+  passive log of the login.
 - **Reveal response leg:** for every sensitive response (issuance / account / subscription / rotate /
   switch-backend), the client puts a fresh ephemeral public key inside the request, and the server
   seals the response to that ephemeral. This is forward-secret against later server-key compromise
@@ -85,13 +87,37 @@ asymmetric key the CDN never sees.
 See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/lib/pop.ts`,
 `convex/replayGuard.ts`, the verify path in `convex/lib/http.ts`.
 
+### Layer 3: epoch keys, revocation, and bundle hardening (Phase 3)
+
+- **Epoch keys (request-direction forward secrecy).** The server mints a short-lived hybrid KEM
+  keypair every 10 min (validity ~30 min), manifest-signs the public key, and publishes it at
+  `GET /api/v1/e2ee/keys`. The client verifies the signature against the baked manifest key
+  (`VITE_FS_MANIFEST_PK`) and seals the login to it instead of the multi-day static key. Retired
+  epoch seeds are destroyed by the sweep, so a later key compromise cannot decrypt a swept epoch's
+  logins. Any failure falls back to the static key (dual-mode). See `convex/keyEpochs.ts`,
+  `rotateEpochKey` / `openRequest` in `convex/lib/e2eeCrypto.ts`.
+- **Anti-rollback revoked-kid list.** A manifest-signed, monotonic-versioned list
+  (`e2eeCrypto.signRevocation`, served alongside the epoch key). The client persists the last-seen
+  version, rejects an older one, will not seal to a revoked kid, and fails closed on the login route
+  if the only seal target is revoked. The break-glass kill switch for a compromised static or epoch
+  key. See `convex/keyRevocations.ts`.
+- **PoP v2 (host + reveal-leg ephemeral).** The canonical message binds the host (cross-vhost replay)
+  and the GET reveal-leg ephemeral (so an active CDN cannot redirect a crown-jewel response by
+  swapping the header). See `src/shared/crypto/pop.ts`.
+- **Browser hardening.** sha384 SRI on the entry assets; COOP/CORP/Permissions-Policy + Trusted Types
+  report-only in the reverse proxy. COEP and Integrity-Policy enforcement are staged (blocked by the
+  third-party Turnstile script). See `vite.config.ts` + the Caddyfile in `docs/convex-self-hosting.md`.
+- **Out-of-band trust + reproducible build.** A signed release + `.onion` mirror publish the manifest
+  fingerprint and the reproducible `dist-sha256`; CI builds twice and asserts identical output. The
+  real active-CDN defense (a store-delivered verifier) is Phase 4. See `docs/oob-verification.md`.
+
 ## Documented residual limits
 
 - **Recipient-key compromise is a retroactive (classical) oracle within the key epoch** for the
-  request direction and any Export-based reads. Mitigated by aggressive static-key rotation; shrunk to
-  minutes by Phase 3 epoch keys; eliminated for the account-number reveals by the reveal leg. The
-  **login request (standing account number) is the dominant residual for returning users** until epoch
-  keys ship.
+  request direction. Now bounded to the epoch validity + sweep grace (tens of minutes) by the Phase 3
+  epoch keys (the login seals to the epoch key, whose seed is destroyed on sweep), and eliminated for
+  the account-number reveals by the reveal leg. The residual shrinks to a client that seals to the
+  static key because no verified epoch key was available (fallback).
 - **The PQ leg is unaudited; the hybrid backstops it.** `mlkem` (ML-KEM-768) and
   `@hpke/hybridkem-x-wing` are young / pre-standardization, whereas the X25519 leg is audited and
   decades-hardened. X-Wing is secure if either holds, so an attacker must defeat both.
@@ -102,22 +128,18 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
 - **The reveal leg's forward secrecy assumes a sound client CSPRNG.** A weak or backdoored
   `crypto.getRandomValues` (a compromised or state-provisioned device) silently weakens it, and this
   layer cannot detect or defend a compromised client.
-- **PoP host-binding is deferred to Phase 3.** The canonical message omits host/`:authority` in v1
-  (the dev reverse proxy rewrites Host with `changeOrigin`, the same reason `buildInfo` omits it).
-  The single-use nonce + ts window already defeat same-host replay, which is the real passive threat;
-  cross-vhost replay coverage is a versioned `FCP-PoP v2` addition.
-- **PoP clock-skew auto-resync is deferred to Phase 3.** v1 tolerates +/- 60s of skew; a client with a
-  badly wrong clock fails closed (re-auth) rather than being handed a server-time hint to retry with.
-- **The GET reveal-leg ephemeral header is not PoP-signed (active-CDN only).** On a reveal-leg GET the
-  response-ephemeral travels in the `x-fs-resp-eph` header, outside the signed canonical message
-  (POST reveal routes carry it in the signed body, so they are covered). An **active** CDN could swap
-  that header on a live authenticated request to have the response sealed to its own ephemeral. This
-  requires an active adversary on an already-authenticated request (a passive log cannot), so it is
-  consistent with "active CDN not defended at the browser tier"; Phase 3 folds the response-ephemeral
-  into a `FCP-PoP v2` canonical message alongside host-binding.
+- **PoP host + reveal-ephemeral binding now ship (PoP v2).** The canonical message binds host
+  (cross-vhost replay) and the reveal-leg ephemeral (the active-CDN header swap on GET reveal routes).
+  Host enforcement is lockout-proof: it is reconstructed from a client-declared header (so the
+  signature authenticates it) and checked against an allowlist only when `POP_EXPECTED_HOST` /
+  `WEBAUTHN_ORIGIN` is configured. v1 is still accepted during rollout. Clock skew is handled by a
+  `/healthz`-derived client offset plus the +/-60s window (an explicit server-pushed resync was not
+  needed).
+- **The reveal leg's forward secrecy assumes a sound client CSPRNG** (restated): a weak or backdoored
+  `crypto.getRandomValues` silently weakens it, and this layer cannot detect a compromised client.
 - **Metadata is still visible:** path, sizes, timing, IP, and the `sid` correlating a session's
   requests. Reducible later (single opaque endpoint, size-bucket padding); IP is answered by the
-  Phase 3 `.onion` mirror. We do not chase timing.
+  `.onion` mirror (an operator runbook item, `docs/oob-verification.md`). We do not chase timing.
 - The proxy **content** fetch (the native client pulling the subscription URL) is out-of-band on its
   own TLS; this layer protects delivery of the URL/key in the SPA, not that later fetch.
 
@@ -130,15 +152,20 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
 - Full `resolveMember` verify path (valid auth, replay rejected, re-bind rule, wrong key, legacy
   fallback both ways): `convex/popResolve.test.ts`.
 - Serializable nonce guard set-semantics: `convex/replayGuard.test.ts` (proven live on the backend).
+- Manifest sign/verify incl. tamper + version-bump rejection: `src/shared/crypto/manifest.test.ts`.
+  Epoch generation + revocation publish were proven live on the dev backend (rotateEpochKey ->
+  keyEpochs:current; a login sealed to the epoch key opened server-side; signRevocation versions).
+- PoP v2 host + reveal-ephemeral binding + `allowedPopHosts` env parsing: `convex/lib/pop.test.ts`.
+- Reproducible double-build: `scripts/verify-reproducible.sh` + the `reproducible-build` CI job.
 
 ## Roadmap
 
-- **Phase 3 (active-tamper + request-direction FS + honesty):** epoch keys (request-direction FS to
-  minutes; removes the long-lived KEM oracle); out-of-band key publication (signed release + `.onion`,
-  DNSSEC if independent); `/config` accepted-kid set + versioned anti-rollback revoked-kid list; the
-  `FCP-PoP v2` canonical message (host + the reveal-leg ephemeral) + clock-skew resync; COOP/COEP/CORP
-  - Permissions-Policy + SRI + Integrity-Policy + Trusted Types; reproducible build with provenance +
-    an independent rebuilder; daily static-key rotation + retired-key destruction.
+- **Phase 3 (shipped on `v2`):** epoch keys (request-direction FS to tens of minutes); manifest-signed
+  anti-rollback revoked-kid list; `FCP-PoP v2` (host + reveal-leg ephemeral) + clock-skew offset;
+  SRI + COOP/CORP/Permissions-Policy + Trusted-Types-report-only. Operator runbook items
+  (`docs/oob-verification.md`): the signed release + `.onion` mirror + DNSSEC publication, the Rekor
+  attestation, and an independent rebuilder. Staged (Turnstile-blocked): COEP require-corp +
+  Integrity-Policy enforcement.
 - **Phase 4 (true active defense + PQ signatures):** ship the client in a signed browser extension
   (MEGA model: update channel is the web store, not our CDN) / native app; migrate the manifest
   signing key to ML-DSA (FIPS 204).
