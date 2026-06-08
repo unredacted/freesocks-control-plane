@@ -18,9 +18,11 @@ import {
 } from '../../shared/crypto/envelope';
 import { clientOpenResponse, clientPrepareRequest } from '../../shared/crypto/channel';
 import { deserializePublicKey } from '../../shared/crypto/hpke';
+import { epochStatement, verifyManifest } from '../../shared/crypto/manifest';
 
 const PK_B64 = import.meta.env.VITE_FS_SERVER_HPKE_PK as string | undefined;
 const KID = import.meta.env.VITE_FS_SERVER_HPKE_KID as string | undefined;
+const MANIFEST_PK = import.meta.env.VITE_FS_MANIFEST_PK as string | undefined;
 
 export function sealingEnabled(): boolean {
   return !!PK_B64 && !!KID;
@@ -29,6 +31,60 @@ export function sealingEnabled(): boolean {
 let _serverPub: Promise<CryptoKey> | null = null;
 function serverPub(): Promise<CryptoKey> {
   return (_serverPub ??= deserializePublicKey(b64UrlToBytes(PK_B64!)));
+}
+
+// --- epoch keys (Phase 3): seal the login to a short-lived, manifest-signed key
+// instead of the multi-day static key, so a later server-key compromise cannot
+// decrypt a logged login. Verified against the baked manifest public key; ANY
+// failure (no manifest key, network error, bad signature, expired) falls back to
+// the static key, preserving dual-mode and never trusting an unverified key.
+
+interface EpochKey {
+  kid: string;
+  pub: CryptoKey;
+  notAfter: number;
+}
+let _epoch: EpochKey | null = null;
+let _epochFetch: Promise<void> | null = null;
+/** Stop using an epoch this long before its notAfter (clock skew + in-flight margin). */
+const EPOCH_MARGIN_MS = 30_000;
+
+async function refreshEpoch(): Promise<void> {
+  if (!MANIFEST_PK) return;
+  try {
+    const res = await fetch('/api/v1/e2ee/keys', { credentials: 'omit' });
+    if (!res.ok) return;
+    const body = (await res.json()) as {
+      epoch?: { kid: string; publicKey: string; notAfter: number; sig: string } | null;
+    };
+    const e = body.epoch;
+    if (!e) return;
+    const ok = verifyManifest(
+      b64UrlToBytes(MANIFEST_PK),
+      epochStatement({ kid: e.kid, publicKeyB64: e.publicKey, notAfter: e.notAfter }),
+      b64UrlToBytes(e.sig),
+    );
+    if (!ok || e.notAfter <= Date.now()) return; // tampered or expired -> ignore (static fallback)
+    _epoch = {
+      kid: e.kid,
+      pub: await deserializePublicKey(b64UrlToBytes(e.publicKey)),
+      notAfter: e.notAfter,
+    };
+  } catch {
+    // network/parse error -> keep whatever we have (or none); fall back to static.
+  }
+}
+
+/** The current verified epoch key, or null to fall back to the static key. */
+async function currentEpoch(): Promise<{ kid: string; pub: CryptoKey } | null> {
+  const fresh = () => (_epoch && _epoch.notAfter - EPOCH_MARGIN_MS > Date.now() ? _epoch : null);
+  if (fresh()) return { kid: _epoch!.kid, pub: _epoch!.pub };
+  _epochFetch ??= refreshEpoch().finally(() => {
+    _epochFetch = null;
+  });
+  await _epochFetch;
+  const e = fresh();
+  return e ? { kid: e.kid, pub: e.pub } : null;
 }
 
 export interface OutboundSeal {
@@ -51,9 +107,21 @@ export async function prepareOutbound(
   const policy = routePolicy(path);
   if (!policy) return undefined;
   const m = method.toUpperCase();
+  // Seal target: for a request-seal route (login) prefer the current epoch key;
+  // the reveal leg ignores serverPub/serverKid here (it seals the response to a
+  // client ephemeral and opens with the static KID), so static is fine there.
+  let sealPub = await serverPub();
+  let sealKid = KID!;
+  if (policy.request === 'seal') {
+    const ep = await currentEpoch();
+    if (ep) {
+      sealPub = ep.pub;
+      sealKid = ep.kid;
+    }
+  }
   const prep = await clientPrepareRequest({
-    serverPub: await serverPub(),
-    serverKid: KID!,
+    serverPub: sealPub,
+    serverKid: sealKid,
     method: m,
     path,
     policy,

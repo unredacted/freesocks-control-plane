@@ -105,6 +105,33 @@ http.route({
   handler: httpAction(async (ctx) => json(await ctx.runQuery(api.publicConfig.get, {}))),
 });
 
+// CDN-blinding Phase 3: the current manifest-signed epoch KEM public key (and,
+// from P3c, the revoked-kid list). Public + unauthenticated: the key is public
+// and the client verifies the manifest signature against its baked manifest
+// public key before sealing the login to it, so a CDN that tampers is caught.
+// Briefly cacheable (the epoch is valid for ~30 min and carries its own notAfter).
+http.route({
+  path: '/api/v1/e2ee/keys',
+  method: 'GET',
+  handler: httpAction(async (ctx) => {
+    const epoch = await ctx.runQuery(internal.keyEpochs.current, {});
+    return json(
+      {
+        epoch: epoch
+          ? {
+              kid: epoch.kid,
+              publicKey: epoch.publicKey,
+              notAfter: epoch.notAfter,
+              sig: epoch.manifestSig,
+            }
+          : null,
+      },
+      200,
+      { 'cache-control': 'public, max-age=60' },
+    );
+  }),
+});
+
 // --- subscription -----------------------------------------------------------
 
 http.route({
