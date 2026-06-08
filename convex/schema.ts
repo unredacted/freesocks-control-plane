@@ -302,6 +302,19 @@ export default defineSchema({
     .index('by_not_before', ['notBefore'])
     .index('by_expires', ['notAfter']),
 
+  // Manifest-signed revoked-kid list (CDN-blinding Phase 3c). A break-glass
+  // mechanism: an operator runs e2eeCrypto.signRevocation to publish a new
+  // version listing compromised kids (static or epoch). `version` is monotonic;
+  // the client persists the last-seen version and REJECTS an older one (a CDN
+  // cannot roll back to un-revoke a kid). Each row is a full snapshot at its
+  // version; the current row is the max version.
+  keyRevocations: defineTable({
+    version: v.number(),
+    revokedKids: v.array(v.string()),
+    notAfter: v.number(),
+    manifestSig: v.string(),
+  }).index('by_version', ['version']),
+
   // Single-use PoP request nonces (CDN-blinding Phase 2). Each authenticated,
   // PoP-signed request carries a 16-byte nonce; `consumeNonce` inserts
   // (sid, nonceHash) exactly once via a serializable mutation, so a passive CDN

@@ -18,7 +18,7 @@ import {
 } from '../../shared/crypto/envelope';
 import { clientOpenResponse, clientPrepareRequest } from '../../shared/crypto/channel';
 import { deserializePublicKey } from '../../shared/crypto/hpke';
-import { epochStatement, verifyManifest } from '../../shared/crypto/manifest';
+import { epochStatement, revocationStatement, verifyManifest } from '../../shared/crypto/manifest';
 
 const PK_B64 = import.meta.env.VITE_FS_SERVER_HPKE_PK as string | undefined;
 const KID = import.meta.env.VITE_FS_SERVER_HPKE_KID as string | undefined;
@@ -49,6 +49,59 @@ let _epochFetch: Promise<void> | null = null;
 /** Stop using an epoch this long before its notAfter (clock skew + in-flight margin). */
 const EPOCH_MARGIN_MS = 30_000;
 
+// --- revoked-kid list (Phase 3c): a manifest-signed, monotonic-versioned list
+// of compromised kids. Persisted so it survives reload and applies before the
+// first fetch; a CDN cannot roll it back to a lower version. The client refuses
+// to seal the login to a revoked kid (fail closed rather than leak plaintext).
+const REV_STORAGE_KEY = 'fs_e2ee_revocation';
+let _revVersion = -1;
+let _revokedKids = new Set<string>();
+
+(function loadPersistedRevocation() {
+  try {
+    const raw = localStorage.getItem(REV_STORAGE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw) as { version: number; revokedKids: string[] };
+    if (typeof s.version === 'number' && Array.isArray(s.revokedKids)) {
+      _revVersion = s.version;
+      _revokedKids = new Set(s.revokedKids);
+    }
+  } catch {
+    /* no/unreadable storage */
+  }
+})();
+
+function isRevoked(kid: string): boolean {
+  return _revokedKids.has(kid);
+}
+
+function applyRevocation(r: {
+  version: number;
+  revokedKids: string[];
+  notAfter: number;
+  sig: string;
+}) {
+  if (!MANIFEST_PK) return;
+  // Anti-rollback: never accept a version lower than the last we trusted.
+  if (r.version < _revVersion) return;
+  const ok = verifyManifest(
+    b64UrlToBytes(MANIFEST_PK),
+    revocationStatement({ version: r.version, notAfter: r.notAfter, revokedKids: r.revokedKids }),
+    b64UrlToBytes(r.sig),
+  );
+  if (!ok) return; // tampered -> keep the persisted list (still fail-closed on known kids)
+  _revVersion = r.version;
+  _revokedKids = new Set(r.revokedKids);
+  try {
+    localStorage.setItem(
+      REV_STORAGE_KEY,
+      JSON.stringify({ version: r.version, revokedKids: r.revokedKids }),
+    );
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 async function refreshEpoch(): Promise<void> {
   if (!MANIFEST_PK) return;
   try {
@@ -56,7 +109,9 @@ async function refreshEpoch(): Promise<void> {
     if (!res.ok) return;
     const body = (await res.json()) as {
       epoch?: { kid: string; publicKey: string; notAfter: number; sig: string } | null;
+      revocation?: { version: number; revokedKids: string[]; notAfter: number; sig: string } | null;
     };
+    if (body.revocation) applyRevocation(body.revocation);
     const e = body.epoch;
     if (!e) return;
     const ok = verifyManifest(
@@ -64,7 +119,8 @@ async function refreshEpoch(): Promise<void> {
       epochStatement({ kid: e.kid, publicKeyB64: e.publicKey, notAfter: e.notAfter }),
       b64UrlToBytes(e.sig),
     );
-    if (!ok || e.notAfter <= Date.now()) return; // tampered or expired -> ignore (static fallback)
+    // Ignore a tampered, expired, or revoked epoch key -> fall back to static.
+    if (!ok || e.notAfter <= Date.now() || isRevoked(e.kid)) return;
     _epoch = {
       kid: e.kid,
       pub: await deserializePublicKey(b64UrlToBytes(e.publicKey)),
@@ -77,7 +133,10 @@ async function refreshEpoch(): Promise<void> {
 
 /** The current verified epoch key, or null to fall back to the static key. */
 async function currentEpoch(): Promise<{ kid: string; pub: CryptoKey } | null> {
-  const fresh = () => (_epoch && _epoch.notAfter - EPOCH_MARGIN_MS > Date.now() ? _epoch : null);
+  const fresh = () =>
+    _epoch && _epoch.notAfter - EPOCH_MARGIN_MS > Date.now() && !isRevoked(_epoch.kid)
+      ? _epoch
+      : null;
   if (fresh()) return { kid: _epoch!.kid, pub: _epoch!.pub };
   _epochFetch ??= refreshEpoch().finally(() => {
     _epochFetch = null;
@@ -118,6 +177,10 @@ export async function prepareOutbound(
       sealPub = ep.pub;
       sealKid = ep.kid;
     }
+    // Fail closed: if even the chosen seal target is revoked (e.g. the static key
+    // is compromised and no valid epoch key is available), refuse to send the
+    // login rather than leak the account number in plaintext.
+    if (isRevoked(sealKid)) throw new Error('fcp_e2ee_seal_key_revoked');
   }
   const prep = await clientPrepareRequest({
     serverPub: sealPub,

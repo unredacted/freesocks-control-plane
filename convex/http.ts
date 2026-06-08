@@ -114,7 +114,10 @@ http.route({
   path: '/api/v1/e2ee/keys',
   method: 'GET',
   handler: httpAction(async (ctx) => {
-    const epoch = await ctx.runQuery(internal.keyEpochs.current, {});
+    const [epoch, revocation] = await Promise.all([
+      ctx.runQuery(internal.keyEpochs.current, {}),
+      ctx.runQuery(internal.keyRevocations.current, {}),
+    ]);
     return json(
       {
         epoch: epoch
@@ -123,6 +126,14 @@ http.route({
               publicKey: epoch.publicKey,
               notAfter: epoch.notAfter,
               sig: epoch.manifestSig,
+            }
+          : null,
+        revocation: revocation
+          ? {
+              version: revocation.version,
+              revokedKids: revocation.revokedKids,
+              notAfter: revocation.notAfter,
+              sig: revocation.manifestSig,
             }
           : null,
       },

@@ -30,7 +30,11 @@ import {
   serverKeyPairFromSeed,
 } from '../../src/shared/crypto/hpke';
 import { serverOpenRequest, serverSealResponse } from '../../src/shared/crypto/channel';
-import { epochStatement, signManifest } from '../../src/shared/crypto/manifest';
+import {
+  epochStatement,
+  revocationStatement,
+  signManifest,
+} from '../../src/shared/crypto/manifest';
 
 /** Epoch-key validity window. Longer than the rotate cadence (crons.ts) so there
  *  is always a live key with overlap; bounds request-direction retroactive
@@ -119,6 +123,38 @@ export const rotateEpochKey = internalAction({
     });
     await ctx.runMutation(internal.keyEpochs.sweepExpired, {});
     return { kid, notAfter };
+  },
+});
+
+/**
+ * Break-glass: publish a new manifest-signed revoked-kid list (Phase 3c). Bumps
+ * the monotonic version, signs the full snapshot, and stores it. Run by an
+ * operator when a static or epoch key is believed compromised:
+ *   bunx convex run lib/e2eeCrypto:signRevocation '{"revokedKids":["<kid>"]}'
+ * Pass the FULL set of kids that should be revoked (a snapshot, not a delta);
+ * passing fewer kids at a higher version un-revokes the omitted ones.
+ */
+export const signRevocation = internalAction({
+  args: { revokedKids: v.array(v.string()), ttlMs: v.optional(v.number()) },
+  handler: async (
+    ctx,
+    { revokedKids, ttlMs },
+  ): Promise<{ version: number; revokedKids: string[]; notAfter: number }> => {
+    if (!process.env.FS_MANIFEST_SK) throw new Error('FS_MANIFEST_SK must be set');
+    const cur = await ctx.runQuery(internal.keyRevocations.current, {});
+    const version = (cur?.version ?? 0) + 1;
+    const notAfter = Date.now() + (ttlMs ?? 7 * 86_400_000);
+    const sig = signManifest(
+      loadManifestSecret(),
+      revocationStatement({ version, notAfter, revokedKids }),
+    );
+    await ctx.runMutation(internal.keyRevocations.insert, {
+      version,
+      revokedKids,
+      notAfter,
+      manifestSig: bytesToB64Url(sig),
+    });
+    return { version, revokedKids, notAfter };
   },
 });
 
