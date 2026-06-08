@@ -23,6 +23,7 @@ export const insert = internalMutation({
     publicKey: v.string(),
     seed: v.string(),
     manifestSig: v.string(),
+    manifestSigPq: v.optional(v.string()),
     notBefore: v.number(),
     notAfter: v.number(),
   },
@@ -47,6 +48,7 @@ export const current = internalQuery({
       kid: row.kid,
       publicKey: row.publicKey,
       manifestSig: row.manifestSig,
+      manifestSigPq: row.manifestSigPq,
       notBefore: row.notBefore,
       notAfter: row.notAfter,
     };

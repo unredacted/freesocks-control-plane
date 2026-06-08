@@ -126,6 +126,7 @@ http.route({
               publicKey: epoch.publicKey,
               notAfter: epoch.notAfter,
               sig: epoch.manifestSig,
+              sigPq: epoch.manifestSigPq,
             }
           : null,
         revocation: revocation
@@ -134,6 +135,7 @@ http.route({
               revokedKids: revocation.revokedKids,
               notAfter: revocation.notAfter,
               sig: revocation.manifestSig,
+              sigPq: revocation.manifestSigPq,
             }
           : null,
       },

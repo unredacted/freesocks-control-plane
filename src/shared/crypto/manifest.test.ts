@@ -1,8 +1,16 @@
 // @vitest-environment node
 import { describe, expect, test } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519.js';
+import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { bytesToB64Url } from './envelope';
-import { epochStatement, revocationStatement, signManifest, verifyManifest } from './manifest';
+import {
+  epochStatement,
+  revocationStatement,
+  signManifest,
+  signManifestPq,
+  verifyManifest,
+  verifyManifestPq,
+} from './manifest';
 
 function keypair() {
   const { secretKey, publicKey } = ed25519.keygen();
@@ -37,6 +45,47 @@ describe('manifest epoch statement', () => {
     const msg = epochStatement({ kid: 'k', publicKeyB64: 'P', notAfter: 1 });
     const sig = signManifest(signer.secretKey, msg);
     expect(verifyManifest(stranger.publicKey, msg, sig)).toBe(false);
+  });
+});
+
+describe('manifest ML-DSA-65 signatures (Phase 4 post-quantum leg)', () => {
+  test('a signed statement verifies against the ML-DSA public key', () => {
+    const { secretKey, publicKey } = ml_dsa65.keygen();
+    const msg = epochStatement({ kid: 'k', publicKeyB64: 'P', notAfter: 1 });
+    const sig = signManifestPq(secretKey, msg);
+    expect(verifyManifestPq(publicKey, msg, sig)).toBe(true);
+  });
+
+  test('a tampered statement fails', () => {
+    const { secretKey, publicKey } = ml_dsa65.keygen();
+    const sig = signManifestPq(
+      secretKey,
+      epochStatement({ kid: 'k', publicKeyB64: 'P', notAfter: 1 }),
+    );
+    const swapped = epochStatement({ kid: 'k', publicKeyB64: 'ATTACKER', notAfter: 1 });
+    expect(verifyManifestPq(publicKey, swapped, sig)).toBe(false);
+  });
+
+  test('a signature from a different ML-DSA key fails', () => {
+    const signer = ml_dsa65.keygen();
+    const stranger = ml_dsa65.keygen();
+    const msg = epochStatement({ kid: 'k', publicKeyB64: 'P', notAfter: 1 });
+    expect(verifyManifestPq(stranger.publicKey, msg, signManifestPq(signer.secretKey, msg))).toBe(
+      false,
+    );
+  });
+
+  test('hybrid: the same statement is independently signed + verified by both schemes', () => {
+    const ed = ed25519.keygen();
+    const pq = ml_dsa65.keygen();
+    const msg = epochStatement({ kid: 'k', publicKeyB64: 'P', notAfter: 42 });
+    const sigEd = signManifest(ed.secretKey, msg);
+    const sigPq = signManifestPq(pq.secretKey, msg);
+    // Both verify under their own key...
+    expect(verifyManifest(ed.publicKey, msg, sigEd)).toBe(true);
+    expect(verifyManifestPq(pq.publicKey, msg, sigPq)).toBe(true);
+    // ...and neither verifies under the other's key/sig (independent legs).
+    expect(verifyManifestPq(pq.publicKey, msg, sigEd)).toBe(false);
   });
 });
 

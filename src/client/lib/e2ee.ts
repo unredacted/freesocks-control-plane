@@ -18,11 +18,39 @@ import {
 } from '../../shared/crypto/envelope';
 import { clientOpenResponse, clientPrepareRequest } from '../../shared/crypto/channel';
 import { deserializePublicKey } from '../../shared/crypto/hpke';
-import { epochStatement, revocationStatement, verifyManifest } from '../../shared/crypto/manifest';
+import {
+  epochStatement,
+  revocationStatement,
+  verifyManifest,
+  verifyManifestPq,
+} from '../../shared/crypto/manifest';
 
 const PK_B64 = import.meta.env.VITE_FS_SERVER_HPKE_PK as string | undefined;
 const KID = import.meta.env.VITE_FS_SERVER_HPKE_KID as string | undefined;
 const MANIFEST_PK = import.meta.env.VITE_FS_MANIFEST_PK as string | undefined;
+const MANIFEST_PK_PQ = import.meta.env.VITE_FS_MANIFEST_PK_PQ as string | undefined;
+
+/**
+ * Hybrid manifest verify (Phase 4): Ed25519 is required; ML-DSA-65 is ALSO
+ * required when its public key is baked (no downgrade -- a baked PQ key with a
+ * missing/invalid PQ signature is rejected). To forge, an attacker must break
+ * both, so it holds if either does. Never throws.
+ */
+function verifyManifestHybrid(
+  message: Uint8Array,
+  sigB64: string,
+  sigPqB64: string | undefined,
+): boolean {
+  if (!MANIFEST_PK) return false;
+  if (!verifyManifest(b64UrlToBytes(MANIFEST_PK), message, b64UrlToBytes(sigB64))) return false;
+  if (MANIFEST_PK_PQ) {
+    if (!sigPqB64) return false;
+    if (!verifyManifestPq(b64UrlToBytes(MANIFEST_PK_PQ), message, b64UrlToBytes(sigPqB64))) {
+      return false;
+    }
+  }
+  return true;
+}
 
 export function sealingEnabled(): boolean {
   return !!PK_B64 && !!KID;
@@ -80,14 +108,15 @@ function applyRevocation(r: {
   revokedKids: string[];
   notAfter: number;
   sig: string;
+  sigPq?: string;
 }) {
   if (!MANIFEST_PK) return;
   // Anti-rollback: never accept a version lower than the last we trusted.
   if (r.version < _revVersion) return;
-  const ok = verifyManifest(
-    b64UrlToBytes(MANIFEST_PK),
+  const ok = verifyManifestHybrid(
     revocationStatement({ version: r.version, notAfter: r.notAfter, revokedKids: r.revokedKids }),
-    b64UrlToBytes(r.sig),
+    r.sig,
+    r.sigPq,
   );
   if (!ok) return; // tampered -> keep the persisted list (still fail-closed on known kids)
   _revVersion = r.version;
@@ -108,16 +137,28 @@ async function refreshEpoch(): Promise<void> {
     const res = await fetch('/api/v1/e2ee/keys', { credentials: 'omit' });
     if (!res.ok) return;
     const body = (await res.json()) as {
-      epoch?: { kid: string; publicKey: string; notAfter: number; sig: string } | null;
-      revocation?: { version: number; revokedKids: string[]; notAfter: number; sig: string } | null;
+      epoch?: {
+        kid: string;
+        publicKey: string;
+        notAfter: number;
+        sig: string;
+        sigPq?: string;
+      } | null;
+      revocation?: {
+        version: number;
+        revokedKids: string[];
+        notAfter: number;
+        sig: string;
+        sigPq?: string;
+      } | null;
     };
     if (body.revocation) applyRevocation(body.revocation);
     const e = body.epoch;
     if (!e) return;
-    const ok = verifyManifest(
-      b64UrlToBytes(MANIFEST_PK),
+    const ok = verifyManifestHybrid(
       epochStatement({ kid: e.kid, publicKeyB64: e.publicKey, notAfter: e.notAfter }),
-      b64UrlToBytes(e.sig),
+      e.sig,
+      e.sigPq,
     );
     // Ignore a tampered, expired, or revoked epoch key -> fall back to static.
     if (!ok || e.notAfter <= Date.now() || isRevoked(e.kid)) return;

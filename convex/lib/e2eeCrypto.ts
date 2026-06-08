@@ -34,6 +34,7 @@ import {
   epochStatement,
   revocationStatement,
   signManifest,
+  signManifestPq,
 } from '../../src/shared/crypto/manifest';
 
 /** Epoch-key validity window. Longer than the rotate cadence (crons.ts) so there
@@ -46,6 +47,19 @@ function loadManifestSecret(): Uint8Array {
   const b64 = process.env.FS_MANIFEST_SK;
   if (!b64) throw new Error('FS_MANIFEST_SK must be set (bunx convex env set FS_MANIFEST_SK ...)');
   return b64UrlToBytes(b64);
+}
+
+/** Optional ML-DSA-65 manifest secret (Phase 4 hybrid); null if not configured. */
+function loadManifestSecretPq(): Uint8Array | null {
+  const b64 = process.env.FS_MANIFEST_SK_PQ;
+  return b64 ? b64UrlToBytes(b64) : null;
+}
+
+/** Sign a manifest statement with Ed25519 + (if configured) ML-DSA-65. */
+function signManifestHybrid(message: Uint8Array): { sig: string; sigPq?: string } {
+  const sig = bytesToB64Url(signManifest(loadManifestSecret(), message));
+  const pqSk = loadManifestSecretPq();
+  return pqSk ? { sig, sigPq: bytesToB64Url(signManifestPq(pqSk, message)) } : { sig };
 }
 
 /** Load + reconstruct the server X-Wing keypair from the env seed. Fails closed. */
@@ -109,15 +123,15 @@ export const rotateEpochKey = internalAction({
     const kid = await kidFromPublicKey(pkBytes);
     const notBefore = Date.now();
     const notAfter = notBefore + EPOCH_VALIDITY_MS;
-    const sig = signManifest(
-      loadManifestSecret(),
+    const { sig, sigPq } = signManifestHybrid(
       epochStatement({ kid, publicKeyB64: publicKey, notAfter }),
     );
     await ctx.runMutation(internal.keyEpochs.insert, {
       kid,
       publicKey,
       seed: bytesToB64Url(seed),
-      manifestSig: bytesToB64Url(sig),
+      manifestSig: sig,
+      ...(sigPq ? { manifestSigPq: sigPq } : {}),
       notBefore,
       notAfter,
     });
@@ -144,15 +158,15 @@ export const signRevocation = internalAction({
     const cur = await ctx.runQuery(internal.keyRevocations.current, {});
     const version = (cur?.version ?? 0) + 1;
     const notAfter = Date.now() + (ttlMs ?? 7 * 86_400_000);
-    const sig = signManifest(
-      loadManifestSecret(),
+    const { sig, sigPq } = signManifestHybrid(
       revocationStatement({ version, notAfter, revokedKids }),
     );
     await ctx.runMutation(internal.keyRevocations.insert, {
       version,
       revokedKids,
       notAfter,
-      manifestSig: bytesToB64Url(sig),
+      manifestSig: sig,
+      ...(sigPq ? { manifestSigPq: sigPq } : {}),
     });
     return { version, revokedKids, notAfter };
   },

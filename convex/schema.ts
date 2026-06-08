@@ -295,6 +295,10 @@ export default defineSchema({
     publicKey: v.string(),
     seed: v.string(),
     manifestSig: v.string(),
+    // Phase 4: the ML-DSA-65 half of the hybrid manifest signature (Ed25519 is
+    // `manifestSig`). Optional so a deployment without FS_MANIFEST_SK_PQ still
+    // mints epoch keys (Ed25519-only).
+    manifestSigPq: v.optional(v.string()),
     notBefore: v.number(),
     notAfter: v.number(),
   })
@@ -313,6 +317,7 @@ export default defineSchema({
     revokedKids: v.array(v.string()),
     notAfter: v.number(),
     manifestSig: v.string(),
+    manifestSigPq: v.optional(v.string()),
   }).index('by_version', ['version']),
 
   // Single-use PoP request nonces (CDN-blinding Phase 2). Each authenticated,

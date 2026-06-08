@@ -19,6 +19,7 @@ export const current = internalQuery({
       revokedKids: row.revokedKids,
       notAfter: row.notAfter,
       manifestSig: row.manifestSig,
+      manifestSigPq: row.manifestSigPq,
     };
   },
 });
@@ -29,6 +30,7 @@ export const insert = internalMutation({
     revokedKids: v.array(v.string()),
     notAfter: v.number(),
     manifestSig: v.string(),
+    manifestSigPq: v.optional(v.string()),
   },
   handler: async (ctx, row) => {
     await ctx.db.insert('keyRevocations', row);
