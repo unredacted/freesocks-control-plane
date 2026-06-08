@@ -41,8 +41,16 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  * generic failure. Constant-time on all account-validity failures.
  */
 export const accountLogin = internalAction({
-  args: { accountId: v.string(), turnstileToken: v.string(), ip: v.optional(v.string()) },
-  handler: async (ctx, { accountId, turnstileToken, ip }): Promise<LoginResult> => {
+  args: {
+    accountId: v.string(),
+    turnstileToken: v.string(),
+    ip: v.optional(v.string()),
+    // PoP (Phase 2): the client's session public key, bound to this session so
+    // the cookie alone is not sufficient afterward. Absent for clients without
+    // the signing worker (legacy fallback).
+    popPublicKey: v.optional(v.string()),
+  },
+  handler: async (ctx, { accountId, turnstileToken, ip, popPublicKey }): Promise<LoginResult> => {
     const start = Date.now();
     const failInvalid = async (): Promise<LoginResult> => {
       const elapsed = Date.now() - start;
@@ -97,6 +105,7 @@ export const accountLogin = internalAction({
       kind: 'member',
       userId: user._id,
       ttlMs: MEMBER_TTL_MS,
+      ...(popPublicKey ? { popPublicKey } : {}),
     });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',

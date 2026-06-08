@@ -30,6 +30,7 @@ import type * as lib_e2ee from "../lib/e2ee.js";
 import type * as lib_e2eeCrypto from "../lib/e2eeCrypto.js";
 import type * as lib_http from "../lib/http.js";
 import type * as lib_issuance from "../lib/issuance.js";
+import type * as lib_pop from "../lib/pop.js";
 import type * as lib_turnstile from "../lib/turnstile.js";
 import type * as lifecycle from "../lifecycle.js";
 import type * as outlineServers from "../outlineServers.js";
@@ -74,6 +75,7 @@ declare const fullApi: ApiFromModules<{
   "lib/e2eeCrypto": typeof lib_e2eeCrypto;
   "lib/http": typeof lib_http;
   "lib/issuance": typeof lib_issuance;
+  "lib/pop": typeof lib_pop;
   "lib/turnstile": typeof lib_turnstile;
   lifecycle: typeof lifecycle;
   outlineServers: typeof outlineServers;

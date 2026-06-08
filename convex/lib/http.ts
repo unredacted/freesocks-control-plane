@@ -14,6 +14,7 @@ import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { parseCookies, verifySignedValue } from './cookies';
 import { randomHex } from './crypto';
+import { evaluatePop, extractPopFields, REPLAY_TTL_MS } from './pop';
 
 export const MEMBER_COOKIE = 'fs_session';
 export const ADMIN_COOKIE = 'fs_admin_session';
@@ -43,11 +44,85 @@ export function errorJson(
   return json({ error: { code, message, ...(details ? { details } : {}) } }, status);
 }
 
+// Read the request body text at most once and cache it (a real Request body is
+// single-use). The PoP bodyHash and the handler's readJson share this cache so
+// that, on a plaintext route, reading one does not starve the other.
+const bodyTextCache = new WeakMap<object, Promise<string>>();
+function cachedText(req: Request): Promise<string> {
+  let p = bodyTextCache.get(req);
+  if (!p) {
+    p = Promise.resolve()
+      .then(() => req.text())
+      .catch(() => '');
+    bodyTextCache.set(req, p);
+  }
+  return p;
+}
+
 export async function readJson<T = Record<string, unknown>>(req: Request): Promise<T> {
   const ct = req.headers.get('content-type') ?? '';
   const len = req.headers.get('content-length');
   if (len === '0' || !ct.toLowerCase().includes('json')) return {} as T;
-  return (await req.json()) as T;
+  const text = await cachedText(req);
+  if (!text) return {} as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return {} as T;
+  }
+}
+
+/**
+ * The EXACT wire body bytes for the PoP bodyHash. On a sealed route the wrapper
+ * stashes the original wire body on the proxy request (the handler sees the
+ * transformed body via .text(), but PoP must hash what the client actually
+ * signed); on a plaintext route this is the cached real-body read, shared with
+ * readJson so the single-use body is consumed once.
+ */
+export async function wireBodyText(req: Request): Promise<string> {
+  const stashed = (req as { __fsWireBody?: string }).__fsWireBody;
+  if (typeof stashed === 'string') return stashed;
+  return cachedText(req);
+}
+
+/**
+ * Decide whether a cookie session's proof-of-possession requirement is satisfied
+ * for this request (CDN-blinding Phase 2). True -> proceed; false -> treat as
+ * unauthenticated.
+ *
+ *  - Bound session (popPublicKey set): a fresh, in-window, non-replayed
+ *    signature from the bound key is REQUIRED. Missing/invalid/replayed -> false
+ *    (the re-bind rule: never silently accept a new key on an old sid, which a
+ *    captured cookie could abuse).
+ *  - Legacy/unbound session (predates Phase 2): cookie alone is accepted until
+ *    POP_REQUIRED is enabled, then rejected so the client re-logs-in and binds.
+ */
+async function sessionPopOk(
+  ctx: ActionCtx,
+  req: Request,
+  sid: string,
+  popPublicKey: string | undefined,
+): Promise<boolean> {
+  if (!popPublicKey) return process.env.POP_REQUIRED !== 'true';
+  const fields = extractPopFields(req);
+  if (!fields) return false;
+  const url = new URL(req.url);
+  const { verdict, nonceHash } = await evaluatePop({
+    popPublicKey,
+    method: req.method,
+    path: url.pathname,
+    query: url.search.startsWith('?') ? url.search.slice(1) : url.search,
+    wireBody: await wireBodyText(req),
+    fields,
+    nowMs: Date.now(),
+  });
+  if (verdict !== 'ok' || !nonceHash) return false;
+  const consumed = await ctx.runMutation(internal.replayGuard.consumeNonce, {
+    sid,
+    nonceHash,
+    ttlMs: REPLAY_TTL_MS,
+  });
+  return consumed.ok;
 }
 
 export function bearerToken(req: Request): string | null {
@@ -89,7 +164,11 @@ export async function resolveMember(ctx: ActionCtx, req: Request): Promise<Membe
     if (sid) {
       const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
       if (sess && sess.kind === 'member' && sess.userId) {
-        return { userId: sess.userId, source: 'cookie' };
+        if (await sessionPopOk(ctx, req, sid, sess.popPublicKey)) {
+          return { userId: sess.userId, source: 'cookie' };
+        }
+        // Bound session without a valid PoP signature: fall through (no bearer
+        // present -> unauthenticated, which forces re-auth per the re-bind rule).
       }
     }
   }
@@ -125,7 +204,11 @@ export async function resolveAdmin(ctx: ActionCtx, req: Request): Promise<AdminA
     if (sid) {
       const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
       if (sess && sess.kind === 'admin' && sess.adminUserId) {
-        return { adminUserId: sess.adminUserId, sid };
+        if (await sessionPopOk(ctx, req, sid, sess.popPublicKey)) {
+          return { adminUserId: sess.adminUserId, sid };
+        }
+        // Bound admin session without valid PoP: fall through to the token path
+        // (no admin token present -> unauthenticated -> re-auth).
       }
     }
   }

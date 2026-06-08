@@ -191,10 +191,17 @@ export const authenticateOptions = internalAction({
 });
 
 export const authenticateVerify = internalAction({
-  args: { challengeId: v.string(), response: v.any(), requestId: v.optional(v.string()) },
+  args: {
+    challengeId: v.string(),
+    response: v.any(),
+    requestId: v.optional(v.string()),
+    // PoP (Phase 2): the admin client's session public key. Admin inherits PoP
+    // via the shared verify path once bound here.
+    popPublicKey: v.optional(v.string()),
+  },
   handler: async (
     ctx,
-    { challengeId, response, requestId },
+    { challengeId, response, requestId, popPublicKey },
   ): Promise<{ ok: true; username: string; signedCookieValue: string; maxAgeSec: number }> => {
     const consumed = await ctx.runMutation(internal.admins.consumeAuthChallenge, { challengeId });
     if (!consumed)
@@ -236,6 +243,7 @@ export const authenticateVerify = internalAction({
       kind: 'admin',
       adminUserId,
       ttlMs: ADMIN_TTL_MS,
+      ...(popPublicKey ? { popPublicKey } : {}),
     });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'admin',

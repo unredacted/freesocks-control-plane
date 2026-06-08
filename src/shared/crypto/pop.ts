@@ -56,10 +56,14 @@ export const POP_VERSION_HEADER = 'x-fs-pop-v';
  */
 export const POP_PUBKEY_FIELD = 'fsPopPub';
 
-/** PoP freshness window: a signature's `ts` must be within this of server time. */
+/**
+ * PoP freshness window: a signature's `ts` must be within +/- this of server
+ * time (symmetric, so it tolerates modest clock skew in either direction without
+ * a server-time resync channel; an explicit clock_skew resync is a Phase 3
+ * refinement). The replayGuard TTL is a multiple of this so a captured signature
+ * cannot outlive its nonce row.
+ */
 export const POP_WINDOW_MS = 60_000;
-/** Allowed forward clock skew (client ahead of server) before a resync-retry. */
-export const POP_FORWARD_SKEW_MS = 5_000;
 
 export interface PopMessageParts {
   method: string;

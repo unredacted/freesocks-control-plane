@@ -1,0 +1,169 @@
+// @vitest-environment node
+import { describe, expect, test } from 'vitest';
+import { bytesToB64Url } from '../../src/shared/crypto/envelope';
+import {
+  buildPopMessage,
+  digestB64Url,
+  POP_NONCE_HEADER,
+  POP_SIG_HEADER,
+  POP_TS_HEADER,
+  POP_VERSION,
+  POP_VERSION_HEADER,
+  POP_WINDOW_MS,
+  signP1363,
+} from '../../src/shared/crypto/pop';
+import { evaluatePop, extractPopFields, type PopFields } from './pop';
+
+/** Produce a session keypair + a valid signed request the way the client does. */
+async function signedRequest(opts: {
+  method: string;
+  path: string;
+  query?: string;
+  wireBody: string;
+  ts: number;
+  nonceByte?: number;
+}) {
+  const kp = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
+    'sign',
+    'verify',
+  ])) as CryptoKeyPair;
+  const popPublicKey = bytesToB64Url(
+    new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)),
+  );
+  const nonceB64 = bytesToB64Url(new Uint8Array(16).fill(opts.nonceByte ?? 1));
+  const bodyHashB64 = await digestB64Url(new TextEncoder().encode(opts.wireBody));
+  const msg = buildPopMessage({
+    method: opts.method,
+    path: opts.path,
+    query: opts.query,
+    bodyHashB64,
+    ts: opts.ts,
+    nonceB64,
+  });
+  const sigB64 = bytesToB64Url(await signP1363(kp.privateKey, msg));
+  const fields: PopFields = { sigB64, ts: opts.ts, nonceB64, version: POP_VERSION };
+  return { popPublicKey, fields };
+}
+
+describe('evaluatePop', () => {
+  const now = 1_700_000_000_000;
+  const base = { method: 'POST', path: '/api/v1/account/regenerate', wireBody: '{"a":1}', ts: now };
+
+  test('a valid, fresh, correctly-signed request verifies and yields a nonceHash', async () => {
+    const { popPublicKey, fields } = await signedRequest(base);
+    const r = await evaluatePop({ popPublicKey, ...base, fields, nowMs: now });
+    expect(r.verdict).toBe('ok');
+    expect(r.nonceHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test('a tampered wire body fails (bodyHash mismatch)', async () => {
+    const { popPublicKey, fields } = await signedRequest(base);
+    const r = await evaluatePop({ popPublicKey, ...base, wireBody: '{"a":2}', fields, nowMs: now });
+    expect(r.verdict).toBe('invalid');
+  });
+
+  test('a different path fails (canonical mismatch)', async () => {
+    const { popPublicKey, fields } = await signedRequest(base);
+    const r = await evaluatePop({
+      popPublicKey,
+      ...base,
+      path: '/api/v1/account/account-id/rotate',
+      fields,
+      nowMs: now,
+    });
+    expect(r.verdict).toBe('invalid');
+  });
+
+  test('a stale ts (older than the window) fails', async () => {
+    const { popPublicKey, fields } = await signedRequest(base);
+    const r = await evaluatePop({
+      popPublicKey,
+      ...base,
+      fields,
+      nowMs: now + POP_WINDOW_MS + 5_000,
+    });
+    expect(r.verdict).toBe('invalid');
+  });
+
+  test('a far-future ts (ahead of the window) fails', async () => {
+    const { popPublicKey, fields } = await signedRequest(base);
+    const r = await evaluatePop({
+      popPublicKey,
+      ...base,
+      fields,
+      nowMs: now - POP_WINDOW_MS - 5_000,
+    });
+    expect(r.verdict).toBe('invalid');
+  });
+
+  test('an unknown PoP version fails', async () => {
+    const { popPublicKey, fields } = await signedRequest(base);
+    const r = await evaluatePop({
+      popPublicKey,
+      ...base,
+      fields: { ...fields, version: 'v999' },
+      nowMs: now,
+    });
+    expect(r.verdict).toBe('invalid');
+  });
+
+  test('a signature from a different key fails', async () => {
+    const { fields } = await signedRequest(base);
+    const stranger = await signedRequest(base);
+    const r = await evaluatePop({
+      popPublicKey: stranger.popPublicKey,
+      ...base,
+      fields,
+      nowMs: now,
+    });
+    expect(r.verdict).toBe('invalid');
+  });
+
+  test('within-window clock skew (either direction) still verifies', async () => {
+    const { popPublicKey, fields } = await signedRequest(base);
+    const ahead = await evaluatePop({ popPublicKey, ...base, fields, nowMs: now - 30_000 });
+    const behind = await evaluatePop({ popPublicKey, ...base, fields, nowMs: now + 30_000 });
+    expect(ahead.verdict).toBe('ok');
+    expect(behind.verdict).toBe('ok');
+  });
+});
+
+describe('extractPopFields', () => {
+  function reqWith(headers: Record<string, string>): Request {
+    return { headers: new Headers(headers) } as unknown as Request;
+  }
+
+  test('reads all four headers', () => {
+    const f = extractPopFields(
+      reqWith({
+        [POP_SIG_HEADER]: 'sig',
+        [POP_TS_HEADER]: '1700000000000',
+        [POP_NONCE_HEADER]: 'nonce',
+        [POP_VERSION_HEADER]: POP_VERSION,
+      }),
+    );
+    expect(f).toEqual({
+      sigB64: 'sig',
+      ts: 1_700_000_000_000,
+      nonceB64: 'nonce',
+      version: POP_VERSION,
+    });
+  });
+
+  test('returns null when a header is missing', () => {
+    expect(extractPopFields(reqWith({ [POP_SIG_HEADER]: 'sig', [POP_TS_HEADER]: '1' }))).toBeNull();
+  });
+
+  test('returns null when ts is not a number', () => {
+    expect(
+      extractPopFields(
+        reqWith({
+          [POP_SIG_HEADER]: 'sig',
+          [POP_TS_HEADER]: 'not-a-number',
+          [POP_NONCE_HEADER]: 'nonce',
+          [POP_VERSION_HEADER]: POP_VERSION,
+        }),
+      ),
+    ).toBeNull();
+  });
+});

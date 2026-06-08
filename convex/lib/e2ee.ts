@@ -31,8 +31,13 @@ type RawHandler = (ctx: ActionCtx, req: Request) => Promise<Response>;
  * handler's readJson(). The handlers only touch `.headers`, `.json()`, `.text()`,
  * `.url`, and `.method`, so this delegating object suffices and keeps the
  * original headers (cookie, etc.).
+ *
+ * `__fsWireBody` carries the ORIGINAL wire body bytes (before decrypt/strip) so
+ * the PoP bodyHash in lib/http.wireBodyText hashes exactly what the client
+ * signed, while the handler's `.text()` sees the transformed (decrypted /
+ * fsRespEph-stripped) body.
  */
-function proxyReq(req: Request, bodyObj: unknown): Request {
+function proxyReq(req: Request, bodyObj: unknown, rawWireBody: string): Request {
   const text = JSON.stringify(bodyObj ?? {});
   return {
     url: req.url,
@@ -40,6 +45,7 @@ function proxyReq(req: Request, bodyObj: unknown): Request {
     headers: req.headers,
     json: async () => JSON.parse(text),
     text: async () => text,
+    __fsWireBody: rawWireBody,
   } as unknown as Request;
 }
 
@@ -70,7 +76,9 @@ export function sealed(handler: RawHandler) {
         const eph = bodyObj[RESP_EPH_FIELD];
         if (typeof eph === 'string') respEphPubB64 = eph;
         delete bodyObj[RESP_EPH_FIELD];
-        handlerReq = proxyReq(req, bodyObj);
+        // PoP hashes `raw` (the wire body WITH fsRespEph, as the client signed);
+        // the handler sees the stripped body.
+        handlerReq = proxyReq(req, bodyObj, raw);
       }
     } else if (policy.request === 'seal') {
       const raw = await req.text();
@@ -86,9 +94,9 @@ export function sealed(handler: RawHandler) {
           path,
           wireBody: parsed,
         });
-        handlerReq = proxyReq(req, opened.plaintext ?? {});
+        handlerReq = proxyReq(req, opened.plaintext ?? {}, raw);
       } else {
-        handlerReq = proxyReq(req, parsed ?? {});
+        handlerReq = proxyReq(req, parsed ?? {}, raw);
       }
     }
 
