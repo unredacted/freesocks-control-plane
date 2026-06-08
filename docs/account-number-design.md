@@ -15,7 +15,7 @@ is the **only** member credential.
 > - **Mint-at-issuance + reveal-once**: free-tier issuance mints a number
 >   (`convex/accountId.ts:mintForUser`, CSPRNG) and returns it once in the
 >   `POST /api/v1/subscription` response (`accountId` on first issue;
->   `accountIdAvailable:false` on a same-IP/day reissue). Only the SHA-256 hash +
+>   `accountIdAvailable:false` on a same-IP/day reissue). Only the peppered HMAC-SHA256 hash +
 >   4-digit prefix are persisted (`users.accountIdHash` / `accountIdPrefix`).
 > - **Rotate**: `POST /api/v1/account/account-id/rotate`
 >   (`convex/auth.ts:rotateAccountId`): new number revealed once, old hash
