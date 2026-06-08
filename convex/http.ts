@@ -17,6 +17,7 @@ import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
 import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyTurnstile } from './lib/turnstile';
+import { sealed } from './lib/e2ee';
 import {
   ADMIN_COOKIE,
   MEMBER_COOKIE,
@@ -108,7 +109,7 @@ http.route({
 http.route({
   path: '/api/v1/subscription',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const requestId = newRequestId();
     const body = await readJson<{ turnstileToken?: string; backend?: 'remnawave' | 'outline' }>(
       req,
@@ -228,7 +229,7 @@ http.route({
 http.route({
   path: '/api/v1/subscription',
   method: 'GET',
-  handler: httpAction(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req);
     if (!member) return json({ subscription: null });
     const view = await ctx.runAction(internal.account.getAccountView, { userId: member.userId });
@@ -248,7 +249,7 @@ http.route({
 http.route({
   path: '/api/v1/auth/account-login',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const body = await readJson<{ accountId?: string; turnstileToken?: string }>(req);
     if (!body.accountId || !body.turnstileToken) {
       return errorJson('validation', 'accountId and turnstileToken are required', 400);
@@ -316,7 +317,7 @@ http.route({
 http.route({
   path: '/api/v1/account',
   method: 'GET',
-  handler: httpAction(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req);
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const view = await ctx.runAction(internal.account.getAccountView, { userId: member.userId });
@@ -328,7 +329,7 @@ http.route({
 http.route({
   path: '/api/v1/account/regenerate',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req);
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const result = await ctx.runAction(internal.account.regenerate, {
@@ -342,7 +343,7 @@ http.route({
 http.route({
   path: '/api/v1/account/switch-backend',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req);
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const body = await readJson<{ backend?: 'remnawave' | 'outline'; confirm?: boolean }>(req);
@@ -374,7 +375,7 @@ http.route({
 http.route({
   path: '/api/v1/account/account-id/rotate',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req);
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const result = await ctx.runAction(internal.auth.rotateAccountId, {

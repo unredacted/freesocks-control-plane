@@ -50,6 +50,12 @@ export interface ClientPrepared {
   body: unknown;
   /** Present for 'reveal' routes: the ephemeral private key needed to open the response. */
   respEphPriv?: CryptoKey;
+  /**
+   * Present for 'reveal' routes: the base64url ephemeral public key. The caller
+   * places it in the body for a POST (already done in `body`) or in the
+   * `x-fs-resp-eph` header for a GET (which has no body).
+   */
+  respEphPubB64?: string;
 }
 
 /** Prepare an outbound request per the route policy. */
@@ -61,13 +67,15 @@ export async function clientPrepareRequest(opts: {
   policy: RoutePolicy;
   bodyObj?: unknown;
 }): Promise<ClientPrepared> {
-  let outBody: Record<string, unknown> = { ...((opts.bodyObj as object) ?? {}) };
+  const outBody: Record<string, unknown> = { ...((opts.bodyObj as object) ?? {}) };
   let respEphPriv: CryptoKey | undefined;
+  let respEphPubB64: string | undefined;
 
   if (opts.policy.response === 'reveal') {
     const eph = await generateEphemeralKeyPair();
     respEphPriv = eph.privateKey;
-    outBody[RESP_EPH_FIELD] = bytesToB64Url(await serializePublicKey(eph.publicKey));
+    respEphPubB64 = bytesToB64Url(await serializePublicKey(eph.publicKey));
+    outBody[RESP_EPH_FIELD] = respEphPubB64;
   }
 
   if (opts.policy.request === 'seal') {
@@ -81,9 +89,10 @@ export async function clientPrepareRequest(opts: {
     return {
       body: encodeEnvelope({ suiteId: SUITE_ID, kid: opts.serverKid, enc, ct }),
       respEphPriv,
+      respEphPubB64,
     };
   }
-  return { body: outBody, respEphPriv };
+  return { body: outBody, respEphPriv, respEphPubB64 };
 }
 
 /** Open a sealed response with the ephemeral private key from clientPrepareRequest. */
