@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import type { ApiError } from '../../shared/contracts/common';
 import { openInbound, prepareOutbound } from './e2ee';
+import { augmentLoginBody, signedHeaders } from './pop';
 
 class ApiCallError extends Error {
   constructor(
@@ -21,22 +22,33 @@ async function request<S extends z.ZodTypeAny>(
   const method = (init?.method ?? 'GET').toUpperCase();
   const bodyStr = typeof init?.body === 'string' ? init.body : undefined;
 
+  // PoP (Phase 2): at login, mint/ensure the session signing key and fold its
+  // public point into the body (it then gets sealed with the account number on
+  // the login route). No-op for every other route.
+  const outBodyStr = await augmentLoginBody(path, bodyStr);
+
   // CDN-blinding: seal the request body and/or set up to open a sealed response,
   // per the route policy. No-op (undefined) for non-sealed routes or when the
   // pinned key is not baked in (then everything stays plaintext, dual-mode).
-  const seal = await prepareOutbound(path, method, bodyStr);
+  const seal = await prepareOutbound(path, method, outBodyStr);
 
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     ...(init?.headers as Record<string, string> | undefined),
   };
-  let body = init?.body;
+  let body: BodyInit | undefined = outBodyStr;
   if (seal) {
     if (seal.body !== undefined) body = seal.body;
     if (seal.header) headers[seal.header.name] = seal.header.value;
   }
 
-  const res = await fetch(path, { credentials: 'include', ...init, headers, body });
+  // PoP (Phase 2): sign the EXACT wire body (post-seal) for authenticated routes.
+  // Returns null pre-login (no session key) or for ineligible routes, so the
+  // request then goes out unsigned.
+  const popHeaders = await signedHeaders(path, method, typeof body === 'string' ? body : undefined);
+  if (popHeaders) Object.assign(headers, popHeaders);
+
+  const res = await fetch(path, { credentials: 'include', method, headers, body });
   let json: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new ApiCallError(res.status, json as never);

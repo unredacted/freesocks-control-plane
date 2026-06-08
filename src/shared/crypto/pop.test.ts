@@ -69,7 +69,9 @@ describe('signP1363 / verifyP1363 round-trip (WebCrypto -> noble)', () => {
     // lowS:true regression would almost certainly fail this test.
     const { priv, pubRaw } = await sessionKey();
     for (let i = 0; i < 30; i++) {
-      const msg = buildPopMessage(baseParts({ nonceB64: bytesToB64Url(new Uint8Array(16).fill(i)) }));
+      const msg = buildPopMessage(
+        baseParts({ nonceB64: bytesToB64Url(new Uint8Array(16).fill(i)) }),
+      );
       const sig = await signP1363(priv, msg);
       expect(verifyP1363(pubRaw, msg, sig)).toBe(true);
     }

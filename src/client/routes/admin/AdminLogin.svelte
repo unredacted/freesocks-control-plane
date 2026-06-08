@@ -10,6 +10,8 @@
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
   import { router } from '../../stores/router.svelte';
+  import { ensureSessionKey } from '../../lib/pop';
+  import { POP_PUBKEY_FIELD } from '../../../shared/crypto/pop';
 
   let username = $state('');
   let error = $state<string | null>(null);
@@ -55,11 +57,19 @@
           `Passkey ceremony failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+      // PoP (Phase 2): mint/ensure the admin signing key and bind it to this
+      // session by posting its public point with the assertion. Admin then
+      // inherits PoP via the shared apiClient seam on every later request.
+      const popPub = await ensureSessionKey('admin');
       const verifyRes = await fetch('/api/admin/auth/authenticate/verify', {
         method: 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ challengeId: optsBody.challengeId, response: assertion }),
+        body: JSON.stringify({
+          challengeId: optsBody.challengeId,
+          response: assertion,
+          ...(popPub ? { [POP_PUBKEY_FIELD]: popPub } : {}),
+        }),
       });
       if (!verifyRes.ok) {
         const body = (await verifyRes.json().catch(() => ({}))) as { error?: { message?: string } };

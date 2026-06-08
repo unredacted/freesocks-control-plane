@@ -21,6 +21,7 @@
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
   import { apiClient, ApiCallError } from '../lib/api';
+  import { clearSessionKey } from '../lib/pop';
   import { accountQuery, configQuery, queryKeys } from '../lib/queries';
   import { router } from '../stores/router.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -149,6 +150,8 @@
 
   async function logout() {
     await apiClient.post('/api/v1/auth/logout', {}, z.object({ ok: z.boolean() }));
+    // Drop the PoP signing key so the next login binds a fresh one.
+    await clearSessionKey('member');
     window.location.href = '/';
   }
 
