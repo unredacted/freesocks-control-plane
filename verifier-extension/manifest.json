@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "FreeSocks bundle verifier",
+  "version": "0.1.0",
+  "description": "Confirms the FreeSocks web app served by the CDN matches the reproducible, out-of-band-published build. The verifier ships through the web store, not the CDN.",
+  "permissions": ["webNavigation", "notifications"],
+  "host_permissions": ["https://app.freesocks.org/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "FreeSocks verifier" }
+}

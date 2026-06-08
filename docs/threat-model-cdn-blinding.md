@@ -2,8 +2,10 @@
 
 Design + status for the CDN-blinding feature. Full plan: `.claude/plans/`. Phase 0 gate
 artifact: `docs/e2ee-phase0-spike.md`. This doc is the standing "what is and is not protected"
-reference. Status: Phase 0 to 3 shipped on `v2` (Phase 3's out-of-band publication + reproducible
-rebuilder are operator runbook items, see `docs/oob-verification.md`); Phase 4 is roadmap (see end).
+reference. Status: Phases 0 to 4 implemented on `v2`. The manifest trust anchor is post-quantum
+(hybrid Ed25519 + ML-DSA-65). The remaining pieces are operator-shipped, not code: the out-of-band
+publication + reproducible rebuilder (`docs/oob-verification.md`) and the verifier extension
+(`verifier-extension/`, the active-CDN defense, published through the web store).
 
 ## Why
 
@@ -121,10 +123,10 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
 - **The PQ leg is unaudited; the hybrid backstops it.** `mlkem` (ML-KEM-768) and
   `@hpke/hybridkem-x-wing` are young / pre-standardization, whereas the X25519 leg is audited and
   decades-hardened. X-Wing is secure if either holds, so an attacker must defeat both.
-- **Signatures are not yet post-quantum** (PoP ECDSA P-256, manifest Ed25519). Acceptable: PoP is
-  real-time authentication of an ephemeral session, not HNDL-confidentiality (you cannot
-  harvest-then-forge an expired session). Migrate the manifest key to ML-DSA before CRQCs are credible
-  (Phase 4); the versioned suite id makes it a bump, not a redesign.
+- **The manifest signature is now post-quantum** (Phase 4: hybrid Ed25519 + ML-DSA-65, both required
+  when the PQ key is baked, so it is unforgeable if either holds). **PoP signatures stay ECDSA P-256**
+  by design: PoP is real-time authentication of an ephemeral session, not HNDL-confidentiality (you
+  cannot harvest-then-forge an expired session), so it does not need PQ.
 - **The reveal leg's forward secrecy assumes a sound client CSPRNG.** A weak or backdoored
   `crypto.getRandomValues` (a compromised or state-provisioned device) silently weakens it, and this
   layer cannot detect or defend a compromised client.
@@ -166,6 +168,7 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
   (`docs/oob-verification.md`): the signed release + `.onion` mirror + DNSSEC publication, the Rekor
   attestation, and an independent rebuilder. Staged (Turnstile-blocked): COEP require-corp +
   Integrity-Policy enforcement.
-- **Phase 4 (true active defense + PQ signatures):** ship the client in a signed browser extension
-  (MEGA model: update channel is the web store, not our CDN) / native app; migrate the manifest
-  signing key to ML-DSA (FIPS 204).
+- **Phase 4 (implemented on `v2`):** the manifest trust anchor is hybrid Ed25519 + ML-DSA-65 (the
+  PQ-signature migration); the verifier extension scaffold (`verifier-extension/`, the MEGA-model
+  active-CDN tripwire) is in the repo for an operator to pin + publish to the web store. A native app
+  (reusing the existing native proxy clients) is the stronger sibling and the next increment.

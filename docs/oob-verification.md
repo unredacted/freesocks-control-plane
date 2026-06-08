@@ -43,10 +43,11 @@ through as many of these independent channels as are available:
    carrying the fingerprint. CAVEAT: if the CDN also runs your DNS, this is not an
    independent path and adds nothing; flag that in the release notes. Skip it
    unless DNS is hosted separately and DNSSEC-signed.
-4. **Verifier extension / native app (Phase 4).** The real active-CDN defense:
-   the trusted code ships through the browser web store or an app store, not the
-   CDN, and verifies the served content against the pinned key + hash. Tracked
-   for Phase 4 (MEGA model: the update channel is the store, not our CDN).
+4. **Verifier extension / native app (Phase 4, scaffold in `verifier-extension/`).**
+   The real active-CDN defense: trusted code ships through the browser web store
+   (not the CDN) and checks the served `index.html` hash against the pinned
+   reproducible build (MEGA model). An operator pins + publishes it; a native app
+   reusing the existing proxy clients is the stronger sibling.
 
 ## Reproducible build
 
@@ -106,4 +107,6 @@ A third party who does not trust us (or the CDN) reproduces a release:
   script + CI job), the fingerprint script, the revocation break-glass action.
 - Operator action: the signed release, the `.onion` mirror, the DNSSEC TXT, the
   Rekor attestation, and recruiting an independent rebuilder.
-- Phase 4: the verifier extension / native app + the ML-DSA manifest-key migration.
+- Phase 4 (done in-repo): the hybrid Ed25519 + ML-DSA-65 manifest key, and the verifier extension
+  scaffold (`verifier-extension/`); pinning + web-store publication of the extension, and a native
+  app, are operator actions.
