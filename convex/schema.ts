@@ -281,6 +281,27 @@ export default defineSchema({
     .index('by_sid', ['sid'])
     .index('by_expires', ['expiresAt']),
 
+  // Short-lived HPKE epoch KEM keys (CDN-blinding Phase 3). The login request
+  // seals to the CURRENT epoch key instead of the multi-day static key, so the
+  // request-direction retroactive-exposure window shrinks from days to the epoch
+  // validity (tens of minutes). `seed` is the random 32-byte X-Wing seed (a
+  // SECRET); it is generated fresh per epoch and DESTROYED by the sweep once the
+  // epoch expires, which is what gives forward secrecy (a later key compromise
+  // cannot recover a swept epoch's logins). NEVER log `seed`. `manifestSig` is
+  // the Ed25519 manifest signature over the epoch statement, so the client can
+  // verify the epoch public key it is handed via the CDN-fronted /config.
+  keyEpochs: defineTable({
+    kid: v.string(),
+    publicKey: v.string(),
+    seed: v.string(),
+    manifestSig: v.string(),
+    notBefore: v.number(),
+    notAfter: v.number(),
+  })
+    .index('by_kid', ['kid'])
+    .index('by_not_before', ['notBefore'])
+    .index('by_expires', ['notAfter']),
+
   // Single-use PoP request nonces (CDN-blinding Phase 2). Each authenticated,
   // PoP-signed request carries a 16-byte nonce; `consumeNonce` inserts
   // (sid, nonceHash) exactly once via a serializable mutation, so a passive CDN

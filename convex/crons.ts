@@ -47,4 +47,11 @@ crons.daily(
   {},
 );
 
+// Mint a fresh manifest-signed HPKE epoch key (CDN-blinding Phase 3); the login
+// request seals to the current epoch key, not the multi-day static key. Each run
+// also destroys long-expired epoch seeds (forward secrecy). No-op when the
+// manifest key is unset. A daily backstop sweep runs even if rotation stalls.
+crons.interval('epoch-key-rotate', { minutes: 10 }, internal.lib.e2eeCrypto.rotateEpochKey, {});
+crons.daily('epoch-key-sweep', { hourUTC: 3, minuteUTC: 50 }, internal.keyEpochs.sweepExpired, {});
+
 export default crons;

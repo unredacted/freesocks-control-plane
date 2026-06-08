@@ -13,9 +13,11 @@
  * actions land in P1 (the OHTTP exporter flow).
  */
 import { internalAction } from '../_generated/server';
+import { internal } from '../_generated/api';
 import { v } from 'convex/values';
 import {
   b64UrlToBytes,
+  bytesToB64Url,
   buildInfo,
   kidFromPublicKey,
   SUITE_ID,
@@ -28,6 +30,19 @@ import {
   serverKeyPairFromSeed,
 } from '../../src/shared/crypto/hpke';
 import { serverOpenRequest, serverSealResponse } from '../../src/shared/crypto/channel';
+import { epochStatement, signManifest } from '../../src/shared/crypto/manifest';
+
+/** Epoch-key validity window. Longer than the rotate cadence (crons.ts) so there
+ *  is always a live key with overlap; bounds request-direction retroactive
+ *  exposure to roughly this plus the sweep grace. */
+export const EPOCH_VALIDITY_MS = 30 * 60_000;
+
+/** Load the Ed25519 manifest secret key from env (signs epoch keys + revocations). */
+function loadManifestSecret(): Uint8Array {
+  const b64 = process.env.FS_MANIFEST_SK;
+  if (!b64) throw new Error('FS_MANIFEST_SK must be set (bunx convex env set FS_MANIFEST_SK ...)');
+  return b64UrlToBytes(b64);
+}
 
 /** Load + reconstruct the server X-Wing keypair from the env seed. Fails closed. */
 export async function loadServerKeyPair(): Promise<CryptoKeyPair> {
@@ -63,7 +78,7 @@ export const selfTest = internalAction({
   },
 });
 
-/** The server identity for the channel: private key + the kid the client pinned. */
+/** The static server identity: private key + the kid baked into the bundle. */
 async function serverContext(): Promise<{ priv: CryptoKey; kid: string }> {
   const kp = await loadServerKeyPair();
   const kid = await kidFromPublicKey(await serializePublicKey(kp.publicKey));
@@ -71,19 +86,73 @@ async function serverContext(): Promise<{ priv: CryptoKey; kid: string }> {
 }
 
 /**
+ * Mint one fresh epoch KEM keypair, manifest-sign its public key, and store it
+ * (Phase 3). Called by the rotate cron. The login request seals to the current
+ * epoch key instead of the multi-day static key, so a later key compromise
+ * cannot decrypt logins from a swept epoch. The seed is a secret stored only so
+ * openRequest can resolve it, and destroyed by keyEpochs.sweepExpired.
+ */
+export const rotateEpochKey = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ kid: string; notAfter: number } | { skipped: true }> => {
+    // No manifest key -> E2EE is not configured on this deployment; skip cleanly
+    // (the cron would otherwise error every tick). Clients fall back to static.
+    if (!process.env.FS_MANIFEST_SK) return { skipped: true };
+    const seed = crypto.getRandomValues(new Uint8Array(32));
+    const kp = await serverKeyPairFromSeed(seed);
+    const pkBytes = await serializePublicKey(kp.publicKey);
+    const publicKey = bytesToB64Url(pkBytes);
+    const kid = await kidFromPublicKey(pkBytes);
+    const notBefore = Date.now();
+    const notAfter = notBefore + EPOCH_VALIDITY_MS;
+    const sig = signManifest(
+      loadManifestSecret(),
+      epochStatement({ kid, publicKeyB64: publicKey, notAfter }),
+    );
+    await ctx.runMutation(internal.keyEpochs.insert, {
+      kid,
+      publicKey,
+      seed: bytesToB64Url(seed),
+      manifestSig: bytesToB64Url(sig),
+      notBefore,
+      notAfter,
+    });
+    await ctx.runMutation(internal.keyEpochs.sweepExpired, {});
+    return { kid, notAfter };
+  },
+});
+
+/**
  * Open a sealed request body (login). Called by the isolate `sealed()` wrapper
  * via ctx.runAction; returns the decrypted request object for the handler.
+ *
+ * The envelope `kid` selects the recipient key: the static key (kid baked into
+ * the bundle), or a Phase 3 epoch key resolved from keyEpochs. The kid is also
+ * bound into the HPKE `info`, so it must match what the client sealed with.
  */
 export const openRequest = internalAction({
   args: { method: v.string(), path: v.string(), wireBody: v.any() },
-  handler: async (_ctx, { method, path, wireBody }): Promise<{ plaintext: unknown }> => {
-    const { priv, kid } = await serverContext();
+  handler: async (ctx, { method, path, wireBody }): Promise<{ plaintext: unknown }> => {
+    const wire = wireBody as SealedWire;
+    const envKid = wire?.fsSealed?.kid;
+    const { priv: staticPriv, kid: staticKid } = await serverContext();
+
+    let priv = staticPriv;
+    let kid = staticKid;
+    if (envKid && envKid !== staticKid) {
+      // An epoch-sealed request: resolve the epoch private key by its kid. If the
+      // epoch is unknown/swept, open will fail cleanly (client refetches /config).
+      const epoch = await ctx.runQuery(internal.keyEpochs.byKid, { kid: envKid });
+      if (epoch) priv = (await serverKeyPairFromSeed(b64UrlToBytes(epoch.seed))).privateKey;
+      kid = envKid;
+    }
+
     const plaintext = await serverOpenRequest({
       serverPriv: priv,
       serverKid: kid,
       method,
       path,
-      wireBody: wireBody as SealedWire,
+      wireBody: wire,
     });
     return { plaintext };
   },

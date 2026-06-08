@@ -20,6 +20,7 @@ import type * as backends from "../backends.js";
 import type * as crons from "../crons.js";
 import type * as freeTier from "../freeTier.js";
 import type * as http from "../http.js";
+import type * as keyEpochs from "../keyEpochs.js";
 import type * as lib_accountId from "../lib/accountId.js";
 import type * as lib_backends_outline from "../lib/backends/outline.js";
 import type * as lib_backends_remnawave from "../lib/backends/remnawave.js";
@@ -65,6 +66,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   freeTier: typeof freeTier;
   http: typeof http;
+  keyEpochs: typeof keyEpochs;
   "lib/accountId": typeof lib_accountId;
   "lib/backends/outline": typeof lib_backends_outline;
   "lib/backends/remnawave": typeof lib_backends_remnawave;
