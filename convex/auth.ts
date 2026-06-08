@@ -1,7 +1,7 @@
 /**
- * Member auth (P6) — account-number login + rotate. The ONLY member identity
- * path (no OIDC, no password, no email login). Ported from the account-number
- * design (docs/account-number-design.md §3/§7) faithfully:
+ * Member auth (P6): account-number login + rotate. The ONLY member identity
+ * path (account number only; no password, no third-party login). Ported from
+ * the account-number design (docs/account-number-design.md §3/§7) faithfully:
  *
  *  - Turnstile gates every attempt (blocks headless brute force).
  *  - Per-prefix (30/day) + per-IP (10/h) STRICT rate limits.

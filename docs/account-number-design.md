@@ -1,8 +1,8 @@
 # Design: Self-service account-number authentication
 
 Every issued user gets a unique, opaque account number they use to sign back into
-their account without email or any external identity provider. It is the **only**
-member credential.
+their account without any external identity provider or stored contact details. It
+is the **only** member credential.
 
 > **Implementation status (2026-06).** Account-number auth is now **THE member
 > identity and is LIVE** on the Convex backend. The format / entropy / storage /
@@ -155,66 +155,20 @@ subsection assumed an Authentik callback that minted a number as a second login
 path. There is no OIDC callback; every user gets a number at key issuance
 instead, and it is the only path.
 
-## 5. Account page changes
+## 5. Sign-in page
 
-> **Partially NOT APPLICABLE.** There is no "Sign in with Unredacted" OIDC tab.
-> The sign-in page (`/login`) has a single account-number form (number input +
-> Turnstile) that posts to `/api/v1/auth/account-login`; on success it
-> invalidates `queryKeys.me` / `queryKeys.account` and renders the member view.
-> The two-tab design below is historical.
+The sign-in page (`/login`) has a single account-number form (number input plus
+Turnstile) that posts to `/api/v1/auth/account-login`. On success it invalidates
+`queryKeys.me` and `queryKeys.account` and renders the member view.
 
-`/account` (unauthenticated): two tabs.
+## 6. Member-link flow — not applicable (OIDC removed)
 
-- **Sign in with Unredacted** (existing OIDC button)
-- **Sign in with account number** (new form — number input + Turnstile)
-
-Submit posts to `/api/v1/auth/account-login`. On success: invalidate
-`queryKeys.me` and `queryKeys.account`. After login the route renders
-identically to the existing OIDC-session view.
-
-## 6. Member-link flow — NOT APPLICABLE (OIDC removed)
-
-> **This entire section does not apply.** There is no OIDC identity to link to and
-> no admin merge flow. Account numbers stand alone. The transitions below
-> ((a) link an account-number session to OIDC, (b) reveal/rotate for an OIDC user,
-> (c) admin merge of two anonymous accounts) were never built and are not planned
-> in this form. Rotation (`POST /api/v1/account/account-id/rotate`) is the only
-> credential-management operation that shipped. Retained for historical context.
-
-Three transitions, all converging on one user row:
-
-### (a) Account-number session is current; user starts OIDC
-
-`/api/auth/login` already takes a `returnTo`. Pass through the current
-`fs_session` (account-id-sourced) intact during the OIDC dance. In the
-callback, before `upsertMemberUser`, check `c.var.member`. If present AND
-`member.authentikSubject` is null AND the incoming OIDC subject doesn't
-already map to a different user, mutate the existing user row:
-
-```
-set authentik_subject = verified.sub
-set civicrm_contact_id = contact?.id
-set email = userInfo.email
-```
-
-Audit-log `account.link.oidc`. Same user row, history preserved.
-
-### (b) OIDC user without anonymous origin wants an account number
-
-Their user row already has `account_id_hash` (set by §4 above). The number is
-hashed and we cannot re-display it. Add a UI affordance on `/account`
-("Reveal account number") that **rotates**: button → new identifier minted,
-one-time reveal, old hash overwritten, audit-logged. Document rotation as the
-only path to revisit your number.
-
-### (c) User has two anonymous accounts to consolidate
-
-Manual support flow. Add admin-side `POST /api/v1/admin/users/:id/merge` that
-takes a source user id and target user id: copies tier history rows pointing
-to source over to target, tombstones source's subscription (24h grace),
-nullifies source's `account_id_hash`, sets `status='deleted'`, audit-logs
-`user.merge`. Admin-only — too many ways for a user to merge into someone
-else's account if exposed end-user-side.
+There is no external identity to link to and no admin merge flow. Account numbers
+stand alone. Rotation (`POST /api/v1/account/account-id/rotate`) is the only
+credential-management operation, and it is the only way to revisit a number after
+its one-time reveal. An earlier draft described linking an account-number session
+to an external identity and an admin merge of two anonymous accounts; neither was
+built, and neither is planned.
 
 ## 7. Security
 
@@ -227,11 +181,10 @@ else's account if exposed end-user-side.
   and the request id. Never include it in audit `payload`. Error messages refer
   to "the submitted credential". The plaintext value lives in one place only:
   the response to the issuing call, in TLS-protected transport.
-- **Forgot my number**: irrecoverable by design. UX states this once at
-  issuance ("You won't be able to recover this. Save it now."). **Do NOT** offer
-  email-based recovery — it would add an email-account-takeover dependency the
-  system specifically avoids. _(The original "members re-auth via OIDC" fallback
-  no longer exists — OIDC was removed. There is no second recovery path.)_
+- **Forgot my number**: irrecoverable by design. The UI states this once at
+  issuance ("You won't be able to recover this. Save it now."). Do NOT add an
+  out-of-band recovery channel: it would reintroduce the account-takeover
+  dependency the system avoids. There is no second recovery path.
 - **Account takeover**: if a number leaks, the legitimate user (while still
   signed in) rotates via `POST /api/v1/account/account-id/rotate`, which
   immediately invalidates the old number. If they've already lost access, the
@@ -241,8 +194,8 @@ else's account if exposed end-user-side.
 
 ## 8. Audit and admin
 
-- New audit actions: `account.login.account_id`, `account.id.issue`,
-  `account.id.rotate`, `account.link.oidc`, `user.merge`.
+- Audit actions: `account.login.account_id`, `account.id.issue`,
+  `account.id.rotate`.
 - Admin search: `GET /api/v1/admin/users?accountIdPrefix=1234` — prefix match
   against `users.account_id_prefix`. Never permit full-number lookup (no way to
   verify without rehash, and the lookup itself becomes an enumeration oracle).
@@ -256,7 +209,7 @@ else's account if exposed end-user-side.
 
 ## 9. Out of scope (v1)
 
-- Email-based recovery / "forgot my number" reset
+- Out-of-band account recovery / "forgot my number" reset
 - SMS or phone-based auth
 - Vanity / custom identifiers
 - Multiple identifiers per user (one canonical; rotation replaces)

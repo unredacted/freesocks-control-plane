@@ -166,8 +166,8 @@
         {#if me.isPending}
           Loading…
         {:else if me.data?.authenticated}
-          Signed in as <strong class="text-foreground">{me.data.member?.email ?? 'member'}</strong>
-          on the <strong class="text-foreground">{me.data.member?.tier.name}</strong> tier.
+          Signed in on the
+          <strong class="text-foreground">{me.data.member?.tier.name}</strong> tier.
         {:else}
           Solve the human-check below to issue a free key.
         {/if}

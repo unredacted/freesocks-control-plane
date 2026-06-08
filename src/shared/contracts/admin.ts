@@ -38,9 +38,12 @@ export type TierUpsert = z.infer<typeof TierUpsert>;
 
 export const UserAdmin = z.object({
   id: z.string(),
-  // Always null post-OIDC-removal (kept so the SPA's display fallback compiles).
-  authentikSubject: z.string().nullable(),
-  email: z.string().email().nullable(),
+  /**
+   * First 4 digits of the member's account number. Non-secret and
+   * admin-searchable (a full number is never exposed). Null until issuance
+   * mints one. This is the only human-readable handle for an anonymous member.
+   */
+  accountIdPrefix: z.string().nullable(),
   status: UserStatus,
   tierSlug: TierSlug,
   membershipExpiresAt: z.string().datetime().nullable(),

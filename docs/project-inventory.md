@@ -116,9 +116,10 @@ Detailed companions, referenced rather than duplicated here:
 - **S3 subscription mirrors** (`convex/storage.ts`, `"use node"`) — N providers from env
   (`S3_MIRRORS_ENABLED`, `S3_PROVIDER_*`); the censorship-resistance hedge. **Dormant**
   (off unless configured).
-- **Email subsystem** — **Deferred.** The lifecycle transitions (welcome / grace-warning /
-  disabled) fire and audit, but **send nothing**: there is no email provider wired. An
-  `emailLog` table + a `templateKey`/`dedupeKey` shape exist as the foundation. See §2.
+- **Email / notifications** — **Intentionally absent.** Accounts are anonymous: no contact
+  details are collected and the control plane sends nothing. Lifecycle transitions (grace,
+  disabled) are recorded to the audit log only. There is no email subsystem, and adding one
+  is a non-goal.
 
 ### 1.8 Scheduled jobs (`convex/crons.ts`) — **Live**
 
@@ -148,7 +149,6 @@ the companion docs. Sizes: S/M/L.
 
 | Item                                                                                                                                                                                                                                                   | Size | Where it's tracked          |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---- | --------------------------- |
-| **Email subsystem** — welcome / grace-warning / disabled notifications. The lifecycle transitions fire + audit but send nothing; the `emailLog` table is the only foundation. Pick a provider, add a `"use node"` action, wire it into `lifecycle.ts`. | M    | this file (§1.7)            |
 | **Billing portal integration** — the webhook seam (`/api/webhooks/billing` → `setMembership`) is ready; the in-house portal that calls it is the future entitlement source.                                                                            | L    | this file (§1.7)            |
 | **Paid cross-backend switch** — `account.switchBackend` returns 409 for paid tiers until the billing portal defines cross-backend tier linkage. Needs the portal's tier model.                                                                         | M    | `convex/account.ts`         |
 | **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent) — needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                        | M    | `deferred-security-bugs.md` |
@@ -165,7 +165,6 @@ the companion docs. Sizes: S/M/L.
 
 | Symbol / artifact                                      | Location                                                                                                                      | Why it has no (full) caller                                                                                                                                             | Disposition                    |
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| `emailLog` table + `EmailDelivery` shape               | `convex/schema.ts`                                                                                                            | Foundation for the deferred email subsystem; lifecycle transitions fire but nothing sends yet.                                                                          | **Keep** (deferred — §1.7)     |
 | `webhooks.ingest` billing seam                         | `convex/webhooks.ts`, `convex/http.ts`                                                                                        | The single inbound point for the future billing portal; HMAC + dedupe + `setMembership` are all live, but no portal calls it today.                                     | **Keep** (seam ready)          |
 | Entire **Outline** subsystem                           | `convex/backends.ts` (outline branches), `convex/lib/backends/outline.ts`, `convex/outlineServers.ts`, admin server routes/UI | Fully wired but unreachable until `outline.enabled=true` + a server is registered. Within it: pool scoring uses a `latency*0` placeholder; `prometheusUrl` is reserved. | **Keep** (dormant)             |
 | S3 mirroring (`storage.ts`)                            | `convex/storage.ts`, `convex/lib/issuance.ts`                                                                                 | Skipped entirely unless `S3_MIRRORS_ENABLED=true` + providers configured.                                                                                               | **Keep** (dormant)             |

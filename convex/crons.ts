@@ -5,10 +5,8 @@
  * live-tested in P5/P6. Bulk sweeps take a bounded page per run (the functions
  * cap at 100–500 rows) and simply catch up on the next tick.
  *
- * Tier propagation is NOT a cron: it's event-driven — lifecycle.setMembership
+ * Tier propagation is NOT a cron: it's event-driven. lifecycle.setMembership
  * schedules pushTierToBackend via ctx.scheduler.runAfter on each tier change.
- *
- * Deferred: the email subsystem (welcome / grace-warning / disabled).
  */
 import { cronJobs } from 'convex/server';
 import { internal } from './_generated/api';

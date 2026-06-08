@@ -1,12 +1,11 @@
 <script lang="ts" module>
   /**
    * Recursively redact known sensitive fields client-side before showing the
-   * audit payload. Server-side audit records may include PII (emails, IP
-   * hashes, token prefixes, contact ids) — admins can choose to reveal it but
-   * it should not be on screen by default.
+   * audit payload. Server-side audit records may carry sensitive values (IP
+   * hashes, token prefixes, raw payloads). Admins can reveal a single row on
+   * demand, but nothing sensitive renders by default.
    */
   const SENSITIVE_KEYS = new Set([
-    'email',
     'ipHash',
     'ip_hash',
     'ip',
@@ -14,12 +13,6 @@
     'token_prefix',
     'plaintext',
     'token',
-    'authentikSubject',
-    'authentik_subject',
-    'civicrmContactId',
-    'civicrm_contact_id',
-    'contactId',
-    'contact_id',
     'rawPayload',
     'raw_payload',
   ]);
@@ -56,7 +49,7 @@
 <AdminLayout>
   <h1 class="text-2xl font-bold mb-6">Audit log</h1>
   <p class="text-sm text-muted-foreground mb-4">
-    Sensitive fields (email, IP hash, token prefix, contact id) are redacted by default. Click "Show
+    Sensitive fields (IP hash, token prefix, raw payload) are redacted by default. Click "Show
     raw" on a row to reveal the unredacted payload for that entry.
   </p>
 

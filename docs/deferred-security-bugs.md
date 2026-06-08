@@ -80,8 +80,7 @@ while Outline is disabled; Outline scoring **RTT capture** (the
 disabled. **Test gaps:** the `convex-test` suite covers auth/free-tier/lifecycle/
 subscriptions/webhooks/admin-API + the lib units (incl. the Outline accessUrl path);
 not yet covered — most proxy-backend HTTP fns (Remnawave), S3 storage, and the
-WebAuthn ceremonies (the `"use node"` modules are awkward under `convex-test`). The
-email subsystem was **removed** (accounts are anonymous — no email at all).
+WebAuthn ceremonies (the `"use node"` modules are awkward under `convex-test`).
 
 ## Security — deferred
 
@@ -235,10 +234,9 @@ trusts the Authentik member list).
 
 **Location** `src/server/services/membership-sync.ts:294` _(now `convex/lifecycle.ts`)_
 
-**The issue.** Disable transition is hardcoded to 7 days; the grace-warning
-email uses each tier's configured value. If an admin configures a 14-day grace
-on a tier, the warning email tells the user one date but actual disable fires
-after 7.
+**The issue.** The disable transition was hardcoded to 7 days and ignored each
+tier's configured `expirationDaysAfterMembershipLapse`. If an admin set a 14-day
+grace on a tier, disable still fired after 7.
 
 **Fix.** Either compute the per-row cutoff using each row's tier's
 `expirationDaysAfterMembershipLapse`, or denormalize a `graceEndsAt`

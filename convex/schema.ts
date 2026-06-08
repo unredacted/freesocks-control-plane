@@ -74,7 +74,6 @@ export default defineSchema({
     .index('by_active', ['isActive']),
 
   users: defineTable({
-    email: v.optional(v.string()),
     tierId: v.id('tiers'),
     currentSubscriptionId: v.optional(v.id('subscriptions')),
     status: userStatus,
@@ -156,7 +155,6 @@ export default defineSchema({
   adminUsers: defineTable({
     username: v.string(),
     displayName: v.string(),
-    email: v.optional(v.string()),
     isActive: v.boolean(),
     updatedAt: v.number(),
     lastLoginAt: v.optional(v.number()),
@@ -196,8 +194,8 @@ export default defineSchema({
     .index('by_challenge_id', ['challengeId'])
     .index('by_expires', ['expiresAt']),
 
-  // (No email tables — accounts are anonymous by design; there is no email
-  // subsystem and no member email is ever collected or sent.)
+  // Accounts are anonymous by design: no contact details are ever collected,
+  // and the control plane sends no notifications.
 
   // Generic singleton key/value state (e.g. tier-propagation cursors).
   appState: defineTable({

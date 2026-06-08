@@ -5,9 +5,6 @@ export const AuthMeResponse = z.object({
   authenticated: z.boolean(),
   member: z
     .object({
-      contactId: z.number().int().nullable(),
-      email: z.string().email().optional(),
-      displayName: z.string().optional(),
       tier: z.object({ slug: TierSlug, name: z.string() }),
     })
     .optional(),

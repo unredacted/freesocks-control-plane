@@ -106,7 +106,6 @@ describe('adminApi usersSearch', () => {
       });
       await ctx.db.insert('users', {
         tierId,
-        email: 'alice@example.com',
         status: 'active',
         updatedAt: Date.now(),
       });

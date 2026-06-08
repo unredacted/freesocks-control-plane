@@ -265,14 +265,9 @@
          not by everything being framed. -->
     <header class="flex items-start justify-between gap-4 flex-wrap">
       <div>
-        <h1 class="text-3xl font-display font-bold tracking-tight">
-          Welcome{data.user.email ? `, ${data.user.email.split('@')[0]}` : ''}
-        </h1>
+        <h1 class="text-3xl font-display font-bold tracking-tight">Welcome</h1>
         <p class="text-sm text-muted-foreground mt-1">
           Tier <strong class="text-foreground">{data.user.tier.name}</strong>
-          {#if membership?.currentTypeName}
-            <span> · membership: {membership.currentTypeName}</span>
-          {/if}
         </p>
       </div>
       <div class="flex items-center gap-1 shrink-0">

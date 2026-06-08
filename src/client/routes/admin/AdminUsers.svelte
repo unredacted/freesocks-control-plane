@@ -31,6 +31,13 @@
       resync: () => null,
     };
 
+  // Anonymous members have no name. The 4-digit account-number prefix is the
+  // handle admins search by; fall back to a short id slice before issuance
+  // mints one.
+  function userLabel(u: z.infer<typeof UserAdmin>): string {
+    return u.accountIdPrefix ? `Account ${u.accountIdPrefix}…` : `User ${u.id.slice(0, 8)}`;
+  }
+
   // The text the user has typed but not yet committed (Enter or Search button).
   // We only update the actual queryKey input on commit so each keystroke
   // doesn't fire a fresh request — that's the whole point of separating
@@ -68,7 +75,7 @@
   }));
 
   function startAction(user: z.infer<typeof UserAdmin>, op: UserOp) {
-    const copy = OP_COPY[op](user.email ?? user.authentikSubject ?? `user #${user.id}`);
+    const copy = OP_COPY[op](userLabel(user));
     if (!copy) {
       // No confirmation needed (resync) — fire immediately.
       userAction.mutate({ user, op });
@@ -83,9 +90,7 @@
 
   let pendingCopy = $derived(
     pending
-      ? OP_COPY[pending.op](
-          pending.user.email ?? pending.user.authentikSubject ?? `user #${pending.user.id}`,
-        )
+      ? OP_COPY[pending.op](userLabel(pending.user))
       : null,
   );
 </script>
@@ -94,7 +99,7 @@
   <h1 class="text-2xl font-bold mb-6">Users</h1>
   <div class="flex gap-2 mb-6">
     <Input
-      placeholder="Search by email or account-number prefix..."
+      placeholder="Search by account-number prefix (first 4 digits)…"
       bind:value={inputText}
       onkeydown={(e) => {
         if (e.key === 'Enter') activeQuery = inputText;
@@ -137,7 +142,7 @@
         <Card>
           <CardHeader>
             <CardTitle class="text-lg">
-              {u.email ?? u.authentikSubject ?? `user #${u.id}`}
+              {userLabel(u)}
             </CardTitle>
           </CardHeader>
           <CardContent class="text-sm space-y-1">

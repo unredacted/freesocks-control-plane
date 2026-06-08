@@ -287,8 +287,7 @@ async function mapUser(
   const cur = await currentBackendForUser(ctx, u);
   return {
     id: u._id as string,
-    authentikSubject: null,
-    email: u.email ?? null,
+    accountIdPrefix: u.accountIdPrefix ?? null,
     status: u.status,
     tierSlug: tierSlugById.get(u.tierId) ?? 'free',
     membershipExpiresAt: u.membershipExpiresAt != null ? iso(u.membershipExpiresAt) : null,
@@ -300,9 +299,9 @@ async function mapUser(
 
 /**
  * Admin user search. Filters:
- *  - `q`: matches a 4-digit account-number prefix (uses the prefix index, never
- *    a full-number oracle) OR an exact email; falls back to a scan-substring on
- *    email when neither index hits.
+ *  - `q`: a 4-digit account-number prefix, looked up via the prefix index (a
+ *    full number is never an admin oracle). The prefix is the only searchable
+ *    handle for an anonymous member, so any non-prefix query matches nothing.
  *  - `status` / `tier`: post-filters.
  * Pagination is a keyset over `_creationTime` desc via an opaque cursor.
  */
@@ -327,23 +326,14 @@ export const usersSearch = internalQuery({
     // Targeted lookups when `q` clearly identifies a single user — these short
     // out before the paginated scan and ignore the cursor (small result set).
     if (trimmed) {
-      const matches: Doc<'users'>[] = [];
-      if (/^\d{4}$/.test(trimmed)) {
-        const byPrefix = await ctx.db
-          .query('users')
-          .withIndex('by_account_id_prefix', (idx) => idx.eq('accountIdPrefix', trimmed))
-          .take(pageSize);
-        matches.push(...byPrefix);
-      } else if (trimmed.includes('@')) {
-        // No email index; bounded scan for an exact (case-insensitive) match.
-        const all = await ctx.db.query('users').order('desc').take(1000);
-        const needle = trimmed.toLowerCase();
-        matches.push(...all.filter((u) => (u.email ?? '').toLowerCase() === needle));
-      } else {
-        const all = await ctx.db.query('users').order('desc').take(1000);
-        const needle = trimmed.toLowerCase();
-        matches.push(...all.filter((u) => (u.email ?? '').toLowerCase().includes(needle)));
-      }
+      // The 4-digit account-number prefix is the only searchable handle; any
+      // other query has nothing to match against (members are anonymous).
+      const matches: Doc<'users'>[] = /^\d{4}$/.test(trimmed)
+        ? await ctx.db
+            .query('users')
+            .withIndex('by_account_id_prefix', (idx) => idx.eq('accountIdPrefix', trimmed))
+            .take(pageSize)
+        : [];
       const filtered = matches
         .filter((u) => (status ? u.status === status : true))
         .filter((u) => (tier ? u.tierId === tierIdBySlug.get(tier) : true))

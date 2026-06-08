@@ -305,8 +305,6 @@ http.route({
     return json({
       authenticated: true,
       member: {
-        contactId: null,
-        email: user.email ?? undefined,
         tier: { slug: tier.slug, name: tier.name },
       },
     });

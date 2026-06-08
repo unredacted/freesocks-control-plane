@@ -3,9 +3,8 @@
  * active→grace→disabled sweep + free-tier cleanup. Ported from the surviving
  * half of services/membership-sync.ts and FreeTierService.cleanupExpired.
  *
- * Email notifications (grace-warning / disabled / welcome) are intentionally
- * deferred to a later phase — they need the email-provider subsystem and are a
- * standalone concern. The transitions + audit happen here regardless.
+ * Transitions are recorded to the audit log but trigger no user notifications:
+ * accounts are anonymous, so the control plane has no contact channel by design.
  *
  * Handlers that reference same-file `internal.lifecycle.*` carry explicit return
  * types to break Convex's self-reference inference cycle.

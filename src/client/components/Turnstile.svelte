@@ -33,18 +33,18 @@
    *      communicating with Cloudflare's verification backend over the
    *      embedding origin. Self-hosting the JS file does not bypass that;
    *      it just breaks the widget entirely.
-   *   2. It is load-bearing for anti-abuse. The free-tier rate-limiter (KV
-   *      + D1 backstop) is the second line of defense; Turnstile is the
-   *      first. Removing it lets attackers mint free-tier keys at machine
-   *      speed.
-   *   3. It is same-trust-boundary. The control plane already runs on
-   *      Cloudflare Workers and uses Cloudflare D1, KV, and Email Sending.
-   *      Adding `challenges.cloudflare.com` to the trust set does not
-   *      meaningfully expand the surface area.
+   *   2. It is load-bearing for anti-abuse. The free-tier rate limiter (the
+   *      serializable per-IP/day cap) is the second line of defense; Turnstile
+   *      is the first. Removing it lets attackers mint free-tier keys at
+   *      machine speed.
+   *   3. It is the one sanctioned third-party script. Self-hosting everything
+   *      else, fonts included, is a deliberate censorship-resistance choice, so
+   *      Turnstile is the single accepted exception. Adding
+   *      `challenges.cloudflare.com` to the trust set is a known, bounded cost.
    *
    * If a self-hostable alternative becomes available (a different captcha
    * provider with a bundleable widget, or an alternative anti-abuse design
-   * — proof-of-work, identity proofs, etc.) this exception should be
+   * such as proof-of-work or identity proofs) this exception should be
    * revisited.
    */
   interface Props {

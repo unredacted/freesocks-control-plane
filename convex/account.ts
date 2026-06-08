@@ -23,7 +23,6 @@ type Backend = 'remnawave' | 'outline';
 interface AccountView {
   user: {
     id: Id<'users'>;
-    email?: string;
     status: 'active' | 'grace' | 'disabled' | 'deleted';
     tier: {
       slug: string;
@@ -103,7 +102,6 @@ export const getAccountView = internalAction({
     return {
       user: {
         id: user._id,
-        email: user.email ?? undefined,
         status: user.status,
         tier: {
           slug: tier.slug,
