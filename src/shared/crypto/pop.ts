@@ -39,7 +39,15 @@ import { p256 } from '@noble/curves/nist.js';
 import { bytesToB64Url, canonicalQuery, normalizePath, sha256 } from './envelope';
 
 export const POP_PREFIX = 'FCP-PoP';
-export const POP_VERSION = 'v1';
+/**
+ * Current PoP canonical-message version the client signs. v2 (Phase 3) adds two
+ * lines after the query: the host and the reveal-leg response-ephemeral, so a
+ * captured request cannot be replayed cross-vhost and an active CDN cannot swap
+ * the GET reveal-leg ephemeral header undetected. The server still accepts v1
+ * during rollout (POP_ACCEPTED_VERSIONS).
+ */
+export const POP_VERSION = 'v2';
+export const POP_ACCEPTED_VERSIONS = ['v1', 'v2'] as const;
 /** WebCrypto JWK `alg` for the session key; stored on the session row for agility. */
 export const POP_ALG = 'ES256';
 
@@ -48,6 +56,10 @@ export const POP_SIG_HEADER = 'x-fs-pop-sig';
 export const POP_TS_HEADER = 'x-fs-pop-ts';
 export const POP_NONCE_HEADER = 'x-fs-pop-nonce';
 export const POP_VERSION_HEADER = 'x-fs-pop-v';
+/** v2: the host the client signed (location.host), so the server reconstructs the
+ *  exact canonical message even behind a Host-rewriting dev proxy, then checks it
+ *  against its allowlist. */
+export const POP_HOST_HEADER = 'x-fs-pop-host';
 
 /**
  * Request-body field carrying the client's base64url raw P-256 public point
@@ -66,11 +78,17 @@ export const POP_PUBKEY_FIELD = 'fsPopPub';
 export const POP_WINDOW_MS = 60_000;
 
 export interface PopMessageParts {
+  /** Canonical-message version ('v2' default; 'v1' only for back-compat verify). */
+  version?: string;
   method: string;
   /** Pathname only, no query string. */
   path: string;
   /** Raw query string without a leading '?'. */
   query?: string;
+  /** v2: the host (location.host). Bound so a request cannot be replayed cross-vhost. */
+  host?: string;
+  /** v2: the reveal-leg response-ephemeral (the x-fs-resp-eph header value), or ''. */
+  respEph?: string;
   /** base64url SHA-256 of the exact wire body bytes (see digestB64Url). */
   bodyHashB64: string;
   /** Epoch milliseconds. */
@@ -79,18 +97,23 @@ export interface PopMessageParts {
   nonceB64: string;
 }
 
-/** Build the canonical PoP message bytes. Identical on client and server. */
+/**
+ * Build the canonical PoP message bytes. Identical on client and server. v2
+ * inserts host + reveal-ephemeral after the query; v1 (back-compat) omits them.
+ */
 export function buildPopMessage(p: PopMessageParts): Uint8Array {
-  const s = [
-    `${POP_PREFIX} ${POP_VERSION}`,
+  const version = p.version ?? POP_VERSION;
+  const lines = [
+    `${POP_PREFIX} ${version}`,
     p.method.toUpperCase(),
     normalizePath(p.path),
     canonicalQuery(p.query),
-    p.bodyHashB64,
-    String(p.ts),
-    p.nonceB64,
-  ].join('\n');
-  return new TextEncoder().encode(s);
+  ];
+  if (version === 'v2') {
+    lines.push(p.host ?? '', p.respEph ?? '');
+  }
+  lines.push(p.bodyHashB64, String(p.ts), p.nonceB64);
+  return new TextEncoder().encode(lines.join('\n'));
 }
 
 /** base64url SHA-256 of the given bytes (the request bodyHash). */

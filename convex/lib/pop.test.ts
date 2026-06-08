@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { bytesToB64Url } from '../../src/shared/crypto/envelope';
 import {
   buildPopMessage,
@@ -12,13 +12,16 @@ import {
   POP_WINDOW_MS,
   signP1363,
 } from '../../src/shared/crypto/pop';
-import { evaluatePop, extractPopFields, type PopFields } from './pop';
+import { allowedPopHosts, evaluatePop, extractPopFields, type PopFields } from './pop';
 
 /** Produce a session keypair + a valid signed request the way the client does. */
 async function signedRequest(opts: {
   method: string;
   path: string;
   query?: string;
+  host?: string;
+  respEph?: string;
+  version?: string;
   wireBody: string;
   ts: number;
   nonceByte?: number;
@@ -33,15 +36,18 @@ async function signedRequest(opts: {
   const nonceB64 = bytesToB64Url(new Uint8Array(16).fill(opts.nonceByte ?? 1));
   const bodyHashB64 = await digestB64Url(new TextEncoder().encode(opts.wireBody));
   const msg = buildPopMessage({
+    version: opts.version,
     method: opts.method,
     path: opts.path,
     query: opts.query,
+    host: opts.host,
+    respEph: opts.respEph,
     bodyHashB64,
     ts: opts.ts,
     nonceB64,
   });
   const sigB64 = bytesToB64Url(await signP1363(kp.privateKey, msg));
-  const fields: PopFields = { sigB64, ts: opts.ts, nonceB64, version: POP_VERSION };
+  const fields: PopFields = { sigB64, ts: opts.ts, nonceB64, version: opts.version ?? POP_VERSION };
   return { popPublicKey, fields };
 }
 
@@ -125,6 +131,92 @@ describe('evaluatePop', () => {
     const behind = await evaluatePop({ popPublicKey, ...base, fields, nowMs: now + 30_000 });
     expect(ahead.verdict).toBe('ok');
     expect(behind.verdict).toBe('ok');
+  });
+});
+
+describe('allowedPopHosts', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test('parses POP_EXPECTED_HOST (comma-separated, lowercased)', () => {
+    vi.stubEnv('POP_EXPECTED_HOST', 'App.Freesocks.org, alt.example');
+    expect(allowedPopHosts()).toEqual(['app.freesocks.org', 'alt.example']);
+  });
+
+  test('falls back to the host(s) of WEBAUTHN_ORIGIN', () => {
+    vi.stubEnv('POP_EXPECTED_HOST', '');
+    vi.stubEnv('WEBAUTHN_ORIGIN', 'https://app.freesocks.org,https://admin.freesocks.org:8443');
+    expect(allowedPopHosts()).toEqual(['app.freesocks.org', 'admin.freesocks.org:8443']);
+  });
+
+  test('empty when neither is set (no lockout: host bound but not enforced)', () => {
+    vi.stubEnv('POP_EXPECTED_HOST', '');
+    vi.stubEnv('WEBAUTHN_ORIGIN', '');
+    expect(allowedPopHosts()).toEqual([]);
+  });
+});
+
+describe('evaluatePop v2 host + reveal-ephemeral binding', () => {
+  const now = 1_700_000_000_000;
+  const base = { method: 'GET', path: '/api/v1/account', wireBody: '', ts: now };
+
+  test('host must match what was signed (cross-vhost replay fails)', async () => {
+    const { popPublicKey, fields } = await signedRequest({ ...base, host: 'app.freesocks.org' });
+    const ok = await evaluatePop({
+      popPublicKey,
+      ...base,
+      host: 'app.freesocks.org',
+      fields,
+      nowMs: now,
+    });
+    const bad = await evaluatePop({
+      popPublicKey,
+      ...base,
+      host: 'evil.example',
+      fields,
+      nowMs: now,
+    });
+    expect(ok.verdict).toBe('ok');
+    expect(bad.verdict).toBe('invalid');
+  });
+
+  test('the reveal-leg ephemeral must match what was signed (active swap fails)', async () => {
+    const { popPublicKey, fields } = await signedRequest({
+      ...base,
+      host: 'app.x',
+      respEph: 'CLIENT_EPH',
+    });
+    const ok = await evaluatePop({
+      popPublicKey,
+      ...base,
+      host: 'app.x',
+      respEph: 'CLIENT_EPH',
+      fields,
+      nowMs: now,
+    });
+    const swapped = await evaluatePop({
+      popPublicKey,
+      ...base,
+      host: 'app.x',
+      respEph: 'ATTACKER_EPH',
+      fields,
+      nowMs: now,
+    });
+    expect(ok.verdict).toBe('ok');
+    expect(swapped.verdict).toBe('invalid');
+  });
+
+  test('a v1 signature still verifies (back-compat during rollout)', async () => {
+    const { popPublicKey, fields } = await signedRequest({ ...base, version: 'v1' });
+    // host/respEph are ignored for v1 on both sides.
+    const r = await evaluatePop({
+      popPublicKey,
+      ...base,
+      host: 'whatever',
+      respEph: 'whatever',
+      fields,
+      nowMs: now,
+    });
+    expect(r.verdict).toBe('ok');
   });
 });
 

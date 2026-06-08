@@ -13,6 +13,7 @@
  */
 import { normalizePath } from '../../shared/crypto/envelope';
 import {
+  POP_HOST_HEADER,
   POP_NONCE_HEADER,
   POP_PUBKEY_FIELD,
   POP_SIG_HEADER,
@@ -147,28 +148,67 @@ export function injectPopPub(bodyStr: string | undefined, pubB64: string): strin
   return JSON.stringify(obj);
 }
 
+// --- server-time offset (Phase 3 clock-skew handling) -------------------------
+// Fetched once from /healthz; the worker signs with ts = Date.now() + offset, so
+// a device whose clock is off by more than the +/-60s window still lands in it.
+// Any failure leaves the offset at 0 (rely on the window). Stable per session.
+let _tsOffset = 0;
+let _tsFetched = false;
+let _tsFetch: Promise<void> | null = null;
+
+async function refreshTimeOffset(): Promise<void> {
+  try {
+    const t0 = Date.now();
+    const res = await fetch('/healthz', { credentials: 'omit' });
+    if (!res.ok) return;
+    const body = (await res.json()) as { timestamp?: string };
+    const serverMs = body.timestamp ? Date.parse(body.timestamp) : NaN;
+    if (!Number.isFinite(serverMs)) return;
+    const t1 = Date.now();
+    _tsOffset = serverMs - (t0 + (t1 - t0) / 2); // server time at round-trip midpoint
+  } catch {
+    /* keep 0 */
+  }
+}
+
+async function serverTimeOffset(): Promise<number> {
+  if (_tsFetched) return _tsOffset;
+  _tsFetch ??= refreshTimeOffset().then(() => {
+    _tsFetched = true;
+  });
+  await _tsFetch;
+  return _tsOffset;
+}
+
 /**
  * PoP headers for an authenticated request, or null if the route is not
  * eligible or no session key exists (then the request goes unsigned). `wireBody`
  * must be the EXACT body string sent on the wire (post-seal), so the server's
- * bodyHash over the raw bytes matches.
+ * bodyHash over the raw bytes matches. `respEph` is the reveal-leg
+ * response-ephemeral (the x-fs-resp-eph header value) for GET reveal routes,
+ * bound into the v2 message so an active CDN cannot swap it undetected.
  */
 export async function signedHeaders(
   path: string,
   method: string,
   wireBody: string | undefined,
+  respEph?: string,
 ): Promise<Record<string, string> | null> {
   if (!signEligible(path)) return null;
   const p = normalizePath(path);
   const qIdx = path.indexOf('?');
   const query = qIdx >= 0 ? path.slice(qIdx + 1) : undefined;
+  const host = typeof location !== 'undefined' ? location.host : '';
   const r = await call({
     type: 'sign',
     realm: realmForPath(path),
     method: method.toUpperCase(),
     path: p,
     query,
+    host,
+    respEph: respEph ?? '',
     body: wireBody ?? '',
+    tsOffset: await serverTimeOffset(),
   });
   if (!r.ok || !r.sigB64 || r.ts === undefined || !r.nonceB64) return null;
   return {
@@ -176,5 +216,6 @@ export async function signedHeaders(
     [POP_TS_HEADER]: String(r.ts),
     [POP_NONCE_HEADER]: r.nonceB64,
     [POP_VERSION_HEADER]: POP_VERSION,
+    [POP_HOST_HEADER]: host,
   };
 }

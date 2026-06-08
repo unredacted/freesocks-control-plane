@@ -13,10 +13,10 @@ import { b64UrlToBytes } from '../../src/shared/crypto/envelope';
 import {
   buildPopMessage,
   digestB64Url,
+  POP_ACCEPTED_VERSIONS,
   POP_NONCE_HEADER,
   POP_SIG_HEADER,
   POP_TS_HEADER,
-  POP_VERSION,
   POP_VERSION_HEADER,
   POP_WINDOW_MS,
   verifyP1363,
@@ -61,15 +61,22 @@ export async function evaluatePop(opts: {
   path: string;
   /** raw query string without a leading '?'. */
   query?: string;
+  /** v2: the host the client declared (x-fs-pop-host); bound into the message. */
+  host?: string;
+  /** v2: the reveal-leg response-ephemeral (x-fs-resp-eph header), bound in. */
+  respEph?: string;
   /** EXACT wire body bytes as received (string), '' for none. */
   wireBody: string;
   fields: PopFields;
   nowMs: number;
 }): Promise<{ verdict: PopVerdict; nonceHash?: string }> {
   const { fields } = opts;
-  // Unknown PoP version: the client must match the server's pinned format.
-  if (fields.version !== POP_VERSION) return { verdict: 'invalid' };
-  // Freshness: symmetric window tolerates modest clock skew either way.
+  // Unknown PoP version: the client must use an accepted canonical format.
+  if (!(POP_ACCEPTED_VERSIONS as readonly string[]).includes(fields.version)) {
+    return { verdict: 'invalid' };
+  }
+  // Freshness: symmetric window tolerates modest clock skew either way (the
+  // client also corrects with a /healthz-derived offset, P3d).
   if (Math.abs(opts.nowMs - fields.ts) > POP_WINDOW_MS) return { verdict: 'invalid' };
 
   let pub: Uint8Array;
@@ -82,10 +89,17 @@ export async function evaluatePop(opts: {
   }
 
   const bodyHashB64 = await digestB64Url(new TextEncoder().encode(opts.wireBody));
+  // buildPopMessage only folds host/respEph in for v2; v1 ignores them. The host
+  // is reconstructed from the client-declared header, so the signature verifies
+  // only if the client actually signed that host (authenticating it for the
+  // allowlist check the caller does on a v2 'ok').
   const message = buildPopMessage({
+    version: fields.version,
     method: opts.method,
     path: opts.path,
     query: opts.query,
+    host: opts.host ?? '',
+    respEph: opts.respEph ?? '',
     bodyHashB64,
     ts: fields.ts,
     nonceB64: fields.nonceB64,
@@ -94,4 +108,31 @@ export async function evaluatePop(opts: {
 
   const nonceHash = await sha256Hex(fields.nonceB64);
   return { verdict: 'ok', nonceHash };
+}
+
+/**
+ * Allowed PoP hosts for the v2 cross-vhost check, from POP_EXPECTED_HOST
+ * (comma-separated) or, failing that, the host(s) of WEBAUTHN_ORIGIN. Empty when
+ * neither is set (then the host is bound + authenticated but not allowlist-
+ * enforced, so a misconfigured deployment never locks itself out).
+ */
+export function allowedPopHosts(): string[] {
+  const raw = process.env.POP_EXPECTED_HOST;
+  if (raw) {
+    return raw
+      .split(',')
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean);
+  }
+  const origins = process.env.WEBAUTHN_ORIGIN;
+  if (!origins) return [];
+  const hosts: string[] = [];
+  for (const o of origins.split(',')) {
+    try {
+      hosts.push(new URL(o.trim()).host.toLowerCase());
+    } catch {
+      /* skip a malformed origin */
+    }
+  }
+  return hosts;
 }

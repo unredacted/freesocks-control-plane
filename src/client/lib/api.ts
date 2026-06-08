@@ -37,15 +37,25 @@ async function request<S extends z.ZodTypeAny>(
     ...(init?.headers as Record<string, string> | undefined),
   };
   let body: BodyInit | undefined = outBodyStr;
+  let respEph: string | undefined;
   if (seal) {
     if (seal.body !== undefined) body = seal.body;
-    if (seal.header) headers[seal.header.name] = seal.header.value;
+    if (seal.header) {
+      headers[seal.header.name] = seal.header.value;
+      // The reveal-leg ephemeral (GET routes) is bound into the PoP v2 signature.
+      if (seal.header.name === 'x-fs-resp-eph') respEph = seal.header.value;
+    }
   }
 
   // PoP (Phase 2): sign the EXACT wire body (post-seal) for authenticated routes.
   // Returns null pre-login (no session key) or for ineligible routes, so the
-  // request then goes out unsigned.
-  const popHeaders = await signedHeaders(path, method, typeof body === 'string' ? body : undefined);
+  // request then goes out unsigned. respEph binds the reveal-leg ephemeral (P3d).
+  const popHeaders = await signedHeaders(
+    path,
+    method,
+    typeof body === 'string' ? body : undefined,
+    respEph,
+  );
   if (popHeaders) Object.assign(headers, popHeaders);
 
   const res = await fetch(path, { credentials: 'include', method, headers, body });

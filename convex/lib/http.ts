@@ -14,7 +14,8 @@ import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { parseCookies, verifySignedValue } from './cookies';
 import { randomHex } from './crypto';
-import { evaluatePop, extractPopFields, REPLAY_TTL_MS } from './pop';
+import { allowedPopHosts, evaluatePop, extractPopFields, REPLAY_TTL_MS } from './pop';
+import { POP_HOST_HEADER } from '../../src/shared/crypto/pop';
 
 export const MEMBER_COOKIE = 'fs_session';
 export const ADMIN_COOKIE = 'fs_admin_session';
@@ -107,16 +108,30 @@ async function sessionPopOk(
   const fields = extractPopFields(req);
   if (!fields) return false;
   const url = new URL(req.url);
+  // v2 binds host + the reveal-leg ephemeral; both come from request headers (the
+  // signature authenticates them). v1 ignores them (back-compat during rollout).
+  const host = req.headers.get(POP_HOST_HEADER) ?? undefined;
+  const respEph = req.headers.get('x-fs-resp-eph') ?? undefined;
   const { verdict, nonceHash } = await evaluatePop({
     popPublicKey,
     method: req.method,
     path: url.pathname,
     query: url.search.startsWith('?') ? url.search.slice(1) : url.search,
+    host,
+    respEph,
     wireBody: await wireBodyText(req),
     fields,
     nowMs: Date.now(),
   });
   if (verdict !== 'ok' || !nonceHash) return false;
+  // v2 cross-vhost check: the now-authenticated declared host must be in the
+  // allowlist when one is configured (else the bind is tamper-evident but not
+  // enforced, so a deployment without POP_EXPECTED_HOST/WEBAUTHN_ORIGIN cannot
+  // lock itself out).
+  if (fields.version !== 'v1') {
+    const allowed = allowedPopHosts();
+    if (allowed.length > 0 && (!host || !allowed.includes(host.toLowerCase()))) return false;
+  }
   const consumed = await ctx.runMutation(internal.replayGuard.consumeNonce, {
     sid,
     nonceHash,

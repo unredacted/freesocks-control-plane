@@ -120,6 +120,12 @@ interface SignMsg {
   path: string;
   query?: string;
   body?: string;
+  /** v2: the host to bind (location.host). */
+  host?: string;
+  /** v2: the reveal-leg response-ephemeral (x-fs-resp-eph value), if any. */
+  respEph?: string;
+  /** Server-time offset (serverTime - localTime) so a skewed client signs in-window. */
+  tsOffset?: number;
 }
 
 async function sign(
@@ -128,7 +134,7 @@ async function sign(
   if (!pathAllowed(msg.path)) return { error: 'path' };
   const kp = await loadKeyPair(msg.realm);
   if (!kp) return { error: 'no-key' };
-  const ts = Date.now();
+  const ts = Date.now() + (msg.tsOffset ?? 0);
   const nonce = crypto.getRandomValues(new Uint8Array(16));
   const nonceB64 = bytesToB64Url(nonce);
   const bodyHashB64 = await digestB64Url(new TextEncoder().encode(msg.body ?? ''));
@@ -136,6 +142,8 @@ async function sign(
     method: msg.method,
     path: msg.path,
     query: msg.query,
+    host: msg.host,
+    respEph: msg.respEph,
     bodyHashB64,
     ts,
     nonceB64,
