@@ -18,9 +18,9 @@ https://HOST:PORT/<base64-secret>/access-keys
 ```
 
 That base64-secret in the URL path **is the authentication**. There are no headers,
-no API keys — anyone who can construct the URL can call the API. Treat the URL as a
+no API keys; anyone who can construct the URL can call the API. Treat the URL as a
 credential. The control plane stores it server-side on the `outlineServers` row and
-**never returns it** to the SPA — admin reads get a masked form (`apiUrlMasked`,
+**never returns it** to the SPA: admin reads get a masked form (`apiUrlMasked`,
 scheme+host only) instead.
 
 ## TLS requirements
@@ -47,12 +47,12 @@ and surfaces the TLS or auth error. Use it before saving.
      uniqueness is enforced. Immutable once set.
    - **API URL**: the full management URL, including the secret path segment. Stored on the
      server row; never returned to the SPA in full (only `apiUrlMasked` for display). To
-     rotate the secret later, edit the server and retype the URL — a blank field leaves the
+     rotate the secret later, edit the server and retype the URL; a blank field leaves the
      stored value unchanged.
    - **WSS-wrapped Shadowsocks**: leave unchecked unless your Outline host runs the
      non-stock FreeSocks fork that supports `websocket: {…}` on `POST /access-keys`.
      Stock Outline servers should keep this off. (See the WSS caveat in
-     `deferred-security-bugs.md` — Bug 15 — before routing to a WSS server.)
+     `deferred-security-bugs.md` (Bug 15) before routing to a WSS server.)
    - **WSS domain**: only used when the above is on; the public hostname that terminates
      the WebSocket TLS.
    - **Prometheus URL**: reserved for future per-key metrics. Leave blank.
@@ -75,10 +75,10 @@ New-key issuance calls `internal.outlineServers.pickCandidatesForIssue` (in
 1. Collect active servers (optionally filtered to an `outlineServerPoolIds` allowlist on the
    issue spec).
 2. **Prefer servers healthy within the last ~30 minutes** (`lastHealthOkAt` fresh); if none
-   qualify, fall back to all active servers — so a transient healthcheck blip can't take the
+   qualify, fall back to all active servers, so a transient healthcheck blip can't take the
    whole pool offline.
 3. Score each (lower wins): `latency_weight × <latency> + key_count_weight × accessKeyCount`.
-   `<latency>` is currently a `0` placeholder (real RTT capture is future work — see
+   `<latency>` is currently a `0` placeholder (real RTT capture is future work, see
    `project-inventory.md`), so ordering is effectively by access-key count, then admin
    `priority`. Weights come from the `outline.scoring.*` app settings.
 4. The dispatch **action** (`convex/backends.ts`) takes the top candidates and picks one at
@@ -95,7 +95,7 @@ Once at least one Outline server is registered:
 1. Visit **Settings** in the admin sidebar.
 2. Flip **Outline backend enabled** (`outline.enabled`) to `on`.
 3. (Optional) Set `subscription.user_choice_enabled` to let end users pick on `/get-key`.
-   Default is off — the server picks based on `subscription.default_backend`.
+   Default is off; the server picks based on `subscription.default_backend`.
 4. (Optional) Edit the user-facing labels under **Backend labels**. Anything you set appears
    in the chooser segment and the "via X" badge on `/account`.
 
@@ -107,9 +107,9 @@ A tier is bound to a single backend. To offer Outline as a paid tier:
 2. Click **Add tier** (or edit an existing one).
 3. Set **Backend** to `outline`.
 4. Configure:
-   - `monthlyTrafficGb` — the per-key data limit (Outline enforces this server-side via
+   - `monthlyTrafficGb`: the per-key data limit (Outline enforces this server-side via
      `PUT /access-keys/{id}/data-limit`).
-   - `deviceLimit` — informational only; Outline doesn't enforce HWID.
+   - `deviceLimit`: informational only; Outline doesn't enforce HWID.
 
 The `hwidLimit` and `trafficStrategy` fields disappear from the form when the backend is
 Outline because they don't apply.
@@ -133,7 +133,7 @@ To offer a free Outline tier alongside the Remnawave free tier:
 ## Operational notes
 
 - **Health**: the **Outline Servers** page reflects each server's `lastHealthOkAt` (refreshed
-  by the healthcheck cron). A failing server is **not** auto-deactivated — it ages out of the
+  by the healthcheck cron). A failing server is **not** auto-deactivated; it ages out of the
   30-min "fresh" set in `pickCandidatesForIssue` and is deprioritized, with all-servers
   fallback preserved.
 - **Per-key metrics**: `outlineGetState` fetches `/metrics/transfer` on every `/account` read

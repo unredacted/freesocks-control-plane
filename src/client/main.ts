@@ -3,7 +3,7 @@ import App from './App.svelte';
 import './styles/globals.css';
 
 /*
- * Bundled web fonts. NEVER load fonts from a third-party CDN — every font
+ * Bundled web fonts. NEVER load fonts from a third-party CDN: every font
  * weight here is shipped as a hashed WOFF2 asset in our own dist/ bundle so
  * the SPA renders without contacting Google Fonts (or any other host) on
  * behalf of the user.
@@ -24,7 +24,7 @@ import './styles/globals.css';
  *
  * The fontsource packages ship per-subset @font-face declarations with
  * unicode-range, so the browser only downloads the subset(s) it actually
- * needs — adding cyrillic/greek/vietnamese support costs nothing on a
+ * needs, so adding cyrillic/greek/vietnamese support costs nothing on a
  * latin-only page.
  */
 import '@fontsource/inter/400.css';

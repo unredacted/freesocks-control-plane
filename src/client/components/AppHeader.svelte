@@ -8,7 +8,7 @@
   import LogIn from '@lucide/svelte/icons/log-in';
   import Heart from '@lucide/svelte/icons/heart';
 
-  // TanStack query — fetched once on first render, cached across the SPA,
+  // TanStack query, fetched once on first render, cached across the SPA,
   // refetched on window focus (so the user gets fresh tier info when they
   // come back from a payment tab once the membership flow is live).
   const me = meQuery();

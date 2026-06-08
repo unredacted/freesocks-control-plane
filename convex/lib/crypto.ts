@@ -31,7 +31,7 @@ export function randomHex(bytes: number): string {
   return toHex(buf);
 }
 
-/** URL-safe base64 of random bytes — the `fsv1_` token body + opaque ids. */
+/** URL-safe base64 of random bytes: the `fsv1_` token body + opaque ids. */
 export function base64UrlEncode(buf: ArrayBuffer | Uint8Array): string {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   let str = '';

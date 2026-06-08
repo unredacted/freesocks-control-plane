@@ -79,7 +79,7 @@ export type AuditEntry = z.infer<typeof AuditEntry>;
 
 /**
  * App settings exposed via the admin API. Server-side, each key has its own
- * Zod schema — see `src/server/services/app-settings.ts`. This contract is
+ * Zod schema; see `src/server/services/app-settings.ts`. This contract is
  * intentionally loose so the SPA can render unknown future keys generically.
  */
 export const AppSettingsRecord = z.record(z.string(), z.unknown());
@@ -89,7 +89,7 @@ export type AppSettingsRecord = z.infer<typeof AppSettingsRecord>;
  * Outline server row as exposed to the admin CMS. `apiUrlMasked` redacts the
  * secret path segment of the upstream Outline Manager URL; the real value is
  * never round-tripped to the SPA. Admins submit the full URL on create/edit
- * and the server stores it — they never read it back.
+ * and the server stores it; they never read it back.
  */
 export const OutlineServerAdmin = z.object({
   id: z.string(),
@@ -111,7 +111,7 @@ export type OutlineServerAdmin = z.infer<typeof OutlineServerAdmin>;
 export const OutlineServerUpsert = z.object({
   name: z.string().min(1).max(128),
   slug: z.string().min(1).max(64),
-  /** Full Outline Manager URL including the secret. Server-only — never echoed back. */
+  /** Full Outline Manager URL including the secret. Server-only. Never echoed back. */
   apiUrl: z.string().url(),
   websocketEnabled: z.boolean().default(false),
   websocketDomain: z.string().nullable().optional(),

@@ -28,7 +28,7 @@
     <div class="max-w-lg mx-auto py-16 text-center space-y-4">
       <h1 class="text-2xl font-bold">Something went wrong</h1>
       <p class="text-muted-foreground">
-        The page failed to render. This is a bug in the app — refreshing usually fixes it. If it
+        The page failed to render. This is a bug in the app, and refreshing usually fixes it. If it
         keeps happening, please report it.
       </p>
       <div class="flex gap-2 justify-center pt-2">

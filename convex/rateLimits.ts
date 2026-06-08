@@ -1,5 +1,5 @@
 /**
- * Rate-limit counters (P6) — replaces the KV `rateLimit` namespace. Unlike the
+ * Rate-limit counters (P6): replaces the KV `rateLimit` namespace. Unlike the
  * old best-effort KV limiter (which could be raced past its cap because KV is
  * eventually-consistent and non-transactional), this is a STRICT counter:
  * `checkAndIncrement` runs as a serializable mutation, so concurrent callers

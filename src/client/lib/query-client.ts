@@ -6,7 +6,7 @@ import { ApiCallError } from './api';
  * (the entry page that renders the login form when an admin exists, or the
  * bootstrap form otherwise). Without this, a deep-link to a page like
  * `/admin/settings` after the session expires just shows a raw "auth.invalid"
- * error inline — confusing for the operator who expects to be prompted to
+ * error inline, confusing for the operator who expects to be prompted to
  * sign in again.
  *
  * We discriminate "admin" requests via the query-key prefix (`['admin', …]`,
@@ -30,16 +30,16 @@ function redirectToAdminLoginIfNeeded(): void {
  * same client implicitly via context.
  *
  * Defaults tuned for our app:
- *   - staleTime: 30s        — most of our data (account, tiers, users) doesn't
- *                             change second-to-second; suppress thrashing on
- *                             component remount.
- *   - gcTime: 5min          — keep stale data around so navigating back to a
- *                             page shows it instantly while a refetch runs.
- *   - retry: 1              — retry once on network blips, don't keep hammering
- *                             on a real 4xx/5xx (TanStack defaults to 3).
- *   - refetchOnWindowFocus  — true by default; this is exactly what we want
- *                             for the post-payment "I just paid, refresh my
- *                             tier" UX.
+ *   - staleTime: 30s        most of our data (account, tiers, users) doesn't
+ *                           change second-to-second; suppress thrashing on
+ *                           component remount.
+ *   - gcTime: 5min          keep stale data around so navigating back to a
+ *                           page shows it instantly while a refetch runs.
+ *   - retry: 1              retry once on network blips, don't keep hammering
+ *                           on a real 4xx/5xx (TanStack defaults to 3).
+ *   - refetchOnWindowFocus  true by default; this is exactly what we want
+ *                           for the post-payment "I just paid, refresh my
+ *                           tier" UX.
  *
  * The query- and mutation-cache `onError` hooks centralize admin session-
  * expired handling so every admin page (current and future) gets the right

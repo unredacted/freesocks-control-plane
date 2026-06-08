@@ -3,43 +3,43 @@
 [FreeSocks](https://freesocks.org) is a service that distributes free, open & uncensored
 proxies to people in countries experiencing heavy Internet censorship. This is the
 control plane: a **self-hosted [Convex](https://convex.dev) backend + a static Svelte 5
-SPA** that hands out subscription URLs from one of two proxy backends —
+SPA** that hands out subscription URLs from one of two proxy backends,
 [Remnawave](https://remna.st) (multi-protocol; shown to users as **"Xray"**) or
-[Outline](https://getoutline.org/) (Shadowsocks access keys) — gates anonymous issuance
+[Outline](https://getoutline.org/) (Shadowsocks access keys). It gates anonymous issuance
 through [Cloudflare Turnstile](https://www.cloudflare.com/products/turnstile/), lets members
 sign back in with a self-service **account number**, and provides a passkey-gated admin CMS
 for tier, user, backend, token, and runtime-config management.
 
 > **New here?** [`docs/project-inventory.md`](docs/project-inventory.md) is the at-a-glance
 > map: every feature (live / deferred), the open to-dos, and a register of intentional
-> scaffolding — read it before removing anything as "dead code".
+> scaffolding. Read it before removing anything as "dead code".
 
 > **Migration note.** This codebase was fully migrated off its previous Hono/Cloudflare-Workers
 > stack. Drizzle/D1, the `PlatformAdapter` + per-platform entrypoints, the `KvStore`
-> abstraction, Authentik OIDC, CiviCRM, and the wrangler/Fastly/Fly tooling are all gone —
-> the backend is now entirely Convex functions. Trust the source under `convex/` and `src/`
+> abstraction, Authentik OIDC, CiviCRM, and the wrangler/Fastly/Fly tooling are all gone.
+> The backend is now entirely Convex functions. Trust the source under `convex/` and `src/`
 > over any older description.
 
 ## Stack
 
-### Backend — self-hosted Convex (`convex/`)
+### Backend: self-hosted Convex (`convex/`)
 
 The entire backend is a Convex deployment: queries, mutations, and actions, plus an HTTP
 router and native cron jobs. There is no separate web framework or edge worker.
 
-- **[Convex](https://docs.convex.dev) 1.40** — reactive document DB + serverless functions, run **self-hosted** (Docker; SQLite or Postgres). Schema and validators are TypeScript (`v.*`), so there is no SQL and no migration set.
-- **HTTP router** (`convex/http.ts`) — every public route is an `httpAction`, served on the Convex HTTP-actions port (`:3211`). This is the surface the SPA and API consumers call.
-- **Native crons** (`convex/crons.ts`) — grace/disable sweep, tombstone sweep, Outline healthcheck, free-tier cleanup, session/rate-limit sweeps.
-- **Proxy backends** — **Remnawave** and **Outline** behind a common action dispatch (`convex/backends.ts` + `convex/lib/backends/*`); per-tier backend selection plus optional end-user choice. See [`docs/backends.md`](docs/backends.md).
+- **[Convex](https://docs.convex.dev) 1.40**: reactive document DB + serverless functions, run **self-hosted** (Docker; SQLite or Postgres). Schema and validators are TypeScript (`v.*`), so there is no SQL and no migration set.
+- **HTTP router** (`convex/http.ts`): every public route is an `httpAction`, served on the Convex HTTP-actions port (`:3211`). This is the surface the SPA and API consumers call.
+- **Native crons** (`convex/crons.ts`): grace/disable sweep, tombstone sweep, Outline healthcheck, free-tier cleanup, session/rate-limit sweeps.
+- **Proxy backends**: **Remnawave** and **Outline** behind a common action dispatch (`convex/backends.ts` + `convex/lib/backends/*`); per-tier backend selection plus optional end-user choice. See [`docs/backends.md`](docs/backends.md).
 - **`@simplewebauthn/server`** for admin passkey auth (a `"use node"` action module).
 - **`@aws-sdk/client-s3`** for optional multi-provider subscription mirroring (a `"use node"` action module).
 - **TypeScript 6** strict throughout.
 
-### Frontend — Svelte 5 SPA (`src/client/`)
+### Frontend: Svelte 5 SPA (`src/client/`)
 
-- **Svelte 5** in runes mode (`$state`, `$derived`, `$effect`, `$props`) — no SvelteKit; a custom client-side router on the History API (`src/client/stores/router.svelte.ts`).
+- **Svelte 5** in runes mode (`$state`, `$derived`, `$effect`, `$props`); no SvelteKit, just a custom client-side router on the History API (`src/client/stores/router.svelte.ts`).
 - **TanStack Svelte Query 6** for every data fetch and mutation, with a single `QueryClient` and an explicit `queryKeys` registry in `src/client/lib/queries.ts`.
-- **A thin cookie-auth `apiClient`** (`src/client/lib/api.ts`, `credentials:'include'`) that calls the Convex HTTP surface and Zod-validates every response. The client does **not** use the Convex reactive client — authenticated data flows over the HTTP actions so the session cookie stays httpOnly.
+- **A thin cookie-auth `apiClient`** (`src/client/lib/api.ts`, `credentials:'include'`) that calls the Convex HTTP surface and Zod-validates every response. The client does **not** use the Convex reactive client; authenticated data flows over the HTTP actions so the session cookie stays httpOnly.
 - **shadcn-svelte** components copied as source into `src/client/components/ui/`, over **bits-ui** headless primitives.
 - **Tailwind CSS 4** via `@tailwindcss/vite`; Inter / Inter Tight / JetBrains Mono bundled and self-hosted via `@fontsource/*` (no third-party font CDN).
 - **`@simplewebauthn/browser`** for admin passkey ceremonies; **qrcode** for the subscription QR; **svelte-sonner** toasts; **mode-watcher** theming.
@@ -48,12 +48,12 @@ router and native cron jobs. There is no separate web framework or edge worker.
 
 Zod schemas the client uses for response parsing and types. Since the server now validates
 with Convex `v.*` validators, these are client-side, but they remain the declared shape of
-the API surface — keep the client and the Convex HTTP handlers in agreement.
+the API surface. Keep the client and the Convex HTTP handlers in agreement.
 
 ### Tooling
 
 - **Bun 1.3.14** as the package manager and CLI launcher (`bun.lock` is the only lockfile). The Convex backend runs on Convex's own V8 runtime.
-- **Vite 8** builds the SPA (the only build artifact — the backend is `convex/`).
+- **Vite 8** builds the SPA (the only build artifact; the backend is `convex/`).
 - **Vitest 4** with **`convex-test`** for an in-memory Convex test harness (no backend needed).
 - **svelte-check** alongside `tsc -b` in the typecheck pipeline; **ESLint 10** + **Prettier 3**.
 
@@ -62,7 +62,7 @@ the API surface — keep the client and the Convex HTTP handlers in agreement.
 ```
 convex/                            The backend (Convex functions)
 ├── schema.ts                      defineSchema tables + indexes (no SQL/migrations)
-├── http.ts                        httpRouter — every public route as an httpAction
+├── http.ts                        httpRouter: every public route as an httpAction
 ├── crons.ts                       native scheduled jobs
 ├── seed.ts                        idempotent cutover seed (default tiers + settings)
 ├── freeTier.ts                    Turnstile-gated anon issuance + serializable cap
@@ -126,14 +126,14 @@ The two halves ship independently to a self-hosted Convex deployment. The tag-tr
 `.github/workflows/deploy.yml` does both:
 
 ```bash
-# Backend — typecheck + push convex/ functions, schema, HTTP router, crons
+# Backend: typecheck + push convex/ functions, schema, HTTP router, crons
 CONVEX_SELF_HOSTED_URL=... CONVEX_SELF_HOSTED_ADMIN_KEY=... bunx convex deploy -y
 
-# SPA — static build; a reverse proxy serves dist/ and routes /api -> the actions origin
+# SPA: static build; a reverse proxy serves dist/ and routes /api -> the actions origin
 VITE_CONVEX_SITE_URL=https://app.freesocks.org bun run build
 ```
 
-Convex does **not** serve the SPA — a reverse proxy (Caddy/nginx/…) terminates TLS, serves
+Convex does **not** serve the SPA. A reverse proxy (Caddy/nginx/…) terminates TLS, serves
 the static `dist/` with history-API fallback, and routes `/api/*` + `/healthz` to the
 Convex HTTP-actions origin. The full cutover runbook (stand up, set env, seed, bootstrap the
 first admin passkey, reverse-proxy config, verification checklist) is in
@@ -143,7 +143,7 @@ first admin passkey, reverse-proxy config, verification checklist) is in
 
 Highlights:
 
-- **Anonymous flow**: `POST /api/v1/subscription` — Turnstile-gated, no email. The
+- **Anonymous flow**: `POST /api/v1/subscription`, Turnstile-gated, no email. The
   per-(IP, day) cap is a **serializable Convex mutation** (`freeTier.claimFreeSlot`), so
   concurrent bursts can't over-issue. Each first issuance mints a one-time **account number**
   returned in the response; a per-(IP, day) reissue hands back the existing key.
@@ -153,7 +153,7 @@ Highlights:
   and **regenerate** or **switch backend** for their key. There is no OIDC.
 - **Entitlements**: `tiers` drive limits; `lifecycle.setMembership` is the single seam that
   sets a user's tier + expiry. Today it's driven by admin edits and the **billing webhook**
-  (`POST /api/webhooks/billing`, HMAC-verified + deduped) — the future in-house billing
+  (`POST /api/webhooks/billing`, HMAC-verified + deduped); the future in-house billing
   portal plugs in here. A cron sweep moves lapsed members `active → grace → disabled`.
 - **Admin CMS**: passkey-only auth (first-run bootstrap wizard, then WebAuthn), separate
   from member sessions. Tiers, users (search, disable, reset-traffic, resync), API tokens
@@ -201,7 +201,7 @@ A `fsv1_` token can be a **service** token (acts with its own scopes) or a **use
 ### Admin-issued API tokens
 
 Admins mint tokens through the admin CMS at `/admin/tokens`. The plaintext is shown **once**
-on creation and never recoverable thereafter — only `SHA-256(token)` is stored. Tokens have
+on creation and never recoverable thereafter; only `SHA-256(token)` is stored. Tokens have
 a name, an explicit scope set (vocabulary in `src/shared/contracts/scopes.ts`, e.g.
 `subscription:read`, `admin:users:write`), optional expiry, debounced last-used tracking,
 and soft-revoke.
@@ -239,7 +239,7 @@ mutations.
 ### Typography
 
 Inter (body) + Inter Tight (display) + JetBrains Mono (code), bundled and self-hosted via
-`@fontsource/*` (imported in `src/client/main.ts`) — the page never contacts
+`@fontsource/*` (imported in `src/client/main.ts`); the page never contacts
 `fonts.googleapis.com` / `fonts.gstatic.com` or any third-party host, a deliberate privacy /
 censorship-resistance choice. The only sanctioned third-party script is Cloudflare Turnstile.
 Apply `tabular-nums` to counters, file sizes, dates, and any number that re-renders.

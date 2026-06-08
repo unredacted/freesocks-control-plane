@@ -14,12 +14,12 @@
       FOUC-prevention script. Runs synchronously before paint, BEFORE the
       Vite bundle even starts parsing, so the user never sees a flash of
       the wrong theme. mode-watcher itself injects a similar script via
-      <svelte:head> at runtime, but that fires too late in a pure SPA —
+      <svelte:head> at runtime, but that fires too late in a pure SPA:
       the <html class="..."> needs to be correct on the first paint, not
       after the bundle mounts.
 
       Without this, `<html class="dark">` was hardcoded on the document and
-      light-mode users saw a dark-mode flash on every load — making the
+      light-mode users saw a dark-mode flash on every load, making the
       light theme feel "broken" even though the toggle did update the class.
 
       Logic mirrors mode-watcher's `setInitialMode`:
@@ -54,8 +54,8 @@
 
     <!--
       Fonts (Inter for body, Inter Tight for display headings, JetBrains
-      Mono for code) ship bundled with the SPA via @fontsource/* — see
-      src/client/main.ts for the imports. We deliberately do NOT preconnect
+      Mono for code) ship bundled with the SPA via @fontsource/* (see
+      src/client/main.ts for the imports). We deliberately do NOT preconnect
       to fonts.googleapis.com or fonts.gstatic.com from this document. No
       third-party host should be contacted by the browser to render this
       page; everything is served from our own origin.

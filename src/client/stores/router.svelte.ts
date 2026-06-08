@@ -2,7 +2,7 @@
  * Tiny client-side router. Tracks `window.location.pathname` reactively so
  * the routing tree in `App.svelte` re-renders when the path changes.
  *
- * No external library — for our 9 routes a custom router is ~30 lines and
+ * No external library: for our 9 routes a custom router is ~30 lines and
  * avoids pulling in another runtime dependency.
  */
 function createRouter() {

@@ -8,7 +8,7 @@
    * Two-state light ↔ dark toggle. We DELIBERATELY skip the standard shadcn
    * three-state (light / dark / system) cycle because users hit a real-world
    * confusion: starting from dark, click 1 goes to "system" which, for the
-   * many users on a dark-mode OS, looks IDENTICAL to dark — so the click
+   * many users on a dark-mode OS, looks IDENTICAL to dark, so the click
    * appears to do nothing and the toggle reads as broken.
    *
    * Two states keeps the contract obvious: every click flips the look. If we

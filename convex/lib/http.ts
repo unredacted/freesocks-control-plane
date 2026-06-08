@@ -1,5 +1,5 @@
 /**
- * HTTP-action helpers (P7) — the small replacements for the Hono middleware
+ * HTTP-action helpers (P7): the small replacements for the Hono middleware
  * chain + lib/errors + middleware/services.resolveClientIp. Every public route
  * in convex/http.ts is a bare httpAction; these give it the request-id, the
  * `{ error: { code, message } }` envelope the SPA already parses, cookie-based
@@ -7,7 +7,7 @@
  *
  * Auth model: the member + admin sessions are httpOnly signed cookies (no JWT,
  * no Convex ctx.auth). Authenticated data flows through these HTTP actions, not
- * the reactive query channel — so the cookie never has to be readable by JS.
+ * the reactive query channel, so the cookie never has to be readable by JS.
  */
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';

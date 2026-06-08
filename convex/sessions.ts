@@ -1,8 +1,8 @@
 /**
- * Session store (P6) — replaces the KV `sessions` namespace. A signed cookie
+ * Session store (P6): replaces the KV `sessions` namespace. A signed cookie
  * carries the opaque `sid`; the row holds the bound identity + expiry. The sid
  * is minted in an action (CSPRNG) and handed to `create`; cookie signing lives
- * in lib/cookies. All functions are internal — only the HTTP actions touch them.
+ * in lib/cookies. All functions are internal; only the HTTP actions touch them.
  *
  * `bySid` treats an expired row as absent (defence-in-depth alongside the daily
  * sweep), so a stale-but-unswept cookie never authenticates.

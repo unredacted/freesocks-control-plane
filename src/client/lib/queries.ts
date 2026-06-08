@@ -39,7 +39,7 @@ export const queryKeys = {
 // --- Public surface ----------------------------------------------------------
 
 /**
- * Current user identity. Treated as fresh for 60s — in practice the only thing
+ * Current user identity. Treated as fresh for 60s; in practice the only thing
  * that changes mid-session is tier membership after a payment, and the focus
  * refetch + explicit refresh button cover that.
  */
@@ -61,7 +61,7 @@ export const meQuery = () =>
 /**
  * Public config (member portal URLs, Turnstile site key, environment, backend
  * toggles). Most fields are env-var driven and only change on redeploy, but
- * the backend toggles are admin-editable at runtime — so we set staleTime to
+ * the backend toggles are admin-editable at runtime, so we set staleTime to
  * 5 min instead of Infinity. That bounds the worst-case staleness after an
  * admin flips a toggle to roughly the server-side KV cache window.
  */

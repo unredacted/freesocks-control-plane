@@ -5,7 +5,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-// shadcn-svelte component prop helpers — the generated UI components import
+// shadcn-svelte component prop helpers: the generated UI components import
 // these to strip the `child` / `children` snippet props from delegated
 // HTMLAttributes so consumers can spread the rest onto the root element
 // without TS complaining about unrecognized JSX-ish attributes.

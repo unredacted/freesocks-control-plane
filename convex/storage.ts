@@ -2,7 +2,7 @@
 /**
  * S3 subscription-content mirrors as a Node action (ported from
  * src/server/providers/storage/*). `@aws-sdk/client-s3` needs the Node runtime,
- * so this whole file is `"use node"` — it can't define queries/mutations.
+ * so this whole file is `"use node"`; it can't define queries/mutations.
  *
  * Mirrors are the censorship-resistance hedge: the proxy subscription content
  * is uploaded to N S3-compatible providers so a client can fetch it even if the

@@ -5,7 +5,7 @@
  * credential, so it's sized to be unguessable even against offline brute-force
  * of a leaked hash column.
  *
- * The stored hash is HMAC-SHA256(ACCOUNT_ID_PEPPER, number) — NOT a bare hash:
+ * The stored hash is HMAC-SHA256(ACCOUNT_ID_PEPPER, number), NOT a bare hash:
  * the pepper is a deployment secret (env, never in the DB), so a DB-only leak
  * can't be brute-forced without it. It's still deterministic, so login keeps its
  * single indexed lookup (hash the input, match `by_account_id_hash`).
@@ -58,7 +58,7 @@ export function generateAccountId(): string {
 
 /**
  * The stored form: HMAC-SHA256(ACCOUNT_ID_PEPPER, normalized number). The pepper
- * is a required deployment secret — fail closed if it's missing rather than
+ * is a required deployment secret; fail closed if it's missing rather than
  * silently falling back to a guessable bare hash. Call from an action.
  */
 export async function hashAccountId(input: string): Promise<string> {

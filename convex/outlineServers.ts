@@ -1,9 +1,9 @@
 /**
- * Outline server pool — the DB-touching half of the Outline backend (ported
+ * Outline server pool: the DB-touching half of the Outline backend (ported
  * from services/outline-pool.ts). These are INTERNAL functions: the server
  * rows carry the secret `apiUrl`, so they must never be exposed via a public
  * query. The dispatch action (convex/backends.ts) calls them, does the HTTP
- * (convex/lib/backends/outline.ts), and — for issuance — the random pick.
+ * (convex/lib/backends/outline.ts), and, for issuance, the random pick.
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -31,7 +31,7 @@ async function scoringWeights(ctx: QueryCtx): Promise<{ latency: number; keyCoun
 
 /**
  * Top-N scored active servers for new-key issuance (lower score wins). The
- * action picks one at random among them — randomness can't live in a query.
+ * action picks one at random among them; randomness can't live in a query.
  * `latency` is a placeholder (0) until the healthcheck cron captures real RTT,
  * so order is effectively by access-key count then admin `priority`.
  */
@@ -96,7 +96,7 @@ export const bumpAccessKeyCount = internalMutation({
 
 // --- healthcheck (cron, P11 follow-up) -------------------------------------
 
-/** All active servers WITH their secret apiUrl — internal-only (the cron pings them). */
+/** All active servers WITH their secret apiUrl; internal-only (the cron pings them). */
 export const listActiveWithSecret = internalQuery({
   args: {},
   handler: (ctx) =>
@@ -122,7 +122,7 @@ export const markHealthy = internalMutation({
 /**
  * Cron: ping each active Outline server. On success, stamp lastHealthOkAt (which
  * keeps it in `pickCandidatesForIssue`'s 30-min "fresh" set) + refresh its key
- * count. A failing server is NOT deactivated — it simply ages out of the fresh
+ * count. A failing server is NOT deactivated; it simply ages out of the fresh
  * window and is deprioritized, with all-servers fallback preserved, so a
  * transient blip can't take the whole pool offline.
  */
@@ -141,7 +141,7 @@ export const healthcheck = internalAction({
         await ctx.runMutation(internal.outlineServers.markHealthy, { id: s._id, keyCount });
         healthy++;
       } catch {
-        /* unhealthy — ages out of the fresh window; never logs the secret apiUrl */
+        /* unhealthy: ages out of the fresh window; never logs the secret apiUrl */
       }
     }
     return { checked: servers.length, healthy };

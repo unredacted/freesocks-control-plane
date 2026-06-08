@@ -6,7 +6,7 @@ export const get = query({
   handler: (ctx, { id }) => ctx.db.get(id),
 });
 
-/** Set a user's tier (peer backend switch — no membership-state change). */
+/** Set a user's tier (peer backend switch, no membership-state change). */
 export const setTier = internalMutation({
   args: { userId: v.id('users'), tierId: v.id('tiers') },
   handler: async (ctx, { userId, tierId }) => {
@@ -18,7 +18,7 @@ export const setTier = internalMutation({
 /**
  * Account-number login lookup. The caller (a Node action) hashes the submitted
  * number and passes the hash; we match it against the unique index. Returns
- * null when unknown OR the owner is disabled/deleted — the caller treats both
+ * null when unknown OR the owner is disabled/deleted; the caller treats both
  * identically (no existence oracle). Rate-limiting + constant-time padding are
  * the caller's responsibility (see the account-login HTTP action, P6/P7).
  */
@@ -50,7 +50,7 @@ export const byAccountIdHashInternal = internalQuery({
 
 /**
  * Admin search by the 4-digit account-number prefix. Never a full-number
- * lookup — that would be an enumeration oracle. Bounded result set.
+ * lookup: that would be an enumeration oracle. Bounded result set.
  */
 export const searchByAccountIdPrefix = query({
   args: { prefix: v.string(), limit: v.optional(v.number()) },

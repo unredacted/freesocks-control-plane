@@ -4,7 +4,7 @@
 // (`bun run typecheck`); ESLint here is purely for catching the few issues
 // the type system can't, plus a guard rail for accidental console.log /
 // debugger leaks. Heavier linting (typescript-eslint, react-specific rules)
-// is intentionally not pulled in — it'd add ~30s to CI for marginal value
+// is intentionally not pulled in: it'd add ~30s to CI for marginal value
 // when `tsc --strict` already enforces most of what those plugins check.
 
 export default [

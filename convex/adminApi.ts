@@ -1,5 +1,5 @@
 /**
- * Admin resource API (the `/api/v1/admin/*` surface) — the Convex half of the
+ * Admin resource API (the `/api/v1/admin/*` surface): the Convex half of the
  * passkey-gated admin CMS. The HTTP routes in convex/http.ts authenticate the
  * admin (cookie OR an `admin:*`-scoped fsv1_ token) via `resolveAdmin`, then
  * call these functions. Row → contract mapping (Convex string `_id`, ISO
@@ -8,7 +8,7 @@
  *
  * Security:
  *  - Outline server rows carry a secret `apiUrl` (the Manager URL embeds a
- *    credential path). It is NEVER returned — only `apiUrlMasked` (scheme+host,
+ *    credential path). It is NEVER returned, only `apiUrlMasked` (scheme+host,
  *    path replaced with `/***`). The full URL is stored on create/edit and read
  *    back only by the internal backend actions.
  *  - Uniqueness (tier slug, outline slug) is enforced inside the mutation via a
@@ -159,7 +159,7 @@ export const tiersList = internalQuery({
 export const createTier = internalMutation({
   args: tierUpsertFields,
   handler: async (ctx, a) => {
-    // Slug uniqueness (no UNIQUE constraint in Convex) — read-check the index.
+    // Slug uniqueness (no UNIQUE constraint in Convex): read-check the index.
     const clash = await ctx.db
       .query('tiers')
       .withIndex('by_slug', (q) => q.eq('slug', a.slug))
@@ -188,7 +188,7 @@ export const createTier = internalMutation({
 });
 
 export const updateTier = internalMutation({
-  // All fields optional — the SPA sends a partial patch (TierUpsert minus
+  // All fields optional: the SPA sends a partial patch (TierUpsert minus
   // anything unchanged). `description` / `remnawaveSquadUuid` accept null.
   args: {
     id: v.id('tiers'),
@@ -323,7 +323,7 @@ export const usersSearch = internalQuery({
 
     const trimmed = q?.trim();
 
-    // Targeted lookups when `q` clearly identifies a single user — these short
+    // Targeted lookups when `q` clearly identifies a single user; these short
     // out before the paginated scan and ignore the cursor (small result set).
     if (trimmed) {
       // The 4-digit account-number prefix is the only searchable handle; any
@@ -635,7 +635,7 @@ export const deleteOutlineServer = internalMutation({
 /**
  * Best-effort connectivity check for the Outline Manager URL the admin pasted
  * (before they save it). Lists access keys; on success returns the current key
- * count. The apiUrl is treated as a credential — never echoed back, never put
+ * count. The apiUrl is treated as a credential: never echoed back, never put
  * in the error message (the Outline helpers already scrub it).
  */
 export const testOutlineConnection = internalAction({
@@ -660,7 +660,7 @@ export const testOutlineConnection = internalAction({
         signal: controller.signal,
       });
       if (!res.ok) {
-        // Status only — never the URL (it carries the secret path).
+        // Status only, never the URL (it carries the secret path).
         return { ok: false, error: `Outline returned HTTP ${res.status}` };
       }
       const body = (await res.json().catch(() => null)) as { accessKeys?: unknown[] } | null;

@@ -22,7 +22,7 @@
       toast.success('Token copied to clipboard');
       setTimeout(() => (copied = false), 2000);
     } catch {
-      toast.error('Copy failed — select the token text above and copy it manually.');
+      toast.error('Copy failed: select the token text above and copy it manually.');
     }
   }
 
@@ -56,7 +56,7 @@
       <AlertDialog.Title>Save your token now</AlertDialog.Title>
       <AlertDialog.Description>
         This is the only time you'll see <strong>{token.name}</strong>'s plaintext value. Copy it
-        and store it somewhere safe — it cannot be recovered if you close this dialog without saving
+        and store it somewhere safe. It cannot be recovered if you close this dialog without saving
         it.
       </AlertDialog.Description>
     </AlertDialog.Header>

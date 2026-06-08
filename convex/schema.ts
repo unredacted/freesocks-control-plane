@@ -2,12 +2,12 @@ import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 
 /**
- * Convex schema for FreeSocks Control Plane — the migration target
+ * Convex schema for FreeSocks Control Plane: the migration target
  * (`.claude/plans/...`, phase P2). Ported from `src/server/db/schema.ts` with
  * Convex idioms:
  *
  *  - Integer PKs/FKs become `_id` / `v.id("table")`. No referential enforcement
- *    (Convex has none) — code keeps the existing best-effort delete semantics.
+ *    (Convex has none); code keeps the existing best-effort delete semantics.
  *  - `created_at` columns are dropped in favour of the built-in `_creationTime`;
  *    explicit timestamps are kept ONLY where they're indexed or mutated
  *    (updatedAt, membershipExpiresAt, grantedAt, expiresAt, …).
@@ -133,7 +133,7 @@ export default defineSchema({
     grantedDayBucket: v.number(),
     // NOTE: the old `slot` column + composite UNIQUE index are intentionally
     // gone. The free-tier cap is now enforced by a serializable mutation
-    // (read count over by_ip_day, then insert) — see migration plan §2.
+    // (read count over by_ip_day, then insert); see migration plan §2.
   })
     .index('by_ip_day', ['ipHash', 'grantedDayBucket'])
     .index('by_granted_at', ['grantedAt']),

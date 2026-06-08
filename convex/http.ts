@@ -1,5 +1,5 @@
 /**
- * Public HTTP surface (P7) — the httpRouter that replaces the Hono app +
+ * Public HTTP surface (P7): the httpRouter that replaces the Hono app +
  * @hono/zod-openapi routes. Served on the Convex HTTP-actions port (:3211; in
  * dev the SPA's vite proxy forwards /api → here, so it's same-origin and needs
  * no CORS). Each handler is a bare httpAction; auth + the {error:{code,message}}
@@ -60,7 +60,7 @@ function convexError(err: unknown): Response {
 const ADMIN_UNAUTH = () => errorJson('auth.unauthenticated', 'Authentication required', 401);
 
 /**
- * Last path segment of a request URL — used to parse `:id` / `:op` out of the
+ * Last path segment of a request URL, used to parse `:id` / `:op` out of the
  * pathPrefix-registered admin routes (Convex's httpRouter has no path params).
  * Trailing slashes are tolerated.
  */
@@ -535,7 +535,7 @@ http.route({
       });
       return json(result);
     } catch {
-      // Generic — never echo the internal error (leaks paths) to an
+      // Generic: never echo the internal error (leaks paths) to an
       // unauthenticated endpoint. Detail is in the function logs.
       return errorJson('webhook.rejected', 'Webhook rejected (invalid signature or payload)', 400);
     }
@@ -789,7 +789,7 @@ http.route({
   }),
 });
 
-// POST /api/v1/admin/outline-servers/test-connection — exact path, so it wins
+// POST /api/v1/admin/outline-servers/test-connection: exact path, so it wins
 // over the pathPrefix below (which only handles PATCH/DELETE anyway).
 http.route({
   path: '/api/v1/admin/outline-servers/test-connection',

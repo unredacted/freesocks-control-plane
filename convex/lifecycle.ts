@@ -116,7 +116,7 @@ export const pushTierToBackend = internalAction({
         },
       });
     } catch {
-      /* best-effort — local state is already consistent; retried on next edit */
+      /* best-effort: local state is already consistent; retried on next edit */
     }
     return null;
   },

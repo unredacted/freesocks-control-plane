@@ -8,7 +8,7 @@ cutover runbook and **§7** for the reverse proxy that serves the SPA.
 ## Prerequisites
 
 - Docker (Compose v2)
-- `bun install` — installs the `convex` CLI
+- `bun install` installs the `convex` CLI
 
 ## 1. Configure the backend
 
@@ -41,7 +41,7 @@ This writes `.env.local` (gitignored) with `CONVEX_SELF_HOSTED_URL` +
 `CONVEX_SELF_HOSTED_ADMIN_KEY` (and the `VITE_CONVEX_*` URLs the SPA uses from P9).
 
 > **Do not** run a bare `convex dev` and pick **"Start without an account (run
-> Convex locally)"** — that boots a _separate_ CLI-managed backend (on a
+> Convex locally)"**: that boots a _separate_ CLI-managed backend (on a
 > different port) instead of this docker one, and writes a conflicting
 > `CONVEX_DEPLOYMENT` into `.env.local` (you'll then hit
 > _"CONVEX_SELF_HOSTED_URL … must not be set when CONVEX_DEPLOYMENT is set"_).
@@ -66,17 +66,17 @@ dashboard → Settings → Environment Variables). `bunx convex env list` shows 
 
 **Required for a functioning deploy:**
 
-| Var                                         | Used by                                                                                                                                                                                |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SESSION_SIGNING_KEY`                       | member `fs_session` cookie HMAC — `openssl rand -hex 32`                                                                                                                               |
-| `ADMIN_SESSION_SIGNING_KEY`                 | admin `fs_admin_session` cookie HMAC — `openssl rand -hex 32`                                                                                                                          |
-| `ADMIN_BOOTSTRAP_SECRET`                    | first-run admin passkey bootstrap gate — `openssl rand -hex 32`                                                                                                                        |
-| `IP_HASH_SALT`                              | HMAC salt for free-tier IP keying + login rate-limit — `openssl rand -hex 32`                                                                                                          |
-| `ACCOUNT_ID_PEPPER`                         | keyed-hash pepper for account numbers (a leaked hash column is useless without it) — `openssl rand -hex 32`. **Set once before launch; changing it invalidates every account number.** |
-| `TURNSTILE_SECRET_KEY`                      | Turnstile siteverify (free issuance + account login)                                                                                                                                   |
-| `WEBAUTHN_RP_ID`                            | passkey RP id = the bare domain (e.g. `freesocks.org`)                                                                                                                                 |
-| `WEBAUTHN_ORIGIN`                           | allowed page origin(s), comma-separated (e.g. `https://app.freesocks.org`)                                                                                                             |
-| `REMNAWAVE_BASE_URL`, `REMNAWAVE_API_TOKEN` | Remnawave ("Xray") backend actions                                                                                                                                                     |
+| Var                                         | Used by                                                                                                                                                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SESSION_SIGNING_KEY`                       | member `fs_session` cookie HMAC: `openssl rand -hex 32`                                                                                                                               |
+| `ADMIN_SESSION_SIGNING_KEY`                 | admin `fs_admin_session` cookie HMAC: `openssl rand -hex 32`                                                                                                                          |
+| `ADMIN_BOOTSTRAP_SECRET`                    | first-run admin passkey bootstrap gate: `openssl rand -hex 32`                                                                                                                        |
+| `IP_HASH_SALT`                              | HMAC salt for free-tier IP keying + login rate-limit: `openssl rand -hex 32`                                                                                                          |
+| `ACCOUNT_ID_PEPPER`                         | keyed-hash pepper for account numbers (a leaked hash column is useless without it): `openssl rand -hex 32`. **Set once before launch; changing it invalidates every account number.** |
+| `TURNSTILE_SECRET_KEY`                      | Turnstile siteverify (free issuance + account login)                                                                                                                                  |
+| `WEBAUTHN_RP_ID`                            | passkey RP id = the bare domain (e.g. `freesocks.org`)                                                                                                                                |
+| `WEBAUTHN_ORIGIN`                           | allowed page origin(s), comma-separated (e.g. `https://app.freesocks.org`)                                                                                                            |
+| `REMNAWAVE_BASE_URL`, `REMNAWAVE_API_TOKEN` | Remnawave ("Xray") backend actions                                                                                                                                                    |
 
 **Optional / feature-gated:**
 
@@ -84,38 +84,38 @@ dashboard → Settings → Environment Variables). `bunx convex env list` shows 
 | ------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
 | `ENVIRONMENT`                                                                                                                         | `production`      | set to `development` ONLY for local http (drops the cookie `Secure` flag)                        |
 | `WEBAUTHN_RP_NAME`                                                                                                                    | `FreeSocks Admin` | passkey display name                                                                             |
-| `TURNSTILE_SITE_KEY`                                                                                                                  | —                 | echoed to the SPA via `/api/v1/config` so it renders the widget                                  |
+| `TURNSTILE_SITE_KEY`                                                                                                                  | none              | echoed to the SPA via `/api/v1/config` so it renders the widget                                  |
 | `TRUSTED_PROXY`                                                                                                                       | unset             | set `true` ONLY behind a reverse proxy that overwrites `X-Forwarded-For` (fail-closed client-IP) |
 | `FREE_TIER_DAILY_CAP`                                                                                                                 | `1`               | per-IP/day free-key cap                                                                          |
 | `FREE_TIER_EXPIRY_DAYS`                                                                                                               | `90`              | free-user cleanup window                                                                         |
-| `WEBHOOK_SIGNING_SECRET`                                                                                                              | —                 | HMAC for `POST /api/webhooks/billing` (the billing seam)                                         |
-| `MEMBERS_JOIN_URL`, `MEMBERS_ACCOUNT_URL`                                                                                             | —                 | optional member-portal links surfaced in `/api/v1/config`                                        |
-| `S3_MIRRORS_ENABLED`, `S3_PROVIDER_COUNT`, `S3_PROVIDER_<i>_{NAME,ENDPOINT,BUCKET,PUBLIC_URL,REGION,ACCESS_KEY_ID,SECRET_ACCESS_KEY}` | off               | S3 subscription mirrors — one block per mirror; count `0`/unset disables                         |
+| `WEBHOOK_SIGNING_SECRET`                                                                                                              | none              | HMAC for `POST /api/webhooks/billing` (the billing seam)                                         |
+| `MEMBERS_JOIN_URL`, `MEMBERS_ACCOUNT_URL`                                                                                             | none              | optional member-portal links surfaced in `/api/v1/config`                                        |
+| `S3_MIRRORS_ENABLED`, `S3_PROVIDER_COUNT`, `S3_PROVIDER_<i>_{NAME,ENDPOINT,BUCKET,PUBLIC_URL,REGION,ACCESS_KEY_ID,SECRET_ACCESS_KEY}` | off               | S3 subscription mirrors, one block per mirror; count `0`/unset disables                          |
 
 The SPA build reads `VITE_CONVEX_SITE_URL` (the public HTTP-actions origin that
 `/api` is proxied to). Outline server `apiUrl`s live per-row in the
 `outlineServers` table (admin CMS), never in env.
 
-## 6. Cutover to Convex (P11 — start fresh)
+## 6. Cutover to Convex (P11, start fresh)
 
 No data is migrated (free users churn within the expiry window; there are no OIDC
 members to carry). On a fresh backend:
 
-1. **Stand up + deploy** — steps 1–4 above, then `bunx convex deploy -y` (CI uses
+1. **Stand up + deploy**: steps 1 to 4 above, then `bunx convex deploy -y` (CI uses
    `CONVEX_SELF_HOSTED_URL` + `CONVEX_SELF_HOSTED_ADMIN_KEY`).
-2. **Set env** — every Required var in §5 (and `ENVIRONMENT` left at `production`
+2. **Set env**: every Required var in §5 (and `ENVIRONMENT` left at `production`
    so cookies are `Secure`; `TRUSTED_PROXY=true` since you're behind the proxy in §7).
 3. **Seed tiers + settings** (idempotent):
    ```sh
    bunx convex run seed:seedCutover '{}'
    ```
    Adjust the tier limits afterward in the admin CMS (Tiers) or edit `convex/seed.ts`.
-4. **Register Outline servers** (only if using the Outline backend) — admin CMS →
+4. **Register Outline servers** (only if using the Outline backend): admin CMS →
    Outline Servers (the `apiUrl` secret is stored server-side, never echoed back).
-5. **Bootstrap the first admin passkey** — open `/admin` in a browser; the wizard
+5. **Bootstrap the first admin passkey**: open `/admin` in a browser; the wizard
    appears while `passkeyCredentials` is empty. Paste `ADMIN_BOOTSTRAP_SECRET`,
    register a passkey. Bootstrap **locks forever** once any credential exists.
-6. **Issue `fsv1_` service tokens** (if any external callers) — admin CMS → API Tokens.
+6. **Issue `fsv1_` service tokens** (if any external callers): admin CMS → API Tokens.
 7. **Verify** (§8), then point DNS at the reverse proxy and decommission the old stack.
 
 ## 7. Reverse proxy

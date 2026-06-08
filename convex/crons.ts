@@ -1,9 +1,9 @@
 /**
- * Scheduled jobs (P8) — replaces jobs/dispatcher.ts + the per-platform cron
+ * Scheduled jobs (P8): replaces jobs/dispatcher.ts + the per-platform cron
  * triad (Workers triggers / node-cron / external scheduler). Convex runs these
  * natively; each target is an internalAction/internalMutation already built and
  * live-tested in P5/P6. Bulk sweeps take a bounded page per run (the functions
- * cap at 100–500 rows) and simply catch up on the next tick.
+ * cap at 100 to 500 rows) and simply catch up on the next tick.
  *
  * Tier propagation is NOT a cron: it's event-driven. lifecycle.setMembership
  * schedules pushTierToBackend via ctx.scheduler.runAfter on each tier change.

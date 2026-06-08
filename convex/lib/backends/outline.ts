@@ -1,12 +1,12 @@
 /**
  * Outline Manager backend, ported from src/server/providers/outline/* into
  * config-based functions (V8 fetch). The DB-touching parts (server-pool
- * selection, key→server resolution, access-key-count bump) are NOT here — they
+ * selection, key→server resolution, access-key-count bump) are NOT here; they
  * live in convex/outlineServers.ts as internal queries/mutations that the
  * dispatch action (convex/backends.ts) calls. These functions take a resolved
  * server config.
  *
- * `apiUrl` carries the Outline Manager secret path segment — treat as a
+ * `apiUrl` carries the Outline Manager secret path segment; treat as a
  * credential: never logged, never put in an error.
  */
 import { z } from 'zod';
@@ -67,7 +67,7 @@ async function call<T>(
       signal: controller.signal,
     });
     if (!res.ok) {
-      // NEVER include the url/apiUrl in the error — only the path + status.
+      // NEVER include the url/apiUrl in the error, only the path + status.
       throw new OutlineApiError(`Outline ${res.status} on ${args.path}`, {
         status: res.status,
         path: args.path,
@@ -127,12 +127,12 @@ export async function outlineIssue(
     schema: OutlineAccessKey,
   });
   if (spec.trafficLimitBytes !== null && spec.trafficLimitBytes > 0) {
-    // A failed limit doesn't void a usable key — leave it; tier propagation / the
+    // A failed limit doesn't void a usable key; leave it. Tier propagation / the
     // healthcheck cron will reconcile. (We swallow here, matching the original.)
     try {
       await setDataLimit(cfg, key.id, spec.trafficLimitBytes);
     } catch {
-      /* noop — key is still usable */
+      /* noop: key is still usable */
     }
   }
   if (!key.accessUrl) {
@@ -140,7 +140,7 @@ export async function outlineIssue(
     // deriving the URL from the fork's WSS response isn't implemented yet
     // (Bug 15). Fail clearly rather than issuing a key with an empty URL.
     throw new OutlineApiError(
-      'Outline key has no accessUrl — WSS/dynamic-config issuance is not supported yet',
+      'Outline key has no accessUrl; WSS/dynamic-config issuance is not supported yet',
       { path: '/access-keys' },
     );
   }
@@ -155,7 +155,7 @@ export async function outlineIssue(
 /**
  * Connectivity + auth probe for the healthcheck cron. Lists access keys (the
  * cheapest authenticated endpoint) and returns the live key count. Throws on
- * any failure — the cron treats a throw as "unhealthy". The `call` helper
+ * any failure: the cron treats a throw as "unhealthy". The `call` helper
  * scrubs the secret apiUrl from errors.
  */
 const OutlineAccessKeyList = z.object({ accessKeys: z.array(z.unknown()) }).passthrough();
@@ -232,7 +232,7 @@ export async function outlineFetchContent(
     path: `/access-keys/${encodeURIComponent(backendUserId)}`,
     schema: OutlineAccessKey,
   });
-  // An Outline key IS its content — the ss:// URL is everything the client needs.
+  // An Outline key IS its content: the ss:// URL is everything the client needs.
   // Returned as text so the S3 mirror flow has something to upload.
   if (!key.accessUrl) {
     throw new OutlineApiError('Outline key has no accessUrl to mirror (WSS not supported yet)', {

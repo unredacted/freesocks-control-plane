@@ -3,7 +3,7 @@
 
   /**
    * Brief framing card explaining how the service is funded. We deliberately
-   * don't enumerate specific programs / impact items here — doing so
+   * don't enumerate specific programs / impact items here, since doing so
    * requires knowing the real allocation, which lives on the Unredacted
    * website itself. We just link there. Donations are the active funding
    * path today; membership signup is being designed and will appear here
@@ -20,7 +20,7 @@
       <h2 class="text-xl font-display font-bold tracking-tight">Donations support Unredacted</h2>
       <p class="text-sm text-muted-foreground mt-1 max-w-xl leading-relaxed">
         Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations
-        fund the work — see what that work is on the Unredacted site.
+        fund the work. See what that work is on the Unredacted site.
       </p>
     </div>
   </div>

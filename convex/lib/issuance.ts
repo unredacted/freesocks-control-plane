@@ -1,5 +1,5 @@
 /**
- * The issuance saga (P5c) — the read→act→write decomposition of the old
+ * The issuance saga (P5c): the read→act→write decomposition of the old
  * SubscriptionDeliveryService.issueNew. A plain helper (not a registered
  * function) invoked from within an action (free-tier issueOrReissue, and later
  * regenerate/switch-backend), so it shares the caller's ActionCtx instead of
@@ -33,7 +33,7 @@ export async function issueNewSubscription(
     spec: input.spec,
   });
   try {
-    // Mirror to S3 — skipped entirely when mirroring is off / no providers, so
+    // Mirror to S3; skipped entirely when mirroring is off / no providers, so
     // we don't even fetch the content (matches the old mirrorSubscription).
     let mirrors: IssueResult['mirrors'] = [];
     let rawContentHash: string | undefined;
@@ -76,7 +76,7 @@ export async function issueNewSubscription(
       mirrors,
     };
   } catch (err) {
-    // The backend user exists but we couldn't finish — delete it so a transient
+    // The backend user exists but we couldn't finish, so delete it: a transient
     // failure doesn't leak a backend account with no local row.
     try {
       await ctx.runAction(internal.backends.deleteUser, {

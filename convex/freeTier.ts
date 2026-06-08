@@ -6,12 +6,12 @@
  * Why this is race-free (closes deferred bug H1): Convex mutations run under
  * serializable OCC. `claimFreeSlot` reads the grants for (ipHash, dayBucket)
  * over the by_ip_day index, then inserts only if under cap. The read set is the
- * grant range, so two concurrent claims have a read/write conflict — the loser
+ * grant range, so two concurrent claims have a read/write conflict; the loser
  * is aborted and retried, re-reads the now-larger count, and sees the cap. Two
  * racers therefore can NEVER both observe `< cap`. No slot column, no modulo,
  * no UNIQUE trick.
  *
- * The backend issuance (HTTP) can't happen in this mutation — it's the action
+ * The backend issuance (HTTP) can't happen in this mutation; it's the action
  * leg of the saga (P5c). The slot is held durably before any side effect, so
  * the cap is enforced up front; `releaseFreeSlot` compensates if issuance fails.
  */
@@ -99,7 +99,7 @@ export const releaseFreeSlot = internalMutation({
   },
 });
 
-/** Grants for an (ipHash, dayBucket) — used by reissue logic and the cap test. */
+/** Grants for an (ipHash, dayBucket), used by reissue logic and the cap test. */
 export const grantsForIpDay = internalQuery({
   args: { ipHash: v.string(), dayBucket: v.number() },
   handler: (ctx, { ipHash, dayBucket }) =>
@@ -110,7 +110,7 @@ export const grantsForIpDay = internalQuery({
 });
 
 /**
- * Anonymous free-tier issuance — the top-level saga (replaces
+ * Anonymous free-tier issuance: the top-level saga (replaces
  * FreeTierService.issueOrReissue). Turnstile is verified upstream (the HTTP
  * action, P7). Cap is the serializable claimFreeSlot; on a lost claim we serve
  * the existing key (reissue) or reject. On a win we issue, mint a one-time
@@ -183,7 +183,7 @@ export const issueOrReissue = internalAction({
         },
       });
     } catch (err) {
-      // Backend issuance failed — release the slot + bare user so a transient
+      // Backend issuance failed: release the slot + bare user so a transient
       // error doesn't burn this IP's daily allowance.
       await ctx.runMutation(internal.freeTier.releaseFreeSlot, {
         userId: claim.userId,

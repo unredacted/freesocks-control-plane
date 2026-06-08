@@ -20,7 +20,7 @@
   /**
    * One-time bootstrap form for the very first admin. Server-side this is
    * only accepted while no admin has a registered passkey, so the form is
-   * harmless to expose publicly — without ADMIN_BOOTSTRAP_SECRET it does
+   * harmless to expose publicly: without ADMIN_BOOTSTRAP_SECRET it does
    * nothing.
    */
   let bootstrap = $state('');

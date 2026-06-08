@@ -12,7 +12,7 @@
 
   /**
    * Modal editor for a single Outline server. Used for both create and edit
-   * — when `server` is provided, the form pre-fills (minus the secret-laden
+   * when `server` is provided, the form pre-fills (minus the secret-laden
    * `apiUrl`, which is masked on read and only re-submitted if the admin
    * actually retypes it).
    */
@@ -27,7 +27,7 @@
   const isEdit = !!server;
 
   // Form state. On edit, the existing `apiUrlMasked` is shown as placeholder
-  // text in the apiUrl input — the admin can leave it blank to keep the
+  // text in the apiUrl input: the admin can leave it blank to keep the
   // existing URL, or type a new one to rotate the secret.
   let name = $state(server?.name ?? '');
   let slug = $state(server?.slug ?? '');
@@ -38,7 +38,7 @@
   let isActive = $state(server?.isActive ?? true);
   let priority = $state(server?.priority ?? 0);
 
-  // Test connection state (a separate side flow — independent of save).
+  // Test connection state (a separate side flow, independent of save).
   let testing = $state(false);
   let testResult = $state<{ ok: boolean; message: string } | null>(null);
 
@@ -124,8 +124,8 @@
     <Dialog.Header>
       <Dialog.Title>{isEdit ? `Edit ${server?.name}` : 'Register an Outline server'}</Dialog.Title>
       <Dialog.Description>
-        The Outline server's TLS certificate must be valid — Workers <code>fetch</code> rejects self-signed
-        certs. Either front it with Cloudflare or install a real LE certificate.
+        The Outline server's TLS certificate must be valid: <code>fetch</code> rejects self-signed certs.
+        Either front it with Cloudflare or install a real Let's Encrypt certificate.
       </Dialog.Description>
     </Dialog.Header>
 

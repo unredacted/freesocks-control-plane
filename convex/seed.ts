@@ -1,5 +1,5 @@
 /**
- * Seed helpers for local dev / cutover (P11) and tests. All idempotent — safe to
+ * Seed helpers for local dev / cutover (P11) and tests. All idempotent and safe to
  * re-run. `seedCutover` is the one-shot a fresh prod deploy runs (P11): default
  * tiers + app settings. Outline servers are operator-specific (their apiUrl is a
  * secret) and are added via the admin CMS, not seeded.

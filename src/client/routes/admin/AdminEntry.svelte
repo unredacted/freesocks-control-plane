@@ -31,7 +31,7 @@
     }
   });
 
-  // After bootstrap completes, AdminBootstrap calls onComplete — we
+  // After bootstrap completes, AdminBootstrap calls onComplete; we
   // invalidate the status query so it re-fetches and the SPA flips to the
   // login screen automatically.
   function refresh() {
@@ -55,7 +55,7 @@
     Render a neutral loading state while:
       a) the initial status fetch is in flight, or
       b) the caller is already signed in and the $effect above is about to
-         navigate them to /admin/tiers — showing the login form for the few
+         navigate them to /admin/tiers. Showing the login form for the few
          frames before the redirect lands would be jarring.
   -->
   <div class="max-w-md mx-auto py-12 text-muted-foreground text-center">Loading…</div>

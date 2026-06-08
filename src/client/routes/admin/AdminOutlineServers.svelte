@@ -90,7 +90,7 @@
       <p>No Outline servers registered.</p>
       <p class="text-xs">
         Add one to enable issuing Outline-backed keys. The Outline server must have a valid TLS
-        certificate (Cloudflare-fronted or LE-issued — self-signed certs are rejected by Workers).
+        certificate (Cloudflare-fronted or Let's Encrypt; self-signed certs are rejected).
       </p>
     </div>
   {:else}
@@ -171,7 +171,7 @@
         <AlertDialog.Title>Remove "{pendingDelete?.name}"?</AlertDialog.Title>
         <AlertDialog.Description>
           De-registers the server from the pool. Existing keys on this server keep working
-          server-side but will fail on next regenerate — migrate users off first if you want a clean
+          server-side but will fail on next regenerate. Migrate users off first if you want a clean
           shutdown.
         </AlertDialog.Description>
       </AlertDialog.Header>

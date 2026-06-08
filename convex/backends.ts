@@ -6,7 +6,7 @@
  * Remnawave is pure HTTP (config from process.env). Outline needs the DB to
  * pick/resolve a server (its `apiUrl` is secret), so its branches call the
  * internal queries/mutation in convex/outlineServers.ts and then do the HTTP
- * in convex/lib/backends/outline.ts — the read → act → write decomposition.
+ * in convex/lib/backends/outline.ts: the read → act → write decomposition.
  *
  * Config (Convex env vars): REMNAWAVE_BASE_URL, REMNAWAVE_API_TOKEN.
  */
@@ -116,7 +116,7 @@ export const issueUser = internalAction({
       });
       if (candidates.length === 0)
         throw new Error('No active Outline servers available to issue a key');
-      // Random pick among the top candidates (CSPRNG — can't live in the query).
+      // Random pick among the top candidates (CSPRNG, can't live in the query).
       const idx = new Uint32Array(1);
       crypto.getRandomValues(idx);
       server = candidates[idx[0]! % candidates.length]!;
@@ -137,7 +137,7 @@ export const getUser = internalAction({
     const server = await resolveOutlineServer(ctx, backendUserId);
     if (!server) {
       // READ-path tolerance: an unresolved key (e.g. row mid-write) shouldn't
-      // crash /account — return a sentinel "active/unknown" state.
+      // crash /account; return a sentinel "active/unknown" state.
       return {
         trafficLimitBytes: null,
         usedTrafficBytes: 0,

@@ -10,7 +10,7 @@
   }
   let { entry }: Props = $props();
 
-  // Always two views available — redacted (default) and raw (toggle). The
+  // Always two views available: redacted (default) and raw (toggle). The
   // Collapsible drives the raw view; the redacted view is always rendered
   // above it so admins see what the row is about without expanding.
   let payload = $derived(

@@ -8,7 +8,7 @@ third backend.
 
 There is no class-based `ProxyBackendProvider` interface anymore. A backend is:
 
-1. **A branch in the dispatch actions** (`convex/backends.ts`) — six `internalAction`s, each
+1. **A branch in the dispatch actions** (`convex/backends.ts`): six `internalAction`s, each
    switching on the `backend` discriminator:
 
    ```ts
@@ -25,7 +25,7 @@ There is no class-based `ProxyBackendProvider` interface anymore. A backend is:
    live in `convex/lib/backends/types.ts`.
 
 2. **Pure HTTP functions** in `convex/lib/backends/<id>.ts` that take a resolved config and
-   do `fetch`. They hold no DB access — they're invoked from inside the dispatch action's V8
+   do `fetch`. They hold no DB access; they're invoked from inside the dispatch action's V8
    runtime. Reference: `convex/lib/backends/remnawave.ts` (e.g. `remnawaveIssueUser`,
    `remnawaveGetUser`, …) and `convex/lib/backends/outline.ts` (`outlineIssue`,
    `outlineGetState`, …).
@@ -39,7 +39,7 @@ There is no class-based `ProxyBackendProvider` interface anymore. A backend is:
 The contract is intentionally permissive about per-backend differences:
 
 - **`issueUser`** takes a superset `spec`. Backends apply what they support and ignore the
-  rest — e.g. `hwidDeviceLimit` / `trafficLimitStrategy` / `remnawaveSquadUuid` are Remnawave
+  rest, e.g. `hwidDeviceLimit` / `trafficLimitStrategy` / `remnawaveSquadUuid` are Remnawave
   concepts that Outline drops; `outlineServerId` / `outlineServerPoolIds` are Outline pool
   hints that Remnawave ignores.
 - **`updateUser`** is a sparse PATCH. `undefined` means "leave it alone". Backends apply
@@ -56,7 +56,7 @@ The contract is intentionally permissive about per-backend differences:
 
 ## Where dispatch is called from
 
-Higher-level code never calls `fetch` directly — it runs the dispatch actions:
+Higher-level code never calls `fetch` directly; it runs the dispatch actions:
 
 - **Issuance** goes through the saga helper `issueNewSubscription` in
   `convex/lib/issuance.ts`, which calls `internal.backends.issueUser` (and, with mirroring on,
@@ -69,13 +69,13 @@ Higher-level code never calls `fetch` directly — it runs the dispatch actions:
 
 ### The `backend` discriminator: two places, two questions
 
-- `tiers.backend` — the backend a tier issues **against**. This is what `issueUser` dispatches
+- `tiers.backend`: the backend a tier issues **against**. This is what `issueUser` dispatches
   on. Free tiers can come in pairs (one Remnawave, one Outline, both `isDefaultFree`); the
   subscription endpoint picks the matching default-free tier from the user's choice (or the
   admin default).
-- `subscriptions.backend` — the backend that actually **issued** this row. Stays put even if
+- `subscriptions.backend`: the backend that actually **issued** this row. Stays put even if
   the tier later moves to a different backend (tier-backend changes are intentionally not
-  propagated — existing users keep their original backend until they regenerate or explicitly
+  propagated; existing users keep their original backend until they regenerate or explicitly
   switch). This is what later reads/updates/deletes dispatch on.
 
 ## Adding a new backend
@@ -89,16 +89,16 @@ Steps to add a third backend (e.g. `wireguard`, `3xui`, …):
    - the client-side `BackendId` zod enum in `src/shared/contracts/` (so the SPA's response
      parsing accepts it).
 
-   (Convex schema changes apply on the next `convex dev`/`deploy` push — there is no
+   (Convex schema changes apply on the next `convex dev`/`deploy` push; there is no
    migration file.)
 
 2. **Write the pure HTTP functions** at `convex/lib/backends/<id>.ts`. Mirror
    `convex/lib/backends/remnawave.ts`. Implement issue/get/update/delete/fetch as standalone
    functions that take a resolved config and return the shared `lib/backends/types.ts` shapes.
-   - Custom error classes must **not** capture URLs or other secrets — see `OutlineApiError`
+   - Custom error classes must **not** capture URLs or other secrets; see `OutlineApiError`
      in `convex/lib/backends/outline.ts`, which records only the status + path.
 
-3. **Add the dispatch branches** in `convex/backends.ts` — one `if (backend === '<id>')` arm
+3. **Add the dispatch branches** in `convex/backends.ts`, one `if (backend === '<id>')` arm
    per action. Pull config from `process.env` (set via `bunx convex env set`). If the backend
    has multiple physical servers, add a DB-half module like `convex/outlineServers.ts` and do
    the read → act → write split in the dispatch (the random pick / CSPRNG must live in the
@@ -118,14 +118,14 @@ Steps to add a third backend (e.g. `wireguard`, `3xui`, …):
    server registry similar to Outline.
 
 6. **Surface in user UI** (optional): if the backend should be an end-user choice on
-   `/get-key`, add an option to the chooser (it degrades gracefully — fewer enabled backends =
+   `/get-key`, add an option to the chooser (it degrades gracefully; fewer enabled backends =
    fewer options).
 
 7. **Tests**: unit-test the pure HTTP functions with a mocked `fetch`; add a `convex-test`
    case that issues/reads/updates/deletes through the dispatch action (mirror
    `convex/subscriptions.test.ts` for shape).
 
-Most domain code needs no changes — it already dispatches through `convex/backends.ts`.
+Most domain code needs no changes; it already dispatches through `convex/backends.ts`.
 
 ## Sensitive data
 
@@ -137,10 +137,10 @@ Backends often need credentials that must never leak:
 Conventions:
 
 - Per-server secrets live on the registry row (e.g. `outlineServers.apiUrl`) and are
-  **never returned** to the SPA — admin endpoints return a `apiUrlMasked` form only
+  **never returned** to the SPA; admin endpoints return a `apiUrlMasked` form only
   (`maskApiUrl` in `convex/adminApi.ts`). Backend config that's global (Remnawave) lives in
   Convex env vars, never in the DB or a response.
 - Never write a raw secret into a log line or audit `payload`. The Outline healthcheck and
   the `OutlineApiError` class both deliberately avoid the `apiUrl`.
-- Custom error classes for backend HTTP calls should NOT capture the URL — model them on
+- Custom error classes for backend HTTP calls should NOT capture the URL; model them on
   `OutlineApiError`.

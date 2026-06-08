@@ -1,10 +1,10 @@
 /**
- * Cloudflare Turnstile siteverify (P6) — pure async fn ported from
+ * Cloudflare Turnstile siteverify (P6): pure async fn ported from
  * providers/turnstile/verify.ts. Called from actions (fetch is available).
  * Gates account-number login + anonymous free-tier issuance.
  *
  * Local testing: set TURNSTILE_SECRET_KEY to Cloudflare's "always passes" test
- * secret `1x0000000000000000000000000000000AA` — siteverify then returns
+ * secret `1x0000000000000000000000000000000AA`; siteverify then returns
  * success:true for any response token.
  */
 export interface TurnstileResult {

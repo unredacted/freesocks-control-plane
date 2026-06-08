@@ -109,7 +109,7 @@ describe('lifecycle grace/disable transitions', () => {
         updatedAt: now,
       }),
     );
-    // Grace user still inside the 7-day window — must NOT be returned.
+    // Grace user still inside the 7-day window; must NOT be returned.
     await t.run(async (ctx) =>
       ctx.db.insert('users', {
         tierId: memberTierId,

@@ -31,7 +31,7 @@
   const config = configQuery();
   const qc = useQueryClient();
 
-  // Convenience accessor — Svelte's narrowing reads better than account.data
+  // Convenience accessor: Svelte's narrowing reads better than account.data
   // sprinkled across the template.
   let data = $derived(account.data);
 
@@ -43,7 +43,7 @@
   // query updates `data.subscription.backend` to the new value.
   let pendingSwitchTarget = $state<'remnawave' | 'outline' | null>(null);
 
-  // 401 from /api/v1/account means the cookie session is missing or expired —
+  // 401 from /api/v1/account means the cookie session is missing or expired;
   // bounce to the account-number sign-in form (no OIDC anymore).
   $effect(() => {
     const err = account.error;
@@ -94,7 +94,7 @@
             monthlyTrafficGb: z.number(),
             deviceLimit: z.number(),
           }),
-          // Nullable — null when there was no live previous subscription
+          // Nullable: null when there was no live previous subscription
           // to tombstone (e.g. a rapid double-switch). Suppress the
           // "24h grace" toast detail in that case rather than telling
           // the user about a window that may not apply.
@@ -153,7 +153,7 @@
   }
 
   // One-time reveal of a freshly rotated account number. Held in volatile state
-  // only — never re-fetchable (the server stores just a hash). The old number
+  // only, never re-fetchable (the server stores just a hash). The old number
   // stops working immediately.
   let revealedAccountId = $state<string | null>(null);
   let rotateConfirmOpen = $state(false);
@@ -168,7 +168,7 @@
       revealedAccountId = result.accountId;
       toast.success('New account number generated', {
         description:
-          'Save it now — the old number no longer works and this is the only time it’s shown.',
+          'Save it now. The old number no longer works and this is the only time it’s shown.',
       });
     },
     onError: (err) => {
@@ -261,7 +261,7 @@
   </div>
 {:else}
   <div class="max-w-3xl mx-auto py-8 space-y-8">
-    <!-- Welcome strip — slim, not a card. Visual rhythm is set by spacing,
+    <!-- Welcome strip, slim, not a card. Visual rhythm is set by spacing,
          not by everything being framed. -->
     <header class="flex items-start justify-between gap-4 flex-wrap">
       <div>
@@ -286,7 +286,7 @@
     {#if revealedAccountId}
       <div class="rounded-xl border-2 border-primary bg-primary/5 p-5 space-y-3">
         <h2 class="text-sm font-semibold uppercase tracking-wider text-primary">
-          Your new account number — save it now
+          Your new account number: save it now
         </h2>
         <p
           class="font-mono text-lg md:text-xl tracking-normal tabular-nums select-all break-words leading-relaxed"
@@ -295,7 +295,7 @@
         </p>
         <p class="text-xs text-muted-foreground">
           This is the only time it's shown, and your old number no longer works. Store it somewhere
-          safe — it's the only way to sign in, and it can't be recovered.
+          safe: it's the only way to sign in, and it can't be recovered.
         </p>
         <div class="flex gap-2">
           <Button
@@ -319,7 +319,7 @@
         <h2 class="text-sm font-semibold">Rotate your account number?</h2>
         <p class="text-xs text-muted-foreground">
           A new 32-digit number is generated and shown once. Your current number stops working
-          immediately — anyone who has it loses access. Do this if your number may have leaked.
+          immediately. Anyone who has it loses access. Do this if your number may have leaked.
         </p>
         <div class="flex gap-2">
           <Button
@@ -348,7 +348,7 @@
       <MembershipCallout
         tone="info"
         title="You're on the free tier"
-        body="Higher Unredacted membership tiers — raising device count and monthly bandwidth — are coming soon. In the meantime, donations keep free keys funded."
+        body="Higher Unredacted membership tiers (raising device count and monthly bandwidth) are coming soon. In the meantime, donations keep free keys funded."
         ctaUrl="https://unredacted.org/donate"
         ctaLabel="Donate"
       >
@@ -461,7 +461,7 @@
                 <code class="font-mono text-xs truncate">{d.hwid.slice(0, 24)}…</code>
               </div>
               <span class="text-muted-foreground text-xs tabular-nums shrink-0 ml-3">
-                {d.lastSeenAt ? `Last seen ${new Date(d.lastSeenAt).toLocaleDateString()}` : '—'}
+                {d.lastSeenAt ? `Last seen ${new Date(d.lastSeenAt).toLocaleDateString()}` : '-'}
               </span>
             </li>
           {/each}

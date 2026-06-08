@@ -38,12 +38,12 @@ export const PublicConfig = z.object({
    * enforced numbers (straight from the DB) instead of hardcoded copies that
    * silently drift from the seed. Active tiers only, ordered by `priority`
    * ascending (free → patron), deduped by slug. Deliberately excludes every
-   * sensitive field — no backend/squad identifiers.
+   * sensitive field: no backend/squad identifiers.
    */
   tiers: z.array(
     z.object({
       // Free-form: admins may define custom tier slugs (the admin contract
-      // allows any string), so this must not be the narrower TierSlug enum —
+      // allows any string), so this must not be the narrower TierSlug enum;
       // an out-of-enum slug must never 500 this public endpoint.
       slug: z.string(),
       name: z.string(),
@@ -54,7 +54,7 @@ export const PublicConfig = z.object({
   /**
    * Public subset of AppSettings the SPA needs to render the backend chooser
    * on `/get-key` and pick the right labels everywhere else. This is the only
-   * way anonymous users learn about the backend toggle state — the full
+   * way anonymous users learn about the backend toggle state; the full
    * `/api/v1/admin/settings` endpoint is admin-only.
    *
    * `userChoiceEnabled` gates whether the chooser is rendered at all; when

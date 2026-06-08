@@ -15,7 +15,7 @@
 
   function onOpenChange(next: boolean) {
     // Sync the parent's `open` flag, and treat external close (Escape, outside
-    // click) as a cancel — but don't allow it while a regen is in flight.
+    // click) as a cancel, but don't allow it while a regen is in flight.
     if (!next && busy) return;
     open = next;
     if (!next) onCancel();
@@ -38,7 +38,7 @@
       {#if deviceCount > 0}
         <li>
           You currently have <strong>{deviceCount}</strong>
-          connected device{deviceCount === 1 ? '' : 's'} — they'll all need re-import
+          connected device{deviceCount === 1 ? '' : 's'}, they'll all need re-import
         </li>
       {/if}
     </ul>

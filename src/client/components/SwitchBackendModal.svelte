@@ -14,7 +14,7 @@
    */
   interface Props {
     open: boolean;
-    /** Target backend after the switch — used for the body copy. */
+    /** Target backend after the switch, used for the body copy. */
     targetBackend: 'remnawave' | 'outline';
     /** Current backend, for the "from X to Y" framing. */
     currentBackend: 'remnawave' | 'outline';
@@ -41,7 +41,7 @@
   let toLabel = $derived(labels[targetBackend]);
 
   function onOpenChange(next: boolean) {
-    // Don't allow Escape / outside-click while the switch is in flight —
+    // Don't allow Escape / outside-click while the switch is in flight:
     // a mid-request close could leave the user in an ambiguous state about
     // whether the new subscription was actually issued.
     if (!next && busy) return;
@@ -66,7 +66,7 @@
       {#if deviceCount > 0}
         <li>
           You currently have <strong>{deviceCount}</strong>
-          connected device{deviceCount === 1 ? '' : 's'} — re-import on all of them
+          connected device{deviceCount === 1 ? '' : 's'}, re-import on all of them
         </li>
       {/if}
     </ul>

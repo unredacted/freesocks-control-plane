@@ -2,7 +2,7 @@
  * Account-number minting (P5a). The plaintext is generated in an action
  * (CSPRNG) and revealed exactly once; only the hash + 4-digit prefix are
  * persisted. Uniqueness of the hash is enforced inside the mutation via the
- * by_account_id_hash read-check (serializable OCC — race-free, replacing the
+ * by_account_id_hash read-check (serializable OCC, race-free, replacing the
  * old UNIQUE index). The login lookup is users.byAccountIdHash (P3).
  */
 import { internalAction, internalMutation } from './_generated/server';

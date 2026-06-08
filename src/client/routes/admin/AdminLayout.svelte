@@ -47,7 +47,7 @@
     </button>
   </div>
 
-  <!-- Sidebar — drawer on mobile, fixed column on md+ -->
+  <!-- Sidebar: drawer on mobile, fixed column on md+ -->
   <aside
     class={cn(
       'md:block md:border-r md:border-border md:pr-6',

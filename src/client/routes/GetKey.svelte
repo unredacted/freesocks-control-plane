@@ -19,7 +19,7 @@
   let token = $state<string | null>(null);
   let result = $state<SubscriptionPayload | null>(null);
   // Tracked separately from `config.data?.backends.defaultBackend` because the
-  // user can pick a non-default — initialized lazily in $effect once config
+  // user can pick a non-default, initialized lazily in $effect once config
   // loads so the UI doesn't flicker between undefined → default.
   let chosenBackend = $state<'remnawave' | 'outline' | null>(null);
 
@@ -47,10 +47,10 @@
   });
 
   // createMutation handles in-flight state (mutation.isPending) and surfaces
-  // errors via mutation.error — and we layer toast feedback on top.
+  // errors via mutation.error, and we layer toast feedback on top.
   const issueKey = createMutation(() => ({
     mutationFn: async () => {
-      // Only send `backend` when the user could actually pick one — otherwise
+      // Only send `backend` when the user could actually pick one; otherwise
       // the server ignores it. Authenticated members go through the member
       // path which doesn't read this field at all (their tier dictates the
       // backend), so we omit it there too.
@@ -99,7 +99,7 @@
           {result.accountId.replace(/(\d{4})(?=\d)/g, '$1 ')}
         </p>
         <p class="text-xs text-muted-foreground">
-          This is the <strong>only</strong> way to sign back in — there's no email or password, and it
+          This is the <strong>only</strong> way to sign back in: there's no email or password, and it
           can't be recovered. Store it somewhere safe. It's shown only once.
         </p>
         <div class="flex gap-2">
@@ -133,7 +133,7 @@
     {#if !me.data?.authenticated}
       <div class="text-center text-sm text-muted-foreground pt-2">
         <!--
-          Member tiers (more devices, more bandwidth) are being designed —
+          Member tiers (more devices, more bandwidth) are being designed;
           the signup flow isn't wired end-to-end yet. The sign-in path
           still works for existing Unredacted members; everything past
           that is a placeholder until the membership flow ships.
@@ -146,7 +146,7 @@
           class="text-primary underline"
         >
           Donate
-        </a>{' '}— member tiers with more devices and bandwidth are coming soon.
+        </a>{' '}(member tiers with more devices and bandwidth are coming soon).
       </div>
     {/if}
   </div>

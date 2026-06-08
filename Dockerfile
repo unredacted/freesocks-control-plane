@@ -1,4 +1,4 @@
-# FreeSocks Control Plane — Bun self-host image.
+# FreeSocks Control Plane: Bun self-host image.
 # Build with:    docker build -t freesocks-control-plane:bun .
 # Run with:      docker run --rm -p 3000:3000 -e SQLITE_PATH=/data/freesocks.sqlite \
 #                  -v ./data:/data --env-file ./.env freesocks-control-plane:bun

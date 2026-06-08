@@ -17,7 +17,7 @@
   let editing = $state<z.infer<typeof TierAdmin> | null>(null);
 
   // Mutation: PATCH a tier. Optimistic updates aren't worth the complexity
-  // here — tier edits are infrequent and we'd rather show the authoritative
+  // here: tier edits are infrequent and we'd rather show the authoritative
   // server response (in case the propagation job kicks in async).
   const saveTier = createMutation(() => ({
     mutationFn: (tier: z.infer<typeof TierAdmin>) => {
@@ -44,7 +44,7 @@
 <AdminLayout>
   <h1 class="text-2xl font-bold mb-6">Tiers</h1>
   {#if tiers.isPending}
-    <!-- Skeleton stack — three placeholder cards (free/member/patron typical). -->
+    <!-- Skeleton stack: three placeholder cards (free/member/patron typical). -->
     <div class="space-y-4">
       {#each Array(3) as _, i (i)}
         <Card>

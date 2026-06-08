@@ -35,7 +35,7 @@
   const settings = appSettingsQuery();
   const qc = useQueryClient();
 
-  // Local working copy of the settings bag — we don't want to drop the user's
+  // Local working copy of the settings bag: we don't want to drop the user's
   // edits if the underlying query refetches in the background.
   let draft = $state<Record<string, unknown>>({});
   let initialized = $state(false);

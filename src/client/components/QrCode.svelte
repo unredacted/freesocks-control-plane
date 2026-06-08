@@ -9,7 +9,7 @@
    * screen instead of hand-typing the long `vless://` URL.
    *
    * The container has `currentColor` background so the QR adapts to dark
-   * mode automatically — we tell the encoder to render dark squares as
+   * mode automatically: we tell the encoder to render dark squares as
    * `--foreground` and light squares as `--background`.
    */
   interface Props {
@@ -38,7 +38,7 @@
   function toCssColor(raw: string): string {
     if (!raw) return '#000';
     if (raw.startsWith('#')) return raw;
-    // Coerce via temporary canvas — easiest cross-browser oklch→hex path.
+    // Coerce via temporary canvas: easiest cross-browser oklch→hex path.
     const c = document.createElement('canvas');
     c.width = 1;
     c.height = 1;

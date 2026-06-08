@@ -22,9 +22,9 @@
    * Loads `https://challenges.cloudflare.com/turnstile/v0/api.js` and renders
    * the widget. If the script fails to load (CSP block, restrictive network,
    * browser extension blocking, etc.), surfaces an explicit error state with
-   * a retry — not a silent dead-end.
+   * a retry, not a silent dead-end.
    *
-   * IMPORTANT — policy exception. The codebase otherwise bans third-party
+   * IMPORTANT: policy exception. The codebase otherwise bans third-party
    * scripts and resources (see CLAUDE.md's "No third-party resources"
    * section). Turnstile is the singular allowed exception because:
    *

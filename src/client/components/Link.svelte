@@ -13,7 +13,7 @@
 
   function handle(e: MouseEvent) {
     // Run the caller's own onclick first (e.g. closing the mobile nav drawer).
-    // It MUST be pulled out of `...rest` — otherwise a caller-supplied onclick
+    // It MUST be pulled out of `...rest`, otherwise a caller-supplied onclick
     // would overwrite this handler in the spread and we'd lose SPA navigation.
     onClickProp?.(e);
     if (e.defaultPrevented) return;

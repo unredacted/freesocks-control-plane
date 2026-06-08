@@ -30,7 +30,7 @@ async function seedFreeTier(t: ReturnType<typeof convexTest>): Promise<Id<'tiers
 describe('freeTier.claimFreeSlot', () => {
   // NOTE: claimFreeSlot's true OCC race-safety (two concurrent racers can never
   // both observe `< cap`) was proven against the LIVE Convex backend; convex-test
-  // runs mutations single-threaded, so these calls are SEQUENTIAL — they assert
+  // runs mutations single-threaded, so these calls are SEQUENTIAL; they assert
   // the cap arithmetic, not the concurrency guarantee.
   test('claims up to cap N, then refuses', async () => {
     const t = convexTest(schema, modules);

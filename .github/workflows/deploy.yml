@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
 
 # Deploys the two halves of the stack to the self-hosted Convex deployment:
-#   1. `convex deploy` — typechecks + pushes the convex/ functions (queries,
+#   1. `convex deploy`: typechecks + pushes the convex/ functions (queries,
 #      mutations, actions, http router, crons) to the backend.
-#   2. `vite build` — builds the static SPA, which a reverse proxy serves while
+#   2. `vite build`: builds the static SPA, which a reverse proxy serves while
 #      routing /api -> the Convex HTTP-actions origin (see docs/convex-self-hosting.md).
 #
 # Required repo secrets:
@@ -43,7 +43,7 @@ jobs:
           VITE_CONVEX_SITE_URL: ${{ secrets.VITE_CONVEX_SITE_URL }}
 
       # Ship dist/ to wherever the reverse proxy serves the SPA from. This step
-      # is deployment-specific (rsync / object storage / container image) — wire
+      # is deployment-specific (rsync / object storage / container image); wire
       # it to your host. The build artifact is ./dist.
       - name: Upload SPA artifact
         uses: actions/upload-artifact@v4

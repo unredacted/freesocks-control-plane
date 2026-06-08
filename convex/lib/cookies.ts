@@ -1,11 +1,11 @@
 /**
- * Signed-cookie helpers (P6) — ported verbatim from src/server/lib/cookies.ts so
+ * Signed-cookie helpers (P6): ported verbatim from src/server/lib/cookies.ts so
  * the wire format is unchanged: the cookie value is `<sid>.<hmac>`, verify splits
  * on the LAST '.', and the sid (hex) never contains a '.'. Used by the HTTP
  * actions in convex/http.ts to set/read the member + admin session cookies.
  *
  * These run inside Convex actions (Web Crypto available), so the HMAC fns are
- * async — mirror lib/crypto on the old stack.
+ * async, mirroring lib/crypto on the old stack.
  */
 import { hmacSha256Hex, timingSafeEqual } from './crypto';
 

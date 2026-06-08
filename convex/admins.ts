@@ -3,7 +3,7 @@
  * convex/webauthn.ts (a "use node" action module, since @simplewebauthn needs
  * Node); this file holds the queries + mutations they orchestrate via
  * ctx.runQuery/runMutation. Challenge consume + counter bump are mutations so
- * they're race-safe (serializable) — the replay/TOCTOU guarantees the old
+ * they're race-safe (serializable), giving the replay/TOCTOU guarantees the old
  * Hono+D1 code relied on transactions for.
  */
 import { internalMutation, internalQuery, query } from './_generated/server';
@@ -93,7 +93,7 @@ export const insertRegistrationChallenge = internalMutation({
 
 /**
  * Consume the newest valid registration challenge for an admin and return its
- * challenge string. Marked consumed BEFORE the caller verifies (replay guard) —
+ * challenge string. Marked consumed BEFORE the caller verifies (replay guard);
  * a legitimate retry just restarts the ceremony. Returns null if none valid.
  */
 export const consumeLatestRegistrationChallenge = internalMutation({

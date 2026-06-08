@@ -1,5 +1,5 @@
 /**
- * Member account operations (P7) — the multi-step flows behind GET /account,
+ * Member account operations (P7): the multi-step flows behind GET /account,
  * regenerate, switch-backend, and refresh-membership. Ported from
  * routes/api/account.ts. The HTTP layer authenticates the member session and
  * passes the userId; these internalActions own the saga (backend issue + S3 via
@@ -78,7 +78,7 @@ export const getAccountView = internalAction({
           devices: state.devices,
         };
       } catch {
-        /* backend unreachable — serve local data with zeroed live fields */
+        /* backend unreachable: serve local data with zeroed live fields */
       }
       subscription = {
         url: sub.subscriptionUrl,

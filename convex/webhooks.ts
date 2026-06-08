@@ -1,5 +1,5 @@
 /**
- * Generic webhook seam (P7) — the single inbound integration point the future
+ * Generic webhook seam (P7): the single inbound integration point the future
  * billing portal plugs into to drive entitlements. HMAC-verified + deduped,
  * then mapped onto the lifecycle `setMembership` seam keyed by the member's
  * account number. CiviCRM's bespoke webhook is gone; this is intentionally
@@ -44,9 +44,9 @@ export const ingest = internalAction({
     if (!eventId || !accountId || !tierSlug)
       throw new Error('eventId, accountId, tierSlug required');
 
-    // Dedupe first — a replayed eventId never reapplies. Persist a REDACTED
+    // Dedupe first: a replayed eventId never reapplies. Persist a REDACTED
     // payload: the raw body carries the account-number plaintext, which must
-    // never be stored — keep only the 4-digit prefix for tracing.
+    // never be stored; keep only the 4-digit prefix for tracing.
     const safePayload = JSON.stringify({
       eventId,
       accountIdPrefix: normalizeAccountId(accountId).slice(0, 4),

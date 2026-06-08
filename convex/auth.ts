@@ -6,7 +6,7 @@
  *  - Turnstile gates every attempt (blocks headless brute force).
  *  - Per-prefix (30/day) + per-IP (10/h) STRICT rate limits.
  *  - The submitted number is ALWAYS hashed (even on a rate-limit reject), and
- *    every failure is padded to a ~300ms floor — so timing never reveals
+ *    every failure is padded to a ~300ms floor, so timing never reveals
  *    whether a number exists, is malformed, or is rate-limited.
  *  - One generic failure shape (no existence oracle): unknown / disabled /
  *    rate-limited all return `{ ok:false, reason:'invalid' }`.
@@ -50,7 +50,7 @@ export const accountLogin = internalAction({
       return { ok: false, reason: 'invalid' };
     };
 
-    // 1. Turnstile — independent of account validity, so a fast distinct return
+    // 1. Turnstile, independent of account validity, so a fast distinct return
     //    here is fine (it's not an enumeration oracle).
     const secret = process.env.TURNSTILE_SECRET_KEY;
     if (!secret) throw new Error('TURNSTILE_SECRET_KEY must be set (bunx convex env set ...)');

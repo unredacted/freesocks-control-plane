@@ -22,14 +22,14 @@
   import { fade } from 'svelte/transition';
 
   let onAdminRoute = $derived(router.pathname.startsWith('/admin'));
-  // DevTools only in development — in production it's tree-shaken away.
+  // DevTools only in development; in production it's tree-shaken away.
   const isDev = import.meta.env.DEV;
 </script>
 
 <!--
   ModeWatcher syncs the `dark` class on <html> with the user's preference
   (light/dark/system) and persists to localStorage. Toaster is the global
-  Sonner outlet — anywhere in the tree can call `toast.success(...)` and
+  Sonner outlet: anywhere in the tree can call `toast.success(...)` and
   it'll appear here. QueryClientProvider provides the cache to every
   createQuery/createMutation in the tree.
 -->

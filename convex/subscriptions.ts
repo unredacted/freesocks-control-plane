@@ -24,7 +24,7 @@ export const byBackendUserId = query({
 });
 
 /**
- * Newest active subscription for a user — the resolver shared by /account and
+ * Newest active subscription for a user: the resolver shared by /account and
  * /subscription (replaces lib/current-subscription.ts). Tombstoned rows are
  * excluded; ties broken by creation time (newest wins).
  */
@@ -47,7 +47,7 @@ export const activeForUser = query({
  * The resolver shared by /account + /subscription (replaces
  * lib/current-subscription.resolveActiveSubscription): prefer the user's
  * `currentSubscriptionId` (so a freshly regenerated key shows immediately), but
- * only if it's still active — never a tombstoned row during the 24h grace
+ * only if it's still active, never a tombstoned row during the 24h grace
  * window. Falls back to the newest active row.
  */
 export const resolveCurrentOrActive = query({

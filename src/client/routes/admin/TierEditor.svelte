@@ -14,14 +14,14 @@
   let { tier, onCancel, onSave }: Props = $props();
 
   // Spread once at init from the prop. We intentionally don't track tier
-  // changes after mount — once an editor is open, the dialog has its own
+  // changes after mount: once an editor is open, the dialog has its own
   // editable copy and prop changes shouldn't blow it away mid-edit. Wrapping
   // in an IIFE silences `state_referenced_locally` since the snapshot lives
   // in a separate scope, breaking the "captures initial value of prop"
   // analysis the compiler does.
   let draft = $state(((t: typeof tier) => ({ ...$state.snapshot(t) }))(tier));
 
-  // Compare against the original to disable Save when nothing has changed —
+  // Compare against the original to disable Save when nothing has changed;
   // gives the operator a clear signal that they haven't unsaved edits and
   // prevents accidental tier-propagation jobs from no-op saves.
   let isPristine = $derived(JSON.stringify(draft) === JSON.stringify(tier));
@@ -50,7 +50,7 @@
           <Select.Content>
             <!--
               Backend ids are the internal discriminator (`remnawave` /
-              `outline`) — kept for backwards compatibility with existing
+              `outline`), kept for backwards compatibility with existing
               DB rows. The labels shown to admins say "Xray" because that's
               what's surfaced to end users; "Remnawave" is the management
               panel implementation detail we don't advertise.
@@ -61,7 +61,7 @@
         </Select.Root>
         {#if draft.backend !== tier.backend}
           <p class="text-xs text-amber-600 dark:text-amber-400 mt-1 leading-snug">
-            Changing backend does not migrate existing users on this tier — they keep their current
+            Changing backend does not migrate existing users on this tier. They keep their current
             backend until they regenerate or switch explicitly.
           </p>
         {/if}

@@ -112,7 +112,7 @@
   .tabular-nums {
     font-variant-numeric: tabular-nums;
   }
-  /* Honour user motion preferences — users with vestibular sensitivity get a
+  /* Honour user motion preferences: users with vestibular sensitivity get a
      no-motion experience. Svelte's `transition:` directives do their own
      reduced-motion check via `prefers-reduced-motion`, but this catches CSS
      animations and transitions we apply directly. */

@@ -38,7 +38,7 @@
   import AuditRow from './AuditRow.svelte';
   import { adminAuditQuery } from '../../lib/queries';
 
-  // createInfiniteQuery accumulates pages — `audit.data.pages` is an array of
+  // createInfiniteQuery accumulates pages: `audit.data.pages` is an array of
   // server pages; flatten for rendering. `hasNextPage` is derived from the
   // last page's `nextCursor`.
   const audit = adminAuditQuery();
@@ -49,8 +49,8 @@
 <AdminLayout>
   <h1 class="text-2xl font-bold mb-6">Audit log</h1>
   <p class="text-sm text-muted-foreground mb-4">
-    Sensitive fields (IP hash, token prefix, raw payload) are redacted by default. Click "Show
-    raw" on a row to reveal the unredacted payload for that entry.
+    Sensitive fields (IP hash, token prefix, raw payload) are redacted by default. Click "Show raw"
+    on a row to reveal the unredacted payload for that entry.
   </p>
 
   {#if audit.isPending}

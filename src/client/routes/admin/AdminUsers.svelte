@@ -40,7 +40,7 @@
 
   // The text the user has typed but not yet committed (Enter or Search button).
   // We only update the actual queryKey input on commit so each keystroke
-  // doesn't fire a fresh request — that's the whole point of separating
+  // doesn't fire a fresh request: that's the whole point of separating
   // input-state from query-state.
   let inputText = $state('');
   let activeQuery = $state('');
@@ -77,7 +77,7 @@
   function startAction(user: z.infer<typeof UserAdmin>, op: UserOp) {
     const copy = OP_COPY[op](userLabel(user));
     if (!copy) {
-      // No confirmation needed (resync) — fire immediately.
+      // No confirmation needed (resync), fire immediately.
       userAction.mutate({ user, op });
       return;
     }
@@ -88,11 +88,7 @@
     if (pending) userAction.mutate(pending);
   }
 
-  let pendingCopy = $derived(
-    pending
-      ? OP_COPY[pending.op](userLabel(pending.user))
-      : null,
-  );
+  let pendingCopy = $derived(pending ? OP_COPY[pending.op](userLabel(pending.user)) : null);
 </script>
 
 <AdminLayout>
@@ -153,7 +149,7 @@
               Created {new Date(u.createdAt).toLocaleDateString()}
             </div>
             <div class="text-muted-foreground">
-              Backend: <strong class="text-foreground">{u.backend ?? '—'}</strong>
+              Backend: <strong class="text-foreground">{u.backend ?? '-'}</strong>
               {#if u.backendUserId}
                 · <code class="text-xs break-all">{u.backendUserId}</code>
               {/if}

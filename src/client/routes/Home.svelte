@@ -1,12 +1,12 @@
 <script lang="ts">
   /**
    * Main landing page for FreeSocks. This deployment IS the primary public
-   * surface for the service — what was formerly a separate "marketing site"
+   * surface for the service: what was formerly a separate "marketing site"
    * has been folded in here, so there's no upstream to defer to.
    *
    * Voice principle: factual, plain. No invented stats, no marketing
    * flourishes, no claims about Unredacted's other programs (we link to
-   * unredacted.org for that — they own that copy, not us).
+   * unredacted.org for that; they own that copy, not us).
    */
   import Link from '../components/Link.svelte';
   import { Button } from '@client/components/ui/button';
@@ -116,7 +116,7 @@
     <!--
       Hero card. Earlier versions of this card showed a fake "Subscription
       URL" with a placeholder vless:// string + a green "Subscription ready"
-      pip, which was confusing — visitors landing here for the first time
+      pip, which was confusing: visitors landing here for the first time
       assumed they'd already been issued something. This version is a
       plain at-a-glance summary of what a free key gets you, labeled
       "Free tier" so the framing is obvious, and a small footnote that
@@ -232,7 +232,7 @@
     </div>
   </section>
 
-  <!-- ABOUT — short, factual, no invented programs -->
+  <!-- ABOUT: short, factual, no invented programs -->
   <section class="rounded-2xl border border-border bg-card p-6 md:p-10">
     <div class="max-w-2xl space-y-3">
       <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">About</h2>
@@ -247,7 +247,7 @@
       </p>
       <div class="flex flex-wrap gap-3 pt-2">
         <!--
-          Donate is the primary "give back" CTA right now — membership signup
+          Donate is the primary "give back" CTA right now; membership signup
           isn't wired end-to-end yet (the in-house billing portal is still
           being designed), so we lead with donations and mark Membership as
           coming-soon. Donation flow is hosted on unredacted.org and works

@@ -71,7 +71,7 @@
     </h1>
     <p class="text-sm text-muted-foreground">
       Enter the 32-digit account number you saved when you got your key. It's the only way to sign
-      in — there's no email or password to recover.
+      in: there's no email or password to recover.
     </p>
   </header>
 
@@ -118,6 +118,7 @@
 
   <p class="text-xs text-muted-foreground text-center">
     Don't have an account number yet?{' '}
-    <a href="/get-key" class="text-primary underline">Get a free key</a> — you'll be shown one to save.
+    <a href="/get-key" class="text-primary underline">Get a free key</a>: you'll be shown one to
+    save.
   </p>
 </div>

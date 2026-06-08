@@ -23,13 +23,13 @@ worker-configuration.d.ts
 # Real (filled-in) configs. Templates (.example) are committed.
 wrangler.toml
 wrangler.beta.toml
-# Backups (may contain secrets) — never commit
+# Backups (may contain secrets). Never commit
 *.bak
 
 # Drizzle
 drizzle/
 
-# Convex — generated client/server code. COMMITTED on purpose: Convex's own CLI
+# Convex: generated client/server code. COMMITTED on purpose: Convex's own CLI
 # says "should be committed to the repo (your code won't typecheck without it!)".
 # CI has no Convex deployment, so committing it is what makes typecheck + the
 # convex-test suite work without a backend. `convex dev`/`deploy` keep it fresh.

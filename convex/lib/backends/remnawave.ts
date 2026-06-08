@@ -170,7 +170,7 @@ async function listDevices(cfg: RemnawaveConfig, userUuid: string): Promise<Back
       lastSeenAt: d.lastSeenAt ?? undefined,
     }));
   } catch {
-    // Some panel versions don't expose this endpoint — degrade to "no devices".
+    // Some panel versions don't expose this endpoint; degrade to "no devices".
     return [];
   }
 }

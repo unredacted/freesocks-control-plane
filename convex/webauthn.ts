@@ -1,6 +1,6 @@
 'use node';
 /**
- * Admin passkey ceremonies (P6c) — a "use node" action module because
+ * Admin passkey ceremonies (P6c): a "use node" action module because
  * @simplewebauthn/server needs Node (Buffer, node crypto). Ported from
  * providers/webauthn/server.ts + routes/api/admin/auth.ts. The data layer
  * (admins.ts) holds the queries/mutations; this file is just the ceremonies +

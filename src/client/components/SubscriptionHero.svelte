@@ -15,7 +15,7 @@
   import { toast } from 'svelte-sonner';
 
   /**
-   * Hero subscription block — the visual focal point of the page. Big URL,
+   * Hero subscription block: the visual focal point of the page. Big URL,
    * one-click copy, QR code for cross-device handoff, expiry/traffic as
    * secondary metadata. Used on /get-key (anonymous result), /account
    * (signed-in dashboard), and anywhere else we hand someone a key.
@@ -83,7 +83,7 @@
         if (copied === key) copied = null;
       }, 1500);
     } catch {
-      toast.error('Copy failed — select the URL and copy it manually.');
+      toast.error('Copy failed. Select the URL and copy it manually.');
     }
   }
 
@@ -104,7 +104,7 @@
     toast.success(`Downloaded ${downloadFilename}`);
   }
 
-  // Traffic percentage — only meaningful when there's a limit.
+  // Traffic percentage, only meaningful when there's a limit.
   let usagePct = $derived(
     trafficLimitBytes ? Math.min(100, (trafficUsedBytes / trafficLimitBytes) * 100) : 0,
   );
@@ -112,7 +112,7 @@
     usagePct >= 90 ? 'bg-destructive' : usagePct >= 70 ? 'bg-amber-500' : 'bg-primary',
   );
 
-  // Expiry — convert + classify (so we can hint when it's close).
+  // Expiry: convert + classify (so we can hint when it's close).
   let expiryDate = $derived(expiresAt ? new Date(expiresAt) : null);
   let daysLeft = $derived(
     expiryDate ? Math.ceil((expiryDate.getTime() - Date.now()) / 86_400_000) : null,
@@ -236,7 +236,7 @@
       {/if}
     </div>
 
-    <!-- Fallback URL — secondary, equal billing as a peer alternative -->
+    <!-- Fallback URL: secondary, equal billing as a peer alternative -->
     {#if fallbackUrl && fallbackUrl !== subscriptionUrl}
       <div class="space-y-2 pt-2 border-t border-border/60">
         <div
@@ -299,7 +299,7 @@
           {#if usagePct >= 70}
             <p class="text-[11px] text-muted-foreground mt-1.5 tabular-nums">
               {usagePct >= 90
-                ? `Nearly out — only ${formatBytes(trafficLimitBytes - trafficUsedBytes)} left this period.`
+                ? `Nearly out, only ${formatBytes(trafficLimitBytes - trafficUsedBytes)} left this period.`
                 : `${formatBytes(trafficLimitBytes - trafficUsedBytes)} left this period.`}
             </p>
           {/if}
