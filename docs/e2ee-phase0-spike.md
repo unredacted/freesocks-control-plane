@@ -35,7 +35,7 @@ Verified by inspecting the installed packages:
 - The X25519 leg is `@hpke/dhkem-x25519`, whose primitive wraps `@noble/curves` (pure-JS), not
   `crypto.subtle` X25519. This was the single highest-risk assumption and it holds.
 - The combiner is the real X-Wing combiner, library-provided: `sha3_256(ssM ‖ ssX ‖ ctX ‖ pkX ‖
-  label)` with the `\.//^\` label and ML-KEM-ciphertext omission. Never hand-rolled.
+label)` with the `\.//^\` label and ML-KEM-ciphertext omission. Never hand-rolled.
 - Wire sizes match X-Wing exactly: `enc` = 1120 bytes (X25519 32 + ML-KEM-768 ct 1088), public key =
   1216 bytes (X25519 32 + ML-KEM-768 ek 1184).
 
@@ -53,20 +53,28 @@ bump, not a wire-format redesign.
 One monorepo (`dajiaji/hpke-js`) for the `@hpke/*` packages; `mlkem` and `@noble/*` by the same and
 adjacent authors. Pinned with the lockfile committed.
 
-| Package | Constraint | Resolved | Role |
-| --- | --- | --- | --- |
-| `@hpke/core` | `^1.7.5` | **1.9.0** | HPKE core, KDF, AEAD base, `Aes256Gcm` fallback. >= 1.7.5 includes the GHSA-73g8-5h73-26h4 concurrent-`seal()` nonce-reuse fix. |
-| `@hpke/hybridkem-x-wing` | latest | **0.7.0** | KEM = X-Wing. Pre-1.0 / experimental; pulls `@hpke/dhkem-x25519` (X25519 via @noble/curves) + `mlkem`. |
-| `@hpke/chacha20poly1305` | latest | **1.8.0** | AEAD (primary) |
-| `mlkem` | transitive | **2.7.0** | FIPS 203 ML-KEM-768 (the live PQ leg), pure-JS, adds SHA-3/SHAKE |
-| `@noble/post-quantum` | direct | **0.6.1** | Retained for the Phase 4 ML-DSA-65 manifest migration + optional KAT cross-checks. NOT on the live X-Wing path. |
-| `@noble/curves` | direct | **2.2.0** | P-256 server-side PoP verify (Phase 2); X25519 reaches X-Wing transitively via @hpke/dhkem-x25519 |
+| Package                  | Constraint | Resolved  | Role                                                                                                                            |
+| ------------------------ | ---------- | --------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `@hpke/core`             | `^1.7.5`   | **1.9.0** | HPKE core, KDF, AEAD base, `Aes256Gcm` fallback. >= 1.7.5 includes the GHSA-73g8-5h73-26h4 concurrent-`seal()` nonce-reuse fix. |
+| `@hpke/hybridkem-x-wing` | latest     | **0.7.0** | KEM = X-Wing. Pre-1.0 / experimental; pulls `@hpke/dhkem-x25519` (X25519 via @noble/curves) + `mlkem`.                          |
+| `@hpke/chacha20poly1305` | latest     | **1.8.0** | AEAD (primary)                                                                                                                  |
+| `mlkem`                  | transitive | **2.7.0** | FIPS 203 ML-KEM-768 (the live PQ leg), pure-JS, adds SHA-3/SHAKE                                                                |
+| `@noble/post-quantum`    | direct     | **0.6.1** | Retained for the Phase 4 ML-DSA-65 manifest migration + optional KAT cross-checks. NOT on the live X-Wing path.                 |
+| `@noble/curves`          | direct     | **2.2.0** | P-256 server-side PoP verify (Phase 2); X25519 reaches X-Wing transitively via @hpke/dhkem-x25519                               |
 
 ## 3. KAT vector sources (to vendor in P0d)
 
+**P0d status:** the wiring + identity suite landed in `src/shared/crypto/hpke.test.ts` (15 tests:
+round-trip, tampered-enc to AEAD-`Open`-failure, info context-binding, exporter agreement on both
+ends, X-Wing sizes 1120/1216, deterministic seed-based keygen + kid, and an ML-KEM-768 FIPS-203
+self-consistency check). The external draft-10 X-Wing vendored KAT (matching published bytes via
+`generateKeyPairDerand` + `encap({ekm})`) is a tracked follow-up, not a gate blocker: the upstream
+`mlkem` and `@hpke/hybridkem-x-wing` packages already run the standardized vectors in their own CI,
+so a vendored copy is defense-in-depth.
+
 The primitives are vector-tested upstream (`mlkem` CI runs FIPS 203 KATs; `@hpke/hybridkem-x-wing`
-runs X-Wing vectors). We additionally vendor our own copies and run them in CI under both
-jsdom/Vitest and `bunx convex run`, to catch upstream regressions and our own wiring:
+runs X-Wing vectors). When vendored, run our own copies in CI under both jsdom/Vitest and
+`bunx convex run`, to catch upstream regressions and our own wiring:
 
 - **X-Wing:** `draft-connolly-cfrg-xwing-kem-10` test vectors (and/or the X-Wing reference vectors).
   Record the exact source URL + revision when vendored in P0d.
@@ -87,17 +95,17 @@ Run against the self-hosted Convex deployment (`http://127.0.0.1:3210`) via a th
 `"use node"` action `e2eeSpike:roundTrip` (and a standalone `bun` smoke). Default-isolate result
 recorded for the record.
 
-| # | Check | Result |
-| --- | --- | --- |
-| G1 | Suite composes + full round-trip (encap, seal, decap, open) | **PASS in `"use node"`** (round-trip ok). **FAIL in the default isolate** (`crypto.subtle.importKey for HKDF` not implemented). Drives the section-0 decision. |
-| G2 | X25519 backend is noble pure-JS, not `subtle` X25519 | **PASS** (dep-tree: `@hpke/dhkem-x25519` wraps `@noble/curves`; the Node round-trip exercises it without an unsupported-algorithm error) |
-| G3 | `crypto.getRandomValues` usable in the runtime | **PASS** (`getRandomValues: true`) |
-| G4 | Single round-trip latency | **PASS** 18 ms in the Node runtime (7.5 ms standalone bun); well under the 50 ms threshold |
-| G5 | 16 concurrent round-trips (each incl. keygen) | **PASS** 66 ms wall (54 ms standalone); no timeout |
-| G6 | X-Wing + ML-KEM-768 KATs in CI under both envs | **PENDING** (vendored in P0d; primitives are KAT-tested upstream) |
-| G7 | Implicit rejection surfaces as an AEAD `Open` failure, not a decaps throw | **PASS** (`tamperedOpenFailed: true`) |
-| G8 | Single-use context (one `Seal` then drop) | **Discipline enforced in our wrapper** (hpke-js allows sequential seals with nonce increment; the GHSA was a concurrent-seal race, so our narrow API does one seal per context then discards it; asserted in P0d tests) |
-| G9 | `Aes256Gcm` fallback if ChaCha fails to compose | **N/A** (the blocker was HKDF, not the AEAD) |
+| #   | Check                                                                     | Result                                                                                                                                                                                                                            |
+| --- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G1  | Suite composes + full round-trip (encap, seal, decap, open)               | **PASS in `"use node"`** (round-trip ok). **FAIL in the default isolate** (`crypto.subtle.importKey for HKDF` not implemented). Drives the section-0 decision.                                                                    |
+| G2  | X25519 backend is noble pure-JS, not `subtle` X25519                      | **PASS** (dep-tree: `@hpke/dhkem-x25519` wraps `@noble/curves`; the Node round-trip exercises it without an unsupported-algorithm error)                                                                                          |
+| G3  | `crypto.getRandomValues` usable in the runtime                            | **PASS** (`getRandomValues: true`)                                                                                                                                                                                                |
+| G4  | Single round-trip latency                                                 | **PASS** 18 ms in the Node runtime (7.5 ms standalone bun); well under the 50 ms threshold                                                                                                                                        |
+| G5  | 16 concurrent round-trips (each incl. keygen)                             | **PASS** 66 ms wall (54 ms standalone); no timeout                                                                                                                                                                                |
+| G6  | X-Wing + ML-KEM-768 KATs in CI under both envs                            | **PARTIAL**: wiring + FIPS-203 identity + deterministic-keygen + sizes tests landed (`src/shared/crypto/hpke.test.ts`, node env); the external draft-10 vendored KAT is a tracked follow-up (upstream packages are vector-tested) |
+| G7  | Implicit rejection surfaces as an AEAD `Open` failure, not a decaps throw | **PASS** (`tamperedOpenFailed: true`)                                                                                                                                                                                             |
+| G8  | Single-use context (one `Seal` then drop)                                 | **Discipline enforced in our wrapper** (hpke-js allows sequential seals with nonce increment; the GHSA was a concurrent-seal race, so our narrow API does one seal per context then discards it; asserted in P0d tests)           |
+| G9  | `Aes256Gcm` fallback if ChaCha fails to compose                           | **N/A** (the blocker was HKDF, not the AEAD)                                                                                                                                                                                      |
 
 Gate decision: the runtime-critical checks pass in the Node runtime, so the approach is viable with
 the section-0 `"use node"` server crypto. G6 (vendored KATs) and the G8 single-use assertion land
