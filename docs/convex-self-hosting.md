@@ -129,26 +129,38 @@ Example `Caddyfile` (the SPA's `apiClient` calls same-origin `/api/*` + `/health
 app.freesocks.org {
     encode gzip
 
-    # Security headers (CDN-blinding Phase 1 hardening). The strict CSP blocks
-    # inline + injected scripts (the FOUC theme logic is the external
-    # /theme-init.js, not inline); the one sanctioned third party is Cloudflare
-    # Turnstile (its script, iframe, and verification calls). Inline STYLES are
-    # allowed (Svelte style bindings); inline SCRIPTS are not. worker-src 'self'
-    # is for the Phase 2 proof-of-possession signing worker.
+    # Security headers (CDN-blinding hardening). The strict CSP blocks inline +
+    # injected scripts (the FOUC theme logic is the external /theme-init.js, not
+    # inline); the one sanctioned third party is Cloudflare Turnstile (its script,
+    # iframe, and verification calls). Inline STYLES are allowed (Svelte style
+    # bindings); inline SCRIPTS are not. worker-src 'self' is for the Phase 2
+    # proof-of-possession signing worker.
     header {
         Content-Security-Policy "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'"
+        # Phase 3 hardening, safe with the Turnstile iframe:
+        #  - COOP same-origin isolates the browsing context (opener relationships).
+        #  - CORP same-origin stops our own responses being embedded cross-origin.
+        #  - Permissions-Policy denies sensitive features the app never uses.
+        Cross-Origin-Opener-Policy "same-origin"
+        Cross-Origin-Resource-Policy "same-origin"
+        Permissions-Policy "accelerometer=(), browsing-topics=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+        # Trusted Types in REPORT-ONLY first: collect violations (Svelte sinks, the
+        # Turnstile widget) in staging before enforcing. Promote
+        # require-trusted-types-for into the enforcing CSP above only once clean.
+        Content-Security-Policy-Report-Only "require-trusted-types-for 'script'"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "no-referrer"
         -Server
     }
-    # Phase 3 (each has a prerequisite, so they are NOT enabled here yet):
-    #   Integrity-Policy "blocked-destinations=(script)"  -> needs SRI on the
-    #     built <script> tags first (add a Vite SRI step), else it blocks the bundle.
-    #   require-trusted-types-for 'script' (fold into the CSP) -> validate in
-    #     staging with Content-Security-Policy-Report-Only + a report endpoint
-    #     first; it can break Svelte innerHTML sinks / the Turnstile widget.
-    #   Cross-Origin-Opener-Policy / -Embedder-Policy / -Resource-Policy and a
-    #     restrictive Permissions-Policy.
+    # Still deferred, each blocked by the dynamically-loaded third-party Turnstile
+    # script (which cannot carry our SRI and may not send CORP):
+    #   Integrity-Policy "blocked-destinations=(script)" -> our entry assets now
+    #     ship sha384 SRI (the Vite sriPlugin), but this header blocks ANY script
+    #     lacking integrity, including the Turnstile script. Enable only behind a
+    #     verifier extension (Phase 4) or once Turnstile loads with SRI.
+    #   Cross-Origin-Embedder-Policy "require-corp" -> requires every subresource
+    #     (Turnstile iframe + script) to opt in via CORP/CORS; validate in staging
+    #     first (it can break the widget; it unlocks crossOriginIsolated).
 
     # API + health → Convex HTTP actions (:3211)
     @api path /api/* /healthz
@@ -168,6 +180,8 @@ app.freesocks.org {
 Build the SPA with the public actions origin baked in:
 `VITE_CONVEX_SITE_URL=https://app.freesocks.org bun run build` (here `/api` is
 same-origin, so the value only matters if you split the actions onto another host).
+The build stamps sha384 `integrity` (SRI) on the entry script/style + the theme
+script automatically (the Vite `sriPlugin`); no operator action is needed.
 
 ## 8. Cutover verification checklist
 

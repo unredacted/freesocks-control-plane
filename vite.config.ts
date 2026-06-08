@@ -1,7 +1,42 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+
+/**
+ * Subresource Integrity (CDN-blinding Phase 3): stamp sha384 `integrity` on the
+ * built entry script/style + the external theme script. Hand-rolled (no new
+ * build dependency) to keep the reproducible-build input set small. The hash is
+ * computed from the exact emitted bytes, so a CDN that alters a cached
+ * subresource while index.html stays fresh is caught by the browser. This is the
+ * prerequisite for enforcing the `Integrity-Policy` header (staged in the
+ * Caddyfile, see docs/convex-self-hosting.md). Build-only; dev serve is
+ * untouched.
+ */
+function sriPlugin(): Plugin {
+  return {
+    name: 'fcp-sri',
+    apply: 'build',
+    closeBundle() {
+      const dist = path.resolve(__dirname, 'dist');
+      const indexPath = path.join(dist, 'index.html');
+      if (!existsSync(indexPath)) return;
+      const html = readFileSync(indexPath, 'utf8').replace(
+        /<(script|link)\b([^>]*?)\s(src|href)="(\/[^"]+\.(?:js|css))"([^>]*)>/g,
+        (m, tag: string, pre: string, attr: string, url: string, post: string) => {
+          if (/\sintegrity=/.test(m)) return m;
+          const file = path.join(dist, url);
+          if (!existsSync(file)) return m;
+          const hash = createHash('sha384').update(readFileSync(file)).digest('base64');
+          return `<${tag}${pre} ${attr}="${url}" integrity="sha384-${hash}"${post}>`;
+        },
+      );
+      writeFileSync(indexPath, html);
+    },
+  };
+}
 
 // Post-Convex-migration (P10): the backend is the self-hosted convex-backend,
 // not a Cloudflare Worker. Dev = plain Vite serving the SPA + a proxy that
@@ -12,7 +47,7 @@ import path from 'node:path';
 const CONVEX_SITE = process.env.VITE_CONVEX_SITE_URL ?? 'http://127.0.0.1:3211';
 
 export default defineConfig(() => ({
-  plugins: [svelte(), tailwindcss()],
+  plugins: [svelte(), tailwindcss(), sriPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
