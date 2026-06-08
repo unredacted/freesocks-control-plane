@@ -12,9 +12,13 @@ cutover runbook and **§7** for the reverse proxy that serves the SPA.
 
 ## 1. Configure the backend
 
+The docker-compose stack lives at the repo root (`docker-compose.yml`, project
+name `fcp`). Its config is `.env.docker` (kept separate from `.env` / `.env.local`,
+which Vite and the Convex CLI load):
+
 ```sh
-cp self-hosted/.env.example self-hosted/.env
-openssl rand -hex 32          # paste the result into INSTANCE_SECRET in self-hosted/.env
+cp .env.docker.example .env.docker
+openssl rand -hex 32          # paste the result into INSTANCE_SECRET in .env.docker
 ```
 
 ## 2. Start the backend + dashboard
@@ -27,9 +31,8 @@ bun run selfhost:up
 - HTTP actions → http://127.0.0.1:3211
 - Dashboard → http://localhost:6791
 
-Data persists in the `data` Docker volume (SQLite). Set `POSTGRES_URL` in
-`self-hosted/.env` to move to Postgres when single-box write throughput is
-outgrown.
+Data persists in the `fcp_data` Docker volume (SQLite). Set `POSTGRES_URL` in
+`.env.docker` to move to Postgres when single-box write throughput is outgrown.
 
 ## 3. Point the CLI at the backend
 
@@ -199,8 +202,8 @@ script automatically (the Vite `sriPlugin`); no operator action is needed.
 ## Stop / reset
 
 ```sh
-bun run selfhost:down                                           # stop containers
-docker compose -f self-hosted/docker-compose.yml down -v        # stop + wipe the data volume
+bun run selfhost:down                                       # stop containers (keeps fcp_data)
+docker compose --env-file .env.docker down -v               # stop + wipe the fcp_data volume
 ```
 
 ## Backups
@@ -210,5 +213,5 @@ bunx convex export --path snapshot.zip
 bunx convex import --replace-all snapshot.zip
 ```
 
-> Pin the `:latest` image tags in `self-hosted/docker-compose.yml` to a specific
-> `:<rev>` before any production use.
+> Pin the `:latest` image tags in `docker-compose.yml` to a specific `:<rev>`
+> before any production use.

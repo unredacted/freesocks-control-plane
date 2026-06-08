@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-COMPOSE="docker compose -f self-hosted/docker-compose.yml"
+COMPOSE="docker compose --env-file .env.docker"
 
 if ! $COMPOSE ps --status running --services 2>/dev/null | grep -q backend; then
   echo "error: the self-hosted backend isn't running. Start it first:" >&2
@@ -21,7 +21,7 @@ if [ -z "$KEY" ]; then
 fi
 
 cat > .env.local <<EOF
-# Convex CLI -> self-hosted docker backend (self-hosted/docker-compose.yml).
+# Convex CLI -> self-hosted docker backend (docker-compose.yml, project "fcp").
 # Written by scripts/selfhost-env.sh. Gitignored. Do NOT also set CONVEX_DEPLOYMENT.
 CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210
 CONVEX_SELF_HOSTED_ADMIN_KEY=$KEY

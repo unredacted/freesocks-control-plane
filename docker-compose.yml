@@ -1,10 +1,18 @@
-# Self-hosted Convex backend for FreeSocks Control Plane (migration target).
+# Self-hosted Convex backend for FreeSocks Control Plane.
 #
 # Vendored from the official get-convex/convex-backend self-hosted template.
 # Defaults to single-box SQLite under the `data` volume; set POSTGRES_URL (in
-# self-hosted/.env) to move to Postgres later. See docs/convex-self-hosting.md.
+# .env.docker) to move to Postgres later. See docs/convex-self-hosting.md.
+#
+# Run via the package.json scripts (bun run selfhost:up / :down / :env), which
+# pass --env-file .env.docker. The docker env lives in .env.docker, NOT .env,
+# which Vite and the Convex CLI would also load.
 #
 # Pin `:latest` to a specific `:<rev>` before any production use.
+
+# Compose project name -> container/volume prefix: fcp-backend-1, fcp-dashboard-1, fcp_data.
+name: fcp
+
 services:
   backend:
     image: ghcr.io/get-convex/convex-backend:latest

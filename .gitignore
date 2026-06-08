@@ -38,6 +38,8 @@ drizzle/
 .env
 .env.local
 .env.*.local
+.env.docker
+# (.env.docker.example IS tracked)
 
 # OS
 .DS_Store

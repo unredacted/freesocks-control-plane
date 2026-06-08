@@ -91,7 +91,9 @@ src/
 │   └── stores/router.svelte.ts    History-API router
 └── shared/contracts/              Zod contracts the client parses responses with
 
-self-hosted/                       docker-compose + .env for the Convex backend + dashboard
+docker-compose.yml                 self-hosted Convex backend + dashboard (compose project "fcp")
+.env.docker.example                docker env template (copy to .env.docker)
+verifier-extension/                MV3 bundle-verifier scaffold (CDN-blinding Phase 4)
 ```
 
 ## Prerequisites
@@ -99,26 +101,48 @@ self-hosted/                       docker-compose + .env for the Convex backend 
 - **Bun ≥ 1.3** (`brew install oven-sh/bun/bun` or `curl -fsSL https://bun.sh/install | bash`).
 - **Docker** (Compose v2) for the self-hosted Convex backend.
 
-## Quick start (local)
+## Quick start (local, via Docker)
+
+The self-hosted Convex backend runs from the root `docker-compose.yml` (Compose
+project **`fcp`**). Its config lives in **`.env.docker`** (deliberately separate
+from `.env` / `.env.local`, which Vite and the Convex CLI load).
 
 ```bash
+# 1. Docker backend config. Defaults are fine for throwaway local dev; set a real
+#    INSTANCE_SECRET (openssl rand -hex 32) for any persistent instance.
+cp .env.docker.example .env.docker
+
+# 2. Install deps, then start the backend + dashboard (Docker).
 bun install
-bun run selfhost:up      # start the self-hosted Convex backend + dashboard (Docker)
-bun run selfhost:env     # generate an admin key + write .env.local for the CLI
-bun run dev              # runs `convex dev` (pushes convex/) + `vite` (the SPA) together
+bun run selfhost:up        # starts fcp-backend-1 + fcp-dashboard-1
+bun run selfhost:env       # reads an admin key from the backend -> writes .env.local
+
+# 3. Deploy convex/ and run the SPA together (watch mode).
+bun run dev                # `convex dev` (pushes convex/) + `vite` (the SPA)
+
+# 4. Seed default tiers + settings (idempotent).
+bunx convex run seed:seedCutover '{}'
 ```
 
-`bun run dev` runs Convex in watch mode (pushing `convex/` and regenerating
-`convex/_generated`) alongside the Vite SPA dev server. The SPA's same-origin `/api/*`
-fetches are proxied by Vite to the Convex HTTP-actions port (`vite.config.ts`).
+Then:
 
-Set Convex **deployment** env vars with `bunx convex env set NAME value` (these are
-separate from the SPA's build-time `VITE_*`). The full required/optional list is in
-[`docs/convex-self-hosting.md §5`](docs/convex-self-hosting.md). To seed default tiers +
-settings: `bunx convex run seed:seedCutover '{}'`.
+- **SPA** → http://localhost:5173 · **Convex dashboard** → http://localhost:6791
+- Backend API `:3210`, HTTP actions `:3211`; Vite proxies the SPA's same-origin
+  `/api/*` to `:3211` (`vite.config.ts`).
+
+Set Convex **deployment** env vars with `bunx convex env set NAME value` (separate
+from the SPA's build-time `VITE_*`); the full required/optional list is in
+[`docs/convex-self-hosting.md §5`](docs/convex-self-hosting.md). Reset the backend
+to a clean slate with `docker compose --env-file .env.docker down -v` (wipes the
+`fcp_data` volume).
+
+To exercise the CDN-blinding E2EE locally, also generate its keys
+(`bun scripts/gen-e2ee-keys.mjs`), `bunx convex env set` the printed `FS_*` secrets,
+and append the printed `VITE_FS_*` public vars to `.env.local`. See
+[`docs/threat-model-cdn-blinding.md`](docs/threat-model-cdn-blinding.md).
 
 See **[`docs/convex-self-hosting.md`](docs/convex-self-hosting.md)** for the complete
-self-hosting walkthrough.
+self-hosting walkthrough and the production cutover runbook.
 
 ## Deploy
 
