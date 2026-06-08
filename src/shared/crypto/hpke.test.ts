@@ -74,13 +74,14 @@ describe('envelope (pure helpers)', () => {
       suiteId: SUITE_ID,
       kid: 'deadbeef',
       method: 'POST',
-      host: 'app.example.org',
       path: '/api/v1/auth/account-login',
+      dir: 'req' as const,
     };
     const ref = bytesToB64Url(buildInfo(base));
     expect(bytesToB64Url(buildInfo({ ...base, kid: 'feedface' }))).not.toBe(ref);
     expect(bytesToB64Url(buildInfo({ ...base, path: '/api/v1/subscription' }))).not.toBe(ref);
     expect(bytesToB64Url(buildInfo({ ...base, method: 'GET' }))).not.toBe(ref);
+    expect(bytesToB64Url(buildInfo({ ...base, dir: 'resp' }))).not.toBe(ref);
     expect(bytesToB64Url(buildInfo(base))).toBe(ref); // deterministic
   });
 
@@ -103,8 +104,8 @@ describe('hpke X-Wing (X25519 + ML-KEM-768)', () => {
     suiteId: SUITE_ID,
     kid: 'deadbeefdeadbeef',
     method: 'POST',
-    host: 'app.example.org',
     path: '/api/v1/subscription',
+    dir: 'req',
   });
   const aad = te('aad-v1');
 
@@ -147,8 +148,8 @@ describe('hpke X-Wing (X25519 + ML-KEM-768)', () => {
       suiteId: SUITE_ID,
       kid: 'deadbeefdeadbeef',
       method: 'POST',
-      host: 'app.example.org',
       path: '/api/v1/account', // different path
+      dir: 'req',
     });
     await expect(openFrom(kp.privateKey, enc, otherInfo, aad, ct)).rejects.toThrow();
   });

@@ -85,19 +85,26 @@ export interface InfoParts {
   suiteId: string;
   kid: string;
   method: string;
-  host: string;
   path: string;
+  /** Direction marker so a request-sealed blob can never be read as a response-sealed one. */
+  dir: 'req' | 'resp';
 }
 
-/** HPKE `info`: PREFIX \0 suiteId \0 kid \0 METHOD \0 host \0 path. No time window (see spike doc). */
+/**
+ * HPKE `info`: PREFIX \0 suiteId \0 kid \0 METHOD \0 path \0 dir. No time window
+ * (see spike doc). `host` is deliberately NOT bound here: a dev reverse proxy
+ * rewrites Host, and recipient-key binding already prevents cross-app misuse;
+ * host-binding for replay lives in the PoP canonical request (Phase 2,
+ * canonicalize()).
+ */
 export function buildInfo(p: InfoParts): Uint8Array {
   const parts = [
     INFO_PREFIX,
     p.suiteId,
     p.kid,
     p.method.toUpperCase(),
-    p.host.toLowerCase(),
     normalizePath(p.path),
+    p.dir,
   ].map((x) => te.encode(x));
   const total = parts.reduce((n, x) => n + x.length, 0) + (parts.length - 1);
   const out = new Uint8Array(total);
@@ -182,3 +189,34 @@ export async function kidFromPublicKey(pkBytes: Uint8Array): Promise<string> {
   const h = await sha256(pkBytes);
   return [...h.slice(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+// --- route policy -------------------------------------------------------------
+
+/**
+ * Per-route sealing policy. `request: 'seal'` seals the request body to the
+ * server static key (the account number on login). `response: 'reveal'` seals
+ * the response to a fresh client ephemeral (the reveal leg: forward-secret
+ * against server-key compromise, used for every sensitive response). Both the
+ * client `request()` seam and the server `sealed()` wrapper read this, so it is
+ * the single source of truth and lives here (pure, isolate-safe).
+ */
+export interface RoutePolicy {
+  request: 'seal' | 'plain';
+  response: 'reveal' | 'plain';
+}
+
+export const SEALED_ROUTES: Record<string, RoutePolicy> = {
+  '/api/v1/auth/account-login': { request: 'seal', response: 'plain' },
+  '/api/v1/subscription': { request: 'plain', response: 'reveal' },
+  '/api/v1/account': { request: 'plain', response: 'reveal' },
+  '/api/v1/account/regenerate': { request: 'plain', response: 'reveal' },
+  '/api/v1/account/switch-backend': { request: 'plain', response: 'reveal' },
+  '/api/v1/account/account-id/rotate': { request: 'plain', response: 'reveal' },
+};
+
+export function routePolicy(path: string): RoutePolicy | undefined {
+  return SEALED_ROUTES[normalizePath(path)];
+}
+
+/** Request body field carrying the client's base64url response-ephemeral public key (reveal leg). */
+export const RESP_EPH_FIELD = 'fsRespEph';

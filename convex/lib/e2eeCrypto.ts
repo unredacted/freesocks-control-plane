@@ -13,8 +13,21 @@
  * actions land in P1 (the OHTTP exporter flow).
  */
 import { internalAction } from '../_generated/server';
-import { b64UrlToBytes, buildInfo, SUITE_ID } from '../../src/shared/crypto/envelope';
-import { openFrom, sealTo, serverKeyPairFromSeed } from '../../src/shared/crypto/hpke';
+import { v } from 'convex/values';
+import {
+  b64UrlToBytes,
+  buildInfo,
+  kidFromPublicKey,
+  SUITE_ID,
+  type SealedWire,
+} from '../../src/shared/crypto/envelope';
+import {
+  openFrom,
+  sealTo,
+  serializePublicKey,
+  serverKeyPairFromSeed,
+} from '../../src/shared/crypto/hpke';
+import { serverOpenRequest, serverSealResponse } from '../../src/shared/crypto/channel';
 
 /** Load + reconstruct the server X-Wing keypair from the env seed. Fails closed. */
 export async function loadServerKeyPair(): Promise<CryptoKeyPair> {
@@ -39,13 +52,51 @@ export const selfTest = internalAction({
       suiteId: SUITE_ID,
       kid: 'selftest00000000',
       method: 'POST',
-      host: 'localhost',
       path: '/api/v1/subscription',
+      dir: 'req',
     });
     const aad = new TextEncoder().encode('fcp-selftest');
     const msg = new TextEncoder().encode('node-runtime-selftest');
     const { enc, ct } = await sealTo(kp.publicKey, info, aad, msg);
     const pt = await openFrom(kp.privateKey, enc, info, aad, ct);
     return { ok: new TextDecoder().decode(pt) === 'node-runtime-selftest', encBytes: enc.length };
+  },
+});
+
+/** The server identity for the channel: private key + the kid the client pinned. */
+async function serverContext(): Promise<{ priv: CryptoKey; kid: string }> {
+  const kp = await loadServerKeyPair();
+  const kid = await kidFromPublicKey(await serializePublicKey(kp.publicKey));
+  return { priv: kp.privateKey, kid };
+}
+
+/**
+ * Open a sealed request body (login). Called by the isolate `sealed()` wrapper
+ * via ctx.runAction; returns the decrypted request object for the handler.
+ */
+export const openRequest = internalAction({
+  args: { method: v.string(), path: v.string(), wireBody: v.any() },
+  handler: async (_ctx, { method, path, wireBody }): Promise<{ plaintext: unknown }> => {
+    const { priv, kid } = await serverContext();
+    const plaintext = await serverOpenRequest({
+      serverPriv: priv,
+      serverKid: kid,
+      method,
+      path,
+      wireBody: wireBody as SealedWire,
+    });
+    return { plaintext };
+  },
+});
+
+/**
+ * Seal a response to the client's ephemeral public key (reveal leg). Called by
+ * the wrapper after the handler produces its plaintext JSON.
+ */
+export const sealResponse = internalAction({
+  args: { method: v.string(), path: v.string(), respEphPubB64: v.string(), responseObj: v.any() },
+  handler: async (_ctx, { method, path, respEphPubB64, responseObj }): Promise<SealedWire> => {
+    const { kid } = await serverContext();
+    return serverSealResponse({ serverKid: kid, method, path, respEphPubB64, responseObj });
   },
 });
