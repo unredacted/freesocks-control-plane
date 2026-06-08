@@ -127,6 +127,28 @@ Example `Caddyfile` (the SPA's `apiClient` calls same-origin `/api/*` + `/health
 ```caddy
 app.freesocks.org {
     encode gzip
+
+    # Security headers (CDN-blinding Phase 1 hardening). The strict CSP blocks
+    # inline + injected scripts (the FOUC theme logic is the external
+    # /theme-init.js, not inline); the one sanctioned third party is Cloudflare
+    # Turnstile (its script, iframe, and verification calls). Inline STYLES are
+    # allowed (Svelte style bindings); inline SCRIPTS are not. worker-src 'self'
+    # is for the Phase 2 proof-of-possession signing worker.
+    header {
+        Content-Security-Policy "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        -Server
+    }
+    # Phase 3 (each has a prerequisite, so they are NOT enabled here yet):
+    #   Integrity-Policy "blocked-destinations=(script)"  -> needs SRI on the
+    #     built <script> tags first (add a Vite SRI step), else it blocks the bundle.
+    #   require-trusted-types-for 'script' (fold into the CSP) -> validate in
+    #     staging with Content-Security-Policy-Report-Only + a report endpoint
+    #     first; it can break Svelte innerHTML sinks / the Turnstile widget.
+    #   Cross-Origin-Opener-Policy / -Embedder-Policy / -Resource-Policy and a
+    #     restrictive Permissions-Policy.
+
     # API + health → Convex HTTP actions (:3211)
     @api path /api/* /healthz
     handle @api {

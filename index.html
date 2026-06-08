@@ -31,26 +31,11 @@
       Keep the storage key (`mode-watcher-mode`) and class name (`dark`) in
       sync with the mode-watcher config in App.svelte. If you change either
       there, change them here too.
+
+      The logic lives in /public/theme-init.js (an external same-origin script,
+      not inline) so a strict CSP `script-src 'self'` can be enforced in prod.
     -->
-    <script>
-      (function () {
-        try {
-          var stored = localStorage.getItem('mode-watcher-mode');
-          var mode = stored || 'dark';
-          var prefersDark =
-            window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-          var dark = mode === 'dark' || (mode === 'system' && prefersDark);
-          var root = document.documentElement;
-          if (dark) root.classList.add('dark');
-          else root.classList.remove('dark');
-          root.style.colorScheme = dark ? 'dark' : 'light';
-        } catch (_) {
-          // localStorage / matchMedia unavailable (e.g. restrictive privacy
-          // settings). Fall through to dark by default.
-          document.documentElement.classList.add('dark');
-        }
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
 
     <!--
       Fonts (Inter for body, Inter Tight for display headings, JetBrains
