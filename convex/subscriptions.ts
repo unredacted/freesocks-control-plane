@@ -80,7 +80,7 @@ export const insertSubscription = internalMutation({
     backend: v.union(v.literal('remnawave'), v.literal('outline')),
     backendUserId: v.string(),
     backendShortId: v.string(),
-    outlineServerId: v.optional(v.id('outlineServers')),
+    backendServerId: v.optional(v.id('backendServers')),
     subscriptionUrl: v.string(),
     subscriptionMirrors: v.array(mirror),
     rawContentHash: v.optional(v.string()),

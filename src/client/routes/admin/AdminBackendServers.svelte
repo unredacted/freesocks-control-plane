@@ -1,54 +1,56 @@
 <script lang="ts">
   import type { z } from 'zod';
   import AdminLayout from './AdminLayout.svelte';
-  import OutlineServerEditor from './OutlineServerEditor.svelte';
+  import BackendServerEditor from './BackendServerEditor.svelte';
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Button } from '@client/components/ui/button';
   import * as AlertDialog from '@client/components/ui/alert-dialog';
   import { apiClient } from '../../lib/api';
-  import { adminOutlineServersQuery, queryKeys } from '../../lib/queries';
+  import { adminBackendServersQuery, queryKeys } from '../../lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { OutlineServerAdmin } from '../../../shared/contracts/admin';
+  import { BackendServerAdmin } from '../../../shared/contracts/admin';
+  import type { BackendId } from '../../../shared/contracts/backends';
   import { toast } from 'svelte-sonner';
   import Plus from '@lucide/svelte/icons/plus';
   import { z as zod } from 'zod';
 
-  const servers = adminOutlineServersQuery();
+  type Server = z.infer<typeof BackendServerAdmin>;
+  const servers = adminBackendServersQuery();
   const qc = useQueryClient();
+  const BACKEND_LABELS: Record<BackendId, string> = { remnawave: 'Remnawave', outline: 'Outline' };
 
-  let editing = $state<z.infer<typeof OutlineServerAdmin> | null>(null);
+  let editing = $state<Server | null>(null);
   let creating = $state(false);
-  let pendingDelete = $state<z.infer<typeof OutlineServerAdmin> | null>(null);
+  let pendingDelete = $state<Server | null>(null);
 
   const remove = createMutation(() => ({
     mutationFn: async (id: string) => {
       await apiClient.delete(
-        `/api/v1/admin/outline-servers/${id}`,
+        `/api/v1/admin/backend-servers/${id}`,
         zod.object({ ok: zod.boolean() }),
       );
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: queryKeys.adminOutlineServers });
+      void qc.invalidateQueries({ queryKey: queryKeys.adminBackendServers });
       pendingDelete = null;
-      toast.success('Outline server removed');
+      toast.success('Instance removed');
     },
     onError: (err) => {
-      toast.error('Could not delete server', {
+      toast.error('Could not delete instance', {
         description: err instanceof Error ? err.message : String(err),
       });
     },
   }));
 
-  // Display badge for the "is reachable right now?" indicator. Five-minute
-  // freshness window matches the cron interval; longer-stale becomes amber,
-  // never-seen becomes red.
+  // Reachability badge. The healthcheck cron runs every 10 min; fresh-within-15
+  // is green, longer-stale amber, never-seen red.
   function healthBadge(lastHealthOkAt: string | null) {
     if (!lastHealthOkAt) {
       return { label: 'No check yet', tone: 'bg-destructive/15 text-destructive' };
     }
     const age = Date.now() - new Date(lastHealthOkAt).getTime();
-    if (age < 5 * 60_000) return { label: 'Healthy', tone: 'bg-emerald-500/15 text-emerald-600' };
+    if (age < 15 * 60_000) return { label: 'Healthy', tone: 'bg-emerald-500/15 text-emerald-600' };
     if (age < 60 * 60_000) return { label: 'Stale', tone: 'bg-amber-500/15 text-amber-600' };
     return { label: 'Unreachable', tone: 'bg-destructive/15 text-destructive' };
   }
@@ -57,14 +59,15 @@
 <AdminLayout>
   <div class="flex items-center justify-between mb-6">
     <div>
-      <h1 class="text-2xl font-bold">Outline servers</h1>
+      <h1 class="text-2xl font-bold">Backend servers</h1>
       <p class="text-sm text-muted-foreground mt-1">
-        Outline Manager endpoints used for issuing Shadowsocks keys.
+        Proxy backend instances used to issue keys. Each tier issues against its backend type; the
+        pool picks the best-scored active instance of that type.
       </p>
     </div>
     <Button onclick={() => (creating = true)}>
       <Plus class="size-4" />
-      Add server
+      Add instance
     </Button>
   </div>
 
@@ -87,11 +90,8 @@
     <div
       class="text-sm text-muted-foreground border border-dashed rounded-lg p-8 text-center space-y-2"
     >
-      <p>No Outline servers registered.</p>
-      <p class="text-xs">
-        Add one to enable issuing Outline-backed keys. The Outline server must have a valid TLS
-        certificate (Cloudflare-fronted or Let's Encrypt; self-signed certs are rejected).
-      </p>
+      <p>No backend instances registered.</p>
+      <p class="text-xs">Add a Remnawave or Outline instance to start issuing keys.</p>
     </div>
   {:else}
     <div class="space-y-3">
@@ -105,8 +105,11 @@
                 <code class="text-xs text-muted-foreground font-mono ml-2">{s.slug}</code>
               </span>
               <span class="flex items-center gap-2">
+                <span class="text-xs px-2 py-1 rounded bg-primary/10 text-primary font-medium">
+                  {BACKEND_LABELS[s.backend]}
+                </span>
                 <span class="text-xs px-2 py-1 rounded {health.tone}">{health.label}</span>
-                {#if s.websocketEnabled}
+                {#if s.config.type === 'outline' && s.config.websocketEnabled}
                   <span class="text-xs px-2 py-1 rounded bg-secondary text-secondary-foreground">
                     WSS
                   </span>
@@ -120,14 +123,24 @@
             </CardTitle>
           </CardHeader>
           <CardContent class="text-sm space-y-1">
+            {#if s.config.type === 'remnawave'}
+              <div class="text-muted-foreground">
+                Base URL: <code class="font-mono">{s.config.baseUrl}</code> · Token:
+                <strong class="text-foreground">{s.config.apiTokenSet ? 'set' : 'not set'}</strong>
+              </div>
+            {:else}
+              <div class="text-muted-foreground">
+                API URL: <code class="font-mono">{s.config.apiUrlMasked}</code>
+                {#if s.config.websocketEnabled && s.config.websocketDomain}
+                  · WSS domain: <code class="font-mono">{s.config.websocketDomain}</code>
+                {/if}
+              </div>
+            {/if}
             <div class="text-muted-foreground">
-              API URL: <code class="font-mono">{s.apiUrlMasked}</code>
-            </div>
-            <div class="text-muted-foreground">
-              Priority: <strong class="text-foreground tabular-nums">{s.priority}</strong> · Keys
-              issued: <strong class="text-foreground tabular-nums">{s.accessKeyCount}</strong>
-              {#if s.websocketEnabled && s.websocketDomain}
-                · WSS domain: <code class="font-mono">{s.websocketDomain}</code>
+              Priority: <strong class="text-foreground tabular-nums">{s.priority}</strong> · Keys:
+              <strong class="text-foreground tabular-nums">{s.keyCount}</strong>
+              {#if s.lastHealthRttMs != null}
+                · Last RTT: <strong class="text-foreground tabular-nums">{s.lastHealthRttMs}ms</strong>
               {/if}
             </div>
             <div class="flex gap-2 pt-2">
@@ -143,36 +156,32 @@
   {/if}
 
   {#if creating}
-    <OutlineServerEditor
+    <BackendServerEditor
       onClose={() => (creating = false)}
       onSaved={() => {
         creating = false;
-        void qc.invalidateQueries({ queryKey: queryKeys.adminOutlineServers });
+        void qc.invalidateQueries({ queryKey: queryKeys.adminBackendServers });
       }}
     />
   {/if}
   {#if editing}
-    <OutlineServerEditor
+    <BackendServerEditor
       server={editing}
       onClose={() => (editing = null)}
       onSaved={() => {
         editing = null;
-        void qc.invalidateQueries({ queryKey: queryKeys.adminOutlineServers });
+        void qc.invalidateQueries({ queryKey: queryKeys.adminBackendServers });
       }}
     />
   {/if}
 
-  <AlertDialog.Root
-    open={!!pendingDelete}
-    onOpenChange={(o) => (o ? null : (pendingDelete = null))}
-  >
+  <AlertDialog.Root open={!!pendingDelete} onOpenChange={(o) => (o ? null : (pendingDelete = null))}>
     <AlertDialog.Content>
       <AlertDialog.Header>
         <AlertDialog.Title>Remove "{pendingDelete?.name}"?</AlertDialog.Title>
         <AlertDialog.Description>
-          De-registers the server from the pool. Existing keys on this server keep working
-          server-side but will fail on next regenerate. Migrate users off first if you want a clean
-          shutdown.
+          De-registers the instance from the pool. Existing keys on it keep working server-side but
+          will fail on next regenerate. Migrate users off first for a clean shutdown.
         </AlertDialog.Description>
       </AlertDialog.Header>
       <AlertDialog.Footer>

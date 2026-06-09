@@ -809,60 +809,60 @@ http.route({
   }),
 });
 
-// --- admin: outline servers -------------------------------------------------
+// --- admin: backend servers (instances) -------------------------------------
 
 http.route({
-  path: '/api/v1/admin/outline-servers',
+  path: '/api/v1/admin/backend-servers',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
-    return json(await ctx.runQuery(internal.adminApi.outlineServersList, {}));
+    return json(await ctx.runQuery(internal.adminApi.backendServersList, {}));
   }),
 });
 
 http.route({
-  path: '/api/v1/admin/outline-servers',
+  path: '/api/v1/admin/backend-servers',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
-    if (!body.apiUrl || typeof body.apiUrl !== 'string') {
-      return errorJson('validation', 'apiUrl is required to register a server', 400);
+    if (body.backend !== 'remnawave' && body.backend !== 'outline') {
+      return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
     }
     try {
-      return json(await ctx.runMutation(internal.adminApi.createOutlineServer, body as never));
+      return json(await ctx.runMutation(internal.adminApi.createBackendServer, body as never));
     } catch (err) {
       return adminError(err);
     }
   }),
 });
 
-// POST /api/v1/admin/outline-servers/test-connection: exact path, so it wins
+// POST /api/v1/admin/backend-servers/test-connection: exact path, so it wins
 // over the pathPrefix below (which only handles PATCH/DELETE anyway).
 http.route({
-  path: '/api/v1/admin/outline-servers/test-connection',
+  path: '/api/v1/admin/backend-servers/test-connection',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
-    const body = await readJson<{ apiUrl?: string }>(req);
-    if (!body.apiUrl) return json({ ok: false, error: 'Paste an apiUrl first' });
-    const result = await ctx.runAction(internal.adminApi.testOutlineConnection, {
-      apiUrl: body.apiUrl,
-    });
+    const body = await readJson<Record<string, unknown>>(req);
+    if (body.backend !== 'remnawave' && body.backend !== 'outline') {
+      return json({ ok: false, error: 'Pick a backend type first' });
+    }
+    const result = await ctx.runAction(internal.adminApi.testBackendConnection, body as never);
     return json(result);
   }),
 });
 
 http.route({
-  pathPrefix: '/api/v1/admin/outline-servers/',
+  pathPrefix: '/api/v1/admin/backend-servers/',
   method: 'PATCH',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
-    const id = lastPathSegment(req) as Id<'outlineServers'>;
+    const id = lastPathSegment(req) as Id<'backendServers'>;
     const body = await readJson<Record<string, unknown>>(req);
     try {
       return json(
-        await ctx.runMutation(internal.adminApi.updateOutlineServer, { id, ...body } as never),
+        await ctx.runMutation(internal.adminApi.updateBackendServer, { id, ...body } as never),
       );
     } catch (err) {
       return adminError(err);
@@ -871,13 +871,13 @@ http.route({
 });
 
 http.route({
-  pathPrefix: '/api/v1/admin/outline-servers/',
+  pathPrefix: '/api/v1/admin/backend-servers/',
   method: 'DELETE',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
-    const id = lastPathSegment(req) as Id<'outlineServers'>;
+    const id = lastPathSegment(req) as Id<'backendServers'>;
     try {
-      return json(await ctx.runMutation(internal.adminApi.deleteOutlineServer, { id }));
+      return json(await ctx.runMutation(internal.adminApi.deleteBackendServer, { id }));
     } catch (err) {
       return adminError(err);
     }

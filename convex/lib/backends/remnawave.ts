@@ -257,3 +257,53 @@ export async function remnawaveFetchSubscription(
     clearTimeout(timer);
   }
 }
+
+// A well-formed but absent user id: the panel answers 404 (reachable + token
+// accepted) rather than 200, which is exactly what a health probe wants.
+const HEALTH_PROBE_UUID = '00000000-0000-4000-8000-000000000000';
+
+/**
+ * Reachability + auth probe for the healthcheck cron + the admin
+ * test-connection button. A 2xx or 404 means the panel is up and the token was
+ * accepted; 401/403 means bad credentials; anything else (or a network error)
+ * is unhealthy. `keyCount` is not cheaply available from Remnawave, so it is 0
+ * (pool scoring tie-breaks Remnawave instances on rtt + priority). Never leaks
+ * the token or URL (RemnawaveApiError scrubs them).
+ */
+export async function remnawaveHealth(
+  cfg: RemnawaveConfig,
+): Promise<{ keyCount: number; rttMs: number }> {
+  const url = new URL(`/api/users/${HEALTH_PROBE_UUID}`, cfg.baseUrl).toString();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 8000);
+  const started = Date.now();
+  try {
+    const res = await fetch(url, {
+      headers: { authorization: `Bearer ${cfg.apiToken}`, accept: 'application/json' },
+      signal: controller.signal,
+    });
+    const rttMs = Date.now() - started;
+    if (res.ok || res.status === 404) return { keyCount: 0, rttMs };
+    throw new RemnawaveApiError(`Remnawave ${res.status} on /api/users/{id}`, {
+      status: res.status,
+      path: '/api/users/{id}',
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Pre-save connectivity check; surfaces the HTTP status but never the secret. */
+export async function remnawaveTestConnection(
+  cfg: RemnawaveConfig,
+): Promise<{ ok: true; keyCount: number } | { ok: false; error: string }> {
+  try {
+    const { keyCount } = await remnawaveHealth(cfg);
+    return { ok: true, keyCount };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError')
+      return { ok: false, error: 'Connection timed out' };
+    const status = (err as { meta?: { status?: number } }).meta?.status;
+    return { ok: false, error: status ? `Remnawave returned HTTP ${status}` : 'Connection failed' };
+  }
+}

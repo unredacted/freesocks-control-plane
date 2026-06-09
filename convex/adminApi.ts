@@ -7,23 +7,23 @@
  * stays thin and the shapes match src/shared/contracts/{admin,tokens}.ts.
  *
  * Security:
- *  - Outline server rows carry a secret `apiUrl` (the Manager URL embeds a
- *    credential path). It is NEVER returned, only `apiUrlMasked` (scheme+host,
- *    path replaced with `/***`). The full URL is stored on create/edit and read
- *    back only by the internal backend actions.
- *  - Uniqueness (tier slug, outline slug) is enforced inside the mutation via a
- *    by-field index read-check (serializable OCC makes it race-free).
+ *  - Backend instance rows carry a secret `config` (a Remnawave apiToken, an
+ *    Outline Manager apiUrl whose path embeds a credential). It is NEVER
+ *    returned; admin responses mask it (apiUrlMasked / apiTokenSet). The full
+ *    secret is stored on create/edit and read back only by the backend actions.
+ *  - Uniqueness (tier slug, backend-server slug) is enforced inside the mutation
+ *    via a by-field index read-check (serializable OCC makes it race-free).
  *
  * Some actions reference same-file `internal.adminApi.*`; those handlers carry
  * an explicit return-type annotation to break Convex's self-reference inference
  * cycle (this repo has hit it before).
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 
 // Admin resource functions are INTERNAL: the only caller is the admin-gated
 // HTTP layer (convex/http.ts) via ctx.runQuery/runMutation. Keeping them off
@@ -129,19 +129,32 @@ export function maskApiUrl(apiUrl: string): string {
   }
 }
 
-function mapOutlineServer(s: Doc<'outlineServers'>) {
+function mapBackendServer(s: Doc<'backendServers'>) {
+  const config =
+    s.config.type === 'remnawave'
+      ? {
+          type: 'remnawave' as const,
+          baseUrl: s.config.baseUrl,
+          apiTokenSet: s.config.apiToken.length > 0,
+        }
+      : {
+          type: 'outline' as const,
+          apiUrlMasked: maskApiUrl(s.config.apiUrl),
+          websocketEnabled: s.config.websocketEnabled,
+          websocketDomain: s.config.websocketDomain ?? null,
+          prometheusUrl: s.config.prometheusUrl ?? null,
+        };
   return {
     id: s._id as string,
+    backend: s.backend,
     name: s.name,
     slug: s.slug,
-    apiUrlMasked: maskApiUrl(s.apiUrl),
-    websocketEnabled: s.websocketEnabled,
-    websocketDomain: s.websocketDomain ?? null,
-    prometheusUrl: s.prometheusUrl ?? null,
     isActive: s.isActive,
     priority: s.priority,
+    keyCount: s.keyCount,
     lastHealthOkAt: s.lastHealthOkAt != null ? iso(s.lastHealthOkAt) : null,
-    accessKeyCount: s.accessKeyCount,
+    lastHealthRttMs: s.lastHealthRttMs ?? null,
+    config,
     createdAt: iso(s._creationTime),
     updatedAt: iso(s.updatedAt),
   };
@@ -542,91 +555,123 @@ export const auditList = internalQuery({
 // Read/patch reuse appSettings.resolved + appSettings.set at the HTTP layer;
 // no extra functions needed here.
 
-// === outline servers ========================================================
+// === backend servers (instances) ===========================================
 
-export const outlineServersList = internalQuery({
+export const backendServersList = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db.query('outlineServers').collect();
-    return { servers: rows.sort((a, b) => a.priority - b.priority).map(mapOutlineServer) };
+    const rows = await ctx.db.query('backendServers').collect();
+    return { servers: rows.sort((a, b) => a.priority - b.priority).map(mapBackendServer) };
   },
 });
 
-export const createOutlineServer = internalMutation({
+export const createBackendServer = internalMutation({
   args: {
+    backend: backendId,
     name: v.string(),
     slug: v.string(),
-    apiUrl: v.string(),
-    websocketEnabled: v.optional(v.boolean()),
-    websocketDomain: v.optional(v.union(v.string(), v.null())),
-    prometheusUrl: v.optional(v.union(v.string(), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
-  },
-  handler: async (ctx, a) => {
-    const clash = await ctx.db
-      .query('outlineServers')
-      .withIndex('by_slug', (q) => q.eq('slug', a.slug))
-      .unique();
-    if (clash) throw new Error(`An Outline server with slug "${a.slug}" already exists`);
-    const id = await ctx.db.insert('outlineServers', {
-      name: a.name,
-      slug: a.slug,
-      apiUrl: a.apiUrl,
-      websocketEnabled: a.websocketEnabled ?? false,
-      websocketDomain: a.websocketDomain ?? undefined,
-      prometheusUrl: a.prometheusUrl ?? undefined,
-      isActive: a.isActive ?? true,
-      priority: a.priority ?? 0,
-      accessKeyCount: 0,
-      updatedAt: Date.now(),
-    });
-    const created = await ctx.db.get(id);
-    return mapOutlineServer(created!);
-  },
-});
-
-export const updateOutlineServer = internalMutation({
-  args: {
-    id: v.id('outlineServers'),
-    name: v.optional(v.string()),
-    slug: v.optional(v.string()),
-    // apiUrl only present when the admin retyped it (rotate the secret).
+    // Remnawave:
+    baseUrl: v.optional(v.string()),
+    apiToken: v.optional(v.string()),
+    // Outline:
     apiUrl: v.optional(v.string()),
     websocketEnabled: v.optional(v.boolean()),
     websocketDomain: v.optional(v.union(v.string(), v.null())),
     prometheusUrl: v.optional(v.union(v.string(), v.null())),
-    isActive: v.optional(v.boolean()),
-    priority: v.optional(v.number()),
   },
-  handler: async (ctx, { id, ...patch }) => {
-    const existing = await ctx.db.get(id);
-    if (!existing) throw new Error('Outline server not found');
-    if (patch.slug !== undefined && patch.slug !== existing.slug) {
-      const clash = await ctx.db
-        .query('outlineServers')
-        .withIndex('by_slug', (q) => q.eq('slug', patch.slug!))
-        .unique();
-      if (clash) throw new Error(`An Outline server with slug "${patch.slug}" already exists`);
+  handler: async (ctx, a) => {
+    const clash = await ctx.db
+      .query('backendServers')
+      .withIndex('by_slug', (q) => q.eq('slug', a.slug))
+      .unique();
+    if (clash) throw new Error(`A backend server with slug "${a.slug}" already exists`);
+
+    let config;
+    if (a.backend === 'remnawave') {
+      if (!a.baseUrl || !a.apiToken)
+        throw new Error('A Remnawave instance needs a base URL and an API token');
+      config = { type: 'remnawave' as const, baseUrl: a.baseUrl, apiToken: a.apiToken };
+    } else {
+      if (!a.apiUrl) throw new Error('An Outline instance needs an apiUrl');
+      config = {
+        type: 'outline' as const,
+        apiUrl: a.apiUrl,
+        websocketEnabled: a.websocketEnabled ?? false,
+        websocketDomain: a.websocketDomain ?? undefined,
+        prometheusUrl: a.prometheusUrl ?? undefined,
+      };
     }
-    const fields: Partial<Doc<'outlineServers'>> = { updatedAt: Date.now() };
-    if (patch.name !== undefined) fields.name = patch.name;
-    if (patch.slug !== undefined) fields.slug = patch.slug;
-    if (patch.apiUrl !== undefined && patch.apiUrl !== '') fields.apiUrl = patch.apiUrl;
-    if (patch.websocketEnabled !== undefined) fields.websocketEnabled = patch.websocketEnabled;
-    if (patch.websocketDomain !== undefined)
-      fields.websocketDomain = patch.websocketDomain ?? undefined;
-    if (patch.prometheusUrl !== undefined) fields.prometheusUrl = patch.prometheusUrl ?? undefined;
-    if (patch.isActive !== undefined) fields.isActive = patch.isActive;
-    if (patch.priority !== undefined) fields.priority = patch.priority;
-    await ctx.db.patch(id, fields);
-    const updated = await ctx.db.get(id);
-    return mapOutlineServer(updated!);
+    const id = await ctx.db.insert('backendServers', {
+      backend: a.backend,
+      name: a.name,
+      slug: a.slug,
+      config,
+      isActive: a.isActive ?? true,
+      priority: a.priority ?? 0,
+      keyCount: 0,
+      updatedAt: Date.now(),
+    });
+    return mapBackendServer((await ctx.db.get(id))!);
   },
 });
 
-export const deleteOutlineServer = internalMutation({
-  args: { id: v.id('outlineServers') },
+export const updateBackendServer = internalMutation({
+  args: {
+    id: v.id('backendServers'),
+    name: v.optional(v.string()),
+    slug: v.optional(v.string()),
+    isActive: v.optional(v.boolean()),
+    priority: v.optional(v.number()),
+    // Secret-bearing fields are present only when the admin retyped them (rotate).
+    baseUrl: v.optional(v.string()),
+    apiToken: v.optional(v.string()),
+    apiUrl: v.optional(v.string()),
+    websocketEnabled: v.optional(v.boolean()),
+    websocketDomain: v.optional(v.union(v.string(), v.null())),
+    prometheusUrl: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, { id, ...patch }) => {
+    const existing = await ctx.db.get(id);
+    if (!existing) throw new Error('Backend server not found');
+    if (patch.slug !== undefined && patch.slug !== existing.slug) {
+      const clash = await ctx.db
+        .query('backendServers')
+        .withIndex('by_slug', (q) => q.eq('slug', patch.slug!))
+        .unique();
+      if (clash) throw new Error(`A backend server with slug "${patch.slug}" already exists`);
+    }
+    const fields: Partial<Doc<'backendServers'>> = { updatedAt: Date.now() };
+    if (patch.name !== undefined) fields.name = patch.name;
+    if (patch.slug !== undefined) fields.slug = patch.slug;
+    if (patch.isActive !== undefined) fields.isActive = patch.isActive;
+    if (patch.priority !== undefined) fields.priority = patch.priority;
+
+    // The backend TYPE is immutable; merge config into the existing variant. An
+    // empty/absent secret keeps the stored one, so editing other fields never
+    // wipes the credential.
+    if (existing.config.type === 'remnawave') {
+      const cfg = { ...existing.config };
+      if (patch.baseUrl !== undefined && patch.baseUrl !== '') cfg.baseUrl = patch.baseUrl;
+      if (patch.apiToken !== undefined && patch.apiToken !== '') cfg.apiToken = patch.apiToken;
+      fields.config = cfg;
+    } else {
+      const cfg = { ...existing.config };
+      if (patch.apiUrl !== undefined && patch.apiUrl !== '') cfg.apiUrl = patch.apiUrl;
+      if (patch.websocketEnabled !== undefined) cfg.websocketEnabled = patch.websocketEnabled;
+      if (patch.websocketDomain !== undefined)
+        cfg.websocketDomain = patch.websocketDomain ?? undefined;
+      if (patch.prometheusUrl !== undefined) cfg.prometheusUrl = patch.prometheusUrl ?? undefined;
+      fields.config = cfg;
+    }
+    await ctx.db.patch(id, fields);
+    return mapBackendServer((await ctx.db.get(id))!);
+  },
+});
+
+export const deleteBackendServer = internalMutation({
+  args: { id: v.id('backendServers') },
   handler: async (ctx, { id }) => {
     await ctx.db.delete(id);
     return { ok: true as const };
@@ -634,47 +679,34 @@ export const deleteOutlineServer = internalMutation({
 });
 
 /**
- * Best-effort connectivity check for the Outline Manager URL the admin pasted
- * (before they save it). Lists access keys; on success returns the current key
- * count. The apiUrl is treated as a credential: never echoed back, never put
- * in the error message (the Outline helpers already scrub it).
+ * Best-effort connectivity check for the connection details the admin pasted
+ * (before they save). Routes to the backend type's provider; the secret is a
+ * credential (never echoed back, never put in the error: the providers scrub it).
  */
-export const testOutlineConnection = internalAction({
-  args: { apiUrl: v.string() },
-  handler: async (
-    _ctx: ActionCtx,
-    { apiUrl }: { apiUrl: string },
-  ): Promise<{ ok: true; keyCount: number } | { ok: false; error: string }> => {
-    const base = apiUrl.endsWith('/') ? apiUrl : `${apiUrl}/`;
-    let url: string;
-    try {
-      url = new URL('access-keys', base).toString();
-    } catch {
-      return { ok: false, error: 'Invalid URL' };
+export const testBackendConnection = internalAction({
+  args: {
+    backend: backendId,
+    baseUrl: v.optional(v.string()),
+    apiToken: v.optional(v.string()),
+    apiUrl: v.optional(v.string()),
+    websocketEnabled: v.optional(v.boolean()),
+    websocketDomain: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (_ctx, a): Promise<{ ok: true; keyCount: number } | { ok: false; error: string }> => {
+    let config: BackendConfig;
+    if (a.backend === 'remnawave') {
+      if (!a.baseUrl || !a.apiToken)
+        return { ok: false, error: 'A base URL and an API token are required' };
+      config = { type: 'remnawave', baseUrl: a.baseUrl, apiToken: a.apiToken };
+    } else {
+      if (!a.apiUrl) return { ok: false, error: 'An apiUrl is required' };
+      config = {
+        type: 'outline',
+        apiUrl: a.apiUrl,
+        websocketEnabled: a.websocketEnabled ?? false,
+        websocketDomain: a.websocketDomain ?? undefined,
+      };
     }
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
-    try {
-      const res = await fetch(url, {
-        method: 'GET',
-        headers: { accept: 'application/json' },
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        // Status only, never the URL (it carries the secret path).
-        return { ok: false, error: `Outline returned HTTP ${res.status}` };
-      }
-      const body = (await res.json().catch(() => null)) as { accessKeys?: unknown[] } | null;
-      const keyCount = Array.isArray(body?.accessKeys) ? body!.accessKeys!.length : 0;
-      return { ok: true, keyCount };
-    } catch (err) {
-      const msg =
-        err instanceof Error && err.name === 'AbortError'
-          ? 'Connection timed out'
-          : 'Connection failed';
-      return { ok: false, error: msg };
-    } finally {
-      clearTimeout(timer);
-    }
+    return PROVIDERS[a.backend].testConnection(config);
   },
 });

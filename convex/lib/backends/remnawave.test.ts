@@ -3,8 +3,10 @@ import {
   remnawaveDeleteUser,
   remnawaveFetchSubscription,
   remnawaveGetUser,
+  remnawaveHealth,
   remnawaveIssueUser,
   remnawaveResetTraffic,
+  remnawaveTestConnection,
   remnawaveUpdateUser,
   type RemnawaveConfig,
 } from './remnawave';
@@ -237,6 +239,39 @@ describe('remnawaveFetchSubscription', () => {
     mockFetch(() => noCt);
     const out = await remnawaveFetchSubscription(cfg, 'short123');
     expect(out).toEqual({ content: 'payload', contentType: 'text/plain' });
+  });
+});
+
+describe('remnawaveHealth / remnawaveTestConnection', () => {
+  const PROBE = '/api/users/00000000-0000-4000-8000-000000000000';
+
+  test('treats 404 (well-formed but absent id) as reachable + authed', async () => {
+    mockFetch(() => new Response(null, { status: 404 }));
+    const h = await remnawaveHealth(cfg);
+    expect(h.keyCount).toBe(0);
+    expect(typeof h.rttMs).toBe('number');
+    expect(calls[0]!.path).toBe(PROBE);
+    expect(calls[0]!.headers.authorization).toBe('Bearer SECRET_TOKEN_DO_NOT_LEAK');
+  });
+
+  test('treats a 2xx as healthy', async () => {
+    mockFetch(() => jsonRes({}));
+    await expect(remnawaveHealth(cfg)).resolves.toMatchObject({ keyCount: 0 });
+  });
+
+  test('throws on a 401 (bad credentials)', async () => {
+    mockFetch(() => new Response(null, { status: 401 }));
+    await expect(remnawaveHealth(cfg)).rejects.toBeInstanceOf(Error);
+  });
+
+  test('testConnection maps 404 -> ok and 401 -> error with the status', async () => {
+    mockFetch(() => new Response(null, { status: 404 }));
+    expect(await remnawaveTestConnection(cfg)).toEqual({ ok: true, keyCount: 0 });
+    mockFetch(() => new Response(null, { status: 401 }));
+    expect(await remnawaveTestConnection(cfg)).toEqual({
+      ok: false,
+      error: 'Remnawave returned HTTP 401',
+    });
   });
 });
 

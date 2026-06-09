@@ -14,7 +14,7 @@ import { AccountResponse } from '../../shared/contracts/account';
 import {
   AppSettingsRecord,
   AuditEntry,
-  OutlineServerAdmin,
+  BackendServerAdmin,
   TierAdmin,
   UserAdmin,
 } from '../../shared/contracts/admin';
@@ -33,7 +33,7 @@ export const queryKeys = {
   adminTokens: ['admin', 'tokens'] as const,
   adminAudit: ['admin', 'audit'] as const,
   adminSettings: ['admin', 'settings'] as const,
-  adminOutlineServers: ['admin', 'outline-servers'] as const,
+  adminBackendServers: ['admin', 'backend-servers'] as const,
 };
 
 // --- Public surface ----------------------------------------------------------
@@ -172,18 +172,17 @@ export const appSettingsQuery = () =>
   }));
 
 /**
- * Registered Outline servers. Used by AdminOutlineServers.svelte for CRUD
- * and by TierEditor.svelte to populate the per-tier "server pool" multi-select
- * when `tier.backend === 'outline'`.
+ * Registered backend instances (Remnawave, Outline, ...). Used by
+ * AdminBackendServers.svelte for CRUD.
  */
-const OutlineServersListResponse = z.object({ servers: z.array(OutlineServerAdmin) });
-export const adminOutlineServersQuery = () =>
+const BackendServersListResponse = z.object({ servers: z.array(BackendServerAdmin) });
+export const adminBackendServersQuery = () =>
   createQuery(() => ({
-    queryKey: queryKeys.adminOutlineServers,
+    queryKey: queryKeys.adminBackendServers,
     queryFn: async () => {
       const result = await apiClient.get(
-        '/api/v1/admin/outline-servers',
-        OutlineServersListResponse,
+        '/api/v1/admin/backend-servers',
+        BackendServersListResponse,
       );
       return result.servers;
     },

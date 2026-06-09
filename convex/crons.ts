@@ -19,8 +19,9 @@ crons.interval('grace-sweep', { minutes: 10 }, internal.lifecycle.runGraceSweep,
 // Hard-delete subscriptions whose 24h regenerate/switch-backend grace elapsed.
 crons.interval('tombstone-sweep', { minutes: 10 }, internal.lifecycle.sweepTombstones, {});
 
-// Ping active Outline servers; stamp lastHealthOkAt (feeds pool selection).
-crons.interval('outline-healthcheck', { minutes: 10 }, internal.outlineServers.healthcheck, {});
+// Ping active backend instances of every type; stamp lastHealthOkAt + rtt
+// (feeds pool selection). Per-type health lives in the provider registry.
+crons.interval('backend-healthcheck', { minutes: 10 }, internal.backendServers.healthcheck, {});
 
 // Delete free-tier users (+ backend/S3) past the expiry window.
 crons.daily(

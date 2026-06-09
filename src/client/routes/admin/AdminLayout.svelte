@@ -20,7 +20,7 @@
     { to: '/admin/tiers', label: 'Tiers', icon: Layers },
     { to: '/admin/users', label: 'Users', icon: UsersIcon },
     { to: '/admin/tokens', label: 'API tokens', icon: KeyIcon },
-    { to: '/admin/outline-servers', label: 'Outline servers', icon: Server },
+    { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
     { to: '/admin/audit', label: 'Audit log', icon: History },
     { to: '/admin/settings', label: 'Settings', icon: Settings },
   ];

@@ -1,18 +1,28 @@
 /**
- * Proxy-backend operations as Convex actions (external HTTP → V8 runtime).
- * Dispatch by `backend`; `internalAction`s invoked by the issuance saga (P5),
- * grace/disable sweep, and tier propagation.
+ * Proxy-backend operations as Convex actions (external HTTP -> V8 runtime). The
+ * dispatch is now GENERIC: it resolves a backend INSTANCE (a `backendServers`
+ * row of any type) and calls that type's provider from the registry
+ * (convex/lib/backends/registry.ts). There are no per-backend `if` arms and no
+ * env-based config: every backend (Remnawave, Outline, ...) is a DB-managed
+ * instance, picked from the scored pool at issuance and resolved by key for
+ * later reads/updates.
  *
- * Remnawave is pure HTTP (config from process.env). Outline needs the DB to
- * pick/resolve a server (its `apiUrl` is secret), so its branches call the
- * internal queries/mutation in convex/outlineServers.ts and then do the HTTP
- * in convex/lib/backends/outline.ts: the read → act → write decomposition.
+ *  - issueUser dispatches on the tier's backend TYPE, picks an active instance of
+ *    that type, and returns the chosen `backendServerId` (persisted on the sub).
+ *  - get/update/reset/delete resolve the instance from the subscription row by
+ *    `backendUserId`; the passed `backend` is vestigial (the resolved instance is
+ *    authoritative) and kept only to avoid churning call sites.
+ *  - delete + fetchContent also accept a `backendServerId` hint for the points in
+ *    the saga where the subscription row does not exist yet (issuance compensation
+ *    + the S3 mirror fetch).
  *
- * Config (Convex env vars): REMNAWAVE_BASE_URL, REMNAWAVE_API_TOKEN.
+ * The dev mock backend (double-gated, DEV_MOCK_BACKEND + ENVIRONMENT=development)
+ * still short-circuits every op so the full flow works without a real instance.
  */
 import { internalAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import type {
   IssueUserSpec,
@@ -21,23 +31,7 @@ import type {
   UpdateUserPatch,
   UserState,
 } from './lib/backends/types';
-import {
-  remnawaveDeleteUser,
-  remnawaveFetchSubscription,
-  remnawaveGetUser,
-  remnawaveIssueUser,
-  remnawaveResetTraffic,
-  remnawaveUpdateUser,
-  type RemnawaveConfig,
-} from './lib/backends/remnawave';
-import {
-  outlineDelete,
-  outlineFetchContent,
-  outlineGetState,
-  outlineIssue,
-  outlineUpdate,
-  type OutlineServerConfig,
-} from './lib/backends/outline';
+import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import {
   mockBackendEnabled,
   mockFetchContent,
@@ -45,6 +39,7 @@ import {
   mockIssueUser,
 } from './lib/backends/mock';
 
+// Keep in sync with BACKEND_IDS (src/shared/contracts/backends.ts).
 const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
 const trafficStrategy = v.union(
   v.literal('NO_RESET'),
@@ -62,8 +57,6 @@ const issueSpec = v.object({
   hwidDeviceLimit: v.optional(v.union(v.number(), v.null())),
   trafficLimitStrategy: v.optional(trafficStrategy),
   remnawaveSquadUuid: v.optional(v.union(v.string(), v.null())),
-  outlineServerId: v.optional(v.id('outlineServers')),
-  outlineServerPoolIds: v.optional(v.array(v.id('outlineServers'))),
 });
 
 const updatePatch = v.object({
@@ -77,72 +70,41 @@ const updatePatch = v.object({
   status: v.optional(v.union(v.literal('active'), v.literal('disabled'))),
 });
 
-function remnawaveConfig(): RemnawaveConfig {
-  const baseUrl = process.env.REMNAWAVE_BASE_URL;
-  const apiToken = process.env.REMNAWAVE_API_TOKEN;
-  if (!baseUrl || !apiToken) {
-    throw new Error(
-      'REMNAWAVE_BASE_URL and REMNAWAVE_API_TOKEN must be set (bunx convex env set ...)',
-    );
-  }
-  return { baseUrl, apiToken };
-}
-
-function outlineCfg(server: {
-  apiUrl: string;
-  websocketEnabled: boolean;
-  websocketDomain?: string | null;
-}): OutlineServerConfig {
-  return {
-    apiUrl: server.apiUrl,
-    websocketEnabled: server.websocketEnabled,
-    websocketDomain: server.websocketDomain ?? null,
-  };
-}
-
-/** Resolve the server hosting an existing Outline key (read/update/delete/fetch). */
-async function resolveOutlineServer(ctx: ActionCtx, backendUserId: string) {
-  return ctx.runQuery(internal.outlineServers.resolveKeyServer, { backendUserId });
+/** The instance hosting an existing key (resolved from its subscription row). */
+async function resolveInstanceByKey(ctx: ActionCtx, backendUserId: string) {
+  return ctx.runQuery(internal.backendServers.resolveKeyServer, { backendUserId });
 }
 
 export const issueUser = internalAction({
   args: { backend: backendId, spec: issueSpec },
-  handler: async (ctx, { backend, spec }): Promise<IssuedUser> => {
+  handler: async (
+    ctx,
+    { backend, spec },
+  ): Promise<IssuedUser & { backendServerId?: Id<'backendServers'> }> => {
     if (mockBackendEnabled()) return mockIssueUser(spec as IssueUserSpec);
-    if (backend === 'remnawave')
-      return remnawaveIssueUser(remnawaveConfig(), spec as IssueUserSpec);
-
-    // Outline: resolve a server (admin hint, else pick from the scored pool).
-    let server;
-    if (spec.outlineServerId) {
-      server = await ctx.runQuery(internal.outlineServers.getById, { id: spec.outlineServerId });
-      if (!server) throw new Error('Outline server not found for the requested id');
-    } else {
-      const candidates = await ctx.runQuery(internal.outlineServers.pickCandidatesForIssue, {
-        poolIds: spec.outlineServerPoolIds,
-      });
-      if (candidates.length === 0)
-        throw new Error('No active Outline servers available to issue a key');
-      // Random pick among the top candidates (CSPRNG, can't live in the query).
-      const idx = new Uint32Array(1);
-      crypto.getRandomValues(idx);
-      server = candidates[idx[0]! % candidates.length]!;
-    }
-    const issued = await outlineIssue(outlineCfg(server), {
-      username: spec.username,
-      trafficLimitBytes: spec.trafficLimitBytes,
+    const candidates = await ctx.runQuery(internal.backendServers.pickCandidatesForIssue, {
+      backend,
     });
-    await ctx.runMutation(internal.outlineServers.bumpAccessKeyCount, { id: server._id });
-    return { ...issued, outlineServerId: server._id };
+    if (candidates.length === 0)
+      throw new Error(`No active ${backend} instances available to issue a key`);
+    // Random pick among the top candidates (CSPRNG, can't live in the query).
+    const idx = new Uint32Array(1);
+    crypto.getRandomValues(idx);
+    const server = candidates[idx[0]! % candidates.length]!;
+    const issued = await PROVIDERS[server.backend].issue(
+      server.config as BackendConfig,
+      spec as IssueUserSpec,
+    );
+    await ctx.runMutation(internal.backendServers.bumpKeyCount, { id: server._id });
+    return { ...issued, backendServerId: server._id };
   },
 });
 
 export const getUser = internalAction({
   args: { backend: backendId, backendUserId: v.string() },
-  handler: async (ctx, { backend, backendUserId }): Promise<UserState> => {
+  handler: async (ctx, { backendUserId }): Promise<UserState> => {
     if (mockBackendEnabled()) return mockGetUser();
-    if (backend === 'remnawave') return remnawaveGetUser(remnawaveConfig(), backendUserId);
-    const server = await resolveOutlineServer(ctx, backendUserId);
+    const server = await resolveInstanceByKey(ctx, backendUserId);
     if (!server) {
       // READ-path tolerance: an unresolved key (e.g. row mid-write) shouldn't
       // crash /account; return a sentinel "active/unknown" state.
@@ -154,63 +116,78 @@ export const getUser = internalAction({
         devices: [],
       };
     }
-    return outlineGetState(outlineCfg(server), backendUserId);
+    return PROVIDERS[server.backend].get(server.config as BackendConfig, backendUserId);
   },
 });
 
 export const updateUser = internalAction({
   args: { backend: backendId, backendUserId: v.string(), patch: updatePatch },
-  handler: async (ctx, { backend, backendUserId, patch }) => {
+  handler: async (ctx, { backendUserId, patch }) => {
     if (mockBackendEnabled()) return null;
-    if (backend === 'remnawave') {
-      await remnawaveUpdateUser(remnawaveConfig(), backendUserId, patch as UpdateUserPatch);
-      return null;
-    }
-    const server = await resolveOutlineServer(ctx, backendUserId);
-    if (!server) throw new Error('Outline key not resolvable to a server');
-    await outlineUpdate(outlineCfg(server), backendUserId, patch as UpdateUserPatch);
+    const server = await resolveInstanceByKey(ctx, backendUserId);
+    if (!server) throw new Error('Subscription key not resolvable to a backend instance');
+    await PROVIDERS[server.backend].update(
+      server.config as BackendConfig,
+      backendUserId,
+      patch as UpdateUserPatch,
+    );
     return null;
   },
 });
 
 export const resetUserTraffic = internalAction({
   args: { backend: backendId, backendUserId: v.string() },
-  handler: async (_ctx, { backend, backendUserId }) => {
+  handler: async (ctx, { backendUserId }) => {
     if (mockBackendEnabled()) return null;
-    if (backend === 'remnawave') {
-      await remnawaveResetTraffic(remnawaveConfig(), backendUserId);
-      return null;
-    }
-    // Outline exposes no per-key traffic reset; metrics roll on the server window. No-op.
-    void backendUserId;
+    const server = await resolveInstanceByKey(ctx, backendUserId);
+    if (!server) return null;
+    await PROVIDERS[server.backend].resetTraffic(server.config as BackendConfig, backendUserId);
     return null;
   },
 });
 
 export const deleteUser = internalAction({
-  args: { backend: backendId, backendUserId: v.string() },
-  handler: async (ctx, { backend, backendUserId }) => {
+  args: {
+    backend: backendId,
+    backendUserId: v.string(),
+    // Hint for the issuance-compensation path, where no subscription row exists
+    // yet to resolve the instance from.
+    backendServerId: v.optional(v.id('backendServers')),
+  },
+  handler: async (ctx, { backendUserId, backendServerId }) => {
     if (mockBackendEnabled()) return null;
-    if (backend === 'remnawave') {
-      await remnawaveDeleteUser(remnawaveConfig(), backendUserId);
-      return null;
-    }
-    const server = await resolveOutlineServer(ctx, backendUserId);
-    if (!server) return null; // already gone / no server recorded
-    await outlineDelete(outlineCfg(server), backendUserId);
+    const server = backendServerId
+      ? await ctx.runQuery(internal.backendServers.getById, { id: backendServerId })
+      : await resolveInstanceByKey(ctx, backendUserId);
+    if (!server) return null; // already gone / no instance recorded
+    await PROVIDERS[server.backend].remove(server.config as BackendConfig, backendUserId);
     return null;
   },
 });
 
 export const fetchSubscriptionContent = internalAction({
-  args: { backend: backendId, backendShortId: v.string(), userAgent: v.optional(v.string()) },
-  handler: async (ctx, { backend, backendShortId, userAgent }): Promise<SubscriptionContent> => {
+  args: {
+    backend: backendId,
+    // The instance is passed explicitly: this is called during issuance (S3
+    // mirror), before the subscription row exists to resolve from. Optional so
+    // the dev mock path (which needs no instance) still validates.
+    backendServerId: v.optional(v.id('backendServers')),
+    backendShortId: v.string(),
+    userAgent: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    { backendServerId, backendShortId, userAgent },
+  ): Promise<SubscriptionContent> => {
     if (mockBackendEnabled()) return mockFetchContent();
-    if (backend === 'remnawave') {
-      return remnawaveFetchSubscription(remnawaveConfig(), backendShortId, userAgent);
-    }
-    const server = await resolveOutlineServer(ctx, backendShortId);
-    if (!server) throw new Error('Outline key not resolvable to a server');
-    return outlineFetchContent(outlineCfg(server), backendShortId);
+    if (!backendServerId)
+      throw new Error('backendServerId required to fetch subscription content');
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new Error('Backend instance not found for subscription content fetch');
+    return PROVIDERS[server.backend].fetchContent(
+      server.config as BackendConfig,
+      backendShortId,
+      userAgent,
+    );
   },
 });

@@ -90,12 +90,15 @@ Detailed companions, referenced rather than duplicated here:
 
 ### 1.5 Proxy backends (`convex/backends.ts` + `convex/lib/backends/*`)
 
-- **Remnawave** (surfaced to users as **"Xray"**): pure HTTP, config from `process.env`
-  (`REMNAWAVE_BASE_URL`, `REMNAWAVE_API_TOKEN`). **Live, default.**
-- **Outline**: dispatch branches + `convex/lib/backends/outline.ts` (HTTP) +
-  `convex/outlineServers.ts` (the DB half: pool selection, key→server resolution,
-  `outline-healthcheck` cron) + admin server CRUD. **Dormant** (`outline.enabled=false`).
-  See `outline-setup.md`.
+- **Generic + instance-based.** Dispatch (`convex/backends.ts`) resolves a backend INSTANCE (a
+  `backendServers` row of any type) and calls that type's provider from the registry
+  (`convex/lib/backends/registry.ts`). The DB half (pool selection, key→instance resolution, the
+  `backend-healthcheck` cron) is generic in `convex/backendServers.ts`; instances are admin-managed
+  ("Backend servers" CMS screen). See `backends.md`.
+- **Remnawave** (surfaced to users as **"Xray"**): pure HTTP provider. **Live, default.** Instances
+  are DB rows; the primary is seeded from `REMNAWAVE_*` env at cutover, then managed in the CMS.
+- **Outline**: pure HTTP provider + DB instances. **Dormant** (`outline.enabled=false`). See
+  `outline-setup.md`.
 
 ### 1.6 Admin CMS (`/api/v1/admin/*` + `src/client/routes/admin/*`): **Live**
 
@@ -152,7 +155,6 @@ the companion docs. Sizes: S/M/L.
 | **Billing portal integration**: the webhook seam (`/api/webhooks/billing` → `setMembership`) is ready; the in-house portal that calls it is the future entitlement source.        | L    | this file (§1.7)            |
 | **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until the billing portal defines cross-backend tier linkage. Needs the portal's tier model.     | M    | `convex/account.ts`         |
 | **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.    | M    | `deferred-security-bugs.md` |
-| **Outline scoring RTT**: `pickCandidatesForIssue` uses a `latency*0` placeholder; real RTT capture would need the healthcheck to record per-server latency. Latent (backend off). | M    | `outline-setup.md` + §3     |
 
 ---
 

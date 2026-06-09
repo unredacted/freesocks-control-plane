@@ -13,11 +13,11 @@ import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
 import { api, internal } from '../_generated/api';
 import { sha256Hex } from './crypto';
-import type { IssueUserSpec } from './backends/types';
+import type { BackendId, IssueUserSpec } from './backends/types';
 
 export interface IssueResult {
   subscriptionId: Id<'subscriptions'>;
-  backend: 'remnawave' | 'outline';
+  backend: BackendId;
   backendUserId: string;
   backendShortId: string;
   subscriptionUrl: string;
@@ -42,6 +42,7 @@ export async function issueNewSubscription(
     if (s3On) {
       const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
         backend: input.backend,
+        backendServerId: issued.backendServerId,
         backendShortId: issued.backendShortId,
       });
       rawContentHash = await sha256Hex(fetched.content);
@@ -57,7 +58,7 @@ export async function issueNewSubscription(
       backend: input.backend,
       backendUserId: issued.backendUserId,
       backendShortId: issued.backendShortId,
-      outlineServerId: issued.outlineServerId,
+      backendServerId: issued.backendServerId,
       subscriptionUrl: issued.subscriptionUrl,
       subscriptionMirrors: mirrors,
       rawContentHash: mirrors.length > 0 ? rawContentHash : undefined,
@@ -82,6 +83,7 @@ export async function issueNewSubscription(
       await ctx.runAction(internal.backends.deleteUser, {
         backend: input.backend,
         backendUserId: issued.backendUserId,
+        backendServerId: issued.backendServerId,
       });
     } catch {
       /* best-effort compensation */
@@ -121,6 +123,7 @@ export async function deleteSubscriptionEverywhere(
     await ctx.runAction(internal.backends.deleteUser, {
       backend: input.backend,
       backendUserId: input.backendUserId,
+      backendServerId: sub?.backendServerId,
     });
   } catch {
     /* best-effort */

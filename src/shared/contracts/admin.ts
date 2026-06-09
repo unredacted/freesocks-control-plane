@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import { TierSlug, UserStatus } from './common';
+import { BackendId } from './backends';
 
 export const TrafficStrategy = z.enum(['NO_RESET', 'DAY', 'WEEK', 'MONTH']);
 export type TrafficStrategy = z.infer<typeof TrafficStrategy>;
 
-export const BackendId = z.enum(['remnawave', 'outline']);
-export type BackendId = z.infer<typeof BackendId>;
+// BackendId is defined once in ./backends (the BACKEND_IDS source of truth) and
+// re-exported here for the admin/account/subscription contracts that use it.
+export { BackendId };
 
 export const TierAdmin = z.object({
   // Convex document ids are opaque strings (was an integer PK under SQLite).
@@ -86,37 +88,59 @@ export const AppSettingsRecord = z.record(z.string(), z.unknown());
 export type AppSettingsRecord = z.infer<typeof AppSettingsRecord>;
 
 /**
- * Outline server row as exposed to the admin CMS. `apiUrlMasked` redacts the
- * secret path segment of the upstream Outline Manager URL; the real value is
- * never round-tripped to the SPA. Admins submit the full URL on create/edit
- * and the server stores it; they never read it back.
+ * A backend instance (one deployed proxy server of any type) as exposed to the
+ * admin CMS. Secrets are never round-tripped: the per-type config summary masks
+ * them (Outline's apiUrl path is redacted; Remnawave's token is reported only as
+ * `apiTokenSet`). Admins submit the full secret on create/edit and the server
+ * stores it; they never read it back.
  */
-export const OutlineServerAdmin = z.object({
-  id: z.string(),
-  name: z.string().min(1).max(128),
-  slug: z.string().min(1).max(64),
+const RemnawaveConfigSummary = z.object({
+  type: z.literal('remnawave'),
+  baseUrl: z.string(),
+  apiTokenSet: z.boolean(),
+});
+const OutlineConfigSummary = z.object({
+  type: z.literal('outline'),
   apiUrlMasked: z.string(),
   websocketEnabled: z.boolean(),
   websocketDomain: z.string().nullable(),
   prometheusUrl: z.string().nullable(),
+});
+
+export const BackendServerAdmin = z.object({
+  id: z.string(),
+  backend: BackendId,
+  name: z.string().min(1).max(128),
+  slug: z.string().min(1).max(64),
   isActive: z.boolean(),
   priority: z.number().int(),
+  keyCount: z.number().int().nonnegative(),
   lastHealthOkAt: z.string().datetime().nullable(),
-  accessKeyCount: z.number().int().nonnegative(),
+  lastHealthRttMs: z.number().nonnegative().nullable(),
+  config: z.discriminatedUnion('type', [RemnawaveConfigSummary, OutlineConfigSummary]),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
-export type OutlineServerAdmin = z.infer<typeof OutlineServerAdmin>;
+export type BackendServerAdmin = z.infer<typeof BackendServerAdmin>;
 
-export const OutlineServerUpsert = z.object({
+/**
+ * Create/edit input. Secret-bearing fields (apiToken, apiUrl) are required on
+ * create and optional on edit (sent only to rotate the secret). The server
+ * validates the required-per-type combination; `backend` is immutable on edit.
+ */
+export const BackendServerUpsert = z.object({
+  backend: BackendId,
   name: z.string().min(1).max(128),
   slug: z.string().min(1).max(64),
-  /** Full Outline Manager URL including the secret. Server-only. Never echoed back. */
-  apiUrl: z.string().url(),
-  websocketEnabled: z.boolean().default(false),
-  websocketDomain: z.string().nullable().optional(),
-  prometheusUrl: z.string().nullable().optional(),
   isActive: z.boolean().default(true),
   priority: z.number().int().default(0),
+  // Remnawave instance:
+  baseUrl: z.string().url().optional(),
+  apiToken: z.string().min(1).optional(),
+  // Outline instance:
+  apiUrl: z.string().url().optional(),
+  websocketEnabled: z.boolean().optional(),
+  websocketDomain: z.string().nullable().optional(),
+  prometheusUrl: z.string().nullable().optional(),
 });
-export type OutlineServerUpsert = z.infer<typeof OutlineServerUpsert>;
+export type BackendServerUpsert = z.infer<typeof BackendServerUpsert>;

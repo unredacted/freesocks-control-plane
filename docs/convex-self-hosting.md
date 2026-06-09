@@ -79,7 +79,10 @@ dashboard → Settings → Environment Variables). `bunx convex env list` shows 
 | `TURNSTILE_SECRET_KEY`                      | Turnstile siteverify (free issuance + account login)                                                                                                                                  |
 | `WEBAUTHN_RP_ID`                            | passkey RP id = the bare domain (e.g. `freesocks.org`)                                                                                                                                |
 | `WEBAUTHN_ORIGIN`                           | allowed page origin(s), comma-separated (e.g. `https://app.freesocks.org`)                                                                                                            |
-| `REMNAWAVE_BASE_URL`, `REMNAWAVE_API_TOKEN` | Remnawave ("Xray") backend actions                                                                                                                                                    |
+
+(Backend connection config is no longer required env: it lives per-instance in the
+`backendServers` table, managed in the admin CMS. See `REMNAWAVE_*` below for the
+optional one-time bootstrap.)
 
 **Optional / feature-gated:**
 
@@ -91,6 +94,7 @@ dashboard → Settings → Environment Variables). `bunx convex env list` shows 
 | `TRUSTED_PROXY`                                                                                                                       | unset             | set `true` ONLY behind a reverse proxy that overwrites `X-Forwarded-For` (fail-closed client-IP)                                                                                                                                            |
 | `POP_REQUIRED`                                                                                                                        | unset             | CDN-blinding Phase 2: set `true` (after the client soaks) to reject legacy cookie-only sessions and require proof-of-possession. Sessions already bound to a PoP key always enforce it regardless. See `docs/threat-model-cdn-blinding.md`. |
 | `DEV_MOCK_BACKEND`                                                                                                                    | unset             | LOCAL DEV ONLY: set `true` (requires `ENVIRONMENT=development`) to issue synthetic subscriptions without a real Remnawave/Outline, so the get-account flow works locally. Double-gated; a `production` deployment ignores it. NEVER in prod. |
+| `REMNAWAVE_BASE_URL`, `REMNAWAVE_API_TOKEN`                                                                                           | none              | One-time bootstrap only: `seed:seedCutover` seeds the primary Remnawave instance into `backendServers` from these if set. After cutover, manage instances in the admin CMS ("Backend servers") and remove these. A fresh install can skip them and add every instance in the CMS. |
 | `FREE_TIER_DAILY_CAP`                                                                                                                 | `1`               | per-IP/day free-account cap                                                                                                                                                                                                                 |
 | `FREE_TIER_EXPIRY_DAYS`                                                                                                               | `90`              | free-user cleanup window                                                                                                                                                                                                                    |
 | `WEBHOOK_SIGNING_SECRET`                                                                                                              | none              | HMAC for `POST /api/webhooks/billing` (the billing seam)                                                                                                                                                                                    |
@@ -98,8 +102,10 @@ dashboard → Settings → Environment Variables). `bunx convex env list` shows 
 | `S3_MIRRORS_ENABLED`, `S3_PROVIDER_COUNT`, `S3_PROVIDER_<i>_{NAME,ENDPOINT,BUCKET,PUBLIC_URL,REGION,ACCESS_KEY_ID,SECRET_ACCESS_KEY}` | off               | S3 subscription mirrors, one block per mirror; count `0`/unset disables                                                                                                                                                                     |
 
 The SPA build reads `VITE_CONVEX_SITE_URL` (the public HTTP-actions origin that
-`/api` is proxied to). Outline server `apiUrl`s live per-row in the
-`outlineServers` table (admin CMS), never in env.
+`/api` is proxied to). Backend instance connection config (Remnawave `baseUrl` +
+`apiToken`, Outline `apiUrl`) lives per-row in the `backendServers` table (admin
+CMS, "Backend servers"), never in env. The `REMNAWAVE_*` vars only seed the first
+Remnawave instance at cutover.
 
 ## 6. Cutover to Convex (P11, start fresh)
 

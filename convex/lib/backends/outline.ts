@@ -108,7 +108,7 @@ async function setDataLimit(
 export async function outlineIssue(
   cfg: OutlineServerConfig,
   spec: { username: string; trafficLimitBytes: number | null },
-): Promise<Omit<IssuedUser, 'outlineServerId'>> {
+): Promise<IssuedUser> {
   const body: Record<string, unknown> = {};
   if (spec.username) body.name = spec.username;
   if (cfg.websocketEnabled) {
@@ -166,6 +166,25 @@ export async function outlineHealth(cfg: OutlineServerConfig): Promise<{ keyCoun
     schema: OutlineAccessKeyList,
   });
   return { keyCount: list.accessKeys.length };
+}
+
+/**
+ * Pre-save connectivity check for the admin test-connection button. Lists access
+ * keys (cheapest authed call); surfaces the HTTP status but never the secret
+ * apiUrl (call() + OutlineApiError already scrub it to status + path).
+ */
+export async function outlineTestConnection(
+  cfg: OutlineServerConfig,
+): Promise<{ ok: true; keyCount: number } | { ok: false; error: string }> {
+  try {
+    const { keyCount } = await outlineHealth(cfg);
+    return { ok: true, keyCount };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError')
+      return { ok: false, error: 'Connection timed out' };
+    const status = (err as { meta?: { status?: number } }).meta?.status;
+    return { ok: false, error: status ? `Outline returned HTTP ${status}` : 'Connection failed' };
+  }
 }
 
 export async function outlineGetState(

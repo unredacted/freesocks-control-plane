@@ -21,8 +21,29 @@ import { v } from 'convex/values';
  *    and `rateLimits` replace the former KvStore namespaces.
  */
 
-// Reusable enum validators (Drizzle text-enums → unions of literals).
+// The set of proxy-backend TYPES. Keep these literals in sync with BACKEND_IDS
+// in src/shared/contracts/backends.ts (the client-side source of truth): adding
+// a backend type means a literal here + a config variant in backendServerConfig.
 const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
+
+// Per-instance backend config: the secret-bearing connection details for one
+// deployed server. A discriminated union keyed by backend type (`type` matches
+// the row's `backend`). NEVER returned to the SPA (admin responses mask it).
+const backendServerConfig = v.union(
+  v.object({
+    type: v.literal('remnawave'),
+    baseUrl: v.string(),
+    apiToken: v.string(),
+  }),
+  v.object({
+    type: v.literal('outline'),
+    // The Outline Manager URL embeds a secret path segment.
+    apiUrl: v.string(),
+    websocketEnabled: v.boolean(),
+    websocketDomain: v.optional(v.string()),
+    prometheusUrl: v.optional(v.string()),
+  }),
+);
 const trafficStrategy = v.union(
   v.literal('NO_RESET'),
   v.literal('DAY'),
@@ -99,7 +120,7 @@ export default defineSchema({
     backend: backendId,
     backendUserId: v.string(),
     backendShortId: v.string(),
-    outlineServerId: v.optional(v.id('outlineServers')),
+    backendServerId: v.optional(v.id('backendServers')),
     subscriptionUrl: v.string(),
     subscriptionMirrors: v.array(subscriptionMirror),
     rawContentHash: v.optional(v.string()),
@@ -232,21 +253,26 @@ export default defineSchema({
     .index('by_creator', ['createdByAdminId'])
     .index('by_active', ['revokedAt', 'expiresAt']),
 
-  outlineServers: defineTable({
+  // Backend instances: one row per deployed proxy server of any backend type
+  // (Remnawave, Outline, ...). Generalizes the former `outlineServers` table so
+  // adding a backend type needs no new table. `config` holds the per-type
+  // connection secret (never returned to the SPA). `keyCount` + `lastHealthRttMs`
+  // feed pool selection at issuance; `lastHealthOkAt` is stamped by the
+  // healthcheck cron. Uniqueness of `slug` is enforced in the mutation.
+  backendServers: defineTable({
+    backend: backendId,
     name: v.string(),
     slug: v.string(),
-    apiUrl: v.string(),
-    websocketEnabled: v.boolean(),
-    websocketDomain: v.optional(v.string()),
-    prometheusUrl: v.optional(v.string()),
+    config: backendServerConfig,
     isActive: v.boolean(),
     priority: v.number(),
     lastHealthOkAt: v.optional(v.number()),
-    accessKeyCount: v.number(),
+    lastHealthRttMs: v.optional(v.number()),
+    keyCount: v.number(),
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])
-    .index('by_active_priority', ['isActive', 'priority']),
+    .index('by_backend_active', ['backend', 'isActive', 'priority']),
 
   appSettings: defineTable({
     key: v.string(),

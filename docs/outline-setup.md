@@ -39,7 +39,7 @@ and surfaces the TLS or auth error. Use it before saving.
 
 ## Registering a server
 
-1. Log in to the admin CMS and visit **Outline Servers** in the sidebar.
+1. Log in to the admin CMS and visit **Backend servers** in the sidebar (pick the Outline type).
 2. Click **Add server**.
 3. Fill in:
    - **Name**: human-readable, e.g. `EU North`.
@@ -77,13 +77,13 @@ New-key issuance calls `internal.outlineServers.pickCandidatesForIssue` (in
 2. **Prefer servers healthy within the last ~30 minutes** (`lastHealthOkAt` fresh); if none
    qualify, fall back to all active servers, so a transient healthcheck blip can't take the
    whole pool offline.
-3. Score each (lower wins): `latency_weight × <latency> + key_count_weight × accessKeyCount`.
-   `<latency>` is currently a `0` placeholder (real RTT capture is future work, see
-   `project-inventory.md`), so ordering is effectively by access-key count, then admin
-   `priority`. Weights come from the `outline.scoring.*` app settings.
+3. Score each (lower wins): `latency_weight × lastHealthRttMs + key_count_weight × keyCount`.
+   `lastHealthRttMs` is the round-trip time the `backend-healthcheck` cron measured on its last
+   probe (instances never checked contribute `0`); ties break on admin `priority`. Weights come
+   from the `backend.scoring.*` app settings.
 4. The dispatch **action** (`convex/backends.ts`) takes the top candidates and picks one at
-   **random** via CSPRNG (randomness can't live in a Convex query), then bumps that server's
-   `accessKeyCount`.
+   **random** via CSPRNG (randomness can't live in a Convex query), then bumps that instance's
+   `keyCount`.
 
 Reads/updates/deletes on an existing key resolve the hosting server from the subscription
 row via `internal.outlineServers.resolveKeyServer` (keyed by `backendUserId`).

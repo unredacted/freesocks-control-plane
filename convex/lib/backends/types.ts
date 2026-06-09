@@ -1,14 +1,13 @@
 /**
  * Common proxy-backend types, ported from src/server/providers/backend.ts.
  * Backends ignore fields that don't apply to them. These are plain TS types;
- * the Convex action boundary (convex/backends.ts) validates with `v.*`.
- *
- * `outlineServerId` is a Convex `Id<"outlineServers">` (a string) here, not the
- * old SQLite integer.
+ * the Convex action boundary (convex/backends.ts) validates with `v.*`. The
+ * per-instance config types + the provider registry live in
+ * convex/lib/backends/registry.ts.
  */
-import type { Id } from '../../_generated/dataModel';
 
-export type BackendId = 'remnawave' | 'outline';
+// Single source of truth for the backend-type set (the shared contract).
+export type { BackendId } from '../../../src/shared/contracts/backends';
 export type TrafficLimitStrategy = 'NO_RESET' | 'DAY' | 'WEEK' | 'MONTH';
 export type BackendUserStatus = 'active' | 'disabled' | 'limited' | 'expired' | 'unknown';
 
@@ -22,16 +21,12 @@ export interface IssueUserSpec {
   hwidDeviceLimit?: number | null;
   trafficLimitStrategy?: TrafficLimitStrategy;
   remnawaveSquadUuid?: string | null;
-  // Outline-only pool hints (used from P4b):
-  outlineServerId?: Id<'outlineServers'>;
-  outlineServerPoolIds?: Id<'outlineServers'>[];
 }
 
 export interface IssuedUser {
   backendUserId: string;
   backendShortId: string;
   subscriptionUrl: string;
-  outlineServerId?: Id<'outlineServers'>;
   raw: unknown;
 }
 
