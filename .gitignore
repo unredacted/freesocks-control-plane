@@ -39,7 +39,8 @@ drizzle/
 .env.local
 .env.*.local
 .env.docker
-# (.env.docker.example IS tracked)
+.env.beta
+# (the *.example files ARE tracked)
 
 # OS
 .DS_Store

@@ -1,0 +1,91 @@
+# Beta deployment: self-hosted Convex backend (internal) + Caddy serving the SPA
+# and reverse-proxying the API. Standalone (not an overlay on docker-compose.yml,
+# which is the dev stack). Run from the repo root on the beta host:
+#
+#   docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --build
+#
+# Caddy reaches the backend's HTTP-actions port (:3211) over the compose network;
+# it is NOT published. The deploy/sync API (:3210) + dashboard (:6791) bind to
+# 127.0.0.1 only (on-host `convex deploy` + an SSH-tunnelled dashboard); never
+# expose them publicly. Full runbook: docs/beta-deploy.md.
+name: fcp-beta
+
+services:
+  backend:
+    # Pinned to the digest tested in dev (immutable). Re-pin when you upgrade.
+    image: ghcr.io/get-convex/convex-backend@sha256:edd7959f3464ed661f6663f646db205d5d61bda606c969b074dfb3c69ed71463
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - '127.0.0.1:${PORT:-3210}:3210'
+    volumes:
+      - data:/convex/data
+    environment:
+      - ACTIONS_USER_TIMEOUT_SECS=${ACTIONS_USER_TIMEOUT_SECS:-120}
+      - APPLICATION_MAX_CONCURRENT_MUTATIONS=16
+      - APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=16
+      - APPLICATION_MAX_CONCURRENT_QUERIES=16
+      - APPLICATION_MAX_CONCURRENT_V8_ACTIONS=16
+      - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
+      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN}
+      - DISABLE_BEACON=${DISABLE_BEACON:-true}
+      - DO_NOT_REQUIRE_SSL=true
+      - INSTANCE_NAME=${INSTANCE_NAME}
+      - INSTANCE_SECRET=${INSTANCE_SECRET}
+      - POSTGRES_URL=${POSTGRES_URL:-}
+      # Don't echo internal error detail to API clients in prod.
+      - REDACT_LOGS_TO_CLIENT=${REDACT_LOGS_TO_CLIENT:-true}
+      - RUST_LOG=${RUST_LOG:-info}
+    healthcheck:
+      test: curl -f http://localhost:3210/version
+      interval: 10s
+      start_period: 15s
+
+  # Admin-only Convex dashboard, bound to localhost (reach via SSH tunnel:
+  # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
+  dashboard:
+    image: ghcr.io/get-convex/convex-dashboard@sha256:bbc4d2c43d19fd6f2791dd6c5153a76e127f3eea489c1639e5acf66999c216bf
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - '127.0.0.1:${DASHBOARD_PORT:-6791}:6791'
+    environment:
+      - NEXT_PUBLIC_DEPLOYMENT_URL=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      # To enable app-layer encryption (CDN-blinding) later, pass the public pins
+      # here as args (and set the private halves in the Convex deployment env),
+      # then rebuild. Left unset = ships dark (plaintext dual-mode over TLS).
+      # args:
+      #   VITE_FS_MANIFEST_PK: "..."
+      #   VITE_FS_MANIFEST_PK_PQ: "..."
+      #   VITE_FS_SERVER_HPKE_KID: "..."
+      #   VITE_FS_SERVER_HPKE_PK: "..."
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp' # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # persists the Let's Encrypt cert + account
+      - caddy_config:/config
+    environment:
+      - SITE_ADDRESS=${SITE_ADDRESS:-beta.freesocks.org}
+      - ACME_EMAIL=${ACME_EMAIL:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:

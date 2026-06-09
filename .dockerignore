@@ -5,8 +5,7 @@ bin
 .git
 .github
 .dev.vars
-.env
-.env.local
+.env*
 *.log
 coverage
 test

@@ -1,0 +1,72 @@
+# Caddy reverse proxy for the FreeSocks Control Plane (beta).
+#
+# Serves the built SPA (/srv/dist, baked into the web image) and routes the API
+# surface to the Convex HTTP-actions port (:3211) over the compose network.
+# SITE_ADDRESS + ACME_EMAIL come from the compose env (.env.beta). Caddy
+# auto-provisions + renews the TLS cert via Let's Encrypt on :443.
+#
+# Bind-mounted by docker-compose.beta.yml, so header tweaks can be applied with
+# `docker compose -f docker-compose.beta.yml exec web caddy reload --config /etc/caddy/Caddyfile`
+# without rebuilding the SPA image. See docs/beta-deploy.md.
+{
+	# Let's Encrypt contact (expiry notices). Override via the ACME_EMAIL env.
+	email {$ACME_EMAIL:ops@freesocks.org}
+}
+
+{$SITE_ADDRESS:beta.freesocks.org} {
+	encode zstd gzip
+
+	# --- Security headers (CDN-blinding hardening) ---------------------------
+	# Strict CSP: only 'self' + Cloudflare Turnstile (the one sanctioned third
+	# party). Inline STYLES are allowed (Svelte style bindings); inline SCRIPTS
+	# are not (the FOUC theme logic is the external /theme-init.js). worker-src
+	# 'self' covers the proof-of-possession signing worker.
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'"
+		# COOP isolates the browsing context; CORP stops our responses being
+		# embedded cross-origin; Permissions-Policy denies features we never use.
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		Permissions-Policy "accelerometer=(), browsing-topics=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+		# Trusted Types in REPORT-ONLY first: collect violations (Svelte sinks, the
+		# Turnstile widget) before promoting require-trusted-types-for into the
+		# enforcing CSP above.
+		Content-Security-Policy-Report-Only "require-trusted-types-for 'script'"
+		# Direct TLS termination here, so HSTS is ours to set. No includeSubDomains
+		# / preload on a beta host (it would bind siblings of beta.freesocks.org).
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+	# Still deferred (each blocked by the dynamically-loaded Turnstile script,
+	# which carries no SRI and may not send CORP): Integrity-Policy
+	# "blocked-destinations=(script)" and Cross-Origin-Embedder-Policy
+	# "require-corp". Enable behind the verifier extension (Phase 4) or once
+	# Turnstile loads with SRI. See docs/threat-model-cdn-blinding.md.
+
+	# --- API + health -> Convex HTTP actions (:3211 over the compose network) --
+	@api path /api/* /healthz
+	handle @api {
+		# Client-IP trust: with no trusted_proxies configured, Caddy OVERWRITES any
+		# client-sent X-Forwarded-For with the immediate peer (the real client,
+		# since Caddy is the edge), so XFF[0] cannot be spoofed. That is what the
+		# backend trusts for the free-tier per-IP cap (TRUSTED_PROXY=true). If you
+		# later put a CDN in front, set trusted_proxies + use the cf-connecting-ip
+		# path instead (see docs/threat-model-cdn-blinding.md).
+		reverse_proxy backend:3211
+	}
+
+	# --- everything else -> the built SPA, history-API fallback to index.html --
+	handle {
+		root * /srv/dist
+		# Vite emits content-hashed files under /assets/, so they are immutable;
+		# the HTML entry must revalidate so a new deploy is picked up at once.
+		@assets path /assets/*
+		@html not path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		header @html Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}
