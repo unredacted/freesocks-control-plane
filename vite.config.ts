@@ -65,9 +65,13 @@ export default defineConfig(() => ({
   },
   server: {
     port: 5173,
+    // `xfwd` adds X-Forwarded-For so the backend can resolve the client IP in
+    // dev the same way it does behind the prod reverse proxy. The backend only
+    // trusts it when TRUSTED_PROXY=true (set that on the dev deployment); without
+    // it the anonymous get-account flow fails closed with `freetier.ip_unresolved`.
     proxy: {
-      '/api': { target: CONVEX_SITE, changeOrigin: true },
-      '/healthz': { target: CONVEX_SITE, changeOrigin: true },
+      '/api': { target: CONVEX_SITE, changeOrigin: true, xfwd: true },
+      '/healthz': { target: CONVEX_SITE, changeOrigin: true, xfwd: true },
     },
   },
 }));

@@ -38,6 +38,12 @@ import {
   outlineUpdate,
   type OutlineServerConfig,
 } from './lib/backends/outline';
+import {
+  mockBackendEnabled,
+  mockFetchContent,
+  mockGetUser,
+  mockIssueUser,
+} from './lib/backends/mock';
 
 const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
 const trafficStrategy = v.union(
@@ -102,6 +108,7 @@ async function resolveOutlineServer(ctx: ActionCtx, backendUserId: string) {
 export const issueUser = internalAction({
   args: { backend: backendId, spec: issueSpec },
   handler: async (ctx, { backend, spec }): Promise<IssuedUser> => {
+    if (mockBackendEnabled()) return mockIssueUser(spec as IssueUserSpec);
     if (backend === 'remnawave')
       return remnawaveIssueUser(remnawaveConfig(), spec as IssueUserSpec);
 
@@ -133,6 +140,7 @@ export const issueUser = internalAction({
 export const getUser = internalAction({
   args: { backend: backendId, backendUserId: v.string() },
   handler: async (ctx, { backend, backendUserId }): Promise<UserState> => {
+    if (mockBackendEnabled()) return mockGetUser();
     if (backend === 'remnawave') return remnawaveGetUser(remnawaveConfig(), backendUserId);
     const server = await resolveOutlineServer(ctx, backendUserId);
     if (!server) {
@@ -153,6 +161,7 @@ export const getUser = internalAction({
 export const updateUser = internalAction({
   args: { backend: backendId, backendUserId: v.string(), patch: updatePatch },
   handler: async (ctx, { backend, backendUserId, patch }) => {
+    if (mockBackendEnabled()) return null;
     if (backend === 'remnawave') {
       await remnawaveUpdateUser(remnawaveConfig(), backendUserId, patch as UpdateUserPatch);
       return null;
@@ -167,6 +176,7 @@ export const updateUser = internalAction({
 export const resetUserTraffic = internalAction({
   args: { backend: backendId, backendUserId: v.string() },
   handler: async (_ctx, { backend, backendUserId }) => {
+    if (mockBackendEnabled()) return null;
     if (backend === 'remnawave') {
       await remnawaveResetTraffic(remnawaveConfig(), backendUserId);
       return null;
@@ -180,6 +190,7 @@ export const resetUserTraffic = internalAction({
 export const deleteUser = internalAction({
   args: { backend: backendId, backendUserId: v.string() },
   handler: async (ctx, { backend, backendUserId }) => {
+    if (mockBackendEnabled()) return null;
     if (backend === 'remnawave') {
       await remnawaveDeleteUser(remnawaveConfig(), backendUserId);
       return null;
@@ -194,6 +205,7 @@ export const deleteUser = internalAction({
 export const fetchSubscriptionContent = internalAction({
   args: { backend: backendId, backendShortId: v.string(), userAgent: v.optional(v.string()) },
   handler: async (ctx, { backend, backendShortId, userAgent }): Promise<SubscriptionContent> => {
+    if (mockBackendEnabled()) return mockFetchContent();
     if (backend === 'remnawave') {
       return remnawaveFetchSubscription(remnawaveConfig(), backendShortId, userAgent);
     }

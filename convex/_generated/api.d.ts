@@ -23,6 +23,7 @@ import type * as http from "../http.js";
 import type * as keyEpochs from "../keyEpochs.js";
 import type * as keyRevocations from "../keyRevocations.js";
 import type * as lib_accountId from "../lib/accountId.js";
+import type * as lib_backends_mock from "../lib/backends/mock.js";
 import type * as lib_backends_outline from "../lib/backends/outline.js";
 import type * as lib_backends_remnawave from "../lib/backends/remnawave.js";
 import type * as lib_backends_types from "../lib/backends/types.js";
@@ -70,6 +71,7 @@ declare const fullApi: ApiFromModules<{
   keyEpochs: typeof keyEpochs;
   keyRevocations: typeof keyRevocations;
   "lib/accountId": typeof lib_accountId;
+  "lib/backends/mock": typeof lib_backends_mock;
   "lib/backends/outline": typeof lib_backends_outline;
   "lib/backends/remnawave": typeof lib_backends_remnawave;
   "lib/backends/types": typeof lib_backends_types;
