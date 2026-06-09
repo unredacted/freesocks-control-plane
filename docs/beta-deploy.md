@@ -183,9 +183,16 @@ See `docs/threat-model-cdn-blinding.md`.
 - **Image pinning.** `docker-compose.beta.yml` pins the Convex backend +
   dashboard to the digests tested in dev. Re-pin (and the `caddy:2-alpine` base in
   `docker/web.Dockerfile`) when you intentionally upgrade.
-- **Datastore.** Defaults to single-box SQLite in the `data` volume. Set
-  `POSTGRES_URL` in `.env.beta` to move to Postgres. Back up with `bunx convex
-  export` regardless.
+- **Datastore.** The stack runs **Postgres 18** (the `postgres` service) as the
+  datastore, to exercise it before prod. Set `POSTGRES_PASSWORD` in `.env.beta`;
+  the backend connects with `POSTGRES_URL` (no db name) and uses the database
+  named after `INSTANCE_NAME` with hyphens replaced by underscores, which is why
+  `POSTGRES_DB` in the compose file is `freesocks_beta` and must stay in sync with
+  `INSTANCE_NAME`. SSL on the link is disabled with `DO_NOT_REQUIRE_SSL` (the link
+  is private to the compose network). The backend's `data` volume is still used
+  for file/module/search storage (until S3 is configured). The Postgres data
+  lives in the `pgdata` volume; PG18's image volume is `/var/lib/postgresql`, not
+  the pre-18 `/data` path. Back up with `bunx convex export` (and/or `pg_dump`).
 - **Dashboard.** Reach the admin dashboard over an SSH tunnel, never publicly:
   `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 <beta-host>`, then open
   `http://127.0.0.1:6791`.

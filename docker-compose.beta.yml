@@ -33,7 +33,10 @@ services:
       - DO_NOT_REQUIRE_SSL=true
       - INSTANCE_NAME=${INSTANCE_NAME}
       - INSTANCE_SECRET=${INSTANCE_SECRET}
-      - POSTGRES_URL=${POSTGRES_URL:-}
+      # Postgres connection string WITHOUT a db name or query params: Convex
+      # derives the database from INSTANCE_NAME (hyphens -> underscores). SSL on
+      # the link is disabled via DO_NOT_REQUIRE_SSL above (private compose net).
+      - POSTGRES_URL=postgresql://convex:${POSTGRES_PASSWORD}@postgres:5432
       # Don't echo internal error detail to API clients in prod.
       - REDACT_LOGS_TO_CLIENT=${REDACT_LOGS_TO_CLIENT:-true}
       - RUST_LOG=${RUST_LOG:-info}
@@ -41,6 +44,31 @@ services:
       test: curl -f http://localhost:3210/version
       interval: 10s
       start_period: 15s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Postgres 18: the production datastore (exercised on beta before prod). The
+  # backend connects to a database named after INSTANCE_NAME with hyphens
+  # replaced by underscores, so POSTGRES_DB below MUST match (keep them in sync).
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    stop_grace_period: 10s
+    environment:
+      - POSTGRES_USER=convex
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.beta}
+      - POSTGRES_DB=freesocks_beta
+    volumes:
+      # PG18 moved the image VOLUME to /var/lib/postgresql (PGDATA defaults to
+      # /var/lib/postgresql/18/docker inside it). Do NOT mount the pre-18
+      # /var/lib/postgresql/data path or the container refuses to start.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U convex -d freesocks_beta']
+      interval: 10s
+      start_period: 20s
+      retries: 5
 
   # Admin-only Convex dashboard, bound to localhost (reach via SSH tunnel:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
@@ -87,5 +115,6 @@ services:
 
 volumes:
   data:
+  pgdata:
   caddy_data:
   caddy_config:
