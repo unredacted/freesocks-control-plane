@@ -113,8 +113,46 @@ services:
       backend:
         condition: service_healthy
 
+  # One-shot: derive a valid admin key from INSTANCE_NAME + INSTANCE_SECRET (a
+  # standalone derivation via the backend image's generate_admin_key.sh, no
+  # running server needed) and write it to the shared `convexkey` volume for the
+  # deployer. The key is accepted by the backend because it shares INSTANCE_SECRET.
+  keygen:
+    image: ghcr.io/get-convex/convex-backend@sha256:edd7959f3464ed661f6663f646db205d5d61bda606c969b074dfb3c69ed71463
+    restart: 'no'
+    entrypoint: ['/bin/bash', '-c']
+    command: ["./generate_admin_key.sh | grep '|' | tail -n1 > /keys/admin_key"]
+    environment:
+      - INSTANCE_NAME=${INSTANCE_NAME}
+      - INSTANCE_SECRET=${INSTANCE_SECRET:?set INSTANCE_SECRET in .env.beta}
+    volumes:
+      - convexkey:/keys
+
+  # One-shot: push the Convex functions, apply the deployment env from
+  # .env.convex, and seed (tiers + settings + the env-configured backend
+  # instance). Runs after the backend is healthy and the admin key exists.
+  # Idempotent, so it re-runs harmlessly on every `up`; exits 0 on success
+  # (check `docker compose -f docker-compose.beta.yml logs deployer`).
+  deployer:
+    build:
+      context: .
+      dockerfile: docker/deploy.Dockerfile
+    restart: 'no'
+    environment:
+      - CONVEX_SELF_HOSTED_URL=http://backend:3210
+    volumes:
+      - convexkey:/keys:ro
+      # The application secrets to apply (copy .env.convex.example -> .env.convex).
+      - ./.env.convex:/run/convex.env:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      keygen:
+        condition: service_completed_successfully
+
 volumes:
   data:
   pgdata:
+  convexkey:
   caddy_data:
   caddy_config:
