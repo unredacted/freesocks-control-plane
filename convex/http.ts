@@ -237,7 +237,25 @@ http.route({
           429,
         );
       }
-      throw err;
+      // No proxy instance of the chosen backend is registered/active yet (e.g. a
+      // fresh deploy with no Remnawave instance). Surface a clean 503 instead of
+      // letting it escape as a bare 500.
+      if (/No active .* instances/i.test(msg)) {
+        return errorJson(
+          'backend.unavailable',
+          'No proxy server is available right now. Please try again later or contact support.',
+          503,
+        );
+      }
+      // Any other issuance failure (e.g. a backend API error). Return a clean
+      // envelope; the detail is logged server-side only, never leaked to the
+      // client (and the backend error types already scrub URLs/secrets).
+      console.error(`[subscription] free-tier issuance failed (req ${requestId}): ${msg}`);
+      return errorJson(
+        'issuance.failed',
+        'Could not issue a key right now. Please try again later.',
+        502,
+      );
     }
 
     const tier = await ctx.runQuery(api.tiers.getBySlug, { slug: result.user.tierSlug });

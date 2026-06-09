@@ -10,7 +10,10 @@ class ApiCallError extends Error {
       | z.infer<typeof ApiError>
       | { error: { code: string; message: string } },
   ) {
-    super(payload.error.message);
+    // Be robust to a non-envelope error body (e.g. a bare upstream 500 that
+    // isn't our { error: { code, message } } shape): fall back to a generic
+    // message instead of throwing while constructing the error.
+    super((payload as { error?: { message?: string } })?.error?.message ?? `Request failed (${status})`);
   }
 }
 
