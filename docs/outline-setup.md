@@ -94,7 +94,7 @@ Once at least one Outline server is registered:
 
 1. Visit **Settings** in the admin sidebar.
 2. Flip **Outline backend enabled** (`outline.enabled`) to `on`.
-3. (Optional) Set `subscription.user_choice_enabled` to let end users pick on `/get-key`.
+3. (Optional) Set `subscription.user_choice_enabled` to let end users pick on `/get-account`.
    Default is off; the server picks based on `subscription.default_backend`.
 4. (Optional) Edit the user-facing labels under **Backend labels**. Anything you set appears
    in the chooser segment and the "via X" badge on `/account`.
@@ -127,7 +127,7 @@ To offer a free Outline tier alongside the Remnawave free tier:
    `isActive = true`, `backend = 'outline'`.
 2. `tiers.getDefaultFree(backend)` picks the first matching `isDefaultFree && isActive` tier
    for the requested backend.
-3. If `subscription.user_choice_enabled` is on, the `/get-key` chooser routes the user's pick
+3. If `subscription.user_choice_enabled` is on, the `/get-account` chooser routes the user's pick
    to the matching default-free tier.
 
 ## Operational notes

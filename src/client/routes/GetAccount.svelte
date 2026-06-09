@@ -48,7 +48,7 @@
 
   // createMutation handles in-flight state (mutation.isPending) and surfaces
   // errors via mutation.error, and we layer toast feedback on top.
-  const issueKey = createMutation(() => ({
+  const getAccount = createMutation(() => ({
     mutationFn: async () => {
       // Only send `backend` when the user could actually pick one; otherwise
       // the server ignores it. Authenticated members go through the member
@@ -66,7 +66,7 @@
     },
     onError: (err) => {
       const msg = err instanceof ApiCallError ? err.payload.error.message : String(err);
-      toast.error('Could not issue key', { description: msg });
+      toast.error('Could not create account', { description: msg });
     },
   }));
 </script>
@@ -157,10 +157,10 @@
         class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 text-primary px-3 py-1 text-xs font-semibold uppercase tracking-wider"
       >
         <KeyIcon class="size-3.5" />
-        Free key
+        Free account
       </div>
       <h1 class="text-3xl md:text-4xl font-display font-bold tracking-tight">
-        Get a FreeSocks key
+        Get a FreeSocks account
       </h1>
       <p class="text-sm text-muted-foreground max-w-md mx-auto">
         {#if me.isPending}
@@ -169,7 +169,7 @@
           Signed in on the
           <strong class="text-foreground">{me.data.member?.tier.name}</strong> tier.
         {:else}
-          Solve the human-check below to issue a free key.
+          Solve the human-check below to create a free account.
         {/if}
       </p>
     </header>
@@ -227,28 +227,28 @@
       {#if !me.data?.authenticated}
         <Turnstile {siteKey} onVerify={(t) => (token = t)} />
       {/if}
-      {#if issueKey.error}
+      {#if getAccount.error}
         <div
           class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive"
         >
-          {issueKey.error instanceof ApiCallError
-            ? issueKey.error.payload.error.message
-            : String(issueKey.error)}
+          {getAccount.error instanceof ApiCallError
+            ? getAccount.error.payload.error.message
+            : String(getAccount.error)}
         </div>
       {/if}
       <Button
-        onclick={() => issueKey.mutate()}
-        disabled={issueKey.isPending || (!me.data?.authenticated && !token)}
+        onclick={() => getAccount.mutate()}
+        disabled={getAccount.isPending || (!me.data?.authenticated && !token)}
         size="lg"
         class="w-full"
       >
         <KeyIcon class="size-4" />
-        {issueKey.isPending ? 'Working…' : 'Get my key'}
+        {getAccount.isPending ? 'Working…' : 'Create my account'}
       </Button>
     </div>
 
     <p class="text-xs text-muted-foreground text-center max-w-sm mx-auto">
-      Free keys are valid for 30 days and limited to one device. Sign in for higher tiers.
+      Free accounts are valid for 30 days and limited to one device. Sign in for higher tiers.
     </p>
   </div>
 {/if}

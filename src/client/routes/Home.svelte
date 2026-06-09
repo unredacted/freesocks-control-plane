@@ -94,10 +94,10 @@
       </p>
 
       <div class="flex flex-wrap gap-3">
-        <Link href="/get-key">
+        <Link href="/get-account">
           <Button size="lg" class="text-base">
             <KeyIcon class="size-4" />
-            Get a free key
+            Get a free account
             <ArrowRight class="size-4" />
           </Button>
         </Link>
@@ -118,7 +118,7 @@
       URL" with a placeholder vless:// string + a green "Subscription ready"
       pip, which was confusing: visitors landing here for the first time
       assumed they'd already been issued something. This version is a
-      plain at-a-glance summary of what a free key gets you, labeled
+      plain at-a-glance summary of what a free account gets you, labeled
       "Free tier" so the framing is obvious, and a small footnote that
       makes clear the numbers come from the seeded defaults (not a live
       account).
@@ -223,7 +223,7 @@
       {/each}
     </div>
     <div class="pt-2">
-      <Link href="/get-key">
+      <Link href="/get-account">
         <Button size="lg">
           Try it now
           <ArrowRight class="size-4" />
@@ -243,7 +243,7 @@
           class="underline hover:text-foreground"
           target="_blank"
           rel="noopener noreferrer">Unredacted</a
-        >, a US 501(c)(3) nonprofit. Free keys are funded by donations and paying members.
+        >, a US 501(c)(3) nonprofit. Free accounts are funded by donations and paying members.
       </p>
       <div class="flex flex-wrap gap-3 pt-2">
         <!--

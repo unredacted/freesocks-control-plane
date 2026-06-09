@@ -85,7 +85,7 @@ convex/                            The backend (Convex functions)
 src/
 ├── client/                        Svelte 5 SPA (Vite, shadcn-svelte)
 │   ├── App.svelte, main.ts        Root: QueryClientProvider, router switch
-│   ├── routes/                    Home, GetKey, Account, Login + admin/*
+│   ├── routes/                    Home, GetAccount, Account, Login + admin/*
 │   ├── components/                ui/ (shadcn primitives), AppHeader, SubscriptionHero, …
 │   ├── lib/                       api.ts (fetch + Zod), queries.ts, query-client.ts, utils.ts
 │   └── stores/router.svelte.ts    History-API router
@@ -129,6 +129,12 @@ Then:
 - **SPA** → http://localhost:5173 · **Convex dashboard** → http://localhost:6791
 - Backend API `:3210`, HTTP actions `:3211`; Vite proxies the SPA's same-origin
   `/api/*` to `:3211` (`vite.config.ts`).
+
+> **The Docker backend is a separate process from `bun run dev`.** `bun run dev`
+> only starts the SPA + the Convex CLI watch; the backend is `bun run selfhost:up`
+> and must stay running (it now auto-restarts with Docker via `restart:
+unless-stopped`, but a `down` removes it). If API calls fail with
+> "TypeError: Failed to fetch", the backend is down: `bun run selfhost:up`.
 
 Set Convex **deployment** env vars with `bunx convex env set NAME value` (separate
 from the SPA's build-time `VITE_*`); the full required/optional list is in

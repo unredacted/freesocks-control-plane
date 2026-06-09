@@ -118,7 +118,7 @@
 
   <p class="text-xs text-muted-foreground text-center">
     Don't have an account number yet?{' '}
-    <a href="/get-key" class="text-primary underline">Get a free key</a>: you'll be shown one to
-    save.
+    <a href="/get-account" class="text-primary underline">Get a free account</a>: you'll be shown
+    one to save.
   </p>
 </div>

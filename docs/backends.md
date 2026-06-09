@@ -118,7 +118,7 @@ Steps to add a third backend (e.g. `wireguard`, `3xui`, …):
    server registry similar to Outline.
 
 6. **Surface in user UI** (optional): if the backend should be an end-user choice on
-   `/get-key`, add an option to the chooser (it degrades gracefully; fewer enabled backends =
+   `/get-account`, add an option to the chooser (it degrades gracefully; fewer enabled backends =
    fewer options).
 
 7. **Tests**: unit-test the pure HTTP functions with a mocked `fetch`; add a `convex-test`

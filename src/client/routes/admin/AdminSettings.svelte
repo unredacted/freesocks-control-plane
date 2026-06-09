@@ -91,8 +91,8 @@
         <CardHeader>
           <CardTitle class="text-base">Backend availability</CardTitle>
           <CardDescription>
-            Master switches for each proxy backend. Disabling a backend hides it from the /get-key
-            chooser and rejects new issuance against it.
+            Master switches for each proxy backend. Disabling a backend hides it from the
+            /get-account chooser and rejects new issuance against it.
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-3 text-sm">
@@ -129,7 +129,7 @@
               onCheckedChange={(v) =>
                 (draft = { ...draft, 'subscription.user_choice_enabled': v === true })}
             />
-            <span>Show backend chooser on /get-key and /account</span>
+            <span>Show backend chooser on /get-account and /account</span>
           </label>
           <div class="space-y-1.5">
             <label

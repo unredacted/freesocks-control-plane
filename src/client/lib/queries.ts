@@ -156,7 +156,7 @@ export const adminAuditQuery = () =>
 /**
  * Global admin-editable settings (outline.enabled, default_backend, etc.).
  * Used by AdminSettings.svelte for the form, and by the public surface
- * (/get-key chooser, AppHeader nudges) to read the toggles. Cached server-side
+ * (/get-account chooser, AppHeader nudges) to read the toggles. Cached server-side
  * 5 min via KV; client-side we set staleTime to 60s so admin edits propagate
  * quickly across tabs.
  */

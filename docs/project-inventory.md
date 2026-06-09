@@ -133,7 +133,7 @@ Convex runs these natively (no Workers triggers, no node-cron):
 
 ### 1.9 Frontend SPA (Svelte 5 runes): **Live**
 
-- Public: `Home`, `GetKey` (Turnstile + backend chooser when dual-backend on, reveal-once
+- Public: `Home`, `GetAccount` (Turnstile + backend chooser when dual-backend on, reveal-once
   account-number panel), `Account` (member view + regenerate / switch-backend / rotate),
   `Login` (account-number sign-in).
 - Admin: `AdminEntry`/`AdminLogin`/`AdminBootstrap`/`AdminLayout` + Tiers / Users / Tokens /

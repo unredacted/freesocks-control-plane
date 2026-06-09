@@ -351,7 +351,7 @@
       <MembershipCallout
         tone="info"
         title="You're on the free tier"
-        body="Higher Unredacted membership tiers (raising device count and monthly bandwidth) are coming soon. In the meantime, donations keep free keys funded."
+        body="Higher Unredacted membership tiers (raising device count and monthly bandwidth) are coming soon. In the meantime, donations keep free accounts funded."
         ctaUrl="https://unredacted.org/donate"
         ctaLabel="Donate"
       >

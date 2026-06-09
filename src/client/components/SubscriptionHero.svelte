@@ -17,7 +17,7 @@
   /**
    * Hero subscription block: the visual focal point of the page. Big URL,
    * one-click copy, QR code for cross-device handoff, expiry/traffic as
-   * secondary metadata. Used on /get-key (anonymous result), /account
+   * secondary metadata. Used on /get-account (anonymous result), /account
    * (signed-in dashboard), and anywhere else we hand someone a key.
    *
    * Design decisions:

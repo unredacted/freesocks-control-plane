@@ -5,7 +5,7 @@
   import { ModeWatcher } from 'mode-watcher';
   import ErrorBoundary from './components/ErrorBoundary.svelte';
   import Home from './routes/Home.svelte';
-  import GetKey from './routes/GetKey.svelte';
+  import GetAccount from './routes/GetAccount.svelte';
   import Account from './routes/Account.svelte';
   import Login from './routes/Login.svelte';
   import AdminEntry from './routes/admin/AdminEntry.svelte';
@@ -54,8 +54,8 @@
           <div in:fade={{ duration: 180 }}>
             {#if router.pathname === '/'}
               <Home />
-            {:else if router.pathname === '/get-key'}
-              <GetKey />
+            {:else if router.pathname === '/get-account'}
+              <GetAccount />
             {:else if router.pathname === '/account'}
               <Account />
             {:else if router.pathname === '/login'}

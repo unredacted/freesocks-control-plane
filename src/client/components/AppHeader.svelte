@@ -32,10 +32,10 @@
       FreeSocks
     </Link>
     <nav class="flex items-center gap-2">
-      <Link href="/get-key">
+      <Link href="/get-account">
         <Button variant="ghost" size="sm">
           <KeyIcon class="size-4" />
-          <span class="hidden sm:inline">Get a key</span>
+          <span class="hidden sm:inline">Get an account</span>
         </Button>
       </Link>
       {#if !me.isPending && me.data?.authenticated}

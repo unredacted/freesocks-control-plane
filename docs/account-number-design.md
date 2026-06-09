@@ -22,7 +22,7 @@ is the **only** member credential.
 >   overwritten, audited.
 > - **Admin prefix search**: `GET /api/v1/admin/users?q=` matches the stored
 >   4-digit prefix (`convex/adminApi.ts`); full-number lookup is never permitted.
-> - **SPA**: reveal-once panel on `/get-key`, account-number sign-in on `/login`,
+> - **SPA**: reveal-once panel on `/get-account`, account-number sign-in on `/login`,
 >   rotate dialog on `/account`.
 >
 > **NOT APPLICABLE: OIDC was removed.** The original design assumed an Authentik
@@ -319,5 +319,5 @@ Phase-staged following existing Phase-4 conventions:
 - `src/shared/contracts/subscription.ts`
 - `src/shared/contracts/auth.ts`
 - `src/client/routes/Account.svelte`
-- `src/client/routes/GetKey.svelte`
+- `src/client/routes/GetAccount.svelte`
 - `src/client/components/SubscriptionHero.svelte`

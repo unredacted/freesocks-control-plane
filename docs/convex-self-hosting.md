@@ -189,8 +189,8 @@ script automatically (the Vite `sriPlugin`); no operator action is needed.
 ## 8. Cutover verification checklist
 
 - `GET /healthz` → `{ok:true}`; `GET /api/v1/config` → tiers + Turnstile site key.
-- Anonymous **get-key**: solve Turnstile → key issued + account number revealed once;
-  2nd same-IP/day call is capped (`accountIdAvailable:false`).
+- Anonymous **get-account**: solve Turnstile → account created (key issued) + account number
+  revealed once; 2nd same-IP/day call is capped (`accountIdAvailable:false`).
 - **Account login** with that number → `fs_session` set → `/account` renders; a wrong
   number → generic 401, constant-time.
 - **Rotate** → new number revealed once, old number dead.

@@ -16,6 +16,9 @@ name: fcp
 services:
   backend:
     image: ghcr.io/get-convex/convex-backend:latest
+    # Survive a Docker Desktop / daemon restart (the backend is separate from
+    # `bun run dev`, so it must stay up on its own). `down` still removes it.
+    restart: unless-stopped
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
@@ -67,6 +70,7 @@ services:
 
   dashboard:
     image: ghcr.io/get-convex/convex-dashboard:latest
+    restart: unless-stopped
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
