@@ -23,6 +23,7 @@ import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { v } from 'convex/values';
+import { writeAuditLog } from './lib/audit';
 
 // Admin resource functions are INTERNAL: the only caller is the admin-gated
 // HTTP layer (convex/http.ts) via ctx.runQuery/runMutation. Keeping them off
@@ -380,7 +381,7 @@ export const disableUser = internalMutation({
       suspendedAt: Date.now(),
       updatedAt: Date.now(),
     });
-    await ctx.db.insert('auditLog', {
+    await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
       action: 'admin.user.disable',
@@ -413,7 +414,7 @@ export const recordUserOpAudit = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { action, userId, actorAdminId }) => {
-    await ctx.db.insert('auditLog', {
+    await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
       action,

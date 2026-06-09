@@ -1,9 +1,12 @@
 /**
  * Audit log writes (ported from services/audit.ts). Insert-only. Called from
- * mutations directly or from actions via ctx.runMutation.
+ * actions via ctx.runMutation; in-mutation callers use `writeAuditLog` from
+ * lib/audit directly (Convex forbids mutation->mutation calls). Both paths run
+ * the payload through the same per-action allowlist (M3, see lib/audit.ts).
  */
 import { internalMutation } from './_generated/server';
 import { v } from 'convex/values';
+import { writeAuditLog } from './lib/audit';
 
 export const record = internalMutation({
   args: {
@@ -23,7 +26,7 @@ export const record = internalMutation({
     ipHash: v.optional(v.string()),
   },
   handler: async (ctx, entry) => {
-    await ctx.db.insert('auditLog', entry);
+    await writeAuditLog(ctx, entry);
     return null;
   },
 });

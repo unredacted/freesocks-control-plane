@@ -14,6 +14,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { deleteSubscriptionEverywhere } from './lib/issuance';
+import { writeAuditLog } from './lib/audit';
 
 // --- entitlement seam ------------------------------------------------------
 
@@ -58,7 +59,7 @@ export const setMembership = internalMutation({
       reason: a.reason,
       triggeredBy: a.triggeredBy ?? 'system',
     });
-    await ctx.db.insert('auditLog', {
+    await writeAuditLog(ctx, {
       actorType: 'system',
       action: 'membership.tier_change',
       targetType: 'user',
@@ -159,7 +160,7 @@ export const applyGraceTransition = internalMutation({
   args: { userId: v.id('users') },
   handler: async (ctx, { userId }) => {
     await ctx.db.patch(userId, { status: 'grace', updatedAt: Date.now() });
-    await ctx.db.insert('auditLog', {
+    await writeAuditLog(ctx, {
       actorType: 'system',
       action: 'membership.transition.grace',
       targetType: 'user',
@@ -178,7 +179,7 @@ export const applyDisableTransition = internalMutation({
       suspendedAt: Date.now(),
       updatedAt: Date.now(),
     });
-    await ctx.db.insert('auditLog', {
+    await writeAuditLog(ctx, {
       actorType: 'system',
       action: 'membership.transition.disabled',
       targetType: 'user',

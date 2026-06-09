@@ -1,0 +1,86 @@
+/**
+ * Audit-log payload allowlist (M3). The audit table's `payload` is `v.any()`, so
+ * a careless future caller could persist a raw request body, and admins with
+ * `admin:audit:read` would then be able to read it (free-text, account numbers,
+ * future PII). To make that impossible by construction rather than by review,
+ * every audit write goes through `writeAuditLog`, which projects the payload
+ * down to an explicit per-action key allowlist.
+ *
+ * Fail-closed: an action with no allowlist entry stores NO payload at all (a
+ * one-time console.warn names the action so the author registers it here). The
+ * action name is never secret, so logging it is safe. Curated, no-payload
+ * actions (admin.login, transitions, etc.) are simply absent from the map; they
+ * never pass a payload, so they never warn.
+ *
+ * Pure helpers live here so both write paths share them: the `audit.record`
+ * mutation (called from actions) and the in-mutation direct inserts (lifecycle /
+ * freeTier / adminApi, which cannot `ctx.runMutation` another mutation).
+ */
+import type { MutationCtx } from '../_generated/server';
+
+export type AuditActorType = 'system' | 'admin' | 'member' | 'anonymous' | 'webhook';
+
+export interface AuditEntry {
+  actorType: AuditActorType;
+  action: string;
+  actorId?: string;
+  targetType?: string;
+  targetId?: string;
+  payload?: unknown;
+  requestId?: string;
+  ipHash?: string;
+}
+
+/**
+ * The only payloads any audit write is allowed to persist, keyed by action.
+ * Add an entry (with the exact, curated key set) when a new action needs to
+ * record structured context. Keys absent here are dropped before insert; an
+ * action absent here drops its payload entirely. Keep these to non-secret,
+ * scalar context: never an account number, token, secret, or apiUrl.
+ */
+export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
+  'subscription.switch_backend': ['fromBackend', 'toBackend', 'fromTier', 'toTier'],
+  'membership.tier_change': ['fromTierId', 'toTierId', 'reason'],
+  'user.create.free': ['ipCountry', 'asn'],
+};
+
+/**
+ * Project an audit payload to its action's allowlisted keys. Returns `undefined`
+ * (store nothing) when there is no payload, the payload is not a plain object,
+ * or the action is unregistered. Shallow by design: allowlisted values are
+ * curated scalars, so there is no nested structure to recurse into.
+ */
+export function sanitizeAuditPayload(
+  action: string,
+  payload: unknown,
+): Record<string, unknown> | undefined {
+  if (payload === undefined || payload === null) return undefined;
+  if (typeof payload !== 'object' || Array.isArray(payload)) {
+    console.warn(`[audit] dropping non-object payload for action "${action}"`);
+    return undefined;
+  }
+  const allow = AUDIT_PAYLOAD_ALLOWLIST[action];
+  if (!allow) {
+    console.warn(`[audit] dropping payload for unregistered action "${action}"`);
+    return undefined;
+  }
+  const src = payload as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of allow) {
+    if (key in src && src[key] !== undefined) out[key] = src[key];
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * The single blessed way to write the audit log: sanitizes the payload, then
+ * inserts. Never `ctx.db.insert('auditLog', ...)` directly, or the allowlist is
+ * bypassed.
+ */
+export async function writeAuditLog(ctx: MutationCtx, entry: AuditEntry): Promise<void> {
+  const { payload, ...rest } = entry;
+  await ctx.db.insert('auditLog', {
+    ...rest,
+    payload: sanitizeAuditPayload(entry.action, payload),
+  });
+}

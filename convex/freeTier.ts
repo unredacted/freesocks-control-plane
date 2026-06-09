@@ -21,6 +21,7 @@ import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { hmacSha256Hex, randomHex, sha256Hex } from './lib/crypto';
 import { issueNewSubscription } from './lib/issuance';
+import { writeAuditLog } from './lib/audit';
 
 type FreeIssueOutcome = {
   user: { id: Id<'users'>; tierSlug: string };
@@ -281,7 +282,7 @@ export const finalizeFreeIssuance = internalMutation({
       reason: 'initial',
       triggeredBy: 'anonymous',
     });
-    await ctx.db.insert('auditLog', {
+    await writeAuditLog(ctx, {
       actorType: 'anonymous',
       action: 'user.create.free',
       targetType: 'user',

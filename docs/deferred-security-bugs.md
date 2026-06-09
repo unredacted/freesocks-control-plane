@@ -70,17 +70,33 @@ self-provisioning) is MOOT (no OIDC).
 
 **Recently resolved (2026-06 hardening pass):** **M3**: audit writes re-reviewed
 (all curated) + the billing webhook now redacts the account-number plaintext from
-its stored payload. **Bug 15**: Outline `accessUrl` made optional + parse-safe with
-a clear error (regression test added); full WSS _issuance_ is the only piece left
-and it stays blocked on the fork's response contract.
+its stored payload, and (2026-06-09) a per-action payload **allowlist** now enforces
+this at a single `writeAuditLog` chokepoint, fail-closed for unregistered actions
+(`convex/lib/audit.ts`). **Bug 15**: Outline `accessUrl` made optional + parse-safe
+with a clear error (regression test added); full WSS _issuance_ is the only piece
+left and it stays blocked on the fork's response contract.
 
 **Still open / deferred on Convex:** **Bug 15 (full WSS issuance only)**: latent
-while Outline is disabled; Outline scoring **RTT capture** (the
-`pickCandidatesForIssue` latency term is a `0` placeholder), latent while Outline is
-disabled. **Test gaps:** the `convex-test` suite covers auth/free-tier/lifecycle/
-subscriptions/webhooks/admin-API + the lib units (incl. the Outline accessUrl path);
-not yet covered: most proxy-backend HTTP fns (Remnawave), S3 storage, and the
-WebAuthn ceremonies (the `"use node"` modules are awkward under `convex-test`).
+while Outline is disabled (blocked on the fork's real WSS create-key contract, which
+is not in this repo); Outline scoring **RTT capture** (the `pickCandidatesForIssue`
+latency term is a `0` placeholder), latent while Outline is disabled. Both are gated
+on enabling Outline and are intentionally deferred until then.
+
+**Test gaps (mostly closed, 2026-06-09):** the `convex-test` suite covers
+auth/free-tier/lifecycle/subscriptions/webhooks/admin-API + the lib units (incl. the
+Outline accessUrl path). Now also covered: the **Remnawave** HTTP fns
+(`convex/lib/backends/remnawave.test.ts`: issue/get/update/reset/delete/fetch
+mapping, status-enum mapping, squad set/clear (Bug 14), device-endpoint degradation,
+and the error path not leaking the token or base URL); **S3 storage** mirror logic
+(`convex/storage.test.ts`, via an injected `send` seam: provider env parsing,
+multi-provider upload + public-URL join, partial + total failure, best-effort
+delete); and the **WebAuthn ceremony** gating/security branches
+(`convex/webauthn.test.ts`: bootstrap-secret gate + bootstrap lock + TOCTOU
+re-check, M4 anti-enumeration, per-IP throttle, challenge replay + unknown
+credential). The one remaining gap is the WebAuthn **cryptographic happy-path** (a
+genuine attestation/assertion passing `@simplewebauthn` verification, the counter
+bump, the session mint), which needs a real or virtual authenticator and belongs in
+an e2e browser test, not `convex-test`.
 
 ## Security: deferred
 
@@ -152,17 +168,22 @@ signing. Small, contained change; bundled with the next session-related work.
 
 ---
 
-### M3. Audit log payload scrubbing: ADDRESSED (Convex)
+### M3. Audit log payload scrubbing: CLOSED (Convex)
 
-> **ADDRESSED.** Re-reviewed every audit write in `convex/{adminApi,account,
-lifecycle,freeTier}.ts`: each logs a curated, explicit object (or no payload),
-> and none dumps a raw request body, so the leak vector is gone. The related (worse)
-> issue surfaced during the review: the billing webhook persisted the **raw body**
-> into `webhookEvents.payload`, and that body carries the **account-number
-> plaintext**. Fixed: `webhooks.ingest` now stores a redacted payload (eventId +
-> tierSlug + the 4-digit prefix only). Covered by `convex/webhooks.test.ts`.
-> `audit.record` still takes `payload: v.any()`; a future per-action allowlist
-> would harden against new callers, but no current caller leaks.
+> **CLOSED (2026-06-09).** Re-reviewed every audit write in `convex/{adminApi,
+> account,lifecycle,freeTier}.ts`: each logs a curated, explicit object (or no
+> payload), and none dumps a raw request body. The related (worse) issue found
+> during the review (the billing webhook persisted the **raw body**, which carries
+> the **account-number plaintext**) was fixed: `webhooks.ingest` stores a redacted
+> payload (eventId + tierSlug + the 4-digit prefix only), covered by
+> `convex/webhooks.test.ts`. The remaining residual is now closed too: a per-action
+> payload **allowlist** in `convex/lib/audit.ts` projects every audit payload down
+> to an explicit key set, and **all** writes route through the single
+> `writeAuditLog` chokepoint (the `audit.record` mutation called from actions, plus
+> the in-mutation inserts in lifecycle/freeTier/adminApi that cannot call a
+> mutation). An action that is not registered in the allowlist fails closed (its
+> payload is dropped, with a non-secret `console.warn` naming the action). Covered
+> by `convex/lib/audit.test.ts`.
 
 **Location** `src/server/services/audit.ts:22-33` _(now `convex/audit.ts` + callers in `convex/adminApi.ts`)_
 
