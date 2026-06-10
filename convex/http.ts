@@ -449,6 +449,31 @@ http.route({
   }),
 });
 
+// Redeem a membership code (W4). Member-authenticated; the code is a bearer
+// secret so the route is sealed like the other member actions. Every failure
+// (unknown / revoked / used / rate-limited / malformed) returns one generic
+// envelope — no oracle.
+http.route({
+  path: '/api/v1/account/redeem-code',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req);
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const body = await readJson<{ code?: string }>(req);
+    if (typeof body.code !== 'string' || !body.code.trim()) {
+      return errorJson('validation', 'code is required', 400);
+    }
+    const result = await ctx.runAction(internal.membershipCodes.redeemCode, {
+      userId: member.userId,
+      code: body.code,
+    });
+    if (!result.ok) {
+      return errorJson('code.invalid', 'That code is not valid, or has already been used.', 400);
+    }
+    return json(result);
+  }),
+});
+
 // --- admin passkey auth -----------------------------------------------------
 
 http.route({
@@ -847,6 +872,72 @@ http.route({
         actorAdminId: admin.adminUserId,
       });
       return json({ policies: await ctx.runQuery(internal.rateLimits.listPolicies, {}) });
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// --- admin: membership codes (W4) -------------------------------------------
+
+http.route({
+  path: '/api/v1/admin/membership-codes',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    const status = new URL(req.url).searchParams.get('status') ?? undefined;
+    return json({ codes: await ctx.runQuery(internal.membershipCodes.listCodes, { status }) });
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/membership-codes',
+  method: 'POST',
+  handler: httpAction(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req);
+    if (!admin) return ADMIN_UNAUTH();
+    // Minting must be attributed to a concrete admin row (like token creation).
+    if (!admin.adminUserId) {
+      return errorJson('auth.forbidden', 'Code minting requires an admin session', 403);
+    }
+    const body = await readJson<{
+      tierId?: string;
+      durationDays?: number;
+      count?: number;
+      note?: string;
+    }>(req);
+    if (!body.tierId || typeof body.durationDays !== 'number' || typeof body.count !== 'number') {
+      return errorJson('validation', 'tierId, durationDays, count are required', 400);
+    }
+    try {
+      const minted = await ctx.runAction(internal.membershipCodes.mintCodes, {
+        tierId: body.tierId as Id<'tiers'>,
+        durationDays: body.durationDays,
+        count: body.count,
+        note: body.note,
+        actorAdminId: admin.adminUserId,
+      });
+      return json(minted);
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/membership-codes/',
+  method: 'DELETE',
+  handler: httpAction(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req);
+    if (!admin) return ADMIN_UNAUTH();
+    const id = lastPathSegment(req) as Id<'redemptionCodes'>;
+    try {
+      return json(
+        await ctx.runMutation(internal.membershipCodes.revokeCode, {
+          id,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
     } catch (err) {
       return adminError(err);
     }

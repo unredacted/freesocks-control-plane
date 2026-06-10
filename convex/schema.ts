@@ -286,6 +286,28 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('by_key', ['key']),
 
+  // Membership redemption codes (W4): admin-minted bearer codes a member redeems
+  // to grant/extend a paid tier — no billing portal required. Codes are SECRETS:
+  // only the SHA-256 `codeHash` is stored (never plaintext), plus a short
+  // `codePrefix` for the admin list. Single-use: a serializable consume flips
+  // status active→redeemed. Uniqueness of `codeHash` is enforced in the mutation.
+  redemptionCodes: defineTable({
+    codeHash: v.string(),
+    codePrefix: v.string(),
+    tierId: v.id('tiers'),
+    durationDays: v.number(),
+    status: v.union(v.literal('active'), v.literal('redeemed'), v.literal('revoked')),
+    note: v.optional(v.string()),
+    batchId: v.optional(v.string()),
+    mintedByAdminId: v.id('adminUsers'),
+    redeemedByUserId: v.optional(v.id('users')),
+    redeemedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_code_hash', ['codeHash'])
+    .index('by_status', ['status'])
+    .index('by_batch', ['batchId']),
+
   // --- new tables replacing the former KvStore namespaces ---
 
   // Member + admin sessions (was the `sessions` KV namespace + signed cookie).

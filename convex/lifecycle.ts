@@ -10,6 +10,7 @@
  * types to break Convex's self-reference inference cycle.
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import type { MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
@@ -17,6 +18,62 @@ import { deleteSubscriptionEverywhere } from './lib/issuance';
 import { writeAuditLog } from './lib/audit';
 
 // --- entitlement seam ------------------------------------------------------
+
+export interface SetMembershipArgs {
+  userId: Id<'users'>;
+  tierId: Id<'tiers'>;
+  expiresAtMs: number | null;
+  reason: string;
+  triggeredBy?: string;
+}
+
+/**
+ * The entitlement-seam core, reusable inside other mutations (e.g. W4 code
+ * redemption grants membership atomically with consuming the code). Sets tier +
+ * expiry; on a tier change records history + audit and schedules a durable
+ * backend push. Idempotent on an unchanged tier (only patches expiry if it moved).
+ */
+export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): Promise<void> {
+  const user = await ctx.db.get(a.userId);
+  if (!user) return;
+  const toTier = await ctx.db.get(a.tierId);
+  if (!toTier) throw new Error('tier not found');
+
+  if (user.tierId === a.tierId) {
+    if (a.expiresAtMs !== (user.membershipExpiresAt ?? null)) {
+      await ctx.db.patch(a.userId, {
+        membershipExpiresAt: a.expiresAtMs ?? undefined,
+        // A renewed/extended membership re-activates a lapsed (grace/disabled) user.
+        ...(user.status === 'grace' || user.status === 'disabled' ? { status: 'active' as const } : {}),
+        updatedAt: Date.now(),
+      });
+    }
+    return;
+  }
+
+  await ctx.db.patch(a.userId, {
+    tierId: a.tierId,
+    membershipExpiresAt: a.expiresAtMs ?? undefined,
+    ...(user.status === 'grace' || user.status === 'disabled' ? { status: 'active' as const } : {}),
+    updatedAt: Date.now(),
+  });
+  await ctx.db.insert('tierHistory', {
+    userId: a.userId,
+    fromTierId: user.tierId,
+    toTierId: a.tierId,
+    reason: a.reason,
+    triggeredBy: a.triggeredBy ?? 'system',
+  });
+  await writeAuditLog(ctx, {
+    actorType: 'system',
+    action: 'membership.tier_change',
+    targetType: 'user',
+    targetId: a.userId,
+    payload: { fromTierId: user.tierId, toTierId: a.tierId, reason: a.reason },
+  });
+  // Durable, decoupled propagation of the new tier spec to the live backend.
+  await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, { userId: a.userId });
+}
 
 /**
  * Set a user's tier + membership expiry from an external source of truth
@@ -32,42 +89,7 @@ export const setMembership = internalMutation({
     triggeredBy: v.optional(v.string()),
   },
   handler: async (ctx, a): Promise<null> => {
-    const user = await ctx.db.get(a.userId);
-    if (!user) return null;
-    const toTier = await ctx.db.get(a.tierId);
-    if (!toTier) throw new Error('tier not found');
-
-    if (user.tierId === a.tierId) {
-      if (a.expiresAtMs !== (user.membershipExpiresAt ?? null)) {
-        await ctx.db.patch(a.userId, {
-          membershipExpiresAt: a.expiresAtMs ?? undefined,
-          updatedAt: Date.now(),
-        });
-      }
-      return null;
-    }
-
-    await ctx.db.patch(a.userId, {
-      tierId: a.tierId,
-      membershipExpiresAt: a.expiresAtMs ?? undefined,
-      updatedAt: Date.now(),
-    });
-    await ctx.db.insert('tierHistory', {
-      userId: a.userId,
-      fromTierId: user.tierId,
-      toTierId: a.tierId,
-      reason: a.reason,
-      triggeredBy: a.triggeredBy ?? 'system',
-    });
-    await writeAuditLog(ctx, {
-      actorType: 'system',
-      action: 'membership.tier_change',
-      targetType: 'user',
-      targetId: a.userId,
-      payload: { fromTierId: user.tierId, toTierId: a.tierId, reason: a.reason },
-    });
-    // Durable, decoupled propagation of the new tier spec to the live backend.
-    await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, { userId: a.userId });
+    await applyMembership(ctx, a);
     return null;
   },
 });
