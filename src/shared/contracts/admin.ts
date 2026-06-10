@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TierSlug, UserStatus } from './common';
+import { UserStatus } from './common';
 import { BackendId } from './backends';
 
 export const TrafficStrategy = z.enum(['NO_RESET', 'DAY', 'WEEK', 'MONTH']);
@@ -46,8 +46,15 @@ export const UserAdmin = z.object({
    * mints one. This is the only human-readable handle for an anonymous member.
    */
   accountIdPrefix: z.string().nullable(),
+  /**
+   * W3: the member's non-secret `FS-XXXX-XXXX` support handle (null until
+   * backfilled). The primary human-readable id for support — collision-free,
+   * unlike the 4-digit prefix.
+   */
+  supportId: z.string().nullable(),
   status: UserStatus,
-  tierSlug: TierSlug,
+  // Admin-controlled free text (see common.ts); not the narrower TierSlug enum.
+  tierSlug: z.string(),
   membershipExpiresAt: z.string().datetime().nullable(),
   /** Backend-agnostic primary id of the user's current subscription. */
   backendUserId: z.string().nullable(),
@@ -60,7 +67,7 @@ export type UserAdmin = z.infer<typeof UserAdmin>;
 export const UserSearchQuery = z.object({
   q: z.string().optional(),
   status: UserStatus.optional(),
-  tier: TierSlug.optional(),
+  tier: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   cursor: z.string().optional(),
 });

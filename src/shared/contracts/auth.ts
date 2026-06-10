@@ -1,11 +1,12 @@
 import { z } from 'zod';
-import { TierSlug } from './common';
 
 export const AuthMeResponse = z.object({
   authenticated: z.boolean(),
   member: z
     .object({
-      tier: z.object({ slug: TierSlug, name: z.string() }),
+      // Slug is admin-controlled free text; never the narrower TierSlug enum
+      // (a renamed/custom slug must not make zod reject a valid response).
+      tier: z.object({ slug: z.string().min(1), name: z.string() }),
     })
     .optional(),
 });
@@ -31,6 +32,14 @@ export type AdminAuthStatus = z.infer<typeof AdminAuthStatus>;
 export const PublicConfig = z.object({
   membersJoinUrl: z.string().url().optional(),
   membersAccountUrl: z.string().url().optional(),
+  /**
+   * Where the renew/upgrade callouts point (P1-13). `donateUrl` is the primary
+   * CTA for lapsed/expiring members (FreeSocks is donation-funded); `contactUrl`
+   * is the secondary "contact us" link (e.g. to redeem a membership code). Both
+   * optional; the UI omits a missing one rather than rendering a dead link.
+   */
+  donateUrl: z.string().url().optional(),
+  contactUrl: z.string().url().optional(),
   freeTierTurnstileSiteKey: z.string(),
   environment: z.enum(['production', 'development', 'test']),
   /**

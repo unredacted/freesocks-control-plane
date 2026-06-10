@@ -1,15 +1,23 @@
 import { z } from 'zod';
-import { TierSlug, UserStatus } from './common';
+import { UserStatus } from './common';
 import { SubscriptionMirror } from './subscription';
 import { BackendId } from './admin';
+
+// Tier slugs are admin-controlled free text (the admin tier validator accepts
+// any string), so the member-facing contracts accept any non-empty string here
+// rather than a fixed enum — a renamed/custom slug must not make zod reject an
+// otherwise-valid response. Mirrors the same widening on PublicConfig.tiers[].slug.
+const Slug = z.string().min(1);
 
 export const AccountResponse = z.object({
   user: z.object({
     // Convex document id (string) since the P10 migration; was an integer PK.
     id: z.string(),
     status: UserStatus,
+    // W3: non-secret `FS-XXXX-XXXX` support handle (null until backfilled).
+    supportId: z.string().nullable(),
     tier: z.object({
-      slug: TierSlug,
+      slug: Slug,
       name: z.string(),
       monthlyTrafficGb: z.number(),
       deviceLimit: z.number(),
@@ -82,7 +90,7 @@ export const SwitchBackendResponse = z.object({
   shortUuid: z.string(),
   backend: BackendId,
   tier: z.object({
-    slug: TierSlug,
+    slug: Slug,
     name: z.string(),
     monthlyTrafficGb: z.number(),
     deviceLimit: z.number(),
@@ -124,7 +132,7 @@ export type CreateAccountRequest = z.infer<typeof CreateAccountRequest>;
 export const CreateAccountResponse = z.object({
   accountId: z.string(),
   tier: z.object({
-    slug: TierSlug,
+    slug: Slug,
     name: z.string(),
     monthlyTrafficGb: z.number(),
     deviceLimit: z.number(),

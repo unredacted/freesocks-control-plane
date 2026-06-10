@@ -168,6 +168,9 @@ export const createFreeAccount = internalAction({
 
     try {
       const acct = await ctx.runAction(internal.accountId.mintForUser, { userId: claim.userId });
+      // W3: assign the non-secret support handle at creation (lazy backfill in
+      // getAccountView covers pre-W3 accounts).
+      await ctx.runAction(internal.supportId.ensureForUser, { userId: claim.userId });
       await ctx.runMutation(internal.freeTier.finalizeFreeIssuance, {
         userId: claim.userId,
         tierId: tier._id,

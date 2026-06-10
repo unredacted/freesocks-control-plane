@@ -24,6 +24,7 @@ interface AccountView {
   user: {
     id: Id<'users'>;
     status: 'active' | 'grace' | 'disabled' | 'deleted';
+    supportId: string | null;
     tier: {
       slug: string;
       name: string;
@@ -54,6 +55,17 @@ export const getAccountView = internalAction({
     const tier = await ctx.runQuery(api.tiers.get, { id: user.tierId });
     if (!tier) return null;
     const sub = await ctx.runQuery(api.subscriptions.resolveCurrentOrActive, { userId });
+
+    // W3: lazily backfill the support ID for pre-W3 accounts. Non-fatal — the
+    // account view still renders if minting transiently fails.
+    let supportId = user.supportId ?? null;
+    if (!supportId) {
+      try {
+        supportId = (await ctx.runAction(internal.supportId.ensureForUser, { userId })).supportId;
+      } catch {
+        /* leave null; next view retries */
+      }
+    }
 
     const trafficLimitFromTier =
       tier.monthlyTrafficGb > 0 ? tier.monthlyTrafficGb * 1_000_000_000 : null;
@@ -103,6 +115,7 @@ export const getAccountView = internalAction({
       user: {
         id: user._id,
         status: user.status,
+        supportId,
         tier: {
           slug: tier.slug,
           name: tier.name,

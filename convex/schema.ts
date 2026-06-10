@@ -108,10 +108,15 @@ export default defineSchema({
     accountIdPrefix: v.optional(v.string()),
     accountIdCreatedAt: v.optional(v.number()),
     accountIdRotatedAt: v.optional(v.number()),
+    // W3: a non-secret `FS-XXXX-XXXX` support handle (NOT a credential). Minted
+    // at account creation, lazily backfilled for pre-W3 users. Unique (enforced
+    // in the mutation). See convex/lib/supportId.ts.
+    supportId: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index('by_account_id_hash', ['accountIdHash'])
     .index('by_account_id_prefix', ['accountIdPrefix'])
+    .index('by_support_id', ['supportId'])
     .index('by_status_expires', ['status', 'membershipExpiresAt'])
     .index('by_tier', ['tierId']),
 

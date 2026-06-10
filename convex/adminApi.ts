@@ -23,6 +23,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+import { normalizeSupportId } from './lib/supportId';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 
 // Admin resource functions are INTERNAL: the only caller is the admin-gated
@@ -302,6 +303,7 @@ async function mapUser(
   return {
     id: u._id as string,
     accountIdPrefix: u.accountIdPrefix ?? null,
+    supportId: u.supportId ?? null,
     status: u.status,
     tierSlug: tierSlugById.get(u.tierId) ?? 'free',
     membershipExpiresAt: u.membershipExpiresAt != null ? iso(u.membershipExpiresAt) : null,
@@ -313,9 +315,10 @@ async function mapUser(
 
 /**
  * Admin user search. Filters:
- *  - `q`: a 4-digit account-number prefix, looked up via the prefix index (a
- *    full number is never an admin oracle). The prefix is the only searchable
- *    handle for an anonymous member, so any non-prefix query matches nothing.
+ *  - `q`: a member's W3 support ID (`FS-XXXX-XXXX`, the preferred handle), OR a
+ *    4-digit account-number prefix, looked up via the respective index (a full
+ *    account number is never an admin oracle). Any other query matches nothing
+ *    (members are anonymous).
  *  - `status` / `tier`: post-filters.
  * Pagination is a keyset over `_creationTime` desc via an opaque cursor.
  */
@@ -340,14 +343,23 @@ export const usersSearch = internalQuery({
     // Targeted lookups when `q` clearly identifies a single user; these short
     // out before the paginated scan and ignore the cursor (small result set).
     if (trimmed) {
-      // The 4-digit account-number prefix is the only searchable handle; any
-      // other query has nothing to match against (members are anonymous).
-      const matches: Doc<'users'>[] = /^\d{4}$/.test(trimmed)
-        ? await ctx.db
-            .query('users')
-            .withIndex('by_account_id_prefix', (idx) => idx.eq('accountIdPrefix', trimmed))
-            .take(pageSize)
-        : [];
+      // Searchable handles: the W3 support ID (FS-…, exact) or the 4-digit
+      // account-number prefix. Anything else matches nothing (members are
+      // anonymous).
+      let matches: Doc<'users'>[] = [];
+      if (/^fs[\s-]?/i.test(trimmed)) {
+        const supportId = normalizeSupportId(trimmed);
+        const bySupport = await ctx.db
+          .query('users')
+          .withIndex('by_support_id', (idx) => idx.eq('supportId', supportId))
+          .unique();
+        matches = bySupport ? [bySupport] : [];
+      } else if (/^\d{4}$/.test(trimmed)) {
+        matches = await ctx.db
+          .query('users')
+          .withIndex('by_account_id_prefix', (idx) => idx.eq('accountIdPrefix', trimmed))
+          .take(pageSize);
+      }
       const filtered = matches
         .filter((u) => (status ? u.status === status : true))
         .filter((u) => (tier ? u.tierId === tierIdBySlug.get(tier) : true))

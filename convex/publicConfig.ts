@@ -56,6 +56,8 @@ export const get = query({
     return {
       membersJoinUrl: process.env.MEMBERS_JOIN_URL || undefined,
       membersAccountUrl: process.env.MEMBERS_ACCOUNT_URL || undefined,
+      donateUrl: process.env.DONATE_URL || undefined,
+      contactUrl: process.env.CONTACT_URL || undefined,
       freeTierTurnstileSiteKey: process.env.TURNSTILE_SITE_KEY ?? '',
       environment,
       tiers,
