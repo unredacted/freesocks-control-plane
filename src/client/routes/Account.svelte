@@ -16,6 +16,7 @@
   import TierComparison from '../components/TierComparison.svelte';
   import MemberImpact from '../components/MemberImpact.svelte';
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
+  import SetupGuidance from '../components/SetupGuidance.svelte';
   import { t, normalizeDigits } from '../lib/i18n/index.svelte';
   import { RedeemCodeRequest, RedeemCodeResponse } from '../../shared/contracts/membershipCodes';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
@@ -460,6 +461,7 @@
         tierName={data.user.tier.name}
         backend={data.subscription.backend}
       />
+      <SetupGuidance backend={data.subscription.backend} />
     {:else}
       <!-- Empty state when the user has no subscription yet -->
       <div class="rounded-xl border border-dashed border-border p-8 text-center space-y-3">

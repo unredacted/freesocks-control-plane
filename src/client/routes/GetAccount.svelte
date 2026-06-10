@@ -4,6 +4,7 @@
   import CapWidget from '../components/CapWidget.svelte';
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
+  import SetupGuidance from '../components/SetupGuidance.svelte';
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import { meQuery, configQuery, accountQuery, queryKeys } from '../lib/queries';
@@ -286,6 +287,7 @@
           tierName={account.data?.user.tier.name ?? accountTier?.name ?? ''}
           backend={subscription.backend}
         />
+        <SetupGuidance backend={subscription.backend} />
         <p class="text-xs text-muted-foreground text-center">
           Manage this subscription anytime from
           <Link href="/account" class="text-primary underline">your account</Link>.
