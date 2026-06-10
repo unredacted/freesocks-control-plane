@@ -73,22 +73,21 @@ export const accountLogin = internalAction({
     const hash = await hashAccountId(normalized);
     const prefix = normalized.slice(0, 4);
 
-    // 3. Strict per-prefix + per-IP limits. A denial is folded into the generic
-    //    invalid result (identical body) so it can't be used to probe.
-    const prefixRl = await ctx.runMutation(internal.rateLimits.checkAndIncrement, {
-      bucket: `account-login:prefix:${prefix}`,
-      max: 30,
-      windowMs: 86_400_000,
+    // 3. Strict per-prefix + per-IP limits (admin-tunable policies; W2). A denial
+    //    is folded into the generic invalid result (identical body) so it can't be
+    //    used to probe.
+    const prefixRl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account-login.prefix',
+      subject: prefix,
     });
     let ipDenied = false;
     if (ip) {
       const salt = process.env.IP_HASH_SALT;
       if (!salt) throw new Error('IP_HASH_SALT must be set');
       const ipHash = await hmacSha256Hex(salt, ip);
-      const ipRl = await ctx.runMutation(internal.rateLimits.checkAndIncrement, {
-        bucket: `account-login:ip:${ipHash}`,
-        max: 10,
-        windowMs: 3_600_000,
+      const ipRl = await ctx.runMutation(internal.rateLimits.enforce, {
+        policyKey: 'account-login.ip',
+        subject: ipHash,
       });
       ipDenied = !ipRl.allowed;
     }

@@ -141,7 +141,13 @@ export const createFreeAccount = internalAction({
     if (!signingKey) throw new Error('SESSION_SIGNING_KEY must be set');
     const ipHash = await hmacSha256Hex(salt, a.ip);
     const dayBucket = Math.floor(Date.now() / 86_400_000);
-    const cap = Number(process.env.FREE_TIER_DAILY_CAP ?? '1');
+    // Daily per-(IP,day) cap is the admin-tunable `freetier.create` policy (W2);
+    // a disabled policy means no cap. The hard enforcement is the serializable
+    // claimFreeSlot mutation below — this just supplies its `cap` number.
+    const policy = await ctx.runQuery(internal.rateLimits.getPolicy, {
+      policyKey: 'freetier.create',
+    });
+    const cap = policy && policy.enabled ? policy.max : Number.MAX_SAFE_INTEGER;
 
     const tier = await ctx.runQuery(api.tiers.getDefaultFree, { backend: a.backend });
     if (!tier) throw new Error('No default-free tier configured');

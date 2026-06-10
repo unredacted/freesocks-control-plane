@@ -154,7 +154,9 @@ describe('freeTier.createFreeAccount', () => {
     vi.stubEnv('IP_HASH_SALT', 'test-salt');
     vi.stubEnv('SESSION_SIGNING_KEY', 'test-sign');
     vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
-    vi.stubEnv('FREE_TIER_DAILY_CAP', '1');
+    // The daily cap is now the admin-tunable `freetier.create` policy (W2),
+    // default 3; FREE_TIER_DAILY_CAP no longer controls it. The cap test below
+    // seeds the policy to max:1 explicitly.
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -234,6 +236,14 @@ describe('freeTier.createFreeAccount', () => {
   test('a second account from the same IP/day is capped (cap_reached, no second user)', async () => {
     const t = convexTest(schema, modules);
     await seedFreeTier(t);
+    // Seed the W2 free-tier policy to a cap of 1 for this test.
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'ratelimit.freetier.create',
+        value: JSON.stringify({ max: 1, windowMs: 86_400_000, enabled: true }),
+        updatedAt: Date.now(),
+      });
+    });
     const first = await t.action(internal.freeTier.createFreeAccount, {
       ip: '203.0.113.22',
       requestId: 'req-cap-1',

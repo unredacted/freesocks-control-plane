@@ -42,6 +42,12 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'subscription.switch_backend': ['fromBackend', 'toBackend', 'fromTier', 'toTier'],
   'membership.tier_change': ['fromTierId', 'toTierId', 'reason'],
   'user.create.free': ['ipCountry', 'asn'],
+  // W2: admin retunes a rate-limit policy.
+  'settings.ratelimit_change': ['policyKey', 'max', 'windowMs', 'enabled'],
+  // W4: admin mints / revokes membership codes (never the code/hash itself).
+  'membership_code.mint': ['count', 'tierId', 'durationDays'],
+  'membership_code.revoke': ['codeId'],
+  'membership_code.redeem': ['tierId', 'durationDays'],
 };
 
 /**

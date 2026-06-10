@@ -58,6 +58,145 @@ describe('rateLimits.checkAndIncrement', () => {
   });
 });
 
+describe('rateLimits.enforce (W2 policy-driven)', () => {
+  test('uses the compiled default when no override row exists', async () => {
+    const t = convexTest(schema, modules);
+    // account.refresh-membership defaults to max 1 / 30s.
+    const r1 = await t.mutation(internal.rateLimits.enforce, {
+      policyKey: 'account.refresh-membership',
+      subject: 'user-1',
+    });
+    expect(r1.allowed).toBe(true);
+    const r2 = await t.mutation(internal.rateLimits.enforce, {
+      policyKey: 'account.refresh-membership',
+      subject: 'user-1',
+    });
+    expect(r2.allowed).toBe(false);
+    // A different subject is independent.
+    expect(
+      (
+        await t.mutation(internal.rateLimits.enforce, {
+          policyKey: 'account.refresh-membership',
+          subject: 'user-2',
+        })
+      ).allowed,
+    ).toBe(true);
+  });
+
+  test('an admin override changes the effective limit', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.rateLimits.setPolicy, {
+      policyKey: 'account.regenerate',
+      max: 1,
+      windowMs: 60_000,
+      enabled: true,
+    });
+    expect(
+      (
+        await t.mutation(internal.rateLimits.enforce, {
+          policyKey: 'account.regenerate',
+          subject: 'u',
+        })
+      ).allowed,
+    ).toBe(true);
+    expect(
+      (
+        await t.mutation(internal.rateLimits.enforce, {
+          policyKey: 'account.regenerate',
+          subject: 'u',
+        })
+      ).allowed,
+    ).toBe(false);
+  });
+
+  test('a disabled policy allows through unlimited', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.rateLimits.setPolicy, {
+      policyKey: 'account-login.ip',
+      max: 1,
+      windowMs: 60_000,
+      enabled: false,
+    });
+    for (let i = 0; i < 5; i++) {
+      expect(
+        (
+          await t.mutation(internal.rateLimits.enforce, {
+            policyKey: 'account-login.ip',
+            subject: 'iphash',
+          })
+        ).allowed,
+      ).toBe(true);
+    }
+  });
+
+  test('an unknown policy key fails open but is not a configured limit', async () => {
+    const t = convexTest(schema, modules);
+    const r = await t.mutation(internal.rateLimits.enforce, {
+      policyKey: 'nonexistent.key',
+      subject: 'x',
+    });
+    expect(r.allowed).toBe(true);
+  });
+
+  test('a corrupt stored override falls back to the compiled default (fail-safe)', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'ratelimit.account.refresh-membership',
+        value: 'not json{{{',
+        updatedAt: Date.now(),
+      });
+    });
+    const policy = await t.query(internal.rateLimits.getPolicy, {
+      policyKey: 'account.refresh-membership',
+    });
+    expect(policy).toEqual({ max: 1, windowMs: 30_000, enabled: true });
+  });
+
+  test('setPolicy rejects out-of-bounds values', async () => {
+    const t = convexTest(schema, modules);
+    await expect(
+      t.mutation(internal.rateLimits.setPolicy, {
+        policyKey: 'account.regenerate',
+        max: 0,
+        windowMs: 60_000,
+        enabled: true,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      t.mutation(internal.rateLimits.setPolicy, {
+        policyKey: 'account.regenerate',
+        max: 5,
+        windowMs: 100, // < 1s
+        enabled: true,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      t.mutation(internal.rateLimits.setPolicy, {
+        policyKey: 'totally.unknown',
+        max: 5,
+        windowMs: 60_000,
+        enabled: true,
+      }),
+    ).rejects.toThrow();
+  });
+
+  test('listPolicies reports defaults and overrides', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.rateLimits.setPolicy, {
+      policyKey: 'code.redeem',
+      max: 99,
+      windowMs: 60_000,
+      enabled: true,
+    });
+    const policies = await t.query(internal.rateLimits.listPolicies, {});
+    const redeem = policies.find((p) => p.key === 'code.redeem');
+    expect(redeem).toMatchObject({ max: 99, windowMs: 60_000, enabled: true, isDefault: false });
+    const login = policies.find((p) => p.key === 'account-login.ip');
+    expect(login?.isDefault).toBe(true);
+  });
+});
+
 describe('rateLimits.sweepExpired', () => {
   test('deletes only the expired rows', async () => {
     const t = convexTest(schema, modules);

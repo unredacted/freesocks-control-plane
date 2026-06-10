@@ -436,10 +436,9 @@ http.route({
   handler: httpAction(async (ctx, req) => {
     const member = await resolveMember(ctx, req);
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const rl = await ctx.runMutation(internal.rateLimits.checkAndIncrement, {
-      bucket: `refresh-membership:user:${member.userId}`,
-      max: 1,
-      windowMs: 30_000,
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.refresh-membership',
+      subject: member.userId,
     });
     if (!rl.allowed) {
       return errorJson('rate_limit.exceeded', 'Refresh too soon. Try again in 30 seconds.', 429, {
@@ -805,6 +804,52 @@ http.route({
     }
     const settings = await ctx.runQuery(api.appSettings.resolved, {});
     return json({ settings });
+  }),
+});
+
+// --- admin: rate-limit policies (W2) ----------------------------------------
+
+http.route({
+  path: '/api/v1/admin/rate-limits',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    return json({ policies: await ctx.runQuery(internal.rateLimits.listPolicies, {}) });
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/rate-limits',
+  method: 'PATCH',
+  handler: httpAction(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req);
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<{
+      policyKey?: string;
+      max?: number;
+      windowMs?: number;
+      enabled?: boolean;
+    }>(req);
+    if (
+      typeof body.policyKey !== 'string' ||
+      typeof body.max !== 'number' ||
+      typeof body.windowMs !== 'number' ||
+      typeof body.enabled !== 'boolean'
+    ) {
+      return errorJson('validation', 'policyKey, max, windowMs, enabled are required', 400);
+    }
+    try {
+      await ctx.runMutation(internal.rateLimits.setPolicy, {
+        policyKey: body.policyKey,
+        max: body.max,
+        windowMs: body.windowMs,
+        enabled: body.enabled,
+        actorAdminId: admin.adminUserId,
+      });
+      return json({ policies: await ctx.runQuery(internal.rateLimits.listPolicies, {}) });
+    } catch (err) {
+      return adminError(err);
+    }
   }),
 });
 
