@@ -1,6 +1,7 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
 import './styles/globals.css';
+import { initI18n } from './lib/i18n/index.svelte';
 
 /*
  * Bundled web fonts. NEVER load fonts from a third-party CDN: every font
@@ -36,6 +37,9 @@ import '@fontsource/inter-tight/700.css';
 import '@fontsource/inter-tight/800.css';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
+
+// Apply the saved/detected locale's <html lang/dir> before first paint.
+initI18n();
 
 const target = document.getElementById('app');
 if (!target) throw new Error('#app element not found');

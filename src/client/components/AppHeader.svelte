@@ -1,8 +1,10 @@
 <script lang="ts">
   import Link from './Link.svelte';
   import ThemeToggle from './ThemeToggle.svelte';
+  import LanguageSwitcher from './LanguageSwitcher.svelte';
   import { Button } from '@client/components/ui/button';
   import { meQuery } from '../lib/queries';
+  import { t } from '../lib/i18n/index.svelte';
   import KeyIcon from '@lucide/svelte/icons/key-round';
   import User from '@lucide/svelte/icons/user-round';
   import LogIn from '@lucide/svelte/icons/log-in';
@@ -35,7 +37,7 @@
       <Link href="/get-account">
         <Button variant="ghost" size="sm">
           <KeyIcon class="size-4" />
-          <span class="hidden sm:inline">Get an account</span>
+          <span class="hidden sm:inline">{t('nav.getAccount')}</span>
         </Button>
       </Link>
       {#if !me.isPending && me.data?.authenticated}
@@ -61,17 +63,18 @@
         <Link href="/account">
           <Button variant="default" size="sm">
             <User class="size-4" />
-            <span class="hidden sm:inline">Account</span>
+            <span class="hidden sm:inline">{t('nav.account')}</span>
           </Button>
         </Link>
       {:else}
         <Link href="/login">
           <Button variant="outline" size="sm">
             <LogIn class="size-4" />
-            Sign in
+            {t('nav.signIn')}
           </Button>
         </Link>
       {/if}
+      <LanguageSwitcher />
       <ThemeToggle />
     </nav>
   </div>
