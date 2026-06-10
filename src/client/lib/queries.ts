@@ -20,6 +20,8 @@ import {
 } from '../../shared/contracts/admin';
 import { ListTokensResponse } from '../../shared/contracts/tokens';
 import { AdminAuthStatus } from '../../shared/contracts/auth';
+import { RateLimitListResponse } from '../../shared/contracts/rateLimits';
+import { MembershipCodeListResponse } from '../../shared/contracts/membershipCodes';
 
 // --- Cache keys --------------------------------------------------------------
 
@@ -34,6 +36,8 @@ export const queryKeys = {
   adminAudit: ['admin', 'audit'] as const,
   adminSettings: ['admin', 'settings'] as const,
   adminBackendServers: ['admin', 'backend-servers'] as const,
+  adminRateLimits: ['admin', 'rate-limits'] as const,
+  adminMembershipCodes: (status: string) => ['admin', 'membership-codes', status] as const,
 };
 
 // --- Public surface ----------------------------------------------------------
@@ -194,3 +198,32 @@ export const adminBackendServersQuery = () =>
     },
     staleTime: 30_000,
   }));
+
+/** W2: admin-tunable rate-limit policies. */
+export const adminRateLimitsQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRateLimits,
+    queryFn: async () => {
+      const result = await apiClient.get('/api/v1/admin/rate-limits', RateLimitListResponse);
+      return result.policies;
+    },
+    staleTime: 30_000,
+  }));
+
+/** W4: minted membership codes (masked), optionally filtered by status. */
+export const adminMembershipCodesQuery = (statusRef: () => string) =>
+  createQuery(() => {
+    const status = statusRef();
+    return {
+      queryKey: queryKeys.adminMembershipCodes(status),
+      queryFn: async () => {
+        const params = status ? `?status=${encodeURIComponent(status)}` : '';
+        const result = await apiClient.get(
+          `/api/v1/admin/membership-codes${params}`,
+          MembershipCodeListResponse,
+        );
+        return result.codes;
+      },
+      staleTime: 30_000,
+    };
+  });

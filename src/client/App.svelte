@@ -15,6 +15,8 @@
   import AdminAudit from './routes/admin/AdminAudit.svelte';
   import AdminSettings from './routes/admin/AdminSettings.svelte';
   import AdminBackendServers from './routes/admin/AdminBackendServers.svelte';
+  import AdminMembershipCodes from './routes/admin/AdminMembershipCodes.svelte';
+  import AdminRateLimits from './routes/admin/AdminRateLimits.svelte';
   import { router } from './stores/router.svelte';
   import { QueryClientProvider } from '@tanstack/svelte-query';
   import { SvelteQueryDevtools } from '@tanstack/svelte-query-devtools';
@@ -74,6 +76,10 @@
               <AdminSettings />
             {:else if router.pathname === '/admin/backend-servers'}
               <AdminBackendServers />
+            {:else if router.pathname === '/admin/membership-codes'}
+              <AdminMembershipCodes />
+            {:else if router.pathname === '/admin/rate-limits'}
+              <AdminRateLimits />
             {:else}
               <div class="text-center py-16">
                 <h1 class="text-3xl font-display font-bold mb-2">Not found</h1>
