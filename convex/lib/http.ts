@@ -13,7 +13,7 @@ import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { parseCookies, verifySignedValue } from './cookies';
-import { randomHex } from './crypto';
+import { hmacSha256Hex, randomHex } from './crypto';
 import { allowedPopHosts, evaluatePop, extractPopFields, REPLAY_TTL_MS } from './pop';
 import { POP_HOST_HEADER } from '../../src/shared/crypto/pop';
 
@@ -140,6 +140,18 @@ async function sessionPopOk(
   return consumed.ok;
 }
 
+/**
+ * Hash a client IP into a stable rate-limit bucket subject. Never store or bucket
+ * on a raw IP (consistent with the audit-log posture); the salted HMAC keeps the
+ * counter keyed without persisting the address. Throws if IP_HASH_SALT is unset
+ * (fail closed, like every other IP-hash site).
+ */
+export async function ipHashSubject(ip: string): Promise<string> {
+  const salt = process.env.IP_HASH_SALT;
+  if (!salt) throw new Error('IP_HASH_SALT must be set (bunx convex env set ...)');
+  return hmacSha256Hex(salt, ip);
+}
+
 export function bearerToken(req: Request): string | null {
   const h = req.headers.get('authorization');
   if (!h || !h.toLowerCase().startsWith('bearer ')) return null;
@@ -185,8 +197,19 @@ export interface MemberAuth {
   scopes?: string[];
 }
 
-/** Member identity: the fs_session cookie, OR an fsv1_ token with subjectType:user. */
-export async function resolveMember(ctx: ActionCtx, req: Request): Promise<MemberAuth | null> {
+/**
+ * Member identity: the fs_session cookie, OR an fsv1_ token with subjectType:user.
+ *
+ * `required` (P1-1): when the caller is a TOKEN, it must carry this scope or the
+ * call resolves to null (unauthenticated). Cookie sessions are the full-privilege
+ * member and bypass the scope gate by design. Routes that don't pass a scope
+ * accept any valid user token (used for minimal identity reads like /me).
+ */
+export async function resolveMember(
+  ctx: ActionCtx,
+  req: Request,
+  required?: string,
+): Promise<MemberAuth | null> {
   const raw = parseCookies(req.headers.get('cookie'))[MEMBER_COOKIE];
   const key = process.env.SESSION_SIGNING_KEY;
   if (raw && key) {
@@ -206,6 +229,7 @@ export async function resolveMember(ctx: ActionCtx, req: Request): Promise<Membe
   if (bearer) {
     const tok = await ctx.runAction(internal.apiTokens.resolveToken, { plaintext: bearer });
     if (tok && tok.subjectType === 'user' && tok.subjectUserId) {
+      if (required && !hasScope(tok.scopes, required)) return null;
       return { userId: tok.subjectUserId, source: 'token', scopes: tok.scopes };
     }
   }
@@ -225,8 +249,22 @@ export interface AdminAuth {
   tokenScopes?: string[];
 }
 
-/** Admin identity: the fs_admin_session cookie, OR an fsv1_ token with any admin:* scope. */
-export async function resolveAdmin(ctx: ActionCtx, req: Request): Promise<AdminAuth | null> {
+/**
+ * Admin identity: the fs_admin_session cookie, OR an fsv1_ token.
+ *
+ * `required` (P1-1): when the caller is a TOKEN, it must carry this exact scope
+ * (e.g. `admin:tiers:write`) or the call resolves to null. The cookie admin
+ * session is the full-privilege admin and bypasses the scope gate. A token with
+ * only `admin:*` scopes but not the specific one required is rejected — this is
+ * what makes a read-only token actually read-only. (Routes still without a
+ * `required` arg fall back to "any admin:* scope", used only by the unauth-
+ * tolerant bootstrap-status endpoint.)
+ */
+export async function resolveAdmin(
+  ctx: ActionCtx,
+  req: Request,
+  required?: string,
+): Promise<AdminAuth | null> {
   const raw = parseCookies(req.headers.get('cookie'))[ADMIN_COOKIE];
   const key = process.env.ADMIN_SESSION_SIGNING_KEY;
   if (raw && key) {
@@ -243,10 +281,13 @@ export async function resolveAdmin(ctx: ActionCtx, req: Request): Promise<AdminA
     }
   }
   const tok = await resolveBearer(ctx, req);
-  if (tok && tok.scopes.some((s) => s.startsWith('admin:'))) {
-    return { tokenScopes: tok.scopes };
+  if (!tok) return null;
+  if (required) {
+    if (!hasScope(tok.scopes, required)) return null;
+  } else if (!tok.scopes.some((s) => s.startsWith('admin:'))) {
+    return null;
   }
-  return null;
+  return { tokenScopes: tok.scopes };
 }
 
 export function hasScope(scopes: string[] | undefined, required: string): boolean {

@@ -23,6 +23,7 @@ import {
   ADMIN_COOKIE,
   MEMBER_COOKIE,
   errorJson,
+  ipHashSubject,
   json,
   newRequestId,
   readJson,
@@ -205,6 +206,20 @@ http.route({
         503,
       );
     }
+    // P1-2: per-IP throttle BEFORE the outbound captcha verify, so a flood can't
+    // drive verify QPS (the per-day cap is enforced later in claimFreeSlot).
+    const createRl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.create.ip',
+      subject: await ipHashSubject(ip),
+    });
+    if (!createRl.allowed) {
+      return errorJson(
+        'rate_limit.exceeded',
+        'Too many attempts from your network. Please wait a bit and try again.',
+        429,
+        { retryAfterMs: createRl.retryAfterMs },
+      );
+    }
     const secret = process.env.TURNSTILE_SECRET_KEY;
     if (!secret) return errorJson('config', 'Turnstile not configured', 503);
     const ts = await verifyTurnstile(secret, body.turnstileToken, ip);
@@ -351,7 +366,7 @@ http.route({
   path: '/api/v1/account',
   method: 'GET',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req);
+    const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const view = await ctx.runAction(internal.account.getAccountView, { userId: member.userId });
     if (!view) return errorJson('not_found', 'user not found', 404);
@@ -363,8 +378,24 @@ http.route({
   path: '/api/v1/account/regenerate',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req);
+    const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.regenerate',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
+    // P1-3: only one issuance saga per user at a time (else two keys, one orphan).
+    const lock = await ctx.runMutation(internal.account.acquireIssuanceLock, {
+      userId: member.userId,
+    });
+    if (!lock.acquired) {
+      return errorJson('issuance.in_progress', 'Another change is already in progress.', 409);
+    }
     const requestId = newRequestId();
     try {
       const result = await ctx.runAction(internal.account.regenerate, {
@@ -374,6 +405,8 @@ http.route({
       return json(result);
     } catch (err) {
       return issuanceErrorResponse(err, requestId);
+    } finally {
+      await ctx.runMutation(internal.account.releaseIssuanceLock, { userId: member.userId });
     }
   }),
 });
@@ -382,13 +415,28 @@ http.route({
   path: '/api/v1/account/switch-backend',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req);
+    const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const body = await readJson<{ backend?: 'remnawave' | 'outline'; confirm?: boolean }>(req);
     if (body.backend !== 'remnawave' && body.backend !== 'outline') {
       return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
     }
     if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.switch-backend',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
+    const lock = await ctx.runMutation(internal.account.acquireIssuanceLock, {
+      userId: member.userId,
+    });
+    if (!lock.acquired) {
+      return errorJson('issuance.in_progress', 'Another change is already in progress.', 409);
+    }
     const requestId = newRequestId();
     let result;
     try {
@@ -399,6 +447,8 @@ http.route({
       });
     } catch (err) {
       return issuanceErrorResponse(err, requestId);
+    } finally {
+      await ctx.runMutation(internal.account.releaseIssuanceLock, { userId: member.userId });
     }
     if (!result.ok) return errorJson(result.code, result.message, result.status);
     const {
@@ -420,7 +470,7 @@ http.route({
   path: '/api/v1/account/account-id/rotate',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req);
+    const member = await resolveMember(ctx, req, 'account:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const result = await ctx.runAction(internal.auth.rotateAccountId, {
       userId: member.userId,
@@ -434,7 +484,7 @@ http.route({
   path: '/api/v1/account/refresh-membership',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
-    const member = await resolveMember(ctx, req);
+    const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const rl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'account.refresh-membership',
@@ -457,7 +507,7 @@ http.route({
   path: '/api/v1/account/redeem-code',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req);
+    const member = await resolveMember(ctx, req, 'account:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const body = await readJson<{ code?: string }>(req);
     if (typeof body.code !== 'string' || !body.code.trim()) {
@@ -598,7 +648,27 @@ http.route({
   path: '/api/webhooks/billing',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
+    // P1-2: reject an oversized body BEFORE hashing it (the HMAC over an
+    // unbounded body is otherwise a cheap CPU-amplification vector for an
+    // unauthenticated caller). 64 KiB is far above any real billing payload.
+    const declaredLen = Number(req.headers.get('content-length') ?? '0');
+    if (Number.isFinite(declaredLen) && declaredLen > 64 * 1024) {
+      return errorJson('webhook.too_large', 'Payload too large', 413);
+    }
+    // Per-IP throttle when the IP resolves (defense in depth on top of the HMAC;
+    // skipped when the IP is unresolvable so a misconfig can't block a real portal).
+    const ip = resolveClientIp(req);
+    if (ip) {
+      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+        policyKey: 'webhook.billing.ip',
+        subject: await ipHashSubject(ip),
+      });
+      if (!rl.allowed) return errorJson('rate_limit.exceeded', 'Too many requests', 429);
+    }
     const rawBody = await req.text();
+    if (rawBody.length > 64 * 1024) {
+      return errorJson('webhook.too_large', 'Payload too large', 413);
+    }
     try {
       const result = await ctx.runAction(internal.webhooks.ingest, {
         rawBody,
@@ -619,7 +689,7 @@ http.route({
   path: '/api/v1/admin/tiers',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:tiers:read'))) return ADMIN_UNAUTH();
     return json(await ctx.runQuery(internal.adminApi.tiersList, {}));
   }),
 });
@@ -628,7 +698,7 @@ http.route({
   path: '/api/v1/admin/tiers',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:tiers:write'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, never>>(req);
     try {
       return json(await ctx.runMutation(internal.adminApi.createTier, body as never));
@@ -642,7 +712,7 @@ http.route({
   pathPrefix: '/api/v1/admin/tiers/',
   method: 'PATCH',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:tiers:write'))) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'tiers'>;
     const body = await readJson<Record<string, unknown>>(req);
     try {
@@ -657,7 +727,7 @@ http.route({
   pathPrefix: '/api/v1/admin/tiers/',
   method: 'DELETE',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:tiers:write'))) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'tiers'>;
     try {
       return json(await ctx.runMutation(internal.adminApi.deleteTier, { id }));
@@ -673,7 +743,7 @@ http.route({
   path: '/api/v1/admin/users',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:users:read'))) return ADMIN_UNAUTH();
     const u = new URL(req.url);
     const limitRaw = u.searchParams.get('limit');
     const limit = limitRaw ? Number(limitRaw) : undefined;
@@ -698,7 +768,7 @@ http.route({
   pathPrefix: '/api/v1/admin/users/',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
-    const admin = await resolveAdmin(ctx, req);
+    const admin = await resolveAdmin(ctx, req, 'admin:users:write');
     if (!admin) return ADMIN_UNAUTH();
     const { id, op } = userIdAndOp(req);
     if (op !== 'disable' && op !== 'reset-traffic' && op !== 'resync') {
@@ -723,7 +793,7 @@ http.route({
   path: '/api/v1/admin/tokens',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:tokens:read'))) return ADMIN_UNAUTH();
     return json(await ctx.runQuery(internal.adminApi.tokensList, {}));
   }),
 });
@@ -732,7 +802,7 @@ http.route({
   path: '/api/v1/admin/tokens',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
-    const admin = await resolveAdmin(ctx, req);
+    const admin = await resolveAdmin(ctx, req, 'admin:tokens:write');
     if (!admin) return ADMIN_UNAUTH();
     // Token creation must be attributed to a concrete admin row. A pure
     // admin-scoped service token has no adminUserId, so it can't mint tokens.
@@ -773,7 +843,7 @@ http.route({
   pathPrefix: '/api/v1/admin/tokens/',
   method: 'DELETE',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:tokens:write'))) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'apiTokens'>;
     try {
       return json(await ctx.runMutation(internal.adminApi.revokeToken, { id }));
@@ -789,7 +859,7 @@ http.route({
   path: '/api/v1/admin/audit',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:audit:read'))) return ADMIN_UNAUTH();
     const cursor = new URL(req.url).searchParams.get('cursor') ?? undefined;
     return json(await ctx.runQuery(internal.adminApi.auditList, { cursor }));
   }),
@@ -801,7 +871,7 @@ http.route({
   path: '/api/v1/admin/settings',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
     const settings = await ctx.runQuery(api.appSettings.resolved, {});
     return json({ settings });
   }),
@@ -811,7 +881,7 @@ http.route({
   path: '/api/v1/admin/settings',
   method: 'PATCH',
   handler: httpAction(async (ctx, req) => {
-    const admin = await resolveAdmin(ctx, req);
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
     if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     const validKeys = new Set(Object.keys(SETTINGS_DEFAULTS));
@@ -838,7 +908,7 @@ http.route({
   path: '/api/v1/admin/rate-limits',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
     return json({ policies: await ctx.runQuery(internal.rateLimits.listPolicies, {}) });
   }),
 });
@@ -847,7 +917,7 @@ http.route({
   path: '/api/v1/admin/rate-limits',
   method: 'PATCH',
   handler: httpAction(async (ctx, req) => {
-    const admin = await resolveAdmin(ctx, req);
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
     if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<{
       policyKey?: string;
@@ -884,7 +954,7 @@ http.route({
   path: '/api/v1/admin/membership-codes',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:users:read'))) return ADMIN_UNAUTH();
     const status = new URL(req.url).searchParams.get('status') ?? undefined;
     return json({ codes: await ctx.runQuery(internal.membershipCodes.listCodes, { status }) });
   }),
@@ -894,7 +964,7 @@ http.route({
   path: '/api/v1/admin/membership-codes',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
-    const admin = await resolveAdmin(ctx, req);
+    const admin = await resolveAdmin(ctx, req, 'admin:users:write');
     if (!admin) return ADMIN_UNAUTH();
     // Minting must be attributed to a concrete admin row (like token creation).
     if (!admin.adminUserId) {
@@ -928,7 +998,7 @@ http.route({
   pathPrefix: '/api/v1/admin/membership-codes/',
   method: 'DELETE',
   handler: httpAction(async (ctx, req) => {
-    const admin = await resolveAdmin(ctx, req);
+    const admin = await resolveAdmin(ctx, req, 'admin:users:write');
     if (!admin) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'redemptionCodes'>;
     try {
@@ -950,7 +1020,7 @@ http.route({
   path: '/api/v1/admin/backend-servers',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
     return json(await ctx.runQuery(internal.adminApi.backendServersList, {}));
   }),
 });
@@ -959,7 +1029,7 @@ http.route({
   path: '/api/v1/admin/backend-servers',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:write'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     if (body.backend !== 'remnawave' && body.backend !== 'outline') {
       return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
@@ -978,7 +1048,7 @@ http.route({
   path: '/api/v1/admin/backend-servers/test-connection',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     if (body.backend !== 'remnawave' && body.backend !== 'outline') {
       return json({ ok: false, error: 'Pick a backend type first' });
@@ -992,7 +1062,7 @@ http.route({
   pathPrefix: '/api/v1/admin/backend-servers/',
   method: 'PATCH',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:write'))) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'backendServers'>;
     const body = await readJson<Record<string, unknown>>(req);
     try {
@@ -1009,7 +1079,7 @@ http.route({
   pathPrefix: '/api/v1/admin/backend-servers/',
   method: 'DELETE',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req))) return ADMIN_UNAUTH();
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:write'))) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'backendServers'>;
     try {
       return json(await ctx.runMutation(internal.adminApi.deleteBackendServer, { id }));

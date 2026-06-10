@@ -11,7 +11,7 @@
  * switch via the default-free peer tier; paid users get 409 until the billing
  * portal defines cross-backend tier linkage (CiviCRM linkage is gone).
  */
-import { internalAction } from './_generated/server';
+import { internalAction, internalMutation } from './_generated/server';
 import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
@@ -19,6 +19,49 @@ import { randomHex } from './lib/crypto';
 import { issueNewSubscription } from './lib/issuance';
 
 type Backend = 'remnawave' | 'outline';
+
+// P1-3: a serializable per-user issuance lock. regenerate / switch-backend each
+// mint a NEW backend key and tombstone the old one; two concurrent runs would
+// mint two keys but tombstone only one, orphaning a live key forever. The lock
+// makes only one issuance saga run per user at a time. A short TTL means a
+// crashed saga self-heals (the next attempt re-acquires once it expires).
+const ISSUE_LOCK_TTL_MS = 30_000;
+
+export const acquireIssuanceLock = internalMutation({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }): Promise<{ acquired: boolean }> => {
+    const key = `issue-lock:${userId}`;
+    const now = Date.now();
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', key))
+      .unique();
+    if (row) {
+      const exp = Number(row.value);
+      if (Number.isFinite(exp) && exp > now) return { acquired: false };
+      await ctx.db.patch(row._id, { value: String(now + ISSUE_LOCK_TTL_MS), updatedAt: now });
+      return { acquired: true };
+    }
+    await ctx.db.insert('appState', {
+      key,
+      value: String(now + ISSUE_LOCK_TTL_MS),
+      updatedAt: now,
+    });
+    return { acquired: true };
+  },
+});
+
+export const releaseIssuanceLock = internalMutation({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }): Promise<null> => {
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', `issue-lock:${userId}`))
+      .unique();
+    if (row) await ctx.db.delete(row._id);
+    return null;
+  },
+});
 
 interface AccountView {
   user: {
