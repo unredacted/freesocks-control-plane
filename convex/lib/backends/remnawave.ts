@@ -228,11 +228,19 @@ export async function remnawaveDeleteUser(
   cfg: RemnawaveConfig,
   backendUserId: string,
 ): Promise<void> {
-  await call(cfg, {
-    method: 'DELETE',
-    path: `/api/users/${backendUserId}`,
-    schema: z.unknown(),
-  });
+  try {
+    await call(cfg, {
+      method: 'DELETE',
+      path: `/api/users/${backendUserId}`,
+      schema: z.unknown(),
+    });
+  } catch (err) {
+    // Idempotent delete: an already-absent user (404) is success. This lets the
+    // teardown sweep safely retry after a partial run (backend deleted, local
+    // mark not yet committed) without looping forever on a 404.
+    if (err instanceof RemnawaveApiError && err.meta?.status === 404) return;
+    throw err;
+  }
 }
 
 export async function remnawaveFetchSubscription(

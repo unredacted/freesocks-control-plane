@@ -297,6 +297,21 @@ export const switchBackend = internalAction({
         remnawaveSquadUuid: peerTier.remnawaveSquadUuid ?? null,
       },
     });
+
+    // P1-6: tombstone the OLD subscription BEFORE flipping the tier. issueNew
+    // already repointed currentSubscriptionId at the new key, so the old key is
+    // scheduled for teardown first; if a later step dies, the worst case is the
+    // user on the old tier with the new key live and the old key tombstoned —
+    // never two indefinitely-live keys.
+    let oldDeletedAt: number | null = null;
+    if (oldSub) {
+      const tomb = await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, {
+        backendUserId: oldSub.backendUserId,
+        graceMs: 24 * 60 * 60 * 1000,
+      });
+      oldDeletedAt = tomb?.deletedAt ?? null;
+    }
+
     await ctx.runMutation(internal.users.setTier, { userId, tierId: peerTier._id });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',
@@ -312,15 +327,6 @@ export const switchBackend = internalAction({
       },
       requestId,
     });
-
-    let oldDeletedAt: number | null = null;
-    if (oldSub) {
-      const tomb = await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, {
-        backendUserId: oldSub.backendUserId,
-        graceMs: 24 * 60 * 60 * 1000,
-      });
-      oldDeletedAt = tomb?.deletedAt ?? null;
-    }
     return {
       ok: true,
       subscriptionUrl: issued.subscriptionUrl,

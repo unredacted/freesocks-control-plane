@@ -92,9 +92,16 @@ export async function issueNewSubscription(
 }
 
 /**
- * Tear a subscription down everywhere: drop its S3 mirrors, delete the backend
- * user, and mark the local row deleted. Best-effort on the external legs (the
- * local row is always marked). Used by free-tier cleanup + the tombstone sweep.
+ * Tear a subscription down everywhere: delete the backend user, drop its S3
+ * mirrors, then mark the local row deleted. Used by free-tier cleanup + the
+ * tombstone sweep.
+ *
+ * ORDERING MATTERS (P1-5): the backend delete happens FIRST and is NOT swallowed.
+ * If it throws, we propagate WITHOUT marking the local row deleted, so the row
+ * stays selectable and the next sweep retries — otherwise a transient backend
+ * blip would mark the row `deleted` (no sweep scans deleted rows) and the proxy
+ * key would keep routing forever. `deleteUser` is expected to treat an
+ * already-absent backend user as success, so a retry after a partial run is safe.
  */
 export async function deleteSubscriptionEverywhere(
   ctx: ActionCtx,
@@ -103,6 +110,15 @@ export async function deleteSubscriptionEverywhere(
   const sub = await ctx.runQuery(api.subscriptions.byBackendUserId, {
     backendUserId: input.backendUserId,
   });
+  // 1. Delete the backend user first. A throw here propagates (the caller's
+  //    sweep counts this as not-removed and retries next tick) and we do NOT
+  //    touch local state, so the key never silently keeps routing.
+  await ctx.runAction(internal.backends.deleteUser, {
+    backend: input.backend,
+    backendUserId: input.backendUserId,
+    backendServerId: sub?.backendServerId,
+  });
+  // 2. Backend user is gone. Best-effort drop S3 mirrors, then mark the row.
   if (sub) {
     const items = sub.subscriptionMirrors
       .filter((m): m is typeof m & { objectPath: string } => typeof m.objectPath === 'string')
@@ -111,20 +127,11 @@ export async function deleteSubscriptionEverywhere(
       try {
         await ctx.runAction(internal.storage.deleteMirrors, { items });
       } catch {
-        /* best-effort */
+        /* best-effort: mirrors are a hedge, not the routing key */
       }
     }
     await ctx.runMutation(internal.subscriptions.markSubscriptionDeleted, {
       subscriptionId: sub._id,
     });
-  }
-  try {
-    await ctx.runAction(internal.backends.deleteUser, {
-      backend: input.backend,
-      backendUserId: input.backendUserId,
-      backendServerId: sub?.backendServerId,
-    });
-  } catch {
-    /* best-effort */
   }
 }

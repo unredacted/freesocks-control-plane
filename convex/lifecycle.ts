@@ -147,34 +147,55 @@ export const pushTierToBackend = internalAction({
 
 // --- grace / disable sweep -------------------------------------------------
 
-/** Active users whose membership has lapsed (expiry in the past). */
+const SWEEP_PAGE = 500;
+const SWEEP_MAX_PAGES = 200; // safety backstop: 200 * 500 = 100k rows/run, then log
+
+/**
+ * Active users whose membership has lapsed (expiry in the past), as an EXACT
+ * index range — not a take-then-filter — so the page contains only due users
+ * (most overdue first) and the sweep can drain it fully. Free users (no expiry)
+ * are excluded by `gt(...,0)`. (P1-4: the old take(500)+post-filter silently
+ * stopped processing anyone past row 500.)
+ */
 export const findGraceTransitions = internalQuery({
   args: { now: v.number(), limit: v.optional(v.number()) },
   handler: async (ctx, { now, limit }) => {
     const rows = await ctx.db
       .query('users')
-      .withIndex('by_status_expires', (q) => q.eq('status', 'active').gt('membershipExpiresAt', 0))
-      .take(limit ?? 500);
-    return rows.filter((u) => u.membershipExpiresAt != null && u.membershipExpiresAt < now);
+      .withIndex('by_status_expires', (q) =>
+        q.eq('status', 'active').gt('membershipExpiresAt', 0).lt('membershipExpiresAt', now),
+      )
+      .take(limit ?? SWEEP_PAGE);
+    return rows.map((u) => u._id);
   },
 });
 
-/** Grace users past THEIR tier's grace window. */
+/**
+ * A page of grace users with expiry > `afterExpiry` (keyset cursor), with the
+ * due ones (past THEIR tier's grace window) flagged. Read-only: the caller
+ * collects across pages, then applies, so disabling-while-paginating can't shift
+ * the set. (P1-4.)
+ */
 export const findDisableTransitions = internalQuery({
-  args: { now: v.number(), limit: v.optional(v.number()) },
-  handler: async (ctx, { now, limit }) => {
-    const graceUsers = await ctx.db
+  args: { now: v.number(), afterExpiry: v.number(), limit: v.optional(v.number()) },
+  handler: async (ctx, { now, afterExpiry, limit }) => {
+    const pageSize = limit ?? SWEEP_PAGE;
+    const rows = await ctx.db
       .query('users')
-      .withIndex('by_status_expires', (q) => q.eq('status', 'grace').gt('membershipExpiresAt', 0))
-      .take(limit ?? 500);
-    const due = [];
-    for (const u of graceUsers) {
+      .withIndex('by_status_expires', (q) =>
+        q.eq('status', 'grace').gt('membershipExpiresAt', afterExpiry),
+      )
+      .take(pageSize);
+    const due: Id<'users'>[] = [];
+    let lastExpiry = afterExpiry;
+    for (const u of rows) {
       if (u.membershipExpiresAt == null) continue;
+      lastExpiry = u.membershipExpiresAt;
       const tier = await ctx.db.get(u.tierId);
       const windowMs = (tier?.expirationDaysAfterMembershipLapse ?? 7) * 86_400_000;
-      if (u.membershipExpiresAt + windowMs < now) due.push(u);
+      if (u.membershipExpiresAt + windowMs < now) due.push(u._id);
     }
-    return due;
+    return { due, lastExpiry, hasMore: rows.length === pageSize };
   },
 });
 
@@ -216,15 +237,41 @@ export const runGraceSweep = internalAction({
   args: {},
   handler: async (ctx): Promise<{ toGrace: number; toDisabled: number }> => {
     const now = Date.now();
-    const toGrace = await ctx.runQuery(internal.lifecycle.findGraceTransitions, { now });
-    for (const u of toGrace) {
-      await ctx.runMutation(internal.lifecycle.applyGraceTransition, { userId: u._id });
+
+    // active → grace: drain the exact-range page repeatedly. Each applied user
+    // leaves the active index, so re-querying advances through the whole set.
+    let toGrace = 0;
+    for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
+      const due = await ctx.runQuery(internal.lifecycle.findGraceTransitions, { now });
+      if (due.length === 0) break;
+      for (const userId of due) {
+        await ctx.runMutation(internal.lifecycle.applyGraceTransition, { userId });
+      }
+      toGrace += due.length;
+      if (due.length < SWEEP_PAGE) break;
+      if (page === SWEEP_MAX_PAGES - 1) {
+        console.warn('[grace-sweep] grace transitions hit the per-run cap; remainder next run');
+      }
     }
-    const toDisable = await ctx.runQuery(internal.lifecycle.findDisableTransitions, { now });
-    for (const u of toDisable) {
-      await ctx.runMutation(internal.lifecycle.applyDisableTransition, { userId: u._id });
-      // Disable the backend sub too, so the key actually stops routing.
-      const st = await ctx.runQuery(internal.lifecycle.activeSubAndTier, { userId: u._id });
+
+    // grace → disabled: paginate the grace set read-only (keyset on expiry),
+    // collecting due ids, then apply. Backend-disable FIRST so a backend failure
+    // leaves the user in `grace` for the next sweep to retry (not silently
+    // disabled-locally with the key still routing).
+    const disableIds: Id<'users'>[] = [];
+    let afterExpiry = 0;
+    for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
+      const res = await ctx.runQuery(internal.lifecycle.findDisableTransitions, { now, afterExpiry });
+      disableIds.push(...res.due);
+      if (!res.hasMore || res.lastExpiry <= afterExpiry) break;
+      afterExpiry = res.lastExpiry;
+      if (page === SWEEP_MAX_PAGES - 1) {
+        console.warn('[grace-sweep] disable scan hit the per-run cap; remainder next run');
+      }
+    }
+    let toDisabled = 0;
+    for (const userId of disableIds) {
+      const st = await ctx.runQuery(internal.lifecycle.activeSubAndTier, { userId });
       if (st) {
         try {
           await ctx.runAction(internal.backends.updateUser, {
@@ -233,11 +280,15 @@ export const runGraceSweep = internalAction({
             patch: { status: 'disabled' },
           });
         } catch {
-          /* best-effort */
+          // Backend unreachable: leave the user in `grace` so the next sweep
+          // retries; disabling locally now would strand a still-routing key.
+          continue;
         }
       }
+      await ctx.runMutation(internal.lifecycle.applyDisableTransition, { userId });
+      toDisabled++;
     }
-    return { toGrace: toGrace.length, toDisabled: toDisable.length };
+    return { toGrace, toDisabled };
   },
 });
 
@@ -288,31 +339,57 @@ export const sweepTombstones = internalAction({
 
 // --- free-tier cleanup -----------------------------------------------------
 
-/** Active free-tier users created before the cutoff, with a live subscription. */
+/** The default-free tier ids (the only tiers cleanup-expired-free touches). */
+export const defaultFreeTierIds = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<Id<'tiers'>[]> =>
+    (await ctx.db.query('tiers').collect()).filter((t) => t.isDefaultFree).map((t) => t._id),
+});
+
+/**
+ * One page of expired free users on a SINGLE tier, oldest first, with a
+ * `_creationTime` keyset cursor (`afterCreation`, exclusive). Targets the tier
+ * via `by_tier` so paid members never crowd the page, and the cursor pages past
+ * already-deleted old users instead of re-scanning them each run. (P1-4.)
+ */
 export const findExpiredFree = internalQuery({
-  args: { cutoff: v.number(), limit: v.number() },
-  handler: async (ctx, { cutoff, limit }) => {
-    // Active users sort free-tier (no expiry) first under by_status_expires.
-    const candidates = await ctx.db
+  args: {
+    tierId: v.id('tiers'),
+    cutoff: v.number(),
+    limit: v.number(),
+    afterCreation: v.number(),
+  },
+  handler: async (ctx, { tierId, cutoff, limit, afterCreation }) => {
+    const rows = await ctx.db
       .query('users')
-      .withIndex('by_status_expires', (q) => q.eq('status', 'active'))
-      .take(500);
-    const out: { userId: Id<'users'>; backend: 'remnawave' | 'outline'; backendUserId: string }[] =
-      [];
-    for (const u of candidates) {
-      if (u._creationTime >= cutoff) continue;
-      const tier = await ctx.db.get(u.tierId);
-      if (!tier?.isDefaultFree) continue;
+      .withIndex('by_tier', (q) => q.eq('tierId', tierId).gt('_creationTime', afterCreation))
+      .order('asc')
+      .take(limit);
+    const expired: {
+      userId: Id<'users'>;
+      backend: 'remnawave' | 'outline';
+      backendUserId: string;
+    }[] = [];
+    let cursor = afterCreation;
+    let reachedCutoff = false;
+    for (const u of rows) {
+      cursor = u._creationTime;
+      if (u._creationTime >= cutoff) {
+        reachedCutoff = true; // asc order → nothing older remains on this tier
+        break;
+      }
+      if (u.status !== 'active') continue;
       const subs = await ctx.db
         .query('subscriptions')
         .withIndex('by_user', (q) => q.eq('userId', u._id))
         .collect();
       const sub = subs.find((s) => s.state === 'active');
       if (!sub) continue;
-      out.push({ userId: u._id, backend: sub.backend, backendUserId: sub.backendUserId });
-      if (out.length >= limit) break;
+      expired.push({ userId: u._id, backend: sub.backend, backendUserId: sub.backendUserId });
     }
-    return out;
+    // More to scan on this tier iff we filled the page and haven't hit the cutoff.
+    const hasMore = !reachedCutoff && rows.length === limit;
+    return { expired, nextCursor: hasMore ? cursor : null };
   },
 });
 
@@ -330,21 +407,35 @@ export const cleanupExpiredFree = internalAction({
   handler: async (ctx, { limit }): Promise<{ removed: number }> => {
     const expiryDays = Number(process.env.FREE_TIER_EXPIRY_DAYS ?? '90');
     const cutoff = Date.now() - expiryDays * 86_400_000;
-    const expired = await ctx.runQuery(internal.lifecycle.findExpiredFree, {
-      cutoff,
-      limit: limit ?? 100,
-    });
+    const pageSize = limit ?? 100;
+    const tierIds = await ctx.runQuery(internal.lifecycle.defaultFreeTierIds, {});
     let removed = 0;
-    for (const e of expired) {
-      try {
-        await deleteSubscriptionEverywhere(ctx, {
-          backend: e.backend,
-          backendUserId: e.backendUserId,
+    for (const tierId of tierIds) {
+      let afterCreation = 0;
+      for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
+        const { expired, nextCursor } = await ctx.runQuery(internal.lifecycle.findExpiredFree, {
+          tierId,
+          cutoff,
+          limit: pageSize,
+          afterCreation,
         });
-        await ctx.runMutation(internal.lifecycle.markUserDeleted, { userId: e.userId });
-        removed++;
-      } catch {
-        /* best-effort; sub-ops log their own failures */
+        for (const e of expired) {
+          try {
+            await deleteSubscriptionEverywhere(ctx, {
+              backend: e.backend,
+              backendUserId: e.backendUserId,
+            });
+            await ctx.runMutation(internal.lifecycle.markUserDeleted, { userId: e.userId });
+            removed++;
+          } catch {
+            /* best-effort; teardown failure leaves the row for the next sweep */
+          }
+        }
+        if (nextCursor == null) break;
+        afterCreation = nextCursor;
+        if (page === SWEEP_MAX_PAGES - 1) {
+          console.warn('[cleanup-free] hit the per-run page cap; remainder next run');
+        }
       }
     }
     return { removed };
