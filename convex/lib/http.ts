@@ -148,15 +148,30 @@ export function bearerToken(req: Request): string | null {
 }
 
 /**
- * Resolve the client IP with the same fail-closed trust rules as the old
- * middleware: Workers' `cf-connecting-ip` (unspoofable) is honoured if present;
- * off-Workers we only trust `x-forwarded-for` when the operator set
- * TRUSTED_PROXY=true behind a normalizing reverse proxy. Returns null rather
- * than a shared fallback (which would itself be a rate-limit-bypass bucket).
+ * Resolve the client IP with fail-closed trust rules. A header is only
+ * trustworthy if the immediate upstream is KNOWN to set/overwrite it, so both
+ * trust sources are opt-in and deployment-dependent:
+ *
+ *   - `CF_FRONTED=true`: a real Cloudflare edge sits in front and overwrites
+ *     `cf-connecting-ip` with the true client IP for every request entering
+ *     THROUGH Cloudflare. Enable this ONLY when the origin also rejects direct
+ *     (non-CF) traffic (firewall / authenticated origin pulls); otherwise an
+ *     attacker hits the origin directly and spoofs the header. Off by default.
+ *   - `TRUSTED_PROXY=true`: a normalizing reverse proxy (e.g. Caddy with no
+ *     `trusted_proxies`) overwrites `x-forwarded-for` with the immediate peer,
+ *     so XFF[0] is the real client and cannot be spoofed.
+ *
+ * A client-supplied `cf-connecting-ip` is IGNORED unless CF_FRONTED is set:
+ * Caddy and most proxies forward that header untouched, so trusting it
+ * unconditionally lets any client choose its own rate-limit bucket. With
+ * neither flag set we return null rather than a shared fallback (which would
+ * itself be one giant rate-limit-bypass bucket).
  */
 export function resolveClientIp(req: Request): string | null {
-  const cf = req.headers.get('cf-connecting-ip');
-  if (cf && cf.trim()) return cf.trim();
+  if (process.env.CF_FRONTED === 'true') {
+    const cf = req.headers.get('cf-connecting-ip')?.trim();
+    if (cf) return cf;
+  }
   if (process.env.TRUSTED_PROXY === 'true') {
     const first = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
     if (first) return first;

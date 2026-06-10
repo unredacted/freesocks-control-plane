@@ -51,10 +51,19 @@
 		# Client-IP trust: with no trusted_proxies configured, Caddy OVERWRITES any
 		# client-sent X-Forwarded-For with the immediate peer (the real client,
 		# since Caddy is the edge), so XFF[0] cannot be spoofed. That is what the
-		# backend trusts for the free-tier per-IP cap (TRUSTED_PROXY=true). If you
-		# later put a CDN in front, set trusted_proxies + use the cf-connecting-ip
-		# path instead (see docs/threat-model-cdn-blinding.md).
-		reverse_proxy backend:3211
+		# backend trusts for the free-tier per-IP cap (TRUSTED_PROXY=true).
+		reverse_proxy backend:3211 {
+			# Defense in depth for the client-IP trust rules: strip any
+			# client-supplied CF-Connecting-IP before it reaches the backend. The
+			# backend only honours that header when CF_FRONTED=true (a real
+			# Cloudflare edge in front); in this Caddy-direct topology CF_FRONTED is
+			# unset, but stripping here means the two layers can never disagree and a
+			# request hitting Caddy directly can't spoof its IP. If you later put
+			# Cloudflare in front, set `trusted_proxies` here + CF_FRONTED=true on the
+			# backend AND lock the origin to CF-only traffic (see
+			# docs/threat-model-cdn-blinding.md).
+			header_up -CF-Connecting-IP
+		}
 	}
 
 	# --- everything else -> the built SPA, history-API fallback to index.html --

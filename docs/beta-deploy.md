@@ -158,7 +158,9 @@ See `docs/threat-model-cdn-blinding.md`.
   `bunx convex export` and/or `pg_dump`.
 - **Client IP.** `TRUSTED_PROXY=true` is safe because Caddy (no `trusted_proxies`)
   overwrites `X-Forwarded-For` with the real client IP, so the free-tier per-IP cap
-  cannot be spoofed.
+  cannot be spoofed. `CF_FRONTED` is left UNSET in this topology: there is no Cloudflare
+  edge in front, so a client-supplied `cf-connecting-ip` would be spoofable — the backend
+  ignores that header unless `CF_FRONTED=true`, and Caddy strips it upstream anyway.
 - **Dashboard.** Reach it over an SSH tunnel, never publicly:
   `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 <beta-host>`, then open
   `http://127.0.0.1:6791`.
