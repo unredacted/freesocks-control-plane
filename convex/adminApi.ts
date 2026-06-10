@@ -21,7 +21,7 @@
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 import { normalizeSupportId } from './lib/supportId';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
@@ -251,6 +251,26 @@ export const updateTier = internalMutation({
 export const deleteTier = internalMutation({
   args: { id: v.id('tiers') },
   handler: async (ctx, { id }) => {
+    // P2: refuse to delete a tier that would orphan accounts or break sign-up.
+    // Convex has no FK enforcement, so check by hand.
+    const tier = await ctx.db.get(id);
+    if (!tier) throw new ConvexError({ code: 'not_found', message: 'tier not found' });
+    if (tier.isDefaultFree) {
+      throw new ConvexError({
+        code: 'tier.in_use',
+        message: 'Cannot delete the default-free tier (new sign-ups need it).',
+      });
+    }
+    const referencing = await ctx.db
+      .query('users')
+      .withIndex('by_tier', (q) => q.eq('tierId', id))
+      .first();
+    if (referencing) {
+      throw new ConvexError({
+        code: 'tier.in_use',
+        message: 'Cannot delete a tier that still has users. Move them off it first.',
+      });
+    }
     await ctx.db.delete(id);
     return { ok: true as const };
   },

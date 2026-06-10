@@ -10,11 +10,20 @@
 # expose them publicly. Full runbook: docs/beta-deploy.md.
 name: fcp-beta
 
+# P2: cap container log growth (json-file default grows unbounded). Applied to
+# every long-lived service below via `logging: *log`.
+x-logging: &log
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
 services:
   backend:
     # Pinned to the digest tested in dev (immutable). Re-pin when you upgrade.
     image: ghcr.io/get-convex/convex-backend@sha256:edd7959f3464ed661f6663f646db205d5d61bda606c969b074dfb3c69ed71463
     restart: unless-stopped
+    logging: *log
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
@@ -54,6 +63,7 @@ services:
   postgres:
     image: postgres:18
     restart: unless-stopped
+    logging: *log
     stop_grace_period: 10s
     environment:
       - POSTGRES_USER=convex
@@ -79,6 +89,7 @@ services:
       context: .
       dockerfile: docker/backup.Dockerfile
     restart: unless-stopped
+    logging: *log
     stop_grace_period: 10s
     environment:
       - POSTGRES_HOST=postgres
@@ -104,6 +115,7 @@ services:
   dashboard:
     image: ghcr.io/get-convex/convex-dashboard@sha256:bbc4d2c43d19fd6f2791dd6c5153a76e127f3eea489c1639e5acf66999c216bf
     restart: unless-stopped
+    logging: *log
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
@@ -122,6 +134,7 @@ services:
   cap:
     image: tiago2/cap:latest
     restart: unless-stopped
+    logging: *log
     stop_grace_period: 10s
     environment:
       - ADMIN_KEY=${CAP_ADMIN_KEY:?set CAP_ADMIN_KEY in .env.beta (>=32 chars)}
@@ -139,6 +152,7 @@ services:
   valkey:
     image: valkey/valkey:8-alpine
     restart: unless-stopped
+    logging: *log
     stop_grace_period: 10s
     command: ['valkey-server', '--save', '60', '1', '--appendonly', 'no']
     volumes:
@@ -162,6 +176,7 @@ services:
       #   VITE_FS_SERVER_HPKE_KID: "..."
       #   VITE_FS_SERVER_HPKE_PK: "..."
     restart: unless-stopped
+    logging: *log
     ports:
       - '80:80'
       - '443:443'

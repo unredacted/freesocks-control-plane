@@ -133,5 +133,13 @@ export async function deleteSubscriptionEverywhere(
     await ctx.runMutation(internal.subscriptions.markSubscriptionDeleted, {
       subscriptionId: sub._id,
     });
+    // P2: keep the instance's load estimate honest (issue bumps +1; teardown -1)
+    // so multi-instance pool scoring stays balanced between healthchecks.
+    if (sub.backendServerId) {
+      await ctx.runMutation(internal.backendServers.bumpKeyCount, {
+        id: sub.backendServerId,
+        delta: -1,
+      });
+    }
   }
 }

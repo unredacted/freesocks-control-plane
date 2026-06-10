@@ -112,6 +112,9 @@
       switchBackendOpen = false;
       pendingSwitchTarget = null;
       void qc.invalidateQueries({ queryKey: queryKeys.account });
+      // P2: the switch moves the user to the peer tier, so the header's `me`
+      // tier label is now stale — refresh it too.
+      void qc.invalidateQueries({ queryKey: queryKeys.me });
       toast.success(`Switched to ${result.tier.name}`, {
         description: result.oldSubscriptionDeletedAt
           ? 'Re-import the new subscription URL on each device. The old subscription works for 24 more hours.'

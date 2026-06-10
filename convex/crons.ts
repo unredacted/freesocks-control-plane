@@ -55,4 +55,26 @@ crons.daily(
 crons.interval('epoch-key-rotate', { minutes: 10 }, internal.lib.e2eeCrypto.rotateEpochKey, {});
 crons.daily('epoch-key-sweep', { hourUTC: 3, minuteUTC: 50 }, internal.keyEpochs.sweepExpired, {});
 
+// P2: retention sweeps for the append-only tables (bounded daily deletes past a
+// per-table window) so storage doesn't grow without bound.
+crons.daily('retention-audit', { hourUTC: 4, minuteUTC: 0 }, internal.retention.sweepAuditLog, {});
+crons.daily(
+  'retention-webhooks',
+  { hourUTC: 4, minuteUTC: 5 },
+  internal.retention.sweepWebhookEvents,
+  {},
+);
+crons.daily(
+  'retention-tier-history',
+  { hourUTC: 4, minuteUTC: 10 },
+  internal.retention.sweepTierHistory,
+  {},
+);
+crons.daily(
+  'retention-free-grants',
+  { hourUTC: 4, minuteUTC: 15 },
+  internal.retention.sweepFreeGrants,
+  {},
+);
+
 export default crons;

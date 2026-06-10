@@ -136,11 +136,17 @@ Detailed companions, referenced rather than duplicated here:
 
 Convex runs these natively (no Workers triggers, no node-cron):
 
-- `grace-sweep` (10 min): `active→grace→disabled`.
+- `grace-sweep` (10 min): `active→grace→disabled` (cursor-drained; backend-disable first).
 - `tombstone-sweep` (10 min): hard-delete subscriptions past their 24h regenerate/switch grace.
-- `outline-healthcheck` (10 min): ping active Outline servers; stamp `lastHealthOkAt`.
-- `cleanup-expired-free` (daily 03:00 UTC): delete expired free users.
-- `session-sweep` / `rate-limit-sweep` (daily): drop expired `sessions` / `rateLimits` rows.
+- `backend-healthcheck` (10 min): ping active backend instances of every type; stamp
+  `lastHealthOkAt` + rtt (feeds pool selection).
+- `cleanup-expired-free` (daily 03:00 UTC): delete expired free users (per-tier cursor).
+- `session-sweep` / `rate-limit-sweep` / `replay-guard-sweep` (daily): drop expired
+  `sessions` / `rateLimits` / `replayGuard` rows.
+- `epoch-key-rotate` (10 min) / `epoch-key-sweep` (daily): CDN-blinding HPKE epoch keys.
+- `retention-audit` / `retention-webhooks` / `retention-tier-history` /
+  `retention-free-grants` (daily): bounded deletes of the append-only tables past their
+  retention window (P2).
 
 ### 1.9 Frontend SPA (Svelte 5 runes): **Live**
 

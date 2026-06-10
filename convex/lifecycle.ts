@@ -123,12 +123,20 @@ export const activeSubAndTier = internalQuery({
   },
 });
 
-/** Push the user's current tier spec to their live backend subscription. */
+// P2: retry the backend push with bounded exponential backoff. setMembership
+// schedules this with attempt:0; a redeemed membership code (W4) drives it on
+// day 1, so a transient backend blip must not silently leave the backend on the
+// old tier. On the final failure we write an audit entry so the drift is
+// observable (an admin can hit "resync"). Backoff: ~30s, 2m, 8m, 30m.
+const PUSH_MAX_ATTEMPTS = 4;
+const PUSH_BACKOFF_MS = [30_000, 120_000, 480_000, 1_800_000];
+
 export const pushTierToBackend = internalAction({
-  args: { userId: v.id('users') },
-  handler: async (ctx, { userId }): Promise<null> => {
+  args: { userId: v.id('users'), attempt: v.optional(v.number()) },
+  handler: async (ctx, { userId, attempt }): Promise<null> => {
+    const n = attempt ?? 0;
     const st = await ctx.runQuery(internal.lifecycle.activeSubAndTier, { userId });
-    if (!st) return null;
+    if (!st) return null; // no active sub to push to (e.g. free user pre-issuance)
     try {
       await ctx.runAction(internal.backends.updateUser, {
         backend: st.backend,
@@ -140,9 +148,38 @@ export const pushTierToBackend = internalAction({
           remnawaveSquadUuid: st.remnawaveSquadUuid,
         },
       });
-    } catch {
-      /* best-effort: local state is already consistent; retried on next edit */
+    } catch (err) {
+      if (n + 1 < PUSH_MAX_ATTEMPTS) {
+        await ctx.scheduler.runAfter(
+          PUSH_BACKOFF_MS[n] ?? 1_800_000,
+          internal.lifecycle.pushTierToBackend,
+          {
+            userId,
+            attempt: n + 1,
+          },
+        );
+      } else {
+        // Exhausted retries: record it so the drift is visible (admin can resync).
+        await ctx.runMutation(internal.lifecycle.recordPushFailure, {
+          userId,
+          detail: err instanceof Error ? err.message.slice(0, 200) : 'unknown',
+        });
+      }
     }
+    return null;
+  },
+});
+
+/** Audit a tier-push that exhausted its retries (no secrets; backend errors are pre-scrubbed). */
+export const recordPushFailure = internalMutation({
+  args: { userId: v.id('users'), detail: v.string() },
+  handler: async (ctx, { userId }) => {
+    await writeAuditLog(ctx, {
+      actorType: 'system',
+      action: 'membership.push_failed',
+      targetType: 'user',
+      targetId: userId,
+    });
     return null;
   },
 });

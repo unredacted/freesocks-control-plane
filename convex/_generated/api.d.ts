@@ -47,6 +47,7 @@ import type * as membershipCodes from "../membershipCodes.js";
 import type * as publicConfig from "../publicConfig.js";
 import type * as rateLimits from "../rateLimits.js";
 import type * as replayGuard from "../replayGuard.js";
+import type * as retention from "../retention.js";
 import type * as seed from "../seed.js";
 import type * as sessions from "../sessions.js";
 import type * as storage from "../storage.js";
@@ -103,6 +104,7 @@ declare const fullApi: ApiFromModules<{
   publicConfig: typeof publicConfig;
   rateLimits: typeof rateLimits;
   replayGuard: typeof replayGuard;
+  retention: typeof retention;
   seed: typeof seed;
   sessions: typeof sessions;
   storage: typeof storage;

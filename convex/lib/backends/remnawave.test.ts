@@ -249,7 +249,9 @@ describe('remnawaveHealth / remnawaveTestConnection', () => {
   test('treats 404 (well-formed but absent id) as reachable + authed', async () => {
     mockFetch(() => new Response(null, { status: 404 }));
     const h = await remnawaveHealth(cfg);
-    expect(h.keyCount).toBe(0);
+    // P2: Remnawave has no cheap key count, so health returns null (the
+    // healthcheck then preserves the locally-bumped estimate).
+    expect(h.keyCount).toBeNull();
     expect(typeof h.rttMs).toBe('number');
     expect(calls[0]!.path).toBe(PROBE);
     expect(calls[0]!.headers.authorization).toBe('Bearer SECRET_TOKEN_DO_NOT_LEAK');
@@ -257,7 +259,7 @@ describe('remnawaveHealth / remnawaveTestConnection', () => {
 
   test('treats a 2xx as healthy', async () => {
     mockFetch(() => jsonRes({}));
-    await expect(remnawaveHealth(cfg)).resolves.toMatchObject({ keyCount: 0 });
+    await expect(remnawaveHealth(cfg)).resolves.toMatchObject({ keyCount: null });
   });
 
   test('throws on a 401 (bad credentials)', async () => {

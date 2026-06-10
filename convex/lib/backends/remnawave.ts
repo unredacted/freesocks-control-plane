@@ -274,13 +274,14 @@ const HEALTH_PROBE_UUID = '00000000-0000-4000-8000-000000000000';
  * Reachability + auth probe for the healthcheck cron + the admin
  * test-connection button. A 2xx or 404 means the panel is up and the token was
  * accepted; 401/403 means bad credentials; anything else (or a network error)
- * is unhealthy. `keyCount` is not cheaply available from Remnawave, so it is 0
- * (pool scoring tie-breaks Remnawave instances on rtt + priority). Never leaks
- * the token or URL (RemnawaveApiError scrubs them).
+ * is unhealthy. `keyCount` is not cheaply available from Remnawave, so it is
+ * `null` — the healthcheck then LEAVES the locally-bumped estimate alone instead
+ * of clobbering it to 0 every cycle (P2: that reset broke multi-instance pool
+ * load-scoring). Never leaks the token or URL (RemnawaveApiError scrubs them).
  */
 export async function remnawaveHealth(
   cfg: RemnawaveConfig,
-): Promise<{ keyCount: number; rttMs: number }> {
+): Promise<{ keyCount: number | null; rttMs: number }> {
   const url = new URL(`/api/users/${HEALTH_PROBE_UUID}`, cfg.baseUrl).toString();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 8000);
@@ -291,7 +292,7 @@ export async function remnawaveHealth(
       signal: controller.signal,
     });
     const rttMs = Date.now() - started;
-    if (res.ok || res.status === 404) return { keyCount: 0, rttMs };
+    if (res.ok || res.status === 404) return { keyCount: null, rttMs };
     throw new RemnawaveApiError(`Remnawave ${res.status} on /api/users/{id}`, {
       status: res.status,
       path: '/api/users/{id}',
@@ -307,7 +308,7 @@ export async function remnawaveTestConnection(
 ): Promise<{ ok: true; keyCount: number } | { ok: false; error: string }> {
   try {
     const { keyCount } = await remnawaveHealth(cfg);
-    return { ok: true, keyCount };
+    return { ok: true, keyCount: keyCount ?? 0 };
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError')
       return { ok: false, error: 'Connection timed out' };
