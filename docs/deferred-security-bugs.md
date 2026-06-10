@@ -171,7 +171,7 @@ signing. Small, contained change; bundled with the next session-related work.
 ### M3. Audit log payload scrubbing: CLOSED (Convex)
 
 > **CLOSED (2026-06-09).** Re-reviewed every audit write in `convex/{adminApi,
-> account,lifecycle,freeTier}.ts`: each logs a curated, explicit object (or no
+account,lifecycle,freeTier}.ts`: each logs a curated, explicit object (or no
 > payload), and none dumps a raw request body. The related (worse) issue found
 > during the review (the billing webhook persisted the **raw body**, which carries
 > the **account-number plaintext**) was fixed: `webhooks.ingest` stores a redacted

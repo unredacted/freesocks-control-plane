@@ -226,8 +226,7 @@ http.route({
     }
     const cap = await verifyCaptcha(captchaToken);
     if (!cap.configured) return errorJson('config', 'Captcha not configured', 503);
-    if (!cap.success)
-      return errorJson('auth.captcha_failed', 'Captcha verification failed', 403);
+    if (!cap.success) return errorJson('auth.captcha_failed', 'Captcha verification failed', 403);
 
     // Resolve which default-free tier (backend) the new account lands on. This
     // reads only the admin enabled/default toggles, never proxy availability.

@@ -179,7 +179,9 @@
       redeemCode = '';
       void qc.invalidateQueries({ queryKey: queryKeys.account });
       void qc.invalidateQueries({ queryKey: queryKeys.me });
-      toast.success(t('account.redeemSuccess', { tier: result.tierName, days: result.durationDays }));
+      toast.success(
+        t('account.redeemSuccess', { tier: result.tierName, days: result.durationDays }),
+      );
     },
     onError: () => {
       // Generic, no oracle (matches the server). Don't echo a specific reason.
@@ -433,7 +435,9 @@
           placeholder={t('account.redeemPlaceholder')}
           value={redeemCode}
           oninput={(e) =>
-            (redeemCode = normalizeDigits((e.currentTarget as HTMLInputElement).value).toUpperCase())}
+            (redeemCode = normalizeDigits(
+              (e.currentTarget as HTMLInputElement).value,
+            ).toUpperCase())}
           onkeydown={(e) => {
             if (e.key === 'Enter' && redeemCode.trim() && !redeem.isPending) redeem.mutate();
           }}
@@ -475,7 +479,9 @@
           {regenerate.isPending ? 'Creating…' : 'Create subscription'}
         </Button>
         {#if regenerate.error}
-          <p class="text-sm text-destructive max-w-sm mx-auto">{apiErrorMessage(regenerate.error)}</p>
+          <p class="text-sm text-destructive max-w-sm mx-auto">
+            {apiErrorMessage(regenerate.error)}
+          </p>
         {/if}
       </div>
     {/if}

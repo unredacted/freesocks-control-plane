@@ -108,7 +108,8 @@ export const bumpKeyCount = internalMutation({
 /** All active instances WITH their secret config; internal-only (the cron pings them). */
 export const listActiveWithSecret = internalQuery({
   args: {},
-  handler: async (ctx) => (await ctx.db.query('backendServers').collect()).filter((s) => s.isActive),
+  handler: async (ctx) =>
+    (await ctx.db.query('backendServers').collect()).filter((s) => s.isActive),
 });
 
 /**
@@ -123,7 +124,12 @@ export const markHealthy = internalMutation({
     rttMs: v.number(),
   },
   handler: async (ctx, { id, keyCount, rttMs }) => {
-    const fields: { lastHealthOkAt: number; lastHealthRttMs: number; updatedAt: number; keyCount?: number } = {
+    const fields: {
+      lastHealthOkAt: number;
+      lastHealthRttMs: number;
+      updatedAt: number;
+      keyCount?: number;
+    } = {
       lastHealthOkAt: Date.now(),
       lastHealthRttMs: rttMs,
       updatedAt: Date.now(),

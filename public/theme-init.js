@@ -5,12 +5,12 @@
 // key (mode-watcher-mode) and class name (dark) in sync with App.svelte.
 (function () {
   try {
-    var stored = localStorage.getItem('mode-watcher-mode');
-    var mode = stored || 'dark';
-    var prefersDark =
+    const stored = localStorage.getItem('mode-watcher-mode');
+    const mode = stored || 'dark';
+    const prefersDark =
       window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    var dark = mode === 'dark' || (mode === 'system' && prefersDark);
-    var root = document.documentElement;
+    const dark = mode === 'dark' || (mode === 'system' && prefersDark);
+    const root = document.documentElement;
     if (dark) root.classList.add('dark');
     else root.classList.remove('dark');
     root.style.colorScheme = dark ? 'dark' : 'light';

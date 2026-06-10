@@ -59,7 +59,12 @@ export default defineConfig(() => ({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    sourcemap: true,
+    // P1-17: do NOT ship a sourcemap to the public web root. The 3+ MB .map was
+    // publicly fetchable and disclosed full readable source — a needless leak
+    // for a censorship-resistance tool. Caddy also blocks *.map as defense in
+    // depth. (Re-enable as 'hidden' + upload to an error tracker if/when one
+    // exists, so maps stay private.)
+    sourcemap: false,
     target: 'esnext',
     rollupOptions: { input: path.resolve(__dirname, 'index.html') },
   },

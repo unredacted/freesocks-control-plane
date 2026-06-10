@@ -76,8 +76,8 @@
   <div class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-3 text-sm">
     <p class="mb-1 font-semibold">Couldn't complete the human check.</p>
     <p class="text-muted-foreground">
-      The check runs entirely in your browser. If it failed, your browser may be blocking the
-      worker it needs, or the network dropped the request.
+      The check runs entirely in your browser. If it failed, your browser may be blocking the worker
+      it needs, or the network dropped the request.
     </p>
     <ul class="mt-2 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
       <li>Try disabling browser extensions</li>

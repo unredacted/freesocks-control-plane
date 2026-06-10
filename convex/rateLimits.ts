@@ -138,10 +138,16 @@ export const setPolicy = internalMutation({
   },
   handler: async (ctx, { policyKey, max, windowMs, enabled, actorAdminId }) => {
     if (!isRateLimitPolicyKey(policyKey)) {
-      throw new ConvexError({ code: 'validation', message: `Unknown rate-limit policy "${policyKey}"` });
+      throw new ConvexError({
+        code: 'validation',
+        message: `Unknown rate-limit policy "${policyKey}"`,
+      });
     }
     if (!Number.isInteger(max) || max < 1 || max > 1_000_000) {
-      throw new ConvexError({ code: 'validation', message: 'max must be an integer in [1, 1000000]' });
+      throw new ConvexError({
+        code: 'validation',
+        message: 'max must be an integer in [1, 1000000]',
+      });
     }
     if (!Number.isInteger(windowMs) || windowMs < 1000 || windowMs > DAY_MS) {
       throw new ConvexError({
@@ -156,7 +162,8 @@ export const setPolicy = internalMutation({
       .withIndex('by_key', (q) => q.eq('key', settingKey))
       .unique();
     const now = Date.now();
-    if (existing) await ctx.db.patch(existing._id, { value, updatedByAdminId: actorAdminId, updatedAt: now });
+    if (existing)
+      await ctx.db.patch(existing._id, { value, updatedByAdminId: actorAdminId, updatedAt: now });
     else
       await ctx.db.insert('appSettings', {
         key: settingKey,

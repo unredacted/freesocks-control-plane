@@ -704,7 +704,10 @@ export const testBackendConnection = internalAction({
     websocketEnabled: v.optional(v.boolean()),
     websocketDomain: v.optional(v.union(v.string(), v.null())),
   },
-  handler: async (_ctx, a): Promise<{ ok: true; keyCount: number } | { ok: false; error: string }> => {
+  handler: async (
+    _ctx,
+    a,
+  ): Promise<{ ok: true; keyCount: number } | { ok: false; error: string }> => {
     let config: BackendConfig;
     if (a.backend === 'remnawave') {
       if (!a.baseUrl || !a.apiToken)

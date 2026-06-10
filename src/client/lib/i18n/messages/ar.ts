@@ -61,7 +61,8 @@ export const ar: Partial<Messages> = {
   'account.signOut': 'تسجيل الخروج',
   'account.redeemTitle': 'لديك رمز عضوية؟',
   'account.redeemSubmit': 'استخدام الرمز',
-  'account.redeemSuccess': (p) => `تم الاستخدام — أنت الآن على ${p.tier} لمدة ${p.days} يومًا إضافيًا.`,
+  'account.redeemSuccess': (p) =>
+    `تم الاستخدام — أنت الآن على ${p.tier} لمدة ${p.days} يومًا إضافيًا.`,
   'account.redeemFailed': 'هذا الرمز غير صالح أو تم استخدامه من قبل.',
 
   'renew.expiringTitle': 'عضويتك على وشك الانتهاء',

@@ -48,6 +48,9 @@
   const users = adminUsersQuery(() => activeQuery);
   const qc = useQueryClient();
 
+  // Flatten the infinite-query pages into a single list (P1-16).
+  let userRows = $derived(users.data?.pages.flatMap((p) => p.users) ?? []);
+
   // Holds the user op that needs explicit confirmation, mounting the
   // AlertDialog. `null` = closed.
   let pending = $state<{ user: z.infer<typeof UserAdmin>; op: UserOp } | null>(null);
@@ -133,7 +136,7 @@
     </div>
   {:else}
     <div class="space-y-3">
-      {#each users.data ?? [] as u (u.id)}
+      {#each userRows as u (u.id)}
         {@const busy = userAction.isPending && userAction.variables?.user.id === u.id}
         <Card>
           <CardHeader>
@@ -183,6 +186,22 @@
           </CardContent>
         </Card>
       {/each}
+      {#if userRows.length === 0}
+        <div class="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+          No users found.
+        </div>
+      {/if}
+      {#if users.hasNextPage}
+        <div class="pt-2 text-center">
+          <Button
+            variant="outline"
+            onclick={() => users.fetchNextPage()}
+            disabled={users.isFetchingNextPage}
+          >
+            {users.isFetchingNextPage ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      {/if}
     </div>
   {/if}
 

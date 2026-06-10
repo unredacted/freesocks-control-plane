@@ -186,7 +186,13 @@ export const revokeCode = internalMutation({
 // --- member: redeem ---------------------------------------------------------
 
 type RedeemResult =
-  | { ok: true; tierSlug: string; tierName: string; durationDays: number; membershipExpiresAt: string }
+  | {
+      ok: true;
+      tierSlug: string;
+      tierName: string;
+      durationDays: number;
+      membershipExpiresAt: string;
+    }
   | { ok: false };
 
 /**

@@ -8,15 +8,8 @@
   import GetAccount from './routes/GetAccount.svelte';
   import Account from './routes/Account.svelte';
   import Login from './routes/Login.svelte';
-  import AdminEntry from './routes/admin/AdminEntry.svelte';
-  import AdminTiers from './routes/admin/AdminTiers.svelte';
-  import AdminUsers from './routes/admin/AdminUsers.svelte';
-  import AdminTokens from './routes/admin/AdminTokens.svelte';
-  import AdminAudit from './routes/admin/AdminAudit.svelte';
-  import AdminSettings from './routes/admin/AdminSettings.svelte';
-  import AdminBackendServers from './routes/admin/AdminBackendServers.svelte';
-  import AdminMembershipCodes from './routes/admin/AdminMembershipCodes.svelte';
-  import AdminRateLimits from './routes/admin/AdminRateLimits.svelte';
+  // The whole admin CMS is lazy-loaded (P1-18): public visitors never download it.
+  const AdminRouter = () => import('./routes/admin/AdminRouter.svelte');
   import { router } from './stores/router.svelte';
   import { QueryClientProvider } from '@tanstack/svelte-query';
   import { SvelteQueryDevtools } from '@tanstack/svelte-query-devtools';
@@ -62,24 +55,11 @@
               <Account />
             {:else if router.pathname === '/login'}
               <Login />
-            {:else if router.pathname === '/admin'}
-              <AdminEntry />
-            {:else if router.pathname === '/admin/tiers'}
-              <AdminTiers />
-            {:else if router.pathname === '/admin/users'}
-              <AdminUsers />
-            {:else if router.pathname === '/admin/tokens'}
-              <AdminTokens />
-            {:else if router.pathname === '/admin/audit'}
-              <AdminAudit />
-            {:else if router.pathname === '/admin/settings'}
-              <AdminSettings />
-            {:else if router.pathname === '/admin/backend-servers'}
-              <AdminBackendServers />
-            {:else if router.pathname === '/admin/membership-codes'}
-              <AdminMembershipCodes />
-            {:else if router.pathname === '/admin/rate-limits'}
-              <AdminRateLimits />
+            {:else if onAdminRoute}
+              {#await AdminRouter() then mod}
+                {@const Admin = mod.default}
+                <Admin />
+              {/await}
             {:else}
               <div class="text-center py-16">
                 <h1 class="text-3xl font-display font-bold mb-2">Not found</h1>

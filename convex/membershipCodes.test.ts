@@ -55,7 +55,9 @@ async function seedTiers(t: ReturnType<typeof convexTest>) {
 }
 
 async function seedUser(t: ReturnType<typeof convexTest>, tierId: Id<'tiers'>) {
-  return t.run((ctx) => ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }));
+  return t.run((ctx) =>
+    ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }),
+  );
 }
 
 describe('lib/membershipCode helpers', () => {
@@ -91,7 +93,10 @@ describe('membershipCodes redeem flow', () => {
     });
     expect(codes).toHaveLength(1);
 
-    const res = await t.action(internal.membershipCodes.redeemCode, { userId: user, code: codes[0]! });
+    const res = await t.action(internal.membershipCodes.redeemCode, {
+      userId: user,
+      code: codes[0]!,
+    });
     expect(res.ok).toBe(true);
     if (!res.ok) throw new Error('unreachable');
     expect(res.tierSlug).toBe('patron');
@@ -132,12 +137,16 @@ describe('membershipCodes redeem flow', () => {
     const t = convexTest(schema, modules);
     const { patron } = await seedTiers(t);
     const user = await seedUser(t, patron);
-    expect((await t.action(internal.membershipCodes.redeemCode, { userId: user, code: 'garbage' })).ok).toBe(
-      false,
-    );
     expect(
-      (await t.action(internal.membershipCodes.redeemCode, { userId: user, code: 'FSM-0000-0000-0000' }))
-        .ok,
+      (await t.action(internal.membershipCodes.redeemCode, { userId: user, code: 'garbage' })).ok,
+    ).toBe(false);
+    expect(
+      (
+        await t.action(internal.membershipCodes.redeemCode, {
+          userId: user,
+          code: 'FSM-0000-0000-0000',
+        })
+      ).ok,
     ).toBe(false);
   });
 
@@ -156,7 +165,10 @@ describe('membershipCodes redeem flow', () => {
       id: list[0]!.id as Id<'redemptionCodes'>,
       actorAdminId: admin,
     });
-    const res = await t.action(internal.membershipCodes.redeemCode, { userId: user, code: codes[0]! });
+    const res = await t.action(internal.membershipCodes.redeemCode, {
+      userId: user,
+      code: codes[0]!,
+    });
     expect(res.ok).toBe(false);
   });
 

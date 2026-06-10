@@ -82,6 +82,11 @@
 		}
 	}
 
+	# Never serve source maps from the public root (defense in depth; the prod
+	# build emits none, but block the path regardless).
+	@maps path *.map
+	respond @maps 404
+
 	# --- everything else -> the built SPA, history-API fallback to index.html --
 	handle {
 		root * /srv/dist

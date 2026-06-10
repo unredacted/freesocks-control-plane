@@ -217,7 +217,9 @@ describe('authenticateVerify', () => {
     ).rejects.toThrow(/Unknown credential/);
     // The challenge is single-use: it was consumed before the credential lookup.
     const row = await t.run(async (ctx) =>
-      (await ctx.db.query('webauthnAuthChallenges').collect()).find((r) => r.challengeId === 'ch-1'),
+      (await ctx.db.query('webauthnAuthChallenges').collect()).find(
+        (r) => r.challengeId === 'ch-1',
+      ),
     );
     expect(row?.consumedAt).toBeTypeOf('number');
   });

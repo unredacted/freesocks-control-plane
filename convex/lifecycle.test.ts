@@ -261,7 +261,11 @@ describe('lifecycle.findExpiredFree (P1-4 per-tier cursor)', () => {
         ids.push(uid);
       }
       // A paid member on the member tier must never be returned by a free scan.
-      await ctx.db.insert('users', { tierId: memberTierId, status: 'active', updatedAt: Date.now() });
+      await ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
     });
 
     // Page 1 (limit 2): the two oldest free users.
@@ -301,9 +305,15 @@ describe('account issuance lock (P1-3)', () => {
     const userId = await t.run((ctx) =>
       ctx.db.insert('users', { tierId: freeTierId, status: 'active', updatedAt: Date.now() }),
     );
-    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(true);
-    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(false);
+    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
+      true,
+    );
+    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
+      false,
+    );
     await t.mutation(internal.account.releaseIssuanceLock, { userId });
-    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(true);
+    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
+      true,
+    );
   });
 });

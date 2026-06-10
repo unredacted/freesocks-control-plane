@@ -47,7 +47,8 @@ export const en = {
 
   // --- support id ---
   'support.label': 'Support ID',
-  'support.hint': 'Share this if you contact us. It is NOT your sign-in number and grants no access.',
+  'support.hint':
+    'Share this if you contact us. It is NOT your sign-in number and grants no access.',
 
   // --- login ---
   'login.title': 'Sign in with your account number',

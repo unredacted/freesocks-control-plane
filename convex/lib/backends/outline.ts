@@ -244,7 +244,10 @@ export async function outlineDelete(
   } catch (err) {
     // Idempotent delete: an already-absent key (404) is success, so the teardown
     // sweep can safely retry after a partial run.
-    if (err instanceof OutlineApiError && (err as { meta?: { status?: number } }).meta?.status === 404)
+    if (
+      err instanceof OutlineApiError &&
+      (err as { meta?: { status?: number } }).meta?.status === 404
+    )
       return;
     throw err;
   }

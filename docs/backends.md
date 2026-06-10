@@ -1,7 +1,7 @@
 # Backend abstraction
 
 The control plane talks to N proxy backends through one generic dispatch layer + a provider
-registry. This document describes the two core concepts (backend *types* vs *instances*), how
+registry. This document describes the two core concepts (backend _types_ vs _instances_), how
 dispatch works, and what's required to add another backend.
 
 ## Two concepts: type vs instance
@@ -14,7 +14,7 @@ dispatch works, and what's required to add another backend.
   secret. Instances are rows in the **`backendServers`** table and are managed in the admin CMS
   ("Backend servers"). Remnawave and Outline both have instances; a type can have many.
 
-This split is what makes the system multi-backend: instance *management* (pool selection at
+This split is what makes the system multi-backend: instance _management_ (pool selection at
 issuance, key->instance resolution, health, load counters) is fully generic, and only the per-type
 wire protocol is pluggable.
 
@@ -54,7 +54,6 @@ wire protocol is pluggable.
 4. **The dispatch** `convex/backends.ts` (six `internalAction`s). It resolves an instance, then calls
    `PROVIDERS[instance.backend].<op>(instance.config, ...)`. There are no per-backend `if` arms and
    no env-based config.
-
    - `issueUser({ backend, spec })` dispatches on the tier's backend **type**, picks an active
      instance of that type from the scored pool (random among the top candidates; the CSPRNG pick
      lives in the action, not the query), issues, bumps the instance's key count, and returns the

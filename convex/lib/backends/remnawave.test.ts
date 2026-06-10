@@ -218,7 +218,8 @@ describe('remnawaveResetTraffic / remnawaveDeleteUser', () => {
 describe('remnawaveFetchSubscription', () => {
   test('returns raw content + content-type and forwards the user-agent', async () => {
     mockFetch(
-      () => new Response('vmess://node\n', { status: 200, headers: { 'content-type': 'text/yaml' } }),
+      () =>
+        new Response('vmess://node\n', { status: 200, headers: { 'content-type': 'text/yaml' } }),
     );
     const out = await remnawaveFetchSubscription(cfg, 'short123', 'Clash/1.0');
     expect(out).toEqual({ content: 'vmess://node\n', contentType: 'text/yaml' });

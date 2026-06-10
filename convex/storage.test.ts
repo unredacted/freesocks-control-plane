@@ -95,13 +95,25 @@ describe('uploadToProviders', () => {
     expect(calls).toHaveLength(2);
     expect(out).toEqual(
       expect.arrayContaining([
-        { provider: 'p1', publicUrl: 'https://cdn-1.example.com/subs/abc', objectPath: 'subs/abc', status: 'ok' },
-        { provider: 'p2', publicUrl: 'https://cdn-2.example.com/subs/abc', objectPath: 'subs/abc', status: 'ok' },
+        {
+          provider: 'p1',
+          publicUrl: 'https://cdn-1.example.com/subs/abc',
+          objectPath: 'subs/abc',
+          status: 'ok',
+        },
+        {
+          provider: 'p2',
+          publicUrl: 'https://cdn-2.example.com/subs/abc',
+          objectPath: 'subs/abc',
+          status: 'ok',
+        },
       ]),
     );
     // The object key + content-type are forwarded on the put op.
     expect(
-      calls.every((c) => c.op.kind === 'put' && c.op.key === 'subs/abc' && c.op.contentType === 'text/yaml'),
+      calls.every(
+        (c) => c.op.kind === 'put' && c.op.key === 'subs/abc' && c.op.contentType === 'text/yaml',
+      ),
     ).toBe(true);
   });
 
@@ -125,7 +137,11 @@ describe('uploadToProviders', () => {
   test('throws when every provider upload fails', async () => {
     const { send } = recorder(() => true);
     await expect(
-      uploadToProviders([provider(1), provider(2)], { objectPath: 'subs/abc', content: 'hello' }, send),
+      uploadToProviders(
+        [provider(1), provider(2)],
+        { objectPath: 'subs/abc', content: 'hello' },
+        send,
+      ),
     ).rejects.toThrow(/All S3 mirror uploads failed/);
   });
 });

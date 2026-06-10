@@ -82,7 +82,12 @@ const realSend: S3Send = async (p, op) => {
   const client = clientFor(p);
   if (op.kind === 'put') {
     await client.send(
-      new PutObjectCommand({ Bucket: p.bucket, Key: op.key, Body: op.body, ContentType: op.contentType }),
+      new PutObjectCommand({
+        Bucket: p.bucket,
+        Key: op.key,
+        Body: op.body,
+        ContentType: op.contentType,
+      }),
     );
   } else {
     await client.send(new DeleteObjectCommand({ Bucket: p.bucket, Key: op.key }));
@@ -97,7 +102,11 @@ const realSend: S3Send = async (p, op) => {
  */
 export async function uploadToProviders(
   providers: S3Provider[],
-  { objectPath, content, contentType }: { objectPath: string; content: string; contentType?: string },
+  {
+    objectPath,
+    content,
+    contentType,
+  }: { objectPath: string; content: string; contentType?: string },
   send: S3Send = realSend,
 ): Promise<SubscriptionMirror[]> {
   if (providers.length === 0) return [];

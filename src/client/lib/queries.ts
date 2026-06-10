@@ -113,19 +113,24 @@ export const adminTiersQuery = () =>
     staleTime: 30_000,
   }));
 
+// P1-16: paginated via createInfiniteQuery so the admin can "Load more" instead
+// of silently seeing only the first page. A targeted search (q set) returns one
+// page with nextCursor:null, so the button only appears on the unfiltered browse.
+const UsersPage = z.object({ users: z.array(UserAdmin), nextCursor: z.string().nullable() });
 export const adminUsersQuery = (queryRef: () => string) =>
-  createQuery(() => {
+  createInfiniteQuery(() => {
     const q = queryRef();
     return {
       queryKey: queryKeys.adminUsers(q),
-      queryFn: async () => {
-        const params = q ? `?q=${encodeURIComponent(q)}` : '';
-        const result = await apiClient.get(
-          `/api/v1/admin/users${params}`,
-          z.object({ users: z.array(UserAdmin), nextCursor: z.string().nullable() }),
-        );
-        return result.users;
+      initialPageParam: undefined as string | undefined,
+      queryFn: ({ pageParam }: { pageParam: string | undefined }) => {
+        const params = new URLSearchParams();
+        if (q) params.set('q', q);
+        if (pageParam) params.set('cursor', pageParam);
+        const qs = params.toString();
+        return apiClient.get(`/api/v1/admin/users${qs ? `?${qs}` : ''}`, UsersPage);
       },
+      getNextPageParam: (last: z.infer<typeof UsersPage>) => last.nextCursor ?? undefined,
       staleTime: 30_000,
     };
   });

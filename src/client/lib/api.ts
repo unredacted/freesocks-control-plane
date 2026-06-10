@@ -12,7 +12,9 @@ import { augmentLoginBody, signedHeaders } from './pop';
 function toEnvelope(status: number, body: unknown): { error: { code: string; message: string } } {
   const e = (body as { error?: { code?: unknown; message?: unknown } } | null)?.error;
   if (e && typeof e.message === 'string') {
-    return { error: { code: typeof e.code === 'string' ? e.code : `http.${status}`, message: e.message } };
+    return {
+      error: { code: typeof e.code === 'string' ? e.code : `http.${status}`, message: e.message },
+    };
   }
   return { error: { code: `http.${status}`, message: `Request failed (${status})` } };
 }
@@ -80,7 +82,9 @@ async function request<S extends z.ZodTypeAny>(
   try {
     res = await fetch(path, { credentials: 'include', method, headers, body });
   } catch {
-    throw new ApiCallError(0, { error: { code: 'network.offline', message: 'Network request failed' } });
+    throw new ApiCallError(0, {
+      error: { code: 'network.offline', message: 'Network request failed' },
+    });
   }
   let json: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {

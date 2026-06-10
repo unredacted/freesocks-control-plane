@@ -140,7 +140,9 @@
               Priority: <strong class="text-foreground tabular-nums">{s.priority}</strong> · Keys:
               <strong class="text-foreground tabular-nums">{s.keyCount}</strong>
               {#if s.lastHealthRttMs != null}
-                · Last RTT: <strong class="text-foreground tabular-nums">{s.lastHealthRttMs}ms</strong>
+                · Last RTT: <strong class="text-foreground tabular-nums"
+                  >{s.lastHealthRttMs}ms</strong
+                >
               {/if}
             </div>
             <div class="flex gap-2 pt-2">
@@ -175,7 +177,10 @@
     />
   {/if}
 
-  <AlertDialog.Root open={!!pendingDelete} onOpenChange={(o) => (o ? null : (pendingDelete = null))}>
+  <AlertDialog.Root
+    open={!!pendingDelete}
+    onOpenChange={(o) => (o ? null : (pendingDelete = null))}
+  >
     <AlertDialog.Content>
       <AlertDialog.Header>
         <AlertDialog.Title>Remove "{pendingDelete?.name}"?</AlertDialog.Title>

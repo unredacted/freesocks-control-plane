@@ -180,8 +180,7 @@ export const fetchSubscriptionContent = internalAction({
     { backendServerId, backendShortId, userAgent },
   ): Promise<SubscriptionContent> => {
     if (mockBackendEnabled()) return mockFetchContent();
-    if (!backendServerId)
-      throw new Error('backendServerId required to fetch subscription content');
+    if (!backendServerId) throw new Error('backendServerId required to fetch subscription content');
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new Error('Backend instance not found for subscription content fetch');
     return PROVIDERS[server.backend].fetchContent(

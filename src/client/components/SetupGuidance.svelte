@@ -73,7 +73,8 @@
         role="tab"
         aria-selected={active === p.key}
         onclick={() => (active = p.key)}
-        class="min-h-9 rounded-md px-3 py-1.5 text-sm font-medium transition-colors {active === p.key
+        class="min-h-9 rounded-md px-3 py-1.5 text-sm font-medium transition-colors {active ===
+        p.key
           ? 'bg-primary text-primary-foreground'
           : 'bg-muted text-muted-foreground hover:text-foreground'}"
       >

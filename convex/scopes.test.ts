@@ -52,7 +52,9 @@ describe('P1-1 admin token scope enforcement', () => {
     const token = await insertToken(t, { scopes: ['admin:tiers:read'], subjectType: 'service' });
     const req = bearer(token);
     // Has the read scope:
-    expect(await t.action(async (ctx) => resolveAdmin(ctx, req, 'admin:tiers:read'))).not.toBeNull();
+    expect(
+      await t.action(async (ctx) => resolveAdmin(ctx, req, 'admin:tiers:read')),
+    ).not.toBeNull();
     // Lacks the write scope → rejected (this is the bug the audit found):
     expect(await t.action(async (ctx) => resolveAdmin(ctx, req, 'admin:tiers:write'))).toBeNull();
     // And cannot reach a DIFFERENT resource it wasn't granted:
@@ -63,7 +65,9 @@ describe('P1-1 admin token scope enforcement', () => {
     const t = convexTest(schema, modules);
     const token = await insertToken(t, { scopes: ['admin:users:write'], subjectType: 'service' });
     const req = bearer(token);
-    expect(await t.action(async (ctx) => resolveAdmin(ctx, req, 'admin:users:write'))).not.toBeNull();
+    expect(
+      await t.action(async (ctx) => resolveAdmin(ctx, req, 'admin:users:write')),
+    ).not.toBeNull();
   });
 
   test('a member token without the required member scope is rejected', async () => {
@@ -93,9 +97,9 @@ describe('P1-1 admin token scope enforcement', () => {
     });
     const req = bearer(token);
     // read scope present:
-    expect((await t.action(async (ctx) => resolveMember(ctx, req, 'subscription:read')))?.userId).toBe(
-      userId,
-    );
+    expect(
+      (await t.action(async (ctx) => resolveMember(ctx, req, 'subscription:read')))?.userId,
+    ).toBe(userId);
     // write scope absent → cannot regenerate/switch (subscription:write) or rotate:
     expect(await t.action(async (ctx) => resolveMember(ctx, req, 'subscription:write'))).toBeNull();
     expect(await t.action(async (ctx) => resolveMember(ctx, req, 'account:write'))).toBeNull();

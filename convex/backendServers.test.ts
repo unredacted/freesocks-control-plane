@@ -85,7 +85,9 @@ describe('pickCandidatesForIssue', () => {
   test('returns [] when no instance of the type exists', async () => {
     const t = convexTest(schema, modules);
     await seedInstance(t, { backend: 'remnawave', slug: 'rw-only' });
-    expect(await t.query(internal.backendServers.pickCandidatesForIssue, { backend: 'outline' })).toEqual([]);
+    expect(
+      await t.query(internal.backendServers.pickCandidatesForIssue, { backend: 'outline' }),
+    ).toEqual([]);
   });
 });
 
@@ -100,7 +102,11 @@ describe('admin CRUD (createBackendServer / updateBackendServer)', () => {
       apiToken: 'SUPER_SECRET',
     });
     expect(res.backend).toBe('remnawave');
-    expect(res.config).toEqual({ type: 'remnawave', baseUrl: 'https://panel.test', apiTokenSet: true });
+    expect(res.config).toEqual({
+      type: 'remnawave',
+      baseUrl: 'https://panel.test',
+      apiTokenSet: true,
+    });
     expect(JSON.stringify(res)).not.toContain('SUPER_SECRET');
     const row = await t.run((ctx) => ctx.db.query('backendServers').first());
     expect(row!.config).toMatchObject({ type: 'remnawave', apiToken: 'SUPER_SECRET' });
@@ -121,10 +127,18 @@ describe('admin CRUD (createBackendServer / updateBackendServer)', () => {
   test('rejects a create missing the per-type required secret', async () => {
     const t = convexTest(schema, modules);
     await expect(
-      t.mutation(internal.adminApi.createBackendServer, { backend: 'remnawave', name: 'x', slug: 'x1' }),
+      t.mutation(internal.adminApi.createBackendServer, {
+        backend: 'remnawave',
+        name: 'x',
+        slug: 'x1',
+      }),
     ).rejects.toThrow(/base URL and an API token/);
     await expect(
-      t.mutation(internal.adminApi.createBackendServer, { backend: 'outline', name: 'y', slug: 'y1' }),
+      t.mutation(internal.adminApi.createBackendServer, {
+        backend: 'outline',
+        name: 'y',
+        slug: 'y1',
+      }),
     ).rejects.toThrow(/apiUrl/);
   });
 
@@ -172,7 +186,11 @@ describe('admin CRUD (createBackendServer / updateBackendServer)', () => {
 describe('generic dispatch (convex/backends.ts via the provider registry)', () => {
   test('issueUser picks an active instance, issues, returns + bumps its key count', async () => {
     const t = convexTest(schema, modules);
-    const instanceId = await seedInstance(t, { backend: 'remnawave', slug: 'rw-issue', keyCount: 0 });
+    const instanceId = await seedInstance(t, {
+      backend: 'remnawave',
+      slug: 'rw-issue',
+      keyCount: 0,
+    });
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => jsonRes(remnaUser())),
@@ -217,7 +235,11 @@ describe('generic dispatch (convex/backends.ts via the provider registry)', () =
         expirationDaysAfterMembershipLapse: 0,
         updatedAt: Date.now(),
       });
-      const userId = await ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
       await ctx.db.insert('subscriptions', {
         userId,
         backend: 'remnawave',

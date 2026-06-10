@@ -45,7 +45,8 @@
       void qc.invalidateQueries({ queryKey: ['admin', 'membership-codes'] });
       toast.success(`Minted ${result.codes.length} code${result.codes.length === 1 ? '' : 's'}`);
     },
-    onError: (err) => toast.error('Mint failed', { description: err instanceof Error ? err.message : String(err) }),
+    onError: (err) =>
+      toast.error('Mint failed', { description: err instanceof Error ? err.message : String(err) }),
   }));
 
   const revoke = createMutation(() => ({
@@ -55,7 +56,10 @@
       void qc.invalidateQueries({ queryKey: ['admin', 'membership-codes'] });
       toast.success('Code revoked');
     },
-    onError: (err) => toast.error('Revoke failed', { description: err instanceof Error ? err.message : String(err) }),
+    onError: (err) =>
+      toast.error('Revoke failed', {
+        description: err instanceof Error ? err.message : String(err),
+      }),
   }));
 
   async function copyAll() {
@@ -166,7 +170,9 @@
       {#each Array(3) as _, i (i)}<Skeleton class="h-12 w-full" />{/each}
     </div>
   {:else if codes.isError}
-    <div class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+    <div
+      class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+    >
       {codes.error instanceof Error ? codes.error.message : String(codes.error)}
     </div>
   {:else if (codes.data?.length ?? 0) === 0}
@@ -179,7 +185,9 @@
         <li class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
           <div class="flex items-center gap-3">
             <code class="font-mono">{code.codePrefix}…</code>
-            <span class="rounded px-2 py-0.5 text-xs {STATUS_COLORS[code.status]}">{code.status}</span>
+            <span class="rounded px-2 py-0.5 text-xs {STATUS_COLORS[code.status]}"
+              >{code.status}</span
+            >
             <span class="text-muted-foreground">{code.tierSlug} · {code.durationDays}d</span>
             {#if code.note}<span class="text-xs text-muted-foreground">“{code.note}”</span>{/if}
           </div>
@@ -188,7 +196,9 @@
               redeemed {new Date(code.redeemedAt).toLocaleDateString()}
             {/if}
             {#if code.status === 'active'}
-              <Button size="sm" variant="ghost" onclick={() => revoke.mutate(code.id)}>Revoke</Button>
+              <Button size="sm" variant="ghost" onclick={() => revoke.mutate(code.id)}
+                >Revoke</Button
+              >
             {/if}
           </div>
         </li>
@@ -214,7 +224,9 @@
           This is the only time the codes are shown. Copy or download them, then hand them out.
         </AlertDialog.Description>
       </AlertDialog.Header>
-      <pre class="max-h-48 overflow-auto rounded bg-muted p-3 font-mono text-xs">{(revealed ?? []).join('\n')}</pre>
+      <pre class="max-h-48 overflow-auto rounded bg-muted p-3 font-mono text-xs">{(
+          revealed ?? []
+        ).join('\n')}</pre>
       <div class="flex gap-2">
         <Button variant="outline" size="sm" onclick={copyAll}>Copy all</Button>
         <Button variant="outline" size="sm" onclick={downloadAll}>Download</Button>

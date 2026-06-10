@@ -65,8 +65,7 @@ export const zh: Partial<Messages> = {
 
   'renew.expiringTitle': '你的会员即将到期',
   'renew.expiredTitle': '你的会员已过期',
-  'renew.body':
-    'FreeSocks 由社区捐助运营。要续订会员，请捐款或联系我们获取会员码。',
+  'renew.body': 'FreeSocks 由社区捐助运营。要续订会员，请捐款或联系我们获取会员码。',
   'renew.donate': '捐款',
   'renew.contact': '联系我们',
   'renew.haveCode': '有会员码？在上方兑换。',

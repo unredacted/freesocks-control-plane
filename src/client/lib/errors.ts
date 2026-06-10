@@ -15,7 +15,11 @@ export function apiErrorMessage(err: unknown): string {
     const code = err.payload.error.code;
     if (code === 'backend.unavailable') return t('error.backendUnavailable');
     if (code.startsWith('auth.captcha')) return t('error.captchaFailed');
-    if (code === 'client.parse_error' || code === 'issuance.failed' || code === 'account.create_failed')
+    if (
+      code === 'client.parse_error' ||
+      code === 'issuance.failed' ||
+      code === 'account.create_failed'
+    )
       return t('error.generic');
     // A real, specific server message (e.g. a validation detail) — show it.
     return err.payload.error.message || t('error.generic');

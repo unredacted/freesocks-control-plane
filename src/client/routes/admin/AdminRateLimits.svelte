@@ -22,10 +22,16 @@
   function draftFor(p: RateLimitPolicyAdmin) {
     return drafts[p.key] ?? { max: p.max, windowMs: p.windowMs, enabled: p.enabled };
   }
-  function setDraft(key: string, patch: Partial<{ max: number; windowMs: number; enabled: boolean }>) {
+  function setDraft(
+    key: string,
+    patch: Partial<{ max: number; windowMs: number; enabled: boolean }>,
+  ) {
     const base = drafts[key] ?? policies.data?.find((p) => p.key === key);
     if (!base) return;
-    drafts = { ...drafts, [key]: { max: base.max, windowMs: base.windowMs, enabled: base.enabled, ...patch } };
+    drafts = {
+      ...drafts,
+      [key]: { max: base.max, windowMs: base.windowMs, enabled: base.enabled, ...patch },
+    };
   }
 
   function humanWindow(ms: number): string {
@@ -53,7 +59,9 @@
       toast.success(`Updated ${body.key}`);
     },
     onError: (err) =>
-      toast.error('Update failed', { description: err instanceof Error ? err.message : String(err) }),
+      toast.error('Update failed', {
+        description: err instanceof Error ? err.message : String(err),
+      }),
   }));
 </script>
 
@@ -66,9 +74,13 @@
   </p>
 
   {#if policies.isPending}
-    <div class="space-y-2">{#each Array(5) as _, i (i)}<Skeleton class="h-14 w-full" />{/each}</div>
+    <div class="space-y-2">
+      {#each Array(5) as _, i (i)}<Skeleton class="h-14 w-full" />{/each}
+    </div>
   {:else if policies.isError}
-    <div class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+    <div
+      class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+    >
       {policies.error instanceof Error ? policies.error.message : String(policies.error)}
     </div>
   {:else}
@@ -80,7 +92,8 @@
           <div class="min-w-0 flex-1">
             <code class="font-mono text-foreground">{p.key}</code>
             {#if !p.isDefault}
-              <span class="ms-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400"
+              <span
+                class="ms-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400"
                 >customized</span
               >
             {/if}
@@ -96,7 +109,8 @@
               type="number"
               min="1"
               value={d.max}
-              oninput={(e) => setDraft(p.key, { max: Number((e.currentTarget as HTMLInputElement).value) })}
+              oninput={(e) =>
+                setDraft(p.key, { max: Number((e.currentTarget as HTMLInputElement).value) })}
               class="min-h-9 w-20 rounded-md border border-border bg-background px-2 py-1 text-sm"
             />
           </label>
@@ -123,7 +137,8 @@
           <Button
             size="sm"
             disabled={!dirty || save.isPending}
-            onclick={() => save.mutate({ ...p, max: d.max, windowMs: d.windowMs, enabled: d.enabled })}
+            onclick={() =>
+              save.mutate({ ...p, max: d.max, windowMs: d.windowMs, enabled: d.enabled })}
           >
             Save
           </Button>

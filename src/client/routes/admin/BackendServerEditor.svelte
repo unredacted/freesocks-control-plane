@@ -166,14 +166,16 @@
         {isEdit ? `Edit ${server?.name}` : 'Register a backend instance'}
       </Dialog.Title>
       <Dialog.Description>
-        A backend instance is one deployed proxy server. Connection secrets are stored
-        server-side and never shown again.
+        A backend instance is one deployed proxy server. Connection secrets are stored server-side
+        and never shown again.
       </Dialog.Description>
     </Dialog.Header>
 
     <div class="space-y-4">
       <div>
-        <label class="text-xs text-muted-foreground mb-1 block" for="srv-backend">Backend type</label>
+        <label class="text-xs text-muted-foreground mb-1 block" for="srv-backend"
+          >Backend type</label
+        >
         {#if isEdit}
           <div id="srv-backend" class="text-sm font-medium py-1">{BACKEND_LABELS[backend]}</div>
           <p class="text-xs text-muted-foreground/80">The backend type is fixed once created.</p>
@@ -207,8 +209,15 @@
 
       {#if backend === 'remnawave'}
         <div>
-          <label class="text-xs text-muted-foreground mb-1 block" for="srv-baseurl">Panel base URL</label>
-          <Input id="srv-baseurl" bind:value={baseUrl} placeholder="https://panel.example.org" autocomplete="off" />
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-baseurl"
+            >Panel base URL</label
+          >
+          <Input
+            id="srv-baseurl"
+            bind:value={baseUrl}
+            placeholder="https://panel.example.org"
+            autocomplete="off"
+          />
         </div>
         <div>
           <label class="text-xs text-muted-foreground mb-1 block" for="srv-token">API token</label>
@@ -220,7 +229,9 @@
             autocomplete="off"
           />
           <p class="text-xs text-muted-foreground/80 mt-1">
-            Stored server-side, never shown again.{isEdit ? ' Leave blank to keep the existing token.' : ''}
+            Stored server-side, never shown again.{isEdit
+              ? ' Leave blank to keep the existing token.'
+              : ''}
           </p>
         </div>
       {:else}
@@ -250,7 +261,9 @@
           </label>
           {#if websocketEnabled}
             <div>
-              <label class="text-xs text-muted-foreground mb-1 block" for="srv-wsdomain">WSS domain</label>
+              <label class="text-xs text-muted-foreground mb-1 block" for="srv-wsdomain"
+                >WSS domain</label
+              >
               <Input id="srv-wsdomain" bind:value={websocketDomain} placeholder="ws.example.org" />
             </div>
           {/if}
@@ -264,7 +277,12 @@
       {/if}
 
       <div>
-        <button type="button" class="text-primary text-xs underline" onclick={runTest} disabled={testing}>
+        <button
+          type="button"
+          class="text-primary text-xs underline"
+          onclick={runTest}
+          disabled={testing}
+        >
           {testing ? 'Testing…' : 'Test connection'}
         </button>
         {#if testResult}
@@ -280,7 +298,8 @@
 
       <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="text-xs text-muted-foreground mb-1 block" for="srv-priority">Priority</label>
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-priority">Priority</label
+          >
           <Input
             id="srv-priority"
             type="number"
@@ -298,7 +317,9 @@
     </div>
 
     <Dialog.Footer>
-      <Button variant="ghost" onclick={() => (open = false)} disabled={save.isPending}>Cancel</Button>
+      <Button variant="ghost" onclick={() => (open = false)} disabled={save.isPending}
+        >Cancel</Button
+      >
       <Button onclick={() => save.mutate()} disabled={save.isPending || !name || !slug}>
         {save.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Register instance'}
       </Button>

@@ -21,7 +21,11 @@ export type RateLimitListResponse = z.infer<typeof RateLimitListResponse>;
 export const RateLimitUpdateRequest = z.object({
   policyKey: z.string(),
   max: z.number().int().min(1).max(1_000_000),
-  windowMs: z.number().int().min(1000).max(7 * 86_400_000),
+  windowMs: z
+    .number()
+    .int()
+    .min(1000)
+    .max(7 * 86_400_000),
   enabled: z.boolean(),
 });
 export type RateLimitUpdateRequest = z.infer<typeof RateLimitUpdateRequest>;

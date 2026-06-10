@@ -44,7 +44,9 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
       await ctx.db.patch(a.userId, {
         membershipExpiresAt: a.expiresAtMs ?? undefined,
         // A renewed/extended membership re-activates a lapsed (grace/disabled) user.
-        ...(user.status === 'grace' || user.status === 'disabled' ? { status: 'active' as const } : {}),
+        ...(user.status === 'grace' || user.status === 'disabled'
+          ? { status: 'active' as const }
+          : {}),
         updatedAt: Date.now(),
       });
     }
@@ -261,7 +263,10 @@ export const runGraceSweep = internalAction({
     const disableIds: Id<'users'>[] = [];
     let afterExpiry = 0;
     for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
-      const res = await ctx.runQuery(internal.lifecycle.findDisableTransitions, { now, afterExpiry });
+      const res = await ctx.runQuery(internal.lifecycle.findDisableTransitions, {
+        now,
+        afterExpiry,
+      });
       disableIds.push(...res.due);
       if (!res.hasMore || res.lastExpiry <= afterExpiry) break;
       afterExpiry = res.lastExpiry;
