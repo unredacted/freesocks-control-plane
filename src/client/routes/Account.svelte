@@ -15,6 +15,9 @@
   import SwitchBackendModal from '../components/SwitchBackendModal.svelte';
   import TierComparison from '../components/TierComparison.svelte';
   import MemberImpact from '../components/MemberImpact.svelte';
+  import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
+  import { t, normalizeDigits } from '../lib/i18n/index.svelte';
+  import { RedeemCodeRequest, RedeemCodeResponse } from '../../shared/contracts/membershipCodes';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Plus from '@lucide/svelte/icons/plus';
   import LogOut from '@lucide/svelte/icons/log-out';
@@ -149,30 +152,52 @@
   }));
 
   async function logout() {
-    await apiClient.post('/api/v1/auth/logout', {}, z.object({ ok: z.boolean() }));
-    // Drop the PoP signing key so the next login binds a fresh one.
-    await clearSessionKey('member');
-    window.location.href = '/';
+    // P1-11: the local clear + redirect must run even if the network POST fails
+    // (offline / backend down), otherwise the user is stuck on a dead session.
+    try {
+      await apiClient.post('/api/v1/auth/logout', {}, z.object({ ok: z.boolean() }));
+    } catch {
+      /* best-effort server-side revoke; the cookie clears on redirect regardless */
+    } finally {
+      await clearSessionKey('member').catch(() => {});
+      window.location.href = '/';
+    }
   }
+
+  // W4: redeem a membership code.
+  let redeemCode = $state('');
+  const redeem = createMutation(() => ({
+    mutationFn: () =>
+      apiClient.post(
+        '/api/v1/account/redeem-code',
+        RedeemCodeRequest.parse({ code: redeemCode.trim() }),
+        RedeemCodeResponse,
+      ),
+    onSuccess: (result) => {
+      redeemCode = '';
+      void qc.invalidateQueries({ queryKey: queryKeys.account });
+      void qc.invalidateQueries({ queryKey: queryKeys.me });
+      toast.success(t('account.redeemSuccess', { tier: result.tierName, days: result.durationDays }));
+    },
+    onError: () => {
+      // Generic, no oracle (matches the server). Don't echo a specific reason.
+      toast.error(t('account.redeemFailed'));
+    },
+  }));
 
   // One-time reveal of a freshly rotated account number. Held in volatile state
   // only, never re-fetchable (the server stores just a hash). The old number
   // stops working immediately.
   let revealedAccountId = $state<string | null>(null);
+  let revealOpen = $state(false);
   let rotateConfirmOpen = $state(false);
-  let formattedRevealed = $derived(
-    revealedAccountId ? revealedAccountId.replace(/(\d{4})(?=\d)/g, '$1 ') : '',
-  );
   const rotateAccountId = createMutation(() => ({
     mutationFn: () =>
       apiClient.post('/api/v1/account/account-id/rotate', {}, AccountIdRevealResponse),
     onSuccess: (result) => {
       rotateConfirmOpen = false;
       revealedAccountId = result.accountId;
-      toast.success('New account number generated', {
-        description:
-          'Save it now. The old number no longer works and this is the only time it’s shown.',
-      });
+      revealOpen = true; // A2: same blocking, gated reveal as initial issuance
     },
     onError: (err) => {
       const msg = err instanceof ApiCallError ? err.payload.error.message : String(err);
@@ -268,52 +293,40 @@
          not by everything being framed. -->
     <header class="flex items-start justify-between gap-4 flex-wrap">
       <div>
-        <h1 class="text-3xl font-display font-bold tracking-tight">Welcome</h1>
+        <h1 class="text-3xl font-display font-bold tracking-tight">{t('account.title')}</h1>
         <p class="text-sm text-muted-foreground mt-1">
-          Tier <strong class="text-foreground">{data.user.tier.name}</strong>
+          {t('account.tierLabel')}: <strong class="text-foreground">{data.user.tier.name}</strong>
         </p>
+        {#if data.user.supportId}
+          <p class="mt-1 text-xs text-muted-foreground">
+            {t('support.label')}:
+            <code class="select-all font-mono text-foreground">{data.user.supportId}</code>
+            <span class="block text-[0.7rem] opacity-80">{t('support.hint')}</span>
+          </p>
+        {/if}
       </div>
       <div class="flex items-center gap-1 shrink-0">
         <Button onclick={() => (rotateConfirmOpen = true)} variant="ghost" size="sm">
           <RotateCcw class="size-4" />
-          <span class="hidden sm:inline">Rotate number</span>
+          <span class="hidden sm:inline">{t('account.rotate')}</span>
         </Button>
         <Button onclick={logout} variant="ghost" size="sm">
           <LogOut class="size-4" />
-          Sign out
+          {t('account.signOut')}
         </Button>
       </div>
     </header>
 
-    <!-- One-time reveal of a freshly rotated account number (volatile state). -->
+    <!-- A2: one-time reveal of a freshly rotated account number. Same blocking,
+         checkbox-gated modal as the initial issuance — losing the NEW number is
+         equally fatal (the old one already stopped working). -->
     {#if revealedAccountId}
-      <div class="rounded-xl border-2 border-primary bg-primary/5 p-5 space-y-3">
-        <h2 class="text-sm font-semibold uppercase tracking-wider text-primary">
-          Your new account number: save it now
-        </h2>
-        <p
-          class="font-mono text-lg md:text-xl tracking-normal tabular-nums select-all break-words leading-relaxed"
-        >
-          {formattedRevealed}
-        </p>
-        <p class="text-xs text-muted-foreground">
-          This is the only time it's shown, and your old number no longer works. Store it somewhere
-          safe: it's the only way to sign in, and it can't be recovered.
-        </p>
-        <div class="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onclick={() => {
-              if (revealedAccountId) navigator.clipboard?.writeText(revealedAccountId);
-              toast.success('Copied');
-            }}
-          >
-            Copy
-          </Button>
-          <Button size="sm" onclick={() => (revealedAccountId = null)}>I've saved it</Button>
-        </div>
-      </div>
+      <AccountNumberReveal
+        bind:open={revealOpen}
+        accountId={revealedAccountId}
+        rotated
+        onClose={() => (revealedAccountId = null)}
+      />
     {/if}
 
     <!-- Rotate confirmation. -->
@@ -370,21 +383,71 @@
     {#if membershipState === 'expiring-soon' && expiresAt && daysUntilExpiry !== null}
       <MembershipCallout
         tone="warn"
-        title={`Your membership ends in ${daysUntilExpiry} day${daysUntilExpiry === 1 ? '' : 's'}`}
-        body="Renew now to avoid losing access to your tier benefits."
-        ctaUrl={config.data?.membersAccountUrl}
-        ctaLabel="Renew membership"
-      />
+        title={t('renew.expiringTitle')}
+        body={t('renew.body')}
+        ctaUrl={config.data?.donateUrl}
+        ctaLabel={t('renew.donate')}
+      >
+        {#snippet secondaryAction()}
+          {#if config.data?.contactUrl}
+            <a
+              class="text-xs text-muted-foreground underline hover:text-foreground"
+              href={config.data.contactUrl}
+              target="_blank"
+              rel="noopener noreferrer">{t('renew.contact')}</a
+            >
+          {/if}
+        {/snippet}
+      </MembershipCallout>
     {/if}
     {#if membershipState === 'expired'}
       <MembershipCallout
         tone="error"
-        title="Your membership has lapsed"
-        body="Your subscription has been moved to the free tier. Renew to restore your previous tier."
-        ctaUrl={config.data?.membersAccountUrl}
-        ctaLabel="Renew membership"
-      />
+        title={t('renew.expiredTitle')}
+        body={t('renew.body')}
+        ctaUrl={config.data?.donateUrl}
+        ctaLabel={t('renew.donate')}
+      >
+        {#snippet secondaryAction()}
+          {#if config.data?.contactUrl}
+            <a
+              class="text-xs text-muted-foreground underline hover:text-foreground"
+              href={config.data.contactUrl}
+              target="_blank"
+              rel="noopener noreferrer">{t('renew.contact')}</a
+            >
+          {/if}
+        {/snippet}
+      </MembershipCallout>
     {/if}
+
+    <!-- W4: redeem a membership code (extends/upgrades the tier). Available to
+         any signed-in member; the renew callouts above point here. -->
+    <section class="rounded-xl border border-border bg-card p-4 sm:p-5">
+      <h2 class="text-sm font-semibold">{t('account.redeemTitle')}</h2>
+      <div class="mt-3 flex flex-col gap-2 sm:flex-row">
+        <input
+          inputmode="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder={t('account.redeemPlaceholder')}
+          value={redeemCode}
+          oninput={(e) =>
+            (redeemCode = normalizeDigits((e.currentTarget as HTMLInputElement).value).toUpperCase())}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && redeemCode.trim() && !redeem.isPending) redeem.mutate();
+          }}
+          class="min-h-11 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm tracking-wider focus:outline-none focus:ring-2 focus:ring-primary"
+        />
+        <Button
+          onclick={() => redeem.mutate()}
+          disabled={!redeemCode.trim() || redeem.isPending}
+          class="min-h-11 shrink-0"
+        >
+          {redeem.isPending ? t('common.loading') : t('account.redeemSubmit')}
+        </Button>
+      </div>
+    </section>
 
     <!-- HERO: the subscription is the main thing on this page -->
     {#if data.subscription}

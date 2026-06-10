@@ -2,8 +2,10 @@
   import { z } from 'zod';
   import { Button } from '@client/components/ui/button';
   import CapWidget from '../components/CapWidget.svelte';
+  import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import Link from '../components/Link.svelte';
+  import { t } from '../lib/i18n/index.svelte';
   import { meQuery, configQuery, accountQuery, queryKeys } from '../lib/queries';
   import { apiClient, ApiCallError } from '../lib/api';
   import { CreateAccountRequest, CreateAccountResponse } from '../../shared/contracts/account';
@@ -27,6 +29,7 @@
   // Set once account creation succeeds. The reveal-once number stays visible in
   // its panel while the user creates a subscription in card 2.
   let revealedAccountId = $state<string | null>(null);
+  let revealOpen = $state(false);
   let accountTier = $state<CreateAccountPayload['tier'] | null>(null);
   let created = $state(false);
 
@@ -72,6 +75,7 @@
     },
     onSuccess: (data) => {
       revealedAccountId = data.accountId;
+      revealOpen = true; // A2: blocking, checkbox-gated reveal modal
       accountTier = data.tier;
       created = true;
       // Cookie is set; reflect the new authenticated identity everywhere.
@@ -240,34 +244,26 @@
     </div>
   {/if}
 
-  <!-- One-time reveal of the freshly minted account number. -->
+  <!-- A2: one-time reveal of the freshly minted account number, in a blocking,
+       checkbox-gated modal with copy/download + a beforeunload guard. -->
   {#if revealedAccountId}
-    <div class="rounded-xl border-2 border-primary bg-primary/5 p-5 space-y-3">
-      <h2 class="text-sm font-semibold uppercase tracking-wider text-primary">
-        Save your account number
-      </h2>
-      <p
-        class="font-mono text-lg md:text-xl tracking-normal tabular-nums select-all break-words leading-relaxed"
+    <AccountNumberReveal
+      bind:open={revealOpen}
+      accountId={revealedAccountId}
+      onClose={() => {
+        // Once acknowledged, drop the plaintext from component state so it does
+        // not linger in memory after the moment has passed.
+        revealedAccountId = null;
+      }}
+    />
+    {#if !revealOpen}
+      <div
+        class="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-4 py-3 text-sm"
       >
-        {revealedAccountId.replace(/(\d{4})(?=\d)/g, '$1 ')}
-      </p>
-      <p class="text-xs text-muted-foreground">
-        This is the <strong>only</strong> way to sign back in: there's no email or password, and it can't
-        be recovered. Store it somewhere safe. It's shown only once.
-      </p>
-      <div class="flex gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          onclick={() => {
-            if (revealedAccountId) navigator.clipboard?.writeText(revealedAccountId);
-            toast.success('Copied');
-          }}
-        >
-          Copy number
-        </Button>
+        <CheckCircle class="size-4 text-primary" aria-hidden="true" />
+        <span>{t('reveal.confirmCheckbox')} ✓</span>
       </div>
-    </div>
+    {/if}
   {/if}
 
   <!-- STEP 2: create the proxy subscription (needs a proxy server). -->
