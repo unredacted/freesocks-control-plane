@@ -6,7 +6,7 @@ control plane: a **self-hosted [Convex](https://convex.dev) backend + a static S
 SPA** that hands out subscription URLs from one of two proxy backends,
 [Remnawave](https://remna.st) (multi-protocol; shown to users as **"Xray"**) or
 [Outline](https://getoutline.org/) (Shadowsocks access keys). It gates anonymous issuance
-through [Cloudflare Turnstile](https://www.cloudflare.com/products/turnstile/), lets members
+through a self-hosted [Cap](https://trycap.dev) proof-of-work captcha (no third-party scripts), lets members
 sign back in with a self-service **account number**, and provides a passkey-gated admin CMS
 for tier, user, backend, token, and runtime-config management.
 
@@ -79,7 +79,7 @@ convex/                            The backend (Convex functions)
 │   publicConfig.ts, audit.ts, rateLimits.ts, sessions.ts, adminApi.ts
 └── lib/
     ├── http.ts                    error envelope, client-IP, resolveMember/Admin/Bearer
-    ├── cookies.ts, crypto.ts, accountId.ts, turnstile.ts, issuance.ts
+    ├── cookies.ts, crypto.ts, accountId.ts, captcha.ts, issuance.ts
     └── backends/{types,remnawave,outline}.ts   pure HTTP backend fns
 
 src/

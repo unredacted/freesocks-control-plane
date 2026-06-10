@@ -120,8 +120,10 @@ Detailed companions, referenced rather than duplicated here:
   table) → maps `{accountId, tierSlug, expiresAtMs?}` onto `lifecycle.setMembership`. The
   single inbound point the **future in-house billing portal** plugs into. **Live (seam ready;
   no portal calling it yet).**
-- **Cloudflare Turnstile** (`convex/lib/turnstile.ts`): gates free issuance + account login.
-  The only sanctioned third-party script. **Live.**
+- **Self-hosted Cap captcha** (`convex/lib/captcha.ts` + `src/client/components/CapWidget.svelte`):
+  proof-of-work CAPTCHA gating free issuance + account login. Replaced Cloudflare Turnstile (W1)
+  — the widget is bundled from npm and challenge traffic is same-origin (Caddy `/cap` → the `cap`
+  service), so there are now **zero third-party runtime scripts**. **Live.**
 - **S3 subscription mirrors** (`convex/storage.ts`, `"use node"`): N providers from env
   (`S3_MIRRORS_ENABLED`, `S3_PROVIDER_*`); the censorship-resistance hedge. **Dormant**
   (off unless configured).

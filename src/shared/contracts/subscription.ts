@@ -8,13 +8,13 @@ export const SubscriptionMirror = z.object({
 export type SubscriptionMirror = z.infer<typeof SubscriptionMirror>;
 
 /**
- * Body for `POST /api/v1/auth/account-login`. Turnstile is required on every
- * attempt (same widget that gates free-tier issuance) to stop headless
- * brute-force. The accountId is normalized server-side (strip spaces/hyphens).
+ * Body for `POST /api/v1/auth/account-login`. A captcha (self-hosted Cap) is
+ * required on every attempt (same widget that gates free-tier issuance) to stop
+ * headless brute-force. The accountId is normalized server-side (strip spaces).
  */
 export const AccountLoginRequest = z.object({
   accountId: z.string().min(1),
-  turnstileToken: z.string().min(1),
+  captchaToken: z.string().min(1),
 });
 export type AccountLoginRequest = z.infer<typeof AccountLoginRequest>;
 

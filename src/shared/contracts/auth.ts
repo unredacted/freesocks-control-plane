@@ -40,7 +40,16 @@ export const PublicConfig = z.object({
    */
   donateUrl: z.string().url().optional(),
   contactUrl: z.string().url().optional(),
-  freeTierTurnstileSiteKey: z.string(),
+  /**
+   * W1: self-hosted Cap captcha. `apiEndpoint` is the same-origin path the widget
+   * hits (e.g. `/cap`); the widget's data-cap-api-endpoint is
+   * `${apiEndpoint}/${siteKey}/`. `siteKey` empty => captcha not configured (the
+   * UI can fall back / the dev bypass applies server-side).
+   */
+  captcha: z.object({
+    apiEndpoint: z.string(),
+    siteKey: z.string(),
+  }),
   environment: z.enum(['production', 'development', 'test']),
   /**
    * Public-safe tier limits so the marketing/comparison UI renders the actual

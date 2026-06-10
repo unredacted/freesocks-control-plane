@@ -1,7 +1,7 @@
 <script lang="ts">
   import { z } from 'zod';
   import { Button } from '@client/components/ui/button';
-  import Turnstile from '../components/Turnstile.svelte';
+  import CapWidget from '../components/CapWidget.svelte';
   import { configQuery } from '../lib/queries';
   import { apiClient, ApiCallError } from '../lib/api';
   import { queryClient } from '../lib/query-client';
@@ -18,7 +18,8 @@
   const config = configQuery();
   let token = $state<string | null>(null);
   let accountId = $state('');
-  let siteKey = $derived(config.data?.freeTierTurnstileSiteKey ?? '1x00000000000000000000AA');
+  let captchaEndpoint = $derived(config.data?.captcha.apiEndpoint ?? '/cap');
+  let captchaSiteKey = $derived(config.data?.captcha.siteKey ?? '');
 
   // Display helper: group the digits the user types into 4s, like the reveal
   // panel shows them. Stored/submitted value is digits-only (server normalizes
@@ -37,7 +38,7 @@
     mutationFn: () =>
       apiClient.post(
         '/api/v1/auth/account-login',
-        { accountId: accountId.replace(/\D/g, ''), turnstileToken: token! },
+        { accountId: accountId.replace(/\D/g, ''), captchaToken: token! },
         LoginResult,
       ),
     onSuccess: async () => {
@@ -98,7 +99,11 @@
       />
     </div>
 
-    <Turnstile {siteKey} onVerify={(t) => (token = t)} />
+    <CapWidget
+      apiEndpoint={captchaEndpoint}
+      siteKey={captchaSiteKey}
+      onVerify={(t) => (token = t || null)}
+    />
 
     {#if login.error}
       <div

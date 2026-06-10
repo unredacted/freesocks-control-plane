@@ -44,7 +44,10 @@ async function seedUserWithAccount(
 
 describe('auth.accountLogin', () => {
   beforeEach(() => {
-    vi.stubEnv('TURNSTILE_SECRET_KEY', 'x');
+    // W1: self-hosted Cap captcha config (fetch is stubbed to return {success}).
+    vi.stubEnv('CAP_API_ENDPOINT', 'http://cap:3000');
+    vi.stubEnv('CAP_SITE_KEY', 'sk_test');
+    vi.stubEnv('CAP_SECRET', 'secret_test');
     vi.stubEnv('SESSION_SIGNING_KEY', 'test-sign');
     vi.stubEnv('IP_HASH_SALT', 'test-salt');
     vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
@@ -61,7 +64,7 @@ describe('auth.accountLogin', () => {
 
     const res = await t.action(internal.auth.accountLogin, {
       accountId,
-      turnstileToken: 'tok',
+      captchaToken: 'tok',
       ip: '203.0.113.7',
     });
     expect(res.ok).toBe(true);
@@ -87,7 +90,7 @@ describe('auth.accountLogin', () => {
     const { accountId } = await seedUserWithAccount(t);
     const res = await t.action(internal.auth.accountLogin, {
       accountId: formatAccountId(accountId),
-      turnstileToken: 'tok',
+      captchaToken: 'tok',
       ip: '203.0.113.8',
     });
     expect(res.ok).toBe(true);
@@ -99,7 +102,7 @@ describe('auth.accountLogin', () => {
     await seedUserWithAccount(t);
     const res = await t.action(internal.auth.accountLogin, {
       accountId: '00000000000000000000000000000000',
-      turnstileToken: 'tok',
+      captchaToken: 'tok',
       ip: '203.0.113.9',
     });
     expect(res).toEqual({ ok: false, reason: 'invalid' });
@@ -111,7 +114,7 @@ describe('auth.accountLogin', () => {
     const { accountId } = await seedUserWithAccount(t, 'disabled');
     const res = await t.action(internal.auth.accountLogin, {
       accountId,
-      turnstileToken: 'tok',
+      captchaToken: 'tok',
       ip: '203.0.113.10',
     });
     expect(res).toEqual({ ok: false, reason: 'invalid' });
@@ -123,10 +126,10 @@ describe('auth.accountLogin', () => {
     const { accountId } = await seedUserWithAccount(t);
     const res = await t.action(internal.auth.accountLogin, {
       accountId,
-      turnstileToken: 'bad',
+      captchaToken: 'bad',
       ip: '203.0.113.11',
     });
-    expect(res).toEqual({ ok: false, reason: 'turnstile' });
+    expect(res).toEqual({ ok: false, reason: 'captcha' });
   });
 
   test('a failure is padded to the constant-time floor (~300ms)', async () => {
@@ -136,7 +139,7 @@ describe('auth.accountLogin', () => {
     const start = Date.now();
     const res = await t.action(internal.auth.accountLogin, {
       accountId: '00000000000000000000000000000000',
-      turnstileToken: 'tok',
+      captchaToken: 'tok',
       ip: '203.0.113.12',
     });
     const elapsed = Date.now() - start;

@@ -16,7 +16,7 @@ import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
 import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
-import { verifyTurnstile } from './lib/turnstile';
+import { verifyCaptcha } from './lib/captcha';
 import { sealed } from './lib/e2ee';
 import { POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
 import {
@@ -192,11 +192,15 @@ http.route({
       );
     }
 
-    const body = await readJson<{ turnstileToken?: string; backend?: 'remnawave' | 'outline' }>(
-      req,
-    );
-    if (!body.turnstileToken) {
-      return errorJson('validation', 'Turnstile token required', 400);
+    const body = await readJson<{
+      captchaToken?: string;
+      turnstileToken?: string;
+      backend?: 'remnawave' | 'outline';
+    }>(req);
+    // Accept the new `captchaToken` and the legacy `turnstileToken` (skew window).
+    const captchaToken = body.captchaToken ?? body.turnstileToken;
+    if (!captchaToken) {
+      return errorJson('validation', 'Captcha token required', 400);
     }
     const ip = resolveClientIp(req);
     if (!ip) {
@@ -220,11 +224,10 @@ http.route({
         { retryAfterMs: createRl.retryAfterMs },
       );
     }
-    const secret = process.env.TURNSTILE_SECRET_KEY;
-    if (!secret) return errorJson('config', 'Turnstile not configured', 503);
-    const ts = await verifyTurnstile(secret, body.turnstileToken, ip);
-    if (!ts.success)
-      return errorJson('auth.turnstile_failed', 'Turnstile verification failed', 403);
+    const cap = await verifyCaptcha(captchaToken);
+    if (!cap.configured) return errorJson('config', 'Captcha not configured', 503);
+    if (!cap.success)
+      return errorJson('auth.captcha_failed', 'Captcha verification failed', 403);
 
     // Resolve which default-free tier (backend) the new account lands on. This
     // reads only the admin enabled/default toggles, never proxy availability.
@@ -249,8 +252,6 @@ http.route({
         ip,
         ipCountry: req.headers.get('cf-ipcountry') ?? undefined,
         userAgent: req.headers.get('user-agent') ?? undefined,
-        turnstileAction: ts.action,
-        turnstileCdata: ts.cdata,
         requestId,
         backend,
         popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
@@ -294,9 +295,14 @@ http.route({
   path: '/api/v1/auth/account-login',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    const body = await readJson<{ accountId?: string; turnstileToken?: string }>(req);
-    if (!body.accountId || !body.turnstileToken) {
-      return errorJson('validation', 'accountId and turnstileToken are required', 400);
+    const body = await readJson<{
+      accountId?: string;
+      captchaToken?: string;
+      turnstileToken?: string;
+    }>(req);
+    const captchaToken = body.captchaToken ?? body.turnstileToken;
+    if (!body.accountId || !captchaToken) {
+      return errorJson('validation', 'accountId and captchaToken are required', 400);
     }
     const ip = resolveClientIp(req) ?? undefined;
     // PoP (Phase 2): the client folds its session public key into the (sealed)
@@ -304,13 +310,13 @@ http.route({
     const popRaw = (body as Record<string, unknown>)[POP_PUBKEY_FIELD];
     const res = await ctx.runAction(internal.auth.accountLogin, {
       accountId: body.accountId,
-      turnstileToken: body.turnstileToken,
+      captchaToken,
       ip,
       popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
     });
     if (!res.ok) {
-      if (res.reason === 'turnstile') {
-        return errorJson('auth.turnstile_failed', 'Turnstile verification failed', 403);
+      if (res.reason === 'captcha') {
+        return errorJson('auth.captcha_failed', 'Captcha verification failed', 403);
       }
       return errorJson('auth.invalid_account_id', 'The submitted credential is not valid', 401);
     }

@@ -85,6 +85,41 @@ services:
       backend:
         condition: service_healthy
 
+  # Self-hosted Cap captcha (W1): the proof-of-work CAPTCHA that replaced
+  # Cloudflare Turnstile. Caddy proxies the public /cap path here; the backend
+  # verifies tokens over the compose network (CAP_API_ENDPOINT=http://cap:3000).
+  # Pin to a digest before real production use (see docs/beta-deploy.md). The
+  # dashboard is ADMIN_KEY-gated; set a strong CAP_ADMIN_KEY (32+ chars).
+  cap:
+    image: tiago2/cap:latest
+    restart: unless-stopped
+    stop_grace_period: 10s
+    environment:
+      - ADMIN_KEY=${CAP_ADMIN_KEY:?set CAP_ADMIN_KEY in .env.beta (>=32 chars)}
+      - REDIS_URL=redis://valkey:6379
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3000/ >/dev/null 2>&1 || exit 1']
+      interval: 15s
+      start_period: 15s
+      retries: 5
+    depends_on:
+      valkey:
+        condition: service_healthy
+
+  # Cap's datastore (Redis-compatible). Persists issued challenges/tokens.
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    stop_grace_period: 10s
+    command: ['valkey-server', '--save', '60', '1', '--appendonly', 'no']
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ['CMD', 'valkey-cli', 'ping']
+      interval: 10s
+      start_period: 5s
+      retries: 5
+
   web:
     build:
       context: .
@@ -111,6 +146,8 @@ services:
       - ACME_EMAIL=${ACME_EMAIL:-}
     depends_on:
       backend:
+        condition: service_healthy
+      cap:
         condition: service_healthy
 
   # One-shot: derive a valid admin key from INSTANCE_NAME + INSTANCE_SECRET (a
@@ -156,3 +193,4 @@ volumes:
   convexkey:
   caddy_data:
   caddy_config:
+  valkey_data:

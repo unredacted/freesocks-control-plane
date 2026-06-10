@@ -1,7 +1,7 @@
 <script lang="ts">
   import { z } from 'zod';
   import { Button } from '@client/components/ui/button';
-  import Turnstile from '../components/Turnstile.svelte';
+  import CapWidget from '../components/CapWidget.svelte';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import Link from '../components/Link.svelte';
   import { meQuery, configQuery, accountQuery, queryKeys } from '../lib/queries';
@@ -39,9 +39,9 @@
   const account = accountQuery(() => isAuthed);
   let subscription = $derived(account.data?.subscription ?? null);
 
-  // Prefer the server-side site key from /api/v1/config; fall back to Turnstile
-  // test key so dev still works if the API call fails.
-  let siteKey = $derived(config.data?.freeTierTurnstileSiteKey ?? '1x00000000000000000000AA');
+  // Self-hosted Cap captcha config from /api/v1/config (same-origin endpoint).
+  let captchaEndpoint = $derived(config.data?.captcha.apiEndpoint ?? '/cap');
+  let captchaSiteKey = $derived(config.data?.captcha.siteKey ?? '');
 
   // Chooser is visible only when BOTH backends are enabled AND the admin has
   // turned on user-choice. It selects which default-free tier (backend) the new
@@ -66,8 +66,8 @@
     mutationFn: async () => {
       const body =
         showChooser && chosenBackend
-          ? CreateAccountRequest.parse({ turnstileToken: token!, backend: chosenBackend })
-          : CreateAccountRequest.parse({ turnstileToken: token! });
+          ? CreateAccountRequest.parse({ captchaToken: token!, backend: chosenBackend })
+          : CreateAccountRequest.parse({ captchaToken: token! });
       return apiClient.post('/api/v1/account', body, CreateAccountResponse);
     },
     onSuccess: (data) => {
@@ -201,7 +201,11 @@
         </div>
       {/if}
 
-      <Turnstile {siteKey} onVerify={(t) => (token = t)} />
+      <CapWidget
+        apiEndpoint={captchaEndpoint}
+        siteKey={captchaSiteKey}
+        onVerify={(t) => (token = t || null)}
+      />
 
       {#if createAccount.error}
         <div

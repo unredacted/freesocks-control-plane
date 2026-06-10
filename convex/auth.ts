@@ -3,7 +3,7 @@
  * path (account number only; no password, no third-party login). Ported from
  * the account-number design (docs/account-number-design.md §3/§7) faithfully:
  *
- *  - Turnstile gates every attempt (blocks headless brute force).
+ *  - A captcha (self-hosted Cap) gates every attempt (blocks headless brute force).
  *  - Per-prefix (30/day) + per-IP (10/h) STRICT rate limits.
  *  - The submitted number is ALWAYS hashed (even on a rate-limit reject), and
  *    every failure is padded to a ~300ms floor, so timing never reveals
@@ -24,7 +24,7 @@ import { v } from 'convex/values';
 import { hashAccountId, isValidAccountId, normalizeAccountId } from './lib/accountId';
 import { hmacSha256Hex, randomHex } from './lib/crypto';
 import { signValue } from './lib/cookies';
-import { verifyTurnstile } from './lib/turnstile';
+import { verifyCaptcha } from './lib/captcha';
 
 // 30 days, matches the old fs_session cookie. Exported so freeTier.createFreeAccount
 // (account creation also establishes a member session) uses the same TTL.
@@ -33,7 +33,7 @@ const FAILURE_FLOOR_MS = 300;
 
 type LoginResult =
   | { ok: true; signedCookieValue: string; maxAgeSec: number; userId: Id<'users'> }
-  | { ok: false; reason: 'turnstile' | 'invalid' };
+  | { ok: false; reason: 'captcha' | 'invalid' };
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -45,14 +45,14 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export const accountLogin = internalAction({
   args: {
     accountId: v.string(),
-    turnstileToken: v.string(),
+    captchaToken: v.string(),
     ip: v.optional(v.string()),
     // PoP (Phase 2): the client's session public key, bound to this session so
     // the cookie alone is not sufficient afterward. Absent for clients without
     // the signing worker (legacy fallback).
     popPublicKey: v.optional(v.string()),
   },
-  handler: async (ctx, { accountId, turnstileToken, ip, popPublicKey }): Promise<LoginResult> => {
+  handler: async (ctx, { accountId, captchaToken, ip, popPublicKey }): Promise<LoginResult> => {
     const start = Date.now();
     const failInvalid = async (): Promise<LoginResult> => {
       const elapsed = Date.now() - start;
@@ -60,12 +60,10 @@ export const accountLogin = internalAction({
       return { ok: false, reason: 'invalid' };
     };
 
-    // 1. Turnstile, independent of account validity, so a fast distinct return
-    //    here is fine (it's not an enumeration oracle).
-    const secret = process.env.TURNSTILE_SECRET_KEY;
-    if (!secret) throw new Error('TURNSTILE_SECRET_KEY must be set (bunx convex env set ...)');
-    const ts = await verifyTurnstile(secret, turnstileToken, ip);
-    if (!ts.success) return { ok: false, reason: 'turnstile' };
+    // 1. Captcha (self-hosted Cap), independent of account validity, so a fast
+    //    distinct return here is fine (it's not an enumeration oracle).
+    const cap = await verifyCaptcha(captchaToken);
+    if (!cap.success) return { ok: false, reason: 'captcha' };
 
     // 2. Normalize + ALWAYS hash (keeps timing constant regardless of validity).
     const normalized = normalizeAccountId(accountId);

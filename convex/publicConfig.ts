@@ -58,7 +58,13 @@ export const get = query({
       membersAccountUrl: process.env.MEMBERS_ACCOUNT_URL || undefined,
       donateUrl: process.env.DONATE_URL || undefined,
       contactUrl: process.env.CONTACT_URL || undefined,
-      freeTierTurnstileSiteKey: process.env.TURNSTILE_SITE_KEY ?? '',
+      // W1: self-hosted Cap. `apiEndpoint` is the SAME-ORIGIN path the browser
+      // widget hits (Caddy proxies /cap → the Cap service), so challenge traffic
+      // stays inside `connect-src 'self'`. `siteKey` is public.
+      captcha: {
+        apiEndpoint: process.env.CAP_PUBLIC_ENDPOINT || '/cap',
+        siteKey: process.env.CAP_SITE_KEY ?? '',
+      },
       environment,
       tiers,
       backends: {

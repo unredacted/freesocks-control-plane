@@ -117,7 +117,7 @@ export type SwitchBackendResponse = z.infer<typeof SwitchBackendResponse>;
  * `subscription.user_choice_enabled` is set; no proxy server is provisioned here.
  */
 export const CreateAccountRequest = z.object({
-  turnstileToken: z.string().min(1),
+  captchaToken: z.string().min(1),
   backend: BackendId.optional(),
 });
 export type CreateAccountRequest = z.infer<typeof CreateAccountRequest>;
