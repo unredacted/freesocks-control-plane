@@ -25,6 +25,16 @@ if [ -z "${admin_key}" ]; then
 fi
 export CONVEX_SELF_HOSTED_ADMIN_KEY="${admin_key}"
 
+# A4: a lightweight gate so a type-broken checkout can't deploy on the host.
+# (`convex deploy` typechecks convex/ too; this also covers the client + shared
+# contracts. The full test suite is the CI gate run before tagging — see
+# .github/workflows/deploy.yml — not repeated here to keep restarts quick.)
+# Set DEPLOY_SKIP_TYPECHECK=true to bypass in an emergency.
+if [ "${DEPLOY_SKIP_TYPECHECK:-false}" != "true" ]; then
+  echo "[deploy] typechecking before deploy"
+  bun run typecheck
+fi
+
 echo "[deploy] pushing functions to ${CONVEX_SELF_HOSTED_URL}"
 bunx convex deploy -y
 

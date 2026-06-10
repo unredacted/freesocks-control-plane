@@ -116,12 +116,29 @@ function adminError(err: unknown): Response {
 
 // --- operational ------------------------------------------------------------
 
+// Liveness: the process is up and routing. Cheap, no datastore touch.
 http.route({
   path: '/healthz',
   method: 'GET',
   handler: httpAction(async () =>
     json({ ok: true, timestamp: new Date().toISOString(), requestId: newRequestId() }),
   ),
+});
+
+// A3: readiness — a real datastore round-trip, so an uptime monitor can tell a
+// wedged Postgres / exhausted pool apart from a merely-live process. 503 on
+// failure so the monitor pages. Point external monitoring at /readyz.
+http.route({
+  path: '/readyz',
+  method: 'GET',
+  handler: httpAction(async (ctx) => {
+    try {
+      await ctx.runQuery(internal.health.dbPing, {});
+      return json({ ok: true, db: 'ok', timestamp: new Date().toISOString() });
+    } catch {
+      return json({ ok: false, db: 'error', timestamp: new Date().toISOString() }, 503);
+    }
+  }),
 });
 
 http.route({

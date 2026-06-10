@@ -44,9 +44,11 @@ $EDITOR .env.beta .env.convex
 - `.env.beta`: `SITE_ADDRESS=beta.freesocks.org`, `ACME_EMAIL`, `INSTANCE_SECRET`
   (`openssl rand -hex 32`), `POSTGRES_PASSWORD` (`openssl rand -hex 24`, URL-safe).
 - `.env.convex`: fill **every** `CHANGE_ME` (`openssl rand -hex 32` for the keys),
-  the Turnstile keys, and keep `WEBAUTHN_*` / `ENVIRONMENT` / `TRUSTED_PROXY` as
-  set. `ACCOUNT_ID_PEPPER` is **set once** (changing it invalidates every account
-  number). The `deployer` refuses to run while any `CHANGE_ME` remains.
+  the Cap captcha keys (`CAP_SITE_KEY` / `CAP_SECRET`, created in the Cap dashboard
+  on first boot — see Operations below), and keep `WEBAUTHN_*` / `ENVIRONMENT` /
+  `TRUSTED_PROXY` as set. `ACCOUNT_ID_PEPPER` is **set once** (changing it
+  invalidates every account number). The `deployer` refuses to run while any
+  `CHANGE_ME` remains.
 
 To also seed a Remnawave instance automatically, set `REMNAWAVE_BASE_URL` +
 `REMNAWAVE_API_TOKEN` in `.env.convex` (else add it in the CMS in §4).
@@ -106,8 +108,9 @@ curl -sI  https://beta.freesocks.org | grep -i -E 'content-security-policy|stric
 In a browser:
 
 - the home page loads over a valid TLS cert;
-- `/get-account` step 1 ("Create my account") reveals the account number even with
-  no backend instance; step 2 ("Create subscription") issues a key after §4;
+- `/get-account` step 1 ("Create my account") reveals the account number (after the
+  Cap captcha) even with no backend instance; step 2 ("Create subscription") issues
+  a key after §4;
 - signing in with that account number works;
 - `/admin` passkey login works;
 - the session cookie is `Secure` (DevTools), because `ENVIRONMENT=production`.
@@ -164,3 +167,81 @@ See `docs/threat-model-cdn-blinding.md`.
 - **Dashboard.** Reach it over an SSH tunnel, never publicly:
   `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 <beta-host>`, then open
   `http://127.0.0.1:6791`.
+
+## Operations (A3/A4)
+
+### Captcha (Cap) first-run
+
+The `cap` service runs the self-hosted [Cap](https://trycap.dev) captcha. On first
+boot, tunnel to it and create a site key:
+
+```
+ssh -L 3000:127.0.0.1:3000 <beta-host>   # if you expose it locally; else exec in
+docker compose -f docker-compose.beta.yml exec cap sh   # then browse its dashboard
+```
+
+Log in with `CAP_ADMIN_KEY`, create a site key, and put the **site key** +
+**secret** into `.env.convex` as `CAP_SITE_KEY` / `CAP_SECRET` (the backend reads
+them; `CAP_API_ENDPOINT=http://cap:3000`, `CAP_PUBLIC_ENDPOINT=/cap`). Re-run the
+deployer (`docker compose ... up -d`) so the env applies.
+
+### Health & monitoring
+
+- **`/healthz`** — liveness only (process up). Used by the compose healthchecks.
+- **`/readyz`** — deep readiness: does a real datastore round-trip and returns
+  **503** if Postgres is unreachable. **Point your external uptime monitor at
+  `https://<host>/readyz`** and alert on non-200. This is the launch alerting
+  baseline; pair it with Convex log streaming (below) for error-rate alerts.
+- **Error visibility.** Stream the backend's logs off-box and alert on the rate
+  of `issuance failed` / `create failed` lines and 5xx envelopes. Minimal setup:
+  `docker compose -f docker-compose.beta.yml logs -f backend | <log shipper>`,
+  or a sidecar that tails and POSTs to a webhook. The audit log
+  (admin CMS → Audit log) is the pull-based record of lifecycle events.
+
+### Backups & restore
+
+The `backup` service `pg_dump`s the datastore every `BACKUP_INTERVAL_SECONDS`
+and (when `BACKUP_S3_*` is set) uploads offsite, pruning to `BACKUP_RETENTION`
+local copies. **Configure offsite storage before launch** — accounts are
+anonymous, so a lost datastore is unrecoverable. Also back up the **secret set**
+(the `bunx convex env` values, especially `ACCOUNT_ID_PEPPER` — losing it
+invalidates every account number).
+
+Restore a dump:
+
+```
+# copy the chosen dump to the host, then:
+gunzip -c freesocks-freesocks_beta-<ts>.sql.gz \
+  | docker compose -f docker-compose.beta.yml exec -T postgres \
+      psql -U convex -d freesocks_beta
+```
+
+Run a **restore drill** before launch (restore into a scratch DB and diff row
+counts) and periodically after.
+
+### Rollback (A4)
+
+Deploys are idempotent and the contract changes are kept additive (backend-first
+is safe). To roll back:
+
+1. **Backend/functions:** check out the previous good tag and re-run the deployer
+   (`docker compose -f docker-compose.beta.yml up -d --build deployer`), or in CI
+   re-tag the previous good commit (`git tag -f vX … && git push -f --tags`), or
+   `git revert` the bad commit and tag. `convex deploy` replaces the function set.
+2. **SPA:** rebuild the `web` image from the previous tag
+   (`docker compose ... up -d --build web`) — it bakes the SPA from that checkout.
+3. **Schema:** Convex applies schema on deploy; a rollback that drops a field
+   only affects new writes. Restore from a backup only if data was corrupted.
+
+### Incident runbook (quick reference)
+
+- **Backend down / `/readyz` 503:** check `docker compose ps`, `logs backend`,
+  `logs postgres`; restart `backend`; if Postgres is the cause, see below.
+- **Postgres disk full:** prune old WAL/backups, grow the volume, restart. The
+  `backup` service keeps only `BACKUP_RETENTION` local copies; offsite is durable.
+- **Cert expiry:** Caddy auto-renews; if it fails, check `logs web`, that `:80`
+  is reachable (ACME HTTP-01), and `ACME_EMAIL` is set.
+- **Cap (captcha) outage:** `/get-account` + login fail closed. Check `logs cap`
+  / `logs valkey`; restart. As a temporary measure an operator can loosen the
+  `freetier.create` / `account-login.*` limits in the admin CMS, but the captcha
+  is a primary anti-abuse control — restore it promptly.

@@ -20,6 +20,7 @@ import type * as backendServers from "../backendServers.js";
 import type * as backends from "../backends.js";
 import type * as crons from "../crons.js";
 import type * as freeTier from "../freeTier.js";
+import type * as health from "../health.js";
 import type * as http from "../http.js";
 import type * as keyEpochs from "../keyEpochs.js";
 import type * as keyRevocations from "../keyRevocations.js";
@@ -75,6 +76,7 @@ declare const fullApi: ApiFromModules<{
   backends: typeof backends;
   crons: typeof crons;
   freeTier: typeof freeTier;
+  health: typeof health;
   http: typeof http;
   keyEpochs: typeof keyEpochs;
   keyRevocations: typeof keyRevocations;

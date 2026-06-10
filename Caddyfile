@@ -62,7 +62,7 @@
 	}
 
 	# --- API + health -> Convex HTTP actions (:3211 over the compose network) --
-	@api path /api/* /healthz
+	@api path /api/* /healthz /readyz
 	handle @api {
 		# Client-IP trust: with no trusted_proxies configured, Caddy OVERWRITES any
 		# client-sent X-Forwarded-For with the immediate peer (the real client,

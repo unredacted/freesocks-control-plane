@@ -70,6 +70,35 @@ services:
       start_period: 20s
       retries: 5
 
+  # A3: automated Postgres backups. pg_dumps on an interval and ships the dump to
+  # S3-compatible object storage (set S3_* + AWS_* in .env.beta), pruning old
+  # local copies. WARNING: without S3_* it keeps LOCAL-ONLY copies (no offsite) —
+  # configure offsite before launch. Restore drill: docs/beta-deploy.md.
+  backup:
+    build:
+      context: .
+      dockerfile: docker/backup.Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 10s
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=convex
+      - POSTGRES_DB=freesocks_beta
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.beta}
+      - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
+      - BACKUP_RETENTION=${BACKUP_RETENTION:-7}
+      - S3_ENDPOINT=${BACKUP_S3_ENDPOINT:-}
+      - S3_BUCKET=${BACKUP_S3_BUCKET:-}
+      - S3_PREFIX=${BACKUP_S3_PREFIX:-db-backups}
+      - AWS_ACCESS_KEY_ID=${BACKUP_AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${BACKUP_AWS_SECRET_ACCESS_KEY:-}
+      - AWS_DEFAULT_REGION=${BACKUP_AWS_REGION:-auto}
+    volumes:
+      - backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # Admin-only Convex dashboard, bound to localhost (reach via SSH tunnel:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
   dashboard:
@@ -194,3 +223,4 @@ volumes:
   caddy_data:
   caddy_config:
   valkey_data:
+  backups:
