@@ -8,6 +8,7 @@
   import { t } from '../lib/i18n/index.svelte';
   import { meQuery, configQuery, accountQuery, queryKeys } from '../lib/queries';
   import { apiClient, ApiCallError } from '../lib/api';
+  import { apiErrorMessage } from '../lib/errors';
   import { CreateAccountRequest, CreateAccountResponse } from '../../shared/contracts/account';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -82,8 +83,7 @@
       void qc.invalidateQueries({ queryKey: queryKeys.me });
     },
     onError: (err) => {
-      const msg = err instanceof ApiCallError ? err.payload.error.message : String(err);
-      toast.error('Could not create account', { description: msg });
+      toast.error('Could not create account', { description: apiErrorMessage(err) });
     },
   }));
 
@@ -104,8 +104,7 @@
       });
     },
     onError: (err) => {
-      const msg = err instanceof ApiCallError ? err.payload.error.message : String(err);
-      toast.error('Could not create subscription', { description: msg });
+      toast.error('Could not create subscription', { description: apiErrorMessage(err) });
     },
   }));
 
@@ -215,9 +214,7 @@
         <div
           class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive"
         >
-          {createAccount.error instanceof ApiCallError
-            ? createAccount.error.payload.error.message
-            : String(createAccount.error)}
+          {apiErrorMessage(createAccount.error)}
         </div>
       {/if}
 
@@ -302,11 +299,7 @@
           <div
             class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive space-y-1"
           >
-            <p>
-              {createSubscription.error instanceof ApiCallError
-                ? createSubscription.error.payload.error.message
-                : String(createSubscription.error)}
-            </p>
+            <p>{apiErrorMessage(createSubscription.error)}</p>
             {#if subErrorIsUnavailable}
               <p class="text-xs text-muted-foreground">
                 Your account is safe. You can create the subscription later from

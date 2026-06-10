@@ -3,19 +3,29 @@ import type { ApiError } from '../../shared/contracts/common';
 import { openInbound, prepareOutbound } from './e2ee';
 import { augmentLoginBody, signedHeaders } from './pop';
 
+/**
+ * Coerce ANY error body into our `{ error: { code, message } }` envelope so
+ * `err.payload.error.message` is always safe for consumers (P1-8). A non-JSON
+ * body (a reverse-proxy 502 HTML page) or a bare upstream error otherwise leaves
+ * `payload.error` undefined and throws inside the consumer's onError handler.
+ */
+function toEnvelope(status: number, body: unknown): { error: { code: string; message: string } } {
+  const e = (body as { error?: { code?: unknown; message?: unknown } } | null)?.error;
+  if (e && typeof e.message === 'string') {
+    return { error: { code: typeof e.code === 'string' ? e.code : `http.${status}`, message: e.message } };
+  }
+  return { error: { code: `http.${status}`, message: `Request failed (${status})` } };
+}
+
 class ApiCallError extends Error {
+  readonly payload: { error: { code: string; message: string } };
   constructor(
     public readonly status: number,
-    public readonly payload:
-      | z.infer<typeof ApiError>
-      | { error: { code: string; message: string } },
+    payload: z.infer<typeof ApiError> | { error: { code: string; message: string } } | unknown,
   ) {
-    // Be robust to a non-envelope error body (e.g. a bare upstream 500 that
-    // isn't our { error: { code, message } } shape): fall back to a generic
-    // message instead of throwing while constructing the error.
-    super(
-      (payload as { error?: { message?: string } })?.error?.message ?? `Request failed (${status})`,
-    );
+    const envelope = toEnvelope(status, payload);
+    super(envelope.error.message);
+    this.payload = envelope;
   }
 }
 
@@ -63,10 +73,18 @@ async function request<S extends z.ZodTypeAny>(
   );
   if (popHeaders) Object.assign(headers, popHeaders);
 
-  const res = await fetch(path, { credentials: 'include', method, headers, body });
+  // P1-9: a network failure (offline / dropped connection) rejects fetch with a
+  // TypeError. Surface it as a structured status-0 ApiCallError so consumers can
+  // show an "offline" message instead of a raw "TypeError: Failed to fetch".
+  let res: Response;
+  try {
+    res = await fetch(path, { credentials: 'include', method, headers, body });
+  } catch {
+    throw new ApiCallError(0, { error: { code: 'network.offline', message: 'Network request failed' } });
+  }
   let json: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new ApiCallError(res.status, json as never);
+    throw new ApiCallError(res.status, json);
   }
   if (seal) json = await openInbound(seal, path, method, json);
   const parsed = schema.safeParse(json);

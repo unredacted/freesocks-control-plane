@@ -24,6 +24,7 @@
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
   import { apiClient, ApiCallError } from '../lib/api';
+  import { apiErrorMessage } from '../lib/errors';
   import { clearSessionKey } from '../lib/pop';
   import { accountQuery, configQuery, queryKeys } from '../lib/queries';
   import { router } from '../stores/router.svelte';
@@ -73,7 +74,7 @@
       });
     },
     onError: (err) => {
-      const msg = err instanceof ApiCallError ? err.payload.error.message : String(err);
+      const msg = apiErrorMessage(err);
       toast.error('Regenerate failed', { description: msg });
     },
   }));
@@ -117,7 +118,7 @@
       });
     },
     onError: (err) => {
-      const msg = err instanceof ApiCallError ? err.payload.error.message : String(err);
+      const msg = apiErrorMessage(err);
       toast.error('Switch failed', { description: msg });
     },
   }));
@@ -146,7 +147,7 @@
       }
     },
     onError: (err) => {
-      const msg = err instanceof ApiCallError ? err.payload.error.message : String(err);
+      const msg = apiErrorMessage(err);
       toast.error('Refresh failed', { description: msg });
     },
   }));
@@ -200,7 +201,7 @@
       revealOpen = true; // A2: same blocking, gated reveal as initial issuance
     },
     onError: (err) => {
-      const msg = err instanceof ApiCallError ? err.payload.error.message : String(err);
+      const msg = apiErrorMessage(err);
       toast.error('Rotate failed', { description: msg });
     },
   }));
@@ -255,9 +256,7 @@
       <CardHeader>
         <CardTitle>Account</CardTitle>
         <CardDescription class="text-destructive">
-          {account.error instanceof ApiCallError
-            ? account.error.payload.error.message
-            : String(account.error)}
+          {apiErrorMessage(account.error)}
         </CardDescription>
       </CardHeader>
     </Card>
@@ -474,11 +473,7 @@
           {regenerate.isPending ? 'Creating…' : 'Create subscription'}
         </Button>
         {#if regenerate.error}
-          <p class="text-sm text-destructive max-w-sm mx-auto">
-            {regenerate.error instanceof ApiCallError
-              ? regenerate.error.payload.error.message
-              : 'Could not create a subscription right now. Please try again later.'}
-          </p>
+          <p class="text-sm text-destructive max-w-sm mx-auto">{apiErrorMessage(regenerate.error)}</p>
         {/if}
       </div>
     {/if}

@@ -3,13 +3,17 @@
   import { Button } from '@client/components/ui/button';
   import CapWidget from '../components/CapWidget.svelte';
   import { configQuery } from '../lib/queries';
-  import { apiClient, ApiCallError } from '../lib/api';
+  import { apiClient } from '../lib/api';
+  import { apiErrorMessage } from '../lib/errors';
+  import { t, normalizeDigits } from '../lib/i18n/index.svelte';
   import { queryClient } from '../lib/query-client';
   import { queryKeys } from '../lib/queries';
   import { router } from '../stores/router.svelte';
   import { createMutation } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import LogIn from '@lucide/svelte/icons/log-in';
+  import Eye from '@lucide/svelte/icons/eye';
+  import EyeOff from '@lucide/svelte/icons/eye-off';
 
   // The ONLY member sign-in path post-migration: the random account number
   // (no OIDC, no password). Turnstile gates every attempt server-side; we just
@@ -17,20 +21,17 @@
   // fs_session cookie and we bounce to /account.
   const config = configQuery();
   let token = $state<string | null>(null);
+  // P1-12: store the digits-only value the user has typed. We do NOT reformat the
+  // input's bound value on every keystroke (that's what jumped the caret to the
+  // end mid-edit); grouping is shown via the placeholder + monospace tracking,
+  // and on blur. Persian/Arabic-Indic numerals are normalized to ASCII.
   let accountId = $state('');
+  let reveal = $state(false);
   let captchaEndpoint = $derived(config.data?.captcha.apiEndpoint ?? '/cap');
   let captchaSiteKey = $derived(config.data?.captcha.siteKey ?? '');
 
-  // Display helper: group the digits the user types into 4s, like the reveal
-  // panel shows them. Stored/submitted value is digits-only (server normalizes
-  // again defensively).
   const ACCOUNT_ID_LEN = 32;
-  let formatted = $derived(
-    accountId
-      .replace(/\D/g, '')
-      .slice(0, ACCOUNT_ID_LEN)
-      .replace(/(\d{4})(?=\d)/g, '$1 '),
-  );
+  const digitsOnly = $derived(accountId.replace(/\D/g, '').slice(0, ACCOUNT_ID_LEN));
 
   const LoginResult = z.object({ ok: z.boolean() });
 
@@ -38,7 +39,7 @@
     mutationFn: () =>
       apiClient.post(
         '/api/v1/auth/account-login',
-        { accountId: accountId.replace(/\D/g, ''), captchaToken: token! },
+        { accountId: digitsOnly, captchaToken: token! },
         LoginResult,
       ),
     onSuccess: async () => {
@@ -49,14 +50,21 @@
       router.navigate('/account');
     },
     onError: (err) => {
-      const msg = err instanceof ApiCallError ? err.payload.error.message : String(err);
-      toast.error('Sign-in failed', { description: msg });
+      toast.error(t('login.failed'), { description: apiErrorMessage(err) });
     },
   }));
 
-  let canSubmit = $derived(
-    accountId.replace(/\D/g, '').length === ACCOUNT_ID_LEN && !!token && !login.isPending,
-  );
+  function onInput(e: Event) {
+    // Normalize non-ASCII digits, then keep what the user typed (incl. their own
+    // spaces) — no reformat, so the caret stays put.
+    accountId = normalizeDigits((e.currentTarget as HTMLInputElement).value);
+  }
+  function onBlur() {
+    // Tidy into groups of 4 once focus leaves (purely cosmetic).
+    accountId = digitsOnly.replace(/(\d{4})(?=\d)/g, '$1 ');
+  }
+
+  let canSubmit = $derived(digitsOnly.length === ACCOUNT_ID_LEN && !!token && !login.isPending);
 </script>
 
 <div class="max-w-md mx-auto py-10 md:py-16 space-y-8">
@@ -65,14 +73,13 @@
       class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 text-primary px-3 py-1 text-xs font-semibold uppercase tracking-wider"
     >
       <LogIn class="size-3.5" />
-      Sign in
+      {t('nav.signIn')}
     </div>
     <h1 class="text-3xl md:text-4xl font-display font-bold tracking-tight">
-      Sign in with your account number
+      {t('login.title')}
     </h1>
     <p class="text-sm text-muted-foreground">
-      Enter the 32-digit account number you saved when you got your key. It's the only way to sign
-      in: there's no email or password to recover.
+      {t('login.subtitle')}
     </p>
   </header>
 
@@ -82,48 +89,69 @@
         for="account-number"
         class="text-xs uppercase tracking-wider text-muted-foreground font-semibold"
       >
-        Account number
+        {t('login.label')}
       </label>
+      <!-- A hidden, stable "username" so password managers index this credential
+           as a saveable entry (the account number is the "password"). -->
       <input
-        id="account-number"
-        inputmode="numeric"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="1234 5678 9012 3456 7890 1234 5678 9012"
-        value={formatted}
-        oninput={(e) => (accountId = (e.currentTarget as HTMLInputElement).value)}
-        onkeydown={(e) => {
-          if (e.key === 'Enter' && canSubmit) login.mutate();
-        }}
-        class="w-full rounded-md border border-border bg-background px-3 py-2.5 font-mono text-base tracking-normal tabular-nums focus:outline-none focus:ring-2 focus:ring-primary"
+        type="text"
+        name="username"
+        autocomplete="username"
+        value="freesocks-account"
+        readonly
+        tabindex="-1"
+        aria-hidden="true"
+        class="sr-only"
       />
+      <div class="relative">
+        <input
+          id="account-number"
+          type={reveal ? 'text' : 'password'}
+          inputmode="numeric"
+          autocomplete="current-password"
+          spellcheck="false"
+          placeholder="1234 5678 9012 3456 7890 1234 5678 9012"
+          value={accountId}
+          oninput={onInput}
+          onblur={onBlur}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && canSubmit) login.mutate();
+          }}
+          class="min-h-11 w-full rounded-md border border-border bg-background px-3 py-2.5 pe-10 font-mono text-base tracking-wider tabular-nums focus:outline-none focus:ring-2 focus:ring-primary"
+        />
+        <button
+          type="button"
+          onclick={() => (reveal = !reveal)}
+          class="absolute inset-y-0 end-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+          aria-label={reveal ? t('login.hide') : t('login.show')}
+        >
+          {#if reveal}<EyeOff class="size-4" />{:else}<Eye class="size-4" />{/if}
+        </button>
+      </div>
     </div>
 
     <CapWidget
       apiEndpoint={captchaEndpoint}
       siteKey={captchaSiteKey}
-      onVerify={(t) => (token = t || null)}
+      onVerify={(tok) => (token = tok || null)}
     />
 
     {#if login.error}
       <div
         class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive"
       >
-        {login.error instanceof ApiCallError
-          ? login.error.payload.error.message
-          : String(login.error)}
+        {apiErrorMessage(login.error)}
       </div>
     {/if}
 
-    <Button onclick={() => login.mutate()} disabled={!canSubmit} size="lg" class="w-full">
+    <Button onclick={() => login.mutate()} disabled={!canSubmit} size="lg" class="w-full min-h-11">
       <LogIn class="size-4" />
-      {login.isPending ? 'Signing in…' : 'Sign in'}
+      {login.isPending ? t('login.submitting') : t('login.submit')}
     </Button>
   </div>
 
   <p class="text-xs text-muted-foreground text-center">
-    Don't have an account number yet?{' '}
-    <a href="/get-account" class="text-primary underline">Get a free account</a>: you'll be shown
-    one to save.
+    {t('login.noAccount')}{' '}
+    <a href="/get-account" class="text-primary underline">{t('login.getOne')}</a>
   </p>
 </div>
