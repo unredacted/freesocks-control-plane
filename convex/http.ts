@@ -59,6 +59,30 @@ function convexError(err: unknown): Response {
   throw err;
 }
 
+/**
+ * Map a subscription-issuance failure (account.regenerate / switch-backend) to a
+ * clean envelope. A missing/empty proxy backend ("No active <backend> instances")
+ * becomes a 503 the user can act on; anything else is logged server-side (the
+ * backend error types already scrub URLs/secrets) and returned as a generic 502,
+ * never a bare 500. Pairs with src/client/lib/api.ts's non-envelope fallback.
+ */
+function issuanceErrorResponse(err: unknown, requestId: string): Response {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/No active .* instances/i.test(msg)) {
+    return errorJson(
+      'backend.unavailable',
+      'No proxy server is available right now. Please try again later or contact support.',
+      503,
+    );
+  }
+  console.error(`[subscription] issuance failed (req ${requestId}): ${msg}`);
+  return errorJson(
+    'issuance.failed',
+    'Could not create a subscription right now. Please try again later.',
+    502,
+  );
+}
+
 const ADMIN_UNAUTH = () => errorJson('auth.unauthenticated', 'Authentication required', 401);
 
 /**
@@ -145,51 +169,33 @@ http.route({
   }),
 });
 
-// --- subscription -----------------------------------------------------------
+// --- account creation -------------------------------------------------------
+// Anonymous sign-up: Turnstile -> mint a user + account number + member session.
+// NO proxy backend is touched here (the proxy key is created separately, once
+// signed in, via POST /api/v1/account/regenerate), so a missing/empty backend
+// can never block account creation. The account-number reveal is sealed (the
+// '/api/v1/account' reveal policy in src/shared/crypto/envelope.ts).
 
 http.route({
-  path: '/api/v1/subscription',
+  path: '/api/v1/account',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
     const requestId = newRequestId();
+
+    // Already signed in? They already have an account.
+    if (await resolveMember(ctx, req)) {
+      return errorJson(
+        'account.exists',
+        'You are already signed in. Sign out before creating another account.',
+        409,
+      );
+    }
+
     const body = await readJson<{ turnstileToken?: string; backend?: 'remnawave' | 'outline' }>(
       req,
     );
-
-    // Authenticated member: return their current subscription (members
-    // re-issue via /account/regenerate, not here).
-    const member = await resolveMember(ctx, req);
-    if (member) {
-      const view = await ctx.runAction(internal.account.getAccountView, { userId: member.userId });
-      if (!view?.subscription) {
-        return errorJson(
-          'subscription.absent',
-          'No subscription on file. Use /api/v1/account/regenerate to create one.',
-          409,
-        );
-      }
-      const s = view.subscription;
-      return json({
-        subscriptionUrl: s.url,
-        fallbackUrl: s.mirrors[0]?.publicUrl,
-        mirrors: s.mirrors,
-        tier: {
-          slug: view.user.tier.slug,
-          name: view.user.tier.name,
-          monthlyTrafficGb: view.user.tier.monthlyTrafficGb,
-          deviceLimit: view.user.tier.deviceLimit,
-        },
-        backend: s.backend,
-        expiresAt: s.expiresAt,
-        trafficLimitBytes: s.trafficLimitBytes,
-        trafficUsedBytes: s.trafficUsedBytes,
-        isReissued: false,
-      });
-    }
-
-    // Anonymous: Turnstile + fail-closed client IP + the free-tier saga.
     if (!body.turnstileToken) {
-      return errorJson('validation', 'Turnstile token required for anonymous requests', 400);
+      return errorJson('validation', 'Turnstile token required', 400);
     }
     const ip = resolveClientIp(req);
     if (!ip) {
@@ -205,7 +211,8 @@ http.route({
     if (!ts.success)
       return errorJson('auth.turnstile_failed', 'Turnstile verification failed', 403);
 
-    // Resolve the backend from app settings (+ optional honored preference).
+    // Resolve which default-free tier (backend) the new account lands on. This
+    // reads only the admin enabled/default toggles, never proxy availability.
     const settings = await ctx.runQuery(api.appSettings.resolved, {});
     let backend = settings['subscription.default_backend'] as 'remnawave' | 'outline';
     if (body.backend && settings['subscription.user_choice_enabled']) backend = body.backend;
@@ -217,9 +224,13 @@ http.route({
       );
     }
 
+    // PoP (Phase 2): account creation establishes a member session, so the client
+    // folds its session public key into the (sealed) body to bind it (like login).
+    const popRaw = (body as Record<string, unknown>)[POP_PUBKEY_FIELD];
+
     let result;
     try {
-      result = await ctx.runAction(internal.freeTier.issueOrReissue, {
+      result = await ctx.runAction(internal.freeTier.createFreeAccount, {
         ip,
         ipCountry: req.headers.get('cf-ipcountry') ?? undefined,
         userAgent: req.headers.get('user-agent') ?? undefined,
@@ -227,78 +238,37 @@ http.route({
         turnstileCdata: ts.cdata,
         requestId,
         backend,
+        popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
       });
     } catch (err) {
+      // Account creation has no backend dependency, so a throw here is a config
+      // or infra error. Log the detail server-side; return a clean envelope.
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.startsWith('rate_limit')) {
-        return errorJson(
-          'rate_limit.exceeded',
-          'Daily free-tier limit reached on this network.',
-          429,
-        );
-      }
-      // No proxy instance of the chosen backend is registered/active yet (e.g. a
-      // fresh deploy with no Remnawave instance). Surface a clean 503 instead of
-      // letting it escape as a bare 500.
-      if (/No active .* instances/i.test(msg)) {
-        return errorJson(
-          'backend.unavailable',
-          'No proxy server is available right now. Please try again later or contact support.',
-          503,
-        );
-      }
-      // Any other issuance failure (e.g. a backend API error). Return a clean
-      // envelope; the detail is logged server-side only, never leaked to the
-      // client (and the backend error types already scrub URLs/secrets).
-      console.error(`[subscription] free-tier issuance failed (req ${requestId}): ${msg}`);
+      console.error(`[account] create failed (req ${requestId}): ${msg}`);
       return errorJson(
-        'issuance.failed',
-        'Could not issue a key right now. Please try again later.',
+        'account.create_failed',
+        'Could not create an account right now. Please try again later.',
         502,
       );
     }
 
-    const tier = await ctx.runQuery(api.tiers.getBySlug, { slug: result.user.tierSlug });
-    const mirrors = result.subscription.mirrors.map((m) => ({
-      provider: m.provider,
-      publicUrl: m.publicUrl,
-    }));
-    return json({
-      subscriptionUrl: result.subscription.url,
-      fallbackUrl: mirrors[0]?.publicUrl,
-      mirrors,
-      tier: {
-        slug: result.user.tierSlug,
-        name: tier?.name ?? result.user.tierSlug,
-        monthlyTrafficGb: tier?.monthlyTrafficGb ?? 0,
-        deviceLimit: tier?.deviceLimit ?? 1,
-      },
-      backend: result.subscription.backend,
-      expiresAt: result.subscription.expireAt,
-      trafficLimitBytes: result.subscription.trafficLimitBytes,
-      trafficUsedBytes: 0,
-      isReissued: result.reissued,
-      ...(result.reissued
-        ? { accountIdAvailable: result.accountIdAvailable }
-        : { accountId: result.accountId, accountIdAvailable: true }),
-    });
-  }),
-});
+    if (!result.ok) {
+      // The per-(IP,day) cap is reached. There is no key to hand back (issuance
+      // is a separate flow now), so the visitor signs in with their number.
+      return errorJson(
+        'freetier.cap_reached',
+        'You have already created an account from this network today. Sign in with your account number instead.',
+        429,
+      );
+    }
 
-http.route({
-  path: '/api/v1/subscription',
-  method: 'GET',
-  handler: sealed(async (ctx, req) => {
-    const member = await resolveMember(ctx, req);
-    if (!member) return json({ subscription: null });
-    const view = await ctx.runAction(internal.account.getAccountView, { userId: member.userId });
-    if (!view?.subscription) return json({ subscription: null });
-    return json({
-      subscription: {
-        url: view.subscription.url,
-        shortUuid: view.subscription.shortUuid,
-        mirrors: view.subscription.mirrors,
-      },
+    const cookie = buildSetCookie(MEMBER_COOKIE, result.signedCookieValue, {
+      maxAge: result.maxAgeSec,
+      sameSite: 'Lax',
+      secure: secureCookies(),
+    });
+    return json({ accountId: result.accountId, tier: result.tier, authenticated: true }, 200, {
+      'set-cookie': cookie,
     });
   }),
 });
@@ -395,11 +365,16 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req);
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const result = await ctx.runAction(internal.account.regenerate, {
-      userId: member.userId,
-      requestId: newRequestId(),
-    });
-    return json(result);
+    const requestId = newRequestId();
+    try {
+      const result = await ctx.runAction(internal.account.regenerate, {
+        userId: member.userId,
+        requestId,
+      });
+      return json(result);
+    } catch (err) {
+      return issuanceErrorResponse(err, requestId);
+    }
   }),
 });
 
@@ -414,11 +389,17 @@ http.route({
       return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
     }
     if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
-    const result = await ctx.runAction(internal.account.switchBackend, {
-      userId: member.userId,
-      target: body.backend,
-      requestId: newRequestId(),
-    });
+    const requestId = newRequestId();
+    let result;
+    try {
+      result = await ctx.runAction(internal.account.switchBackend, {
+        userId: member.userId,
+        target: body.backend,
+        requestId,
+      });
+    } catch (err) {
+      return issuanceErrorResponse(err, requestId);
+    }
     if (!result.ok) return errorJson(result.code, result.message, result.status);
     const {
       ok: _ok,

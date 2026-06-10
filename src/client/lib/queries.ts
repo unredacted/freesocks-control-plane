@@ -74,11 +74,17 @@ export const configQuery = () =>
 
 // --- Member surface ----------------------------------------------------------
 
-export const accountQuery = () =>
+/**
+ * Member account view. `enabled` is optional so callers that may render while
+ * still anonymous (e.g. /get-account before sign-up completes) can gate the
+ * fetch and avoid a spurious 401; /account just calls `accountQuery()`.
+ */
+export const accountQuery = (enabled?: () => boolean) =>
   createQuery(() => ({
     queryKey: queryKeys.account,
     queryFn: () => apiClient.get('/api/v1/account', AccountResponse),
     staleTime: 30_000,
+    ...(enabled ? { enabled: enabled() } : {}),
   }));
 
 // --- Admin surface -----------------------------------------------------------

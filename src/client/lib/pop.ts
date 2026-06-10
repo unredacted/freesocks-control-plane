@@ -25,8 +25,22 @@ import {
 /** Keys are scoped so member and admin never share one (see pop-worker.ts). */
 export type Realm = 'member' | 'admin';
 
-/** Member login + admin passkey verify establish a session key and post the pubkey. */
+/** Member login establishes a session key and posts the pubkey. */
 const MEMBER_LOGIN_PATH = '/api/v1/auth/account-login';
+/** Anonymous account creation also establishes a member session (auto sign-in). */
+const MEMBER_CREATE_PATH = '/api/v1/account';
+
+/**
+ * POSTs that establish a member session by binding a freshly-minted PoP key.
+ * They cannot themselves be PoP-signed (the key is bound by this very request)
+ * and instead carry the public key in the body. Method-scoped so the
+ * GET /api/v1/account view stays signed like any other authenticated read.
+ */
+function isMemberSessionEstablish(path: string, method: string): boolean {
+  if (method.toUpperCase() !== 'POST') return false;
+  const p = normalizePath(path);
+  return p === MEMBER_LOGIN_PATH || p === MEMBER_CREATE_PATH;
+}
 
 /** Admin resources live under these prefixes; everything else authenticated is a member route. */
 function realmForPath(path: string): Realm {
@@ -34,10 +48,13 @@ function realmForPath(path: string): Realm {
   return p.startsWith('/api/v1/admin/') || p.startsWith('/api/admin/') ? 'admin' : 'member';
 }
 
-/** Paths that must NOT be PoP-signed: the auth ceremonies (no session yet) + logout. */
-function signEligible(path: string): boolean {
+/** Paths that must NOT be PoP-signed: the session-establish ceremonies + logout. */
+function signEligible(path: string, method: string): boolean {
   const p = normalizePath(path);
-  if (p === MEMBER_LOGIN_PATH || p === '/api/v1/auth/logout') return false;
+  // Session-establishing POSTs (login, account creation) bind the key in-body;
+  // they are never signed. GET /api/v1/account, by contrast, IS signed.
+  if (isMemberSessionEstablish(p, method)) return false;
+  if (p === '/api/v1/auth/logout') return false;
   if (p.startsWith('/api/admin/auth/')) return false;
   return p.startsWith('/api/');
 }
@@ -119,16 +136,18 @@ export async function clearSessionKey(realm: Realm = 'member'): Promise<void> {
 }
 
 /**
- * If `path` establishes a session (member login), make sure a session key
- * exists and merge its public point into the (about-to-be-sealed) request body.
- * Returns the body string to send (augmented or unchanged). Admin passkey verify
- * is wired separately because it does not flow through apiClient.
+ * If `path`+`method` establishes a member session (login or account creation),
+ * make sure a session key exists and merge its public point into the
+ * (about-to-be-sealed) request body. Returns the body string to send (augmented
+ * or unchanged). Admin passkey verify is wired separately because it does not
+ * flow through apiClient.
  */
 export async function augmentLoginBody(
   path: string,
+  method: string,
   bodyStr: string | undefined,
 ): Promise<string | undefined> {
-  if (normalizePath(path) !== MEMBER_LOGIN_PATH) return bodyStr;
+  if (!isMemberSessionEstablish(path, method)) return bodyStr;
   const pub = await ensureSessionKey();
   if (!pub) return bodyStr;
   return injectPopPub(bodyStr, pub);
@@ -194,7 +213,7 @@ export async function signedHeaders(
   wireBody: string | undefined,
   respEph?: string,
 ): Promise<Record<string, string> | null> {
-  if (!signEligible(path)) return null;
+  if (!signEligible(path, method)) return null;
   const p = normalizePath(path);
   const qIdx = path.indexOf('?');
   const query = qIdx >= 0 ? path.slice(qIdx + 1) : undefined;

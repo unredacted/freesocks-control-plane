@@ -26,7 +26,9 @@ import { hmacSha256Hex, randomHex } from './lib/crypto';
 import { signValue } from './lib/cookies';
 import { verifyTurnstile } from './lib/turnstile';
 
-const MEMBER_TTL_MS = 30 * 86_400_000; // 30 days, matches the old fs_session cookie.
+// 30 days, matches the old fs_session cookie. Exported so freeTier.createFreeAccount
+// (account creation also establishes a member session) uses the same TTL.
+export const MEMBER_TTL_MS = 30 * 86_400_000;
 const FAILURE_FLOOR_MS = 300;
 
 type LoginResult =

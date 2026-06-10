@@ -207,7 +207,8 @@ export interface RoutePolicy {
 
 export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   '/api/v1/auth/account-login': { request: 'seal', response: 'plain' },
-  '/api/v1/subscription': { request: 'plain', response: 'reveal' },
+  // POST mints + reveals the account number (and binds the PoP key); GET reveals
+  // the authenticated account view. Both share this reveal policy.
   '/api/v1/account': { request: 'plain', response: 'reveal' },
   '/api/v1/account/regenerate': { request: 'plain', response: 'reveal' },
   '/api/v1/account/switch-backend': { request: 'plain', response: 'reveal' },

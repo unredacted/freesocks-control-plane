@@ -28,9 +28,10 @@ Files: `docker-compose.beta.yml`, `Caddyfile`, `docker/web.Dockerfile`,
   stack comes up regardless).
 - The repo checked out on the host (it is the build context). Nothing else: the
   SPA build, function deploy, and seeding all run inside the stack.
-- A real **Remnawave panel** (base URL + API token) if you want issuance to mint
-  real keys. Beta has no dev mock; with no backend instance, get-account returns
-  "no active instances" (see §4).
+- A real **Remnawave panel** (base URL + API token) if you want the subscription
+  step to mint real keys. Beta has no dev mock. Account creation never needs a
+  backend; only the proxy-subscription step does, and with no backend instance it
+  shows "no active instances" (see §4).
 
 ## 1. Fill the two env files
 
@@ -84,12 +85,16 @@ bootstrap wizard appears: paste the `ADMIN_BOOTSTRAP_SECRET` you set in
 `.env.convex`, then register a passkey. Bootstrap **locks forever** once any
 credential exists.
 
-## 4. Add a backend instance (issuance needs one)
+## 4. Add a backend instance (the subscription step needs one)
 
-If you did not set `REMNAWAVE_*` in `.env.convex`, add an instance in the admin CMS:
-**Backend servers** -> add a Remnawave instance (base URL + API token; use **Test
-connection** before saving). Without an active instance of the default-free tier's
-backend type, get-account returns "No active remnawave instances".
+Account creation never needs a proxy instance: `/get-account` mints the account
+and reveal-once number with just a Turnstile check, even on a fresh box. The proxy
+**subscription** does need an active instance of the account's backend type. If you
+did not set `REMNAWAVE_*` in `.env.convex`, add one in the admin CMS: **Backend
+servers** -> add a Remnawave instance (base URL + API token; use **Test connection**
+before saving). Until then, the "Create subscription" step (on `/get-account` or
+`/account`) shows a clean "No proxy server is available right now" notice instead of
+a key; the account itself is unaffected.
 
 ## 5. Verify
 
@@ -99,8 +104,10 @@ curl -sI  https://beta.freesocks.org | grep -i -E 'content-security-policy|stric
 ```
 
 In a browser:
+
 - the home page loads over a valid TLS cert;
-- `/get-account` issues a key (after §4) and shows the reveal-once account number;
+- `/get-account` step 1 ("Create my account") reveals the account number even with
+  no backend instance; step 2 ("Create subscription") issues a key after §4;
 - signing in with that account number works;
 - `/admin` passkey login works;
 - the session cookie is `Secure` (DevTools), because `ENVIRONMENT=production`.

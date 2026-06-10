@@ -37,7 +37,7 @@ Detailed companions, referenced rather than duplicated here:
 ### 1.1 Identity & authentication: three schemes, NO OIDC
 
 - **Account number** (members): a random **32-digit** credential (~106 bits), minted once at
-  key issuance (reveal-once), stored only as a peppered keyed hash
+  account creation (reveal-once), stored only as a peppered keyed hash
   (`HMAC-SHA256(ACCOUNT_ID_PEPPER, number)`), the **only** member identity. `POST /api/v1/auth/account-login` (Turnstile +
   strict per-prefix/per-IP rate limits + constant-time, generic-failure) → signed `fs_session`
   cookie. Rotatable (`POST /api/v1/account/account-id/rotate`). `convex/auth.ts`,
@@ -54,19 +54,21 @@ Detailed companions, referenced rather than duplicated here:
   `resolveMember` / `resolveAdmin` / `resolveBearer` in `convex/lib/http.ts` (signed cookie
   OR `fsv1_` token). **Live.**
 
-### 1.2 Free-tier issuance (`convex/freeTier.ts`): **Live**
+### 1.2 Free-tier account creation (`convex/freeTier.ts`): **Live**
 
-- Turnstile-gated anonymous key issuance via `POST /api/v1/subscription`.
+- Turnstile-gated anonymous account creation via `POST /api/v1/account`
+  (`createFreeAccount`): mint user + reveal-once account number + member session.
+  **Decoupled from proxy issuance**, so it never depends on a backend being available; the
+  proxy key is created separately by the signed-in member (§1.4).
 - **Serializable per-(IP, day) cap**: `claimFreeSlot` reads the `freeGrants` for
   `(ipHash, dayBucket)` over the `by_ip_day` index and inserts only if under cap. Convex's
   serializable OCC makes two concurrent claims conflict, so the cap holds exactly (closes the
   H1 over-issuance race **by construction**; see `deferred-security-bugs.md`).
-- Reissue path: a same-(IP, day) request with one prior live grant returns the existing key
-  (`accountIdAvailable:false`) instead of rejecting.
-- The slot is held before any backend HTTP; `releaseFreeSlot` compensates if issuance fails,
-  so a transient error doesn't burn the IP's daily allowance.
+- Cap reached (same IP, day): `freetier.cap_reached` (429). There is no key to hand back, so
+  the visitor signs in with their existing number. `releaseFreeSlot` compensates if the
+  mint/session step fails, so a transient error doesn't burn the IP's daily allowance.
 - Fail-closed client-IP resolution (`convex/lib/http.ts`): trust `cf-connecting-ip`;
-  `x-forwarded-for` only when `TRUSTED_PROXY=true`; refuse issuance on an unresolvable IP.
+  `x-forwarded-for` only when `TRUSTED_PROXY=true`; refuse on an unresolvable IP.
 - `cleanup-expired-free` daily cron removes lapsed free users (backend + S3 + local).
 
 ### 1.3 Entitlements, tiers & lifecycle (`convex/lifecycle.ts`, `convex/tiers.ts`): **Live**
@@ -81,9 +83,11 @@ Detailed companions, referenced rather than duplicated here:
 
 ### 1.4 Subscription delivery (`convex/lib/issuance.ts`, `convex/account.ts`): **Live**
 
-- Backend-agnostic issue / mirror / teardown saga. `GET|POST /api/v1/subscription`;
-  `/api/v1/account` **regenerate** + **switch-backend** (24h tombstone overlap). Optional S3
-  multi-provider mirrors; `tombstone-sweep` cron hard-deletes after the grace window.
+- Backend-agnostic issue / mirror / teardown saga, run as a signed-in member action:
+  `/api/v1/account` **regenerate** (create-or-replace the proxy key) + **switch-backend** (24h
+  tombstone overlap). A missing/empty backend surfaces as a retryable `backend.unavailable`
+  (503), mapped in `convex/http.ts`. Optional S3 multi-provider mirrors; `tombstone-sweep`
+  cron hard-deletes after the grace window.
 - Switch-backend interim: free-tier users switch via the default-free peer tier on the target
   backend; **paid cross-backend switching returns 409** until the billing portal defines tier
   linkage (CiviCRM's linkage is gone). Documented in `convex/account.ts`.
@@ -150,11 +154,11 @@ Convex runs these natively (no Workers triggers, no node-cron):
 There are **no `TODO`/`FIXME` markers in `convex/` or `src/`**; open work lives here and in
 the companion docs. Sizes: S/M/L.
 
-| Item                                                                                                                                                                              | Size | Where it's tracked          |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | --------------------------- |
-| **Billing portal integration**: the webhook seam (`/api/webhooks/billing` → `setMembership`) is ready; the in-house portal that calls it is the future entitlement source.        | L    | this file (§1.7)            |
-| **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until the billing portal defines cross-backend tier linkage. Needs the portal's tier model.     | M    | `convex/account.ts`         |
-| **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.    | M    | `deferred-security-bugs.md` |
+| Item                                                                                                                                                                           | Size | Where it's tracked          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---- | --------------------------- |
+| **Billing portal integration**: the webhook seam (`/api/webhooks/billing` → `setMembership`) is ready; the in-house portal that calls it is the future entitlement source.     | L    | this file (§1.7)            |
+| **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until the billing portal defines cross-backend tier linkage. Needs the portal's tier model.  | M    | `convex/account.ts`         |
+| **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to. | M    | `deferred-security-bugs.md` |
 
 ---
 

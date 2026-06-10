@@ -12,11 +12,12 @@ is the **only** member credential.
 >   `convex/auth.ts:accountLogin`): Turnstile-gated, strict per-prefix (30/day) +
 >   per-IP (10/h) rate limits, always-hash + ~300ms failure floor (constant-time),
 >   one generic failure shape (no existence oracle) → signed `fs_session` cookie.
-> - **Mint-at-issuance + reveal-once**: free-tier issuance mints a number
->   (`convex/accountId.ts:mintForUser`, CSPRNG) and returns it once in the
->   `POST /api/v1/subscription` response (`accountId` on first issue;
->   `accountIdAvailable:false` on a same-IP/day reissue). Only the peppered HMAC-SHA256 hash +
->   4-digit prefix are persisted (`users.accountIdHash` / `accountIdPrefix`).
+> - **Mint-at-account-creation + reveal-once**: anonymous account creation mints
+>   a number (`convex/accountId.ts:mintForUser`, CSPRNG) and returns it once in
+>   the `POST /api/v1/account` response (`convex/freeTier.ts:createFreeAccount`).
+>   This is decoupled from proxy issuance, so it never depends on a backend being
+>   available. Only the peppered HMAC-SHA256 hash + 4-digit prefix are persisted
+>   (`users.accountIdHash` / `accountIdPrefix`).
 > - **Rotate**: `POST /api/v1/account/account-id/rotate`
 >   (`convex/auth.ts:rotateAccountId`): new number revealed once, old hash
 >   overwritten, audited.
@@ -128,21 +129,29 @@ time is constant regardless of validity. Treat unknown identifiers and
 rate-limited identifiers with identical response body. Add a constant ~300ms
 artificial floor on failures.
 
-## 4. Issuance flow changes
+## 4. Account-creation flow
 
-`POST /api/v1/subscription` (anonymous path in `free-tier.ts`):
+Account creation is its own flow, decoupled from proxy-key issuance:
+`POST /api/v1/account` (`convex/http.ts` -> `convex/freeTier.ts:createFreeAccount`):
 
-1. Generate a fresh 32-digit identifier inside the free-tier issuance flow.
-   Use `crypto.getRandomValues` over `Uint8Array(8)`; reduce each byte mod-10
-   with rejection sampling to avoid modulo bias.
-2. Hash, store in `users.account_id_hash`; store the prefix in
-   `users.account_id_prefix`. On the (vanishingly rare) collision, retry once.
-3. Add `accountId` (plaintext, one-time) to `SubscriptionResponse`. Update
-   `src/shared/contracts/subscription.ts` accordingly.
-4. **Reissue path** (same-IP-same-day): do NOT return a new account number.
-   The original was shown once; we don't surface a new one because the original
-   is still valid. Add `accountIdAvailable: false` flag so the SPA can skip the
-   reveal panel.
+1. Turnstile + fail-closed client IP are verified in the HTTP layer; the
+   per-(IP,day) cap is the serializable `claimFreeSlot` (which creates the bare
+   user + the grant ledger row).
+2. Generate a fresh 32-digit identifier (`convex/accountId.ts:mintForUser`,
+   CSPRNG over `Uint8Array(8)`, reduced mod-10 with rejection sampling to avoid
+   modulo bias). Persist only the peppered hash in `users.accountIdHash` plus the
+   4-digit `users.accountIdPrefix`; retry once on the vanishingly rare collision.
+3. Mint a member session + signed `fs_session` cookie (auto sign-in), then return
+   `accountId` (plaintext, one-time) in `CreateAccountResponse`
+   (`src/shared/contracts/account.ts`). NO proxy backend is touched, so account
+   creation succeeds even with no server available.
+4. **Cap reached** (same-IP-same-day): return `freetier.cap_reached` (429). There
+   is no key to hand back (issuance is a separate flow), so the visitor signs in
+   with their existing number instead.
+
+The proxy subscription is created separately, once signed in, via
+`POST /api/v1/account/regenerate` (a missing or empty backend surfaces there as a
+retryable `backend.unavailable`, and never blocks the account).
 
 `SubscriptionHero` gains a prominent, dismissible "Save this account number"
 panel ABOVE the URL: large monospaced four-group display, copy button,

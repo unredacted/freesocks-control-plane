@@ -410,6 +410,13 @@
           <Plus class="size-4" />
           {regenerate.isPending ? 'Creating…' : 'Create subscription'}
         </Button>
+        {#if regenerate.error}
+          <p class="text-sm text-destructive max-w-sm mx-auto">
+            {regenerate.error instanceof ApiCallError
+              ? regenerate.error.payload.error.message
+              : 'Could not create a subscription right now. Please try again later.'}
+          </p>
+        {/if}
       </div>
     {/if}
 

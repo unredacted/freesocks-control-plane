@@ -13,7 +13,9 @@ class ApiCallError extends Error {
     // Be robust to a non-envelope error body (e.g. a bare upstream 500 that
     // isn't our { error: { code, message } } shape): fall back to a generic
     // message instead of throwing while constructing the error.
-    super((payload as { error?: { message?: string } })?.error?.message ?? `Request failed (${status})`);
+    super(
+      (payload as { error?: { message?: string } })?.error?.message ?? `Request failed (${status})`,
+    );
   }
 }
 
@@ -28,7 +30,7 @@ async function request<S extends z.ZodTypeAny>(
   // PoP (Phase 2): at login, mint/ensure the session signing key and fold its
   // public point into the body (it then gets sealed with the account number on
   // the login route). No-op for every other route.
-  const outBodyStr = await augmentLoginBody(path, bodyStr);
+  const outBodyStr = await augmentLoginBody(path, method, bodyStr);
 
   // CDN-blinding: seal the request body and/or set up to open a sealed response,
   // per the route policy. No-op (undefined) for non-sealed routes or when the

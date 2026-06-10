@@ -1,9 +1,8 @@
 /**
  * The issuance saga (P5c): the read→act→write decomposition of the old
  * SubscriptionDeliveryService.issueNew. A plain helper (not a registered
- * function) invoked from within an action (free-tier issueOrReissue, and later
- * regenerate/switch-backend), so it shares the caller's ActionCtx instead of
- * paying an action-to-action hop.
+ * function) invoked from within an action (account.regenerate / switchBackend),
+ * so it shares the caller's ActionCtx instead of paying an action-to-action hop.
  *
  * Flow: backend create (HTTP) → mirror content to S3 → persist the row →
  * point the user at it. On any post-create failure it deletes the backend user

@@ -101,3 +101,35 @@ export const SwitchBackendResponse = z.object({
   oldSubscriptionDeletedAt: z.string().datetime().nullable(),
 });
 export type SwitchBackendResponse = z.infer<typeof SwitchBackendResponse>;
+
+/**
+ * Body for `POST /api/v1/account` (anonymous free-account creation). Turnstile
+ * gates it (same widget as login). `backend` is an optional preference for which
+ * default-free tier (and thus backend) the account lands on, honored only when
+ * `subscription.user_choice_enabled` is set; no proxy server is provisioned here.
+ */
+export const CreateAccountRequest = z.object({
+  turnstileToken: z.string().min(1),
+  backend: BackendId.optional(),
+});
+export type CreateAccountRequest = z.infer<typeof CreateAccountRequest>;
+
+/**
+ * Result of creating a free account. The caller is auto-signed-in (the response
+ * carries a `Set-Cookie`), so `authenticated` is always true. `accountId` is the
+ * reveal-once 32-digit number (stored only as a hash; never returned again).
+ * No subscription is created here: the member creates the proxy key separately
+ * via `POST /api/v1/account/regenerate`.
+ */
+export const CreateAccountResponse = z.object({
+  accountId: z.string(),
+  tier: z.object({
+    slug: TierSlug,
+    name: z.string(),
+    monthlyTrafficGb: z.number(),
+    deviceLimit: z.number(),
+    backend: BackendId,
+  }),
+  authenticated: z.literal(true),
+});
+export type CreateAccountResponse = z.infer<typeof CreateAccountResponse>;

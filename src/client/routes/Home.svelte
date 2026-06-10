@@ -37,8 +37,8 @@
   const features = [
     {
       icon: Lock,
-      title: 'No signup',
-      body: 'A Turnstile human-check is the entire onboarding. No email, no account.',
+      title: 'No email or password',
+      body: 'One human-check and you are in. We mint a 32-digit account number you save to sign back in. No email collected.',
     },
     {
       icon: Globe,
@@ -55,13 +55,13 @@
   const steps = [
     {
       n: 1,
-      title: 'Solve a quick check',
-      body: 'A Turnstile widget loads to confirm you are human.',
+      title: 'Create a free account',
+      body: 'Solve a quick human-check. You get a 32-digit account number to save: it is how you sign back in.',
     },
     {
       n: 2,
-      title: 'Get a subscription URL',
-      body: 'A subscription URL is issued, with a QR code for handoff to a phone.',
+      title: 'Create your subscription',
+      body: 'Once you are signed in, create a subscription URL, with a QR code for handoff to a phone.',
     },
     {
       n: 3,
@@ -89,8 +89,9 @@
       </h1>
 
       <p class="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
-        Get a subscription URL with no signup. Paste it into any modern VPN client. Higher tiers
-        exist for users who want more bandwidth and more devices.
+        Create a free account with one human-check, then get a subscription URL for any modern VPN
+        client. No email or password. Higher tiers exist for users who want more bandwidth and more
+        devices.
       </p>
 
       <div class="flex flex-wrap gap-3">
@@ -164,9 +165,9 @@
           <li class="flex items-start gap-3">
             <Lock class="size-4 text-primary mt-0.5 shrink-0" />
             <div>
-              <p class="text-sm font-medium">No account</p>
+              <p class="text-sm font-medium">No email or password</p>
               <p class="text-xs text-muted-foreground leading-snug">
-                One human-check, key in hand. No email collected.
+                One human-check. Save your account number to sign in. No email collected.
               </p>
             </div>
           </li>

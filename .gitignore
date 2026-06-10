@@ -61,3 +61,5 @@ coverage/
 
 # Misc
 CLAUDE.md
+# Local-only Claude Code working dir (plans contain unpatched-vuln details; never commit)
+.claude/
