@@ -61,13 +61,20 @@
 	# set lands after the file_server/proxy response (replace, no duplicate).
 	@notCap not path /cap/*
 	header @notCap {
+		# - script-src carries a PER-REQUEST nonce ({http.request.uuid}, the same
+		#   UUID templated into <meta name="csp-nonce"> in index.html). It lets
+		#   ONLY the Cap captcha's instrumentation challenge run — a server-
+		#   supplied, per-challenge-randomised inline script in a sandboxed
+		#   <iframe srcdoc> (which inherits this policy). 'self' still governs our
+		#   own (external) scripts; the nonce adds nothing an attacker can use
+		#   because it is unguessable and regenerated every response.
 		# - worker-src allows blob: because @cap.js/widget spawns its proof-of-
 		#   work solver as `new Worker(URL.createObjectURL(new Blob([...])))`
 		#   (verified in its source); worker-src 'self' alone silently kills it
 		#   and the captcha never completes.
 		# - font-src data: because Vite inlines small @fontsource subsets as
 		#   data: URIs in the bundled CSS (inline bytes, not a network origin).
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self' blob:; child-src 'self' blob:"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'nonce-{http.request.uuid}' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self' blob:; child-src 'self' blob:"
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
 		defer
@@ -142,6 +149,13 @@
 		header @assets Cache-Control "public, max-age=31536000, immutable"
 		header @html Cache-Control "no-cache"
 		try_files {path} /index.html
+		# Expand {{placeholder "http.request.uuid"}} in index.html to the same
+		# per-request UUID the CSP `script-src 'nonce-…'` header carries, so the
+		# <meta name="csp-nonce"> matches the enforcing policy. Scoped to
+		# text/html only: hashed JS/font/image assets are served verbatim.
+		templates {
+			mime text/html
+		}
 		file_server
 	}
 }

@@ -14,6 +14,23 @@
     <title>FreeSocks</title>
 
     <!--
+      Per-request CSP script nonce. Caddy's templates module expands the
+      http.request.uuid placeholder below to the SAME UUID it puts in the
+      response's script-src nonce header, so this value matches the enforcing
+      CSP. main.ts reads it into window.CAP_SCRIPT_NONCE so the Cap captcha's
+      instrumentation challenge (a server-supplied inline script in a sandboxed
+      iframe srcdoc) runs WITHOUT relaxing the strict no-inline CSP. Single-
+      quoted so the inner quotes don't truncate the attribute.
+
+      IMPORTANT: this whole file is run through Caddy templates, so it must
+      contain NO other Go-template action sequences anywhere (comments
+      included) — only the placeholder below. Served outside Caddy (vite dev /
+      preview) the attribute stays the literal placeholder text; main.ts
+      ignores that, and dev has no enforcing CSP anyway.
+    -->
+    <meta name="csp-nonce" content='{{placeholder "http.request.uuid"}}' />
+
+    <!--
       FOUC-prevention script. Runs synchronously before paint, BEFORE the
       Vite bundle even starts parsing, so the user never sees a flash of
       the wrong theme. mode-watcher itself injects a similar script via

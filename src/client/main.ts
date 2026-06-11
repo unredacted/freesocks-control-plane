@@ -38,6 +38,18 @@ import '@fontsource/inter-tight/800.css';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 
+// Hand the per-request CSP nonce to the Cap widget. Caddy puts the same UUID in
+// the response's `script-src 'nonce-…'` header and in the <meta name="csp-nonce">
+// tag (templates), so the widget can stamp it on its instrumentation challenge
+// (a server-supplied inline script in a sandboxed <iframe srcdoc>) and have it
+// run under our strict no-inline-script CSP. Outside Caddy (vite dev/preview)
+// the meta is the literal "{{…}}" placeholder — ignore it (dev has no
+// enforcing CSP, and a bogus nonce would just make instrumentation no-op).
+const cspNonce = document.querySelector('meta[name="csp-nonce"]')?.getAttribute('content');
+if (cspNonce && !cspNonce.includes('{{')) {
+  window.CAP_SCRIPT_NONCE = cspNonce;
+}
+
 // Apply the saved/detected locale's <html lang/dir> before first paint.
 initI18n();
 

@@ -17,6 +17,10 @@ declare global {
   interface Window {
     CAP_CUSTOM_WASM_URL?: string;
     CAP_PAKO_URL?: string;
+    // Per-request CSP nonce (set in main.ts from the <meta name="csp-nonce">
+    // Caddy templates). The widget stamps it on its instrumentation srcdoc
+    // script so it runs under our strict no-inline-script CSP.
+    CAP_SCRIPT_NONCE?: string;
   }
 }
 
