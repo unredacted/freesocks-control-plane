@@ -192,15 +192,18 @@ deployer (`docker compose ... up -d`) so the env applies.
 > **"Instrumentation challenges" can stay ON** (it defaults on in the dashboard,
 > labelled "recommended"; "block automated browsers" depends on it). Cap's
 > instrumentation runs a server-supplied, per-challenge-randomised **inline**
-> script inside a sandboxed `<iframe srcdoc>`, which our strict no-inline CSP
-> would normally block (it can't be hashed — the script changes every
-> challenge). We support it **without** weakening the CSP via a **per-request
-> nonce**: Caddy puts `'nonce-{http.request.uuid}'` in the member `script-src`
-> header AND templates the same UUID into `<meta name="csp-nonce">`; `main.ts`
-> hands it to `window.CAP_SCRIPT_NONCE`, which the widget stamps on the srcdoc
-> script (the srcdoc iframe inherits the parent CSP, so the nonce authorises
-> it). The nonce is unguessable and regenerated every response, so it gives an
-> XSS attacker nothing. Instrumentation + the proof-of-work challenge + the
+> script inside a sandboxed `<iframe srcdoc>`, and that script deliberately
+> calls `eval()`/`new Function()` to detect emulated/headless JS engines. The
+> srcdoc iframe inherits the member CSP, so two `script-src` grants make it
+> work: a **per-request nonce** authorises the inline script itself (Caddy puts
+> `'nonce-{http.request.uuid}'` in the header AND templates the same UUID into
+> `<meta name="csp-nonce">`; `main.ts` hands it to `window.CAP_SCRIPT_NONCE`,
+> which the widget stamps on the srcdoc script), and **`'unsafe-eval'`** lets
+> the probes run (without it they throw, the probe silently returns null, and
+> the widget reports `instr_timeout` after 20 s). Neither grant opens an
+> injection door: the nonce is unguessable and regenerated every response, and
+> eval is only reachable from code that is already executing — inline script
+> injection stays blocked. Instrumentation + the proof-of-work challenge + the
 > DB-driven per-IP rate limits (A1/W2) together are the anti-abuse stack.
 
 If the fronting proxy is down or not yet configured, the dashboard also binds

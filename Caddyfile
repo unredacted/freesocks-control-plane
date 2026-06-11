@@ -68,13 +68,19 @@
 		#   <iframe srcdoc> (which inherits this policy). 'self' still governs our
 		#   own (external) scripts; the nonce adds nothing an attacker can use
 		#   because it is unguessable and regenerated every response.
+		# - 'unsafe-eval' is REQUIRED by that same instrumentation script: its
+		#   anti-emulation probes deliberately call eval()/new Function() (verified
+		#   in the pinned tiago2/cap image), each wrapped in catch -> return null,
+		#   so a blocked eval = no postMessage = instr_timeout after 20s. eval is
+		#   only reachable from code that is ALREADY executing; initial injection
+		#   stays gated by 'self' + the nonce (inline scripts remain blocked).
 		# - worker-src allows blob: because @cap.js/widget spawns its proof-of-
 		#   work solver as `new Worker(URL.createObjectURL(new Blob([...])))`
 		#   (verified in its source); worker-src 'self' alone silently kills it
 		#   and the captcha never completes.
 		# - font-src data: because Vite inlines small @fontsource subsets as
 		#   data: URIs in the bundled CSS (inline bytes, not a network origin).
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'nonce-{http.request.uuid}' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self' blob:; child-src 'self' blob:"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'nonce-{http.request.uuid}' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self' blob:; child-src 'self' blob:"
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
 		defer
@@ -92,8 +98,10 @@
 	# ADMIN_KEY-gated regardless.
 	#
 	# /cap gets its OWN, relaxed CSP (set below) because the dashboard login uses
-	# a javascript: navigation that needs 'unsafe-inline' in script-src. The
-	# widget's challenge/redeem endpoints are JSON (CSP inert), so the relaxation
+	# a javascript: navigation that needs 'unsafe-inline' in script-src, and the
+	# dashboard's widget-test page runs the same eval-probing instrumentation
+	# challenge as the member SPA, so 'unsafe-eval' too. The widget's
+	# challenge/redeem endpoints are JSON (CSP inert), so the relaxation
 	# effectively applies to the dashboard documents alone. The member SPA keeps
 	# the strict CSP — CSP is per-response, and @notCap above excludes /cap.
 	@cap path /cap/*
@@ -106,7 +114,7 @@
 		# page, behind the fronting edge's auth); the member origin never permits
 		# it. font-src data: for any inlined dashboard fonts.
 		header {
-			Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://trycap.dev; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+			Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://trycap.dev; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 			-X-Powered-By
 		}
 		uri strip_prefix /cap
