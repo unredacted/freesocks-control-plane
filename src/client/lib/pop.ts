@@ -136,6 +136,17 @@ export async function clearSessionKey(realm: Realm = 'member'): Promise<void> {
 }
 
 /**
+ * Boot-warm (pre-`POP_REQUIRED` requirement): spin up the signing worker (so the
+ * persisted session key is loaded) and fetch the server-time offset BEFORE the
+ * first authenticated request, instead of paying both on its critical path.
+ * Call once when a session is known to exist (authenticated). Fire-and-forget;
+ * fails soft like everything else here.
+ */
+export async function prewarm(realm: Realm = 'member'): Promise<void> {
+  await Promise.all([ensureSessionKey(realm), serverTimeOffset()]);
+}
+
+/**
  * If `path`+`method` establishes a member session (login or account creation),
  * make sure a session key exists and merge its public point into the
  * (about-to-be-sealed) request body. Returns the body string to send (augmented

@@ -14,9 +14,25 @@
   import { QueryClientProvider } from '@tanstack/svelte-query';
   import { SvelteQueryDevtools } from '@tanstack/svelte-query-devtools';
   import { queryClient } from './lib/query-client';
+  import { meQuery } from './lib/queries';
+  import { prewarm } from './lib/pop';
   import { fade } from 'svelte/transition';
 
   let onAdminRoute = $derived(router.pathname.startsWith('/admin'));
+
+  // Boot-warm PoP once a session is known to exist: spins up the signing worker
+  // (loads the persisted key) + fetches the server-time offset off the critical
+  // path, so the first authenticated request is ready to sign (matters when
+  // POP_REQUIRED is on). Only for authenticated users — never mint a key for an
+  // anonymous visitor.
+  const me = meQuery();
+  let popWarmed = false;
+  $effect(() => {
+    if (!popWarmed && me.data?.authenticated) {
+      popWarmed = true;
+      void prewarm('member');
+    }
+  });
   // DevTools only in development; in production it's tree-shaken away.
   const isDev = import.meta.env.DEV;
 
