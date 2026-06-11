@@ -5,6 +5,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { hmacSha256Hex } from './lib/crypto';
+import { ConvexError } from 'convex/values';
 
 const modules = import.meta.glob('./**/*.*s');
 const SECRET = 'test-webhook';
@@ -143,5 +144,22 @@ describe('webhooks.ingest', () => {
     const signature = await hmacSha256Hex(SECRET, body);
     const res = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
     expect(res).toEqual({ ok: true, applied: false, reason: 'unknown_tier' });
+  });
+});
+
+describe('webhooks.ingest config gate (pass 2)', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test('unset secret throws the typed webhook.not_configured ConvexError', async () => {
+    vi.stubEnv('WEBHOOK_SIGNING_SECRET', '');
+    const t = convexTest(schema, modules);
+    let thrown: unknown;
+    try {
+      await t.action(internal.webhooks.ingest, { rawBody: '{}', signature: 'x' });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(ConvexError);
+    expect((thrown as ConvexError<{ code: string }>).data.code).toBe('webhook.not_configured');
   });
 });

@@ -161,3 +161,78 @@ describe('adminApi.maskApiUrl', () => {
     expect(maskApiUrl('not a url')).toBe('***');
   });
 });
+
+describe('adminApi default-free auto-clear (pass 2)', () => {
+  test('creating a second default-free tier on a backend clears the first (audited)', async () => {
+    const t = convexTest(schema, modules);
+    const a = await t.mutation(
+      internal.adminApi.createTier,
+      tierUpsert({ slug: 'free-a', isDefaultFree: true }),
+    );
+    const b = await t.mutation(
+      internal.adminApi.createTier,
+      tierUpsert({ slug: 'free-b', isDefaultFree: true }),
+    );
+    expect(b.isDefaultFree).toBe(true);
+    const { tiers } = await t.query(internal.adminApi.tiersList, {});
+    expect(tiers.find((x) => x.id === a.id)!.isDefaultFree).toBe(false);
+    await t.run(async (ctx) => {
+      const audits = await ctx.db.query('auditLog').collect();
+      expect(audits.some((e) => e.action === 'admin.tier.default_free_cleared')).toBe(true);
+    });
+  });
+
+  test('flipping the flag on via updateTier clears the previous holder', async () => {
+    const t = convexTest(schema, modules);
+    const a = await t.mutation(
+      internal.adminApi.createTier,
+      tierUpsert({ slug: 'free-a2', isDefaultFree: true }),
+    );
+    const b = await t.mutation(
+      internal.adminApi.createTier,
+      tierUpsert({ slug: 'free-b2', isDefaultFree: false }),
+    );
+    await t.mutation(internal.adminApi.updateTier, {
+      id: b.id as never,
+      isDefaultFree: true,
+    });
+    const { tiers } = await t.query(internal.adminApi.tiersList, {});
+    expect(tiers.find((x) => x.id === a.id)!.isDefaultFree).toBe(false);
+    expect(tiers.find((x) => x.id === b.id)!.isDefaultFree).toBe(true);
+  });
+
+  test('defaults on DIFFERENT backends coexist', async () => {
+    const t = convexTest(schema, modules);
+    const rw = await t.mutation(
+      internal.adminApi.createTier,
+      tierUpsert({ slug: 'free-rw', backend: 'remnawave', isDefaultFree: true }),
+    );
+    const ol = await t.mutation(
+      internal.adminApi.createTier,
+      tierUpsert({ slug: 'free-ol', backend: 'outline', isDefaultFree: true }),
+    );
+    const { tiers } = await t.query(internal.adminApi.tiersList, {});
+    expect(tiers.find((x) => x.id === rw.id)!.isDefaultFree).toBe(true);
+    expect(tiers.find((x) => x.id === ol.id)!.isDefaultFree).toBe(true);
+  });
+
+  test("moving a default tier to another backend clears that backend's holder", async () => {
+    const t = convexTest(schema, modules);
+    const rw = await t.mutation(
+      internal.adminApi.createTier,
+      tierUpsert({ slug: 'free-rw3', backend: 'remnawave', isDefaultFree: true }),
+    );
+    const ol = await t.mutation(
+      internal.adminApi.createTier,
+      tierUpsert({ slug: 'free-ol3', backend: 'outline', isDefaultFree: true }),
+    );
+    // Move the remnawave default onto outline: the outline holder must clear.
+    await t.mutation(internal.adminApi.updateTier, {
+      id: rw.id as never,
+      backend: 'outline',
+    });
+    const { tiers } = await t.query(internal.adminApi.tiersList, {});
+    expect(tiers.find((x) => x.id === rw.id)!.isDefaultFree).toBe(true);
+    expect(tiers.find((x) => x.id === ol.id)!.isDefaultFree).toBe(false);
+  });
+});
