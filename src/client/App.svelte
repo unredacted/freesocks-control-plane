@@ -1,6 +1,7 @@
 <script lang="ts">
   import Link from './components/Link.svelte';
   import AppHeader from './components/AppHeader.svelte';
+  import PopWarm from './components/PopWarm.svelte';
   import { Toaster } from '@client/components/ui/sonner';
   import { ModeWatcher } from 'mode-watcher';
   import ErrorBoundary from './components/ErrorBoundary.svelte';
@@ -14,8 +15,6 @@
   import { QueryClientProvider } from '@tanstack/svelte-query';
   import { SvelteQueryDevtools } from '@tanstack/svelte-query-devtools';
   import { queryClient } from './lib/query-client';
-  import { meQuery } from './lib/queries';
-  import { prewarm } from './lib/pop';
   import { t, getLocale } from './lib/i18n/index.svelte';
   import { dirForLocale } from './lib/i18n/locales';
   import { fade } from 'svelte/transition';
@@ -26,19 +25,11 @@
   let dir = $derived(dirForLocale(getLocale()));
   let toasterPosition = $derived(dir === 'rtl' ? ('top-left' as const) : ('top-right' as const));
 
-  // Boot-warm PoP once a session is known to exist: spins up the signing worker
-  // (loads the persisted key) + fetches the server-time offset off the critical
-  // path, so the first authenticated request is ready to sign (matters when
-  // POP_REQUIRED is on). Only for authenticated users — never mint a key for an
-  // anonymous visitor.
-  const me = meQuery();
-  let popWarmed = false;
-  $effect(() => {
-    if (!popWarmed && me.data?.authenticated) {
-      popWarmed = true;
-      void prewarm('member');
-    }
-  });
+  // PoP boot-warm lives in <PopWarm/> inside the provider below — it calls
+  // meQuery(), which reads the query client from context at init, so it CANNOT
+  // run from this script (App hosts the provider; its script runs before the
+  // provider child mounts).
+
   // DevTools only in development; in production it's tree-shaken away.
   const isDev = import.meta.env.DEV;
 
@@ -69,6 +60,7 @@
 <Toaster richColors position={toasterPosition} {dir} />
 
 <QueryClientProvider client={queryClient}>
+  <PopWarm />
   <ErrorBoundary>
     <div class="min-h-screen flex flex-col">
       {#if !onAdminRoute}

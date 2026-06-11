@@ -58,7 +58,11 @@
 	# response (replace, no duplicate).
 	@notCap not path /cap/*
 	header @notCap {
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'; child-src 'self' blob:"
+		# font-src includes data: because Vite inlines @fontsource subset files
+		# under its 4 KB assetsInlineLimit as data: URIs in the bundled CSS — a
+		# data: URI is inline bytes, NOT a network origin, so this permits no
+		# third-party fetch (same as the existing img-src 'self' data:).
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'; child-src 'self' blob:"
 		defer
 	}
 	# Integrity-Policy "blocked-destinations=(script)" stays deferred until every
@@ -84,8 +88,11 @@
 		# omits it, and @notCap excludes /cap), so this is the sole setter — no
 		# override race. The -X-Powered-By deletion auto-defers the block so it
 		# lands after Cap's response.
+		# img-src allows https://trycap.dev for the dashboard's logo (operator-only
+		# page, behind the fronting edge's auth); the member origin never permits
+		# it. font-src data: for any inlined dashboard fonts.
 		header {
-			Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+			Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://trycap.dev; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 			-X-Powered-By
 		}
 		uri strip_prefix /cap
