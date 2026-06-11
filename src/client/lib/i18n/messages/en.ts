@@ -20,7 +20,11 @@ export const en = {
   'common.close': 'Close',
   'common.retry': 'Retry',
   'common.loading': 'Loading…',
+  'common.working': 'Working…',
+  'common.reload': 'Reload',
   'common.language': 'Language',
+  'common.deviceCount': (p: Record<string, string | number>) =>
+    p.count === 1 ? '1 device' : `${p.count} devices`,
 
   // --- nav / header ---
   'nav.getAccount': 'Get a free account',
@@ -32,6 +36,12 @@ export const en = {
   'captcha.verifying': 'Verifying…',
   'captcha.solved': 'Verified',
   'captcha.error': 'Check failed — retry',
+  'captcha.failedTitle': "Couldn't complete the human check.",
+  'captcha.failedBody':
+    'The check runs entirely in your browser. If it failed, your browser may be blocking the worker it needs, or the network dropped the request.',
+  'captcha.failedTip1': 'Try disabling browser extensions',
+  'captcha.failedTip2': 'Try a different network or a private/incognito window',
+  'captcha.failedTip3': 'Make sure JavaScript and WebAssembly are enabled',
 
   // --- reveal-once account number (THE highest-stakes moment) ---
   'reveal.title': 'Save your account number now',
@@ -62,6 +72,7 @@ export const en = {
   'login.noAccount': "Don't have an account number yet?",
   'login.getOne': 'Get a free account',
   'login.failed': 'Sign-in failed',
+  'login.success': 'Signed in',
 
   // --- account page: membership states ---
   'account.title': 'Your account',
@@ -79,6 +90,165 @@ export const en = {
   'account.redeemSuccess': (p: Record<string, string | number>) =>
     `Redeemed — you're now on ${p.tier} for ${p.days} more days.`,
   'account.redeemFailed': 'That code is not valid, or has already been used.',
+  'account.redeemAriaLabel': 'Membership code',
+  'account.switchTo': (p: Record<string, string | number>) => `Switch to ${p.label}`,
+  'account.devicesTitle': 'Connected devices',
+  'account.lastSeen': (p: Record<string, string | number>) => `Last seen ${p.date}`,
+  'account.noSubTitle': 'No subscription yet',
+  'account.noSubBody':
+    'Create your first subscription to get a URL you can use in any compatible VPN client.',
+  'account.createSub': 'Create subscription',
+  'account.creating': 'Creating…',
+  'account.rotateTitle': 'Rotate your account number?',
+  'account.rotateBody':
+    'A new 32-digit number is generated and shown once. Your current number stops working immediately. Anyone who has it loses access. Do this if your number may have leaked.',
+  'account.rotateConfirm': 'Yes, rotate',
+  'account.rotating': 'Rotating…',
+  'account.rotateFailedTitle': 'Could not change the account number',
+  'account.freeTierTitle': "You're on the free tier",
+  'account.freeTierBody':
+    'Higher Unredacted membership tiers (raising device count and monthly bandwidth) are coming soon. In the meantime, donations keep free accounts funded.',
+  'account.refreshMembership': 'Already paid? Refresh membership',
+  'account.refreshing': 'Refreshing…',
+  'account.regenSuccessTitle': 'New subscription URL generated',
+  'account.regenSuccessBody':
+    'Re-import it on each of your devices. The old URL works for 24 more hours.',
+  'account.regenFailedTitle': 'Could not create a new key',
+  'account.switchSuccessTitle': (p: Record<string, string | number>) => `Switched to ${p.tier}`,
+  'account.switchSuccessBodyGrace':
+    'Re-import the new subscription URL on each device. The old subscription works for 24 more hours.',
+  'account.switchSuccessBody': 'Re-import the new subscription URL on each device.',
+  'account.switchFailedTitle': 'Could not switch server type',
+  'account.refreshWelcome': (p: Record<string, string | number>) => `Welcome to ${p.tier}`,
+  'account.refreshNoneTitle': 'No active membership found yet',
+  'account.refreshNoneBody': 'If you just paid, give it a moment and try again.',
+  'account.refreshFailedTitle': 'Could not refresh membership',
+  'account.graceTitle': 'Your account is in a grace period',
+  'account.graceBody':
+    'Your membership has lapsed, so this account will be limited soon. Renew — donate or redeem a membership code below — to keep your plan.',
+  'account.disabledTitle': 'Your account is currently disabled',
+  'account.disabledBody':
+    'New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID.',
+
+  // --- subscription hero (the key/URL card) ---
+  'hero.titleDefault': 'Your subscription',
+  'hero.eyebrowAccessKey': 'Your access key',
+  'hero.urlLabelSubscription': 'Subscription URL',
+  'hero.urlLabelAccessKey': 'Access key',
+  'hero.tierLine': (p: Record<string, string | number>) => `Tier ${p.tier}`,
+  'hero.viaLine': (p: Record<string, string | number>) => `via ${p.backend}`,
+  'hero.copyUrl': 'Copy URL',
+  'hero.copiedShort': 'Copied',
+  'hero.qrShow': 'QR',
+  'hero.qrHide': 'Hide',
+  'hero.scanPhone': 'Scan with your phone',
+  'hero.scanOther': 'Scan with another device',
+  'hero.scanFallback': 'Scan the fallback on another device',
+  'hero.fallbackLabel': 'Fallback URL',
+  'hero.fallbackHint': 'Use this if the main URL gets blocked',
+  'hero.fallbackQrAria': 'Show fallback URL QR code',
+  'hero.downloaded': (p: Record<string, string | number>) => `Downloaded ${p.filename}`,
+  'hero.traffic': 'Traffic',
+  'hero.unlimited': 'Unlimited',
+  'hero.usedSoFar': (p: Record<string, string | number>) => `${p.amount} used so far`,
+  'hero.leftThisPeriod': (p: Record<string, string | number>) => `${p.amount} left this period.`,
+  'hero.nearlyOut': (p: Record<string, string | number>) =>
+    `Nearly out, only ${p.amount} left this period.`,
+  'hero.expires': 'Expires',
+  'hero.noExpiry': 'No expiry',
+  'hero.expiresToday': 'Expires today',
+  'hero.daysRemaining': (p: Record<string, string | number>) =>
+    p.count === 1 ? '1 day remaining' : `${p.count} days remaining`,
+  'hero.expiredDaysAgo': (p: Record<string, string | number>) =>
+    p.count === 1 ? 'Expired 1 day ago' : `Expired ${p.count} days ago`,
+
+  // --- regenerate confirmation modal ---
+  'regen.title': 'Regenerate subscription?',
+  'regen.body': (p: Record<string, string | number>) =>
+    `Your current subscription URL (ending …${p.suffix}) will be replaced with a new one. The old URL becomes read-only for 24 hours, then is deleted.`,
+  'regen.point1': 'Your current key remains usable for the next 24 hours',
+  'regen.point2': "You'll need to re-import the new URL in each of your devices",
+  'regen.pointDevices': (p: Record<string, string | number>) =>
+    p.count === 1
+      ? 'You currently have 1 connected device — it will need the new URL'
+      : `You currently have ${p.count} connected devices — they will all need the new URL`,
+  'regen.confirm': 'Regenerate',
+  'regen.working': 'Regenerating…',
+
+  // --- switch-backend confirmation modal ---
+  'switch.title': (p: Record<string, string | number>) => `Switch to ${p.to}?`,
+  'switch.body': (p: Record<string, string | number>) =>
+    `Your current ${p.from} subscription will be replaced with a new ${p.to} one. The old subscription stays usable for 24 hours so you can re-import on every device before it stops working.`,
+  'switch.point1': (p: Record<string, string | number>) =>
+    `A new subscription URL is issued on the ${p.to} backend`,
+  'switch.point2': (p: Record<string, string | number>) =>
+    `The current ${p.from} URL keeps working for 24 hours, then is deleted`,
+  'switch.point3': "You'll need to re-import the new URL in each VPN client you use",
+  'switch.pointDevices': (p: Record<string, string | number>) =>
+    p.count === 1
+      ? 'You currently have 1 connected device — re-import on it'
+      : `You currently have ${p.count} connected devices — re-import on all of them`,
+  'switch.confirm': (p: Record<string, string | number>) => `Switch to ${p.to}`,
+  'switch.working': 'Switching…',
+
+  // --- get-account flow ---
+  'get.badge': 'Free account',
+  'get.title': 'Get a FreeSocks account',
+  'get.introTwoSteps':
+    'Two quick steps: solve the human-check to create a free account, then create your subscription.',
+  'get.introReady': 'Your account and subscription are ready.',
+  'get.introReadyNoSub': 'Your account is ready. Create a subscription below to get your key.',
+  'get.step1Title': 'Create your account',
+  'get.chooseBackend': 'Choose a backend',
+  'get.backendAria': 'Backend',
+  'get.backendMultiProtocol': 'Multi-protocol (VLESS, Trojan, Shadowsocks)',
+  'get.backendShadowsocks': 'Shadowsocks via Outline',
+  'get.createAccount': 'Create my account',
+  'get.freeAccountNote':
+    'Free accounts are valid for 30 days and limited to one device. No email or password.',
+  'get.accountReady': 'Your account is ready.',
+  'get.accountReadyTier': (p: Record<string, string | number>) =>
+    `Your account is ready on the ${p.tier} tier.`,
+  'get.step2Title': 'Create your subscription',
+  'get.step2Intro':
+    'Create a proxy subscription to get a URL you can paste into any compatible VPN client.',
+  'get.manageHintPrefix': 'Manage this subscription anytime from',
+  'get.manageLinkLabel': 'your account',
+  'get.subErrorSafePrefix': 'Your account is safe. You can create the subscription later from',
+  'get.subErrorSafeSuffix': 'once a server is available.',
+  'get.createSubToastTitle': 'Subscription created',
+  'get.createSubToastBody': 'Copy the URL into your VPN client, or scan the QR code.',
+  'get.createAccountFailedTitle': 'Could not create account',
+  'get.createSubFailedTitle': 'Could not create subscription',
+  'get.haveAccountPrefix': 'Already have an account?',
+  'get.lostNumberHint': 'Lost your account number before saving it? You can switch to a new one —',
+  'get.lostNumberLinkLabel': 'change it from your account page',
+
+  // --- tier comparison (free-tier dashboard) ---
+  'tiers.title': 'Tiers',
+  'tiers.subtitle':
+    'What each tier includes. Pricing and signup live on the Unredacted member portal.',
+  'tiers.yourTier': 'Your tier',
+  'tiers.gbPerMonth': (p: Record<string, string | number>) => `${p.gb} GB / month`,
+  'tiers.validity30': '30-day key',
+  'tiers.validityContinuous': 'Continuous',
+  'tiers.mirrors': 'Mirror URLs',
+  'tiers.comingSoon': 'Coming soon',
+  'tiers.comingSoonTitle': 'Membership signup is coming soon',
+
+  // --- member impact / funding card ---
+  'impact.title': 'Donations support Unredacted',
+  'impact.body':
+    'Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site.',
+  'impact.membershipSoon': 'Membership (coming soon)',
+
+  // --- misc chrome ---
+  'qr.ariaLabel': 'QR code for the subscription URL',
+  'app.notFound': 'Not found',
+  'app.goHome': 'Go home',
+  'footer.operatedPrefix': 'Operated by',
+  'footer.operatedSuffix': ', a US 501(c)(3) nonprofit',
+  'footer.apiDocs': 'API docs',
 
   // --- renew / donate callouts (P1-13) ---
   'renew.expiringTitle': 'Your membership is expiring soon',

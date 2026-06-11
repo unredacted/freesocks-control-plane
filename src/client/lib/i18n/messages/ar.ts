@@ -82,5 +82,174 @@ export const ar: Partial<Messages> = {
 
   'setup.title': 'إعداد تطبيق الوكيل',
   'setup.intro': 'انسخ رابط الاشتراك بالأعلى، ثم أضفه إلى تطبيق متوافق:',
+  'setup.android': 'أندرويد',
+  'setup.ios': 'آيفون / آيباد',
+  'setup.windows': 'ويندوز',
+  'setup.desktop': 'ماك / لينكس',
+  'setup.step.install': 'ثبّت التطبيق',
+  'setup.step.import': 'افتحه، أضف اشتراكًا/ملفًا شخصيًا، والصق رابطك',
+  'setup.step.connect': 'اختر خادمًا واتصل',
   'setup.qrHint': 'أو امسح رمز QR هذا بهاتفك لنقل الرابط.',
+
+  'common.working': 'جارٍ التنفيذ…',
+  'common.reload': 'إعادة التحميل',
+  'common.deviceCount': (p) =>
+    p.count === 1 ? 'جهاز واحد' : p.count === 2 ? 'جهازان' : `${p.count} أجهزة`,
+  'login.success': 'تم تسجيل الدخول',
+
+  'captcha.failedTitle': 'تعذّر إكمال التحقق البشري.',
+  'captcha.failedBody':
+    'يعمل هذا التحقق بالكامل داخل متصفحك. إذا فشل، فقد يكون متصفحك يحظر الـ Worker المطلوب، أو انقطع الطلب عبر الشبكة.',
+  'captcha.failedTip1': 'جرّب تعطيل إضافات المتصفح',
+  'captcha.failedTip2': 'جرّب شبكة أخرى أو نافذة تصفح خاص',
+  'captcha.failedTip3': 'تأكد من تفعيل JavaScript وWebAssembly',
+
+  'account.redeemAriaLabel': 'رمز العضوية',
+  'account.switchTo': (p) => `التبديل إلى ${p.label}`,
+  'account.devicesTitle': 'الأجهزة المتصلة',
+  'account.lastSeen': (p) => `آخر اتصال ${p.date}`,
+  'account.noSubTitle': 'لا يوجد اشتراك بعد',
+  'account.noSubBody': 'أنشئ اشتراكك الأول للحصول على رابط يمكنك استخدامه في أي تطبيق VPN متوافق.',
+  'account.createSub': 'إنشاء اشتراك',
+  'account.creating': 'جارٍ الإنشاء…',
+  'account.rotateTitle': 'تغيير رقم الحساب؟',
+  'account.rotateBody':
+    'سيتم إنشاء رقم جديد من 32 خانة وعرضه مرة واحدة فقط. يتوقف رقمك الحالي عن العمل فورًا، ويفقد أي شخص يملكه إمكانية الوصول. افعل هذا إذا كان رقمك قد تسرّب.',
+  'account.rotateConfirm': 'نعم، غيّره',
+  'account.rotating': 'جارٍ التغيير…',
+  'account.rotateFailedTitle': 'تعذّر تغيير رقم الحساب',
+  'account.freeTierTitle': 'أنت على الخطة المجانية',
+  'account.freeTierBody':
+    'خطط عضوية أعلى (بأجهزة أكثر وسعة شهرية أكبر) قادمة قريبًا. في هذه الأثناء، تُبقي التبرعات الحسابات المجانية تعمل.',
+  'account.refreshMembership': 'دفعت بالفعل؟ حدّث العضوية',
+  'account.refreshing': 'جارٍ التحديث…',
+  'account.regenSuccessTitle': 'تم إنشاء رابط اشتراك جديد',
+  'account.regenSuccessBody':
+    'أعد استيراده على كل أجهزتك. يظل الرابط القديم يعمل لمدة 24 ساعة إضافية.',
+  'account.regenFailedTitle': 'تعذّر إنشاء مفتاح جديد',
+  'account.switchSuccessTitle': (p) => `تم التبديل إلى ${p.tier}`,
+  'account.switchSuccessBodyGrace':
+    'أعد استيراد رابط الاشتراك الجديد على كل جهاز. يظل الاشتراك القديم يعمل لمدة 24 ساعة إضافية.',
+  'account.switchSuccessBody': 'أعد استيراد رابط الاشتراك الجديد على كل جهاز.',
+  'account.switchFailedTitle': 'تعذّر تبديل نوع الخادم',
+  'account.refreshWelcome': (p) => `مرحبًا بك في ${p.tier}`,
+  'account.refreshNoneTitle': 'لم يتم العثور على عضوية نشطة بعد',
+  'account.refreshNoneBody': 'إذا كنت قد دفعت للتو، فانتظر لحظة وحاول مرة أخرى.',
+  'account.refreshFailedTitle': 'تعذّر تحديث العضوية',
+  'account.graceTitle': 'حسابك في فترة سماح',
+  'account.graceBody':
+    'انتهت عضويتك، وسيُقيَّد هذا الحساب قريبًا. جدّد — تبرّع أو استخدم رمز عضوية بالأسفل — للحفاظ على خطتك.',
+  'account.disabledTitle': 'حسابك معطّل حاليًا',
+  'account.disabledBody':
+    'المفاتيح الجديدة والتغييرات متوقفة على هذا الحساب. استخدم رمز عضوية بالأسفل لإعادة تفعيله، أو تواصل مع الدعم وشارك معرّف الدعم الخاص بك.',
+
+  'hero.titleDefault': 'اشتراكك',
+  'hero.eyebrowAccessKey': 'مفتاح الوصول الخاص بك',
+  'hero.urlLabelSubscription': 'رابط الاشتراك',
+  'hero.urlLabelAccessKey': 'مفتاح الوصول',
+  'hero.tierLine': (p) => `الفئة ${p.tier}`,
+  'hero.viaLine': (p) => `عبر ${p.backend}`,
+  'hero.copyUrl': 'نسخ الرابط',
+  'hero.copiedShort': 'تم النسخ',
+  'hero.qrShow': 'QR',
+  'hero.qrHide': 'إخفاء',
+  'hero.scanPhone': 'امسحه بهاتفك',
+  'hero.scanOther': 'امسحه بجهاز آخر',
+  'hero.scanFallback': 'امسح الرابط الاحتياطي بجهاز آخر',
+  'hero.fallbackLabel': 'رابط احتياطي',
+  'hero.fallbackHint': 'استخدم هذا إذا حُجب الرابط الرئيسي',
+  'hero.fallbackQrAria': 'عرض رمز QR للرابط الاحتياطي',
+  'hero.downloaded': (p) => `تم تنزيل ${p.filename}`,
+  'hero.traffic': 'البيانات',
+  'hero.unlimited': 'غير محدود',
+  'hero.usedSoFar': (p) => `${p.amount} مستخدمة حتى الآن`,
+  'hero.leftThisPeriod': (p) => `${p.amount} متبقية لهذه الفترة.`,
+  'hero.nearlyOut': (p) => `أوشكت على النفاد — تبقّى ${p.amount} فقط لهذه الفترة.`,
+  'hero.expires': 'تاريخ الانتهاء',
+  'hero.noExpiry': 'بلا انتهاء',
+  'hero.expiresToday': 'ينتهي اليوم',
+  'hero.daysRemaining': (p) =>
+    p.count === 1 ? 'يوم واحد متبقٍ' : p.count === 2 ? 'يومان متبقيان' : `${p.count} أيام متبقية`,
+  'hero.expiredDaysAgo': (p) =>
+    p.count === 1
+      ? 'انتهى منذ يوم واحد'
+      : p.count === 2
+        ? 'انتهى منذ يومين'
+        : `انتهى منذ ${p.count} أيام`,
+
+  'regen.title': 'إعادة إنشاء الاشتراك؟',
+  'regen.body': (p) =>
+    `سيُستبدل رابط اشتراكك الحالي (المنتهي بـ …${p.suffix}) برابط جديد. يصبح الرابط القديم للقراءة فقط لمدة 24 ساعة ثم يُحذف.`,
+  'regen.point1': 'يظل مفتاحك الحالي قابلاً للاستخدام خلال الـ 24 ساعة القادمة',
+  'regen.point2': 'ستحتاج إلى إعادة استيراد الرابط الجديد على كل جهاز من أجهزتك',
+  'regen.pointDevices': (p) =>
+    p.count === 1
+      ? 'لديك حاليًا جهاز واحد متصل — سيحتاج إلى الرابط الجديد'
+      : `لديك حاليًا ${p.count} أجهزة متصلة — ستحتاج كلها إلى الرابط الجديد`,
+  'regen.confirm': 'إعادة الإنشاء',
+  'regen.working': 'جارٍ الإنشاء…',
+
+  'switch.title': (p) => `التبديل إلى ${p.to}؟`,
+  'switch.body': (p) =>
+    `سيُستبدل اشتراكك الحالي على ${p.from} باشتراك جديد على ${p.to}. يظل الاشتراك القديم يعمل لمدة 24 ساعة حتى تعيد الاستيراد على كل جهاز قبل توقفه.`,
+  'switch.point1': (p) => `يُصدر رابط اشتراك جديد على خادم ${p.to}`,
+  'switch.point2': (p) => `يظل رابط ${p.from} الحالي يعمل لمدة 24 ساعة ثم يُحذف`,
+  'switch.point3': 'ستحتاج إلى إعادة استيراد الرابط الجديد في كل تطبيق VPN تستخدمه',
+  'switch.pointDevices': (p) =>
+    p.count === 1
+      ? 'لديك حاليًا جهاز واحد متصل — أعد الاستيراد عليه'
+      : `لديك حاليًا ${p.count} أجهزة متصلة — أعد الاستيراد عليها كلها`,
+  'switch.confirm': (p) => `التبديل إلى ${p.to}`,
+  'switch.working': 'جارٍ التبديل…',
+
+  'get.badge': 'حساب مجاني',
+  'get.title': 'احصل على حساب FreeSocks',
+  'get.introTwoSteps': 'خطوتان سريعتان: أكمل التحقق البشري لإنشاء حساب مجاني، ثم أنشئ اشتراكك.',
+  'get.introReady': 'حسابك واشتراكك جاهزان.',
+  'get.introReadyNoSub': 'حسابك جاهز. أنشئ اشتراكًا بالأسفل للحصول على مفتاحك.',
+  'get.step1Title': 'أنشئ حسابك',
+  'get.chooseBackend': 'اختر نوع الخادم',
+  'get.backendAria': 'نوع الخادم',
+  'get.backendMultiProtocol': 'متعدد البروتوكولات (VLESS وTrojan وShadowsocks)',
+  'get.backendShadowsocks': 'Shadowsocks عبر Outline',
+  'get.createAccount': 'إنشاء حسابي',
+  'get.freeAccountNote':
+    'الحسابات المجانية صالحة لمدة 30 يومًا ومحدودة بجهاز واحد. بلا بريد إلكتروني أو كلمة مرور.',
+  'get.accountReady': 'حسابك جاهز.',
+  'get.accountReadyTier': (p) => `حسابك جاهز على فئة ${p.tier}.`,
+  'get.step2Title': 'أنشئ اشتراكك',
+  'get.step2Intro': 'أنشئ اشتراك وكيل للحصول على رابط يمكنك لصقه في أي تطبيق VPN متوافق.',
+  'get.manageHintPrefix': 'أدر هذا الاشتراك في أي وقت من',
+  'get.manageLinkLabel': 'حسابك',
+  'get.subErrorSafePrefix': 'حسابك آمن. يمكنك إنشاء الاشتراك لاحقًا من',
+  'get.subErrorSafeSuffix': 'عندما يتوفر خادم.',
+  'get.createSubToastTitle': 'تم إنشاء الاشتراك',
+  'get.createSubToastBody': 'انسخ الرابط في تطبيق VPN لديك، أو امسح رمز QR.',
+  'get.createAccountFailedTitle': 'تعذّر إنشاء الحساب',
+  'get.createSubFailedTitle': 'تعذّر إنشاء الاشتراك',
+  'get.haveAccountPrefix': 'لديك حساب بالفعل؟',
+  'get.lostNumberHint': 'فقدت رقم حسابك قبل حفظه؟ يمكنك التبديل إلى رقم جديد —',
+  'get.lostNumberLinkLabel': 'غيّره من صفحة حسابك',
+
+  'tiers.title': 'الفئات',
+  'tiers.subtitle': 'ما تتضمنه كل فئة. الأسعار والتسجيل في بوابة أعضاء Unredacted.',
+  'tiers.yourTier': 'فئتك',
+  'tiers.gbPerMonth': (p) => `${p.gb} غيغابايت / شهر`,
+  'tiers.validity30': 'مفتاح لمدة 30 يومًا',
+  'tiers.validityContinuous': 'مستمر',
+  'tiers.mirrors': 'روابط بديلة',
+  'tiers.comingSoon': 'قريبًا',
+  'tiers.comingSoonTitle': 'التسجيل في العضوية قادم قريبًا',
+
+  'impact.title': 'التبرعات تدعم Unredacted',
+  'impact.body':
+    'Unredacted منظمة أمريكية غير ربحية 501(c)(3). وFreeSocks أحد مشاريعها. التبرعات تموّل هذا العمل. اطّلع على تفاصيله في موقع Unredacted.',
+  'impact.membershipSoon': 'العضوية (قريبًا)',
+
+  'qr.ariaLabel': 'رمز QR لرابط الاشتراك',
+  'app.notFound': 'غير موجود',
+  'app.goHome': 'العودة إلى الرئيسية',
+  'footer.operatedPrefix': 'يديره',
+  'footer.operatedSuffix': '، منظمة أمريكية غير ربحية 501(c)(3)',
+  'footer.apiDocs': 'وثائق API',
 };
