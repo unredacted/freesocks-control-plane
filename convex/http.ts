@@ -23,6 +23,7 @@ import {
   ADMIN_COOKIE,
   MEMBER_COOKIE,
   errorJson,
+  guard,
   ipHashSubject,
   json,
   newRequestId,
@@ -321,6 +322,27 @@ http.route({
       return errorJson('validation', 'accountId and captchaToken are required', 400);
     }
     const ip = resolveClientIp(req) ?? undefined;
+    // Per-IP throttle BEFORE the outbound captcha verify (mirrors account-create,
+    // P1-2): without it, a login flood drives one Cap siteverify call per request.
+    // Same policy key + subject the action used before, so counters carry over.
+    // Not an oracle — the 429 depends only on the requester's own IP, never on
+    // account validity (those failures stay folded into the generic 'invalid').
+    // Unresolvable IP -> skip (matches the webhook route; a proxy misconfig must
+    // not take login down, and the per-(prefix,IP) backstop still applies).
+    if (ip) {
+      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+        policyKey: 'account-login.ip',
+        subject: await ipHashSubject(ip),
+      });
+      if (!rl.allowed) {
+        return errorJson(
+          'rate_limit.exceeded',
+          'Too many attempts from your network. Please wait a bit and try again.',
+          429,
+          { retryAfterMs: rl.retryAfterMs },
+        );
+      }
+    }
     // PoP (Phase 2): the client folds its session public key into the (sealed)
     // login body to bind the session to it.
     const popRaw = (body as Record<string, unknown>)[POP_PUBKEY_FIELD];
@@ -561,7 +583,7 @@ http.route({
 http.route({
   path: '/api/admin/auth/register-bootstrap/options',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     const body = await readJson<{ username?: string; displayName?: string }>(req);
     if (!body.username) return errorJson('validation', 'username required', 400);
     try {
@@ -580,7 +602,7 @@ http.route({
 http.route({
   path: '/api/admin/auth/register-bootstrap/verify',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     const body = await readJson<{ adminId?: string; response?: unknown; deviceLabel?: string }>(
       req,
     );
@@ -602,7 +624,7 @@ http.route({
 http.route({
   path: '/api/admin/auth/authenticate/options',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     const body = await readJson<{ username?: string }>(req);
     if (!body.username) return errorJson('validation', 'username required', 400);
     try {
@@ -620,7 +642,7 @@ http.route({
 http.route({
   path: '/api/admin/auth/authenticate/verify',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     const body = await readJson<{ challengeId?: string; response?: unknown }>(req);
     if (!body.challengeId || !body.response) {
       return errorJson('validation', 'challengeId and response required', 400);
@@ -670,6 +692,18 @@ http.route({
   path: '/api/webhooks/billing',
   method: 'POST',
   handler: httpAction(async (ctx, req) => {
+    // Loud, distinct config failure: while no billing portal exists, this env
+    // var is legitimately unset (membership codes are the day-1 paid path) and
+    // every post must say "not configured", NOT "invalid signature" — otherwise
+    // a real portal integration is undebuggable from the caller's side.
+    if (!process.env.WEBHOOK_SIGNING_SECRET) {
+      console.error('[webhook] rejected: WEBHOOK_SIGNING_SECRET unset (webhook.not_configured)');
+      return errorJson(
+        'webhook.not_configured',
+        'Billing webhooks are not configured on this deployment',
+        503,
+      );
+    }
     // P1-2: reject an oversized body BEFORE hashing it (the HMAC over an
     // unbounded body is otherwise a cheap CPU-amplification vector for an
     // unauthenticated caller). 64 KiB is far above any real billing payload.
@@ -697,7 +731,19 @@ http.route({
         signature: req.headers.get('x-signature') ?? undefined,
       });
       return json(result);
-    } catch {
+    } catch (err) {
+      // Defense in depth for the config case (the action also throws it when
+      // called outside this route); keep it distinguishable from a bad HMAC.
+      if (err instanceof ConvexError) {
+        const data = err.data as { code?: string };
+        if (data.code === 'webhook.not_configured') {
+          return errorJson(
+            'webhook.not_configured',
+            'Billing webhooks are not configured on this deployment',
+            503,
+          );
+        }
+      }
       // Generic: never echo the internal error (leaks paths) to an
       // unauthenticated endpoint. Detail is in the function logs.
       return errorJson('webhook.rejected', 'Webhook rejected (invalid signature or payload)', 400);
@@ -719,7 +765,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/tiers',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:tiers:write'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, never>>(req);
     try {
@@ -733,7 +779,7 @@ http.route({
 http.route({
   pathPrefix: '/api/v1/admin/tiers/',
   method: 'PATCH',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:tiers:write'))) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'tiers'>;
     const body = await readJson<Record<string, unknown>>(req);
@@ -823,7 +869,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/tokens',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:tokens:write');
     if (!admin) return ADMIN_UNAUTH();
     // Token creation must be attributed to a concrete admin row. A pure
@@ -902,7 +948,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/settings',
   method: 'PATCH',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
     if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
@@ -938,7 +984,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/rate-limits',
   method: 'PATCH',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
     if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<{
@@ -985,7 +1031,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/membership-codes',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:users:write');
     if (!admin) return ADMIN_UNAUTH();
     // Minting must be attributed to a concrete admin row (like token creation).
@@ -1050,7 +1096,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/backend-servers',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:servers:write'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     if (body.backend !== 'remnawave' && body.backend !== 'outline') {
@@ -1069,7 +1115,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/backend-servers/test-connection',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     if (body.backend !== 'remnawave' && body.backend !== 'outline') {
@@ -1083,7 +1129,7 @@ http.route({
 http.route({
   pathPrefix: '/api/v1/admin/backend-servers/',
   method: 'PATCH',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:servers:write'))) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'backendServers'>;
     const body = await readJson<Record<string, unknown>>(req);

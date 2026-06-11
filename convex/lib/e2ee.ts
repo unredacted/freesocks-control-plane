@@ -15,6 +15,7 @@
 import { httpAction } from '../_generated/server';
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
+import { errorJson, PayloadTooLargeError, readBodyTextCapped } from './http';
 import {
   RESP_EPH_FIELD,
   isSealedWire,
@@ -51,73 +52,86 @@ function proxyReq(req: Request, bodyObj: unknown, rawWireBody: string): Request 
 
 export function sealed(handler: RawHandler) {
   return httpAction(async (ctx, req): Promise<Response> => {
-    const url = new URL(req.url);
-    const path = url.pathname;
-    const method = req.method.toUpperCase();
-    const policy = routePolicy(path);
-    if (!policy) return handler(ctx, req);
-
-    let handlerReq = req;
-    let respEphPubB64: string | undefined;
-
-    if (policy.response === 'reveal') {
-      if (method === 'GET' || method === 'HEAD') {
-        respEphPubB64 = req.headers.get('x-fs-resp-eph') ?? undefined;
-      } else {
-        const raw = await req.text();
-        let bodyObj: Record<string, unknown> = {};
-        if (raw) {
-          try {
-            bodyObj = JSON.parse(raw) as Record<string, unknown>;
-          } catch {
-            bodyObj = {};
-          }
-        }
-        const eph = bodyObj[RESP_EPH_FIELD];
-        if (typeof eph === 'string') respEphPubB64 = eph;
-        delete bodyObj[RESP_EPH_FIELD];
-        // PoP hashes `raw` (the wire body WITH fsRespEph, as the client signed);
-        // the handler sees the stripped body.
-        handlerReq = proxyReq(req, bodyObj, raw);
+    try {
+      return await sealedInner(ctx, req, handler);
+    } catch (e) {
+      // The wrapper reads the wire body itself (before the handler's readJson),
+      // so the body cap surfaces here for sealed routes.
+      if (e instanceof PayloadTooLargeError) {
+        return errorJson('request.too_large', 'Request body too large', 413);
       }
-    } else if (policy.request === 'seal') {
-      const raw = await req.text();
-      let parsed: unknown;
-      try {
-        parsed = raw ? JSON.parse(raw) : undefined;
-      } catch {
-        parsed = undefined;
-      }
-      if (isSealedWire(parsed)) {
-        const opened = await ctx.runAction(internal.lib.e2eeCrypto.openRequest, {
-          method,
-          path,
-          wireBody: parsed,
-        });
-        handlerReq = proxyReq(req, opened.plaintext ?? {}, raw);
-      } else {
-        handlerReq = proxyReq(req, parsed ?? {}, raw);
-      }
+      throw e;
     }
-
-    const res = await handler(ctx, handlerReq);
-
-    if (policy.response === 'reveal' && respEphPubB64 && res.ok) {
-      const ct = res.headers.get('content-type') ?? '';
-      if (ct.includes('json')) {
-        const responseObj = await res.json();
-        const sealedWire: SealedWire = await ctx.runAction(internal.lib.e2eeCrypto.sealResponse, {
-          method,
-          path,
-          respEphPubB64,
-          responseObj,
-        });
-        const headers = new Headers(res.headers);
-        headers.set('content-type', 'application/json');
-        headers.set('x-fs-sealed', '1');
-        return new Response(JSON.stringify(sealedWire), { status: res.status, headers });
-      }
-    }
-    return res;
   });
+}
+
+async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): Promise<Response> {
+  const url = new URL(req.url);
+  const path = url.pathname;
+  const method = req.method.toUpperCase();
+  const policy = routePolicy(path);
+  if (!policy) return handler(ctx, req);
+
+  let handlerReq = req;
+  let respEphPubB64: string | undefined;
+
+  if (policy.response === 'reveal') {
+    if (method === 'GET' || method === 'HEAD') {
+      respEphPubB64 = req.headers.get('x-fs-resp-eph') ?? undefined;
+    } else {
+      const raw = await readBodyTextCapped(req);
+      let bodyObj: Record<string, unknown> = {};
+      if (raw) {
+        try {
+          bodyObj = JSON.parse(raw) as Record<string, unknown>;
+        } catch {
+          bodyObj = {};
+        }
+      }
+      const eph = bodyObj[RESP_EPH_FIELD];
+      if (typeof eph === 'string') respEphPubB64 = eph;
+      delete bodyObj[RESP_EPH_FIELD];
+      // PoP hashes `raw` (the wire body WITH fsRespEph, as the client signed);
+      // the handler sees the stripped body.
+      handlerReq = proxyReq(req, bodyObj, raw);
+    }
+  } else if (policy.request === 'seal') {
+    const raw = await readBodyTextCapped(req);
+    let parsed: unknown;
+    try {
+      parsed = raw ? JSON.parse(raw) : undefined;
+    } catch {
+      parsed = undefined;
+    }
+    if (isSealedWire(parsed)) {
+      const opened = await ctx.runAction(internal.lib.e2eeCrypto.openRequest, {
+        method,
+        path,
+        wireBody: parsed,
+      });
+      handlerReq = proxyReq(req, opened.plaintext ?? {}, raw);
+    } else {
+      handlerReq = proxyReq(req, parsed ?? {}, raw);
+    }
+  }
+
+  const res = await handler(ctx, handlerReq);
+
+  if (policy.response === 'reveal' && respEphPubB64 && res.ok) {
+    const ct = res.headers.get('content-type') ?? '';
+    if (ct.includes('json')) {
+      const responseObj = await res.json();
+      const sealedWire: SealedWire = await ctx.runAction(internal.lib.e2eeCrypto.sealResponse, {
+        method,
+        path,
+        respEphPubB64,
+        responseObj,
+      });
+      const headers = new Headers(res.headers);
+      headers.set('content-type', 'application/json');
+      headers.set('x-fs-sealed', '1');
+      return new Response(JSON.stringify(sealedWire), { status: res.status, headers });
+    }
+  }
+  return res;
 }

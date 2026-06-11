@@ -10,6 +10,7 @@
  * the reactive query channel, so the cookie never has to be readable by JS.
  */
 import type { ActionCtx } from '../_generated/server';
+import { httpAction } from '../_generated/server';
 import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { parseCookies, verifySignedValue } from './cookies';
@@ -60,17 +61,63 @@ function cachedText(req: Request): Promise<string> {
   return p;
 }
 
-export async function readJson<T = Record<string, unknown>>(req: Request): Promise<T> {
+/** Default request-body cap — far above any real payload on this API. */
+export const MAX_BODY_BYTES = 64 * 1024;
+
+/** Thrown by readBodyTextCapped; guard()/sealed() map it to a 413 envelope. */
+export class PayloadTooLargeError extends Error {
+  constructor() {
+    super('request body too large');
+  }
+}
+
+/**
+ * Capped wire-body read: rejects on the declared content-length AND the actual
+ * length. Convex has already buffered the request by the time an httpAction
+ * runs, so the cap saves the downstream JSON.parse / HMAC / HPKE / runAction
+ * work, not network ingress. `.length` is UTF-16 units (≤3x byte slack) —
+ * fine for a DoS guard, and it matches the webhook route's existing check.
+ */
+export async function readBodyTextCapped(req: Request, maxBytes = MAX_BODY_BYTES): Promise<string> {
+  const declared = Number(req.headers.get('content-length') ?? '0');
+  if (Number.isFinite(declared) && declared > maxBytes) throw new PayloadTooLargeError();
+  const text = await cachedText(req);
+  if (text.length > maxBytes) throw new PayloadTooLargeError();
+  return text;
+}
+
+export async function readJson<T = Record<string, unknown>>(
+  req: Request,
+  opts?: { maxBytes?: number },
+): Promise<T> {
   const ct = req.headers.get('content-type') ?? '';
   const len = req.headers.get('content-length');
   if (len === '0' || !ct.toLowerCase().includes('json')) return {} as T;
-  const text = await cachedText(req);
+  const text = await readBodyTextCapped(req, opts?.maxBytes);
   if (!text) return {} as T;
   try {
     return JSON.parse(text) as T;
   } catch {
     return {} as T;
   }
+}
+
+/**
+ * Plaintext-route wrapper that converts a PayloadTooLargeError (thrown by
+ * readJson/readBodyTextCapped) into the 413 envelope. Sealed routes get the
+ * same mapping inside lib/e2ee.sealed(), which reads the wire body itself.
+ */
+export function guard(handler: (ctx: ActionCtx, req: Request) => Promise<Response>) {
+  return httpAction(async (ctx, req) => {
+    try {
+      return await handler(ctx, req);
+    } catch (e) {
+      if (e instanceof PayloadTooLargeError) {
+        return errorJson('request.too_large', 'Request body too large', 413);
+      }
+      throw e;
+    }
+  });
 }
 
 /**

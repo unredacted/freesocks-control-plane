@@ -4,7 +4,9 @@
  * the account-number design (docs/account-number-design.md §3/§7) faithfully:
  *
  *  - A captcha (self-hosted Cap) gates every attempt (blocks headless brute force).
- *  - Per-prefix (30/day) + per-IP (10/h) STRICT rate limits.
+ *  - STRICT rate limits: per-IP (10/h) at the HTTP layer BEFORE the captcha
+ *    verify (convex/http.ts, so floods can't drive Cap QPS) + per-(prefix,IP)
+ *    (30/day) here as the account-correlated backstop.
  *  - The submitted number is ALWAYS hashed (even on a rate-limit reject), and
  *    every failure is padded to a ~300ms floor, so timing never reveals
  *    whether a number exists, is malformed, or is rate-limited.
@@ -71,33 +73,31 @@ export const accountLogin = internalAction({
     const hash = await hashAccountId(normalized);
     const prefix = normalized.slice(0, 4);
 
-    // 3. Strict per-IP + per-(prefix,IP) limits (admin-tunable policies; W2). A
-    //    denial is folded into the generic invalid result (identical body) so it
-    //    can't be used to probe.
+    // 3. Per-(prefix,IP) backstop limit (admin-tunable policy; W2). A denial is
+    //    folded into the generic invalid result (identical body) so it can't be
+    //    used to probe — it MUST stay inside this action because the bucket is
+    //    account-correlated (keyed on the submitted prefix).
+    //
+    //    The per-IP primary guard ('account-login.ip') moved to the HTTP layer
+    //    (convex/http.ts), BEFORE the captcha verify, so a login flood can't
+    //    drive Cap siteverify QPS. Its 429 is not an oracle: the bucket depends
+    //    only on the requester's own IP, like account-create's.
     //
     //    P2: the prefix limit is scoped per-IP (not global-per-prefix), so it
     //    can't be abused as a cross-user lockout lever — one attacker can no
     //    longer exhaust the daily budget for everyone sharing a 4-digit prefix.
-    //    Now that A1 makes the per-IP bucket meaningful, per-IP is the primary
-    //    online-guessing guard and the per-(prefix,IP) limit is the backstop.
     let ipHash: string | null = null;
-    let ipDenied = false;
     if (ip) {
       const salt = process.env.IP_HASH_SALT;
       if (!salt) throw new Error('IP_HASH_SALT must be set');
       ipHash = await hmacSha256Hex(salt, ip);
-      const ipRl = await ctx.runMutation(internal.rateLimits.enforce, {
-        policyKey: 'account-login.ip',
-        subject: ipHash,
-      });
-      ipDenied = !ipRl.allowed;
     }
     const prefixRl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'account-login.prefix',
       subject: ipHash ? `${prefix}:${ipHash}` : prefix,
     });
 
-    if (!validFormat || !prefixRl.allowed || ipDenied) return failInvalid();
+    if (!validFormat || !prefixRl.allowed) return failInvalid();
 
     // 4. Single indexed lookup; the query returns null for unknown OR
     //    disabled/deleted owners (no oracle distinction).

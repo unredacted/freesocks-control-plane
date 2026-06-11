@@ -13,7 +13,7 @@
  */
 import { internalAction, internalMutation } from './_generated/server';
 import { api, internal } from './_generated/api';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { hmacSha256Hex, timingSafeEqual } from './lib/crypto';
 import { hashAccountId, normalizeAccountId } from './lib/accountId';
 
@@ -23,7 +23,14 @@ export const ingest = internalAction({
   args: { rawBody: v.string(), signature: v.optional(v.string()) },
   handler: async (ctx, { rawBody, signature }): Promise<IngestResult> => {
     const secret = process.env.WEBHOOK_SIGNING_SECRET;
-    if (!secret) throw new Error('WEBHOOK_SIGNING_SECRET must be set (bunx convex env set ...)');
+    // Typed throw so the HTTP route can answer a distinct 503 webhook.not_configured
+    // instead of the misleading generic 400 "invalid signature or payload".
+    if (!secret) {
+      throw new ConvexError({
+        code: 'webhook.not_configured',
+        message: 'WEBHOOK_SIGNING_SECRET must be set before billing webhooks can be ingested',
+      });
+    }
     const expected = await hmacSha256Hex(secret, rawBody);
     if (!signature || !timingSafeEqual(expected, signature)) {
       throw new Error('invalid signature');
