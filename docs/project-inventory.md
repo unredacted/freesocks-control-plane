@@ -125,11 +125,20 @@ Detailed companions, referenced rather than duplicated here:
 
 ### 1.7 Integrations & runtime
 
-- **Billing webhook seam**: `POST /api/webhooks/billing` (`convex/webhooks.ts`),
+- **Self-service membership billing** (`convex/billing.ts`, `convex/lib/processors/*`,
+  `convex/lib/billingConfig.ts`; `docs/billing.md`): signed-in members buy a fixed-term
+  membership via a hosted-redirect rail — **NOWPayments (crypto, Live)**, **Stripe (card)**
+  and **PayPal** as phased adapters. `POST /api/v1/billing/checkout` mints an opaque
+  `userId`-bound order (no payer PII stored) → processor invoice → `/api/webhooks/<processor>`
+  verifies + dedupes + grants exactly once via `applyMembership`. Catalog/toggles in the
+  `appSettings` `billing.*` namespace, edited in Admin → Billing. The SPA `UpgradeMembership`
+  panel + `/account?order=<ref>` polling complete the loop. **Live (NOWPayments; Stripe/PayPal
+  scaffolded behind admin toggles).** The USD off-ramp is a documented ops runbook
+  (NOWPayments → USDC → Coinbase/Kraken → ACH).
+- **Billing webhook seam** (legacy/ops): `POST /api/webhooks/billing` (`convex/webhooks.ts`),
   HMAC-SHA256-verified (`WEBHOOK_SIGNING_SECRET`) + deduped by `eventId` (`webhookEvents`
-  table) → maps `{accountId, tierSlug, expiresAtMs?}` onto `lifecycle.setMembership`. The
-  single inbound point the **future in-house billing portal** plugs into. **Live (seam ready;
-  no portal calling it yet).**
+  table) → maps `{accountId, tierSlug, expiresAtMs?}` onto `lifecycle.setMembership`. Kept as
+  a generic inbound entitlement seam alongside the self-service rails above. **Live.**
 - **Self-hosted Cap captcha** (`convex/lib/captcha.ts` + `src/client/components/CapWidget.svelte`):
   proof-of-work CAPTCHA gating free issuance + account login. Replaced Cloudflare Turnstile (W1)
   — the widget is bundled from npm and challenge traffic is same-origin (Caddy `/cap` → the `cap`
@@ -194,13 +203,13 @@ Convex runs these natively (no Workers triggers, no node-cron):
 There are **no `TODO`/`FIXME` markers in `convex/` or `src/`**; open work lives here and in
 the companion docs. Sizes: S/M/L.
 
-| Item                                                                                                                                                                                                                                                           | Size | Where it's tracked                 |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------- |
-| **Billing portal integration**: the webhook seam (`/api/webhooks/billing` → `setMembership`) is ready, and **membership codes (W4) already cover the manual/day-1 upgrade path**; the in-house portal that automates minting is the future entitlement source. | L    | this file (§1.7)                   |
-| **Native-speaker translation review** + extracting remaining marketing copy into i18n keys (the non-English locales are a first-pass MT; the critical journey strings are done).                                                                               | M    | this file (§1.7), `.claude/plans/` |
-| **`POP_REQUIRED` flip**: operational — flip in beta after the client soaks (boot-warm prerequisite is done), prod launches with it on. PoP `sid`-binding needs an httpOnly-compatible design (a public per-session token).                                     | S    | `.claude/plans/`, threat model     |
-| **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until tier linkage across backends is defined. Needs the portal's tier model.                                                                                                | M    | `convex/account.ts`                |
-| **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                 | M    | `deferred-security-bugs.md`        |
+| Item                                                                                                                                                                                                                                                                                                                                                        | Size | Where it's tracked                  |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ----------------------------------- |
+| **Self-service billing**: the crypto rail (NOWPayments) is **Live**; **Stripe + PayPal** adapters are scaffolded behind admin toggles and need their phase work (adapter `createCheckout`/`verifyAndParse` + webhook route + tests). Plus the non-code launch checklist: NOWPayments US-nonprofit ToS confirmation + the USDC→Coinbase/Kraken→ACH off-ramp. | M    | `docs/billing.md`, this file (§1.7) |
+| **Native-speaker translation review** + extracting remaining marketing copy into i18n keys (the non-English locales are a first-pass MT; the critical journey strings are done).                                                                                                                                                                            | M    | this file (§1.7), `.claude/plans/`  |
+| **`POP_REQUIRED` flip**: operational — flip in beta after the client soaks (boot-warm prerequisite is done), prod launches with it on. PoP `sid`-binding needs an httpOnly-compatible design (a public per-session token).                                                                                                                                  | S    | `.claude/plans/`, threat model      |
+| **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until tier linkage across backends is defined. Needs the portal's tier model.                                                                                                                                                                                             | M    | `convex/account.ts`                 |
+| **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                                                                                                              | M    | `deferred-security-bugs.md`         |
 
 ---
 
