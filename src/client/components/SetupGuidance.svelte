@@ -61,6 +61,21 @@
   let active = $state<Platform['key']>('android');
   // `active` is always one of the defined keys, so find() always hits.
   let currentApps = $derived(PLATFORMS.find((p) => p.key === active)?.apps ?? []);
+
+  // WAI-ARIA tabs roving focus: Left/Right (or Up/Down) cycle + select, then
+  // focus the newly selected tab. Same pattern as GetAccount's radiogroup.
+  function tabKeydown(e: KeyboardEvent) {
+    const forward = ['ArrowRight', 'ArrowDown'].includes(e.key);
+    const backward = ['ArrowLeft', 'ArrowUp'].includes(e.key);
+    if (!forward && !backward) return;
+    e.preventDefault();
+    const idx = PLATFORMS.findIndex((p) => p.key === active);
+    const next = (idx + (forward ? 1 : -1) + PLATFORMS.length) % PLATFORMS.length;
+    active = PLATFORMS[next]!.key;
+    (e.currentTarget as HTMLElement).parentElement
+      ?.querySelector<HTMLElement>('[aria-selected="true"]')
+      ?.focus();
+  }
 </script>
 
 <section class="rounded-xl border border-border bg-card p-5 sm:p-6">
@@ -70,13 +85,17 @@
   </h2>
   <p class="mt-1 text-sm text-muted-foreground">{t('setup.intro')}</p>
 
-  <div class="mt-4 flex flex-wrap gap-1.5" role="tablist">
+  <div class="mt-4 flex flex-wrap gap-1.5" role="tablist" aria-label={t('setup.title')}>
     {#each PLATFORMS as p (p.key)}
       <button
         type="button"
         role="tab"
+        id="setup-tab-{p.key}"
         aria-selected={active === p.key}
+        aria-controls="setup-panel-{p.key}"
+        tabindex={active === p.key ? 0 : -1}
         onclick={() => (active = p.key)}
+        onkeydown={tabKeydown}
         class="min-h-9 rounded-md px-3 py-1.5 text-sm font-medium transition-colors {active ===
         p.key
           ? 'bg-primary text-primary-foreground'
@@ -87,7 +106,12 @@
     {/each}
   </div>
 
-  <ol class="mt-4 space-y-3 text-sm">
+  <ol
+    class="mt-4 space-y-3 text-sm"
+    role="tabpanel"
+    id="setup-panel-{active}"
+    aria-labelledby="setup-tab-{active}"
+  >
     <li class="flex gap-3">
       <span
         class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"

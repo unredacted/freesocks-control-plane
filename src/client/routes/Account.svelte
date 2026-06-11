@@ -43,6 +43,11 @@
   // sprinkled across the template.
   let data = $derived(account.data);
 
+  // a11y: sonner toasts aren't reliably announced; this feeds a visually
+  // hidden role="status" region so async outcomes are spoken once. Keep the
+  // messages short and NEVER include the account number.
+  let liveMessage = $state('');
+
   let regenerateOpen = $state(false);
   let switchBackendOpen = $state(false);
   // Which backend is the user about to switch TO when they confirm. Computed
@@ -75,11 +80,13 @@
     onSuccess: () => {
       regenerateOpen = false;
       void qc.invalidateQueries({ queryKey: queryKeys.account });
+      liveMessage = t('account.regenSuccessTitle');
       toast.success(t('account.regenSuccessTitle'), {
         description: t('account.regenSuccessBody'),
       });
     },
     onError: (err) => {
+      liveMessage = t('account.regenFailedTitle');
       toast.error(t('account.regenFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
@@ -119,6 +126,7 @@
       // P2: the switch moves the user to the peer tier, so the header's `me`
       // tier label is now stale — refresh it too.
       void qc.invalidateQueries({ queryKey: queryKeys.me });
+      liveMessage = t('account.switchSuccessTitle', { tier: result.tier.name });
       toast.success(t('account.switchSuccessTitle', { tier: result.tier.name }), {
         description: result.oldSubscriptionDeletedAt
           ? t('account.switchSuccessBodyGrace')
@@ -126,6 +134,7 @@
       });
     },
     onError: (err) => {
+      liveMessage = t('account.switchFailedTitle');
       toast.error(t('account.switchFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
@@ -184,12 +193,17 @@
       redeemCode = '';
       void qc.invalidateQueries({ queryKey: queryKeys.account });
       void qc.invalidateQueries({ queryKey: queryKeys.me });
+      liveMessage = t('account.redeemSuccess', {
+        tier: result.tierName,
+        days: result.durationDays,
+      });
       toast.success(
         t('account.redeemSuccess', { tier: result.tierName, days: result.durationDays }),
       );
     },
     onError: () => {
       // Generic, no oracle (matches the server). Don't echo a specific reason.
+      liveMessage = t('account.redeemFailed');
       toast.error(t('account.redeemFailed'));
     },
   }));
@@ -209,6 +223,7 @@
       revealOpen = true; // A2: same blocking, gated reveal as initial issuance
     },
     onError: (err) => {
+      liveMessage = t('account.rotateFailedTitle');
       toast.error(t('account.rotateFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
@@ -302,6 +317,7 @@
   </div>
 {:else}
   <div class="max-w-3xl mx-auto py-8 space-y-8">
+    <div class="sr-only" role="status" aria-live="polite">{liveMessage}</div>
     <!-- Welcome strip, slim, not a card. Visual rhythm is set by spacing,
          not by everything being framed. -->
     <header class="flex items-start justify-between gap-4 flex-wrap">
@@ -456,9 +472,12 @@
     <!-- W4: redeem a membership code (extends/upgrades the tier). Available to
          any signed-in member; the renew callouts above point here. -->
     <section class="rounded-xl border border-border bg-card p-4 sm:p-5">
-      <h2 class="text-sm font-semibold">{t('account.redeemTitle')}</h2>
+      <h2 id="redeem-title" class="text-sm font-semibold">{t('account.redeemTitle')}</h2>
       <div class="mt-3 flex flex-col gap-2 sm:flex-row">
         <input
+          id="redeem-code"
+          aria-labelledby="redeem-title"
+          aria-label={t('account.redeemAriaLabel')}
           inputmode="text"
           autocomplete="off"
           spellcheck="false"
