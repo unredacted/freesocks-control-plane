@@ -1151,6 +1151,46 @@ http.route({
   }),
 });
 
+// --- admin: billing (self-service membership) -------------------------------
+
+http.route({
+  path: '/api/v1/admin/billing',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    const u = new URL(req.url);
+    const limitRaw = u.searchParams.get('limit');
+    const limit = limitRaw ? Number(limitRaw) : undefined;
+    return json(
+      await ctx.runQuery(internal.adminApi.billingOverview, {
+        cursor: u.searchParams.get('cursor') ?? undefined,
+        status: u.searchParams.get('status') ?? undefined,
+        limit: Number.isFinite(limit) ? limit : undefined,
+      }),
+    );
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/billing/config',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.adminApi.setBillingConfig, {
+          patch: body,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 // --- admin: membership codes (W4) -------------------------------------------
 
 http.route({

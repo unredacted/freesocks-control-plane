@@ -37,3 +37,58 @@ export const OrderStatusResponse = z.object({
   membershipExpiresAt: z.string().datetime().nullable(),
 });
 export type OrderStatusResponse = z.infer<typeof OrderStatusResponse>;
+
+// --- admin surface (the AdminBilling CMS page) ------------------------------
+
+export const BillingDuration = z.object({
+  months: z.number().int(),
+  amountCents: z.number().int(),
+});
+export type BillingDuration = z.infer<typeof BillingDuration>;
+
+/** The full (admin-editable) billing config — superset of PublicConfig.billing. */
+export const BillingConfigView = z.object({
+  enabled: z.boolean(),
+  rails: z.object({
+    nowpayments: z.boolean(),
+    stripe: z.boolean(),
+    paypal: z.boolean(),
+  }),
+  currency: z.string(),
+  tierSlug: z.string(),
+  durations: z.array(BillingDuration),
+});
+export type BillingConfigView = z.infer<typeof BillingConfigView>;
+
+/** A partial config patch the admin PATCH accepts (validated/sanitized server-side). */
+export const BillingConfigPatch = BillingConfigView.partial();
+export type BillingConfigPatch = z.infer<typeof BillingConfigPatch>;
+
+export const AdminBillingOrder = z.object({
+  id: z.string(),
+  processor: BillingProcessor,
+  /** Only a prefix of the opaque ref (the full ref is the member's poll token). */
+  refPrefix: z.string(),
+  userId: z.string(),
+  status: BillingOrderStatus,
+  amountCents: z.number().int(),
+  currency: z.string(),
+  durationDays: z.number().int(),
+  processorRef: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  paidAt: z.string().datetime().nullable(),
+});
+export type AdminBillingOrder = z.infer<typeof AdminBillingOrder>;
+
+/** GET /api/v1/admin/billing and PATCH /api/v1/admin/billing/config responses. */
+export const AdminBillingOverview = z.object({
+  config: BillingConfigView,
+  orders: z.array(AdminBillingOrder),
+  nextCursor: z.string().nullable(),
+});
+export type AdminBillingOverview = z.infer<typeof AdminBillingOverview>;
+
+export const AdminBillingConfigResponse = z.object({
+  config: BillingConfigView,
+});
+export type AdminBillingConfigResponse = z.infer<typeof AdminBillingConfigResponse>;

@@ -26,6 +26,7 @@ import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 import { normalizeSupportId } from './lib/supportId';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
+import { billingConfigWrites, resolveBillingConfig } from './lib/billingConfig';
 
 // Admin resource functions are INTERNAL: the only caller is the admin-gated
 // HTTP layer (convex/http.ts) via ctx.runQuery/runMutation. Keeping them off
@@ -775,5 +776,103 @@ export const testBackendConnection = internalAction({
       };
     }
     return PROVIDERS[a.backend].testConnection(config);
+  },
+});
+
+// === billing (self-service membership) ======================================
+// Config edits reuse the appSettings `billing.*` namespace (validated by
+// billingConfigWrites); the orders list redacts the opaque ref to a prefix
+// (the full ref is the member's poll token) and carries no payer PII.
+
+function mapBillingOrder(o: Doc<'billingOrders'>) {
+  return {
+    id: o._id as string,
+    processor: o.processor,
+    refPrefix: o.opaqueRef.slice(0, 8),
+    userId: o.userId as string,
+    status: o.status,
+    amountCents: o.amountCents,
+    currency: o.currency,
+    durationDays: o.durationDays,
+    processorRef: o.processorRef ?? null,
+    createdAt: iso(o._creationTime),
+    paidAt: o.paidAt != null ? iso(o.paidAt) : null,
+  };
+}
+
+const BILLING_ORDER_STATUSES = new Set(['pending', 'confirming', 'paid', 'failed', 'expired']);
+
+/** Admin billing overview: the resolved config + a keyset page of recent orders. */
+export const billingOverview = internalQuery({
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    status: v.optional(v.string()),
+  },
+  handler: async (ctx, { cursor, limit, status }) => {
+    const config = await resolveBillingConfig(ctx.db);
+    const pageSize = Math.min(Math.max(limit ?? 50, 1), 200);
+    const useStatus = status && BILLING_ORDER_STATUSES.has(status);
+    let qry = useStatus
+      ? ctx.db
+          .query('billingOrders')
+          .withIndex('by_status', (q) =>
+            q.eq('status', status as 'pending' | 'confirming' | 'paid' | 'failed' | 'expired'),
+          )
+          .order('desc')
+      : ctx.db.query('billingOrders').order('desc');
+    if (cursor) {
+      const before = Number(cursor);
+      if (Number.isFinite(before)) qry = qry.filter((f) => f.lt(f.field('_creationTime'), before));
+    }
+    const rows = await qry.take(pageSize + 1);
+    const hasMore = rows.length > pageSize;
+    const page = rows.slice(0, pageSize);
+    const last = page[page.length - 1];
+    const nextCursor = hasMore && last ? String(last._creationTime) : null;
+    return { config, orders: page.map(mapBillingOrder), nextCursor };
+  },
+});
+
+/** Admin: patch the billing config (partial). Validates + audits per key. */
+export const setBillingConfig = internalMutation({
+  args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { patch, actorAdminId }) => {
+    let writes: Array<{ key: string; value: string }>;
+    try {
+      writes = billingConfigWrites(patch);
+    } catch (e) {
+      throw new ConvexError({
+        code: 'validation',
+        message: e instanceof Error ? e.message : 'invalid billing config',
+      });
+    }
+    const now = Date.now();
+    for (const { key, value } of writes) {
+      const existing = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique();
+      if (existing) {
+        await ctx.db.patch(existing._id, { value, updatedByAdminId: actorAdminId, updatedAt: now });
+      } else {
+        await ctx.db.insert('appSettings', {
+          key,
+          value,
+          updatedByAdminId: actorAdminId,
+          updatedAt: now,
+        });
+      }
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: actorAdminId,
+        action: 'billing.config.update',
+        targetType: 'billing_config',
+        targetId: key,
+        payload: { key },
+      });
+    }
+    const config = await resolveBillingConfig(ctx.db);
+    return { config };
   },
 });
