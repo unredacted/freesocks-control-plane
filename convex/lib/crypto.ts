@@ -25,6 +25,22 @@ export async function hmacSha256Hex(secret: string, message: string): Promise<st
   return toHex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message)));
 }
 
+/**
+ * HMAC-SHA512 hex. Used to verify NOWPayments IPN callbacks (their signature is
+ * HMAC-SHA512 over the key-sorted JSON body). Web Crypto, so it stays in the V8
+ * action isolate (no "use node").
+ */
+export async function hmacSha512Hex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-512' },
+    false,
+    ['sign'],
+  );
+  return toHex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message)));
+}
+
 export function randomHex(bytes: number): string {
   const buf = new Uint8Array(bytes);
   crypto.getRandomValues(buf);
