@@ -59,21 +59,36 @@
     const node = el;
     if (!node) return;
 
+    // The custom element dispatches `reset` from its disconnectedCallback, which
+    // Svelte runs DURING its DOM teardown flush (when `failed` flips, the {#key}
+    // remounts, or the page navigates away). Calling onVerify() straight from
+    // there mutates the PARENT's `token` $state mid-flush -> Svelte throws
+    // state_unsafe_mutation. So notify the parent on a microtask (outside the
+    // flush), and drop it if THIS effect run has already been torn down (`alive`
+    // is per-run, so a stale reset from an old widget can't clear a new token).
+    let alive = true;
+    const notify = (token: string) => {
+      queueMicrotask(() => {
+        if (alive) onVerify(token);
+      });
+    };
+
     const onSolve = (e: Event) => {
       const token = (e as CustomEvent<{ token: string }>).detail?.token;
-      if (token) onVerify(token);
+      if (token) notify(token);
     };
     const onError = (e: Event) => {
       console.error('Cap widget error', (e as CustomEvent).detail);
       failed = true;
-      onVerify(''); // invalidate any stale token
+      notify(''); // invalidate any stale token
     };
-    const onReset = () => onVerify(''); // token expired / returned to initial state
+    const onReset = () => notify(''); // token expired / returned to initial state
 
     node.addEventListener('solve', onSolve);
     node.addEventListener('error', onError);
     node.addEventListener('reset', onReset);
     return () => {
+      alive = false;
       node.removeEventListener('solve', onSolve);
       node.removeEventListener('error', onError);
       node.removeEventListener('reset', onReset);

@@ -189,6 +189,18 @@ site key, and put the **site key** + **secret** into `.env.convex` as
 `CAP_API_ENDPOINT=http://cap:3000`, `CAP_PUBLIC_ENDPOINT=/cap`). Re-run the
 deployer (`docker compose ... up -d`) so the env applies.
 
+> **Leave "instrumentation challenges" OFF on the site key** (it defaults on in
+> the dashboard, labelled "recommended"; same for "block automated browsers",
+> which depends on it). Cap's instrumentation runs a server-supplied,
+> per-challenge-randomised **inline** script inside a sandboxed `<iframe srcdoc>`
+> — incompatible with the member origin's no-inline-script CSP (it can't be
+> hashed, and we will not add `'unsafe-inline'`/per-request nonces to the member
+> page). With it on, the widget spins and fails `instr_timeout`. The
+> proof-of-work challenge + the DB-driven per-IP rate limits (A1/W2) are the
+> anti-abuse stack; instrumentation is an additional bot-detection layer we
+> deliberately forgo. If a key already has it on, edit the key and uncheck it
+> (or `PUT /cap/keys/<siteKey>/config` with `{"instrumentation": false}`).
+
 If the fronting proxy is down or not yet configured, the dashboard also binds
 to host loopback as a fallback (no edge/auth in the path):
 
