@@ -393,6 +393,84 @@ describe('billing.ingestEvent (Stripe)', () => {
   });
 });
 
+describe('billing.ingestEvent (PayPal)', () => {
+  beforeEach(() => {
+    vi.stubEnv('PAYPAL_CLIENT_ID', 'pp-client');
+    vi.stubEnv('PAYPAL_SECRET', 'pp-secret');
+    vi.stubEnv('PAYPAL_WEBHOOK_ID', 'wh-id');
+    vi.stubEnv('PAYPAL_API_BASE', 'https://api-m.sandbox.paypal.example');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  function stubPayPal(verification = 'SUCCESS') {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        const ok = (body: unknown) =>
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        if (u.includes('/v1/oauth2/token')) return ok({ access_token: 'tok' });
+        if (u.includes('/verify-webhook-signature'))
+          return ok({ verification_status: verification });
+        if (u.includes('/capture')) return ok({ status: 'COMPLETED' });
+        return new Response('{}', { status: 404 });
+      }),
+    );
+  }
+
+  const ppHeaders = {
+    'paypal-auth-algo': 'SHA256withRSA',
+    'paypal-cert-url': 'https://api.paypal.com/cert',
+    'paypal-transmission-id': 'tx-1',
+    'paypal-transmission-sig': 'sig',
+    'paypal-transmission-time': '2026-06-11T00:00:00Z',
+  };
+
+  test('a verified PAYMENT.CAPTURE.COMPLETED extends membership', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-paypal');
+    stubPayPal('SUCCESS');
+    const rawBody = JSON.stringify({
+      id: 'WH-1',
+      event_type: 'PAYMENT.CAPTURE.COMPLETED',
+      resource: { id: 'CAP-1', custom_id: 'ref-paypal' },
+    });
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'paypal',
+      rawBody,
+      headers: ppHeaders,
+    });
+    expect(res).toEqual({ ok: true, applied: true });
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(memberTierId);
+      expect(user?.membershipExpiresAt).toBeGreaterThan(Date.now());
+    });
+  });
+
+  test('a FAILURE verification is rejected', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-paypal-fail');
+    stubPayPal('FAILURE');
+    const rawBody = JSON.stringify({
+      id: 'WH-2',
+      event_type: 'PAYMENT.CAPTURE.COMPLETED',
+      resource: { id: 'CAP-2', custom_id: 'ref-paypal-fail' },
+    });
+    await expect(
+      t.action(internal.billing.ingestEvent, { processor: 'paypal', rawBody, headers: ppHeaders }),
+    ).rejects.toThrow();
+  });
+});
+
 describe('billing.applyEvent single-grant guard', () => {
   afterEach(() => vi.unstubAllEnvs());
 

@@ -25,6 +25,7 @@ import { findDuration, resolveBillingConfig } from './lib/billingConfig';
 import type { BillingConfig } from './lib/billingConfig';
 import * as nowpayments from './lib/processors/nowpayments';
 import * as stripe from './lib/processors/stripe';
+import * as paypal from './lib/processors/paypal';
 import type {
   CheckoutParams,
   CheckoutResult,
@@ -82,9 +83,26 @@ async function createCheckoutForProcessor(
       if (!apiKey) throw new Error('STRIPE_API_KEY unset');
       return stripe.createCheckout({ apiKey }, params);
     }
-    case 'paypal':
-      throw new Error(`processor ${processor} not implemented yet`);
+    case 'paypal': {
+      const cfg = paypalConfig();
+      if (!cfg) throw new Error('PAYPAL_* env unset');
+      return paypal.createCheckout(cfg, params);
+    }
   }
+}
+
+/** Build the PayPal config from env, or null if not fully configured. */
+function paypalConfig(): paypal.PayPalConfig | null {
+  const clientId = process.env.PAYPAL_CLIENT_ID;
+  const secret = process.env.PAYPAL_SECRET;
+  const webhookId = process.env.PAYPAL_WEBHOOK_ID;
+  if (!clientId || !secret || !webhookId) return null;
+  return {
+    clientId,
+    secret,
+    webhookId,
+    apiBase: process.env.PAYPAL_API_BASE || 'https://api-m.paypal.com',
+  };
 }
 
 /** Verify + parse a processor webhook. Throws billing.not_configured if its secret is unset. */
@@ -92,6 +110,7 @@ async function verifyForProcessor(
   processor: ProcessorId,
   rawBody: string,
   signature: string | null,
+  headers: Record<string, string>,
 ): Promise<VerifyResult> {
   switch (processor) {
     case 'nowpayments': {
@@ -114,11 +133,16 @@ async function verifyForProcessor(
       }
       return stripe.verifyAndParse({ rawBody, signature, secret });
     }
-    case 'paypal':
-      throw new ConvexError({
-        code: 'billing.not_configured',
-        message: `${processor} webhooks are not configured`,
-      });
+    case 'paypal': {
+      const cfg = paypalConfig();
+      if (!cfg) {
+        throw new ConvexError({
+          code: 'billing.not_configured',
+          message: 'PayPal webhooks are not configured',
+        });
+      }
+      return paypal.verifyAndParse({ rawBody, headers, cfg });
+    }
   }
 }
 
@@ -342,9 +366,21 @@ export const applyEvent = internalMutation({
  * webhookEvents payload is the adapter's REDACTED summary (no payer PII).
  */
 export const ingestEvent = internalAction({
-  args: { processor: processorValidator, rawBody: v.string(), signature: v.optional(v.string()) },
+  args: {
+    processor: processorValidator,
+    rawBody: v.string(),
+    signature: v.optional(v.string()),
+    // PayPal verifies over a set of `paypal-*` request headers, not a single
+    // signature; the webhook route collects them here. Unused by np/stripe.
+    headers: v.optional(v.record(v.string(), v.string())),
+  },
   handler: async (ctx, a): Promise<{ ok: true; duplicate?: boolean; applied: boolean }> => {
-    const verified = await verifyForProcessor(a.processor, a.rawBody, a.signature ?? null);
+    const verified = await verifyForProcessor(
+      a.processor,
+      a.rawBody,
+      a.signature ?? null,
+      a.headers ?? {},
+    );
     if (!verified.ok) throw new Error(`webhook verify failed: ${verified.reason}`);
 
     const dedupe = await ctx.runMutation(internal.webhooks.recordEvent, {

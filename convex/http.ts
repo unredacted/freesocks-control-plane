@@ -841,7 +841,10 @@ type BillingProcessorId = 'nowpayments' | 'stripe' | 'paypal';
 function processorWebhook(opts: {
   processor: BillingProcessorId;
   secretEnv: string;
-  sigHeader: string;
+  /** Single signature header (NOWPayments/Stripe). Omit for PayPal (uses headerNames). */
+  sigHeader?: string;
+  /** Header set PayPal verifies over (its API call needs all of them). */
+  headerNames?: string[];
   policyKey: 'webhook.nowpayments.ip' | 'webhook.stripe.ip' | 'webhook.paypal.ip';
 }) {
   const notConfigured = () =>
@@ -871,11 +874,20 @@ function processorWebhook(opts: {
     if (rawBody.length > 64 * 1024) {
       return errorJson('webhook.too_large', 'Payload too large', 413);
     }
+    let headers: Record<string, string> | undefined;
+    if (opts.headerNames) {
+      headers = {};
+      for (const name of opts.headerNames) {
+        const v = req.headers.get(name);
+        if (v != null) headers[name] = v;
+      }
+    }
     try {
       const result = await ctx.runAction(internal.billing.ingestEvent, {
         processor: opts.processor,
         rawBody,
-        signature: req.headers.get(opts.sigHeader) ?? undefined,
+        signature: opts.sigHeader ? (req.headers.get(opts.sigHeader) ?? undefined) : undefined,
+        headers,
       });
       return json(result);
     } catch (err) {
@@ -909,6 +921,25 @@ http.route({
     secretEnv: 'STRIPE_WEBHOOK_SECRET',
     sigHeader: 'stripe-signature',
     policyKey: 'webhook.stripe.ip',
+  }),
+});
+
+http.route({
+  path: '/api/webhooks/paypal',
+  method: 'POST',
+  handler: processorWebhook({
+    processor: 'paypal',
+    // Cheap pre-check; billing.ingestEvent fully validates all PAYPAL_* vars and
+    // 503s via the ConvexError catch if any is missing.
+    secretEnv: 'PAYPAL_CLIENT_ID',
+    headerNames: [
+      'paypal-auth-algo',
+      'paypal-cert-url',
+      'paypal-transmission-id',
+      'paypal-transmission-sig',
+      'paypal-transmission-time',
+    ],
+    policyKey: 'webhook.paypal.ip',
   }),
 });
 
