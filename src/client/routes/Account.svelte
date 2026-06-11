@@ -539,7 +539,7 @@
                 <Smartphone class="size-4 text-muted-foreground shrink-0" />
                 <code class="font-mono text-xs truncate">{d.hwid.slice(0, 24)}…</code>
               </div>
-              <span class="text-muted-foreground text-xs tabular-nums shrink-0 ml-3">
+              <span class="text-muted-foreground text-xs tabular-nums shrink-0 ms-3">
                 {d.lastSeenAt ? `Last seen ${new Date(d.lastSeenAt).toLocaleDateString()}` : '-'}
               </span>
             </li>

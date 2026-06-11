@@ -32,7 +32,7 @@
         old URL becomes read-only for 24 hours, then is deleted.
       </Dialog.Description>
     </Dialog.Header>
-    <ul class="text-sm space-y-1 list-disc pl-5">
+    <ul class="text-sm space-y-1 list-disc ps-5">
       <li>Your current key remains usable for the next 24 hours</li>
       <li>You'll need to re-import the new URL in each of your devices</li>
       {#if deviceCount > 0}

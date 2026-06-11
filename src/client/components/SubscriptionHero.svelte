@@ -178,7 +178,7 @@
         <div class="relative rounded-lg border border-border bg-muted/40 p-3 group">
           <code
             id="primary-url"
-            class="block font-mono text-xs md:text-sm break-all pr-2 leading-relaxed text-foreground/90"
+            class="block font-mono text-xs md:text-sm break-all pe-2 leading-relaxed text-foreground/90"
           >
             {subscriptionUrl}
           </code>

@@ -79,7 +79,7 @@
       The check runs entirely in your browser. If it failed, your browser may be blocking the worker
       it needs, or the network dropped the request.
     </p>
-    <ul class="mt-2 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+    <ul class="mt-2 list-disc space-y-1 ps-5 text-xs text-muted-foreground">
       <li>Try disabling browser extensions</li>
       <li>Try a different network or a private/incognito window</li>
       <li>Make sure JavaScript and WebAssembly are enabled</li>

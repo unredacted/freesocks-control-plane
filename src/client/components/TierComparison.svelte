@@ -96,7 +96,7 @@
       >
         {#if isCurrent}
           <div
-            class="absolute top-0 left-0 px-2 py-1 rounded-br-lg bg-secondary text-secondary-foreground text-[10px] font-semibold uppercase tracking-wider"
+            class="absolute top-0 start-0 px-2 py-1 rounded-ee-lg bg-secondary text-secondary-foreground text-[10px] font-semibold uppercase tracking-wider"
           >
             Your tier
           </div>

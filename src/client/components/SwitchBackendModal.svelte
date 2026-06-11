@@ -59,7 +59,7 @@
         stays usable for 24 hours so you can re-import on every device before it stops working.
       </Dialog.Description>
     </Dialog.Header>
-    <ul class="text-sm space-y-1 list-disc pl-5">
+    <ul class="text-sm space-y-1 list-disc ps-5">
       <li>A new subscription URL is issued on the {toLabel} backend</li>
       <li>The current {fromLabel} URL keeps working for 24 hours, then is deleted</li>
       <li>You'll need to re-import the new URL in each VPN client you use</li>
