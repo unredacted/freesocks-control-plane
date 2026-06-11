@@ -94,9 +94,8 @@
       // Cookie is set; reflect the new authenticated identity everywhere.
       void qc.invalidateQueries({ queryKey: queryKeys.me });
     },
-    onError: (err) => {
-      toast.error(t('get.createAccountFailedTitle'), { description: apiErrorMessage(err) });
-    },
+    // Failures render inline next to the CTA (see the destructive box below);
+    // no duplicate toast — one error surface per failure.
   }));
 
   // Step 2: provision the proxy key. Separate request from step 1, so a backend
@@ -115,9 +114,7 @@
         description: t('get.createSubToastBody'),
       });
     },
-    onError: (err) => {
-      toast.error(t('get.createSubFailedTitle'), { description: apiErrorMessage(err) });
-    },
+    // Failures render inline next to the CTA; no duplicate toast.
   }));
 
   // A 503 "no proxy server available" is retryable and not the user's fault, so
@@ -256,6 +253,15 @@
         {accountTier
           ? t('get.accountReadyTier', { tier: accountTier.name })
           : t('get.accountReady')}
+        {#if !created}
+          <!-- Refresh-recovery path: the reveal-once state is volatile, so a
+               reload right after creation must not be a dead end. The rotate
+               action on /account mints (and properly reveals) a NEW number. -->
+          <span class="block text-xs text-muted-foreground mt-0.5">
+            {t('get.lostNumberHint')}
+            <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
+          </span>
+        {/if}
       </span>
     </div>
   {/if}

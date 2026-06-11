@@ -4,6 +4,13 @@
  * raw — so a 429 reads "too many attempts", a network failure reads "offline",
  * and a backend outage / parse failure reads a friendly localized string rather
  * than an opaque code or a TypeError.
+ *
+ * ERROR-SURFACE CONVENTION (pass 2): one surface per failure, never both.
+ *  - Query/load errors and form-blocking errors render INLINE, next to the
+ *    thing the user is looking at (and its Retry affordance).
+ *  - Background mutation outcomes (the user may have scrolled/moved on) use a
+ *    TOAST.
+ * GetAccount's create flows are inline; Account's actions are toasts.
  */
 import { ApiCallError } from './api';
 import { t } from './i18n/index.svelte';

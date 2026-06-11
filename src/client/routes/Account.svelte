@@ -16,6 +16,7 @@
   import TierComparison from '../components/TierComparison.svelte';
   import MemberImpact from '../components/MemberImpact.svelte';
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
+  import RotateAccountIdModal from '../components/RotateAccountIdModal.svelte';
   import SetupGuidance from '../components/SetupGuidance.svelte';
   import { t, normalizeDigits } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
@@ -233,6 +234,13 @@
           : 'active',
   );
 
+  // Operational account status — a DIFFERENT axis from the membership
+  // (entitlement) state above. `grace`/`disabled` come from the lifecycle sweep
+  // and mean the account itself is winding down; without surfacing it the user
+  // would see a normal-looking dashboard while their keys are about to stop.
+  let userStatus = $derived(data?.user.status ?? 'active');
+  let actionsDisabled = $derived(userStatus === 'disabled');
+
   // Backend-switch eligibility. The button is visible only when:
   //   - both backends are enabled in app settings (the chooser-enabled
   //     condition; we don't require user-choice-enabled here because backend
@@ -260,7 +268,7 @@
   <div class="max-w-2xl mx-auto py-8">
     <Card>
       <CardHeader>
-        <CardTitle>Account</CardTitle>
+        <CardTitle>{t('account.title')}</CardTitle>
         <CardDescription class="text-destructive">
           {apiErrorMessage(account.error)}
         </CardDescription>
@@ -299,8 +307,22 @@
     <header class="flex items-start justify-between gap-4 flex-wrap">
       <div>
         <h1 class="text-3xl font-display font-bold tracking-tight">{t('account.title')}</h1>
-        <p class="text-sm text-muted-foreground mt-1">
-          {t('account.tierLabel')}: <strong class="text-foreground">{data.user.tier.name}</strong>
+        <p class="text-sm text-muted-foreground mt-1 flex flex-wrap items-center gap-2">
+          <span>
+            {t('account.tierLabel')}:
+            <strong class="text-foreground">{data.user.tier.name}</strong>
+          </span>
+          {#if userStatus === 'grace'}
+            <span
+              class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-600 dark:text-amber-400"
+            >
+              {t('account.statusGrace')}
+            </span>
+          {:else if userStatus === 'disabled'}
+            <span class="rounded-full bg-destructive/15 px-2 py-0.5 text-xs text-destructive">
+              {t('account.statusDisabled')}
+            </span>
+          {/if}
         </p>
         {#if data.user.supportId}
           <p class="mt-1 text-xs text-muted-foreground">
@@ -334,28 +356,33 @@
       />
     {/if}
 
-    <!-- Rotate confirmation. -->
-    {#if rotateConfirmOpen}
-      <div class="rounded-xl border border-destructive/40 bg-destructive/5 p-5 space-y-3">
-        <h2 class="text-sm font-semibold">Rotate your account number?</h2>
-        <p class="text-xs text-muted-foreground">
-          A new 32-digit number is generated and shown once. Your current number stops working
-          immediately. Anyone who has it loses access. Do this if your number may have leaked.
-        </p>
-        <div class="flex gap-2">
-          <Button
-            size="sm"
-            variant="destructive"
-            onclick={() => rotateAccountId.mutate()}
-            disabled={rotateAccountId.isPending}
-          >
-            {rotateAccountId.isPending ? 'Rotating…' : 'Yes, rotate'}
-          </Button>
-          <Button size="sm" variant="ghost" onclick={() => (rotateConfirmOpen = false)}
-            >Cancel</Button
-          >
-        </div>
-      </div>
+    <!-- Rotate confirmation: a proper Dialog, consistent with Regenerate/Switch
+         (rotating invalidates the only credential — it deserves no less). -->
+    <RotateAccountIdModal
+      bind:open={rotateConfirmOpen}
+      onCancel={() => (rotateConfirmOpen = false)}
+      onConfirm={() => rotateAccountId.mutate()}
+      busy={rotateAccountId.isPending}
+    />
+
+    <!-- Operational status callouts (lifecycle grace/disabled) — distinct from
+         the membership-entitlement callouts below; both can apply. -->
+    {#if userStatus === 'grace'}
+      <MembershipCallout
+        tone="warn"
+        title={t('account.graceTitle')}
+        body={t('account.graceBody')}
+        ctaUrl={config.data?.donateUrl}
+        ctaLabel={t('renew.donate')}
+      />
+    {:else if userStatus === 'disabled'}
+      <MembershipCallout
+        tone="error"
+        title={t('account.disabledTitle')}
+        body={t('account.disabledBody')}
+        ctaUrl={config.data?.donateUrl}
+        ctaLabel={t('renew.donate')}
+      />
     {/if}
 
     <!-- Membership-state callouts: only shown when there's something to say. -->
@@ -477,7 +504,11 @@
         <p class="text-sm text-muted-foreground max-w-sm mx-auto">
           {t('account.noSubBody')}
         </p>
-        <Button onclick={() => regenerate.mutate()} disabled={regenerate.isPending} size="lg">
+        <Button
+          onclick={() => regenerate.mutate()}
+          disabled={regenerate.isPending || actionsDisabled}
+          size="lg"
+        >
           <Plus class="size-4" />
           {regenerate.isPending ? t('account.creating') : t('account.createSub')}
         </Button>
@@ -494,7 +525,7 @@
       <div class="flex flex-wrap gap-2">
         <Button
           onclick={() => (regenerateOpen = true)}
-          disabled={regenerate.isPending || switchBackend.isPending}
+          disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
           variant="outline"
           size="sm"
         >
@@ -507,7 +538,7 @@
               pendingSwitchTarget = oppositeBackend;
               switchBackendOpen = true;
             }}
-            disabled={regenerate.isPending || switchBackend.isPending}
+            disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
             variant="outline"
             size="sm"
           >
