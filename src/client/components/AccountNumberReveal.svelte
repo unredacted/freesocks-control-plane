@@ -106,9 +106,11 @@
       </AlertDialog.Description>
     </AlertDialog.Header>
 
+    <!-- Deliberately NOT aria-live: auto-announcing the only credential aloud is a
+         shoulder-surf/shared-device hazard. The dialog title gives SR users context;
+         the number stays plain focusable, select-all text. -->
     <p
       class="block select-all rounded-md border border-border bg-muted px-3 py-4 text-center font-mono text-lg tracking-wider break-words"
-      aria-live="polite"
       data-testid="account-number"
     >
       {grouped}

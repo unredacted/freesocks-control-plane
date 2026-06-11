@@ -50,10 +50,13 @@
   let pendingSwitchTarget = $state<'remnawave' | 'outline' | null>(null);
 
   // 401 from /api/v1/account means the cookie session is missing or expired;
-  // bounce to the account-number sign-in form (no OIDC anymore).
+  // bounce to the account-number sign-in form (no OIDC anymore). The once-flag
+  // keeps refetch-error churn from re-firing the navigation.
+  let redirectedToLogin = false;
   $effect(() => {
     const err = account.error;
-    if (err instanceof ApiCallError && err.status === 401) {
+    if (!redirectedToLogin && err instanceof ApiCallError && err.status === 401) {
+      redirectedToLogin = true;
       router.navigate('/login');
     }
   });

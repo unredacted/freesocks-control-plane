@@ -56,6 +56,9 @@
     onSuccess: (updated) => {
       draft = { ...updated };
       void qc.invalidateQueries({ queryKey: queryKeys.adminSettings });
+      // Settings feed the public /api/v1/config (backend toggles, default, labels)
+      // — refresh it too so member tabs in this browser don't serve stale config.
+      void qc.invalidateQueries({ queryKey: queryKeys.config });
       toast.success('Settings saved');
     },
     onError: (err) => {

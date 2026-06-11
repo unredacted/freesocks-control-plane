@@ -94,6 +94,22 @@
               {#await AdminRouter() then mod}
                 {@const Admin = mod.default}
                 <Admin />
+              {:catch}
+                <!-- The lazy admin chunk failed to load (flaky network / stale
+                     cache) — without this branch the page is silently blank. -->
+                <div class="text-center py-16 space-y-3">
+                  <h1 class="text-xl font-display font-bold">Couldn't load the admin console</h1>
+                  <p class="text-sm text-muted-foreground">
+                    The network request for this section failed. Reload to retry.
+                  </p>
+                  <button
+                    type="button"
+                    class="text-primary underline"
+                    onclick={() => window.location.reload()}
+                  >
+                    Reload
+                  </button>
+                </div>
               {/await}
             {:else}
               <div class="text-center py-16">

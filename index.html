@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Never leak where a user came from / where they go. Reinforces the
+         no-third-party posture and protects users whose traffic is inspected. -->
+    <meta name="referrer" content="no-referrer" />
     <meta
       name="description"
       content="FreeSocks - free, open & uncensored proxies for users in heavily-censored regions"

@@ -31,6 +31,9 @@
   let revealed = $state<string[] | null>(null);
   let acknowledged = $state(false);
 
+  // Revoke is irreversible (a donor may be holding the code) — confirm first.
+  let pendingRevoke = $state<{ id: string; codePrefix: string } | null>(null);
+
   const mint = createMutation(() => ({
     mutationFn: () =>
       apiClient.post(
@@ -54,6 +57,7 @@
       apiClient.delete(`/api/v1/admin/membership-codes/${id}`, z.object({ ok: z.boolean() })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['admin', 'membership-codes'] });
+      pendingRevoke = null;
       toast.success('Code revoked');
     },
     onError: (err) =>
@@ -196,15 +200,45 @@
               redeemed {new Date(code.redeemedAt).toLocaleDateString()}
             {/if}
             {#if code.status === 'active'}
-              <Button size="sm" variant="ghost" onclick={() => revoke.mutate(code.id)}
-                >Revoke</Button
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={revoke.isPending}
+                onclick={() => (pendingRevoke = { id: code.id, codePrefix: code.codePrefix })}
               >
+                Revoke
+              </Button>
             {/if}
           </div>
         </li>
       {/each}
     </ul>
   {/if}
+
+  <!-- Revoke confirmation (irreversible; mirrors the token-revoke pattern). -->
+  <AlertDialog.Root
+    open={!!pendingRevoke}
+    onOpenChange={(o) => (o ? null : (pendingRevoke = null))}
+  >
+    <AlertDialog.Content>
+      <AlertDialog.Header>
+        <AlertDialog.Title>Revoke code {pendingRevoke?.codePrefix}…?</AlertDialog.Title>
+        <AlertDialog.Description>
+          The code becomes unusable immediately — a donor holding it will not be able to redeem it.
+          This cannot be undone.
+        </AlertDialog.Description>
+      </AlertDialog.Header>
+      <AlertDialog.Footer>
+        <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+        <AlertDialog.Action
+          onclick={() => pendingRevoke && revoke.mutate(pendingRevoke.id)}
+          disabled={revoke.isPending}
+        >
+          {revoke.isPending ? 'Revoking…' : 'Revoke'}
+        </AlertDialog.Action>
+      </AlertDialog.Footer>
+    </AlertDialog.Content>
+  </AlertDialog.Root>
 
   <!-- Reveal-once dialog for freshly minted codes. -->
   <AlertDialog.Root
