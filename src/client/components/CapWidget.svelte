@@ -14,7 +14,12 @@
    * `solve` (detail.token), `error`, and `reset`. We surface a load/solve
    * failure as an explicit, actionable state (matching the old Turnstile UX)
    * rather than a silent dead-end.
+   *
+   * The PoW WASM + pako are served SAME-ORIGIN (cap-wasm-config, imported first)
+   * so nothing is fetched from cdn.jsdelivr.net — preserving the zero-third-party
+   * guarantee and working where that CDN is blocked.
    */
+  import '../lib/cap-wasm-config';
   import '@cap.js/widget';
 
   interface Props {
