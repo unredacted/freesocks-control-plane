@@ -27,8 +27,8 @@ export CONVEX_SELF_HOSTED_ADMIN_KEY="${admin_key}"
 
 # A4: a lightweight gate so a type-broken checkout can't deploy on the host.
 # (`convex deploy` typechecks convex/ too; this also covers the client + shared
-# contracts. The full test suite is the CI gate run before tagging — see
-# .github/workflows/deploy.yml — not repeated here to keep restarts quick.)
+# contracts. The full suite — typecheck + test + lint + build — is the CI gate in
+# .github/workflows/ci.yml; not repeated here to keep restarts quick.)
 # Set DEPLOY_SKIP_TYPECHECK=true to bypass in an emergency.
 if [ "${DEPLOY_SKIP_TYPECHECK:-false}" != "true" ]; then
   echo "[deploy] typechecking before deploy"
@@ -61,5 +61,11 @@ fi
 
 echo "[deploy] seeding tiers + settings (+ Remnawave instance if REMNAWAVE_* is set)"
 bunx convex run seed:seedCutover '{}'
+
+# One-time migration of the paid 'member' tier to the unlimited FreeSocks
+# Membership (the billing flow's target). Guarded: a no-op once the row is
+# already unlimited, so it's safe on every deploy and won't clobber admin edits.
+echo "[deploy] reconfiguring the membership tier (no-op if already unlimited)"
+bunx convex run seed:reconfigureMembershipTier '{}'
 
 echo "[deploy] OK"

@@ -74,12 +74,14 @@ export const seedMemberTier = internalMutation({
 });
 
 /**
- * Idempotently bring the EXISTING `'member'` row up to the unlimited membership
- * config (name/limits). `seedMemberTier` skips-if-exists, so a beta install that
- * already has the old 500 GB / 3-device `'Member'` row needs this one-shot patch.
- * Run via `bunx convex run seed:reconfigureMembershipTier '{}'`. Preserves any
- * admin-tuned `remnawaveSquadUuid`. Existing paid members pick up the new limits
- * on their next tier change / re-issue (or run a manual push).
+ * Bring the EXISTING `'member'` row up to the unlimited membership config (the
+ * paid tier the billing flow grants). `seedMemberTier` skips-if-exists, so a beta
+ * install that already has the old 500 GB / 3-device `'Member'` row needs this
+ * migration. **Guarded + safe to re-run on every deploy:** once the row is
+ * already unlimited (`monthlyTrafficGb === 0 && !hwidEnabled`) it's a no-op, so
+ * it won't clobber later admin edits (name, squad, priority) — it only performs
+ * the one-time bump from a limited row. Existing paid members pick up the new
+ * limits on their next tier change / re-issue.
  */
 export const reconfigureMembershipTier = internalMutation({
   args: {},
@@ -90,6 +92,10 @@ export const reconfigureMembershipTier = internalMutation({
       .unique();
     if (!existing) {
       return { reconfigured: false as const, id: null };
+    }
+    // Already unlimited → leave it (and any admin customizations) alone.
+    if (existing.monthlyTrafficGb === 0 && existing.hwidEnabled === false) {
+      return { reconfigured: false as const, id: existing._id };
     }
     await ctx.db.patch(existing._id, { ...MEMBERSHIP_TIER, updatedAt: Date.now() });
     return { reconfigured: true as const, id: existing._id };
