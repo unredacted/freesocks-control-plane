@@ -10,7 +10,9 @@
    */
   import Link from '../components/Link.svelte';
   import { Button } from '@client/components/ui/button';
+  import TierComparison from '../components/TierComparison.svelte';
   import { meQuery, configQuery } from '../lib/queries';
+  import { router } from '../stores/router.svelte';
   import { fly, fade } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
   import KeyIcon from '@lucide/svelte/icons/key-round';
@@ -22,6 +24,13 @@
 
   const me = meQuery();
   const config = configQuery();
+
+  // The membership upgrade entry point: an authed member goes straight to their
+  // account (the upgrade panel); an anon visitor creates a free account first.
+  const billingEnabled = $derived(config.data?.billing?.enabled ?? false);
+  function goUpgrade() {
+    router.navigate(me.data?.authenticated ? '/account' : '/get-account');
+  }
 
   // Live free-tier limits from /api/v1/config (the DB-enforced numbers), with
   // the seed values as a fallback while config loads.
@@ -90,7 +99,7 @@
 
       <p class="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
         Create a free account with one human-check, then get a subscription URL for any modern VPN
-        client. No email or password. Higher tiers exist for users who want more bandwidth and more
+        client. No email or password. A FreeSocks membership unlocks unlimited bandwidth and
         devices.
       </p>
 
@@ -157,7 +166,7 @@
             <div>
               <p class="text-sm font-medium tabular-nums">{freeTierLine}</p>
               <p class="text-xs text-muted-foreground leading-snug">
-                Higher tiers raise these (coming soon).
+                A FreeSocks membership makes these unlimited.
               </p>
             </div>
           </li>
@@ -232,6 +241,21 @@
     </div>
   </section>
 
+  <!-- MEMBERSHIP / pricing — only when billing is live (reuses the comparison
+       card, which shows "from <price>/mo" + an Upgrade CTA). -->
+  {#if billingEnabled}
+    <section class="space-y-6">
+      <div class="max-w-2xl space-y-2">
+        <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">Membership</h2>
+        <p class="text-muted-foreground leading-relaxed">
+          Free covers the basics. A FreeSocks membership lifts every limit — unlimited bandwidth and
+          devices — and you can pay with crypto (Monero & more), card, or PayPal.
+        </p>
+      </div>
+      <TierComparison currentTierSlug="" onUpgrade={goUpgrade} />
+    </section>
+  {/if}
+
   <!-- ABOUT: short, factual, no invented programs -->
   <section class="rounded-2xl border border-border bg-card p-6 md:p-10">
     <div class="max-w-2xl space-y-3">
@@ -247,11 +271,9 @@
       </p>
       <div class="flex flex-wrap gap-3 pt-2">
         <!--
-          Donate is the primary "give back" CTA right now; membership signup
-          isn't wired end-to-end yet (the in-house billing portal is still
-          being designed), so we lead with donations and mark Membership as
-          coming-soon. Donation flow is hosted on unredacted.org and works
-          today.
+          Donations fund free accounts (hosted on unredacted.org). When billing
+          is live, the membership CTA routes to the in-app upgrade panel
+          (authed → /account, else create a free account first via /get-account).
         -->
         <a href="https://unredacted.org/donate" target="_blank" rel="noopener noreferrer">
           <Button>
@@ -262,14 +284,9 @@
         <a href="https://unredacted.org" target="_blank" rel="noopener noreferrer">
           <Button variant="outline">unredacted.org</Button>
         </a>
-        <Button
-          variant="ghost"
-          disabled
-          aria-disabled="true"
-          title="Membership signup is coming soon"
-        >
-          Membership (coming soon)
-        </Button>
+        {#if billingEnabled}
+          <Button variant="ghost" onclick={goUpgrade}>Get a membership</Button>
+        {/if}
       </div>
     </div>
   </section>

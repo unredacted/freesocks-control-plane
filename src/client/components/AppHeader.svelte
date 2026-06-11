@@ -3,7 +3,7 @@
   import ThemeToggle from './ThemeToggle.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
   import { Button } from '@client/components/ui/button';
-  import { meQuery } from '../lib/queries';
+  import { meQuery, configQuery } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
   import KeyIcon from '@lucide/svelte/icons/key-round';
   import User from '@lucide/svelte/icons/user-round';
@@ -14,8 +14,10 @@
   // refetched on window focus (so the user gets fresh tier info when they
   // come back from a payment tab once the membership flow is live).
   const me = meQuery();
+  const config = configQuery();
 
   let isFreeTierMember = $derived(!!me.data?.authenticated && me.data.member?.tier.slug === 'free');
+  let billingEnabled = $derived(config.data?.billing?.enabled ?? false);
 </script>
 
 <header class="border-b border-border bg-background/80 backdrop-blur sticky top-0 z-10">
@@ -41,24 +43,14 @@
         </Button>
       </Link>
       {#if !me.isPending && me.data?.authenticated}
-        {#if isFreeTierMember}
-          <!--
-            Membership flow is not yet wired up end-to-end (the in-house
-            billing portal is still being designed). Surface the CTA as
-            "coming soon" so free-tier users see it's planned, but don't
-            link out to a flow that doesn't work yet.
-          -->
-          <Button
-            variant="outline"
-            size="sm"
-            class="text-muted-foreground border-border hidden sm:inline-flex"
-            disabled
-            aria-disabled="true"
-            title="Membership signup is coming soon"
-          >
-            <Heart class="size-4" />
-            Membership (coming soon)
-          </Button>
+        {#if isFreeTierMember && billingEnabled}
+          <!-- Free-tier member + billing live: route to the in-app upgrade panel. -->
+          <Link href="/account">
+            <Button variant="outline" size="sm" class="hidden sm:inline-flex">
+              <Heart class="size-4" />
+              Membership
+            </Button>
+          </Link>
         {/if}
         <Link href="/account">
           <Button variant="default" size="sm">
