@@ -6,6 +6,8 @@
   import { Input } from '@client/components/ui/input';
   import { Checkbox } from '@client/components/ui/checkbox';
   import { apiClient } from '../../lib/api';
+  import { apiErrorMessage } from '../../lib/errors';
+  import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import { BackendServerAdmin } from '../../../shared/contracts/admin';
   import { BACKEND_IDS, type BackendId } from '../../../shared/contracts/backends';
   import { createMutation } from '@tanstack/svelte-query';
@@ -27,7 +29,6 @@
 
   let open = $state(true);
   const isEdit = !!server;
-  const BACKEND_LABELS: Record<BackendId, string> = { remnawave: 'Remnawave', outline: 'Outline' };
 
   // One-time snapshot of the prop into plain locals (an editor keeps its own
   // editable copy; later prop changes shouldn't blow it away mid-edit). The IIFE
@@ -67,6 +68,18 @@
   let testing = $state(false);
   let testResult = $state<{ ok: boolean; message: string } | null>(null);
 
+  // A green "Reachable" badge must describe the CURRENT config: editing any
+  // connection-relevant field invalidates the last test verdict.
+  $effect(() => {
+    void backend;
+    void baseUrl;
+    void apiToken;
+    void apiUrl;
+    void websocketEnabled;
+    void websocketDomain;
+    testResult = null;
+  });
+
   function testBody(): Record<string, unknown> | { error: string } {
     if (backend === 'remnawave') {
       if (!baseUrl || !apiToken) return { error: 'Enter a base URL and an API token to test' };
@@ -98,7 +111,7 @@
         ? { ok: true, message: `Reachable. Current key count: ${result.keyCount}` }
         : { ok: false, message: result.error };
     } catch (err) {
-      testResult = { ok: false, message: err instanceof Error ? err.message : String(err) };
+      testResult = { ok: false, message: apiErrorMessage(err) };
     } finally {
       testing = false;
     }
@@ -147,9 +160,7 @@
       toast.success(isEdit ? 'Instance updated' : 'Instance registered');
     },
     onError: (err) => {
-      toast.error('Save failed', {
-        description: err instanceof Error ? err.message : String(err),
-      });
+      toast.error('Save failed', { description: apiErrorMessage(err) });
     },
   }));
 
@@ -177,7 +188,9 @@
           >Backend type</label
         >
         {#if isEdit}
-          <div id="srv-backend" class="text-sm font-medium py-1">{BACKEND_LABELS[backend]}</div>
+          <div id="srv-backend" class="text-sm font-medium py-1">
+            {ADMIN_BACKEND_LABELS[backend]}
+          </div>
           <p class="text-xs text-muted-foreground/80">The backend type is fixed once created.</p>
         {:else}
           <Select.Root
@@ -185,10 +198,12 @@
             value={backend}
             onValueChange={(v) => (backend = v as BackendId)}
           >
-            <Select.Trigger id="srv-backend" class="w-56">{BACKEND_LABELS[backend]}</Select.Trigger>
+            <Select.Trigger id="srv-backend" class="w-56"
+              >{ADMIN_BACKEND_LABELS[backend]}</Select.Trigger
+            >
             <Select.Content>
               {#each BACKEND_IDS as id (id)}
-                <Select.Item value={id}>{BACKEND_LABELS[id]}</Select.Item>
+                <Select.Item value={id}>{ADMIN_BACKEND_LABELS[id]}</Select.Item>
               {/each}
             </Select.Content>
           </Select.Root>

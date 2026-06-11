@@ -7,8 +7,12 @@
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
   import { apiClient } from '../../lib/api';
+  import { apiErrorMessage } from '../../lib/errors';
+  import { formatDate } from '../../lib/i18n/format';
+  import AdminListState from './AdminListState.svelte';
   import { UserAdmin } from '../../../shared/contracts/admin';
-  import { adminUsersQuery } from '../../lib/queries';
+  import { adminTiersQuery, adminUsersQuery } from '../../lib/queries';
+  import * as Select from '@client/components/ui/select';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
 
@@ -35,6 +39,7 @@
   // handle admins search by; fall back to a short id slice before issuance
   // mints one.
   function userLabel(u: z.infer<typeof UserAdmin>): string {
+    if (u.supportId) return u.supportId;
     return u.accountIdPrefix ? `Account ${u.accountIdPrefix}…` : `User ${u.id.slice(0, 8)}`;
   }
 
@@ -44,8 +49,19 @@
   // input-state from query-state.
   let inputText = $state('');
   let activeQuery = $state('');
+  // Server-supported list filters (UserSearchQuery): wired here for the first
+  // time — the API honored them, the UI just never offered them.
+  let statusFilter = $state('');
+  let tierFilter = $state('');
 
-  const users = adminUsersQuery(() => activeQuery);
+  const STATUS_OPTIONS = ['', 'active', 'grace', 'disabled'] as const;
+
+  const users = adminUsersQuery(() => ({
+    q: activeQuery,
+    status: statusFilter,
+    tier: tierFilter,
+  }));
+  const tiers = adminTiersQuery();
   const qc = useQueryClient();
 
   // Flatten the infinite-query pages into a single list (P1-16).
@@ -71,9 +87,7 @@
       pending = null;
     },
     onError: (err) => {
-      toast.error('Action failed', {
-        description: err instanceof Error ? err.message : String(err),
-      });
+      toast.error('Action failed', { description: apiErrorMessage(err) });
     },
   }));
 
@@ -98,7 +112,7 @@
   <h1 class="text-2xl font-bold mb-6">Users</h1>
   <div class="flex gap-2 mb-6">
     <Input
-      placeholder="Search by account-number prefix (first 4 digits)…"
+      placeholder="Search by FS- support ID or 4-digit account prefix…"
       bind:value={inputText}
       onkeydown={(e) => {
         if (e.key === 'Enter') activeQuery = inputText;
@@ -107,6 +121,41 @@
     <Button onclick={() => (activeQuery = inputText)} disabled={users.isFetching}>
       {users.isFetching ? 'Searching…' : 'Search'}
     </Button>
+  </div>
+  <div class="mb-6 flex flex-wrap items-center gap-2 text-sm">
+    <Select.Root type="single" value={statusFilter} onValueChange={(v) => (statusFilter = v)}>
+      <Select.Trigger class="w-40">
+        {statusFilter ? `Status: ${statusFilter}` : 'Any status'}
+      </Select.Trigger>
+      <Select.Content>
+        {#each STATUS_OPTIONS as opt (opt)}
+          <Select.Item value={opt}>{opt || 'Any status'}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+    <Select.Root type="single" value={tierFilter} onValueChange={(v) => (tierFilter = v)}>
+      <Select.Trigger class="w-44">
+        {tierFilter ? `Tier: ${tierFilter}` : 'Any tier'}
+      </Select.Trigger>
+      <Select.Content>
+        <Select.Item value="">Any tier</Select.Item>
+        {#each tiers.data ?? [] as tier (tier.id)}
+          <Select.Item value={tier.slug}>{tier.slug}</Select.Item>
+        {/each}
+      </Select.Content>
+    </Select.Root>
+    {#if statusFilter || tierFilter}
+      <Button
+        size="sm"
+        variant="ghost"
+        onclick={() => {
+          statusFilter = '';
+          tierFilter = '';
+        }}
+      >
+        Clear filters
+      </Button>
+    {/if}
   </div>
 
   {#if users.isPending}
@@ -129,11 +178,7 @@
       {/each}
     </div>
   {:else if users.isError}
-    <div
-      class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive"
-    >
-      {users.error instanceof Error ? users.error.message : String(users.error)}
-    </div>
+    <AdminListState error={users.error} />
   {:else}
     <div class="space-y-3">
       {#each userRows as u (u.id)}
@@ -149,7 +194,16 @@
               Status: <strong>{u.status}</strong> · Tier: <strong>{u.tierSlug}</strong>
             </div>
             <div class="text-muted-foreground">
-              Created {new Date(u.createdAt).toLocaleDateString()}
+              {#if u.supportId}
+                Support ID: <code class="select-all font-mono text-foreground">{u.supportId}</code>
+              {/if}
+              {#if u.accountIdPrefix}
+                {#if u.supportId}·{/if}
+                Prefix: <code class="font-mono">{u.accountIdPrefix}…</code>
+              {/if}
+            </div>
+            <div class="text-muted-foreground">
+              Created {formatDate(u.createdAt)}
             </div>
             <div class="text-muted-foreground">
               Backend: <strong class="text-foreground">{u.backend ?? '-'}</strong>
@@ -187,9 +241,7 @@
         </Card>
       {/each}
       {#if userRows.length === 0}
-        <div class="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-          No users found.
-        </div>
+        <AdminListState emptyText="No users found." />
       {/if}
       {#if users.hasNextPage}
         <div class="pt-2 text-center">

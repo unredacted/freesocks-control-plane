@@ -5,6 +5,7 @@
   import { Checkbox } from '@client/components/ui/checkbox';
   import * as Select from '@client/components/ui/select';
   import { apiClient } from '../../lib/api';
+  import { apiErrorMessage } from '../../lib/errors';
   import { CreateTokenResponse } from '../../../shared/contracts/tokens';
   import { type ApiScope, SCOPE_GROUPS } from '../../../shared/contracts/scopes';
   import { createMutation } from '@tanstack/svelte-query';
@@ -61,7 +62,7 @@
     },
     onError: (err) => {
       toast.error('Could not create token', {
-        description: err instanceof Error ? err.message : String(err),
+        description: apiErrorMessage(err),
       });
     },
   }));

@@ -7,6 +7,10 @@
   import { Button } from '@client/components/ui/button';
   import AdminLayout from './AdminLayout.svelte';
   import { apiClient } from '../../lib/api';
+  import { apiErrorMessage, firstIssueMessage } from '../../lib/errors';
+  import { formatDate } from '../../lib/i18n/format';
+  import { Input } from '@client/components/ui/input';
+  import AdminListState from './AdminListState.svelte';
   import { adminMembershipCodesQuery, adminTiersQuery } from '../../lib/queries';
   import {
     MintCodesRequest,
@@ -28,29 +32,44 @@
   let note = $state('');
 
   // Reveal-once: the freshly minted plaintext codes + an acknowledgement gate.
-  let revealed = $state<string[] | null>(null);
+  let revealed = $state<{ codes: string[]; batchId: string } | null>(null);
   let acknowledged = $state(false);
 
   // Revoke is irreversible (a donor may be holding the code) — confirm first.
   let pendingRevoke = $state<{ id: string; codePrefix: string } | null>(null);
 
   const mint = createMutation(() => ({
-    mutationFn: () =>
-      apiClient.post(
-        '/api/v1/admin/membership-codes',
-        MintCodesRequest.parse({ tierId, durationDays, count, note: note || undefined }),
-        MintCodesResponse,
-      ),
+    mutationFn: (body: MintCodesRequest) =>
+      apiClient.post('/api/v1/admin/membership-codes', body, MintCodesResponse),
     onSuccess: (result) => {
-      revealed = result.codes;
+      revealed = { codes: result.codes, batchId: result.batchId };
       acknowledged = false;
+      // Full reset so a follow-up mint starts clean (no stale tier/count).
+      tierId = '';
+      durationDays = 30;
+      count = 1;
       note = '';
       void qc.invalidateQueries({ queryKey: ['admin', 'membership-codes'] });
       toast.success(`Minted ${result.codes.length} code${result.codes.length === 1 ? '' : 's'}`);
     },
-    onError: (err) =>
-      toast.error('Mint failed', { description: err instanceof Error ? err.message : String(err) }),
+    onError: (err) => toast.error('Mint failed', { description: apiErrorMessage(err) }),
   }));
+
+  // Validate BEFORE mutating (out-of-bounds count/duration on paste would
+  // otherwise throw a raw ZodError inside mutationFn).
+  function submitMint() {
+    const parsed = MintCodesRequest.safeParse({
+      tierId,
+      durationDays,
+      count,
+      note: note || undefined,
+    });
+    if (!parsed.success) {
+      toast.error('Check the form', { description: firstIssueMessage(parsed.error) });
+      return;
+    }
+    mint.mutate(parsed.data);
+  }
 
   const revoke = createMutation(() => ({
     mutationFn: (id: string) =>
@@ -60,16 +79,13 @@
       pendingRevoke = null;
       toast.success('Code revoked');
     },
-    onError: (err) =>
-      toast.error('Revoke failed', {
-        description: err instanceof Error ? err.message : String(err),
-      }),
+    onError: (err) => toast.error('Revoke failed', { description: apiErrorMessage(err) }),
   }));
 
   async function copyAll() {
     if (!revealed) return;
     try {
-      await navigator.clipboard.writeText(revealed.join('\n'));
+      await navigator.clipboard.writeText(revealed.codes.join('\n'));
       toast.success('Codes copied to clipboard');
     } catch {
       toast.error('Copy failed — select the codes and copy manually');
@@ -77,7 +93,7 @@
   }
   function downloadAll() {
     if (!revealed) return;
-    const blob = new Blob([revealed.join('\n') + '\n'], { type: 'text/plain' });
+    const blob = new Blob([revealed.codes.join('\n') + '\n'], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -118,35 +134,18 @@
       </label>
       <label class="text-sm">
         <span class="mb-1 block text-muted-foreground">Duration (days)</span>
-        <input
-          type="number"
-          min="1"
-          max="3650"
-          bind:value={durationDays}
-          class="min-h-9 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-        />
+        <Input type="number" min={1} max={3650} bind:value={durationDays} />
       </label>
       <label class="text-sm">
         <span class="mb-1 block text-muted-foreground">Count</span>
-        <input
-          type="number"
-          min="1"
-          max="100"
-          bind:value={count}
-          class="min-h-9 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-        />
+        <Input type="number" min={1} max={100} bind:value={count} />
       </label>
       <label class="text-sm">
         <span class="mb-1 block text-muted-foreground">Note (optional)</span>
-        <input
-          type="text"
-          bind:value={note}
-          placeholder="e.g. launch batch"
-          class="min-h-9 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-        />
+        <Input type="text" bind:value={note} placeholder="e.g. launch batch" />
       </label>
       <div class="sm:col-span-2">
-        <Button onclick={() => mint.mutate()} disabled={!tierId || mint.isPending}>
+        <Button onclick={submitMint} disabled={!tierId || mint.isPending}>
           {mint.isPending ? 'Minting…' : `Mint ${count} code${count === 1 ? '' : 's'}`}
         </Button>
       </div>
@@ -174,15 +173,9 @@
       {#each Array(3) as _, i (i)}<Skeleton class="h-12 w-full" />{/each}
     </div>
   {:else if codes.isError}
-    <div
-      class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-    >
-      {codes.error instanceof Error ? codes.error.message : String(codes.error)}
-    </div>
+    <AdminListState error={codes.error} />
   {:else if (codes.data?.length ?? 0) === 0}
-    <div class="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-      No codes yet.
-    </div>
+    <AdminListState emptyText="No codes yet." />
   {:else}
     <ul class="divide-y divide-border rounded-lg border border-border bg-card">
       {#each codes.data ?? [] as code (code.id)}
@@ -197,7 +190,7 @@
           </div>
           <div class="flex items-center gap-3 text-xs text-muted-foreground">
             {#if code.redeemedAt}
-              redeemed {new Date(code.redeemedAt).toLocaleDateString()}
+              redeemed {formatDate(code.redeemedAt)}
             {/if}
             {#if code.status === 'active'}
               <Button
@@ -259,8 +252,12 @@
         </AlertDialog.Description>
       </AlertDialog.Header>
       <pre class="max-h-48 overflow-auto rounded bg-muted p-3 font-mono text-xs">{(
-          revealed ?? []
+          revealed?.codes ?? []
         ).join('\n')}</pre>
+      <p class="text-xs text-muted-foreground">
+        Batch: <code class="select-all font-mono">{revealed?.batchId}</code> — shown in the list for cross-referencing
+        after this dialog closes.
+      </p>
       <div class="flex gap-2">
         <Button variant="outline" size="sm" onclick={copyAll}>Copy all</Button>
         <Button variant="outline" size="sm" onclick={downloadAll}>Download</Button>

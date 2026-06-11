@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatDateTime } from '../../lib/i18n/format';
   import type { z } from 'zod';
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
   import * as Collapsible from '@client/components/ui/collapsible';
@@ -33,7 +34,7 @@
       {entry.targetId ?? ''}
     </div>
     <div class="text-muted-foreground">
-      {new Date(entry.createdAt).toLocaleString()} · request {entry.requestId ?? '-'}
+      {formatDateTime(entry.createdAt)} · request {entry.requestId ?? '-'}
     </div>
     {#if payload !== null}
       <div class="mt-2">

@@ -8,6 +8,9 @@
   import CreateTokenModal from './CreateTokenModal.svelte';
   import RevealModal from './RevealModal.svelte';
   import { apiClient } from '../../lib/api';
+  import { apiErrorMessage } from '../../lib/errors';
+  import { formatDateTime } from '../../lib/i18n/format';
+  import AdminListState from './AdminListState.svelte';
   import { adminTokensQuery, queryKeys } from '../../lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -28,9 +31,7 @@
       toast.success(`Token #${id} revoked`);
     },
     onError: (err) => {
-      toast.error('Revoke failed', {
-        description: err instanceof Error ? err.message : String(err),
-      });
+      toast.error('Revoke failed', { description: apiErrorMessage(err) });
     },
   }));
 </script>
@@ -60,17 +61,11 @@
       {/each}
     </div>
   {:else if tokens.isError}
-    <div
-      class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive"
-    >
-      {tokens.error instanceof Error ? tokens.error.message : String(tokens.error)}
-    </div>
+    <AdminListState error={tokens.error} />
   {:else}
     <div class="space-y-3">
       {#if (tokens.data?.length ?? 0) === 0}
-        <div class="text-sm text-muted-foreground border border-dashed rounded-lg p-6 text-center">
-          No tokens yet.
-        </div>
+        <AdminListState emptyText="No tokens yet." />
       {/if}
       {#each tokens.data ?? [] as tok (tok.id)}
         <Card>
@@ -104,12 +99,12 @@
               {/each}
             </div>
             <div class="text-muted-foreground">
-              Created {new Date(tok.createdAt).toLocaleString()}
+              Created {formatDateTime(tok.createdAt)}
               {#if tok.lastUsedAt}
-                · last used {new Date(tok.lastUsedAt).toLocaleString()}
+                · last used {formatDateTime(tok.lastUsedAt)}
               {/if}
               {#if tok.expiresAt}
-                · expires {new Date(tok.expiresAt).toLocaleString()}
+                · expires {formatDateTime(tok.expiresAt)}
               {/if}
             </div>
             {#if !tok.revokedAt}

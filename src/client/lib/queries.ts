@@ -31,7 +31,7 @@ export const queryKeys = {
   account: ['account'] as const,
   adminAuthStatus: ['admin', 'auth-status'] as const,
   adminTiers: ['admin', 'tiers'] as const,
-  adminUsers: (q: string) => ['admin', 'users', q] as const,
+  adminUsers: (q: string, status = '', tier = '') => ['admin', 'users', q, status, tier] as const,
   adminTokens: ['admin', 'tokens'] as const,
   adminAudit: ['admin', 'audit'] as const,
   adminSettings: ['admin', 'settings'] as const,
@@ -117,15 +117,24 @@ export const adminTiersQuery = () =>
 // of silently seeing only the first page. A targeted search (q set) returns one
 // page with nextCursor:null, so the button only appears on the unfiltered browse.
 const UsersPage = z.object({ users: z.array(UserAdmin), nextCursor: z.string().nullable() });
-export const adminUsersQuery = (queryRef: () => string) =>
+export interface AdminUserFilters {
+  q: string;
+  status: string;
+  tier: string;
+}
+export const adminUsersQuery = (filtersRef: () => AdminUserFilters) =>
   createInfiniteQuery(() => {
-    const q = queryRef();
+    const { q, status, tier } = filtersRef();
     return {
-      queryKey: queryKeys.adminUsers(q),
+      // Same ['admin','users', ...] prefix, so existing prefix invalidations
+      // still hit every filter combination.
+      queryKey: queryKeys.adminUsers(q, status, tier),
       initialPageParam: undefined as string | undefined,
       queryFn: ({ pageParam }: { pageParam: string | undefined }) => {
         const params = new URLSearchParams();
         if (q) params.set('q', q);
+        if (status) params.set('status', status);
+        if (tier) params.set('tier', tier);
         if (pageParam) params.set('cursor', pageParam);
         const qs = params.toString();
         return apiClient.get(`/api/v1/admin/users${qs ? `?${qs}` : ''}`, UsersPage);

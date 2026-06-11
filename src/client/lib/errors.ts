@@ -12,8 +12,21 @@
  *    TOAST.
  * GetAccount's create flows are inline; Account's actions are toasts.
  */
+import type { ZodError } from 'zod';
 import { ApiCallError } from './api';
 import { t } from './i18n/index.svelte';
+
+/**
+ * First human-readable issue out of a ZodError — for client-side form
+ * validation (safeParse BEFORE mutate). Never surface a raw ZodError string
+ * (a multi-line path dump) in a toast.
+ */
+export function firstIssueMessage(err: ZodError): string {
+  const issue = err.issues[0];
+  if (!issue) return 'Invalid input';
+  const path = issue.path.join('.');
+  return path ? `${path}: ${issue.message}` : issue.message;
+}
 
 export function apiErrorMessage(err: unknown): string {
   if (err instanceof ApiCallError) {

@@ -14,6 +14,9 @@
   import { Checkbox } from '@client/components/ui/checkbox';
   import * as Select from '@client/components/ui/select';
   import { apiClient } from '../../lib/api';
+  import { apiErrorMessage } from '../../lib/errors';
+  import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
+  import AdminListState from './AdminListState.svelte';
   import { appSettingsQuery, queryKeys } from '../../lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { AppSettingsRecord } from '../../../shared/contracts/admin';
@@ -62,9 +65,7 @@
       toast.success('Settings saved');
     },
     onError: (err) => {
-      toast.error('Could not save settings', {
-        description: err instanceof Error ? err.message : String(err),
-      });
+      toast.error('Could not save settings', { description: apiErrorMessage(err) });
     },
   }));
 </script>
@@ -82,11 +83,7 @@
       {/each}
     </div>
   {:else if settings.isError}
-    <div
-      class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive"
-    >
-      {settings.error instanceof Error ? settings.error.message : String(settings.error)}
-    </div>
+    <AdminListState error={settings.error} />
   {:else}
     <div class="space-y-4 max-w-2xl">
       <!-- Backend availability toggles -->
@@ -147,11 +144,13 @@
               onValueChange={(v) => (draft = { ...draft, 'subscription.default_backend': v })}
             >
               <Select.Trigger class="w-48">
-                {draft['subscription.default_backend'] === 'outline' ? 'Outline' : 'Remnawave'}
+                {draft['subscription.default_backend'] === 'outline'
+                  ? ADMIN_BACKEND_LABELS.outline
+                  : ADMIN_BACKEND_LABELS.remnawave}
               </Select.Trigger>
               <Select.Content>
-                <Select.Item value="remnawave">Remnawave</Select.Item>
-                <Select.Item value="outline">Outline</Select.Item>
+                <Select.Item value="remnawave">{ADMIN_BACKEND_LABELS.remnawave}</Select.Item>
+                <Select.Item value="outline">{ADMIN_BACKEND_LABELS.outline}</Select.Item>
               </Select.Content>
             </Select.Root>
           </div>

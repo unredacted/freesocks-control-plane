@@ -7,10 +7,12 @@
   import { Button } from '@client/components/ui/button';
   import * as AlertDialog from '@client/components/ui/alert-dialog';
   import { apiClient } from '../../lib/api';
+  import { apiErrorMessage } from '../../lib/errors';
+  import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
+  import AdminListState from './AdminListState.svelte';
   import { adminBackendServersQuery, queryKeys } from '../../lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { BackendServerAdmin } from '../../../shared/contracts/admin';
-  import type { BackendId } from '../../../shared/contracts/backends';
   import { toast } from 'svelte-sonner';
   import Plus from '@lucide/svelte/icons/plus';
   import { z as zod } from 'zod';
@@ -18,7 +20,6 @@
   type Server = z.infer<typeof BackendServerAdmin>;
   const servers = adminBackendServersQuery();
   const qc = useQueryClient();
-  const BACKEND_LABELS: Record<BackendId, string> = { remnawave: 'Remnawave', outline: 'Outline' };
 
   let editing = $state<Server | null>(null);
   let creating = $state(false);
@@ -37,9 +38,7 @@
       toast.success('Instance removed');
     },
     onError: (err) => {
-      toast.error('Could not delete instance', {
-        description: err instanceof Error ? err.message : String(err),
-      });
+      toast.error('Could not delete instance', { description: apiErrorMessage(err) });
     },
   }));
 
@@ -81,11 +80,7 @@
       {/each}
     </div>
   {:else if servers.isError}
-    <div
-      class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive"
-    >
-      {servers.error instanceof Error ? servers.error.message : String(servers.error)}
-    </div>
+    <AdminListState error={servers.error} />
   {:else if (servers.data?.length ?? 0) === 0}
     <div
       class="text-sm text-muted-foreground border border-dashed rounded-lg p-8 text-center space-y-2"
@@ -106,7 +101,7 @@
               </span>
               <span class="flex items-center gap-2">
                 <span class="text-xs px-2 py-1 rounded bg-primary/10 text-primary font-medium">
-                  {BACKEND_LABELS[s.backend]}
+                  {ADMIN_BACKEND_LABELS[s.backend]}
                 </span>
                 <span class="text-xs px-2 py-1 rounded {health.tone}">{health.label}</span>
                 {#if s.config.type === 'outline' && s.config.websocketEnabled}

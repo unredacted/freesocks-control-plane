@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Card, CardHeader, CardTitle, CardDescription } from '@client/components/ui/card';
+  import AdminListState from './AdminListState.svelte';
   import AdminLogin from './AdminLogin.svelte';
   import AdminBootstrap from './AdminBootstrap.svelte';
   import { adminAuthStatusQuery, queryKeys } from '../../lib/queries';
@@ -40,15 +41,9 @@
 </script>
 
 {#if status.isError}
-  <div class="max-w-md mx-auto py-12">
-    <Card>
-      <CardHeader>
-        <CardTitle>Admin unavailable</CardTitle>
-        <CardDescription class="text-destructive">
-          {status.error instanceof Error ? status.error.message : String(status.error)}
-        </CardDescription>
-      </CardHeader>
-    </Card>
+  <div class="max-w-md mx-auto py-12 space-y-3">
+    <h1 class="text-lg font-semibold">Admin unavailable</h1>
+    <AdminListState error={status.error} onRetry={() => void status.refetch()} />
   </div>
 {:else if status.isPending || !status.data || status.data.signedIn}
   <!--

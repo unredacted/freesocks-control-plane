@@ -37,6 +37,7 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import AuditRow from './AuditRow.svelte';
   import { adminAuditQuery } from '../../lib/queries';
+  import AdminListState from './AdminListState.svelte';
 
   // createInfiniteQuery accumulates pages: `audit.data.pages` is an array of
   // server pages; flatten for rendering. `hasNextPage` is derived from the
@@ -60,11 +61,7 @@
       {/each}
     </div>
   {:else if audit.isError}
-    <div
-      class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive"
-    >
-      {audit.error instanceof Error ? audit.error.message : String(audit.error)}
-    </div>
+    <AdminListState error={audit.error} />
   {:else}
     <div class="space-y-2">
       {#each entries as e (e.id)}

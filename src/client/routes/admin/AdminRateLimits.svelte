@@ -1,9 +1,13 @@
 <script lang="ts">
+  import type { z } from 'zod';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Button } from '@client/components/ui/button';
   import { Checkbox } from '@client/components/ui/checkbox';
   import AdminLayout from './AdminLayout.svelte';
   import { apiClient } from '../../lib/api';
+  import { apiErrorMessage, firstIssueMessage } from '../../lib/errors';
+  import { Input } from '@client/components/ui/input';
+  import AdminListState from './AdminListState.svelte';
   import { adminRateLimitsQuery, queryKeys } from '../../lib/queries';
   import {
     RateLimitListResponse,
@@ -42,27 +46,34 @@
   }
 
   const save = createMutation(() => ({
-    mutationFn: (body: RateLimitPolicyAdmin) =>
-      apiClient.patch(
-        '/api/v1/admin/rate-limits',
-        RateLimitUpdateRequest.parse({
-          policyKey: body.key,
-          max: body.max,
-          windowMs: body.windowMs,
-          enabled: body.enabled,
-        }),
-        RateLimitListResponse,
-      ),
+    mutationFn: (body: z.infer<typeof RateLimitUpdateRequest>) =>
+      apiClient.patch('/api/v1/admin/rate-limits', body, RateLimitListResponse),
     onSuccess: (_data, body) => {
       void qc.invalidateQueries({ queryKey: queryKeys.adminRateLimits });
-      drafts = Object.fromEntries(Object.entries(drafts).filter(([k]) => k !== body.key));
-      toast.success(`Updated ${body.key}`);
+      drafts = Object.fromEntries(Object.entries(drafts).filter(([k]) => k !== body.policyKey));
+      toast.success(`Updated ${body.policyKey}`);
     },
-    onError: (err) =>
-      toast.error('Update failed', {
-        description: err instanceof Error ? err.message : String(err),
-      }),
+    onError: (err) => toast.error('Update failed', { description: apiErrorMessage(err) }),
   }));
+
+  // Validate BEFORE mutating: an out-of-bounds value gets a readable toast
+  // (firstIssueMessage), never a raw ZodError dump from inside mutationFn.
+  function submitPolicy(
+    p: RateLimitPolicyAdmin,
+    d: { max: number; windowMs: number; enabled: boolean },
+  ) {
+    const parsed = RateLimitUpdateRequest.safeParse({
+      policyKey: p.key,
+      max: d.max,
+      windowMs: d.windowMs,
+      enabled: d.enabled,
+    });
+    if (!parsed.success) {
+      toast.error('Check the form', { description: firstIssueMessage(parsed.error) });
+      return;
+    }
+    save.mutate(parsed.data);
+  }
 </script>
 
 <AdminLayout>
@@ -78,11 +89,7 @@
       {#each Array(5) as _, i (i)}<Skeleton class="h-14 w-full" />{/each}
     </div>
   {:else if policies.isError}
-    <div
-      class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-    >
-      {policies.error instanceof Error ? policies.error.message : String(policies.error)}
-    </div>
+    <AdminListState error={policies.error} />
   {:else}
     <ul class="divide-y divide-border rounded-lg border border-border bg-card">
       {#each policies.data ?? [] as p (p.key)}
@@ -105,24 +112,24 @@
           </div>
           <label class="flex items-center gap-1">
             <span class="text-xs text-muted-foreground">max</span>
-            <input
+            <Input
               type="number"
-              min="1"
+              min={1}
+              class="min-h-9 w-20"
               value={d.max}
               oninput={(e) =>
                 setDraft(p.key, { max: Number((e.currentTarget as HTMLInputElement).value) })}
-              class="min-h-9 w-20 rounded-md border border-border bg-background px-2 py-1 text-sm"
             />
           </label>
           <label class="flex items-center gap-1">
             <span class="text-xs text-muted-foreground">window ms</span>
-            <input
+            <Input
               type="number"
-              min="1000"
+              min={1000}
+              class="min-h-9 w-28"
               value={d.windowMs}
               oninput={(e) =>
                 setDraft(p.key, { windowMs: Number((e.currentTarget as HTMLInputElement).value) })}
-              class="min-h-9 w-28 rounded-md border border-border bg-background px-2 py-1 text-sm"
             />
             <span class="text-xs text-muted-foreground">({humanWindow(d.windowMs)})</span>
           </label>
@@ -134,12 +141,7 @@
             />
             <span class="text-xs text-muted-foreground">enabled</span>
           </label>
-          <Button
-            size="sm"
-            disabled={!dirty || save.isPending}
-            onclick={() =>
-              save.mutate({ ...p, max: d.max, windowMs: d.windowMs, enabled: d.enabled })}
-          >
+          <Button size="sm" disabled={!dirty || save.isPending} onclick={() => submitPolicy(p, d)}>
             Save
           </Button>
         </li>

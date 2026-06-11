@@ -1,42 +1,127 @@
 <script lang="ts">
-  import { z } from 'zod';
-  import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
+  import * as Dialog from '@client/components/ui/dialog';
+  import * as Select from '@client/components/ui/select';
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
-  import * as Select from '@client/components/ui/select';
-  import { TierAdmin } from '../../../shared/contracts/admin';
+  import { Checkbox } from '@client/components/ui/checkbox';
+  import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
+  import {
+    TrafficStrategy,
+    type TierAdmin,
+    type TierUpsert,
+  } from '../../../shared/contracts/admin';
 
+  /**
+   * Tier editor, both modes:
+   *  - edit (tier prop set): the common knobs (name, backend, limits)
+   *  - create (no tier): adds the identity/policy fields a new row needs
+   *    (slug, description, strategy, priority, flags)
+   * Uses Dialog.Root (focus trap + Escape) — the old hand-rolled fixed
+   * overlay had neither. The parent owns the mutation; this stays
+   * presentational.
+   */
   interface Props {
-    tier: z.infer<typeof TierAdmin>;
+    /** Absent → create mode. */
+    tier?: TierAdmin | null;
     onCancel: () => void;
-    onSave: (t: z.infer<typeof TierAdmin>) => void;
+    onSave: (draft: TierUpsert) => void;
+    busy?: boolean;
   }
-  let { tier, onCancel, onSave }: Props = $props();
+  let { tier = null, onCancel, onSave, busy = false }: Props = $props();
 
-  // Spread once at init from the prop. We intentionally don't track tier
-  // changes after mount: once an editor is open, the dialog has its own
-  // editable copy and prop changes shouldn't blow it away mid-edit. Wrapping
-  // in an IIFE silences `state_referenced_locally` since the snapshot lives
-  // in a separate scope, breaking the "captures initial value of prop"
-  // analysis the compiler does.
-  let draft = $state(((t: typeof tier) => ({ ...$state.snapshot(t) }))(tier));
+  const isEdit = !!tier;
+  let open = $state(true);
 
-  // Compare against the original to disable Save when nothing has changed;
-  // gives the operator a clear signal that they haven't unsaved edits and
-  // prevents accidental tier-propagation jobs from no-op saves.
-  let isPristine = $derived(JSON.stringify(draft) === JSON.stringify(tier));
+  const CREATE_DEFAULTS: TierUpsert = {
+    slug: '',
+    name: '',
+    description: null,
+    backend: 'remnawave',
+    monthlyTrafficGb: 50,
+    deviceLimit: 1,
+    hwidLimit: 1,
+    hwidEnabled: true,
+    trafficStrategy: 'MONTH',
+    remnawaveSquadUuid: null,
+    isDefaultFree: false,
+    isActive: true,
+    priority: 100,
+    expirationDaysAfterMembershipLapse: 90,
+  };
+
+  // Snapshot once at init (an open editor keeps its own copy; prop changes
+  // mustn't blow it away mid-edit). IIFE breaks the compiler's
+  // captures-initial-prop analysis, same as before the Dialog port.
+  let draft = $state<TierUpsert>(
+    ((t: TierAdmin | null) => {
+      if (!t) return { ...CREATE_DEFAULTS };
+      const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = $state.snapshot(t);
+      return { ...rest };
+    })(tier),
+  );
+
+  // Disable Save when nothing changed (edit) / required identity missing (create).
+  let isPristine = $derived(
+    isEdit
+      ? JSON.stringify(draft) ===
+          JSON.stringify(
+            ((t: TierAdmin) => {
+              const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = t;
+              return rest;
+            })(tier!),
+          )
+      : false,
+  );
+  let canSave = $derived(!isPristine && !!draft.name && (isEdit || !!draft.slug));
+
+  function onOpenChange(next: boolean) {
+    if (!next && busy) return;
+    open = next;
+    if (!next) onCancel();
+  }
 </script>
 
-<div class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-  <Card class="w-full max-w-lg">
-    <CardHeader>
-      <CardTitle>Edit tier · {tier.name}</CardTitle>
-    </CardHeader>
-    <CardContent class="space-y-3">
+<Dialog.Root bind:open {onOpenChange}>
+  <Dialog.Content class="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+    <Dialog.Header>
+      <Dialog.Title>{isEdit ? `Edit tier · ${tier?.name}` : 'New tier'}</Dialog.Title>
+      {#if !isEdit}
+        <Dialog.Description>
+          Defines an entitlement template (limits + backend). New sign-ups land on the default-free
+          tier; paid tiers are granted via membership codes or the billing seam.
+        </Dialog.Description>
+      {/if}
+    </Dialog.Header>
+
+    <div class="space-y-3">
       <div>
         <label class="text-xs text-muted-foreground mb-1 block" for="tier-name">Display name</label>
-        <Input id="tier-name" bind:value={draft.name} />
+        <Input id="tier-name" bind:value={draft.name} placeholder="e.g. Member" />
       </div>
+      {#if !isEdit}
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="tier-slug">Slug</label>
+          <Input id="tier-slug" bind:value={draft.slug} placeholder="member" autocomplete="off" />
+          <p class="text-xs text-muted-foreground/80 mt-1">
+            Stable identifier used by webhooks and membership codes. Lowercase, no spaces; immutable
+            in practice once referenced.
+          </p>
+        </div>
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="tier-desc">
+            Description (optional)
+          </label>
+          <Input
+            id="tier-desc"
+            value={draft.description ?? ''}
+            oninput={(e) =>
+              (draft = {
+                ...draft,
+                description: (e.currentTarget as HTMLInputElement).value || null,
+              })}
+          />
+        </div>
+      {/if}
       <div>
         <label class="text-xs text-muted-foreground mb-1 block" for="tier-backend">Backend</label>
         <Select.Root
@@ -45,21 +130,19 @@
           onValueChange={(v) => (draft = { ...draft, backend: v as 'remnawave' | 'outline' })}
         >
           <Select.Trigger id="tier-backend" class="w-48">
-            {draft.backend === 'outline' ? 'Outline' : 'Xray'}
+            {ADMIN_BACKEND_LABELS[draft.backend]}
           </Select.Trigger>
           <Select.Content>
             <!--
               Backend ids are the internal discriminator (`remnawave` /
-              `outline`), kept for backwards compatibility with existing
-              DB rows. The labels shown to admins say "Xray" because that's
-              what's surfaced to end users; "Remnawave" is the management
-              panel implementation detail we don't advertise.
+              `outline`); the shared ADMIN_BACKEND_LABELS map names them the
+              way end users see them (Xray), with the panel in parentheses.
             -->
-            <Select.Item value="remnawave">Xray</Select.Item>
-            <Select.Item value="outline">Outline</Select.Item>
+            <Select.Item value="remnawave">{ADMIN_BACKEND_LABELS.remnawave}</Select.Item>
+            <Select.Item value="outline">{ADMIN_BACKEND_LABELS.outline}</Select.Item>
           </Select.Content>
         </Select.Root>
-        {#if draft.backend !== tier.backend}
+        {#if isEdit && draft.backend !== tier?.backend}
           <p class="text-xs text-amber-600 dark:text-amber-400 mt-1 leading-snug">
             Changing backend does not migrate existing users on this tier. They keep their current
             backend until they regenerate or switch explicitly.
@@ -87,12 +170,66 @@
           </p>
         </div>
       {/if}
-      <div class="flex gap-2 justify-end pt-2">
-        <Button variant="ghost" onclick={onCancel}>Cancel</Button>
-        <Button onclick={() => onSave(draft)} disabled={isPristine}>
-          {isPristine ? 'No changes' : 'Save'}
-        </Button>
-      </div>
-    </CardContent>
-  </Card>
-</div>
+      {#if !isEdit}
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="tier-strategy">
+            Traffic reset strategy
+          </label>
+          <Select.Root
+            type="single"
+            value={draft.trafficStrategy}
+            onValueChange={(v) =>
+              (draft = { ...draft, trafficStrategy: v as TierUpsert['trafficStrategy'] })}
+          >
+            <Select.Trigger id="tier-strategy" class="w-48">{draft.trafficStrategy}</Select.Trigger>
+            <Select.Content>
+              {#each TrafficStrategy.options as s (s)}
+                <Select.Item value={s}>{s}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="tier-priority">
+              Priority (lower = first)
+            </label>
+            <Input id="tier-priority" type="number" bind:value={draft.priority} />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="tier-expiry">
+              Expiry days after lapse
+            </label>
+            <Input
+              id="tier-expiry"
+              type="number"
+              min={0}
+              bind:value={draft.expirationDaysAfterMembershipLapse}
+            />
+          </div>
+        </div>
+        <label class="flex items-center gap-3 text-sm">
+          <Checkbox
+            checked={draft.isActive}
+            onCheckedChange={(v) => (draft = { ...draft, isActive: v === true })}
+          />
+          <span>Active (eligible for issuance)</span>
+        </label>
+        <label class="flex items-center gap-3 text-sm">
+          <Checkbox
+            checked={draft.isDefaultFree}
+            onCheckedChange={(v) => (draft = { ...draft, isDefaultFree: v === true })}
+          />
+          <span>Default free tier for its backend (new sign-ups land here)</span>
+        </label>
+      {/if}
+    </div>
+
+    <Dialog.Footer>
+      <Button variant="ghost" onclick={onCancel} disabled={busy}>Cancel</Button>
+      <Button onclick={() => onSave(draft)} disabled={!canSave || busy}>
+        {busy ? 'Saving…' : isEdit ? (isPristine ? 'No changes' : 'Save') : 'Create tier'}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
