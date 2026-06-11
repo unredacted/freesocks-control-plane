@@ -174,23 +174,27 @@ See `docs/threat-model-cdn-blinding.md`.
 
 ### Captcha (Cap) first-run
 
-The `cap` service runs the self-hosted [Cap](https://trycap.dev) captcha. Its
-admin dashboard is **not public**: Caddy proxies only the widget endpoints
-(`/cap/<siteKey>/challenge` + `/cap/<siteKey>/redeem`) and answers 404 for
-everything else under `/cap` — the dashboard's login needs inline JS the
-pure-self CSP blocks, and admin surfaces stay off the member origin. The
-dashboard binds to host loopback (`127.0.0.1:3000`, tunable via
-`CAP_DASHBOARD_PORT`); reach it like the Convex dashboard:
+The `cap` service runs the self-hosted [Cap](https://trycap.dev) captcha. Caddy
+proxies the whole `/cap` path — the widget endpoints AND the `ADMIN_KEY`-gated
+admin dashboard — and **relaxes the CSP for `/cap` responses only** (the
+dashboard login uses a `javascript:` navigation that needs `'unsafe-inline'`;
+the member SPA keeps the strict pure-self CSP, since CSP is per-response). The
+deployment expectation is an **authenticating edge in front of this host
+(Pangolin + CrowdSec)** with the admin paths behind its auth; `CAP_ADMIN_KEY`
+gates the dashboard regardless.
+
+Open `https://<host>/cap` in a browser, log in with `CAP_ADMIN_KEY`, create a
+site key, and put the **site key** + **secret** into `.env.convex` as
+`CAP_SITE_KEY` / `CAP_SECRET` (the backend reads them;
+`CAP_API_ENDPOINT=http://cap:3000`, `CAP_PUBLIC_ENDPOINT=/cap`). Re-run the
+deployer (`docker compose ... up -d`) so the env applies.
+
+If the fronting proxy is down or not yet configured, the dashboard also binds
+to host loopback as a fallback (no edge/auth in the path):
 
 ```sh
-ssh -L 3000:127.0.0.1:3000 <beta-host>
-# then open http://127.0.0.1:3000
+ssh -L 3000:127.0.0.1:3000 <beta-host>   # then open http://127.0.0.1:3000
 ```
-
-Log in with `CAP_ADMIN_KEY`, create a site key, and put the **site key** +
-**secret** into `.env.convex` as `CAP_SITE_KEY` / `CAP_SECRET` (the backend reads
-them; `CAP_API_ENDPOINT=http://cap:3000`, `CAP_PUBLIC_ENDPOINT=/cap`). Re-run the
-deployer (`docker compose ... up -d`) so the env applies.
 
 ### Health & monitoring
 

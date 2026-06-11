@@ -17,26 +17,33 @@
 	encode zstd gzip
 
 	# --- Security headers (CDN-blinding hardening) ---------------------------
-	# W1: with Cloudflare Turnstile replaced by self-hosted Cap, the CSP is now
-	# pure 'self' — ZERO third-party origins. Inline STYLES are allowed (Svelte
-	# style bindings); inline SCRIPTS are not (the FOUC theme logic is the
-	# external /theme-init.js). worker-src 'self' covers BOTH the proof-of-
+	# W1: with Cloudflare Turnstile replaced by self-hosted Cap, the member CSP
+	# is pure 'self' — ZERO third-party origins. Inline STYLES are allowed
+	# (Svelte style bindings); inline SCRIPTS are not (the FOUC theme logic is
+	# the external /theme-init.js). worker-src 'self' covers BOTH the proof-of-
 	# possession signing worker and Cap's proof-of-work solver worker.
 	# 'wasm-unsafe-eval' lets Cap's WebAssembly PoW solver compile (it does NOT
-	# permit eval()); the WASM is served same-origin via /cap.
+	# permit eval()); the WASM is served same-origin via /cap. The /cap admin
+	# dashboard is the one CSP exception (see its handle below).
+	#
+	# Site-wide security headers (everything EXCEPT the CSP), applied to every
+	# response incl. the SPA's file_server output. CSP is set disjointly by
+	# scope below — NOT here — because it differs for /cap: a deferred site-wide
+	# CSP set would always win the response-write race against a per-handle
+	# override (the outer route wraps first, so it runs last), so the override
+	# could never take effect. Keeping CSP out of this block sidesteps that
+	# entirely. `-Server` makes this block deferred, so it still applies after
+	# the upstream/file_server response, as before.
 	header {
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'; child-src 'self' blob:"
 		# COOP isolates the browsing context; CORP stops our responses being
-		# embedded cross-origin; COEP now enforceable since every subresource is
-		# same-origin (the Turnstile iframe that blocked it is gone).
-		# Permissions-Policy denies features we never use.
+		# embedded cross-origin; COEP is enforceable since every subresource is
+		# same-origin. Permissions-Policy denies features we never use.
 		Cross-Origin-Opener-Policy "same-origin"
 		Cross-Origin-Resource-Policy "same-origin"
 		Cross-Origin-Embedder-Policy "require-corp"
 		Permissions-Policy "accelerometer=(), browsing-topics=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
 		# Trusted Types in REPORT-ONLY first: collect violations (Svelte sinks, the
-		# Cap widget) before promoting require-trusted-types-for into the enforcing
-		# CSP above.
+		# Cap widget) before promoting require-trusted-types-for into the CSP.
 		Content-Security-Policy-Report-Only "require-trusted-types-for 'script'"
 		# Direct TLS termination here, so HSTS is ours to set. No includeSubDomains
 		# / preload on a beta host (it would bind siblings of beta.freesocks.org).
@@ -45,30 +52,44 @@
 		Referrer-Policy "no-referrer"
 		-Server
 	}
+	# Strict pure-self CSP for everything BUT /cap (the member SPA + API). Scoped
+	# by matcher so it never sets a value for /cap, leaving the /cap handle's CSP
+	# as the only setter there. `defer` so it lands after the file_server/proxy
+	# response (replace, no duplicate).
+	@notCap not path /cap/*
+	header @notCap {
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'; child-src 'self' blob:"
+		defer
+	}
 	# Integrity-Policy "blocked-destinations=(script)" stays deferred until every
 	# dynamically-imported chunk carries SRI (code-splitting emits chunks the SRI
 	# plugin doesn't yet stamp). See docs/threat-model-cdn-blinding.md.
 
 	# --- self-hosted Cap captcha (W1) -> the cap service over the compose net ---
-	# ONLY the widget's two endpoints are public: the browser POSTs to the
-	# SAME-ORIGIN /cap/<siteKey>/challenge and /cap/<siteKey>/redeem (verified
-	# against @cap.js/widget — it calls nothing else here; the PoW WASM is a
-	# bundled same-origin asset). Strip the /cap prefix to match Cap's routes.
+	# The browser widget posts challenges to the SAME-ORIGIN /cap/<siteKey>/...
+	# so they stay within connect-src 'self'. Strip the /cap prefix to match the
+	# Cap server's routes. This ALSO serves Cap's ADMIN DASHBOARD: the deployment
+	# topology puts an authenticating edge (Pangolin + CrowdSec) in front of this
+	# host with the admin paths behind its auth, and the dashboard is
+	# ADMIN_KEY-gated regardless.
 	#
-	# The Cap ADMIN DASHBOARD is deliberately NOT exposed: it is a third-party
-	# UI that needs inline JS (our pure-self CSP rightly blocks its login), and
-	# a public admin surface on the member origin would widen the same-origin
-	# XSS blast radius. Operators reach it over an SSH tunnel to the
-	# loopback-published port instead (docs/beta-deploy.md, "Captcha (Cap)
-	# first-run"). Everything else under /cap answers 404 at the edge.
-	@capWidget path /cap/*/challenge /cap/*/redeem
-	handle @capWidget {
+	# /cap gets its OWN, relaxed CSP (set below) because the dashboard login uses
+	# a javascript: navigation that needs 'unsafe-inline' in script-src. The
+	# widget's challenge/redeem endpoints are JSON (CSP inert), so the relaxation
+	# effectively applies to the dashboard documents alone. The member SPA keeps
+	# the strict CSP — CSP is per-response, and @notCap above excludes /cap.
+	@cap path /cap/*
+	handle @cap {
+		# /cap is the ONLY scope that sets CSP here (the site-wide block above
+		# omits it, and @notCap excludes /cap), so this is the sole setter — no
+		# override race. The -X-Powered-By deletion auto-defers the block so it
+		# lands after Cap's response.
+		header {
+			Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+			-X-Powered-By
+		}
 		uri strip_prefix /cap
 		reverse_proxy cap:3000
-	}
-	@capOther path /cap/*
-	handle @capOther {
-		respond 404
 	}
 
 	# --- API + health -> Convex HTTP actions (:3211 over the compose network) --

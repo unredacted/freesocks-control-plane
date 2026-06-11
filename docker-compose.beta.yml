@@ -132,12 +132,11 @@ services:
         condition: service_healthy
 
   # Self-hosted Cap captcha (W1): the proof-of-work CAPTCHA that replaced
-  # Cloudflare Turnstile. Caddy proxies ONLY the public widget endpoints
-  # (/cap/<siteKey>/{challenge,redeem}) here; the backend verifies tokens over
-  # the compose network (CAP_API_ENDPOINT=http://cap:3000). The ADMIN_KEY-gated
-  # admin dashboard is NOT public (its login needs inline JS our CSP blocks,
-  # and admin surfaces stay off the member origin): it binds to host loopback
-  # below — reach it via SSH tunnel, like the Convex dashboard.
+  # Cloudflare Turnstile. Caddy proxies the public /cap path here (widget
+  # endpoints + the ADMIN_KEY-gated admin dashboard — the deployment fronts
+  # this host with an authenticating edge, Pangolin + CrowdSec, that gates the
+  # admin paths); the backend verifies tokens over the compose network
+  # (CAP_API_ENDPOINT=http://cap:3000).
   cap:
     # Pinned by digest (re-pin on upgrade: docker buildx imagetools inspect tiago2/cap:latest).
     image: tiago2/cap:latest@sha256:97455d85b5517172397c7053837d377c72ded6250777928d5435c3eab2f58779
@@ -145,7 +144,9 @@ services:
     logging: *log
     stop_grace_period: 10s
     ports:
-      # Admin dashboard, loopback only (ssh -L 3000:127.0.0.1:3000 <host>).
+      # Fallback admin access with no edge/auth layer in the path (loopback
+      # only; ssh -L 3000:127.0.0.1:3000 <host>). Useful if the fronting
+      # proxy is down or misconfigured.
       - '127.0.0.1:${CAP_DASHBOARD_PORT:-3000}:3000'
     environment:
       - ADMIN_KEY=${CAP_ADMIN_KEY:?set CAP_ADMIN_KEY in .env.beta (>=32 chars)}
