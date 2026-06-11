@@ -22,6 +22,7 @@ import { ListTokensResponse } from '../../shared/contracts/tokens';
 import { AdminAuthStatus } from '../../shared/contracts/auth';
 import { RateLimitListResponse } from '../../shared/contracts/rateLimits';
 import { MembershipCodeListResponse } from '../../shared/contracts/membershipCodes';
+import { OrderStatusResponse } from '../../shared/contracts/billing';
 
 // --- Cache keys --------------------------------------------------------------
 
@@ -38,6 +39,8 @@ export const queryKeys = {
   adminBackendServers: ['admin', 'backend-servers'] as const,
   adminRateLimits: ['admin', 'rate-limits'] as const,
   adminMembershipCodes: (status: string) => ['admin', 'membership-codes', status] as const,
+  adminBilling: (status: string) => ['admin', 'billing', status] as const,
+  billingOrder: (ref: string) => ['billing', 'order', ref] as const,
 };
 
 // --- Public surface ----------------------------------------------------------
@@ -90,6 +93,33 @@ export const accountQuery = (enabled?: () => boolean) =>
     staleTime: 30_000,
     ...(enabled ? { enabled: enabled() } : {}),
   }));
+
+/**
+ * Poll a billing order after the payment redirect returns to /account?order=ref.
+ * The ONLY polling query in the SPA: `refetchInterval` keeps firing (4s) until a
+ * terminal status, since crypto `confirming` can take minutes. Disabled when
+ * there's no ref. `retry: false` so a 404 (ref not theirs / unknown) surfaces
+ * immediately instead of hammering.
+ */
+export const billingOrderQuery = (refGetter: () => string | null) =>
+  createQuery(() => {
+    const ref = refGetter();
+    return {
+      queryKey: queryKeys.billingOrder(ref ?? ''),
+      enabled: !!ref,
+      queryFn: () =>
+        apiClient.get(
+          `/api/v1/billing/order/${encodeURIComponent(ref as string)}`,
+          OrderStatusResponse,
+        ),
+      refetchInterval: (query: { state: { data?: { status?: string } } }) => {
+        const s = query.state.data?.status;
+        return s === 'paid' || s === 'failed' || s === 'expired' ? false : 4000;
+      },
+      staleTime: 0,
+      retry: false,
+    };
+  });
 
 // --- Admin surface -----------------------------------------------------------
 

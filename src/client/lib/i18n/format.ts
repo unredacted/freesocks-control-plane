@@ -16,3 +16,17 @@ export function formatDate(
 export function formatDateTime(value: string | number | Date): string {
   return new Date(value).toLocaleString(getLocale());
 }
+
+/**
+ * Locale-aware money formatting from minor units (cents). Reactive via
+ * getLocale() like the date helpers. Falls back to a plain `<amount> <CUR>`
+ * string if the currency code is non-standard (Intl throws on a bad code).
+ */
+export function formatMoney(amountCents: number, currency: string): string {
+  const amount = amountCents / 100;
+  try {
+    return new Intl.NumberFormat(getLocale(), { style: 'currency', currency }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${currency}`;
+  }
+}

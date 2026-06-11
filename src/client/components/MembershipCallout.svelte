@@ -10,7 +10,8 @@
     title: string;
     body: string;
     ctaUrl?: string;
-    ctaLabel: string;
+    /** Optional: omit (with no ctaUrl) for a callout whose only action is the secondary snippet. */
+    ctaLabel?: string;
     secondaryAction?: import('svelte').Snippet;
   }
 
@@ -27,7 +28,7 @@
   <p class="font-semibold">{title}</p>
   <p class="text-muted-foreground">{body}</p>
   <div class="flex flex-wrap items-center gap-3 pt-1">
-    {#if ctaUrl}
+    {#if ctaUrl && ctaLabel}
       <a href={ctaUrl} target="_blank" rel="noopener noreferrer">
         <Button size="sm">{ctaLabel}</Button>
       </a>

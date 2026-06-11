@@ -234,6 +234,7 @@ export const en = {
   'tiers.mirrors': 'Mirror URLs',
   'tiers.comingSoon': 'Coming soon',
   'tiers.comingSoonTitle': 'Membership signup is coming soon',
+  'tiers.upgradeCta': 'Upgrade',
 
   // --- member impact / funding card ---
   'impact.title': 'Donations support Unredacted',
@@ -257,6 +258,35 @@ export const en = {
   'renew.donate': 'Donate',
   'renew.contact': 'Contact us',
   'renew.haveCode': 'Have a membership code? Redeem it above.',
+
+  // --- membership upgrade / purchase (billing) ---
+  'upgrade.title': 'Upgrade to a FreeSocks membership',
+  'upgrade.extendTitle': 'Extend your membership',
+  'upgrade.subtitle': 'Unlimited bandwidth and devices. Choose a length and how to pay.',
+  'upgrade.durationLabel': 'Membership length',
+  'upgrade.months': (p: Record<string, string | number>) =>
+    p.count === 1 ? '1 month' : `${p.count} months`,
+  'upgrade.perMonth': (p: Record<string, string | number>) => `${p.price}/mo`,
+  'upgrade.methodLabel': 'Payment method',
+  'upgrade.payNowpayments': 'Cryptocurrency',
+  'upgrade.payNowpaymentsHint': 'Monero, Bitcoin & more',
+  'upgrade.payStripe': 'Card',
+  'upgrade.payStripeHint': 'Credit or debit card',
+  'upgrade.payPaypal': 'PayPal',
+  'upgrade.payPaypalHint': 'PayPal balance or card',
+  'upgrade.total': (p: Record<string, string | number>) => `Total ${p.price}`,
+  'upgrade.continue': 'Continue to payment',
+  'upgrade.starting': 'Starting checkout…',
+  'upgrade.startFailed': 'Could not start checkout',
+  'upgrade.noStoreNote': 'We never store your email or payment details.',
+  'upgrade.confirmingTitle': 'Confirming your payment…',
+  'upgrade.confirmingBody':
+    'Crypto can take a few minutes to confirm. You can leave this page — your membership activates automatically.',
+  'upgrade.paidTitle': 'Membership active',
+  'upgrade.paidBody': 'Thank you! Your membership is now active.',
+  'upgrade.failedTitle': 'Payment not completed',
+  'upgrade.failedBody':
+    'Your payment did not go through, or the checkout expired. You can try again.',
 
   // --- errors (shown inline / as toasts) ---
   'error.offline': 'You appear to be offline. Check your connection and try again.',

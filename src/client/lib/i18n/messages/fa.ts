@@ -244,4 +244,33 @@ export const fa: Partial<Messages> = {
   'footer.operatedPrefix': 'اداره‌شده توسط',
   'footer.operatedSuffix': '، یک سازمان غیرانتفاعی 501(c)(3) آمریکایی',
   'footer.apiDocs': 'مستندات API',
+
+  'tiers.upgradeCta': 'ارتقا',
+
+  'upgrade.title': 'به عضویت FreeSocks ارتقا دهید',
+  'upgrade.extendTitle': 'عضویت خود را تمدید کنید',
+  'upgrade.subtitle': 'پهنای باند و دستگاه‌های نامحدود. مدت و روش پرداخت را انتخاب کنید.',
+  'upgrade.durationLabel': 'مدت عضویت',
+  'upgrade.months': (p) => `${p.count} ماه`,
+  'upgrade.perMonth': (p) => `${p.price}/ماه`,
+  'upgrade.methodLabel': 'روش پرداخت',
+  'upgrade.payNowpayments': 'ارز دیجیتال',
+  'upgrade.payNowpaymentsHint': 'مونرو، بیت‌کوین و بیشتر',
+  'upgrade.payStripe': 'کارت',
+  'upgrade.payStripeHint': 'کارت اعتباری یا نقدی',
+  'upgrade.payPaypal': 'پی‌پال',
+  'upgrade.payPaypalHint': 'موجودی پی‌پال یا کارت',
+  'upgrade.total': (p) => `مجموع ${p.price}`,
+  'upgrade.continue': 'ادامه به پرداخت',
+  'upgrade.starting': 'در حال شروع پرداخت…',
+  'upgrade.startFailed': 'شروع پرداخت ممکن نشد',
+  'upgrade.noStoreNote': 'ما هرگز ایمیل یا اطلاعات پرداخت شما را ذخیره نمی‌کنیم.',
+  'upgrade.confirmingTitle': 'در حال تأیید پرداخت شما…',
+  'upgrade.confirmingBody':
+    'تأیید ارز دیجیتال ممکن است چند دقیقه طول بکشد. می‌توانید این صفحه را ترک کنید — عضویت شما به‌طور خودکار فعال می‌شود.',
+  'upgrade.paidTitle': 'عضویت فعال شد',
+  'upgrade.paidBody': 'متشکریم! عضویت شما اکنون فعال است.',
+  'upgrade.failedTitle': 'پرداخت کامل نشد',
+  'upgrade.failedBody':
+    'پرداخت شما انجام نشد یا مهلت پرداخت به پایان رسید. می‌توانید دوباره تلاش کنید.',
 };

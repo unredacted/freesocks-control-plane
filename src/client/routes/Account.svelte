@@ -14,6 +14,7 @@
   import RegenerateModal from '../components/RegenerateModal.svelte';
   import SwitchBackendModal from '../components/SwitchBackendModal.svelte';
   import TierComparison from '../components/TierComparison.svelte';
+  import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import MemberImpact from '../components/MemberImpact.svelte';
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import RotateAccountIdModal from '../components/RotateAccountIdModal.svelte';
@@ -29,7 +30,7 @@
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { clearSessionKey } from '../lib/pop';
-  import { accountQuery, configQuery, queryKeys } from '../lib/queries';
+  import { accountQuery, billingOrderQuery, configQuery, queryKeys } from '../lib/queries';
   import { router } from '../stores/router.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -67,6 +68,30 @@
       router.navigate('/login');
     }
   });
+
+  // Post-payment return: the processor sends the member back to
+  // /account?order=<ref>. Poll the order until a terminal status; on 'paid',
+  // refresh entitlement (account + me) and clear the param. The only polling
+  // query in the SPA — crypto 'confirming' can take minutes (refetchInterval).
+  let orderRef = $derived(router.searchParams.get('order'));
+  const order = billingOrderQuery(() => orderRef);
+  let orderPaidHandled = false;
+  $effect(() => {
+    if (orderRef && order.data?.status === 'paid' && !orderPaidHandled) {
+      orderPaidHandled = true;
+      void qc.invalidateQueries({ queryKey: queryKeys.account });
+      void qc.invalidateQueries({ queryKey: queryKeys.me });
+      liveMessage = t('upgrade.paidTitle');
+      toast.success(t('upgrade.paidTitle'), { description: t('upgrade.paidBody') });
+      router.navigate('/account', { replace: true });
+    }
+  });
+
+  // TierComparison's "Upgrade" CTA scrolls up to the purchase panel (#upgrade),
+  // which is rendered above for every non-active membership state.
+  function scrollToUpgrade() {
+    document.getElementById('upgrade')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 
   // Mutation: regenerate the subscription. Invalidates ['account'] on success
   // so the SubscriptionHero re-fetches with the new URL automatically.
@@ -381,6 +406,33 @@
       busy={rotateAccountId.isPending}
     />
 
+    <!-- Post-payment confirmation (return from the processor's hosted page).
+         The webhook — not this redirect — is the source of truth; we just poll. -->
+    {#if orderRef && order.data?.status !== 'paid'}
+      {#if order.isError || order.data?.status === 'failed' || order.data?.status === 'expired'}
+        <MembershipCallout
+          tone="error"
+          title={t('upgrade.failedTitle')}
+          body={t('upgrade.failedBody')}
+        >
+          {#snippet secondaryAction()}
+            <button
+              type="button"
+              class="text-xs text-muted-foreground underline hover:text-foreground"
+              onclick={() => router.navigate('/account', { replace: true })}
+            >
+              {t('common.close')}
+            </button>
+          {/snippet}
+        </MembershipCallout>
+      {:else}
+        <div class="rounded-xl border border-primary/30 bg-primary/5 p-4 sm:p-5">
+          <p class="text-sm font-semibold">{t('upgrade.confirmingTitle')}</p>
+          <p class="mt-1 text-sm text-muted-foreground">{t('upgrade.confirmingBody')}</p>
+        </div>
+      {/if}
+    {/if}
+
     <!-- Operational status callouts (lifecycle grace/disabled) — distinct from
          the membership-entitlement callouts below; both can apply. -->
     {#if userStatus === 'grace'}
@@ -467,6 +519,13 @@
           {/if}
         {/snippet}
       </MembershipCallout>
+    {/if}
+
+    <!-- Self-service purchase panel (renders only when billing is enabled).
+         Shown for every non-active state; 'upgrade' for free users, 'extend'
+         for expiring/expired members. -->
+    {#if membershipState !== 'active'}
+      <UpgradeMembership mode={membershipState === 'no-membership' ? 'upgrade' : 'extend'} />
     {/if}
 
     <!-- W4: redeem a membership code (extends/upgrades the tier). Available to
@@ -600,7 +659,7 @@
          Honest framing: factual feature comparison, mission transparency.
          No nags, no urgency, just information. -->
     {#if membershipState === 'no-membership'}
-      <TierComparison currentTierSlug={data.user.tier.slug} />
+      <TierComparison currentTierSlug={data.user.tier.slug} onUpgrade={scrollToUpgrade} />
       <MemberImpact />
     {/if}
     {#if data.subscription}

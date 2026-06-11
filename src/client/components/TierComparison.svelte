@@ -5,22 +5,41 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import { configQuery } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
+  import { formatMoney } from '../lib/i18n/format';
 
   /**
    * Side-by-side feature comparison for free vs paid tiers. The bandwidth and
    * device numbers are pulled live from `/api/v1/config` (the actual
    * DB-enforced limits), so they can't drift from the seed; the static card
    * scaffold below supplies presentational copy (validity, mirrors) and a
-   * fallback when config hasn't loaded. Pricing is not shown here because we
-   * don't manage billing; once the membership signup flow is live, the
-   * paid-tier cards will gain a CTA. Until then they show "Coming soon".
+   * fallback when config hasn't loaded. When billing is enabled, the membership
+   * card shows a "from <price>/mo" and an Upgrade CTA (via `onUpgrade`, which the
+   * parent wires to the purchase panel); otherwise it's purely informational.
    */
   interface Props {
     currentTierSlug: string;
+    /** Called when the membership-card CTA is clicked (parent scrolls to / opens the panel). */
+    onUpgrade?: () => void;
   }
-  let { currentTierSlug }: Props = $props();
+  let { currentTierSlug, onUpgrade }: Props = $props();
 
   const config = configQuery();
+
+  // Billing catalog (for the "from <price>/mo" line + whether to show a CTA).
+  let billing = $derived(config.data?.billing);
+  let billingEnabled = $derived(billing?.enabled ?? false);
+  let fromPerMonthCents = $derived(
+    (billing?.durations ?? []).reduce<number | null>((min, d) => {
+      if (d.months <= 0) return min;
+      const per = d.amountCents / d.months;
+      return min === null || per < min ? per : min;
+    }, null),
+  );
+  let fromPerMonth = $derived(
+    fromPerMonthCents !== null
+      ? formatMoney(Math.round(fromPerMonthCents), billing?.currency ?? 'USD')
+      : null,
+  );
 
   interface TierCard {
     slug: string;
@@ -100,6 +119,11 @@
 
         <div class="space-y-1 pt-3">
           <h3 class="text-lg font-display font-semibold">{tier.name}</h3>
+          {#if tier.slug === 'member' && billingEnabled && fromPerMonth}
+            <p class="text-sm tabular-nums text-muted-foreground">
+              {t('upgrade.perMonth', { price: fromPerMonth })}
+            </p>
+          {/if}
         </div>
 
         <ul class="space-y-2 text-sm">
@@ -137,21 +161,9 @@
           </li>
         </ul>
 
-        {#if !isCurrent && tier.slug !== 'free'}
-          <!--
-            Membership signup isn't wired end-to-end yet. Render a disabled
-            "coming soon" affordance instead of linking out to a join page
-            that's still being designed.
-          -->
-          <Button
-            variant="outline"
-            class="w-full"
-            size="sm"
-            disabled
-            aria-disabled="true"
-            title={t('tiers.comingSoonTitle')}
-          >
-            {t('tiers.comingSoon')}
+        {#if !isCurrent && tier.slug !== 'free' && billingEnabled && onUpgrade}
+          <Button variant="default" class="w-full" size="sm" onclick={onUpgrade}>
+            {t('tiers.upgradeCta')}
           </Button>
         {/if}
       </div>
