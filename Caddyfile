@@ -18,51 +18,58 @@
 
 	# --- Security headers (CDN-blinding hardening) ---------------------------
 	# W1: with Cloudflare Turnstile replaced by self-hosted Cap, the member CSP
-	# is pure 'self' — ZERO third-party origins. Inline STYLES are allowed
+	# is near-pure 'self' — ZERO third-party origins. Inline STYLES are allowed
 	# (Svelte style bindings); inline SCRIPTS are not (the FOUC theme logic is
-	# the external /theme-init.js). worker-src 'self' covers BOTH the proof-of-
-	# possession signing worker and Cap's proof-of-work solver worker.
+	# the external /theme-init.js). worker-src is 'self' blob:: the PoP signing
+	# worker is a same-origin module, but Cap's PoW solver is a blob: worker.
 	# 'wasm-unsafe-eval' lets Cap's WebAssembly PoW solver compile (it does NOT
-	# permit eval()); the WASM is served same-origin via /cap. The /cap admin
-	# dashboard is the one CSP exception (see its handle below).
+	# permit eval()); the WASM is a bundled same-origin asset. The /cap admin
+	# dashboard is the one scope with a relaxed CSP + no COOP/COEP (see below).
 	#
-	# Site-wide security headers (everything EXCEPT the CSP), applied to every
-	# response incl. the SPA's file_server output. CSP is set disjointly by
-	# scope below — NOT here — because it differs for /cap: a deferred site-wide
-	# CSP set would always win the response-write race against a per-handle
+	# Headers IDENTICAL on every response (member SPA, API, AND the /cap
+	# dashboard). The CSP and the cross-origin-isolation pair (COOP/COEP) are
+	# NOT here — they differ for /cap and are set disjointly by scope below.
+	# Why disjoint and not a global-set + per-/cap-override: a deferred
+	# site-wide set always wins the response-write race against a deeper handle
 	# override (the outer route wraps first, so it runs last), so the override
-	# could never take effect. Keeping CSP out of this block sidesteps that
-	# entirely. `-Server` makes this block deferred, so it still applies after
-	# the upstream/file_server response, as before.
+	# could never take effect. `-Server` makes this block deferred, so it still
+	# applies after the upstream/file_server response.
 	header {
-		# COOP isolates the browsing context; CORP stops our responses being
-		# embedded cross-origin; COEP is enforceable since every subresource is
-		# same-origin. Permissions-Policy denies features we never use.
-		Cross-Origin-Opener-Policy "same-origin"
+		# CORP stops OUR responses being embedded cross-origin (harmless on the
+		# top-level dashboard too). Permissions-Policy denies features we never
+		# use. (browsing-topics intentionally omitted: it's a Chrome-only,
+		# best-effort denial that logs an "unrecognized feature" warning in every
+		# other browser — pure console noise for no real gain here.)
 		Cross-Origin-Resource-Policy "same-origin"
-		Cross-Origin-Embedder-Policy "require-corp"
-		Permissions-Policy "accelerometer=(), browsing-topics=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
-		# Trusted Types in REPORT-ONLY first: collect violations (Svelte sinks, the
-		# Cap widget) before promoting require-trusted-types-for into the CSP.
-		Content-Security-Policy-Report-Only "require-trusted-types-for 'script'"
+		Permissions-Policy "accelerometer=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
 		# Direct TLS termination here, so HSTS is ours to set. No includeSubDomains
 		# / preload on a beta host (it would bind siblings of beta.freesocks.org).
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 		-Server
+		# NOTE: no Content-Security-Policy-Report-Only require-trusted-types-for
+		# here anymore. Svelte + the Cap widget both legitimately use string-to-
+		# script/HTML sinks, so Trusted Types can never be ENFORCED without
+		# breaking the app; with no report-to endpoint the report-only header
+		# only spammed the console. Removed.
 	}
-	# Strict pure-self CSP for everything BUT /cap (the member SPA + API). Scoped
-	# by matcher so it never sets a value for /cap, leaving the /cap handle's CSP
-	# as the only setter there. `defer` so it lands after the file_server/proxy
-	# response (replace, no duplicate).
+	# Member SPA + API (everything BUT /cap): the strict pure-self CSP plus the
+	# cross-origin-isolation pair. COOP/COEP live HERE, not site-wide, because
+	# the /cap dashboard is a third-party app that loads cross-origin assets
+	# (e.g. its logo) and must NOT run under COEP require-corp. `defer` so the
+	# set lands after the file_server/proxy response (replace, no duplicate).
 	@notCap not path /cap/*
 	header @notCap {
-		# font-src includes data: because Vite inlines @fontsource subset files
-		# under its 4 KB assetsInlineLimit as data: URIs in the bundled CSS — a
-		# data: URI is inline bytes, NOT a network origin, so this permits no
-		# third-party fetch (same as the existing img-src 'self' data:).
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'; child-src 'self' blob:"
+		# - worker-src allows blob: because @cap.js/widget spawns its proof-of-
+		#   work solver as `new Worker(URL.createObjectURL(new Blob([...])))`
+		#   (verified in its source); worker-src 'self' alone silently kills it
+		#   and the captcha never completes.
+		# - font-src data: because Vite inlines small @fontsource subsets as
+		#   data: URIs in the bundled CSS (inline bytes, not a network origin).
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self' blob:; child-src 'self' blob:"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Embedder-Policy "require-corp"
 		defer
 	}
 	# Integrity-Policy "blocked-destinations=(script)" stays deferred until every
