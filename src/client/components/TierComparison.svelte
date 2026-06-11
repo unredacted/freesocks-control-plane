@@ -45,20 +45,10 @@
     },
     {
       slug: 'member',
-      name: 'Member',
-      features: {
-        bandwidth: '500 GB / month',
-        devices: '3 devices',
-        validity: 'Continuous',
-        mirrors: true,
-      },
-    },
-    {
-      slug: 'patron',
-      name: 'Patron',
+      name: 'FreeSocks Membership',
       features: {
         bandwidth: 'Unlimited',
-        devices: '5 devices',
+        devices: 'Unlimited',
         validity: 'Continuous',
         mirrors: true,
       },
@@ -77,7 +67,10 @@
   function deviceLabel(slug: string, fallback: string): string {
     const tier = liveLimits.get(slug);
     if (!tier) return fallback;
-    return t('common.deviceCount', { count: tier.deviceLimit });
+    // deviceLimit 0 is the "unlimited" sentinel (matches monthlyTrafficGb 0).
+    return tier.deviceLimit === 0
+      ? t('hero.unlimited')
+      : t('common.deviceCount', { count: tier.deviceLimit });
   }
 </script>
 
@@ -89,7 +82,7 @@
     </p>
   </div>
 
-  <div class="grid gap-3 md:grid-cols-3">
+  <div class="grid gap-3 md:grid-cols-2">
     {#each tiers as tier (tier.slug)}
       {@const isCurrent = tier.slug === currentTierSlug}
       <div

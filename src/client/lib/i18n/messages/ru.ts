@@ -130,7 +130,7 @@ export const ru: Partial<Messages> = {
   'account.rotateFailedTitle': 'Не удалось сменить номер аккаунта',
   'account.freeTierTitle': 'Вы на бесплатном тарифе',
   'account.freeTierBody':
-    'Платные уровни членства (больше устройств и трафика) появятся скоро. Пока что бесплатные аккаунты существуют на пожертвования.',
+    'Членство FreeSocks открывает неограниченное число устройств и трафик. Пожертвования также поддерживают бесплатные аккаунты.',
   'account.refreshMembership': 'Уже оплатили? Обновить членство',
   'account.refreshing': 'Обновление…',
   'account.regenSuccessTitle': 'Создана новая ссылка подписки',
@@ -236,8 +236,7 @@ export const ru: Partial<Messages> = {
   'get.lostNumberLinkLabel': 'смените его на странице аккаунта',
 
   'tiers.title': 'Тарифы',
-  'tiers.subtitle':
-    'Что входит в каждый тариф. Цены и оформление — на портале участников Unredacted.',
+  'tiers.subtitle': 'Что входит в каждый тариф.',
   'tiers.yourTier': 'Ваш тариф',
   'tiers.gbPerMonth': (p) => `${p.gb} ГБ / месяц`,
   'tiers.validity30': 'Ключ на 30 дней',

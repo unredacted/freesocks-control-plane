@@ -120,7 +120,7 @@ export const ar: Partial<Messages> = {
   'account.rotateFailedTitle': 'تعذّر تغيير رقم الحساب',
   'account.freeTierTitle': 'أنت على الخطة المجانية',
   'account.freeTierBody':
-    'خطط عضوية أعلى (بأجهزة أكثر وسعة شهرية أكبر) قادمة قريبًا. في هذه الأثناء، تُبقي التبرعات الحسابات المجانية تعمل.',
+    'تمنحك عضوية FreeSocks أجهزة وسعة استخدام غير محدودة. كما تُبقي التبرعات الحسابات المجانية تعمل.',
   'account.refreshMembership': 'دفعت بالفعل؟ حدّث العضوية',
   'account.refreshing': 'جارٍ التحديث…',
   'account.regenSuccessTitle': 'تم إنشاء رابط اشتراك جديد',
@@ -232,7 +232,7 @@ export const ar: Partial<Messages> = {
   'get.lostNumberLinkLabel': 'غيّره من صفحة حسابك',
 
   'tiers.title': 'الفئات',
-  'tiers.subtitle': 'ما تتضمنه كل فئة. الأسعار والتسجيل في بوابة أعضاء Unredacted.',
+  'tiers.subtitle': 'ما تتضمنه كل فئة.',
   'tiers.yourTier': 'فئتك',
   'tiers.gbPerMonth': (p) => `${p.gb} غيغابايت / شهر`,
   'tiers.validity30': 'مفتاح لمدة 30 يومًا',

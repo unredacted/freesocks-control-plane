@@ -37,7 +37,30 @@ export const seedDefaultFreeTier = internalMutation({
   },
 });
 
-/** Insert a 'member' (paid) tier if absent; return its id. */
+/**
+ * The single paid tier: the FreeSocks membership. Unlimited bandwidth
+ * (`monthlyTrafficGb: 0` → null traffic limit at issuance) and unlimited
+ * devices (`hwidEnabled: false` → null device limit). `deviceLimit: 0` is the
+ * display sentinel the SPA renders as "Unlimited". Slug stays `'member'` so the
+ * billing config + existing references keep resolving it.
+ */
+const MEMBERSHIP_TIER = {
+  slug: 'member',
+  name: 'FreeSocks Membership',
+  description: 'Unlimited bandwidth and devices for FreeSocks supporters',
+  backend: 'remnawave' as const,
+  monthlyTrafficGb: 0,
+  deviceLimit: 0,
+  hwidLimit: 0,
+  hwidEnabled: false,
+  trafficStrategy: 'NO_RESET' as const,
+  isDefaultFree: false,
+  isActive: true,
+  priority: 10,
+  expirationDaysAfterMembershipLapse: 7,
+};
+
+/** Insert the paid membership tier if absent; return its id. */
 export const seedMemberTier = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -46,22 +69,30 @@ export const seedMemberTier = internalMutation({
       .withIndex('by_slug', (q) => q.eq('slug', 'member'))
       .unique();
     if (existing) return existing._id;
-    return ctx.db.insert('tiers', {
-      slug: 'member',
-      name: 'Member',
-      description: 'Standard FreeSocks supporters',
-      backend: 'remnawave',
-      monthlyTrafficGb: 500,
-      deviceLimit: 3,
-      hwidLimit: 3,
-      hwidEnabled: true,
-      trafficStrategy: 'MONTH',
-      isDefaultFree: false,
-      isActive: true,
-      priority: 10,
-      expirationDaysAfterMembershipLapse: 7,
-      updatedAt: Date.now(),
-    });
+    return ctx.db.insert('tiers', { ...MEMBERSHIP_TIER, updatedAt: Date.now() });
+  },
+});
+
+/**
+ * Idempotently bring the EXISTING `'member'` row up to the unlimited membership
+ * config (name/limits). `seedMemberTier` skips-if-exists, so a beta install that
+ * already has the old 500 GB / 3-device `'Member'` row needs this one-shot patch.
+ * Run via `bunx convex run seed:reconfigureMembershipTier '{}'`. Preserves any
+ * admin-tuned `remnawaveSquadUuid`. Existing paid members pick up the new limits
+ * on their next tier change / re-issue (or run a manual push).
+ */
+export const reconfigureMembershipTier = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const existing = await ctx.db
+      .query('tiers')
+      .withIndex('by_slug', (q) => q.eq('slug', 'member'))
+      .unique();
+    if (!existing) {
+      return { reconfigured: false as const, id: null };
+    }
+    await ctx.db.patch(existing._id, { ...MEMBERSHIP_TIER, updatedAt: Date.now() });
+    return { reconfigured: true as const, id: existing._id };
   },
 });
 

@@ -107,7 +107,7 @@ export const en = {
   'account.rotateFailedTitle': 'Could not change the account number',
   'account.freeTierTitle': "You're on the free tier",
   'account.freeTierBody':
-    'Higher Unredacted membership tiers (raising device count and monthly bandwidth) are coming soon. In the meantime, donations keep free accounts funded.',
+    'A FreeSocks membership unlocks unlimited devices and bandwidth. Donations also keep free accounts funded.',
   'account.refreshMembership': 'Already paid? Refresh membership',
   'account.refreshing': 'Refreshing…',
   'account.regenSuccessTitle': 'New subscription URL generated',
@@ -226,8 +226,7 @@ export const en = {
 
   // --- tier comparison (free-tier dashboard) ---
   'tiers.title': 'Tiers',
-  'tiers.subtitle':
-    'What each tier includes. Pricing and signup live on the Unredacted member portal.',
+  'tiers.subtitle': 'What each tier includes.',
   'tiers.yourTier': 'Your tier',
   'tiers.gbPerMonth': (p: Record<string, string | number>) => `${p.gb} GB / month`,
   'tiers.validity30': '30-day key',

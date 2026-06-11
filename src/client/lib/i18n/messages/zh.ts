@@ -114,8 +114,7 @@ export const zh: Partial<Messages> = {
   'account.rotating': '更换中…',
   'account.rotateFailedTitle': '无法更换账户号码',
   'account.freeTierTitle': '你正在使用免费套餐',
-  'account.freeTierBody':
-    '更高级的会员套餐（更多设备与每月流量）即将推出。在此期间，捐款让免费账户得以维持。',
+  'account.freeTierBody': 'FreeSocks 会员可解锁无限设备与流量。捐款也让免费账户得以维持。',
   'account.refreshMembership': '已付款？刷新会员状态',
   'account.refreshing': '刷新中…',
   'account.regenSuccessTitle': '已生成新的订阅链接',
@@ -212,7 +211,7 @@ export const zh: Partial<Messages> = {
   'get.lostNumberLinkLabel': '在账户页面更换',
 
   'tiers.title': '套餐',
-  'tiers.subtitle': '各套餐包含的内容。价格与注册在 Unredacted 会员门户。',
+  'tiers.subtitle': '各套餐包含的内容。',
   'tiers.yourTier': '你的套餐',
   'tiers.gbPerMonth': (p) => `每月 ${p.gb} GB`,
   'tiers.validity30': '30 天密钥',

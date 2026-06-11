@@ -121,7 +121,7 @@ export const fa: Partial<Messages> = {
   'account.rotateFailedTitle': 'تغییر شمارهٔ حساب ناموفق بود',
   'account.freeTierTitle': 'شما در پلن رایگان هستید',
   'account.freeTierBody':
-    'پلن‌های عضویت بالاتر (با دستگاه‌ها و پهنای باند بیشتر) به‌زودی ارائه می‌شوند. در این میان، کمک‌های مالی حساب‌های رایگان را سرپا نگه می‌دارند.',
+    'عضویت FreeSocks دستگاه‌ها و پهنای باند نامحدود را در اختیار شما می‌گذارد. کمک‌های مالی نیز حساب‌های رایگان را سرپا نگه می‌دارند.',
   'account.refreshMembership': 'قبلاً پرداخت کرده‌اید؟ به‌روزرسانی عضویت',
   'account.refreshing': 'در حال به‌روزرسانی…',
   'account.regenSuccessTitle': 'لینک اشتراک جدید ساخته شد',
@@ -224,7 +224,7 @@ export const fa: Partial<Messages> = {
   'get.lostNumberLinkLabel': 'از صفحهٔ حساب خود آن را تغییر دهید',
 
   'tiers.title': 'سطح‌ها',
-  'tiers.subtitle': 'هر سطح چه چیزهایی دارد. قیمت و ثبت‌نام در پورتال اعضای Unredacted است.',
+  'tiers.subtitle': 'هر سطح چه چیزهایی دارد.',
   'tiers.yourTier': 'سطح شما',
   'tiers.gbPerMonth': (p) => `${p.gb} گیگابایت / ماه`,
   'tiers.validity30': 'کلید ۳۰ روزه',
