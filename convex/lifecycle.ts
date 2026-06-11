@@ -104,13 +104,11 @@ export const activeSubAndTier = internalQuery({
     if (!user) return null;
     const tier = await ctx.db.get(user.tierId);
     if (!tier) return null;
-    const subs = await ctx.db
+    const sub = await ctx.db
       .query('subscriptions')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect();
-    const sub = subs
-      .filter((s) => s.state === 'active')
-      .sort((x, y) => y._creationTime - x._creationTime)[0];
+      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+      .order('desc')
+      .first();
     if (!sub) return null;
     return {
       backend: sub.backend,
@@ -421,11 +419,11 @@ export const findExpiredFree = internalQuery({
         break;
       }
       if (u.status !== 'active') continue;
-      const subs = await ctx.db
+      const sub = await ctx.db
         .query('subscriptions')
-        .withIndex('by_user', (q) => q.eq('userId', u._id))
-        .collect();
-      const sub = subs.find((s) => s.state === 'active');
+        .withIndex('by_user_state', (q) => q.eq('userId', u._id).eq('state', 'active'))
+        .order('desc')
+        .first();
       if (!sub) continue;
       expired.push({ userId: u._id, backend: sub.backend, backendUserId: sub.backendUserId });
     }

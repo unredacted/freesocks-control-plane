@@ -38,14 +38,14 @@ export const resolveCurrentOrActive = internalQuery({
       const cur = await ctx.db.get(user.currentSubscriptionId);
       if (cur && cur.state === 'active') return cur;
     }
-    const rows = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect();
+    // Newest active row via the (userId, state) index — within the equal
+    // prefix the index orders by _creationTime, so desc->first is newest.
     return (
-      rows
-        .filter((s) => s.state === 'active')
-        .sort((a, b) => b._creationTime - a._creationTime)[0] ?? null
+      (await ctx.db
+        .query('subscriptions')
+        .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+        .order('desc')
+        .first()) ?? null
     );
   },
 });

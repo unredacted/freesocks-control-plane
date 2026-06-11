@@ -134,7 +134,14 @@ export default defineSchema({
     deletedAt: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
-    .index('by_state', ['state'])
+    // (userId, state): the active-subscription resolvers hit this directly
+    // instead of collecting every historical row for the user (tombstones
+    // accrue with each regenerate/switch and, for paid users, otherwise
+    // accumulate forever — see retention.sweepDeletedSubscriptions).
+    .index('by_user_state', ['userId', 'state'])
+    // (state, deletedAt): the tombstone sweep prefix-queries state; the
+    // deleted-row retention sweep range-queries deletedAt under it.
+    .index('by_state', ['state', 'deletedAt'])
     .index('by_backend_user_id', ['backendUserId'])
     .index('by_backend_short_id', ['backendShortId']),
 

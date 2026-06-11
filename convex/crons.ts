@@ -50,9 +50,10 @@ crons.daily(
 
 // Mint a fresh manifest-signed HPKE epoch key (CDN-blinding Phase 3); the login
 // request seals to the current epoch key, not the multi-day static key. Each run
-// also destroys long-expired epoch seeds (forward secrecy). No-op when the
-// manifest key is unset. A daily backstop sweep runs even if rotation stalls.
-crons.interval('epoch-key-rotate', { minutes: 10 }, internal.lib.e2eeCrypto.rotateEpochKey, {});
+// also destroys long-expired epoch seeds (forward secrecy). Gated in the isolate
+// (keyEpochs.maybeRotate) so a dark deployment doesn't cold-start a Node action
+// every 10 min just to no-op. A daily backstop sweep runs even if rotation stalls.
+crons.interval('epoch-key-rotate', { minutes: 10 }, internal.keyEpochs.maybeRotate, {});
 crons.daily('epoch-key-sweep', { hourUTC: 3, minuteUTC: 50 }, internal.keyEpochs.sweepExpired, {});
 
 // P2: retention sweeps for the append-only tables (bounded daily deletes past a
@@ -74,6 +75,12 @@ crons.daily(
   'retention-free-grants',
   { hourUTC: 4, minuteUTC: 15 },
   internal.retention.sweepFreeGrants,
+  {},
+);
+crons.daily(
+  'retention-subscriptions',
+  { hourUTC: 4, minuteUTC: 20 },
+  internal.retention.sweepDeletedSubscriptions,
   {},
 );
 

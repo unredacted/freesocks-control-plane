@@ -58,6 +58,27 @@ export const sweepTierHistory = internalMutation({
   },
 });
 
+/**
+ * Long-deleted subscription rows: keep ~90 days. A row reaches state:'deleted'
+ * only AFTER its backend user is gone (deleteSubscriptionEverywhere marks it
+ * last), so these are pure history — but they used to accumulate forever for
+ * paid users (each regenerate/switch leaves one), bloating the per-user
+ * resolvers. Range-scans the (state, deletedAt) index. Tombstoned (disabled)
+ * rows are NOT touched: the tombstone sweep owns those.
+ */
+export const sweepDeletedSubscriptions = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const cutoff = Date.now() - num('SUBSCRIPTION_RETENTION_DAYS', 90) * DAY;
+    const rows = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_state', (q) => q.eq('state', 'deleted').lt('deletedAt', cutoff))
+      .take(limit ?? PAGE);
+    for (const r of rows) await ctx.db.delete(r._id);
+    return { removed: rows.length };
+  },
+});
+
 /** Free-grant issuance ledger: keep ~30 days (the per-(IP,day) cap window + buffer). */
 export const sweepFreeGrants = internalMutation({
   args: { limit: v.optional(v.number()) },

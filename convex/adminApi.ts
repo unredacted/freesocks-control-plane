@@ -19,6 +19,7 @@
  * cycle (this repo has hit it before).
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import type { MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
@@ -171,6 +172,35 @@ export const tiersList = internalQuery({
   },
 });
 
+/**
+ * Invariant: at most ONE default-free tier per backend (tiers.getDefaultFree is
+ * otherwise priority/creation-order dependent and free sign-ups could land on
+ * the wrong tier after an admin misconfig). AUTO-CLEAR rather than reject:
+ * with reject semantics, moving the default from tier A to B needs A cleared
+ * first — a window where getDefaultFree returns null and every sign-up fails.
+ * One serializable mutation keeps the move atomic. Cleared regardless of
+ * isActive so a later re-activation can't resurrect ambiguity; each clear is
+ * audited.
+ */
+async function clearOtherDefaultFree(
+  ctx: MutationCtx,
+  backend: 'remnawave' | 'outline',
+  keepId: Id<'tiers'>,
+): Promise<void> {
+  const tiers = await ctx.db.query('tiers').collect(); // admin write path; tiny table
+  for (const t of tiers) {
+    if (t._id !== keepId && t.backend === backend && t.isDefaultFree) {
+      await ctx.db.patch(t._id, { isDefaultFree: false, updatedAt: Date.now() });
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        action: 'admin.tier.default_free_cleared',
+        targetType: 'tier',
+        targetId: t._id,
+      });
+    }
+  }
+}
+
 export const createTier = internalMutation({
   args: tierUpsertFields,
   handler: async (ctx, a) => {
@@ -197,6 +227,7 @@ export const createTier = internalMutation({
       expirationDaysAfterMembershipLapse: a.expirationDaysAfterMembershipLapse,
       updatedAt: Date.now(),
     });
+    if (a.isDefaultFree) await clearOtherDefaultFree(ctx, a.backend, id);
     const created = await ctx.db.get(id);
     return mapTier(created!);
   },
@@ -243,6 +274,12 @@ export const updateTier = internalMutation({
       }
     }
     await ctx.db.patch(id, fields);
+    // Compute the post-patch effective row: a patch may flip isDefaultFree on,
+    // OR move an already-default tier to another backend — both must clear the
+    // peer default on the resulting backend.
+    const effectiveDefaultFree = patch.isDefaultFree ?? existing.isDefaultFree;
+    const effectiveBackend = patch.backend ?? existing.backend;
+    if (effectiveDefaultFree) await clearOtherDefaultFree(ctx, effectiveBackend, id);
     const updated = await ctx.db.get(id);
     return mapTier(updated!);
   },
@@ -300,14 +337,11 @@ async function currentBackendForUser(
     if (cur && cur.state === 'active') sub = cur;
   }
   if (!sub) {
-    const rows = await ctx.db
+    sub = await ctx.db
       .query('subscriptions')
-      .withIndex('by_user', (q) => q.eq('userId', user._id))
-      .collect();
-    sub =
-      rows
-        .filter((s) => s.state === 'active')
-        .sort((a, b) => b._creationTime - a._creationTime)[0] ?? null;
+      .withIndex('by_user_state', (q) => q.eq('userId', user._id).eq('state', 'active'))
+      .order('desc')
+      .first();
   }
   return sub
     ? { backend: sub.backend, backendUserId: sub.backendUserId }
@@ -441,13 +475,11 @@ export const disableUser = internalMutation({
 export const activeSubForUser = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, { userId }) => {
-    const rows = await ctx.db
+    const sub = await ctx.db
       .query('subscriptions')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect();
-    const sub = rows
-      .filter((s) => s.state === 'active')
-      .sort((a, b) => b._creationTime - a._creationTime)[0];
+      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+      .order('desc')
+      .first();
     return sub ? { backend: sub.backend, backendUserId: sub.backendUserId } : null;
   },
 });

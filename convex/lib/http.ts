@@ -31,9 +31,14 @@ export function secureCookies(): boolean {
 }
 
 export function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  // no-store by default: several responses carry secrets (the subscription URL
+  // IS the proxy key; /account is the credential surface) and must never land
+  // in a shared/intermediary cache if the fronting topology ever changes.
+  // Routes that are genuinely cacheable override via `headers` (the spread
+  // wins — e.g. /api/v1/e2ee/keys sets 'cache-control: public, max-age=60').
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers },
   });
 }
 
