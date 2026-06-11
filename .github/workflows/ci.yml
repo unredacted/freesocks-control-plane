@@ -30,6 +30,10 @@ jobs:
       # convex-test suite (in-memory; no backend needed).
       - run: bun run test
 
+      # eslint + prettier --check (was the deploy workflow's extra gate before
+      # deploy.yml was removed in favour of manual deploys).
+      - run: bun run lint
+
       # Build the SPA (the only build artifact now; the backend is convex/).
       - run: bun run build
 

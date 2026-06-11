@@ -159,8 +159,9 @@ self-hosting walkthrough and the production cutover runbook.
 
 ## Deploy
 
-The two halves ship independently to a self-hosted Convex deployment. The tag-triggered
-`.github/workflows/deploy.yml` does both:
+The two halves ship independently to a self-hosted Convex deployment, **deployed
+manually** (CI runs checks only — there is no auto-deploy workflow; the beta
+docker-compose stack's `deployer` service runs `convex deploy` on `up`):
 
 ```bash
 # Backend: typecheck + push convex/ functions, schema, HTTP router, crons
