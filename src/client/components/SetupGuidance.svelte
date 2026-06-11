@@ -106,40 +106,37 @@
     {/each}
   </div>
 
-  <ol
-    class="mt-4 space-y-3 text-sm"
-    role="tabpanel"
-    id="setup-panel-{active}"
-    aria-labelledby="setup-tab-{active}"
-  >
-    <li class="flex gap-3">
-      <span
-        class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"
-        >1</span
-      >
-      <span>
-        {t('setup.step.install')}:
-        {#each currentApps as app, i (app.name)}{i > 0 ? ' · ' : ' '}<a
-            href={app.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="text-primary underline">{app.name}</a
-          >{/each}
-      </span>
-    </li>
-    <li class="flex gap-3">
-      <span
-        class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"
-        >2</span
-      >
-      <span>{t('setup.step.import')}</span>
-    </li>
-    <li class="flex gap-3">
-      <span
-        class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"
-        >3</span
-      >
-      <span>{t('setup.step.connect')}</span>
-    </li>
-  </ol>
+  <div role="tabpanel" id="setup-panel-{active}" aria-labelledby="setup-tab-{active}">
+    <ol class="mt-4 space-y-3 text-sm">
+      <li class="flex gap-3">
+        <span
+          class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"
+          >1</span
+        >
+        <span>
+          {t('setup.step.install')}:
+          {#each currentApps as app, i (app.name)}{i > 0 ? ' · ' : ' '}<a
+              href={app.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-primary underline">{app.name}</a
+            >{/each}
+        </span>
+      </li>
+      <li class="flex gap-3">
+        <span
+          class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"
+          >2</span
+        >
+        <span>{t('setup.step.import')}</span>
+      </li>
+      <li class="flex gap-3">
+        <span
+          class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"
+          >3</span
+        >
+        <span>{t('setup.step.connect')}</span>
+      </li>
+    </ol>
+  </div>
 </section>
