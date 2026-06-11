@@ -63,9 +63,10 @@ and surfaces the TLS or auth error. Use it before saving.
 4. Click **Test connection**. Confirm "Reachable. Current key count: N" appears.
 5. Click **Register server**.
 
-The **outline-healthcheck** cron (every 10 minutes, `convex/crons.ts` →
-`internal.outlineServers.healthcheck`) pings each active server, stamps `lastHealthOkAt`,
-and refreshes its live access-key count.
+The **backend-healthcheck** cron (every 10 minutes, `convex/crons.ts` →
+`internal.backendServers.healthcheck`) pings each active backend instance of every type,
+stamps `lastHealthOkAt` + rtt, and refreshes the live access-key count for backends that
+report one (Outline does; Remnawave returns `null`, so its locally-tracked estimate is kept).
 
 ## How the pool picks a server
 

@@ -37,7 +37,7 @@ Files: `docker-compose.beta.yml`, `Caddyfile`, `docker/web.Dockerfile`,
 
 ```sh
 cp .env.beta.example   .env.beta      # infra: Caddy + Convex backend identity + Postgres
-cp .env.convex.example .env.convex    # app secrets: signing keys, pepper, Turnstile, WebAuthn
+cp .env.convex.example .env.convex    # app secrets: signing keys, pepper, Cap captcha, WebAuthn
 $EDITOR .env.beta .env.convex
 ```
 
@@ -90,7 +90,7 @@ credential exists.
 ## 4. Add a backend instance (the subscription step needs one)
 
 Account creation never needs a proxy instance: `/get-account` mints the account
-and reveal-once number with just a Turnstile check, even on a fresh box. The proxy
+and reveal-once number with just a Cap captcha check, even on a fresh box. The proxy
 **subscription** does need an active instance of the account's backend type. If you
 did not set `REMNAWAVE_*` in `.env.convex`, add one in the admin CMS: **Backend
 servers** -> add a Remnawave instance (base URL + API token; use **Test connection**

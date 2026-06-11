@@ -8,10 +8,18 @@ is the **only** member credential.
 > identity and is LIVE** on the Convex backend. The format / entropy / storage /
 > rate-limit / timing design below is what got built. Implemented:
 >
+> **2026-06-10 update:** the captcha is now **self-hosted Cap** (not Cloudflare
+> Turnstile) — read every "Turnstile" below as "the captcha"; the wire field is
+> `captchaToken`. A non-secret **support ID** (`FS-XXXX-XXXX`) is now minted
+> alongside the account number as the support-facing handle (collision-free,
+> unlike the 4-digit prefix). Login rate limits are now per-IP + per-(prefix,IP)
+> (the prefix limit was made IP-scoped so it can't be a cross-user lockout lever).
+>
 > - **Login**: `POST /api/v1/auth/account-login` (`convex/http.ts` →
->   `convex/auth.ts:accountLogin`): Turnstile-gated, strict per-prefix (30/day) +
->   per-IP (10/h) rate limits, always-hash + ~300ms failure floor (constant-time),
->   one generic failure shape (no existence oracle) → signed `fs_session` cookie.
+>   `convex/auth.ts:accountLogin`): Cap-captcha-gated, strict per-IP (10/h) +
+>   per-(prefix,IP) (30/day) rate limits (admin-tunable W2 policies), always-hash +
+>   ~300ms failure floor (constant-time), one generic failure shape (no existence
+>   oracle) → signed `fs_session` cookie.
 > - **Mint-at-account-creation + reveal-once**: anonymous account creation mints
 >   a number (`convex/accountId.ts:mintForUser`, CSPRNG) and returns it once in
 >   the `POST /api/v1/account` response (`convex/freeTier.ts:createFreeAccount`).
@@ -21,10 +29,12 @@ is the **only** member credential.
 > - **Rotate**: `POST /api/v1/account/account-id/rotate`
 >   (`convex/auth.ts:rotateAccountId`): new number revealed once, old hash
 >   overwritten, audited.
-> - **Admin prefix search**: `GET /api/v1/admin/users?q=` matches the stored
->   4-digit prefix (`convex/adminApi.ts`); full-number lookup is never permitted.
-> - **SPA**: reveal-once panel on `/get-account`, account-number sign-in on `/login`,
->   rotate dialog on `/account`.
+> - **Admin search**: `GET /api/v1/admin/users?q=` matches the W3 **support ID**
+>   (`FS-…`) or the stored 4-digit prefix (`convex/adminApi.ts`); full-number lookup
+>   is never permitted.
+> - **SPA**: a blocking, checkbox-gated reveal-once **modal** (`AccountNumberReveal`,
+>   copy/download/`beforeunload`) on `/get-account` AND on rotate; account-number
+>   sign-in on `/login` (show/hide + password-manager autofill + digit normalization).
 >
 > **NOT APPLICABLE: OIDC was removed.** The original design assumed an Authentik
 > OIDC / CiviCRM identity that an account number would _link_ to. That stack is
@@ -96,9 +106,10 @@ lifecycle tied to the user row.
 `POST /api/v1/auth/account-login` (new file `src/server/routes/api/auth-account.ts`,
 mounted alongside `/api/auth/*`).
 
-**Request**: `{ accountId: string, turnstileToken: string }`. Turnstile required
-on every attempt, the same widget that gates free-tier issuance. Prevents
-headless brute-force.
+**Request**: `{ accountId: string, captchaToken: string }`. A captcha (self-hosted
+**Cap**; replaced Cloudflare Turnstile as of 2026-06-10) is required on every attempt,
+the same widget that gates free-tier issuance. Prevents headless brute-force. (The
+server still accepts the legacy `turnstileToken` field name during the rollout.)
 
 **Response 200**: `{ ok: true }`; sets the `fs_session` cookie identical to OIDC
 callback. SPA redirects to `/account`.

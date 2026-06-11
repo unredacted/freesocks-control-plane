@@ -29,7 +29,8 @@ router and native cron jobs. There is no separate web framework or edge worker.
 
 - **[Convex](https://docs.convex.dev) 1.40**: reactive document DB + serverless functions, run **self-hosted** (Docker; SQLite or Postgres). Schema and validators are TypeScript (`v.*`), so there is no SQL and no migration set.
 - **HTTP router** (`convex/http.ts`): every public route is an `httpAction`, served on the Convex HTTP-actions port (`:3211`). This is the surface the SPA and API consumers call.
-- **Native crons** (`convex/crons.ts`): grace/disable sweep, tombstone sweep, Outline healthcheck, free-tier cleanup, session/rate-limit sweeps.
+- **Native crons** (`convex/crons.ts`): grace/disable sweep, tombstone sweep, backend healthcheck, free-tier cleanup, session/rate-limit/replay-guard sweeps, HPKE epoch-key rotation, and append-only-table retention sweeps.
+- **Self-hosted [Cap](https://trycap.dev) captcha** (the `cap` + `valkey` compose services) gates anonymous account creation + login; verified server-side in `convex/lib/captcha.ts`. The widget + its proof-of-work WASM are bundled and served same-origin — no third-party scripts.
 - **Proxy backends**: **Remnawave** and **Outline** behind a common action dispatch (`convex/backends.ts` + `convex/lib/backends/*`); per-tier backend selection plus optional end-user choice. See [`docs/backends.md`](docs/backends.md).
 - **`@simplewebauthn/server`** for admin passkey auth (a `"use node"` action module).
 - **`@aws-sdk/client-s3`** for optional multi-provider subscription mirroring (a `"use node"` action module).
@@ -42,7 +43,8 @@ router and native cron jobs. There is no separate web framework or edge worker.
 - **A thin cookie-auth `apiClient`** (`src/client/lib/api.ts`, `credentials:'include'`) that calls the Convex HTTP surface and Zod-validates every response. The client does **not** use the Convex reactive client; authenticated data flows over the HTTP actions so the session cookie stays httpOnly.
 - **shadcn-svelte** components copied as source into `src/client/components/ui/`, over **bits-ui** headless primitives.
 - **Tailwind CSS 4** via `@tailwindcss/vite`; Inter / Inter Tight / JetBrains Mono bundled and self-hosted via `@fontsource/*` (no third-party font CDN).
-- **`@simplewebauthn/browser`** for admin passkey ceremonies; **qrcode** for the subscription QR; **svelte-sonner** toasts; **mode-watcher** theming.
+- **`@simplewebauthn/browser`** for admin passkey ceremonies; **qrcode** for the subscription QR; **svelte-sonner** toasts; **mode-watcher** theming; **`@cap.js/widget`** (bundled) for the captcha.
+- **i18n** is a small dependency-free per-locale catalog (`src/client/lib/i18n/`): English + Farsi, Arabic, Russian, Simplified Chinese, with RTL driven off `<html dir>` and a persisted language switcher. The critical user-journey strings are translated; marketing copy + a native-speaker review pass are tracked follow-ups.
 
 ### Shared contracts (`src/shared/contracts/`)
 
@@ -65,22 +67,28 @@ convex/                            The backend (Convex functions)
 ├── http.ts                        httpRouter: every public route as an httpAction
 ├── crons.ts                       native scheduled jobs
 ├── seed.ts                        idempotent cutover seed (default tiers + settings)
-├── freeTier.ts                    Turnstile-gated anon issuance + serializable cap
+├── freeTier.ts                    Cap-gated anon account creation + serializable cap
 ├── account.ts                     getAccountView / regenerate / switchBackend / refresh
 ├── auth.ts, accountId.ts          account-number login / rotate / mint
+├── supportId.ts                   non-secret FS-XXXX-XXXX support handle (mint/lookup)
+├── membershipCodes.ts             admin-minted redemption codes; member redeem (single-use)
 ├── lifecycle.ts                   setMembership seam + grace/disable + cleanup sweeps
 ├── backends.ts                    proxy-backend dispatch (action)
-├── outlineServers.ts             Outline server pool (DB half) + healthcheck
+├── backendServers.ts              generic backend-instance pool (DB half) + healthcheck
+├── outlineServers.ts              Outline-specific DB half
 ├── webauthn.ts                    admin passkey ceremonies + bootstrap ("use node")
-├── apiTokens.ts                   fsv1_ token mint/resolve
+├── apiTokens.ts                   fsv1_ token mint/resolve (scoped)
 ├── webhooks.ts                    generic billing webhook (HMAC + dedupe)
 ├── storage.ts                     S3 subscription mirrors ("use node")
+├── retention.ts                   daily append-only-table retention sweeps
+├── health.ts                      /readyz deep readiness (DB ping)
 ├── subscriptions.ts, tiers.ts, users.ts, admins.ts, appSettings.ts,
 │   publicConfig.ts, audit.ts, rateLimits.ts, sessions.ts, adminApi.ts
 └── lib/
-    ├── http.ts                    error envelope, client-IP, resolveMember/Admin/Bearer
-    ├── cookies.ts, crypto.ts, accountId.ts, captcha.ts, issuance.ts
-    └── backends/{types,remnawave,outline}.ts   pure HTTP backend fns
+    ├── http.ts                    error envelope, client-IP, resolveMember/Admin/Bearer (scoped)
+    ├── cookies.ts, crypto.ts, accountId.ts, supportId.ts, captcha.ts,
+    │   membershipCode.ts, rateLimitPolicy.ts, issuance.ts
+    └── backends/{types,registry,remnawave,outline}.ts   pure HTTP backend fns
 
 src/
 ├── client/                        Svelte 5 SPA (Vite, shadcn-svelte)
@@ -173,22 +181,27 @@ first admin passkey, reverse-proxy config, verification checklist) is in
 
 Highlights:
 
-- **Anonymous flow**: `POST /api/v1/subscription`, Turnstile-gated, no email. The
-  per-(IP, day) cap is a **serializable Convex mutation** (`freeTier.claimFreeSlot`), so
-  concurrent bursts can't over-issue. Each first issuance mints a one-time **account number**
-  returned in the response; a per-(IP, day) reissue hands back the existing key.
+- **Anonymous flow**: `POST /api/v1/account`, Cap-captcha-gated, no email. Account creation is
+  **decoupled from proxy issuance** (so a backend outage can't block sign-up): it mints the
+  one-time **account number** (revealed via a blocking save-it modal) + a non-secret **support
+  ID** + a member session. The per-(IP, day) cap is a **serializable Convex mutation**
+  (`freeTier.claimFreeSlot`, cap from the admin-tunable `freetier.create` policy), so concurrent
+  bursts can't over-issue. The proxy key is created separately by the signed-in member.
 - **Member flow**: the account number is the only credential. `POST /api/v1/auth/account-login`
-  (Turnstile + strict per-prefix/per-IP rate limits + constant-time) sets the signed
-  `fs_session` cookie; the member can **rotate** it (`/api/v1/account/account-id/rotate`)
-  and **regenerate** or **switch backend** for their key. There is no OIDC.
+  (Cap + strict per-IP/per-(prefix,IP) rate limits + constant-time) sets the signed
+  `fs_session` cookie; the member can **rotate** it (`/api/v1/account/account-id/rotate`),
+  **regenerate** or **switch backend** for their key, and **redeem a membership code**
+  (`/api/v1/account/redeem-code`). There is no OIDC.
 - **Entitlements**: `tiers` drive limits; `lifecycle.setMembership` is the single seam that
-  sets a user's tier + expiry. Today it's driven by admin edits and the **billing webhook**
-  (`POST /api/webhooks/billing`, HMAC-verified + deduped); the future in-house billing
-  portal plugs in here. A cron sweep moves lapsed members `active → grace → disabled`.
+  sets a user's tier + expiry. Driven by admin edits, **admin-minted redemption codes** a
+  member redeems (the day-1 paid path), and the **billing webhook** (`POST /api/webhooks/billing`,
+  HMAC-verified + deduped) for the future portal. A cron sweep moves lapsed members
+  `active → grace → disabled`.
 - **Admin CMS**: passkey-only auth (first-run bootstrap wizard, then WebAuthn), separate
-  from member sessions. Tiers, users (search, disable, reset-traffic, resync), API tokens
-  (create / reveal-once / revoke), Outline servers (CRUD + test-connection), settings, and
-  the audit log.
+  from member sessions. Tiers, users (search by support ID / prefix; disable, reset-traffic,
+  resync; paginated), API tokens (create / reveal-once / revoke), backend servers (CRUD +
+  test-connection), **rate-limit policies** (live-editable), **membership codes** (mint /
+  reveal-once / revoke), settings, and the audit log.
 - **Subscription delivery**: the issuance saga (`convex/lib/issuance.ts`) creates the
   backend user, optionally mirrors the content to N S3 providers
   ([`@aws-sdk/client-s3`](https://www.npmjs.com/package/@aws-sdk/client-s3)), and persists
@@ -207,11 +220,12 @@ Highlights:
 
 ### Endpoints (served by `convex/http.ts`)
 
-- **Public / member:** `GET /healthz`, `GET /api/v1/config`, `GET|POST /api/v1/subscription`,
+- **Public / member:** `GET /healthz` (liveness), `GET /readyz` (deep readiness),
+  `GET /api/v1/config`, `POST /api/v1/account` (create), `GET /api/v1/account`,
   `POST /api/v1/auth/account-login`, `POST /api/v1/auth/logout`, `GET /api/v1/me`,
-  `GET /api/v1/account`, `POST /api/v1/account/{regenerate,switch-backend,refresh-membership}`,
+  `POST /api/v1/account/{regenerate,switch-backend,refresh-membership,redeem-code}`,
   `POST /api/v1/account/account-id/rotate`.
-- **Admin (cookie or `admin:*`-scoped token):** `GET|POST|PATCH|DELETE /api/v1/admin/{tiers,users,tokens,audit,settings,outline-servers}/*`.
+- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{tiers,users,tokens,audit,settings,rate-limits,membership-codes,backend-servers}/*` — each route enforces a specific scope on token callers.
 - **Plumbing:** `GET|POST /api/admin/auth/*` (WebAuthn passkey ceremonies + bootstrap),
   `POST /api/webhooks/billing` (HMAC inbound).
 
@@ -271,7 +285,8 @@ mutations.
 Inter (body) + Inter Tight (display) + JetBrains Mono (code), bundled and self-hosted via
 `@fontsource/*` (imported in `src/client/main.ts`); the page never contacts
 `fonts.googleapis.com` / `fonts.gstatic.com` or any third-party host, a deliberate privacy /
-censorship-resistance choice. The only sanctioned third-party script is Cloudflare Turnstile.
+censorship-resistance choice. There are **no third-party runtime scripts at all** — the Cap
+captcha widget + its proof-of-work WASM + pako are bundled and served same-origin.
 Apply `tabular-nums` to counters, file sizes, dates, and any number that re-renders.
 
 ### Router

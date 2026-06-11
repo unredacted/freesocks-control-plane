@@ -76,6 +76,35 @@ this at a single `writeAuditLog` chokepoint, fail-closed for unregistered action
 with a clear error (regression test added); full WSS _issuance_ is the only piece
 left and it stays blocked on the fork's response contract.
 
+**Resolved (2026-06-10 launch-readiness pass — `.claude/plans/2026-06-10-launch-readiness-plan.md`):**
+
+- **A1 — client-IP spoofing (per-IP control bypass):** `resolveClientIp` trusted a
+  client-supplied `cf-connecting-ip` unconditionally; in the Caddy-direct topology that let
+  any caller pick its own rate-limit bucket and defeat the free-tier per-(IP,day) cap + the
+  login throttle. Now `cf-connecting-ip` is honoured ONLY when `CF_FRONTED=true` (real CF edge
+  in front), Caddy strips the header upstream, and `TRUSTED_PROXY` gates the XFF path
+  (`convex/clientIp.test.ts`).
+- **P1-1 — API-token scopes were not enforced:** every admin route accepted any `admin:*`
+  token; `resolveAdmin`/`resolveMember` now take a required scope and enforce it on token
+  callers (cookie sessions stay full-privilege). `convex/scopes.test.ts`.
+- **P1-2 — unthrottled abuse surface:** per-IP throttles on account-create (before the captcha
+  verify) + the billing webhook, plus a content-length cap on the webhook body before HMAC.
+- **P1-3 — regenerate/switch could orphan a routing key:** per-user rate limit + a serializable
+  issuance-in-progress lock so two concurrent sagas can't mint two backend keys and tombstone
+  only one.
+- **P1-4 — lifecycle sweeps stopped at the first 500 rows:** grace/disable/free-cleanup now
+  drain via exact index ranges / per-tier cursors instead of `take(500)` + post-filter.
+- **P1-5 — teardown orphaned the backend key on failure:** `deleteSubscriptionEverywhere`
+  deletes the backend user FIRST and only marks the row deleted on success (idempotent 404),
+  so a transient failure leaves the row for the next sweep instead of stranding a live key.
+- **P1-6 — switch-backend ordering:** the old subscription is tombstoned before the tier flips,
+  so a mid-saga failure can't leave two indefinitely-live keys.
+- **Turnstile → self-hosted Cap (W1):** removes the last third-party script. The captcha
+  widget, its PoW WASM, and pako are all bundled same-origin; the CSP is pure `'self'` and
+  COEP `require-corp` is now enforced.
+- **Rate limits are DB-driven (W2)** and **per-prefix login is now per-(prefix,IP)** (no longer
+  a cross-user lockout lever, now that A1 makes per-IP meaningful).
+
 **Still open / deferred on Convex:** **Bug 15 (full WSS issuance only)**: latent
 while Outline is disabled (blocked on the fork's real WSS create-key contract, which
 is not in this repo); Outline scoring **RTT capture** (the `pickCandidatesForIssue`
@@ -127,7 +156,7 @@ dedicated change.
 
 **Mitigations currently in place.** The KV increment is unconditional and the
 D1 backstop catches the steady-state case; the race only widens during
-genuinely concurrent bursts. Combined with Turnstile gating on every free-tier
+genuinely concurrent bursts. Combined with captcha gating on every free-tier
 request, sustained abuse is hard. The IP-based cap is also a soft signal:
 NAT'd users sharing an IP can hit the cap without being attackers.
 

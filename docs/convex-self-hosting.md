@@ -143,44 +143,47 @@ Example `Caddyfile` (the SPA's `apiClient` calls same-origin `/api/*` + `/health
 app.freesocks.org {
     encode gzip
 
-    # Security headers (CDN-blinding hardening). The strict CSP blocks inline +
-    # injected scripts (the FOUC theme logic is the external /theme-init.js, not
-    # inline); the one sanctioned third party is Cloudflare Turnstile (its script,
-    # iframe, and verification calls). Inline STYLES are allowed (Svelte style
-    # bindings); inline SCRIPTS are not. worker-src 'self' is for the Phase 2
-    # proof-of-possession signing worker.
+    # Security headers. The captcha (self-hosted Cap) is bundled + served
+    # same-origin, so the CSP is pure 'self' — ZERO third-party origins. Inline
+    # STYLES are allowed (Svelte style bindings); inline SCRIPTS are not (the FOUC
+    # theme logic is the external /theme-init.js). worker-src 'self' covers both
+    # the PoP signing worker and Cap's proof-of-work solver worker;
+    # 'wasm-unsafe-eval' lets Cap's WASM compile (served same-origin via /cap).
     header {
-        Content-Security-Policy "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'"
-        # Phase 3 hardening, safe with the Turnstile iframe:
-        #  - COOP same-origin isolates the browsing context (opener relationships).
-        #  - CORP same-origin stops our own responses being embedded cross-origin.
-        #  - Permissions-Policy denies sensitive features the app never uses.
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; worker-src 'self'; child-src 'self' blob:"
+        # COOP/CORP isolate the context; COEP require-corp is now ENFORCEABLE
+        # (every subresource is same-origin — the Turnstile iframe that blocked it
+        # is gone). Permissions-Policy denies features the app never uses.
         Cross-Origin-Opener-Policy "same-origin"
         Cross-Origin-Resource-Policy "same-origin"
+        Cross-Origin-Embedder-Policy "require-corp"
         Permissions-Policy "accelerometer=(), browsing-topics=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
-        # Trusted Types in REPORT-ONLY first: collect violations (Svelte sinks, the
-        # Turnstile widget) in staging before enforcing. Promote
-        # require-trusted-types-for into the enforcing CSP above only once clean.
+        Strict-Transport-Security "max-age=31536000"
         Content-Security-Policy-Report-Only "require-trusted-types-for 'script'"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "no-referrer"
         -Server
     }
-    # Still deferred, each blocked by the dynamically-loaded third-party Turnstile
-    # script (which cannot carry our SRI and may not send CORP):
-    #   Integrity-Policy "blocked-destinations=(script)" -> our entry assets now
-    #     ship sha384 SRI (the Vite sriPlugin), but this header blocks ANY script
-    #     lacking integrity, including the Turnstile script. Enable only behind a
-    #     verifier extension (Phase 4) or once Turnstile loads with SRI.
-    #   Cross-Origin-Embedder-Policy "require-corp" -> requires every subresource
-    #     (Turnstile iframe + script) to opt in via CORP/CORS; validate in staging
-    #     first (it can break the widget; it unlocks crossOriginIsolated).
+    # Integrity-Policy "blocked-destinations=(script)" stays deferred until every
+    # dynamically-imported chunk carries SRI (code-splitting emits chunks the Vite
+    # sriPlugin doesn't yet stamp). Entry assets already ship sha384 SRI.
 
-    # API + health → Convex HTTP actions (:3211)
-    @api path /api/* /healthz
+    # API + health/readiness → Convex HTTP actions (:3211)
+    @api path /api/* /healthz /readyz
     handle @api {
-        reverse_proxy 127.0.0.1:3211
+        reverse_proxy 127.0.0.1:3211 {
+            header_up -CF-Connecting-IP   # strip client-spoofable header (A1)
+        }
     }
+    # Self-hosted Cap captcha (same-origin); strip the /cap prefix to match its routes.
+    @cap path /cap/*
+    handle @cap {
+        uri strip_prefix /cap
+        reverse_proxy 127.0.0.1:3000
+    }
+    # Never serve source maps publicly.
+    @maps path *.map
+    respond @maps 404
     # Everything else → the built SPA, with history-API fallback to index.html
     handle {
         root * /srv/freesocks/dist
@@ -188,7 +191,7 @@ app.freesocks.org {
         file_server
     }
 }
-# Lock the Convex dashboard to your network / behind auth, separately.
+# Lock the Convex dashboard + the Cap admin dashboard to your network / behind auth.
 ```
 
 Build the SPA with the public actions origin baked in:
@@ -199,9 +202,10 @@ script automatically (the Vite `sriPlugin`); no operator action is needed.
 
 ## 8. Cutover verification checklist
 
-- `GET /healthz` → `{ok:true}`; `GET /api/v1/config` → tiers + Turnstile site key.
-- Anonymous **get-account**: solve Turnstile → account created (key issued) + account number
-  revealed once; 2nd same-IP/day call is capped (`accountIdAvailable:false`).
+- `GET /healthz` → `{ok:true}` (liveness); `GET /readyz` → 200 with a real DB ping (503 if
+  Postgres is down); `GET /api/v1/config` → tiers + the Cap `{apiEndpoint, siteKey}`.
+- Anonymous **get-account**: solve the Cap captcha → account created + account number revealed
+  once (in the blocking save-it modal) + support ID; 2nd same-IP/day call is capped (429).
 - **Account login** with that number → `fs_session` set → `/account` renders; a wrong
   number → generic 401, constant-time.
 - **Rotate** → new number revealed once, old number dead.

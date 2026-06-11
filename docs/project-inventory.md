@@ -1,6 +1,8 @@
 # Project inventory: features, open work, and code status
 
-**Last reconciled against the code: 2026-06-05** (branch `v2`). This is a map, not a
+**Last reconciled against the code: 2026-06-10** (branch `v2`; after the launch-readiness
+pass — Cap captcha, W2 rate-limit policies, W3 support ID, W4 redemption codes, i18n/RTL, the
+A1–A4 + P1/P2 hardening). This is a map, not a
 spec; if it disagrees with the source, trust the source and fix this file. It exists so
 a new maintainer (or a future automated pass) can tell at a glance what's **live**, what's
 **deliberately deferred or scaffolded**, and what's genuinely **open work**, and, in
@@ -38,10 +40,14 @@ Detailed companions, referenced rather than duplicated here:
 
 - **Account number** (members): a random **32-digit** credential (~106 bits), minted once at
   account creation (reveal-once), stored only as a peppered keyed hash
-  (`HMAC-SHA256(ACCOUNT_ID_PEPPER, number)`), the **only** member identity. `POST /api/v1/auth/account-login` (Turnstile +
-  strict per-prefix/per-IP rate limits + constant-time, generic-failure) → signed `fs_session`
+  (`HMAC-SHA256(ACCOUNT_ID_PEPPER, number)`), the **only** member identity. `POST /api/v1/auth/account-login`
+  (Cap captcha + strict per-IP + per-(prefix,IP) rate limits + constant-time, generic-failure) → signed `fs_session`
   cookie. Rotatable (`POST /api/v1/account/account-id/rotate`). `convex/auth.ts`,
   `convex/accountId.ts`, `convex/lib/accountId.ts`. **Live.** See `account-number-design.md`.
+- **Support ID** (W3): a non-secret `FS-XXXX-XXXX` Crockford-base32 handle minted per user at
+  creation (lazily backfilled), uniqueness-checked, NOT a credential (can't log in). The
+  human-shareable identifier for support (collision-free, unlike the 4-digit prefix). Shown on
+  the Account page; admin user-search resolves it. `convex/supportId.ts`, `convex/lib/supportId.ts`. **Live.**
 - **WebAuthn passkeys** (admins): first-run **bootstrap wizard** (gated by
   `ADMIN_BOOTSTRAP_SECRET`, re-checked at options _and_ verify, **locks forever** once any
   credential exists) + authenticate; signed `fs_admin_session` cookie; per-IP throttle +
@@ -56,8 +62,8 @@ Detailed companions, referenced rather than duplicated here:
 
 ### 1.2 Free-tier account creation (`convex/freeTier.ts`): **Live**
 
-- Turnstile-gated anonymous account creation via `POST /api/v1/account`
-  (`createFreeAccount`): mint user + reveal-once account number + member session.
+- Cap-captcha-gated anonymous account creation via `POST /api/v1/account`
+  (`createFreeAccount`): mint user + reveal-once account number + support ID + member session.
   **Decoupled from proxy issuance**, so it never depends on a backend being available; the
   proxy key is created separately by the signed-in member (§1.4).
 - **Serializable per-(IP, day) cap**: `claimFreeSlot` reads the `freeGrants` for
@@ -77,9 +83,10 @@ Detailed companions, referenced rather than duplicated here:
 
 - `tiers` are entitlement templates (traffic/device/hwid limits, `backend` discriminator,
   per-tier `expirationDaysAfterMembershipLapse`). Admin CRUD via `convex/adminApi.ts`.
-- **`setMembership`** is the single entitlement seam: sets a user's tier + expiry, records
-  `tierHistory` + audit, and schedules a durable `pushTierToBackend` (event-driven, **not** a
-  cron). Driven today by admin edits and the billing webhook (§1.7).
+- **`setMembership`** / `applyMembership` is the single entitlement seam: sets a user's tier +
+  expiry (re-activating a lapsed user), records `tierHistory` + audit, and schedules a durable
+  `pushTierToBackend` (event-driven, **not** a cron; retries with backoff + audits on final
+  failure). Driven by admin edits, **membership-code redemption** (§1.7), and the billing webhook.
 - `runGraceSweep` cron: `active → grace` for lapsed members, `grace → disabled` past **each
   tier's** grace window (and disables the backend sub so the key stops routing).
 
@@ -108,10 +115,13 @@ Detailed companions, referenced rather than duplicated here:
 
 ### 1.6 Admin CMS (`/api/v1/admin/*` + `src/client/routes/admin/*`): **Live**
 
-- Tiers; Users (search by query/status/tier; disable / reset-traffic / resync; backend shown);
-  API tokens (create / reveal-once / revoke); Outline servers (CRUD + test-connection; the
-  `apiUrl` secret is stored server-side and only ever returned as `apiUrlMasked`); App
-  settings; Audit log. Backed by `convex/adminApi.ts`.
+- Tiers; Users (search by **support ID** or 4-digit prefix; status/tier filters; disable /
+  reset-traffic / resync; backend shown; **paginated** via "Load more"); API tokens (create /
+  reveal-once / revoke; **per-route scope enforcement** on token callers); Backend servers
+  (CRUD + test-connection; the secret `config`/`apiUrl` is stored server-side and only ever
+  returned masked); **Rate-limit policies** (live-edit max/window/enabled per policy; W2);
+  **Membership codes** (mint a batch + reveal-once, list/filter, revoke; W4); App settings;
+  Audit log. Backed by `convex/adminApi.ts` (+ `rateLimits`/`membershipCodes`).
 
 ### 1.7 Integrations & runtime
 
@@ -124,9 +134,25 @@ Detailed companions, referenced rather than duplicated here:
   proof-of-work CAPTCHA gating free issuance + account login. Replaced Cloudflare Turnstile (W1)
   — the widget is bundled from npm and challenge traffic is same-origin (Caddy `/cap` → the `cap`
   service), so there are now **zero third-party runtime scripts**. **Live.**
+- **Membership redemption codes** (W4, `convex/membershipCodes.ts`): admin-minted
+  `FSM-XXXX-XXXX-XXXX` bearer codes (stored hashed) a signed-in member redeems
+  (`POST /api/v1/account/redeem-code`) to grant/extend a paid tier — the **day-1 upgrade path**,
+  no billing portal required. Single-use serializable consume → `applyMembership`; hard
+  rate-limited; generic no-oracle failure. **Live.**
+- **DB-driven rate-limit policies** (W2, `convex/lib/rateLimitPolicy.ts` + `rateLimits.enforce`):
+  every limit (free-tier cap, login, regenerate/switch, redeem, webhook) is an admin-editable
+  `{max,windowMs,enabled}` stored under `appSettings.ratelimit.*`, resolved per request with a
+  fail-safe fallback to the compiled default. **Live.**
+- **i18n + RTL** (P1-15, `src/client/lib/i18n/`): dependency-free per-locale catalogs (en + fa,
+  ar, ru, zh), RTL via `<html dir>`, persisted language switcher, Persian/Arabic-Indic digit
+  normalization. Critical user-journey strings translated; marketing copy + native review are
+  follow-ups. **Live (English authoritative; other locales first-pass MT).**
 - **S3 subscription mirrors** (`convex/storage.ts`, `"use node"`): N providers from env
   (`S3_MIRRORS_ENABLED`, `S3_PROVIDER_*`); the censorship-resistance hedge. **Dormant**
   (off unless configured).
+- **Automated backups** (A3, `docker/backup.sh` + the `backup` compose service): scheduled
+  `pg_dump` shipped offsite to S3-compatible storage. **Live when `BACKUP_S3_*` is set** (else
+  local-only with a loud warning).
 - **Email / notifications**: **intentionally absent.** Accounts are anonymous: no contact
   details are collected and the control plane sends nothing. Lifecycle transitions (grace,
   disabled) are recorded to the audit log only. There is no email subsystem, and adding one
@@ -150,12 +176,16 @@ Convex runs these natively (no Workers triggers, no node-cron):
 
 ### 1.9 Frontend SPA (Svelte 5 runes): **Live**
 
-- Public: `Home`, `GetAccount` (Turnstile + backend chooser when dual-backend on, reveal-once
-  account-number panel), `Account` (member view + regenerate / switch-backend / rotate),
-  `Login` (account-number sign-in).
-- Admin: `AdminEntry`/`AdminLogin`/`AdminBootstrap`/`AdminLayout` + Tiers / Users / Tokens /
-  OutlineServers / Settings / Audit pages + editors/modals. Custom History-API router; all
-  data via TanStack Query + the zod-validating `apiClient` (`lib/api.ts`, `lib/queries.ts`).
+- Public: `Home`, `GetAccount` (Cap widget + backend chooser radiogroup when dual-backend on;
+  the reveal-once account number is a blocking, checkbox-gated `AccountNumberReveal` modal with
+  copy/download/`beforeunload`; per-platform `SetupGuidance` after issuance), `Account` (member
+  view + regenerate / switch-backend / rotate / **redeem code** / support-ID display),
+  `Login` (account-number sign-in: show/hide, password-manager autofill, digit normalization).
+  Localized via `lib/i18n`; a `LanguageSwitcher` in the header.
+- Admin (lazy-loaded behind `AdminRouter`): `AdminEntry`/`AdminLogin`/`AdminBootstrap`/`AdminLayout`
+  - Tiers / Users / Tokens / BackendServers / **RateLimits** / **MembershipCodes** / Settings /
+    Audit pages + editors/modals. Custom History-API router; all data via TanStack Query + the
+    zod-validating `apiClient` (`lib/api.ts`, `lib/queries.ts`); errors localized via `lib/errors.ts`.
 
 ---
 
@@ -164,11 +194,13 @@ Convex runs these natively (no Workers triggers, no node-cron):
 There are **no `TODO`/`FIXME` markers in `convex/` or `src/`**; open work lives here and in
 the companion docs. Sizes: S/M/L.
 
-| Item                                                                                                                                                                           | Size | Where it's tracked          |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---- | --------------------------- |
-| **Billing portal integration**: the webhook seam (`/api/webhooks/billing` → `setMembership`) is ready; the in-house portal that calls it is the future entitlement source.     | L    | this file (§1.7)            |
-| **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until the billing portal defines cross-backend tier linkage. Needs the portal's tier model.  | M    | `convex/account.ts`         |
-| **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to. | M    | `deferred-security-bugs.md` |
+| Item                                                                                                                                                                                                                                                           | Size | Where it's tracked                 |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------- |
+| **Billing portal integration**: the webhook seam (`/api/webhooks/billing` → `setMembership`) is ready, and **membership codes (W4) already cover the manual/day-1 upgrade path**; the in-house portal that automates minting is the future entitlement source. | L    | this file (§1.7)                   |
+| **Native-speaker translation review** + extracting remaining marketing copy into i18n keys (the non-English locales are a first-pass MT; the critical journey strings are done).                                                                               | M    | this file (§1.7), `.claude/plans/` |
+| **`POP_REQUIRED` flip**: operational — flip in beta after the client soaks (boot-warm prerequisite is done), prod launches with it on. PoP `sid`-binding needs an httpOnly-compatible design (a public per-session token).                                     | S    | `.claude/plans/`, threat model     |
+| **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until tier linkage across backends is defined. Needs the portal's tier model.                                                                                                | M    | `convex/account.ts`                |
+| **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                 | M    | `deferred-security-bugs.md`        |
 
 ---
 
