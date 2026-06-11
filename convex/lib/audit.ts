@@ -48,6 +48,10 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'membership_code.mint': ['count', 'tierId', 'durationDays'],
   'membership_code.revoke': ['codeId'],
   'membership_code.redeem': ['tierId', 'durationDays'],
+  // Billing: self-service membership purchases (never payer PII — no email/ref).
+  'billing.checkout.created': ['processor', 'months'],
+  'billing.order.paid': ['processor', 'tierSlug', 'durationDays', 'amountCents'],
+  'billing.config.update': ['key'],
 };
 
 /**
