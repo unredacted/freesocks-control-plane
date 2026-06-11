@@ -19,6 +19,21 @@
 #     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
 set -eu
 
+# Fail-fast gate: accounts are anonymous, so a host-disk loss without an
+# offsite copy is unrecoverable. Refuse to run local-only unless the operator
+# explicitly accepts the risk (a crash-looping container is impossible to miss
+# in `docker compose ps`; a once-a-day WARNING line is easy to).
+if [ -z "${S3_BUCKET:-}" ] || [ -z "${S3_ENDPOINT:-}" ]; then
+  if [ "${BACKUP_ALLOW_LOCAL_ONLY:-}" != "true" ]; then
+    echo "[backup] FATAL: BACKUP_S3_* unset — backups would be LOCAL ONLY and a" >&2
+    echo "[backup]        host-disk loss is unrecoverable (anonymous accounts)." >&2
+    echo "[backup]        Set the S3_ENDPOINT/S3_BUCKET + AWS_* creds in .env.beta," >&2
+    echo "[backup]        or set BACKUP_ALLOW_LOCAL_ONLY=true to accept the risk." >&2
+    exit 1
+  fi
+  echo "[backup] WARNING: BACKUP_ALLOW_LOCAL_ONLY=true — offsite backups DISABLED" >&2
+fi
+
 PGHOST="${POSTGRES_HOST:-postgres}"
 PGUSER="${POSTGRES_USER:-convex}"
 PGDB="${POSTGRES_DB:-freesocks_beta}"

@@ -75,7 +75,6 @@ convex/                            The backend (Convex functions)
 ├── lifecycle.ts                   setMembership seam + grace/disable + cleanup sweeps
 ├── backends.ts                    proxy-backend dispatch (action)
 ├── backendServers.ts              generic backend-instance pool (DB half) + healthcheck
-├── outlineServers.ts              Outline-specific DB half
 ├── webauthn.ts                    admin passkey ceremonies + bootstrap ("use node")
 ├── apiTokens.ts                   fsv1_ token mint/resolve (scoped)
 ├── webhooks.ts                    generic billing webhook (HMAC + dedupe)

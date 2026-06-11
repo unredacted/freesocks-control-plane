@@ -201,11 +201,17 @@ deployer (`docker compose ... up -d`) so the env applies.
 ### Backups & restore
 
 The `backup` service `pg_dump`s the datastore every `BACKUP_INTERVAL_SECONDS`
-and (when `BACKUP_S3_*` is set) uploads offsite, pruning to `BACKUP_RETENTION`
-local copies. **Configure offsite storage before launch** — accounts are
+and uploads offsite via `BACKUP_S3_*`, pruning to `BACKUP_RETENTION` local
+copies. **Offsite storage is enforced**: with `BACKUP_S3_*` unset the container
+exits fatally (visible in `docker compose ps`) unless
+`BACKUP_ALLOW_LOCAL_ONLY=true` explicitly accepts the risk — accounts are
 anonymous, so a lost datastore is unrecoverable. Also back up the **secret set**
 (the `bunx convex env` values, especially `ACCOUNT_ID_PEPPER` — losing it
 invalidates every account number).
+
+**Pre-launch check:** `docker compose -f docker-compose.beta.yml logs backup |
+grep uploading` must show offsite uploads (not the LOCAL ONLY warning), and the
+restore drill below must have been run at least once.
 
 Restore a dump:
 
@@ -245,3 +251,18 @@ is safe). To roll back:
   / `logs valkey`; restart. As a temporary measure an operator can loosen the
   `freetier.create` / `account-login.*` limits in the admin CMS, but the captcha
   is a primary anti-abuse control — restore it promptly.
+
+### Cap image provenance (accepted risk)
+
+The `cap` service is pinned **by digest** to `tiago2/cap` — an individual's
+Docker Hub repo, not an org image. The digest pin prevents silent substitution;
+the residual risk is **availability** (repo deleted/renamed ⇒ future pulls
+fail; the host's local image cache keeps the current one running). Before GA,
+mirror the digest into an org-controlled registry and repoint the compose
+file:
+
+```
+docker pull tiago2/cap@sha256:<pinned-digest>
+docker tag  tiago2/cap@sha256:<pinned-digest> ghcr.io/<org>/cap:<version>
+docker push ghcr.io/<org>/cap:<version>      # then keep a digest pin on the mirror
+```

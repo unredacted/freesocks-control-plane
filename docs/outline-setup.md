@@ -2,7 +2,7 @@
 
 How to register an Outline server with the control plane and offer it as a backend
 option to users. Outline servers are managed entirely through the **admin CMS** (the
-**Outline Servers** page); their data lives in the `outlineServers` Convex table, and the
+**Backend servers** page); their data lives in the generic `backendServers` Convex table, and the
 backend itself is a set of Convex actions (`convex/backends.ts` +
 `convex/lib/backends/outline.ts`). See [`docs/backends.md`](backends.md) for the dispatch
 shape.
@@ -19,7 +19,7 @@ https://HOST:PORT/<base64-secret>/access-keys
 
 That base64-secret in the URL path **is the authentication**. There are no headers,
 no API keys; anyone who can construct the URL can call the API. Treat the URL as a
-credential. The control plane stores it server-side on the `outlineServers` row and
+credential. The control plane stores it server-side on the `backendServers` row and
 **never returns it** to the SPA: admin reads get a masked form (`apiUrlMasked`,
 scheme+host only) instead.
 
@@ -70,8 +70,8 @@ report one (Outline does; Remnawave returns `null`, so its locally-tracked estim
 
 ## How the pool picks a server
 
-New-key issuance calls `internal.outlineServers.pickCandidatesForIssue` (in
-`convex/outlineServers.ts`):
+New-key issuance calls `internal.backendServers.pickCandidatesForIssue` (in
+`convex/backendServers.ts`):
 
 1. Collect active servers (optionally filtered to an `outlineServerPoolIds` allowlist on the
    issue spec).
@@ -87,7 +87,7 @@ New-key issuance calls `internal.outlineServers.pickCandidatesForIssue` (in
    `keyCount`.
 
 Reads/updates/deletes on an existing key resolve the hosting server from the subscription
-row via `internal.outlineServers.resolveKeyServer` (keyed by `backendUserId`).
+row via `internal.backendServers.resolveKeyServer` (keyed by `backendUserId`).
 
 ## Enabling the Outline backend
 
@@ -133,7 +133,7 @@ To offer a free Outline tier alongside the Remnawave free tier:
 
 ## Operational notes
 
-- **Health**: the **Outline Servers** page reflects each server's `lastHealthOkAt` (refreshed
+- **Health**: the **Backend servers** page reflects each server's `lastHealthOkAt` (refreshed
   by the healthcheck cron). A failing server is **not** auto-deactivated; it ages out of the
   30-min "fresh" set in `pickCandidatesForIssue` and is deprioritized, with all-servers
   fallback preserved.

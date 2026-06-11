@@ -189,7 +189,7 @@ http.route({
 });
 
 // --- account creation -------------------------------------------------------
-// Anonymous sign-up: Turnstile -> mint a user + account number + member session.
+// Anonymous sign-up: Cap captcha -> mint a user + account number + member session.
 // NO proxy backend is touched here (the proxy key is created separately, once
 // signed in, via POST /api/v1/account/regenerate), so a missing/empty backend
 // can never block account creation. The account-number reveal is sealed (the

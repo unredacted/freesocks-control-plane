@@ -21,7 +21,7 @@ export const seedDefaultFreeTier = internalMutation({
     return ctx.db.insert('tiers', {
       slug: 'free',
       name: 'Free',
-      description: 'Anonymous, Turnstile-gated access for users in censored regions',
+      description: 'Anonymous, captcha-gated access for users in censored regions',
       backend: 'remnawave',
       monthlyTrafficGb: 50,
       deviceLimit: 1,

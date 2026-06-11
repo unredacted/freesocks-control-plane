@@ -104,6 +104,9 @@ services:
       - AWS_ACCESS_KEY_ID=${BACKUP_AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${BACKUP_AWS_SECRET_ACCESS_KEY:-}
       - AWS_DEFAULT_REGION=${BACKUP_AWS_REGION:-auto}
+      # Explicit risk-acceptance opt-out: without BACKUP_S3_*, the sidecar
+      # exits fatally unless this is 'true' (see docker/backup.sh).
+      - BACKUP_ALLOW_LOCAL_ONLY=${BACKUP_ALLOW_LOCAL_ONLY:-}
     volumes:
       - backups:/backups
     depends_on:

@@ -1,7 +1,7 @@
 /**
  * Public bootstrap config (P7): the anonymous SPA reads this to render the
- * Turnstile widget, the tier-comparison table, and the backend chooser. Ported
- * from the old PublicConfig contract. Public + safe: the Turnstile SITE key is
+ * captcha widget, the tier-comparison table, and the backend chooser. Ported
+ * from the old PublicConfig contract. Public + safe: the Cap SITE key is
  * public, tier limits are public, and only the backend enabled/label subset of
  * settings is exposed (never squad/backend secrets). A plain query so it can be
  * served reactively or via the GET /api/v1/config HTTP route.
