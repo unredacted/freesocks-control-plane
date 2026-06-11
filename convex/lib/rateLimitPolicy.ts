@@ -45,6 +45,12 @@ export const RATE_LIMIT_DEFAULTS = {
   'code.redeem': { max: 5, windowMs: HOUR, enabled: true },
   // Per-IP throttle on the billing webhook (generous; a legit portal calls it).
   'webhook.billing.ip': { max: 60, windowMs: MINUTE, enabled: true },
+  // Self-service membership checkout (per member): each call creates a hosted
+  // invoice + a pending order, so cap the churn without blocking real retries.
+  'billing.checkout': { max: 10, windowMs: HOUR, enabled: true },
+  // Per-IP throttle on the crypto IPN (a single payment fires several status
+  // callbacks: waiting → confirming → finished — so this is generous).
+  'webhook.nowpayments.ip': { max: 120, windowMs: MINUTE, enabled: true },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyKey = keyof typeof RATE_LIMIT_DEFAULTS;

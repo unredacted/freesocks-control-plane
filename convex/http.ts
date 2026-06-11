@@ -568,6 +568,86 @@ http.route({
   }),
 });
 
+// --- self-service membership billing ----------------------------------------
+
+// Start a checkout: member picks a rail + duration, we mint an opaque order
+// bound to their userId and return the processor-hosted redirect URL. Not
+// `sealed` (no account-number/key material crosses — just processor+months → a
+// public URL); `guard` caps the body. The member identity is NEVER sent to the
+// processor; only the opaque ref is.
+http.route({
+  path: '/api/v1/billing/checkout',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'billing.checkout',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson(
+        'rate_limit.exceeded',
+        'Too many checkout attempts. Please wait and try again.',
+        429,
+        { retryAfterMs: rl.retryAfterMs },
+      );
+    }
+    const body = await readJson<{ processor?: string; months?: number }>(req);
+    if (
+      body.processor !== 'nowpayments' &&
+      body.processor !== 'stripe' &&
+      body.processor !== 'paypal'
+    ) {
+      return errorJson('validation', 'processor must be nowpayments, stripe, or paypal', 400);
+    }
+    if (typeof body.months !== 'number' || !Number.isInteger(body.months) || body.months < 1) {
+      return errorJson('validation', 'months must be a positive integer', 400);
+    }
+    try {
+      const result = await ctx.runAction(internal.billing.createCheckout, {
+        userId: member.userId,
+        processor: body.processor,
+        months: body.months,
+      });
+      return json(result);
+    } catch (err) {
+      if (err instanceof ConvexError) {
+        const data = err.data as { code?: string; message?: string };
+        const code = data.code ?? 'billing.error';
+        const status =
+          code === 'billing.unavailable' || code === 'billing.not_configured'
+            ? 503
+            : code === 'billing.disabled'
+              ? 409
+              : 400;
+        return errorJson(code, data.message ?? 'Checkout could not be started', status);
+      }
+      console.error('[billing] checkout error', err);
+      return errorJson('billing.error', 'Checkout could not be started', 500);
+    }
+  }),
+});
+
+// Poll an order's status (the return page). Scoped to the requesting member —
+// a ref that isn't theirs (or doesn't exist) is a 404.
+http.route({
+  pathPrefix: '/api/v1/billing/order/',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:read');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const opaqueRef = lastPathSegment(req);
+    if (!opaqueRef) return errorJson('validation', 'order ref required', 400);
+    const status = await ctx.runQuery(internal.billing.getOrderStatus, {
+      opaqueRef,
+      userId: member.userId,
+    });
+    if (!status) return errorJson('not_found', 'order not found', 404);
+    return json(status);
+  }),
+});
+
 // --- admin passkey auth -----------------------------------------------------
 
 http.route({
@@ -746,6 +826,61 @@ http.route({
       }
       // Generic: never echo the internal error (leaks paths) to an
       // unauthenticated endpoint. Detail is in the function logs.
+      return errorJson('webhook.rejected', 'Webhook rejected (invalid signature or payload)', 400);
+    }
+  }),
+});
+
+// --- NOWPayments IPN (crypto rail) ------------------------------------------
+// Same template as the generic billing webhook: 503 when the IPN secret is
+// unset (distinct from a bad signature), 64 KiB cap BEFORE hashing, per-IP
+// throttle, raw-body read, then HMAC-SHA512 verify + parse in billing.ingestEvent.
+http.route({
+  path: '/api/webhooks/nowpayments',
+  method: 'POST',
+  handler: httpAction(async (ctx, req) => {
+    if (!process.env.NOWPAYMENTS_IPN_SECRET) {
+      console.error('[webhook] rejected: NOWPAYMENTS_IPN_SECRET unset (billing.not_configured)');
+      return errorJson(
+        'billing.not_configured',
+        'NOWPayments webhooks are not configured on this deployment',
+        503,
+      );
+    }
+    const declaredLen = Number(req.headers.get('content-length') ?? '0');
+    if (Number.isFinite(declaredLen) && declaredLen > 64 * 1024) {
+      return errorJson('webhook.too_large', 'Payload too large', 413);
+    }
+    const ip = resolveClientIp(req);
+    if (ip) {
+      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+        policyKey: 'webhook.nowpayments.ip',
+        subject: await ipHashSubject(ip),
+      });
+      if (!rl.allowed) return errorJson('rate_limit.exceeded', 'Too many requests', 429);
+    }
+    const rawBody = await req.text();
+    if (rawBody.length > 64 * 1024) {
+      return errorJson('webhook.too_large', 'Payload too large', 413);
+    }
+    try {
+      const result = await ctx.runAction(internal.billing.ingestEvent, {
+        processor: 'nowpayments',
+        rawBody,
+        signature: req.headers.get('x-nowpayments-sig') ?? undefined,
+      });
+      return json(result);
+    } catch (err) {
+      if (err instanceof ConvexError) {
+        const data = err.data as { code?: string };
+        if (data.code === 'billing.not_configured') {
+          return errorJson(
+            'billing.not_configured',
+            'NOWPayments webhooks are not configured on this deployment',
+            503,
+          );
+        }
+      }
       return errorJson('webhook.rejected', 'Webhook rejected (invalid signature or payload)', 400);
     }
   }),

@@ -83,5 +83,21 @@ crons.daily(
   internal.retention.sweepDeletedSubscriptions,
   {},
 );
+crons.daily(
+  'retention-billing-orders',
+  { hourUTC: 4, minuteUTC: 25 },
+  internal.retention.sweepBillingOrders,
+  {},
+);
+
+// Expire abandoned membership checkouts (pending/confirming with no terminal
+// webhook past the TTL). Frequent: abandoned checkouts are common, and an
+// expired order should stop the SPA's poll promptly. Never grants.
+crons.interval(
+  'billing-pending-sweep',
+  { minutes: 15 },
+  internal.retention.expireStalePendingOrders,
+  {},
+);
 
 export default crons;

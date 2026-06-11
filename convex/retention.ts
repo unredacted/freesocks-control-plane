@@ -9,6 +9,7 @@ import { internalMutation } from './_generated/server';
 import { v } from 'convex/values';
 
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
 const PAGE = 1000;
 
 const num = (envKey: string, fallbackDays: number): number => {
@@ -90,5 +91,52 @@ export const sweepFreeGrants = internalMutation({
       .take(limit ?? PAGE);
     for (const r of rows) await ctx.db.delete(r._id);
     return { removed: rows.length };
+  },
+});
+
+/**
+ * Expire abandoned checkouts: a pending/confirming billing order with no
+ * terminal webhook past BILLING_PENDING_TTL_HOURS (default 48) flips to
+ * `expired`. NEVER grants — only a `paid` webhook does. Range-scans the by_status
+ * index per non-terminal status (Convex appends `_creationTime`). Runs often
+ * (abandoned checkouts are common); kept as PATCH (not delete) so the order
+ * lifecycle stays auditable until the retention sweep below deletes it.
+ */
+export const expireStalePendingOrders = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const cutoff = Date.now() - num('BILLING_PENDING_TTL_HOURS', 48) * HOUR;
+    const page = limit ?? PAGE;
+    let expired = 0;
+    for (const status of ['pending', 'confirming'] as const) {
+      const rows = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_status', (q) => q.eq('status', status).lt('_creationTime', cutoff))
+        .take(page);
+      for (const r of rows) {
+        await ctx.db.patch(r._id, { status: 'expired', updatedAt: Date.now() });
+        expired++;
+      }
+    }
+    return { expired };
+  },
+});
+
+/** Terminal billing orders (paid/failed/expired): keep ~365 days for accounting. */
+export const sweepBillingOrders = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const cutoff = Date.now() - num('BILLING_ORDER_RETENTION_DAYS', 365) * DAY;
+    const page = limit ?? PAGE;
+    let removed = 0;
+    for (const status of ['paid', 'failed', 'expired'] as const) {
+      const rows = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_status', (q) => q.eq('status', status).lt('_creationTime', cutoff))
+        .take(page);
+      for (const r of rows) await ctx.db.delete(r._id);
+      removed += rows.length;
+    }
+    return { removed };
   },
 });
