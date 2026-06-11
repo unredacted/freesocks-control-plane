@@ -75,4 +75,4 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
   return typeof entry === 'function' ? entry(params ?? {}) : entry;
 }
 
-export { LOCALES, normalizeDigits, type LocaleCode };
+export { LOCALES, normalizeDigits, type LocaleCode, type MessageKey };

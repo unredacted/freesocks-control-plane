@@ -11,7 +11,7 @@
    * App names are proper nouns (not translated); the structural copy is i18n'd.
    * Links open the app's own site — the user chooses whether to follow them.
    */
-  import { t } from '../lib/i18n/index.svelte';
+  import { t, type MessageKey } from '../lib/i18n/index.svelte';
   import Smartphone from '@lucide/svelte/icons/smartphone';
 
   interface Props {
@@ -20,7 +20,11 @@
   let { backend = 'remnawave' }: Props = $props();
 
   type App = { name: string; url: string };
-  type Platform = { key: 'android' | 'ios' | 'windows' | 'desktop'; labelKey: string; apps: App[] };
+  type Platform = {
+    key: 'android' | 'ios' | 'windows' | 'desktop';
+    labelKey: MessageKey;
+    apps: App[];
+  };
 
   // Recommended free/open-source clients. Outline keys → the Outline client;
   // Xray (Remnawave) subscriptions → the v2ray-family apps.
@@ -78,7 +82,7 @@
           ? 'bg-primary text-primary-foreground'
           : 'bg-muted text-muted-foreground hover:text-foreground'}"
       >
-        {t(p.labelKey as never)}
+        {t(p.labelKey)}
       </button>
     {/each}
   </div>

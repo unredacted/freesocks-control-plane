@@ -18,6 +18,7 @@
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import SetupGuidance from '../components/SetupGuidance.svelte';
   import { t, normalizeDigits } from '../lib/i18n/index.svelte';
+  import { formatDate } from '../lib/i18n/format';
   import { RedeemCodeRequest, RedeemCodeResponse } from '../../shared/contracts/membershipCodes';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Plus from '@lucide/svelte/icons/plus';
@@ -73,13 +74,12 @@
     onSuccess: () => {
       regenerateOpen = false;
       void qc.invalidateQueries({ queryKey: queryKeys.account });
-      toast.success('New subscription URL generated', {
-        description: 'Re-import it on each of your devices. The old URL works for 24 more hours.',
+      toast.success(t('account.regenSuccessTitle'), {
+        description: t('account.regenSuccessBody'),
       });
     },
     onError: (err) => {
-      const msg = apiErrorMessage(err);
-      toast.error('Regenerate failed', { description: msg });
+      toast.error(t('account.regenFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
 
@@ -118,15 +118,14 @@
       // P2: the switch moves the user to the peer tier, so the header's `me`
       // tier label is now stale — refresh it too.
       void qc.invalidateQueries({ queryKey: queryKeys.me });
-      toast.success(`Switched to ${result.tier.name}`, {
+      toast.success(t('account.switchSuccessTitle', { tier: result.tier.name }), {
         description: result.oldSubscriptionDeletedAt
-          ? 'Re-import the new subscription URL on each device. The old subscription works for 24 more hours.'
-          : 'Re-import the new subscription URL on each device.',
+          ? t('account.switchSuccessBodyGrace')
+          : t('account.switchSuccessBody'),
       });
     },
     onError: (err) => {
-      const msg = apiErrorMessage(err);
-      toast.error('Switch failed', { description: msg });
+      toast.error(t('account.switchFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
 
@@ -146,16 +145,15 @@
       void qc.invalidateQueries({ queryKey: queryKeys.account });
       void qc.invalidateQueries({ queryKey: queryKeys.me });
       if (result.isCurrent) {
-        toast.success(`Welcome to ${result.tierName}`);
+        toast.success(t('account.refreshWelcome', { tier: result.tierName }));
       } else {
-        toast.info('No active membership found yet', {
-          description: 'If you just paid, give it a moment and try again.',
+        toast.info(t('account.refreshNoneTitle'), {
+          description: t('account.refreshNoneBody'),
         });
       }
     },
     onError: (err) => {
-      const msg = apiErrorMessage(err);
-      toast.error('Refresh failed', { description: msg });
+      toast.error(t('account.refreshFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
 
@@ -210,8 +208,7 @@
       revealOpen = true; // A2: same blocking, gated reveal as initial issuance
     },
     onError: (err) => {
-      const msg = apiErrorMessage(err);
-      toast.error('Rotate failed', { description: msg });
+      toast.error(t('account.rotateFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
 
@@ -371,10 +368,10 @@
       -->
       <MembershipCallout
         tone="info"
-        title="You're on the free tier"
-        body="Higher Unredacted membership tiers (raising device count and monthly bandwidth) are coming soon. In the meantime, donations keep free accounts funded."
-        ctaUrl="https://unredacted.org/donate"
-        ctaLabel="Donate"
+        title={t('account.freeTierTitle')}
+        body={t('account.freeTierBody')}
+        ctaUrl={config.data?.donateUrl ?? 'https://unredacted.org/donate'}
+        ctaLabel={t('renew.donate')}
       >
         {#snippet secondaryAction()}
           <button
@@ -383,7 +380,7 @@
             onclick={() => refreshMembership.mutate()}
             disabled={refreshMembership.isPending}
           >
-            {refreshMembership.isPending ? 'Refreshing…' : 'Already paid? Refresh membership'}
+            {refreshMembership.isPending ? t('account.refreshing') : t('account.refreshMembership')}
           </button>
         {/snippet}
       </MembershipCallout>
@@ -462,7 +459,8 @@
     <!-- HERO: the subscription is the main thing on this page -->
     {#if data.subscription}
       <SubscriptionHero
-        eyebrow="Your access key"
+        eyebrow={t('hero.eyebrowAccessKey')}
+        backendLabel={config.data?.backends.labels[data.subscription.backend]}
         subscriptionUrl={data.subscription.url}
         fallbackUrl={data.subscription.mirrors[0]?.publicUrl}
         expiresAt={data.subscription.expiresAt}
@@ -475,14 +473,13 @@
     {:else}
       <!-- Empty state when the user has no subscription yet -->
       <div class="rounded-xl border border-dashed border-border p-8 text-center space-y-3">
-        <h2 class="text-lg font-semibold">No subscription yet</h2>
+        <h2 class="text-lg font-semibold">{t('account.noSubTitle')}</h2>
         <p class="text-sm text-muted-foreground max-w-sm mx-auto">
-          Create your first subscription to get an Xray subscription URL you can use in any
-          compatible VPN client.
+          {t('account.noSubBody')}
         </p>
         <Button onclick={() => regenerate.mutate()} disabled={regenerate.isPending} size="lg">
           <Plus class="size-4" />
-          {regenerate.isPending ? 'Creating…' : 'Create subscription'}
+          {regenerate.isPending ? t('account.creating') : t('account.createSub')}
         </Button>
         {#if regenerate.error}
           <p class="text-sm text-destructive max-w-sm mx-auto">
@@ -502,7 +499,7 @@
           size="sm"
         >
           <RotateCcw class="size-4" />
-          {regenerate.isPending ? 'Working…' : 'Regenerate URL'}
+          {regenerate.isPending ? t('common.working') : t('account.regenerate')}
         </Button>
         {#if canSwitchBackend && oppositeBackend && config.data}
           <Button
@@ -516,8 +513,8 @@
           >
             <ArrowLeftRight class="size-4" />
             {switchBackend.isPending
-              ? 'Switching…'
-              : `Switch to ${config.data.backends.labels[oppositeBackend]}`}
+              ? t('switch.working')
+              : t('account.switchTo', { label: config.data.backends.labels[oppositeBackend] })}
           </Button>
         {/if}
       </div>
@@ -527,12 +524,10 @@
         <div class="flex items-baseline justify-between">
           <h2 class="text-lg font-display font-semibold flex items-center gap-2">
             <Smartphone class="size-4 text-muted-foreground" />
-            Connected devices
+            {t('account.devicesTitle')}
           </h2>
           <span class="text-xs text-muted-foreground tabular-nums">
-            {data.subscription.devices.length} device{data.subscription.devices.length === 1
-              ? ''
-              : 's'}
+            {t('common.deviceCount', { count: data.subscription.devices.length })}
           </span>
         </div>
         <ul class="rounded-lg border border-border divide-y divide-border bg-card">
@@ -543,7 +538,7 @@
                 <code class="font-mono text-xs truncate">{d.hwid.slice(0, 24)}…</code>
               </div>
               <span class="text-muted-foreground text-xs tabular-nums shrink-0 ms-3">
-                {d.lastSeenAt ? `Last seen ${new Date(d.lastSeenAt).toLocaleDateString()}` : '-'}
+                {d.lastSeenAt ? t('account.lastSeen', { date: formatDate(d.lastSeenAt) }) : '-'}
               </span>
             </li>
           {/each}

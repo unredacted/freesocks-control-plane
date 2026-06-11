@@ -4,6 +4,7 @@
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { configQuery } from '../lib/queries';
+  import { t } from '../lib/i18n/index.svelte';
 
   /**
    * Side-by-side feature comparison for free vs paid tiers. The bandwidth and
@@ -67,22 +68,24 @@
   // Live, DB-enforced limits keyed by slug; overlaid onto the scaffold above.
   const liveLimits = $derived(new Map((config.data?.tiers ?? []).map((t) => [t.slug, t])));
   function bandwidthLabel(slug: string, fallback: string): string {
-    const t = liveLimits.get(slug);
-    if (!t) return fallback;
-    return t.monthlyTrafficGb === 0 ? 'Unlimited' : `${t.monthlyTrafficGb} GB / month`;
+    const tier = liveLimits.get(slug);
+    if (!tier) return fallback;
+    return tier.monthlyTrafficGb === 0
+      ? t('hero.unlimited')
+      : t('tiers.gbPerMonth', { gb: tier.monthlyTrafficGb });
   }
   function deviceLabel(slug: string, fallback: string): string {
-    const t = liveLimits.get(slug);
-    if (!t) return fallback;
-    return `${t.deviceLimit} device${t.deviceLimit === 1 ? '' : 's'}`;
+    const tier = liveLimits.get(slug);
+    if (!tier) return fallback;
+    return t('common.deviceCount', { count: tier.deviceLimit });
   }
 </script>
 
 <section class="space-y-4">
   <div>
-    <h2 class="text-xl font-display font-bold tracking-tight">Tiers</h2>
+    <h2 class="text-xl font-display font-bold tracking-tight">{t('tiers.title')}</h2>
     <p class="text-sm text-muted-foreground">
-      What each tier includes. Pricing and signup live on the Unredacted member portal.
+      {t('tiers.subtitle')}
     </p>
   </div>
 
@@ -98,7 +101,7 @@
           <div
             class="absolute top-0 start-0 px-2 py-1 rounded-ee-lg bg-secondary text-secondary-foreground text-[10px] font-semibold uppercase tracking-wider"
           >
-            Your tier
+            {t('tiers.yourTier')}
           </div>
         {/if}
 
@@ -125,7 +128,11 @@
           </li>
           <li class="flex items-start gap-2">
             <Check class="size-4 text-primary shrink-0 mt-0.5" />
-            <span>{tier.features.validity}</span>
+            <span>
+              {tier.features.validity === 'Continuous'
+                ? t('tiers.validityContinuous')
+                : t('tiers.validity30')}
+            </span>
           </li>
           <li class="flex items-start gap-2">
             {#if tier.features.mirrors}
@@ -133,7 +140,7 @@
             {:else}
               <Minus class="size-4 text-muted-foreground/40 shrink-0 mt-0.5" />
             {/if}
-            <span class="text-muted-foreground">Mirror URLs</span>
+            <span class="text-muted-foreground">{t('tiers.mirrors')}</span>
           </li>
         </ul>
 
@@ -149,9 +156,9 @@
             size="sm"
             disabled
             aria-disabled="true"
-            title="Membership signup is coming soon"
+            title={t('tiers.comingSoonTitle')}
           >
-            Coming soon
+            {t('tiers.comingSoon')}
           </Button>
         {/if}
       </div>

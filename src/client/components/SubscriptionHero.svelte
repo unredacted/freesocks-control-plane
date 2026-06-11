@@ -12,6 +12,8 @@
   import Link2 from '@lucide/svelte/icons/link-2';
   import Shield from '@lucide/svelte/icons/shield';
   import { formatBytes } from '../lib/utils';
+  import { t } from '../lib/i18n/index.svelte';
+  import { formatDate } from '../lib/i18n/format';
   import { toast } from 'svelte-sonner';
 
   /**
@@ -31,6 +33,9 @@
   interface Props {
     title?: string;
     eyebrow?: string;
+    /** Display name for the backend (from config.backends.labels). Falls back
+     *  to the built-in names so existing callers keep working. */
+    backendLabel?: string;
     subscriptionUrl: string;
     fallbackUrl?: string;
     expiresAt: string | null;
@@ -50,8 +55,9 @@
     backend?: 'remnawave' | 'outline';
   }
   let {
-    title = 'Your subscription',
+    title,
     eyebrow,
+    backendLabel,
     subscriptionUrl,
     fallbackUrl,
     expiresAt,
@@ -65,8 +71,13 @@
 
   // Outline keys are bare `ss://` URLs that VPN clients import as a single
   // "access key", not as a multi-protocol subscription. Use the right noun in
-  // the UI so the user knows what they're looking at.
-  let urlLabel = $derived(backend === 'outline' ? 'Access key' : 'Subscription URL');
+  // the UI so the user knows what they're looking at. All labels resolve in
+  // $derived so a locale switch re-renders them (t() reads $state).
+  let resolvedTitle = $derived(title ?? t('hero.titleDefault'));
+  let urlLabel = $derived(
+    backend === 'outline' ? t('hero.urlLabelAccessKey') : t('hero.urlLabelSubscription'),
+  );
+  let resolvedBackendLabel = $derived(backendLabel ?? (backend === 'outline' ? 'Outline' : 'Xray'));
   let downloadFilename = $derived(
     backend === 'outline' ? 'freesocks-outline.txt' : 'freesocks-subscription.txt',
   );
@@ -77,14 +88,17 @@
 
   async function copy(value: string, key: 'primary' | 'fallback') {
     try {
+      // Explicit guard (mirrors AccountNumberReveal): clipboard is undefined in
+      // insecure contexts / older in-region browsers — fail to the manual path.
+      if (!navigator.clipboard) throw new Error('clipboard unavailable');
       await navigator.clipboard.writeText(value);
       copied = key;
-      toast.success('Copied to clipboard', { duration: 1500 });
+      toast.success(t('common.copied'), { duration: 1500 });
       setTimeout(() => {
         if (copied === key) copied = null;
       }, 1500);
     } catch {
-      toast.error('Copy failed. Select the URL and copy it manually.');
+      toast.error(t('common.copyFailed'));
     }
   }
 
@@ -102,7 +116,7 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast.success(`Downloaded ${downloadFilename}`);
+    toast.success(t('hero.downloaded', { filename: downloadFilename }));
   }
 
   // Traffic percentage, only meaningful when there's a limit.
@@ -149,19 +163,12 @@
         </p>
       {/if}
       <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
-        {title}
+        {resolvedTitle}
       </h2>
       <p class="text-sm text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span class="inline-flex items-center gap-1">
-          Tier <strong class="text-foreground">{tierName}</strong>
-        </span>
+        <span class="font-medium text-foreground">{t('hero.tierLine', { tier: tierName })}</span>
         <span class="text-muted-foreground/60">·</span>
-        <span class="inline-flex items-center gap-1">
-          via{' '}
-          <strong class="text-foreground">
-            {backend === 'outline' ? 'Outline' : 'Xray'}
-          </strong>
-        </span>
+        <span>{t('hero.viaLine', { backend: resolvedBackendLabel })}</span>
       </p>
     </div>
 
@@ -178,7 +185,7 @@
         <div class="relative rounded-lg border border-border bg-muted/40 p-3 group">
           <code
             id="primary-url"
-            class="block font-mono text-xs md:text-sm break-all pe-2 leading-relaxed text-foreground/90"
+            class="block select-all font-mono text-xs md:text-sm break-all pe-2 leading-relaxed text-foreground/90"
           >
             {subscriptionUrl}
           </code>
@@ -192,18 +199,18 @@
             {#if copied === 'primary'}
               <span in:fade={{ duration: 150 }} class="inline-flex items-center gap-2">
                 <Check class="size-4" />
-                Copied
+                {t('hero.copiedShort')}
               </span>
             {:else}
               <span in:fade={{ duration: 150 }} class="inline-flex items-center gap-2">
                 <Copy class="size-4" />
-                Copy URL
+                {t('hero.copyUrl')}
               </span>
             {/if}
           </Button>
           <Button variant="outline" size="lg" onclick={downloadConfig}>
             <Download class="size-4" />
-            <span class="hidden sm:inline">Download</span>
+            <span class="hidden sm:inline">{t('common.download')}</span>
           </Button>
           {#if showQr}
             <Button
@@ -214,7 +221,7 @@
               aria-expanded={qrOpen}
             >
               <QrCodeIcon class="size-4" />
-              {qrOpen ? 'Hide' : 'QR'}
+              {qrOpen ? t('hero.qrHide') : t('hero.qrShow')}
             </Button>
           {/if}
         </div>
@@ -225,13 +232,13 @@
         <div class="hidden md:block">
           <QrCode text={subscriptionUrl} size={144} />
           <p class="mt-2 text-xs text-muted-foreground text-center max-w-[144px]">
-            Scan with your phone
+            {t('hero.scanPhone')}
           </p>
         </div>
         {#if qrOpen}
           <div class="md:hidden flex flex-col items-center pt-2" in:fade={{ duration: 200 }}>
             <QrCode text={subscriptionUrl} size={192} />
-            <p class="mt-2 text-xs text-muted-foreground">Scan with another device</p>
+            <p class="mt-2 text-xs text-muted-foreground">{t('hero.scanOther')}</p>
           </div>
         {/if}
       {/if}
@@ -243,14 +250,14 @@
         <div
           class="flex items-center justify-between gap-2 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
         >
-          <span>Fallback URL</span>
+          <span>{t('hero.fallbackLabel')}</span>
           <span class="text-muted-foreground normal-case font-normal text-[11px] tracking-normal">
-            Use this if the main URL gets blocked
+            {t('hero.fallbackHint')}
           </span>
         </div>
         <div class="flex gap-2">
           <code
-            class="flex-1 px-3 py-2 rounded-md bg-muted text-xs font-mono break-all min-w-0 text-muted-foreground"
+            class="flex-1 select-all px-3 py-2 rounded-md bg-muted text-xs font-mono break-all min-w-0 text-muted-foreground"
           >
             {fallbackUrl}
           </code>
@@ -267,7 +274,7 @@
               size="sm"
               onclick={() => (qrFallbackOpen = !qrFallbackOpen)}
               aria-expanded={qrFallbackOpen}
-              aria-label="Show fallback URL QR code"
+              aria-label={t('hero.fallbackQrAria')}
             >
               <QrCodeIcon class="size-3.5" />
             </Button>
@@ -276,7 +283,7 @@
         {#if showQr && qrFallbackOpen}
           <div class="flex flex-col items-center pt-2" in:fade={{ duration: 200 }}>
             <QrCode text={fallbackUrl} size={176} />
-            <p class="mt-2 text-xs text-muted-foreground">Scan the fallback on another device</p>
+            <p class="mt-2 text-xs text-muted-foreground">{t('hero.scanFallback')}</p>
           </div>
         {/if}
       </div>
@@ -291,7 +298,7 @@
             class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
           >
             <Gauge class="size-3.5" />
-            Traffic
+            {t('hero.traffic')}
           </span>
           {#if trafficLimitBytes !== null}
             <span class="text-sm tabular-nums">
@@ -301,7 +308,7 @@
             <span
               class="rounded-full bg-primary/10 text-primary text-[11px] font-medium px-2 py-0.5"
             >
-              Unlimited
+              {t('hero.unlimited')}
             </span>
           {/if}
         </div>
@@ -315,13 +322,15 @@
           {#if usagePct >= 70}
             <p class="text-[11px] text-muted-foreground mt-1.5 tabular-nums">
               {usagePct >= 90
-                ? `Nearly out, only ${formatBytes(trafficLimitBytes - trafficUsedBytes)} left this period.`
-                : `${formatBytes(trafficLimitBytes - trafficUsedBytes)} left this period.`}
+                ? t('hero.nearlyOut', { amount: formatBytes(trafficLimitBytes - trafficUsedBytes) })
+                : t('hero.leftThisPeriod', {
+                    amount: formatBytes(trafficLimitBytes - trafficUsedBytes),
+                  })}
             </p>
           {/if}
         {:else}
           <p class="text-[11px] text-muted-foreground tabular-nums">
-            {formatBytes(trafficUsedBytes)} used so far
+            {t('hero.usedSoFar', { amount: formatBytes(trafficUsedBytes) })}
           </p>
         {/if}
       </div>
@@ -333,27 +342,23 @@
             class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
           >
             <Calendar class="size-3.5" />
-            Expires
+            {t('hero.expires')}
           </span>
           {#if expiryDate}
             <span class="text-sm tabular-nums {expiryUrgency}">
-              {expiryDate.toLocaleDateString(undefined, {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-              })}
+              {formatDate(expiryDate)}
             </span>
           {:else}
-            <span class="text-sm text-muted-foreground">No expiry</span>
+            <span class="text-sm text-muted-foreground">{t('hero.noExpiry')}</span>
           {/if}
         </div>
         {#if daysLeft !== null}
           <p class="text-[11px] tabular-nums {expiryUrgency}">
             {daysLeft < 0
-              ? `Expired ${-daysLeft} day${-daysLeft === 1 ? '' : 's'} ago`
+              ? t('hero.expiredDaysAgo', { count: -daysLeft })
               : daysLeft === 0
-                ? 'Expires today'
-                : `${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining`}
+                ? t('hero.expiresToday')
+                : t('hero.daysRemaining', { count: daysLeft })}
           </p>
         {/if}
       </div>

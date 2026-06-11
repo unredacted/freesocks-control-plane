@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import QRCode from 'qrcode';
+  import { t } from '../lib/i18n/index.svelte';
 
   /**
    * Renders a QR code for arbitrary text content. We use the canvas-based
@@ -61,7 +62,7 @@
       width={size}
       height={size}
       class="rounded-md border border-border"
-      aria-label="QR code for the subscription URL"
+      aria-label={t('qr.ariaLabel')}
     ></canvas>
   {/if}
 </div>

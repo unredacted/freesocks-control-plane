@@ -95,7 +95,7 @@
       void qc.invalidateQueries({ queryKey: queryKeys.me });
     },
     onError: (err) => {
-      toast.error('Could not create account', { description: apiErrorMessage(err) });
+      toast.error(t('get.createAccountFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
 
@@ -111,12 +111,12 @@
       ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.account });
-      toast.success('Subscription created', {
-        description: 'Copy the URL into your VPN client, or scan the QR code.',
+      toast.success(t('get.createSubToastTitle'), {
+        description: t('get.createSubToastBody'),
       });
     },
     onError: (err) => {
-      toast.error('Could not create subscription', { description: apiErrorMessage(err) });
+      toast.error(t('get.createSubFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
 
@@ -134,23 +134,22 @@
       class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 text-primary px-3 py-1 text-xs font-semibold uppercase tracking-wider"
     >
       <KeyIcon class="size-3.5" />
-      Free account
+      {t('get.badge')}
     </div>
     <h1 class="text-3xl md:text-4xl font-display font-bold tracking-tight">
-      Get a FreeSocks account
+      {t('get.title')}
     </h1>
     <p class="text-sm text-muted-foreground max-w-md mx-auto">
       {#if me.isPending && !created}
-        Loading…
+        {t('common.loading')}
       {:else if isAuthed}
         {#if subscription}
-          Your account and subscription are ready.
+          {t('get.introReady')}
         {:else}
-          Your account is ready. Create a subscription below to get your key.
+          {t('get.introReadyNoSub')}
         {/if}
       {:else}
-        Two quick steps: solve the human-check to create a free account, then create your
-        subscription.
+        {t('get.introTwoSteps')}
       {/if}
     </p>
   </header>
@@ -163,17 +162,17 @@
           class="size-7 rounded-full bg-primary/10 text-primary font-display font-bold flex items-center justify-center text-sm tabular-nums"
           >1</span
         >
-        <h2 class="text-lg font-display font-semibold">Create your account</h2>
+        <h2 class="text-lg font-display font-semibold">{t('get.step1Title')}</h2>
       </div>
 
       {#if showChooser && config.data}
         <div class="space-y-2">
           <p class="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
-            Choose a backend
+            {t('get.chooseBackend')}
           </p>
           <div
             role="radiogroup"
-            aria-label="Backend"
+            aria-label={t('get.backendAria')}
             class="grid grid-cols-2 gap-2 rounded-lg border border-border p-1"
           >
             <button
@@ -193,7 +192,7 @@
                   ? 'text-primary-foreground/80'
                   : 'text-muted-foreground/80'}"
               >
-                Multi-protocol (VLESS, Trojan, Shadowsocks)
+                {t('get.backendMultiProtocol')}
               </div>
             </button>
             <button
@@ -213,7 +212,7 @@
                   ? 'text-primary-foreground/80'
                   : 'text-muted-foreground/80'}"
               >
-                Shadowsocks via Outline
+                {t('get.backendShadowsocks')}
               </div>
             </button>
           </div>
@@ -241,11 +240,11 @@
         class="w-full"
       >
         <KeyIcon class="size-4" />
-        {createAccount.isPending ? 'Working…' : 'Create my account'}
+        {createAccount.isPending ? t('common.working') : t('get.createAccount')}
       </Button>
 
       <p class="text-xs text-muted-foreground text-center">
-        Free accounts are valid for 30 days and limited to one device. No email or password.
+        {t('get.freeAccountNote')}
       </p>
     </div>
   {:else}
@@ -253,7 +252,11 @@
       class="rounded-xl border border-primary/40 bg-primary/5 px-4 py-3 flex items-center gap-2.5 text-sm"
     >
       <CheckCircle class="size-4 text-primary shrink-0" />
-      <span>Your account is ready{accountTier ? ` on the ${accountTier.name} tier` : ''}.</span>
+      <span>
+        {accountTier
+          ? t('get.accountReadyTier', { tier: accountTier.name })
+          : t('get.accountReady')}
+      </span>
     </div>
   {/if}
 
@@ -287,13 +290,16 @@
           class="size-7 rounded-full bg-primary/10 text-primary font-display font-bold flex items-center justify-center text-sm tabular-nums"
           >2</span
         >
-        <h2 class="text-lg font-display font-semibold">Create your subscription</h2>
+        <h2 class="text-lg font-display font-semibold">{t('get.step2Title')}</h2>
       </div>
 
       {#if subscription}
         <SubscriptionHero
-          eyebrow="Your access key"
-          title={subscription.backend === 'outline' ? 'Access key' : 'Subscription URL'}
+          eyebrow={t('hero.eyebrowAccessKey')}
+          title={subscription.backend === 'outline'
+            ? t('hero.urlLabelAccessKey')
+            : t('hero.urlLabelSubscription')}
+          backendLabel={config.data?.backends.labels[subscription.backend]}
           subscriptionUrl={subscription.url}
           fallbackUrl={subscription.mirrors[0]?.publicUrl}
           expiresAt={subscription.expiresAt}
@@ -304,12 +310,12 @@
         />
         <SetupGuidance backend={subscription.backend} />
         <p class="text-xs text-muted-foreground text-center">
-          Manage this subscription anytime from
-          <Link href="/account" class="text-primary underline">your account</Link>.
+          {t('get.manageHintPrefix')}
+          <Link href="/account" class="text-primary underline">{t('get.manageLinkLabel')}</Link>.
         </p>
       {:else}
         <p class="text-sm text-muted-foreground">
-          Create a proxy subscription to get a URL you can paste into any compatible VPN client.
+          {t('get.step2Intro')}
         </p>
 
         {#if createSubscription.error}
@@ -319,8 +325,9 @@
             <p>{apiErrorMessage(createSubscription.error)}</p>
             {#if subErrorIsUnavailable}
               <p class="text-xs text-muted-foreground">
-                Your account is safe. You can create the subscription later from
-                <Link href="/account" class="underline">your account</Link> once a server is available.
+                {t('get.subErrorSafePrefix')}
+                <Link href="/account" class="underline">{t('get.manageLinkLabel')}</Link>
+                {t('get.subErrorSafeSuffix')}
               </p>
             {/if}
           </div>
@@ -333,7 +340,7 @@
           class="w-full"
         >
           <Plus class="size-4" />
-          {createSubscription.isPending ? 'Creating…' : 'Create subscription'}
+          {createSubscription.isPending ? t('account.creating') : t('account.createSub')}
         </Button>
       {/if}
     </div>
@@ -341,8 +348,8 @@
 
   {#if !isAuthed}
     <p class="text-xs text-muted-foreground text-center max-w-sm mx-auto">
-      Already have an account?
-      <Link href="/login" class="text-primary underline">Sign in</Link>.
+      {t('get.haveAccountPrefix')}
+      <Link href="/login" class="text-primary underline">{t('nav.signIn')}</Link>.
     </p>
   {/if}
 </div>

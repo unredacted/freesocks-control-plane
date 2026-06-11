@@ -46,7 +46,7 @@
       // The cookie is set; refresh identity-derived caches before navigating.
       await queryClient.invalidateQueries({ queryKey: queryKeys.me });
       await queryClient.invalidateQueries({ queryKey: queryKeys.account });
-      toast.success('Signed in');
+      toast.success(t('login.success'));
       router.navigate('/account');
     },
     onError: (err) => {

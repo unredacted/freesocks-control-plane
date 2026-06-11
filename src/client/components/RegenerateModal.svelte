@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '@client/components/ui/button';
   import * as Dialog from '@client/components/ui/dialog';
+  import { t } from '../lib/i18n/index.svelte';
 
   interface Props {
     open: boolean;
@@ -25,27 +26,22 @@
 <Dialog.Root bind:open {onOpenChange}>
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
-      <Dialog.Title>Regenerate subscription?</Dialog.Title>
+      <Dialog.Title>{t('regen.title')}</Dialog.Title>
       <Dialog.Description>
-        Your current subscription URL (ending
-        <code class="font-mono">…{shortUuid.slice(-6)}</code>) will be replaced with a new one. The
-        old URL becomes read-only for 24 hours, then is deleted.
+        {t('regen.body', { suffix: shortUuid.slice(-6) })}
       </Dialog.Description>
     </Dialog.Header>
     <ul class="text-sm space-y-1 list-disc ps-5">
-      <li>Your current key remains usable for the next 24 hours</li>
-      <li>You'll need to re-import the new URL in each of your devices</li>
+      <li>{t('regen.point1')}</li>
+      <li>{t('regen.point2')}</li>
       {#if deviceCount > 0}
-        <li>
-          You currently have <strong>{deviceCount}</strong>
-          connected device{deviceCount === 1 ? '' : 's'}, they'll all need re-import
-        </li>
+        <li>{t('regen.pointDevices', { count: deviceCount })}</li>
       {/if}
     </ul>
     <Dialog.Footer>
-      <Button variant="ghost" onclick={onCancel} disabled={busy}>Cancel</Button>
+      <Button variant="ghost" onclick={onCancel} disabled={busy}>{t('common.cancel')}</Button>
       <Button onclick={onConfirm} disabled={busy} variant="destructive">
-        {busy ? 'Regenerating…' : 'Regenerate'}
+        {busy ? t('regen.working') : t('regen.confirm')}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

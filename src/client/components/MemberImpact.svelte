@@ -1,5 +1,6 @@
 <script lang="ts">
   import Heart from '@lucide/svelte/icons/heart';
+  import { t } from '../lib/i18n/index.svelte';
 
   /**
    * Brief framing card explaining how the service is funded. We deliberately
@@ -17,10 +18,9 @@
       <Heart class="size-5" />
     </div>
     <div>
-      <h2 class="text-xl font-display font-bold tracking-tight">Donations support Unredacted</h2>
+      <h2 class="text-xl font-display font-bold tracking-tight">{t('impact.title')}</h2>
       <p class="text-sm text-muted-foreground mt-1 max-w-xl leading-relaxed">
-        Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations
-        fund the work. See what that work is on the Unredacted site.
+        {t('impact.body')}
       </p>
     </div>
   </div>
@@ -30,7 +30,7 @@
       <span
         class="inline-flex items-center gap-1.5 text-sm underline hover:text-foreground text-muted-foreground"
       >
-        Donate
+        {t('renew.donate')}
       </span>
     </a>
     <a href="https://unredacted.org" target="_blank" rel="noopener noreferrer">
@@ -41,7 +41,7 @@
       </span>
     </a>
     <span class="inline-flex items-center gap-1.5 text-sm text-muted-foreground/60">
-      Membership (coming soon)
+      {t('impact.membershipSoon')}
     </span>
   </div>
 </section>

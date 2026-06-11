@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '@client/components/ui/button';
   import * as Dialog from '@client/components/ui/dialog';
+  import { t } from '../lib/i18n/index.svelte';
 
   /**
    * Confirmation dialog for `/api/v1/account/switch-backend`. Mirrors the
@@ -53,27 +54,23 @@
 <Dialog.Root bind:open {onOpenChange}>
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
-      <Dialog.Title>Switch to {toLabel}?</Dialog.Title>
+      <Dialog.Title>{t('switch.title', { to: toLabel })}</Dialog.Title>
       <Dialog.Description>
-        Your current {fromLabel} subscription will be replaced with a new {toLabel} one. The old subscription
-        stays usable for 24 hours so you can re-import on every device before it stops working.
+        {t('switch.body', { from: fromLabel, to: toLabel })}
       </Dialog.Description>
     </Dialog.Header>
     <ul class="text-sm space-y-1 list-disc ps-5">
-      <li>A new subscription URL is issued on the {toLabel} backend</li>
-      <li>The current {fromLabel} URL keeps working for 24 hours, then is deleted</li>
-      <li>You'll need to re-import the new URL in each VPN client you use</li>
+      <li>{t('switch.point1', { to: toLabel })}</li>
+      <li>{t('switch.point2', { from: fromLabel })}</li>
+      <li>{t('switch.point3')}</li>
       {#if deviceCount > 0}
-        <li>
-          You currently have <strong>{deviceCount}</strong>
-          connected device{deviceCount === 1 ? '' : 's'}, re-import on all of them
-        </li>
+        <li>{t('switch.pointDevices', { count: deviceCount })}</li>
       {/if}
     </ul>
     <Dialog.Footer>
-      <Button variant="ghost" onclick={onCancel} disabled={busy}>Cancel</Button>
+      <Button variant="ghost" onclick={onCancel} disabled={busy}>{t('common.cancel')}</Button>
       <Button onclick={onConfirm} disabled={busy} variant="destructive">
-        {busy ? 'Switching…' : `Switch to ${toLabel}`}
+        {busy ? t('switch.working') : t('switch.confirm', { to: toLabel })}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

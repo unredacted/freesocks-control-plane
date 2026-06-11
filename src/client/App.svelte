@@ -16,9 +16,15 @@
   import { queryClient } from './lib/query-client';
   import { meQuery } from './lib/queries';
   import { prewarm } from './lib/pop';
+  import { t, getLocale } from './lib/i18n/index.svelte';
+  import { dirForLocale } from './lib/i18n/locales';
   import { fade } from 'svelte/transition';
 
   let onAdminRoute = $derived(router.pathname.startsWith('/admin'));
+
+  // Toasts originate from the leading edge: top-right for LTR, top-left for RTL.
+  let dir = $derived(dirForLocale(getLocale()));
+  let toasterPosition = $derived(dir === 'rtl' ? ('top-left' as const) : ('top-right' as const));
 
   // Boot-warm PoP once a session is known to exist: spins up the signing worker
   // (loads the persisted key) + fetches the server-time offset off the critical
@@ -60,7 +66,7 @@
   createQuery/createMutation in the tree.
 -->
 <ModeWatcher defaultMode="dark" />
-<Toaster richColors position="top-right" />
+<Toaster richColors position={toasterPosition} {dir} />
 
 <QueryClientProvider client={queryClient}>
   <ErrorBoundary>
@@ -113,8 +119,8 @@
               {/await}
             {:else}
               <div class="text-center py-16">
-                <h1 class="text-3xl font-display font-bold mb-2">Not found</h1>
-                <Link href="/" class="text-primary underline">Go home</Link>
+                <h1 class="text-3xl font-display font-bold mb-2">{t('app.notFound')}</h1>
+                <Link href="/" class="text-primary underline">{t('app.goHome')}</Link>
               </div>
             {/if}
           </div>
@@ -126,7 +132,7 @@
           class="container mx-auto px-4 py-8 flex flex-col md:flex-row gap-4 items-center justify-between text-sm text-muted-foreground"
         >
           <p>
-            Operated by{' '}
+            {t('footer.operatedPrefix')}{' '}
             <a
               class="underline hover:text-foreground"
               href="https://unredacted.org"
@@ -134,7 +140,7 @@
               rel="noopener noreferrer"
             >
               Unredacted
-            </a>, a US 501(c)(3) nonprofit
+            </a>{t('footer.operatedSuffix')}
           </p>
           <nav class="flex flex-wrap items-center gap-4 text-xs">
             <a
@@ -143,9 +149,9 @@
               target="_blank"
               rel="noopener noreferrer"
             >
-              Donate
+              {t('renew.donate')}
             </a>
-            <a class="hover:text-foreground" href="/api/docs">API docs</a>
+            <a class="hover:text-foreground" href="/api/docs">{t('footer.apiDocs')}</a>
           </nav>
         </div>
       </footer>
