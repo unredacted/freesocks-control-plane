@@ -14,6 +14,7 @@
   import AdminSettings from './AdminSettings.svelte';
   import AdminBackendServers from './AdminBackendServers.svelte';
   import AdminMembershipCodes from './AdminMembershipCodes.svelte';
+  import AdminBilling from './AdminBilling.svelte';
   import AdminRateLimits from './AdminRateLimits.svelte';
   import Link from '../../components/Link.svelte';
 </script>
@@ -30,6 +31,8 @@
   <AdminBackendServers />
 {:else if router.pathname === '/admin/membership-codes'}
   <AdminMembershipCodes />
+{:else if router.pathname === '/admin/billing'}
+  <AdminBilling />
 {:else if router.pathname === '/admin/rate-limits'}
   <AdminRateLimits />
 {:else if router.pathname === '/admin/audit'}

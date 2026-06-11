@@ -12,6 +12,7 @@
   import Settings from '@lucide/svelte/icons/settings';
   import Gauge from '@lucide/svelte/icons/gauge';
   import Ticket from '@lucide/svelte/icons/ticket';
+  import CreditCard from '@lucide/svelte/icons/credit-card';
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -24,6 +25,7 @@
     { to: '/admin/tokens', label: 'API tokens', icon: KeyIcon },
     { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
     { to: '/admin/membership-codes', label: 'Membership codes', icon: Ticket },
+    { to: '/admin/billing', label: 'Billing', icon: CreditCard },
     { to: '/admin/rate-limits', label: 'Rate limits', icon: Gauge },
     { to: '/admin/audit', label: 'Audit log', icon: History },
     { to: '/admin/settings', label: 'Settings', icon: Settings },

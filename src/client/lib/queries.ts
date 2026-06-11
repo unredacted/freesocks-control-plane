@@ -22,7 +22,7 @@ import { ListTokensResponse } from '../../shared/contracts/tokens';
 import { AdminAuthStatus } from '../../shared/contracts/auth';
 import { RateLimitListResponse } from '../../shared/contracts/rateLimits';
 import { MembershipCodeListResponse } from '../../shared/contracts/membershipCodes';
-import { OrderStatusResponse } from '../../shared/contracts/billing';
+import { AdminBillingOverview, OrderStatusResponse } from '../../shared/contracts/billing';
 
 // --- Cache keys --------------------------------------------------------------
 
@@ -253,6 +253,20 @@ export const adminRateLimitsQuery = () =>
     },
     staleTime: 30_000,
   }));
+
+/** Billing: the config + recent orders for the AdminBilling page. */
+export const adminBillingQuery = (statusRef: () => string) =>
+  createQuery(() => {
+    const status = statusRef();
+    return {
+      queryKey: queryKeys.adminBilling(status),
+      queryFn: () => {
+        const params = status ? `?status=${encodeURIComponent(status)}` : '';
+        return apiClient.get(`/api/v1/admin/billing${params}`, AdminBillingOverview);
+      },
+      staleTime: 30_000,
+    };
+  });
 
 /** W4: minted membership codes (masked), optionally filtered by status. */
 export const adminMembershipCodesQuery = (statusRef: () => string) =>
