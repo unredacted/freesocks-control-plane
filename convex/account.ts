@@ -12,7 +12,7 @@
  * portal defines cross-backend tier linkage (CiviCRM linkage is gone).
  */
 import { internalAction, internalMutation } from './_generated/server';
-import { api, internal } from './_generated/api';
+import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { randomHex } from './lib/crypto';
@@ -93,11 +93,11 @@ interface AccountView {
 export const getAccountView = internalAction({
   args: { userId: v.id('users') },
   handler: async (ctx, { userId }): Promise<AccountView | null> => {
-    const user = await ctx.runQuery(api.users.get, { id: userId });
+    const user = await ctx.runQuery(internal.users.get, { id: userId });
     if (!user) return null;
-    const tier = await ctx.runQuery(api.tiers.get, { id: user.tierId });
+    const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
     if (!tier) return null;
-    const sub = await ctx.runQuery(api.subscriptions.resolveCurrentOrActive, { userId });
+    const sub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
 
     // W3: lazily backfill the support ID for pre-W3 accounts. Non-fatal — the
     // account view still renders if minting transiently fails.
@@ -185,14 +185,14 @@ export const regenerate = internalAction({
     ctx,
     { userId, requestId },
   ): Promise<{ subscriptionUrl: string; shortUuid: string }> => {
-    const user = await ctx.runQuery(api.users.get, { id: userId });
+    const user = await ctx.runQuery(internal.users.get, { id: userId });
     if (!user) throw new Error('user not found');
-    const tier = await ctx.runQuery(api.tiers.get, { id: user.tierId });
+    const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
     if (!tier) throw new Error('tier not found');
 
     // Capture the OLD subscription BEFORE issuing (issueNewSubscription repoints
     // currentSubscriptionId at the new row).
-    const oldSub = await ctx.runQuery(api.subscriptions.resolveCurrentOrActive, { userId });
+    const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
 
     const issued = await issueNewSubscription(ctx, {
       userId,
@@ -244,9 +244,9 @@ export const switchBackend = internalAction({
     requestId: v.optional(v.string()),
   },
   handler: async (ctx, { userId, target, requestId }): Promise<SwitchResult> => {
-    const user = await ctx.runQuery(api.users.get, { id: userId });
+    const user = await ctx.runQuery(internal.users.get, { id: userId });
     if (!user) return { ok: false, code: 'not_found', message: 'user not found', status: 404 };
-    const currentTier = await ctx.runQuery(api.tiers.get, { id: user.tierId });
+    const currentTier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
     if (!currentTier)
       return { ok: false, code: 'not_found', message: 'tier not found', status: 404 };
 
@@ -258,7 +258,7 @@ export const switchBackend = internalAction({
         status: 400,
       };
     }
-    const settings = await ctx.runQuery(api.appSettings.resolved, {});
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     if (!settings[`${target}.enabled`]) {
       return {
         ok: false,
@@ -271,7 +271,7 @@ export const switchBackend = internalAction({
     // Free-tier users switch via the default-free peer tier; paid cross-backend
     // switching awaits the billing portal's tier linkage (interim 409).
     const peerTier = currentTier.isDefaultFree
-      ? await ctx.runQuery(api.tiers.getDefaultFree, { backend: target })
+      ? await ctx.runQuery(internal.tiers.getDefaultFree, { backend: target })
       : null;
     if (!peerTier) {
       return {
@@ -282,7 +282,7 @@ export const switchBackend = internalAction({
       };
     }
 
-    const oldSub = await ctx.runQuery(api.subscriptions.resolveCurrentOrActive, { userId });
+    const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
     const issued = await issueNewSubscription(ctx, {
       userId,
       backend: peerTier.backend,
@@ -355,9 +355,9 @@ export const refreshMembership = internalAction({
     membershipExpiresAt: string | null;
     isCurrent: boolean;
   }> => {
-    const user = await ctx.runQuery(api.users.get, { id: userId });
-    const tier = user ? await ctx.runQuery(api.tiers.get, { id: user.tierId }) : null;
-    const effective = tier ?? (await ctx.runQuery(api.tiers.getDefaultFree, {}));
+    const user = await ctx.runQuery(internal.users.get, { id: userId });
+    const tier = user ? await ctx.runQuery(internal.tiers.get, { id: user.tierId }) : null;
+    const effective = tier ?? (await ctx.runQuery(internal.tiers.getDefaultFree, {}));
     if (!effective) throw new Error('no tier');
     return {
       tierSlug: effective.slug,

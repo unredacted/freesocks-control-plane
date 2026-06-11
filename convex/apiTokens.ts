@@ -5,9 +5,9 @@
  * plaintext, matches the unique index, and debounces the last-used write to
  * avoid hot-row updates. Scope enforcement happens at the call site (HTTP layer).
  */
-import { internalAction, internalMutation, mutation, query } from './_generated/server';
-import { api, internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import { internal } from './_generated/api';
+import type { Doc, Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { base64UrlEncode, sha256Hex } from './lib/crypto';
 
@@ -18,10 +18,13 @@ const LAST_USED_DEBOUNCE_MS = 5 * 60_000;
 /**
  * Resolve a plaintext token by its SHA-256 hash. Returns null for unknown,
  * revoked, or expired tokens. Scope enforcement is the caller's job.
+ * Internal (pass 2): a public query here was a token-hash → scopes oracle on
+ * the raw Convex channel. Explicit return type breaks the same-file
+ * internal.* self-reference inference cycle.
  */
-export const byTokenHash = query({
+export const byTokenHash = internalQuery({
   args: { tokenHash: v.string() },
-  handler: async (ctx, { tokenHash }) => {
+  handler: async (ctx, { tokenHash }): Promise<Doc<'apiTokens'> | null> => {
     const tok = await ctx.db
       .query('apiTokens')
       .withIndex('by_token_hash', (q) => q.eq('tokenHash', tokenHash))
@@ -30,11 +33,6 @@ export const byTokenHash = query({
     if (tok.expiresAt && tok.expiresAt < Date.now()) return null;
     return tok;
   },
-});
-
-export const list = query({
-  args: {},
-  handler: (ctx) => ctx.db.query('apiTokens').collect(),
 });
 
 // --- resolve path (P6d) ---
@@ -52,7 +50,7 @@ export const resolveToken = internalAction({
   handler: async (ctx, { plaintext }): Promise<ResolvedToken | null> => {
     if (!plaintext.startsWith(TOKEN_PREFIX)) return null;
     const tokenHash = await sha256Hex(plaintext);
-    const tok = await ctx.runQuery(api.apiTokens.byTokenHash, { tokenHash });
+    const tok = await ctx.runQuery(internal.apiTokens.byTokenHash, { tokenHash });
     if (!tok) return null;
     await ctx.runMutation(internal.apiTokens.touchLastUsed, { tokenId: tok._id });
     return {
@@ -124,10 +122,6 @@ export const insertToken = internalMutation({
   handler: (ctx, a) => ctx.db.insert('apiTokens', { ...a, updatedAt: Date.now() }),
 });
 
-export const revoke = mutation({
-  args: { tokenId: v.id('apiTokens') },
-  handler: async (ctx, { tokenId }) => {
-    await ctx.db.patch(tokenId, { revokedAt: Date.now(), updatedAt: Date.now() });
-    return null;
-  },
-});
+// `list` and `revoke` (public query/mutation) were deleted in pass 2: dead code
+// — the admin CMS uses adminApi.tokensList / adminApi.revokeToken — and public
+// functions are callable by anyone who can reach the Convex deploy port.

@@ -20,7 +20,7 @@
  * layer only decides the `Secure` flag from the environment.
  */
 import { internalAction } from './_generated/server';
-import { api, internal } from './_generated/api';
+import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { hashAccountId, isValidAccountId, normalizeAccountId } from './lib/accountId';
@@ -101,7 +101,7 @@ export const accountLogin = internalAction({
 
     // 4. Single indexed lookup; the query returns null for unknown OR
     //    disabled/deleted owners (no oracle distinction).
-    const user = await ctx.runQuery(api.users.byAccountIdHash, { accountIdHash: hash });
+    const user = await ctx.runQuery(internal.users.byAccountIdHash, { accountIdHash: hash });
     if (!user) return failInvalid();
 
     // 5. Mint a member session + signed cookie.

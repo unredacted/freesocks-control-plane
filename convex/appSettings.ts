@@ -1,4 +1,4 @@
-import { mutation, query } from './_generated/server';
+import { internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 
 /**
@@ -16,18 +16,17 @@ export const SETTINGS_DEFAULTS = {
   'backend.scoring.key_count_weight': 100,
 } as const;
 
-/** All settings rows (the SPA + services read these; Convex caches reactively). */
-export const getAll = query({
-  args: {},
-  handler: (ctx) => ctx.db.query('appSettings').collect(),
-});
+// `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA
+// has no Convex client; everything reads `resolved` via the HTTP layer), and
+// this table also holds the ratelimit.* policy overrides — nothing here may be
+// publicly callable on the raw Convex channel.
 
 /**
  * Settings as a typed bag with defaults applied (replaces
  * AppSettingsService.getAll). Unknown/corrupt rows fall back to the default so
  * a bad row fails closed instead of breaking reads.
  */
-export const resolved = query({
+export const resolved = internalQuery({
   args: {},
   handler: async (ctx): Promise<Record<string, unknown>> => {
     const rows = await ctx.db.query('appSettings').collect();
@@ -45,7 +44,7 @@ export const resolved = query({
 });
 
 /** Upsert one setting (JSON-encoded). Admin-gated at the HTTP layer. */
-export const set = mutation({
+export const set = internalMutation({
   args: { key: v.string(), value: v.string(), updatedByAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { key, value, updatedByAdminId }) => {
     const existing = await ctx.db
@@ -57,14 +56,4 @@ export const set = mutation({
     else await ctx.db.insert('appSettings', { key, value, updatedByAdminId, updatedAt: now });
     return null;
   },
-});
-
-/** Single setting by key (unique-index lookup). */
-export const get = query({
-  args: { key: v.string() },
-  handler: (ctx, { key }) =>
-    ctx.db
-      .query('appSettings')
-      .withIndex('by_key', (q) => q.eq('key', key))
-      .unique(),
 });

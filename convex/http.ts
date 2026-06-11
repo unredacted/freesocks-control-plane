@@ -248,7 +248,7 @@ http.route({
 
     // Resolve which default-free tier (backend) the new account lands on. This
     // reads only the admin enabled/default toggles, never proxy availability.
-    const settings = await ctx.runQuery(api.appSettings.resolved, {});
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     let backend = settings['subscription.default_backend'] as 'remnawave' | 'outline';
     if (body.backend && settings['subscription.user_choice_enabled']) backend = body.backend;
     if (!settings[`${backend}.enabled`]) {
@@ -392,8 +392,8 @@ http.route({
   handler: httpAction(async (ctx, req) => {
     const member = await resolveMember(ctx, req);
     if (!member) return json({ authenticated: false });
-    const user = await ctx.runQuery(api.users.get, { id: member.userId });
-    const tier = user ? await ctx.runQuery(api.tiers.get, { id: user.tierId }) : null;
+    const user = await ctx.runQuery(internal.users.get, { id: member.userId });
+    const tier = user ? await ctx.runQuery(internal.tiers.get, { id: user.tierId }) : null;
     if (!user || !tier) return json({ authenticated: false });
     return json({
       authenticated: true,
@@ -575,7 +575,7 @@ http.route({
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req);
-    const status = await ctx.runQuery(api.admins.bootstrapStatus, {});
+    const status = await ctx.runQuery(internal.admins.bootstrapStatus, {});
     return json({ ...status, signedIn: Boolean(admin?.adminUserId) });
   }),
 });
@@ -940,7 +940,7 @@ http.route({
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
-    const settings = await ctx.runQuery(api.appSettings.resolved, {});
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     return json({ settings });
   }),
 });
@@ -959,13 +959,13 @@ http.route({
       }
     }
     for (const [key, value] of Object.entries(body)) {
-      await ctx.runMutation(api.appSettings.set, {
+      await ctx.runMutation(internal.appSettings.set, {
         key,
         value: JSON.stringify(value),
         updatedByAdminId: admin.adminUserId,
       });
     }
-    const settings = await ctx.runQuery(api.appSettings.resolved, {});
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     return json({ settings });
   }),
 });

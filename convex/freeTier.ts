@@ -18,7 +18,7 @@
  * (account.regenerate), so a missing/empty backend can never block sign-up.
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import { api, internal } from './_generated/api';
+import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { hmacSha256Hex, randomHex, sha256Hex } from './lib/crypto';
@@ -149,7 +149,7 @@ export const createFreeAccount = internalAction({
     });
     const cap = policy && policy.enabled ? policy.max : Number.MAX_SAFE_INTEGER;
 
-    const tier = await ctx.runQuery(api.tiers.getDefaultFree, { backend: a.backend });
+    const tier = await ctx.runQuery(internal.tiers.getDefaultFree, { backend: a.backend });
     if (!tier) throw new Error('No default-free tier configured');
 
     const claim = await ctx.runMutation(internal.freeTier.claimFreeSlot, {

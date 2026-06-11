@@ -12,7 +12,7 @@
  * a replayed eventId is a no-op.
  */
 import { internalAction, internalMutation } from './_generated/server';
-import { api, internal } from './_generated/api';
+import { internal } from './_generated/api';
 import { ConvexError, v } from 'convex/values';
 import { hmacSha256Hex, timingSafeEqual } from './lib/crypto';
 import { hashAccountId, normalizeAccountId } from './lib/accountId';
@@ -74,7 +74,7 @@ export const ingest = internalAction({
     });
     if (!user) return { ok: true, applied: false, reason: 'unknown_user' };
 
-    const tier = await ctx.runQuery(api.tiers.getBySlug, { slug: tierSlug });
+    const tier = await ctx.runQuery(internal.tiers.getBySlug, { slug: tierSlug });
     if (!tier) return { ok: true, applied: false, reason: 'unknown_tier' };
 
     await ctx.runMutation(internal.lifecycle.setMembership, {

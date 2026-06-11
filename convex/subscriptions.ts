@@ -1,4 +1,8 @@
-import { internalMutation, query } from './_generated/server';
+// Pass 2: every function here is internal — a subscription row carries the
+// live proxy key (subscriptionUrl), so nothing in this module may be callable
+// on the raw Convex channel. The old public `get` / `activeForUser` queries
+// were dead code and were deleted outright.
+import { internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 
 const mirror = v.object({
@@ -8,13 +12,8 @@ const mirror = v.object({
   status: v.optional(v.union(v.literal('ok'), v.literal('failed'))),
 });
 
-export const get = query({
-  args: { id: v.id('subscriptions') },
-  handler: (ctx, { id }) => ctx.db.get(id),
-});
-
 /** Unique-index lookup by the backend's primary user id. */
-export const byBackendUserId = query({
+export const byBackendUserId = internalQuery({
   args: { backendUserId: v.string() },
   handler: (ctx, { backendUserId }) =>
     ctx.db
@@ -24,33 +23,13 @@ export const byBackendUserId = query({
 });
 
 /**
- * Newest active subscription for a user: the resolver shared by /account and
- * /subscription (replaces lib/current-subscription.ts). Tombstoned rows are
- * excluded; ties broken by creation time (newest wins).
- */
-export const activeForUser = query({
-  args: { userId: v.id('users') },
-  handler: async (ctx, { userId }) => {
-    const rows = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect();
-    return (
-      rows
-        .filter((s) => s.state === 'active')
-        .sort((a, b) => b._creationTime - a._creationTime)[0] ?? null
-    );
-  },
-});
-
-/**
  * The resolver shared by /account + /subscription (replaces
  * lib/current-subscription.resolveActiveSubscription): prefer the user's
  * `currentSubscriptionId` (so a freshly regenerated key shows immediately), but
  * only if it's still active, never a tombstoned row during the 24h grace
  * window. Falls back to the newest active row.
  */
-export const resolveCurrentOrActive = query({
+export const resolveCurrentOrActive = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, { userId }) => {
     const user = await ctx.db.get(userId);

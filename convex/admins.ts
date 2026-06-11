@@ -6,10 +6,11 @@
  * they're race-safe (serializable), giving the replay/TOCTOU guarantees the old
  * Hono+D1 code relied on transactions for.
  */
-import { internalMutation, internalQuery, query } from './_generated/server';
+import { internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 
-// --- bootstrap status (PUBLIC: drives the SPA's bootstrap-vs-login decision) ---
+// --- bootstrap status (drives the SPA's bootstrap-vs-login decision, served
+//     via GET /api/admin/auth/status; internal so the raw channel can't read it) ---
 
 /**
  * Whether any admin has completed registration (≥1 passkey), and whether the
@@ -17,7 +18,7 @@ import { v } from 'convex/values';
  * abandoned bootstrap attempt and doesn't count. `signedIn` is added by the
  * HTTP layer (it reads the cookie); this query is cookie-blind.
  */
-export const bootstrapStatus = query({
+export const bootstrapStatus = internalQuery({
   args: {},
   handler: async (ctx) => {
     const oneCred = await ctx.db.query('passkeyCredentials').take(1);

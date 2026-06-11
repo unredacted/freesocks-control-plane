@@ -2,7 +2,7 @@
 import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from './schema';
-import { api } from './_generated/api';
+import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -60,7 +60,7 @@ describe('subscriptions.resolveCurrentOrActive', () => {
       await ctx.db.patch(userId, { currentSubscriptionId: currentId });
       return { userId, currentId };
     });
-    const res = await t.query(api.subscriptions.resolveCurrentOrActive, { userId });
+    const res = await t.query(internal.subscriptions.resolveCurrentOrActive, { userId });
     expect(res?._id).toBe(currentId);
     expect(res?.backendUserId).toBe('cur');
   });
@@ -78,7 +78,7 @@ describe('subscriptions.resolveCurrentOrActive', () => {
       const newerId = await ctx.db.insert('subscriptions', subFields(userId, 'newer', 'active'));
       return { userId, newerId };
     });
-    const res = await t.query(api.subscriptions.resolveCurrentOrActive, { userId });
+    const res = await t.query(internal.subscriptions.resolveCurrentOrActive, { userId });
     expect(res?._id).toBe(newerId);
   });
 
@@ -96,7 +96,7 @@ describe('subscriptions.resolveCurrentOrActive', () => {
       await ctx.db.patch(userId, { currentSubscriptionId: deletedId });
       return { userId, activeId };
     });
-    const res = await t.query(api.subscriptions.resolveCurrentOrActive, { userId });
+    const res = await t.query(internal.subscriptions.resolveCurrentOrActive, { userId });
     expect(res?._id).toBe(activeId);
     expect(res?.state).toBe('active');
   });
@@ -113,6 +113,6 @@ describe('subscriptions.resolveCurrentOrActive', () => {
       await ctx.db.insert('subscriptions', subFields(userId, 'd1', 'deleted'));
       return userId;
     });
-    expect(await t.query(api.subscriptions.resolveCurrentOrActive, { userId })).toBeNull();
+    expect(await t.query(internal.subscriptions.resolveCurrentOrActive, { userId })).toBeNull();
   });
 });

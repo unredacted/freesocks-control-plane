@@ -21,9 +21,12 @@ services:
     restart: unless-stopped
     stop_grace_period: 10s
     stop_signal: SIGINT
+    # Loopback-only (like the beta compose): :3210 is the raw Convex
+    # query/mutation channel — anything exported as a public function is
+    # callable on it, so it must NEVER be bound to a public interface.
     ports:
-      - '${PORT:-3210}:3210'
-      - '${SITE_PROXY_PORT:-3211}:3211'
+      - '127.0.0.1:${PORT:-3210}:3210'
+      - '127.0.0.1:${SITE_PROXY_PORT:-3211}:3211'
     volumes:
       - data:/convex/data
     environment:
@@ -74,7 +77,7 @@ services:
     stop_grace_period: 10s
     stop_signal: SIGINT
     ports:
-      - '${DASHBOARD_PORT:-6791}:6791'
+      - '127.0.0.1:${DASHBOARD_PORT:-6791}:6791'
     environment:
       - NEXT_PUBLIC_DEPLOYMENT_URL=${NEXT_PUBLIC_DEPLOYMENT_URL:-http://127.0.0.1:${PORT:-3210}}
       - NEXT_PUBLIC_LOAD_MONACO_INTERNALLY

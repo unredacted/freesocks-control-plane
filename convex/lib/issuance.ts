@@ -10,7 +10,7 @@
  */
 import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
-import { api, internal } from '../_generated/api';
+import { internal } from '../_generated/api';
 import { sha256Hex } from './crypto';
 import type { BackendId, IssueUserSpec } from './backends/types';
 
@@ -107,7 +107,7 @@ export async function deleteSubscriptionEverywhere(
   ctx: ActionCtx,
   input: { backend: 'remnawave' | 'outline'; backendUserId: string },
 ): Promise<void> {
-  const sub = await ctx.runQuery(api.subscriptions.byBackendUserId, {
+  const sub = await ctx.runQuery(internal.subscriptions.byBackendUserId, {
     backendUserId: input.backendUserId,
   });
   // 1. Delete the backend user first. A throw here propagates (the caller's
