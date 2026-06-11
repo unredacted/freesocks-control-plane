@@ -146,10 +146,12 @@ See `docs/threat-model-cdn-blinding.md`.
 
 ## Notes
 
-- **Image pinning.** `docker-compose.beta.yml` pins the Convex backend + dashboard
-  (and `keygen`, which reuses the backend image) to the digests tested in dev.
-  Re-pin those + the `caddy:2-alpine` / `oven/bun` / `postgres:18` bases when you
-  intentionally upgrade.
+- **Image pinning.** EVERY image is pinned by digest: the Convex backend +
+  dashboard (and `keygen`, which reuses the backend image), `cap`, `valkey`,
+  `postgres:18` (compose + the backup image), and the `caddy:2-alpine` /
+  `oven/bun` Dockerfile bases. Verified against upstream 2026-06-11 (all pins
+  were at the then-current stable digests). Re-pin on intentional upgrades:
+  `docker buildx imagetools inspect <image:tag>`.
 - **Datastore.** The stack runs **Postgres 18** (the `postgres` service). Set
   `POSTGRES_PASSWORD` in `.env.beta`; the backend connects with `POSTGRES_URL` (no
   db name) and uses the database named after `INSTANCE_NAME` with hyphens replaced
@@ -172,12 +174,17 @@ See `docs/threat-model-cdn-blinding.md`.
 
 ### Captcha (Cap) first-run
 
-The `cap` service runs the self-hosted [Cap](https://trycap.dev) captcha. On first
-boot, tunnel to it and create a site key:
+The `cap` service runs the self-hosted [Cap](https://trycap.dev) captcha. Its
+admin dashboard is **not public**: Caddy proxies only the widget endpoints
+(`/cap/<siteKey>/challenge` + `/cap/<siteKey>/redeem`) and answers 404 for
+everything else under `/cap` — the dashboard's login needs inline JS the
+pure-self CSP blocks, and admin surfaces stay off the member origin. The
+dashboard binds to host loopback (`127.0.0.1:3000`, tunable via
+`CAP_DASHBOARD_PORT`); reach it like the Convex dashboard:
 
-```
-ssh -L 3000:127.0.0.1:3000 <beta-host>   # if you expose it locally; else exec in
-docker compose -f docker-compose.beta.yml exec cap sh   # then browse its dashboard
+```sh
+ssh -L 3000:127.0.0.1:3000 <beta-host>
+# then open http://127.0.0.1:3000
 ```
 
 Log in with `CAP_ADMIN_KEY`, create a site key, and put the **site key** +

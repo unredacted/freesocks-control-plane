@@ -50,15 +50,25 @@
 	# plugin doesn't yet stamp). See docs/threat-model-cdn-blinding.md.
 
 	# --- self-hosted Cap captcha (W1) -> the cap service over the compose net ---
-	# The browser widget posts challenges to the SAME-ORIGIN /cap/<siteKey>/...
-	# so they stay within connect-src 'self'. Strip the /cap prefix to match the
-	# Cap server's routes. The Cap admin DASHBOARD is ADMIN_KEY-gated; set a
-	# strong CAP_ADMIN_KEY (32+ chars). Block obvious dashboard paths from the
-	# public edge as defense in depth.
-	@cap path /cap/*
-	handle @cap {
+	# ONLY the widget's two endpoints are public: the browser POSTs to the
+	# SAME-ORIGIN /cap/<siteKey>/challenge and /cap/<siteKey>/redeem (verified
+	# against @cap.js/widget — it calls nothing else here; the PoW WASM is a
+	# bundled same-origin asset). Strip the /cap prefix to match Cap's routes.
+	#
+	# The Cap ADMIN DASHBOARD is deliberately NOT exposed: it is a third-party
+	# UI that needs inline JS (our pure-self CSP rightly blocks its login), and
+	# a public admin surface on the member origin would widen the same-origin
+	# XSS blast radius. Operators reach it over an SSH tunnel to the
+	# loopback-published port instead (docs/beta-deploy.md, "Captcha (Cap)
+	# first-run"). Everything else under /cap answers 404 at the edge.
+	@capWidget path /cap/*/challenge /cap/*/redeem
+	handle @capWidget {
 		uri strip_prefix /cap
 		reverse_proxy cap:3000
+	}
+	@capOther path /cap/*
+	handle @capOther {
+		respond 404
 	}
 
 	# --- API + health -> Convex HTTP actions (:3211 over the compose network) --

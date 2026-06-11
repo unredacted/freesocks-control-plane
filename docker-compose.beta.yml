@@ -61,7 +61,9 @@ services:
   # backend connects to a database named after INSTANCE_NAME with hyphens
   # replaced by underscores, so POSTGRES_DB below MUST match (keep them in sync).
   postgres:
-    image: postgres:18
+    # Pinned by digest like every other image (re-pin on upgrade:
+    # docker buildx imagetools inspect postgres:18).
+    image: postgres:18@sha256:fd03421d521b789274856f57ba64914f8271255ef1415ac307cbc907121c8c7b
     restart: unless-stopped
     logging: *log
     stop_grace_period: 10s
@@ -130,16 +132,21 @@ services:
         condition: service_healthy
 
   # Self-hosted Cap captcha (W1): the proof-of-work CAPTCHA that replaced
-  # Cloudflare Turnstile. Caddy proxies the public /cap path here; the backend
-  # verifies tokens over the compose network (CAP_API_ENDPOINT=http://cap:3000).
-  # Pin to a digest before real production use (see docs/beta-deploy.md). The
-  # dashboard is ADMIN_KEY-gated; set a strong CAP_ADMIN_KEY (32+ chars).
+  # Cloudflare Turnstile. Caddy proxies ONLY the public widget endpoints
+  # (/cap/<siteKey>/{challenge,redeem}) here; the backend verifies tokens over
+  # the compose network (CAP_API_ENDPOINT=http://cap:3000). The ADMIN_KEY-gated
+  # admin dashboard is NOT public (its login needs inline JS our CSP blocks,
+  # and admin surfaces stay off the member origin): it binds to host loopback
+  # below — reach it via SSH tunnel, like the Convex dashboard.
   cap:
     # Pinned by digest (re-pin on upgrade: docker buildx imagetools inspect tiago2/cap:latest).
     image: tiago2/cap:latest@sha256:97455d85b5517172397c7053837d377c72ded6250777928d5435c3eab2f58779
     restart: unless-stopped
     logging: *log
     stop_grace_period: 10s
+    ports:
+      # Admin dashboard, loopback only (ssh -L 3000:127.0.0.1:3000 <host>).
+      - '127.0.0.1:${CAP_DASHBOARD_PORT:-3000}:3000'
     environment:
       - ADMIN_KEY=${CAP_ADMIN_KEY:?set CAP_ADMIN_KEY in .env.beta (>=32 chars)}
       - REDIS_URL=redis://valkey:6379
