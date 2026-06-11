@@ -24,6 +24,7 @@ import { writeAuditLog } from './lib/audit';
 import { findDuration, resolveBillingConfig } from './lib/billingConfig';
 import type { BillingConfig } from './lib/billingConfig';
 import * as nowpayments from './lib/processors/nowpayments';
+import * as stripe from './lib/processors/stripe';
 import type {
   CheckoutParams,
   CheckoutResult,
@@ -76,7 +77,11 @@ async function createCheckoutForProcessor(
         params,
       );
     }
-    case 'stripe':
+    case 'stripe': {
+      const apiKey = process.env.STRIPE_API_KEY;
+      if (!apiKey) throw new Error('STRIPE_API_KEY unset');
+      return stripe.createCheckout({ apiKey }, params);
+    }
     case 'paypal':
       throw new Error(`processor ${processor} not implemented yet`);
   }
@@ -99,7 +104,16 @@ async function verifyForProcessor(
       }
       return nowpayments.verifyAndParse({ rawBody, signature, ipnSecret });
     }
-    case 'stripe':
+    case 'stripe': {
+      const secret = process.env.STRIPE_WEBHOOK_SECRET;
+      if (!secret) {
+        throw new ConvexError({
+          code: 'billing.not_configured',
+          message: 'Stripe webhooks are not configured',
+        });
+      }
+      return stripe.verifyAndParse({ rawBody, signature, secret });
+    }
     case 'paypal':
       throw new ConvexError({
         code: 'billing.not_configured',

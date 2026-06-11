@@ -43,6 +43,7 @@ import type * as lib_issuance from "../lib/issuance.js";
 import type * as lib_membershipCode from "../lib/membershipCode.js";
 import type * as lib_pop from "../lib/pop.js";
 import type * as lib_processors_nowpayments from "../lib/processors/nowpayments.js";
+import type * as lib_processors_stripe from "../lib/processors/stripe.js";
 import type * as lib_processors_types from "../lib/processors/types.js";
 import type * as lib_rateLimitPolicy from "../lib/rateLimitPolicy.js";
 import type * as lib_supportId from "../lib/supportId.js";
@@ -104,6 +105,7 @@ declare const fullApi: ApiFromModules<{
   "lib/membershipCode": typeof lib_membershipCode;
   "lib/pop": typeof lib_pop;
   "lib/processors/nowpayments": typeof lib_processors_nowpayments;
+  "lib/processors/stripe": typeof lib_processors_stripe;
   "lib/processors/types": typeof lib_processors_types;
   "lib/rateLimitPolicy": typeof lib_rateLimitPolicy;
   "lib/supportId": typeof lib_supportId;

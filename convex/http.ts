@@ -831,21 +831,29 @@ http.route({
   }),
 });
 
-// --- NOWPayments IPN (crypto rail) ------------------------------------------
-// Same template as the generic billing webhook: 503 when the IPN secret is
-// unset (distinct from a bad signature), 64 KiB cap BEFORE hashing, per-IP
-// throttle, raw-body read, then HMAC-SHA512 verify + parse in billing.ingestEvent.
-http.route({
-  path: '/api/webhooks/nowpayments',
-  method: 'POST',
-  handler: httpAction(async (ctx, req) => {
-    if (!process.env.NOWPAYMENTS_IPN_SECRET) {
-      console.error('[webhook] rejected: NOWPAYMENTS_IPN_SECRET unset (billing.not_configured)');
-      return errorJson(
-        'billing.not_configured',
-        'NOWPayments webhooks are not configured on this deployment',
-        503,
-      );
+// --- self-service billing webhooks (one route per processor) ----------------
+// Same template as the generic billing webhook: 503 when the rail's secret is
+// unset (distinct from a bad signature), 64 KiB cap BEFORE verifying, per-IP
+// throttle, raw-body read, then per-processor verify + parse in
+// billing.ingestEvent. Factored because the three rails differ only in their
+// secret env var, signature header, and IP policy key.
+type BillingProcessorId = 'nowpayments' | 'stripe' | 'paypal';
+function processorWebhook(opts: {
+  processor: BillingProcessorId;
+  secretEnv: string;
+  sigHeader: string;
+  policyKey: 'webhook.nowpayments.ip' | 'webhook.stripe.ip' | 'webhook.paypal.ip';
+}) {
+  const notConfigured = () =>
+    errorJson(
+      'billing.not_configured',
+      `${opts.processor} webhooks are not configured on this deployment`,
+      503,
+    );
+  return httpAction(async (ctx, req) => {
+    if (!process.env[opts.secretEnv]) {
+      console.error(`[webhook] rejected: ${opts.secretEnv} unset (billing.not_configured)`);
+      return notConfigured();
     }
     const declaredLen = Number(req.headers.get('content-length') ?? '0');
     if (Number.isFinite(declaredLen) && declaredLen > 64 * 1024) {
@@ -854,7 +862,7 @@ http.route({
     const ip = resolveClientIp(req);
     if (ip) {
       const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-        policyKey: 'webhook.nowpayments.ip',
+        policyKey: opts.policyKey,
         subject: await ipHashSubject(ip),
       });
       if (!rl.allowed) return errorJson('rate_limit.exceeded', 'Too many requests', 429);
@@ -865,24 +873,42 @@ http.route({
     }
     try {
       const result = await ctx.runAction(internal.billing.ingestEvent, {
-        processor: 'nowpayments',
+        processor: opts.processor,
         rawBody,
-        signature: req.headers.get('x-nowpayments-sig') ?? undefined,
+        signature: req.headers.get(opts.sigHeader) ?? undefined,
       });
       return json(result);
     } catch (err) {
-      if (err instanceof ConvexError) {
-        const data = err.data as { code?: string };
-        if (data.code === 'billing.not_configured') {
-          return errorJson(
-            'billing.not_configured',
-            'NOWPayments webhooks are not configured on this deployment',
-            503,
-          );
-        }
+      if (
+        err instanceof ConvexError &&
+        (err.data as { code?: string }).code === 'billing.not_configured'
+      ) {
+        return notConfigured();
       }
       return errorJson('webhook.rejected', 'Webhook rejected (invalid signature or payload)', 400);
     }
+  });
+}
+
+http.route({
+  path: '/api/webhooks/nowpayments',
+  method: 'POST',
+  handler: processorWebhook({
+    processor: 'nowpayments',
+    secretEnv: 'NOWPAYMENTS_IPN_SECRET',
+    sigHeader: 'x-nowpayments-sig',
+    policyKey: 'webhook.nowpayments.ip',
+  }),
+});
+
+http.route({
+  path: '/api/webhooks/stripe',
+  method: 'POST',
+  handler: processorWebhook({
+    processor: 'stripe',
+    secretEnv: 'STRIPE_WEBHOOK_SECRET',
+    sigHeader: 'stripe-signature',
+    policyKey: 'webhook.stripe.ip',
   }),
 });
 

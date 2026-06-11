@@ -487,6 +487,58 @@ describe('nowpayments webhook route', () => {
   });
 });
 
+describe('stripe webhook route', () => {
+  const signStripe = async (rawBody: string, secret: string): Promise<string> => {
+    const ts = Math.floor(Date.now() / 1000);
+    return `t=${ts},v1=${await hmacSha256Hex(secret, `${ts}.${rawBody}`)}`;
+  };
+
+  test('unset webhook secret answers a distinct 503', async () => {
+    const t = convexTest(schema, modules);
+    const res = await t.fetch('/api/webhooks/stripe', { method: 'POST', body: '{}' });
+    expect(res.status).toBe(503);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('billing.not_configured');
+  });
+
+  test('a valid completed session extends the bound member’s membership', async () => {
+    vi.stubEnv('STRIPE_WEBHOOK_SECRET', 'whsec');
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedMemberTierUser(t);
+    await t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'stripe',
+        opaqueRef: 'stripe-route-ref',
+        userId,
+        tierId: memberTierId,
+        durationDays: 91,
+        amountCents: 1400,
+        currency: 'USD',
+        status: 'pending',
+        updatedAt: Date.now(),
+      }),
+    );
+    const rawBody = JSON.stringify({
+      id: 'evt_route',
+      type: 'checkout.session.completed',
+      data: {
+        object: { id: 'cs_route', client_reference_id: 'stripe-route-ref', payment_status: 'paid' },
+      },
+    });
+    const res = await t.fetch('/api/webhooks/stripe', {
+      method: 'POST',
+      headers: { 'stripe-signature': await signStripe(rawBody, 'whsec') },
+      body: rawBody,
+    });
+    expect(res.status).toBe(200);
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(memberTierId);
+      expect(user?.membershipExpiresAt).toBeGreaterThan(Date.now());
+    });
+  });
+});
+
 describe('billing order poll route', () => {
   test('404 for an unknown ref', async () => {
     const t = convexTest(schema, modules);

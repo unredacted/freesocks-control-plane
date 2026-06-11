@@ -51,6 +51,9 @@ export const RATE_LIMIT_DEFAULTS = {
   // Per-IP throttle on the crypto IPN (a single payment fires several status
   // callbacks: waiting → confirming → finished — so this is generous).
   'webhook.nowpayments.ip': { max: 120, windowMs: MINUTE, enabled: true },
+  // Per-IP throttle on the Stripe + PayPal webhooks (generous; legit senders).
+  'webhook.stripe.ip': { max: 120, windowMs: MINUTE, enabled: true },
+  'webhook.paypal.ip': { max: 120, windowMs: MINUTE, enabled: true },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyKey = keyof typeof RATE_LIMIT_DEFAULTS;

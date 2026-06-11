@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { hmacSha512Hex } from './lib/crypto';
+import { hmacSha256Hex, hmacSha512Hex } from './lib/crypto';
 import { ConvexError } from 'convex/values';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -335,6 +335,61 @@ describe('billing.ingestEvent (NOWPayments)', () => {
     }
     expect(thrown).toBeInstanceOf(ConvexError);
     expect((thrown as ConvexError<{ code: string }>).data.code).toBe('billing.not_configured');
+  });
+});
+
+describe('billing.ingestEvent (Stripe)', () => {
+  const SECRET = 'stripe-whsec';
+  const signStripe = async (rawBody: string): Promise<string> => {
+    const t = Math.floor(Date.now() / 1000);
+    return `t=${t},v1=${await hmacSha256Hex(SECRET, `${t}.${rawBody}`)}`;
+  };
+  beforeEach(() => vi.stubEnv('STRIPE_WEBHOOK_SECRET', SECRET));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  test('a completed checkout session extends membership', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-stripe');
+    const rawBody = JSON.stringify({
+      id: 'evt_1',
+      type: 'checkout.session.completed',
+      data: { object: { id: 'cs_1', client_reference_id: 'ref-stripe', payment_status: 'paid' } },
+    });
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'stripe',
+      rawBody,
+      signature: await signStripe(rawBody),
+    });
+    expect(res).toEqual({ ok: true, applied: true });
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(memberTierId);
+      expect(user?.membershipExpiresAt).toBeGreaterThan(Date.now());
+    });
+  });
+
+  test('a bad Stripe signature is rejected', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-stripe-bad');
+    const rawBody = JSON.stringify({
+      id: 'evt_2',
+      type: 'checkout.session.completed',
+      data: {
+        object: { id: 'cs_2', client_reference_id: 'ref-stripe-bad', payment_status: 'paid' },
+      },
+    });
+    await expect(
+      t.action(internal.billing.ingestEvent, {
+        processor: 'stripe',
+        rawBody,
+        signature: 't=1,v1=deadbeef',
+      }),
+    ).rejects.toThrow();
   });
 });
 
