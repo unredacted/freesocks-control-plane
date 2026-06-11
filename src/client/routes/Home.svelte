@@ -124,11 +124,10 @@
       makes clear the numbers come from the seeded defaults (not a live
       account).
     -->
-    <div
-      class="hidden md:block relative"
-      in:fly={{ x: 20, duration: 600, delay: 150, easing: quintOut }}
-      aria-hidden="true"
-    >
+    <!-- Shown on every viewport: mobile is the majority of our audience, and this
+         card is the at-a-glance "what you get" summary they'd otherwise miss. Not
+         aria-hidden — the specifics (limits, no-email) are informative. -->
+    <div class="relative" in:fly={{ x: 20, duration: 600, delay: 150, easing: quintOut }}>
       <div
         class="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent rounded-2xl blur-3xl"
       ></div>
@@ -172,7 +171,7 @@
             </div>
           </li>
         </ul>
-        <p class="text-[11px] text-muted-foreground/70 leading-snug border-t border-border/60 pt-3">
+        <p class="text-[11px] text-muted-foreground leading-snug border-t border-border/60 pt-3">
           Numbers reflect the current free-tier configuration. Solve the check to get yours.
         </p>
       </div>

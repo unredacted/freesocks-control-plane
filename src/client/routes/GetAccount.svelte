@@ -64,6 +64,17 @@
     }
   });
 
+  // WAI-ARIA radiogroup roving focus: arrows move + select between the two
+  // options, then focus the newly-checked radio. Lives on the focusable radios.
+  function chooserKeydown(e: KeyboardEvent) {
+    if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(e.key)) return;
+    e.preventDefault();
+    chosenBackend = chosenBackend === 'remnawave' ? 'outline' : 'remnawave';
+    (e.currentTarget as HTMLElement).parentElement
+      ?.querySelector<HTMLElement>('[aria-checked="true"]')
+      ?.focus();
+  }
+
   // Step 1: create the account. No proxy backend is touched, so this succeeds
   // even when every backend is down/empty. On success the server sets the
   // session cookie (auto sign-in) and reveals the one-time account number.
@@ -169,7 +180,9 @@
               type="button"
               role="radio"
               aria-checked={chosenBackend === 'remnawave'}
+              tabindex={chosenBackend === 'remnawave' ? 0 : -1}
               onclick={() => (chosenBackend = 'remnawave')}
+              onkeydown={chooserKeydown}
               class="rounded-md px-3 py-2.5 text-sm transition-colors {chosenBackend === 'remnawave'
                 ? 'bg-primary text-primary-foreground shadow-sm'
                 : 'text-muted-foreground hover:bg-muted'}"
@@ -187,7 +200,9 @@
               type="button"
               role="radio"
               aria-checked={chosenBackend === 'outline'}
+              tabindex={chosenBackend === 'outline' ? 0 : -1}
               onclick={() => (chosenBackend = 'outline')}
+              onkeydown={chooserKeydown}
               class="rounded-md px-3 py-2.5 text-sm transition-colors {chosenBackend === 'outline'
                 ? 'bg-primary text-primary-foreground shadow-sm'
                 : 'text-muted-foreground hover:bg-muted'}"

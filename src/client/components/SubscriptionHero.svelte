@@ -73,6 +73,7 @@
 
   let copied = $state<'primary' | 'fallback' | null>(null);
   let qrOpen = $state(false);
+  let qrFallbackOpen = $state(false);
 
   async function copy(value: string, key: 'primary' | 'fallback') {
     try {
@@ -243,9 +244,7 @@
           class="flex items-center justify-between gap-2 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
         >
           <span>Fallback URL</span>
-          <span
-            class="text-muted-foreground/70 normal-case font-normal text-[11px] tracking-normal"
-          >
+          <span class="text-muted-foreground normal-case font-normal text-[11px] tracking-normal">
             Use this if the main URL gets blocked
           </span>
         </div>
@@ -262,7 +261,24 @@
               <Copy class="size-3.5" />
             {/if}
           </Button>
+          {#if showQr}
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={() => (qrFallbackOpen = !qrFallbackOpen)}
+              aria-expanded={qrFallbackOpen}
+              aria-label="Show fallback URL QR code"
+            >
+              <QrCodeIcon class="size-3.5" />
+            </Button>
+          {/if}
         </div>
+        {#if showQr && qrFallbackOpen}
+          <div class="flex flex-col items-center pt-2" in:fade={{ duration: 200 }}>
+            <QrCode text={fallbackUrl} size={176} />
+            <p class="mt-2 text-xs text-muted-foreground">Scan the fallback on another device</p>
+          </div>
+        {/if}
       </div>
     {/if}
 

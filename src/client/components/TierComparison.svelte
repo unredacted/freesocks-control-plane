@@ -2,6 +2,7 @@
   import Check from '@lucide/svelte/icons/check';
   import Minus from '@lucide/svelte/icons/minus';
   import { Button } from '@client/components/ui/button';
+  import { Skeleton } from '@client/components/ui/skeleton';
   import { configQuery } from '../lib/queries';
 
   /**
@@ -108,11 +109,19 @@
         <ul class="space-y-2 text-sm">
           <li class="flex items-start gap-2">
             <Check class="size-4 text-primary shrink-0 mt-0.5" />
-            <span class="tabular-nums">{bandwidthLabel(tier.slug, tier.features.bandwidth)}</span>
+            {#if config.isPending}
+              <Skeleton class="h-4 w-28" />
+            {:else}
+              <span class="tabular-nums">{bandwidthLabel(tier.slug, tier.features.bandwidth)}</span>
+            {/if}
           </li>
           <li class="flex items-start gap-2">
             <Check class="size-4 text-primary shrink-0 mt-0.5" />
-            <span class="tabular-nums">{deviceLabel(tier.slug, tier.features.devices)}</span>
+            {#if config.isPending}
+              <Skeleton class="h-4 w-20" />
+            {:else}
+              <span class="tabular-nums">{deviceLabel(tier.slug, tier.features.devices)}</span>
+            {/if}
           </li>
           <li class="flex items-start gap-2">
             <Check class="size-4 text-primary shrink-0 mt-0.5" />

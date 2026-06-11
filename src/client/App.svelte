@@ -19,6 +19,21 @@
   let onAdminRoute = $derived(router.pathname.startsWith('/admin'));
   // DevTools only in development; in production it's tree-shaken away.
   const isDev = import.meta.env.DEV;
+
+  // a11y: on a client-side route change, move focus to the main region so
+  // keyboard + screen-reader users land in the new content (a SPA navigation
+  // otherwise leaves focus on the clicked link and announces nothing). Skipped
+  // on first paint (the page load already focuses the document).
+  let mainEl = $state<HTMLElement | null>(null);
+  let firstRoute = true;
+  $effect(() => {
+    void router.pathname;
+    if (firstRoute) {
+      firstRoute = false;
+      return;
+    }
+    mainEl?.focus();
+  });
 </script>
 
 <!--
@@ -38,7 +53,11 @@
         <AppHeader />
       {/if}
 
-      <main class="flex-1 container mx-auto px-4 py-8">
+      <main
+        bind:this={mainEl}
+        tabindex="-1"
+        class="flex-1 container mx-auto px-4 py-8 outline-none"
+      >
         <!--
           Keying the wrapper by pathname forces a remount when the route
           changes, which lets the in/out fade transitions actually fire. The
