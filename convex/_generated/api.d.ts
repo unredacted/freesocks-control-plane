@@ -31,6 +31,7 @@ import type * as lib_backends_outline from "../lib/backends/outline.js";
 import type * as lib_backends_registry from "../lib/backends/registry.js";
 import type * as lib_backends_remnawave from "../lib/backends/remnawave.js";
 import type * as lib_backends_types from "../lib/backends/types.js";
+import type * as lib_billingConfig from "../lib/billingConfig.js";
 import type * as lib_captcha from "../lib/captcha.js";
 import type * as lib_cookies from "../lib/cookies.js";
 import type * as lib_crypto from "../lib/crypto.js";
@@ -88,6 +89,7 @@ declare const fullApi: ApiFromModules<{
   "lib/backends/registry": typeof lib_backends_registry;
   "lib/backends/remnawave": typeof lib_backends_remnawave;
   "lib/backends/types": typeof lib_backends_types;
+  "lib/billingConfig": typeof lib_billingConfig;
   "lib/captcha": typeof lib_captcha;
   "lib/cookies": typeof lib_cookies;
   "lib/crypto": typeof lib_crypto;

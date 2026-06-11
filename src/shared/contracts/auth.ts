@@ -89,5 +89,28 @@ export const PublicConfig = z.object({
       outline: z.string(),
     }),
   }),
+  /**
+   * Public billing catalog for the self-service membership upgrade. Prices and
+   * durations are public; the SPA renders the upgrade UI only when `enabled` is
+   * true and shows a payment method only when its `rails.*` flag is true.
+   * `amountCents` is in `currency` (ISO 4217). No secrets here (processor API
+   * keys / IPN secrets are server-side env only).
+   */
+  billing: z.object({
+    enabled: z.boolean(),
+    rails: z.object({
+      nowpayments: z.boolean(),
+      stripe: z.boolean(),
+      paypal: z.boolean(),
+    }),
+    currency: z.string(),
+    tierSlug: z.string(),
+    durations: z.array(
+      z.object({
+        months: z.number().int(),
+        amountCents: z.number().int(),
+      }),
+    ),
+  }),
 });
 export type PublicConfig = z.infer<typeof PublicConfig>;

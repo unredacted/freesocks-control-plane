@@ -73,6 +73,23 @@ const subscriptionMirror = v.object({
   status: v.optional(v.union(v.literal('ok'), v.literal('failed'))),
 });
 
+// Self-service membership payment processors (hosted-redirect rails). Keep in
+// sync with the PaymentProcessor adapters in convex/lib/processors/.
+const billingProcessor = v.union(
+  v.literal('nowpayments'),
+  v.literal('stripe'),
+  v.literal('paypal'),
+);
+// Order lifecycle. `confirming` is the crypto mempool/confirmation wait (a
+// non-terminal state the SPA keeps polling). Only `paid` grants membership.
+const billingOrderStatus = v.union(
+  v.literal('pending'),
+  v.literal('confirming'),
+  v.literal('paid'),
+  v.literal('failed'),
+  v.literal('expired'),
+);
+
 export default defineSchema({
   tiers: defineTable({
     slug: v.string(),
@@ -247,6 +264,32 @@ export default defineSchema({
   })
     .index('by_event_id', ['eventId'])
     .index('by_source', ['source']),
+
+  // Self-service membership purchases: one row per checkout. The member's
+  // `userId` is bound HERE, server-side — it is NEVER sent to the processor as
+  // identity; the processor only ever sees the unguessable `opaqueRef` (used as
+  // its `order_id` and in the return URL). A confirmed-payment webhook flips
+  // status→paid EXACTLY ONCE (billing.markOrderPaidAndGrant) and extends
+  // membership. NO payer PII is stored (no email/name/address) — only the ref,
+  // amount, tier, duration, and status. `by_status` (Convex appends
+  // `_creationTime`) drives the stale-pending sweep.
+  billingOrders: defineTable({
+    processor: billingProcessor,
+    opaqueRef: v.string(),
+    processorRef: v.optional(v.string()),
+    userId: v.id('users'),
+    tierId: v.id('tiers'),
+    durationDays: v.number(),
+    amountCents: v.number(),
+    currency: v.string(),
+    status: billingOrderStatus,
+    paidAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_opaque_ref', ['opaqueRef'])
+    .index('by_processor_ref', ['processor', 'processorRef'])
+    .index('by_user', ['userId'])
+    .index('by_status', ['status']),
 
   apiTokens: defineTable({
     name: v.string(),

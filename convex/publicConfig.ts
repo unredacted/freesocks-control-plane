@@ -7,6 +7,7 @@
  * served reactively or via the GET /api/v1/config HTTP route.
  */
 import { query } from './_generated/server';
+import { resolveBillingConfig } from './lib/billingConfig';
 
 export const get = query({
   args: {},
@@ -53,6 +54,11 @@ export const get = query({
       | 'development'
       | 'test';
 
+    // Public-safe billing catalog: prices, durations, which rails are live, and
+    // the tier slug the membership maps to. No secrets (API keys/IPN secrets are
+    // env-only). The SPA gates the upgrade UI on `billing.enabled` + `rails.*`.
+    const billing = await resolveBillingConfig(ctx.db);
+
     return {
       membersJoinUrl: process.env.MEMBERS_JOIN_URL || undefined,
       membersAccountUrl: process.env.MEMBERS_ACCOUNT_URL || undefined,
@@ -73,6 +79,13 @@ export const get = query({
         defaultBackend: settings['subscription.default_backend'] as 'remnawave' | 'outline',
         userChoiceEnabled: settings['subscription.user_choice_enabled'] as boolean,
         labels,
+      },
+      billing: {
+        enabled: billing.enabled,
+        rails: billing.rails,
+        currency: billing.currency,
+        tierSlug: billing.tierSlug,
+        durations: billing.durations,
       },
     };
   },
