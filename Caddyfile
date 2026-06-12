@@ -185,27 +185,39 @@
 # Two HOSTS, not one random path: the dashboard is a Next.js app serving assets
 # from absolute paths (/_next/*), so it must sit at a host ROOT — a sub-path
 # breaks it — and its browser separately calls the deploy API's own /api/* paths.
-# For obscurity on beta, use long random subdomains (e.g. cvx-dash-7f3a9c.<zone>,
-# cvx-api-7f3a9c.<zone>).
 #
-# !!! SECURITY !!!  The deploy API (:3210) carries the deployment's sync/deploy
-# surface and accepts the admin key for FULL data + deploy control — which is why
-# it is otherwise 127.0.0.1-only. Unauthenticated callers can still reach ONLY
-# publicConfig.get (the public-function lockdown holds), but anyone with the
-# hostname + admin key has full control. On beta these hostnames ARE the gate, so
-# treat them as secrets; in PROD front BOTH with Pangolin (auth + CrowdSec) and
-# do not rely on obscurity. (Convex serves the dashboard cross-origin to the API;
-# if the dashboard can't connect after enabling, verify there first.)
+# !!! SECURITY — the hostname is NOT secret !!!  A non-guessable subdomain is at
+# most weak defense-in-depth: the moment Caddy gets a Let's Encrypt cert for it,
+# the exact name is published to public Certificate Transparency logs (crt.sh) —
+# plus passive-DNS. So you MUST gate the surface with real auth, not obscurity.
+# The deploy API (:3210) fronts the sync/deploy surface and accepts the admin key
+# for FULL control (it is otherwise 127.0.0.1-only); unauthenticated callers reach
+# only publicConfig.get, but the surface must not be open to the world.
+#   - The `@gate not remote_ip …` allowlist below is the real control here:
+#     restrict to your operator IPs / VPN egress. (Or use `basic_auth` over TLS,
+#     or mTLS — none depend on the hostname being secret.)
+#   - In PROD, front BOTH hosts with Pangolin (auth + CrowdSec) instead.
+#   - To keep the NAME private too, you'd need a wildcard cert (DNS-01) + wildcard
+#     A record so it never hits CT logs — defense-in-depth, never the lock.
+# (Convex serves the dashboard cross-origin to the API; if it loads but won't
+# connect after enabling, verify origin/CORS on your Convex version there.)
 #
 # {$CONVEX_DASHBOARD_ADDRESS} {
 # 	encode zstd gzip
 # 	header -Server
+# 	# The real gate — replace with your operator IPs/CIDRs (NOT the hostname).
+# 	@gate not remote_ip 203.0.113.0/24 198.51.100.7
+# 	respond @gate 403
 # 	reverse_proxy dashboard:6791
 # }
 #
 # {$CONVEX_API_ADDRESS} {
 # 	encode zstd gzip
 # 	header -Server
-# 	# reverse_proxy upgrades the /api/.../sync WebSocket natively.
+# 	@gate not remote_ip 203.0.113.0/24 198.51.100.7
+# 	respond @gate 403
+# 	# reverse_proxy upgrades the /api/.../sync WebSocket natively. (Caddy serves
+# 	# the ACME challenge before these routes, so the allowlist won't block cert
+# 	# issuance.)
 # 	reverse_proxy backend:3210
 # }

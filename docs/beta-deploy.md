@@ -201,11 +201,18 @@ See `docs/threat-model-cdn-blinding.md`.
   `CONVEX_DASHBOARD_DEPLOYMENT_URL` in `.env.beta` (see `.env.beta.example`),
   `up -d`, then reload Caddy. It needs **two** subdomains — one for the dashboard
   UI, one for the deploy API the dashboard's browser calls (the UI is a Next.js
-  app that can't live under a sub-path). **Security:** the deploy-API host fronts
-  the admin/deploy surface (admin key = full control; unauthenticated callers
-  still reach only `publicConfig.get`). Use long, random, secret subdomains on
-  beta; in prod gate **both** behind Pangolin (auth + CrowdSec) — obscurity is
-  not a prod control.
+  app that can't live under a sub-path).
+
+  **Security — don't rely on the subdomain being secret.** Caddy's Let's Encrypt
+  cert publishes the exact hostname to public Certificate Transparency logs
+  (crt.sh), so a "random" subdomain is discoverable in minutes — it is at most
+  minor defense-in-depth, never the gate. The deploy-API host fronts the
+  admin/deploy surface (admin key = full control; unauthenticated callers still
+  reach only `publicConfig.get`), so put a **real** front-door on both hosts: the
+  `@gate remote_ip` IP allowlist baked into the Caddy blocks (your operator
+  IPs/VPN), or `basic_auth`/mTLS. In prod, gate **both** behind Pangolin (auth +
+  CrowdSec). To hide the name itself you'd need a wildcard cert (DNS-01) + wildcard
+  A record so it never reaches CT — defense-in-depth, not the lock.
 
 ## Operations (A3/A4)
 
