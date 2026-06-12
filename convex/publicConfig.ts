@@ -41,6 +41,7 @@ export const get = query({
       .map((t) => ({
         slug: t.slug,
         name: t.name,
+        description: t.description ?? null,
         monthlyTrafficGb: t.monthlyTrafficGb,
         deviceLimit: t.deviceLimit,
       }));

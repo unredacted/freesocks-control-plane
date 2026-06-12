@@ -65,6 +65,9 @@ export const PublicConfig = z.object({
       // an out-of-enum slug must never 500 this public endpoint.
       slug: z.string(),
       name: z.string(),
+      // Admin-editable marketing line (Admin → Tiers). Surfaced on the
+      // comparison cards so tier copy is DB-driven, not hardcoded in the SPA.
+      description: z.string().nullable(),
       monthlyTrafficGb: z.number().int(), // 0 = unlimited
       deviceLimit: z.number().int(),
     }),
