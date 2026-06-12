@@ -97,11 +97,24 @@ export async function createCheckout(
       signal: controller.signal,
     });
     if (!res.ok) {
-      // Never capture the body verbatim (could echo request fields); status only.
-      throw new NowPaymentsApiError(`NOWPayments ${res.status} on /v1/invoice`, res.status);
+      // Capture the error body (truncated) so the operator can see WHY — e.g.
+      // "Invalid api key", a min-amount error, or "Invoice" not enabled on the
+      // account. This is SERVER-LOG ONLY: createCheckout catches it and returns a
+      // generic message to the member. NOWPayments error bodies describe the
+      // rejected request fields, never the api key (that's a request header).
+      const detail = (await res.text().catch(() => '')).slice(0, 300);
+      throw new NowPaymentsApiError(
+        `NOWPayments ${res.status} on /v1/invoice${detail ? `: ${detail}` : ''}`,
+        res.status,
+      );
     }
-    const parsed = InvoiceResponse.safeParse(await res.json());
-    if (!parsed.success) throw new NowPaymentsApiError('NOWPayments invoice schema mismatch');
+    const body: unknown = await res.json().catch(() => null);
+    const parsed = InvoiceResponse.safeParse(body);
+    if (!parsed.success) {
+      throw new NowPaymentsApiError(
+        `NOWPayments invoice schema mismatch: ${JSON.stringify(body).slice(0, 200)}`,
+      );
+    }
     return { redirectUrl: parsed.data.invoice_url, processorRef: parsed.data.id };
   } finally {
     clearTimeout(timer);

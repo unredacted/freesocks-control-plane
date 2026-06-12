@@ -159,6 +159,33 @@ describe('billing.createCheckout', () => {
     });
   });
 
+  test('leaves no order behind when the processor rejects the invoice', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTiersAndUser(t);
+    await enableBilling(t);
+    // NOWPayments rejects (e.g. an invalid sandbox key) — the adapter throws and
+    // checkout must NOT persist a dangling pending order.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              statusCode: 403,
+              code: 'INVALID_API_KEY',
+              message: 'Invalid api key.',
+            }),
+            { status: 403, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    );
+    await expect(
+      t.action(internal.billing.createCheckout, { userId, processor: 'nowpayments', months: 3 }),
+    ).rejects.toThrow();
+    const orders = await t.run((ctx) => ctx.db.query('billingOrders').collect());
+    expect(orders).toHaveLength(0);
+  });
+
   test('refuses when billing is disabled', async () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedTiersAndUser(t);

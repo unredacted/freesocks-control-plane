@@ -144,11 +144,15 @@ export const checkoutContext = internalQuery({
   },
 });
 
-/** Insert a pending order bound to the member's userId; audit the checkout start. */
+/**
+ * Persist a pending order bound to the member's userId AFTER the hosted invoice
+ * was created (so a failed create never leaves an orphan); audit the checkout.
+ */
 export const insertOrder = internalMutation({
   args: {
     processor: processorValidator,
     opaqueRef: v.string(),
+    processorRef: v.string(),
     userId: v.id('users'),
     tierId: v.id('tiers'),
     durationDays: v.number(),
@@ -161,6 +165,7 @@ export const insertOrder = internalMutation({
     const orderId = await ctx.db.insert('billingOrders', {
       processor: a.processor,
       opaqueRef: a.opaqueRef,
+      processorRef: a.processorRef,
       userId: a.userId,
       tierId: a.tierId,
       durationDays: a.durationDays,
@@ -181,19 +186,11 @@ export const insertOrder = internalMutation({
   },
 });
 
-/** Record the processor's invoice/session id on the order (post-create). */
-export const attachProcessorRef = internalMutation({
-  args: { orderId: v.id('billingOrders'), processorRef: v.string() },
-  handler: async (ctx, { orderId, processorRef }): Promise<null> => {
-    await ctx.db.patch(orderId, { processorRef, updatedAt: Date.now() });
-    return null;
-  },
-});
-
 /**
  * Start a checkout for a signed-in member. Validates the rail + duration against
- * the resolved catalog, inserts a pending order bound to `userId`, creates the
- * hosted invoice, and returns its redirect URL + our opaque order ref. The
+ * the resolved catalog, creates the hosted invoice, and ONLY THEN persists a
+ * pending order bound to `userId` — so a processor/config failure can't leave an
+ * orphaned `pending` row (the member sees a clean error and can retry). The
  * member identity is NEVER sent to the processor — only `opaqueRef`.
  */
 export const createCheckout = internalAction({
@@ -229,17 +226,6 @@ export const createCheckout = internalAction({
     const secrets = await ctx.runQuery(internal.billing.resolveSecrets, {});
     const base = publicBaseUrl(secrets);
     const opaqueRef = randomHex(16);
-    const orderId = await ctx.runMutation(internal.billing.insertOrder, {
-      processor: a.processor,
-      opaqueRef,
-      userId: a.userId,
-      tierId,
-      durationDays: monthsToDays(a.months),
-      amountCents: duration.amountCents,
-      currency: config.currency,
-      months: a.months,
-    });
-
     const params: CheckoutParams = {
       orderRef: opaqueRef,
       amountCents: duration.amountCents,
@@ -250,12 +236,13 @@ export const createCheckout = internalAction({
       cancelUrl: `${base}/account?order=${opaqueRef}&cancel=1`,
     };
 
+    // Create the invoice FIRST. On failure, nothing is persisted (no orphaned
+    // pending order). The processor's real error is logged server-side for the
+    // operator; the member only ever sees the generic message.
     let result: CheckoutResult;
     try {
       result = await createCheckoutForProcessor(a.processor, params, secrets);
     } catch (err) {
-      // The pending order stays (the stale-pending sweep expires it). Never leak
-      // processor internals to the member.
       console.error(
         `[billing] ${a.processor} checkout create failed:`,
         err instanceof Error ? err.message : String(err),
@@ -265,9 +252,17 @@ export const createCheckout = internalAction({
         message: 'Could not start checkout. Please try again.',
       });
     }
-    await ctx.runMutation(internal.billing.attachProcessorRef, {
-      orderId,
+
+    await ctx.runMutation(internal.billing.insertOrder, {
+      processor: a.processor,
+      opaqueRef,
       processorRef: result.processorRef,
+      userId: a.userId,
+      tierId,
+      durationDays: monthsToDays(a.months),
+      amountCents: duration.amountCents,
+      currency: config.currency,
+      months: a.months,
     });
     return { redirectUrl: result.redirectUrl, orderRef: opaqueRef };
   },
