@@ -84,6 +84,15 @@ dashboard → Settings → Environment Variables). `bunx convex env list` shows 
 `backendServers` table, managed in the admin CMS. See `REMNAWAVE_*` below for the
 optional one-time bootstrap.)
 
+> **Beta compose stack:** the in-stack `deployer` **auto-generates the five
+> pure-random secrets** above (`SESSION_SIGNING_KEY`, `ADMIN_SESSION_SIGNING_KEY`,
+> `ADMIN_BOOTSTRAP_SECRET`, `IP_HASH_SALT`, `ACCOUNT_ID_PEPPER`) once and persists
+> them in the deployment env — leave them as `CHANGE_ME` in `.env.convex` to use
+> that. It never regenerates an already-set value. Retrieve the generated
+> `ADMIN_BOOTSTRAP_SECRET` (for the first passkey) with
+> `bunx convex env get ADMIN_BOOTSTRAP_SECRET`. A standalone `bunx convex deploy`
+> (no compose) still needs them set manually.
+
 **Optional / feature-gated:**
 
 | Var                                                                                                                                   | Default                              | Used by                                                                                                                                                                                                                                                                                                               |
