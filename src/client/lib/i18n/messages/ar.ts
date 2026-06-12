@@ -280,4 +280,8 @@ export const ar: Partial<Messages> = {
   'upgrade.paidBody': 'شكرًا لك! عضويتك مفعّلة الآن.',
   'upgrade.failedTitle': 'لم يكتمل الدفع',
   'upgrade.failedBody': 'لم تتم عملية الدفع، أو انتهت صلاحية الجلسة. يمكنك المحاولة مرة أخرى.',
+
+  'get.upsellTitle': 'تريد بلا حدود؟',
+  'get.upsellBody':
+    'حسابك المجاني جاهز. يمكنك الترقية إلى عضوية FreeSocks في أي وقت للحصول على نطاق ترددي وأجهزة غير محدودة.',
 };

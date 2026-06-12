@@ -36,13 +36,8 @@
       FreeSocks
     </Link>
     <nav class="flex items-center gap-2">
-      <Link href="/get-account">
-        <Button variant="ghost" size="sm">
-          <KeyIcon class="size-4" />
-          <span class="hidden sm:inline">{t('nav.getAccount')}</span>
-        </Button>
-      </Link>
       {#if !me.isPending && me.data?.authenticated}
+        <!-- Signed in: account-relevant CTAs only (no "Get a free account"). -->
         {#if isFreeTierMember && billingEnabled}
           <!-- Free-tier member + billing live: route to the in-app upgrade panel. -->
           <Link href="/account">
@@ -59,6 +54,12 @@
           </Button>
         </Link>
       {:else}
+        <Link href="/get-account">
+          <Button variant="ghost" size="sm">
+            <KeyIcon class="size-4" />
+            <span class="hidden sm:inline">{t('nav.getAccount')}</span>
+          </Button>
+        </Link>
         <Link href="/login">
           <Button variant="outline" size="sm">
             <LogIn class="size-4" />

@@ -5,6 +5,7 @@
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import SetupGuidance from '../components/SetupGuidance.svelte';
+  import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import { meQuery, configQuery, accountQuery, queryKeys } from '../lib/queries';
@@ -349,6 +350,19 @@
           {createSubscription.isPending ? t('account.creating') : t('account.createSub')}
         </Button>
       {/if}
+    </div>
+  {/if}
+
+  <!-- Upsell: once the free account + subscription are working, offer the paid
+       membership right in the flow. The panel self-gates on billing being live
+       (and the member is signed in here, so checkout works). -->
+  {#if isAuthed && subscription && config.data?.billing?.enabled}
+    <div class="space-y-3">
+      <div class="space-y-1">
+        <h2 class="font-display text-lg font-semibold">{t('get.upsellTitle')}</h2>
+        <p class="text-sm text-muted-foreground">{t('get.upsellBody')}</p>
+      </div>
+      <UpgradeMembership mode="upgrade" />
     </div>
   {/if}
 

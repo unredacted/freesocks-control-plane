@@ -104,18 +104,27 @@
       </p>
 
       <div class="flex flex-wrap gap-3">
-        <Link href="/get-account">
-          <Button size="lg" class="text-base">
-            <KeyIcon class="size-4" />
-            Get a free account
-            <ArrowRight class="size-4" />
-          </Button>
-        </Link>
         {#if !me.isPending && me.data?.authenticated}
           <Link href="/account">
-            <Button size="lg" variant="outline" class="text-base">My account</Button>
+            <Button size="lg" class="text-base">
+              <KeyIcon class="size-4" />
+              My account
+              <ArrowRight class="size-4" />
+            </Button>
           </Link>
+          {#if billingEnabled}
+            <Button size="lg" variant="outline" class="text-base" onclick={goUpgrade}>
+              Get a membership
+            </Button>
+          {/if}
         {:else}
+          <Link href="/get-account">
+            <Button size="lg" class="text-base">
+              <KeyIcon class="size-4" />
+              Get a free account
+              <ArrowRight class="size-4" />
+            </Button>
+          </Link>
           <Link href="/login">
             <Button size="lg" variant="outline" class="text-base">Sign in</Button>
           </Link>

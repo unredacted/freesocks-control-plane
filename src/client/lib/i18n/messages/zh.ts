@@ -258,4 +258,7 @@ export const zh: Partial<Messages> = {
   'upgrade.paidBody': '谢谢！你的会员现已激活。',
   'upgrade.failedTitle': '付款未完成',
   'upgrade.failedBody': '你的付款未成功，或结账已过期。你可以重试。',
+
+  'get.upsellTitle': '想要无限制？',
+  'get.upsellBody': '你的免费账户已就绪。随时可升级到 FreeSocks 会员，享受无限流量与设备。',
 };

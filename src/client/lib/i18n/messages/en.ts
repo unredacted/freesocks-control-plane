@@ -223,6 +223,9 @@ export const en = {
   'get.haveAccountPrefix': 'Already have an account?',
   'get.lostNumberHint': 'Lost your account number before saving it? You can switch to a new one —',
   'get.lostNumberLinkLabel': 'change it from your account page',
+  'get.upsellTitle': 'Want unlimited?',
+  'get.upsellBody':
+    'Your free account is ready. Upgrade to a FreeSocks membership any time for unlimited bandwidth and devices.',
 
   // --- tier comparison (free-tier dashboard) ---
   'tiers.title': 'Tiers',
