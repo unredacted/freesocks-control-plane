@@ -774,6 +774,51 @@ http.route({
   }),
 });
 
+// --- admin invite registration (multi-admin onboarding) ---------------------
+// Public + invite-gated: the invitee has no session yet, so the single-use
+// invite token (in the body) is the authorization. Under /api/admin/auth/, so
+// the client leaves these unsigned (no PoP key to sign with).
+
+http.route({
+  path: '/api/admin/auth/register/options',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const body = await readJson<{ invite?: string }>(req);
+    if (!body.invite) return errorJson('validation', 'invite required', 400);
+    try {
+      const out = await ctx.runAction(internal.webauthn.registerInviteOptions, {
+        invite: body.invite,
+        ip: resolveClientIp(req) ?? undefined,
+      });
+      return json(out);
+    } catch (err) {
+      return convexError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/admin/auth/register/verify',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const body = await readJson<{ invite?: string; response?: unknown; deviceLabel?: string }>(req);
+    if (!body.invite || !body.response) {
+      return errorJson('validation', 'invite and response required', 400);
+    }
+    try {
+      const out = await ctx.runAction(internal.webauthn.registerInviteVerify, {
+        invite: body.invite,
+        response: body.response,
+        deviceLabel: body.deviceLabel,
+        requestId: newRequestId(),
+      });
+      return json({ ok: true, username: out.username });
+    } catch (err) {
+      return convexError(err);
+    }
+  }),
+});
+
 // --- billing webhook seam ---------------------------------------------------
 
 http.route({
@@ -941,6 +986,45 @@ http.route({
       'paypal-transmission-time',
     ],
     policyKey: 'webhook.paypal.ip',
+  }),
+});
+
+// --- admin: admins (multi-admin management + invites) -----------------------
+
+http.route({
+  path: '/api/v1/admin/admins',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:admins:read'))) return ADMIN_UNAUTH();
+    return json({ admins: await ctx.runQuery(internal.admins.listAdminsWithCounts, {}) });
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/admins/invite',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:admins:write');
+    if (!admin) return ADMIN_UNAUTH();
+    // Inviting a new admin is a human-admin action, so require a cookie session
+    // (which carries adminUserId) over a service token — the invite needs a real
+    // creator for the audit trail.
+    if (!admin.adminUserId) {
+      return errorJson('auth.forbidden', 'Inviting requires an admin session', 403);
+    }
+    const body = await readJson<{ username?: string; displayName?: string }>(req);
+    if (!body.username) return errorJson('validation', 'username required', 400);
+    try {
+      const out = await ctx.runAction(internal.webauthn.createInvite, {
+        username: body.username,
+        displayName: body.displayName,
+        createdByAdminId: admin.adminUserId,
+        requestId: newRequestId(),
+      });
+      return json(out);
+    } catch (err) {
+      return convexError(err);
+    }
   }),
 });
 

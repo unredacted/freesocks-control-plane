@@ -12,6 +12,7 @@ import { apiClient } from './api';
 import { AuthMeResponse, PublicConfig } from '../../shared/contracts/auth';
 import { AccountResponse } from '../../shared/contracts/account';
 import {
+  AdminListResponse,
   AppSettingsRecord,
   AuditEntry,
   BackendServerAdmin,
@@ -31,6 +32,7 @@ export const queryKeys = {
   config: ['config'] as const,
   account: ['account'] as const,
   adminAuthStatus: ['admin', 'auth-status'] as const,
+  adminAdmins: ['admin', 'admins'] as const,
   adminTiers: ['admin', 'tiers'] as const,
   adminUsers: (q: string, status = '', tier = '') => ['admin', 'users', q, status, tier] as const,
   adminTokens: ['admin', 'tokens'] as const,
@@ -141,6 +143,13 @@ export const adminTiersQuery = () =>
       return result.tiers;
     },
     staleTime: 30_000,
+  }));
+
+export const adminAdminsQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminAdmins,
+    queryFn: async () => (await apiClient.get('/api/v1/admin/admins', AdminListResponse)).admins,
+    staleTime: 15_000,
   }));
 
 // P1-16: paginated via createInfiniteQuery so the admin can "Load more" instead

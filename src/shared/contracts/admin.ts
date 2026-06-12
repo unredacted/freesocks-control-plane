@@ -151,3 +151,37 @@ export const BackendServerUpsert = z.object({
   prometheusUrl: z.string().nullable().optional(),
 });
 export type BackendServerUpsert = z.infer<typeof BackendServerUpsert>;
+
+// --- admin management (multi-admin onboarding via invite links) ---
+
+/** One row in the admins list (GET /api/v1/admin/admins). */
+export const AdminListItem = z.object({
+  id: z.string(),
+  username: z.string(),
+  displayName: z.string(),
+  isActive: z.boolean(),
+  // How many passkeys this admin has registered (0 = invited but not yet set up).
+  passkeyCount: z.number().int().nonnegative(),
+  // True when an unconsumed, unexpired invite is outstanding for this admin.
+  pendingInvite: z.boolean(),
+  lastLoginAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type AdminListItem = z.infer<typeof AdminListItem>;
+
+export const AdminListResponse = z.object({ admins: z.array(AdminListItem) });
+
+/** Mint an invite link for a NEW admin (POST /api/v1/admin/admins/invite). */
+export const CreateInviteRequest = z.object({
+  username: z.string().min(1).max(64),
+  displayName: z.string().max(128).optional(),
+});
+export type CreateInviteRequest = z.infer<typeof CreateInviteRequest>;
+
+/** The raw invite token is returned ONCE; the SPA builds the shareable URL. */
+export const CreateInviteResponse = z.object({
+  inviteToken: z.string(),
+  username: z.string(),
+  expiresAtMs: z.number(),
+});
+export type CreateInviteResponse = z.infer<typeof CreateInviteResponse>;

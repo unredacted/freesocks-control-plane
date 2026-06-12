@@ -13,6 +13,7 @@
   import Gauge from '@lucide/svelte/icons/gauge';
   import Ticket from '@lucide/svelte/icons/ticket';
   import CreditCard from '@lucide/svelte/icons/credit-card';
+  import ShieldCheck from '@lucide/svelte/icons/shield-check';
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -22,6 +23,7 @@
   const NAV = [
     { to: '/admin/tiers', label: 'Tiers', icon: Layers },
     { to: '/admin/users', label: 'Users', icon: UsersIcon },
+    { to: '/admin/admins', label: 'Admins', icon: ShieldCheck },
     { to: '/admin/tokens', label: 'API tokens', icon: KeyIcon },
     { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
     { to: '/admin/membership-codes', label: 'Membership codes', icon: Ticket },

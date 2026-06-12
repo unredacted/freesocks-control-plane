@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { hmacSha256Hex } from './lib/crypto';
+import { hmacSha256Hex, sha256Hex } from './lib/crypto';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -241,6 +241,133 @@ describe('authenticateVerify', () => {
       ),
     );
     expect(row?.consumedAt).toBeTypeOf('number');
+  });
+});
+
+describe('createInvite (multi-admin onboarding)', () => {
+  async function seedCreator(t: T): Promise<Id<'adminUsers'>> {
+    return t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'root',
+        displayName: 'Root',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+  }
+
+  test('mints an invite for a new admin and returns a one-time token (stored hashed)', async () => {
+    const t = convexTest(schema, modules);
+    const creator = await seedCreator(t);
+    const res = await t.action(internal.webauthn.createInvite, {
+      username: 'alex',
+      createdByAdminId: creator,
+    });
+    expect(res.inviteToken).toMatch(/^[0-9a-f]{64}$/);
+    expect(res.username).toBe('alex');
+    const { admins, invites } = await t.run(async (ctx) => ({
+      admins: await ctx.db.query('adminUsers').collect(),
+      invites: await ctx.db.query('adminInvites').collect(),
+    }));
+    expect(admins.map((a) => a.username)).toContain('alex');
+    expect(invites).toHaveLength(1);
+    // Only the hash is persisted — never the raw token.
+    expect(invites[0]!.tokenHash).toBe(await sha256Hex(res.inviteToken));
+    expect(invites[0]!.tokenHash).not.toBe(res.inviteToken);
+  });
+
+  test('rejects a username that already has a registered passkey', async () => {
+    const t = convexTest(schema, modules);
+    const creator = await seedCreator(t);
+    await seedAdminWithCredential(t, 'taken', 'cred-x');
+    await expect(
+      t.action(internal.webauthn.createInvite, { username: 'taken', createdByAdminId: creator }),
+    ).rejects.toThrow(/already has a registered admin/);
+  });
+});
+
+describe('registerInviteOptions / registerInviteVerify (invite gating)', () => {
+  async function seedInvite(
+    t: T,
+    opts: { token?: string; expired?: boolean; consumed?: boolean } = {},
+  ): Promise<{ adminUserId: Id<'adminUsers'>; token: string }> {
+    const token = opts.token ?? 'a'.repeat(64);
+    const adminUserId = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'alex',
+        displayName: 'Alex',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+    const tokenHash = await sha256Hex(token);
+    await t.run((ctx) =>
+      ctx.db.insert('adminInvites', {
+        adminUserId,
+        tokenHash,
+        tokenPrefix: token.slice(0, 8),
+        createdByAdminId: adminUserId,
+        expiresAt: opts.expired ? Date.now() - 1000 : Date.now() + 3_600_000,
+        consumedAt: opts.consumed ? Date.now() : undefined,
+        updatedAt: Date.now(),
+      }),
+    );
+    return { adminUserId, token };
+  }
+
+  test('options: an invalid invite is rejected', async () => {
+    const t = convexTest(schema, modules);
+    await expect(
+      t.action(internal.webauthn.registerInviteOptions, { invite: 'not-a-real-token' }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+  });
+
+  test('options: a valid invite returns registration options + stores a challenge', async () => {
+    const t = convexTest(schema, modules);
+    const { adminUserId, token } = await seedInvite(t);
+    const res = await t.action(internal.webauthn.registerInviteOptions, { invite: token });
+    expect(typeof res.options.challenge).toBe('string');
+    const challenges = await t.run((ctx) =>
+      ctx.db
+        .query('webauthnRegistrationChallenges')
+        .withIndex('by_admin_expires', (q) => q.eq('adminUserId', adminUserId))
+        .collect(),
+    );
+    expect(challenges).toHaveLength(1);
+  });
+
+  test('options: an expired invite is rejected', async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await seedInvite(t, { expired: true });
+    await expect(
+      t.action(internal.webauthn.registerInviteOptions, { invite: token }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+  });
+
+  test('options: a consumed invite is rejected', async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await seedInvite(t, { consumed: true });
+    await expect(
+      t.action(internal.webauthn.registerInviteOptions, { invite: token }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+  });
+
+  test('verify: an invalid invite is rejected', async () => {
+    const t = convexTest(schema, modules);
+    await expect(
+      t.action(internal.webauthn.registerInviteVerify, { invite: 'nope', response: {} }),
+    ).rejects.toThrow(/Invalid or expired invite/);
+  });
+
+  test('verify: a valid invite with no pending challenge fails before any crypto', async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await seedInvite(t);
+    await expect(
+      t.action(internal.webauthn.registerInviteVerify, {
+        invite: token,
+        response: { id: 'x', rawId: 'x', response: {}, type: 'public-key' },
+      }),
+    ).rejects.toThrow(/No valid challenge/);
   });
 });
 

@@ -198,3 +198,102 @@ export const consumeAuthChallenge = internalMutation({
     return { challenge: row.challenge };
   },
 });
+
+// --- admin management + invites (multi-admin onboarding) ---
+
+/**
+ * Every admin row with its passkey count + pending-invite flag, for the admins
+ * management page. Timestamps are ISO strings (the wire convention). The set of
+ * admins is small (operators), so the per-admin credential/invite reads are fine.
+ */
+export const listAdminsWithCounts = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const admins = await ctx.db.query('adminUsers').collect();
+    const out = [];
+    for (const a of admins) {
+      const creds = await ctx.db
+        .query('passkeyCredentials')
+        .withIndex('by_admin', (q) => q.eq('adminUserId', a._id))
+        .collect();
+      const invites = await ctx.db
+        .query('adminInvites')
+        .withIndex('by_admin', (q) => q.eq('adminUserId', a._id))
+        .collect();
+      out.push({
+        id: a._id,
+        username: a.username,
+        displayName: a.displayName,
+        isActive: a.isActive,
+        passkeyCount: creds.length,
+        pendingInvite: invites.some((i) => !i.consumedAt && i.expiresAt > now),
+        lastLoginAt: a.lastLoginAt ? new Date(a.lastLoginAt).toISOString() : null,
+        createdAt: new Date(a._creationTime).toISOString(),
+      });
+    }
+    return out;
+  },
+});
+
+export const insertInvite = internalMutation({
+  args: {
+    adminUserId: v.id('adminUsers'),
+    tokenHash: v.string(),
+    tokenPrefix: v.string(),
+    createdByAdminId: v.id('adminUsers'),
+    ttlMs: v.number(),
+  },
+  handler: async (ctx, { adminUserId, tokenHash, tokenPrefix, createdByAdminId, ttlMs }) => {
+    await ctx.db.insert('adminInvites', {
+      adminUserId,
+      tokenHash,
+      tokenPrefix,
+      createdByAdminId,
+      expiresAt: Date.now() + ttlMs,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/** Resolve a valid (unconsumed, unexpired) invite by its token hash. */
+export const inviteByTokenHash = internalQuery({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, { tokenHash }) => {
+    const row = await ctx.db
+      .query('adminInvites')
+      .withIndex('by_token_hash', (q) => q.eq('tokenHash', tokenHash))
+      .unique();
+    if (!row || row.consumedAt || row.expiresAt <= Date.now()) return null;
+    return { inviteId: row._id, adminUserId: row.adminUserId };
+  },
+});
+
+/**
+ * Atomically mark an invite consumed (single-use gate). Returns {ok:false} if it
+ * was already consumed (a race), so the caller can abort before inserting a
+ * second credential.
+ */
+export const consumeInvite = internalMutation({
+  args: { inviteId: v.id('adminInvites') },
+  handler: async (ctx, { inviteId }) => {
+    const row = await ctx.db.get(inviteId);
+    if (!row || row.consumedAt) return { ok: false as const };
+    await ctx.db.patch(inviteId, { consumedAt: Date.now(), updatedAt: Date.now() });
+    return { ok: true as const };
+  },
+});
+
+/** Cron: delete a page of expired invite rows (consumed ones age out by expiry too). */
+export const sweepExpiredInvites = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const expired = await ctx.db
+      .query('adminInvites')
+      .withIndex('by_expires', (q) => q.lt('expiresAt', Date.now()))
+      .take(limit ?? 500);
+    for (const row of expired) await ctx.db.delete(row._id);
+    return { removed: expired.length };
+  },
+});

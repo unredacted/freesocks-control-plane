@@ -145,6 +145,11 @@ members to carry). On a fresh backend:
 5. **Bootstrap the first admin passkey**: open `/admin` in a browser; the wizard
    appears while `passkeyCredentials` is empty. Paste `ADMIN_BOOTSTRAP_SECRET`,
    register a passkey. Bootstrap **locks forever** once any credential exists.
+   Sign-in is **usernameless**: the passkey is discoverable, so `/admin` just
+   shows a "Sign in with a passkey" button (a username field is a fallback only).
+   **Add further admins** from the CMS — **Admins → Invite an admin** mints a
+   one-time link (24h) the new person opens on their own device to register their
+   passkey; no second bootstrap secret needed.
 6. **Issue `fsv1_` service tokens** (if any external callers): admin CMS → API Tokens.
 7. **Verify** (§8), then point DNS at the reverse proxy and decommission the old stack.
 

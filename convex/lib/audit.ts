@@ -52,6 +52,10 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'billing.checkout.created': ['processor', 'months'],
   'billing.order.paid': ['processor', 'tierSlug', 'durationDays', 'amountCents'],
   'billing.config.update': ['key'],
+  // Multi-admin onboarding: invite minted / redeemed (username is a non-secret
+  // admin label, never the invite token).
+  'admin.invite.created': ['username'],
+  'admin.invite.redeemed': ['username'],
 };
 
 /**

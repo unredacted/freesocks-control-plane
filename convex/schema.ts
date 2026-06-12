@@ -230,6 +230,24 @@ export default defineSchema({
     consumedAt: v.optional(v.number()),
   }).index('by_admin_expires', ['adminUserId', 'expiresAt']),
 
+  // Single-use, short-lived admin INVITE tokens (multi-admin onboarding). An
+  // existing admin mints one for a pre-created (credential-less) adminUsers row;
+  // the invitee opens the link on their own device and registers a passkey,
+  // which consumes the invite. Stored HASHED (never the raw token), like
+  // apiTokens; `tokenPrefix` is the non-secret first chars for display/audit.
+  adminInvites: defineTable({
+    adminUserId: v.id('adminUsers'),
+    tokenHash: v.string(),
+    tokenPrefix: v.string(),
+    createdByAdminId: v.id('adminUsers'),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_token_hash', ['tokenHash'])
+    .index('by_admin', ['adminUserId'])
+    .index('by_expires', ['expiresAt']),
+
   // Short-lived passkey ASSERTION challenges (was the `webauthn:assert:<id>` KV
   // entry). Keyed by an opaque challengeId; `adminUserId` is absent for the
   // unknown/inactive-user sentinel so verify fails like any wrong passkey

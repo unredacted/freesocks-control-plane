@@ -48,6 +48,14 @@ crons.daily(
   {},
 );
 
+// Drop expired admin invite rows (multi-admin onboarding tokens).
+crons.daily(
+  'admin-invite-sweep',
+  { hourUTC: 3, minuteUTC: 55 },
+  internal.admins.sweepExpiredInvites,
+  {},
+);
+
 // Mint a fresh manifest-signed HPKE epoch key (CDN-blinding Phase 3); the login
 // request seals to the current epoch key, not the multi-day static key. Each run
 // also destroys long-expired epoch seeds (forward secrecy). Gated in the isolate
