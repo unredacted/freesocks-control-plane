@@ -196,11 +196,14 @@ See `docs/threat-model-cdn-blinding.md`.
   `http://127.0.0.1:6791` (function `console.*` logs live here, under **Logs**).
   It asks for a **deployment URL** (`http://127.0.0.1:3210` over the tunnel) and
   the **admin key** every time. Retrieve the admin key on the host with
-  `docker compose -f docker-compose.beta.yml exec backend ./generate_admin_key.sh`
-  (it's derived from `INSTANCE_SECRET`, so it's stable; the `keygen` service also
-  wrote it to the `convexkey` volume at `/keys/admin_key`). It is a long-lived,
-  FULL-CONTROL credential (read all data, run any function, deploy code) — treat
-  it like a root password; "rotating" it means changing `INSTANCE_SECRET`.
+  `docker compose -f docker-compose.beta.yml --env-file .env.beta exec backend ./generate_admin_key.sh`
+  (the `--env-file` is required — Compose validates the whole file's `${VAR:?}`
+  guards on every subcommand, so omitting it aborts with a misleading
+  "CAP_ADMIN_KEY is missing"). The key is derived from `INSTANCE_SECRET`, so it's
+  stable; the `keygen` service also wrote it to the `convexkey` volume at
+  `/keys/admin_key`. It is a long-lived, FULL-CONTROL credential (read all data,
+  run any function, deploy code) — treat it like a root password; "rotating" it
+  means changing `INSTANCE_SECRET`.
 
   **Optional — expose it through Caddy (no tunnel).** Uncomment the two site
   blocks at the bottom of the `Caddyfile`, point DNS for both hostnames at the
