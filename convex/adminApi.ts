@@ -26,7 +26,13 @@ import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 import { normalizeSupportId } from './lib/supportId';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
-import { billingConfigWrites, resolveBillingConfig } from './lib/billingConfig';
+import {
+  billingConfigWrites,
+  billingSecretWrites,
+  processorSecretStatus,
+  resolveBillingConfig,
+  resolveProcessorSecrets,
+} from './lib/billingConfig';
 
 // Admin resource functions are INTERNAL: the only caller is the admin-gated
 // HTTP layer (convex/http.ts) via ctx.runQuery/runMutation. Keeping them off
@@ -811,6 +817,8 @@ export const billingOverview = internalQuery({
   },
   handler: async (ctx, { cursor, limit, status }) => {
     const config = await resolveBillingConfig(ctx.db);
+    // Credential status as booleans + the non-secret URLs — never the values.
+    const secretStatus = processorSecretStatus(await resolveProcessorSecrets(ctx.db));
     const pageSize = Math.min(Math.max(limit ?? 50, 1), 200);
     const useStatus = status && BILLING_ORDER_STATUSES.has(status);
     let qry = useStatus
@@ -830,22 +838,29 @@ export const billingOverview = internalQuery({
     const page = rows.slice(0, pageSize);
     const last = page[page.length - 1];
     const nextCursor = hasMore && last ? String(last._creationTime) : null;
-    return { config, orders: page.map(mapBillingOrder), nextCursor };
+    return { config, secretStatus, orders: page.map(mapBillingOrder), nextCursor };
   },
 });
 
-/** Admin: patch the billing config (partial). Validates + audits per key. */
+/**
+ * Admin: patch the billing config + processor credentials (partial). Config
+ * fields are validated/sanitized; secret fields are write-only (a blank box is
+ * left unchanged). Audited per key (the key NAME, never the secret value).
+ */
 export const setBillingConfig = internalMutation({
   args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { patch, actorAdminId }) => {
     let writes: Array<{ key: string; value: string }>;
     try {
-      writes = billingConfigWrites(patch);
+      writes = [...billingConfigWrites(patch), ...billingSecretWrites(patch)];
     } catch (e) {
       throw new ConvexError({
         code: 'validation',
         message: e instanceof Error ? e.message : 'invalid billing config',
       });
+    }
+    if (writes.length === 0) {
+      throw new ConvexError({ code: 'validation', message: 'no recognized billing fields' });
     }
     const now = Date.now();
     for (const { key, value } of writes) {
@@ -873,6 +888,7 @@ export const setBillingConfig = internalMutation({
       });
     }
     const config = await resolveBillingConfig(ctx.db);
-    return { config };
+    const secretStatus = processorSecretStatus(await resolveProcessorSecrets(ctx.db));
+    return { config, secretStatus };
   },
 });

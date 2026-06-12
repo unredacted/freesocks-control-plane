@@ -840,7 +840,6 @@ http.route({
 type BillingProcessorId = 'nowpayments' | 'stripe' | 'paypal';
 function processorWebhook(opts: {
   processor: BillingProcessorId;
-  secretEnv: string;
   /** Single signature header (NOWPayments/Stripe). Omit for PayPal (uses headerNames). */
   sigHeader?: string;
   /** Header set PayPal verifies over (its API call needs all of them). */
@@ -853,11 +852,10 @@ function processorWebhook(opts: {
       `${opts.processor} webhooks are not configured on this deployment`,
       503,
     );
+  // The "not configured" 503 comes from billing.ingestEvent (it resolves the
+  // rail's credentials from the DB or env and throws billing.not_configured when
+  // unset) — caught below. No env pre-check here, since secrets may be DB-only.
   return httpAction(async (ctx, req) => {
-    if (!process.env[opts.secretEnv]) {
-      console.error(`[webhook] rejected: ${opts.secretEnv} unset (billing.not_configured)`);
-      return notConfigured();
-    }
     const declaredLen = Number(req.headers.get('content-length') ?? '0');
     if (Number.isFinite(declaredLen) && declaredLen > 64 * 1024) {
       return errorJson('webhook.too_large', 'Payload too large', 413);
@@ -907,7 +905,6 @@ http.route({
   method: 'POST',
   handler: processorWebhook({
     processor: 'nowpayments',
-    secretEnv: 'NOWPAYMENTS_IPN_SECRET',
     sigHeader: 'x-nowpayments-sig',
     policyKey: 'webhook.nowpayments.ip',
   }),
@@ -918,7 +915,6 @@ http.route({
   method: 'POST',
   handler: processorWebhook({
     processor: 'stripe',
-    secretEnv: 'STRIPE_WEBHOOK_SECRET',
     sigHeader: 'stripe-signature',
     policyKey: 'webhook.stripe.ip',
   }),
@@ -929,9 +925,6 @@ http.route({
   method: 'POST',
   handler: processorWebhook({
     processor: 'paypal',
-    // Cheap pre-check; billing.ingestEvent fully validates all PAYPAL_* vars and
-    // 503s via the ConvexError catch if any is missing.
-    secretEnv: 'PAYPAL_CLIENT_ID',
     headerNames: [
       'paypal-auth-algo',
       'paypal-cert-url',

@@ -60,9 +60,36 @@ export const BillingConfigView = z.object({
 });
 export type BillingConfigView = z.infer<typeof BillingConfigView>;
 
-/** A partial config patch the admin PATCH accepts (validated/sanitized server-side). */
-export const BillingConfigPatch = BillingConfigView.partial();
-export type BillingConfigPatch = z.infer<typeof BillingConfigPatch>;
+/**
+ * Processor credential status: which secrets are set (booleans, never values) +
+ * the non-secret URLs. Returned to the admin UI so it can show "set / not set".
+ */
+export const ProcessorSecretStatus = z.object({
+  publicBaseUrl: z.string(),
+  nowpayments: z.object({ apiKey: z.boolean(), ipnSecret: z.boolean(), apiUrl: z.string() }),
+  stripe: z.object({ apiKey: z.boolean(), webhookSecret: z.boolean() }),
+  paypal: z.object({
+    clientId: z.boolean(),
+    secret: z.boolean(),
+    webhookId: z.boolean(),
+    apiBase: z.string(),
+  }),
+});
+export type ProcessorSecretStatus = z.infer<typeof ProcessorSecretStatus>;
+
+/**
+ * The admin billing-config PATCH body: a partial of the config view, plus the
+ * non-secret `publicBaseUrl` and write-only `secrets` (blank fields are left
+ * unchanged server-side). Not wire-validated; this is the client-side shape.
+ */
+export interface BillingConfigPatch extends Partial<BillingConfigView> {
+  publicBaseUrl?: string;
+  secrets?: {
+    nowpayments?: { apiKey?: string; ipnSecret?: string; apiUrl?: string };
+    stripe?: { apiKey?: string; webhookSecret?: string };
+    paypal?: { clientId?: string; secret?: string; webhookId?: string; apiBase?: string };
+  };
+}
 
 export const AdminBillingOrder = z.object({
   id: z.string(),
@@ -83,6 +110,7 @@ export type AdminBillingOrder = z.infer<typeof AdminBillingOrder>;
 /** GET /api/v1/admin/billing and PATCH /api/v1/admin/billing/config responses. */
 export const AdminBillingOverview = z.object({
   config: BillingConfigView,
+  secretStatus: ProcessorSecretStatus,
   orders: z.array(AdminBillingOrder),
   nextCursor: z.string().nullable(),
 });
@@ -90,5 +118,6 @@ export type AdminBillingOverview = z.infer<typeof AdminBillingOverview>;
 
 export const AdminBillingConfigResponse = z.object({
   config: BillingConfigView,
+  secretStatus: ProcessorSecretStatus,
 });
 export type AdminBillingConfigResponse = z.infer<typeof AdminBillingConfigResponse>;

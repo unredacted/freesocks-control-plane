@@ -10,6 +10,7 @@
   import { adminBillingQuery, queryKeys } from '../../lib/queries';
   import {
     AdminBillingConfigResponse,
+    type BillingConfigPatch,
     type BillingConfigView,
     type BillingProcessor,
   } from '../../../shared/contracts/billing';
@@ -23,9 +24,30 @@
 
   // Editable copy of the config, seeded once from the query.
   let draft = $state<BillingConfigView | null>(null);
-  $effect(() => {
-    if (!draft && billing.data) draft = JSON.parse(JSON.stringify(billing.data.config));
+
+  // Write-only credential inputs. Secrets start blank (the server never returns
+  // them; a blank box is left unchanged on save). The non-secret URLs are seeded
+  // from the masked status so the admin can see + edit the current value.
+  let secretsDraft = $state({
+    publicBaseUrl: '',
+    nowpayments: { apiKey: '', ipnSecret: '', apiUrl: '' },
+    stripe: { apiKey: '', webhookSecret: '' },
+    paypal: { clientId: '', secret: '', webhookId: '', apiBase: '' },
   });
+  let seeded = false;
+  $effect(() => {
+    if (!seeded && billing.data) {
+      draft = JSON.parse(JSON.stringify(billing.data.config));
+      const s = billing.data.secretStatus;
+      secretsDraft.publicBaseUrl = s.publicBaseUrl;
+      secretsDraft.nowpayments.apiUrl = s.nowpayments.apiUrl;
+      secretsDraft.paypal.apiBase = s.paypal.apiBase;
+      seeded = true;
+    }
+  });
+
+  // Masked credential status (booleans + non-secret URLs) for the field badges.
+  let ss = $derived(billing.data?.secretStatus);
 
   const RAILS: { key: BillingProcessor; label: string }[] = [
     { key: 'nowpayments', label: 'Crypto (NOWPayments)' },
@@ -44,17 +66,46 @@
   }
 
   const save = createMutation(() => ({
-    mutationFn: (body: BillingConfigView) =>
+    mutationFn: (body: BillingConfigPatch) =>
       apiClient.patch('/api/v1/admin/billing/config', body, AdminBillingConfigResponse),
     onSuccess: (res) => {
       draft = JSON.parse(JSON.stringify(res.config));
+      // Clear the write-only secret boxes; keep the non-secret URLs from the new status.
+      secretsDraft = {
+        publicBaseUrl: res.secretStatus.publicBaseUrl,
+        nowpayments: { apiKey: '', ipnSecret: '', apiUrl: res.secretStatus.nowpayments.apiUrl },
+        stripe: { apiKey: '', webhookSecret: '' },
+        paypal: {
+          clientId: '',
+          secret: '',
+          webhookId: '',
+          apiBase: res.secretStatus.paypal.apiBase,
+        },
+      };
       // Refresh the admin view AND the public config (the member panel reads it).
       void qc.invalidateQueries({ queryKey: ['admin', 'billing'] });
       void qc.invalidateQueries({ queryKey: queryKeys.config });
-      toast.success('Billing config saved');
+      toast.success('Billing settings saved');
     },
     onError: (err) => toast.error('Save failed', { description: apiErrorMessage(err) }),
   }));
+
+  // One PATCH carries both the config and the (write-only) credentials.
+  function submitAll() {
+    if (!draft) return;
+    save.mutate({
+      ...draft,
+      publicBaseUrl: secretsDraft.publicBaseUrl,
+      secrets: {
+        nowpayments: secretsDraft.nowpayments,
+        stripe: secretsDraft.stripe,
+        paypal: secretsDraft.paypal,
+      },
+    });
+  }
+
+  // Render helper: a "set ✓ / not set" badge for a write-only credential.
+  const setBadge = (isSet: boolean) => (isSet ? 'set ✓ — leave blank to keep' : 'not set');
 
   const STATUS_TONE: Record<string, string> = {
     paid: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
@@ -68,8 +119,8 @@
 <AdminLayout>
   <h1 class="mb-2 text-2xl font-bold">Billing</h1>
   <p class="mb-6 text-sm text-muted-foreground">
-    Self-service membership purchases. Prices are admin-editable here (no deploy). A rail also needs
-    its processor secrets set as Convex env vars, or its checkout/webhook returns 503. Turn
+    Self-service membership purchases. Prices and processor credentials are admin-editable here (no
+    deploy) — set a rail's credentials below, or its checkout/webhook returns 503. Turn
     <code class="font-mono">enabled</code> on only once prices are set and a rail is live.
   </p>
 
@@ -160,13 +211,129 @@
         </div>
         <Button variant="outline" size="sm" class="mt-2" onclick={addDuration}>Add duration</Button>
       </div>
+    </section>
 
-      <div class="flex justify-end">
-        <Button disabled={save.isPending} onclick={() => draft && save.mutate(draft)}>
-          {save.isPending ? 'Saving…' : 'Save config'}
-        </Button>
+    <!-- Processor credentials: DB-stored (an env var is the fallback). Secret
+         fields are WRITE-ONLY — the server never returns them; a blank box is
+         left unchanged on save. -->
+    {#snippet cred(label: string, isSet: boolean, value: string, onInput: (v: string) => void)}
+      <label class="block space-y-1">
+        <span class="text-xs text-muted-foreground">
+          {label}
+          <span class={isSet ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}>
+            ({setBadge(isSet)})
+          </span>
+        </span>
+        <Input
+          type="password"
+          autocomplete="off"
+          class="min-h-9"
+          {value}
+          oninput={(e) => onInput((e.currentTarget as HTMLInputElement).value)}
+        />
+      </label>
+    {/snippet}
+
+    <section class="mb-8 space-y-5 rounded-xl border border-border bg-card p-5">
+      <div>
+        <h2 class="text-base font-semibold">Processor credentials</h2>
+        <p class="text-sm text-muted-foreground">
+          Stored in the database (an env var is the fallback). Secret fields are write-only — leave
+          a box blank to keep the current value.
+        </p>
+      </div>
+
+      <label class="block space-y-1">
+        <span class="text-xs text-muted-foreground">Public base URL (for IPN/return URLs)</span>
+        <Input
+          class="min-h-9"
+          placeholder="https://beta.freesocks.org"
+          value={secretsDraft.publicBaseUrl}
+          oninput={(e) =>
+            (secretsDraft.publicBaseUrl = (e.currentTarget as HTMLInputElement).value)}
+        />
+      </label>
+
+      <div class="space-y-2 rounded-lg border border-border/60 p-3">
+        <p class="text-xs font-semibold">Crypto (NOWPayments)</p>
+        {@render cred(
+          'API key',
+          !!ss?.nowpayments.apiKey,
+          secretsDraft.nowpayments.apiKey,
+          (v) => (secretsDraft.nowpayments.apiKey = v),
+        )}
+        {@render cred(
+          'IPN secret',
+          !!ss?.nowpayments.ipnSecret,
+          secretsDraft.nowpayments.ipnSecret,
+          (v) => (secretsDraft.nowpayments.ipnSecret = v),
+        )}
+        <label class="block space-y-1">
+          <span class="text-xs text-muted-foreground">API URL (blank = production default)</span>
+          <Input
+            class="min-h-9"
+            placeholder="https://api.nowpayments.io"
+            value={secretsDraft.nowpayments.apiUrl}
+            oninput={(e) =>
+              (secretsDraft.nowpayments.apiUrl = (e.currentTarget as HTMLInputElement).value)}
+          />
+        </label>
+      </div>
+
+      <div class="space-y-2 rounded-lg border border-border/60 p-3">
+        <p class="text-xs font-semibold">Card (Stripe)</p>
+        {@render cred(
+          'Secret API key',
+          !!ss?.stripe.apiKey,
+          secretsDraft.stripe.apiKey,
+          (v) => (secretsDraft.stripe.apiKey = v),
+        )}
+        {@render cred(
+          'Webhook signing secret',
+          !!ss?.stripe.webhookSecret,
+          secretsDraft.stripe.webhookSecret,
+          (v) => (secretsDraft.stripe.webhookSecret = v),
+        )}
+      </div>
+
+      <div class="space-y-2 rounded-lg border border-border/60 p-3">
+        <p class="text-xs font-semibold">PayPal</p>
+        {@render cred(
+          'Client ID',
+          !!ss?.paypal.clientId,
+          secretsDraft.paypal.clientId,
+          (v) => (secretsDraft.paypal.clientId = v),
+        )}
+        {@render cred(
+          'Secret',
+          !!ss?.paypal.secret,
+          secretsDraft.paypal.secret,
+          (v) => (secretsDraft.paypal.secret = v),
+        )}
+        {@render cred(
+          'Webhook ID',
+          !!ss?.paypal.webhookId,
+          secretsDraft.paypal.webhookId,
+          (v) => (secretsDraft.paypal.webhookId = v),
+        )}
+        <label class="block space-y-1">
+          <span class="text-xs text-muted-foreground">API base (blank = live default)</span>
+          <Input
+            class="min-h-9"
+            placeholder="https://api-m.paypal.com"
+            value={secretsDraft.paypal.apiBase}
+            oninput={(e) =>
+              (secretsDraft.paypal.apiBase = (e.currentTarget as HTMLInputElement).value)}
+          />
+        </label>
       </div>
     </section>
+
+    <div class="mb-8 flex justify-end">
+      <Button disabled={save.isPending} onclick={submitAll}>
+        {save.isPending ? 'Saving…' : 'Save settings'}
+      </Button>
+    </div>
 
     <!-- Orders -->
     <div class="mb-3 flex flex-wrap items-center gap-2">

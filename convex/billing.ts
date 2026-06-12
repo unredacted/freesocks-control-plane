@@ -21,8 +21,8 @@ import { ConvexError, v } from 'convex/values';
 import { randomHex } from './lib/crypto';
 import { applyMembership } from './lifecycle';
 import { writeAuditLog } from './lib/audit';
-import { findDuration, resolveBillingConfig } from './lib/billingConfig';
-import type { BillingConfig } from './lib/billingConfig';
+import { findDuration, resolveBillingConfig, resolveProcessorSecrets } from './lib/billingConfig';
+import type { BillingConfig, ProcessorSecrets } from './lib/billingConfig';
 import * as nowpayments from './lib/processors/nowpayments';
 import * as stripe from './lib/processors/stripe';
 import * as paypal from './lib/processors/paypal';
@@ -51,58 +51,42 @@ const orderStatusValidator = v.union(
   v.literal('expired'),
 );
 
-// --- env-backed processor dispatch (kept out of the db ctx) ------------------
+// --- processor dispatch (credentials resolved from DB/env, passed in) --------
 
 /** The deployment's public origin, for building absolute IPN/return URLs. */
-function publicBaseUrl(): string {
-  const base = process.env.PUBLIC_BASE_URL;
-  if (!base) {
+function publicBaseUrl(secrets: ProcessorSecrets): string {
+  if (!secrets.publicBaseUrl) {
     throw new ConvexError({
       code: 'billing.unavailable',
-      message: 'Billing is not fully configured',
+      message: 'Billing is not fully configured (no public base URL)',
     });
   }
-  return base.replace(/\/$/, '');
+  return secrets.publicBaseUrl.replace(/\/$/, '');
 }
 
 async function createCheckoutForProcessor(
   processor: ProcessorId,
   params: CheckoutParams,
+  secrets: ProcessorSecrets,
 ): Promise<CheckoutResult> {
   switch (processor) {
     case 'nowpayments': {
-      const apiKey = process.env.NOWPAYMENTS_API_KEY;
-      if (!apiKey) throw new Error('NOWPAYMENTS_API_KEY unset');
+      if (!secrets.nowpayments.apiKey) throw new Error('NOWPayments API key not configured');
       return nowpayments.createCheckout(
-        { apiUrl: process.env.NOWPAYMENTS_API_URL || 'https://api.nowpayments.io', apiKey },
+        { apiUrl: secrets.nowpayments.apiUrl, apiKey: secrets.nowpayments.apiKey },
         params,
       );
     }
     case 'stripe': {
-      const apiKey = process.env.STRIPE_API_KEY;
-      if (!apiKey) throw new Error('STRIPE_API_KEY unset');
-      return stripe.createCheckout({ apiKey }, params);
+      if (!secrets.stripe.apiKey) throw new Error('Stripe API key not configured');
+      return stripe.createCheckout({ apiKey: secrets.stripe.apiKey }, params);
     }
     case 'paypal': {
-      const cfg = paypalConfig();
-      if (!cfg) throw new Error('PAYPAL_* env unset');
-      return paypal.createCheckout(cfg, params);
+      const pp = secrets.paypal;
+      if (!pp.clientId || !pp.secret || !pp.webhookId) throw new Error('PayPal not configured');
+      return paypal.createCheckout(pp, params);
     }
   }
-}
-
-/** Build the PayPal config from env, or null if not fully configured. */
-function paypalConfig(): paypal.PayPalConfig | null {
-  const clientId = process.env.PAYPAL_CLIENT_ID;
-  const secret = process.env.PAYPAL_SECRET;
-  const webhookId = process.env.PAYPAL_WEBHOOK_ID;
-  if (!clientId || !secret || !webhookId) return null;
-  return {
-    clientId,
-    secret,
-    webhookId,
-    apiBase: process.env.PAYPAL_API_BASE || 'https://api-m.paypal.com',
-  };
 }
 
 /** Verify + parse a processor webhook. Throws billing.not_configured if its secret is unset. */
@@ -111,40 +95,39 @@ async function verifyForProcessor(
   rawBody: string,
   signature: string | null,
   headers: Record<string, string>,
+  secrets: ProcessorSecrets,
 ): Promise<VerifyResult> {
+  const notConfigured = (name: string) =>
+    new ConvexError({
+      code: 'billing.not_configured',
+      message: `${name} webhooks are not configured`,
+    });
   switch (processor) {
     case 'nowpayments': {
-      const ipnSecret = process.env.NOWPAYMENTS_IPN_SECRET;
-      if (!ipnSecret) {
-        throw new ConvexError({
-          code: 'billing.not_configured',
-          message: 'NOWPayments webhooks are not configured',
-        });
-      }
-      return nowpayments.verifyAndParse({ rawBody, signature, ipnSecret });
+      if (!secrets.nowpayments.ipnSecret) throw notConfigured('NOWPayments');
+      return nowpayments.verifyAndParse({
+        rawBody,
+        signature,
+        ipnSecret: secrets.nowpayments.ipnSecret,
+      });
     }
     case 'stripe': {
-      const secret = process.env.STRIPE_WEBHOOK_SECRET;
-      if (!secret) {
-        throw new ConvexError({
-          code: 'billing.not_configured',
-          message: 'Stripe webhooks are not configured',
-        });
-      }
-      return stripe.verifyAndParse({ rawBody, signature, secret });
+      if (!secrets.stripe.webhookSecret) throw notConfigured('Stripe');
+      return stripe.verifyAndParse({ rawBody, signature, secret: secrets.stripe.webhookSecret });
     }
     case 'paypal': {
-      const cfg = paypalConfig();
-      if (!cfg) {
-        throw new ConvexError({
-          code: 'billing.not_configured',
-          message: 'PayPal webhooks are not configured',
-        });
-      }
-      return paypal.verifyAndParse({ rawBody, headers, cfg });
+      const pp = secrets.paypal;
+      if (!pp.clientId || !pp.secret || !pp.webhookId) throw notConfigured('PayPal');
+      return paypal.verifyAndParse({ rawBody, headers, cfg: pp });
     }
   }
 }
+
+/** Internal-only: resolve all processor credentials (DB rows, env fallback). */
+export const resolveSecrets = internalQuery({
+  args: {},
+  handler: (ctx): Promise<ProcessorSecrets> => resolveProcessorSecrets(ctx.db),
+});
 
 // --- checkout ----------------------------------------------------------------
 
@@ -243,7 +226,8 @@ export const createCheckout = internalAction({
       });
     }
 
-    const base = publicBaseUrl();
+    const secrets = await ctx.runQuery(internal.billing.resolveSecrets, {});
+    const base = publicBaseUrl(secrets);
     const opaqueRef = randomHex(16);
     const orderId = await ctx.runMutation(internal.billing.insertOrder, {
       processor: a.processor,
@@ -268,7 +252,7 @@ export const createCheckout = internalAction({
 
     let result: CheckoutResult;
     try {
-      result = await createCheckoutForProcessor(a.processor, params);
+      result = await createCheckoutForProcessor(a.processor, params, secrets);
     } catch (err) {
       // The pending order stays (the stale-pending sweep expires it). Never leak
       // processor internals to the member.
@@ -375,11 +359,13 @@ export const ingestEvent = internalAction({
     headers: v.optional(v.record(v.string(), v.string())),
   },
   handler: async (ctx, a): Promise<{ ok: true; duplicate?: boolean; applied: boolean }> => {
+    const secrets = await ctx.runQuery(internal.billing.resolveSecrets, {});
     const verified = await verifyForProcessor(
       a.processor,
       a.rawBody,
       a.signature ?? null,
       a.headers ?? {},
+      secrets,
     );
     if (!verified.ok) throw new Error(`webhook verify failed: ${verified.reason}`);
 

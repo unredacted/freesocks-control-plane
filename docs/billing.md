@@ -38,6 +38,13 @@ SPA UpgradeMembership ──POST /api/v1/billing/checkout──▶ billing.creat
   validation), edited via the admin **Billing** page (`PATCH
 /api/v1/admin/billing/config`) — not the generic settings PATCH. Exposed
   publicly (prices only) through `publicConfig.get`.
+- **Credentials** — processor API keys/secrets + the public base URL live in the
+  same `appSettings` table under `billing.secret.*` (the same trust model as the
+  proxy-backend secrets in `backendServers.config`): **set them in Admin →
+  Billing → Processor credentials** (write-only — the API never returns a secret,
+  only set/not-set booleans). Each field falls back to its env var
+  (`NOWPAYMENTS_API_KEY`, …) when the DB row is unset, so an env-configured deploy
+  keeps working; `resolveProcessorSecrets` (internal-only) reads DB-then-env.
 - **Orders** — the `billingOrders` table: one row per checkout, bound to the
   member's `userId`. Swept by `retention.expireStalePendingOrders` (pending >48h
   → expired) and `retention.sweepBillingOrders` (terminal > 365d → deleted).

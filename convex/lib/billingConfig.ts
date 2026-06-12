@@ -178,6 +178,141 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
   }
   if ('durations' in p) put(BILLING_KEYS.durations, sanitizeDurations(p.durations));
 
-  if (writes.length === 0) throw new Error('billing config patch had no recognized fields');
+  return writes;
+}
+
+// --- processor secrets (DB-stored, env-fallback) ----------------------------
+//
+// Secrets live in the same `appSettings` table as the proxy-backend secrets
+// (backendServers.config), NOT in SETTINGS_DEFAULTS — so they're never returned
+// by appSettings.resolved or publicConfig. They are resolved ONLY by the billing
+// actions (internal) and surfaced to the admin UI as set/not-set booleans, never
+// as values. DB takes precedence; an env var is the fallback (so an existing
+// env-configured deploy keeps working until secrets are moved into the DB).
+
+export interface ProcessorSecrets {
+  publicBaseUrl: string;
+  nowpayments: { apiKey: string; ipnSecret: string; apiUrl: string };
+  stripe: { apiKey: string; webhookSecret: string };
+  paypal: { clientId: string; secret: string; webhookId: string; apiBase: string };
+}
+
+const NOWPAYMENTS_DEFAULT_API = 'https://api.nowpayments.io';
+const PAYPAL_DEFAULT_API = 'https://api-m.paypal.com';
+
+/** Keys that hold credentials (`secret`) or non-secret processor config. */
+export const BILLING_SECRET_KEYS = {
+  publicBaseUrl: 'billing.publicBaseUrl',
+  np_apiKey: 'billing.secret.nowpayments.apiKey',
+  np_ipnSecret: 'billing.secret.nowpayments.ipnSecret',
+  np_apiUrl: 'billing.nowpayments.apiUrl',
+  stripe_apiKey: 'billing.secret.stripe.apiKey',
+  stripe_webhookSecret: 'billing.secret.stripe.webhookSecret',
+  pp_clientId: 'billing.secret.paypal.clientId',
+  pp_secret: 'billing.secret.paypal.secret',
+  pp_webhookId: 'billing.secret.paypal.webhookId',
+  pp_apiBase: 'billing.paypal.apiBase',
+} as const;
+
+const asStr = (raw: unknown): string => (typeof raw === 'string' ? raw : '');
+
+/** DB value (a non-blank string) else the env fallback else `fallback`. */
+function dbOrEnv(dbVal: unknown, envName: string, fallback = ''): string {
+  const s = asStr(dbVal).trim();
+  if (s.length > 0) return s;
+  const e = process.env[envName];
+  return e && e.trim().length > 0 ? e : fallback;
+}
+
+/** Resolve all processor credentials (DB rows, env fallback). Internal use only. */
+export async function resolveProcessorSecrets(db: DatabaseReader): Promise<ProcessorSecrets> {
+  const [pub, npKey, npIpn, npUrl, stKey, stWh, ppCid, ppSec, ppWh, ppBase] = await Promise.all([
+    readSetting(db, BILLING_SECRET_KEYS.publicBaseUrl),
+    readSetting(db, BILLING_SECRET_KEYS.np_apiKey),
+    readSetting(db, BILLING_SECRET_KEYS.np_ipnSecret),
+    readSetting(db, BILLING_SECRET_KEYS.np_apiUrl),
+    readSetting(db, BILLING_SECRET_KEYS.stripe_apiKey),
+    readSetting(db, BILLING_SECRET_KEYS.stripe_webhookSecret),
+    readSetting(db, BILLING_SECRET_KEYS.pp_clientId),
+    readSetting(db, BILLING_SECRET_KEYS.pp_secret),
+    readSetting(db, BILLING_SECRET_KEYS.pp_webhookId),
+    readSetting(db, BILLING_SECRET_KEYS.pp_apiBase),
+  ]);
+  return {
+    publicBaseUrl: dbOrEnv(pub, 'PUBLIC_BASE_URL'),
+    nowpayments: {
+      apiKey: dbOrEnv(npKey, 'NOWPAYMENTS_API_KEY'),
+      ipnSecret: dbOrEnv(npIpn, 'NOWPAYMENTS_IPN_SECRET'),
+      apiUrl: dbOrEnv(npUrl, 'NOWPAYMENTS_API_URL', NOWPAYMENTS_DEFAULT_API),
+    },
+    stripe: {
+      apiKey: dbOrEnv(stKey, 'STRIPE_API_KEY'),
+      webhookSecret: dbOrEnv(stWh, 'STRIPE_WEBHOOK_SECRET'),
+    },
+    paypal: {
+      clientId: dbOrEnv(ppCid, 'PAYPAL_CLIENT_ID'),
+      secret: dbOrEnv(ppSec, 'PAYPAL_SECRET'),
+      webhookId: dbOrEnv(ppWh, 'PAYPAL_WEBHOOK_ID'),
+      apiBase: dbOrEnv(ppBase, 'PAYPAL_API_BASE', PAYPAL_DEFAULT_API),
+    },
+  };
+}
+
+/** Admin-safe view: which credentials are set (booleans), plus the non-secret URLs. */
+export interface ProcessorSecretStatus {
+  publicBaseUrl: string;
+  nowpayments: { apiKey: boolean; ipnSecret: boolean; apiUrl: string };
+  stripe: { apiKey: boolean; webhookSecret: boolean };
+  paypal: { clientId: boolean; secret: boolean; webhookId: boolean; apiBase: string };
+}
+export function processorSecretStatus(s: ProcessorSecrets): ProcessorSecretStatus {
+  const set = (v: string) => v.trim().length > 0;
+  return {
+    publicBaseUrl: s.publicBaseUrl,
+    nowpayments: {
+      apiKey: set(s.nowpayments.apiKey),
+      ipnSecret: set(s.nowpayments.ipnSecret),
+      apiUrl: s.nowpayments.apiUrl,
+    },
+    stripe: { apiKey: set(s.stripe.apiKey), webhookSecret: set(s.stripe.webhookSecret) },
+    paypal: {
+      clientId: set(s.paypal.clientId),
+      secret: set(s.paypal.secret),
+      webhookId: set(s.paypal.webhookId),
+      apiBase: s.paypal.apiBase,
+    },
+  };
+}
+
+/**
+ * Admin secret-patch → `appSettings` writes. WRITE-ONLY: a blank field is left
+ * unchanged (the UI never round-trips secret values, so a submit with empty
+ * boxes must not wipe set credentials). Accepts `{ publicBaseUrl?, secrets?: {
+ * nowpayments?, stripe?, paypal? } }`.
+ */
+export function billingSecretWrites(patch: unknown): Array<{ key: string; value: string }> {
+  if (!patch || typeof patch !== 'object') return [];
+  const p = patch as Record<string, unknown>;
+  const writes: Array<{ key: string; value: string }> = [];
+  const putStr = (key: string, raw: unknown) => {
+    const s = asStr(raw).trim();
+    if (s.length > 0) writes.push({ key, value: JSON.stringify(s) });
+  };
+  if ('publicBaseUrl' in p) putStr(BILLING_SECRET_KEYS.publicBaseUrl, p.publicBaseUrl);
+  if (p.secrets && typeof p.secrets === 'object') {
+    const s = p.secrets as Record<string, unknown>;
+    const np = (s.nowpayments ?? {}) as Record<string, unknown>;
+    putStr(BILLING_SECRET_KEYS.np_apiKey, np.apiKey);
+    putStr(BILLING_SECRET_KEYS.np_ipnSecret, np.ipnSecret);
+    putStr(BILLING_SECRET_KEYS.np_apiUrl, np.apiUrl);
+    const st = (s.stripe ?? {}) as Record<string, unknown>;
+    putStr(BILLING_SECRET_KEYS.stripe_apiKey, st.apiKey);
+    putStr(BILLING_SECRET_KEYS.stripe_webhookSecret, st.webhookSecret);
+    const pp = (s.paypal ?? {}) as Record<string, unknown>;
+    putStr(BILLING_SECRET_KEYS.pp_clientId, pp.clientId);
+    putStr(BILLING_SECRET_KEYS.pp_secret, pp.secret);
+    putStr(BILLING_SECRET_KEYS.pp_webhookId, pp.webhookId);
+    putStr(BILLING_SECRET_KEYS.pp_apiBase, pp.apiBase);
+  }
   return writes;
 }

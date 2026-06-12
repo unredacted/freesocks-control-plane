@@ -471,6 +471,37 @@ describe('billing.ingestEvent (PayPal)', () => {
   });
 });
 
+describe('processor secrets resolve from the DB (env fallback)', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test('a NOWPayments IPN verifies against the DB-stored secret with no env set', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-dbsecret');
+    const DB_SECRET = 'db-stored-ipn-secret';
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'billing.secret.nowpayments.ipnSecret',
+        value: JSON.stringify(DB_SECRET),
+        updatedAt: Date.now(),
+      }),
+    );
+    const payload = { payment_status: 'finished', payment_id: 55, order_id: 'ref-dbsecret' };
+    const sorted = JSON.stringify(payload, Object.keys(payload).sort());
+    const signature = await hmacSha512Hex(DB_SECRET, sorted); // signed with the DB secret
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'nowpayments',
+      rawBody: JSON.stringify(payload),
+      signature,
+    });
+    expect(res).toEqual({ ok: true, applied: true });
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      expect(user?.membershipExpiresAt).toBeGreaterThan(Date.now());
+    });
+  });
+});
+
 describe('billing.applyEvent single-grant guard', () => {
   afterEach(() => vi.unstubAllEnvs());
 
