@@ -185,8 +185,6 @@ export const zh: Partial<Messages> = {
   'get.badge': '免费账户',
   'get.title': '获取 FreeSocks 账户',
   'get.introTwoSteps': '两个快速步骤：完成真人验证以创建免费账户，然后创建订阅。',
-  'get.introReady': '你的账户和订阅已就绪。',
-  'get.introReadyNoSub': '账户已就绪。在下方创建订阅以获取密钥。',
   'get.step1Title': '创建你的账户',
   'get.chooseBackend': '选择服务器类型',
   'get.backendAria': '服务器类型',
@@ -195,7 +193,6 @@ export const zh: Partial<Messages> = {
   'get.createAccount': '创建我的账户',
   'get.freeAccountNote': '免费账户有效期 30 天，限一台设备。无需电子邮件或密码。',
   'get.accountReady': '你的账户已就绪。',
-  'get.accountReadyTier': (p) => `你的账户已在 ${p.tier} 套餐上就绪。`,
   'get.step2Title': '创建你的订阅',
   'get.step2Intro': '创建代理订阅，获得可粘贴到任何兼容 VPN 客户端的链接。',
   'get.manageHintPrefix': '随时管理此订阅，前往',
@@ -260,5 +257,5 @@ export const zh: Partial<Messages> = {
   'upgrade.failedBody': '你的付款未成功，或结账已过期。你可以重试。',
 
   'get.upsellTitle': '想要无限制？',
-  'get.upsellBody': '你的免费账户已就绪。随时可升级到 FreeSocks 会员，享受无限流量与设备。',
+  'get.upsellBody': '随时可升级到 FreeSocks 会员，享受无限流量与设备。',
 };

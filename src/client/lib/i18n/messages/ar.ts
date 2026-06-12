@@ -205,8 +205,6 @@ export const ar: Partial<Messages> = {
   'get.badge': 'حساب مجاني',
   'get.title': 'احصل على حساب FreeSocks',
   'get.introTwoSteps': 'خطوتان سريعتان: أكمل التحقق البشري لإنشاء حساب مجاني، ثم أنشئ اشتراكك.',
-  'get.introReady': 'حسابك واشتراكك جاهزان.',
-  'get.introReadyNoSub': 'حسابك جاهز. أنشئ اشتراكًا بالأسفل للحصول على مفتاحك.',
   'get.step1Title': 'أنشئ حسابك',
   'get.chooseBackend': 'اختر نوع الخادم',
   'get.backendAria': 'نوع الخادم',
@@ -216,7 +214,6 @@ export const ar: Partial<Messages> = {
   'get.freeAccountNote':
     'الحسابات المجانية صالحة لمدة 30 يومًا ومحدودة بجهاز واحد. بلا بريد إلكتروني أو كلمة مرور.',
   'get.accountReady': 'حسابك جاهز.',
-  'get.accountReadyTier': (p) => `حسابك جاهز على فئة ${p.tier}.`,
   'get.step2Title': 'أنشئ اشتراكك',
   'get.step2Intro': 'أنشئ اشتراك وكيل للحصول على رابط يمكنك لصقه في أي تطبيق VPN متوافق.',
   'get.manageHintPrefix': 'أدر هذا الاشتراك في أي وقت من',
@@ -283,5 +280,5 @@ export const ar: Partial<Messages> = {
 
   'get.upsellTitle': 'تريد بلا حدود؟',
   'get.upsellBody':
-    'حسابك المجاني جاهز. يمكنك الترقية إلى عضوية FreeSocks في أي وقت للحصول على نطاق ترددي وأجهزة غير محدودة.',
+    'يمكنك الترقية إلى عضوية FreeSocks في أي وقت للحصول على نطاق ترددي وأجهزة غير محدودة.',
 };

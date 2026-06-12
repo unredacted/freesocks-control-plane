@@ -196,8 +196,6 @@ export const en = {
   'get.title': 'Get a FreeSocks account',
   'get.introTwoSteps':
     'Two quick steps: solve the human-check to create a free account, then create your subscription.',
-  'get.introReady': 'Your account and subscription are ready.',
-  'get.introReadyNoSub': 'Your account is ready. Create a subscription below to get your key.',
   'get.step1Title': 'Create your account',
   'get.chooseBackend': 'Choose a backend',
   'get.backendAria': 'Backend',
@@ -207,8 +205,6 @@ export const en = {
   'get.freeAccountNote':
     'Free accounts are valid for 30 days and limited to one device. No email or password.',
   'get.accountReady': 'Your account is ready.',
-  'get.accountReadyTier': (p: Record<string, string | number>) =>
-    `Your account is ready on the ${p.tier} tier.`,
   'get.step2Title': 'Create your subscription',
   'get.step2Intro':
     'Create a proxy subscription to get a URL you can paste into any compatible VPN client.',
@@ -225,7 +221,7 @@ export const en = {
   'get.lostNumberLinkLabel': 'change it from your account page',
   'get.upsellTitle': 'Want unlimited?',
   'get.upsellBody':
-    'Your free account is ready. Upgrade to a FreeSocks membership any time for unlimited bandwidth and devices.',
+    'Upgrade to a FreeSocks membership any time for unlimited bandwidth and devices.',
 
   // --- tier comparison (free-tier dashboard) ---
   'tiers.title': 'Tiers',

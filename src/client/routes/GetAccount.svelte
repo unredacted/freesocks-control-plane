@@ -137,19 +137,13 @@
     <h1 class="text-3xl md:text-4xl font-display font-bold tracking-tight">
       {t('get.title')}
     </h1>
-    <p class="text-sm text-muted-foreground max-w-md mx-auto">
-      {#if me.isPending && !created}
-        {t('common.loading')}
-      {:else if isAuthed}
-        {#if subscription}
-          {t('get.introReady')}
-        {:else}
-          {t('get.introReadyNoSub')}
-        {/if}
-      {:else}
-        {t('get.introTwoSteps')}
-      {/if}
-    </p>
+    <!-- Pre-creation guidance only. Once authed, the success callout below is
+         the single "account ready" message — no redundant restatement here. -->
+    {#if me.isPending && !created}
+      <p class="text-sm text-muted-foreground max-w-md mx-auto">{t('common.loading')}</p>
+    {:else if !isAuthed}
+      <p class="text-sm text-muted-foreground max-w-md mx-auto">{t('get.introTwoSteps')}</p>
+    {/if}
   </header>
 
   <!-- STEP 1: create account (no proxy server required) -->
@@ -251,9 +245,7 @@
     >
       <CheckCircle class="size-4 text-primary shrink-0" />
       <span>
-        {accountTier
-          ? t('get.accountReadyTier', { tier: accountTier.name })
-          : t('get.accountReady')}
+        {t('get.accountReady')}
         {#if !created}
           <!-- Refresh-recovery path: the reveal-once state is volatile, so a
                reload right after creation must not be a dead end. The rotate
@@ -353,10 +345,11 @@
     </div>
   {/if}
 
-  <!-- Upsell: once the free account + subscription are working, offer the paid
-       membership right in the flow. The panel self-gates on billing being live
-       (and the member is signed in here, so checkout works). -->
-  {#if isAuthed && subscription && config.data?.billing?.enabled}
+  <!-- Upsell: the moment the free account exists, offer the paid membership —
+       not gated on first creating the free subscription. The panel self-gates
+       on billing being live (and the member is signed in here, so checkout
+       works). -->
+  {#if isAuthed && config.data?.billing?.enabled}
     <div class="space-y-3">
       <div class="space-y-1">
         <h2 class="font-display text-lg font-semibold">{t('get.upsellTitle')}</h2>
