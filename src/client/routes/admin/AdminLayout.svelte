@@ -1,7 +1,10 @@
 <script lang="ts">
+  import { z } from 'zod';
   import Link from '../../components/Link.svelte';
   import { router } from '../../stores/router.svelte';
   import { cn } from '../../lib/utils';
+  import { apiClient } from '../../lib/api';
+  import { clearSessionKey } from '../../lib/pop';
   import Layers from '@lucide/svelte/icons/layers';
   import UsersIcon from '@lucide/svelte/icons/users';
   import KeyIcon from '@lucide/svelte/icons/key';
@@ -14,11 +17,29 @@
   import Ticket from '@lucide/svelte/icons/ticket';
   import CreditCard from '@lucide/svelte/icons/credit-card';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
+  import LogOut from '@lucide/svelte/icons/log-out';
 
   interface Props {
     children?: import('svelte').Snippet;
   }
   let { children }: Props = $props();
+
+  let signingOut = $state(false);
+  // Mirror the member logout (Account.svelte): the local clear + redirect must
+  // run even if the network POST fails, so a flaky connection can't strand the
+  // admin in a half-signed-out state. Clears the admin PoP key too, so the next
+  // sign-in binds a fresh one. Lands on /admin, which shows the sign-in form.
+  async function signOut() {
+    signingOut = true;
+    try {
+      await apiClient.post('/api/admin/auth/logout', {}, z.object({ ok: z.boolean() }));
+    } catch {
+      /* best-effort server-side revoke; the cookie clears on redirect regardless */
+    } finally {
+      await clearSessionKey('admin').catch(() => {});
+      window.location.href = '/admin';
+    }
+  }
 
   const NAV = [
     { to: '/admin/tiers', label: 'Tiers', icon: Layers },
@@ -92,6 +113,17 @@
         </Link>
       {/each}
     </nav>
+    <div class="mt-2 border-t border-border pt-2">
+      <button
+        type="button"
+        onclick={signOut}
+        disabled={signingOut}
+        class="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground disabled:opacity-60"
+      >
+        <LogOut class="size-4 shrink-0" />
+        {signingOut ? 'Signing out…' : 'Sign out'}
+      </button>
+    </div>
   </aside>
   <section>
     {#if children}{@render children()}{/if}
