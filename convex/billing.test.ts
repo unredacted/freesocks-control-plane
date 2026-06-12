@@ -186,6 +186,22 @@ describe('billing.createCheckout', () => {
     expect(orders).toHaveLength(0);
   });
 
+  test('refuses a crypto term below the crypto minimum (default 3 months), no order left', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTiersAndUser(t);
+    // Catalog includes a 1-month term, but cryptoMinMonths defaults to 3, so a
+    // 1-month NOWPayments checkout is refused before any processor call.
+    await enableBilling(t, [
+      { months: 1, amountCents: 500 },
+      { months: 3, amountCents: 1400 },
+    ]);
+    await expect(
+      t.action(internal.billing.createCheckout, { userId, processor: 'nowpayments', months: 1 }),
+    ).rejects.toThrow();
+    const orders = await t.run((ctx) => ctx.db.query('billingOrders').collect());
+    expect(orders).toHaveLength(0);
+  });
+
   test('refuses when billing is disabled', async () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedTiersAndUser(t);

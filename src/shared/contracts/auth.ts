@@ -114,6 +114,9 @@ export const PublicConfig = z.object({
         amountCents: z.number().int(),
       }),
     ),
+    /** Minimum term (months) the crypto rail accepts (per-coin minimums; XMR's
+     * is high). The SPA disables shorter terms when crypto is the chosen method. */
+    cryptoMinMonths: z.number().int(),
   }),
 });
 export type PublicConfig = z.infer<typeof PublicConfig>;

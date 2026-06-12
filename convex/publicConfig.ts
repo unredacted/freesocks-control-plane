@@ -87,6 +87,7 @@ export const get = query({
         currency: billing.currency,
         tierSlug: billing.tierSlug,
         durations: billing.durations,
+        cryptoMinMonths: billing.cryptoMinMonths,
       },
     };
   },

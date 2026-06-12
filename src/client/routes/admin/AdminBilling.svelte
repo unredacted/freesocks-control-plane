@@ -211,6 +211,29 @@
         </div>
         <Button variant="outline" size="sm" class="mt-2" onclick={addDuration}>Add duration</Button>
       </div>
+
+      <label class="block">
+        <span class="mb-1 block text-xs font-medium text-muted-foreground"
+          >Crypto minimum term (months)</span
+        >
+        <Input
+          type="number"
+          min={1}
+          class="min-h-9 w-24"
+          value={draft.cryptoMinMonths}
+          oninput={(e) =>
+            draft &&
+            (draft.cryptoMinMonths = Math.max(
+              1,
+              Math.round(Number((e.currentTarget as HTMLInputElement).value)),
+            ))}
+        />
+        <span class="mt-1 block text-xs text-muted-foreground">
+          Shortest term the crypto rail (NOWPayments) offers. Coins like XMR have a per-payment
+          minimum that floats with fees, so the cheapest crypto term must clear it; card/PayPal
+          aren't affected.
+        </span>
+      </label>
     </section>
 
     <!-- Processor credentials: DB-stored (an env var is the fallback). Secret

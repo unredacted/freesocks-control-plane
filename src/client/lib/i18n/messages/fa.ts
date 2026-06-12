@@ -248,6 +248,8 @@ export const fa: Partial<Messages> = {
   'upgrade.extendTitle': 'عضویت خود را تمدید کنید',
   'upgrade.subtitle': 'پهنای باند و دستگاه‌های نامحدود. مدت و روش پرداخت را انتخاب کنید.',
   'upgrade.durationLabel': 'مدت عضویت',
+  'upgrade.cryptoMinNote': (p) =>
+    `پرداخت رمزارزی از ${p.months} ماه شروع می‌شود — مدت‌های کوتاه‌تر کمتر از حداقل شبکه هستند. برای مدت کوتاه‌تر روش دیگری انتخاب کنید.`,
   'upgrade.months': (p) => `${p.count} ماه`,
   'upgrade.perMonth': (p) => `${p.price}/ماه`,
   'upgrade.methodLabel': 'روش پرداخت',

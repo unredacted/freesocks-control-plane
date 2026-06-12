@@ -263,6 +263,8 @@ export const en = {
   'upgrade.extendTitle': 'Extend your membership',
   'upgrade.subtitle': 'Unlimited bandwidth and devices. Choose a length and how to pay.',
   'upgrade.durationLabel': 'Membership length',
+  'upgrade.cryptoMinNote': (p: Record<string, string | number>) =>
+    `Crypto payments start at ${p.months} months — shorter terms fall below the network minimum. Pick another method for shorter terms.`,
   'upgrade.months': (p: Record<string, string | number>) =>
     p.count === 1 ? '1 month' : `${p.count} months`,
   'upgrade.perMonth': (p: Record<string, string | number>) => `${p.price}/mo`,

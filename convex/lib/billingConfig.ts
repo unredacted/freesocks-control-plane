@@ -32,6 +32,14 @@ export interface BillingConfig {
   currency: string;
   /** Purchasable fixed terms, ascending by months. */
   durations: BillingDuration[];
+  /**
+   * Minimum term (months) purchasable with the crypto rail (NOWPayments). Each
+   * coin has a per-payment minimum that floats with fees — XMR's is high — and
+   * the payer picks the coin on the hosted page, so we can't pre-check it. This
+   * floor keeps the cheapest offered crypto term above that minimum; shorter
+   * terms stay card/PayPal-only. Card/PayPal have no such floor (min 1).
+   */
+  cryptoMinMonths: number;
 }
 
 /** Compiled defaults. PLACEHOLDER prices — set real ones in Admin → Billing pre-launch. */
@@ -46,6 +54,7 @@ export const BILLING_DEFAULTS: BillingConfig = {
     { months: 6, amountCents: 2700 },
     { months: 12, amountCents: 5000 },
   ],
+  cryptoMinMonths: 3,
 };
 
 /** The `appSettings` keys this config is persisted across (the `billing.` namespace). */
@@ -57,6 +66,7 @@ export const BILLING_KEYS = {
   tierSlug: 'billing.membership.tierSlug',
   currency: 'billing.membership.currency',
   durations: 'billing.membership.durations',
+  cryptoMinMonths: 'billing.nowpayments.minMonths',
 } as const;
 
 const MAX_MONTHS = 120; // 10 years — a sane upper bound on a single fixed term.
@@ -103,6 +113,13 @@ function asNonEmptyString(raw: unknown, fallback: string): string {
   return typeof raw === 'string' && raw.trim().length > 0 ? raw : fallback;
 }
 
+/** Clamp a minimum-term value to an integer in [1, MAX_MONTHS]; else the fallback. */
+function asMinMonths(raw: unknown, fallback: number): number {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 && raw <= MAX_MONTHS
+    ? raw
+    : fallback;
+}
+
 async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
   const row = await db
     .query('appSettings')
@@ -118,7 +135,7 @@ async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
 
 /** Resolve the full billing config from stored `billing.*` rows, fail-safe to defaults. */
 export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingConfig> {
-  const [enabled, np, st, pp, tierSlug, currency, durations] = await Promise.all([
+  const [enabled, np, st, pp, tierSlug, currency, durations, cryptoMin] = await Promise.all([
     readSetting(db, BILLING_KEYS.enabled),
     readSetting(db, BILLING_KEYS.rail_nowpayments),
     readSetting(db, BILLING_KEYS.rail_stripe),
@@ -126,6 +143,7 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     readSetting(db, BILLING_KEYS.tierSlug),
     readSetting(db, BILLING_KEYS.currency),
     readSetting(db, BILLING_KEYS.durations),
+    readSetting(db, BILLING_KEYS.cryptoMinMonths),
   ]);
   return {
     enabled: asBool(enabled, BILLING_DEFAULTS.enabled),
@@ -137,12 +155,22 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     tierSlug: asNonEmptyString(tierSlug, BILLING_DEFAULTS.tierSlug),
     currency: asNonEmptyString(currency, BILLING_DEFAULTS.currency).toUpperCase(),
     durations: sanitizeDurations(durations),
+    cryptoMinMonths: asMinMonths(cryptoMin, BILLING_DEFAULTS.cryptoMinMonths),
   };
 }
 
 /** Look up a duration by months in a resolved config. */
 export function findDuration(cfg: BillingConfig, months: number): BillingDuration | undefined {
   return cfg.durations.find((d) => d.months === months);
+}
+
+/**
+ * Minimum purchasable term (months) for a rail. Crypto (NOWPayments) carries the
+ * per-coin-minimum floor; card/PayPal have none. The SPA mirrors this to gate the
+ * duration picker; the checkout action enforces it server-side.
+ */
+export function minMonthsForProcessor(cfg: BillingConfig, processor: BillingProcessor): number {
+  return processor === 'nowpayments' ? cfg.cryptoMinMonths : 1;
 }
 
 /**
@@ -177,6 +205,12 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
     );
   }
   if ('durations' in p) put(BILLING_KEYS.durations, sanitizeDurations(p.durations));
+  if ('cryptoMinMonths' in p) {
+    put(
+      BILLING_KEYS.cryptoMinMonths,
+      asMinMonths(p.cryptoMinMonths, BILLING_DEFAULTS.cryptoMinMonths),
+    );
+  }
 
   return writes;
 }

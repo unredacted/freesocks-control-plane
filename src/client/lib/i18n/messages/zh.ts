@@ -235,6 +235,8 @@ export const zh: Partial<Messages> = {
   'upgrade.extendTitle': '续订你的会员',
   'upgrade.subtitle': '无限流量与设备。选择时长和支付方式。',
   'upgrade.durationLabel': '会员时长',
+  'upgrade.cryptoMinNote': (p) =>
+    `加密支付最少 ${p.months} 个月，更短周期低于网络最低限额。如需更短周期请改用其他方式。`,
   'upgrade.months': (p) => `${p.count} 个月`,
   'upgrade.perMonth': (p) => `${p.price}/月`,
   'upgrade.methodLabel': '支付方式',

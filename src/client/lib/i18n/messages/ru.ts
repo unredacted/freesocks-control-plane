@@ -260,6 +260,8 @@ export const ru: Partial<Messages> = {
   'upgrade.extendTitle': 'Продлить членство',
   'upgrade.subtitle': 'Безлимитный трафик и устройства. Выберите срок и способ оплаты.',
   'upgrade.durationLabel': 'Срок членства',
+  'upgrade.cryptoMinNote': (p) =>
+    `Оплата криптовалютой — от ${p.months} мес.; более короткие сроки ниже сетевого минимума. Для коротких сроков выберите другой способ.`,
   'upgrade.months': (p) => `${p.count} мес.`,
   'upgrade.perMonth': (p) => `${p.price}/мес`,
   'upgrade.methodLabel': 'Способ оплаты',

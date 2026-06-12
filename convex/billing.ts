@@ -21,7 +21,12 @@ import { ConvexError, v } from 'convex/values';
 import { randomHex } from './lib/crypto';
 import { applyMembership } from './lifecycle';
 import { writeAuditLog } from './lib/audit';
-import { findDuration, resolveBillingConfig, resolveProcessorSecrets } from './lib/billingConfig';
+import {
+  findDuration,
+  minMonthsForProcessor,
+  resolveBillingConfig,
+  resolveProcessorSecrets,
+} from './lib/billingConfig';
 import type { BillingConfig, ProcessorSecrets } from './lib/billingConfig';
 import * as nowpayments from './lib/processors/nowpayments';
 import * as stripe from './lib/processors/stripe';
@@ -214,6 +219,15 @@ export const createCheckout = internalAction({
       throw new ConvexError({
         code: 'billing.invalid_duration',
         message: 'Unknown membership duration',
+      });
+    }
+    // Crypto carries a per-coin minimum (XMR's is high) and the payer picks the
+    // coin on the hosted page, so we floor the term here. The SPA hides these,
+    // but a crafted request must still be refused.
+    if (a.months < minMonthsForProcessor(config, a.processor)) {
+      throw new ConvexError({
+        code: 'billing.duration_unavailable',
+        message: 'That term is not available for this payment method.',
       });
     }
     if (!tierId) {

@@ -256,6 +256,8 @@ export const ar: Partial<Messages> = {
   'upgrade.extendTitle': 'مدّد عضويتك',
   'upgrade.subtitle': 'نطاق ترددي وأجهزة غير محدودة. اختر المدة وطريقة الدفع.',
   'upgrade.durationLabel': 'مدة العضوية',
+  'upgrade.cryptoMinNote': (p) =>
+    `تبدأ مدفوعات العملات المشفّرة من ${p.months} أشهر — المدد الأقصر أقل من الحد الأدنى للشبكة. اختر طريقة أخرى للمدد الأقصر.`,
   'upgrade.months': (p) => `${p.count} شهر`,
   'upgrade.perMonth': (p) => `${p.price}/شهر`,
   'upgrade.methodLabel': 'طريقة الدفع',

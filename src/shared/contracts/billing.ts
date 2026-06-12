@@ -57,6 +57,8 @@ export const BillingConfigView = z.object({
   currency: z.string(),
   tierSlug: z.string(),
   durations: z.array(BillingDuration),
+  /** Minimum term (months) purchasable with the crypto rail (per-coin minimums). */
+  cryptoMinMonths: z.number().int(),
 });
 export type BillingConfigView = z.infer<typeof BillingConfigView>;
 
