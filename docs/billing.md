@@ -96,6 +96,14 @@ ids), enforced by an allowlist, and is covered by a test that asserts a
    `waiting`→pending, `failed`/`refunded`→failed, `expired`→expired.
 5. **Sandbox:** `api-sandbox.nowpayments.io` + the IPN simulator lets you drive a
    payment to `finished` without real funds.
+6. **Per-coin minimums (a PRICING constraint).** NOWPayments enforces a minimum
+   payment amount per coin that floats with network fees, and **XMR's is among
+   the highest.** We send a **USD-priced** invoice and the payer picks the coin on
+   the hosted page, so we cannot pre-check the floor — a too-low amount fails
+   there with "Crypto amount … is less than minimal". Therefore the **cheapest
+   duration must be priced high enough to clear XMR's minimum** (test it; leave
+   headroom), or XMR payers can't buy that option. This is the real lower bound on
+   membership pricing, not an app limit.
 
 ### USD off-ramp (operational, not code)
 
