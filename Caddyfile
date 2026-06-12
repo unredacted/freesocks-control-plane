@@ -167,3 +167,45 @@
 		file_server
 	}
 }
+
+# =============================================================================
+# OPTIONAL — expose the Convex dashboard + deploy API through Caddy.
+# =============================================================================
+# OFF by default: the dashboard (:6791) and deploy/sync API (:3210) stay bound to
+# 127.0.0.1 and are reached over an SSH tunnel (docs/beta-deploy.md). To reach
+# the dashboard from a browser without a tunnel, UNCOMMENT both site blocks below
+# and:
+#   1. Point DNS (A/AAAA) for BOTH hostnames at this host.
+#   2. In .env.beta set CONVEX_DASHBOARD_ADDRESS + CONVEX_API_ADDRESS (the `web`
+#      service passes them in for the interpolation below) and
+#      CONVEX_DASHBOARD_DEPLOYMENT_URL = https://<CONVEX_API_ADDRESS> (so the
+#      dashboard's BROWSER calls the API host). See .env.beta.example.
+#   3. `docker compose ... up -d` (to apply the env), then reload Caddy.
+#
+# Two HOSTS, not one random path: the dashboard is a Next.js app serving assets
+# from absolute paths (/_next/*), so it must sit at a host ROOT — a sub-path
+# breaks it — and its browser separately calls the deploy API's own /api/* paths.
+# For obscurity on beta, use long random subdomains (e.g. cvx-dash-7f3a9c.<zone>,
+# cvx-api-7f3a9c.<zone>).
+#
+# !!! SECURITY !!!  The deploy API (:3210) carries the deployment's sync/deploy
+# surface and accepts the admin key for FULL data + deploy control — which is why
+# it is otherwise 127.0.0.1-only. Unauthenticated callers can still reach ONLY
+# publicConfig.get (the public-function lockdown holds), but anyone with the
+# hostname + admin key has full control. On beta these hostnames ARE the gate, so
+# treat them as secrets; in PROD front BOTH with Pangolin (auth + CrowdSec) and
+# do not rely on obscurity. (Convex serves the dashboard cross-origin to the API;
+# if the dashboard can't connect after enabling, verify there first.)
+#
+# {$CONVEX_DASHBOARD_ADDRESS} {
+# 	encode zstd gzip
+# 	header -Server
+# 	reverse_proxy dashboard:6791
+# }
+#
+# {$CONVEX_API_ADDRESS} {
+# 	encode zstd gzip
+# 	header -Server
+# 	# reverse_proxy upgrades the /api/.../sync WebSocket natively.
+# 	reverse_proxy backend:3210
+# }

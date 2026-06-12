@@ -191,9 +191,21 @@ See `docs/threat-model-cdn-blinding.md`.
   cannot be spoofed. `CF_FRONTED` is left UNSET in this topology: there is no Cloudflare
   edge in front, so a client-supplied `cf-connecting-ip` would be spoofable — the backend
   ignores that header unless `CF_FRONTED=true`, and Caddy strips it upstream anyway.
-- **Dashboard.** Reach it over an SSH tunnel, never publicly:
+- **Dashboard.** By default, reach it over an SSH tunnel:
   `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 <beta-host>`, then open
-  `http://127.0.0.1:6791`.
+  `http://127.0.0.1:6791` (function `console.*` logs live here, under **Logs**).
+
+  **Optional — expose it through Caddy (no tunnel).** Uncomment the two site
+  blocks at the bottom of the `Caddyfile`, point DNS for both hostnames at the
+  host, set `CONVEX_DASHBOARD_ADDRESS` + `CONVEX_API_ADDRESS` +
+  `CONVEX_DASHBOARD_DEPLOYMENT_URL` in `.env.beta` (see `.env.beta.example`),
+  `up -d`, then reload Caddy. It needs **two** subdomains — one for the dashboard
+  UI, one for the deploy API the dashboard's browser calls (the UI is a Next.js
+  app that can't live under a sub-path). **Security:** the deploy-API host fronts
+  the admin/deploy surface (admin key = full control; unauthenticated callers
+  still reach only `publicConfig.get`). Use long, random, secret subdomains on
+  beta; in prod gate **both** behind Pangolin (auth + CrowdSec) — obscurity is
+  not a prod control.
 
 ## Operations (A3/A4)
 

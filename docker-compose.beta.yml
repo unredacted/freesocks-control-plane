@@ -126,7 +126,11 @@ services:
     ports:
       - '127.0.0.1:${DASHBOARD_PORT:-6791}:6791'
     environment:
-      - NEXT_PUBLIC_DEPLOYMENT_URL=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
+      # Default = the on-host tunnel URL. To run the dashboard remotely via Caddy
+      # (see the optional blocks in Caddyfile), set CONVEX_DASHBOARD_DEPLOYMENT_URL
+      # to the PUBLIC deploy-API host (https://<CONVEX_API_ADDRESS>) — the
+      # dashboard's browser connects there.
+      - NEXT_PUBLIC_DEPLOYMENT_URL=${CONVEX_DASHBOARD_DEPLOYMENT_URL:-http://127.0.0.1:3210}
     depends_on:
       backend:
         condition: service_healthy
@@ -206,6 +210,11 @@ services:
     environment:
       - SITE_ADDRESS=${SITE_ADDRESS:-beta.freesocks.org}
       - ACME_EMAIL=${ACME_EMAIL:-}
+      # Optional Convex-dashboard exposure (see the commented site blocks in
+      # Caddyfile + docs/beta-deploy.md). Empty unless you opt in; Caddy only
+      # references them when those blocks are uncommented.
+      - CONVEX_DASHBOARD_ADDRESS=${CONVEX_DASHBOARD_ADDRESS:-}
+      - CONVEX_API_ADDRESS=${CONVEX_API_ADDRESS:-}
     depends_on:
       backend:
         condition: service_healthy
