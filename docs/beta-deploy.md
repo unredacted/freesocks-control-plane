@@ -120,10 +120,21 @@ In a browser:
 ```sh
 git pull
 docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --build
+# Force the one-shot deployer to actually re-run with the freshly built image:
+docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --build --force-recreate deployer
+docker compose -f docker-compose.beta.yml --env-file .env.beta logs --tail=40 deployer  # expect "[deploy] OK"
 ```
 
-That rebuilds the SPA + deployer images and re-runs `keygen` + `deployer`, which
-re-deploys the functions, re-applies `.env.convex`, and re-seeds (all idempotent).
+That rebuilds the SPA + deployer images. The `web` service (long-lived) restarts
+with the new SPA on the first command. The **`deployer` is a one-shot**
+(`restart: no`): plain `up -d` will rebuild its image but often will **not re-run
+an already-exited one-shot**, so the new functions/schema never get pushed — the
+classic symptom is a **new SPA talking to an old backend** (e.g. usernameless
+admin sign-in returning `username required`, or `/admin` still re-prompting). The
+explicit `--force-recreate deployer` line guarantees it runs; always confirm the
+log ends with `[deploy] OK`. Everything the deployer does (`convex deploy`, env
+apply, seed) is idempotent, so re-running is safe.
+
 Header-only Caddyfile tweaks need no rebuild:
 
 ```sh
