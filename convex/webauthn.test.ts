@@ -162,7 +162,26 @@ describe('authenticateOptions (M4 anti-enumeration + throttle)', () => {
     expect(row?.adminUserId).toBeUndefined();
   });
 
-  test('a known admin yields the same shape but with its credentials listed', async () => {
+  test('usernameless: no username yields discoverable options (no allowCredentials), admin-blind challenge', async () => {
+    const t = convexTest(schema, modules);
+    await seedAdminWithCredential(t, 'admin', 'cred-1');
+    // The default sign-in flow: omit the username entirely. The authenticator
+    // picks from its resident passkeys, so the server sends no allowCredentials
+    // hint and the challenge is not tied to any admin (verify resolves the admin
+    // from the chosen credential).
+    const res = await t.action(internal.webauthn.authenticateOptions, {});
+    expect(typeof res.options.challenge).toBe('string');
+    expect(typeof res.challengeId).toBe('string');
+    expect(res.options.allowCredentials ?? []).toHaveLength(0);
+    const row = await t.run(async (ctx) =>
+      (await ctx.db.query('webauthnAuthChallenges').collect()).find(
+        (r) => r.challengeId === res.challengeId,
+      ),
+    );
+    expect(row?.adminUserId).toBeUndefined();
+  });
+
+  test('a known admin (username fallback) yields the same shape but with its credentials listed', async () => {
     const t = convexTest(schema, modules);
     await seedAdminWithCredential(t, 'admin', 'cred-1');
     const res = await t.action(internal.webauthn.authenticateOptions, { username: 'admin' });

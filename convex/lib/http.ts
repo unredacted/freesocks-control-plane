@@ -342,6 +342,32 @@ export async function resolveAdmin(
   return { tokenScopes: tok.scopes };
 }
 
+/**
+ * Cookie-only admin-session probe for the unauthenticated `/api/admin/auth/status`
+ * endpoint. Returns the bound adminUserId when the fs_admin_session cookie maps
+ * to a live admin session — deliberately WITHOUT a proof-of-possession check.
+ *
+ * This is *detection*, not authorization: the status route returns only booleans
+ * (signed-in? / bootstrap state) and performs no privileged action, so skipping
+ * PoP here leaks nothing a cookie-holder didn't already have. Every privileged
+ * admin route still goes through `resolveAdmin` (full PoP). Using `resolveAdmin`
+ * here was the /admin re-prompt bug: a PoP-bound session's status GET is unsigned
+ * (the admin auth surface can't be signed), so `sessionPopOk` failed and the
+ * landing page reported signed-out and re-prompted an already-authenticated admin.
+ */
+export async function adminSessionProbe(
+  ctx: ActionCtx,
+  req: Request,
+): Promise<Id<'adminUsers'> | null> {
+  const raw = parseCookies(req.headers.get('cookie'))[ADMIN_COOKIE];
+  const key = process.env.ADMIN_SESSION_SIGNING_KEY;
+  if (!raw || !key) return null;
+  const sid = await verifySignedValue(raw, key);
+  if (!sid) return null;
+  const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
+  return sess && sess.kind === 'admin' && sess.adminUserId ? sess.adminUserId : null;
+}
+
 export function hasScope(scopes: string[] | undefined, required: string): boolean {
   return Boolean(scopes?.includes(required));
 }

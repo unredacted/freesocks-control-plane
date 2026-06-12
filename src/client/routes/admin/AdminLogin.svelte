@@ -13,50 +13,59 @@
   import { ensureSessionKey } from '../../lib/pop';
   import { POP_PUBKEY_FIELD } from '../../../shared/crypto/pop';
 
-  let username = $state('');
-  let error = $state<string | null>(null);
   let busy = $state(false);
+  let error = $state<string | null>(null);
+  // Usernameless (discoverable-credential) sign-in is the default. The username
+  // field is a fallback only: some authenticators register a passkey WITHOUT
+  // making it discoverable, so the browser won't surface it without an
+  // allowCredentials hint — a username lets the server supply that hint.
+  let useUsername = $state(false);
+  let username = $state('');
 
-  async function submit() {
+  async function signIn(withUsername: boolean) {
     busy = true;
     error = null;
     try {
+      // Omit the username for the discoverable flow; send it only for the
+      // fallback. The server returns no allowCredentials when usernameless, so
+      // the authenticator offers every resident passkey for this site.
       const optsRes = await fetch('/api/admin/auth/authenticate/options', {
         method: 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username }),
+        body: JSON.stringify(withUsername && username.trim() ? { username: username.trim() } : {}),
       });
       if (!optsRes.ok) {
-        // Surface the server's actual error message so the user can tell the
-        // difference between "username not found" and "service unavailable".
         const body = (await optsRes.json().catch(() => ({}))) as { error?: { message?: string } };
-        const msg = body.error?.message;
-        // Specific UX: a 403 here usually means the username doesn't exist
-        // ("No such admin"). Make that human-friendly.
-        if (optsRes.status === 403) {
-          throw new Error(msg ?? 'No admin found with that username.');
-        }
-        throw new Error(msg ?? `Failed to start authentication (${optsRes.status})`);
+        throw new Error(body.error?.message ?? `Failed to start sign-in (${optsRes.status})`);
       }
       const optsBody = (await optsRes.json()) as {
         options: Parameters<typeof startAuthentication>[0]['optionsJSON'];
         challengeId: string;
       };
+
       let assertion: Awaited<ReturnType<typeof startAuthentication>>;
       try {
         assertion = await startAuthentication({ optionsJSON: optsBody.options });
       } catch (err) {
-        // Distinguish user-cancelled (NotAllowedError) from device errors so
-        // the message is actionable rather than scary.
         const name = err instanceof Error ? err.name : '';
         if (name === 'NotAllowedError' || name === 'AbortError') {
+          // Cancelled, timed out, or no usable passkey was offered. From the
+          // usernameless path, surface the username fallback as the next step
+          // (covers an older passkey that isn't discoverable).
+          if (!withUsername) {
+            useUsername = true;
+            throw new Error(
+              "No passkey selected. If yours isn't offered automatically, enter your username and try again.",
+            );
+          }
           throw new Error('Passkey prompt was cancelled. Try again.');
         }
         throw new Error(
           `Passkey ceremony failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+
       // PoP (Phase 2): mint/ensure the admin signing key and bind it to this
       // session by posting its public point with the assertion. Admin then
       // inherits PoP via the shared apiClient seam on every later request.
@@ -73,7 +82,7 @@
       });
       if (!verifyRes.ok) {
         const body = (await verifyRes.json().catch(() => ({}))) as { error?: { message?: string } };
-        throw new Error(body.error?.message ?? 'Authentication failed');
+        throw new Error(body.error?.message ?? 'Sign-in failed');
       }
       router.navigate('/admin/tiers');
     } catch (err) {
@@ -88,19 +97,53 @@
   <Card>
     <CardHeader>
       <CardTitle>Admin sign-in</CardTitle>
-      <CardDescription>Use your registered passkey.</CardDescription>
+      <CardDescription>Sign in with your passkey — no username needed.</CardDescription>
     </CardHeader>
     <CardContent class="space-y-4">
-      <div>
-        <label class="text-sm mb-1 block" for="admin-username">Username</label>
-        <Input id="admin-username" bind:value={username} />
-      </div>
       {#if error}
         <p class="text-sm text-destructive">{error}</p>
       {/if}
-      <Button onclick={submit} disabled={busy || !username} class="w-full">
-        {busy ? 'Authenticating...' : 'Sign in with passkey'}
-      </Button>
+
+      {#if useUsername}
+        <div>
+          <label class="text-sm mb-1 block" for="admin-username">Username</label>
+          <Input
+            id="admin-username"
+            bind:value={username}
+            autocomplete="username webauthn"
+            onkeydown={(e: KeyboardEvent) => {
+              if (e.key === 'Enter' && username.trim() && !busy) void signIn(true);
+            }}
+          />
+        </div>
+        <Button onclick={() => signIn(true)} disabled={busy || !username.trim()} class="w-full">
+          {busy ? 'Authenticating…' : 'Sign in'}
+        </Button>
+        <button
+          type="button"
+          class="text-xs text-muted-foreground underline hover:text-foreground"
+          onclick={() => {
+            useUsername = false;
+            error = null;
+          }}
+        >
+          Back to passkey sign-in
+        </button>
+      {:else}
+        <Button onclick={() => signIn(false)} disabled={busy} class="w-full">
+          {busy ? 'Authenticating…' : 'Sign in with a passkey'}
+        </Button>
+        <button
+          type="button"
+          class="text-xs text-muted-foreground underline hover:text-foreground"
+          onclick={() => {
+            useUsername = true;
+            error = null;
+          }}
+        >
+          Use a username instead
+        </button>
+      {/if}
     </CardContent>
   </Card>
 </div>

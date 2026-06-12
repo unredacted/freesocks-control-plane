@@ -22,6 +22,7 @@ import { POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
 import {
   ADMIN_COOKIE,
   MEMBER_COOKIE,
+  adminSessionProbe,
   errorJson,
   guard,
   ipHashSubject,
@@ -654,9 +655,13 @@ http.route({
   path: '/api/admin/auth/status',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
-    const admin = await resolveAdmin(ctx, req);
+    // Cookie-only probe (no PoP): this is signed-in *detection* that drives a
+    // redirect, not a privileged action, and the admin auth surface is unsigned.
+    // Gating it on a PoP signature re-prompted already-signed-in admins. See
+    // adminSessionProbe.
+    const adminUserId = await adminSessionProbe(ctx, req);
     const status = await ctx.runQuery(internal.admins.bootstrapStatus, {});
-    return json({ ...status, signedIn: Boolean(admin?.adminUserId) });
+    return json({ ...status, signedIn: adminUserId !== null });
   }),
 });
 
@@ -705,11 +710,14 @@ http.route({
   path: '/api/admin/auth/authenticate/options',
   method: 'POST',
   handler: guard(async (ctx, req) => {
+    // Username is optional: omitted for the usernameless / discoverable flow,
+    // present only as a fallback. An empty string is normalized to undefined so
+    // it doesn't get treated as a (never-matching) username lookup.
     const body = await readJson<{ username?: string }>(req);
-    if (!body.username) return errorJson('validation', 'username required', 400);
+    const username = body.username?.trim() || undefined;
     try {
       const out = await ctx.runAction(internal.webauthn.authenticateOptions, {
-        username: body.username,
+        username,
         ip: resolveClientIp(req) ?? undefined,
       });
       return json(out);

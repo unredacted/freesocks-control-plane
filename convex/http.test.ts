@@ -571,3 +571,45 @@ describe('billing order poll route', () => {
     expect(json.status).toBe('confirming');
   });
 });
+
+describe('GET /api/admin/auth/status — cookie-only signed-in detection', () => {
+  test('a PoP-bound admin session reports signedIn WITHOUT a PoP signature', async () => {
+    const t = convexTest(schema, modules);
+    const adminUserId = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'op',
+        displayName: 'Op',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+    const sid = `asid-${Math.random().toString(36).slice(2)}`;
+    // popPublicKey set => the session is PoP-bound. A bound session sending no
+    // x-fs-pop-* signature fails resolveAdmin's sessionPopOk; the status probe
+    // must succeed anyway (detection, not authorization) — this is the /admin
+    // re-prompt regression.
+    await t.mutation(internal.sessions.create, {
+      sid,
+      kind: 'admin',
+      adminUserId,
+      ttlMs: 3_600_000,
+      popPublicKey: 'BPdummy-bound-key',
+    });
+    const cookie = `fs_admin_session=${await signValue(sid, ADMIN_SIGN_KEY)}`;
+    const res = await t.fetch('/api/admin/auth/status', {
+      method: 'GET',
+      headers: { cookie }, // deliberately NO x-fs-pop-* headers
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { signedIn: boolean };
+    expect(body.signedIn).toBe(true);
+  });
+
+  test('no cookie reports signedIn:false', async () => {
+    const t = convexTest(schema, modules);
+    const res = await t.fetch('/api/admin/auth/status', { method: 'GET' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { signedIn: boolean };
+    expect(body.signedIn).toBe(false);
+  });
+});

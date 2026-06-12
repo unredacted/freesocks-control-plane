@@ -82,7 +82,11 @@ export const registerBootstrapOptions = internalAction({
       userName: username,
       userDisplayName: displayName ?? username,
       attestationType: 'none',
-      authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
+      // residentKey:'required' makes the passkey DISCOVERABLE, which is what lets
+      // the admin sign in later with no username (the authenticator can surface
+      // it without an allowCredentials hint). userVerification stays 'preferred'
+      // so an authenticator without a biometric/PIN isn't rejected outright.
+      authenticatorSelection: { residentKey: 'required', userVerification: 'preferred' },
     });
     await ctx.runMutation(internal.admins.insertRegistrationChallenge, {
       adminUserId: adminId,
@@ -140,7 +144,11 @@ export const registerBootstrapVerify = internalAction({
 // --- authentication ---------------------------------------------------------
 
 export const authenticateOptions = internalAction({
-  args: { username: v.string(), ip: v.optional(v.string()) },
+  // `username` is optional: omit it for the usernameless / discoverable-credential
+  // flow (the default UX). A username is still accepted as a fallback for
+  // authenticators that did not make the passkey discoverable (it narrows
+  // allowCredentials), without leaking whether that admin exists.
+  args: { username: v.optional(v.string()), ip: v.optional(v.string()) },
   handler: async (
     ctx,
     { username, ip },
@@ -162,28 +170,41 @@ export const authenticateOptions = internalAction({
         });
       }
     }
-    if (!username) throw new ConvexError({ code: 'validation', message: 'username required' });
 
-    // Do NOT reveal whether the username exists: for an unknown/inactive admin
-    // we still return well-formed options with no credentials (verify then fails
-    // like any wrong passkey), identical shape + similar timing to the valid case.
-    const admin = await ctx.runQuery(internal.admins.byUsername, { username });
-    const active = admin?.isActive ? admin : null;
-    const allowCredentialIds = active
-      ? await ctx.runQuery(internal.admins.credentialIdsByAdmin, { adminUserId: active._id })
-      : [];
+    // Usernameless (the default): no allowCredentials, so the authenticator
+    // offers every resident passkey for this RP and the user just picks one —
+    // verify then identifies the admin from the chosen credential. With a
+    // username (fallback) we narrow to that admin's credentials, but do NOT
+    // reveal whether it exists: an unknown/inactive admin still gets well-formed
+    // options with no credentials (verify fails like any wrong passkey).
+    let allowCredentialIds: string[] = [];
+    let boundAdminId: Id<'adminUsers'> | undefined;
+    if (username) {
+      const admin = await ctx.runQuery(internal.admins.byUsername, { username });
+      const active = admin?.isActive ? admin : null;
+      if (active) {
+        boundAdminId = active._id;
+        allowCredentialIds = await ctx.runQuery(internal.admins.credentialIdsByAdmin, {
+          adminUserId: active._id,
+        });
+      }
+    }
 
     const { rpId } = webauthnConfig();
     const options = await generateAuthenticationOptions({
       rpID: rpId,
       userVerification: 'preferred',
-      allowCredentials: allowCredentialIds.map((id: string) => ({ id })),
+      // Omit (not []) when usernameless so the browser does discoverable-credential
+      // selection rather than restricting to a (empty) list.
+      allowCredentials: allowCredentialIds.length
+        ? allowCredentialIds.map((id: string) => ({ id }))
+        : undefined,
     });
     const challengeId = randomHex(16);
     await ctx.runMutation(internal.admins.insertAuthChallenge, {
       challengeId,
       challenge: options.challenge,
-      adminUserId: active?._id,
+      adminUserId: boundAdminId,
       ttlMs: 60_000,
     });
     return { options, challengeId };
