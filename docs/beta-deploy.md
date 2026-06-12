@@ -117,23 +117,37 @@ In a browser:
 
 ## 6. Updating / redeploying
 
+A release has **two independently-built halves**, and a normal update must
+refresh BOTH or you get a version mismatch:
+
+- **`web`** — the SPA (Caddy serves the `vite build` output). Frontend changes
+  (any new page/route/component, e.g. a new admin screen) live here.
+- **`deployer`** — a one-shot that runs `convex deploy` (functions + schema +
+  crons) and applies `.env.convex`. Backend changes live here.
+
 ```sh
 git pull
-docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --build
-# Force the one-shot deployer to actually re-run with the freshly built image:
-docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --build --force-recreate deployer
+docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --build --force-recreate web deployer
 docker compose -f docker-compose.beta.yml --env-file .env.beta logs --tail=40 deployer  # expect "[deploy] OK"
 ```
 
-That rebuilds the SPA + deployer images. The `web` service (long-lived) restarts
-with the new SPA on the first command. The **`deployer` is a one-shot**
-(`restart: no`): plain `up -d` will rebuild its image but often will **not re-run
-an already-exited one-shot**, so the new functions/schema never get pushed — the
-classic symptom is a **new SPA talking to an old backend** (e.g. usernameless
-admin sign-in returning `username required`, or `/admin` still re-prompting). The
-explicit `--force-recreate deployer` line guarantees it runs; always confirm the
-log ends with `[deploy] OK`. Everything the deployer does (`convex deploy`, env
-apply, seed) is idempotent, so re-running is safe.
+`--build` rebuilds both images from the pulled source; `--force-recreate web
+deployer` then recreates **both** containers — `web` restarts with the new SPA,
+and the **one-shot `deployer` actually re-runs** (a bare `up -d` rebuilds its
+image but typically will NOT re-run an already-exited one-shot, so the backend
+silently stays on the old code). Naming a service scopes the action to it, so
+**don't** force-recreate only one half:
+
+- only `deployer` re-run → **new backend, stale SPA**: new admin pages/routes are
+  missing from the UI (the SPA never calls the new endpoints).
+- only `web` rebuilt → **new SPA, old backend**: new API behavior is missing
+  (e.g. usernameless admin sign-in returning `username required`, `/admin`
+  re-prompting an already-signed-in admin).
+
+Always confirm the deployer log ends with `[deploy] OK`. Everything it does
+(`convex deploy`, env apply, seed) is idempotent, so re-running is safe. The
+`Failed to resolve http.js:/api/...` and `Module not in functions: …` lines in
+the backend log during a push are benign analyzer chatter, not errors.
 
 Header-only Caddyfile tweaks need no rebuild:
 
@@ -270,7 +284,8 @@ Deploys are idempotent and the contract changes are kept additive (backend-first
 is safe). To roll back:
 
 1. **Backend/functions:** check out the previous good tag and re-run the deployer
-   (`docker compose -f docker-compose.beta.yml up -d --build deployer`), or in CI
+   (`docker compose -f docker-compose.beta.yml up -d --build --force-recreate deployer`
+   — `--force-recreate` so the one-shot actually re-runs), or in CI
    re-tag the previous good commit (`git tag -f vX … && git push -f --tags`), or
    `git revert` the bad commit and tag. `convex deploy` replaces the function set.
 2. **SPA:** rebuild the `web` image from the previous tag
