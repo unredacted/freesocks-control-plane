@@ -55,7 +55,11 @@ function signEligible(path: string, method: string): boolean {
   // they are never signed. GET /api/v1/account, by contrast, IS signed.
   if (isMemberSessionEstablish(p, method)) return false;
   if (p === '/api/v1/auth/logout') return false;
-  if (p.startsWith('/api/admin/auth/')) return false;
+  // The passkey ceremonies (options/verify) and admin logout bind or clear the
+  // session key, so they can't be PoP-signed. The status READ is the exception:
+  // once login binds a PoP key, an UNSIGNED status request fails sessionPopOk,
+  // so a revisit to /admin would wrongly report signed-out and re-prompt login.
+  if (p.startsWith('/api/admin/auth/') && p !== '/api/admin/auth/status') return false;
   return p.startsWith('/api/');
 }
 
