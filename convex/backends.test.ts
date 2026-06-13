@@ -123,4 +123,47 @@ describe('backends dispatch', () => {
       expect(row!.keyCount).toBe(1);
     });
   });
+
+  test('issueUser sends a Remnawave-safe body: uppercased tag + non-null expireAt', async () => {
+    const user = {
+      uuid: '7b51b8a0-7a4c-4f0b-9e76-0d6a4c1f2a3b',
+      shortUuid: 'short-1',
+      username: 'freesocks-member-x',
+      status: 'ACTIVE',
+      trafficLimitBytes: null,
+      trafficLimitStrategy: 'MONTH',
+      usedTrafficBytes: 0,
+      expireAt: null,
+      hwidDeviceLimit: null,
+      subscriptionUrl: 'https://sub.test.example/short-1',
+    };
+    const fetchSpy = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ response: user }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    const t = convexTest(schema, modules);
+    await seedServer(t);
+
+    // A lowercase slug tag + null expiry — exactly what account.ts builds, and
+    // what Remnawave rejected (tag regex + "expireAt is required") before the fix.
+    await t.action(internal.backends.issueUser, {
+      backend: 'remnawave',
+      spec: {
+        username: 'freesocks-member-x',
+        trafficLimitBytes: null,
+        expireAt: null,
+        tag: 'member',
+      },
+    });
+
+    const init = (fetchSpy.mock.calls[0]?.[1] ?? {}) as RequestInit;
+    const sent = JSON.parse(String(init.body)) as { tag?: unknown; expireAt?: unknown };
+    expect(sent.tag).toBe('MEMBER');
+    expect(typeof sent.expireAt).toBe('string');
+    expect((sent.expireAt as string).length).toBeGreaterThan(0);
+  });
 });

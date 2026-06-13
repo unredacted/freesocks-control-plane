@@ -142,6 +142,32 @@ function toState(user: RemnawaveUser, devices: BackendDevice[]): UserState {
   };
 }
 
+const DAY_MS = 86_400_000;
+
+/**
+ * Remnawave REQUIRES `expireAt` on create. Our model treats `expireAt: null` as
+ * "no backend-enforced expiry — FCP's lifecycle (grace → disable → delete) is the
+ * source of truth", so we send a far-future date as that sentinel rather than let
+ * Remnawave expire the key on its own clock.
+ */
+function expiryOrFarFuture(expireAt: string | null): string {
+  return expireAt ?? new Date(Date.now() + 3650 * DAY_MS).toISOString();
+}
+
+/**
+ * Remnawave tags accept only `[A-Z0-9_]`. Coerce our slug-style tag (e.g.
+ * "member" → "MEMBER"); return undefined when nothing usable remains, so the
+ * field is omitted (Remnawave allows that) rather than sent invalid.
+ */
+function toRemnawaveTag(tag: string | undefined): string | undefined {
+  if (!tag) return undefined;
+  const t = tag
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]/g, '_')
+    .slice(0, 16);
+  return t.length > 0 ? t : undefined;
+}
+
 export async function remnawaveIssueUser(
   cfg: RemnawaveConfig,
   spec: IssueUserSpec,
@@ -153,9 +179,11 @@ export async function remnawaveIssueUser(
       username: spec.username,
       trafficLimitBytes: spec.trafficLimitBytes ?? undefined,
       trafficLimitStrategy: spec.trafficLimitStrategy ?? 'MONTH',
-      expireAt: spec.expireAt ?? undefined,
+      // Required by Remnawave; null spec => far-future sentinel (FCP owns expiry).
+      expireAt: expiryOrFarFuture(spec.expireAt),
       hwidDeviceLimit: spec.hwidDeviceLimit ?? undefined,
-      tag: spec.tag,
+      // Remnawave restricts tags to [A-Z0-9_]; coerce our lowercase slug.
+      tag: toRemnawaveTag(spec.tag),
       description: spec.description,
       activeInternalSquads: spec.remnawaveSquadUuid ? [spec.remnawaveSquadUuid] : undefined,
     },
@@ -211,7 +239,7 @@ export async function remnawaveUpdateUser(
   if (patch.expireAt !== undefined) body.expireAt = patch.expireAt;
   if (patch.hwidDeviceLimit !== undefined) body.hwidDeviceLimit = patch.hwidDeviceLimit;
   if (patch.description !== undefined) body.description = patch.description;
-  if (patch.tag !== undefined) body.tag = patch.tag;
+  if (patch.tag !== undefined) body.tag = toRemnawaveTag(patch.tag);
   if (patch.remnawaveSquadUuid !== undefined) {
     // present+null/'' clears the squad; a value sets it.
     body.activeInternalSquads = patch.remnawaveSquadUuid ? [patch.remnawaveSquadUuid] : [];

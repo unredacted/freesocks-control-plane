@@ -93,7 +93,10 @@ describe('remnawaveIssueUser', () => {
     });
     expect(calls[0]!.method).toBe('POST');
     expect(calls[0]!.headers.authorization).toBe('Bearer SECRET_TOKEN_DO_NOT_LEAK');
-    expect(calls[0]!.body).toMatchObject({ username: 'fs_user', tag: 'free' });
+    // tag is uppercased to Remnawave's [A-Z0-9_]; expireAt:null becomes a
+    // far-future sentinel (Remnawave REQUIRES the field).
+    expect(calls[0]!.body).toMatchObject({ username: 'fs_user', tag: 'FREE' });
+    expect(typeof calls[0]!.body!.expireAt).toBe('string');
     // No strategy supplied → defaults to MONTH; no squad → field omitted.
     expect(calls[0]!.body!.trafficLimitStrategy).toBe('MONTH');
     expect(calls[0]!.body!.activeInternalSquads).toBeUndefined();
