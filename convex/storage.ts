@@ -13,8 +13,11 @@
  *   S3_PROVIDER_i_{NAME,ENDPOINT,BUCKET,PUBLIC_URL,REGION,ACCESS_KEY_ID,SECRET_ACCESS_KEY}
  */
 import { internalAction } from './_generated/server';
+import { internal } from './_generated/api';
 import { v } from 'convex/values';
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { sha256Hex } from './lib/crypto';
+import type { ActiveMirrorPage } from './subscriptions';
 
 export interface S3Provider {
   name: string;
@@ -161,5 +164,68 @@ export const deleteMirrors = internalAction({
   handler: async (_ctx, { items }) => {
     await deleteFromProviders(parseProviders(), items);
     return null;
+  },
+});
+
+// Bounded per run: drain up to MAX_PAGES × PAGE active subs. Beta/early-prod fits
+// in one run; a larger set catches up over subsequent ticks.
+const REFRESH_MAX_PAGES = 50;
+const REFRESH_PAGE = 50;
+
+/**
+ * Cron: keep the S3 mirrors fresh. Re-fetch each active subscription's current
+ * content from its backend and re-upload it to the SAME object path (so the
+ * mirror URL the member already holds stays valid, with up-to-date content).
+ * Skips a sub whose content is unchanged (hash match), so steady state is cheap.
+ * No-op unless S3 mirroring is enabled + configured (same gate as issuance).
+ */
+export const refreshActiveMirrors = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ refreshed: number; scanned: number }> => {
+    const providers = parseProviders();
+    if (process.env.S3_MIRRORS_ENABLED !== 'true' || providers.length === 0) {
+      return { refreshed: 0, scanned: 0 };
+    }
+    let cursor: string | null = null;
+    let refreshed = 0;
+    let scanned = 0;
+    for (let page = 0; page < REFRESH_MAX_PAGES; page++) {
+      // Annotated (not inferred) to break the internal-API self-reference cycle.
+      const res: ActiveMirrorPage = await ctx.runQuery(internal.subscriptions.pageActiveForMirror, {
+        cursor,
+        numItems: REFRESH_PAGE,
+      });
+      for (const sub of res.items) {
+        scanned++;
+        try {
+          const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
+            backend: sub.backend,
+            backendServerId: sub.backendServerId ?? undefined,
+            backendShortId: sub.backendShortId,
+          });
+          const hash = await sha256Hex(fetched.content);
+          if (hash === sub.rawContentHash) continue; // unchanged → no re-upload
+          // Reuse the existing object path so the mirror URL is stable; only the
+          // first-ever mirror for a sub (none yet) gets a content-addressed path.
+          const objectPath = sub.objectPath ?? `subs/${sub.backendShortId}/${hash.slice(0, 12)}`;
+          const mirrors = await uploadToProviders(providers, {
+            objectPath,
+            content: fetched.content,
+            contentType: fetched.contentType,
+          });
+          await ctx.runMutation(internal.subscriptions.updateMirrors, {
+            subscriptionId: sub.id,
+            mirrors,
+            rawContentHash: hash,
+          });
+          refreshed++;
+        } catch {
+          /* best-effort per sub: one backend/S3 hiccup must not stall the sweep */
+        }
+      }
+      if (res.isDone) break;
+      cursor = res.continueCursor;
+    }
+    return { refreshed, scanned };
   },
 });

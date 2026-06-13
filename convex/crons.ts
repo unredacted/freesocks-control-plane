@@ -108,4 +108,9 @@ crons.interval(
   {},
 );
 
+// Keep the S3 subscription mirrors fresh: re-fetch each active sub's current
+// content and re-upload it (skip-if-unchanged). No-op unless S3 mirroring is
+// configured. The censorship-fallback URL is only useful if it isn't stale.
+crons.interval('mirror-refresh', { hours: 6 }, internal.storage.refreshActiveMirrors, {});
+
 export default crons;

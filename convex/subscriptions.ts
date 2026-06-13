@@ -3,6 +3,7 @@
 // on the raw Convex channel. The old public `get` / `activeForUser` queries
 // were dead code and were deleted outright.
 import { internalMutation, internalQuery } from './_generated/server';
+import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 
 const mirror = v.object({
@@ -66,6 +67,69 @@ export const insertSubscription = internalMutation({
   },
   handler: (ctx, a) =>
     ctx.db.insert('subscriptions', { ...a, state: 'active', updatedAt: Date.now() }),
+});
+
+/**
+ * Page active subscriptions for the S3 mirror-refresh cron. Returns just the
+ * fields the refresh needs (incl. the existing mirror objectPath, which it
+ * reuses to overwrite in place → a stable mirror URL) + the cursor.
+ */
+/** One page of active subs for the mirror-refresh cron (storage.refreshActiveMirrors). */
+export interface ActiveMirrorPage {
+  isDone: boolean;
+  continueCursor: string;
+  items: {
+    id: Id<'subscriptions'>;
+    backend: 'remnawave' | 'outline';
+    backendServerId: Id<'backendServers'> | null;
+    backendShortId: string;
+    rawContentHash: string | null;
+    objectPath: string | null;
+  }[];
+}
+
+export const pageActiveForMirror = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
+  // Explicit return type breaks Convex's cross-module inference cycle (storage.ts
+  // calls this), same convention as billing.ts/lifecycle.ts.
+  handler: async (ctx, { cursor, numItems }): Promise<ActiveMirrorPage> => {
+    const res = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_state', (q) => q.eq('state', 'active'))
+      .paginate({ cursor, numItems });
+    return {
+      isDone: res.isDone,
+      continueCursor: res.continueCursor,
+      items: res.page.map((s) => ({
+        id: s._id,
+        backend: s.backend,
+        backendServerId: s.backendServerId ?? null,
+        backendShortId: s.backendShortId,
+        rawContentHash: s.rawContentHash ?? null,
+        objectPath: s.subscriptionMirrors[0]?.objectPath ?? null,
+      })),
+    };
+  },
+});
+
+/** Replace a subscription's S3 mirrors + content hash (the refresh cron). No-op
+ *  if the row is gone or no longer active (tombstoned mid-refresh). */
+export const updateMirrors = internalMutation({
+  args: {
+    subscriptionId: v.id('subscriptions'),
+    mirrors: v.array(mirror),
+    rawContentHash: v.string(),
+  },
+  handler: async (ctx, { subscriptionId, mirrors, rawContentHash }) => {
+    const row = await ctx.db.get(subscriptionId);
+    if (!row || row.state !== 'active') return null;
+    await ctx.db.patch(subscriptionId, {
+      subscriptionMirrors: mirrors,
+      rawContentHash,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
 });
 
 /** Hard-delete marker: state→deleted (used by cleanup + tombstone sweep). */
