@@ -17,6 +17,7 @@ import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { randomHex } from './lib/crypto';
 import { issueNewSubscription } from './lib/issuance';
+import { computeExpireAtIso, gbToBytes } from './lib/backends/types';
 
 type Backend = 'remnawave' | 'outline';
 
@@ -111,7 +112,7 @@ export const getAccountView = internalAction({
     }
 
     const trafficLimitFromTier =
-      tier.monthlyTrafficGb > 0 ? tier.monthlyTrafficGb * 1_000_000_000 : null;
+      tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null;
     let subscription: AccountView['subscription'] = null;
     if (sub) {
       // Best-effort live state; degrade to local data if the backend is down.
@@ -194,14 +195,17 @@ export const regenerate = internalAction({
     // currentSubscriptionId at the new row).
     const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
 
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
+    const freeExpiryDays = Number(settings['freetier.expiryDays'] ?? 90);
     const issued = await issueNewSubscription(ctx, {
       userId,
       backend: tier.backend,
       spec: {
         username: `freesocks-${tier.slug}-${randomHex(8)}`,
-        trafficLimitBytes: tier.monthlyTrafficGb > 0 ? tier.monthlyTrafficGb * 1_000_000_000 : null,
+        trafficLimitBytes: tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null,
         trafficLimitStrategy: tier.trafficStrategy,
-        expireAt: null,
+        // Member term, else the free window — Remnawave requires a real date.
+        expireAt: computeExpireAtIso(user.membershipExpiresAt, freeExpiryDays),
         hwidDeviceLimit: tier.hwidEnabled ? tier.hwidLimit : null,
         tag: tier.slug,
         remnawaveSquadUuid: tier.remnawaveSquadUuid ?? null,
@@ -289,9 +293,13 @@ export const switchBackend = internalAction({
       spec: {
         username: `freesocks-${peerTier.slug}-${randomHex(8)}`,
         trafficLimitBytes:
-          peerTier.monthlyTrafficGb > 0 ? peerTier.monthlyTrafficGb * 1_000_000_000 : null,
+          peerTier.monthlyTrafficGb > 0 ? gbToBytes(peerTier.monthlyTrafficGb) : null,
         trafficLimitStrategy: peerTier.trafficStrategy,
-        expireAt: null,
+        // Entitlement unchanged by a backend switch: keep the member's term / free window.
+        expireAt: computeExpireAtIso(
+          user.membershipExpiresAt,
+          Number(settings['freetier.expiryDays'] ?? 90),
+        ),
         hwidDeviceLimit: peerTier.hwidEnabled ? peerTier.hwidLimit : null,
         tag: peerTier.slug,
         remnawaveSquadUuid: peerTier.remnawaveSquadUuid ?? null,

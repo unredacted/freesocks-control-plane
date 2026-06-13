@@ -11,6 +11,32 @@ export type { BackendId } from '../../../src/shared/contracts/backends';
 export type TrafficLimitStrategy = 'NO_RESET' | 'DAY' | 'WEEK' | 'MONTH';
 export type BackendUserStatus = 'active' | 'disabled' | 'limited' | 'expired' | 'unknown';
 
+const DAY_MS = 86_400_000;
+
+/**
+ * Tier "GB" → bytes using BINARY GiB (1 GiB = 2^30), so the admin's number
+ * matches what Remnawave shows: it renders limits in GiB, so a tier of `50`
+ * displays as "50 GiB" (not "46.57 GiB", which `50 × 10^9` decimal produced).
+ */
+export function gbToBytes(gb: number): number {
+  return gb * 1024 ** 3;
+}
+
+/**
+ * The backend `expireAt` (ISO) for a user: a paid member's purchased term
+ * (`membershipExpiresAt`), else the free-account window (now + `freeExpiryDays`).
+ * Remnawave REQUIRES a date — FCP's lifecycle is still the source of truth for
+ * disable/delete, this just keeps the key's own expiry honest + a backstop, and
+ * a renewal re-pushes it. Call from an ACTION (uses Date.now()).
+ */
+export function computeExpireAtIso(
+  membershipExpiresAtMs: number | null | undefined,
+  freeExpiryDays: number,
+): string {
+  const ms = membershipExpiresAtMs ?? Date.now() + freeExpiryDays * DAY_MS;
+  return new Date(ms).toISOString();
+}
+
 export interface IssueUserSpec {
   username: string;
   trafficLimitBytes: number | null;

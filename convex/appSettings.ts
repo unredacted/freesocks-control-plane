@@ -14,6 +14,10 @@ export const SETTINGS_DEFAULTS = {
   'subscription.backend_labels': { remnawave: 'Xray', outline: 'Outline' },
   'backend.scoring.latency_weight': 1,
   'backend.scoring.key_count_weight': 100,
+  // Free-account lifetime (days): drives both the issued key's backend expiry
+  // and the cleanup-expired-free sweep. Admin-editable (replaced the
+  // FREE_TIER_EXPIRY_DAYS env var).
+  'freetier.expiryDays': 90,
 } as const;
 
 // `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA

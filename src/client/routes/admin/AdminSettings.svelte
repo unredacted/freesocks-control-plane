@@ -209,6 +209,39 @@
         </CardContent>
       </Card>
 
+      <!-- Free accounts -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Free accounts</CardTitle>
+          <CardDescription>
+            How long a free account (and its proxy key) lasts before the daily cleanup removes it.
+            Also stamped as the key's expiry on the backend.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-3 text-sm">
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="free-expiry-days">
+              Free account lifetime (days)
+            </label>
+            <Input
+              id="free-expiry-days"
+              type="number"
+              min={1}
+              class="w-32"
+              value={Number(draft['freetier.expiryDays'] ?? 90)}
+              oninput={(e) =>
+                (draft = {
+                  ...draft,
+                  'freetier.expiryDays': Math.max(
+                    1,
+                    Math.round(Number((e.target as HTMLInputElement).value) || 90),
+                  ),
+                })}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
       <div class="flex justify-end">
         <Button onclick={() => save.mutate()} disabled={save.isPending}>
           {save.isPending ? 'Saving…' : 'Save settings'}

@@ -10,8 +10,25 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
+import { computeExpireAtIso, gbToBytes } from './lib/backends/types';
 
 const modules = import.meta.glob('./**/*.*s');
+
+describe('issuance spec helpers', () => {
+  test('gbToBytes uses binary GiB so a tier of 50 shows as "50 GiB" in Remnawave', () => {
+    expect(gbToBytes(50)).toBe(50 * 1024 ** 3);
+    expect(gbToBytes(0)).toBe(0);
+  });
+
+  test('computeExpireAtIso: a member term wins; free falls to now + window', () => {
+    const termMs = Date.UTC(2030, 0, 1);
+    expect(computeExpireAtIso(termMs, 90)).toBe(new Date(termMs).toISOString());
+    // Free (no membership): ~90 days out (a few seconds of slack for the clock).
+    const freeMs = Date.parse(computeExpireAtIso(null, 90));
+    expect(freeMs).toBeGreaterThan(Date.now() + 89 * 86_400_000);
+    expect(freeMs).toBeLessThan(Date.now() + 91 * 86_400_000);
+  });
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();

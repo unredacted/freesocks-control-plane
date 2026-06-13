@@ -15,6 +15,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { deleteSubscriptionEverywhere } from './lib/issuance';
+import { computeExpireAtIso, gbToBytes } from './lib/backends/types';
 import { writeAuditLog } from './lib/audit';
 
 // --- entitlement seam ------------------------------------------------------
@@ -113,10 +114,13 @@ export const activeSubAndTier = internalQuery({
     return {
       backend: sub.backend,
       backendUserId: sub.backendUserId,
-      trafficLimitBytes: tier.monthlyTrafficGb > 0 ? tier.monthlyTrafficGb * 1_000_000_000 : null,
+      trafficLimitBytes: tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null,
       trafficLimitStrategy: tier.trafficStrategy,
       hwidDeviceLimit: tier.hwidEnabled ? tier.hwidLimit : null,
       remnawaveSquadUuid: tier.remnawaveSquadUuid ?? null,
+      // Raw ms (this is a query — the ISO is computed in the action, which can
+      // call Date.now()), so a renewal re-pushes the backend expiry.
+      membershipExpiresAt: user.membershipExpiresAt ?? null,
     };
   },
 });
@@ -135,6 +139,8 @@ export const pushTierToBackend = internalAction({
     const n = attempt ?? 0;
     const st = await ctx.runQuery(internal.lifecycle.activeSubAndTier, { userId });
     if (!st) return null; // no active sub to push to (e.g. free user pre-issuance)
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
+    const freeExpiryDays = Number(settings['freetier.expiryDays'] ?? 90);
     try {
       await ctx.runAction(internal.backends.updateUser, {
         backend: st.backend,
@@ -144,6 +150,8 @@ export const pushTierToBackend = internalAction({
           trafficLimitStrategy: st.trafficLimitStrategy,
           hwidDeviceLimit: st.hwidDeviceLimit,
           remnawaveSquadUuid: st.remnawaveSquadUuid,
+          // Push the entitlement expiry too, so a renewal extends the backend key.
+          expireAt: computeExpireAtIso(st.membershipExpiresAt, freeExpiryDays),
         },
       });
     } catch (err) {
@@ -445,7 +453,10 @@ export const markUserDeleted = internalMutation({
 export const cleanupExpiredFree = internalAction({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }): Promise<{ removed: number }> => {
-    const expiryDays = Number(process.env.FREE_TIER_EXPIRY_DAYS ?? '90');
+    // Admin-tunable (appSettings 'freetier.expiryDays', default 90); replaced the
+    // FREE_TIER_EXPIRY_DAYS env var, and matches what issuance stamps on the key.
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
+    const expiryDays = Number(settings['freetier.expiryDays'] ?? 90);
     const cutoff = Date.now() - expiryDays * 86_400_000;
     const pageSize = limit ?? 100;
     const tierIds = await ctx.runQuery(internal.lifecycle.defaultFreeTierIds, {});
