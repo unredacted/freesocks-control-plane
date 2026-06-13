@@ -59,12 +59,15 @@ class RemnawaveApiError extends Error {
       body = undefined;
     }
     // Deliberately do NOT capture the full URL (it carries the bearer token in
-    // some misconfigurations); only the path + a short body slice.
-    return new RemnawaveApiError(`Remnawave ${res.status} on ${path}`, {
-      status: res.status,
-      path,
-      body: body?.slice(0, 200),
-    });
+    // some misconfigurations); only the path + a short body slice. The body
+    // slice goes in the MESSAGE too (not just meta) so it reaches the function
+    // logs — it's Remnawave's own error text (e.g. validation / auth), not a
+    // secret. The member still only ever sees a generic 502.
+    const snippet = body?.slice(0, 200);
+    return new RemnawaveApiError(
+      `Remnawave ${res.status} on ${path}${snippet ? `: ${snippet}` : ''}`,
+      { status: res.status, path, body: snippet },
+    );
   }
 }
 
@@ -102,7 +105,16 @@ async function call<T>(
     if (!res.ok) throw await RemnawaveApiError.fromResponse(res, args.path);
     const parsed = args.schema.safeParse(unwrap(await res.json()));
     if (!parsed.success) {
-      throw new RemnawaveApiError('Remnawave schema mismatch', { path: args.path });
+      // Name the offending FIELDS (paths only, never values) so a Remnawave
+      // version/shape difference is diagnosable from the logs — the most common
+      // cause of a 2xx that still fails issuance.
+      const issues = parsed.error.issues
+        .slice(0, 6)
+        .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+        .join('; ');
+      throw new RemnawaveApiError(`Remnawave schema mismatch on ${args.path} (${issues})`, {
+        path: args.path,
+      });
     }
     return parsed.data;
   } finally {
