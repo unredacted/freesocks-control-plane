@@ -30,7 +30,14 @@ const RemnawaveUser = z.object({
   status: RemnawaveUserStatus,
   trafficLimitBytes: z.number().int().nonnegative().nullable(),
   trafficLimitStrategy: TrafficLimitStrategy,
-  usedTrafficBytes: z.number().int().nonnegative(),
+  // Remnawave omits this on the CREATE response (a brand-new user has used
+  // nothing); default to 0 so issuance parses. On GET it's present and kept.
+  usedTrafficBytes: z
+    .number()
+    .int()
+    .nonnegative()
+    .nullish()
+    .transform((v) => v ?? 0),
   expireAt: z.string().datetime().nullable(),
   hwidDeviceLimit: z.number().int().nonnegative().nullable(),
   subscriptionUrl: z.string().url(),

@@ -102,6 +102,24 @@ describe('remnawaveIssueUser', () => {
     expect(calls[0]!.body!.activeInternalSquads).toBeUndefined();
   });
 
+  test('tolerates a create response that omits usedTrafficBytes (new user)', async () => {
+    mockFetch((path, method) => {
+      if (path === '/api/users' && method === 'POST') {
+        const u = userObj({ uuid: UUID, shortUuid: 'sc', subscriptionUrl: 'https://x/sub' });
+        delete u.usedTrafficBytes; // Remnawave omits it for a brand-new user.
+        return jsonRes(u);
+      }
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    const issued = await remnawaveIssueUser(cfg, {
+      username: 'fs_user',
+      trafficLimitBytes: null,
+      expireAt: null,
+      tag: 'free',
+    });
+    expect(issued.backendUserId).toBe(UUID);
+  });
+
   test('maps a squad uuid into activeInternalSquads', async () => {
     mockFetch(() => jsonRes(userObj()));
     await remnawaveIssueUser(cfg, {
