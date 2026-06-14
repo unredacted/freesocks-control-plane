@@ -20,13 +20,17 @@
     /** Open on mount + auto-open when promoted (privacy mode makes this the
      *  recommended delivery method, so it starts expanded). */
     startOpen?: boolean;
+    /** Render as the PRIMARY config panel: always open, titled, no collapse
+     *  toggle, primary border. Privacy mode makes the raw config the headline. */
+    prominent?: boolean;
   }
-  let { startOpen = false }: Props = $props();
+  let { startOpen = false, prominent = false }: Props = $props();
 
   // `open` MUST be declared before the query: subscriptionContentQuery evaluates
   // its `enabled` getter synchronously at creation, so reading `open` first would
-  // hit the temporal dead zone and throw during render.
-  let open = $state(startOpen);
+  // hit the temporal dead zone and throw during render. `prominent` implies open
+  // (no toggle) so the content actually fetches.
+  let open = $state(startOpen || prominent);
   let copied = $state(false);
   const content = subscriptionContentQuery(() => open);
   // Expand when the parent promotes us (e.g. the member switches to privacy);
@@ -59,19 +63,26 @@
   }
 </script>
 
-<div class="rounded-xl border border-border/60 bg-muted/20">
-  <button
-    type="button"
-    class="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium"
-    onclick={() => (open = !open)}
-    aria-expanded={open}
-  >
-    <span class="flex items-center gap-2 text-muted-foreground">
-      <FileCode class="size-4 shrink-0" />
-      {t('rawconfig.disclosure')}
-    </span>
-    <ChevronDown class="size-4 shrink-0 transition-transform {open ? 'rotate-180' : ''}" />
-  </button>
+<div class="rounded-xl border {prominent ? 'border-primary/30' : 'border-border/60'} bg-muted/20">
+  {#if prominent}
+    <div class="flex items-center gap-2 px-4 py-3 text-sm font-semibold text-foreground">
+      <FileCode class="size-4 shrink-0 text-primary" />
+      {t('rawconfig.title')}
+    </div>
+  {:else}
+    <button
+      type="button"
+      class="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium"
+      onclick={() => (open = !open)}
+      aria-expanded={open}
+    >
+      <span class="flex items-center gap-2 text-muted-foreground">
+        <FileCode class="size-4 shrink-0" />
+        {t('rawconfig.disclosure')}
+      </span>
+      <ChevronDown class="size-4 shrink-0 transition-transform {open ? 'rotate-180' : ''}" />
+    </button>
+  {/if}
 
   {#if open}
     <div class="space-y-3 px-4 pb-4 text-sm" transition:slide={{ duration: 180 }}>

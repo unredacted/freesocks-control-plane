@@ -47,6 +47,13 @@
     /** Whether to render the QR. Default true. Pass false for compact contexts. */
     showQr?: boolean;
     /**
+     * Privacy mode: omit the big subscription URL + QR + copy block entirely and
+     * show only the metadata (traffic/expiry/tier) + a pointer to the raw config
+     * below. The subscription link is what a client fetches through a CDN, so
+     * "maximize privacy" deliberately doesn't surface it as the headline.
+     */
+    hideUrl?: boolean;
+    /**
      * Which backend issued the key. Drives label wording (Remnawave returns a
      * multi-protocol subscription URL; Outline returns a single `ss://` access
      * key) and the download filename. Defaults to `remnawave` so existing
@@ -66,6 +73,7 @@
     tierName,
     banner,
     showQr = true,
+    hideUrl = false,
     backend = 'remnawave',
   }: Props = $props();
 
@@ -172,121 +180,125 @@
       </p>
     </div>
 
-    <!-- URL + QR side-by-side on desktop, stacked on mobile -->
-    <div class="grid gap-6 md:grid-cols-[1fr_auto] md:items-start">
-      <div class="space-y-3 min-w-0">
-        <label
-          for="primary-url"
-          class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
-        >
-          <Link2 class="size-3.5" />
-          {urlLabel}
-        </label>
-        <div class="relative rounded-lg border border-border bg-muted/40 p-3 group">
-          <code
-            id="primary-url"
-            class="block select-all font-mono text-xs md:text-sm break-all pe-2 leading-relaxed text-foreground/90"
+    {#if !hideUrl}
+      <!-- URL + QR side-by-side on desktop, stacked on mobile -->
+      <div class="grid gap-6 md:grid-cols-[1fr_auto] md:items-start">
+        <div class="space-y-3 min-w-0">
+          <label
+            for="primary-url"
+            class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
           >
-            {subscriptionUrl}
-          </code>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <Button
-            onclick={() => copy(subscriptionUrl, 'primary')}
-            class="flex-1 sm:flex-initial transition-all"
-            size="lg"
-          >
-            {#if copied === 'primary'}
-              <span in:fade={{ duration: 150 }} class="inline-flex items-center gap-2">
-                <Check class="size-4" />
-                {t('hero.copiedShort')}
-              </span>
-            {:else}
-              <span in:fade={{ duration: 150 }} class="inline-flex items-center gap-2">
-                <Copy class="size-4" />
-                {t('hero.copyUrl')}
-              </span>
-            {/if}
-          </Button>
-          <Button variant="outline" size="lg" onclick={downloadConfig}>
-            <Download class="size-4" />
-            <span class="hidden sm:inline">{t('common.download')}</span>
-          </Button>
-          {#if showQr}
+            <Link2 class="size-3.5" />
+            {urlLabel}
+          </label>
+          <div class="relative rounded-lg border border-border bg-muted/40 p-3 group">
+            <code
+              id="primary-url"
+              class="block select-all font-mono text-xs md:text-sm break-all pe-2 leading-relaxed text-foreground/90"
+            >
+              {subscriptionUrl}
+            </code>
+          </div>
+          <div class="flex flex-wrap gap-2">
             <Button
-              variant="outline"
+              onclick={() => copy(subscriptionUrl, 'primary')}
+              class="flex-1 sm:flex-initial transition-all"
               size="lg"
-              onclick={() => (qrOpen = !qrOpen)}
-              class="md:hidden"
-              aria-expanded={qrOpen}
             >
-              <QrCodeIcon class="size-4" />
-              {qrOpen ? t('hero.qrHide') : t('hero.qrShow')}
+              {#if copied === 'primary'}
+                <span in:fade={{ duration: 150 }} class="inline-flex items-center gap-2">
+                  <Check class="size-4" />
+                  {t('hero.copiedShort')}
+                </span>
+              {:else}
+                <span in:fade={{ duration: 150 }} class="inline-flex items-center gap-2">
+                  <Copy class="size-4" />
+                  {t('hero.copyUrl')}
+                </span>
+              {/if}
             </Button>
-          {/if}
-        </div>
-      </div>
-
-      {#if showQr}
-        <!-- Desktop: always-visible QR. Mobile: collapsible. -->
-        <div class="hidden md:block">
-          <QrCode text={subscriptionUrl} size={144} />
-          <p class="mt-2 text-xs text-muted-foreground text-center max-w-[144px]">
-            {t('hero.scanPhone')}
-          </p>
-        </div>
-        {#if qrOpen}
-          <div class="md:hidden flex flex-col items-center pt-2" in:fade={{ duration: 200 }}>
-            <QrCode text={subscriptionUrl} size={192} />
-            <p class="mt-2 text-xs text-muted-foreground">{t('hero.scanOther')}</p>
-          </div>
-        {/if}
-      {/if}
-    </div>
-
-    <!-- Fallback URL: secondary, equal billing as a peer alternative -->
-    {#if fallbackUrl && fallbackUrl !== subscriptionUrl}
-      <div class="space-y-2 pt-2 border-t border-border/60">
-        <div
-          class="flex items-center justify-between gap-2 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
-        >
-          <span>{t('hero.fallbackLabel')}</span>
-          <span class="text-muted-foreground normal-case font-normal text-[11px] tracking-normal">
-            {t('hero.fallbackHint')}
-          </span>
-        </div>
-        <div class="flex gap-2">
-          <code
-            class="flex-1 select-all px-3 py-2 rounded-md bg-muted text-xs font-mono break-all min-w-0 text-muted-foreground"
-          >
-            {fallbackUrl}
-          </code>
-          <Button variant="outline" size="sm" onclick={() => copy(fallbackUrl, 'fallback')}>
-            {#if copied === 'fallback'}
-              <Check class="size-3.5" />
-            {:else}
-              <Copy class="size-3.5" />
+            <Button variant="outline" size="lg" onclick={downloadConfig}>
+              <Download class="size-4" />
+              <span class="hidden sm:inline">{t('common.download')}</span>
+            </Button>
+            {#if showQr}
+              <Button
+                variant="outline"
+                size="lg"
+                onclick={() => (qrOpen = !qrOpen)}
+                class="md:hidden"
+                aria-expanded={qrOpen}
+              >
+                <QrCodeIcon class="size-4" />
+                {qrOpen ? t('hero.qrHide') : t('hero.qrShow')}
+              </Button>
             {/if}
-          </Button>
-          {#if showQr}
-            <Button
-              variant="outline"
-              size="sm"
-              onclick={() => (qrFallbackOpen = !qrFallbackOpen)}
-              aria-expanded={qrFallbackOpen}
-              aria-label={t('hero.fallbackQrAria')}
-            >
-              <QrCodeIcon class="size-3.5" />
-            </Button>
-          {/if}
-        </div>
-        {#if showQr && qrFallbackOpen}
-          <div class="flex flex-col items-center pt-2" in:fade={{ duration: 200 }}>
-            <QrCode text={fallbackUrl} size={176} />
-            <p class="mt-2 text-xs text-muted-foreground">{t('hero.scanFallback')}</p>
           </div>
+        </div>
+
+        {#if showQr}
+          <!-- Desktop: always-visible QR. Mobile: collapsible. -->
+          <div class="hidden md:block">
+            <QrCode text={subscriptionUrl} size={144} />
+            <p class="mt-2 text-xs text-muted-foreground text-center max-w-[144px]">
+              {t('hero.scanPhone')}
+            </p>
+          </div>
+          {#if qrOpen}
+            <div class="md:hidden flex flex-col items-center pt-2" in:fade={{ duration: 200 }}>
+              <QrCode text={subscriptionUrl} size={192} />
+              <p class="mt-2 text-xs text-muted-foreground">{t('hero.scanOther')}</p>
+            </div>
+          {/if}
         {/if}
       </div>
+
+      <!-- Fallback URL: secondary, equal billing as a peer alternative -->
+      {#if fallbackUrl && fallbackUrl !== subscriptionUrl}
+        <div class="space-y-2 pt-2 border-t border-border/60">
+          <div
+            class="flex items-center justify-between gap-2 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
+          >
+            <span>{t('hero.fallbackLabel')}</span>
+            <span class="text-muted-foreground normal-case font-normal text-[11px] tracking-normal">
+              {t('hero.fallbackHint')}
+            </span>
+          </div>
+          <div class="flex gap-2">
+            <code
+              class="flex-1 select-all px-3 py-2 rounded-md bg-muted text-xs font-mono break-all min-w-0 text-muted-foreground"
+            >
+              {fallbackUrl}
+            </code>
+            <Button variant="outline" size="sm" onclick={() => copy(fallbackUrl, 'fallback')}>
+              {#if copied === 'fallback'}
+                <Check class="size-3.5" />
+              {:else}
+                <Copy class="size-3.5" />
+              {/if}
+            </Button>
+            {#if showQr}
+              <Button
+                variant="outline"
+                size="sm"
+                onclick={() => (qrFallbackOpen = !qrFallbackOpen)}
+                aria-expanded={qrFallbackOpen}
+                aria-label={t('hero.fallbackQrAria')}
+              >
+                <QrCodeIcon class="size-3.5" />
+              </Button>
+            {/if}
+          </div>
+          {#if showQr && qrFallbackOpen}
+            <div class="flex flex-col items-center pt-2" in:fade={{ duration: 200 }}>
+              <QrCode text={fallbackUrl} size={176} />
+              <p class="mt-2 text-xs text-muted-foreground">{t('hero.scanFallback')}</p>
+            </div>
+          {/if}
+        </div>
+      {/if}
+    {:else}
+      <p class="text-sm text-muted-foreground">{t('hero.configBelowNote')}</p>
     {/if}
 
     <!-- Metadata strip: traffic + expiry -->

@@ -315,29 +315,23 @@
           trafficUsedBytes={subscription.trafficUsedBytes}
           tierName={account.data?.user.tier.name ?? accountTier?.name ?? ''}
           backend={subscription.backend}
+          hideUrl={effectiveDelivery === 'privacy'}
         />
         {#if effectiveDelivery === 'privacy'}
-          <p
-            class="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
-          >
-            {t('delivery.heroPrivacyNote')}
-          </p>
-        {/if}
-        <SetupGuidance backend={subscription.backend} />
-        <div class="flex flex-col gap-8">
-          <div class={effectiveDelivery === 'privacy' ? 'order-1' : 'order-2'}>
-            <RawConfig startOpen={effectiveDelivery === 'privacy'} />
-          </div>
+          <!-- Privacy: raw config is the deliverable; CDN-fetched link hidden; no mirrors. -->
+          <RawConfig prominent />
+          <SetupGuidance backend={subscription.backend} />
+        {:else}
+          <SetupGuidance backend={subscription.backend} />
           {#if config.data?.mirrorsEnabled}
-            <div class={effectiveDelivery === 'privacy' ? 'order-2' : 'order-1'}>
-              <MirrorHelp
-                mirrors={subscription.mirrors}
-                geoCountry={account.data?.geoCountry}
-                subscriptionUrl={subscription.url}
-              />
-            </div>
+            <MirrorHelp
+              mirrors={subscription.mirrors}
+              geoCountry={account.data?.geoCountry}
+              subscriptionUrl={subscription.url}
+            />
           {/if}
-        </div>
+          <RawConfig />
+        {/if}
         <p class="text-xs text-muted-foreground text-center">
           {t('get.manageHintPrefix')}
           <Link href="/account" class="text-primary underline">{t('get.manageLinkLabel')}</Link>.

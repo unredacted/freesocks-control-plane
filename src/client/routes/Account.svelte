@@ -577,31 +577,25 @@
         trafficUsedBytes={data.subscription.trafficUsedBytes}
         tierName={data.user.tier.name}
         backend={data.subscription.backend}
+        hideUrl={effectiveDelivery === 'privacy'}
       />
       {#if effectiveDelivery === 'privacy'}
-        <p
-          class="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
-        >
-          {t('delivery.heroPrivacyNote')}
-        </p>
-      {/if}
-      <SetupGuidance backend={data.subscription.backend} />
-      <!-- Delivery paths, ordered by the chosen emphasis: privacy → raw config
-           (E2EE, expanded) first; evade → backup mirrors first. Both always present. -->
-      <div class="flex flex-col gap-8">
-        <div class={effectiveDelivery === 'privacy' ? 'order-1' : 'order-2'}>
-          <RawConfig startOpen={effectiveDelivery === 'privacy'} />
-        </div>
+        <!-- Privacy: the raw config IS the deliverable (the CDN-fetched link is
+             hidden above). No public mirrors — they'd expose the config to third parties. -->
+        <RawConfig prominent />
+        <SetupGuidance backend={data.subscription.backend} />
+      {:else}
+        <!-- Stay connected: the subscription link is the star; mirrors next, raw config secondary. -->
+        <SetupGuidance backend={data.subscription.backend} />
         {#if config.data?.mirrorsEnabled}
-          <div class={effectiveDelivery === 'privacy' ? 'order-2' : 'order-1'}>
-            <MirrorHelp
-              mirrors={data.subscription.mirrors}
-              geoCountry={data.geoCountry}
-              subscriptionUrl={data.subscription.url}
-            />
-          </div>
+          <MirrorHelp
+            mirrors={data.subscription.mirrors}
+            geoCountry={data.geoCountry}
+            subscriptionUrl={data.subscription.url}
+          />
         {/if}
-      </div>
+        <RawConfig />
+      {/if}
     {:else}
       <!-- Empty state when the user has no subscription yet -->
       <div class="rounded-xl border border-dashed border-border p-8 text-center space-y-3">

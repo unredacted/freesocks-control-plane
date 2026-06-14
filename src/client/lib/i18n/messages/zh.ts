@@ -154,6 +154,8 @@ export const zh: Partial<Messages> = {
   'hero.downloaded': (p) => `已下载 ${p.filename}`,
   'hero.traffic': '流量',
   'hero.unlimited': '不限量',
+  'hero.configBelowNote':
+    '你的完整配置在下方 — 请手动添加服务器。为保护隐私，这里不显示可自动更新的订阅链接（你的应用会通过 CDN 获取它）。',
   'hero.usedSoFar': (p) => `已使用 ${p.amount}`,
   'hero.leftThisPeriod': (p) => `本周期剩余 ${p.amount}。`,
   'hero.nearlyOut': (p) => `即将用尽——本周期仅剩 ${p.amount}。`,
@@ -283,6 +285,7 @@ export const zh: Partial<Messages> = {
 
   // --- 原始配置查看器（保留 E2EE 的手动设置） ---
   'rawconfig.disclosure': '显示原始配置',
+  'rawconfig.title': '你的配置',
   'rawconfig.explainer':
     '你的完整代理配置，通过加密通道获取，因此不会以明文经过 CDN。可手动复制到你的应用中，而无需使用订阅链接。',
   'rawconfig.addHint': '将这些服务器条目手动粘贴到你的代理应用中。',
@@ -296,6 +299,4 @@ export const zh: Partial<Messages> = {
   'delivery.privacyBody':
     '追求最强保密性时最合适。我们会优先采用不让你的配置落到第三方服务器的方式。',
   'delivery.recommended': '推荐',
-  'delivery.heroPrivacyNote':
-    '提示：你的应用通过 CDN 获取此链接，CDN 可以看到你的配置。为获得最大隐私，请从下方的原始配置中手动添加服务器。',
 };

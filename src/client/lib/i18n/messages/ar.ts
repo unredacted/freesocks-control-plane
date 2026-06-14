@@ -162,6 +162,8 @@ export const ar: Partial<Messages> = {
   'hero.downloaded': (p) => `تم تنزيل ${p.filename}`,
   'hero.traffic': 'البيانات',
   'hero.unlimited': 'غير محدود',
+  'hero.configBelowNote':
+    'إعدادك الكامل في الأسفل — أضِف الخوادم يدويًا. حفاظًا على الخصوصية، لا يُعرض هنا رابط الاشتراك ذاتي التحديث (لأن تطبيقك سيجلبه عبر شبكة CDN).',
   'hero.usedSoFar': (p) => `${p.amount} مستخدمة حتى الآن`,
   'hero.leftThisPeriod': (p) => `${p.amount} متبقية لهذه الفترة.`,
   'hero.nearlyOut': (p) => `أوشكت على النفاد — تبقّى ${p.amount} فقط لهذه الفترة.`,
@@ -306,6 +308,7 @@ export const ar: Partial<Messages> = {
 
   // --- عارض الإعداد الخام (إعداد يدوي مع الحفاظ على التشفير) ---
   'rawconfig.disclosure': 'إظهار الإعداد الخام',
+  'rawconfig.title': 'إعدادك',
   'rawconfig.explainer':
     'إعداد الوكيل الكامل الخاص بك، يُجلب عبر قناة مشفّرة بحيث لا يمر أبدًا عبر شبكة CDN كنص عادي. انسخه يدويًا إلى تطبيقك بدلًا من استخدام رابط الاشتراك.',
   'rawconfig.addHint': 'الصق إدخالات الخوادم هذه في تطبيق الوكيل يدويًا.',
@@ -320,6 +323,4 @@ export const ar: Partial<Messages> = {
   'delivery.privacyBody':
     'الأفضل لأقوى سرية. سنفضّل إعدادًا يُبقي تهيئتك بعيدًا عن خوادم الأطراف الثالثة.',
   'delivery.recommended': 'موصى به',
-  'delivery.heroPrivacyNote':
-    'تنبيه: يجلب تطبيقك هذا الرابط عبر شبكة CDN يمكنها رؤية تهيئتك. لأقصى خصوصية، أضِف الخوادم يدويًا من الإعداد الخام أدناه.',
 };

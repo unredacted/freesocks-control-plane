@@ -150,6 +150,8 @@ export const en = {
   'hero.downloaded': (p: Record<string, string | number>) => `Downloaded ${p.filename}`,
   'hero.traffic': 'Traffic',
   'hero.unlimited': 'Unlimited',
+  'hero.configBelowNote':
+    "Your full configuration is below — add the servers by hand. For privacy, the auto-updating subscription link isn't shown here (your app would fetch it through a CDN).",
   'hero.usedSoFar': (p: Record<string, string | number>) => `${p.amount} used so far`,
   'hero.leftThisPeriod': (p: Record<string, string | number>) => `${p.amount} left this period.`,
   'hero.nearlyOut': (p: Record<string, string | number>) =>
@@ -331,6 +333,7 @@ export const en = {
 
   // --- raw config viewer (E2EE-preserving manual setup) ---
   'rawconfig.disclosure': 'Show raw configuration',
+  'rawconfig.title': 'Your configuration',
   'rawconfig.explainer':
     'Your full proxy configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link.',
   'rawconfig.addHint': 'Paste these server entries into your proxy app manually.',
@@ -345,8 +348,6 @@ export const en = {
   'delivery.privacyBody':
     "Best for the strongest confidentiality. We'll prefer setup that keeps your config off third-party servers.",
   'delivery.recommended': 'Recommended',
-  'delivery.heroPrivacyNote':
-    'Heads up: your app fetches this link through a CDN, which can see your config. For maximum privacy, add servers by hand from the raw configuration below.',
 } satisfies Record<string, Msg>;
 
 export type MessageKey = keyof typeof en;
