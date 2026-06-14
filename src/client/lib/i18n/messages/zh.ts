@@ -239,6 +239,7 @@ export const zh: Partial<Messages> = {
     `加密支付最少 ${p.months} 个月，更短周期低于网络最低限额。如需更短周期请改用其他方式。`,
   'upgrade.months': (p) => `${p.count} 个月`,
   'upgrade.perMonth': (p) => `${p.price}/月`,
+  'upgrade.save': (p) => `省 ${p.pct}%`,
   'upgrade.methodLabel': '支付方式',
   'upgrade.payNowpayments': '加密货币',
   'upgrade.payNowpaymentsHint': '门罗币、比特币等',
@@ -279,4 +280,10 @@ export const zh: Partial<Messages> = {
   'mirror.removeAll': '移除所有镜像',
   'mirror.errorToast': '无法添加镜像',
   'mirror.removedToast': '镜像已移除',
+
+  // --- 原始配置查看器（保留 E2EE 的手动设置） ---
+  'rawconfig.disclosure': '显示原始配置',
+  'rawconfig.explainer':
+    '你的完整代理配置，通过加密通道获取，因此不会以明文经过 CDN。可手动复制到你的应用中，而无需使用订阅链接。',
+  'rawconfig.addHint': '将这些服务器条目手动粘贴到你的代理应用中。',
 };

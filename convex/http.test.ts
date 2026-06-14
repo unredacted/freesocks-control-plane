@@ -648,4 +648,10 @@ describe('opt-in mirror routes require a member session', () => {
     const res = await t.fetch('/api/v1/mirror', { method: 'DELETE' });
     expect(res.status).toBe(401);
   });
+
+  test('GET /api/v1/subscription/content → 401 without auth', async () => {
+    const t = convexTest(schema, modules);
+    const res = await t.fetch('/api/v1/subscription/content', { method: 'GET' });
+    expect(res.status).toBe(401);
+  });
 });

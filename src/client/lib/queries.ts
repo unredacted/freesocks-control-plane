@@ -10,7 +10,7 @@ import { createQuery, createInfiniteQuery } from '@tanstack/svelte-query';
 import { z } from 'zod';
 import { apiClient } from './api';
 import { AuthMeResponse, PublicConfig } from '../../shared/contracts/auth';
-import { AccountResponse } from '../../shared/contracts/account';
+import { AccountResponse, SubscriptionContentResponse } from '../../shared/contracts/account';
 import {
   AdminListResponse,
   AppSettingsRecord,
@@ -32,6 +32,7 @@ export const queryKeys = {
   me: ['me'] as const,
   config: ['config'] as const,
   account: ['account'] as const,
+  subscriptionContent: ['subscription', 'content'] as const,
   adminAuthStatus: ['admin', 'auth-status'] as const,
   adminAdmins: ['admin', 'admins'] as const,
   adminTiers: ['admin', 'tiers'] as const,
@@ -96,6 +97,19 @@ export const accountQuery = (enabled?: () => boolean) =>
     queryFn: () => apiClient.get('/api/v1/account', AccountResponse),
     staleTime: 30_000,
     ...(enabled ? { enabled: enabled() } : {}),
+  }));
+
+/**
+ * Raw subscription content (the proxy config), delivered SEALED. Lazy: only
+ * fetched while `enabled()` (the RawConfig viewer is open), so the config isn't
+ * pulled for every account view — it's a deliberate, on-demand reveal.
+ */
+export const subscriptionContentQuery = (enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.subscriptionContent,
+    queryFn: () => apiClient.get('/api/v1/subscription/content', SubscriptionContentResponse),
+    enabled: enabled(),
+    staleTime: 60_000,
   }));
 
 /**

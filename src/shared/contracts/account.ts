@@ -78,6 +78,19 @@ export const RegenerateRequest = z.object({
 export type RegenerateRequest = z.infer<typeof RegenerateRequest>;
 
 /**
+ * Raw subscription content (the actual proxy config — vless/ss links or a
+ * clash/sing-box doc) for the member to add manually. Delivered over the SEALED
+ * reveal-leg channel (CDN sees ciphertext), so a member can get their config
+ * WITHOUT their proxy client fetching the subscription URL through a CDN in
+ * plaintext — the E2EE-preserving alternative to the public S3 mirror.
+ */
+export const SubscriptionContentResponse = z.object({
+  content: z.string(),
+  contentType: z.string(),
+});
+export type SubscriptionContentResponse = z.infer<typeof SubscriptionContentResponse>;
+
+/**
  * Switch a member's subscription from one backend to the other. Free-tier users
  * land on the default-free tier of the target backend; the old subscription is
  * tombstoned with a 24h overlap so the user can re-import on all their devices

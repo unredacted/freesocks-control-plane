@@ -11,6 +11,7 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
+  import RawConfig from '../components/RawConfig.svelte';
   import MembershipCallout from '../components/MembershipCallout.svelte';
   import RegenerateModal from '../components/RegenerateModal.svelte';
   import SwitchBackendModal from '../components/SwitchBackendModal.svelte';
@@ -342,7 +343,7 @@
     </Card>
   </div>
 {:else}
-  <div class="max-w-3xl mx-auto py-8 space-y-8">
+  <div class="max-w-4xl mx-auto py-8 space-y-8">
     <div class="sr-only" role="status" aria-live="polite">{liveMessage}</div>
     <!-- Welcome strip, slim, not a card. Visual rhythm is set by spacing,
          not by everything being framed. -->
@@ -454,33 +455,10 @@
       />
     {/if}
 
-    <!-- Membership-state callouts: only shown when there's something to say. -->
-    {#if membershipState === 'no-membership'}
-      <!--
-        Membership signup is being redesigned around the in-house billing
-        portal. Surface the placeholder rather than linking out to a join
-        page that isn't ready. The "Already paid? Refresh membership"
-        secondary action re-reads the user's local entitlement state.
-      -->
-      <MembershipCallout
-        tone="info"
-        title={t('account.freeTierTitle')}
-        body={t('account.freeTierBody')}
-        ctaUrl={config.data?.donateUrl ?? 'https://unredacted.org/donate'}
-        ctaLabel={t('renew.donate')}
-      >
-        {#snippet secondaryAction()}
-          <button
-            type="button"
-            class="text-xs text-muted-foreground underline hover:text-foreground"
-            onclick={() => refreshMembership.mutate()}
-            disabled={refreshMembership.isPending}
-          >
-            {refreshMembership.isPending ? t('account.refreshing') : t('account.refreshMembership')}
-          </button>
-        {/snippet}
-      </MembershipCallout>
-    {/if}
+    <!-- Membership-state callouts: only shown when there's something to say.
+         No-membership free users lead with the upgrade panel below (upsell first)
+         instead of a clutter callout; the "refresh membership" recovery action
+         moves to a slim link under it. -->
     {#if membershipState === 'expiring-soon' && expiresAt && daysUntilExpiry !== null}
       <MembershipCallout
         tone="warn"
@@ -529,6 +507,21 @@
       <UpgradeMembership mode={membershipState === 'no-membership' ? 'upgrade' : 'extend'} />
     {/if}
 
+    <!-- Already-paid recovery: re-read entitlement state (e.g. a payment that
+         hasn't propagated yet). Slim now that the verbose callout is gone. -->
+    {#if membershipState === 'no-membership'}
+      <p class="text-xs text-muted-foreground">
+        <button
+          type="button"
+          class="underline hover:text-foreground"
+          onclick={() => refreshMembership.mutate()}
+          disabled={refreshMembership.isPending}
+        >
+          {refreshMembership.isPending ? t('account.refreshing') : t('account.refreshMembership')}
+        </button>
+      </p>
+    {/if}
+
     <!-- W4: redeem a membership code (extends/upgrades the tier). Available to
          any signed-in member; the renew callouts above point here. -->
     <section class="rounded-xl border border-border bg-card p-4 sm:p-5">
@@ -575,6 +568,7 @@
         backend={data.subscription.backend}
       />
       <SetupGuidance backend={data.subscription.backend} />
+      <RawConfig />
       {#if config.data?.mirrorsEnabled}
         <MirrorHelp
           mirrors={data.subscription.mirrors}

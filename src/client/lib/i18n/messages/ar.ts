@@ -260,6 +260,7 @@ export const ar: Partial<Messages> = {
     `تبدأ مدفوعات العملات المشفّرة من ${p.months} أشهر — المدد الأقصر أقل من الحد الأدنى للشبكة. اختر طريقة أخرى للمدد الأقصر.`,
   'upgrade.months': (p) => `${p.count} شهر`,
   'upgrade.perMonth': (p) => `${p.price}/شهر`,
+  'upgrade.save': (p) => `وفّر ${p.pct}٪`,
   'upgrade.methodLabel': 'طريقة الدفع',
   'upgrade.payNowpayments': 'العملات المشفرة',
   'upgrade.payNowpaymentsHint': 'مونيرو والبيتكوين والمزيد',
@@ -302,4 +303,10 @@ export const ar: Partial<Messages> = {
   'mirror.removeAll': 'إزالة كل المرايا',
   'mirror.errorToast': 'تعذّر إضافة مرآة',
   'mirror.removedToast': 'تمت إزالة المرايا',
+
+  // --- عارض الإعداد الخام (إعداد يدوي مع الحفاظ على التشفير) ---
+  'rawconfig.disclosure': 'إظهار الإعداد الخام',
+  'rawconfig.explainer':
+    'إعداد الوكيل الكامل الخاص بك، يُجلب عبر قناة مشفّرة بحيث لا يمر أبدًا عبر شبكة CDN كنص عادي. انسخه يدويًا إلى تطبيقك بدلًا من استخدام رابط الاشتراك.',
+  'rawconfig.addHint': 'الصق إدخالات الخوادم هذه في تطبيق الوكيل يدويًا.',
 };

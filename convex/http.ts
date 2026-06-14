@@ -422,6 +422,37 @@ http.route({
   }),
 });
 
+// Raw subscription content (the actual proxy config) for manual setup. Fetched
+// server-side from the backend and returned over the SEALED reveal-leg channel,
+// so a privacy-minded member can copy their config by hand WITHOUT their proxy
+// client pulling the subscription URL through a CDN in plaintext — the
+// E2EE-preserving alternative to the public S3 mirror.
+http.route({
+  path: '/api/v1/subscription/content',
+  method: 'GET',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'subscription:read');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const sub = await ctx.runQuery(internal.subscriptions.mirrorContextForUser, {
+      userId: member.userId,
+    });
+    if (!sub) return errorJson('not_found', 'No active subscription', 404);
+    try {
+      const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
+        backend: sub.backend,
+        backendServerId: sub.backendServerId ?? undefined,
+        backendShortId: sub.backendShortId,
+      });
+      return json({ content: fetched.content, contentType: fetched.contentType ?? 'text/plain' });
+    } catch (err) {
+      console.error(
+        `[subscription] content fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return errorJson('content.unavailable', 'Could not load the configuration right now.', 502);
+    }
+  }),
+});
+
 http.route({
   path: '/api/v1/account/regenerate',
   method: 'POST',

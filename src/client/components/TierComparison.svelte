@@ -11,8 +11,9 @@
    * description, and the bandwidth/device limits are the live DB values, so
    * Admin → Tiers edits propagate here (and to every other view that renders
    * this) with no hardcoded copy to drift. The membership tier (the one whose
-   * slug matches `billing.tierSlug`) shows a "from <price>/mo" line + an Upgrade
-   * CTA when billing is enabled and the parent supplies `onUpgrade`.
+   * slug matches `billing.tierSlug`) shows its monthly price (the shortest term's
+   * per-month) + an Upgrade CTA when billing is enabled and the parent supplies
+   * `onUpgrade`. Longer-term discounts are shown in the upgrade panel, not here.
    */
   interface Props {
     currentTierSlug: string;
@@ -27,17 +28,18 @@
   let billingEnabled = $derived(billing?.enabled ?? false);
   let membershipSlug = $derived(billing?.tierSlug ?? 'member');
 
-  // Cheapest per-month price across the durations, for the "from <price>/mo" line.
-  let fromPerMonthCents = $derived(
-    (billing?.durations ?? []).reduce<number | null>((min, d) => {
-      if (d.months <= 0) return min;
-      const per = d.amountCents / d.months;
-      return min === null || per < min ? per : min;
-    }, null),
-  );
+  // The headline monthly price = the SHORTEST term's per-month (e.g. the 1-month
+  // plan at $5/mo), NOT the cheapest amortized annual ($4.17/mo) — that read as a
+  // pricing bug. Longer-term discounts live in the upgrade panel instead.
+  let monthlyCents = $derived.by(() => {
+    const ds = (billing?.durations ?? []).filter((d) => d.months > 0);
+    if (ds.length === 0) return null;
+    const shortest = ds.reduce((a, b) => (b.months < a.months ? b : a));
+    return shortest.amountCents / shortest.months;
+  });
   let fromPerMonth = $derived(
-    fromPerMonthCents !== null
-      ? formatMoney(Math.round(fromPerMonthCents), billing?.currency ?? 'USD')
+    monthlyCents !== null
+      ? formatMoney(Math.round(monthlyCents), billing?.currency ?? 'USD')
       : null,
   );
 

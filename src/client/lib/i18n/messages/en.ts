@@ -268,6 +268,7 @@ export const en = {
   'upgrade.months': (p: Record<string, string | number>) =>
     p.count === 1 ? '1 month' : `${p.count} months`,
   'upgrade.perMonth': (p: Record<string, string | number>) => `${p.price}/mo`,
+  'upgrade.save': (p: Record<string, string | number>) => `save ${p.pct}%`,
   'upgrade.methodLabel': 'Payment method',
   'upgrade.payNowpayments': 'Cryptocurrency',
   'upgrade.payNowpaymentsHint': 'Monero, Bitcoin & more',
@@ -327,6 +328,12 @@ export const en = {
   'mirror.removeAll': 'Remove all mirrors',
   'mirror.errorToast': "Couldn't add a mirror",
   'mirror.removedToast': 'Mirrors removed',
+
+  // --- raw config viewer (E2EE-preserving manual setup) ---
+  'rawconfig.disclosure': 'Show raw configuration',
+  'rawconfig.explainer':
+    'Your full proxy configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link.',
+  'rawconfig.addHint': 'Paste these server entries into your proxy app manually.',
 } satisfies Record<string, Msg>;
 
 export type MessageKey = keyof typeof en;

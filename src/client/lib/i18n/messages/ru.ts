@@ -264,6 +264,7 @@ export const ru: Partial<Messages> = {
     `Оплата криптовалютой — от ${p.months} мес.; более короткие сроки ниже сетевого минимума. Для коротких сроков выберите другой способ.`,
   'upgrade.months': (p) => `${p.count} мес.`,
   'upgrade.perMonth': (p) => `${p.price}/мес`,
+  'upgrade.save': (p) => `скидка ${p.pct}%`,
   'upgrade.methodLabel': 'Способ оплаты',
   'upgrade.payNowpayments': 'Криптовалюта',
   'upgrade.payNowpaymentsHint': 'Monero, Bitcoin и другие',
@@ -307,4 +308,10 @@ export const ru: Partial<Messages> = {
   'mirror.removeAll': 'Удалить все зеркала',
   'mirror.errorToast': 'Не удалось добавить зеркало',
   'mirror.removedToast': 'Зеркала удалены',
+
+  // --- просмотр необработанной конфигурации (ручная настройка, E2EE сохраняется) ---
+  'rawconfig.disclosure': 'Показать необработанную конфигурацию',
+  'rawconfig.explainer':
+    'Полная конфигурация вашего прокси, полученная по зашифрованному каналу — она никогда не проходит через CDN в открытом виде. Вставьте её в приложение вручную вместо ссылки-подписки.',
+  'rawconfig.addHint': 'Вставьте эти серверные записи в ваше прокси-приложение вручную.',
 };

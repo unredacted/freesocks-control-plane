@@ -5,6 +5,7 @@
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
+  import RawConfig from '../components/RawConfig.svelte';
   import SetupGuidance from '../components/SetupGuidance.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import Link from '../components/Link.svelte';
@@ -308,6 +309,7 @@
           backend={subscription.backend}
         />
         <SetupGuidance backend={subscription.backend} />
+        <RawConfig />
         {#if config.data?.mirrorsEnabled}
           <MirrorHelp
             mirrors={subscription.mirrors}

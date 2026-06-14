@@ -19,6 +19,7 @@ const SAMPLE_PARAMS: Record<string, string | number> = {
   count: 2,
   days: 3,
   months: 3,
+  pct: 17,
   tier: 'Member',
   label: 'Outline',
   to: 'Outline',

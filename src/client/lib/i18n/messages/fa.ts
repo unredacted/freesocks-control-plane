@@ -252,6 +252,7 @@ export const fa: Partial<Messages> = {
     `پرداخت رمزارزی از ${p.months} ماه شروع می‌شود — مدت‌های کوتاه‌تر کمتر از حداقل شبکه هستند. برای مدت کوتاه‌تر روش دیگری انتخاب کنید.`,
   'upgrade.months': (p) => `${p.count} ماه`,
   'upgrade.perMonth': (p) => `${p.price}/ماه`,
+  'upgrade.save': (p) => `${p.pct}٪ صرفه‌جویی`,
   'upgrade.methodLabel': 'روش پرداخت',
   'upgrade.payNowpayments': 'ارز دیجیتال',
   'upgrade.payNowpaymentsHint': 'مونرو، بیت‌کوین و بیشتر',
@@ -296,4 +297,10 @@ export const fa: Partial<Messages> = {
   'mirror.removeAll': 'حذف همهٔ آینه‌ها',
   'mirror.errorToast': 'افزودن آینه ممکن نشد',
   'mirror.removedToast': 'آینه‌ها حذف شدند',
+
+  // --- نمایشگر پیکربندی خام (تنظیم دستی با حفظ E2EE) ---
+  'rawconfig.disclosure': 'نمایش پیکربندی خام',
+  'rawconfig.explainer':
+    'پیکربندی کامل پروکسی شما، که از طریق یک کانال رمزگذاری‌شده دریافت می‌شود تا هرگز به‌صورت متن ساده از CDN عبور نکند. به‌جای استفاده از لینک اشتراک، آن را دستی در برنامه‌تان وارد کنید.',
+  'rawconfig.addHint': 'این ورودی‌های سرور را به‌صورت دستی در برنامهٔ پروکسی خود وارد کنید.',
 };

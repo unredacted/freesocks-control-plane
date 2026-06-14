@@ -3,21 +3,14 @@
   import ThemeToggle from './ThemeToggle.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
   import { Button } from '@client/components/ui/button';
-  import { meQuery, configQuery } from '../lib/queries';
+  import { meQuery } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
   import KeyIcon from '@lucide/svelte/icons/key-round';
   import User from '@lucide/svelte/icons/user-round';
   import LogIn from '@lucide/svelte/icons/log-in';
-  import Heart from '@lucide/svelte/icons/heart';
 
-  // TanStack query, fetched once on first render, cached across the SPA,
-  // refetched on window focus (so the user gets fresh tier info when they
-  // come back from a payment tab once the membership flow is live).
+  // TanStack query, fetched once on first render, cached across the SPA.
   const me = meQuery();
-  const config = configQuery();
-
-  let isFreeTierMember = $derived(!!me.data?.authenticated && me.data.member?.tier.slug === 'free');
-  let billingEnabled = $derived(config.data?.billing?.enabled ?? false);
 </script>
 
 <header class="border-b border-border bg-background/80 backdrop-blur sticky top-0 z-10">
@@ -37,16 +30,9 @@
     </Link>
     <nav class="flex items-center gap-2">
       {#if !me.isPending && me.data?.authenticated}
-        <!-- Signed in: account-relevant CTAs only (no "Get a free account"). -->
-        {#if isFreeTierMember && billingEnabled}
-          <!-- Free-tier member + billing live: route to the in-app upgrade panel. -->
-          <Link href="/account">
-            <Button variant="outline" size="sm" class="hidden sm:inline-flex">
-              <Heart class="size-4" />
-              Membership
-            </Button>
-          </Link>
-        {/if}
+        <!-- Signed in: a single account CTA. The account page itself leads with
+             the membership upsell for free-tier members, so a separate
+             "Membership" button here would just be a second link to /account. -->
         <Link href="/account">
           <Button variant="default" size="sm">
             <User class="size-4" />
