@@ -16,9 +16,12 @@
    * pulling the subscription URL through a CDN in plaintext. Fetched only while
    * the panel is open — a deliberate, on-demand reveal, not auto-loaded.
    */
-  const content = subscriptionContentQuery(() => open);
+  // `open` MUST be declared before the query: subscriptionContentQuery evaluates
+  // its `enabled` getter synchronously at creation, so reading `open` first would
+  // hit the temporal dead zone and throw during render.
   let open = $state(false);
   let copied = $state(false);
+  const content = subscriptionContentQuery(() => open);
 
   function copy(text: string) {
     void navigator.clipboard.writeText(text).then(() => {
