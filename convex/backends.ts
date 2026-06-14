@@ -168,16 +168,18 @@ export const deleteUser = internalAction({
 export const fetchSubscriptionContent = internalAction({
   args: {
     backend: backendId,
-    // The instance is passed explicitly: this is called during issuance (S3
-    // mirror), before the subscription row exists to resolve from. Optional so
-    // the dev mock path (which needs no instance) still validates.
+    // The instance is passed explicitly (optional so the dev mock path validates).
     backendServerId: v.optional(v.id('backendServers')),
     backendShortId: v.string(),
     userAgent: v.optional(v.string()),
+    // The panel-provided public subscription URL — the actual location of the
+    // raw content. Remnawave fetches THIS (the shortUuid is a public capability,
+    // no admin token), not the admin API. Callers resolve it from the sub row.
+    subscriptionUrl: v.optional(v.string()),
   },
   handler: async (
     ctx,
-    { backendServerId, backendShortId, userAgent },
+    { backendServerId, backendShortId, userAgent, subscriptionUrl },
   ): Promise<SubscriptionContent> => {
     if (mockBackendEnabled()) return mockFetchContent();
     if (!backendServerId) throw new Error('backendServerId required to fetch subscription content');
@@ -187,6 +189,7 @@ export const fetchSubscriptionContent = internalAction({
       server.config as BackendConfig,
       backendShortId,
       userAgent,
+      subscriptionUrl,
     );
   },
 });

@@ -89,12 +89,6 @@
     }
   });
 
-  // TierComparison's "Upgrade" CTA scrolls up to the purchase panel (#upgrade),
-  // which is rendered above for every non-active membership state.
-  function scrollToUpgrade() {
-    document.getElementById('upgrade')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
-
   // Mutation: regenerate the subscription. Invalidates ['account'] on success
   // so the SubscriptionHero re-fetches with the new URL automatically.
   const regenerate = createMutation(() => ({
@@ -500,6 +494,12 @@
       </MembershipCallout>
     {/if}
 
+    <!-- Upsell-first: free users see what each tier includes immediately above
+         the purchase panel (bundled together, no scroll-to CTA needed). -->
+    {#if membershipState === 'no-membership'}
+      <TierComparison currentTierSlug={data.user.tier.slug} />
+    {/if}
+
     <!-- Self-service purchase panel (renders only when billing is enabled).
          Shown for every non-active state; 'upgrade' for free users, 'extend'
          for expiring/expired members. -->
@@ -656,11 +656,9 @@
       </section>
     {/if}
 
-    <!-- Tier comparison + member-impact section, free-tier members only.
-         Honest framing: factual feature comparison, mission transparency.
-         No nags, no urgency, just information. -->
+    <!-- Member-impact / mission transparency, free-tier members only. The tier
+         comparison moved up next to the upgrade panel (upsell-first). -->
     {#if membershipState === 'no-membership'}
-      <TierComparison currentTierSlug={data.user.tier.slug} onUpgrade={scrollToUpgrade} />
       <MemberImpact />
     {/if}
     {#if data.subscription}

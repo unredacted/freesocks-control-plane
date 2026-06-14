@@ -174,6 +174,7 @@ export const provisionMirror = internalAction({
         backend: context.backend,
         backendServerId: context.backendServerId ?? undefined,
         backendShortId: context.backendShortId,
+        subscriptionUrl: context.subscriptionUrl,
       });
     } catch {
       return { status: 'error', remaining: Math.max(0, cap - used) };
@@ -323,6 +324,7 @@ export const refreshActiveMirrors = internalAction({
             backend: sub.backend,
             backendServerId: sub.backendServerId ?? undefined,
             backendShortId: sub.backendShortId,
+            subscriptionUrl: sub.subscriptionUrl,
           });
           const hash = await sha256Hex(fetched.content);
           if (hash === sub.rawContentHash) continue; // unchanged → no re-upload

@@ -29,6 +29,22 @@
       setTimeout(() => (copied = false), 1500);
     });
   }
+
+  // Remnawave's default subscription is base64(newline-joined links). Decode it
+  // so the user sees readable vless://… entries they can add by hand; fall back
+  // to the raw text for any other format (clash YAML, already-plaintext, etc.).
+  function prettify(raw: string): string {
+    const trimmed = raw.trim();
+    if (trimmed.length >= 8 && /^[A-Za-z0-9+/=\s]+$/.test(trimmed)) {
+      try {
+        const decoded = atob(trimmed.replace(/\s+/g, ''));
+        if (decoded.includes('://')) return decoded.trim();
+      } catch {
+        /* not base64 — show raw */
+      }
+    }
+    return raw;
+  }
 </script>
 
 <div class="rounded-xl border border-border/60 bg-muted/20">
@@ -54,9 +70,9 @@
       {:else if content.isError}
         <p class="text-xs text-destructive">{apiErrorMessage(content.error)}</p>
       {:else if content.data}
-        {@const cfg = content.data}
+        {@const text = prettify(content.data.content)}
         <div class="flex justify-end">
-          <Button variant="outline" size="sm" onclick={() => copy(cfg.content)}>
+          <Button variant="outline" size="sm" onclick={() => copy(text)}>
             {#if copied}
               <Check class="size-3.5" />
             {:else}
@@ -66,7 +82,7 @@
           </Button>
         </div>
         <pre
-          class="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-xs leading-relaxed text-foreground">{cfg.content}</pre>
+          class="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-xs leading-relaxed text-foreground">{text}</pre>
         <p class="text-xs text-muted-foreground/80">{t('rawconfig.addHint')}</p>
       {/if}
     </div>

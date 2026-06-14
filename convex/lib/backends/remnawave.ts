@@ -294,16 +294,22 @@ export async function remnawaveFetchSubscription(
   cfg: RemnawaveConfig,
   backendShortId: string,
   userAgent?: string,
+  subscriptionUrl?: string,
 ): Promise<SubscriptionContent> {
-  const url = new URL(`/api/subscriptions/${backendShortId}`, cfg.baseUrl).toString();
-  const headers: Record<string, string> = { authorization: `Bearer ${cfg.apiToken}` };
+  // The raw content lives at the panel-provided PUBLIC subscription URL (the
+  // shortUuid is the capability), NOT the admin API — `/api/subscriptions/...`
+  // doesn't exist and 404s. Fetch that URL with NO admin Bearer (it's public).
+  // Fall back to the conventional `/api/sub/<shortUuid>` only if we weren't
+  // handed a URL (legacy callers); no UA → Remnawave serves the default base64
+  // subscription rather than an HTML landing page.
+  const url = subscriptionUrl ?? new URL(`/api/sub/${backendShortId}`, cfg.baseUrl).toString();
+  const headers: Record<string, string> = {};
   if (userAgent) headers['user-agent'] = userAgent;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 8000);
   try {
     const res = await fetch(url, { headers, signal: controller.signal });
-    if (!res.ok)
-      throw await RemnawaveApiError.fromResponse(res, `/api/subscriptions/${backendShortId}`);
+    if (!res.ok) throw await RemnawaveApiError.fromResponse(res, 'subscription content');
     return {
       content: await res.text(),
       contentType: res.headers.get('content-type') ?? 'text/plain',

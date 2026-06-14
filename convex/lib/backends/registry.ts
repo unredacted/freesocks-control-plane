@@ -70,7 +70,12 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   update(config: C, backendUserId: string, patch: UpdateUserPatch): Promise<void>;
   resetTraffic(config: C, backendUserId: string): Promise<void>;
   remove(config: C, backendUserId: string): Promise<void>;
-  fetchContent(config: C, backendShortId: string, userAgent?: string): Promise<SubscriptionContent>;
+  fetchContent(
+    config: C,
+    backendShortId: string,
+    userAgent?: string,
+    subscriptionUrl?: string,
+  ): Promise<SubscriptionContent>;
   health(config: C): Promise<BackendHealth>;
   testConnection(config: C): Promise<TestConnectionResult>;
 }
@@ -81,7 +86,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   update: (c, id, patch) => remnawaveUpdateUser(c, id, patch),
   resetTraffic: (c, id) => remnawaveResetTraffic(c, id),
   remove: (c, id) => remnawaveDeleteUser(c, id),
-  fetchContent: (c, shortId, ua) => remnawaveFetchSubscription(c, shortId, ua),
+  fetchContent: (c, shortId, ua, subUrl) => remnawaveFetchSubscription(c, shortId, ua, subUrl),
   health: (c) => remnawaveHealth(c),
   testConnection: (c) => remnawaveTestConnection(c),
 };

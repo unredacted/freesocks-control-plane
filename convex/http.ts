@@ -442,6 +442,7 @@ http.route({
         backend: sub.backend,
         backendServerId: sub.backendServerId ?? undefined,
         backendShortId: sub.backendShortId,
+        subscriptionUrl: sub.subscriptionUrl,
       });
       return json({ content: fetched.content, contentType: fetched.contentType ?? 'text/plain' });
     } catch (err) {

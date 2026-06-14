@@ -237,16 +237,29 @@ describe('remnawaveResetTraffic / remnawaveDeleteUser', () => {
 });
 
 describe('remnawaveFetchSubscription', () => {
-  test('returns raw content + content-type and forwards the user-agent', async () => {
+  test('fetches the panel-provided public subscription URL (no admin token), forwards UA', async () => {
     mockFetch(
       () =>
         new Response('vmess://node\n', { status: 200, headers: { 'content-type': 'text/yaml' } }),
     );
-    const out = await remnawaveFetchSubscription(cfg, 'short123', 'Clash/1.0');
+    const out = await remnawaveFetchSubscription(
+      cfg,
+      'short123',
+      'Clash/1.0',
+      'https://sub.internal/happ/short123',
+    );
     expect(out).toEqual({ content: 'vmess://node\n', contentType: 'text/yaml' });
-    expect(calls[0]!.path).toBe('/api/subscriptions/short123');
-    expect(calls[0]!.headers.authorization).toBe('Bearer SECRET_TOKEN_DO_NOT_LEAK');
+    expect(calls[0]!.path).toBe('/happ/short123'); // the provided URL, not the admin API
+    // The subscription URL is a public capability — the admin Bearer is NOT sent.
+    expect(calls[0]!.headers.authorization).toBeUndefined();
     expect(calls[0]!.headers['user-agent']).toBe('Clash/1.0');
+  });
+
+  test('falls back to /api/sub/<shortId> when no subscription URL is given', async () => {
+    mockFetch(() => new Response('payload', { status: 200 }));
+    await remnawaveFetchSubscription(cfg, 'short123');
+    expect(calls[0]!.path).toBe('/api/sub/short123');
+    expect(calls[0]!.headers.authorization).toBeUndefined();
   });
 
   test('defaults content-type to text/plain when the response omits the header', async () => {

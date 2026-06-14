@@ -84,6 +84,7 @@ export interface ActiveMirrorPage {
     backend: 'remnawave' | 'outline';
     backendServerId: Id<'backendServers'> | null;
     backendShortId: string;
+    subscriptionUrl: string;
     rawContentHash: string | null;
     objectPath: string | null;
     /** The providers THIS sub was mirrored to (names) — refresh re-uploads to these only. */
@@ -111,6 +112,7 @@ export const pageActiveForMirror = internalQuery({
           backend: s.backend,
           backendServerId: s.backendServerId ?? null,
           backendShortId: s.backendShortId,
+          subscriptionUrl: s.subscriptionUrl,
           rawContentHash: s.rawContentHash ?? null,
           objectPath: s.subscriptionMirrors[0]?.objectPath ?? null,
           providers: s.subscriptionMirrors.map((m) => m.provider),
@@ -130,6 +132,8 @@ export interface MirrorContext {
   backend: 'remnawave' | 'outline';
   backendServerId: Id<'backendServers'> | null;
   backendShortId: string;
+  /** The panel-provided public subscription URL — where the raw content actually lives. */
+  subscriptionUrl: string;
   triedProviders: string[];
   objectPath: string | null;
 }
@@ -157,6 +161,7 @@ export const mirrorContextForUser = internalQuery({
       backend: sub.backend,
       backendServerId: sub.backendServerId ?? null,
       backendShortId: sub.backendShortId,
+      subscriptionUrl: sub.subscriptionUrl,
       triedProviders: sub.subscriptionMirrors.map((m) => m.provider),
       objectPath: sub.subscriptionMirrors[0]?.objectPath ?? null,
     };
