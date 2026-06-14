@@ -42,10 +42,16 @@
   // edits if the underlying query refetches in the background.
   let draft = $state<Record<string, unknown>>({});
   let initialized = $state(false);
+  // Free-text mirror of the privacyCountries array so typing (incl. spaces) isn't
+  // reflowed by re-joining; parsed back into `draft` as a normalized array on input.
+  let privacyCountriesText = $state('');
 
   $effect(() => {
     if (settings.data && !initialized) {
       draft = { ...settings.data };
+      privacyCountriesText = (
+        (settings.data['delivery.privacyCountries'] as string[] | undefined) ?? []
+      ).join(' ');
       initialized = true;
     }
   });
@@ -270,6 +276,40 @@
                     Math.round(Number((e.target as HTMLInputElement).value) || 0),
                   ),
                 })}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <!-- Delivery preference suggestion (country-based) -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Delivery preference</CardTitle>
+          <CardDescription>
+            Countries (ISO 2-letter) where the signup picker suggests "hardened privacy" instead of
+            the default "stay connected". Empty = always suggest stay-connected. The member's actual
+            choice is stored only on their device, never here.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-3 text-sm">
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="privacy-countries">
+              Suggest privacy for these countries
+            </label>
+            <Input
+              id="privacy-countries"
+              placeholder="(none — always suggest stay-connected)"
+              value={privacyCountriesText}
+              oninput={(e) => {
+                privacyCountriesText = (e.target as HTMLInputElement).value;
+                draft = {
+                  ...draft,
+                  'delivery.privacyCountries': privacyCountriesText
+                    .split(/[\s,]+/)
+                    .map((c) => c.trim().toUpperCase())
+                    .filter((c) => /^[A-Z]{2}$/.test(c)),
+                };
+              }}
             />
           </div>
         </CardContent>

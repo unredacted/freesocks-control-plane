@@ -286,4 +286,14 @@ export const zh: Partial<Messages> = {
   'rawconfig.explainer':
     '你的完整代理配置，通过加密通道获取，因此不会以明文经过 CDN。可手动复制到你的应用中，而无需使用订阅链接。',
   'rawconfig.addHint': '将这些服务器条目手动粘贴到你的代理应用中。',
+
+  // --- 投递偏好（隐私 vs 规避封锁） ---
+  'delivery.title': '你最看重什么？',
+  'delivery.subtitle': '选择一个侧重点 — 仅保存在本设备，可随时更改。',
+  'delivery.evadeTitle': '保持连接',
+  'delivery.evadeBody': '当你所在地区网站被封锁时最合适。我们会提供更难被封锁的备用链接。',
+  'delivery.privacyTitle': '最大化隐私',
+  'delivery.privacyBody':
+    '追求最强保密性时最合适。我们会优先采用不让你的配置落到第三方服务器的方式。',
+  'delivery.recommended': '推荐',
 };

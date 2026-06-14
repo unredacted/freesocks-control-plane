@@ -417,8 +417,16 @@ http.route({
     const view = await ctx.runAction(internal.account.getAccountView, { userId: member.userId });
     if (!view) return errorJson('not_found', 'user not found', 404);
     // geoCountry (transient, from the CDN header) prefills the "try a mirror"
-    // country picker. Inside the sealed body; never stored on the user.
-    return json({ ...view, geoCountry: resolveCountry(req) });
+    // picker AND drives the delivery suggestion. Inside the sealed body; never
+    // stored on the user. The suggestion = "privacy" only for the admin-listed
+    // countries (delivery.privacyCountries), else "evade"; the choice itself is
+    // client-side. The country list stays server-side — only the verdict ships.
+    const geoCountry = resolveCountry(req);
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
+    const privacyCountries = (settings['delivery.privacyCountries'] as string[] | undefined) ?? [];
+    const suggestedDelivery =
+      geoCountry && privacyCountries.includes(geoCountry) ? 'privacy' : 'evade';
+    return json({ ...view, geoCountry, suggestedDelivery });
   }),
 });
 

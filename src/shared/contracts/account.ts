@@ -69,6 +69,12 @@ export const AccountResponse = z.object({
    * not CDN-fronted or unknown.
    */
   geoCountry: z.string().nullable().optional(),
+  /**
+   * Server's country-based RECOMMENDATION for the delivery preference: 'privacy'
+   * only for the admin-listed `delivery.privacyCountries`, else 'evade'. Just the
+   * highlighted default in the picker — the member's actual choice is client-side.
+   */
+  suggestedDelivery: z.enum(['privacy', 'evade']).optional(),
 });
 export type AccountResponse = z.infer<typeof AccountResponse>;
 

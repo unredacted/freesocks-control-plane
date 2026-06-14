@@ -334,6 +334,17 @@ export const en = {
   'rawconfig.explainer':
     'Your full proxy configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link.',
   'rawconfig.addHint': 'Paste these server entries into your proxy app manually.',
+
+  // --- delivery preference (privacy vs. evade censorship) ---
+  'delivery.title': 'What matters most to you?',
+  'delivery.subtitle': 'Pick a focus — saved on this device only, and you can change it anytime.',
+  'delivery.evadeTitle': 'Stay connected',
+  'delivery.evadeBody':
+    "Best when sites are blocked where you are. We'll surface backup links that are harder to block.",
+  'delivery.privacyTitle': 'Maximize privacy',
+  'delivery.privacyBody':
+    "Best for the strongest confidentiality. We'll prefer setup that keeps your config off third-party servers.",
+  'delivery.recommended': 'Recommended',
 } satisfies Record<string, Msg>;
 
 export type MessageKey = keyof typeof en;

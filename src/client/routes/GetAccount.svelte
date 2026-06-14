@@ -6,6 +6,8 @@
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
+  import DeliveryPreference from '../components/DeliveryPreference.svelte';
+  import { deliveryPref } from '../lib/deliveryPref.svelte';
   import SetupGuidance from '../components/SetupGuidance.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import Link from '../components/Link.svelte';
@@ -46,6 +48,8 @@
   // 401 while the visitor is still anonymous on this page.
   const account = accountQuery(() => isAuthed);
   let subscription = $derived(account.data?.subscription ?? null);
+  // Delivery emphasis (client choice → country suggestion → evade); orders the panels.
+  let effectiveDelivery = $derived(deliveryPref() ?? account.data?.suggestedDelivery ?? 'evade');
 
   // Self-hosted Cap captcha config from /api/v1/config (same-origin endpoint).
   let captchaEndpoint = $derived(config.data?.captcha.apiEndpoint ?? '/cap');
@@ -309,14 +313,21 @@
           backend={subscription.backend}
         />
         <SetupGuidance backend={subscription.backend} />
-        <RawConfig />
-        {#if config.data?.mirrorsEnabled}
-          <MirrorHelp
-            mirrors={subscription.mirrors}
-            geoCountry={account.data?.geoCountry}
-            subscriptionUrl={subscription.url}
-          />
-        {/if}
+        <DeliveryPreference suggested={account.data?.suggestedDelivery} />
+        <div class="flex flex-col gap-8">
+          <div class={effectiveDelivery === 'privacy' ? 'order-1' : 'order-2'}>
+            <RawConfig />
+          </div>
+          {#if config.data?.mirrorsEnabled}
+            <div class={effectiveDelivery === 'privacy' ? 'order-2' : 'order-1'}>
+              <MirrorHelp
+                mirrors={subscription.mirrors}
+                geoCountry={account.data?.geoCountry}
+                subscriptionUrl={subscription.url}
+              />
+            </div>
+          {/if}
+        </div>
         <p class="text-xs text-muted-foreground text-center">
           {t('get.manageHintPrefix')}
           <Link href="/account" class="text-primary underline">{t('get.manageLinkLabel')}</Link>.

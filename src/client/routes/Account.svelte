@@ -12,6 +12,8 @@
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
+  import DeliveryPreference from '../components/DeliveryPreference.svelte';
+  import { deliveryPref } from '../lib/deliveryPref.svelte';
   import MembershipCallout from '../components/MembershipCallout.svelte';
   import RegenerateModal from '../components/RegenerateModal.svelte';
   import SwitchBackendModal from '../components/SwitchBackendModal.svelte';
@@ -45,6 +47,10 @@
   // Convenience accessor: Svelte's narrowing reads better than account.data
   // sprinkled across the template.
   let data = $derived(account.data);
+
+  // Delivery emphasis: the member's explicit (client-side) choice wins, else the
+  // server's country-based suggestion, else evade. Orders the panels below.
+  let effectiveDelivery = $derived(deliveryPref() ?? data?.suggestedDelivery ?? 'evade');
 
   // a11y: sonner toasts aren't reliably announced; this feeds a visually
   // hidden role="status" region so async outcomes are spoken once. Keep the
@@ -568,14 +574,23 @@
         backend={data.subscription.backend}
       />
       <SetupGuidance backend={data.subscription.backend} />
-      <RawConfig />
-      {#if config.data?.mirrorsEnabled}
-        <MirrorHelp
-          mirrors={data.subscription.mirrors}
-          geoCountry={data.geoCountry}
-          subscriptionUrl={data.subscription.url}
-        />
-      {/if}
+      <DeliveryPreference suggested={data.suggestedDelivery} />
+      <!-- Delivery paths, ordered by the chosen emphasis: privacy → raw config
+           (E2EE) first; evade → backup mirrors first. Both always present. -->
+      <div class="flex flex-col gap-8">
+        <div class={effectiveDelivery === 'privacy' ? 'order-1' : 'order-2'}>
+          <RawConfig />
+        </div>
+        {#if config.data?.mirrorsEnabled}
+          <div class={effectiveDelivery === 'privacy' ? 'order-2' : 'order-1'}>
+            <MirrorHelp
+              mirrors={data.subscription.mirrors}
+              geoCountry={data.geoCountry}
+              subscriptionUrl={data.subscription.url}
+            />
+          </div>
+        {/if}
+      </div>
     {:else}
       <!-- Empty state when the user has no subscription yet -->
       <div class="rounded-xl border border-dashed border-border p-8 text-center space-y-3">
