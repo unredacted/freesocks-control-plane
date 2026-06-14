@@ -1474,4 +1474,72 @@ http.route({
   }),
 });
 
+// --- admin: S3 mirror providers (subscription mirrors) ----------------------
+// Storage config, so it shares the `admin:settings:*` scope with billing config.
+// The secret (secretAccessKey) is never returned (set/not-set boolean) or logged.
+
+http.route({
+  path: '/api/v1/admin/mirror-providers',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.mirrorProviders.listForAdmin, {}));
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/mirror-providers',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(await ctx.runMutation(internal.mirrorProviders.create, body as never));
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// Exact path wins over the pathPrefix PATCH/DELETE below.
+http.route({
+  path: '/api/v1/admin/mirror-providers/test-connection',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    const result = await ctx.runAction(internal.storage.testProviderConnection, body as never);
+    return json(result);
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/mirror-providers/',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const id = lastPathSegment(req) as Id<'mirrorProviders'>;
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(await ctx.runMutation(internal.mirrorProviders.update, { id, ...body } as never));
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/mirror-providers/',
+  method: 'DELETE',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const id = lastPathSegment(req) as Id<'mirrorProviders'>;
+    try {
+      return json(await ctx.runMutation(internal.mirrorProviders.remove, { id }));
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 export default http;

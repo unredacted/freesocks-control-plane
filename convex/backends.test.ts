@@ -228,31 +228,37 @@ describe('refreshActiveMirrors (S3 mirror-refresh cron)', () => {
     });
   }
 
-  test('no-op when S3 mirroring is off — does not even page', async () => {
+  async function seedProvider(t: ReturnType<typeof convexTest>): Promise<void> {
+    await t.run((ctx) =>
+      ctx.db.insert('mirrorProviders', {
+        name: 'p1',
+        endpoint: 'https://s3.example',
+        bucket: 'b1',
+        publicUrl: 'https://cdn.example',
+        region: 'us-east-1',
+        accessKeyId: 'ak',
+        secretAccessKey: 'sk',
+        isActive: true,
+        priority: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+  }
+
+  test('no-op when no mirror provider is enabled — does not even page', async () => {
     const t = convexTest(schema, modules);
     await seedActiveSub(t, 'whatever'); // an active sub exists...
     const res = await t.action(internal.storage.refreshActiveMirrors, {});
-    expect(res).toEqual({ refreshed: 0, scanned: 0 }); // ...but the gate short-circuits.
+    expect(res).toEqual({ refreshed: 0, scanned: 0 }); // ...but the DB gate short-circuits.
   });
 
   test('skips a sub whose content is unchanged (no re-upload, no real S3 hit)', async () => {
-    // S3 configured (gate passes) + mock backend so the content fetch needs no
-    // real Remnawave. The hash matches, so it skips BEFORE any S3 upload.
-    for (const [k, v] of Object.entries({
-      S3_MIRRORS_ENABLED: 'true',
-      S3_PROVIDER_COUNT: '1',
-      S3_PROVIDER_1_NAME: 'p1',
-      S3_PROVIDER_1_ENDPOINT: 'https://s3.example',
-      S3_PROVIDER_1_BUCKET: 'b1',
-      S3_PROVIDER_1_PUBLIC_URL: 'https://cdn.example',
-      S3_PROVIDER_1_ACCESS_KEY_ID: 'ak',
-      S3_PROVIDER_1_SECRET_ACCESS_KEY: 'sk',
-      DEV_MOCK_BACKEND: 'true',
-      ENVIRONMENT: 'development',
-    })) {
-      vi.stubEnv(k, v);
-    }
+    // A provider row makes the gate pass + the mock backend serves the content
+    // fetch (no real Remnawave). The hash matches, so it skips BEFORE any S3 hit.
+    vi.stubEnv('DEV_MOCK_BACKEND', 'true');
+    vi.stubEnv('ENVIRONMENT', 'development');
     const t = convexTest(schema, modules);
+    await seedProvider(t);
     await seedActiveSub(t, await sha256Hex(MOCK_CONTENT));
     const res = await t.action(internal.storage.refreshActiveMirrors, {});
     expect(res.scanned).toBe(1);

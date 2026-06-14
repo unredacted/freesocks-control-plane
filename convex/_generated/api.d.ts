@@ -50,6 +50,7 @@ import type * as lib_rateLimitPolicy from "../lib/rateLimitPolicy.js";
 import type * as lib_supportId from "../lib/supportId.js";
 import type * as lifecycle from "../lifecycle.js";
 import type * as membershipCodes from "../membershipCodes.js";
+import type * as mirrorProviders from "../mirrorProviders.js";
 import type * as publicConfig from "../publicConfig.js";
 import type * as rateLimits from "../rateLimits.js";
 import type * as replayGuard from "../replayGuard.js";
@@ -113,6 +114,7 @@ declare const fullApi: ApiFromModules<{
   "lib/supportId": typeof lib_supportId;
   lifecycle: typeof lifecycle;
   membershipCodes: typeof membershipCodes;
+  mirrorProviders: typeof mirrorProviders;
   publicConfig: typeof publicConfig;
   rateLimits: typeof rateLimits;
   replayGuard: typeof replayGuard;

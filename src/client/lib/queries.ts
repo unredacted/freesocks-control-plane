@@ -16,6 +16,7 @@ import {
   AppSettingsRecord,
   AuditEntry,
   BackendServerAdmin,
+  MirrorProviderAdmin,
   TierAdmin,
   UserAdmin,
 } from '../../shared/contracts/admin';
@@ -39,6 +40,7 @@ export const queryKeys = {
   adminAudit: ['admin', 'audit'] as const,
   adminSettings: ['admin', 'settings'] as const,
   adminBackendServers: ['admin', 'backend-servers'] as const,
+  adminMirrorProviders: ['admin', 'mirror-providers'] as const,
   adminRateLimits: ['admin', 'rate-limits'] as const,
   adminMembershipCodes: (status: string) => ['admin', 'membership-codes', status] as const,
   adminBilling: (status: string) => ['admin', 'billing', status] as const,
@@ -248,6 +250,21 @@ export const adminBackendServersQuery = () =>
         BackendServersListResponse,
       );
       return result.servers;
+    },
+    staleTime: 30_000,
+  }));
+
+/** S3 mirror providers (subscription mirrors) for the AdminStorage CMS page. */
+const MirrorProvidersListResponse = z.object({ providers: z.array(MirrorProviderAdmin) });
+export const adminMirrorProvidersQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminMirrorProviders,
+    queryFn: async () => {
+      const result = await apiClient.get(
+        '/api/v1/admin/mirror-providers',
+        MirrorProvidersListResponse,
+      );
+      return result.providers;
     },
     staleTime: 30_000,
   }));

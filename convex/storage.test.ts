@@ -2,7 +2,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   deleteFromProviders,
-  parseProviders,
   uploadToProviders,
   type S3Op,
   type S3Provider,
@@ -37,45 +36,6 @@ function recorder(fail?: (p: S3Provider) => boolean): {
 }
 
 afterEach(() => vi.unstubAllEnvs());
-
-describe('parseProviders', () => {
-  function setProviderEnv(i: number, fields: Record<string, string>): void {
-    for (const [k, val] of Object.entries(fields)) vi.stubEnv(`S3_PROVIDER_${i}_${k}`, val);
-  }
-  const full = (i: number): Record<string, string> => ({
-    NAME: `p${i}`,
-    ENDPOINT: `https://s3-${i}`,
-    BUCKET: `b${i}`,
-    PUBLIC_URL: `https://cdn${i}`,
-    ACCESS_KEY_ID: `ak${i}`,
-    SECRET_ACCESS_KEY: `sk${i}`,
-  });
-
-  test('returns [] when no providers are configured', () => {
-    vi.stubEnv('S3_PROVIDER_COUNT', '0');
-    expect(parseProviders()).toEqual([]);
-  });
-
-  test('parses N providers and defaults the region when unset', () => {
-    vi.stubEnv('S3_PROVIDER_COUNT', '2');
-    setProviderEnv(1, { ...full(1), REGION: 'eu-west-1' });
-    setProviderEnv(2, full(2)); // no REGION
-    const providers = parseProviders();
-    expect(providers).toHaveLength(2);
-    expect(providers[0]).toMatchObject({ name: 'p1', region: 'eu-west-1' });
-    expect(providers[1]).toMatchObject({ name: 'p2', region: 'us-east-1' });
-  });
-
-  test('skips a provider missing a required field', () => {
-    vi.stubEnv('S3_PROVIDER_COUNT', '2');
-    setProviderEnv(1, full(1));
-    const { SECRET_ACCESS_KEY: _drop, ...partial } = full(2); // omit the secret key
-    setProviderEnv(2, partial);
-    const providers = parseProviders();
-    expect(providers).toHaveLength(1);
-    expect(providers[0]!.name).toBe('p1');
-  });
-});
 
 describe('uploadToProviders', () => {
   test('returns [] and sends nothing when there are no providers', async () => {

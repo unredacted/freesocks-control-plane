@@ -9,8 +9,11 @@
  * control plane is blocked. The issuance saga (P5) calls `mirrorContent` and
  * persists the returned list on the subscription row.
  *
- * Config (Convex env vars): S3_PROVIDER_COUNT and, per provider i in 1..count,
- *   S3_PROVIDER_i_{NAME,ENDPOINT,BUCKET,PUBLIC_URL,REGION,ACCESS_KEY_ID,SECRET_ACCESS_KEY}
+ * Config is fully DB-driven (the `mirrorProviders` table, CMS-managed via
+ * Admin → Storage; replaced the old S3_PROVIDER_* and S3_MIRRORS_ENABLED env vars).
+ * Because this file is `"use node"` it can't define queries, so each action
+ * pulls the provider list from `internal.mirrorProviders.*`. Mirroring is active
+ * iff ≥1 provider row is enabled.
  */
 import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
@@ -34,32 +37,6 @@ export interface SubscriptionMirror {
   publicUrl: string;
   objectPath: string;
   status: 'ok';
-}
-
-export function parseProviders(): S3Provider[] {
-  const count = parseInt(process.env.S3_PROVIDER_COUNT ?? '0', 10);
-  const out: S3Provider[] = [];
-  for (let i = 1; i <= count; i++) {
-    const g = (k: string): string | undefined => process.env[`S3_PROVIDER_${i}_${k}`];
-    const name = g('NAME');
-    const endpoint = g('ENDPOINT');
-    const bucket = g('BUCKET');
-    const publicUrl = g('PUBLIC_URL');
-    const accessKeyId = g('ACCESS_KEY_ID');
-    const secretAccessKey = g('SECRET_ACCESS_KEY');
-    if (name && endpoint && bucket && publicUrl && accessKeyId && secretAccessKey) {
-      out.push({
-        name,
-        endpoint,
-        bucket,
-        publicUrl,
-        region: g('REGION') ?? 'us-east-1',
-        accessKeyId,
-        secretAccessKey,
-      });
-    }
-  }
-  return out;
 }
 
 function clientFor(p: S3Provider): S3Client {
@@ -155,15 +132,64 @@ export async function deleteFromProviders(
  */
 export const mirrorContent = internalAction({
   args: { objectPath: v.string(), content: v.string(), contentType: v.optional(v.string()) },
-  handler: async (_ctx, args) => uploadToProviders(parseProviders(), args),
+  handler: async (ctx, args): Promise<SubscriptionMirror[]> => {
+    const providers = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
+    return uploadToProviders(providers, args);
+  },
 });
 
-/** Best-effort delete of mirror objects (tombstone sweep / teardown). */
+/** Best-effort delete of mirror objects (tombstone sweep / teardown). Uses ALL
+ *  providers (incl. since-deactivated ones) so stale objects get cleaned. */
 export const deleteMirrors = internalAction({
   args: { items: v.array(v.object({ provider: v.string(), objectPath: v.string() })) },
-  handler: async (_ctx, { items }) => {
-    await deleteFromProviders(parseProviders(), items);
+  handler: async (ctx, { items }) => {
+    const providers = await ctx.runQuery(internal.mirrorProviders.listAllWithSecret, {});
+    await deleteFromProviders(providers, items);
     return null;
+  },
+});
+
+/**
+ * Admin test: confirm a provider's connection details work BEFORE saving, by
+ * writing a tiny health object to the bucket (also validates write perms, which
+ * is what mirroring needs). The secret is never echoed back or put in the error
+ * (the SDK error name/message carries no credential).
+ */
+export const testProviderConnection = internalAction({
+  args: {
+    endpoint: v.string(),
+    bucket: v.string(),
+    region: v.optional(v.string()),
+    accessKeyId: v.string(),
+    secretAccessKey: v.string(),
+  },
+  handler: async (_ctx, a): Promise<{ ok: true } | { ok: false; error: string }> => {
+    if (!a.endpoint || !a.bucket || !a.accessKeyId || !a.secretAccessKey) {
+      return { ok: false, error: 'endpoint, bucket, access key ID and secret are all required' };
+    }
+    const provider: S3Provider = {
+      name: '__test__',
+      endpoint: a.endpoint,
+      bucket: a.bucket,
+      publicUrl: '',
+      region: a.region?.trim() || 'us-east-1',
+      accessKeyId: a.accessKeyId,
+      secretAccessKey: a.secretAccessKey,
+    };
+    try {
+      await clientFor(provider).send(
+        new PutObjectCommand({
+          Bucket: provider.bucket,
+          Key: '__fcp_healthcheck',
+          Body: 'ok',
+          ContentType: 'text/plain',
+        }),
+      );
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? `${err.name}: ${err.message}` : 'connection failed';
+      return { ok: false, error: msg.slice(0, 200) };
+    }
   },
 });
 
@@ -177,13 +203,13 @@ const REFRESH_PAGE = 50;
  * content from its backend and re-upload it to the SAME object path (so the
  * mirror URL the member already holds stays valid, with up-to-date content).
  * Skips a sub whose content is unchanged (hash match), so steady state is cheap.
- * No-op unless S3 mirroring is enabled + configured (same gate as issuance).
+ * No-op unless ≥1 mirror provider is configured + enabled (same gate as issuance).
  */
 export const refreshActiveMirrors = internalAction({
   args: {},
   handler: async (ctx): Promise<{ refreshed: number; scanned: number }> => {
-    const providers = parseProviders();
-    if (process.env.S3_MIRRORS_ENABLED !== 'true' || providers.length === 0) {
+    const providers = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
+    if (providers.length === 0) {
       return { refreshed: 0, scanned: 0 };
     }
     let cursor: string | null = null;

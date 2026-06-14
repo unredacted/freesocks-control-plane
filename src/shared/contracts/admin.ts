@@ -152,6 +152,46 @@ export const BackendServerUpsert = z.object({
 });
 export type BackendServerUpsert = z.infer<typeof BackendServerUpsert>;
 
+// --- S3 mirror providers (subscription mirrors, Admin → Storage) ------------
+
+/**
+ * One mirror-provider row (GET /api/v1/admin/mirror-providers). The secret
+ * (`secretAccessKey`) is NEVER returned — only `secretAccessKeySet`. `accessKeyId`
+ * is the public half of the keypair (shown).
+ */
+export const MirrorProviderAdmin = z.object({
+  id: z.string(),
+  name: z.string().min(1).max(64),
+  endpoint: z.string(),
+  bucket: z.string(),
+  publicUrl: z.string(),
+  region: z.string(),
+  accessKeyId: z.string(),
+  secretAccessKeySet: z.boolean(),
+  isActive: z.boolean(),
+  priority: z.number().int(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type MirrorProviderAdmin = z.infer<typeof MirrorProviderAdmin>;
+
+/**
+ * Create/edit input. `secretAccessKey` is required on create, optional on edit
+ * (sent only to rotate it — a blank field keeps the stored secret server-side).
+ */
+export const MirrorProviderUpsert = z.object({
+  name: z.string().min(1).max(64),
+  endpoint: z.string().min(1),
+  bucket: z.string().min(1),
+  publicUrl: z.string().min(1),
+  region: z.string().optional(),
+  accessKeyId: z.string().min(1).optional(),
+  secretAccessKey: z.string().min(1).optional(),
+  isActive: z.boolean().default(true),
+  priority: z.number().int().default(0),
+});
+export type MirrorProviderUpsert = z.infer<typeof MirrorProviderUpsert>;
+
 // --- admin management (multi-admin onboarding via invite links) ---
 
 /** One row in the admins list (GET /api/v1/admin/admins). */

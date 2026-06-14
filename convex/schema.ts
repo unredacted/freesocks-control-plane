@@ -347,6 +347,33 @@ export default defineSchema({
     .index('by_slug', ['slug'])
     .index('by_backend_active', ['backend', 'isActive', 'priority']),
 
+  // S3 subscription-mirror providers (the censorship-resistance hedge): a
+  // variable-length POOL of S3-compatible buckets the subscription content is
+  // copied to, so a client can still fetch its key if the control plane is
+  // blocked. Structurally a sibling of `backendServers` — each row carries a
+  // credential (`secretAccessKey`) that is NEVER returned to the admin UI (shown
+  // as a set/not-set boolean) and NEVER logged. `accessKeyId` is the public half
+  // of the keypair (shown). Mirroring is ACTIVE iff ≥1 row is `isActive` — there
+  // is no separate enable flag. `name` is the stable identifier echoed into
+  // `subscriptions.subscriptionMirrors[].provider` (the delete-match key), so it
+  // is unique (enforced in the create/update mutation via the by_name index).
+  // Fully DB-driven + CMS-managed; replaced the S3_MIRRORS_ENABLED / S3_PROVIDER_*
+  // env scheme.
+  mirrorProviders: defineTable({
+    name: v.string(),
+    endpoint: v.string(),
+    bucket: v.string(),
+    publicUrl: v.string(),
+    region: v.string(),
+    accessKeyId: v.string(),
+    secretAccessKey: v.string(),
+    isActive: v.boolean(),
+    priority: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_name', ['name'])
+    .index('by_active', ['isActive', 'priority']),
+
   appSettings: defineTable({
     key: v.string(),
     value: v.string(),
