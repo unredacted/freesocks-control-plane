@@ -54,6 +54,9 @@ export const RATE_LIMIT_DEFAULTS = {
   // Per-IP throttle on the Stripe + PayPal webhooks (generous; legit senders).
   'webhook.stripe.ip': { max: 120, windowMs: MINUTE, enabled: true },
   'webhook.paypal.ip': { max: 120, windowMs: MINUTE, enabled: true },
+  // Opt-in mirror provisioning (per member): generous — this is a troubleshooting
+  // flow a stuck user taps repeatedly, but the per-user cap is the real bound.
+  'mirror.request': { max: 20, windowMs: HOUR, enabled: true },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyKey = keyof typeof RATE_LIMIT_DEFAULTS;

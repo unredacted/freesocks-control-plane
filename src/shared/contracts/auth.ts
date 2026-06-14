@@ -118,5 +118,8 @@ export const PublicConfig = z.object({
      * is high). The SPA disables shorter terms when crypto is the chosen method. */
     cryptoMinMonths: z.number().int(),
   }),
+  /** Whether the opt-in "trouble connecting? try a mirror" affordance is available
+   *  (≥1 active mirror provider). The SPA hides it entirely when false. */
+  mirrorsEnabled: z.boolean().optional(),
 });
 export type PublicConfig = z.infer<typeof PublicConfig>;

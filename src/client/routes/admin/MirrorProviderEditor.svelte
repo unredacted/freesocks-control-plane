@@ -37,6 +37,7 @@
     region: p?.region ?? 'us-east-1',
     accessKeyId: p?.accessKeyId ?? '',
     secretAccessKeySet: p?.secretAccessKeySet ?? false,
+    countryCodes: (p?.countryCodes ?? []).join(' '),
     isActive: p?.isActive ?? true,
     priority: p?.priority ?? 0,
   }))(provider);
@@ -48,6 +49,9 @@
   let region = $state(init.region);
   let accessKeyId = $state(init.accessKeyId);
   let secretAccessKey = $state('');
+  // Preferred country codes as a free-text list (space/comma separated); parsed
+  // to an array on save. Empty = global fallback.
+  let countryCodes = $state(init.countryCodes);
   let isActive = $state(init.isActive);
   let priority = $state(init.priority);
 
@@ -102,6 +106,8 @@
       bucket,
       publicUrl,
       region,
+      // Split on commas/whitespace; the server normalizes (uppercase, 2-letter, dedupe).
+      countryCodes: countryCodes.split(/[\s,]+/).filter(Boolean),
       isActive,
       priority,
     };
@@ -214,6 +220,21 @@
           Stored server-side, never shown again.{isEdit
             ? ' Leave blank to keep the existing secret.'
             : ''}
+        </p>
+      </div>
+      <div>
+        <label class="text-xs text-muted-foreground mb-1 block" for="mp-countries">
+          Preferred countries (optional)
+        </label>
+        <Input
+          id="mp-countries"
+          bind:value={countryCodes}
+          placeholder="IR RU CN"
+          autocomplete="off"
+        />
+        <p class="text-xs text-muted-foreground/80 mt-1">
+          ISO 2-letter codes this host is preferred for (space/comma separated). Leave blank for a
+          global fallback usable from any country.
         </p>
       </div>
 

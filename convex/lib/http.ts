@@ -243,6 +243,20 @@ export function resolveClientIp(req: Request): string | null {
   return null;
 }
 
+/**
+ * The visitor's country (ISO-3166-1 alpha-2, uppercase) for country-tiered mirror
+ * selection — read from the CDN's `CF-IPCountry` header, and ONLY when CF_FRONTED
+ * (otherwise it is a spoofable client header). Returns null for unknown / anonymizer
+ * values (`XX`, `T1`, `T2`). Used transiently to pick a nearby mirror host; it is
+ * NEVER stored and never bound to the user.
+ */
+export function resolveCountry(req: Request): string | null {
+  if (process.env.CF_FRONTED !== 'true') return null;
+  const cc = req.headers.get('cf-ipcountry')?.trim().toUpperCase();
+  if (!cc || !/^[A-Z]{2}$/.test(cc) || cc === 'XX' || cc === 'T1' || cc === 'T2') return null;
+  return cc;
+}
+
 export interface MemberAuth {
   userId: Id<'users'>;
   source: 'cookie' | 'token';

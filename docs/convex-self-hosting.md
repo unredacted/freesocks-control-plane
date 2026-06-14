@@ -126,8 +126,13 @@ The SPA build reads `VITE_CONVEX_SITE_URL` (the public HTTP-actions origin that
 CMS, "Backend servers"), never in env. The `REMNAWAVE_*` vars only seed the first
 Remnawave instance at cutover. Likewise, **S3 subscription-mirror buckets** live
 per-row in the `mirrorProviders` table (admin CMS, "Storage mirrors"), each with
-its own `secretAccessKey` (stored server-side, never returned). Subscription
-mirroring runs while ≥1 provider is enabled — there is no env flag.
+its own `secretAccessKey` (stored server-side, never returned) and optional
+preferred country codes. Mirrors are **opt-in + lazy**: a member who can't reach
+the normal subscription URL provisions one (country-tiered, capped by the
+`mirror.maxPerUser` admin setting in CMS → Settings, default 3); nothing is mirrored
+proactively. Country tiering reads `CF-IPCountry` to prefill the picker, so it only
+helps when **`CF_FRONTED=true`** (otherwise the member just selects their region) —
+the code is transient and never stored. See `docs/threat-model-cdn-blinding.md`.
 
 ## 6. Cutover to Convex (P11, start fresh)
 

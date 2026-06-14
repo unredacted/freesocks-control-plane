@@ -4,6 +4,7 @@
   import CapWidget from '../components/CapWidget.svelte';
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
+  import MirrorHelp from '../components/MirrorHelp.svelte';
   import SetupGuidance from '../components/SetupGuidance.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import Link from '../components/Link.svelte';
@@ -300,7 +301,6 @@
             : t('hero.urlLabelSubscription')}
           backendLabel={config.data?.backends.labels[subscription.backend]}
           subscriptionUrl={subscription.url}
-          fallbackUrl={subscription.mirrors[0]?.publicUrl}
           expiresAt={subscription.expiresAt}
           trafficLimitBytes={subscription.trafficLimitBytes}
           trafficUsedBytes={subscription.trafficUsedBytes}
@@ -308,6 +308,13 @@
           backend={subscription.backend}
         />
         <SetupGuidance backend={subscription.backend} />
+        {#if config.data?.mirrorsEnabled}
+          <MirrorHelp
+            mirrors={subscription.mirrors}
+            geoCountry={account.data?.geoCountry}
+            subscriptionUrl={subscription.url}
+          />
+        {/if}
         <p class="text-xs text-muted-foreground text-center">
           {t('get.manageHintPrefix')}
           <Link href="/account" class="text-primary underline">{t('get.manageLinkLabel')}</Link>.

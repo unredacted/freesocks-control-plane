@@ -60,6 +60,15 @@ export const get = query({
     // env-only). The SPA gates the upgrade UI on `billing.enabled` + `rails.*`.
     const billing = await resolveBillingConfig(ctx.db);
 
+    // Is the opt-in "trouble connecting? try a mirror" affordance available? Only
+    // a boolean (≥1 active mirror provider) — no provider details/secrets. Lets the
+    // SPA hide the affordance entirely on a dormant deployment.
+    const mirrorsEnabled =
+      (await ctx.db
+        .query('mirrorProviders')
+        .withIndex('by_active', (q) => q.eq('isActive', true))
+        .first()) !== null;
+
     return {
       membersJoinUrl: process.env.MEMBERS_JOIN_URL || undefined,
       membersAccountUrl: process.env.MEMBERS_ACCOUNT_URL || undefined,
@@ -89,6 +98,7 @@ export const get = query({
         durations: billing.durations,
         cryptoMinMonths: billing.cryptoMinMonths,
       },
+      mirrorsEnabled,
     };
   },
 });

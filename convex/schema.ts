@@ -367,6 +367,11 @@ export default defineSchema({
     region: v.string(),
     accessKeyId: v.string(),
     secretAccessKey: v.string(),
+    // Country tiering: ISO-3166-1 alpha-2 codes (uppercase) this provider is
+    // PREFERRED for. Empty/absent = a global fallback usable for any country.
+    // Selection prefers a country match, then global, by priority. Operator
+    // knowledge — "which S3 host is least likely to be blocked in country X".
+    countryCodes: v.optional(v.array(v.string())),
     isActive: v.boolean(),
     priority: v.number(),
     updatedAt: v.number(),

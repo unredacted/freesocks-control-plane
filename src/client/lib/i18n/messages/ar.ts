@@ -283,4 +283,23 @@ export const ar: Partial<Messages> = {
   'get.upsellTitle': 'تريد بلا حدود؟',
   'get.upsellBody':
     'يمكنك الترقية إلى عضوية FreeSocks في أي وقت للحصول على نطاق ترددي وأجهزة غير محدودة.',
+
+  // --- مرايا الاشتراك (خيار «تواجه مشكلة في الاتصال؟») ---
+  'mirror.disclosure': 'تواجه مشكلة في الاتصال؟',
+  'mirror.explainer':
+    'إذا كان رابط الاشتراك العادي لا يتصل في مكانك، أضِف رابط مرآة أدناه. يقدّم المفتاح نفسه من مضيف آخر قد لا يكون محجوبًا.',
+  'mirror.addedLabel': 'روابط المرآة الخاصة بك',
+  'mirror.addToAppHint': 'أضِف كل رابط كاشتراك إضافي في تطبيقك ثم حاول الاتصال.',
+  'mirror.regionLabel': 'منطقتك',
+  'mirror.regionGlobal': 'عالمي (أي منطقة)',
+  'mirror.regionNotStored': 'يُستخدم فقط لاختيار مرآة قريبة — ولا يتم تخزينه.',
+  'mirror.getButton': 'احصل على رابط مرآة',
+  'mirror.tryAnother': 'جرّب مرآة أخرى',
+  'mirror.working': 'جارٍ التنفيذ…',
+  'mirror.capped': 'لقد أضفت الحد الأقصى من المرايا.',
+  'mirror.exhausted': 'لا تتوفر مرايا أخرى لمنطقتك حاليًا.',
+  'mirror.noSubscription': 'أنشئ مفتاحك أولًا، ثم يمكنك إضافة مرآة.',
+  'mirror.removeAll': 'إزالة كل المرايا',
+  'mirror.errorToast': 'تعذّر إضافة مرآة',
+  'mirror.removedToast': 'تمت إزالة المرايا',
 };

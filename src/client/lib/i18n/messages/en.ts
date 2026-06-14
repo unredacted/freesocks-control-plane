@@ -308,6 +308,25 @@ export const en = {
   'setup.step.import': 'Open it, add a subscription / profile, and paste your link',
   'setup.step.connect': 'Select a server and connect',
   'setup.qrHint': 'Or scan this QR code with your phone to transfer the link.',
+
+  // --- opt-in subscription mirrors (the "trouble connecting?" fallback) ---
+  'mirror.disclosure': 'Trouble connecting?',
+  'mirror.explainer':
+    "If your normal subscription link won't connect where you are, add a mirror link below. It serves the same key from a different host that may not be blocked.",
+  'mirror.addedLabel': 'Your mirror links',
+  'mirror.addToAppHint': 'Add each one as an extra subscription in your app, then try connecting.',
+  'mirror.regionLabel': 'Your region',
+  'mirror.regionGlobal': 'Global (any region)',
+  'mirror.regionNotStored': "Used only to pick a nearby mirror — it isn't stored.",
+  'mirror.getButton': 'Get a mirror link',
+  'mirror.tryAnother': 'Try another mirror',
+  'mirror.working': 'Working…',
+  'mirror.capped': "You've added the maximum number of mirrors.",
+  'mirror.exhausted': 'No more mirrors are available for your region right now.',
+  'mirror.noSubscription': 'Create your key first, then you can add a mirror.',
+  'mirror.removeAll': 'Remove all mirrors',
+  'mirror.errorToast': "Couldn't add a mirror",
+  'mirror.removedToast': 'Mirrors removed',
 } satisfies Record<string, Msg>;
 
 export type MessageKey = keyof typeof en;

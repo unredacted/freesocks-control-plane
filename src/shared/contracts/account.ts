@@ -62,6 +62,13 @@ export const AccountResponse = z.object({
       ),
     })
     .nullable(),
+  /**
+   * The visitor's country (ISO-3166-1 alpha-2) as seen by the CDN this request —
+   * transient, NOT stored. Prefills the "trouble connecting? try a mirror" country
+   * picker so the DB can hand out a host that's reachable where they are. Null when
+   * not CDN-fronted or unknown.
+   */
+  geoCountry: z.string().nullable().optional(),
 });
 export type AccountResponse = z.infer<typeof AccountResponse>;
 

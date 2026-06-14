@@ -242,6 +242,39 @@
         </CardContent>
       </Card>
 
+      <!-- Subscription mirrors -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Subscription mirrors</CardTitle>
+          <CardDescription>
+            Max S3 mirrors a member can add via the opt-in "trouble connecting?" flow. Mirror
+            providers themselves are managed under Storage mirrors.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-3 text-sm">
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="mirror-max-per-user">
+              Max mirrors per member
+            </label>
+            <Input
+              id="mirror-max-per-user"
+              type="number"
+              min={0}
+              class="w-32"
+              value={Number(draft['mirror.maxPerUser'] ?? 3)}
+              oninput={(e) =>
+                (draft = {
+                  ...draft,
+                  'mirror.maxPerUser': Math.max(
+                    0,
+                    Math.round(Number((e.target as HTMLInputElement).value) || 0),
+                  ),
+                })}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
       <div class="flex justify-end">
         <Button onclick={() => save.mutate()} disabled={save.isPending}>
           {save.isPending ? 'Saving…' : 'Save settings'}

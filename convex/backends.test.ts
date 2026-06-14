@@ -192,8 +192,9 @@ describe('refreshActiveMirrors (S3 mirror-refresh cron)', () => {
   async function seedActiveSub(
     t: ReturnType<typeof convexTest>,
     rawContentHash: string,
-  ): Promise<void> {
-    await t.run(async (ctx) => {
+    mirrors: { provider: string; publicUrl: string; objectPath: string; status: 'ok' }[] = [],
+  ): Promise<Id<'users'>> {
+    return t.run(async (ctx) => {
       const tierId = await ctx.db.insert('tiers', {
         slug: 'free',
         name: 'Free',
@@ -220,11 +221,12 @@ describe('refreshActiveMirrors (S3 mirror-refresh cron)', () => {
         backendUserId: 'u1',
         backendShortId: 'short-1',
         subscriptionUrl: 'https://x/sub',
-        subscriptionMirrors: [],
+        subscriptionMirrors: mirrors,
         state: 'active',
         rawContentHash,
         updatedAt: Date.now(),
       });
+      return userId;
     });
   }
 
@@ -245,23 +247,117 @@ describe('refreshActiveMirrors (S3 mirror-refresh cron)', () => {
     );
   }
 
+  const MIRROR_ON_P1 = [
+    {
+      provider: 'p1',
+      publicUrl: 'https://cdn.example/mirrors/x',
+      objectPath: 'mirrors/x',
+      status: 'ok' as const,
+    },
+  ];
+
   test('no-op when no mirror provider is enabled — does not even page', async () => {
     const t = convexTest(schema, modules);
-    await seedActiveSub(t, 'whatever'); // an active sub exists...
+    await seedActiveSub(t, 'whatever', MIRROR_ON_P1); // a mirrored sub exists...
     const res = await t.action(internal.storage.refreshActiveMirrors, {});
     expect(res).toEqual({ refreshed: 0, scanned: 0 }); // ...but the DB gate short-circuits.
   });
 
-  test('skips a sub whose content is unchanged (no re-upload, no real S3 hit)', async () => {
+  test('refresh only scans subs that already have a mirror (never creates one)', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', 'true');
+    vi.stubEnv('ENVIRONMENT', 'development');
+    const t = convexTest(schema, modules);
+    await seedProvider(t);
+    await seedActiveSub(t, 'irrelevant', []); // opt-in: NO mirror → must be skipped
+    const res = await t.action(internal.storage.refreshActiveMirrors, {});
+    expect(res.scanned).toBe(0);
+  });
+
+  test('skips a mirrored sub whose content is unchanged (no re-upload, no real S3 hit)', async () => {
     // A provider row makes the gate pass + the mock backend serves the content
     // fetch (no real Remnawave). The hash matches, so it skips BEFORE any S3 hit.
     vi.stubEnv('DEV_MOCK_BACKEND', 'true');
     vi.stubEnv('ENVIRONMENT', 'development');
     const t = convexTest(schema, modules);
     await seedProvider(t);
-    await seedActiveSub(t, await sha256Hex(MOCK_CONTENT));
+    await seedActiveSub(t, await sha256Hex(MOCK_CONTENT), MIRROR_ON_P1);
     const res = await t.action(internal.storage.refreshActiveMirrors, {});
     expect(res.scanned).toBe(1);
     expect(res.refreshed).toBe(0);
+  });
+});
+
+describe('provisionMirror (opt-in lazy mirror)', () => {
+  const MOCK_CONTENT = '# mock subscription content (dev)\n';
+
+  async function seedTierAndUser(
+    t: ReturnType<typeof convexTest>,
+    withSub: boolean,
+  ): Promise<Id<'users'>> {
+    return t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      if (withSub) {
+        await ctx.db.insert('subscriptions', {
+          userId,
+          backend: 'remnawave',
+          backendUserId: 'u1',
+          backendShortId: 'short-1',
+          subscriptionUrl: 'https://x/sub',
+          subscriptionMirrors: [],
+          state: 'active',
+          updatedAt: Date.now(),
+        });
+      }
+      return userId;
+    });
+  }
+
+  test('no_subscription when the member has no active key', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedTierAndUser(t, false);
+    const res = await t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    expect(res.status).toBe('no_subscription');
+  });
+
+  test('capped when mirror.maxPerUser is 0 (returns before any upload)', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedTierAndUser(t, true);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'mirror.maxPerUser',
+        value: JSON.stringify(0),
+        updatedAt: Date.now(),
+      }),
+    );
+    const res = await t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    expect(res.status).toBe('capped');
+  });
+
+  test('exhausted when no provider is left for the request (none configured)', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', 'true');
+    vi.stubEnv('ENVIRONMENT', 'development');
+    const t = convexTest(schema, modules);
+    const userId = await seedTierAndUser(t, true);
+    const res = await t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+    expect(res.status).toBe('exhausted');
   });
 });

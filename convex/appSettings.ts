@@ -18,6 +18,9 @@ export const SETTINGS_DEFAULTS = {
   // and the cleanup-expired-free sweep. Admin-editable (replaced the
   // FREE_TIER_EXPIRY_DAYS env var).
   'freetier.expiryDays': 90,
+  // Max S3 subscription mirrors a single member can provision (the opt-in
+  // "trouble connecting? try a mirror" flow). Bounds at-rest copies per user.
+  'mirror.maxPerUser': 3,
 } as const;
 
 // `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA

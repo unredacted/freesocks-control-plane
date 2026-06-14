@@ -31,6 +31,7 @@ import {
   readJson,
   resolveAdmin,
   resolveClientIp,
+  resolveCountry,
   resolveMember,
   secureCookies,
 } from './lib/http';
@@ -415,7 +416,9 @@ http.route({
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const view = await ctx.runAction(internal.account.getAccountView, { userId: member.userId });
     if (!view) return errorJson('not_found', 'user not found', 404);
-    return json(view);
+    // geoCountry (transient, from the CDN header) prefills the "try a mirror"
+    // country picker. Inside the sealed body; never stored on the user.
+    return json({ ...view, geoCountry: resolveCountry(req) });
   }),
 });
 
@@ -565,6 +568,64 @@ http.route({
     if (!result.ok) {
       return errorJson('code.invalid', 'That code is not valid, or has already been used.', 400);
     }
+    return json(result);
+  }),
+});
+
+// --- opt-in S3 subscription mirrors -----------------------------------------
+// A member who can't reach the normal subscription URL provisions one mirror at a
+// time (country-tiered, capped). `sealed` because the response carries the mirror
+// URL (the config's location). The country code (from the body, else the CDN
+// header) is used transiently to pick a nearby host and is never stored.
+http.route({
+  path: '/api/v1/mirror/request',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'mirror.request',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson(
+        'rate_limit.exceeded',
+        'Too many attempts. Please wait and try again.',
+        429,
+        {
+          retryAfterMs: rl.retryAfterMs,
+        },
+      );
+    }
+    // A valid 2-letter code → use it; explicit null → "global" (don't geo-detect);
+    // absent → fall back to the CDN header. So picking "Global" can't be silently
+    // overridden by the detected country.
+    const body = await readJson<{ countryCode?: string | null }>(req);
+    let countryCode: string | null;
+    if (typeof body.countryCode === 'string' && /^[A-Za-z]{2}$/.test(body.countryCode.trim())) {
+      countryCode = body.countryCode.trim().toUpperCase();
+    } else if (body.countryCode === null) {
+      countryCode = null;
+    } else {
+      countryCode = resolveCountry(req);
+    }
+    const result = await ctx.runAction(internal.storage.provisionMirror, {
+      userId: member.userId,
+      countryCode,
+    });
+    return json(result);
+  }),
+});
+
+http.route({
+  path: '/api/v1/mirror',
+  method: 'DELETE',
+  handler: httpAction(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const result = await ctx.runAction(internal.storage.clearMirrorsForUser, {
+      userId: member.userId,
+    });
     return json(result);
   }),
 });

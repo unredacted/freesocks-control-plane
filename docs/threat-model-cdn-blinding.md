@@ -146,7 +146,28 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
   requests. Reducible later (single opaque endpoint, size-bucket padding); IP is answered by the
   `.onion` mirror (an operator runbook item, `docs/oob-verification.md`). We do not chase timing.
 - The proxy **content** fetch (the native client pulling the subscription URL) is out-of-band on its
-  own TLS; this layer protects delivery of the URL/key in the SPA, not that later fetch.
+  own TLS; this layer protects delivery of the URL/key in the SPA, not that later fetch. Two distinct
+  risks live here and only one is a crypto problem: (1) **fetch confidentiality** — who can read a
+  user's config in transit (solvable by E2EE delivery to a capable client); (2) **server enumeration**
+  — that a censor can obtain the proxy server addresses at all (NOT a crypto problem: any working
+  config handed to an untrusted dumb client contains them, so a censor who signs up harvests them
+  regardless of delivery). Enumeration is bounded by fleet design (rotation/fronting/cohorting), not
+  by this layer.
+- **S3 subscription mirrors are an OPT-IN availability hedge with a deliberate, scoped confidentiality
+  cost** (`convex/storage.ts` + `convex/mirrorProviders.ts`). A mirror serves the proxy config in
+  **plaintext** from a public capability URL on a third-party bucket — so the bucket provider (and any
+  CDN fronting it) can read it. This is acceptable ONLY because it is the user's explicit choice when
+  they otherwise cannot connect, and it is deliberately minimized: **lazy + per-user** (a config hits
+  S3 only when that member requests a mirror — the non-opted-in majority's configs never leave our
+  origin), **capped** (`mirror.maxPerUser`), **capability-URL'd** (unguessable random object path, not
+  enumerable), **country-tiered** (the DB picks a host likely reachable where they are; the country is
+  read transiently from `CF-IPCountry` and **never stored** or bound to the user), and refreshed in
+  place. It does NOT weaken the account-number protection (Layer 1 login leg) or the SPA's sealed
+  delivery of the subscription URL (a different artifact) — it widens only the already-carved-out
+  content-fetch gap, for users who opt in. The principled fix for the privacy population is the
+  **native app**, which (unlike a dumb proxy client) can fetch the content over the sealed reveal-leg
+  channel or `.onion`, closing the content gap without third-party plaintext. Until then the mirror is
+  the dumb-client fallback; keep it dormant unless needed, and prefer a well-fronted primary endpoint.
 
 ## Verification (tests)
 

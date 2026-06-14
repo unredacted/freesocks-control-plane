@@ -4,14 +4,17 @@
  * function) invoked from within an action (account.regenerate / switchBackend),
  * so it shares the caller's ActionCtx instead of paying an action-to-action hop.
  *
- * Flow: backend create (HTTP) → mirror content to S3 → persist the row →
- * point the user at it. On any post-create failure it deletes the backend user
- * (compensation) and rethrows; the caller owns slot/tier bookkeeping.
+ * Flow: backend create (HTTP) → persist the row → point the user at it. On any
+ * post-create failure it deletes the backend user (compensation) and rethrows;
+ * the caller owns slot/tier bookkeeping.
+ *
+ * S3 mirrors are NOT created here. They're opt-in + lazy: a member provisions
+ * one only if they can't reach the normal subscription URL (storage.provisionMirror),
+ * so a fresh sub's content is never proactively copied to third-party storage.
  */
 import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
-import { sha256Hex } from './crypto';
 import type { BackendId, IssueUserSpec } from './backends/types';
 
 export interface IssueResult {
@@ -32,26 +35,6 @@ export async function issueNewSubscription(
     spec: input.spec,
   });
   try {
-    // Mirror to S3; skipped entirely when no provider is enabled, so we don't
-    // even fetch the content (matches the old mirrorSubscription). The gate is
-    // DB-driven now (the mirrorProviders pool), not env vars.
-    let mirrors: IssueResult['mirrors'] = [];
-    let rawContentHash: string | undefined;
-    const s3On = await ctx.runQuery(internal.mirrorProviders.anyActive, {});
-    if (s3On) {
-      const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
-        backend: input.backend,
-        backendServerId: issued.backendServerId,
-        backendShortId: issued.backendShortId,
-      });
-      rawContentHash = await sha256Hex(fetched.content);
-      mirrors = await ctx.runAction(internal.storage.mirrorContent, {
-        objectPath: `subs/${issued.backendShortId}/${rawContentHash.slice(0, 12)}`,
-        content: fetched.content,
-        contentType: fetched.contentType,
-      });
-    }
-
     const subscriptionId = await ctx.runMutation(internal.subscriptions.insertSubscription, {
       userId: input.userId,
       backend: input.backend,
@@ -59,8 +42,8 @@ export async function issueNewSubscription(
       backendShortId: issued.backendShortId,
       backendServerId: issued.backendServerId,
       subscriptionUrl: issued.subscriptionUrl,
-      subscriptionMirrors: mirrors,
-      rawContentHash: mirrors.length > 0 ? rawContentHash : undefined,
+      subscriptionMirrors: [],
+      rawContentHash: undefined,
     });
     await ctx.runMutation(internal.subscriptions.setCurrentSubscription, {
       userId: input.userId,
@@ -73,7 +56,7 @@ export async function issueNewSubscription(
       backendUserId: issued.backendUserId,
       backendShortId: issued.backendShortId,
       subscriptionUrl: issued.subscriptionUrl,
-      mirrors,
+      mirrors: [],
     };
   } catch (err) {
     // The backend user exists but we couldn't finish, so delete it: a transient

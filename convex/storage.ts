@@ -4,22 +4,25 @@
  * src/server/providers/storage/*). `@aws-sdk/client-s3` needs the Node runtime,
  * so this whole file is `"use node"`; it can't define queries/mutations.
  *
- * Mirrors are the censorship-resistance hedge: the proxy subscription content
- * is uploaded to N S3-compatible providers so a client can fetch it even if the
- * control plane is blocked. The issuance saga (P5) calls `mirrorContent` and
- * persists the returned list on the subscription row.
+ * Mirrors are the censorship-resistance hedge: the proxy subscription content is
+ * uploaded to S3-compatible providers so a client can fetch it even if the
+ * control plane is blocked. They are OPT-IN + LAZY: a member calls
+ * `provisionMirror` only when they can't reach the normal subscription URL — so
+ * the non-opted-in majority's configs never touch third-party storage. Each
+ * mirror is country-tiered (the DB picks the host least likely to be blocked
+ * where they are) and capped per user.
  *
  * Config is fully DB-driven (the `mirrorProviders` table, CMS-managed via
  * Admin → Storage; replaced the old S3_PROVIDER_* and S3_MIRRORS_ENABLED env vars).
  * Because this file is `"use node"` it can't define queries, so each action
- * pulls the provider list from `internal.mirrorProviders.*`. Mirroring is active
- * iff ≥1 provider row is enabled.
+ * pulls the provider list from `internal.mirrorProviders.*`.
  */
 import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { sha256Hex } from './lib/crypto';
+import { randomHex, sha256Hex } from './lib/crypto';
+import type { MirrorContext } from './subscriptions';
 import type { ActiveMirrorPage } from './subscriptions';
 
 export interface S3Provider {
@@ -126,15 +129,103 @@ export async function deleteFromProviders(
   );
 }
 
+export interface ProvisionResult {
+  status: 'ok' | 'capped' | 'exhausted' | 'no_subscription' | 'error';
+  publicUrl?: string;
+  provider?: string;
+  remaining: number;
+}
+
 /**
- * Upload `content` to every configured provider in parallel. The issuance saga
- * calls this and persists the returned list on the subscription row.
+ * Opt-in lazy mirror: provision ONE more S3 mirror for the member's active sub,
+ * picking the next country-tiered provider they haven't tried. Bounded by the
+ * `mirror.maxPerUser` setting. Reuses the sub's capability object path across
+ * providers (one unguessable token per sub; content identical, only the host
+ * differs). `countryCode` is used transiently to pick a nearby host — never stored.
  */
-export const mirrorContent = internalAction({
-  args: { objectPath: v.string(), content: v.string(), contentType: v.optional(v.string()) },
-  handler: async (ctx, args): Promise<SubscriptionMirror[]> => {
+export const provisionMirror = internalAction({
+  args: { userId: v.id('users'), countryCode: v.union(v.string(), v.null()) },
+  handler: async (ctx, { userId, countryCode }): Promise<ProvisionResult> => {
+    const context: MirrorContext | null = await ctx.runQuery(
+      internal.subscriptions.mirrorContextForUser,
+      { userId },
+    );
+    if (!context) return { status: 'no_subscription', remaining: 0 };
+
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
+    const cap = Math.max(0, Number(settings['mirror.maxPerUser'] ?? 3));
+    const used = context.triedProviders.length;
+    if (used >= cap) return { status: 'capped', remaining: 0 };
+
+    const next = await ctx.runQuery(internal.mirrorProviders.selectNextProvider, {
+      countryCode,
+      tried: context.triedProviders,
+    });
+    if (!next) return { status: 'exhausted', remaining: Math.max(0, cap - used) };
+
+    // Re-resolve the secret-bearing provider by name (active only).
     const providers = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
-    return uploadToProviders(providers, args);
+    const provider = providers.find((p) => p.name === next.name);
+    if (!provider) return { status: 'exhausted', remaining: Math.max(0, cap - used) };
+
+    let fetched: { content: string; contentType?: string };
+    try {
+      fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
+        backend: context.backend,
+        backendServerId: context.backendServerId ?? undefined,
+        backendShortId: context.backendShortId,
+      });
+    } catch {
+      return { status: 'error', remaining: Math.max(0, cap - used) };
+    }
+    const hash = await sha256Hex(fetched.content);
+    // One capability token per sub, reused across providers (stable + unguessable).
+    const objectPath = context.objectPath ?? `mirrors/${randomHex(16)}`;
+
+    let entry: SubscriptionMirror | undefined;
+    try {
+      const mirrors = await uploadToProviders([provider], {
+        objectPath,
+        content: fetched.content,
+        contentType: fetched.contentType,
+      });
+      entry = mirrors[0];
+    } catch {
+      return { status: 'error', remaining: Math.max(0, cap - used) };
+    }
+    if (!entry) return { status: 'error', remaining: Math.max(0, cap - used) };
+
+    await ctx.runMutation(internal.subscriptions.appendMirror, {
+      subscriptionId: context.subscriptionId,
+      mirror: entry,
+      rawContentHash: hash,
+    });
+    return {
+      status: 'ok',
+      publicUrl: entry.publicUrl,
+      provider: provider.name,
+      remaining: Math.max(0, cap - used - 1),
+    };
+  },
+});
+
+/** Remove all of the member's mirrors (reset): clear the list + delete the objects. */
+export const clearMirrorsForUser = internalAction({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }): Promise<{ removed: number }> => {
+    const context: MirrorContext | null = await ctx.runQuery(
+      internal.subscriptions.mirrorContextForUser,
+      { userId },
+    );
+    if (!context) return { removed: 0 };
+    const { items } = await ctx.runMutation(internal.subscriptions.clearMirrors, {
+      subscriptionId: context.subscriptionId,
+    });
+    if (items.length > 0) {
+      const providers = await ctx.runQuery(internal.mirrorProviders.listAllWithSecret, {});
+      await deleteFromProviders(providers, items);
+    }
+    return { removed: items.length };
   },
 });
 
@@ -199,11 +290,11 @@ const REFRESH_MAX_PAGES = 50;
 const REFRESH_PAGE = 50;
 
 /**
- * Cron: keep the S3 mirrors fresh. Re-fetch each active subscription's current
- * content from its backend and re-upload it to the SAME object path (so the
- * mirror URL the member already holds stays valid, with up-to-date content).
- * Skips a sub whose content is unchanged (hash match), so steady state is cheap.
- * No-op unless ≥1 mirror provider is configured + enabled (same gate as issuance).
+ * Cron: keep EXISTING (opt-in) mirrors fresh. Pages only subs that already have a
+ * mirror (never creates one) and re-uploads each sub's current content to ITS OWN
+ * providers at the SAME object path — so the mirror URL the member already holds
+ * stays valid with up-to-date content. Skips a sub whose content is unchanged
+ * (hash match), so steady state is cheap. No-op when no provider is enabled.
  */
 export const refreshActiveMirrors = internalAction({
   args: {},
@@ -212,6 +303,7 @@ export const refreshActiveMirrors = internalAction({
     if (providers.length === 0) {
       return { refreshed: 0, scanned: 0 };
     }
+    const byName = new Map(providers.map((p) => [p.name, p]));
     let cursor: string | null = null;
     let refreshed = 0;
     let scanned = 0;
@@ -223,6 +315,9 @@ export const refreshActiveMirrors = internalAction({
       });
       for (const sub of res.items) {
         scanned++;
+        // Re-upload only to THIS sub's providers that are still active.
+        const targets = sub.providers.map((n) => byName.get(n)).filter((p): p is S3Provider => !!p);
+        if (targets.length === 0 || !sub.objectPath) continue;
         try {
           const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
             backend: sub.backend,
@@ -231,11 +326,8 @@ export const refreshActiveMirrors = internalAction({
           });
           const hash = await sha256Hex(fetched.content);
           if (hash === sub.rawContentHash) continue; // unchanged → no re-upload
-          // Reuse the existing object path so the mirror URL is stable; only the
-          // first-ever mirror for a sub (none yet) gets a content-addressed path.
-          const objectPath = sub.objectPath ?? `subs/${sub.backendShortId}/${hash.slice(0, 12)}`;
-          const mirrors = await uploadToProviders(providers, {
-            objectPath,
+          const mirrors = await uploadToProviders(targets, {
+            objectPath: sub.objectPath,
             content: fetched.content,
             contentType: fetched.contentType,
           });

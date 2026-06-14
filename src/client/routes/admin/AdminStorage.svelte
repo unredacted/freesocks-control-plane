@@ -132,6 +132,12 @@
               Access key ID: <code class="font-mono">{p.accessKeyId}</code> · Priority:
               <strong class="text-foreground tabular-nums">{p.priority}</strong>
             </div>
+            <div class="text-muted-foreground">
+              Regions:
+              <strong class="text-foreground">
+                {p.countryCodes.length ? p.countryCodes.join(', ') : 'Global (any country)'}
+              </strong>
+            </div>
             <div class="flex gap-2 pt-2">
               <Button size="sm" variant="outline" onclick={() => (editing = p)}>Edit</Button>
               <Button size="sm" variant="destructive" onclick={() => (pendingDelete = p)}>

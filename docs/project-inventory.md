@@ -157,9 +157,14 @@ Detailed companions, referenced rather than duplicated here:
   normalization. Critical user-journey strings translated; marketing copy + native review are
   follow-ups. **Live (English authoritative; other locales first-pass MT).**
 - **S3 subscription mirrors** (`convex/storage.ts` `"use node"` + `convex/mirrorProviders.ts`):
-  N providers from the DB (`mirrorProviders` table, admin CMS → "Storage mirrors"); the
-  censorship-resistance hedge. Mirroring runs while ≥1 provider is enabled (no env flag; replaced
-  `S3_MIRRORS_ENABLED`/`S3_PROVIDER_*`). **Dormant** (no providers configured yet).
+  the censorship-resistance hedge, **opt-in + lazy**. Providers are a DB pool (`mirrorProviders`,
+  admin CMS → "Storage mirrors", country-tiered, no env flag — replaced `S3_MIRRORS_ENABLED`/
+  `S3_PROVIDER_*`). A config hits S3 ONLY when a member who can't connect requests a mirror
+  (`storage.provisionMirror`, capped by `mirror.maxPerUser`, capability-URL'd, country picked from
+  `CF-IPCountry` transiently + never stored) — never proactively. The SPA exposes it via the
+  understated "trouble connecting?" flow (`MirrorHelp.svelte`), gated on `publicConfig.mirrorsEnabled`.
+  See `docs/threat-model-cdn-blinding.md` for the deliberate availability-vs-confidentiality trade.
+  **Dormant** (no providers configured yet).
 - **Automated backups** (A3, `docker/backup.sh` + the `backup` compose service): scheduled
   `pg_dump` shipped offsite to S3-compatible storage. **Live when `BACKUP_S3_*` is set** (else
   local-only with a loud warning).

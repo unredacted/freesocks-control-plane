@@ -70,11 +70,12 @@ export const insertSubscription = internalMutation({
 });
 
 /**
- * Page active subscriptions for the S3 mirror-refresh cron. Returns just the
- * fields the refresh needs (incl. the existing mirror objectPath, which it
- * reuses to overwrite in place → a stable mirror URL) + the cursor.
+ * Page active subscriptions for the S3 mirror-refresh cron. Mirrors are OPT-IN +
+ * LAZY now, so the refresh only keeps EXISTING mirrors fresh — it pages only subs
+ * that already have ≥1 mirror and reports each sub's OWN providers + the shared
+ * object path (re-uploaded in place → a stable mirror URL). It never creates one.
  */
-/** One page of active subs for the mirror-refresh cron (storage.refreshActiveMirrors). */
+/** One page of mirrored active subs for the refresh cron (storage.refreshActiveMirrors). */
 export interface ActiveMirrorPage {
   isDone: boolean;
   continueCursor: string;
@@ -85,6 +86,8 @@ export interface ActiveMirrorPage {
     backendShortId: string;
     rawContentHash: string | null;
     objectPath: string | null;
+    /** The providers THIS sub was mirrored to (names) — refresh re-uploads to these only. */
+    providers: string[];
   }[];
 }
 
@@ -100,15 +103,97 @@ export const pageActiveForMirror = internalQuery({
     return {
       isDone: res.isDone,
       continueCursor: res.continueCursor,
-      items: res.page.map((s) => ({
-        id: s._id,
-        backend: s.backend,
-        backendServerId: s.backendServerId ?? null,
-        backendShortId: s.backendShortId,
-        rawContentHash: s.rawContentHash ?? null,
-        objectPath: s.subscriptionMirrors[0]?.objectPath ?? null,
-      })),
+      items: res.page
+        // Opt-in only: refresh ONLY subs that already have a mirror; never create.
+        .filter((s) => s.subscriptionMirrors.length > 0)
+        .map((s) => ({
+          id: s._id,
+          backend: s.backend,
+          backendServerId: s.backendServerId ?? null,
+          backendShortId: s.backendShortId,
+          rawContentHash: s.rawContentHash ?? null,
+          objectPath: s.subscriptionMirrors[0]?.objectPath ?? null,
+          providers: s.subscriptionMirrors.map((m) => m.provider),
+        })),
     };
+  },
+});
+
+/**
+ * Per-member context for the opt-in "try a mirror" flow: the active sub + which
+ * providers it has already been mirrored to (the "tried" set) + the shared
+ * capability object path (null until the first mirror). Same current-or-active
+ * resolution as resolveCurrentOrActive.
+ */
+export interface MirrorContext {
+  subscriptionId: Id<'subscriptions'>;
+  backend: 'remnawave' | 'outline';
+  backendServerId: Id<'backendServers'> | null;
+  backendShortId: string;
+  triedProviders: string[];
+  objectPath: string | null;
+}
+
+export const mirrorContextForUser = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }): Promise<MirrorContext | null> => {
+    const user = await ctx.db.get(userId);
+    if (!user) return null;
+    let sub = null;
+    if (user.currentSubscriptionId) {
+      const cur = await ctx.db.get(user.currentSubscriptionId);
+      if (cur && cur.state === 'active') sub = cur;
+    }
+    if (!sub) {
+      sub = await ctx.db
+        .query('subscriptions')
+        .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+        .order('desc')
+        .first();
+    }
+    if (!sub) return null;
+    return {
+      subscriptionId: sub._id,
+      backend: sub.backend,
+      backendServerId: sub.backendServerId ?? null,
+      backendShortId: sub.backendShortId,
+      triedProviders: sub.subscriptionMirrors.map((m) => m.provider),
+      objectPath: sub.subscriptionMirrors[0]?.objectPath ?? null,
+    };
+  },
+});
+
+/** Append one freshly-provisioned mirror (opt-in flow), idempotent per provider. */
+export const appendMirror = internalMutation({
+  args: { subscriptionId: v.id('subscriptions'), mirror, rawContentHash: v.string() },
+  handler: async (ctx, { subscriptionId, mirror: entry, rawContentHash }) => {
+    const row = await ctx.db.get(subscriptionId);
+    if (!row || row.state !== 'active') return null;
+    const others = row.subscriptionMirrors.filter((m) => m.provider !== entry.provider);
+    await ctx.db.patch(subscriptionId, {
+      subscriptionMirrors: [...others, entry],
+      rawContentHash,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/** Clear all of a sub's mirrors (member "remove" / reset). Returns the removed
+ *  objects so the action can best-effort delete them from the buckets. */
+export const clearMirrors = internalMutation({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (
+    ctx,
+    { subscriptionId },
+  ): Promise<{ items: { provider: string; objectPath: string }[] }> => {
+    const row = await ctx.db.get(subscriptionId);
+    if (!row) return { items: [] };
+    const items = row.subscriptionMirrors
+      .filter((m): m is typeof m & { objectPath: string } => typeof m.objectPath === 'string')
+      .map((m) => ({ provider: m.provider, objectPath: m.objectPath }));
+    await ctx.db.patch(subscriptionId, { subscriptionMirrors: [], updatedAt: Date.now() });
+    return { items };
   },
 });
 

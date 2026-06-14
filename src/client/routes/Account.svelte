@@ -10,6 +10,7 @@
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
+  import MirrorHelp from '../components/MirrorHelp.svelte';
   import MembershipCallout from '../components/MembershipCallout.svelte';
   import RegenerateModal from '../components/RegenerateModal.svelte';
   import SwitchBackendModal from '../components/SwitchBackendModal.svelte';
@@ -567,7 +568,6 @@
         eyebrow={t('hero.eyebrowAccessKey')}
         backendLabel={config.data?.backends.labels[data.subscription.backend]}
         subscriptionUrl={data.subscription.url}
-        fallbackUrl={data.subscription.mirrors[0]?.publicUrl}
         expiresAt={data.subscription.expiresAt}
         trafficLimitBytes={data.subscription.trafficLimitBytes}
         trafficUsedBytes={data.subscription.trafficUsedBytes}
@@ -575,6 +575,13 @@
         backend={data.subscription.backend}
       />
       <SetupGuidance backend={data.subscription.backend} />
+      {#if config.data?.mirrorsEnabled}
+        <MirrorHelp
+          mirrors={data.subscription.mirrors}
+          geoCountry={data.geoCountry}
+          subscriptionUrl={data.subscription.url}
+        />
+      {/if}
     {:else}
       <!-- Empty state when the user has no subscription yet -->
       <div class="rounded-xl border border-dashed border-border p-8 text-center space-y-3">

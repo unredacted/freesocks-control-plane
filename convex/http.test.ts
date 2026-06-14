@@ -13,6 +13,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { hmacSha256Hex, hmacSha512Hex, sha256Hex } from './lib/crypto';
+import { resolveCountry } from './lib/http';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -611,5 +612,40 @@ describe('GET /api/admin/auth/status — cookie-only signed-in detection', () =>
     expect(res.status).toBe(200);
     const body = (await res.json()) as { signedIn: boolean };
     expect(body.signedIn).toBe(false);
+  });
+});
+
+describe('resolveCountry (CF-IPCountry, CF_FRONTED-gated)', () => {
+  const reqWith = (cc: string) => new Request('https://x/', { headers: { 'cf-ipcountry': cc } });
+
+  test('null unless CF_FRONTED is set (header is spoofable otherwise)', () => {
+    expect(resolveCountry(reqWith('IR'))).toBeNull();
+    vi.stubEnv('CF_FRONTED', 'true');
+    expect(resolveCountry(reqWith('IR'))).toBe('IR');
+  });
+
+  test('uppercases a code, rejects anonymizer/unknown/malformed values', () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    expect(resolveCountry(reqWith('ru'))).toBe('RU');
+    for (const cc of ['XX', 'T1', 'T2', '', 'USA', '1']) {
+      expect(resolveCountry(reqWith(cc))).toBeNull();
+    }
+  });
+});
+
+describe('opt-in mirror routes require a member session', () => {
+  test('POST /api/v1/mirror/request → 401 without auth', async () => {
+    const t = convexTest(schema, modules);
+    const res = await t.fetch('/api/v1/mirror/request', {
+      method: 'POST',
+      body: JSON.stringify({ countryCode: 'IR' }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test('DELETE /api/v1/mirror → 401 without auth', async () => {
+    const t = convexTest(schema, modules);
+    const res = await t.fetch('/api/v1/mirror', { method: 'DELETE' });
+    expect(res.status).toBe(401);
   });
 });

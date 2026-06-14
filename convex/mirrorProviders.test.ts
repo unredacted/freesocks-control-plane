@@ -112,3 +112,70 @@ describe('mirrorProviders CRUD', () => {
     expect(after.providers).toHaveLength(0);
   });
 });
+
+describe('mirrorProviders country tiering', () => {
+  test('create normalizes country codes (uppercase, 2-letter, dedupe)', async () => {
+    const t = convexTest(schema, modules);
+    const row = await t.mutation(internal.mirrorProviders.create, {
+      ...BASE,
+      countryCodes: ['ir', 'RU', ' cn ', 'bad', '12', 'IR'],
+    });
+    expect([...row.countryCodes].sort()).toEqual(['CN', 'IR', 'RU']);
+  });
+
+  test('selectNextProvider: country match first, then global by priority, excluding tried', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.mirrorProviders.create, {
+      ...BASE,
+      name: 'ir-host',
+      countryCodes: ['IR'],
+      priority: 5,
+    });
+    await t.mutation(internal.mirrorProviders.create, {
+      ...BASE,
+      name: 'global-host',
+      countryCodes: [],
+      priority: 1,
+    });
+    await t.mutation(internal.mirrorProviders.create, {
+      ...BASE,
+      name: 'cn-host',
+      countryCodes: ['CN'],
+      priority: 0,
+    });
+
+    // IR match beats the lower-priority global host AND the CN-only host.
+    expect(
+      await t.query(internal.mirrorProviders.selectNextProvider, { countryCode: 'IR', tried: [] }),
+    ).toEqual({ name: 'ir-host' });
+    // IR tried → only the global host is eligible (cn-host is scoped to CN).
+    expect(
+      await t.query(internal.mirrorProviders.selectNextProvider, {
+        countryCode: 'IR',
+        tried: ['ir-host'],
+      }),
+    ).toEqual({ name: 'global-host' });
+    // No country, or a country with no match → the global host.
+    expect(
+      await t.query(internal.mirrorProviders.selectNextProvider, { countryCode: null, tried: [] }),
+    ).toEqual({ name: 'global-host' });
+    expect(
+      await t.query(internal.mirrorProviders.selectNextProvider, { countryCode: 'US', tried: [] }),
+    ).toEqual({ name: 'global-host' });
+    // Everything eligible tried → null (cn-host stays excluded for IR).
+    expect(
+      await t.query(internal.mirrorProviders.selectNextProvider, {
+        countryCode: 'IR',
+        tried: ['ir-host', 'global-host'],
+      }),
+    ).toBeNull();
+  });
+
+  test('an inactive provider is never selected', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.mirrorProviders.create, { ...BASE, name: 'off', isActive: false });
+    expect(
+      await t.query(internal.mirrorProviders.selectNextProvider, { countryCode: null, tried: [] }),
+    ).toBeNull();
+  });
+});

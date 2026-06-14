@@ -260,4 +260,23 @@ export const zh: Partial<Messages> = {
 
   'get.upsellTitle': '想要无限制？',
   'get.upsellBody': '随时可升级到 FreeSocks 会员，享受无限流量与设备。',
+
+  // --- 订阅镜像（“连接有问题？”可选项） ---
+  'mirror.disclosure': '连接有问题？',
+  'mirror.explainer':
+    '如果你所在位置无法用普通订阅链接连接，可在下方添加镜像链接。它会从另一个可能未被封锁的主机提供相同的密钥。',
+  'mirror.addedLabel': '你的镜像链接',
+  'mirror.addToAppHint': '将每个链接作为额外的订阅添加到你的应用中，然后尝试连接。',
+  'mirror.regionLabel': '你所在的地区',
+  'mirror.regionGlobal': '全球（任意地区）',
+  'mirror.regionNotStored': '仅用于选择就近的镜像 — 不会被存储。',
+  'mirror.getButton': '获取镜像链接',
+  'mirror.tryAnother': '尝试其他镜像',
+  'mirror.working': '处理中…',
+  'mirror.capped': '你添加的镜像数量已达上限。',
+  'mirror.exhausted': '当前没有更多适用于你所在地区的镜像。',
+  'mirror.noSubscription': '请先创建你的密钥，然后才能添加镜像。',
+  'mirror.removeAll': '移除所有镜像',
+  'mirror.errorToast': '无法添加镜像',
+  'mirror.removedToast': '镜像已移除',
 };

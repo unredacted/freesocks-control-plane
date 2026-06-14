@@ -47,6 +47,17 @@ function toProvider(r: Doc<'mirrorProviders'>): MirrorProvider {
   };
 }
 
+/** Uppercase + dedupe ISO-3166-1 alpha-2 codes; drop anything not 2 letters. */
+function normalizeCountryCodes(raw: string[] | undefined): string[] {
+  if (!raw) return [];
+  const seen = new Set<string>();
+  for (const c of raw) {
+    const cc = c.trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(cc)) seen.add(cc);
+  }
+  return [...seen];
+}
+
 /** Admin-safe view: everything EXCEPT the secret, which becomes a boolean. */
 function mapProviderAdmin(r: Doc<'mirrorProviders'>) {
   return {
@@ -58,6 +69,7 @@ function mapProviderAdmin(r: Doc<'mirrorProviders'>) {
     region: r.region,
     accessKeyId: r.accessKeyId,
     secretAccessKeySet: r.secretAccessKey.length > 0,
+    countryCodes: r.countryCodes ?? [],
     isActive: r.isActive,
     priority: r.priority,
     createdAt: new Date(r._creationTime).toISOString(),
@@ -92,7 +104,7 @@ export const listAllWithSecret = internalQuery({
   },
 });
 
-/** Cheap issuance gate: is subscription mirroring active (≥1 enabled provider)? */
+/** Cheap gate: is any mirror provider configured + enabled? */
 export const anyActive = internalQuery({
   args: {},
   handler: async (ctx): Promise<boolean> => {
@@ -101,6 +113,38 @@ export const anyActive = internalQuery({
       .withIndex('by_active', (q) => q.eq('isActive', true))
       .first();
     return one !== null;
+  },
+});
+
+/**
+ * Pick the next mirror provider to hand a member, given their (transient,
+ * never-stored) country and the providers they've already tried. Ordering:
+ * country-matched first, then global (no countryCodes), each by ascending
+ * priority; providers scoped to OTHER countries only are excluded. Returns the
+ * provider name (the caller re-resolves the secret via listActiveWithSecret to
+ * upload) or null when none remain.
+ */
+export const selectNextProvider = internalQuery({
+  args: { countryCode: v.union(v.string(), v.null()), tried: v.array(v.string()) },
+  handler: async (ctx, { countryCode, tried }): Promise<{ name: string } | null> => {
+    const triedSet = new Set(tried);
+    const cc = countryCode?.trim().toUpperCase() || null;
+    const active = (
+      await ctx.db
+        .query('mirrorProviders')
+        .withIndex('by_active', (q) => q.eq('isActive', true))
+        .collect()
+    ).filter((p) => !triedSet.has(p.name));
+    const rank = (p: Doc<'mirrorProviders'>): number => {
+      const codes = p.countryCodes ?? [];
+      if (cc && codes.includes(cc)) return 0; // preferred for this country
+      if (codes.length === 0) return 1; // global fallback
+      return 2; // scoped to other countries only — not eligible
+    };
+    const chosen = active
+      .filter((p) => rank(p) < 2)
+      .sort((a, b) => rank(a) - rank(b) || a.priority - b.priority)[0];
+    return chosen ? { name: chosen.name } : null;
   },
 });
 
@@ -123,6 +167,7 @@ export const create = internalMutation({
     region: v.optional(v.string()),
     accessKeyId: v.string(),
     secretAccessKey: v.string(),
+    countryCodes: v.optional(v.array(v.string())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
   },
@@ -154,6 +199,7 @@ export const create = internalMutation({
       region: a.region?.trim() || 'us-east-1',
       accessKeyId: a.accessKeyId,
       secretAccessKey: a.secretAccessKey,
+      countryCodes: normalizeCountryCodes(a.countryCodes),
       isActive: a.isActive ?? true,
       priority: a.priority ?? 0,
       updatedAt: Date.now(),
@@ -174,6 +220,7 @@ export const update = internalMutation({
     // Write-only: a blank/absent secret keeps the stored one (the UI never
     // round-trips it), so editing other fields can't wipe the credential.
     secretAccessKey: v.optional(v.string()),
+    countryCodes: v.optional(v.array(v.string())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
   },
@@ -212,6 +259,9 @@ export const update = internalMutation({
     // Only overwrite the secret when the admin actually retyped one.
     if (patch.secretAccessKey !== undefined && patch.secretAccessKey !== '') {
       fields.secretAccessKey = patch.secretAccessKey;
+    }
+    if (patch.countryCodes !== undefined) {
+      fields.countryCodes = normalizeCountryCodes(patch.countryCodes);
     }
     if (patch.isActive !== undefined) fields.isActive = patch.isActive;
     if (patch.priority !== undefined) fields.priority = patch.priority;

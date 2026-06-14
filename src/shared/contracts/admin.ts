@@ -168,6 +168,8 @@ export const MirrorProviderAdmin = z.object({
   region: z.string(),
   accessKeyId: z.string(),
   secretAccessKeySet: z.boolean(),
+  /** ISO-3166-1 alpha-2 codes this provider is preferred for (empty = global fallback). */
+  countryCodes: z.array(z.string()),
   isActive: z.boolean(),
   priority: z.number().int(),
   createdAt: z.string().datetime(),
@@ -187,6 +189,8 @@ export const MirrorProviderUpsert = z.object({
   region: z.string().optional(),
   accessKeyId: z.string().min(1).optional(),
   secretAccessKey: z.string().min(1).optional(),
+  /** ISO-3166-1 alpha-2 codes this provider is preferred for (empty = global fallback). */
+  countryCodes: z.array(z.string()).optional(),
   isActive: z.boolean().default(true),
   priority: z.number().int().default(0),
 });
