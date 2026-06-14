@@ -561,6 +561,11 @@
       </div>
     </section>
 
+    <!-- Delivery focus FIRST — chosen above the key, since it shapes how the key
+         below is presented (privacy promotes the raw E2EE config + warns that the
+         subscription link is fetched through a CDN; evade keeps the link as the star). -->
+    <DeliveryPreference suggested={data.suggestedDelivery} />
+
     <!-- HERO: the subscription is the main thing on this page -->
     {#if data.subscription}
       <SubscriptionHero
@@ -573,13 +578,19 @@
         tierName={data.user.tier.name}
         backend={data.subscription.backend}
       />
+      {#if effectiveDelivery === 'privacy'}
+        <p
+          class="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+        >
+          {t('delivery.heroPrivacyNote')}
+        </p>
+      {/if}
       <SetupGuidance backend={data.subscription.backend} />
-      <DeliveryPreference suggested={data.suggestedDelivery} />
       <!-- Delivery paths, ordered by the chosen emphasis: privacy → raw config
-           (E2EE) first; evade → backup mirrors first. Both always present. -->
+           (E2EE, expanded) first; evade → backup mirrors first. Both always present. -->
       <div class="flex flex-col gap-8">
         <div class={effectiveDelivery === 'privacy' ? 'order-1' : 'order-2'}>
-          <RawConfig />
+          <RawConfig startOpen={effectiveDelivery === 'privacy'} />
         </div>
         {#if config.data?.mirrorsEnabled}
           <div class={effectiveDelivery === 'privacy' ? 'order-2' : 'order-1'}>

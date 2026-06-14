@@ -16,12 +16,24 @@
    * pulling the subscription URL through a CDN in plaintext. Fetched only while
    * the panel is open — a deliberate, on-demand reveal, not auto-loaded.
    */
+  interface Props {
+    /** Open on mount + auto-open when promoted (privacy mode makes this the
+     *  recommended delivery method, so it starts expanded). */
+    startOpen?: boolean;
+  }
+  let { startOpen = false }: Props = $props();
+
   // `open` MUST be declared before the query: subscriptionContentQuery evaluates
   // its `enabled` getter synchronously at creation, so reading `open` first would
   // hit the temporal dead zone and throw during render.
-  let open = $state(false);
+  let open = $state(startOpen);
   let copied = $state(false);
   const content = subscriptionContentQuery(() => open);
+  // Expand when the parent promotes us (e.g. the member switches to privacy);
+  // never force-collapse, so a manual collapse sticks.
+  $effect(() => {
+    if (startOpen) open = true;
+  });
 
   function copy(text: string) {
     void navigator.clipboard.writeText(text).then(() => {

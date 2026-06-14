@@ -345,6 +345,8 @@ export const en = {
   'delivery.privacyBody':
     "Best for the strongest confidentiality. We'll prefer setup that keeps your config off third-party servers.",
   'delivery.recommended': 'Recommended',
+  'delivery.heroPrivacyNote':
+    'Heads up: your app fetches this link through a CDN, which can see your config. For maximum privacy, add servers by hand from the raw configuration below.',
 } satisfies Record<string, Msg>;
 
 export type MessageKey = keyof typeof en;

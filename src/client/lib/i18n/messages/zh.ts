@@ -296,4 +296,6 @@ export const zh: Partial<Messages> = {
   'delivery.privacyBody':
     '追求最强保密性时最合适。我们会优先采用不让你的配置落到第三方服务器的方式。',
   'delivery.recommended': '推荐',
+  'delivery.heroPrivacyNote':
+    '提示：你的应用通过 CDN 获取此链接，CDN 可以看到你的配置。为获得最大隐私，请从下方的原始配置中手动添加服务器。',
 };

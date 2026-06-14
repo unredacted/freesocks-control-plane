@@ -298,6 +298,10 @@
         <h2 class="text-lg font-display font-semibold">{t('get.step2Title')}</h2>
       </div>
 
+      <!-- Delivery focus FIRST — above the key (and the create button), so the
+           choice shapes how the subscription is presented. -->
+      <DeliveryPreference suggested={account.data?.suggestedDelivery} />
+
       {#if subscription}
         <SubscriptionHero
           eyebrow={t('hero.eyebrowAccessKey')}
@@ -312,11 +316,17 @@
           tierName={account.data?.user.tier.name ?? accountTier?.name ?? ''}
           backend={subscription.backend}
         />
+        {#if effectiveDelivery === 'privacy'}
+          <p
+            class="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+          >
+            {t('delivery.heroPrivacyNote')}
+          </p>
+        {/if}
         <SetupGuidance backend={subscription.backend} />
-        <DeliveryPreference suggested={account.data?.suggestedDelivery} />
         <div class="flex flex-col gap-8">
           <div class={effectiveDelivery === 'privacy' ? 'order-1' : 'order-2'}>
-            <RawConfig />
+            <RawConfig startOpen={effectiveDelivery === 'privacy'} />
           </div>
           {#if config.data?.mirrorsEnabled}
             <div class={effectiveDelivery === 'privacy' ? 'order-2' : 'order-1'}>
