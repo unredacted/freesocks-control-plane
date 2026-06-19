@@ -107,7 +107,7 @@
           </ul>
 
           {#if isMembership && !isCurrent && billingEnabled && onUpgrade}
-            <Button variant="default" class="w-full" size="sm" onclick={onUpgrade}>
+            <Button variant="default" class="w-full min-h-11" size="sm" onclick={onUpgrade}>
               {t('tiers.upgradeCta')}
             </Button>
           {/if}

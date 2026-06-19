@@ -139,7 +139,8 @@
             type="button"
             onclick={() => (selectedProcessorRaw = r)}
             aria-pressed={selectedProcessor === r}
-            class="rounded-lg border p-3 text-start transition {selectedProcessor === r
+            class="rounded-lg border p-3 text-start transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {selectedProcessor ===
+            r
               ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
               : 'border-border hover:border-primary/40'}"
           >
@@ -163,7 +164,7 @@
             disabled={locked}
             onclick={() => (selectedMonthsRaw = d.months)}
             aria-pressed={selectedMonths === d.months}
-            class="rounded-lg border p-3 text-start transition disabled:cursor-not-allowed disabled:opacity-40 {selectedMonths ===
+            class="rounded-lg border p-3 text-start transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-40 {selectedMonths ===
             d.months
               ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
               : 'border-border hover:border-primary/40'}"
@@ -204,7 +205,7 @@
       <Button
         onclick={submit}
         disabled={!selectedProcessor || !selectedMonths || checkout.isPending}
-        class="w-full sm:w-auto"
+        class="w-full sm:w-auto min-h-11"
       >
         {checkout.isPending ? t('upgrade.starting') : t('upgrade.continue')}
       </Button>

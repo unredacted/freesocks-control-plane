@@ -62,6 +62,7 @@
       width={size}
       height={size}
       class="rounded-md border border-border"
+      role="img"
       aria-label={t('qr.ariaLabel')}
     ></canvas>
   {/if}

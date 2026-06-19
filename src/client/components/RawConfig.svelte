@@ -72,7 +72,7 @@
   {:else}
     <button
       type="button"
-      class="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium"
+      class="flex w-full items-center justify-between gap-2 rounded-xl px-4 py-3 text-start text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       onclick={() => (open = !open)}
       aria-expanded={open}
     >
@@ -95,7 +95,7 @@
       {:else if content.data}
         {@const text = prettify(content.data.content)}
         <div class="flex justify-end">
-          <Button variant="outline" size="sm" onclick={() => copy(text)}>
+          <Button variant="outline" size="sm" class="min-h-11" onclick={() => copy(text)}>
             {#if copied}
               <Check class="size-3.5" />
             {:else}

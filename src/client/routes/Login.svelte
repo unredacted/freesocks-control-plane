@@ -2,6 +2,7 @@
   import { z } from 'zod';
   import { Button } from '@client/components/ui/button';
   import CapWidget from '../components/CapWidget.svelte';
+  import InlineError from '../components/InlineError.svelte';
   import { configQuery } from '../lib/queries';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
@@ -65,6 +66,10 @@
   }
 
   let canSubmit = $derived(digitsOnly.length === ACCOUNT_ID_LEN && !!token && !login.isPending);
+
+  // Account.svelte bounces a 401'd member here with ?expired=1; surface a calm
+  // explanation rather than dropping them on a bare form with no context.
+  let sessionExpired = $derived(router.searchParams.get('expired') === '1');
 </script>
 
 <div class="max-w-md mx-auto py-10 md:py-16 space-y-8">
@@ -82,6 +87,15 @@
       {t('login.subtitle')}
     </p>
   </header>
+
+  {#if sessionExpired}
+    <div
+      class="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-muted-foreground"
+      role="status"
+    >
+      {t('login.sessionExpired')}
+    </div>
+  {/if}
 
   <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
     <div class="space-y-2">
@@ -137,11 +151,7 @@
     />
 
     {#if login.error}
-      <div
-        class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive"
-      >
-        {apiErrorMessage(login.error)}
-      </div>
+      <InlineError message={apiErrorMessage(login.error)} />
     {/if}
 
     <Button onclick={() => login.mutate()} disabled={!canSubmit} size="lg" class="w-full min-h-11">

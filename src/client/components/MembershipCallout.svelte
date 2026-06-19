@@ -30,7 +30,7 @@
   <div class="flex flex-wrap items-center gap-3 pt-1">
     {#if ctaUrl && ctaLabel}
       <a href={ctaUrl} target="_blank" rel="noopener noreferrer">
-        <Button size="sm">{ctaLabel}</Button>
+        <Button size="sm" class="min-h-11">{ctaLabel}</Button>
       </a>
     {/if}
     {#if secondaryAction}{@render secondaryAction()}{/if}

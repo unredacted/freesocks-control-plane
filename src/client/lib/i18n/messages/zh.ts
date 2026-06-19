@@ -91,13 +91,13 @@ export const zh: Partial<Messages> = {
   'common.reload': '重新加载',
   'common.deviceCount': (p) => `${p.count} 台设备`,
   'login.success': '已登录',
+  'login.sessionExpired': '请重新登录 — 你的会话可能已结束。',
 
   'captcha.failedTitle': '无法完成真人验证。',
-  'captcha.failedBody':
-    '验证完全在你的浏览器中运行。如果失败，可能是浏览器拦截了所需的 Worker，或网络中断了请求。',
-  'captcha.failedTip1': '尝试禁用浏览器扩展',
-  'captcha.failedTip2': '尝试其他网络或隐私/无痕窗口',
-  'captcha.failedTip3': '确保已启用 JavaScript 和 WebAssembly',
+  'captcha.failedBody': '该验证在你的设备上运行，但未能完成。这通常是网络问题，而不是你的错。',
+  'captcha.failedTip1': '稍等片刻，然后重试',
+  'captcha.failedTip2': '换一个网络试试 — 如果你所在地区的网站被屏蔽，可使用 VPN/代理',
+  'captcha.failedTip3': '仍然无法通过？试试隐私/无痕窗口，或关闭浏览器扩展',
 
   'account.redeemAriaLabel': '会员码',
   'account.switchTo': (p) => `切换到 ${p.label}`,
@@ -115,7 +115,7 @@ export const zh: Partial<Messages> = {
   'account.rotateFailedTitle': '无法更换账户号码',
   'account.freeTierTitle': '你正在使用免费套餐',
   'account.freeTierBody': 'FreeSocks 会员可解锁无限设备与流量。捐款也让免费账户得以维持。',
-  'account.refreshMembership': '已付款？刷新会员状态',
+  'account.refreshMembership': '已付款？查询我的会员状态',
   'account.refreshing': '刷新中…',
   'account.regenSuccessTitle': '已生成新的订阅链接',
   'account.regenSuccessBody': '请在每台设备上重新导入。旧链接还能用 24 小时。',
@@ -225,6 +225,7 @@ export const zh: Partial<Messages> = {
   'impact.membershipSoon': '会员（即将推出）',
 
   'qr.ariaLabel': '订阅链接二维码',
+  'app.skipToContent': '跳到主要内容',
   'app.notFound': '页面不存在',
   'app.goHome': '返回首页',
   'footer.operatedPrefix': '运营方：',

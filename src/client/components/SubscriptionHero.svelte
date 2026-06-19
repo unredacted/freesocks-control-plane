@@ -202,7 +202,7 @@
           <div class="flex flex-wrap gap-2">
             <Button
               onclick={() => copy(subscriptionUrl, 'primary')}
-              class="flex-1 sm:flex-initial transition-all"
+              class="flex-1 sm:flex-initial transition-all min-h-11"
               size="lg"
             >
               {#if copied === 'primary'}
@@ -217,7 +217,7 @@
                 </span>
               {/if}
             </Button>
-            <Button variant="outline" size="lg" onclick={downloadConfig}>
+            <Button variant="outline" size="lg" class="min-h-11" onclick={downloadConfig}>
               <Download class="size-4" />
               <span class="hidden sm:inline">{t('common.download')}</span>
             </Button>
@@ -226,7 +226,7 @@
                 variant="outline"
                 size="lg"
                 onclick={() => (qrOpen = !qrOpen)}
-                class="md:hidden"
+                class="md:hidden min-h-11"
                 aria-expanded={qrOpen}
               >
                 <QrCodeIcon class="size-4" />
@@ -270,7 +270,12 @@
             >
               {fallbackUrl}
             </code>
-            <Button variant="outline" size="sm" onclick={() => copy(fallbackUrl, 'fallback')}>
+            <Button
+              variant="outline"
+              size="sm"
+              class="min-h-11"
+              onclick={() => copy(fallbackUrl, 'fallback')}
+            >
               {#if copied === 'fallback'}
                 <Check class="size-3.5" />
               {:else}
@@ -281,6 +286,7 @@
               <Button
                 variant="outline"
                 size="sm"
+                class="min-h-11"
                 onclick={() => (qrFallbackOpen = !qrFallbackOpen)}
                 aria-expanded={qrFallbackOpen}
                 aria-label={t('hero.fallbackQrAria')}

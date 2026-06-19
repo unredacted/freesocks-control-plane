@@ -34,20 +34,20 @@
              the membership upsell for free-tier members, so a separate
              "Membership" button here would just be a second link to /account. -->
         <Link href="/account">
-          <Button variant="default" size="sm">
+          <Button variant="default" size="sm" class="max-sm:min-h-11">
             <User class="size-4" />
             <span class="hidden sm:inline">{t('nav.account')}</span>
           </Button>
         </Link>
       {:else}
         <Link href="/get-account">
-          <Button variant="ghost" size="sm">
+          <Button variant="ghost" size="sm" class="max-sm:min-h-11">
             <KeyIcon class="size-4" />
             <span class="hidden sm:inline">{t('nav.getAccount')}</span>
           </Button>
         </Link>
         <Link href="/login">
-          <Button variant="outline" size="sm">
+          <Button variant="outline" size="sm" class="max-sm:min-h-11">
             <LogIn class="size-4" />
             {t('nav.signIn')}
           </Button>

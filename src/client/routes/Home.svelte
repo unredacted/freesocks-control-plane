@@ -21,6 +21,7 @@
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import ArrowRight from '@lucide/svelte/icons/arrow-right';
   import Heart from '@lucide/svelte/icons/heart';
+  import ShieldCheck from '@lucide/svelte/icons/shield-check';
 
   const me = meQuery();
   const config = configQuery();
@@ -77,6 +78,16 @@
       title: 'Paste it into a VPN client',
       body: 'Add the URL as a subscription in any compatible client.',
     },
+  ];
+
+  // "What we store" — factual claims about how the system is built (hash-only,
+  // no PII, no traffic logs). The strongest trust signal we can give an anxious,
+  // surveillance-wary visitor, and copy the org can stand behind without legal
+  // sign-off. English-only, like the rest of this landing page.
+  const privacyPoints = [
+    'We store only a hashed version of your account number — never the number itself.',
+    'No email, phone number, or name. We never ask for them.',
+    'No logs of the sites you visit or the traffic you send.',
   ];
 </script>
 
@@ -217,6 +228,27 @@
         </div>
       {/each}
     </div>
+  </section>
+
+  <!-- WHAT WE STORE: the privacy reassurance this audience needs, stated plainly. -->
+  <section class="space-y-8">
+    <div class="max-w-2xl space-y-2">
+      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">What we store</h2>
+      <p class="text-muted-foreground leading-relaxed">
+        FreeSocks is built to know as little about you as possible.
+      </p>
+    </div>
+    <ul class="grid gap-4 md:grid-cols-3">
+      {#each privacyPoints as point, i (point)}
+        <li
+          class="flex items-start gap-3 rounded-xl border border-border bg-card p-5"
+          in:fly={{ y: 16, duration: 400, delay: i * 60, easing: quintOut }}
+        >
+          <ShieldCheck class="size-5 text-primary mt-0.5 shrink-0" aria-hidden="true" />
+          <p class="text-sm text-muted-foreground leading-relaxed">{point}</p>
+        </li>
+      {/each}
+    </ul>
   </section>
 
   <!-- HOW IT WORKS -->

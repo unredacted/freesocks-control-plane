@@ -42,7 +42,8 @@
         type="button"
         onclick={() => setDeliveryPref(opt.mode)}
         aria-pressed={selected === opt.mode}
-        class="relative rounded-lg border p-4 text-start transition {selected === opt.mode
+        class="relative rounded-lg border p-4 text-start transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {selected ===
+        opt.mode
           ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
           : 'border-border hover:border-primary/40'}"
       >

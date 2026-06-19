@@ -106,7 +106,7 @@
 <div class="rounded-xl border border-border/60 bg-muted/20">
   <button
     type="button"
-    class="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm font-medium"
+    class="flex w-full items-center justify-between gap-2 rounded-xl px-4 py-3 text-start text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     onclick={() => (open = !open)}
     aria-expanded={open}
   >
@@ -133,7 +133,12 @@
               >
                 {m.publicUrl}
               </code>
-              <Button variant="outline" size="sm" onclick={() => copy(m.publicUrl)}>
+              <Button
+                variant="outline"
+                size="sm"
+                class="min-h-11"
+                onclick={() => copy(m.publicUrl)}
+              >
                 {#if copiedUrl === m.publicUrl}
                   <Check class="size-3.5" />
                 {:else}
@@ -165,7 +170,7 @@
           <p class="text-xs text-muted-foreground/80">{t('mirror.regionNotStored')}</p>
         </div>
 
-        <Button onclick={() => request.mutate()} disabled={request.isPending}>
+        <Button onclick={() => request.mutate()} disabled={request.isPending} class="min-h-11">
           {request.isPending
             ? t('mirror.working')
             : added.length === 0
@@ -191,7 +196,7 @@
       {#if added.length > 0}
         <button
           type="button"
-          class="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          class="rounded-sm text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onclick={() => clear.mutate()}
           disabled={clear.isPending}
         >

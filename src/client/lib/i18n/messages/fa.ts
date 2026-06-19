@@ -96,13 +96,16 @@ export const fa: Partial<Messages> = {
   'common.reload': 'بارگذاری مجدد',
   'common.deviceCount': (p) => `${p.count} دستگاه`,
   'login.success': 'وارد شدید',
+  'login.sessionExpired': 'لطفاً دوباره وارد شوید — ممکن است نشست شما پایان یافته باشد.',
 
   'captcha.failedTitle': 'بررسی انسانی کامل نشد.',
   'captcha.failedBody':
-    'این بررسی کاملاً در مرورگر شما اجرا می‌شود. اگر ناموفق بود، شاید مرورگرتان Worker مورد نیاز را مسدود کرده یا شبکه درخواست را از دست داده است.',
-  'captcha.failedTip1': 'افزونه‌های مرورگر را غیرفعال کنید',
-  'captcha.failedTip2': 'شبکهٔ دیگری یا یک پنجرهٔ ناشناس را امتحان کنید',
-  'captcha.failedTip3': 'مطمئن شوید جاوااسکریپت و WebAssembly فعال هستند',
+    'این بررسی روی دستگاه شما اجرا می‌شود و کامل نشد. معمولاً این یک مشکل شبکه است، نه اشتباه شما.',
+  'captcha.failedTip1': 'کمی صبر کنید و دوباره تلاش کنید',
+  'captcha.failedTip2':
+    'شبکهٔ دیگری را امتحان کنید — یا اگر سایت‌ها در منطقهٔ شما مسدودند، از یک VPN/پراکسی استفاده کنید',
+  'captcha.failedTip3':
+    'هنوز مشکل دارید؟ یک پنجرهٔ ناشناس باز کنید یا افزونه‌های مرورگر را غیرفعال کنید',
 
   'account.redeemAriaLabel': 'کد عضویت',
   'account.switchTo': (p) => `تغییر به ${p.label}`,
@@ -113,16 +116,16 @@ export const fa: Partial<Messages> = {
     'اولین اشتراک خود را بسازید تا لینکی دریافت کنید که در هر برنامهٔ VPN سازگار قابل استفاده است.',
   'account.createSub': 'ساخت اشتراک',
   'account.creating': 'در حال ساخت…',
-  'account.rotateTitle': 'شمارهٔ حساب عوض شود؟',
+  'account.rotateTitle': 'شمارهٔ حساب تغییر کند؟',
   'account.rotateBody':
     'یک شمارهٔ ۳۲ رقمی جدید ساخته و فقط یک بار نمایش داده می‌شود. شمارهٔ فعلی بلافاصله از کار می‌افتد و هر کسی که آن را دارد دسترسی‌اش را از دست می‌دهد. اگر فکر می‌کنید شماره‌تان لو رفته این کار را انجام دهید.',
-  'account.rotateConfirm': 'بله، عوض کن',
+  'account.rotateConfirm': 'بله، تغییر بده',
   'account.rotating': 'در حال تغییر…',
   'account.rotateFailedTitle': 'تغییر شمارهٔ حساب ناموفق بود',
   'account.freeTierTitle': 'شما در پلن رایگان هستید',
   'account.freeTierBody':
     'عضویت FreeSocks دستگاه‌ها و پهنای باند نامحدود را در اختیار شما می‌گذارد. کمک‌های مالی نیز حساب‌های رایگان را سرپا نگه می‌دارند.',
-  'account.refreshMembership': 'قبلاً پرداخت کرده‌اید؟ به‌روزرسانی عضویت',
+  'account.refreshMembership': 'قبلاً پرداخت کرده‌اید؟ عضویتم را بررسی کن',
   'account.refreshing': 'در حال به‌روزرسانی…',
   'account.regenSuccessTitle': 'لینک اشتراک جدید ساخته شد',
   'account.regenSuccessBody':
@@ -199,8 +202,8 @@ export const fa: Partial<Messages> = {
   'get.introTwoSteps':
     'دو مرحلهٔ سریع: بررسی انسانی را انجام دهید تا حساب رایگان ساخته شود، سپس اشتراک خود را بسازید.',
   'get.step1Title': 'حساب خود را بسازید',
-  'get.chooseBackend': 'یک بک‌اند انتخاب کنید',
-  'get.backendAria': 'بک‌اند',
+  'get.chooseBackend': 'نوع اتصال را انتخاب کنید',
+  'get.backendAria': 'نوع اتصال',
   'get.backendMultiProtocol': 'چندپروتکلی (VLESS، Trojan، Shadowsocks)',
   'get.backendShadowsocks': 'Shadowsocks از طریق Outline',
   'get.createAccount': 'ساخت حساب من',
@@ -238,6 +241,7 @@ export const fa: Partial<Messages> = {
   'impact.membershipSoon': 'عضویت (به‌زودی)',
 
   'qr.ariaLabel': 'کد QR لینک اشتراک',
+  'app.skipToContent': 'رفتن به محتوا',
   'app.notFound': 'یافت نشد',
   'app.goHome': 'بازگشت به خانه',
   'footer.operatedPrefix': 'اداره‌شده توسط',

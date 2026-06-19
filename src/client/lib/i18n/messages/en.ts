@@ -38,10 +38,12 @@ export const en = {
   'captcha.error': 'Check failed — retry',
   'captcha.failedTitle': "Couldn't complete the human check.",
   'captcha.failedBody':
-    'The check runs entirely in your browser. If it failed, your browser may be blocking the worker it needs, or the network dropped the request.',
-  'captcha.failedTip1': 'Try disabling browser extensions',
-  'captcha.failedTip2': 'Try a different network or a private/incognito window',
-  'captcha.failedTip3': 'Make sure JavaScript and WebAssembly are enabled',
+    "The check runs on your device and didn't finish. This is usually a network problem, not something you did wrong.",
+  'captcha.failedTip1': 'Wait a moment, then try again',
+  'captcha.failedTip2':
+    'Try a different network — or a VPN/proxy if sites are blocked where you are',
+  'captcha.failedTip3':
+    'Still stuck? Try a private/incognito window or turn off browser extensions',
 
   // --- reveal-once account number (THE highest-stakes moment) ---
   'reveal.title': 'Save your account number now',
@@ -73,6 +75,7 @@ export const en = {
   'login.getOne': 'Get a free account',
   'login.failed': 'Sign-in failed',
   'login.success': 'Signed in',
+  'login.sessionExpired': 'Please sign in again — your session may have ended.',
 
   // --- account page: membership states ---
   'account.title': 'Your account',
@@ -99,16 +102,16 @@ export const en = {
     'Create your first subscription to get a URL you can use in any compatible VPN client.',
   'account.createSub': 'Create subscription',
   'account.creating': 'Creating…',
-  'account.rotateTitle': 'Rotate your account number?',
+  'account.rotateTitle': 'Change your account number?',
   'account.rotateBody':
     'A new 32-digit number is generated and shown once. Your current number stops working immediately. Anyone who has it loses access. Do this if your number may have leaked.',
-  'account.rotateConfirm': 'Yes, rotate',
+  'account.rotateConfirm': 'Yes, change it',
   'account.rotating': 'Rotating…',
   'account.rotateFailedTitle': 'Could not change the account number',
   'account.freeTierTitle': "You're on the free tier",
   'account.freeTierBody':
     'A FreeSocks membership unlocks unlimited devices and bandwidth. Donations also keep free accounts funded.',
-  'account.refreshMembership': 'Already paid? Refresh membership',
+  'account.refreshMembership': 'Already paid? Check for my membership',
   'account.refreshing': 'Refreshing…',
   'account.regenSuccessTitle': 'New subscription URL generated',
   'account.regenSuccessBody':
@@ -165,7 +168,7 @@ export const en = {
     p.count === 1 ? 'Expired 1 day ago' : `Expired ${p.count} days ago`,
 
   // --- regenerate confirmation modal ---
-  'regen.title': 'Regenerate subscription?',
+  'regen.title': 'Create a new subscription URL?',
   'regen.body': (p: Record<string, string | number>) =>
     `Your current subscription URL (ending …${p.suffix}) will be replaced with a new one. The old URL becomes read-only for 24 hours, then is deleted.`,
   'regen.point1': 'Your current key remains usable for the next 24 hours',
@@ -174,8 +177,8 @@ export const en = {
     p.count === 1
       ? 'You currently have 1 connected device — it will need the new URL'
       : `You currently have ${p.count} connected devices — they will all need the new URL`,
-  'regen.confirm': 'Regenerate',
-  'regen.working': 'Regenerating…',
+  'regen.confirm': 'Create new URL',
+  'regen.working': 'Creating…',
 
   // --- switch-backend confirmation modal ---
   'switch.title': (p: Record<string, string | number>) => `Switch to ${p.to}?`,
@@ -199,8 +202,8 @@ export const en = {
   'get.introTwoSteps':
     'Two quick steps: solve the human-check to create a free account, then create your subscription.',
   'get.step1Title': 'Create your account',
-  'get.chooseBackend': 'Choose a backend',
-  'get.backendAria': 'Backend',
+  'get.chooseBackend': 'Choose a connection type',
+  'get.backendAria': 'Connection type',
   'get.backendMultiProtocol': 'Multi-protocol (VLESS, Trojan, Shadowsocks)',
   'get.backendShadowsocks': 'Shadowsocks via Outline',
   'get.createAccount': 'Create my account',
@@ -245,6 +248,7 @@ export const en = {
 
   // --- misc chrome ---
   'qr.ariaLabel': 'QR code for the subscription URL',
+  'app.skipToContent': 'Skip to content',
   'app.notFound': 'Not found',
   'app.goHome': 'Go home',
   'footer.operatedPrefix': 'Operated by',

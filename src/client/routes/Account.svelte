@@ -1,17 +1,12 @@
 <script lang="ts">
   import { z } from 'zod';
-  import {
-    Card,
-    CardHeader,
-    CardTitle,
-    CardDescription,
-    CardContent,
-  } from '@client/components/ui/card';
+  import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
+  import InlineError from '../components/InlineError.svelte';
   import DeliveryPreference from '../components/DeliveryPreference.svelte';
   import { deliveryPref } from '../lib/deliveryPref.svelte';
   import MembershipCallout from '../components/MembershipCallout.svelte';
@@ -31,6 +26,7 @@
   import LogOut from '@lucide/svelte/icons/log-out';
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
+  import Loader2 from '@lucide/svelte/icons/loader-2';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { clearSessionKey } from '../lib/pop';
@@ -73,7 +69,9 @@
     const err = account.error;
     if (!redirectedToLogin && err instanceof ApiCallError && err.status === 401) {
       redirectedToLogin = true;
-      router.navigate('/login');
+      // Signal WHY they landed on the sign-in form (session gone/expired) so it
+      // isn't a silent, anxiety-inducing bounce for a surveillance-wary user.
+      router.navigate('/login?expired=1');
     }
   });
 
@@ -241,6 +239,10 @@
   let revealedAccountId = $state<string | null>(null);
   let revealOpen = $state(false);
   let rotateConfirmOpen = $state(false);
+  // a11y: the rotate→reveal two-modal chain leaves bits-ui's FocusScope unable to
+  // restore focus (the rotate confirm button it captured has unmounted by the time
+  // the reveal closes), so focus falls to <body>. Hold the trigger to refocus it.
+  let rotateTriggerEl = $state<HTMLElement | null>(null);
   const rotateAccountId = createMutation(() => ({
     mutationFn: () =>
       apiClient.post('/api/v1/account/account-id/rotate', {}, AccountIdRevealResponse),
@@ -307,21 +309,21 @@
 </script>
 
 {#if account.isError && !(account.error instanceof ApiCallError && account.error.status === 401)}
-  <div class="max-w-2xl mx-auto py-8">
+  <div class="max-w-4xl mx-auto py-8">
     <Card>
       <CardHeader>
         <CardTitle>{t('account.title')}</CardTitle>
-        <CardDescription class="text-destructive">
-          {apiErrorMessage(account.error)}
-        </CardDescription>
       </CardHeader>
+      <CardContent>
+        <InlineError message={apiErrorMessage(account.error)} />
+      </CardContent>
     </Card>
   </div>
 {:else if !data}
   <!-- Skeleton placeholder while the initial fetch is in flight. Mirrors the
        three-card layout the loaded state will show, so the page doesn't
        re-flow when data arrives. -->
-  <div class="max-w-2xl mx-auto py-8 space-y-6">
+  <div class="max-w-4xl mx-auto py-8 space-y-6">
     <Card>
       <CardHeader class="space-y-2">
         <Skeleton class="h-6 w-48" />
@@ -376,11 +378,17 @@
         {/if}
       </div>
       <div class="flex items-center gap-1 shrink-0">
-        <Button onclick={() => (rotateConfirmOpen = true)} variant="ghost" size="sm">
+        <Button
+          bind:ref={rotateTriggerEl}
+          onclick={() => (rotateConfirmOpen = true)}
+          variant="ghost"
+          size="sm"
+          class="min-h-11"
+        >
           <RotateCcw class="size-4" />
           <span class="hidden sm:inline">{t('account.rotate')}</span>
         </Button>
-        <Button onclick={logout} variant="ghost" size="sm">
+        <Button onclick={logout} variant="ghost" size="sm" class="min-h-11">
           <LogOut class="size-4" />
           {t('account.signOut')}
         </Button>
@@ -395,7 +403,10 @@
         bind:open={revealOpen}
         accountId={revealedAccountId}
         rotated
-        onClose={() => (revealedAccountId = null)}
+        onClose={() => {
+          revealedAccountId = null;
+          rotateTriggerEl?.focus();
+        }}
       />
     {/if}
 
@@ -420,7 +431,7 @@
           {#snippet secondaryAction()}
             <button
               type="button"
-              class="text-xs text-muted-foreground underline hover:text-foreground"
+              class="rounded-sm text-xs text-muted-foreground underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onclick={() => router.navigate('/account', { replace: true })}
             >
               {t('common.close')}
@@ -429,7 +440,10 @@
         </MembershipCallout>
       {:else}
         <div class="rounded-xl border border-primary/30 bg-primary/5 p-4 sm:p-5">
-          <p class="text-sm font-semibold">{t('upgrade.confirmingTitle')}</p>
+          <p class="flex items-center gap-2 text-sm font-semibold">
+            <Loader2 class="size-4 animate-spin text-primary" aria-hidden="true" />
+            {t('upgrade.confirmingTitle')}
+          </p>
           <p class="mt-1 text-sm text-muted-foreground">{t('upgrade.confirmingBody')}</p>
         </div>
       {/if}
@@ -519,7 +533,7 @@
       <p class="text-xs text-muted-foreground">
         <button
           type="button"
-          class="underline hover:text-foreground"
+          class="rounded-sm underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onclick={() => refreshMembership.mutate()}
           disabled={refreshMembership.isPending}
         >
@@ -607,14 +621,16 @@
           onclick={() => regenerate.mutate()}
           disabled={regenerate.isPending || actionsDisabled}
           size="lg"
+          class="min-h-11"
         >
           <Plus class="size-4" />
           {regenerate.isPending ? t('account.creating') : t('account.createSub')}
         </Button>
         {#if regenerate.error}
-          <p class="text-sm text-destructive max-w-sm mx-auto">
-            {apiErrorMessage(regenerate.error)}
-          </p>
+          <InlineError
+            message={apiErrorMessage(regenerate.error)}
+            class="mx-auto max-w-sm text-start"
+          />
         {/if}
       </div>
     {/if}
@@ -627,6 +643,7 @@
           disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
           variant="outline"
           size="sm"
+          class="min-h-11"
         >
           <RotateCcw class="size-4" />
           {regenerate.isPending ? t('common.working') : t('account.regenerate')}
@@ -640,6 +657,7 @@
             disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
             variant="outline"
             size="sm"
+            class="min-h-11"
           >
             <ArrowLeftRight class="size-4" />
             {switchBackend.isPending

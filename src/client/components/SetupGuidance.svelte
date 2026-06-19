@@ -96,7 +96,7 @@
         tabindex={active === p.key ? 0 : -1}
         onclick={() => (active = p.key)}
         onkeydown={tabKeydown}
-        class="min-h-9 rounded-md px-3 py-1.5 text-sm font-medium transition-colors {active ===
+        class="min-h-9 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {active ===
         p.key
           ? 'bg-primary text-primary-foreground'
           : 'bg-muted text-muted-foreground hover:text-foreground'}"

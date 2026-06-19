@@ -96,13 +96,14 @@ export const ar: Partial<Messages> = {
   'common.deviceCount': (p) =>
     p.count === 1 ? 'جهاز واحد' : p.count === 2 ? 'جهازان' : `${p.count} أجهزة`,
   'login.success': 'تم تسجيل الدخول',
+  'login.sessionExpired': 'يرجى تسجيل الدخول مرة أخرى — ربما انتهت جلستك.',
 
   'captcha.failedTitle': 'تعذّر إكمال التحقق البشري.',
   'captcha.failedBody':
-    'يعمل هذا التحقق بالكامل داخل متصفحك. إذا فشل، فقد يكون متصفحك يحظر الـ Worker المطلوب، أو انقطع الطلب عبر الشبكة.',
-  'captcha.failedTip1': 'جرّب تعطيل إضافات المتصفح',
-  'captcha.failedTip2': 'جرّب شبكة أخرى أو نافذة تصفح خاص',
-  'captcha.failedTip3': 'تأكد من تفعيل JavaScript وWebAssembly',
+    'يجري هذا التحقق على جهازك ولم يكتمل. عادةً ما تكون هذه مشكلة في الشبكة، وليست خطأً منك.',
+  'captcha.failedTip1': 'انتظر لحظة ثم حاول مرة أخرى',
+  'captcha.failedTip2': 'جرّب شبكة أخرى — أو استخدم VPN/بروكسي إذا كانت المواقع محجوبة في منطقتك',
+  'captcha.failedTip3': 'ما زالت المشكلة قائمة؟ جرّب نافذة تصفح خاص أو عطّل إضافات المتصفح',
 
   'account.redeemAriaLabel': 'رمز العضوية',
   'account.switchTo': (p) => `التبديل إلى ${p.label}`,
@@ -121,7 +122,7 @@ export const ar: Partial<Messages> = {
   'account.freeTierTitle': 'أنت على الخطة المجانية',
   'account.freeTierBody':
     'تمنحك عضوية FreeSocks أجهزة وسعة استخدام غير محدودة. كما تُبقي التبرعات الحسابات المجانية تعمل.',
-  'account.refreshMembership': 'دفعت بالفعل؟ حدّث العضوية',
+  'account.refreshMembership': 'دفعت بالفعل؟ تحقّق من عضويتي',
   'account.refreshing': 'جارٍ التحديث…',
   'account.regenSuccessTitle': 'تم إنشاء رابط اشتراك جديد',
   'account.regenSuccessBody':
@@ -246,6 +247,7 @@ export const ar: Partial<Messages> = {
   'impact.membershipSoon': 'العضوية (قريبًا)',
 
   'qr.ariaLabel': 'رمز QR لرابط الاشتراك',
+  'app.skipToContent': 'تخطَّ إلى المحتوى',
   'app.notFound': 'غير موجود',
   'app.goHome': 'العودة إلى الرئيسية',
   'footer.operatedPrefix': 'يديره',

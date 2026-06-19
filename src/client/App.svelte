@@ -63,12 +63,20 @@
   <PopWarm />
   <ErrorBoundary>
     <div class="min-h-screen flex flex-col">
+      <!-- a11y: first focusable element, lets keyboard users jump the header. -->
+      <a
+        href="#main"
+        class="sr-only focus:not-sr-only focus:fixed focus:start-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:shadow focus:outline-none focus:ring-2 focus:ring-ring"
+      >
+        {t('app.skipToContent')}
+      </a>
       {#if !onAdminRoute}
         <AppHeader />
       {/if}
 
       <main
         bind:this={mainEl}
+        id="main"
         tabindex="-1"
         class="flex-1 container mx-auto px-4 py-8 outline-none"
       >

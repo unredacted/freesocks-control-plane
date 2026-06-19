@@ -6,6 +6,7 @@
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
+  import InlineError from '../components/InlineError.svelte';
   import DeliveryPreference from '../components/DeliveryPreference.svelte';
   import { deliveryPref } from '../lib/deliveryPref.svelte';
   import SetupGuidance from '../components/SetupGuidance.svelte';
@@ -132,7 +133,7 @@
   );
 </script>
 
-<div class="max-w-xl mx-auto py-8 md:py-12 space-y-6">
+<div class="max-w-4xl mx-auto py-8 md:py-12 space-y-6">
   <header class="text-center space-y-3">
     <div
       class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 text-primary px-3 py-1 text-xs font-semibold uppercase tracking-wider"
@@ -154,7 +155,7 @@
 
   <!-- STEP 1: create account (no proxy server required) -->
   {#if !created && !me.data?.authenticated}
-    <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
+    <div class="max-w-xl mx-auto rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
       <div class="flex items-center gap-2.5">
         <span
           class="size-7 rounded-full bg-primary/10 text-primary font-display font-bold flex items-center justify-center text-sm tabular-nums"
@@ -180,7 +181,8 @@
               tabindex={chosenBackend === 'remnawave' ? 0 : -1}
               onclick={() => (chosenBackend = 'remnawave')}
               onkeydown={chooserKeydown}
-              class="rounded-md px-3 py-2.5 text-sm transition-colors {chosenBackend === 'remnawave'
+              class="rounded-md px-3 py-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {chosenBackend ===
+              'remnawave'
                 ? 'bg-primary text-primary-foreground shadow-sm'
                 : 'text-muted-foreground hover:bg-muted'}"
             >
@@ -200,7 +202,8 @@
               tabindex={chosenBackend === 'outline' ? 0 : -1}
               onclick={() => (chosenBackend = 'outline')}
               onkeydown={chooserKeydown}
-              class="rounded-md px-3 py-2.5 text-sm transition-colors {chosenBackend === 'outline'
+              class="rounded-md px-3 py-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {chosenBackend ===
+              'outline'
                 ? 'bg-primary text-primary-foreground shadow-sm'
                 : 'text-muted-foreground hover:bg-muted'}"
             >
@@ -224,11 +227,7 @@
       />
 
       {#if createAccount.error}
-        <div
-          class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive"
-        >
-          {apiErrorMessage(createAccount.error)}
-        </div>
+        <InlineError message={apiErrorMessage(createAccount.error)} />
       {/if}
 
       <Button

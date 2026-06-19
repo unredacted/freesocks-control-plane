@@ -105,13 +105,16 @@ export const ru: Partial<Messages> = {
   'common.deviceCount': (p) =>
     `${p.count} ${plural(Number(p.count), ['устройство', 'устройства', 'устройств'])}`,
   'login.success': 'Вы вошли',
+  'login.sessionExpired': 'Пожалуйста, войдите снова — возможно, ваша сессия завершилась.',
 
   'captcha.failedTitle': 'Не удалось пройти проверку.',
   'captcha.failedBody':
-    'Проверка выполняется целиком в вашем браузере. Если она не удалась, браузер может блокировать нужный worker, либо запрос потерялся в сети.',
-  'captcha.failedTip1': 'Попробуйте отключить расширения браузера',
-  'captcha.failedTip2': 'Попробуйте другую сеть или приватное окно',
-  'captcha.failedTip3': 'Убедитесь, что включены JavaScript и WebAssembly',
+    'Проверка выполняется на вашем устройстве и не завершилась. Обычно это проблема с сетью, а не ваша ошибка.',
+  'captcha.failedTip1': 'Подождите немного и попробуйте снова',
+  'captcha.failedTip2':
+    'Попробуйте другую сеть — или VPN/прокси, если сайты заблокированы в вашем регионе',
+  'captcha.failedTip3':
+    'Всё ещё не работает? Откройте приватное окно или отключите расширения браузера',
 
   'account.redeemAriaLabel': 'Код членства',
   'account.switchTo': (p) => `Перейти на ${p.label}`,
@@ -131,7 +134,7 @@ export const ru: Partial<Messages> = {
   'account.freeTierTitle': 'Вы на бесплатном тарифе',
   'account.freeTierBody':
     'Членство FreeSocks открывает неограниченное число устройств и трафик. Пожертвования также поддерживают бесплатные аккаунты.',
-  'account.refreshMembership': 'Уже оплатили? Обновить членство',
+  'account.refreshMembership': 'Уже оплатили? Проверить членство',
   'account.refreshing': 'Обновление…',
   'account.regenSuccessTitle': 'Создана новая ссылка подписки',
   'account.regenSuccessBody':
@@ -250,6 +253,7 @@ export const ru: Partial<Messages> = {
   'impact.membershipSoon': 'Членство (скоро)',
 
   'qr.ariaLabel': 'QR-код ссылки подписки',
+  'app.skipToContent': 'Перейти к содержимому',
   'app.notFound': 'Страница не найдена',
   'app.goHome': 'На главную',
   'footer.operatedPrefix': 'Управляется',
