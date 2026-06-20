@@ -108,9 +108,6 @@ export const en = {
   'account.rotateConfirm': 'Yes, change it',
   'account.rotating': 'Rotating…',
   'account.rotateFailedTitle': 'Could not change the account number',
-  'account.freeTierTitle': "You're on the free tier",
-  'account.freeTierBody':
-    'A FreeSocks membership unlocks unlimited devices and bandwidth. Donations also keep free accounts funded.',
   'account.refreshMembership': 'Already paid? Check for my membership',
   'account.refreshing': 'Refreshing…',
   'account.regenSuccessTitle': 'New subscription URL generated',
@@ -207,8 +204,8 @@ export const en = {
   'get.backendMultiProtocol': 'Multi-protocol (VLESS, Trojan, Shadowsocks)',
   'get.backendShadowsocks': 'Shadowsocks via Outline',
   'get.createAccount': 'Create my account',
-  'get.freeAccountNote':
-    'Free accounts are valid for 30 days and limited to one device. No email or password.',
+  'get.freeAccountNote': (p: Record<string, string | number>) =>
+    `Free accounts are valid for ${p.days} days and limited to ${p.devices}. No email or password.`,
   'get.accountReady': 'Your account is ready.',
   'get.step2Title': 'Create your subscription',
   'get.step2Intro':
@@ -233,8 +230,6 @@ export const en = {
   'tiers.subtitle': 'What each tier includes.',
   'tiers.yourTier': 'Your tier',
   'tiers.gbPerMonth': (p: Record<string, string | number>) => `${p.gb} GB / month`,
-  'tiers.validity30': '30-day key',
-  'tiers.validityContinuous': 'Continuous',
   'tiers.mirrors': 'Mirror URLs',
   'tiers.comingSoon': 'Coming soon',
   'tiers.comingSoonTitle': 'Membership signup is coming soon',

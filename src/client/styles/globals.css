@@ -127,3 +127,46 @@
     }
   }
 }
+
+/* Membership tier card: a slow primary sheen orbits the border to draw the eye.
+   Pure CSS — the conic gradient is masked to a thin ring so only the border
+   lights up, and the angle is animated via a registered custom property (no
+   layout/paint thrash). Guarded by @supports: engines without mask-composite —
+   and users with prefers-reduced-motion (the clamp above neutralizes the
+   animation) — fall back to the card's own static `ring-1 ring-primary/30`, so
+   there's never a filled-gradient artifact or motion. */
+@property --tier-sheen-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes tier-sheen-spin {
+  to {
+    --tier-sheen-angle: 360deg;
+  }
+}
+@supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
+  .tier-sheen::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1.5px;
+    background: conic-gradient(
+      from var(--tier-sheen-angle),
+      transparent 0deg 170deg,
+      var(--primary) 250deg,
+      transparent 330deg 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    animation: tier-sheen-spin 7s linear infinite;
+    pointer-events: none;
+  }
+}

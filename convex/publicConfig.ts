@@ -19,6 +19,9 @@ export const get = query({
       'subscription.default_backend': 'remnawave',
       'subscription.user_choice_enabled': false,
       'subscription.backend_labels': { remnawave: 'Xray', outline: 'Outline' },
+      // Free-account lifetime (days). Public so the signup flow can state the
+      // real validity (DB-driven) instead of a hardcoded number that drifts.
+      'freetier.expiryDays': 90,
     };
     for (const row of rows) {
       if (!(row.key in settings)) continue;
@@ -83,6 +86,7 @@ export const get = query({
       },
       environment,
       tiers,
+      freeTierDays: settings['freetier.expiryDays'] as number,
       backends: {
         remnawaveEnabled: settings['remnawave.enabled'] as boolean,
         outlineEnabled: settings['outline.enabled'] as boolean,

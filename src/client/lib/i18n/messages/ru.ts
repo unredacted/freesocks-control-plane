@@ -131,9 +131,6 @@ export const ru: Partial<Messages> = {
   'account.rotateConfirm': 'Да, сменить',
   'account.rotating': 'Смена…',
   'account.rotateFailedTitle': 'Не удалось сменить номер аккаунта',
-  'account.freeTierTitle': 'Вы на бесплатном тарифе',
-  'account.freeTierBody':
-    'Членство FreeSocks открывает неограниченное число устройств и трафик. Пожертвования также поддерживают бесплатные аккаунты.',
   'account.refreshMembership': 'Уже оплатили? Проверить членство',
   'account.refreshing': 'Обновление…',
   'account.regenSuccessTitle': 'Создана новая ссылка подписки',
@@ -219,8 +216,8 @@ export const ru: Partial<Messages> = {
   'get.backendMultiProtocol': 'Мультипротокол (VLESS, Trojan, Shadowsocks)',
   'get.backendShadowsocks': 'Shadowsocks через Outline',
   'get.createAccount': 'Создать аккаунт',
-  'get.freeAccountNote':
-    'Бесплатные аккаунты действуют 30 дней и ограничены одним устройством. Без почты и пароля.',
+  'get.freeAccountNote': (p) =>
+    `Бесплатные аккаунты действуют ${p.days} дней · ${p.devices}. Без почты и пароля.`,
   'get.accountReady': 'Ваш аккаунт готов.',
   'get.step2Title': 'Создайте подписку',
   'get.step2Intro':
@@ -241,8 +238,6 @@ export const ru: Partial<Messages> = {
   'tiers.subtitle': 'Что входит в каждый тариф.',
   'tiers.yourTier': 'Ваш тариф',
   'tiers.gbPerMonth': (p) => `${p.gb} ГБ / месяц`,
-  'tiers.validity30': 'Ключ на 30 дней',
-  'tiers.validityContinuous': 'Непрерывно',
   'tiers.mirrors': 'Резервные ссылки',
   'tiers.comingSoon': 'Скоро',
   'tiers.comingSoonTitle': 'Оформление членства появится скоро',

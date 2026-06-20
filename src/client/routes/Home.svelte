@@ -12,6 +12,7 @@
   import { Button } from '@client/components/ui/button';
   import TierComparison from '../components/TierComparison.svelte';
   import { meQuery, configQuery } from '../lib/queries';
+  import { membershipTier, limitsPhrase } from '../lib/tiers';
   import { router } from '../stores/router.svelte';
   import { fly, fade } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
@@ -41,8 +42,14 @@
       ? `${freeTier.deviceLimit} device${freeTier.deviceLimit === 1 ? '' : 's'} · ${
           freeTier.monthlyTrafficGb === 0 ? 'Unlimited' : `${freeTier.monthlyTrafficGb} GB / month`
         }`
-      : '1 device · 50 GB / month',
+      : '',
   );
+
+  // Paid-tier limits, DB-driven: drives the membership prose below so it never
+  // contradicts the admin-set tier. `description` is the admin-editable line;
+  // `membershipLimits` is computed from the tier's monthlyTrafficGb/deviceLimit.
+  const memberTier = $derived(membershipTier(config.data));
+  const membershipLimits = $derived(limitsPhrase(memberTier));
 
   const features = [
     {
@@ -110,8 +117,7 @@
 
       <p class="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
         Create a free account with one human-check, then get a subscription URL for any modern VPN
-        client. No email or password. A FreeSocks membership unlocks unlimited bandwidth and
-        devices.
+        client. No email or password. A FreeSocks membership unlocks {membershipLimits}.
       </p>
 
       <div class="flex flex-wrap gap-3">
@@ -186,7 +192,7 @@
             <div>
               <p class="text-sm font-medium tabular-nums">{freeTierLine}</p>
               <p class="text-xs text-muted-foreground leading-snug">
-                A FreeSocks membership makes these unlimited.
+                A FreeSocks membership gives you {membershipLimits}.
               </p>
             </div>
           </li>
@@ -289,8 +295,9 @@
       <div class="max-w-2xl space-y-2">
         <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">Membership</h2>
         <p class="text-muted-foreground leading-relaxed">
-          Free covers the basics. A FreeSocks membership lifts every limit — unlimited bandwidth and
-          devices — and you can pay with crypto (Monero & more), card, or PayPal.
+          Free covers the basics. {memberTier?.description ??
+            'A FreeSocks membership lifts every limit.'}
+          Pay with crypto (Monero & more), card, or PayPal.
         </p>
       </div>
       <TierComparison currentTierSlug="" onUpgrade={goUpgrade} />

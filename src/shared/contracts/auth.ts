@@ -72,6 +72,10 @@ export const PublicConfig = z.object({
       deviceLimit: z.number().int(),
     }),
   ),
+  /** Free-account lifetime in days (the admin-editable `freetier.expiryDays`
+   *  setting). Lets the signup flow state the real validity instead of a
+   *  hardcoded number that drifts from the server's actual expiry. */
+  freeTierDays: z.number().int(),
   /**
    * Public subset of AppSettings the SPA needs to render the backend chooser
    * on `/get-key` and pick the right labels everywhere else. This is the only

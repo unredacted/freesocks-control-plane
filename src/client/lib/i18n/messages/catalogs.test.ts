@@ -18,6 +18,7 @@ const CATALOGS = { fa, ar, ru, zh } as const;
 const SAMPLE_PARAMS: Record<string, string | number> = {
   count: 2,
   days: 3,
+  devices: '1 device',
   months: 3,
   pct: 17,
   tier: 'Member',

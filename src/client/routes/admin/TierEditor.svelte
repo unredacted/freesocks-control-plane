@@ -12,10 +12,12 @@
   } from '../../../shared/contracts/admin';
 
   /**
-   * Tier editor, both modes:
-   *  - edit (tier prop set): the common knobs (name, backend, limits)
-   *  - create (no tier): adds the identity/policy fields a new row needs
-   *    (slug, description, strategy, priority, flags)
+   * Tier editor. Edit mode exposes EVERY field except `slug` (the immutable
+   * identity referenced by billing.tierSlug / membership codes / webhooks);
+   * create mode adds the slug. `updateTier` accepts every field, so an admin
+   * can change a tier's description, limits, device-limit enforcement,
+   * strategy, priority, and flags after creation — keeping the public
+   * comparison cards (which render name/description/limits) DB-driven.
    * Uses Dialog.Root (focus trap + Escape) — the old hand-rolled fixed
    * overlay had neither. The parent owns the mutation; this stays
    * presentational.
@@ -107,21 +109,24 @@
             in practice once referenced.
           </p>
         </div>
-        <div>
-          <label class="text-xs text-muted-foreground mb-1 block" for="tier-desc">
-            Description (optional)
-          </label>
-          <Input
-            id="tier-desc"
-            value={draft.description ?? ''}
-            oninput={(e) =>
-              (draft = {
-                ...draft,
-                description: (e.currentTarget as HTMLInputElement).value || null,
-              })}
-          />
-        </div>
       {/if}
+      <div>
+        <label class="text-xs text-muted-foreground mb-1 block" for="tier-desc">
+          Description (optional)
+        </label>
+        <Input
+          id="tier-desc"
+          value={draft.description ?? ''}
+          oninput={(e) =>
+            (draft = {
+              ...draft,
+              description: (e.currentTarget as HTMLInputElement).value || null,
+            })}
+        />
+        <p class="text-xs text-muted-foreground/80 mt-1 leading-snug">
+          Shown on the public tier-comparison cards.
+        </p>
+      </div>
       <div>
         <label class="text-xs text-muted-foreground mb-1 block" for="tier-backend">Backend</label>
         <Select.Root
@@ -162,67 +167,73 @@
         <Input id="tier-devices" type="number" min={0} bind:value={draft.deviceLimit} />
       </div>
       {#if draft.backend === 'remnawave'}
+        <label class="flex items-center gap-3 text-sm">
+          <Checkbox
+            checked={draft.hwidEnabled}
+            onCheckedChange={(v) => (draft = { ...draft, hwidEnabled: v === true })}
+          />
+          <span>Enforce device limit (HWID) — off = unlimited devices</span>
+        </label>
         <div>
           <label class="text-xs text-muted-foreground mb-1 block" for="tier-hwid">HWID limit</label>
           <Input id="tier-hwid" type="number" min={0} bind:value={draft.hwidLimit} />
           <p class="text-xs text-muted-foreground/80 mt-1 leading-snug">
-            Xray-only. Number of distinct device fingerprints allowed per subscription.
+            Xray-only. Number of distinct device fingerprints allowed per subscription (when
+            enforcement is on).
           </p>
         </div>
       {/if}
-      {#if !isEdit}
+      <div>
+        <label class="text-xs text-muted-foreground mb-1 block" for="tier-strategy">
+          Traffic reset strategy
+        </label>
+        <Select.Root
+          type="single"
+          value={draft.trafficStrategy}
+          onValueChange={(v) =>
+            (draft = { ...draft, trafficStrategy: v as TierUpsert['trafficStrategy'] })}
+        >
+          <Select.Trigger id="tier-strategy" class="w-48">{draft.trafficStrategy}</Select.Trigger>
+          <Select.Content>
+            {#each TrafficStrategy.options as s (s)}
+              <Select.Item value={s}>{s}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="text-xs text-muted-foreground mb-1 block" for="tier-strategy">
-            Traffic reset strategy
+          <label class="text-xs text-muted-foreground mb-1 block" for="tier-priority">
+            Priority (lower = first)
           </label>
-          <Select.Root
-            type="single"
-            value={draft.trafficStrategy}
-            onValueChange={(v) =>
-              (draft = { ...draft, trafficStrategy: v as TierUpsert['trafficStrategy'] })}
-          >
-            <Select.Trigger id="tier-strategy" class="w-48">{draft.trafficStrategy}</Select.Trigger>
-            <Select.Content>
-              {#each TrafficStrategy.options as s (s)}
-                <Select.Item value={s}>{s}</Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
+          <Input id="tier-priority" type="number" bind:value={draft.priority} />
         </div>
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="text-xs text-muted-foreground mb-1 block" for="tier-priority">
-              Priority (lower = first)
-            </label>
-            <Input id="tier-priority" type="number" bind:value={draft.priority} />
-          </div>
-          <div>
-            <label class="text-xs text-muted-foreground mb-1 block" for="tier-expiry">
-              Expiry days after lapse
-            </label>
-            <Input
-              id="tier-expiry"
-              type="number"
-              min={0}
-              bind:value={draft.expirationDaysAfterMembershipLapse}
-            />
-          </div>
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="tier-expiry">
+            Expiry days after lapse
+          </label>
+          <Input
+            id="tier-expiry"
+            type="number"
+            min={0}
+            bind:value={draft.expirationDaysAfterMembershipLapse}
+          />
         </div>
-        <label class="flex items-center gap-3 text-sm">
-          <Checkbox
-            checked={draft.isActive}
-            onCheckedChange={(v) => (draft = { ...draft, isActive: v === true })}
-          />
-          <span>Active (eligible for issuance)</span>
-        </label>
-        <label class="flex items-center gap-3 text-sm">
-          <Checkbox
-            checked={draft.isDefaultFree}
-            onCheckedChange={(v) => (draft = { ...draft, isDefaultFree: v === true })}
-          />
-          <span>Default free tier for its backend (new sign-ups land here)</span>
-        </label>
-      {/if}
+      </div>
+      <label class="flex items-center gap-3 text-sm">
+        <Checkbox
+          checked={draft.isActive}
+          onCheckedChange={(v) => (draft = { ...draft, isActive: v === true })}
+        />
+        <span>Active (eligible for issuance)</span>
+      </label>
+      <label class="flex items-center gap-3 text-sm">
+        <Checkbox
+          checked={draft.isDefaultFree}
+          onCheckedChange={(v) => (draft = { ...draft, isDefaultFree: v === true })}
+        />
+        <span>Default free tier for its backend (new sign-ups land here)</span>
+      </label>
     </div>
 
     <Dialog.Footer>

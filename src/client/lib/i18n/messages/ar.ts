@@ -119,9 +119,6 @@ export const ar: Partial<Messages> = {
   'account.rotateConfirm': 'نعم، غيّره',
   'account.rotating': 'جارٍ التغيير…',
   'account.rotateFailedTitle': 'تعذّر تغيير رقم الحساب',
-  'account.freeTierTitle': 'أنت على الخطة المجانية',
-  'account.freeTierBody':
-    'تمنحك عضوية FreeSocks أجهزة وسعة استخدام غير محدودة. كما تُبقي التبرعات الحسابات المجانية تعمل.',
   'account.refreshMembership': 'دفعت بالفعل؟ تحقّق من عضويتي',
   'account.refreshing': 'جارٍ التحديث…',
   'account.regenSuccessTitle': 'تم إنشاء رابط اشتراك جديد',
@@ -214,8 +211,8 @@ export const ar: Partial<Messages> = {
   'get.backendMultiProtocol': 'متعدد البروتوكولات (VLESS وTrojan وShadowsocks)',
   'get.backendShadowsocks': 'Shadowsocks عبر Outline',
   'get.createAccount': 'إنشاء حسابي',
-  'get.freeAccountNote':
-    'الحسابات المجانية صالحة لمدة 30 يومًا ومحدودة بجهاز واحد. بلا بريد إلكتروني أو كلمة مرور.',
+  'get.freeAccountNote': (p) =>
+    `الحسابات المجانية صالحة لمدة ${p.days} يومًا ومحدودة بـ ${p.devices}. بلا بريد إلكتروني أو كلمة مرور.`,
   'get.accountReady': 'حسابك جاهز.',
   'get.step2Title': 'أنشئ اشتراكك',
   'get.step2Intro': 'أنشئ اشتراك وكيل للحصول على رابط يمكنك لصقه في أي تطبيق VPN متوافق.',
@@ -235,8 +232,6 @@ export const ar: Partial<Messages> = {
   'tiers.subtitle': 'ما تتضمنه كل فئة.',
   'tiers.yourTier': 'فئتك',
   'tiers.gbPerMonth': (p) => `${p.gb} غيغابايت / شهر`,
-  'tiers.validity30': 'مفتاح لمدة 30 يومًا',
-  'tiers.validityContinuous': 'مستمر',
   'tiers.mirrors': 'روابط بديلة',
   'tiers.comingSoon': 'قريبًا',
   'tiers.comingSoonTitle': 'التسجيل في العضوية قادم قريبًا',

@@ -14,6 +14,7 @@
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import { meQuery, configQuery, accountQuery, queryKeys } from '../lib/queries';
+  import { freeTier } from '../lib/tiers';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { CreateAccountRequest, CreateAccountResponse } from '../../shared/contracts/account';
@@ -55,6 +56,18 @@
   // Self-hosted Cap captcha config from /api/v1/config (same-origin endpoint).
   let captchaEndpoint = $derived(config.data?.captcha.apiEndpoint ?? '/cap');
   let captchaSiteKey = $derived(config.data?.captcha.siteKey ?? '');
+
+  // Free-tier note: validity + device limit straight from the DB (the
+  // `freetier.expiryDays` setting + the free tier's deviceLimit), so the copy
+  // never drifts from what the server actually enforces.
+  let freeDays = $derived(config.data?.freeTierDays ?? 90);
+  let freeDevicesLabel = $derived.by(() => {
+    const ft = freeTier(config.data);
+    if (!ft) return t('common.deviceCount', { count: 1 });
+    return ft.deviceLimit === 0
+      ? t('hero.unlimited')
+      : t('common.deviceCount', { count: ft.deviceLimit });
+  });
 
   // Chooser is visible only when BOTH backends are enabled AND the admin has
   // turned on user-choice. It selects which default-free tier (backend) the new
@@ -241,7 +254,7 @@
       </Button>
 
       <p class="text-xs text-muted-foreground text-center">
-        {t('get.freeAccountNote')}
+        {t('get.freeAccountNote', { days: freeDays, devices: freeDevicesLabel })}
       </p>
     </div>
   {:else}

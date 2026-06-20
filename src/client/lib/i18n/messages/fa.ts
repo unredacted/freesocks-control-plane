@@ -122,9 +122,6 @@ export const fa: Partial<Messages> = {
   'account.rotateConfirm': 'بله، تغییر بده',
   'account.rotating': 'در حال تغییر…',
   'account.rotateFailedTitle': 'تغییر شمارهٔ حساب ناموفق بود',
-  'account.freeTierTitle': 'شما در پلن رایگان هستید',
-  'account.freeTierBody':
-    'عضویت FreeSocks دستگاه‌ها و پهنای باند نامحدود را در اختیار شما می‌گذارد. کمک‌های مالی نیز حساب‌های رایگان را سرپا نگه می‌دارند.',
   'account.refreshMembership': 'قبلاً پرداخت کرده‌اید؟ عضویتم را بررسی کن',
   'account.refreshing': 'در حال به‌روزرسانی…',
   'account.regenSuccessTitle': 'لینک اشتراک جدید ساخته شد',
@@ -207,8 +204,8 @@ export const fa: Partial<Messages> = {
   'get.backendMultiProtocol': 'چندپروتکلی (VLESS، Trojan، Shadowsocks)',
   'get.backendShadowsocks': 'Shadowsocks از طریق Outline',
   'get.createAccount': 'ساخت حساب من',
-  'get.freeAccountNote':
-    'حساب‌های رایگان ۳۰ روز اعتبار دارند و به یک دستگاه محدودند. بدون ایمیل یا رمز عبور.',
+  'get.freeAccountNote': (p) =>
+    `حساب‌های رایگان ${p.days} روز اعتبار دارند و به ${p.devices} محدودند. بدون ایمیل یا رمز عبور.`,
   'get.accountReady': 'حساب شما آماده است.',
   'get.step2Title': 'اشتراک خود را بسازید',
   'get.step2Intro':
@@ -229,8 +226,6 @@ export const fa: Partial<Messages> = {
   'tiers.subtitle': 'هر سطح چه چیزهایی دارد.',
   'tiers.yourTier': 'سطح شما',
   'tiers.gbPerMonth': (p) => `${p.gb} گیگابایت / ماه`,
-  'tiers.validity30': 'کلید ۳۰ روزه',
-  'tiers.validityContinuous': 'پیوسته',
   'tiers.mirrors': 'لینک‌های آینه',
   'tiers.comingSoon': 'به‌زودی',
   'tiers.comingSoonTitle': 'ثبت‌نام عضویت به‌زودی فعال می‌شود',
