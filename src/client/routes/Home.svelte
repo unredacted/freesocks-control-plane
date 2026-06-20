@@ -13,8 +13,9 @@
   import TierComparison from '../components/TierComparison.svelte';
   import { meQuery, configQuery } from '../lib/queries';
   import { membershipTier, limitsPhrase } from '../lib/tiers';
+  import { t } from '../lib/i18n/index.svelte';
   import { router } from '../stores/router.svelte';
-  import { fly, fade } from 'svelte/transition';
+  import { fly, fade, slide } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
   import KeyIcon from '@lucide/svelte/icons/key-round';
   import Lock from '@lucide/svelte/icons/lock';
@@ -23,6 +24,7 @@
   import ArrowRight from '@lucide/svelte/icons/arrow-right';
   import Heart from '@lucide/svelte/icons/heart';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
 
   const me = meQuery();
   const config = configQuery();
@@ -96,6 +98,21 @@
     'No email, phone number, or name. We never ask for them.',
     'No logs of the sites you visit or the traffic you send.',
   ];
+
+  // FAQ — the one i18n'd section on this otherwise English-only page: the answers
+  // are exactly what non-English visitors need, so they ride the Paraglide
+  // catalog (auto-translated). Single-open accordion.
+  const FAQ = [
+    { q: 'faq.q1.question', a: 'faq.q1.answer' },
+    { q: 'faq.q2.question', a: 'faq.q2.answer' },
+    { q: 'faq.q3.question', a: 'faq.q3.answer' },
+    { q: 'faq.q4.question', a: 'faq.q4.answer' },
+    { q: 'faq.q5.question', a: 'faq.q5.answer' },
+    { q: 'faq.q6.question', a: 'faq.q6.answer' },
+    { q: 'faq.q7.question', a: 'faq.q7.answer' },
+    { q: 'faq.q8.question', a: 'faq.q8.answer' },
+  ] as const;
+  let openFaq = $state(-1);
 </script>
 
 <div class="space-y-20 md:space-y-28 pb-12">
@@ -303,6 +320,49 @@
       <TierComparison currentTierSlug="" onUpgrade={goUpgrade} />
     </section>
   {/if}
+
+  <!-- FAQ — DB-of-record is the Paraglide catalog (auto-translated), so this is
+       the one localized section on the page. Single-open accordion. -->
+  <section class="space-y-8">
+    <div class="max-w-2xl space-y-2">
+      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">{t('faq.title')}</h2>
+      <p class="text-muted-foreground leading-relaxed">{t('faq.subtitle')}</p>
+    </div>
+    <ul class="max-w-3xl divide-y divide-border rounded-xl border border-border bg-card">
+      {#each FAQ as item, i (item.q)}
+        {@const isOpen = openFaq === i}
+        <li>
+          <button
+            type="button"
+            id="faq-trigger-{i}"
+            class="flex w-full items-center justify-between gap-3 px-5 py-4 text-start text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            aria-expanded={isOpen}
+            aria-controls="faq-panel-{i}"
+            onclick={() => (openFaq = isOpen ? -1 : i)}
+          >
+            <span>{t(item.q)}</span>
+            <ChevronDown
+              class="size-4 shrink-0 text-muted-foreground transition-transform {isOpen
+                ? 'rotate-180'
+                : ''}"
+              aria-hidden="true"
+            />
+          </button>
+          {#if isOpen}
+            <div
+              id="faq-panel-{i}"
+              role="region"
+              aria-labelledby="faq-trigger-{i}"
+              class="px-5 pb-4 text-sm leading-relaxed text-muted-foreground"
+              transition:slide={{ duration: 180 }}
+            >
+              {t(item.a)}
+            </div>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  </section>
 
   <!-- ABOUT: short, factual, no invented programs -->
   <section class="rounded-2xl border border-border bg-card p-6 md:p-10">

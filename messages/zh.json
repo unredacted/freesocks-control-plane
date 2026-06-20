@@ -1,337 +1,445 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
-  "common.copy": "复制",
-  "common.copied": "已复制到剪贴板",
-  "common.copyFailed": "复制失败——请选中文本手动复制",
-  "common.download": "下载",
-  "common.print": "打印",
-  "common.cancel": "取消",
-  "common.close": "关闭",
-  "common.retry": "重试",
-  "common.loading": "加载中…",
-  "common.language": "语言",
-  "nav.getAccount": "获取免费账户",
-  "nav.signIn": "登录",
-  "nav.account": "我的账户",
-  "captcha.initial": "我是真人",
-  "captcha.verifying": "验证中…",
-  "captcha.solved": "已验证",
-  "captcha.error": "验证失败——请重试",
-  "reveal.title": "立即保存你的账户号码",
-  "reveal.subtitle": "这个 32 位数字是再次登录的唯一方式。没有电子邮件或密码可用于找回。一旦丢失，你的账户将永久无法恢复。",
-  "reveal.cannotRecover": "我们无法为你找回——客服也不行。",
-  "reveal.saveHint": "把它保存到密码管理器，或写在安全私密的地方。",
-  "reveal.confirmCheckbox": "我已把账户号码保存在安全的地方",
-  "reveal.done": "我已保存",
-  "reveal.leaveWarning": "你的账户号码仍显示在屏幕上。如果现在未保存就离开，你将无法再次登录。",
-  "support.label": "支持 ID",
-  "support.hint": "联系我们时请提供它。它不是你的登录号码，也不授予任何访问权限。",
-  "login.title": "使用账户号码登录",
-  "login.subtitle": "输入你保存的 32 位账户号码。这是唯一的登录方式——没有可找回的电子邮件或密码。",
-  "login.label": "账户号码",
-  "login.show": "显示",
-  "login.hide": "隐藏",
-  "login.submit": "登录",
-  "login.submitting": "登录中…",
-  "login.noAccount": "还没有账户号码？",
-  "login.getOne": "获取免费账户",
-  "login.failed": "登录失败",
-  "account.title": "你的账户",
-  "account.tierLabel": "你的套餐",
-  "account.statusActive": "有效",
-  "account.statusGrace": "即将到期",
-  "account.statusDisabled": "已过期",
-  "account.regenerate": "创建新密钥",
-  "account.switchBackend": "切换服务器类型",
-  "account.rotate": "更改账户号码",
-  "account.signOut": "退出登录",
-  "account.redeemTitle": "有会员码？",
-  "account.redeemSubmit": "兑换码",
-  "account.redeemSuccess": "已兑换——你现在是 {tier}，还有 {days} 天。",
-  "account.redeemFailed": "该码无效或已被使用。",
-  "renew.expiringTitle": "你的会员即将到期",
-  "renew.expiredTitle": "你的会员已过期",
-  "renew.body": "FreeSocks 由社区捐助运营。要续订会员，请捐款或联系我们获取会员码。",
-  "renew.donate": "捐款",
-  "renew.contact": "联系我们",
-  "renew.haveCode": "有会员码？在上方兑换。",
-  "error.offline": "你似乎已离线。请检查网络连接后重试。",
-  "error.rateLimited": "尝试次数过多。请等待一分钟后重试。",
-  "error.backendUnavailable": "当前没有可用的代理服务器。你的账户是安全的——请几分钟后再创建密钥。",
-  "error.generic": "出错了，请重试。",
-  "error.captchaFailed": "真人验证失败。请完成验证后重试。",
-  "setup.title": "设置你的代理应用",
-  "setup.intro": "复制上方的订阅链接，然后添加到兼容的应用中：",
-  "setup.android": "安卓",
-  "setup.ios": "iPhone / iPad",
-  "setup.windows": "Windows",
-  "setup.desktop": "macOS / Linux",
-  "setup.step.install": "安装应用",
-  "setup.step.import": "打开它，添加订阅/配置文件，并粘贴你的链接",
-  "setup.step.connect": "选择一个服务器并连接",
-  "setup.qrHint": "或用手机扫描此二维码来传输链接。",
-  "common.working": "处理中…",
-  "common.reload": "重新加载",
-  "common.deviceCount": [
-    {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
-      "match": {
-        "countPlural=one": "1 台设备",
-        "countPlural=other": "{count} 台设备"
+  "common": {
+    "copy": "复制",
+    "copied": "已复制到剪贴板",
+    "copyFailed": "复制失败——请选中文本手动复制",
+    "download": "下载",
+    "print": "打印",
+    "cancel": "取消",
+    "close": "关闭",
+    "retry": "重试",
+    "loading": "加载中…",
+    "language": "语言",
+    "working": "处理中…",
+    "reload": "重新加载",
+    "deviceCount": [
+      {
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
+        "match": {
+          "countPlural=one": "1 台设备",
+          "countPlural=other": "{count} 台设备"
+        }
       }
-    }
-  ],
-  "login.success": "已登录",
-  "login.sessionExpired": "请重新登录 — 你的会话可能已结束。",
-  "captcha.failedTitle": "无法完成真人验证。",
-  "captcha.failedBody": "该验证在你的设备上运行，但未能完成。这通常是网络问题，而不是你的错。",
-  "captcha.failedTip1": "稍等片刻，然后重试",
-  "captcha.failedTip2": "换一个网络试试 — 如果你所在地区的网站被屏蔽，可使用 VPN/代理",
-  "captcha.failedTip3": "仍然无法通过？试试隐私/无痕窗口，或关闭浏览器扩展",
-  "account.redeemAriaLabel": "会员码",
-  "account.switchTo": "切换到 {label}",
-  "account.devicesTitle": "已连接设备",
-  "account.lastSeen": "最近活跃 {date}",
-  "account.noSubTitle": "还没有订阅",
-  "account.noSubBody": "创建你的第一个订阅，获得可在任何兼容 VPN 客户端中使用的链接。",
-  "account.createSub": "创建订阅",
-  "account.creating": "创建中…",
-  "account.rotateTitle": "更换账户号码？",
-  "account.rotateBody": "将生成一个新的 32 位号码，并且只显示一次。当前号码立即失效，持有它的任何人都会失去访问权限。如果你的号码可能已泄露，请执行此操作。",
-  "account.rotateConfirm": "是，更换",
-  "account.rotating": "更换中…",
-  "account.rotateFailedTitle": "无法更换账户号码",
-  "account.refreshMembership": "已付款？查询我的会员状态",
-  "account.refreshing": "刷新中…",
-  "account.regenSuccessTitle": "已生成新的订阅链接",
-  "account.regenSuccessBody": "请在每台设备上重新导入。旧链接还能用 24 小时。",
-  "account.regenFailedTitle": "无法创建新密钥",
-  "account.switchSuccessTitle": "已切换到 {tier}",
-  "account.switchSuccessBodyGrace": "请在每台设备上导入新订阅链接。旧订阅还能用 24 小时。",
-  "account.switchSuccessBody": "请在每台设备上导入新订阅链接。",
-  "account.switchFailedTitle": "无法切换服务器类型",
-  "account.refreshWelcome": "欢迎加入 {tier}",
-  "account.refreshNoneTitle": "尚未找到有效会员",
-  "account.refreshNoneBody": "如果你刚刚付款，请稍等片刻再试。",
-  "account.refreshFailedTitle": "无法刷新会员状态",
-  "account.graceTitle": "你的账户处于宽限期",
-  "account.graceBody": "你的会员已到期，此账户即将受限。请续订——捐款或在下方兑换会员码——以保留你的套餐。",
-  "account.disabledTitle": "你的账户当前已停用",
-  "account.disabledBody": "此账户的新密钥与更改已暂停。请在下方兑换会员码以重新激活，或联系支持并提供你的支持 ID。",
-  "hero.titleDefault": "你的订阅",
-  "hero.eyebrowAccessKey": "你的访问密钥",
-  "hero.urlLabelSubscription": "订阅链接",
-  "hero.urlLabelAccessKey": "访问密钥",
-  "hero.tierLine": "套餐 {tier}",
-  "hero.viaLine": "通过 {backend}",
-  "hero.copyUrl": "复制链接",
-  "hero.copiedShort": "已复制",
-  "hero.qrShow": "二维码",
-  "hero.qrHide": "隐藏",
-  "hero.scanPhone": "用手机扫描",
-  "hero.scanOther": "用另一台设备扫描",
-  "hero.scanFallback": "用另一台设备扫描备用链接",
-  "hero.fallbackLabel": "备用链接",
-  "hero.fallbackHint": "主链接被封锁时使用",
-  "hero.fallbackQrAria": "显示备用链接二维码",
-  "hero.downloaded": "已下载 {filename}",
-  "hero.traffic": "流量",
-  "hero.unlimited": "不限量",
-  "hero.configBelowNote": "你的完整配置在下方 — 请手动添加服务器。为保护隐私，这里不显示可自动更新的订阅链接（你的应用会通过 CDN 获取它）。",
-  "hero.usedSoFar": "已使用 {amount}",
-  "hero.leftThisPeriod": "本周期剩余 {amount}。",
-  "hero.nearlyOut": "即将用尽——本周期仅剩 {amount}。",
-  "hero.expires": "到期",
-  "hero.noExpiry": "永不过期",
-  "hero.expiresToday": "今天到期",
-  "hero.daysRemaining": [
-    {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
-      "match": {
-        "countPlural=one": "剩余 1 天",
-        "countPlural=other": "剩余 {count} 天"
+    ]
+  },
+  "nav": {
+    "getAccount": "获取免费账户",
+    "signIn": "登录",
+    "account": "我的账户"
+  },
+  "captcha": {
+    "initial": "我是真人",
+    "verifying": "验证中…",
+    "solved": "已验证",
+    "error": "验证失败——请重试",
+    "failedTitle": "无法完成真人验证。",
+    "failedBody": "该验证在你的设备上运行，但未能完成。这通常是网络问题，而不是你的错。",
+    "failedTip1": "稍等片刻，然后重试",
+    "failedTip2": "换一个网络试试 — 如果你所在地区的网站被屏蔽，可使用 VPN/代理",
+    "failedTip3": "仍然无法通过？试试隐私/无痕窗口，或关闭浏览器扩展"
+  },
+  "reveal": {
+    "title": "立即保存你的账户号码",
+    "subtitle": "这个 32 位数字是再次登录的唯一方式。没有电子邮件或密码可用于找回。一旦丢失，你的账户将永久无法恢复。",
+    "cannotRecover": "我们无法为你找回——客服也不行。",
+    "saveHint": "把它保存到密码管理器，或写在安全私密的地方。",
+    "confirmCheckbox": "我已把账户号码保存在安全的地方",
+    "done": "我已保存",
+    "leaveWarning": "你的账户号码仍显示在屏幕上。如果现在未保存就离开，你将无法再次登录。",
+    "downloadFilename": "freesocks-account-number.txt"
+  },
+  "support": {
+    "label": "支持 ID",
+    "hint": "联系我们时请提供它。它不是你的登录号码，也不授予任何访问权限。"
+  },
+  "login": {
+    "title": "使用账户号码登录",
+    "subtitle": "输入你保存的 32 位账户号码。这是唯一的登录方式——没有可找回的电子邮件或密码。",
+    "label": "账户号码",
+    "show": "显示",
+    "hide": "隐藏",
+    "submit": "登录",
+    "submitting": "登录中…",
+    "noAccount": "还没有账户号码？",
+    "getOne": "获取免费账户",
+    "failed": "登录失败",
+    "success": "已登录",
+    "sessionExpired": "请重新登录 — 你的会话可能已结束。"
+  },
+  "account": {
+    "title": "你的账户",
+    "tierLabel": "你的套餐",
+    "statusActive": "有效",
+    "statusGrace": "即将到期",
+    "statusDisabled": "已过期",
+    "regenerate": "创建新密钥",
+    "switchBackend": "切换服务器类型",
+    "rotate": "更改账户号码",
+    "signOut": "退出登录",
+    "redeemTitle": "有会员码？",
+    "redeemSubmit": "兑换码",
+    "redeemSuccess": "已兑换——你现在是 {tier}，还有 {days} 天。",
+    "redeemFailed": "该码无效或已被使用。",
+    "redeemAriaLabel": "会员码",
+    "switchTo": "切换到 {label}",
+    "devicesTitle": "已连接设备",
+    "lastSeen": "最近活跃 {date}",
+    "noSubTitle": "还没有订阅",
+    "noSubBody": "创建你的第一个订阅，获得可在任何兼容 VPN 客户端中使用的链接。",
+    "createSub": "创建订阅",
+    "creating": "创建中…",
+    "rotateTitle": "更换账户号码？",
+    "rotateBody": "将生成一个新的 32 位号码，并且只显示一次。当前号码立即失效，持有它的任何人都会失去访问权限。如果你的号码可能已泄露，请执行此操作。",
+    "rotateConfirm": "是，更换",
+    "rotating": "更换中…",
+    "rotateFailedTitle": "无法更换账户号码",
+    "refreshMembership": "已付款？查询我的会员状态",
+    "refreshing": "刷新中…",
+    "regenSuccessTitle": "已生成新的订阅链接",
+    "regenSuccessBody": "请在每台设备上重新导入。旧链接还能用 24 小时。",
+    "regenFailedTitle": "无法创建新密钥",
+    "switchSuccessTitle": "已切换到 {tier}",
+    "switchSuccessBodyGrace": "请在每台设备上导入新订阅链接。旧订阅还能用 24 小时。",
+    "switchSuccessBody": "请在每台设备上导入新订阅链接。",
+    "switchFailedTitle": "无法切换服务器类型",
+    "refreshWelcome": "欢迎加入 {tier}",
+    "refreshNoneTitle": "尚未找到有效会员",
+    "refreshNoneBody": "如果你刚刚付款，请稍等片刻再试。",
+    "refreshFailedTitle": "无法刷新会员状态",
+    "graceTitle": "你的账户处于宽限期",
+    "graceBody": "你的会员已到期，此账户即将受限。请续订——捐款或在下方兑换会员码——以保留你的套餐。",
+    "disabledTitle": "你的账户当前已停用",
+    "disabledBody": "此账户的新密钥与更改已暂停。请在下方兑换会员码以重新激活，或联系支持并提供你的支持 ID。",
+    "redeemPlaceholder": "FSM-XXXX-XXXX-XXXX"
+  },
+  "renew": {
+    "expiringTitle": "你的会员即将到期",
+    "expiredTitle": "你的会员已过期",
+    "body": "FreeSocks 由社区捐助运营。要续订会员，请捐款或联系我们获取会员码。",
+    "donate": "捐款",
+    "contact": "联系我们",
+    "haveCode": "有会员码？在上方兑换。"
+  },
+  "error": {
+    "offline": "你似乎已离线。请检查网络连接后重试。",
+    "rateLimited": "尝试次数过多。请等待一分钟后重试。",
+    "backendUnavailable": "当前没有可用的代理服务器。你的账户是安全的——请几分钟后再创建密钥。",
+    "generic": "出错了，请重试。",
+    "captchaFailed": "真人验证失败。请完成验证后重试。"
+  },
+  "setup": {
+    "title": "设置你的代理应用",
+    "intro": "复制上方的订阅链接，然后添加到兼容的应用中：",
+    "android": "安卓",
+    "ios": "iPhone / iPad",
+    "windows": "Windows",
+    "desktop": "macOS / Linux",
+    "step": {
+      "install": "安装应用",
+      "import": "打开它，添加订阅/配置文件，并粘贴你的链接",
+      "connect": "选择一个服务器并连接"
+    },
+    "qrHint": "或用手机扫描此二维码来传输链接。"
+  },
+  "hero": {
+    "titleDefault": "你的订阅",
+    "eyebrowAccessKey": "你的访问密钥",
+    "urlLabelSubscription": "订阅链接",
+    "urlLabelAccessKey": "访问密钥",
+    "tierLine": "套餐 {tier}",
+    "viaLine": "通过 {backend}",
+    "copyUrl": "复制链接",
+    "copiedShort": "已复制",
+    "qrShow": "二维码",
+    "qrHide": "隐藏",
+    "scanPhone": "用手机扫描",
+    "scanOther": "用另一台设备扫描",
+    "scanFallback": "用另一台设备扫描备用链接",
+    "fallbackLabel": "备用链接",
+    "fallbackHint": "主链接被封锁时使用",
+    "fallbackQrAria": "显示备用链接二维码",
+    "downloaded": "已下载 {filename}",
+    "traffic": "流量",
+    "unlimited": "不限量",
+    "configBelowNote": "你的完整配置在下方 — 请手动添加服务器。为保护隐私，这里不显示可自动更新的订阅链接（你的应用会通过 CDN 获取它）。",
+    "usedSoFar": "已使用 {amount}",
+    "leftThisPeriod": "本周期剩余 {amount}。",
+    "nearlyOut": "即将用尽——本周期仅剩 {amount}。",
+    "expires": "到期",
+    "noExpiry": "永不过期",
+    "expiresToday": "今天到期",
+    "daysRemaining": [
+      {
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
+        "match": {
+          "countPlural=one": "剩余 1 天",
+          "countPlural=other": "剩余 {count} 天"
+        }
       }
-    }
-  ],
-  "hero.expiredDaysAgo": [
-    {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
-      "match": {
-        "countPlural=one": "已过期 1 天",
-        "countPlural=other": "已过期 {count} 天"
+    ],
+    "expiredDaysAgo": [
+      {
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
+        "match": {
+          "countPlural=one": "已过期 1 天",
+          "countPlural=other": "已过期 {count} 天"
+        }
       }
-    }
-  ],
-  "regen.title": "重新生成订阅？",
-  "regen.body": "你当前的订阅链接（结尾为 …{suffix}）将被新链接替换。旧链接将变为只读并保留 24 小时，之后删除。",
-  "regen.point1": "当前密钥在接下来的 24 小时内仍可使用",
-  "regen.point2": "你需要在每台设备上重新导入新链接",
-  "regen.pointDevices": [
-    {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
-      "match": {
-        "countPlural=one": "你当前有 1 台已连接设备——都需要导入新链接",
-        "countPlural=other": "你当前有 {count} 台已连接设备——都需要导入新链接"
+    ]
+  },
+  "regen": {
+    "title": "重新生成订阅？",
+    "body": "你当前的订阅链接（结尾为 …{suffix}）将被新链接替换。旧链接将变为只读并保留 24 小时，之后删除。",
+    "point1": "当前密钥在接下来的 24 小时内仍可使用",
+    "point2": "你需要在每台设备上重新导入新链接",
+    "pointDevices": [
+      {
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
+        "match": {
+          "countPlural=one": "你当前有 1 台已连接设备——都需要导入新链接",
+          "countPlural=other": "你当前有 {count} 台已连接设备——都需要导入新链接"
+        }
       }
-    }
-  ],
-  "regen.confirm": "重新生成",
-  "regen.working": "生成中…",
-  "switch.title": "切换到 {to}？",
-  "switch.body": "你当前的 {from} 订阅将被新的 {to} 订阅替换。旧订阅在 24 小时内仍可使用，方便你在所有设备上完成重新导入。",
-  "switch.point1": "将在 {to} 服务器上签发新的订阅链接",
-  "switch.point2": "当前 {from} 链接还能用 24 小时，之后删除",
-  "switch.point3": "你需要在使用的每个 VPN 客户端中重新导入新链接",
-  "switch.pointDevices": [
-    {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
-      "match": {
-        "countPlural=one": "你当前有 1 台已连接设备——请全部重新导入",
-        "countPlural=other": "你当前有 {count} 台已连接设备——请全部重新导入"
+    ],
+    "confirm": "重新生成",
+    "working": "生成中…"
+  },
+  "switch": {
+    "title": "切换到 {to}？",
+    "body": "你当前的 {from} 订阅将被新的 {to} 订阅替换。旧订阅在 24 小时内仍可使用，方便你在所有设备上完成重新导入。",
+    "point1": "将在 {to} 服务器上签发新的订阅链接",
+    "point2": "当前 {from} 链接还能用 24 小时，之后删除",
+    "point3": "你需要在使用的每个 VPN 客户端中重新导入新链接",
+    "pointDevices": [
+      {
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
+        "match": {
+          "countPlural=one": "你当前有 1 台已连接设备——请全部重新导入",
+          "countPlural=other": "你当前有 {count} 台已连接设备——请全部重新导入"
+        }
       }
-    }
-  ],
-  "switch.confirm": "切换到 {to}",
-  "switch.working": "切换中…",
-  "get.badge": "免费账户",
-  "get.title": "获取 FreeSocks 账户",
-  "get.introTwoSteps": "两个快速步骤：完成真人验证以创建免费账户，然后创建订阅。",
-  "get.step1Title": "创建你的账户",
-  "get.chooseBackend": "选择服务器类型",
-  "get.backendAria": "服务器类型",
-  "get.backendMultiProtocol": "多协议（VLESS、Trojan、Shadowsocks）",
-  "get.backendShadowsocks": "通过 Outline 的 Shadowsocks",
-  "get.createAccount": "创建我的账户",
-  "get.freeAccountNote": "免费账户有效期 {days} 天，限 {devices}。无需电子邮件或密码。",
-  "get.accountReady": "你的账户已就绪。",
-  "get.step2Title": "创建你的订阅",
-  "get.step2Intro": "创建代理订阅，获得可粘贴到任何兼容 VPN 客户端的链接。",
-  "get.manageHintPrefix": "随时管理此订阅，前往",
-  "get.manageLinkLabel": "你的账户",
-  "get.subErrorSafePrefix": "你的账户是安全的。稍后可以创建订阅，前往",
-  "get.subErrorSafeSuffix": "等服务器可用时。",
-  "get.createSubToastTitle": "订阅已创建",
-  "get.createSubToastBody": "将链接复制到你的 VPN 客户端，或扫描二维码。",
-  "get.createAccountFailedTitle": "无法创建账户",
-  "get.createSubFailedTitle": "无法创建订阅",
-  "get.haveAccountPrefix": "已有账户？",
-  "get.lostNumberHint": "保存前丢失了账户号码？可以换一个新号码——",
-  "get.lostNumberLinkLabel": "在账户页面更换",
-  "tiers.title": "套餐",
-  "tiers.subtitle": "各套餐包含的内容。",
-  "tiers.yourTier": "你的套餐",
-  "tiers.gbPerMonth": "每月 {gb} GB",
-  "tiers.mirrors": "镜像链接",
-  "tiers.comingSoon": "即将推出",
-  "tiers.comingSoonTitle": "会员注册即将开放",
-  "impact.title": "捐款支持 Unredacted",
-  "impact.body": "Unredacted 是美国 501(c)(3) 非营利组织，FreeSocks 是其运营的项目之一。捐款支持这项工作。详情请见 Unredacted 网站。",
-  "impact.membershipSoon": "会员（即将推出）",
-  "qr.ariaLabel": "订阅链接二维码",
-  "app.skipToContent": "跳到主要内容",
-  "app.notFound": "页面不存在",
-  "app.goHome": "返回首页",
-  "footer.operatedPrefix": "运营方：",
-  "footer.operatedSuffix": "（美国 501(c)(3) 非营利组织）",
-  "footer.apiDocs": "API 文档",
-  "tiers.upgradeCta": "升级",
-  "upgrade.title": "升级到 FreeSocks 会员",
-  "upgrade.extendTitle": "续订你的会员",
-  "upgrade.subtitle": "无限流量与设备。选择时长和支付方式。",
-  "upgrade.durationLabel": "会员时长",
-  "upgrade.cryptoMinNote": "加密支付最少 {months} 个月，更短周期低于网络最低限额。如需更短周期请改用其他方式。",
-  "upgrade.months": [
-    {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "countPlural"
-      ],
-      "match": {
-        "countPlural=one": "1 个月",
-        "countPlural=other": "{count} 个月"
+    ],
+    "confirm": "切换到 {to}",
+    "working": "切换中…"
+  },
+  "get": {
+    "badge": "免费账户",
+    "title": "获取 FreeSocks 账户",
+    "introTwoSteps": "两个快速步骤：完成真人验证以创建免费账户，然后创建订阅。",
+    "step1Title": "创建你的账户",
+    "chooseBackend": "选择服务器类型",
+    "backendAria": "服务器类型",
+    "backendMultiProtocol": "多协议（VLESS、Trojan、Shadowsocks）",
+    "backendShadowsocks": "通过 Outline 的 Shadowsocks",
+    "createAccount": "创建我的账户",
+    "freeAccountNote": "免费账户有效期 {days} 天，限 {devices}。无需电子邮件或密码。",
+    "accountReady": "你的账户已就绪。",
+    "step2Title": "创建你的订阅",
+    "step2Intro": "创建代理订阅，获得可粘贴到任何兼容 VPN 客户端的链接。",
+    "manageHintPrefix": "随时管理此订阅，前往",
+    "manageLinkLabel": "你的账户",
+    "subErrorSafePrefix": "你的账户是安全的。稍后可以创建订阅，前往",
+    "subErrorSafeSuffix": "等服务器可用时。",
+    "createSubToastTitle": "订阅已创建",
+    "createSubToastBody": "将链接复制到你的 VPN 客户端，或扫描二维码。",
+    "createAccountFailedTitle": "无法创建账户",
+    "createSubFailedTitle": "无法创建订阅",
+    "haveAccountPrefix": "已有账户？",
+    "lostNumberHint": "保存前丢失了账户号码？可以换一个新号码——",
+    "lostNumberLinkLabel": "在账户页面更换",
+    "upsellTitle": "想要无限制？",
+    "upsellBody": "随时可升级到 FreeSocks 会员，享受无限流量与设备。"
+  },
+  "tiers": {
+    "title": "套餐",
+    "subtitle": "各套餐包含的内容。",
+    "yourTier": "你的套餐",
+    "gbPerMonth": "每月 {gb} GB",
+    "mirrors": "镜像链接",
+    "comingSoon": "即将推出",
+    "comingSoonTitle": "会员注册即将开放",
+    "upgradeCta": "升级"
+  },
+  "impact": {
+    "title": "捐款支持 Unredacted",
+    "body": "Unredacted 是美国 501(c)(3) 非营利组织，FreeSocks 是其运营的项目之一。捐款支持这项工作。详情请见 Unredacted 网站。",
+    "membershipSoon": "会员（即将推出）"
+  },
+  "qr": {
+    "ariaLabel": "订阅链接二维码"
+  },
+  "app": {
+    "skipToContent": "跳到主要内容",
+    "notFound": "页面不存在",
+    "goHome": "返回首页"
+  },
+  "footer": {
+    "operatedPrefix": "运营方：",
+    "operatedSuffix": "（美国 501(c)(3) 非营利组织）",
+    "apiDocs": "API 文档"
+  },
+  "upgrade": {
+    "title": "升级到 FreeSocks 会员",
+    "extendTitle": "续订你的会员",
+    "subtitle": "无限流量与设备。选择时长和支付方式。",
+    "durationLabel": "会员时长",
+    "cryptoMinNote": "加密支付最少 {months} 个月，更短周期低于网络最低限额。如需更短周期请改用其他方式。",
+    "months": [
+      {
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
+        "match": {
+          "countPlural=one": "1 个月",
+          "countPlural=other": "{count} 个月"
+        }
       }
+    ],
+    "perMonth": "{price}/月",
+    "save": "省 {pct}%",
+    "methodLabel": "支付方式",
+    "payNowpayments": "加密货币",
+    "payNowpaymentsHint": "门罗币、比特币等",
+    "payStripe": "银行卡",
+    "payStripeHint": "信用卡或借记卡",
+    "payPaypal": "PayPal",
+    "payPaypalHint": "PayPal 余额或银行卡",
+    "total": "合计 {price}",
+    "continue": "继续付款",
+    "starting": "正在开始付款…",
+    "startFailed": "无法开始付款",
+    "noStoreNote": "我们绝不存储你的邮箱或支付信息。",
+    "confirmingTitle": "正在确认你的付款…",
+    "confirmingBody": "加密货币确认可能需要几分钟。你可以离开此页面——会员将自动激活。",
+    "paidTitle": "会员已激活",
+    "paidBody": "谢谢！你的会员现已激活。",
+    "failedTitle": "付款未完成",
+    "failedBody": "你的付款未成功，或结账已过期。你可以重试。"
+  },
+  "mirror": {
+    "disclosure": "连接有问题？",
+    "explainer": "如果你所在位置无法用普通订阅链接连接，可在下方添加镜像链接。它会从另一个可能未被封锁的主机提供相同的密钥。",
+    "addedLabel": "你的镜像链接",
+    "addToAppHint": "将每个链接作为额外的订阅添加到你的应用中，然后尝试连接。",
+    "regionLabel": "你所在的地区",
+    "regionGlobal": "全球（任意地区）",
+    "regionNotStored": "仅用于选择就近的镜像 — 不会被存储。",
+    "getButton": "获取镜像链接",
+    "tryAnother": "尝试其他镜像",
+    "working": "处理中…",
+    "capped": "你添加的镜像数量已达上限。",
+    "exhausted": "当前没有更多适用于你所在地区的镜像。",
+    "noSubscription": "请先创建你的密钥，然后才能添加镜像。",
+    "removeAll": "移除所有镜像",
+    "errorToast": "无法添加镜像",
+    "removedToast": "镜像已移除"
+  },
+  "rawconfig": {
+    "disclosure": "显示原始配置",
+    "title": "你的配置",
+    "explainer": "你的完整代理配置，通过加密通道获取，因此不会以明文经过 CDN。可手动复制到你的应用中，而无需使用订阅链接。",
+    "addHint": "将这些服务器条目手动粘贴到你的代理应用中。"
+  },
+  "delivery": {
+    "title": "你最看重什么？",
+    "subtitle": "选择一个侧重点 — 仅保存在本设备，可随时更改。",
+    "evadeTitle": "保持连接",
+    "evadeBody": "当你所在地区网站被封锁时最合适。我们会提供更难被封锁的备用链接。",
+    "privacyTitle": "最大化隐私",
+    "privacyBody": "追求最强保密性时最合适。我们会优先采用不让你的配置落到第三方服务器的方式。",
+    "recommended": "推荐"
+  },
+  "faq": {
+    "title": "常见问题解答",
+    "subtitle": "基本问题已解答。还有疑问？请使用您的支持 ID 联系我们。",
+    "q1": {
+      "question": "FreeSocks是什么？",
+      "answer": "这是一个免费代理服务，帮助身处网络审查严格地区的人们访问开放的互联网。它由美国非营利组织 Unredacted（501(c)(3)）运营。"
+    },
+    "q2": {
+      "question": "真的免费吗？",
+      "answer": "是的。免费账户可以让你使用代理服务器。付费的 FreeSocks 会员服务可以解除限制，并帮助资助其他人免费使用。"
+    },
+    "q3": {
+      "question": "我需要提供邮箱地址或密码吗？",
+      "answer": "不。您只需通过一次性人工审核，我们就会生成一个32位数的账号——这就是您唯一的凭证。我们绝不会索要您的邮箱地址、电话号码或姓名。"
+    },
+    "q4": {
+      "question": "如果我的账号丢失了怎么办？",
+      "answer": "这是您恢复账户的唯一方法，而且我们无法恢复您的原始密码（我们只存储哈希版本），因此请在创建密码时将其保存到密码管理器中。如果您丢失了密码，只需创建一个新的免费账户即可。"
+    },
+    "q5": {
+      "question": "我该如何连接？",
+      "answer": "创建订阅后，复制其链接（或扫描二维码），并将其添加到兼容的应用程序，例如 v2rayNG、Hiddify 或 Streisand。您的帐户页面会列出每个平台的推荐应用程序。"
+    },
+    "q6": {
+      "question": "你记录了我的哪些信息？",
+      "answer": "尽可能少地收集信息：只收集您账号的哈希版本——绝不会收集您的电子邮件或姓名——也不会记录您访问的网站或您发送的流量。"
+    },
+    "q7": {
+      "question": "我这里无法访问该链接，该怎么办？",
+      "answer": "在您的账户页面，打开“连接有问题？”以获取来自其他可能未被屏蔽的主机的镜像链接。您还可以设置您的接收偏好，优先保持连接。"
+    },
+    "q8": {
+      "question": "我可以为别人购买会员资格吗？",
+      "answer": "是的——在您的账户页面，使用“购买分享码”功能购买会员码，您可以将这些会员码赠送给朋友或家人。每个会员码都适用于任何账户，不会影响您的账户。"
     }
-  ],
-  "upgrade.perMonth": "{price}/月",
-  "upgrade.save": "省 {pct}%",
-  "upgrade.methodLabel": "支付方式",
-  "upgrade.payNowpayments": "加密货币",
-  "upgrade.payNowpaymentsHint": "门罗币、比特币等",
-  "upgrade.payStripe": "银行卡",
-  "upgrade.payStripeHint": "信用卡或借记卡",
-  "upgrade.payPaypal": "PayPal",
-  "upgrade.payPaypalHint": "PayPal 余额或银行卡",
-  "upgrade.total": "合计 {price}",
-  "upgrade.continue": "继续付款",
-  "upgrade.starting": "正在开始付款…",
-  "upgrade.startFailed": "无法开始付款",
-  "upgrade.noStoreNote": "我们绝不存储你的邮箱或支付信息。",
-  "upgrade.confirmingTitle": "正在确认你的付款…",
-  "upgrade.confirmingBody": "加密货币确认可能需要几分钟。你可以离开此页面——会员将自动激活。",
-  "upgrade.paidTitle": "会员已激活",
-  "upgrade.paidBody": "谢谢！你的会员现已激活。",
-  "upgrade.failedTitle": "付款未完成",
-  "upgrade.failedBody": "你的付款未成功，或结账已过期。你可以重试。",
-  "get.upsellTitle": "想要无限制？",
-  "get.upsellBody": "随时可升级到 FreeSocks 会员，享受无限流量与设备。",
-  "mirror.disclosure": "连接有问题？",
-  "mirror.explainer": "如果你所在位置无法用普通订阅链接连接，可在下方添加镜像链接。它会从另一个可能未被封锁的主机提供相同的密钥。",
-  "mirror.addedLabel": "你的镜像链接",
-  "mirror.addToAppHint": "将每个链接作为额外的订阅添加到你的应用中，然后尝试连接。",
-  "mirror.regionLabel": "你所在的地区",
-  "mirror.regionGlobal": "全球（任意地区）",
-  "mirror.regionNotStored": "仅用于选择就近的镜像 — 不会被存储。",
-  "mirror.getButton": "获取镜像链接",
-  "mirror.tryAnother": "尝试其他镜像",
-  "mirror.working": "处理中…",
-  "mirror.capped": "你添加的镜像数量已达上限。",
-  "mirror.exhausted": "当前没有更多适用于你所在地区的镜像。",
-  "mirror.noSubscription": "请先创建你的密钥，然后才能添加镜像。",
-  "mirror.removeAll": "移除所有镜像",
-  "mirror.errorToast": "无法添加镜像",
-  "mirror.removedToast": "镜像已移除",
-  "rawconfig.disclosure": "显示原始配置",
-  "rawconfig.title": "你的配置",
-  "rawconfig.explainer": "你的完整代理配置，通过加密通道获取，因此不会以明文经过 CDN。可手动复制到你的应用中，而无需使用订阅链接。",
-  "rawconfig.addHint": "将这些服务器条目手动粘贴到你的代理应用中。",
-  "delivery.title": "你最看重什么？",
-  "delivery.subtitle": "选择一个侧重点 — 仅保存在本设备，可随时更改。",
-  "delivery.evadeTitle": "保持连接",
-  "delivery.evadeBody": "当你所在地区网站被封锁时最合适。我们会提供更难被封锁的备用链接。",
-  "delivery.privacyTitle": "最大化隐私",
-  "delivery.privacyBody": "追求最强保密性时最合适。我们会优先采用不让你的配置落到第三方服务器的方式。",
-  "delivery.recommended": "推荐"
+  },
+  "gift": {
+    "title": "购买分享码",
+    "subtitle": "购买会员码赠送给亲朋好友。每个会员码都适用于任何账户，绝不会影响您的账户。",
+    "quantityLabel": "多少",
+    "buy": "购买代码",
+    "starting": "开始结账……",
+    "startFailed": "无法开始结账",
+    "boughtTitle": "你购买的兑换码",
+    "boughtEmpty": "您尚未购买任何兑换码。",
+    "statusAvailable": "可用的",
+    "statusRedeemed": "已赎回",
+    "statusRevoked": "撤销",
+    "redeemedOn": "已兑换{date}",
+    "copyAll": "全部复制",
+    "reveal": {
+      "title": "立即保存这些代码",
+      "body": "复制并分享每个代码。出于安全考虑，我们只会显示一次完整代码——之后您将只会看到前缀。",
+      "ack": "我已经保存了这些代码。",
+      "saved": "我把它们保存下来了。",
+      "leaveWarning": "您的代码仍然显示在屏幕上。如果您现在不保存就离开，您将无法再次看到它们。"
+    }
+  }
 }

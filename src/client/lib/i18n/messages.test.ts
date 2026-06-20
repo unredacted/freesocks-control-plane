@@ -16,6 +16,21 @@ import en from '../../../../messages/en.json';
 type MsgFn = (i?: Record<string, unknown>, o?: { locale?: string }) => string;
 const messages = m as unknown as Record<string, MsgFn>;
 
+// The inlang store is nested; flatten to the dotted message ids Paraglide exports.
+function flattenKeys(obj: Record<string, unknown>, prefix = ''): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (!prefix && k === '$schema') continue;
+    const full = prefix ? `${prefix}.${k}` : k;
+    if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      out.push(...flattenKeys(v as Record<string, unknown>, full));
+    } else {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
 // Covers every placeholder used across the catalog so interpolated messages
 // render a non-empty string regardless of which params they read.
 const SAMPLE = {
@@ -39,7 +54,7 @@ const SAMPLE = {
 
 describe('paraglide messages', () => {
   test('every base-catalog key compiles to a callable, non-empty message', () => {
-    const keys = Object.keys(en).filter((k) => k !== '$schema');
+    const keys = flattenKeys(en as Record<string, unknown>);
     expect(keys.length).toBeGreaterThan(200);
     for (const key of keys) {
       const fn = messages[key];

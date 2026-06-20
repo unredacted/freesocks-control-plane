@@ -6,10 +6,26 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 
+// The inlang message-format plugin stores messages NESTED (it unflattens dotted
+// ids on write), so flatten back to the dotted message ids Paraglide compiles +
+// `t()` calls with. A leaf is a string (simple message) or an array (a
+// plural/variant message); a plain object is a group to recurse into.
+function flatten(obj: Record<string, unknown>, prefix = ''): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (!prefix && k === '$schema') continue;
+    const full = prefix ? `${prefix}.${k}` : k;
+    if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      out.push(...flatten(v as Record<string, unknown>, full));
+    } else {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
 const en = JSON.parse(readFileSync('messages/en.json', 'utf8')) as Record<string, unknown>;
-const keys = Object.keys(en)
-  .filter((k) => k !== '$schema')
-  .sort();
+const keys = flatten(en).sort();
 const union = keys.map((k) => `  | ${JSON.stringify(k)}`).join('\n');
 writeFileSync(
   'src/client/lib/i18n/message-keys.ts',
