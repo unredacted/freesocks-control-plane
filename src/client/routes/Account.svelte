@@ -7,6 +7,8 @@
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
   import InlineError from '../components/InlineError.svelte';
+  import GiftCodes from '../components/GiftCodes.svelte';
+  import GiftRevealModal from '../components/GiftRevealModal.svelte';
   import DeliveryPreference from '../components/DeliveryPreference.svelte';
   import { deliveryPref } from '../lib/deliveryPref.svelte';
   import MembershipCallout from '../components/MembershipCallout.svelte';
@@ -82,16 +84,48 @@
   let orderRef = $derived(router.searchParams.get('order'));
   const order = billingOrderQuery(() => orderRef);
   let orderPaidHandled = false;
+  // Gift purchase: the buyer's OWN membership is untouched — instead the freshly
+  // minted shareable codes are revealed ONCE here on return, then acknowledged.
+  let giftRevealCodes = $state<string[]>([]);
+  let giftRevealOpen = $state(false);
+  let giftAckRef = '';
   $effect(() => {
     if (orderRef && order.data?.status === 'paid' && !orderPaidHandled) {
       orderPaidHandled = true;
-      void qc.invalidateQueries({ queryKey: queryKeys.account });
-      void qc.invalidateQueries({ queryKey: queryKeys.me });
-      liveMessage = t('upgrade.paidTitle');
-      toast.success(t('upgrade.paidTitle'), { description: t('upgrade.paidBody') });
+      if (order.data.kind === 'gift') {
+        giftAckRef = orderRef;
+        giftRevealCodes = order.data.giftCodes ?? [];
+        giftRevealOpen = giftRevealCodes.length > 0;
+        void qc.invalidateQueries({ queryKey: queryKeys.accountCodes });
+      } else {
+        void qc.invalidateQueries({ queryKey: queryKeys.account });
+        void qc.invalidateQueries({ queryKey: queryKeys.me });
+        liveMessage = t('upgrade.paidTitle');
+        toast.success(t('upgrade.paidTitle'), { description: t('upgrade.paidBody') });
+      }
       router.navigate('/account', { replace: true });
     }
   });
+  async function ackGiftReveal() {
+    giftRevealOpen = false;
+    const ref = giftAckRef;
+    giftAckRef = '';
+    giftRevealCodes = [];
+    if (ref) {
+      // Best-effort: clear the server's transient reveal buffer now (the
+      // gift-reveal sweep is the backstop if this fails).
+      try {
+        await apiClient.post(
+          '/api/v1/account/gift-codes/ack',
+          { orderRef: ref },
+          z.object({ ok: z.boolean() }),
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+    void qc.invalidateQueries({ queryKey: queryKeys.accountCodes });
+  }
 
   // Mutation: regenerate the subscription. Invalidates ['account'] on success
   // so the SubscriptionHero re-fetches with the new URL automatically.
@@ -347,6 +381,8 @@
 {:else}
   <div class="max-w-4xl mx-auto py-8 space-y-8">
     <div class="sr-only" role="status" aria-live="polite">{liveMessage}</div>
+    <!-- One-time reveal of freshly-purchased gift codes (on return from checkout). -->
+    <GiftRevealModal bind:open={giftRevealOpen} codes={giftRevealCodes} onAck={ackGiftReveal} />
     <!-- Welcome strip, slim, not a card. Visual rhythm is set by spacing,
          not by everything being framed. -->
     <header class="flex items-start justify-between gap-4 flex-wrap">
@@ -574,6 +610,11 @@
         </Button>
       </div>
     </section>
+
+    <!-- Buy membership codes to share with friends/family (distinct from the
+         self-upgrade above; doesn't touch your own membership). Self-gates on
+         billing being enabled. -->
+    <GiftCodes />
 
     <!-- Delivery focus FIRST — chosen above the key, since it shapes how the key
          below is presented (privacy promotes the raw E2EE config + warns that the

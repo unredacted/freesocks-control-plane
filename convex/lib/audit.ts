@@ -49,8 +49,15 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'membership_code.revoke': ['codeId'],
   'membership_code.redeem': ['tierId', 'durationDays'],
   // Billing: self-service membership purchases (never payer PII — no email/ref).
-  'billing.checkout.created': ['processor', 'months'],
-  'billing.order.paid': ['processor', 'tierSlug', 'durationDays', 'amountCents'],
+  'billing.checkout.created': ['processor', 'months', 'kind', 'quantity'],
+  'billing.order.paid': [
+    'processor',
+    'tierSlug',
+    'durationDays',
+    'amountCents',
+    'kind',
+    'quantity',
+  ],
   'billing.config.update': ['key'],
   // Multi-admin onboarding: invite minted / redeemed (username is a non-secret
   // admin label, never the invite token).

@@ -302,6 +302,16 @@ export default defineSchema({
     currency: v.string(),
     status: billingOrderStatus,
     paidAt: v.optional(v.number()),
+    // Gift purchases: a 'gift' order mints `quantity` shareable codes (bound to
+    // the buyer via redemptionCodes.purchasedByOrderId) instead of extending the
+    // buyer's own membership. Absent ⇒ legacy self-upgrade. `giftReveal` is the
+    // TRANSIENT plaintext buffer returned to the buyer ONCE on the return poll,
+    // then cleared on ack (or by the gift-reveal sweep) — the codes live
+    // hash-only in redemptionCodes; durable storage is never plaintext.
+    kind: v.optional(v.union(v.literal('self'), v.literal('gift'))),
+    quantity: v.optional(v.number()),
+    giftReveal: v.optional(v.array(v.string())),
+    giftRevealAck: v.optional(v.boolean()),
     updatedAt: v.number(),
   })
     .index('by_opaque_ref', ['opaqueRef'])
@@ -399,14 +409,21 @@ export default defineSchema({
     status: v.union(v.literal('active'), v.literal('redeemed'), v.literal('revoked')),
     note: v.optional(v.string()),
     batchId: v.optional(v.string()),
-    mintedByAdminId: v.id('adminUsers'),
+    // Origin is EITHER an admin mint (mintedByAdminId) OR a member purchase
+    // (purchasedByUserId + purchasedByOrderId). Both optional so a purchased code
+    // carries no admin. `by_purchaser` drives the buyer's "codes I bought" list;
+    // `purchasedByOrderId` makes gift-minting idempotent against a replayed webhook.
+    mintedByAdminId: v.optional(v.id('adminUsers')),
+    purchasedByUserId: v.optional(v.id('users')),
+    purchasedByOrderId: v.optional(v.id('billingOrders')),
     redeemedByUserId: v.optional(v.id('users')),
     redeemedAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_code_hash', ['codeHash'])
     .index('by_status', ['status'])
-    .index('by_batch', ['batchId']),
+    .index('by_batch', ['batchId'])
+    .index('by_purchaser', ['purchasedByUserId']),
 
   // --- new tables replacing the former KvStore namespaces ---
 

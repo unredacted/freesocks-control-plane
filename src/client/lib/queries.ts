@@ -23,7 +23,10 @@ import {
 import { ListTokensResponse } from '../../shared/contracts/tokens';
 import { AdminAuthStatus } from '../../shared/contracts/auth';
 import { RateLimitListResponse } from '../../shared/contracts/rateLimits';
-import { MembershipCodeListResponse } from '../../shared/contracts/membershipCodes';
+import {
+  MembershipCodeListResponse,
+  PurchasedCodesResponse,
+} from '../../shared/contracts/membershipCodes';
 import { AdminBillingOverview, OrderStatusResponse } from '../../shared/contracts/billing';
 
 // --- Cache keys --------------------------------------------------------------
@@ -46,6 +49,7 @@ export const queryKeys = {
   adminMembershipCodes: (status: string) => ['admin', 'membership-codes', status] as const,
   adminBilling: (status: string) => ['admin', 'billing', status] as const,
   billingOrder: (ref: string) => ['billing', 'order', ref] as const,
+  accountCodes: ['account', 'codes'] as const,
 };
 
 // --- Public surface ----------------------------------------------------------
@@ -138,6 +142,19 @@ export const billingOrderQuery = (refGetter: () => string | null) =>
       retry: false,
     };
   });
+
+/**
+ * Gift codes the member has purchased (masked: prefix + status). For the "codes
+ * you've bought" panel; gated so it isn't fetched while still anonymous.
+ */
+export const accountCodesQuery = (enabled?: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.accountCodes,
+    queryFn: async () =>
+      (await apiClient.get('/api/v1/account/codes', PurchasedCodesResponse)).codes,
+    staleTime: 30_000,
+    ...(enabled ? { enabled: enabled() } : {}),
+  }));
 
 // --- Admin surface -----------------------------------------------------------
 

@@ -57,3 +57,21 @@ export const MembershipCodeListResponse = z.object({
   codes: z.array(MembershipCodeAdmin),
 });
 export type MembershipCodeListResponse = z.infer<typeof MembershipCodeListResponse>;
+
+// --- member: codes I purchased (gift codes) --------------------------------
+
+/** A gift code the member bought — masked (prefix + status), never the recipient. */
+export const PurchasedCode = z.object({
+  codePrefix: z.string(),
+  tierSlug: z.string().nullable(),
+  durationDays: z.number().int(),
+  status: z.enum(['active', 'redeemed', 'revoked']),
+  redeemedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type PurchasedCode = z.infer<typeof PurchasedCode>;
+
+export const PurchasedCodesResponse = z.object({
+  codes: z.array(PurchasedCode),
+});
+export type PurchasedCodesResponse = z.infer<typeof PurchasedCodesResponse>;

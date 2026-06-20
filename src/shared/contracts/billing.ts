@@ -17,6 +17,10 @@ export const CheckoutRequest = z.object({
   processor: BillingProcessor,
   /** A duration offered in PublicConfig.billing.durations (validated server-side against the catalog). */
   months: z.number().int().positive(),
+  /** 'gift' buys `quantity` shareable codes instead of extending your own membership. Default 'self'. */
+  kind: z.enum(['self', 'gift']).optional(),
+  /** Number of codes for a gift order (1..50). Ignored for 'self'. */
+  quantity: z.number().int().positive().max(50).optional(),
 });
 export type CheckoutRequest = z.infer<typeof CheckoutRequest>;
 
@@ -35,6 +39,11 @@ export const OrderStatusResponse = z.object({
   status: BillingOrderStatus,
   /** The member's membership expiry once `paid` (ISO); null while pending/failed. */
   membershipExpiresAt: z.string().datetime().nullable(),
+  /** 'self' extends the buyer's membership; 'gift' mints shareable codes. */
+  kind: z.enum(['self', 'gift']).default('self'),
+  /** Gift orders only: the freshly-minted codes, revealed ONCE on return (empty
+   *  once acknowledged / for self orders). Plaintext — show, let the buyer save, ack. */
+  giftCodes: z.array(z.string()).default([]),
 });
 export type OrderStatusResponse = z.infer<typeof OrderStatusResponse>;
 

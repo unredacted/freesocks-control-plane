@@ -18,7 +18,8 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
-import { randomHex } from './lib/crypto';
+import { randomHex, sha256Hex } from './lib/crypto';
+import { generateMembershipCode, membershipCodePrefix } from './lib/membershipCode';
 import { applyMembership } from './lifecycle';
 import { writeAuditLog } from './lib/audit';
 import {
@@ -42,6 +43,11 @@ import type {
 const DAY_MS = 86_400_000;
 const AVG_DAYS_PER_MONTH = 30.44; // 1→30, 3→91, 6→183, 12→365 — fair, day-based like W4 codes.
 const monthsToDays = (months: number): number => Math.round(months * AVG_DAYS_PER_MONTH);
+
+// Gift purchases: how many shareable codes one order may mint.
+const MAX_GIFT_QUANTITY = 50;
+
+const orderKindValidator = v.union(v.literal('self'), v.literal('gift'));
 
 const processorValidator = v.union(
   v.literal('nowpayments'),
@@ -164,6 +170,8 @@ export const insertOrder = internalMutation({
     amountCents: v.number(),
     currency: v.string(),
     months: v.number(),
+    kind: orderKindValidator,
+    quantity: v.number(),
   },
   handler: async (ctx, a): Promise<Id<'billingOrders'>> => {
     const now = Date.now();
@@ -177,6 +185,8 @@ export const insertOrder = internalMutation({
       amountCents: a.amountCents,
       currency: a.currency,
       status: 'pending',
+      kind: a.kind,
+      quantity: a.quantity,
       updatedAt: now,
     });
     await writeAuditLog(ctx, {
@@ -185,7 +195,7 @@ export const insertOrder = internalMutation({
       action: 'billing.checkout.created',
       targetType: 'billing_order',
       targetId: orderId,
-      payload: { processor: a.processor, months: a.months },
+      payload: { processor: a.processor, months: a.months, kind: a.kind, quantity: a.quantity },
     });
     return orderId;
   },
@@ -199,7 +209,15 @@ export const insertOrder = internalMutation({
  * member identity is NEVER sent to the processor — only `opaqueRef`.
  */
 export const createCheckout = internalAction({
-  args: { userId: v.id('users'), processor: processorValidator, months: v.number() },
+  args: {
+    userId: v.id('users'),
+    processor: processorValidator,
+    months: v.number(),
+    // 'gift' mints `quantity` shareable codes for the buyer instead of extending
+    // their own membership. Absent ⇒ self-upgrade, quantity 1.
+    kind: v.optional(orderKindValidator),
+    quantity: v.optional(v.number()),
+  },
   handler: async (ctx, a): Promise<{ redirectUrl: string; orderRef: string }> => {
     const { config, tierId } = await ctx.runQuery(internal.billing.checkoutContext, {});
     if (!config.enabled) {
@@ -237,14 +255,32 @@ export const createCheckout = internalAction({
       });
     }
 
+    // Gift: buy N shareable codes (each granting `months`); amount scales by N.
+    const kind = a.kind ?? 'self';
+    const quantity = kind === 'gift' ? Math.floor(a.quantity ?? 1) : 1;
+    if (
+      kind === 'gift' &&
+      (!Number.isFinite(quantity) || quantity < 1 || quantity > MAX_GIFT_QUANTITY)
+    ) {
+      throw new ConvexError({
+        code: 'billing.invalid_quantity',
+        message: `Number of codes must be between 1 and ${MAX_GIFT_QUANTITY}`,
+      });
+    }
+    const amountCents = duration.amountCents * quantity;
+
     const secrets = await ctx.runQuery(internal.billing.resolveSecrets, {});
     const base = publicBaseUrl(secrets);
     const opaqueRef = randomHex(16);
+    const monthLabel = `${a.months} month${a.months === 1 ? '' : 's'}`;
     const params: CheckoutParams = {
       orderRef: opaqueRef,
-      amountCents: duration.amountCents,
+      amountCents,
       currency: config.currency,
-      description: `FreeSocks Membership — ${a.months} month${a.months === 1 ? '' : 's'}`,
+      description:
+        kind === 'gift'
+          ? `FreeSocks Membership gift — ${quantity} × ${monthLabel}`
+          : `FreeSocks Membership — ${monthLabel}`,
       ipnUrl: `${base}/api/webhooks/${a.processor}`,
       successUrl: `${base}/account?order=${opaqueRef}`,
       cancelUrl: `${base}/account?order=${opaqueRef}&cancel=1`,
@@ -274,9 +310,11 @@ export const createCheckout = internalAction({
       userId: a.userId,
       tierId,
       durationDays: monthsToDays(a.months),
-      amountCents: duration.amountCents,
+      amountCents,
       currency: config.currency,
       months: a.months,
+      kind,
+      quantity,
     });
     return { redirectUrl: result.redirectUrl, orderRef: opaqueRef };
   },
@@ -297,6 +335,12 @@ export const applyEvent = internalMutation({
     orderRef: v.optional(v.string()),
     status: orderStatusValidator,
     processorRef: v.string(),
+    // For a 'gift' order being paid: the codes the caller pre-generated (CSPRNG
+    // runs in the ingest action). Inserted hash-only into redemptionCodes here;
+    // the plaintext is stashed in the order's transient giftReveal buffer.
+    giftCodes: v.optional(
+      v.array(v.object({ plaintext: v.string(), hash: v.string(), prefix: v.string() })),
+    ),
   },
   handler: async (ctx, a): Promise<{ applied: boolean; granted: boolean }> => {
     if (!a.orderRef) return { applied: false, granted: false };
@@ -310,6 +354,50 @@ export const applyEvent = internalMutation({
 
     const now = Date.now();
     if (a.status === 'paid') {
+      const tier = await ctx.db.get(order.tierId);
+
+      // Gift order: mint `quantity` shareable codes bound to the buyer (hash-only)
+      // instead of extending the buyer's own membership. The plaintext lives only
+      // in the transient giftReveal buffer until the buyer acknowledges saving it.
+      if (order.kind === 'gift') {
+        const codes = a.giftCodes ?? [];
+        await ctx.db.patch(order._id, {
+          status: 'paid',
+          paidAt: now,
+          processorRef: a.processorRef || order.processorRef,
+          giftReveal: codes.map((c) => c.plaintext),
+          updatedAt: now,
+        });
+        for (const c of codes) {
+          await ctx.db.insert('redemptionCodes', {
+            codeHash: c.hash,
+            codePrefix: c.prefix,
+            tierId: order.tierId,
+            durationDays: order.durationDays,
+            status: 'active',
+            purchasedByUserId: order.userId,
+            purchasedByOrderId: order._id,
+            updatedAt: now,
+          });
+        }
+        await writeAuditLog(ctx, {
+          actorType: 'webhook',
+          actorId: order.userId,
+          action: 'billing.order.paid',
+          targetType: 'billing_order',
+          targetId: order._id,
+          payload: {
+            processor: a.processor,
+            tierSlug: tier?.slug,
+            durationDays: order.durationDays,
+            amountCents: order.amountCents,
+            kind: 'gift',
+            quantity: codes.length,
+          },
+        });
+        return { applied: true, granted: true };
+      }
+
       const user = await ctx.db.get(order.userId);
       if (!user) return { applied: false, granted: false };
       await ctx.db.patch(order._id, {
@@ -327,7 +415,6 @@ export const applyEvent = internalMutation({
         reason: `billing.${a.processor}`,
         triggeredBy: 'webhook',
       });
-      const tier = await ctx.db.get(order.tierId);
       await writeAuditLog(ctx, {
         actorType: 'webhook',
         actorId: order.userId,
@@ -349,6 +436,29 @@ export const applyEvent = internalMutation({
       await ctx.db.patch(order._id, { status: a.status, updatedAt: now });
     }
     return { applied: true, granted: false };
+  },
+});
+
+/**
+ * Peek at an order's gift-mint plan (by opaque ref) so the ingest action knows
+ * whether — and how many — shareable codes to pre-generate before the grant.
+ */
+export const orderMintPlan = internalQuery({
+  args: { orderRef: v.string() },
+  handler: async (
+    ctx,
+    { orderRef },
+  ): Promise<{ kind: 'self' | 'gift'; quantity: number; alreadyPaid: boolean } | null> => {
+    const order = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', orderRef))
+      .unique();
+    if (!order) return null;
+    return {
+      kind: order.kind ?? 'self',
+      quantity: order.quantity ?? 1,
+      alreadyPaid: order.status === 'paid',
+    };
   },
 });
 
@@ -385,11 +495,33 @@ export const ingestEvent = internalAction({
     });
     if (dedupe.duplicate) return { ok: true, duplicate: true, applied: false };
 
+    // Gift order being paid: pre-generate the shareable codes here (CSPRNG lives
+    // in the action) so applyEvent can insert them hash-only + stash the plaintext
+    // reveal atomically with the single-grant status flip.
+    let giftCodes: { plaintext: string; hash: string; prefix: string }[] | undefined;
+    if (verified.status === 'paid' && verified.orderRef) {
+      const plan = await ctx.runQuery(internal.billing.orderMintPlan, {
+        orderRef: verified.orderRef,
+      });
+      if (plan && plan.kind === 'gift' && !plan.alreadyPaid) {
+        giftCodes = [];
+        for (let i = 0; i < plan.quantity; i++) {
+          const plaintext = generateMembershipCode();
+          giftCodes.push({
+            plaintext,
+            hash: await sha256Hex(plaintext),
+            prefix: membershipCodePrefix(plaintext),
+          });
+        }
+      }
+    }
+
     const res = await ctx.runMutation(internal.billing.applyEvent, {
       processor: a.processor,
       orderRef: verified.orderRef ?? undefined,
       status: verified.status,
       processorRef: verified.processorRef,
+      giftCodes,
     });
     return { ok: true, applied: res.applied };
   },
@@ -407,7 +539,14 @@ export const getOrderStatus = internalQuery({
   handler: async (
     ctx,
     { opaqueRef, userId },
-  ): Promise<{ status: OrderStatus; membershipExpiresAt: string | null } | null> => {
+  ): Promise<{
+    status: OrderStatus;
+    membershipExpiresAt: string | null;
+    kind: 'self' | 'gift';
+    // The freshly-minted gift codes, revealed ONCE on the return poll: present
+    // only for a paid, not-yet-acknowledged gift order (cleared on ack/sweep).
+    giftCodes: string[];
+  } | null> => {
     const order = await ctx.db
       .query('billingOrders')
       .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', opaqueRef))
@@ -417,6 +556,33 @@ export const getOrderStatus = internalQuery({
     const membershipExpiresAt = user?.membershipExpiresAt
       ? new Date(user.membershipExpiresAt).toISOString()
       : null;
-    return { status: order.status, membershipExpiresAt };
+    return {
+      status: order.status,
+      membershipExpiresAt,
+      kind: order.kind ?? 'self',
+      giftCodes: order.kind === 'gift' && !order.giftRevealAck ? (order.giftReveal ?? []) : [],
+    };
+  },
+});
+
+/**
+ * Buyer acknowledges they've saved the revealed gift codes → clear the transient
+ * plaintext buffer (so the reveal is truly once). Member-scoped. The gift-reveal
+ * sweep is the backstop for buyers who never return.
+ */
+export const ackGiftReveal = internalMutation({
+  args: { opaqueRef: v.string(), userId: v.id('users') },
+  handler: async (ctx, { opaqueRef, userId }): Promise<{ ok: boolean }> => {
+    const order = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', opaqueRef))
+      .unique();
+    if (!order || order.userId !== userId) return { ok: false };
+    await ctx.db.patch(order._id, {
+      giftReveal: undefined,
+      giftRevealAck: true,
+      updatedAt: Date.now(),
+    });
+    return { ok: true };
   },
 });

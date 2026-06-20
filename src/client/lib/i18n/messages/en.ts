@@ -291,6 +291,30 @@ export const en = {
   'upgrade.failedBody':
     'Your payment did not go through, or the checkout expired. You can try again.',
 
+  // --- gift / shareable membership codes (buy to give away) ---
+  // (Other locales fall back to English until the build-time translator fills them.)
+  'gift.title': 'Buy codes to share',
+  'gift.subtitle':
+    'Purchase membership codes to give to friends or family. Each works on any account and never touches yours.',
+  'gift.quantityLabel': 'How many',
+  'gift.buy': 'Buy codes',
+  'gift.starting': 'Starting checkout…',
+  'gift.startFailed': 'Could not start checkout',
+  'gift.boughtTitle': "Codes you've bought",
+  'gift.boughtEmpty': "You haven't bought any codes yet.",
+  'gift.statusAvailable': 'Available',
+  'gift.statusRedeemed': 'Redeemed',
+  'gift.statusRevoked': 'Revoked',
+  'gift.redeemedOn': (p: Record<string, string | number>) => `Redeemed ${p.date}`,
+  'gift.copyAll': 'Copy all',
+  'gift.reveal.title': 'Save these codes now',
+  'gift.reveal.body':
+    'Copy and share each code. For security we show them only once — afterwards you will see only a prefix.',
+  'gift.reveal.ack': 'I have saved these codes',
+  'gift.reveal.saved': "I've saved them",
+  'gift.reveal.leaveWarning':
+    'Your codes are still on screen. If you leave now without saving them, you will not be able to see them again.',
+
   // --- errors (shown inline / as toasts) ---
   'error.offline': 'You appear to be offline. Check your connection and try again.',
   'error.rateLimited': 'Too many attempts. Please wait a minute and try again.',

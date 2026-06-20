@@ -695,7 +695,12 @@ http.route({
         { retryAfterMs: rl.retryAfterMs },
       );
     }
-    const body = await readJson<{ processor?: string; months?: number }>(req);
+    const body = await readJson<{
+      processor?: string;
+      months?: number;
+      kind?: string;
+      quantity?: number;
+    }>(req);
     if (
       body.processor !== 'nowpayments' &&
       body.processor !== 'stripe' &&
@@ -706,11 +711,23 @@ http.route({
     if (typeof body.months !== 'number' || !Number.isInteger(body.months) || body.months < 1) {
       return errorJson('validation', 'months must be a positive integer', 400);
     }
+    const kind = body.kind === 'gift' ? 'gift' : 'self';
+    if (
+      kind === 'gift' &&
+      (typeof body.quantity !== 'number' ||
+        !Number.isInteger(body.quantity) ||
+        body.quantity < 1 ||
+        body.quantity > 50)
+    ) {
+      return errorJson('validation', 'quantity must be an integer between 1 and 50', 400);
+    }
     try {
       const result = await ctx.runAction(internal.billing.createCheckout, {
         userId: member.userId,
         processor: body.processor,
         months: body.months,
+        kind,
+        quantity: kind === 'gift' ? body.quantity : 1,
       });
       return json(result);
     } catch (err) {
@@ -747,6 +764,42 @@ http.route({
     });
     if (!status) return errorJson('not_found', 'order not found', 404);
     return json(status);
+  }),
+});
+
+// Acknowledge the one-time gift-code reveal → clear the transient plaintext
+// buffer on the order. Member-scoped; idempotent.
+http.route({
+  path: '/api/v1/account/gift-codes/ack',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const body = await readJson<{ orderRef?: string }>(req);
+    if (typeof body.orderRef !== 'string' || !body.orderRef) {
+      return errorJson('validation', 'orderRef is required', 400);
+    }
+    const result = await ctx.runMutation(internal.billing.ackGiftReveal, {
+      opaqueRef: body.orderRef,
+      userId: member.userId,
+    });
+    return json(result);
+  }),
+});
+
+// List the gift codes this member has purchased (masked: prefix + tier + status
+// + redeemed timestamp — never the full code or the recipient). Not sealed: the
+// payload carries no bearer secret, only prefixes.
+http.route({
+  path: '/api/v1/account/codes',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:read');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const codes = await ctx.runQuery(internal.membershipCodes.listPurchasedCodes, {
+      userId: member.userId,
+    });
+    return json({ codes });
   }),
 });
 

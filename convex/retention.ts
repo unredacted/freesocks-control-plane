@@ -122,6 +122,35 @@ export const expireStalePendingOrders = internalMutation({
   },
 });
 
+/**
+ * Gift-reveal backstop: clear the transient plaintext code buffer from paid gift
+ * orders older than BILLING_GIFT_REVEAL_TTL_HOURS (default 24) that the buyer
+ * never acknowledged, so plaintext gift codes never linger at rest. (An explicit
+ * ack clears it sooner; the codes themselves remain hash-only in redemptionCodes.)
+ */
+export const clearStaleGiftReveals = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const cutoff = Date.now() - num('BILLING_GIFT_REVEAL_TTL_HOURS', 24) * HOUR;
+    const rows = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_status', (q) => q.eq('status', 'paid').lt('_creationTime', cutoff))
+      .take(limit ?? PAGE);
+    let cleared = 0;
+    for (const r of rows) {
+      if (r.kind === 'gift' && r.giftReveal && r.giftReveal.length > 0) {
+        await ctx.db.patch(r._id, {
+          giftReveal: undefined,
+          giftRevealAck: true,
+          updatedAt: Date.now(),
+        });
+        cleared++;
+      }
+    }
+    return { cleared };
+  },
+});
+
 /** Terminal billing orders (paid/failed/expired): keep ~365 days for accounting. */
 export const sweepBillingOrders = internalMutation({
   args: { limit: v.optional(v.number()) },

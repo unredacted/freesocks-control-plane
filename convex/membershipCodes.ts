@@ -162,6 +162,32 @@ export const listCodes = internalQuery({
   },
 });
 
+/**
+ * Member list: the codes this user PURCHASED (gift codes), newest first. A
+ * leak-safe projection — prefix + tier + status + redeemed timestamp, never the
+ * hash/plaintext nor the recipient's userId (which `maskCode` would expose).
+ */
+export const listPurchasedCodes = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }) => {
+    const tiers = await ctx.db.query('tiers').collect();
+    const tierSlugById = new Map<string, string>(tiers.map((t) => [t._id as string, t.slug]));
+    const rows = await ctx.db
+      .query('redemptionCodes')
+      .withIndex('by_purchaser', (q) => q.eq('purchasedByUserId', userId))
+      .order('desc')
+      .take(200);
+    return rows.map((c) => ({
+      codePrefix: c.codePrefix,
+      tierSlug: tierSlugById.get(c.tierId) ?? null,
+      durationDays: c.durationDays,
+      status: c.status,
+      redeemedAt: c.redeemedAt != null ? new Date(c.redeemedAt).toISOString() : null,
+      createdAt: new Date(c._creationTime).toISOString(),
+    }));
+  },
+});
+
 /** Admin revoke: an active code can no longer be redeemed. Audited. */
 export const revokeCode = internalMutation({
   args: { id: v.id('redemptionCodes'), actorAdminId: v.optional(v.id('adminUsers')) },

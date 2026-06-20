@@ -596,3 +596,194 @@ describe('billing.getOrderStatus scoping', () => {
     expect(theirs).toBeNull();
   });
 });
+
+describe('billing gift codes', () => {
+  beforeEach(() => {
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-key');
+    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api.nowpayments.example');
+    vi.stubEnv('PUBLIC_BASE_URL', 'https://beta.freesocks.example');
+    vi.stubEnv('NOWPAYMENTS_IPN_SECRET', IPN_SECRET);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  const insertGiftOrder = (
+    t: ReturnType<typeof convexTest>,
+    userId: Id<'users'>,
+    tierId: Id<'tiers'>,
+    opaqueRef: string,
+    quantity: number,
+  ): Promise<Id<'billingOrders'>> =>
+    t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'nowpayments',
+        opaqueRef,
+        userId,
+        tierId,
+        durationDays: 91,
+        amountCents: 1400 * quantity,
+        currency: 'USD',
+        status: 'pending',
+        kind: 'gift',
+        quantity,
+        updatedAt: Date.now(),
+      }),
+    );
+
+  test('a gift checkout inserts a gift order priced by quantity', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await enableBilling(t);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ id: 'inv_g', invoice_url: 'https://pay.example/i/inv_g' }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    );
+    const res = await t.action(internal.billing.createCheckout, {
+      userId,
+      processor: 'nowpayments',
+      months: 3,
+      kind: 'gift',
+      quantity: 2,
+    });
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', res.orderRef))
+        .unique();
+      expect(order?.kind).toBe('gift');
+      expect(order?.quantity).toBe(2);
+      expect(order?.amountCents).toBe(2800);
+      expect(order?.tierId).toBe(memberTierId);
+    });
+  });
+
+  test('a finished IPN mints codes for the buyer WITHOUT extending their own membership', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, freeTierId, memberTierId } = await seedTiersAndUser(t);
+    await insertGiftOrder(t, userId, memberTierId, 'ref-gift', 2);
+    const payload = { payment_status: 'finished', payment_id: 100, order_id: 'ref-gift' };
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'nowpayments',
+      rawBody: JSON.stringify(payload),
+      signature: await signIpn(payload),
+    });
+    expect(res).toEqual({ ok: true, applied: true });
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-gift'))
+        .unique();
+      expect(order?.status).toBe('paid');
+      expect(order?.giftReveal?.length).toBe(2);
+      const codes = await ctx.db
+        .query('redemptionCodes')
+        .withIndex('by_purchaser', (q) => q.eq('purchasedByUserId', userId))
+        .collect();
+      expect(codes).toHaveLength(2);
+      expect(
+        codes.every(
+          (c) =>
+            c.status === 'active' &&
+            c.purchasedByOrderId === order!._id &&
+            c.mintedByAdminId === undefined,
+        ),
+      ).toBe(true);
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(freeTierId); // membership NOT extended
+      expect(user?.membershipExpiresAt).toBeUndefined();
+    });
+  });
+
+  test('getOrderStatus reveals the codes once; ack clears the buffer', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertGiftOrder(t, userId, memberTierId, 'ref-gift2', 1);
+    const payload = { payment_status: 'finished', payment_id: 101, order_id: 'ref-gift2' };
+    await t.action(internal.billing.ingestEvent, {
+      processor: 'nowpayments',
+      rawBody: JSON.stringify(payload),
+      signature: await signIpn(payload),
+    });
+    const status1 = await t.query(internal.billing.getOrderStatus, {
+      opaqueRef: 'ref-gift2',
+      userId,
+    });
+    expect(status1?.kind).toBe('gift');
+    expect(status1?.giftCodes).toHaveLength(1);
+    await t.mutation(internal.billing.ackGiftReveal, { opaqueRef: 'ref-gift2', userId });
+    const status2 = await t.query(internal.billing.getOrderStatus, {
+      opaqueRef: 'ref-gift2',
+      userId,
+    });
+    expect(status2?.giftCodes).toHaveLength(0);
+  });
+
+  test('a replayed gift IPN does not mint extra codes', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertGiftOrder(t, userId, memberTierId, 'ref-gift3', 3);
+    const payload = { payment_status: 'finished', payment_id: 102, order_id: 'ref-gift3' };
+    const sig = await signIpn(payload);
+    await t.action(internal.billing.ingestEvent, {
+      processor: 'nowpayments',
+      rawBody: JSON.stringify(payload),
+      signature: sig,
+    });
+    await t.action(internal.billing.ingestEvent, {
+      processor: 'nowpayments',
+      rawBody: JSON.stringify(payload),
+      signature: sig,
+    });
+    const count = await t.run(
+      async (ctx) =>
+        (
+          await ctx.db
+            .query('redemptionCodes')
+            .withIndex('by_purchaser', (q) => q.eq('purchasedByUserId', userId))
+            .collect()
+        ).length,
+    );
+    expect(count).toBe(3);
+  });
+
+  test('listPurchasedCodes returns the buyer’s codes, masked, and reflects redemption', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertGiftOrder(t, userId, memberTierId, 'ref-gift4', 1);
+    const payload = { payment_status: 'finished', payment_id: 103, order_id: 'ref-gift4' };
+    await t.action(internal.billing.ingestEvent, {
+      processor: 'nowpayments',
+      rawBody: JSON.stringify(payload),
+      signature: await signIpn(payload),
+    });
+    let list = await t.query(internal.membershipCodes.listPurchasedCodes, { userId });
+    expect(list).toHaveLength(1);
+    expect(list[0].status).toBe('active');
+    expect(list[0].codePrefix).toMatch(/^FSM-/);
+
+    // The recipient (a different account) redeems the gift code.
+    const recipientId = await t.run((ctx) =>
+      ctx.db.insert('users', { tierId: memberTierId, status: 'active', updatedAt: Date.now() }),
+    );
+    const codeHash = await t.run(
+      async (ctx) =>
+        (await ctx.db
+          .query('redemptionCodes')
+          .withIndex('by_purchaser', (q) => q.eq('purchasedByUserId', userId))
+          .first())!.codeHash,
+    );
+    await t.mutation(internal.membershipCodes.consumeAndGrant, { userId: recipientId, codeHash });
+
+    list = await t.query(internal.membershipCodes.listPurchasedCodes, { userId });
+    expect(list[0].status).toBe('redeemed');
+    expect(list[0].redeemedAt).not.toBeNull();
+  });
+});

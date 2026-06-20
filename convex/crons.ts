@@ -108,6 +108,16 @@ crons.interval(
   {},
 );
 
+// Backstop: clear the transient plaintext gift-code reveal from paid gift orders
+// the buyer never acknowledged (an explicit ack clears it sooner), so plaintext
+// gift codes never linger at rest. The codes stay hash-only in redemptionCodes.
+crons.interval(
+  'billing-gift-reveal-sweep',
+  { hours: 1 },
+  internal.retention.clearStaleGiftReveals,
+  {},
+);
+
 // Keep the S3 subscription mirrors fresh: re-fetch each active sub's current
 // content and re-upload it (skip-if-unchanged). No-op unless S3 mirroring is
 // configured. The censorship-fallback URL is only useful if it isn't stale.
