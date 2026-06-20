@@ -53,6 +53,8 @@
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
     "@inlang/paraglide-js": "2.20.0",
+    "@inlang/plugin-m-function-matcher": "2.2.6",
+    "@inlang/plugin-message-format": "4.4.0",
     "@internationalized/date": "^3.12.2",
     "@lucide/svelte": "^1.17.0",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
