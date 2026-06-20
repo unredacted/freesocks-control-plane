@@ -441,5 +441,96 @@
       "saved": "我把它们保存下来了。",
       "leaveWarning": "您的代码仍然显示在屏幕上。如果您现在不保存就离开，您将无法再次看到它们。"
     }
+  },
+  "home": {
+    "hero": {
+      "eyebrow": "由美国501(c)(3)非营利组织Unredacted运营",
+      "title": "为网络审查严格的地区用户提供免费代理。",
+      "subtitle": "只需一次人工验证即可创建一个免费帐户，然后即可获得适用于任何现代 VPN 客户端的订阅 URL。无需电子邮件或密码。FreeSocks 会员资格可解锁{limits} 。"
+    },
+    "cta": {
+      "getMembership": "加入会员"
+    },
+    "freeCard": {
+      "title": "免费套餐",
+      "badge": "你将获得什么",
+      "urlTitle": "X射线订阅网址",
+      "urlBody": "支持多种协议（VLESS/木马/Shadowsocks）。粘贴到任何兼容的客户端即可。",
+      "membershipLine": "FreeSocks 会员资格为您提供{limits} 。",
+      "noAuthTitle": "无需电子邮件或密码",
+      "noAuthBody": "一次人工验证。保存您的账号即可登录。不收集邮箱地址。",
+      "footnote": "此处显示的数字反映的是当前免费套餐的配置。完成验证即可获取您的套餐配置。"
+    },
+    "features": {
+      "title": "FreeSocks是什么",
+      "noAuth": {
+        "title": "无需电子邮件或密码",
+        "body": "只需一次人工验证即可登录。我们会生成一个32位数的账号，您可以保存该账号以便下次登录。我们不会收集您的邮箱地址。"
+      },
+      "mirrors": {
+        "title": "镜像网址",
+        "body": "订阅服务在多个提供商之间是同步的，因此单个服务中断不会导致您的服务中断。"
+      },
+      "protocols": {
+        "title": "标准协议",
+        "body": "基于 Xray 的 VLESS / Trojan / Shadowsocks 恶意软件。适用于大多数 VPN 客户端。"
+      }
+    },
+    "privacy": {
+      "title": "我们储存",
+      "subtitle": "FreeSocks 的设计理念是尽可能少地了解你的信息。",
+      "point1": "我们只存储您账号的哈希版本，绝不会存储账号本身。",
+      "point2": "无需提供电子邮件地址、电话号码或姓名。我们从不索取这些信息。",
+      "point3": "不会记录您访问的网站或您发送的流量。"
+    },
+    "how": {
+      "title": "工作原理",
+      "cta": "立即尝试",
+      "s1": {
+        "title": "创建免费帐户",
+        "body": "完成一个简单的验证。您将获得一个32位数的账号，请保存：这是您下次登录的凭证。"
+      },
+      "s2": {
+        "title": "创建您的订阅",
+        "body": "登录后，创建一个订阅网址，并生成一个二维码，以便将其传输到手机上。"
+      },
+      "s3": {
+        "title": "将其粘贴到 VPN 客户端中",
+        "body": "在任何兼容的客户端中将该URL添加为订阅。"
+      }
+    },
+    "membership": {
+      "title": "会员资格",
+      "lead": "免费版涵盖基本内容。",
+      "descriptionFallback": "FreeSocks 会员资格可解除所有限制。",
+      "payNote": "可使用加密货币（门罗币等）、银行卡或PayPal支付。"
+    },
+    "about": {
+      "title": "关于",
+      "bodyPrefix": "FreeSocks 由",
+      "bodySuffix": "是一家美国501(c)(3)非营利组织。免费账户的资金来源于捐款和付费会员。",
+      "siteLink": "未编辑的.org"
+    },
+    "limits": {
+      "unlimitedBoth": "无限带宽和设备",
+      "unlimitedBandwidth": "无限带宽",
+      "unlimitedDevices": "无限设备",
+      "bandwidthAndDevices": "{bandwidth}和{devices}",
+      "upToDevices": [
+        {
+          "declarations": [
+            "input count",
+            "local countPlural = count: plural"
+          ],
+          "selectors": [
+            "countPlural"
+          ],
+          "match": {
+            "countPlural=one": "最多 1 台设备",
+            "countPlural=other": "最多{count}设备"
+          }
+        }
+      ]
+    }
   }
 }

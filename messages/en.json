@@ -441,5 +441,96 @@
     "privacyTitle": "Maximize privacy",
     "privacyBody": "Best for the strongest confidentiality. We'll prefer setup that keeps your config off third-party servers.",
     "recommended": "Recommended"
+  },
+  "home": {
+    "hero": {
+      "eyebrow": "Operated by Unredacted, a US 501(c)(3) nonprofit",
+      "title": "Free proxies for users in heavily-censored regions.",
+      "subtitle": "Create a free account with one human-check, then get a subscription URL for any modern VPN client. No email or password. A FreeSocks membership unlocks {limits}."
+    },
+    "cta": {
+      "getMembership": "Get a membership"
+    },
+    "freeCard": {
+      "title": "Free tier",
+      "badge": "What you get",
+      "urlTitle": "Xray subscription URL",
+      "urlBody": "Multi-protocol (VLESS / Trojan / Shadowsocks). Paste into any compatible client.",
+      "membershipLine": "A FreeSocks membership gives you {limits}.",
+      "noAuthTitle": "No email or password",
+      "noAuthBody": "One human-check. Save your account number to sign in. No email collected.",
+      "footnote": "Numbers reflect the current free-tier configuration. Solve the check to get yours."
+    },
+    "features": {
+      "title": "What FreeSocks is",
+      "noAuth": {
+        "title": "No email or password",
+        "body": "One human-check and you are in. We mint a 32-digit account number you save to sign back in. No email collected."
+      },
+      "mirrors": {
+        "title": "Mirror URLs",
+        "body": "Subscriptions are mirrored across multiple providers so a single block does not cut you off."
+      },
+      "protocols": {
+        "title": "Standard protocols",
+        "body": "Xray-powered VLESS / Trojan / Shadowsocks. Works in most VPN clients."
+      }
+    },
+    "privacy": {
+      "title": "What we store",
+      "subtitle": "FreeSocks is built to know as little about you as possible.",
+      "point1": "We store only a hashed version of your account number — never the number itself.",
+      "point2": "No email, phone number, or name. We never ask for them.",
+      "point3": "No logs of the sites you visit or the traffic you send."
+    },
+    "how": {
+      "title": "How it works",
+      "cta": "Try it now",
+      "s1": {
+        "title": "Create a free account",
+        "body": "Solve a quick human-check. You get a 32-digit account number to save: it is how you sign back in."
+      },
+      "s2": {
+        "title": "Create your subscription",
+        "body": "Once you are signed in, create a subscription URL, with a QR code for handoff to a phone."
+      },
+      "s3": {
+        "title": "Paste it into a VPN client",
+        "body": "Add the URL as a subscription in any compatible client."
+      }
+    },
+    "membership": {
+      "title": "Membership",
+      "lead": "Free covers the basics.",
+      "descriptionFallback": "A FreeSocks membership lifts every limit.",
+      "payNote": "Pay with crypto (Monero & more), card, or PayPal."
+    },
+    "about": {
+      "title": "About",
+      "bodyPrefix": "FreeSocks is operated by",
+      "bodySuffix": ", a US 501(c)(3) nonprofit. Free accounts are funded by donations and paying members.",
+      "siteLink": "unredacted.org"
+    },
+    "limits": {
+      "unlimitedBoth": "unlimited bandwidth and devices",
+      "unlimitedBandwidth": "unlimited bandwidth",
+      "unlimitedDevices": "unlimited devices",
+      "bandwidthAndDevices": "{bandwidth} and {devices}",
+      "upToDevices": [
+        {
+          "declarations": [
+            "input count",
+            "local countPlural = count: plural"
+          ],
+          "selectors": [
+            "countPlural"
+          ],
+          "match": {
+            "countPlural=one": "up to 1 device",
+            "countPlural=other": "up to {count} devices"
+          }
+        }
+      ]
+    }
   }
 }

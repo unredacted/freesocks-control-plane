@@ -19,20 +19,27 @@ export function membershipTier(config: PublicConfig | undefined): Tier | undefin
   return config?.tiers.find((t) => t.slug === slug);
 }
 
+/** Structured tier limits, so the *words* live in the i18n catalog (the Home
+ *  page composes the translated phrase) while the *numbers* stay DB-driven here.
+ *  `0 = unlimited` matches the comparison cards + the server's issuance logic. */
+export interface TierLimits {
+  unlimitedBandwidth: boolean;
+  gb: number;
+  unlimitedDevices: boolean;
+  devices: number;
+}
+
 /**
- * English limits phrase for the English-only Home page (other surfaces use the
- * i18n'd comparison cards). e.g. "unlimited bandwidth and devices" or
- * "100 GB / month and up to 3 devices". Falls back to the unlimited phrasing
- * when the tier is missing (the membership tier is unlimited by product design).
+ * Read a tier's bandwidth/device limits as structured data. Falls back to
+ * fully-unlimited when the tier is missing (the membership tier is unlimited by
+ * product design). The Home page turns this into a localized phrase via t().
  */
-export function limitsPhrase(tier: Tier | undefined): string {
-  if (!tier) return 'unlimited bandwidth and devices';
-  const gbUnlimited = tier.monthlyTrafficGb === 0;
-  const devUnlimited = tier.deviceLimit === 0;
-  if (gbUnlimited && devUnlimited) return 'unlimited bandwidth and devices';
-  const bw = gbUnlimited ? 'unlimited bandwidth' : `${tier.monthlyTrafficGb} GB / month`;
-  const dev = devUnlimited
-    ? 'unlimited devices'
-    : `up to ${tier.deviceLimit} device${tier.deviceLimit === 1 ? '' : 's'}`;
-  return `${bw} and ${dev}`;
+export function tierLimits(tier: Tier | undefined): TierLimits {
+  if (!tier) return { unlimitedBandwidth: true, gb: 0, unlimitedDevices: true, devices: 0 };
+  return {
+    unlimitedBandwidth: tier.monthlyTrafficGb === 0,
+    gb: tier.monthlyTrafficGb,
+    unlimitedDevices: tier.deviceLimit === 0,
+    devices: tier.deviceLimit,
+  };
 }

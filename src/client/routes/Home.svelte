@@ -7,12 +7,17 @@
    * Voice principle: factual, plain. No invented stats, no marketing
    * flourishes, no claims about Unredacted's other programs (we link to
    * unredacted.org for that; they own that copy, not us).
+   *
+   * Fully localized: every visible string resolves through t() so the
+   * censored-region (mostly non-English) audience gets the page in their
+   * language. DB-driven values (tier name/description, prices) stay dynamic
+   * and are deliberately NOT translated.
    */
   import Link from '../components/Link.svelte';
   import { Button } from '@client/components/ui/button';
   import TierComparison from '../components/TierComparison.svelte';
   import { meQuery, configQuery } from '../lib/queries';
-  import { membershipTier, limitsPhrase } from '../lib/tiers';
+  import { membershipTier, tierLimits, type TierLimits } from '../lib/tiers';
   import { t } from '../lib/i18n/index.svelte';
   import { router } from '../stores/router.svelte';
   import { fly, fade, slide } from 'svelte/transition';
@@ -36,72 +41,69 @@
     router.navigate(me.data?.authenticated ? '/account' : '/get-account');
   }
 
-  // Live free-tier limits from /api/v1/config (the DB-enforced numbers), with
-  // the seed values as a fallback while config loads.
-  const freeTier = $derived(config.data?.tiers.find((t) => t.slug === 'free'));
-  const freeTierLine = $derived(
-    freeTier
-      ? `${freeTier.deviceLimit} device${freeTier.deviceLimit === 1 ? '' : 's'} · ${
-          freeTier.monthlyTrafficGb === 0 ? 'Unlimited' : `${freeTier.monthlyTrafficGb} GB / month`
-        }`
-      : '',
-  );
+  // Compose a localized limits phrase from the structured (DB-driven) tier
+  // limits: the numbers come from config, the words from the catalog. Reading
+  // t() inside makes any $derived that calls this re-run on a locale change.
+  function limitsText(info: TierLimits): string {
+    if (info.unlimitedBandwidth && info.unlimitedDevices) return t('home.limits.unlimitedBoth');
+    const bandwidth = info.unlimitedBandwidth
+      ? t('home.limits.unlimitedBandwidth')
+      : t('tiers.gbPerMonth', { gb: info.gb });
+    const devices = info.unlimitedDevices
+      ? t('home.limits.unlimitedDevices')
+      : t('home.limits.upToDevices', { count: info.devices });
+    return t('home.limits.bandwidthAndDevices', { bandwidth, devices });
+  }
+
+  // Live free-tier limits from /api/v1/config (the DB-enforced numbers).
+  const freeTier = $derived(config.data?.tiers.find((tier) => tier.slug === 'free'));
+  const freeTierLine = $derived.by(() => {
+    const ft = freeTier;
+    if (!ft) return '';
+    const devices = t('common.deviceCount', { count: ft.deviceLimit });
+    const bandwidth =
+      ft.monthlyTrafficGb === 0
+        ? t('hero.unlimited')
+        : t('tiers.gbPerMonth', { gb: ft.monthlyTrafficGb });
+    return `${devices} · ${bandwidth}`;
+  });
 
   // Paid-tier limits, DB-driven: drives the membership prose below so it never
   // contradicts the admin-set tier. `description` is the admin-editable line;
-  // `membershipLimits` is computed from the tier's monthlyTrafficGb/deviceLimit.
+  // `membershipLimits` is the localized phrase from the tier's limits.
   const memberTier = $derived(membershipTier(config.data));
-  const membershipLimits = $derived(limitsPhrase(memberTier));
+  const membershipLimits = $derived(limitsText(tierLimits(memberTier)));
 
+  // Data arrays carry message *keys* (the FAQ pattern) so the markup just t()s
+  // them. `as const` keeps the keys literal so they type-check as MessageKeys.
   const features = [
-    {
-      icon: Lock,
-      title: 'No email or password',
-      body: 'One human-check and you are in. We mint a 32-digit account number you save to sign back in. No email collected.',
-    },
-    {
-      icon: Globe,
-      title: 'Mirror URLs',
-      body: 'Subscriptions are mirrored across multiple providers so a single block does not cut you off.',
-    },
+    { icon: Lock, title: 'home.features.noAuth.title', body: 'home.features.noAuth.body' },
+    { icon: Globe, title: 'home.features.mirrors.title', body: 'home.features.mirrors.body' },
     {
       icon: Smartphone,
-      title: 'Standard protocols',
-      body: 'Xray-powered VLESS / Trojan / Shadowsocks. Works in most VPN clients.',
+      title: 'home.features.protocols.title',
+      body: 'home.features.protocols.body',
     },
-  ];
+  ] as const;
 
   const steps = [
-    {
-      n: 1,
-      title: 'Create a free account',
-      body: 'Solve a quick human-check. You get a 32-digit account number to save: it is how you sign back in.',
-    },
-    {
-      n: 2,
-      title: 'Create your subscription',
-      body: 'Once you are signed in, create a subscription URL, with a QR code for handoff to a phone.',
-    },
-    {
-      n: 3,
-      title: 'Paste it into a VPN client',
-      body: 'Add the URL as a subscription in any compatible client.',
-    },
-  ];
+    { n: 1, title: 'home.how.s1.title', body: 'home.how.s1.body' },
+    { n: 2, title: 'home.how.s2.title', body: 'home.how.s2.body' },
+    { n: 3, title: 'home.how.s3.title', body: 'home.how.s3.body' },
+  ] as const;
 
   // "What we store" — factual claims about how the system is built (hash-only,
   // no PII, no traffic logs). The strongest trust signal we can give an anxious,
   // surveillance-wary visitor, and copy the org can stand behind without legal
-  // sign-off. English-only, like the rest of this landing page.
+  // sign-off.
   const privacyPoints = [
-    'We store only a hashed version of your account number — never the number itself.',
-    'No email, phone number, or name. We never ask for them.',
-    'No logs of the sites you visit or the traffic you send.',
-  ];
+    'home.privacy.point1',
+    'home.privacy.point2',
+    'home.privacy.point3',
+  ] as const;
 
-  // FAQ — the one i18n'd section on this otherwise English-only page: the answers
-  // are exactly what non-English visitors need, so they ride the Paraglide
-  // catalog (auto-translated). Single-open accordion.
+  // FAQ — single-open accordion. Answers ride the same catalog as the rest of
+  // the page (auto-translated).
   const FAQ = [
     { q: 'faq.q1.question', a: 'faq.q1.answer' },
     { q: 'faq.q2.question', a: 'faq.q2.answer' },
@@ -125,16 +127,15 @@
       <div
         class="inline-flex items-center gap-2 rounded-full border border-border bg-card text-muted-foreground px-3 py-1 text-xs font-medium"
       >
-        Operated by Unredacted, a US 501(c)(3) nonprofit
+        {t('home.hero.eyebrow')}
       </div>
 
       <h1 class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05]">
-        Free proxies for users in heavily-censored regions.
+        {t('home.hero.title')}
       </h1>
 
       <p class="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
-        Create a free account with one human-check, then get a subscription URL for any modern VPN
-        client. No email or password. A FreeSocks membership unlocks {membershipLimits}.
+        {t('home.hero.subtitle', { limits: membershipLimits })}
       </p>
 
       <div class="flex flex-wrap gap-3">
@@ -142,25 +143,25 @@
           <Link href="/account">
             <Button size="lg" class="text-base">
               <KeyIcon class="size-4" />
-              My account
+              {t('nav.account')}
               <ArrowRight class="size-4" />
             </Button>
           </Link>
           {#if billingEnabled}
             <Button size="lg" variant="outline" class="text-base" onclick={goUpgrade}>
-              Get a membership
+              {t('home.cta.getMembership')}
             </Button>
           {/if}
         {:else}
           <Link href="/get-account">
             <Button size="lg" class="text-base">
               <KeyIcon class="size-4" />
-              Get a free account
+              {t('nav.getAccount')}
               <ArrowRight class="size-4" />
             </Button>
           </Link>
           <Link href="/login">
-            <Button size="lg" variant="outline" class="text-base">Sign in</Button>
+            <Button size="lg" variant="outline" class="text-base">{t('nav.signIn')}</Button>
           </Link>
         {/if}
       </div>
@@ -187,20 +188,22 @@
         class="relative rounded-2xl border border-border bg-card/80 backdrop-blur p-6 md:p-7 shadow-2xl space-y-5"
       >
         <div class="flex items-baseline justify-between">
-          <h2 class="text-base font-display font-semibold tracking-tight">Free tier</h2>
+          <h2 class="text-base font-display font-semibold tracking-tight">
+            {t('home.freeCard.title')}
+          </h2>
           <span
             class="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold rounded bg-secondary px-1.5 py-0.5"
           >
-            What you get
+            {t('home.freeCard.badge')}
           </span>
         </div>
         <ul class="space-y-3">
           <li class="flex items-start gap-3">
             <Globe class="size-4 text-primary mt-0.5 shrink-0" />
             <div>
-              <p class="text-sm font-medium">Xray subscription URL</p>
+              <p class="text-sm font-medium">{t('home.freeCard.urlTitle')}</p>
               <p class="text-xs text-muted-foreground leading-snug">
-                Multi-protocol (VLESS / Trojan / Shadowsocks). Paste into any compatible client.
+                {t('home.freeCard.urlBody')}
               </p>
             </div>
           </li>
@@ -209,22 +212,22 @@
             <div>
               <p class="text-sm font-medium tabular-nums">{freeTierLine}</p>
               <p class="text-xs text-muted-foreground leading-snug">
-                A FreeSocks membership gives you {membershipLimits}.
+                {t('home.freeCard.membershipLine', { limits: membershipLimits })}
               </p>
             </div>
           </li>
           <li class="flex items-start gap-3">
             <Lock class="size-4 text-primary mt-0.5 shrink-0" />
             <div>
-              <p class="text-sm font-medium">No email or password</p>
+              <p class="text-sm font-medium">{t('home.freeCard.noAuthTitle')}</p>
               <p class="text-xs text-muted-foreground leading-snug">
-                One human-check. Save your account number to sign in. No email collected.
+                {t('home.freeCard.noAuthBody')}
               </p>
             </div>
           </li>
         </ul>
         <p class="text-[11px] text-muted-foreground leading-snug border-t border-border/60 pt-3">
-          Numbers reflect the current free-tier configuration. Solve the check to get yours.
+          {t('home.freeCard.footnote')}
         </p>
       </div>
     </div>
@@ -233,7 +236,9 @@
   <!-- FEATURES -->
   <section class="space-y-8">
     <div class="max-w-2xl space-y-2">
-      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">What FreeSocks is</h2>
+      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+        {t('home.features.title')}
+      </h2>
     </div>
     <div class="grid gap-4 md:grid-cols-3">
       {#each features as f, i (f.title)}
@@ -246,8 +251,8 @@
           >
             <f.icon class="size-5" />
           </div>
-          <h3 class="text-base font-semibold">{f.title}</h3>
-          <p class="text-sm text-muted-foreground leading-relaxed">{f.body}</p>
+          <h3 class="text-base font-semibold">{t(f.title)}</h3>
+          <p class="text-sm text-muted-foreground leading-relaxed">{t(f.body)}</p>
         </div>
       {/each}
     </div>
@@ -256,9 +261,11 @@
   <!-- WHAT WE STORE: the privacy reassurance this audience needs, stated plainly. -->
   <section class="space-y-8">
     <div class="max-w-2xl space-y-2">
-      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">What we store</h2>
+      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+        {t('home.privacy.title')}
+      </h2>
       <p class="text-muted-foreground leading-relaxed">
-        FreeSocks is built to know as little about you as possible.
+        {t('home.privacy.subtitle')}
       </p>
     </div>
     <ul class="grid gap-4 md:grid-cols-3">
@@ -268,7 +275,7 @@
           in:fly={{ y: 16, duration: 400, delay: i * 60, easing: quintOut }}
         >
           <ShieldCheck class="size-5 text-primary mt-0.5 shrink-0" aria-hidden="true" />
-          <p class="text-sm text-muted-foreground leading-relaxed">{point}</p>
+          <p class="text-sm text-muted-foreground leading-relaxed">{t(point)}</p>
         </li>
       {/each}
     </ul>
@@ -277,7 +284,9 @@
   <!-- HOW IT WORKS -->
   <section class="space-y-8">
     <div class="max-w-xl space-y-2">
-      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">How it works</h2>
+      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+        {t('home.how.title')}
+      </h2>
     </div>
     <div class="grid gap-6 md:grid-cols-3 max-w-4xl">
       {#each steps as step, i (step.n)}
@@ -290,15 +299,15 @@
           >
             {step.n}
           </div>
-          <h3 class="font-semibold">{step.title}</h3>
-          <p class="text-sm text-muted-foreground leading-relaxed">{step.body}</p>
+          <h3 class="font-semibold">{t(step.title)}</h3>
+          <p class="text-sm text-muted-foreground leading-relaxed">{t(step.body)}</p>
         </div>
       {/each}
     </div>
     <div class="pt-2">
       <Link href="/get-account">
         <Button size="lg">
-          Try it now
+          {t('home.how.cta')}
           <ArrowRight class="size-4" />
         </Button>
       </Link>
@@ -310,19 +319,20 @@
   {#if billingEnabled}
     <section class="space-y-6">
       <div class="max-w-2xl space-y-2">
-        <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">Membership</h2>
+        <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+          {t('home.membership.title')}
+        </h2>
         <p class="text-muted-foreground leading-relaxed">
-          Free covers the basics. {memberTier?.description ??
-            'A FreeSocks membership lifts every limit.'}
-          Pay with crypto (Monero & more), card, or PayPal.
+          {t('home.membership.lead')}
+          {memberTier?.description ?? t('home.membership.descriptionFallback')}
+          {t('home.membership.payNote')}
         </p>
       </div>
       <TierComparison currentTierSlug="" onUpgrade={goUpgrade} />
     </section>
   {/if}
 
-  <!-- FAQ — DB-of-record is the Paraglide catalog (auto-translated), so this is
-       the one localized section on the page. Single-open accordion. -->
+  <!-- FAQ — single-open accordion, localized like the rest of the page. -->
   <section class="space-y-8">
     <div class="max-w-2xl space-y-2">
       <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">{t('faq.title')}</h2>
@@ -367,15 +377,17 @@
   <!-- ABOUT: short, factual, no invented programs -->
   <section class="rounded-2xl border border-border bg-card p-6 md:p-10">
     <div class="max-w-2xl space-y-3">
-      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">About</h2>
+      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+        {t('home.about.title')}
+      </h2>
       <p class="text-muted-foreground leading-relaxed">
-        FreeSocks is operated by{' '}
+        {t('home.about.bodyPrefix')}{' '}
         <a
           href="https://unredacted.org"
           class="underline hover:text-foreground"
           target="_blank"
           rel="noopener noreferrer">Unredacted</a
-        >, a US 501(c)(3) nonprofit. Free accounts are funded by donations and paying members.
+        >{t('home.about.bodySuffix')}
       </p>
       <div class="flex flex-wrap gap-3 pt-2">
         <!--
@@ -386,14 +398,14 @@
         <a href="https://unredacted.org/donate" target="_blank" rel="noopener noreferrer">
           <Button>
             <Heart class="size-4" />
-            Donate
+            {t('renew.donate')}
           </Button>
         </a>
         <a href="https://unredacted.org" target="_blank" rel="noopener noreferrer">
-          <Button variant="outline">unredacted.org</Button>
+          <Button variant="outline">{t('home.about.siteLink')}</Button>
         </a>
         {#if billingEnabled}
-          <Button variant="ghost" onclick={goUpgrade}>Get a membership</Button>
+          <Button variant="ghost" onclick={goUpgrade}>{t('home.cta.getMembership')}</Button>
         {/if}
       </div>
     </div>
