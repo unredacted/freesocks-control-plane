@@ -13,6 +13,7 @@ export default [
       'dist/**',
       'dist-bun/**',
       'node_modules/**',
+      'src/lib/paraglide/**', // Paraglide-compiled output (generated, gitignored)
       'src/server/db/migrations/**',
       'worker-configuration.d.ts',
       '.wrangler/**',

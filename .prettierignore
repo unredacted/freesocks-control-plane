@@ -5,3 +5,10 @@ convex/_generated
 # Build output + lockfile.
 dist
 bun.lock
+
+# Paraglide-compiled i18n output (generated) + the inlang message store + project
+# meta (managed by the i18n scripts + the inlang CLI, not prettier).
+src/lib/paraglide
+messages
+project.inlang
+src/client/lib/i18n/message-keys.ts

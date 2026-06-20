@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
+import { paraglideVitePlugin } from '@inlang/paraglide-js';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -47,7 +48,15 @@ function sriPlugin(): Plugin {
 const CONVEX_SITE = process.env.VITE_CONVEX_SITE_URL ?? 'http://127.0.0.1:3211';
 
 export default defineConfig(() => ({
-  plugins: [svelte(), tailwindcss(), sriPlugin()],
+  plugins: [
+    // i18n: compile messages/*.json (inlang message-format) → tree-shaken JS in
+    // src/lib/paraglide on dev + build. The output is gitignored + recompiled;
+    // `bun run i18n:translate` machine-fills the non-base locales.
+    paraglideVitePlugin({ project: './project.inlang', outdir: './src/lib/paraglide' }),
+    svelte(),
+    tailwindcss(),
+    sriPlugin(),
+  ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
