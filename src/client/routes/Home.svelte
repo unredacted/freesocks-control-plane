@@ -126,12 +126,14 @@
   >
     <div class="space-y-6 md:space-y-8" in:fly={{ y: 20, duration: 500, easing: quintOut }}>
       <div
-        class="inline-flex items-center gap-2 rounded-full border border-border bg-card text-muted-foreground px-3 py-1 text-xs font-medium"
+        class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 text-primary px-3 py-1 text-xs font-medium"
       >
         {t('home.hero.eyebrow')}
       </div>
 
-      <h1 class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05]">
+      <h1
+        class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05] bg-gradient-to-br from-foreground to-foreground/70 bg-clip-text text-transparent"
+      >
         {t('home.hero.title')}
       </h1>
 
@@ -244,7 +246,7 @@
     <div class="grid gap-4 md:grid-cols-3">
       {#each features as f, i (f.title)}
         <div
-          class="rounded-xl border border-border bg-card p-5 space-y-2"
+          class="rounded-xl border border-border bg-card p-5 space-y-2 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-md"
           in:fly={{ y: 16, duration: 400, delay: i * 60, easing: quintOut }}
         >
           <div
@@ -272,7 +274,7 @@
     <ul class="grid gap-4 md:grid-cols-3">
       {#each privacyPoints as point, i (point)}
         <li
-          class="flex items-start gap-3 rounded-xl border border-border bg-card p-5"
+          class="flex items-start gap-3 rounded-xl border border-border bg-card p-5 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-md"
           in:fly={{ y: 16, duration: 400, delay: i * 60, easing: quintOut }}
         >
           <ShieldCheck class="size-5 text-primary mt-0.5 shrink-0" aria-hidden="true" />

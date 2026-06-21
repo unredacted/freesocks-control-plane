@@ -157,7 +157,9 @@
       <KeyIcon class="size-3.5" />
       {t('get.badge')}
     </div>
-    <h1 class="text-3xl md:text-4xl font-display font-bold tracking-tight">
+    <h1
+      class="text-3xl md:text-4xl font-display font-bold tracking-tight bg-gradient-to-br from-foreground to-foreground/70 bg-clip-text text-transparent"
+    >
       {t('get.title')}
     </h1>
     <!-- Pre-creation guidance only. Once authed, the success callout below is

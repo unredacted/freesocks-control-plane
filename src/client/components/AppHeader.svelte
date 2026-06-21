@@ -17,11 +17,11 @@
   <div class="container mx-auto px-4 py-3 flex items-center justify-between">
     <Link
       href="/"
-      class="font-display text-xl font-bold tracking-tight flex items-center gap-2"
+      class="group font-display text-xl font-bold tracking-tight flex items-center gap-2"
       aria-label="FreeSocks home"
     >
       <span
-        class="inline-flex items-center justify-center size-7 rounded-md bg-primary text-primary-foreground"
+        class="inline-flex items-center justify-center size-7 rounded-md bg-primary text-primary-foreground transition-transform group-hover:scale-105"
         aria-hidden="true"
       >
         <KeyIcon class="size-4" />
