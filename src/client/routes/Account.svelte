@@ -29,6 +29,10 @@
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
   import Loader2 from '@lucide/svelte/icons/loader-2';
+  import KeyRound from '@lucide/svelte/icons/key-round';
+  import Sparkles from '@lucide/svelte/icons/sparkles';
+  import Gift from '@lucide/svelte/icons/gift';
+  import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { clearSessionKey } from '../lib/pop';
@@ -340,7 +344,32 @@
       !!config.data?.backends.remnawaveEnabled &&
       !!config.data?.backends.outlineEnabled,
   );
+
+  // Pinned status band: a payment-return callout plus any lifecycle/expiry
+  // callouts, grouped into one container. `hasCallout` gates that container so an
+  // empty wrapper never adds phantom spacing between sections.
+  let showOrderCallout = $derived(!!orderRef && order.data?.status !== 'paid');
+  let hasCallout = $derived(
+    showOrderCallout ||
+      userStatus === 'grace' ||
+      userStatus === 'disabled' ||
+      membershipState === 'expiring-soon' ||
+      membershipState === 'expired',
+  );
 </script>
+
+<!-- Consistent titled-section header (icon + title + one-line description),
+     mirroring the admin CMS's section style. Groups the page's framed blocks
+     under clear headings instead of one flat stack. -->
+{#snippet sectionHead(Icon: typeof KeyRound, title: string, description: string)}
+  <div class="space-y-1">
+    <h2 class="text-lg font-display font-semibold flex items-center gap-2">
+      <Icon class="size-4 text-muted-foreground" aria-hidden="true" />
+      {title}
+    </h2>
+    <p class="text-sm text-muted-foreground">{description}</p>
+  </div>
+{/snippet}
 
 {#if account.isError && !(account.error instanceof ApiCallError && account.error.status === 401)}
   <div class="max-w-4xl mx-auto py-8">
@@ -379,12 +408,38 @@
     </Card>
   </div>
 {:else}
-  <div class="max-w-4xl mx-auto py-8 space-y-8">
+  <div class="max-w-4xl mx-auto py-8 space-y-10">
     <div class="sr-only" role="status" aria-live="polite">{liveMessage}</div>
+
+    <!-- Always-available overlays (portal out when closed — order-independent). -->
     <!-- One-time reveal of freshly-purchased gift codes (on return from checkout). -->
     <GiftRevealModal bind:open={giftRevealOpen} codes={giftRevealCodes} onAck={ackGiftReveal} />
-    <!-- Welcome strip, slim, not a card. Visual rhythm is set by spacing,
-         not by everything being framed. -->
+    <!-- A2: one-time reveal of a freshly rotated account number. Same blocking,
+         checkbox-gated modal as the initial issuance — losing the NEW number is
+         equally fatal (the old one already stopped working). -->
+    {#if revealedAccountId}
+      <AccountNumberReveal
+        bind:open={revealOpen}
+        accountId={revealedAccountId}
+        rotated
+        onClose={() => {
+          revealedAccountId = null;
+          rotateTriggerEl?.focus();
+        }}
+      />
+    {/if}
+    <!-- Rotate confirmation: a proper Dialog, consistent with Regenerate/Switch
+         (rotating invalidates the only credential — it deserves no less). -->
+    <RotateAccountIdModal
+      bind:open={rotateConfirmOpen}
+      onCancel={() => (rotateConfirmOpen = false)}
+      onConfirm={() => rotateAccountId.mutate()}
+      busy={rotateAccountId.isPending}
+    />
+
+    <!-- Welcome strip, slim, not a card. Identity controls (support ID, rotate)
+         live in the Account & security section below; this keeps the header to the
+         title, plan, lifecycle status, and sign-out. -->
     <header class="flex items-start justify-between gap-4 flex-wrap">
       <div>
         <h1 class="text-3xl font-display font-bold tracking-tight">{t('account.title')}</h1>
@@ -405,341 +460,360 @@
             </span>
           {/if}
         </p>
-        {#if data.user.supportId}
-          <p class="mt-1 text-xs text-muted-foreground">
-            {t('support.label')}:
-            <code class="select-all font-mono text-foreground">{data.user.supportId}</code>
-            <span class="block text-[0.7rem] opacity-80">{t('support.hint')}</span>
-          </p>
-        {/if}
       </div>
-      <div class="flex items-center gap-1 shrink-0">
-        <Button
-          bind:ref={rotateTriggerEl}
-          onclick={() => (rotateConfirmOpen = true)}
-          variant="ghost"
-          size="sm"
-          class="min-h-11"
-        >
-          <RotateCcw class="size-4" />
-          <span class="hidden sm:inline">{t('account.rotate')}</span>
-        </Button>
-        <Button onclick={logout} variant="ghost" size="sm" class="min-h-11">
-          <LogOut class="size-4" />
-          {t('account.signOut')}
-        </Button>
-      </div>
+      <Button onclick={logout} variant="ghost" size="sm" class="min-h-11 shrink-0">
+        <LogOut class="size-4" />
+        {t('account.signOut')}
+      </Button>
     </header>
 
-    <!-- A2: one-time reveal of a freshly rotated account number. Same blocking,
-         checkbox-gated modal as the initial issuance — losing the NEW number is
-         equally fatal (the old one already stopped working). -->
-    {#if revealedAccountId}
-      <AccountNumberReveal
-        bind:open={revealOpen}
-        accountId={revealedAccountId}
-        rotated
-        onClose={() => {
-          revealedAccountId = null;
-          rotateTriggerEl?.focus();
-        }}
-      />
-    {/if}
-
-    <!-- Rotate confirmation: a proper Dialog, consistent with Regenerate/Switch
-         (rotating invalidates the only credential — it deserves no less). -->
-    <RotateAccountIdModal
-      bind:open={rotateConfirmOpen}
-      onCancel={() => (rotateConfirmOpen = false)}
-      onConfirm={() => rotateAccountId.mutate()}
-      busy={rotateAccountId.isPending}
-    />
-
-    <!-- Post-payment confirmation (return from the processor's hosted page).
-         The webhook — not this redirect — is the source of truth; we just poll. -->
-    {#if orderRef && order.data?.status !== 'paid'}
-      {#if order.isError || order.data?.status === 'failed' || order.data?.status === 'expired'}
-        <MembershipCallout
-          tone="error"
-          title={t('upgrade.failedTitle')}
-          body={t('upgrade.failedBody')}
-        >
-          {#snippet secondaryAction()}
-            <button
-              type="button"
-              class="rounded-sm text-xs text-muted-foreground underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onclick={() => router.navigate('/account', { replace: true })}
+    <!-- PINNED STATUS BAND: payment-return + lifecycle + membership-expiry
+         callouts, grouped tightly so they read as one band instead of piling up
+         down the page. Rendered above the key because they're time-sensitive. -->
+    {#if hasCallout}
+      <div class="space-y-3">
+        <!-- Post-payment confirmation (return from the processor's hosted page).
+             The webhook — not this redirect — is the source of truth; we just poll. -->
+        {#if showOrderCallout}
+          {#if order.isError || order.data?.status === 'failed' || order.data?.status === 'expired'}
+            <MembershipCallout
+              tone="error"
+              title={t('upgrade.failedTitle')}
+              body={t('upgrade.failedBody')}
             >
-              {t('common.close')}
-            </button>
-          {/snippet}
-        </MembershipCallout>
-      {:else}
-        <div class="rounded-xl border border-primary/30 bg-primary/5 p-4 sm:p-5">
-          <p class="flex items-center gap-2 text-sm font-semibold">
-            <Loader2 class="size-4 animate-spin text-primary" aria-hidden="true" />
-            {t('upgrade.confirmingTitle')}
-          </p>
-          <p class="mt-1 text-sm text-muted-foreground">{t('upgrade.confirmingBody')}</p>
-        </div>
-      {/if}
-    {/if}
-
-    <!-- Operational status callouts (lifecycle grace/disabled) — distinct from
-         the membership-entitlement callouts below; both can apply. -->
-    {#if userStatus === 'grace'}
-      <MembershipCallout
-        tone="warn"
-        title={t('account.graceTitle')}
-        body={t('account.graceBody')}
-        ctaUrl={config.data?.donateUrl}
-        ctaLabel={t('renew.donate')}
-      />
-    {:else if userStatus === 'disabled'}
-      <MembershipCallout
-        tone="error"
-        title={t('account.disabledTitle')}
-        body={t('account.disabledBody')}
-        ctaUrl={config.data?.donateUrl}
-        ctaLabel={t('renew.donate')}
-      />
-    {/if}
-
-    <!-- Membership-state callouts: only shown when there's something to say.
-         No-membership free users lead with the upgrade panel below (upsell first)
-         instead of a clutter callout; the "refresh membership" recovery action
-         moves to a slim link under it. -->
-    {#if membershipState === 'expiring-soon' && expiresAt && daysUntilExpiry !== null}
-      <MembershipCallout
-        tone="warn"
-        title={t('renew.expiringTitle')}
-        body={t('renew.body')}
-        ctaUrl={config.data?.donateUrl}
-        ctaLabel={t('renew.donate')}
-      >
-        {#snippet secondaryAction()}
-          {#if config.data?.contactUrl}
-            <a
-              class="text-xs text-muted-foreground underline hover:text-foreground"
-              href={config.data.contactUrl}
-              target="_blank"
-              rel="noopener noreferrer">{t('renew.contact')}</a
-            >
+              {#snippet secondaryAction()}
+                <button
+                  type="button"
+                  class="rounded-sm text-xs text-muted-foreground underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onclick={() => router.navigate('/account', { replace: true })}
+                >
+                  {t('common.close')}
+                </button>
+              {/snippet}
+            </MembershipCallout>
+          {:else}
+            <div class="rounded-xl border border-primary/30 bg-primary/5 p-4 sm:p-5">
+              <p class="flex items-center gap-2 text-sm font-semibold">
+                <Loader2 class="size-4 animate-spin text-primary" aria-hidden="true" />
+                {t('upgrade.confirmingTitle')}
+              </p>
+              <p class="mt-1 text-sm text-muted-foreground">{t('upgrade.confirmingBody')}</p>
+            </div>
           {/if}
-        {/snippet}
-      </MembershipCallout>
-    {/if}
-    {#if membershipState === 'expired'}
-      <MembershipCallout
-        tone="error"
-        title={t('renew.expiredTitle')}
-        body={t('renew.body')}
-        ctaUrl={config.data?.donateUrl}
-        ctaLabel={t('renew.donate')}
-      >
-        {#snippet secondaryAction()}
-          {#if config.data?.contactUrl}
-            <a
-              class="text-xs text-muted-foreground underline hover:text-foreground"
-              href={config.data.contactUrl}
-              target="_blank"
-              rel="noopener noreferrer">{t('renew.contact')}</a
-            >
-          {/if}
-        {/snippet}
-      </MembershipCallout>
+        {/if}
+
+        <!-- Operational lifecycle (grace/disabled) — a different axis from the
+             membership-entitlement callouts; both can apply. -->
+        {#if userStatus === 'grace'}
+          <MembershipCallout
+            tone="warn"
+            title={t('account.graceTitle')}
+            body={t('account.graceBody')}
+            ctaUrl={config.data?.donateUrl}
+            ctaLabel={t('renew.donate')}
+          />
+        {:else if userStatus === 'disabled'}
+          <MembershipCallout
+            tone="error"
+            title={t('account.disabledTitle')}
+            body={t('account.disabledBody')}
+            ctaUrl={config.data?.donateUrl}
+            ctaLabel={t('renew.donate')}
+          />
+        {/if}
+
+        <!-- Membership-entitlement expiry. No-membership free users get no callout
+             here — they lead with the Membership section below (upsell-first). -->
+        {#if membershipState === 'expiring-soon' && expiresAt && daysUntilExpiry !== null}
+          <MembershipCallout
+            tone="warn"
+            title={t('renew.expiringTitle')}
+            body={t('renew.body')}
+            ctaUrl={config.data?.donateUrl}
+            ctaLabel={t('renew.donate')}
+          >
+            {#snippet secondaryAction()}
+              {#if config.data?.contactUrl}
+                <a
+                  class="text-xs text-muted-foreground underline hover:text-foreground"
+                  href={config.data.contactUrl}
+                  target="_blank"
+                  rel="noopener noreferrer">{t('renew.contact')}</a
+                >
+              {/if}
+            {/snippet}
+          </MembershipCallout>
+        {/if}
+        {#if membershipState === 'expired'}
+          <MembershipCallout
+            tone="error"
+            title={t('renew.expiredTitle')}
+            body={t('renew.body')}
+            ctaUrl={config.data?.donateUrl}
+            ctaLabel={t('renew.donate')}
+          >
+            {#snippet secondaryAction()}
+              {#if config.data?.contactUrl}
+                <a
+                  class="text-xs text-muted-foreground underline hover:text-foreground"
+                  href={config.data.contactUrl}
+                  target="_blank"
+                  rel="noopener noreferrer">{t('renew.contact')}</a
+                >
+              {/if}
+            {/snippet}
+          </MembershipCallout>
+        {/if}
+      </div>
     {/if}
 
-    <!-- Upsell-first: free users see what each tier includes immediately above
-         the purchase panel (bundled together, no scroll-to CTA needed). -->
-    {#if membershipState === 'no-membership'}
-      <TierComparison currentTierSlug={data.user.tier.slug} />
-    {/if}
+    <!-- SECTION: Your connection — the proxy key is the main thing on this page,
+         so it leads. Delivery focus first (it shapes how the key is presented),
+         then the key + setup panels, key actions, and connected devices. -->
+    <section class="space-y-4">
+      {@render sectionHead(
+        KeyRound,
+        t('account.section.connection.title'),
+        t('account.section.connection.desc'),
+      )}
 
-    <!-- Self-service purchase panel (renders only when billing is enabled).
-         Shown for every non-active state; 'upgrade' for free users, 'extend'
-         for expiring/expired members. -->
-    {#if membershipState !== 'active'}
-      <UpgradeMembership mode={membershipState === 'no-membership' ? 'upgrade' : 'extend'} />
-    {/if}
+      <!-- Delivery focus: privacy promotes the raw E2EE config + warns the
+           subscription link is fetched through a CDN; evade keeps the link as the star. -->
+      <DeliveryPreference suggested={data.suggestedDelivery} />
 
-    <!-- Already-paid recovery: re-read entitlement state (e.g. a payment that
-         hasn't propagated yet). Slim now that the verbose callout is gone. -->
-    {#if membershipState === 'no-membership'}
-      <p class="text-xs text-muted-foreground">
-        <button
-          type="button"
-          class="rounded-sm underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onclick={() => refreshMembership.mutate()}
-          disabled={refreshMembership.isPending}
-        >
-          {refreshMembership.isPending ? t('account.refreshing') : t('account.refreshMembership')}
-        </button>
-      </p>
-    {/if}
-
-    <!-- W4: redeem a membership code (extends/upgrades the tier). Available to
-         any signed-in member; the renew callouts above point here. -->
-    <section class="rounded-xl border border-border bg-card p-4 sm:p-5">
-      <h2 id="redeem-title" class="text-sm font-semibold">{t('account.redeemTitle')}</h2>
-      <div class="mt-3 flex flex-col gap-2 sm:flex-row">
-        <input
-          id="redeem-code"
-          aria-labelledby="redeem-title"
-          aria-label={t('account.redeemAriaLabel')}
-          inputmode="text"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder={t('account.redeemPlaceholder')}
-          value={redeemCode}
-          oninput={(e) =>
-            (redeemCode = normalizeDigits(
-              (e.currentTarget as HTMLInputElement).value,
-            ).toUpperCase())}
-          onkeydown={(e) => {
-            if (e.key === 'Enter' && redeemCode.trim() && !redeem.isPending) redeem.mutate();
-          }}
-          class="min-h-11 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm tracking-wider focus:outline-none focus:ring-2 focus:ring-primary"
+      {#if data.subscription}
+        <SubscriptionHero
+          eyebrow={t('hero.eyebrowAccessKey')}
+          backendLabel={config.data?.backends.labels[data.subscription.backend]}
+          subscriptionUrl={data.subscription.url}
+          expiresAt={data.subscription.expiresAt}
+          trafficLimitBytes={data.subscription.trafficLimitBytes}
+          trafficUsedBytes={data.subscription.trafficUsedBytes}
+          tierName={data.user.tier.name}
+          backend={data.subscription.backend}
+          hideUrl={effectiveDelivery === 'privacy'}
         />
-        <Button
-          onclick={() => redeem.mutate()}
-          disabled={!redeemCode.trim() || redeem.isPending}
-          class="min-h-11 shrink-0"
-        >
-          {redeem.isPending ? t('common.loading') : t('account.redeemSubmit')}
-        </Button>
-      </div>
-    </section>
-
-    <!-- Buy membership codes to share with friends/family (distinct from the
-         self-upgrade above; doesn't touch your own membership). Self-gates on
-         billing being enabled. -->
-    <GiftCodes />
-
-    <!-- Delivery focus FIRST — chosen above the key, since it shapes how the key
-         below is presented (privacy promotes the raw E2EE config + warns that the
-         subscription link is fetched through a CDN; evade keeps the link as the star). -->
-    <DeliveryPreference suggested={data.suggestedDelivery} />
-
-    <!-- HERO: the subscription is the main thing on this page -->
-    {#if data.subscription}
-      <SubscriptionHero
-        eyebrow={t('hero.eyebrowAccessKey')}
-        backendLabel={config.data?.backends.labels[data.subscription.backend]}
-        subscriptionUrl={data.subscription.url}
-        expiresAt={data.subscription.expiresAt}
-        trafficLimitBytes={data.subscription.trafficLimitBytes}
-        trafficUsedBytes={data.subscription.trafficUsedBytes}
-        tierName={data.user.tier.name}
-        backend={data.subscription.backend}
-        hideUrl={effectiveDelivery === 'privacy'}
-      />
-      {#if effectiveDelivery === 'privacy'}
-        <!-- Privacy: the raw config IS the deliverable (the CDN-fetched link is
-             hidden above). No public mirrors — they'd expose the config to third parties. -->
-        <RawConfig prominent />
-        <SetupGuidance backend={data.subscription.backend} />
-      {:else}
-        <!-- Stay connected: the subscription link is the star; mirrors next, raw config secondary. -->
-        <SetupGuidance backend={data.subscription.backend} />
-        {#if config.data?.mirrorsEnabled}
-          <MirrorHelp
-            mirrors={data.subscription.mirrors}
-            geoCountry={data.geoCountry}
-            subscriptionUrl={data.subscription.url}
-          />
+        {#if effectiveDelivery === 'privacy'}
+          <!-- Privacy: the raw config IS the deliverable (the CDN-fetched link is
+               hidden above). No public mirrors — they'd expose the config to third parties. -->
+          <RawConfig prominent />
+          <SetupGuidance backend={data.subscription.backend} />
+        {:else}
+          <!-- Stay connected: the subscription link is the star; mirrors next, raw config secondary. -->
+          <SetupGuidance backend={data.subscription.backend} />
+          {#if config.data?.mirrorsEnabled}
+            <MirrorHelp
+              mirrors={data.subscription.mirrors}
+              geoCountry={data.geoCountry}
+              subscriptionUrl={data.subscription.url}
+            />
+          {/if}
+          <RawConfig />
         {/if}
-        <RawConfig />
-      {/if}
-    {:else}
-      <!-- Empty state when the user has no subscription yet -->
-      <div class="rounded-xl border border-dashed border-border p-8 text-center space-y-3">
-        <h2 class="text-lg font-semibold">{t('account.noSubTitle')}</h2>
-        <p class="text-sm text-muted-foreground max-w-sm mx-auto">
-          {t('account.noSubBody')}
-        </p>
-        <Button
-          onclick={() => regenerate.mutate()}
-          disabled={regenerate.isPending || actionsDisabled}
-          size="lg"
-          class="min-h-11"
-        >
-          <Plus class="size-4" />
-          {regenerate.isPending ? t('account.creating') : t('account.createSub')}
-        </Button>
-        {#if regenerate.error}
-          <InlineError
-            message={apiErrorMessage(regenerate.error)}
-            class="mx-auto max-w-sm text-start"
-          />
-        {/if}
-      </div>
-    {/if}
 
-    <!-- Subscription actions, only when there IS a subscription -->
-    {#if data.subscription}
-      <div class="flex flex-wrap gap-2">
-        <Button
-          onclick={() => (regenerateOpen = true)}
-          disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
-          variant="outline"
-          size="sm"
-          class="min-h-11"
-        >
-          <RotateCcw class="size-4" />
-          {regenerate.isPending ? t('common.working') : t('account.regenerate')}
-        </Button>
-        {#if canSwitchBackend && oppositeBackend && config.data}
+        <!-- Key actions: regenerate, and switch backend when eligible. -->
+        <div class="flex flex-wrap gap-2">
           <Button
-            onclick={() => {
-              pendingSwitchTarget = oppositeBackend;
-              switchBackendOpen = true;
-            }}
+            onclick={() => (regenerateOpen = true)}
             disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
             variant="outline"
             size="sm"
             class="min-h-11"
           >
-            <ArrowLeftRight class="size-4" />
-            {switchBackend.isPending
-              ? t('switch.working')
-              : t('account.switchTo', { label: config.data.backends.labels[oppositeBackend] })}
+            <RotateCcw class="size-4" />
+            {regenerate.isPending ? t('common.working') : t('account.regenerate')}
           </Button>
-        {/if}
-      </div>
-    {/if}
-    {#if data.subscription && data.subscription.devices.length > 0}
-      <section class="space-y-3">
-        <div class="flex items-baseline justify-between">
-          <h2 class="text-lg font-display font-semibold flex items-center gap-2">
-            <Smartphone class="size-4 text-muted-foreground" />
-            {t('account.devicesTitle')}
-          </h2>
-          <span class="text-xs text-muted-foreground tabular-nums">
-            {t('common.deviceCount', { count: data.subscription.devices.length })}
-          </span>
+          {#if canSwitchBackend && oppositeBackend && config.data}
+            <Button
+              onclick={() => {
+                pendingSwitchTarget = oppositeBackend;
+                switchBackendOpen = true;
+              }}
+              disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
+              variant="outline"
+              size="sm"
+              class="min-h-11"
+            >
+              <ArrowLeftRight class="size-4" />
+              {switchBackend.isPending
+                ? t('switch.working')
+                : t('account.switchTo', { label: config.data.backends.labels[oppositeBackend] })}
+            </Button>
+          {/if}
         </div>
-        <ul class="rounded-lg border border-border divide-y divide-border bg-card">
-          {#each data.subscription.devices as d (d.hwid)}
-            <li class="flex items-center justify-between px-4 py-3">
-              <div class="flex items-center gap-3 min-w-0">
-                <Smartphone class="size-4 text-muted-foreground shrink-0" />
-                <code class="font-mono text-xs truncate">{d.hwid.slice(0, 24)}…</code>
-              </div>
-              <span class="text-muted-foreground text-xs tabular-nums shrink-0 ms-3">
-                {d.lastSeenAt ? t('account.lastSeen', { date: formatDate(d.lastSeenAt) }) : '-'}
+
+        {#if data.subscription.devices.length > 0}
+          <div class="space-y-3">
+            <div class="flex items-baseline justify-between">
+              <h3 class="text-sm font-semibold flex items-center gap-2">
+                <Smartphone class="size-4 text-muted-foreground" />
+                {t('account.devicesTitle')}
+              </h3>
+              <span class="text-xs text-muted-foreground tabular-nums">
+                {t('common.deviceCount', { count: data.subscription.devices.length })}
               </span>
-            </li>
-          {/each}
-        </ul>
+            </div>
+            <ul class="rounded-lg border border-border divide-y divide-border bg-card">
+              {#each data.subscription.devices as d (d.hwid)}
+                <li class="flex items-center justify-between px-4 py-3">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <Smartphone class="size-4 text-muted-foreground shrink-0" />
+                    <code class="font-mono text-xs truncate">{d.hwid.slice(0, 24)}…</code>
+                  </div>
+                  <span class="text-muted-foreground text-xs tabular-nums shrink-0 ms-3">
+                    {d.lastSeenAt ? t('account.lastSeen', { date: formatDate(d.lastSeenAt) }) : '-'}
+                  </span>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
+      {:else}
+        <!-- Empty state when the user has no subscription yet -->
+        <div class="rounded-xl border border-dashed border-border p-8 text-center space-y-3">
+          <h3 class="text-lg font-semibold">{t('account.noSubTitle')}</h3>
+          <p class="text-sm text-muted-foreground max-w-sm mx-auto">
+            {t('account.noSubBody')}
+          </p>
+          <Button
+            onclick={() => regenerate.mutate()}
+            disabled={regenerate.isPending || actionsDisabled}
+            size="lg"
+            class="min-h-11"
+          >
+            <Plus class="size-4" />
+            {regenerate.isPending ? t('account.creating') : t('account.createSub')}
+          </Button>
+          {#if regenerate.error}
+            <InlineError
+              message={apiErrorMessage(regenerate.error)}
+              class="mx-auto max-w-sm text-start"
+            />
+          {/if}
+        </div>
+      {/if}
+    </section>
+
+    <!-- SECTION: Membership — plan + upgrade/extend. Only rendered when there's
+         something to act on; an active member has nothing to do here. Free users
+         get the comparison + the mission/impact card (upsell-first). -->
+    {#if membershipState !== 'active'}
+      <section class="space-y-4">
+        {@render sectionHead(
+          Sparkles,
+          t('account.section.membership.title'),
+          t('account.section.membership.desc'),
+        )}
+
+        {#if membershipState === 'no-membership'}
+          <TierComparison currentTierSlug={data.user.tier.slug} />
+        {/if}
+
+        <!-- Self-service purchase panel (self-gates on billing being enabled).
+             'upgrade' for free users, 'extend' for expiring/expired members. -->
+        <UpgradeMembership mode={membershipState === 'no-membership' ? 'upgrade' : 'extend'} />
+
+        {#if membershipState === 'no-membership'}
+          <!-- Already-paid recovery: re-read entitlement (e.g. a payment that
+               hasn't propagated yet). Slim link rather than a verbose callout. -->
+          <p class="text-xs text-muted-foreground">
+            <button
+              type="button"
+              class="rounded-sm underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onclick={() => refreshMembership.mutate()}
+              disabled={refreshMembership.isPending}
+            >
+              {refreshMembership.isPending
+                ? t('account.refreshing')
+                : t('account.refreshMembership')}
+            </button>
+          </p>
+          <MemberImpact />
+        {/if}
       </section>
     {/if}
 
-    <!-- Member-impact / mission transparency, free-tier members only. The tier
-         comparison moved up next to the upgrade panel (upsell-first). -->
-    {#if membershipState === 'no-membership'}
-      <MemberImpact />
-    {/if}
+    <!-- SECTION: Codes & gifts — redeem a membership code, or buy codes to share.
+         Redeem is always available; GiftCodes self-gates on billing. -->
+    <section class="space-y-4">
+      {@render sectionHead(Gift, t('account.section.codes.title'), t('account.section.codes.desc'))}
+
+      <!-- W4: redeem a membership code (extends/upgrades the tier). -->
+      <div class="rounded-xl border border-border bg-card p-4 sm:p-5">
+        <h3 id="redeem-title" class="text-sm font-semibold">{t('account.redeemTitle')}</h3>
+        <div class="mt-3 flex flex-col gap-2 sm:flex-row">
+          <input
+            id="redeem-code"
+            aria-labelledby="redeem-title"
+            aria-label={t('account.redeemAriaLabel')}
+            inputmode="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder={t('account.redeemPlaceholder')}
+            value={redeemCode}
+            oninput={(e) =>
+              (redeemCode = normalizeDigits(
+                (e.currentTarget as HTMLInputElement).value,
+              ).toUpperCase())}
+            onkeydown={(e) => {
+              if (e.key === 'Enter' && redeemCode.trim() && !redeem.isPending) redeem.mutate();
+            }}
+            class="min-h-11 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm tracking-wider focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+          <Button
+            onclick={() => redeem.mutate()}
+            disabled={!redeemCode.trim() || redeem.isPending}
+            class="min-h-11 shrink-0"
+          >
+            {redeem.isPending ? t('common.loading') : t('account.redeemSubmit')}
+          </Button>
+        </div>
+      </div>
+
+      <!-- Buy membership codes to share with friends/family (distinct from the
+           self-upgrade; doesn't touch your own membership). Self-gates on billing. -->
+      <GiftCodes />
+    </section>
+
+    <!-- SECTION: Account & security — support ID + account-number rotation. -->
+    <section class="space-y-4">
+      {@render sectionHead(
+        ShieldCheck,
+        t('account.section.security.title'),
+        t('account.section.security.desc'),
+      )}
+      <div class="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-4">
+        {#if data.user.supportId}
+          <div>
+            <p class="text-sm font-medium">{t('support.label')}</p>
+            <code class="mt-1 block select-all font-mono text-sm text-foreground"
+              >{data.user.supportId}</code
+            >
+            <p class="mt-1 text-xs text-muted-foreground">{t('support.hint')}</p>
+          </div>
+        {/if}
+        <div
+          class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between {data.user
+            .supportId
+            ? 'border-t border-border/60 pt-4'
+            : ''}"
+        >
+          <p class="text-xs text-muted-foreground sm:max-w-md">{t('account.rotateHint')}</p>
+          <Button
+            bind:ref={rotateTriggerEl}
+            onclick={() => (rotateConfirmOpen = true)}
+            variant="outline"
+            size="sm"
+            class="min-h-11 shrink-0"
+          >
+            <RotateCcw class="size-4" />
+            {t('account.rotate')}
+          </Button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Subscription confirm modals (only when there IS a subscription). -->
     {#if data.subscription}
       <RegenerateModal
         bind:open={regenerateOpen}

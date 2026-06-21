@@ -153,7 +153,26 @@
     "graceTitle": "Your account is in a grace period",
     "graceBody": "Your membership has lapsed, so this account will be limited soon. Renew — donate or redeem a membership code below — to keep your plan.",
     "disabledTitle": "Your account is currently disabled",
-    "disabledBody": "New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID."
+    "disabledBody": "New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID.",
+    "rotateHint": "Replace your 32-digit account number if it may have leaked. The old one stops working immediately.",
+    "section": {
+      "connection": {
+        "title": "Your connection",
+        "desc": "Your proxy key, setup help, and connected devices."
+      },
+      "membership": {
+        "title": "Membership",
+        "desc": "Your plan, and how to upgrade or extend it."
+      },
+      "codes": {
+        "title": "Codes & gifts",
+        "desc": "Redeem a membership code, or buy codes to share with others."
+      },
+      "security": {
+        "title": "Account & security",
+        "desc": "Your support ID and account-number controls."
+      }
+    }
   },
   "hero": {
     "titleDefault": "Your subscription",

@@ -117,7 +117,26 @@
     "graceBody": "你的会员已到期，此账户即将受限。请续订——捐款或在下方兑换会员码——以保留你的套餐。",
     "disabledTitle": "你的账户当前已停用",
     "disabledBody": "此账户的新密钥与更改已暂停。请在下方兑换会员码以重新激活，或联系支持并提供你的支持 ID。",
-    "redeemPlaceholder": "FSM-XXXX-XXXX-XXXX"
+    "redeemPlaceholder": "FSM-XXXX-XXXX-XXXX",
+    "rotateHint": "如果您的32位账号可能已泄露，请立即更换。旧账号将立即失效。",
+    "section": {
+      "connection": {
+        "title": "您的连接",
+        "desc": "您的代理密钥、设置帮助和已连接的设备。"
+      },
+      "membership": {
+        "title": "会员资格",
+        "desc": "您的计划，以及如何升级或扩展它。"
+      },
+      "codes": {
+        "title": "代码和礼物",
+        "desc": "兑换会员码，或购买会员码与他人分享。"
+      },
+      "security": {
+        "title": "账户与安全",
+        "desc": "您的支持 ID 和账号控制。"
+      }
+    }
   },
   "renew": {
     "expiringTitle": "你的会员即将到期",
