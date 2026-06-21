@@ -34,6 +34,10 @@
     "q8": {
       "question": "Can I buy a membership for someone else?",
       "answer": "Yes — on your account page use \"Buy codes to share\" to purchase membership codes you can give to friends or family. Each one works on any account and doesn't affect yours."
+    },
+    "q9": {
+      "question": "Can I pay anonymously?",
+      "answer": "Yes. You can pay with cryptocurrency — Monero or Zcash for the most privacy, or Bitcoin — with no account, email, or card. Your membership activates automatically once the payment confirms."
     }
   },
   "common": {
@@ -368,7 +372,9 @@
     "save": "save {pct}%",
     "methodLabel": "Payment method",
     "payNowpayments": "Cryptocurrency",
-    "payNowpaymentsHint": "Monero, Bitcoin & more",
+    "payNowpaymentsHint": "Monero, Zcash, Bitcoin & more",
+    "payNowpaymentsBadge": "Private",
+    "cryptoPrivacyNote": "No account, email, or card needed — pay privately. Monero and Zcash offer the most privacy.",
     "payStripe": "Card",
     "payStripeHint": "Credit or debit card",
     "payPaypal": "PayPal",
@@ -522,7 +528,7 @@
       "title": "Membership",
       "lead": "Free covers the basics.",
       "descriptionFallback": "A FreeSocks membership lifts every limit.",
-      "payNote": "Pay with crypto (Monero & more), card, or PayPal."
+      "payNote": "Pay privately with Monero, Zcash, or Bitcoin — or use a card or PayPal."
     },
     "about": {
       "title": "About",

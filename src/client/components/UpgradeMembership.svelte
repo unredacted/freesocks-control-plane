@@ -144,11 +144,23 @@
               ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
               : 'border-border hover:border-primary/40'}"
           >
-            <div class="text-sm font-semibold">{railLabel(r)}</div>
+            <div class="flex items-center gap-1.5 text-sm font-semibold">
+              {railLabel(r)}
+              {#if r === 'nowpayments'}
+                <span
+                  class="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
+                >
+                  {t('upgrade.payNowpaymentsBadge')}
+                </span>
+              {/if}
+            </div>
             <div class="text-xs text-muted-foreground">{railHint(r)}</div>
           </button>
         {/each}
       </div>
+      {#if selectedProcessor === 'nowpayments'}
+        <p class="mt-2 text-xs text-primary/90">{t('upgrade.cryptoPrivacyNote')}</p>
+      {/if}
     </fieldset>
 
     <fieldset>
