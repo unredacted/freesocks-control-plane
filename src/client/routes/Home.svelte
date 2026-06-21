@@ -112,6 +112,7 @@
     'home.privacy.point1',
     'home.privacy.point2',
     'home.privacy.point3',
+    'home.privacy.point4',
   ] as const;
 
   // FAQ — single-open accordion. Answers ride the same catalog as the rest of
@@ -303,7 +304,7 @@
         {t('home.privacy.subtitle')}
       </p>
     </div>
-    <ul class="grid gap-4 md:grid-cols-3">
+    <ul class="grid gap-4 sm:grid-cols-2">
       {#each privacyPoints as point, i (point)}
         <li
           class="flex items-start gap-3 rounded-xl border border-border bg-card p-5 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-md"

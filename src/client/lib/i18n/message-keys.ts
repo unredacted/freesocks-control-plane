@@ -233,6 +233,7 @@ export type MessageKey =
   | "home.privacy.point1"
   | "home.privacy.point2"
   | "home.privacy.point3"
+  | "home.privacy.point4"
   | "home.privacy.subtitle"
   | "home.privacy.title"
   | "impact.body"

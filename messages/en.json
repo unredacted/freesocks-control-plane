@@ -385,7 +385,7 @@
     "continue": "Continue to payment",
     "starting": "Starting checkout…",
     "startFailed": "Could not start checkout",
-    "noStoreNote": "We never store your email or payment details.",
+    "noStoreNote": "We never see your card or wallet, and store no payment details.",
     "confirmingTitle": "Confirming your payment…",
     "confirmingBody": "Crypto can take a few minutes to confirm. You can leave this page — your membership activates automatically.",
     "paidTitle": "Membership active",
@@ -513,7 +513,8 @@
       "subtitle": "FreeSocks is built to know as little about you as possible.",
       "point1": "We store only a hashed version of your account number — never the number itself.",
       "point2": "No email, phone number, or name. We never ask for them.",
-      "point3": "No logs of the sites you visit or the traffic you send."
+      "point3": "No logs of the sites you visit or the traffic you send.",
+      "point4": "We store no payment details — you pay on the provider's own page, and the provider never sees your account or proxy subscription."
     },
     "how": {
       "title": "How it works",
