@@ -19,7 +19,7 @@
   }
   let { backend = 'remnawave' }: Props = $props();
 
-  type App = { name: string; url: string };
+  type App = { name: string; url: string; hwid?: boolean };
   type Platform = {
     key: 'android' | 'ios' | 'windows' | 'desktop';
     labelKey: MessageKey;
@@ -27,23 +27,30 @@
   };
 
   // Recommended free/open-source clients. Outline keys → the Outline client;
-  // Xray (Remnawave) subscriptions → the v2ray-family apps.
+  // Xray (Remnawave) subscriptions → these. `hwid` apps support Remnawave's
+  // device-identification, so the per-account device limit is honored — needed
+  // by the device-limited free tier (it's off by default in the app, hence
+  // setup.hwidNote). Karing is cross-platform; Throne (NekoRay's maintained
+  // successor) is the desktop power option. The non-hwid entry (Hiddify) is a
+  // familiar fallback, tagged "no device limit". All three are open source.
   const XRAY: Record<Platform['key'], App[]> = {
     android: [
-      { name: 'v2rayNG', url: 'https://github.com/2dust/v2rayNG' },
+      { name: 'Karing', url: 'https://karing.app', hwid: true },
       { name: 'Hiddify', url: 'https://hiddify.com' },
     ],
     ios: [
-      { name: 'Streisand', url: 'https://apps.apple.com/app/streisand/id6450534064' },
+      { name: 'Karing', url: 'https://karing.app', hwid: true },
       { name: 'Hiddify', url: 'https://hiddify.com' },
     ],
     windows: [
+      { name: 'Karing', url: 'https://karing.app', hwid: true },
+      { name: 'Throne', url: 'https://github.com/throneproj/Throne', hwid: true },
       { name: 'Hiddify', url: 'https://hiddify.com' },
-      { name: 'NekoRay', url: 'https://github.com/MatsuriDayo/nekoray' },
     ],
     desktop: [
+      { name: 'Karing', url: 'https://karing.app', hwid: true },
+      { name: 'Throne', url: 'https://github.com/throneproj/Throne', hwid: true },
       { name: 'Hiddify', url: 'https://hiddify.com' },
-      { name: 'NekoRay', url: 'https://github.com/MatsuriDayo/nekoray' },
     ],
   };
   const OUTLINE: App[] = [{ name: 'Outline', url: 'https://getoutline.org/get-started/#step-3' }];
@@ -120,7 +127,9 @@
               target="_blank"
               rel="noopener noreferrer"
               class="text-primary underline">{app.name}</a
-            >{/each}
+            >{#if !app.hwid}&nbsp;<span class="text-xs text-muted-foreground"
+                >({t('setup.noDeviceLimit')})</span
+              >{/if}{/each}
         </span>
       </li>
       <li class="flex gap-3">
@@ -138,5 +147,8 @@
         <span>{t('setup.step.connect')}</span>
       </li>
     </ol>
+    {#if backend !== 'outline'}
+      <p class="mt-3 text-xs text-muted-foreground">{t('setup.hwidNote')}</p>
+    {/if}
   </div>
 </section>
