@@ -488,7 +488,10 @@
       "membershipLine": "A FreeSocks membership gives you {limits}.",
       "noAuthTitle": "No email or password",
       "noAuthBody": "One human-check. Save your account number to sign in. No email collected.",
-      "footnote": "Numbers reflect the current free-tier configuration. Solve the check to get yours."
+      "footnote": "Numbers reflect the current free-tier configuration. Solve the check to get yours.",
+      "upsellTitle": "Want unlimited?",
+      "upsellBody": "Get {limits} — and help keep FreeSocks free for others.",
+      "fromPerMonth": "from {price}/mo"
     },
     "features": {
       "title": "What FreeSocks is",

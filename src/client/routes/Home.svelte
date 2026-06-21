@@ -18,7 +18,9 @@
   import TierComparison from '../components/TierComparison.svelte';
   import { meQuery, configQuery } from '../lib/queries';
   import { membershipTier, tierLimits, type TierLimits } from '../lib/tiers';
+  import { baselinePerMonth } from '../lib/billing';
   import { t } from '../lib/i18n/index.svelte';
+  import { formatMoney } from '../lib/i18n/format';
   import { router } from '../stores/router.svelte';
   import { fly, fade, slide } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
@@ -73,6 +75,16 @@
   // `membershipLimits` is the localized phrase from the tier's limits.
   const memberTier = $derived(membershipTier(config.data));
   const membershipLimits = $derived(limitsText(tierLimits(memberTier)));
+
+  // Headline membership price = the shortest term's per-month rate (the standard
+  // monthly), DB-driven + locale-formatted — mirrors TierComparison's "from $X/mo".
+  // Null until the billing config loads.
+  const membershipFromPrice = $derived.by(() => {
+    const cents = baselinePerMonth(config.data?.billing?.durations ?? []);
+    return cents !== null
+      ? formatMoney(Math.round(cents), config.data?.billing?.currency ?? 'USD')
+      : null;
+  });
 
   // Data arrays carry message *keys* (the FAQ pattern) so the markup just t()s
   // them. `as const` keeps the keys literal so they type-check as MessageKeys.
@@ -232,6 +244,26 @@
         <p class="text-[11px] text-muted-foreground leading-snug border-t border-border/60 pt-3">
           {t('home.freeCard.footnote')}
         </p>
+        {#if billingEnabled}
+          <!-- Upgrade nudge: the free summary stays primary; this footer offers the
+               paid tier with a DB-derived price + the existing goUpgrade entry point. -->
+          <div class="space-y-2 rounded-xl border border-primary/30 bg-primary/5 p-3">
+            <div class="flex items-baseline justify-between gap-2">
+              <p class="text-sm font-semibold">{t('home.freeCard.upsellTitle')}</p>
+              {#if membershipFromPrice}
+                <span class="text-xs font-semibold tabular-nums text-primary">
+                  {t('home.freeCard.fromPerMonth', { price: membershipFromPrice })}
+                </span>
+              {/if}
+            </div>
+            <p class="text-xs text-muted-foreground leading-snug">
+              {t('home.freeCard.upsellBody', { limits: membershipLimits })}
+            </p>
+            <Button size="sm" class="w-full" onclick={goUpgrade}>
+              {t('home.cta.getMembership')}
+            </Button>
+          </div>
+        {/if}
       </div>
     </div>
   </section>

@@ -488,7 +488,10 @@
       "membershipLine": "FreeSocks 会员资格为您提供{limits} 。",
       "noAuthTitle": "无需电子邮件或密码",
       "noAuthBody": "一次人工验证。保存您的账号即可登录。不收集邮箱地址。",
-      "footnote": "此处显示的数字反映的是当前免费套餐的配置。完成验证即可获取您的套餐配置。"
+      "footnote": "此处显示的数字反映的是当前免费套餐的配置。完成验证即可获取您的套餐配置。",
+      "upsellTitle": "想要无限量供应？",
+      "upsellBody": "获取{limits} — 并帮助 FreeSocks 继续免费供他人使用。",
+      "fromPerMonth": "来自{price} /月"
     },
     "features": {
       "title": "FreeSocks是什么",
