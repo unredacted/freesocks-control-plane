@@ -68,6 +68,44 @@
   </head>
   <body class="bg-background text-foreground">
     <div id="app"></div>
+    <!--
+      JS-required notice. The app is a client-rendered SPA, so with JavaScript
+      disabled #app never mounts and the page is blank. This static <noscript>
+      (our i18n runs in JS, so it can't be localized — English only) turns that
+      scary blank screen into a clear instruction. Self-contained inline styles
+      with a system font + explicit colors so it reads regardless of which theme
+      CSS loaded (theme-init.js can't run, so the document otherwise stays light).
+    -->
+    <noscript>
+      <div
+        style="
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 1.5rem;
+          font-family:
+            system-ui,
+            -apple-system,
+            'Segoe UI',
+            Roboto,
+            sans-serif;
+          background: #333333;
+          color: #f5f5f5;
+        "
+      >
+        <div style="max-width: 30rem; text-align: center">
+          <h1 style="margin: 0 0 0.75rem; font-size: 1.5rem; font-weight: 700">
+            FreeSocks needs JavaScript
+          </h1>
+          <p style="margin: 0; font-size: 0.95rem; line-height: 1.6; color: #c8c8c8">
+            FreeSocks runs entirely in your browser — your account, keys, and the human-check all
+            happen on your device, with nothing sent to third parties. Please enable JavaScript and
+            reload the page. If you are using Tor, lower the security level for this site.
+          </p>
+        </div>
+      </div>
+    </noscript>
     <script type="module" src="/src/client/main.ts"></script>
   </body>
 </html>
