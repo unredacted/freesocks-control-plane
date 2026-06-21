@@ -19,9 +19,11 @@
   import { apiErrorMessage } from '../lib/errors';
   import { t } from '../lib/i18n/index.svelte';
   import { formatMoney } from '../lib/i18n/format';
+  import { perMonthCents, savingsPct } from '../lib/billing';
   import { CheckoutResponse, type BillingProcessor } from '../../shared/contracts/billing';
   import { createMutation } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
+  import Sparkles from '@lucide/svelte/icons/sparkles';
 
   interface Props {
     /** 'upgrade' for free users, 'extend' for expiring/expired members (heading copy). */
@@ -68,22 +70,9 @@
     selectedProcessor === 'nowpayments' && durations.some((d) => d.months < cryptoMin),
   );
 
-  // Per-term value: the per-month rate + the % saved vs the shortest term's
-  // per-month (the standard monthly rate). Derived straight from the DB prices,
-  // so there's no separate "discount" field to keep in sync — edit the prices in
-  // Admin → Billing and the savings recompute.
-  let baselinePerMonth = $derived.by(() => {
-    const ds = durations.filter((d) => d.months > 0);
-    if (ds.length === 0) return null;
-    const shortest = ds.reduce((a, b) => (b.months < a.months ? b : a));
-    return shortest.amountCents / shortest.months;
-  });
-  const perMonthCents = (d: { months: number; amountCents: number }): number =>
-    d.months > 0 ? d.amountCents / d.months : d.amountCents;
-  function savingsPct(d: { months: number; amountCents: number }): number {
-    if (baselinePerMonth === null || baselinePerMonth <= 0) return 0;
-    return Math.round((1 - perMonthCents(d) / baselinePerMonth) * 100);
-  }
+  // Per-term value (per-month rate + "save X%") comes from the shared billing
+  // helper, derived from the DB prices — edit prices in Admin → Billing and the
+  // savings recompute. There is no separate stored discount field.
 
   function railLabel(r: BillingProcessor): string {
     return r === 'nowpayments'
@@ -120,9 +109,13 @@
 </script>
 
 {#if billing?.enabled && rails.length > 0 && durations.length > 0}
-  <section id="upgrade" class="space-y-4 rounded-xl border border-primary/30 bg-card p-4 sm:p-5">
+  <section
+    id="upgrade"
+    class="tier-sheen relative space-y-4 overflow-hidden rounded-xl border border-primary/30 bg-card p-4 sm:p-5"
+  >
     <div>
-      <h2 class="font-display text-base font-semibold">
+      <h2 class="flex items-center gap-2 font-display text-base font-semibold">
+        <Sparkles class="size-4 shrink-0 text-primary" aria-hidden="true" />
         {mode === 'extend' ? t('upgrade.extendTitle') : t('upgrade.title')}
       </h2>
       <p class="text-sm text-muted-foreground">{t('upgrade.subtitle')}</p>
@@ -170,7 +163,7 @@
       <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {#each durations as d (d.months)}
           {@const locked = d.months < minMonths}
-          {@const pct = savingsPct(d)}
+          {@const pct = savingsPct(d, durations)}
           <button
             type="button"
             disabled={locked}

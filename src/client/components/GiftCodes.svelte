@@ -16,6 +16,7 @@
   import { apiErrorMessage } from '../lib/errors';
   import { t } from '../lib/i18n/index.svelte';
   import { formatMoney, formatDate } from '../lib/i18n/format';
+  import { perMonthCents, savingsPct } from '../lib/billing';
   import { CheckoutResponse, type BillingProcessor } from '../../shared/contracts/billing';
   import { createMutation } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -143,6 +144,7 @@
       <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {#each durations as d (d.months)}
           {@const locked = d.months < minMonths}
+          {@const pct = savingsPct(d, durations)}
           <button
             type="button"
             disabled={locked}
@@ -157,6 +159,16 @@
             <div class="text-xs tabular-nums text-muted-foreground">
               {formatMoney(d.amountCents, currency)}
             </div>
+            {#if d.months > 1}
+              <div class="text-[0.7rem] tabular-nums text-muted-foreground">
+                {t('upgrade.perMonth', {
+                  price: formatMoney(Math.round(perMonthCents(d)), currency),
+                })}
+                {#if pct > 0}
+                  <span class="font-medium text-primary">· {t('upgrade.save', { pct })}</span>
+                {/if}
+              </div>
+            {/if}
           </button>
         {/each}
       </div>

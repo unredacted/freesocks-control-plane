@@ -5,6 +5,7 @@
   import { configQuery } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
   import { formatMoney } from '../lib/i18n/format';
+  import { baselinePerMonth } from '../lib/billing';
 
   /**
    * Tier comparison cards, rendered ENTIRELY from `/api/v1/config` — name,
@@ -31,12 +32,7 @@
   // The headline monthly price = the SHORTEST term's per-month (e.g. the 1-month
   // plan at $5/mo), NOT the cheapest amortized annual ($4.17/mo) — that read as a
   // pricing bug. Longer-term discounts live in the upgrade panel instead.
-  let monthlyCents = $derived.by(() => {
-    const ds = (billing?.durations ?? []).filter((d) => d.months > 0);
-    if (ds.length === 0) return null;
-    const shortest = ds.reduce((a, b) => (b.months < a.months ? b : a));
-    return shortest.amountCents / shortest.months;
-  });
+  let monthlyCents = $derived(baselinePerMonth(billing?.durations ?? []));
   let fromPerMonth = $derived(
     monthlyCents !== null
       ? formatMoney(Math.round(monthlyCents), billing?.currency ?? 'USD')
