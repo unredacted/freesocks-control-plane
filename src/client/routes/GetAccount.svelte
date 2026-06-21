@@ -11,6 +11,7 @@
   import { deliveryPref } from '../lib/deliveryPref.svelte';
   import SetupGuidance from '../components/SetupGuidance.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
+  import RedeemCode from '../components/RedeemCode.svelte';
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import { meQuery, configQuery, accountQuery, queryKeys } from '../lib/queries';
@@ -52,6 +53,8 @@
   let subscription = $derived(account.data?.subscription ?? null);
   // Delivery emphasis (client choice → country suggestion → evade); orders the panels.
   let effectiveDelivery = $derived(deliveryPref() ?? account.data?.suggestedDelivery ?? 'evade');
+  // Hide the upgrade prompts (redeem a gift code + buy) once they're a member.
+  let isCurrentMember = $derived(account.data?.user.membership?.isCurrent ?? false);
 
   // Self-hosted Cap captcha config from /api/v1/config (same-origin endpoint).
   let captchaEndpoint = $derived(config.data?.captcha.apiEndpoint ?? '/cap');
@@ -299,6 +302,15 @@
     {/if}
   {/if}
 
+  <!-- Got a gift code? Redeem during onboarding so the upgrade lands BEFORE the
+       subscription is created (the backend binds the tier at issuance), and the
+       new key is issued on the member tier. Hidden once they're already a member. -->
+  {#if isAuthed && !isCurrentMember}
+    <div class="mx-auto max-w-xl">
+      <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" />
+    </div>
+  {/if}
+
   <!-- STEP 2: create the proxy subscription (needs a proxy server). -->
   {#if isAuthed}
     <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
@@ -385,7 +397,7 @@
        not gated on first creating the free subscription. The panel self-gates
        on billing being live (and the member is signed in here, so checkout
        works). -->
-  {#if isAuthed && config.data?.billing?.enabled}
+  {#if isAuthed && !isCurrentMember && config.data?.billing?.enabled}
     <div class="space-y-3">
       <div class="space-y-1">
         <h2 class="font-display text-lg font-semibold">{t('get.upsellTitle')}</h2>

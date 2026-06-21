@@ -131,6 +131,8 @@ export type MessageKey =
   | "get.lostNumberLinkLabel"
   | "get.manageHintPrefix"
   | "get.manageLinkLabel"
+  | "get.redeemBody"
+  | "get.redeemTitle"
   | "get.step1Title"
   | "get.step2Intro"
   | "get.step2Title"

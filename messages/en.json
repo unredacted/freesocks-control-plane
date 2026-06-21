@@ -309,7 +309,9 @@
     "lostNumberHint": "Lost your account number before saving it? You can switch to a new one —",
     "lostNumberLinkLabel": "change it from your account page",
     "upsellTitle": "Want unlimited?",
-    "upsellBody": "Upgrade to a FreeSocks membership any time for unlimited bandwidth and devices."
+    "upsellBody": "Upgrade to a FreeSocks membership any time for unlimited bandwidth and devices.",
+    "redeemTitle": "Got a gift code?",
+    "redeemBody": "Redeem it now to upgrade your new account instantly."
   },
   "tiers": {
     "title": "Tiers",

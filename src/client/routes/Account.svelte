@@ -20,9 +20,9 @@
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import RotateAccountIdModal from '../components/RotateAccountIdModal.svelte';
   import SetupGuidance from '../components/SetupGuidance.svelte';
-  import { t, normalizeDigits } from '../lib/i18n/index.svelte';
+  import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
-  import { RedeemCodeRequest, RedeemCodeResponse } from '../../shared/contracts/membershipCodes';
+  import RedeemCode from '../components/RedeemCode.svelte';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Plus from '@lucide/svelte/icons/plus';
   import LogOut from '@lucide/svelte/icons/log-out';
@@ -242,34 +242,6 @@
       window.location.href = '/';
     }
   }
-
-  // W4: redeem a membership code.
-  let redeemCode = $state('');
-  const redeem = createMutation(() => ({
-    mutationFn: () =>
-      apiClient.post(
-        '/api/v1/account/redeem-code',
-        RedeemCodeRequest.parse({ code: redeemCode.trim() }),
-        RedeemCodeResponse,
-      ),
-    onSuccess: (result) => {
-      redeemCode = '';
-      void qc.invalidateQueries({ queryKey: queryKeys.account });
-      void qc.invalidateQueries({ queryKey: queryKeys.me });
-      liveMessage = t('account.redeemSuccess', {
-        tier: result.tierName,
-        days: result.durationDays,
-      });
-      toast.success(
-        t('account.redeemSuccess', { tier: result.tierName, days: result.durationDays }),
-      );
-    },
-    onError: () => {
-      // Generic, no oracle (matches the server). Don't echo a specific reason.
-      liveMessage = t('account.redeemFailed');
-      toast.error(t('account.redeemFailed'));
-    },
-  }));
 
   // One-time reveal of a freshly rotated account number. Held in volatile state
   // only, never re-fetchable (the server stores just a hash). The old number
@@ -739,36 +711,7 @@
       {@render sectionHead(Gift, t('account.section.codes.title'), t('account.section.codes.desc'))}
 
       <!-- W4: redeem a membership code (extends/upgrades the tier). -->
-      <div class="rounded-xl border border-border bg-card p-4 sm:p-5">
-        <h3 id="redeem-title" class="text-sm font-semibold">{t('account.redeemTitle')}</h3>
-        <div class="mt-3 flex flex-col gap-2 sm:flex-row">
-          <input
-            id="redeem-code"
-            aria-labelledby="redeem-title"
-            aria-label={t('account.redeemAriaLabel')}
-            inputmode="text"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder={t('account.redeemPlaceholder')}
-            value={redeemCode}
-            oninput={(e) =>
-              (redeemCode = normalizeDigits(
-                (e.currentTarget as HTMLInputElement).value,
-              ).toUpperCase())}
-            onkeydown={(e) => {
-              if (e.key === 'Enter' && redeemCode.trim() && !redeem.isPending) redeem.mutate();
-            }}
-            class="min-h-11 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm tracking-wider focus:outline-none focus:ring-2 focus:ring-primary"
-          />
-          <Button
-            onclick={() => redeem.mutate()}
-            disabled={!redeemCode.trim() || redeem.isPending}
-            class="min-h-11 shrink-0"
-          >
-            {redeem.isPending ? t('common.loading') : t('account.redeemSubmit')}
-          </Button>
-        </div>
-      </div>
+      <RedeemCode />
 
       <!-- Buy membership codes to share with friends/family (distinct from the
            self-upgrade; doesn't touch your own membership). Self-gates on billing. -->

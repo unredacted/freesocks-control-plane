@@ -300,7 +300,9 @@
     "lostNumberHint": "保存前丢失了账户号码？可以换一个新号码——",
     "lostNumberLinkLabel": "在账户页面更换",
     "upsellTitle": "想要无限制？",
-    "upsellBody": "随时可升级到 FreeSocks 会员，享受无限流量与设备。"
+    "upsellBody": "随时可升级到 FreeSocks 会员，享受无限流量与设备。",
+    "redeemTitle": "你有礼品码吗？",
+    "redeemBody": "立即兑换，即可立即升级您的新账户。"
   },
   "tiers": {
     "title": "套餐",
