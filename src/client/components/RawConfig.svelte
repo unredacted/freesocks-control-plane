@@ -63,7 +63,7 @@
   }
 </script>
 
-<div class="rounded-xl border {prominent ? 'border-primary/30' : 'border-border/60'} bg-muted/20">
+<div class="rounded-xl border {prominent ? 'border-primary/30' : 'border-border/60'} bg-muted/30">
   {#if prominent}
     <div class="flex items-center gap-2 px-4 py-3 text-sm font-semibold text-foreground">
       <FileCode class="size-4 shrink-0 text-primary" />

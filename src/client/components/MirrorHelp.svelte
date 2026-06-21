@@ -103,7 +103,7 @@
   const exhausted = $derived(status === 'capped' || status === 'exhausted');
 </script>
 
-<div class="rounded-xl border border-border/60 bg-muted/20">
+<div class="rounded-xl border border-border/60 bg-muted/30">
   <button
     type="button"
     class="flex w-full items-center justify-between gap-2 rounded-xl px-4 py-3 text-start text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
