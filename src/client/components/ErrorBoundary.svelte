@@ -10,6 +10,7 @@
    * by the call site.
    */
   import { Button } from '@client/components/ui/button';
+  import { t } from '../lib/i18n/index.svelte';
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -26,14 +27,13 @@
 
   {#snippet failed(_err: unknown, reset: () => void)}
     <div class="max-w-lg mx-auto py-16 text-center space-y-4">
-      <h1 class="text-2xl font-bold">Something went wrong</h1>
+      <h1 class="text-2xl font-bold">{t('error.renderTitle')}</h1>
       <p class="text-muted-foreground">
-        The page failed to render. This is a bug in the app, and refreshing usually fixes it. If it
-        keeps happening, please report it.
+        {t('error.renderBody')}
       </p>
       <div class="flex gap-2 justify-center pt-2">
-        <Button onclick={() => window.location.reload()}>Reload page</Button>
-        <Button variant="ghost" onclick={reset}>Try again</Button>
+        <Button onclick={() => window.location.reload()}>{t('error.reloadPage')}</Button>
+        <Button variant="ghost" onclick={reset}>{t('error.tryAgain')}</Button>
       </div>
     </div>
   {/snippet}

@@ -6,9 +6,9 @@
    * Brief framing card explaining how the service is funded. We deliberately
    * don't enumerate specific programs / impact items here, since doing so
    * requires knowing the real allocation, which lives on the Unredacted
-   * website itself. We just link there. Donations are the active funding
-   * path today; membership signup is being designed and will appear here
-   * once the signup flow is wired end-to-end.
+   * website itself. We just link there. Membership upgrades are a live,
+   * self-service flow (UpgradeMembership / GiftCodes panels); this card is
+   * only the donation + nonprofit framing.
    */
 </script>
 
@@ -40,8 +40,5 @@
         unredacted.org
       </span>
     </a>
-    <span class="inline-flex items-center gap-1.5 text-sm text-muted-foreground/60">
-      {t('impact.membershipSoon')}
-    </span>
   </div>
 </section>

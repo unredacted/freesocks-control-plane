@@ -21,7 +21,7 @@
     },
     "q5": {
       "question": "How do I connect?",
-      "answer": "Create a subscription, copy its link (or scan the QR code), and add it to a compatible app such as v2rayNG, Hiddify, or Streisand. Your account page lists recommended apps for each platform."
+      "answer": "Create a subscription, copy its link (or scan the QR code), and add it to a compatible app. Your account page lists the recommended app for each platform (Android, iPhone, Windows, macOS / Linux)."
     },
     "q6": {
       "question": "What do you log about me?",
@@ -45,7 +45,6 @@
     "copied": "Copied to clipboard",
     "copyFailed": "Copy failed — select the text and copy it manually",
     "download": "Download",
-    "print": "Print",
     "cancel": "Cancel",
     "close": "Close",
     "retry": "Retry",
@@ -118,7 +117,7 @@
     "tierLabel": "Your plan",
     "statusActive": "Active",
     "statusGrace": "Expiring soon",
-    "statusDisabled": "Expired",
+    "statusDisabled": "Disabled",
     "regenerate": "Create a new key",
     "switchBackend": "Switch server type",
     "rotate": "Change account number",
@@ -183,7 +182,7 @@
     "eyebrowAccessKey": "Your access key",
     "urlLabelSubscription": "Subscription URL",
     "urlLabelAccessKey": "Access key",
-    "tierLine": "Tier {tier}",
+    "tierLine": "Plan {tier}",
     "viaLine": "via {backend}",
     "copyUrl": "Copy URL",
     "copiedShort": "Copied",
@@ -316,25 +315,25 @@
   "tiers": {
     "title": "Tiers",
     "subtitle": "What each tier includes.",
-    "yourTier": "Your tier",
+    "yourTier": "Your plan",
     "gbPerMonth": "{gb} GB / month",
     "mirrors": "Mirror URLs",
-    "comingSoon": "Coming soon",
-    "comingSoonTitle": "Membership signup is coming soon",
     "upgradeCta": "Upgrade"
   },
   "impact": {
     "title": "Donations support Unredacted",
-    "body": "Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site.",
-    "membershipSoon": "Membership (coming soon)"
+    "body": "Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site."
   },
   "qr": {
-    "ariaLabel": "QR code for the subscription URL"
+    "ariaLabel": "QR code for the subscription URL",
+    "failed": "Couldn't generate the QR code."
   },
   "app": {
     "skipToContent": "Skip to content",
     "notFound": "Not found",
-    "goHome": "Go home"
+    "goHome": "Go home",
+    "adminLoadFailedTitle": "Couldn't load the admin console",
+    "adminLoadFailedBody": "The network request for this section failed. Reload to retry."
   },
   "footer": {
     "operatedPrefix": "Operated by",
@@ -346,8 +345,7 @@
     "expiredTitle": "Your membership has expired",
     "body": "FreeSocks is community-funded — donations keep it running. To renew your membership, donate or contact us for a membership code.",
     "donate": "Donate",
-    "contact": "Contact us",
-    "haveCode": "Have a membership code? Redeem it above."
+    "contact": "Contact us"
   },
   "upgrade": {
     "title": "Upgrade to a FreeSocks membership",
@@ -420,7 +418,11 @@
     "rateLimited": "Too many attempts. Please wait a minute and try again.",
     "backendUnavailable": "No proxy server is available right now. Your account is safe — try creating your key again in a few minutes.",
     "generic": "Something went wrong. Please try again.",
-    "captchaFailed": "The human check failed. Please complete it and try again."
+    "captchaFailed": "The human check failed. Please complete it and try again.",
+    "renderTitle": "Something went wrong",
+    "renderBody": "The page failed to render. This is a bug in the app, and refreshing usually fixes it. If it keeps happening, please report it.",
+    "reloadPage": "Reload page",
+    "tryAgain": "Try again"
   },
   "setup": {
     "title": "Set up your proxy app",
@@ -434,7 +436,6 @@
       "import": "Open it, add a subscription / profile, and paste your link",
       "connect": "Select a server and connect"
     },
-    "qrHint": "Or scan this QR code with your phone to transfer the link.",
     "noDeviceLimit": "no device limit",
     "hwidNote": "On a device-limited plan, turn on \"device identification\" (HWID) in the app's settings so your device is recognized."
   },

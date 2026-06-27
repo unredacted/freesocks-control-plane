@@ -37,7 +37,8 @@
         color: { dark: '#000000', light: '#ffffff' },
       });
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      console.error('QR generation failed', e);
+      error = t('qr.failed');
     }
   }
 
@@ -54,7 +55,7 @@
 <div class={cls}>
   {#if error}
     <div class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-xs">
-      QR generation failed: {error}
+      {error}
     </div>
   {:else}
     <canvas

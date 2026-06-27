@@ -17,7 +17,7 @@
   import EyeOff from '@lucide/svelte/icons/eye-off';
 
   // The ONLY member sign-in path post-migration: the random account number
-  // (no OIDC, no password). Turnstile gates every attempt server-side; we just
+  // (no OIDC, no password). A Cap proof-of-work check gates every attempt; we just
   // collect the token + number and POST. On success the server sets the signed
   // fs_session cookie and we bounce to /account.
   const config = configQuery();

@@ -104,16 +104,16 @@
                 <!-- The lazy admin chunk failed to load (flaky network / stale
                      cache) — without this branch the page is silently blank. -->
                 <div class="text-center py-16 space-y-3">
-                  <h1 class="text-xl font-display font-bold">Couldn't load the admin console</h1>
+                  <h1 class="text-xl font-display font-bold">{t('app.adminLoadFailedTitle')}</h1>
                   <p class="text-sm text-muted-foreground">
-                    The network request for this section failed. Reload to retry.
+                    {t('app.adminLoadFailedBody')}
                   </p>
                   <button
                     type="button"
                     class="text-primary underline"
                     onclick={() => window.location.reload()}
                   >
-                    Reload
+                    {t('common.reload')}
                   </button>
                 </div>
               {/await}

@@ -75,7 +75,7 @@ export const meQuery = () =>
   }));
 
 /**
- * Public config (member portal URLs, Turnstile site key, environment, backend
+ * Public config (member portal URLs, Cap captcha site key, environment, backend
  * toggles). Most fields are env-var driven and only change on redeploy, but
  * the backend toggles are admin-editable at runtime, so we set staleTime to
  * 5 min instead of Infinity. That bounds the worst-case staleness after an

@@ -5,7 +5,6 @@
     "copied": "已复制到剪贴板",
     "copyFailed": "复制失败——请选中文本手动复制",
     "download": "下载",
-    "print": "打印",
     "cancel": "取消",
     "close": "关闭",
     "retry": "重试",
@@ -143,8 +142,7 @@
     "expiredTitle": "你的会员已过期",
     "body": "FreeSocks 由社区捐助运营。要续订会员，请捐款或联系我们获取会员码。",
     "donate": "捐款",
-    "contact": "联系我们",
-    "haveCode": "有会员码？在上方兑换。"
+    "contact": "联系我们"
   },
   "error": {
     "offline": "你似乎已离线。请检查网络连接后重试。",
@@ -165,7 +163,6 @@
       "import": "打开它，添加订阅/配置文件，并粘贴你的链接",
       "connect": "选择一个服务器并连接"
     },
-    "qrHint": "或用手机扫描此二维码来传输链接。",
     "noDeviceLimit": "无设备限制",
     "hwidNote": "如果套餐包含有限数量的设备，请在应用程序的设置中启用“设备识别”（HWID），以便识别您的设备。"
   },
@@ -310,14 +307,11 @@
     "yourTier": "你的套餐",
     "gbPerMonth": "每月 {gb} GB",
     "mirrors": "镜像链接",
-    "comingSoon": "即将推出",
-    "comingSoonTitle": "会员注册即将开放",
     "upgradeCta": "升级"
   },
   "impact": {
     "title": "捐款支持 Unredacted",
-    "body": "Unredacted 是美国 501(c)(3) 非营利组织，FreeSocks 是其运营的项目之一。捐款支持这项工作。详情请见 Unredacted 网站。",
-    "membershipSoon": "会员（即将推出）"
+    "body": "Unredacted 是美国 501(c)(3) 非营利组织，FreeSocks 是其运营的项目之一。捐款支持这项工作。详情请见 Unredacted 网站。"
   },
   "qr": {
     "ariaLabel": "订阅链接二维码"
