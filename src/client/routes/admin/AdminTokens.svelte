@@ -23,12 +23,12 @@
   let pendingRevoke = $state<{ id: string; name: string } | null>(null);
 
   const revoke = createMutation(() => ({
-    mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/tokens/${id}`, z.object({ ok: z.boolean() })),
-    onSuccess: (_data, id) => {
+    mutationFn: (vars: { id: string; name: string }) =>
+      apiClient.delete(`/api/v1/admin/tokens/${vars.id}`, z.object({ ok: z.boolean() })),
+    onSuccess: (_data, vars) => {
       void qc.invalidateQueries({ queryKey: queryKeys.adminTokens });
       pendingRevoke = null;
-      toast.success(`Token #${id} revoked`);
+      toast.success(`Token "${vars.name}" revoked`);
     },
     onError: (err) => {
       toast.error('Revoke failed', { description: apiErrorMessage(err) });
@@ -152,7 +152,7 @@
       <AlertDialog.Footer>
         <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
         <AlertDialog.Action
-          onclick={() => pendingRevoke && revoke.mutate(pendingRevoke.id)}
+          onclick={() => pendingRevoke && revoke.mutate(pendingRevoke)}
           disabled={revoke.isPending}
         >
           {revoke.isPending ? 'Revoking…' : 'Revoke'}

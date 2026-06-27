@@ -22,7 +22,23 @@
   let scopes = $state<Set<ApiScope>>(new Set());
   let expiry = $state<string>('none');
 
-  const allScopes: ApiScope[] = [...SCOPE_GROUPS.member, ...SCOPE_GROUPS.admin];
+  const SCOPE_SECTIONS = [
+    { label: 'Member', scopes: SCOPE_GROUPS.member },
+    { label: 'Admin', scopes: SCOPE_GROUPS.admin },
+  ] as const;
+
+  function groupAllSelected(group: readonly ApiScope[]): boolean {
+    return group.every((s) => scopes.has(s));
+  }
+
+  function toggleGroup(group: readonly ApiScope[], next: boolean) {
+    const draft = new Set(scopes);
+    for (const s of group) {
+      if (next) draft.add(s);
+      else draft.delete(s);
+    }
+    scopes = draft;
+  }
 
   const expiryLabel = $derived(
     expiry === 'none'
@@ -90,16 +106,30 @@
 
       <div>
         <span class="text-xs text-muted-foreground mb-1 block">Scopes</span>
-        <div class="space-y-1.5 max-h-48 overflow-y-auto border rounded p-2">
-          {#each allScopes as s (s)}
-            <label class="flex items-center gap-2 cursor-pointer text-sm">
-              <Checkbox
-                checked={scopes.has(s)}
-                onCheckedChange={(next) => toggle(s, next === true)}
-                id={`scope-${s}`}
-              />
-              <code>{s}</code>
-            </label>
+        <div class="space-y-3 max-h-60 overflow-y-auto border rounded p-2">
+          {#each SCOPE_SECTIONS as section (section.label)}
+            <div class="space-y-1.5">
+              <label class="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                <Checkbox
+                  checked={groupAllSelected(section.scopes)}
+                  onCheckedChange={(next) => toggleGroup(section.scopes, next === true)}
+                  id={`scope-group-${section.label}`}
+                />
+                <span>All {section.label.toLowerCase()} scopes</span>
+              </label>
+              <div class="ps-6 space-y-1.5">
+                {#each section.scopes as s (s)}
+                  <label class="flex items-center gap-2 cursor-pointer text-sm">
+                    <Checkbox
+                      checked={scopes.has(s)}
+                      onCheckedChange={(next) => toggle(s, next === true)}
+                      id={`scope-${s}`}
+                    />
+                    <code>{s}</code>
+                  </label>
+                {/each}
+              </div>
+            </div>
           {/each}
         </div>
       </div>

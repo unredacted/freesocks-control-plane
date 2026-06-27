@@ -1262,7 +1262,7 @@ http.route({
   }),
 });
 
-// POST /api/v1/admin/users/{id}/{op}  (op ∈ disable | reset-traffic | resync)
+// POST /api/v1/admin/users/{id}/{op}  (op ∈ disable | re-enable | reset-traffic | resync)
 http.route({
   pathPrefix: '/api/v1/admin/users/',
   method: 'POST',
@@ -1270,7 +1270,7 @@ http.route({
     const admin = await resolveAdmin(ctx, req, 'admin:users:write');
     if (!admin) return ADMIN_UNAUTH();
     const { id, op } = userIdAndOp(req);
-    if (op !== 'disable' && op !== 'reset-traffic' && op !== 'resync') {
+    if (op !== 'disable' && op !== 're-enable' && op !== 'reset-traffic' && op !== 'resync') {
       return errorJson('not_found', `Unknown user op "${op}"`, 404);
     }
     try {

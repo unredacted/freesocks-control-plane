@@ -29,10 +29,11 @@
    * settings atomically.
    *
    * Adding a new setting:
-   *   1. Add it to `SETTINGS_SCHEMA` in `src/server/services/app-settings.ts`.
+   *   1. Add it to `SETTINGS_DEFAULTS` in `convex/appSettings.ts` (the keyset
+   *      allowlist the admin PATCH route validates against).
    *   2. Add a row below in `FIELDS` describing how to render it.
-   * The PATCH handler validates each value server-side against the
-   * server-side Zod schema, so a UI bug can't persist a bad value.
+   * The PATCH handler rejects any key not in `SETTINGS_DEFAULTS`, so a UI bug
+   * can't persist an unknown setting.
    */
 
   const settings = appSettingsQuery();

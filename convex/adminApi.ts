@@ -478,6 +478,37 @@ export const disableUser = internalMutation({
   },
 });
 
+/**
+ * Inverse of disableUser: lift a disabled account back to active and clear the
+ * suspension fields. Idempotent — only acts on a `disabled` user. NOTE: this
+ * clears the suspension only; a user disabled because a PAID membership lapsed
+ * will be re-swept (active→grace→disabled) unless their membership is also
+ * extended (admin grant / redemption / billing — W2). Free users have no
+ * expiry, so they simply stay active.
+ */
+export const reEnableUser = internalMutation({
+  args: { userId: v.id('users'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { userId, actorAdminId }) => {
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error('user not found');
+    if (user.status !== 'disabled') return { ok: true as const };
+    await ctx.db.patch(userId, {
+      status: 'active',
+      disabledReason: undefined,
+      suspendedAt: undefined,
+      updatedAt: Date.now(),
+    });
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.user.reenable',
+      targetType: 'user',
+      targetId: userId,
+    });
+    return { ok: true as const };
+  },
+});
+
 /** The user's active subscription (backend + backendUserId) for admin ops. */
 export const activeSubForUser = internalQuery({
   args: { userId: v.id('users') },
@@ -518,7 +549,12 @@ export const recordUserOpAudit = internalMutation({
 export const runUserOp = internalAction({
   args: {
     userId: v.id('users'),
-    op: v.union(v.literal('disable'), v.literal('reset-traffic'), v.literal('resync')),
+    op: v.union(
+      v.literal('disable'),
+      v.literal('re-enable'),
+      v.literal('reset-traffic'),
+      v.literal('resync'),
+    ),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { userId, op, actorAdminId }): Promise<{ ok: true }> => {
@@ -531,6 +567,23 @@ export const runUserOp = internalAction({
             backend: sub.backend,
             backendUserId: sub.backendUserId,
             patch: { status: 'disabled' },
+          });
+        } catch {
+          /* best-effort: local state is authoritative; cron/edit will reconcile */
+        }
+      }
+      return { ok: true };
+    }
+
+    if (op === 're-enable') {
+      await ctx.runMutation(internal.adminApi.reEnableUser, { userId, actorAdminId });
+      const sub = await ctx.runQuery(internal.adminApi.activeSubForUser, { userId });
+      if (sub) {
+        try {
+          await ctx.runAction(internal.backends.updateUser, {
+            backend: sub.backend,
+            backendUserId: sub.backendUserId,
+            patch: { status: 'active' },
           });
         } catch {
           /* best-effort: local state is authoritative; cron/edit will reconcile */

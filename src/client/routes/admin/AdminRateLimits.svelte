@@ -45,12 +45,41 @@
     return `${Math.round(ms / 1000)}s`;
   }
 
+  // Window editing in human units (value + unit) instead of raw milliseconds.
+  const UNIT_MS = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
+  type WindowUnit = keyof typeof UNIT_MS;
+  const UNIT_LABEL: Record<WindowUnit, string> = {
+    s: 'seconds',
+    m: 'minutes',
+    h: 'hours',
+    d: 'days',
+  };
+
+  function decomposeWindow(ms: number): { value: number; unit: WindowUnit } {
+    if (ms % UNIT_MS.d === 0) return { value: ms / UNIT_MS.d, unit: 'd' };
+    if (ms % UNIT_MS.h === 0) return { value: ms / UNIT_MS.h, unit: 'h' };
+    if (ms % UNIT_MS.m === 0) return { value: ms / UNIT_MS.m, unit: 'm' };
+    return { value: Math.max(1, Math.round(ms / UNIT_MS.s)), unit: 's' };
+  }
+
+  // Once an admin touches a row we track their explicit value+unit so the field
+  // doesn't normalize units mid-edit (typing "60" in minutes flipping to "1 h").
+  let winUi = $state<Record<string, { value: number; unit: WindowUnit }>>({});
+  function winUiFor(p: RateLimitPolicyAdmin) {
+    return winUi[p.key] ?? decomposeWindow(draftFor(p).windowMs);
+  }
+  function setWindow(key: string, value: number, unit: WindowUnit) {
+    winUi = { ...winUi, [key]: { value, unit } };
+    setDraft(key, { windowMs: Math.round(value * UNIT_MS[unit]) });
+  }
+
   const save = createMutation(() => ({
     mutationFn: (body: z.infer<typeof RateLimitUpdateRequest>) =>
       apiClient.patch('/api/v1/admin/rate-limits', body, RateLimitListResponse),
     onSuccess: (_data, body) => {
       void qc.invalidateQueries({ queryKey: queryKeys.adminRateLimits });
       drafts = Object.fromEntries(Object.entries(drafts).filter(([k]) => k !== body.policyKey));
+      winUi = Object.fromEntries(Object.entries(winUi).filter(([k]) => k !== body.policyKey));
       toast.success(`Updated ${body.policyKey}`);
     },
     onError: (err) => toast.error('Update failed', { description: apiErrorMessage(err) }),
@@ -94,6 +123,7 @@
     <ul class="divide-y divide-border rounded-lg border border-border bg-card">
       {#each policies.data ?? [] as p (p.key)}
         {@const d = draftFor(p)}
+        {@const w = winUiFor(p)}
         {@const dirty = d.max !== p.max || d.windowMs !== p.windowMs || d.enabled !== p.enabled}
         <li class="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
           <div class="min-w-0 flex-1">
@@ -122,16 +152,29 @@
             />
           </label>
           <label class="flex items-center gap-1">
-            <span class="text-xs text-muted-foreground">window ms</span>
+            <span class="text-xs text-muted-foreground">window</span>
             <Input
               type="number"
-              min={1000}
-              class="min-h-9 w-28"
-              value={d.windowMs}
+              min={1}
+              class="min-h-9 w-20"
+              value={w.value}
               oninput={(e) =>
-                setDraft(p.key, { windowMs: Number((e.currentTarget as HTMLInputElement).value) })}
+                setWindow(p.key, Number((e.currentTarget as HTMLInputElement).value), w.unit)}
             />
-            <span class="text-xs text-muted-foreground">({humanWindow(d.windowMs)})</span>
+            <select
+              class="min-h-9 rounded-md border border-input bg-background px-2 text-xs"
+              value={w.unit}
+              onchange={(e) =>
+                setWindow(
+                  p.key,
+                  w.value,
+                  (e.currentTarget as HTMLSelectElement).value as WindowUnit,
+                )}
+            >
+              {#each Object.keys(UNIT_MS) as u (u)}
+                <option value={u}>{UNIT_LABEL[u as WindowUnit]}</option>
+              {/each}
+            </select>
           </label>
           <label class="flex items-center gap-1.5">
             <Checkbox

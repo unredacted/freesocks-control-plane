@@ -16,7 +16,7 @@
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
 
-  type UserOp = 'disable' | 'reset-traffic' | 'resync';
+  type UserOp = 'disable' | 're-enable' | 'reset-traffic' | 'resync';
 
   // Confirmation copy lives next to the operation it belongs to. `resync` is
   // non-destructive so it skips the dialog entirely.
@@ -32,6 +32,8 @@
         description:
           'This zeroes their counter on the proxy backend so they get a fresh allotment for the current period.',
       }),
+      // Restorative actions fire immediately (no confirmation gate).
+      're-enable': () => null,
       resync: () => null,
     };
 
@@ -80,9 +82,11 @@
       const verb =
         vars.op === 'disable'
           ? 'disabled'
-          : vars.op === 'reset-traffic'
-            ? 'had traffic reset'
-            : 're-synced';
+          : vars.op === 're-enable'
+            ? 're-enabled'
+            : vars.op === 'reset-traffic'
+              ? 'had traffic reset'
+              : 're-synced';
       toast.success(`User ${verb}`);
       pending = null;
     },
@@ -228,14 +232,25 @@
               >
                 Force resync
               </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={busy || u.status === 'disabled'}
-                onclick={() => startAction(u, 'disable')}
-              >
-                {u.status === 'disabled' ? 'Disabled' : 'Disable'}
-              </Button>
+              {#if u.status === 'disabled'}
+                <Button
+                  size="sm"
+                  variant="default"
+                  disabled={busy}
+                  onclick={() => startAction(u, 're-enable')}
+                >
+                  Re-enable
+                </Button>
+              {:else}
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={busy}
+                  onclick={() => startAction(u, 'disable')}
+                >
+                  Disable
+                </Button>
+              {/if}
             </div>
           </CardContent>
         </Card>

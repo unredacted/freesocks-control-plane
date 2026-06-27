@@ -150,6 +150,57 @@ describe('adminApi usersSearch', () => {
   });
 });
 
+describe('adminApi reEnableUser', () => {
+  const freeTier = {
+    slug: 'free',
+    name: 'Free',
+    backend: 'remnawave' as const,
+    monthlyTrafficGb: 50,
+    deviceLimit: 1,
+    hwidLimit: 1,
+    hwidEnabled: true,
+    trafficStrategy: 'MONTH' as const,
+    isDefaultFree: true,
+    isActive: true,
+    priority: 0,
+    expirationDaysAfterMembershipLapse: 0,
+  };
+
+  test('flips a disabled user back to active and clears the suspension fields', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', { ...freeTier, updatedAt: Date.now() });
+      return ctx.db.insert('users', {
+        tierId,
+        status: 'disabled',
+        disabledReason: 'admin_action',
+        suspendedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await t.mutation(internal.adminApi.reEnableUser, { userId });
+
+    const user = await t.run((ctx) => ctx.db.get(userId));
+    expect(user?.status).toBe('active');
+    expect(user?.disabledReason).toBeUndefined();
+    expect(user?.suspendedAt).toBeUndefined();
+  });
+
+  test('is a no-op for a user who is not disabled', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', { ...freeTier, updatedAt: Date.now() });
+      return ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+    });
+
+    await t.mutation(internal.adminApi.reEnableUser, { userId });
+
+    const user = await t.run((ctx) => ctx.db.get(userId));
+    expect(user?.status).toBe('active');
+  });
+});
+
 describe('adminApi.maskApiUrl', () => {
   test('keeps scheme+host and redacts the secret path', () => {
     expect(maskApiUrl('https://outline.example.com:8443/SeCrEtPaTh/abc')).toBe(
