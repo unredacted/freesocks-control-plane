@@ -38,14 +38,15 @@ Files: `docker-compose.beta.yml`, `Caddyfile`, `docker/web.Dockerfile`,
 ```sh
 cp .env.beta.example   .env.beta      # infra: Caddy + backend identity + Postgres + E2EE pins
 cp .env.convex.example .env.convex    # Convex deployment secrets
-bun scripts/bootstrap-secrets.mjs     # generate every GENERATABLE secret (idempotent)
+bun run bootstrap                     # installs deps (if stale) + generates every secret (idempotent)
 $EDITOR .env.beta .env.convex         # then fill the EXTERNAL creds by hand (below)
 ```
 
 **Generated for you** — the layered, idempotent secret setup (never overwrites a
 value already set, so it is safe to re-run on testing/beta/prod):
 
-- `bun scripts/bootstrap-secrets.mjs` fills `.env.beta`'s `INSTANCE_SECRET`,
+- `bun run bootstrap` (which runs `bun install --frozen-lockfile` first — so it works on a
+  fresh/stale host — then `scripts/bootstrap-secrets.mjs`) fills `.env.beta`'s `INSTANCE_SECRET`,
   `POSTGRES_PASSWORD`, `CAP_ADMIN_KEY` (it prints `CAP_ADMIN_KEY` — you need it to
   log into the Cap dashboard), and generates the **CDN-blinding keypair**: the
   `VITE_FS_*` public pins in `.env.beta` (baked into the SPA build) + the matching

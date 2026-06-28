@@ -19,7 +19,7 @@
     "selfhost:down": "docker compose --env-file .env.docker down",
     "selfhost:admin-key": "docker compose --env-file .env.docker exec backend ./generate_admin_key.sh",
     "selfhost:env": "bash scripts/selfhost-env.sh",
-    "bootstrap": "bun scripts/bootstrap-secrets.mjs",
+    "bootstrap": "bun install --frozen-lockfile && bun scripts/bootstrap-secrets.mjs",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "typecheck": "bun run i18n:compile && tsc -b --noEmit && tsc -p convex/tsconfig.json --noEmit && svelte-check --workspace . --threshold error",
