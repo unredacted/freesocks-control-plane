@@ -1,27 +1,46 @@
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/svelte-query';
 import { ApiCallError } from './api';
+import { clearSessionKey } from './pop';
 
 /**
- * When an admin query or mutation returns 401, bounce the user to `/admin`
- * (the entry page that renders the login form when an admin exists, or the
- * bootstrap form otherwise). Without this, a deep-link to a page like
- * `/admin/settings` after the session expires just shows a raw "auth.invalid"
- * error inline, confusing for the operator who expects to be prompted to
- * sign in again.
+ * When an admin query or mutation returns 401, sign the admin out and bounce to
+ * `/admin` (the entry page that renders the login form). Without this, a
+ * deep-link after the session expires just shows a raw "auth.invalid" inline.
+ *
+ * Why a full sign-out and not a bare redirect: the `/admin` entry decides
+ * "already signed in?" from the COOKIE-ONLY status probe (no PoP, by design).
+ * A 401 here can mean the cookie expired OR the session is PoP-bound but the
+ * client can't satisfy it (e.g. a stale IndexedDB key after a deploy). A bare
+ * redirect to `/admin` would see the still-valid cookie, bounce back into the
+ * app, 401 again → an infinite loop. Clearing the cookie (logout endpoint) +
+ * the local PoP key/token makes the probe report signed-out, so the loop breaks
+ * and a fresh passkey login re-binds a new key + token.
  *
  * We discriminate "admin" requests via the query-key prefix (`['admin', …]`,
  * shared via `queryKeys.admin*` in queries.ts) for queries, and via the
- * mutation's failure path for mutations. The redirect is suppressed when
- * the user is already on `/admin` (the login page itself) so we don't loop.
+ * mutation's failure path for mutations. Suppressed when already on `/admin`.
  */
 function isAdminQueryKey(key: readonly unknown[]): boolean {
   return key.length > 0 && key[0] === 'admin';
 }
 
-function redirectToAdminLoginIfNeeded(): void {
+let adminSignOutInFlight = false;
+async function signOutAdminAndRedirect(): Promise<void> {
   if (typeof window === 'undefined') return;
-  if (window.location.pathname === '/admin') return; // already there
-  window.location.href = '/admin';
+  if (window.location.pathname === '/admin') return; // already at the login entry
+  if (adminSignOutInFlight) return; // several admin queries can 401 at once
+  adminSignOutInFlight = true;
+  try {
+    // Clear the cookie server-side so the cookie-only status probe flips to
+    // signed-out (best effort — proceed even if it fails).
+    await fetch('/api/admin/auth/logout', { method: 'POST', credentials: 'include' }).catch(
+      () => {},
+    );
+    // Clear the local PoP key + per-session token so the next login binds fresh.
+    await clearSessionKey('admin').catch(() => {});
+  } finally {
+    window.location.href = '/admin';
+  }
 }
 
 /**
@@ -53,7 +72,7 @@ export const queryClient = new QueryClient({
         error.status === 401 &&
         isAdminQueryKey(query.queryKey)
       ) {
-        redirectToAdminLoginIfNeeded();
+        void signOutAdminAndRedirect();
       }
     },
   }),
@@ -63,7 +82,7 @@ export const queryClient = new QueryClient({
       // Mutations don't have a query-key, but they sit on admin pages whose
       // queries do. Use the page path as the discriminator instead.
       if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
-        redirectToAdminLoginIfNeeded();
+        void signOutAdminAndRedirect();
       }
       // `mutation` is referenced for future per-mutation discrimination if
       // we ever need it (e.g. exempt specific mutations from auto-redirect).
