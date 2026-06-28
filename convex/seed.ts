@@ -130,6 +130,16 @@ export const seedAppSettings = internalMutation({
  * DB-managed backend instances: after the first seed, edit it (and add more) in
  * the admin CMS, and the REMNAWAVE_* env vars can be removed. No-op if the env
  * is unset (a fresh install adds instances entirely via the CMS).
+ *
+ * STEADY-STATE OWNERSHIP: once an `ansible-role-freesocks` deploy registers the
+ * panel (`fcp_register_remnawave_panel`), the role is the single ongoing writer
+ * via the idempotent `PUT …/backend-servers/by-slug/{slug}` upsert. The two do
+ * not fight: this seed only inserts when the `remnawave-primary` slug is ABSENT,
+ * and the role's upsert is keep-secret-on-blank, so a converge that omits the
+ * apiToken preserves whatever is stored. Pick ONE source of truth for the
+ * credential (env-seed for env-managed deployments, the role's vault otherwise)
+ * — set the role's `fcp_remnawave_panel_slug` to match this `remnawave-primary`
+ * slug to converge the same row rather than create a second instance.
  */
 export const seedBackendServersFromEnv = internalMutation({
   args: {},
