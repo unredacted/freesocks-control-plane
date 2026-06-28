@@ -19,38 +19,35 @@
  * 1363) 64-byte signature, NOT DER, and does NOT enforce low-S, so the noble
  * verifier must read compact and pass `lowS: false` (see verifyP1363).
  *
- * Canonical message (UTF-8, '\n'-joined). Pre-prod there is exactly ONE version:
+ * Canonical message (UTF-8, '\n'-joined), versioned so Phase 3 can add host
+ * binding as a v2 bump without breaking the wire format:
  *   FCP-PoP v1
  *   METHOD
  *   path                (normalized, no query)
  *   canonicalQuery      (sorted, percent-encoded)
- *   host                (location.host; cross-vhost replay binding)
- *   respEph             (reveal-leg response-ephemeral, or '')
- *   sessionToken        (the public per-session token; binds the sig to ONE session)
  *   bodyHashB64         (base64url SHA-256 of the EXACT wire body bytes)
  *   ts                  (epoch ms, decimal)
  *   nonceB64            (base64url of 16 random bytes, single-use)
  *
- * The host is reconstructed server-side from a client-declared header (so the
- * signature authenticates it) and allowlist-checked when configured. The
- * sessionToken closes the cross-session signature-lift: the client persists one
- * P-256 key across logins, so without it a signature made under session A could
- * be replayed onto session B that reuses the same key (the replayGuard nonce is
- * scoped per-sid). The single-use nonce + ts window defeat same-session replay.
+ * Host/`:authority` is deliberately NOT bound in v1 (the dev reverse proxy
+ * rewrites Host with `changeOrigin`, same reason envelope.buildInfo omits it);
+ * cross-vhost replay coverage is a Phase 3 v2 concern. The single-use nonce
+ * (replayGuard) + ts window already defeat same-host replay, which is the real
+ * passive-CDN threat.
  */
 import { p256 } from '@noble/curves/nist.js';
 import { bytesToB64Url, canonicalQuery, normalizePath, sha256 } from './envelope';
 
 export const POP_PREFIX = 'FCP-PoP';
 /**
- * The single PoP canonical-message version. This is pre-prod (beta), so there is
- * no inter-release wire compatibility to preserve and exactly ONE format is
- * accepted: `v1` binds host + reveal-leg ephemeral + the per-session token (see
- * buildPopMessage). The version line stays for crypto domain separation and a
- * clean future bump after prod launch.
+ * Current PoP canonical-message version the client signs. v2 (Phase 3) adds two
+ * lines after the query: the host and the reveal-leg response-ephemeral, so a
+ * captured request cannot be replayed cross-vhost and an active CDN cannot swap
+ * the GET reveal-leg ephemeral header undetected. The server still accepts v1
+ * during rollout (POP_ACCEPTED_VERSIONS).
  */
-export const POP_VERSION = 'v1';
-export const POP_ACCEPTED_VERSIONS = ['v1'] as const;
+export const POP_VERSION = 'v2';
+export const POP_ACCEPTED_VERSIONS = ['v1', 'v2'] as const;
 /** WebCrypto JWK `alg` for the session key; stored on the session row for agility. */
 export const POP_ALG = 'ES256';
 
@@ -72,18 +69,6 @@ export const POP_HOST_HEADER = 'x-fs-pop-host';
 export const POP_PUBKEY_FIELD = 'fsPopPub';
 
 /**
- * NON-httpOnly cookie carrying the PUBLIC per-session token (pst). It binds each
- * PoP signature to exactly one session: the client reads it and signs it into the
- * canonical message; the server reconstructs the message with the session row's
- * OWN stored pst, so a signature is provably for that session and cannot be
- * lifted onto another session that reuses the same persisted key. The pst is NOT
- * a secret — it authorizes nothing without the non-extractable private key — so a
- * client-readable cookie is the correct transport, and the server NEVER trusts
- * the cookie value, only the pst it stored at login.
- */
-export const POP_SID_COOKIE = 'fs_pop_sid';
-
-/**
  * PoP freshness window: a signature's `ts` must be within +/- this of server
  * time (symmetric, so it tolerates modest clock skew in either direction without
  * a server-time resync channel; an explicit clock_skew resync is a Phase 3
@@ -93,23 +78,17 @@ export const POP_SID_COOKIE = 'fs_pop_sid';
 export const POP_WINDOW_MS = 60_000;
 
 export interface PopMessageParts {
-  /** Canonical-message version (defaults to the single POP_VERSION). */
+  /** Canonical-message version ('v2' default; 'v1' only for back-compat verify). */
   version?: string;
   method: string;
   /** Pathname only, no query string. */
   path: string;
   /** Raw query string without a leading '?'. */
   query?: string;
-  /** The host (location.host). Bound so a request cannot be replayed cross-vhost. */
+  /** v2: the host (location.host). Bound so a request cannot be replayed cross-vhost. */
   host?: string;
-  /** The reveal-leg response-ephemeral (the x-fs-resp-eph header value), or ''. */
+  /** v2: the reveal-leg response-ephemeral (the x-fs-resp-eph header value), or ''. */
   respEph?: string;
-  /**
-   * The public per-session token (fs_pop_sid cookie). Binds the signature to one
-   * session. Empty string ONLY for a client that has no token yet (then the
-   * server, which reconstructs with the session's real pst, rejects it → re-auth).
-   */
-  sessionToken: string;
   /** base64url SHA-256 of the exact wire body bytes (see digestB64Url). */
   bodyHashB64: string;
   /** Epoch milliseconds. */
@@ -119,23 +98,21 @@ export interface PopMessageParts {
 }
 
 /**
- * Build the canonical PoP message bytes. Identical on client and server — the
- * single source of truth, so the two cannot drift. One format (see the file
- * header): host + reveal-ephemeral + per-session token are always included.
+ * Build the canonical PoP message bytes. Identical on client and server. v2
+ * inserts host + reveal-ephemeral after the query; v1 (back-compat) omits them.
  */
 export function buildPopMessage(p: PopMessageParts): Uint8Array {
+  const version = p.version ?? POP_VERSION;
   const lines = [
-    `${POP_PREFIX} ${p.version ?? POP_VERSION}`,
+    `${POP_PREFIX} ${version}`,
     p.method.toUpperCase(),
     normalizePath(p.path),
     canonicalQuery(p.query),
-    p.host ?? '',
-    p.respEph ?? '',
-    p.sessionToken,
-    p.bodyHashB64,
-    String(p.ts),
-    p.nonceB64,
   ];
+  if (version === 'v2') {
+    lines.push(p.host ?? '', p.respEph ?? '');
+  }
+  lines.push(p.bodyHashB64, String(p.ts), p.nonceB64);
   return new TextEncoder().encode(lines.join('\n'));
 }
 

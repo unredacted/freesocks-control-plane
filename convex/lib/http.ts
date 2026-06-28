@@ -30,26 +30,16 @@ export function secureCookies(): boolean {
   return process.env.ENVIRONMENT !== 'development';
 }
 
-export function json(
-  data: unknown,
-  status = 200,
-  headers: Record<string, string> = {},
-  cookies: string[] = [],
-): Response {
+export function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
   // no-store by default: several responses carry secrets (the subscription URL
   // IS the proxy key; /account is the credential surface) and must never land
   // in a shared/intermediary cache if the fronting topology ever changes.
   // Routes that are genuinely cacheable override via `headers` (the spread
   // wins — e.g. /api/v1/e2ee/keys sets 'cache-control: public, max-age=60').
-  const h = new Headers({
-    'content-type': 'application/json',
-    'cache-control': 'no-store',
-    ...headers,
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers },
   });
-  // A Headers built from an object holds at most one 'set-cookie'; append any
-  // EXTRA cookies (e.g. the non-httpOnly fs_pop_sid set alongside the session).
-  for (const c of cookies) h.append('set-cookie', c);
-  return new Response(JSON.stringify(data), { status, headers: h });
 }
 
 export function errorJson(
@@ -154,11 +144,9 @@ export async function wireBodyText(req: Request): Promise<string> {
  * unauthenticated.
  *
  *  - Bound session (popPublicKey set): a fresh, in-window, non-replayed
- *    signature from the bound key is REQUIRED, AND it must bind the session's own
- *    public per-session token (so a signature cannot be lifted onto another
- *    session that reuses the same persisted key). Missing/invalid/replayed/
- *    wrong-token -> false (the re-bind rule: never silently accept a new key on
- *    an old sid, which a captured cookie could abuse).
+ *    signature from the bound key is REQUIRED. Missing/invalid/replayed -> false
+ *    (the re-bind rule: never silently accept a new key on an old sid, which a
+ *    captured cookie could abuse).
  *  - Legacy/unbound session (predates Phase 2): cookie alone is accepted until
  *    POP_REQUIRED is enabled, then rejected so the client re-logs-in and binds.
  */
@@ -167,18 +155,13 @@ async function sessionPopOk(
   req: Request,
   sid: string,
   popPublicKey: string | undefined,
-  sessionToken: string | undefined,
 ): Promise<boolean> {
   if (!popPublicKey) return process.env.POP_REQUIRED !== 'true';
-  // A PoP-bound session must also carry its public per-session token (minted at
-  // login + bound into the signature). A bound session without one predates this
-  // change → force re-auth. Beta-only breakage; no inter-release compat is kept.
-  if (!sessionToken) return false;
   const fields = extractPopFields(req);
   if (!fields) return false;
   const url = new URL(req.url);
-  // host + reveal-leg ephemeral are client-declared headers (the signature
-  // authenticates them); the session token is the server's OWN stored pst.
+  // v2 binds host + the reveal-leg ephemeral; both come from request headers (the
+  // signature authenticates them). v1 ignores them (back-compat during rollout).
   const host = req.headers.get(POP_HOST_HEADER) ?? undefined;
   const respEph = req.headers.get('x-fs-resp-eph') ?? undefined;
   const { verdict, nonceHash } = await evaluatePop({
@@ -188,18 +171,19 @@ async function sessionPopOk(
     query: url.search.startsWith('?') ? url.search.slice(1) : url.search,
     host,
     respEph,
-    sessionToken,
     wireBody: await wireBodyText(req),
     fields,
     nowMs: Date.now(),
   });
   if (verdict !== 'ok' || !nonceHash) return false;
-  // Cross-vhost check: the now-authenticated declared host must be in the
+  // v2 cross-vhost check: the now-authenticated declared host must be in the
   // allowlist when one is configured (else the bind is tamper-evident but not
   // enforced, so a deployment without POP_EXPECTED_HOST/WEBAUTHN_ORIGIN cannot
-  // lock itself out). The host is always bound now (single v1 message).
-  const allowed = allowedPopHosts();
-  if (allowed.length > 0 && (!host || !allowed.includes(host.toLowerCase()))) return false;
+  // lock itself out).
+  if (fields.version !== 'v1') {
+    const allowed = allowedPopHosts();
+    if (allowed.length > 0 && (!host || !allowed.includes(host.toLowerCase()))) return false;
+  }
   const consumed = await ctx.runMutation(internal.replayGuard.consumeNonce, {
     sid,
     nonceHash,
@@ -299,7 +283,7 @@ export async function resolveMember(
     if (sid) {
       const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
       if (sess && sess.kind === 'member' && sess.userId) {
-        if (await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken)) {
+        if (await sessionPopOk(ctx, req, sid, sess.popPublicKey)) {
           return { userId: sess.userId, source: 'cookie' };
         }
         // Bound session without a valid PoP signature: fall through (no bearer
@@ -360,10 +344,7 @@ export async function resolveAdmin(
         const adminRow = await ctx.runQuery(internal.admins.getById, {
           adminUserId: sess.adminUserId,
         });
-        if (
-          adminRow?.isActive &&
-          (await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken))
-        ) {
+        if (adminRow?.isActive && (await sessionPopOk(ctx, req, sid, sess.popPublicKey))) {
           return { adminUserId: sess.adminUserId, sid };
         }
         // Inactive admin, or a bound session without valid PoP: fall through to

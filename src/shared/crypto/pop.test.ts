@@ -23,7 +23,6 @@ async function sessionKey() {
 const baseParts = (over: Partial<PopMessageParts> = {}): PopMessageParts => ({
   method: 'POST',
   path: '/api/v1/account/regenerate',
-  sessionToken: 'tok-default',
   bodyHashB64: 'AAAA',
   ts: 1_700_000_000_000,
   nonceB64: bytesToB64Url(new Uint8Array(16).fill(7)),
@@ -31,42 +30,38 @@ const baseParts = (over: Partial<PopMessageParts> = {}): PopMessageParts => ({
 });
 
 describe('buildPopMessage', () => {
-  test('v1 layout: version, method, path, query, host, respEph, sessionToken, bodyHash, ts, nonce', () => {
+  test('v2 layout: version, method, path, query, host, respEph, bodyHash, ts, nonce', () => {
     const msg = new TextDecoder().decode(
-      buildPopMessage(
-        baseParts({ query: 'b=2&a=1', host: 'app.example', respEph: 'EPH', sessionToken: 'PST' }),
-      ),
+      buildPopMessage(baseParts({ query: 'b=2&a=1', host: 'app.example', respEph: 'EPH' })),
     );
     const lines = msg.split('\n');
-    expect(lines[0]).toBe('FCP-PoP v1');
-    expect(POP_VERSION).toBe('v1');
+    expect(lines[0]).toBe('FCP-PoP v2');
+    expect(POP_VERSION).toBe('v2');
     expect(lines[1]).toBe('POST');
     expect(lines[2]).toBe('/api/v1/account/regenerate');
     expect(lines[3]).toBe('a=1&b=2'); // canonicalQuery sorts
-    expect(lines[4]).toBe('app.example'); // host
-    expect(lines[5]).toBe('EPH'); // reveal-leg ephemeral
-    expect(lines[6]).toBe('PST'); // per-session token
-    expect(lines[7]).toBe('AAAA'); // bodyHash
-    expect(lines[8]).toBe('1700000000000');
-    expect(lines).toHaveLength(10);
+    expect(lines[4]).toBe('app.example'); // host (v2)
+    expect(lines[5]).toBe('EPH'); // reveal-leg ephemeral (v2)
+    expect(lines[6]).toBe('AAAA'); // bodyHash
+    expect(lines[7]).toBe('1700000000000');
   });
 
-  test('host, respEph, and sessionToken are each bound (changing any changes the message)', () => {
-    const base = buildPopMessage(
-      baseParts({ host: 'a.example', respEph: 'E1', sessionToken: 'S1' }),
+  test('v1 omits host + respEph (back-compat layout)', () => {
+    const msg = new TextDecoder().decode(
+      buildPopMessage(baseParts({ version: 'v1', host: 'ignored', respEph: 'ignored' })),
     );
-    const diffHost = buildPopMessage(
-      baseParts({ host: 'b.example', respEph: 'E1', sessionToken: 'S1' }),
-    );
-    const diffEph = buildPopMessage(
-      baseParts({ host: 'a.example', respEph: 'E2', sessionToken: 'S1' }),
-    );
-    const diffTok = buildPopMessage(
-      baseParts({ host: 'a.example', respEph: 'E1', sessionToken: 'S2' }),
-    );
-    expect(bytesToB64Url(base)).not.toBe(bytesToB64Url(diffHost)); // host bound
-    expect(bytesToB64Url(base)).not.toBe(bytesToB64Url(diffEph)); // respEph bound
-    expect(bytesToB64Url(base)).not.toBe(bytesToB64Url(diffTok)); // sessionToken bound
+    const lines = msg.split('\n');
+    expect(lines[0]).toBe('FCP-PoP v1');
+    expect(lines[4]).toBe('AAAA'); // bodyHash right after query (no host/respEph)
+    expect(lines).toHaveLength(7);
+  });
+
+  test('host and respEph change the v2 message (they are bound)', () => {
+    const a = buildPopMessage(baseParts({ host: 'a.example', respEph: 'E1' }));
+    const b = buildPopMessage(baseParts({ host: 'b.example', respEph: 'E1' }));
+    const c = buildPopMessage(baseParts({ host: 'a.example', respEph: 'E2' }));
+    expect(bytesToB64Url(a)).not.toBe(bytesToB64Url(b)); // host bound
+    expect(bytesToB64Url(a)).not.toBe(bytesToB64Url(c)); // respEph bound
   });
 
   test('query ordering does not change the message (canonicalized)', () => {

@@ -16,27 +16,11 @@ import {
   POP_HOST_HEADER,
   POP_NONCE_HEADER,
   POP_PUBKEY_FIELD,
-  POP_SID_COOKIE,
   POP_SIG_HEADER,
   POP_TS_HEADER,
   POP_VERSION,
   POP_VERSION_HEADER,
 } from '../../shared/crypto/pop';
-
-/**
- * Read the non-httpOnly `fs_pop_sid` cookie — the public per-session token the
- * server set at login. Signed into the PoP message to bind the signature to this
- * session; '' before login or if absent (then the server rejects → re-auth).
- */
-function readSessionToken(): string {
-  if (typeof document === 'undefined') return '';
-  const prefix = `${POP_SID_COOKIE}=`;
-  for (const part of document.cookie.split(';')) {
-    const c = part.trim();
-    if (c.startsWith(prefix)) return c.slice(prefix.length);
-  }
-  return '';
-}
 
 /** Keys are scoped so member and admin never share one (see pop-worker.ts). */
 export type Realm = 'member' | 'admin';
@@ -256,7 +240,6 @@ export async function signedHeaders(
     query,
     host,
     respEph: respEph ?? '',
-    sessionToken: readSessionToken(),
     body: wireBody ?? '',
     tsOffset: await serverTimeOffset(),
   });

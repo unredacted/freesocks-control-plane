@@ -34,8 +34,6 @@ type CreateAccountResult =
       signedCookieValue: string;
       maxAgeSec: number;
       userId: Id<'users'>;
-      /** Public per-session token for the fs_pop_sid cookie (only when PoP-bound). */
-      popSessionToken?: string;
       tier: {
         slug: string;
         name: string;
@@ -185,13 +183,12 @@ export const createFreeAccount = internalAction({
       // Mint a member session + signed cookie so the caller is signed in (same
       // shape as auth.accountLogin; the HTTP layer wraps it in a Set-Cookie).
       const sid = randomHex(32);
-      const popSessionToken = a.popPublicKey ? randomHex(16) : undefined;
       await ctx.runMutation(internal.sessions.create, {
         sid,
         kind: 'member',
         userId: claim.userId,
         ttlMs: MEMBER_TTL_MS,
-        ...(a.popPublicKey ? { popPublicKey: a.popPublicKey, popSessionToken } : {}),
+        ...(a.popPublicKey ? { popPublicKey: a.popPublicKey } : {}),
       });
       const signedCookieValue = await signValue(sid, signingKey);
 
@@ -201,7 +198,6 @@ export const createFreeAccount = internalAction({
         signedCookieValue,
         maxAgeSec: MEMBER_TTL_MS / 1000,
         userId: claim.userId,
-        popSessionToken,
         tier: {
           slug: tier.slug,
           name: tier.name,

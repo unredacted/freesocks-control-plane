@@ -447,11 +447,6 @@ export default defineSchema({
     popPublicKey: v.optional(v.string()),
     popAlg: v.optional(v.string()),
     popBoundAt: v.optional(v.number()),
-    // The PUBLIC per-session token (pst), minted at login + handed to the client
-    // via the non-httpOnly fs_pop_sid cookie. The client signs it into every PoP
-    // message; the server reconstructs with THIS value, binding each signature to
-    // exactly one session. Present iff the session is PoP-bound (popPublicKey set).
-    popSessionToken: v.optional(v.string()),
   })
     .index('by_sid', ['sid'])
     .index('by_expires', ['expiresAt']),

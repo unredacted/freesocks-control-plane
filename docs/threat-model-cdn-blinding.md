@@ -71,21 +71,9 @@ asymmetric key the CDN never sees.
   (`sessions.popPublicKey`). The private key never leaves the Worker and is never exposed to page
   script. Keys are scoped by realm (member vs admin) so the two never share one.
 - Every authenticated request carries `x-fs-pop-{sig,ts,nonce,v}`: a signature over a canonical
-  message (`FCP-PoP v1` + method + path + canonical query + **host** + reveal-leg ephemeral +
-  **per-session token** + **bodyHash** (SHA-256 of the exact wire body) + ts + 16-byte nonce). The
-  bodyHash is over the ciphertext envelope as sent, so PoP is a pure transport-integrity check that
-  runs before HPKE-open and transitively covers `enc`/`kid`/`suiteId`. Pre-prod there is exactly ONE
-  message version — the earlier v1/v2 split (host added as a v2 bump) was collapsed into a single
-  `v1`, since there is no inter-release wire compatibility to preserve before launch.
-- **Session binding (`fs_pop_sid`).** The non-extractable P-256 key persists across logins (it is
-  per-realm in IndexedDB), so a signature must bind the session it authorizes — otherwise one made
-  under session A could be lifted onto session B that reuses the same key (the replay nonce is scoped
-  per-`sid`, so cross-`sid` reuse is not otherwise caught). At login the server mints a non-secret
-  **public per-session token**, stores it on the session row, and hands it to the client in the
-  non-httpOnly `fs_pop_sid` cookie; the client signs it into the canonical message and the server
-  reconstructs the message with its OWN stored token, so a signature verifies for exactly one
-  session. The token is not a credential (it authorizes nothing without the private key), so a
-  client-readable cookie is the correct transport and the server never trusts the wire value.
+  message (`FCP-PoP v1` + method + path + canonical query + **bodyHash** (SHA-256 of the exact wire
+  body) + ts + 16-byte nonce). The bodyHash is over the ciphertext envelope as sent, so PoP is a pure
+  transport-integrity check that runs before HPKE-open and transitively covers `enc`/`kid`/`suiteId`.
 - **Freshness + replay:** the server accepts a signature whose `ts` is within +/- 60s (symmetric, so
   modest clock skew is tolerated), verifies the P1363 signature with `@noble/curves` (pure JS, runs in
   the isolate; `lowS:false` because WebCrypto emits high-S signatures), and consumes the nonce once
@@ -115,10 +103,9 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
   version, rejects an older one, will not seal to a revoked kid, and fails closed on the login route
   if the only seal target is revoked. The break-glass kill switch for a compromised static or epoch
   key. See `convex/keyRevocations.ts`.
-- **PoP host + reveal-leg ephemeral + session binding.** The canonical message binds the host
-  (cross-vhost replay), the GET reveal-leg ephemeral (so an active CDN cannot redirect a crown-jewel
-  response by swapping the header), and the per-session token (Layer 2). All three live in the single
-  `v1` message — the historical v2 host bump was folded in pre-prod. See `src/shared/crypto/pop.ts`.
+- **PoP v2 (host + reveal-leg ephemeral).** The canonical message binds the host (cross-vhost replay)
+  and the GET reveal-leg ephemeral (so an active CDN cannot redirect a crown-jewel response by
+  swapping the header). See `src/shared/crypto/pop.ts`.
 - **Browser hardening.** sha384 SRI on the entry assets; COOP/CORP/Permissions-Policy + Trusted Types
   report-only in the reverse proxy. **COEP `require-corp` is now ENFORCED** — replacing Cloudflare
   Turnstile with the bundled, same-origin Cap captcha (W1, 2026-06-10) removed the last cross-origin
@@ -146,14 +133,13 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
 - **The reveal leg's forward secrecy assumes a sound client CSPRNG.** A weak or backdoored
   `crypto.getRandomValues` (a compromised or state-provisioned device) silently weakens it, and this
   layer cannot detect or defend a compromised client.
-- **PoP binds host + reveal-ephemeral + the session (single `v1`).** The canonical message binds host
-  (cross-vhost replay), the reveal-leg ephemeral (the active-CDN header swap on GET reveal routes),
-  and the per-session token (cross-session signature-lift). Host enforcement is lockout-proof: it is
-  reconstructed from a client-declared header (so the signature authenticates it) and checked against
-  an allowlist only when `POP_EXPECTED_HOST` / `WEBAUTHN_ORIGIN` is configured. There is exactly one
-  message version pre-prod (the v1/v2 split was collapsed); a PoP-bound session minted before this
-  change simply re-authenticates. Clock skew is handled by a `/healthz`-derived client offset plus
-  the +/-60s window (an explicit server-pushed resync was not needed).
+- **PoP host + reveal-ephemeral binding now ship (PoP v2).** The canonical message binds host
+  (cross-vhost replay) and the reveal-leg ephemeral (the active-CDN header swap on GET reveal routes).
+  Host enforcement is lockout-proof: it is reconstructed from a client-declared header (so the
+  signature authenticates it) and checked against an allowlist only when `POP_EXPECTED_HOST` /
+  `WEBAUTHN_ORIGIN` is configured. v1 is still accepted during rollout. Clock skew is handled by a
+  `/healthz`-derived client offset plus the +/-60s window (an explicit server-pushed resync was not
+  needed).
 - **The reveal leg's forward secrecy assumes a sound client CSPRNG** (restated): a weak or backdoored
   `crypto.getRandomValues` silently weakens it, and this layer cannot detect a compromised client.
 - **Metadata is still visible:** path, sizes, timing, IP, and the `sid` correlating a session's
