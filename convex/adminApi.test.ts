@@ -319,6 +319,21 @@ describe('adminApi upsertBackendServerBySlug', () => {
       }),
     ).rejects.toThrow(/cannot change it to|exists as type/i);
   });
+
+  test('deleteBackendServerBySlug removes by slug; idempotent no-op when absent', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+      slug: 'node-d',
+      backend: 'remnawave',
+      baseUrl: 'https://panel.example',
+      apiToken: 'tok',
+    });
+    const del1 = await t.mutation(internal.adminApi.deleteBackendServerBySlug, { slug: 'node-d' });
+    expect(del1.deleted).toBe(true);
+    expect(await t.run((ctx) => ctx.db.query('backendServers').collect())).toHaveLength(0);
+    const del2 = await t.mutation(internal.adminApi.deleteBackendServerBySlug, { slug: 'node-d' });
+    expect(del2.deleted).toBe(false); // re-run = no-op, not an error
+  });
 });
 
 describe('adminApi grantMembership', () => {

@@ -67,6 +67,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.automation_token.mint': ['name', 'scopeCount'],
   // Idempotent backend-server upsert by slug (Ansible / IaC); never the config secret.
   'admin.backend_server.upsert': ['slug', 'backend', 'created'],
+  // Slug-addressed backend-server delete (migrate / IaC).
+  'admin.backend_server.delete': ['slug'],
   // Admin grant/extend of a membership from the Users page.
   'admin.user.grant_membership': ['tierId', 'durationDays'],
   // Admin changes the brand theme (preset + optional hue override).

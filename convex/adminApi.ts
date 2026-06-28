@@ -1088,6 +1088,32 @@ export const upsertBackendServerBySlug = internalMutation({
 });
 
 /**
+ * Idempotent slug-addressed delete (for migrate / IaC): a no-op (`deleted:false`)
+ * when the slug is absent, so a re-run never errors. Audited — unlike the by-id
+ * deleteBackendServer above, since this is the operator-automation path.
+ */
+export const deleteBackendServerBySlug = internalMutation({
+  args: { slug: v.string(), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { slug, actorAdminId }) => {
+    const row = await ctx.db
+      .query('backendServers')
+      .withIndex('by_slug', (q) => q.eq('slug', slug))
+      .unique();
+    if (!row) return { ok: true as const, deleted: false };
+    await ctx.db.delete(row._id);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.backend_server.delete',
+      targetType: 'backendServer',
+      targetId: row._id,
+      payload: { slug },
+    });
+    return { ok: true as const, deleted: true };
+  },
+});
+
+/**
  * Best-effort connectivity check for the connection details the admin pasted
  * (before they save). Routes to the backend type's provider; the secret is a
  * credential (never echoed back, never put in the error: the providers scrub it).

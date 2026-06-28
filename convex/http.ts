@@ -1694,6 +1694,28 @@ http.route({
   }),
 });
 
+// DELETE /api/v1/admin/backend-servers/by-slug/{slug}: idempotent slug-addressed
+// delete (migrate / IaC). The longer prefix wins over the by-id DELETE below.
+http.route({
+  pathPrefix: '/api/v1/admin/backend-servers/by-slug/',
+  method: 'DELETE',
+  handler: httpAction(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const slug = decodeURIComponent(lastPathSegment(req));
+    try {
+      return json(
+        await ctx.runMutation(internal.adminApi.deleteBackendServerBySlug, {
+          slug,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 http.route({
   pathPrefix: '/api/v1/admin/backend-servers/',
   method: 'PATCH',
