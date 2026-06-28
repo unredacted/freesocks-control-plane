@@ -201,6 +201,220 @@ describe('adminApi reEnableUser', () => {
   });
 });
 
+describe('adminApi mintAutomationToken', () => {
+  test('mints a service token attributed to a credential-less automation admin', async () => {
+    const t = convexTest(schema, modules);
+    const res = await t.action(internal.adminApi.mintAutomationToken, {
+      scopes: ['admin:servers:read', 'admin:servers:write'],
+    });
+    expect(res.plaintext.startsWith('fsv1_')).toBe(true);
+    expect(res.prefix.startsWith('fsv1_')).toBe(true);
+    expect(res.scopes).toEqual(['admin:servers:read', 'admin:servers:write']);
+
+    const tok = await t.run((ctx) => ctx.db.get(res.id));
+    expect(tok?.subjectType).toBe('service');
+    expect(tok?.createdByAdminId).toBe(res.adminUserId);
+    expect(tok?.scopes).toEqual(['admin:servers:read', 'admin:servers:write']);
+
+    // The synthetic admin exists but has NO passkey — it can never log in.
+    const admin = await t.run((ctx) => ctx.db.get(res.adminUserId));
+    expect(admin?.username).toBe('automation');
+    const creds = await t.run((ctx) =>
+      ctx.db
+        .query('passkeyCredentials')
+        .withIndex('by_admin', (q) => q.eq('adminUserId', res.adminUserId))
+        .collect(),
+    );
+    expect(creds).toHaveLength(0);
+
+    // The mint is audited (no secret — name + scope count only).
+    const audit = await t.run((ctx) =>
+      ctx.db
+        .query('auditLog')
+        .withIndex('by_action', (q) => q.eq('action', 'admin.automation_token.mint'))
+        .collect(),
+    );
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.payload).toMatchObject({ scopeCount: 2 });
+  });
+
+  test('reuses the same automation admin across calls (idempotent)', async () => {
+    const t = convexTest(schema, modules);
+    const a = await t.action(internal.adminApi.mintAutomationToken, {
+      scopes: ['admin:servers:write'],
+    });
+    const b = await t.action(internal.adminApi.mintAutomationToken, {
+      scopes: ['admin:users:read'],
+    });
+    expect(a.adminUserId).toBe(b.adminUserId);
+    const admins = await t.run((ctx) =>
+      ctx.db
+        .query('adminUsers')
+        .withIndex('by_username', (q) => q.eq('username', 'automation'))
+        .collect(),
+    );
+    expect(admins).toHaveLength(1);
+  });
+
+  test('rejects member scopes, unknown scopes, and an empty list', async () => {
+    const t = convexTest(schema, modules);
+    await expect(
+      t.action(internal.adminApi.mintAutomationToken, { scopes: ['account:read'] }),
+    ).rejects.toThrow(/non-admin|invalid/i);
+    await expect(
+      t.action(internal.adminApi.mintAutomationToken, { scopes: ['admin:bogus:read'] }),
+    ).rejects.toThrow(/invalid|non-admin/i);
+    await expect(t.action(internal.adminApi.mintAutomationToken, { scopes: [] })).rejects.toThrow(
+      /at least one scope/i,
+    );
+  });
+});
+
+describe('adminApi upsertBackendServerBySlug', () => {
+  test('creates on first call, updates on re-run keeping the secret on blank', async () => {
+    const t = convexTest(schema, modules);
+
+    const created = await t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+      slug: 'node-a',
+      backend: 'remnawave',
+      name: 'Node A',
+      baseUrl: 'https://panel.example',
+      apiToken: 'secret-token-1',
+    });
+    expect(created.created).toBe(true);
+    expect(created.slug).toBe('node-a');
+
+    // Re-run with a new name and NO apiToken (blank) → updates, keeps the secret.
+    const updated = await t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+      slug: 'node-a',
+      backend: 'remnawave',
+      name: 'Node A (renamed)',
+      baseUrl: 'https://panel.example',
+    });
+    expect(updated.created).toBe(false);
+    expect(updated.name).toBe('Node A (renamed)');
+
+    // Exactly one row (idempotent); the stored apiToken survived the blank re-run.
+    const rows = await t.run((ctx) => ctx.db.query('backendServers').collect());
+    expect(rows).toHaveLength(1);
+    const cfg = rows[0]!.config;
+    expect(cfg.type).toBe('remnawave');
+    if (cfg.type === 'remnawave') expect(cfg.apiToken).toBe('secret-token-1');
+  });
+
+  test('rejects changing the backend type of an existing slug', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+      slug: 'node-b',
+      backend: 'remnawave',
+      baseUrl: 'https://panel.example',
+      apiToken: 'tok',
+    });
+    await expect(
+      t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+        slug: 'node-b',
+        backend: 'outline',
+        apiUrl: 'https://outline.example/secret',
+      }),
+    ).rejects.toThrow(/cannot change it to|exists as type/i);
+  });
+});
+
+describe('adminApi grantMembership', () => {
+  const memberTierRow = {
+    slug: 'member',
+    name: 'Member',
+    backend: 'remnawave' as const,
+    monthlyTrafficGb: 0,
+    deviceLimit: 0,
+    hwidLimit: 0,
+    hwidEnabled: false,
+    trafficStrategy: 'MONTH' as const,
+    isDefaultFree: false,
+    isActive: true,
+    priority: 10,
+    expirationDaysAfterMembershipLapse: 7,
+  };
+
+  test('grants a tier, extends expiry, re-activates a disabled user, and audits', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTier, userId } = await t.run(async (ctx) => {
+      const free = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const member = await ctx.db.insert('tiers', { ...memberTierRow, updatedAt: Date.now() });
+      const u = await ctx.db.insert('users', {
+        tierId: free,
+        status: 'disabled',
+        disabledReason: 'admin_action',
+        updatedAt: Date.now(),
+      });
+      return { memberTier: member, userId: u };
+    });
+
+    const before = Date.now();
+    const res = await t.mutation(internal.adminApi.grantMembership, {
+      userId,
+      tierId: memberTier,
+      durationDays: 30,
+    });
+    expect(res.ok).toBe(true);
+
+    const user = await t.run((ctx) => ctx.db.get(userId));
+    expect(user?.tierId).toBe(memberTier);
+    expect(user?.status).toBe('active'); // lapsed → re-activated
+    expect(user!.membershipExpiresAt!).toBeGreaterThanOrEqual(before + 30 * 86_400_000);
+
+    const audit = await t.run((ctx) =>
+      ctx.db
+        .query('auditLog')
+        .withIndex('by_action', (q) => q.eq('action', 'admin.user.grant_membership'))
+        .collect(),
+    );
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.payload).toMatchObject({ durationDays: 30 });
+  });
+
+  test('rejects an out-of-range durationDays', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTier, userId } = await t.run(async (ctx) => {
+      const member = await ctx.db.insert('tiers', { ...memberTierRow, updatedAt: Date.now() });
+      const u = await ctx.db.insert('users', {
+        tierId: member,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      return { memberTier: member, userId: u };
+    });
+    await expect(
+      t.mutation(internal.adminApi.grantMembership, {
+        userId,
+        tierId: memberTier,
+        durationDays: 0,
+      }),
+    ).rejects.toThrow(/durationDays/);
+    await expect(
+      t.mutation(internal.adminApi.grantMembership, {
+        userId,
+        tierId: memberTier,
+        durationDays: 99999,
+      }),
+    ).rejects.toThrow(/durationDays/);
+  });
+});
+
 describe('adminApi.maskApiUrl', () => {
   test('keeps scheme+host and redacts the secret path', () => {
     expect(maskApiUrl('https://outline.example.com:8443/SeCrEtPaTh/abc')).toBe(

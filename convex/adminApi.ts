@@ -24,6 +24,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+import { applyMembership } from './lifecycle';
 import { normalizeSupportId } from './lib/supportId';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import {
@@ -624,7 +625,146 @@ export const runUserOp = internalAction({
   },
 });
 
+/**
+ * Admin grant/extend of a membership from the Users page. Reuses the shared
+ * `applyMembership` seam (same path as billing + code redemption): extends from
+ * max(now, current expiry) by `durationDays`, re-activating a lapsed
+ * (grace/disabled) user, and scheduling the backend tier push. ALWAYS writes an
+ * admin-attributed audit entry — `applyMembership`'s own audit fires only on a
+ * tier CHANGE, not a same-tier extension, so the admin action would otherwise be
+ * invisible.
+ */
+export const grantMembership = internalMutation({
+  args: {
+    userId: v.id('users'),
+    tierId: v.id('tiers'),
+    durationDays: v.number(),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { userId, tierId, durationDays, actorAdminId }) => {
+    if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3650) {
+      throw new Error('durationDays must be an integer between 1 and 3650');
+    }
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error('user not found');
+    const tier = await ctx.db.get(tierId);
+    if (!tier) throw new Error('tier not found');
+
+    const base = Math.max(Date.now(), user.membershipExpiresAt ?? 0);
+    const expiresAtMs = base + durationDays * 86_400_000;
+
+    await applyMembership(ctx, {
+      userId,
+      tierId,
+      expiresAtMs,
+      reason: 'admin_grant',
+      triggeredBy: 'admin',
+    });
+
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.user.grant_membership',
+      targetType: 'user',
+      targetId: userId,
+      payload: { tierId, durationDays },
+    });
+
+    return { ok: true as const, membershipExpiresAt: expiresAtMs };
+  },
+});
+
 // === tokens =================================================================
+
+// The admin scopes an automation token may be minted with. Kept in sync with the
+// `admin` group in src/shared/contracts/scopes.ts (convex doesn't import the
+// client-side zod enum). Member scopes (account:*, subscription:*) are
+// intentionally NOT mintable here — an automation/service identity has no member.
+const AUTOMATION_ALLOWED_SCOPES = [
+  'admin:tiers:read',
+  'admin:tiers:write',
+  'admin:users:read',
+  'admin:users:write',
+  'admin:admins:read',
+  'admin:admins:write',
+  'admin:audit:read',
+  'admin:tokens:read',
+  'admin:tokens:write',
+  'admin:settings:read',
+  'admin:settings:write',
+  'admin:servers:read',
+  'admin:servers:write',
+] as const;
+
+/**
+ * Mint an `fsv1_` automation token from the trusted control plane, e.g.
+ *   bunx convex run adminApi:mintAutomationToken '{"scopes":["admin:servers:read","admin:servers:write"]}'
+ *
+ * This is the zero-touch bootstrap path for the Ansible role: the operator
+ * already holds the self-hosted admin key (it runs seed:seedCutover), so minting
+ * a SCOPED token with it is a de-escalation, not new attack surface. The token is
+ * attributed to a synthetic, credential-less `automation` admin row — a valid
+ * audit actor that can NEVER establish a cookie session (it has no passkey).
+ *
+ * We deliberately do NOT relax the HTTP cookie gate on `/api/v1/admin/tokens`:
+ * letting any `admin:tokens:write` token mint fresh tokens over the public edge
+ * would be token self-escalation + audit anonymization. Capability boundary ==
+ * network boundary. Only `admin:*` scopes are mintable here.
+ */
+export const mintAutomationToken = internalAction({
+  args: {
+    scopes: v.array(v.string()),
+    name: v.optional(v.string()),
+    expiresInDays: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    { scopes, name, expiresInDays },
+  ): Promise<{
+    id: Id<'apiTokens'>;
+    plaintext: string;
+    prefix: string;
+    adminUserId: Id<'adminUsers'>;
+    scopes: string[];
+  }> => {
+    if (scopes.length === 0) throw new Error('at least one scope is required');
+    const allowed = new Set<string>(AUTOMATION_ALLOWED_SCOPES);
+    const bad = scopes.filter((s) => !allowed.has(s));
+    if (bad.length > 0) {
+      throw new Error(
+        `invalid or non-admin scope(s): ${bad.join(', ')}. Automation tokens may only hold ` +
+          `admin:* scopes (see src/shared/contracts/scopes.ts).`,
+      );
+    }
+    const uniqueScopes = [...new Set(scopes)];
+
+    // Idempotent synthetic admin (no passkey ⇒ can't log in, only an audit anchor).
+    const adminUserId = await ctx.runMutation(internal.admins.upsertByUsername, {
+      username: 'automation',
+      displayName: 'Automation (service)',
+    });
+
+    const tokenName = name && name.trim().length > 0 ? name.trim() : 'automation';
+    const result = await ctx.runAction(internal.apiTokens.createToken, {
+      name: tokenName,
+      scopes: uniqueScopes,
+      subjectType: 'service',
+      expiresInDays,
+      createdByAdminId: adminUserId,
+    });
+
+    await ctx.runMutation(internal.audit.record, {
+      actorType: 'admin',
+      actorId: adminUserId,
+      action: 'admin.automation_token.mint',
+      targetType: 'apiToken',
+      targetId: result.id,
+      payload: { name: tokenName, scopeCount: uniqueScopes.length },
+    });
+
+    return { ...result, adminUserId, scopes: uniqueScopes };
+  },
+});
 
 export const tokensList = internalQuery({
   args: {},
@@ -799,6 +939,114 @@ export const deleteBackendServer = internalMutation({
   handler: async (ctx, { id }) => {
     await ctx.db.delete(id);
     return { ok: true as const };
+  },
+});
+
+/**
+ * Idempotent upsert of a backend-server instance keyed by `slug` (the operator's
+ * stable identifier — for the Ansible role + IaC). Collapses the role's old
+ * GET-list → client-side match → POST/PATCH dance into a single PUT, dissolving
+ * the response-envelope bug class, the O(n) list, and the duplicate-slug failure
+ * on re-run.
+ *
+ * Reuses the exact reshape from createBackendServer and the keep-secret-on-blank
+ * merge from updateBackendServer (inlined — Convex forbids a mutation calling
+ * another mutation). The backend TYPE is immutable: an existing slug of a
+ * different type is rejected. Returns the masked row + `created` so the caller
+ * can report create-vs-update without a second request.
+ */
+export const upsertBackendServerBySlug = internalMutation({
+  args: {
+    slug: v.string(),
+    backend: backendId,
+    name: v.optional(v.string()),
+    isActive: v.optional(v.boolean()),
+    priority: v.optional(v.number()),
+    baseUrl: v.optional(v.string()),
+    apiToken: v.optional(v.string()),
+    apiUrl: v.optional(v.string()),
+    websocketEnabled: v.optional(v.boolean()),
+    websocketDomain: v.optional(v.union(v.string(), v.null())),
+    prometheusUrl: v.optional(v.union(v.string(), v.null())),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, a) => {
+    const existing = await ctx.db
+      .query('backendServers')
+      .withIndex('by_slug', (q) => q.eq('slug', a.slug))
+      .unique();
+
+    if (!existing) {
+      // CREATE path (mirrors createBackendServer).
+      let config;
+      if (a.backend === 'remnawave') {
+        if (!a.baseUrl || !a.apiToken)
+          throw new Error('A Remnawave instance needs a base URL and an API token');
+        config = { type: 'remnawave' as const, baseUrl: a.baseUrl, apiToken: a.apiToken };
+      } else {
+        if (!a.apiUrl) throw new Error('An Outline instance needs an apiUrl');
+        config = {
+          type: 'outline' as const,
+          apiUrl: a.apiUrl,
+          websocketEnabled: a.websocketEnabled ?? false,
+          websocketDomain: a.websocketDomain ?? undefined,
+          prometheusUrl: a.prometheusUrl ?? undefined,
+        };
+      }
+      const id = await ctx.db.insert('backendServers', {
+        backend: a.backend,
+        name: a.name ?? a.slug,
+        slug: a.slug,
+        config,
+        isActive: a.isActive ?? true,
+        priority: a.priority ?? 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: a.actorAdminId ?? undefined,
+        action: 'admin.backend_server.upsert',
+        targetType: 'backendServer',
+        targetId: id,
+        payload: { slug: a.slug, backend: a.backend, created: true },
+      });
+      return { ...mapBackendServer((await ctx.db.get(id))!), created: true };
+    }
+
+    // UPDATE path (mirrors updateBackendServer's keep-secret-on-blank merge).
+    if (existing.backend !== a.backend) {
+      throw new Error(
+        `Backend server "${a.slug}" exists as type "${existing.backend}"; cannot change it to "${a.backend}"`,
+      );
+    }
+    const fields: Partial<Doc<'backendServers'>> = { updatedAt: Date.now() };
+    if (a.name !== undefined) fields.name = a.name;
+    if (a.isActive !== undefined) fields.isActive = a.isActive;
+    if (a.priority !== undefined) fields.priority = a.priority;
+    if (existing.config.type === 'remnawave') {
+      const cfg = { ...existing.config };
+      if (a.baseUrl !== undefined && a.baseUrl !== '') cfg.baseUrl = a.baseUrl;
+      if (a.apiToken !== undefined && a.apiToken !== '') cfg.apiToken = a.apiToken;
+      fields.config = cfg;
+    } else {
+      const cfg = { ...existing.config };
+      if (a.apiUrl !== undefined && a.apiUrl !== '') cfg.apiUrl = a.apiUrl;
+      if (a.websocketEnabled !== undefined) cfg.websocketEnabled = a.websocketEnabled;
+      if (a.websocketDomain !== undefined) cfg.websocketDomain = a.websocketDomain ?? undefined;
+      if (a.prometheusUrl !== undefined) cfg.prometheusUrl = a.prometheusUrl ?? undefined;
+      fields.config = cfg;
+    }
+    await ctx.db.patch(existing._id, fields);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'admin.backend_server.upsert',
+      targetType: 'backendServer',
+      targetId: existing._id,
+      payload: { slug: a.slug, backend: a.backend, created: false },
+    });
+    return { ...mapBackendServer((await ctx.db.get(existing._id))!), created: false };
   },
 });
 

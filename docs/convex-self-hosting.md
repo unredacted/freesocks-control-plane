@@ -158,7 +158,18 @@ members to carry). On a fresh backend:
    **Add further admins** from the CMS — **Admins → Invite an admin** mints a
    one-time link (24h) the new person opens on their own device to register their
    passkey; no second bootstrap secret needed.
-6. **Issue `fsv1_` service tokens** (if any external callers): admin CMS → API Tokens.
+6. **Issue `fsv1_` service tokens** (if any external callers): admin CMS → API Tokens,
+   **or headless** (the zero-touch path for automation such as `ansible-role-freesocks`):
+   ```sh
+   bunx convex run adminApi:mintAutomationToken \
+     '{"scopes":["admin:servers:read","admin:servers:write"]}'
+   ```
+   This mints a scoped `fsv1_` token attributed to a synthetic, credential-less
+   `automation` admin (a valid audit actor that can never sign in — it has no
+   passkey). Only `admin:*` scopes are allowed. It uses the same self-hosted admin
+   key as `seed:seedCutover`, so no browser/passkey is needed — and the HTTP
+   `/api/v1/admin/tokens` route deliberately stays cookie-gated, so a leaked token
+   can't mint another token over the public edge.
 7. **Verify** (§8), then point DNS at the reverse proxy and decommission the old stack.
 
 ## 7. Reverse proxy

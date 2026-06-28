@@ -63,6 +63,12 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // admin label, never the invite token).
   'admin.invite.created': ['username'],
   'admin.invite.redeemed': ['username'],
+  // Automation-token mint (bootstrap via `convex run`); never the token/secret.
+  'admin.automation_token.mint': ['name', 'scopeCount'],
+  // Idempotent backend-server upsert by slug (Ansible / IaC); never the config secret.
+  'admin.backend_server.upsert': ['slug', 'backend', 'created'],
+  // Admin grant/extend of a membership from the Users page.
+  'admin.user.grant_membership': ['tierId', 'durationDays'],
 };
 
 /**

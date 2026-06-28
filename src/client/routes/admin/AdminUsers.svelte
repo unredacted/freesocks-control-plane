@@ -110,6 +110,45 @@
   }
 
   let pendingCopy = $derived(pending ? OP_COPY[pending.op](userLabel(pending.user)) : null);
+
+  // Grant/extend a membership (a plan + N days) for a user. Separate from the
+  // no-body ops above because it carries a tier + duration in the body.
+  let granting = $state<z.infer<typeof UserAdmin> | null>(null);
+  let grantTierId = $state('');
+  let grantDays = $state(30);
+
+  const grantMembership = createMutation(() => ({
+    mutationFn: async (vars: { userId: string; tierId: string; durationDays: number }) => {
+      await apiClient.post(
+        `/api/v1/admin/users/${vars.userId}/grant-membership`,
+        { tierId: vars.tierId, durationDays: vars.durationDays },
+        z.object({ ok: z.boolean(), membershipExpiresAt: z.number().optional() }),
+      );
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+      toast.success('Membership granted');
+      granting = null;
+    },
+    onError: (err) => toast.error('Grant failed', { description: apiErrorMessage(err) }),
+  }));
+
+  function startGrant(user: z.infer<typeof UserAdmin>) {
+    granting = user;
+    grantTierId = '';
+    grantDays = 30;
+  }
+
+  function confirmGrant() {
+    if (!granting || !grantTierId || !Number.isFinite(grantDays) || grantDays < 1) return;
+    grantMembership.mutate({ userId: granting.id, tierId: grantTierId, durationDays: grantDays });
+  }
+
+  let grantTierLabel = $derived(
+    grantTierId
+      ? (tiers.data?.find((t) => t.id === grantTierId)?.slug ?? 'Select a plan')
+      : 'Select a plan',
+  );
 </script>
 
 <AdminLayout>
@@ -251,6 +290,9 @@
                   Disable
                 </Button>
               {/if}
+              <Button size="sm" variant="outline" disabled={busy} onclick={() => startGrant(u)}>
+                Grant membership
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -282,6 +324,53 @@
         <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
         <AlertDialog.Action onclick={confirmPending} disabled={userAction.isPending}>
           {userAction.isPending ? 'Working…' : 'Confirm'}
+        </AlertDialog.Action>
+      </AlertDialog.Footer>
+    </AlertDialog.Content>
+  </AlertDialog.Root>
+
+  <AlertDialog.Root open={!!granting} onOpenChange={(o) => (o ? null : (granting = null))}>
+    <AlertDialog.Content>
+      <AlertDialog.Header>
+        <AlertDialog.Title>
+          Grant membership{granting ? ` to ${userLabel(granting)}` : ''}
+        </AlertDialog.Title>
+        <AlertDialog.Description>
+          Pick a plan and how many days to add. Extends from the later of now or the current expiry,
+          and re-activates a lapsed account. The new tier is pushed to the proxy backend.
+        </AlertDialog.Description>
+      </AlertDialog.Header>
+      <div class="space-y-3 py-2">
+        <div>
+          <span class="text-xs text-muted-foreground mb-1 block">Plan</span>
+          <Select.Root type="single" value={grantTierId} onValueChange={(v) => (grantTierId = v)}>
+            <Select.Trigger class="w-full">{grantTierLabel}</Select.Trigger>
+            <Select.Content>
+              {#each tiers.data ?? [] as tier (tier.id)}
+                <Select.Item value={tier.id}>{tier.slug}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </div>
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="grant-days">Days</label>
+          <Input
+            id="grant-days"
+            type="number"
+            min={1}
+            max={3650}
+            value={grantDays}
+            oninput={(e) => (grantDays = Number((e.currentTarget as HTMLInputElement).value))}
+          />
+        </div>
+      </div>
+      <AlertDialog.Footer>
+        <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+        <AlertDialog.Action
+          onclick={confirmGrant}
+          disabled={grantMembership.isPending || !grantTierId || grantDays < 1}
+        >
+          {grantMembership.isPending ? 'Granting…' : 'Grant'}
         </AlertDialog.Action>
       </AlertDialog.Footer>
     </AlertDialog.Content>

@@ -1262,20 +1262,43 @@ http.route({
   }),
 });
 
-// POST /api/v1/admin/users/{id}/{op}  (op ∈ disable | re-enable | reset-traffic | resync)
+// POST /api/v1/admin/users/{id}/{op}
+//   op ∈ disable | re-enable | reset-traffic | resync   (no body)
+//   op = grant-membership                               (body: { tierId, durationDays })
 http.route({
   pathPrefix: '/api/v1/admin/users/',
   method: 'POST',
-  handler: httpAction(async (ctx, req) => {
+  handler: guard(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:users:write');
     if (!admin) return ADMIN_UNAUTH();
     const { id, op } = userIdAndOp(req);
+    const userId = id as Id<'users'>;
+
+    if (op === 'grant-membership') {
+      const body = await readJson<{ tierId?: string; durationDays?: number }>(req);
+      if (!body.tierId || typeof body.durationDays !== 'number') {
+        return errorJson('validation', 'grant-membership requires tierId and durationDays', 400);
+      }
+      try {
+        return json(
+          await ctx.runMutation(internal.adminApi.grantMembership, {
+            userId,
+            tierId: body.tierId as Id<'tiers'>,
+            durationDays: body.durationDays,
+            actorAdminId: admin.adminUserId,
+          }),
+        );
+      } catch (err) {
+        return adminError(err);
+      }
+    }
+
     if (op !== 'disable' && op !== 're-enable' && op !== 'reset-traffic' && op !== 'resync') {
       return errorJson('not_found', `Unknown user op "${op}"`, 404);
     }
     try {
       const result = await ctx.runAction(internal.adminApi.runUserOp, {
-        userId: id as Id<'users'>,
+        userId,
         op,
         actorAdminId: admin.adminUserId,
       });
@@ -1594,6 +1617,34 @@ http.route({
     }
     const result = await ctx.runAction(internal.adminApi.testBackendConnection, body as never);
     return json(result);
+  }),
+});
+
+// PUT /api/v1/admin/backend-servers/by-slug/{slug}: idempotent upsert (for the
+// Ansible role / IaC). A different METHOD than the PATCH/DELETE pathPrefix below,
+// so the two never collide; the slug comes from the path (authoritative).
+http.route({
+  pathPrefix: '/api/v1/admin/backend-servers/by-slug/',
+  method: 'PUT',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const slug = decodeURIComponent(lastPathSegment(req));
+    const body = await readJson<Record<string, unknown>>(req);
+    if (body.backend !== 'remnawave' && body.backend !== 'outline') {
+      return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
+    }
+    try {
+      return json(
+        await ctx.runMutation(internal.adminApi.upsertBackendServerBySlug, {
+          ...body,
+          slug,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
   }),
 });
 
