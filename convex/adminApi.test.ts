@@ -415,6 +415,58 @@ describe('adminApi grantMembership', () => {
   });
 });
 
+describe('adminApi statusSummary', () => {
+  test('tallies users by status and summarizes backend health (no secrets)', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+      await ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+      await ctx.db.insert('users', { tierId, status: 'disabled', updatedAt: Date.now() });
+      await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'Primary',
+        slug: 'p1',
+        config: { type: 'remnawave', baseUrl: 'https://panel', apiToken: 'secret' },
+        isActive: true,
+        priority: 0,
+        keyCount: 5,
+        lastHealthOkAt: Date.now(),
+        lastHealthRttMs: 12,
+        updatedAt: Date.now(),
+      });
+    });
+
+    const s = await t.query(internal.adminApi.statusSummary, {});
+    expect(s.users.active).toBe(2);
+    expect(s.users.disabled).toBe(1);
+    expect(s.totals.backends).toBe(1);
+    expect(s.totals.activeBackends).toBe(1);
+    expect(s.totals.healthyBackends).toBe(1);
+    expect(s.totals.keys).toBe(5);
+    expect(s.backends[0]!.slug).toBe('p1');
+    expect(s.backends[0]!.healthy).toBe(true);
+    // The secret config must never appear in the status payload.
+    expect(JSON.stringify(s)).not.toContain('secret');
+    expect(s.healthcheck.ok).toBe(true);
+    expect(typeof s.generatedAt).toBe('string');
+  });
+});
+
 describe('adminApi.maskApiUrl', () => {
   test('keeps scheme+host and redacts the secret path', () => {
     expect(maskApiUrl('https://outline.example.com:8443/SeCrEtPaTh/abc')).toBe(

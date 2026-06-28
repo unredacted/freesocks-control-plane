@@ -10,7 +10,7 @@
   /**
    * Smart entry point for `/admin`. Calls the unauthenticated status endpoint
    * on mount and renders one of:
-   *   - Redirect to `/admin/tiers`, if the caller already has a valid admin
+   *   - Redirect to `/admin/dashboard`, if the caller already has a valid admin
    *     session (`signedIn: true`). No reason to show the login form when
    *     the user is already authenticated; bouncing them straight to the
    *     admin app is what they expect.
@@ -28,7 +28,7 @@
   // again (which would just redirect once more).
   $effect(() => {
     if (status.data?.signedIn && router.pathname === '/admin') {
-      router.navigate('/admin/tiers', { replace: true });
+      router.navigate('/admin/dashboard', { replace: true });
     }
   });
 
@@ -50,7 +50,7 @@
     Render a neutral loading state while:
       a) the initial status fetch is in flight, or
       b) the caller is already signed in and the $effect above is about to
-         navigate them to /admin/tiers. Showing the login form for the few
+         navigate them to /admin/dashboard. Showing the login form for the few
          frames before the redirect lands would be jarring.
   -->
   <div class="max-w-md mx-auto py-12 text-muted-foreground text-center">Loading…</div>

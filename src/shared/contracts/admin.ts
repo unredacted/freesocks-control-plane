@@ -229,3 +229,41 @@ export const CreateInviteResponse = z.object({
   expiresAtMs: z.number(),
 });
 export type CreateInviteResponse = z.infer<typeof CreateInviteResponse>;
+
+/**
+ * Operator status snapshot for the admin dashboard (`GET /api/v1/admin/status`).
+ * Counts + health booleans only — never a backend secret. Also consumed by the
+ * Ansible post-deploy health-gate.
+ */
+export const AdminStatusSummary = z.object({
+  users: z.object({
+    active: z.number().int().nonnegative(),
+    grace: z.number().int().nonnegative(),
+    disabled: z.number().int().nonnegative(),
+    deleted: z.number().int().nonnegative(),
+  }),
+  totals: z.object({
+    backends: z.number().int().nonnegative(),
+    activeBackends: z.number().int().nonnegative(),
+    healthyBackends: z.number().int().nonnegative(),
+    keys: z.number().int().nonnegative(),
+  }),
+  backends: z.array(
+    z.object({
+      slug: z.string(),
+      backend: BackendId,
+      isActive: z.boolean(),
+      keyCount: z.number().int().nonnegative(),
+      healthy: z.boolean(),
+      lastHealthOkAt: z.string().datetime().nullable(),
+      lastHealthRttMs: z.number().nullable(),
+    }),
+  ),
+  healthcheck: z.object({
+    ok: z.boolean(),
+    lastOkAt: z.string().datetime().nullable(),
+    staleSeconds: z.number().int().nonnegative().nullable(),
+  }),
+  generatedAt: z.string().datetime(),
+});
+export type AdminStatusSummary = z.infer<typeof AdminStatusSummary>;

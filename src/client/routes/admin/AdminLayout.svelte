@@ -5,6 +5,7 @@
   import { cn } from '../../lib/utils';
   import { apiClient } from '../../lib/api';
   import { clearSessionKey } from '../../lib/pop';
+  import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
   import Layers from '@lucide/svelte/icons/layers';
   import UsersIcon from '@lucide/svelte/icons/users';
   import KeyIcon from '@lucide/svelte/icons/key';
@@ -43,6 +44,7 @@
   }
 
   const NAV = [
+    { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/admin/tiers', label: 'Tiers', icon: Layers },
     { to: '/admin/users', label: 'Users', icon: UsersIcon },
     { to: '/admin/admins', label: 'Admins', icon: ShieldCheck },

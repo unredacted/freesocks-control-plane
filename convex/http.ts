@@ -1387,6 +1387,17 @@ http.route({
   }),
 });
 
+// --- admin: status (operator dashboard + Ansible health-gate) ---------------
+
+http.route({
+  path: '/api/v1/admin/status',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:status:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.adminApi.statusSummary, {}));
+  }),
+});
+
 // --- admin: settings --------------------------------------------------------
 
 http.route({

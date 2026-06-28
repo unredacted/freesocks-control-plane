@@ -694,6 +694,7 @@ const AUTOMATION_ALLOWED_SCOPES = [
   'admin:settings:write',
   'admin:servers:read',
   'admin:servers:write',
+  'admin:status:read',
 ] as const;
 
 /**
@@ -1191,5 +1192,69 @@ export const setBillingConfig = internalMutation({
     const config = await resolveBillingConfig(ctx.db);
     const secretStatus = processorSecretStatus(await resolveProcessorSecrets(ctx.db));
     return { config, secretStatus };
+  },
+});
+
+// === status / dashboard =====================================================
+
+/**
+ * Shared operator status snapshot — feeds BOTH the admin landing dashboard and
+ * an Ansible post-deploy health-gate (scope `admin:status:read`). Read-only and
+ * non-secret: counts + health booleans only, never a backend `config`.
+ */
+export const statusSummary = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const FRESH_MS = 30 * 60_000; // mirrors the backendServers pool freshness window
+
+    // Users tallied by status. NOTE: O(users) — fine at beta scale; if the user
+    // base grows past Convex's per-query read limit, move this to a maintained
+    // counter (an appState row bumped on each status transition).
+    const users = await ctx.db.query('users').collect();
+    const usersByStatus = { active: 0, grace: 0, disabled: 0, deleted: 0 };
+    for (const u of users) usersByStatus[u.status] += 1;
+
+    // Backends are small + admin-managed. Health + key counts only; never config.
+    const serverRows = await ctx.db.query('backendServers').collect();
+    const backends = serverRows
+      .sort((a, b) => a.priority - b.priority)
+      .map((s) => ({
+        slug: s.slug,
+        backend: s.backend,
+        isActive: s.isActive,
+        keyCount: s.keyCount,
+        healthy: s.lastHealthOkAt != null && now - s.lastHealthOkAt < FRESH_MS,
+        lastHealthOkAt: s.lastHealthOkAt != null ? iso(s.lastHealthOkAt) : null,
+        lastHealthRttMs: s.lastHealthRttMs ?? null,
+      }));
+    const activeBackends = backends.filter((b) => b.isActive);
+
+    // Cron freshness: the newest successful healthcheck across ACTIVE backends vs
+    // the 10-min cron cadence. Stale ⇒ the backend-healthcheck cron (or the
+    // backends themselves) may be wedged. lastHealthOkAt is the only cron-stamped
+    // signal we have, so it doubles as a liveness proxy for that cron.
+    const lastOkMs = serverRows
+      .filter((s) => s.isActive && s.lastHealthOkAt != null)
+      .reduce<
+        number | null
+      >((max, s) => (max == null || s.lastHealthOkAt! > max ? s.lastHealthOkAt! : max), null);
+
+    return {
+      users: usersByStatus,
+      totals: {
+        backends: backends.length,
+        activeBackends: activeBackends.length,
+        healthyBackends: activeBackends.filter((b) => b.healthy).length,
+        keys: serverRows.reduce((n, s) => n + (s.keyCount ?? 0), 0),
+      },
+      backends,
+      healthcheck: {
+        ok: lastOkMs != null && now - lastOkMs < FRESH_MS,
+        lastOkAt: lastOkMs != null ? iso(lastOkMs) : null,
+        staleSeconds: lastOkMs != null ? Math.max(0, Math.round((now - lastOkMs) / 1000)) : null,
+      },
+      generatedAt: iso(now),
+    };
   },
 });

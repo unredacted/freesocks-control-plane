@@ -25,6 +25,7 @@ export const ApiScope = z.enum([
   'admin:settings:write',
   'admin:servers:read',
   'admin:servers:write',
+  'admin:status:read',
 ]);
 export type ApiScope = z.infer<typeof ApiScope>;
 
@@ -46,5 +47,6 @@ export const SCOPE_GROUPS = {
     'admin:settings:write',
     'admin:servers:read',
     'admin:servers:write',
+    'admin:status:read',
   ] as const,
 };

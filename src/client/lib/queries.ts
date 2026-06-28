@@ -13,6 +13,7 @@ import { AuthMeResponse, PublicConfig } from '../../shared/contracts/auth';
 import { AccountResponse, SubscriptionContentResponse } from '../../shared/contracts/account';
 import {
   AdminListResponse,
+  AdminStatusSummary,
   AppSettingsRecord,
   AuditEntry,
   BackendServerAdmin,
@@ -37,6 +38,7 @@ export const queryKeys = {
   account: ['account'] as const,
   subscriptionContent: ['subscription', 'content'] as const,
   adminAuthStatus: ['admin', 'auth-status'] as const,
+  adminStatus: ['admin', 'status'] as const,
   adminAdmins: ['admin', 'admins'] as const,
   adminTiers: ['admin', 'tiers'] as const,
   adminUsers: (q: string, status = '', tier = '') => ['admin', 'users', q, status, tier] as const,
@@ -163,6 +165,13 @@ export const adminAuthStatusQuery = () =>
     queryKey: queryKeys.adminAuthStatus,
     queryFn: () => apiClient.get('/api/admin/auth/status', AdminAuthStatus),
     staleTime: 0, // re-fetch after bootstrap completes
+  }));
+
+export const adminStatusQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminStatus,
+    queryFn: () => apiClient.get('/api/v1/admin/status', AdminStatusSummary),
+    staleTime: 15_000,
   }));
 
 export const adminTiersQuery = () =>

@@ -7,6 +7,7 @@
    */
   import { router } from '../../stores/router.svelte';
   import AdminEntry from './AdminEntry.svelte';
+  import AdminDashboard from './AdminDashboard.svelte';
   import AdminRegister from './AdminRegister.svelte';
   import AdminAdmins from './AdminAdmins.svelte';
   import AdminTiers from './AdminTiers.svelte';
@@ -24,6 +25,8 @@
 
 {#if router.pathname === '/admin'}
   <AdminEntry />
+{:else if router.pathname === '/admin/dashboard'}
+  <AdminDashboard />
 {:else if router.pathname === '/admin/register'}
   <!-- Invite landing: no session yet, gated by the invite token in the URL. -->
   <AdminRegister />
