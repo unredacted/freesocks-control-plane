@@ -85,9 +85,16 @@
 		Cross-Origin-Embedder-Policy "require-corp"
 		defer
 	}
-	# Integrity-Policy "blocked-destinations=(script)" stays deferred until every
-	# dynamically-imported chunk carries SRI (code-splitting emits chunks the SRI
-	# plugin doesn't yet stamp). See docs/threat-model-cdn-blinding.md.
+	# Integrity-Policy "blocked-destinations=(script)" stays DEFERRED. Every chunk
+	# now carries SRI (entry/css stamped in index.html + an import map with an
+	# `integrity` section over all dynamic chunks, emitted by the Vite sriPlugin),
+	# so the original blocker is closed. It is NOT enabled because a module WORKER
+	# realm does not inherit the document import map, so the enforcing header would
+	# require integrity for the PoP signing worker's module imports — which have no
+	# integrity source in the worker realm — and BLOCK them, breaking auth. Flip it
+	# only after an in-browser beta check (load /admin, trigger a sealed route, and
+	# confirm the PoP worker still signs) — likely with per-worker integrity.
+	# See docs/threat-model-cdn-blinding.md.
 
 	# --- self-hosted Cap captcha (W1) -> the cap service over the compose net ---
 	# The browser widget posts challenges to the SAME-ORIGIN /cap/<siteKey>/...

@@ -203,9 +203,11 @@ app.freesocks.org {
         Referrer-Policy "no-referrer"
         -Server
     }
-    # Integrity-Policy "blocked-destinations=(script)" stays deferred until every
-    # dynamically-imported chunk carries SRI (code-splitting emits chunks the Vite
-    # sriPlugin doesn't yet stamp). Entry assets already ship sha384 SRI.
+    # Integrity-Policy "blocked-destinations=(script)" stays DEFERRED. Every chunk
+    # now carries SRI (entry/css in index.html + an import map covering all dynamic
+    # chunks), but the enforcing header would block the PoP signing WORKER's module
+    # imports (a worker realm doesn't inherit the document import map → no integrity
+    # source → blocked → auth breaks). Flip only after an in-browser beta check.
 
     # API + health/readiness → Convex HTTP actions (:3211)
     @api path /api/* /healthz /readyz
@@ -237,7 +239,9 @@ Build the SPA with the public actions origin baked in:
 `VITE_CONVEX_SITE_URL=https://app.freesocks.org bun run build` (here `/api` is
 same-origin, so the value only matters if you split the actions onto another host).
 The build stamps sha384 `integrity` (SRI) on the entry script/style + the theme
-script automatically (the Vite `sriPlugin`); no operator action is needed.
+script, AND emits an import map with an `integrity` section over every dynamic
+chunk (+ a `dist/sri-manifest.json` for the OOB verifier) automatically (the Vite
+`sriPlugin`); no operator action is needed.
 
 ## 8. Cutover verification checklist
 

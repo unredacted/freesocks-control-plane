@@ -106,12 +106,15 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
 - **PoP v2 (host + reveal-leg ephemeral).** The canonical message binds the host (cross-vhost replay)
   and the GET reveal-leg ephemeral (so an active CDN cannot redirect a crown-jewel response by
   swapping the header). See `src/shared/crypto/pop.ts`.
-- **Browser hardening.** sha384 SRI on the entry assets; COOP/CORP/Permissions-Policy + Trusted Types
-  report-only in the reverse proxy. **COEP `require-corp` is now ENFORCED** — replacing Cloudflare
+- **Browser hardening.** sha384 SRI on the entry assets AND on every dynamic chunk (via an injected
+  import-map `integrity` section + a `dist/sri-manifest.json`); COOP/CORP/Permissions-Policy + Trusted
+  Types report-only in the reverse proxy. **COEP `require-corp` is now ENFORCED** — replacing Cloudflare
   Turnstile with the bundled, same-origin Cap captcha (W1, 2026-06-10) removed the last cross-origin
-  subresource that blocked it, and the CSP is now pure `'self'`. Integrity-Policy enforcement stays
-  staged (the code-split dynamic chunks don't all carry SRI yet). See `vite.config.ts` + the Caddyfile
-  in `docs/convex-self-hosting.md`.
+  subresource that blocked it, and the CSP is now pure `'self'`. `Integrity-Policy` enforcement stays
+  staged — NOT for lack of chunk SRI (now closed), but because a module-worker realm does not inherit
+  the document import map, so enforcing it would block the PoP signing worker's imports (auth break)
+  until that is handled + browser-verified. See `vite.config.ts` + the Caddyfile in
+  `docs/convex-self-hosting.md`.
 - **Out-of-band trust + reproducible build.** A signed release + `.onion` mirror publish the manifest
   fingerprint and the reproducible `dist-sha256`; CI builds twice and asserts identical output. The
   real active-CDN defense (a store-delivered verifier) is Phase 4. See `docs/oob-verification.md`.
@@ -198,8 +201,10 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
   anti-rollback revoked-kid list; `FCP-PoP v2` (host + reveal-leg ephemeral) + clock-skew offset;
   SRI + COOP/CORP/Permissions-Policy + Trusted-Types-report-only. Operator runbook items
   (`docs/oob-verification.md`): the signed release + `.onion` mirror + DNSSEC publication, the Rekor
-  attestation, and an independent rebuilder. COEP require-corp is now enforced (Turnstile gone);
-  Integrity-Policy enforcement stays staged (pending SRI on the code-split chunks).
+  attestation, and an independent rebuilder. COEP require-corp is now enforced (Turnstile gone). SRI
+  now covers the dynamic chunks too (import-map `integrity` + `sri-manifest.json`); `Integrity-Policy`
+  enforcement stays staged only because a worker realm doesn't inherit the document import map (it
+  would block the PoP worker's imports).
 - **Phase 4 (implemented on `v2`):** the manifest trust anchor is hybrid Ed25519 + ML-DSA-65 (the
   PQ-signature migration); the verifier extension scaffold (`verifier-extension/`, the MEGA-model
   active-CDN tripwire) is in the repo for an operator to pin + publish to the web store. A native app
