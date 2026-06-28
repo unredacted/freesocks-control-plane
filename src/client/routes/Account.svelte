@@ -30,6 +30,7 @@
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
   import Loader2 from '@lucide/svelte/icons/loader-2';
   import KeyRound from '@lucide/svelte/icons/key-round';
+  import Hash from '@lucide/svelte/icons/hash';
   import Sparkles from '@lucide/svelte/icons/sparkles';
   import Gift from '@lucide/svelte/icons/gift';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
@@ -569,7 +570,7 @@
           <!-- Privacy: the raw config IS the deliverable (the CDN-fetched link is
                hidden above). No public mirrors — they'd expose the config to third parties. -->
           <RawConfig prominent />
-          <SetupGuidance backend={data.subscription.backend} />
+          <SetupGuidance backend={data.subscription.backend} privacy />
         {:else}
           <!-- Stay connected: the subscription link is the star; mirrors next, raw config secondary. -->
           <SetupGuidance backend={data.subscription.backend} />
@@ -613,6 +614,7 @@
             </Button>
           {/if}
         </div>
+        <p class="text-xs text-muted-foreground">{t('account.keyActionsHint')}</p>
 
         {#if data.subscription.devices.length > 0}
           <div class="space-y-3">
@@ -749,7 +751,7 @@
             size="sm"
             class="min-h-11 shrink-0"
           >
-            <RotateCcw class="size-4" />
+            <Hash class="size-4" />
             {t('account.rotate')}
           </Button>
         </div>

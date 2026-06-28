@@ -269,15 +269,15 @@
       <CheckCircle class="size-4 text-primary shrink-0" />
       <span>
         {t('get.accountReady')}
-        {#if !created}
-          <!-- Refresh-recovery path: the reveal-once state is volatile, so a
-               reload right after creation must not be a dead end. The rotate
-               action on /account mints (and properly reveals) a NEW number. -->
-          <span class="block text-xs text-muted-foreground mt-0.5">
-            {t('get.lostNumberHint')}
-            <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
-          </span>
-        {/if}
+        <!-- Recovery pointer on BOTH paths (just-created and reload): the
+             reveal-once number is volatile, so if it wasn't saved the only
+             recourse is rotating to a fresh (re-revealed) number on /account.
+             The copy is conditional ("lost it before saving?"), so it reads as
+             an offer, not an alarm. -->
+        <span class="block text-xs text-muted-foreground mt-0.5">
+          {t('get.lostNumberHint')}
+          <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
+        </span>
       </span>
     </div>
   {/if}
@@ -346,7 +346,7 @@
         {#if effectiveDelivery === 'privacy'}
           <!-- Privacy: raw config is the deliverable; CDN-fetched link hidden; no mirrors. -->
           <RawConfig prominent />
-          <SetupGuidance backend={subscription.backend} />
+          <SetupGuidance backend={subscription.backend} privacy />
         {:else}
           <SetupGuidance backend={subscription.backend} />
           {#if config.data?.mirrorsEnabled}

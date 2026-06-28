@@ -16,8 +16,12 @@
 
   interface Props {
     backend?: 'remnawave' | 'outline';
+    /** Privacy/delivery mode hides the auto-updating subscription link, so the
+     *  deliverable is the raw config below — step 2 then says "enter the
+     *  configuration below" instead of "paste your link". */
+    privacy?: boolean;
   }
-  let { backend = 'remnawave' }: Props = $props();
+  let { backend = 'remnawave', privacy = false }: Props = $props();
 
   type App = { name: string; url: string; hwid?: boolean };
   type Platform = {
@@ -137,7 +141,7 @@
           class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"
           >2</span
         >
-        <span>{t('setup.step.import')}</span>
+        <span>{privacy ? t('setup.step.importConfig') : t('setup.step.import')}</span>
       </li>
       <li class="flex gap-3">
         <span
