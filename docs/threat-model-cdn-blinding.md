@@ -127,19 +127,27 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
   `@hpke/hybridkem-x-wing` are young / pre-standardization, whereas the X25519 leg is audited and
   decades-hardened. X-Wing is secure if either holds, so an attacker must defeat both.
 - **The manifest signature is now post-quantum** (Phase 4: hybrid Ed25519 + ML-DSA-65, both required
-  when the PQ key is baked, so it is unforgeable if either holds). **PoP signatures stay ECDSA P-256**
-  by design: PoP is real-time authentication of an ephemeral session, not HNDL-confidentiality (you
-  cannot harvest-then-forge an expired session), so it does not need PQ.
+  when the PQ key is baked, so it is unforgeable if either holds). **PoP signatures are Ed25519** — a
+  rigid, non-NIST curve; ECDSA P-256 is the fallback on browsers without WebCrypto Ed25519, chosen per
+  session and recorded in `sessions.popAlg` (verifier dispatch in `convex/lib/pop.ts` `verifyPop`). PoP
+  stays **classical by design, NOT post-quantum**: it is real-time authentication of an ephemeral
+  session, not HNDL-confidentiality (you cannot harvest-then-forge an expired session), so it does not
+  need PQ — and no PQ signature scheme exists in WebCrypto, so going PQ would also forfeit the
+  non-extractable key. Moving off P-256 is a curve-provenance / footgun hygiene win (Ed25519 is
+  deterministic and drops the ECDSA low-S/DER handling), not a response to a break.
 - **The reveal leg's forward secrecy assumes a sound client CSPRNG.** A weak or backdoored
   `crypto.getRandomValues` (a compromised or state-provisioned device) silently weakens it, and this
   layer cannot detect or defend a compromised client.
-- **PoP host + reveal-ephemeral binding now ship (PoP v2).** The canonical message binds host
-  (cross-vhost replay) and the reveal-leg ephemeral (the active-CDN header swap on GET reveal routes).
-  Host enforcement is lockout-proof: it is reconstructed from a client-declared header (so the
-  signature authenticates it) and checked against an allowlist only when `POP_EXPECTED_HOST` /
-  `WEBAUTHN_ORIGIN` is configured. v1 is still accepted during rollout. Clock skew is handled by a
-  `/healthz`-derived client offset plus the +/-60s window (an explicit server-pushed resync was not
-  needed).
+- **PoP binds host, reveal-ephemeral, and the per-session token (single `v1` message).** The canonical
+  message binds host (cross-vhost replay), the reveal-leg ephemeral (the active-CDN header swap on GET
+  reveal routes), and a public per-session token so a signature cannot be lifted onto another session
+  that reuses the same persisted key (sid-binding). There is exactly ONE accepted format
+  (`POP_ACCEPTED_VERSIONS = ['v1']`); this is pre-prod, so no inter-release wire compatibility is kept.
+  The algorithm (Ed25519 / P-256) is carried out-of-band per session, NOT in the message, so the bytes
+  are identical across curves. Host enforcement is lockout-proof: it is reconstructed from a
+  client-declared header (so the signature authenticates it) and checked against an allowlist only when
+  `POP_EXPECTED_HOST` / `WEBAUTHN_ORIGIN` is configured. Clock skew is handled by a `/healthz`-derived
+  client offset plus the +/-60s window (an explicit server-pushed resync was not needed).
 - **The reveal leg's forward secrecy assumes a sound client CSPRNG** (restated): a weak or backdoored
   `crypto.getRandomValues` silently weakens it, and this layer cannot detect a compromised client.
 - **Metadata is still visible:** path, sizes, timing, IP, and the `sid` correlating a session's

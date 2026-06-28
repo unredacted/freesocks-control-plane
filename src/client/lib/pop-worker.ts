@@ -1,12 +1,14 @@
 /**
  * Proof-of-possession signing Worker (CDN-blinding Phase 2). Owns the session's
- * NON-EXTRACTABLE ECDSA P-256 private key. The key is generated here, persisted
- * in IndexedDB (so it survives a reload without forcing re-login), and used only
- * to sign canonical requests; it can never be read out (non-extractable) and is
- * never posted to the main thread, so neither page script nor the CDN ever sees
- * the private scalar. The Worker exposes only three operations and validates the
- * request path against an allowlist, so a compromised main thread cannot turn it
- * into a general-purpose signing oracle.
+ * NON-EXTRACTABLE session signing key — Ed25519 wherever the browser supports it
+ * in WebCrypto (the preferred, non-NIST curve), else ECDSA P-256 (the fallback,
+ * for older browsers). The key is generated here, persisted in IndexedDB (so it
+ * survives a reload without forcing re-login), and used only to sign canonical
+ * requests; it can never be read out (non-extractable) and is never posted to the
+ * main thread, so neither page script nor the CDN ever sees the private scalar.
+ * The Worker exposes only three operations and validates the request path against
+ * an allowlist, so a compromised main thread cannot turn it into a
+ * general-purpose signing oracle.
  *
  * Bundled by Vite as a same-origin module Worker (the `new URL(..., import.meta.url)`
  * form, NOT a `blob:`), so the strict CSP `worker-src 'self'` allows it.
@@ -16,12 +18,18 @@
  * captured member context cannot sign admin requests.
  *
  * Messages (each carries an `id` echoed back):
- *   { type:'ensureKey', realm }                       -> { ok, pubB64 }   (generate if absent)
+ *   { type:'ensureKey', realm }                       -> { ok, pubB64, alg } (generate if absent)
  *   { type:'sign', realm, method, path, query, body } -> { ok, sigB64, ts, nonceB64 }
  *   { type:'clear', realm }                           -> { ok }           (logout)
  */
 import { bytesToB64Url } from '../../shared/crypto/envelope';
-import { buildPopMessage, digestB64Url, signP1363 } from '../../shared/crypto/pop';
+import {
+  buildPopMessage,
+  digestB64Url,
+  POP_ALG,
+  POP_ALG_ED,
+  signPop,
+} from '../../shared/crypto/pop';
 
 // Worker globals, typed narrowly so this file compiles under the project's DOM
 // lib (the webworker lib is not enabled, and pulling it in would clash on `self`).
@@ -101,17 +109,44 @@ function pathAllowed(path: string): boolean {
   return typeof path === 'string' && path.startsWith('/api/');
 }
 
-async function ensureKey(realm: Realm): Promise<string> {
-  let kp = await loadKeyPair(realm);
-  if (!kp) {
-    kp = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
+/** The session's PoP algorithm string ('EdDSA' | 'ES256'), read off the key itself. */
+function algOf(key: CryptoKey): string {
+  return key.algorithm.name === 'Ed25519' ? POP_ALG_ED : POP_ALG;
+}
+
+/**
+ * Generate a fresh NON-EXTRACTABLE session keypair. Prefers Ed25519 (a rigid,
+ * non-NIST curve); falls back to ECDSA P-256 on browsers without WebCrypto
+ * Ed25519 (e.g. older Android WebView). A capability probe — raw public-key
+ * export + a throwaway sign — runs before we commit to Ed25519, so an engine that
+ * exposes generateKey but not export/sign for it can never leave us with an
+ * unusable persisted key (we fall back to P-256 instead).
+ */
+async function generateKeyPair(): Promise<CryptoKeyPair> {
+  try {
+    const kp = (await crypto.subtle.generateKey({ name: 'Ed25519' }, false, [
       'sign',
       'verify',
     ])) as CryptoKeyPair;
+    await crypto.subtle.exportKey('raw', kp.publicKey);
+    await crypto.subtle.sign({ name: 'Ed25519' }, kp.privateKey, new Uint8Array(8));
+    return kp;
+  } catch {
+    return (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
+      'sign',
+      'verify',
+    ])) as CryptoKeyPair;
+  }
+}
+
+async function ensureKey(realm: Realm): Promise<{ pubB64: string; alg: string }> {
+  let kp = await loadKeyPair(realm);
+  if (!kp) {
+    kp = await generateKeyPair();
     await storeKeyPair(realm, kp);
   }
   const pubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
-  return bytesToB64Url(pubRaw);
+  return { pubB64: bytesToB64Url(pubRaw), alg: algOf(kp.privateKey) };
 }
 
 interface SignMsg {
@@ -151,7 +186,7 @@ async function sign(
     ts,
     nonceB64,
   });
-  const sig = await signP1363(kp.privateKey, message);
+  const sig = await signPop(kp.privateKey, message);
   return { sigB64: bytesToB64Url(sig), ts, nonceB64 };
 }
 
@@ -161,7 +196,8 @@ ctx.addEventListener('message', (e: MessageEvent) => {
   void (async () => {
     try {
       if (data.type === 'ensureKey') {
-        ctx.postMessage({ id: data.id, ok: true, pubB64: await ensureKey(realm) });
+        const k = await ensureKey(realm);
+        ctx.postMessage({ id: data.id, ok: true, pubB64: k.pubB64, alg: k.alg });
       } else if (data.type === 'sign') {
         const r = await sign({ ...data, realm });
         if ('error' in r) ctx.postMessage({ id: data.id, ok: false, error: r.error });

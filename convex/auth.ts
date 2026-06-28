@@ -60,8 +60,13 @@ export const accountLogin = internalAction({
     // the cookie alone is not sufficient afterward. Absent for clients without
     // the signing worker (legacy fallback).
     popPublicKey: v.optional(v.string()),
+    /** The PoP algorithm ('EdDSA' | 'ES256') for popPublicKey; stored on the session. */
+    popAlg: v.optional(v.string()),
   },
-  handler: async (ctx, { accountId, captchaToken, ip, popPublicKey }): Promise<LoginResult> => {
+  handler: async (
+    ctx,
+    { accountId, captchaToken, ip, popPublicKey, popAlg },
+  ): Promise<LoginResult> => {
     const start = Date.now();
     const failInvalid = async (): Promise<LoginResult> => {
       const elapsed = Date.now() - start;
@@ -121,7 +126,7 @@ export const accountLogin = internalAction({
       kind: 'member',
       userId: user._id,
       ttlMs: MEMBER_TTL_MS,
-      ...(popPublicKey ? { popPublicKey, popSessionToken } : {}),
+      ...(popPublicKey ? { popPublicKey, popAlg, popSessionToken } : {}),
     });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',

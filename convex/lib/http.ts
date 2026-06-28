@@ -158,6 +158,7 @@ async function sessionPopOk(
   sid: string,
   popPublicKey: string | undefined,
   sessionToken: string | undefined,
+  popAlg: string | undefined,
 ): Promise<boolean> {
   if (!popPublicKey) return process.env.POP_REQUIRED !== 'true';
   // A PoP-bound session must also carry its public per-session token (minted at
@@ -173,6 +174,7 @@ async function sessionPopOk(
   const respEph = req.headers.get('x-fs-resp-eph') ?? undefined;
   const { verdict, nonceHash } = await evaluatePop({
     popPublicKey,
+    popAlg,
     method: req.method,
     path: url.pathname,
     query: url.search.startsWith('?') ? url.search.slice(1) : url.search,
@@ -289,7 +291,9 @@ export async function resolveMember(
     if (sid) {
       const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
       if (sess && sess.kind === 'member' && sess.userId) {
-        if (await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken)) {
+        if (
+          await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken, sess.popAlg)
+        ) {
           return { userId: sess.userId, source: 'cookie' };
         }
         // Bound session without a valid PoP signature: fall through (no bearer
@@ -352,7 +356,7 @@ export async function resolveAdmin(
         });
         if (
           adminRow?.isActive &&
-          (await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken))
+          (await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken, sess.popAlg))
         ) {
           return { adminUserId: sess.adminUserId, sid };
         }

@@ -18,7 +18,7 @@ import { SETTINGS_DEFAULTS } from './appSettings';
 import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sealed } from './lib/e2ee';
-import { POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
+import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
 import {
   ADMIN_COOKIE,
   MEMBER_COOKIE,
@@ -264,6 +264,7 @@ http.route({
     // PoP (Phase 2): account creation establishes a member session, so the client
     // folds its session public key into the (sealed) body to bind it (like login).
     const popRaw = (body as Record<string, unknown>)[POP_PUBKEY_FIELD];
+    const popAlgRaw = (body as Record<string, unknown>)[POP_ALG_FIELD];
 
     let result;
     try {
@@ -274,6 +275,7 @@ http.route({
         requestId,
         backend,
         popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
+        popAlg: typeof popAlgRaw === 'string' ? popAlgRaw : undefined,
       });
     } catch (err) {
       // Account creation has no backend dependency, so a throw here is a config
@@ -357,11 +359,13 @@ http.route({
     // PoP (Phase 2): the client folds its session public key into the (sealed)
     // login body to bind the session to it.
     const popRaw = (body as Record<string, unknown>)[POP_PUBKEY_FIELD];
+    const popAlgRaw = (body as Record<string, unknown>)[POP_ALG_FIELD];
     const res = await ctx.runAction(internal.auth.accountLogin, {
       accountId: body.accountId,
       captchaToken,
       ip,
       popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
+      popAlg: typeof popAlgRaw === 'string' ? popAlgRaw : undefined,
     });
     if (!res.ok) {
       if (res.reason === 'captcha') {
@@ -899,12 +903,14 @@ http.route({
       return errorJson('validation', 'challengeId and response required', 400);
     }
     const popRaw = (body as Record<string, unknown>)[POP_PUBKEY_FIELD];
+    const popAlgRaw = (body as Record<string, unknown>)[POP_ALG_FIELD];
     try {
       const out = await ctx.runAction(internal.webauthn.authenticateVerify, {
         challengeId: body.challengeId,
         response: body.response,
         requestId: newRequestId(),
         popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
+        popAlg: typeof popAlgRaw === 'string' ? popAlgRaw : undefined,
       });
       const cookie = buildSetCookie(ADMIN_COOKIE, out.signedCookieValue, {
         maxAge: out.maxAgeSec,

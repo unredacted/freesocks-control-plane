@@ -10,6 +10,7 @@ import {
   POP_VERSION,
   POP_VERSION_HEADER,
   POP_WINDOW_MS,
+  signEd25519,
   signP1363,
 } from '../../src/shared/crypto/pop';
 import { allowedPopHosts, evaluatePop, extractPopFields, type PopFields } from './pop';
@@ -50,6 +51,41 @@ async function signedRequest(opts: {
   });
   const sigB64 = bytesToB64Url(await signP1363(kp.privateKey, msg));
   const fields: PopFields = { sigB64, ts: opts.ts, nonceB64, version: opts.version ?? POP_VERSION };
+  return { popPublicKey, fields };
+}
+
+/** Like signedRequest but with a WebCrypto Ed25519 key; null if unsupported. */
+async function ed25519SignedRequest(opts: {
+  method: string;
+  path: string;
+  sessionToken?: string;
+  wireBody: string;
+  ts: number;
+}) {
+  let kp: CryptoKeyPair;
+  try {
+    kp = (await crypto.subtle.generateKey({ name: 'Ed25519' }, false, [
+      'sign',
+      'verify',
+    ])) as CryptoKeyPair;
+  } catch {
+    return null;
+  }
+  const popPublicKey = bytesToB64Url(
+    new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)),
+  );
+  const nonceB64 = bytesToB64Url(new Uint8Array(16).fill(2));
+  const bodyHashB64 = await digestB64Url(new TextEncoder().encode(opts.wireBody));
+  const msg = buildPopMessage({
+    method: opts.method,
+    path: opts.path,
+    sessionToken: opts.sessionToken ?? '',
+    bodyHashB64,
+    ts: opts.ts,
+    nonceB64,
+  });
+  const sigB64 = bytesToB64Url(await signEd25519(kp.privateKey, msg));
+  const fields: PopFields = { sigB64, ts: opts.ts, nonceB64, version: POP_VERSION };
   return { popPublicKey, fields };
 }
 
@@ -150,6 +186,33 @@ describe('evaluatePop', () => {
       ...base,
       sessionToken: 'pst-B',
       fields,
+      nowMs: now,
+    });
+    expect(r.verdict).toBe('invalid');
+  });
+
+  test('an Ed25519-bound session verifies when popAlg is EdDSA', async () => {
+    const ed = await ed25519SignedRequest(base);
+    if (!ed) return; // runtime without WebCrypto Ed25519 (P-256 path is fully covered above)
+    const r = await evaluatePop({
+      popPublicKey: ed.popPublicKey,
+      popAlg: 'EdDSA',
+      ...base,
+      fields: ed.fields,
+      nowMs: now,
+    });
+    expect(r.verdict).toBe('ok');
+    expect(r.nonceHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test('an Ed25519 signature verified with the wrong popAlg (ES256) is rejected', async () => {
+    const ed = await ed25519SignedRequest(base);
+    if (!ed) return;
+    const r = await evaluatePop({
+      popPublicKey: ed.popPublicKey,
+      popAlg: 'ES256', // wrong verifier for an Ed25519 key → fails closed
+      ...base,
+      fields: ed.fields,
       nowMs: now,
     });
     expect(r.verdict).toBe('invalid');

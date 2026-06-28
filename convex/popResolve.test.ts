@@ -14,7 +14,7 @@ import {
   POP_TS_HEADER,
   POP_VERSION,
   POP_VERSION_HEADER,
-  signP1363,
+  signPop,
 } from '../src/shared/crypto/pop';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -52,11 +52,28 @@ async function makeKey() {
   return { priv: kp.privateKey, pubB64 };
 }
 
+/** A WebCrypto Ed25519 session keypair, or null if this runtime lacks it. */
+async function makeEd25519Key() {
+  try {
+    const kp = (await crypto.subtle.generateKey({ name: 'Ed25519' }, false, [
+      'sign',
+      'verify',
+    ])) as CryptoKeyPair;
+    const pubB64 = bytesToB64Url(
+      new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)),
+    );
+    return { priv: kp.privateKey, pubB64 };
+  } catch {
+    return null;
+  }
+}
+
 async function seedSession(
   t: ReturnType<typeof convexTest>,
   userId: Id<'users'>,
   popPublicKey?: string,
   popSessionToken?: string,
+  popAlg = 'ES256',
 ): Promise<string> {
   const sid = `sid-${Math.random().toString(16).slice(2)}`;
   await t.run(async (ctx) => {
@@ -65,9 +82,7 @@ async function seedSession(
       kind: 'member',
       userId,
       expiresAt: Date.now() + 3_600_000,
-      ...(popPublicKey
-        ? { popPublicKey, popAlg: 'ES256', popBoundAt: Date.now(), popSessionToken }
-        : {}),
+      ...(popPublicKey ? { popPublicKey, popAlg, popBoundAt: Date.now(), popSessionToken } : {}),
     });
   });
   return sid;
@@ -94,7 +109,7 @@ async function buildReq(opts: {
       ts,
       nonceB64,
     });
-    headers.set(POP_SIG_HEADER, bytesToB64Url(await signP1363(opts.priv, msg)));
+    headers.set(POP_SIG_HEADER, bytesToB64Url(await signPop(opts.priv, msg)));
     headers.set(POP_TS_HEADER, String(ts));
     headers.set(POP_NONCE_HEADER, nonceB64);
     headers.set(POP_VERSION_HEADER, POP_VERSION);
@@ -112,6 +127,19 @@ describe('resolveMember + PoP (Phase 2 verify path)', () => {
     const { priv, pubB64 } = await makeKey();
     const sid = await seedSession(t, userId, pubB64, PST);
     const req = await buildReq({ sid, priv, sessionToken: PST });
+
+    const auth = await t.action(async (ctx) => resolveMember(ctx, req));
+    expect(auth?.userId).toBe(userId);
+    expect(auth?.source).toBe('cookie');
+  });
+
+  test('an Ed25519-bound session (popAlg EdDSA) authenticates with a valid signature', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedUser(t);
+    const k = await makeEd25519Key();
+    if (!k) return; // runtime without WebCrypto Ed25519 (P-256 path is fully covered)
+    const sid = await seedSession(t, userId, k.pubB64, PST, 'EdDSA');
+    const req = await buildReq({ sid, priv: k.priv, sessionToken: PST });
 
     const auth = await t.action(async (ctx) => resolveMember(ctx, req));
     expect(auth?.userId).toBe(userId);

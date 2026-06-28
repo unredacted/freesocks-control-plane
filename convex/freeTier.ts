@@ -135,6 +135,8 @@ export const createFreeAccount = internalAction({
     // PoP (CDN-blinding Phase 2): account creation establishes a member session,
     // so the client folds its session public key in to bind it (like login).
     popPublicKey: v.optional(v.string()),
+    /** The PoP algorithm ('EdDSA' | 'ES256') for popPublicKey; stored on the session. */
+    popAlg: v.optional(v.string()),
   },
   handler: async (ctx, a): Promise<CreateAccountResult> => {
     const salt = process.env.IP_HASH_SALT;
@@ -191,7 +193,9 @@ export const createFreeAccount = internalAction({
         kind: 'member',
         userId: claim.userId,
         ttlMs: MEMBER_TTL_MS,
-        ...(a.popPublicKey ? { popPublicKey: a.popPublicKey, popSessionToken } : {}),
+        ...(a.popPublicKey
+          ? { popPublicKey: a.popPublicKey, popAlg: a.popAlg, popSessionToken }
+          : {}),
       });
       const signedCookieValue = await signValue(sid, signingKey);
 

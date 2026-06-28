@@ -14,6 +14,7 @@ import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { hmacSha256Hex, hmacSha512Hex, sha256Hex } from './lib/crypto';
 import { resolveCountry } from './lib/http';
+import { bytesToB64Url } from '../src/shared/crypto/envelope';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -588,13 +589,21 @@ describe('GET /api/admin/auth/status — cookie-only signed-in detection', () =>
     // popPublicKey set => the session is PoP-bound. A bound session sending no
     // x-fs-pop-* signature fails resolveAdmin's sessionPopOk; the status probe
     // must succeed anyway (detection, not authorization) — this is the /admin
-    // re-prompt regression.
+    // re-prompt regression. A real 65-byte P-256 point (sessions.create validates
+    // the length against popAlg before binding).
+    const kp = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
+      'sign',
+      'verify',
+    ])) as CryptoKeyPair;
+    const popPublicKey = bytesToB64Url(
+      new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)),
+    );
     await t.mutation(internal.sessions.create, {
       sid,
       kind: 'admin',
       adminUserId,
       ttlMs: 3_600_000,
-      popPublicKey: 'BPdummy-bound-key',
+      popPublicKey,
     });
     const cookie = `fs_admin_session=${await signValue(sid, ADMIN_SIGN_KEY)}`;
     const res = await t.fetch('/api/admin/auth/status', {

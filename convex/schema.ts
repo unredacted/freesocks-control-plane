@@ -431,13 +431,16 @@ export default defineSchema({
   //
   // Proof-of-possession (CDN-blinding Phase 2): a session MAY be bound to an
   // asymmetric PoP key minted client-side at login. `popPublicKey` is the raw
-  // uncompressed P-256 point (65 bytes, base64url) the client posted; the
-  // private half is a non-extractable CryptoKey the browser holds and the CDN
-  // never sees. Once a session carries `popPublicKey`, the signed cookie alone
-  // is NOT sufficient: each request must also carry a fresh signature over its
-  // canonical form (see convex/lib/pop.ts + the re-bind rule in lib/http.ts).
-  // Sessions minted before Phase 2 leave these unset and authenticate by cookie
-  // only until POP_REQUIRED is enabled.
+  // public key the client posted (base64url): an Ed25519 32-byte key (preferred)
+  // OR an uncompressed P-256 point (65 bytes, the fallback for browsers without
+  // WebCrypto Ed25519). `popAlg` ('EdDSA' | 'ES256') records which, so the
+  // verifier dispatches on it (convex/lib/pop.ts `verifyPop`). The private half is
+  // a non-extractable CryptoKey the browser holds and the CDN never sees. Once a
+  // session carries `popPublicKey`, the signed cookie alone is NOT sufficient:
+  // each request must also carry a fresh signature over its canonical form (see
+  // convex/lib/pop.ts + the re-bind rule in lib/http.ts). Sessions minted before
+  // Phase 2 leave these unset and authenticate by cookie only until POP_REQUIRED
+  // is enabled.
   sessions: defineTable({
     sid: v.string(),
     kind: v.union(v.literal('member'), v.literal('admin')),
@@ -447,12 +450,13 @@ export default defineSchema({
     popPublicKey: v.optional(v.string()),
     popAlg: v.optional(v.string()),
     popBoundAt: v.optional(v.number()),
-    // TOMBSTONE: a reverted PoP sid-binding attempt (2026-06-28) wrote this field
-    // to some session rows before it was rolled back. Convex requires the schema
-    // to be a superset of existing data, so this optional field is retained so
-    // those rows validate on push. NO code reads or writes it; it ages out as
-    // those sessions expire (the session-sweep cron deletes them). Safe to drop
-    // from the schema once no session row carries it.
+    // The public per-session token (PoP sid-binding). A non-secret value minted at
+    // login, returned in the login response body, and signed into every PoP
+    // message so a signature is bound to exactly ONE session — it cannot be lifted
+    // onto another session that reuses the same persisted key. Set only when the
+    // session is PoP-bound; read back by lib/http.ts (sessionPopOk) on every
+    // request and folded into the canonical message (convex/lib/pop.ts). Optional
+    // because legacy/unbound sessions have none.
     popSessionToken: v.optional(v.string()),
   })
     .index('by_sid', ['sid'])

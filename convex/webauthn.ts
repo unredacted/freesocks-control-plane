@@ -219,10 +219,12 @@ export const authenticateVerify = internalAction({
     // PoP (Phase 2): the admin client's session public key. Admin inherits PoP
     // via the shared verify path once bound here.
     popPublicKey: v.optional(v.string()),
+    /** The PoP algorithm ('EdDSA' | 'ES256') for popPublicKey; stored on the session. */
+    popAlg: v.optional(v.string()),
   },
   handler: async (
     ctx,
-    { challengeId, response, requestId, popPublicKey },
+    { challengeId, response, requestId, popPublicKey, popAlg },
   ): Promise<{
     ok: true;
     username: string;
@@ -278,7 +280,7 @@ export const authenticateVerify = internalAction({
       kind: 'admin',
       adminUserId,
       ttlMs: ADMIN_TTL_MS,
-      ...(popPublicKey ? { popPublicKey, popSessionToken } : {}),
+      ...(popPublicKey ? { popPublicKey, popAlg, popSessionToken } : {}),
     });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'admin',

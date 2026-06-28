@@ -9,6 +9,19 @@
  */
 import { internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
+import { b64UrlToBytes } from '../src/shared/crypto/envelope';
+import { POP_ALG, POP_ALG_ED } from '../src/shared/crypto/pop';
+
+/** True when the base64url raw public key decodes to the byte length its PoP
+ *  algorithm requires (Ed25519 = 32, P-256 uncompressed point = 65). */
+function popKeyMatchesAlg(popPublicKey: string, alg: string): boolean {
+  try {
+    const len = b64UrlToBytes(popPublicKey).length;
+    return alg === POP_ALG_ED ? len === 32 : len === 65;
+  } catch {
+    return false;
+  }
+}
 
 export const create = internalMutation({
   args: {
@@ -31,15 +44,20 @@ export const create = internalMutation({
     ctx,
     { sid, kind, userId, adminUserId, ttlMs, popPublicKey, popAlg, popSessionToken },
   ) => {
+    // PoP binding (CDN-blinding Phase 2). Normalize the client-reported algorithm
+    // to the allowlist (unknown → ES256, the P-256 fallback) and bind only if the
+    // public key actually decodes to that scheme's length. An inconsistent pair
+    // would only break the caller's OWN session, so we fail safe to an unbound
+    // session (re-auth under POP_REQUIRED) rather than throw.
+    const boundAlg = popAlg === POP_ALG_ED ? POP_ALG_ED : POP_ALG;
+    const bound = popPublicKey !== undefined && popKeyMatchesAlg(popPublicKey, boundAlg);
     await ctx.db.insert('sessions', {
       sid,
       kind,
       userId,
       adminUserId,
       expiresAt: Date.now() + ttlMs,
-      ...(popPublicKey
-        ? { popPublicKey, popAlg: popAlg ?? 'ES256', popBoundAt: Date.now(), popSessionToken }
-        : {}),
+      ...(bound ? { popPublicKey, popAlg: boundAlg, popBoundAt: Date.now(), popSessionToken } : {}),
     });
     return null;
   },

@@ -11,7 +11,7 @@
   import { Input } from '@client/components/ui/input';
   import { router } from '../../stores/router.svelte';
   import { ensureSessionKey, setSessionToken } from '../../lib/pop';
-  import { POP_PUBKEY_FIELD } from '../../../shared/crypto/pop';
+  import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../../../shared/crypto/pop';
 
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -67,9 +67,9 @@
       }
 
       // PoP (Phase 2): mint/ensure the admin signing key and bind it to this
-      // session by posting its public point with the assertion. Admin then
-      // inherits PoP via the shared apiClient seam on every later request.
-      const popPub = await ensureSessionKey('admin');
+      // session by posting its public point + algorithm with the assertion. Admin
+      // then inherits PoP via the shared apiClient seam on every later request.
+      const popKey = await ensureSessionKey('admin');
       const verifyRes = await fetch('/api/admin/auth/authenticate/verify', {
         method: 'POST',
         credentials: 'include',
@@ -77,7 +77,7 @@
         body: JSON.stringify({
           challengeId: optsBody.challengeId,
           response: assertion,
-          ...(popPub ? { [POP_PUBKEY_FIELD]: popPub } : {}),
+          ...(popKey ? { [POP_PUBKEY_FIELD]: popKey.pub, [POP_ALG_FIELD]: popKey.alg } : {}),
         }),
       });
       if (!verifyRes.ok) {

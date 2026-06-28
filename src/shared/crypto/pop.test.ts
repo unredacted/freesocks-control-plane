@@ -4,9 +4,15 @@ import { b64UrlToBytes, bytesToB64Url } from './envelope';
 import {
   buildPopMessage,
   digestB64Url,
+  POP_ALG,
+  POP_ALG_ED,
   POP_VERSION,
+  signEd25519,
   signP1363,
+  signPop,
+  verifyEd25519,
   verifyP1363,
+  verifyPop,
   type PopMessageParts,
 } from './pop';
 
@@ -18,6 +24,25 @@ async function sessionKey() {
   ])) as CryptoKeyPair;
   const pubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
   return { priv: kp.privateKey, pubRaw };
+}
+
+/**
+ * A WebCrypto Ed25519 session keypair (public key exported raw, 32 bytes), or
+ * null if this runtime lacks WebCrypto Ed25519 — then the Ed25519 tests no-op
+ * (the P-256 fallback path is still fully covered, and bun/Node ≥18.4 + every
+ * target browser do support it; the beta smoke test is the end-to-end check).
+ */
+async function ed25519SessionKey() {
+  try {
+    const kp = (await crypto.subtle.generateKey({ name: 'Ed25519' }, false, [
+      'sign',
+      'verify',
+    ])) as CryptoKeyPair;
+    const pubRaw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+    return { priv: kp.privateKey, pubRaw };
+  } catch {
+    return null;
+  }
 }
 
 const baseParts = (over: Partial<PopMessageParts> = {}): PopMessageParts => ({
@@ -131,6 +156,53 @@ describe('signP1363 / verifyP1363 round-trip (WebCrypto -> noble)', () => {
   test('a non-64-byte signature is rejected without throwing', () => {
     const bogusPub = new Uint8Array(65).fill(4);
     expect(verifyP1363(bogusPub, new Uint8Array([1, 2, 3]), new Uint8Array(10))).toBe(false);
+  });
+});
+
+describe('Ed25519 signing + verifyPop dispatch (WebCrypto -> noble)', () => {
+  test('a real WebCrypto Ed25519 signature verifies under noble (interop) and verifyPop(EdDSA)', async () => {
+    const k = await ed25519SessionKey();
+    if (!k) return; // runtime without WebCrypto Ed25519 (covered by P-256 path + beta smoke)
+    const msg = buildPopMessage(baseParts());
+    const sig = await signEd25519(k.priv, msg);
+    expect(sig.length).toBe(64); // RFC 8032 R||s
+    expect(verifyEd25519(k.pubRaw, msg, sig)).toBe(true);
+    expect(verifyPop(POP_ALG_ED, k.pubRaw, msg, sig)).toBe(true);
+  });
+
+  test('signPop dispatches on the key algorithm (Ed25519 key -> Ed25519 sig)', async () => {
+    const k = await ed25519SessionKey();
+    if (!k) return;
+    const msg = buildPopMessage(baseParts());
+    const sig = await signPop(k.priv, msg); // picks Ed25519 from key.algorithm.name
+    expect(verifyPop(POP_ALG_ED, k.pubRaw, msg, sig)).toBe(true);
+  });
+
+  test('cross-algorithm verification fails (the verifier must match the key)', async () => {
+    const ed = await ed25519SessionKey();
+    if (!ed) return;
+    const p = await sessionKey(); // P-256
+    const msg = buildPopMessage(baseParts());
+    const edSig = await signEd25519(ed.priv, msg);
+    const pSig = await signP1363(p.priv, msg);
+    expect(verifyPop(POP_ALG, ed.pubRaw, msg, edSig)).toBe(false); // EdDSA sig under the P-256 verifier
+    expect(verifyPop(POP_ALG_ED, p.pubRaw, msg, pSig)).toBe(false); // P-256 sig under the Ed25519 verifier
+  });
+
+  test('a tampered message fails under Ed25519', async () => {
+    const k = await ed25519SessionKey();
+    if (!k) return;
+    const sig = await signEd25519(k.priv, buildPopMessage(baseParts()));
+    const tampered = buildPopMessage(baseParts({ path: '/api/v1/account/account-id/rotate' }));
+    expect(verifyEd25519(k.pubRaw, tampered, sig)).toBe(false);
+  });
+
+  test('verifyPop defaults to the P-256 verifier when alg is undefined (legacy sessions)', async () => {
+    const p = await sessionKey();
+    const msg = buildPopMessage(baseParts());
+    const sig = await signP1363(p.priv, msg);
+    expect(verifyPop(undefined, p.pubRaw, msg, sig)).toBe(true);
+    expect(verifyPop(POP_ALG, p.pubRaw, msg, sig)).toBe(true);
   });
 });
 

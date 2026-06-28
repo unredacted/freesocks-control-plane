@@ -13,6 +13,7 @@
  */
 import { normalizePath } from '../../shared/crypto/envelope';
 import {
+  POP_ALG_FIELD,
   POP_HOST_HEADER,
   POP_NONCE_HEADER,
   POP_PUBKEY_FIELD,
@@ -114,6 +115,7 @@ const pending = new Map<number, (r: WorkerReply) => void>();
 interface WorkerReply {
   ok: boolean;
   pubB64?: string;
+  alg?: string;
   sigB64?: string;
   ts?: number;
   nonceB64?: string;
@@ -169,10 +171,15 @@ function call(msg: Record<string, unknown>): Promise<WorkerReply> {
 
 // --- public API ---------------------------------------------------------------
 
-/** Generate the realm's session key if absent and return its base64url raw public point. */
-export async function ensureSessionKey(realm: Realm = 'member'): Promise<string | null> {
+/**
+ * Generate the realm's session key if absent and return its base64url raw public
+ * point + algorithm ('EdDSA' | 'ES256'), or null if PoP is unavailable.
+ */
+export async function ensureSessionKey(
+  realm: Realm = 'member',
+): Promise<{ pub: string; alg: string } | null> {
   const r = await call({ type: 'ensureKey', realm });
-  return r.ok && r.pubB64 ? r.pubB64 : null;
+  return r.ok && r.pubB64 && r.alg ? { pub: r.pubB64, alg: r.alg } : null;
 }
 
 /** Delete the realm's session key + per-session token (logout); next login re-binds. */
@@ -205,13 +212,13 @@ export async function augmentLoginBody(
   bodyStr: string | undefined,
 ): Promise<string | undefined> {
   if (!isMemberSessionEstablish(path, method)) return bodyStr;
-  const pub = await ensureSessionKey();
-  if (!pub) return bodyStr;
-  return injectPopPub(bodyStr, pub);
+  const key = await ensureSessionKey();
+  if (!key) return bodyStr;
+  return injectPopPub(bodyStr, key.pub, key.alg);
 }
 
-/** Merge the PoP public key into a JSON body string (used at login). */
-export function injectPopPub(bodyStr: string | undefined, pubB64: string): string {
+/** Merge the PoP public key + algorithm into a JSON body string (used at login). */
+export function injectPopPub(bodyStr: string | undefined, pubB64: string, alg: string): string {
   let obj: Record<string, unknown> = {};
   if (bodyStr) {
     try {
@@ -221,6 +228,7 @@ export function injectPopPub(bodyStr: string | undefined, pubB64: string): strin
     }
   }
   obj[POP_PUBKEY_FIELD] = pubB64;
+  obj[POP_ALG_FIELD] = alg;
   return JSON.stringify(obj);
 }
 

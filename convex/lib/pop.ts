@@ -19,7 +19,7 @@ import {
   POP_TS_HEADER,
   POP_VERSION_HEADER,
   POP_WINDOW_MS,
-  verifyP1363,
+  verifyPop,
 } from '../../src/shared/crypto/pop';
 import { sha256Hex } from './crypto';
 
@@ -54,8 +54,10 @@ export type PopVerdict = 'ok' | 'invalid';
  * the nonce separately (replayGuard).
  */
 export async function evaluatePop(opts: {
-  /** base64url raw P-256 public point bound to the session. */
+  /** base64url raw public key bound to the session (P-256 65-byte point OR Ed25519 32-byte key). */
   popPublicKey: string;
+  /** The session's stored PoP algorithm ('EdDSA' | 'ES256'); selects the verifier (default ES256). */
+  popAlg?: string;
   method: string;
   /** pathname only (no query). */
   path: string;
@@ -114,7 +116,7 @@ export async function evaluatePop(opts: {
     ts: fields.ts,
     nonceB64: fields.nonceB64,
   });
-  if (!verifyP1363(pub, message, sig)) return { verdict: 'invalid' };
+  if (!verifyPop(opts.popAlg, pub, message, sig)) return { verdict: 'invalid' };
 
   const nonceHash = await sha256Hex(fields.nonceB64);
   return { verdict: 'ok', nonceHash };

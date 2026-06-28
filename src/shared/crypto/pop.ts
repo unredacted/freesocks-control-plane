@@ -3,38 +3,41 @@
  * (Phase 2). Closes the cookie-replay hole: a passive CDN that captures the
  * httpOnly `fs_session` / `fs_admin_session` cookie still cannot act as the
  * member, because every authenticated request must also carry a fresh signature
- * over its canonical form, made with a per-session NON-EXTRACTABLE P-256 private
- * key the browser holds and the CDN never sees.
+ * over its canonical form, made with a per-session NON-EXTRACTABLE private key
+ * the browser holds and the CDN never sees.
  *
  * This module is the single source of truth for the canonical message both
  * sides build, so client and server cannot drift. It runs in three places:
- *   - the browser signing Worker (signP1363, WebCrypto) -> src/client/lib/pop-worker.ts
- *   - the Convex httpAction isolate verifying (verifyP1363, @noble/curves)
+ *   - the browser signing Worker (signPop, WebCrypto) -> src/client/lib/pop-worker.ts
+ *   - the Convex httpAction isolate verifying (verifyPop, @noble/curves)
  *     -> convex/lib/http.ts
  *   - tests (both).
  * Both signing (WebCrypto subtle, browser) and verifying (noble, pure JS) are
  * available wherever this is imported; only the relevant half is ever called.
  *
- * Algorithm: ECDSA P-256 over SHA-256. WebCrypto emits the raw r||s (P1363, IEEE
- * 1363) 64-byte signature, NOT DER, and does NOT enforce low-S, so the noble
- * verifier must read compact and pass `lowS: false` (see verifyP1363).
+ * Algorithm agility (per session). The session key is Ed25519 wherever the
+ * browser supports it in WebCrypto — a rigid, non-NIST curve with no per-signature
+ * nonce and none of ECDSA's low-S/DER footguns — falling back to ECDSA P-256 on
+ * older browsers. The algorithm is recorded per session (sessions.popAlg =
+ * 'EdDSA' | 'ES256') and the verifier dispatches on it (verifyPop); it is never
+ * negotiated at verify time. PoP is deliberately CLASSICAL (not post-quantum): it
+ * authenticates an EPHEMERAL session (±window, single-use nonce), so a
+ * harvest-now-forge-later attack only ever yields a signature for a long-dead
+ * session. The confidentiality layer (X-Wing HPKE) is where PQ matters and is
+ * already hybrid. See docs/threat-model-cdn-blinding.md.
  *
- * Canonical message (UTF-8, '\n'-joined), versioned so Phase 3 can add host
- * binding as a v2 bump without breaking the wire format:
- *   FCP-PoP v1
- *   METHOD
- *   path                (normalized, no query)
- *   canonicalQuery      (sorted, percent-encoded)
- *   bodyHashB64         (base64url SHA-256 of the EXACT wire body bytes)
- *   ts                  (epoch ms, decimal)
- *   nonceB64            (base64url of 16 random bytes, single-use)
+ * Signature encodings (both exactly 64 bytes): ECDSA P-256 over SHA-256 is raw
+ * r||s (P1363/IEEE-1363), NOT DER, and WebCrypto does NOT enforce low-S, so the
+ * noble verifier reads compact and passes `lowS: false`. Ed25519 (RFC 8032) signs
+ * the canonical bytes directly (no prehash) and is R||s over a 32-byte public key.
  *
- * Host/`:authority` is deliberately NOT bound in v1 (the dev reverse proxy
- * rewrites Host with `changeOrigin`, same reason envelope.buildInfo omits it);
- * cross-vhost replay coverage is a Phase 3 v2 concern. The single-use nonce
- * (replayGuard) + ts window already defeat same-host replay, which is the real
- * passive-CDN threat.
+ * Canonical message (UTF-8, '\n'-joined): see buildPopMessage. The algorithm is
+ * carried out-of-band (popAlg + the fsPopAlg enrollment field), NOT in the
+ * message, so the bytes are identical across algorithms — POP_VERSION need not
+ * bump for the curve change, and existing P-256 sessions keep verifying under
+ * their stored popAlg (graceful rollover, no forced re-auth).
  */
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { p256 } from '@noble/curves/nist.js';
 import { bytesToB64Url, canonicalQuery, normalizePath, sha256 } from './envelope';
 
@@ -48,23 +51,33 @@ export const POP_PREFIX = 'FCP-PoP';
  */
 export const POP_VERSION = 'v1';
 export const POP_ACCEPTED_VERSIONS = ['v1'] as const;
-/** WebCrypto JWK `alg` for the session key; stored on the session row for agility. */
+/** JWK `alg` for an ECDSA P-256 session key (the fallback curve). Stored on the session row. */
 export const POP_ALG = 'ES256';
+/** JWK `alg` for an Ed25519 session key (the preferred, non-NIST curve). */
+export const POP_ALG_ED = 'EdDSA';
+/**
+ * Request-body field carrying the client's PoP algorithm ('EdDSA' | 'ES256') at
+ * enrollment, alongside POP_PUBKEY_FIELD. The server records it on the session
+ * (sessions.popAlg) and verifies later requests with the matching scheme.
+ */
+export const POP_ALG_FIELD = 'fsPopAlg';
 
 /** Per-request PoP headers (lowercased; Convex header reads are case-insensitive). */
 export const POP_SIG_HEADER = 'x-fs-pop-sig';
 export const POP_TS_HEADER = 'x-fs-pop-ts';
 export const POP_NONCE_HEADER = 'x-fs-pop-nonce';
 export const POP_VERSION_HEADER = 'x-fs-pop-v';
-/** v2: the host the client signed (location.host), so the server reconstructs the
+/** The host the client signed (location.host), so the server reconstructs the
  *  exact canonical message even behind a Host-rewriting dev proxy, then checks it
  *  against its allowlist. */
 export const POP_HOST_HEADER = 'x-fs-pop-host';
 
 /**
- * Request-body field carrying the client's base64url raw P-256 public point
- * (65 bytes, 0x04||x||y) at login. Posted inside the SEALED login body, so even
- * the (public, non-secret) key bytes do not appear in CDN logs.
+ * Request-body field carrying the client's base64url raw public key at login: an
+ * Ed25519 32-byte key (preferred) or an uncompressed P-256 point (65 bytes,
+ * 0x04||x||y, the fallback) — the companion POP_ALG_FIELD says which. Posted
+ * inside the SEALED login body, so even the (public, non-secret) key bytes do not
+ * appear in CDN logs.
  */
 export const POP_PUBKEY_FIELD = 'fsPopPub';
 
@@ -146,6 +159,31 @@ export async function signP1363(privateKey: CryptoKey, message: Uint8Array): Pro
 }
 
 /**
+ * Sign the canonical message with an Ed25519 private CryptoKey (browser/Worker).
+ * Returns the 64-byte RFC 8032 signature (R||s). Ed25519 hashes the message
+ * internally (SHA-512), so it signs the canonical bytes directly — no prehash.
+ */
+export async function signEd25519(privateKey: CryptoKey, message: Uint8Array): Promise<Uint8Array> {
+  const sig = await crypto.subtle.sign(
+    { name: 'Ed25519' },
+    privateKey,
+    message as unknown as ArrayBuffer,
+  );
+  return new Uint8Array(sig);
+}
+
+/**
+ * Sign with whichever scheme the session key uses, picked from the CryptoKey's
+ * own `algorithm.name` (preserved across the IndexedDB structured-clone), so the
+ * Worker needs no separate alg bookkeeping. Both schemes yield 64-byte sigs.
+ */
+export async function signPop(privateKey: CryptoKey, message: Uint8Array): Promise<Uint8Array> {
+  return privateKey.algorithm.name === 'Ed25519'
+    ? signEd25519(privateKey, message)
+    : signP1363(privateKey, message);
+}
+
+/**
  * Verify a P1363 signature over the canonical message against a raw P-256 public
  * point (server, pure-JS noble; runs in the Convex default isolate). Two
  * non-negotiable options for WebCrypto compatibility:
@@ -166,4 +204,41 @@ export function verifyP1363(
   } catch {
     return false;
   }
+}
+
+/**
+ * Verify an Ed25519 (RFC 8032) signature over the canonical message against a raw
+ * 32-byte public key (server, pure-JS noble; runs in the Convex default isolate).
+ * The message is verified directly — Ed25519 hashes it internally, so there is no
+ * prehash, matching WebCrypto's Ed25519 sign over the same bytes. Never throws.
+ */
+export function verifyEd25519(
+  publicKeyRaw: Uint8Array,
+  message: Uint8Array,
+  signature: Uint8Array,
+): boolean {
+  try {
+    if (signature.length !== 64) return false; // Ed25519 sig is R||s, exactly 64 bytes
+    return ed25519.verify(signature, message, publicKeyRaw);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verify a PoP signature with the scheme recorded for the session. `alg` is the
+ * session's stored `popAlg` ('EdDSA' → Ed25519; anything else → ECDSA P-256, the
+ * legacy/default). The server commits to ONE scheme per session before verifying,
+ * so there is no cross-algorithm negotiation an attacker can exploit; a
+ * mismatched key/scheme just fails closed (the underlying verifier throws → false).
+ */
+export function verifyPop(
+  alg: string | undefined,
+  publicKeyRaw: Uint8Array,
+  message: Uint8Array,
+  signature: Uint8Array,
+): boolean {
+  return alg === POP_ALG_ED
+    ? verifyEd25519(publicKeyRaw, message, signature)
+    : verifyP1363(publicKeyRaw, message, signature);
 }

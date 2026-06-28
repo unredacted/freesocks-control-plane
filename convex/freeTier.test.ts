@@ -4,8 +4,19 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
+import { bytesToB64Url } from '../src/shared/crypto/envelope';
 
 const modules = import.meta.glob('./**/*.*s');
+
+/** A real 65-byte P-256 public point (base64url) — sessions.create validates the
+ *  byte length against the algorithm, so a placeholder string would not bind. */
+async function p256PubB64(): Promise<string> {
+  const kp = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, [
+    'sign',
+    'verify',
+  ])) as CryptoKeyPair;
+  return bytesToB64Url(new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)));
+}
 
 async function seedFreeTier(t: ReturnType<typeof convexTest>): Promise<Id<'tiers'>> {
   return t.run((ctx) =>
@@ -217,10 +228,11 @@ describe('freeTier.createFreeAccount', () => {
   test('binds the PoP public key onto the session when provided', async () => {
     const t = convexTest(schema, modules);
     await seedFreeTier(t);
+    const popPublicKey = await p256PubB64();
     const res = await t.action(internal.freeTier.createFreeAccount, {
       ip: '203.0.113.21',
       requestId: 'req-create-2',
-      popPublicKey: 'pub-key-b64',
+      popPublicKey,
     });
     expect(res.ok).toBe(true);
     if (!res.ok) throw new Error('unreachable');
@@ -229,7 +241,8 @@ describe('freeTier.createFreeAccount', () => {
         .query('sessions')
         .filter((q) => q.eq(q.field('userId'), res.userId))
         .unique();
-      expect(session?.popPublicKey).toBe('pub-key-b64');
+      expect(session?.popPublicKey).toBe(popPublicKey);
+      expect(session?.popAlg).toBe('ES256'); // no popAlg supplied → P-256 default
     });
   });
 
