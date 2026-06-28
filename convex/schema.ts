@@ -447,6 +447,13 @@ export default defineSchema({
     popPublicKey: v.optional(v.string()),
     popAlg: v.optional(v.string()),
     popBoundAt: v.optional(v.number()),
+    // TOMBSTONE: a reverted PoP sid-binding attempt (2026-06-28) wrote this field
+    // to some session rows before it was rolled back. Convex requires the schema
+    // to be a superset of existing data, so this optional field is retained so
+    // those rows validate on push. NO code reads or writes it; it ages out as
+    // those sessions expire (the session-sweep cron deletes them). Safe to drop
+    // from the schema once no session row carries it.
+    popSessionToken: v.optional(v.string()),
   })
     .index('by_sid', ['sid'])
     .index('by_expires', ['expiresAt']),
