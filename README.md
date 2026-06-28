@@ -44,7 +44,7 @@ router and native cron jobs. There is no separate web framework or edge worker.
 - **shadcn-svelte** components copied as source into `src/client/components/ui/`, over **bits-ui** headless primitives.
 - **Tailwind CSS 4** via `@tailwindcss/vite`; Inter / Inter Tight / JetBrains Mono bundled and self-hosted via `@fontsource/*` (no third-party font CDN).
 - **`@simplewebauthn/browser`** for admin passkey ceremonies; **qrcode** for the subscription QR; **svelte-sonner** toasts; **mode-watcher** theming; **`@cap.js/widget`** (bundled) for the captcha.
-- **i18n** is a small dependency-free per-locale catalog (`src/client/lib/i18n/`): English + Farsi, Arabic, Russian, Simplified Chinese, with RTL driven off `<html dir>` and a persisted language switcher. The critical user-journey strings are translated; marketing copy + a native-speaker review pass are tracked follow-ups.
+- **i18n** uses Paraglide/inlang (`messages/*.json` is the authoritative source, compiled to typed messages; `t()` in `src/client/lib/i18n/` shims over them): English + Farsi, Arabic, Russian, Simplified Chinese, with RTL driven off `<html dir>` and a persisted language switcher. The critical user-journey strings are translated; marketing copy + a native-speaker review pass are tracked follow-ups.
 
 ### Shared contracts (`src/shared/contracts/`)
 
@@ -198,10 +198,14 @@ Highlights:
   HMAC-verified + deduped) for the future portal. A cron sweep moves lapsed members
   `active → grace → disabled`.
 - **Admin CMS**: passkey-only auth (first-run bootstrap wizard, then WebAuthn), separate
-  from member sessions. Tiers, users (search by support ID / prefix; disable, reset-traffic,
-  resync; paginated), API tokens (create / reveal-once / revoke), backend servers (CRUD +
-  test-connection), **rate-limit policies** (live-editable), **membership codes** (mint /
-  reveal-once / revoke), settings, and the audit log.
+  from member sessions. A landing **dashboard** (health + a shared `GET /admin/status`); tiers
+  (CRUD + **duplicate**); users (search by support ID / prefix; disable / **re-enable** /
+  reset-traffic / resync / **grant membership**; paginated); **admins** (invite links +
+  deactivate/reactivate + per-passkey revoke, under a last-admin guard); API tokens (create /
+  reveal-once / revoke); backend servers (CRUD + test-connection); **billing** (per-rail config
+  - a readiness check); **storage** mirrors; **rate-limit policies**; **membership codes**; an
+    admin-configurable **theme**; settings; and a filterable **audit log**. The Ansible role drives
+    a subset over idempotent **by-slug / by-name** routes using an **automation token**.
 - **Subscription delivery**: the issuance saga (`convex/lib/issuance.ts`) creates the
   backend user, optionally mirrors the content to N S3 providers
   ([`@aws-sdk/client-s3`](https://www.npmjs.com/package/@aws-sdk/client-s3)), and persists
@@ -225,7 +229,7 @@ Highlights:
   `POST /api/v1/auth/account-login`, `POST /api/v1/auth/logout`, `GET /api/v1/me`,
   `POST /api/v1/account/{regenerate,switch-backend,refresh-membership,redeem-code}`,
   `POST /api/v1/account/account-id/rotate`.
-- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{tiers,users,tokens,audit,settings,rate-limits,membership-codes,backend-servers}/*` — each route enforces a specific scope on token callers.
+- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{status,tiers,users,admins,tokens,audit,settings,rate-limits,membership-codes,backend-servers,billing,mirror-providers,theme}/*` — each route enforces a specific scope on token callers; the Ansible role's idempotent `by-slug` / `by-name` upserts live under these.
 - **Plumbing:** `GET|POST /api/admin/auth/*` (WebAuthn passkey ceremonies + bootstrap),
   `POST /api/webhooks/billing` (HMAC inbound).
 

@@ -1,12 +1,17 @@
 # Project inventory: features, open work, and code status
 
-**Last reconciled against the code: 2026-06-10** (branch `v2`; after the launch-readiness
-pass — Cap captcha, W2 rate-limit policies, W3 support ID, W4 redemption codes, i18n/RTL, the
-A1–A4 + P1/P2 hardening). This is a map, not a
-spec; if it disagrees with the source, trust the source and fix this file. It exists so
-a new maintainer (or a future automated pass) can tell at a glance what's **live**, what's
-**deliberately deferred or scaffolded**, and what's genuinely **open work**, and, in
-particular, so nobody deletes intentional scaffolding while "removing dead code."
+**Last reconciled against the code: 2026-06-28** (branch `v2`, after the improvement-roadmap
+pass: an admin landing **dashboard** with a shared `GET /admin/status` and audit-log filtering,
+an admin-configurable **theme system**, **admin/passkey lifecycle** (deactivate/reactivate and
+per-passkey revoke, guarded), IaC-friendly **by-slug / by-name CRUD** with declarative
+squad↔tier binding and an **automation-token** bootstrap for the Ansible role, per-rail
+**billing readiness**, tier **duplicate**, onboarding **skeletons**, a copy sweep, and the
+**Paraglide** i18n migration; on top of the earlier launch-readiness pass: Cap captcha, W2
+rate-limit policies, W3 support ID, W4 redemption codes, i18n/RTL, and the A1–A4 plus P1/P2
+hardening). This is a map, not a spec; if it disagrees with the source, trust the source and fix
+this file. It exists so a new maintainer (or a future automated pass) can tell at a glance what's
+**live**, what's **deliberately deferred or scaffolded**, and what's genuinely **open work**, and,
+in particular, so nobody deletes intentional scaffolding while "removing dead code."
 
 > **Stack, in one line.** The backend is a **self-hosted Convex deployment** (everything
 > under `convex/`: queries/mutations/actions + the `convex/http.ts` HTTP router + the
@@ -51,14 +56,21 @@ Detailed companions, referenced rather than duplicated here:
 - **WebAuthn passkeys** (admins): first-run **bootstrap wizard** (gated by
   `ADMIN_BOOTSTRAP_SECRET`, re-checked at options _and_ verify, **locks forever** once any
   credential exists) + authenticate; signed `fs_admin_session` cookie; per-IP throttle +
-  anti-enumeration (well-formed options for unknown usernames). `convex/webauthn.ts`
-  (`"use node"`) + `convex/admins.ts`. **Live.**
+  anti-enumeration (well-formed options for unknown usernames); **multi-admin invites** + an
+  admin **lifecycle** (deactivate/reactivate, per-passkey revoke) under a **last-admin guard**
+  (an "effective admin" = active + ≥1 passkey; neither op may drop that count to zero).
+  Deactivation is enforced everywhere: `resolveAdmin` re-checks the bound admin's `isActive` on
+  **every request** (and the login verify path refuses), so a disabled admin loses access
+  immediately rather than at session-TTL. `convex/webauthn.ts` (`"use node"`) + `convex/admins.ts`. **Live.**
 - **`fsv1_` API tokens** (services): SHA-256-hashed, scoped (`SCOPE_GROUPS.member|admin` in
-  `src/shared/contracts/scopes.ts`), optional expiry, `subjectType: service|user`, debounced
-  last-used, soft-revoke. `convex/apiTokens.ts`. **Live.**
+  `src/shared/contracts/scopes.ts`, incl. `admin:status:read`), optional expiry,
+  `subjectType: service|user`, debounced last-used, soft-revoke. Minted in the CMS **or**
+  headlessly for IaC via `bunx convex run adminApi:mintAutomationToken` (a credential-less
+  synthetic `automation` admin actor that can never establish a cookie session — the public
+  cookie gate is deliberately **not** relaxed). `convex/apiTokens.ts`, `convex/adminApi.ts`. **Live.**
 - Identity resolution is **per-route**, not middleware: each `httpAction` calls
   `resolveMember` / `resolveAdmin` / `resolveBearer` in `convex/lib/http.ts` (signed cookie
-  OR `fsv1_` token). **Live.**
+  OR `fsv1_` token); admin token callers are scope-gated, cookie sessions are full-privilege. **Live.**
 
 ### 1.2 Free-tier account creation (`convex/freeTier.ts`): **Live**
 
@@ -115,13 +127,24 @@ Detailed companions, referenced rather than duplicated here:
 
 ### 1.6 Admin CMS (`/api/v1/admin/*` + `src/client/routes/admin/*`): **Live**
 
-- Tiers; Users (search by **support ID** or 4-digit prefix; status/tier filters; disable /
-  reset-traffic / resync; backend shown; **paginated** via "Load more"); API tokens (create /
-  reveal-once / revoke; **per-route scope enforcement** on token callers); Backend servers
-  (CRUD + test-connection; the secret `config`/`apiUrl` is stored server-side and only ever
-  returned masked); **Rate-limit policies** (live-edit max/window/enabled per policy; W2);
-  **Membership codes** (mint a batch + reveal-once, list/filter, revoke; W4); App settings;
-  Audit log. Backed by `convex/adminApi.ts` (+ `rateLimits`/`membershipCodes`).
+- **Dashboard** (the `/admin` landing; replaced the old `→ /admin/tiers` redirect): a health
+  strip + users-by-status + per-backend health + a billing mini-panel, all from the shared
+  **`GET /api/v1/admin/status`** (`statusSummary`; scope `admin:status:read`; counts + health
+  booleans only, never a secret — also consumed by the Ansible post-deploy health gate).
+- **Tiers** (CRUD + **Duplicate** — a pre-filled create; the one-default-free-per-backend
+  invariant auto-clears on save); **Users** (search by **support ID** or 4-digit prefix;
+  status/tier filters; disable / **re-enable** / reset-traffic / resync / **grant-or-extend
+  membership**; backend shown; **paginated**); **Admins** (invite links + deactivate/reactivate
+  - per-passkey revoke, §1.1); **API tokens** (create / reveal-once / revoke; scope **group**
+    toggles); **Backend servers** (CRUD + test-connection; secret `config`/`apiUrl` stored
+    server-side, only ever returned masked); **Billing** (per-rail config + a **readiness** check
+    that flags enabled-but-misconfigured rails; §1.7); **Storage mirrors** (provider pool, §1.7);
+    **Theme** (preset gallery + hue slider + live preview; §1.7); **Rate-limit policies** (W2);
+    **Membership codes** (W4); App settings; **Audit log** (filter by action / actor / since).
+- **IaC-addressable mutations** (for the Ansible role): idempotent **`PUT …/backend-servers/by-slug/{slug}`** + **`DELETE …/by-slug/{slug}`**, **`PUT …/tiers/by-slug/{slug}`** (also the
+  declarative squad↔tier bind — `remnawaveSquadUuid` is a tier field), and **`PUT
+…/mirror-providers/by-name/{name}`**. Each is a single keep-secret-on-blank upsert; no
+  client-side id resolution. Backed by `convex/adminApi.ts` / `convex/mirrorProviders.ts`.
 
 ### 1.7 Integrations & runtime
 
@@ -152,10 +175,21 @@ Detailed companions, referenced rather than duplicated here:
   every limit (free-tier cap, login, regenerate/switch, redeem, webhook) is an admin-editable
   `{max,windowMs,enabled}` stored under `appSettings.ratelimit.*`, resolved per request with a
   fail-safe fallback to the compiled default. **Live.**
-- **i18n + RTL** (P1-15, `src/client/lib/i18n/`): dependency-free per-locale catalogs (en + fa,
-  ar, ru, zh), RTL via `<html dir>`, persisted language switcher, Persian/Arabic-Indic digit
-  normalization. Critical user-journey strings translated; marketing copy + native review are
-  follow-ups. **Live (English authoritative; other locales first-pass MT).**
+- **Admin-configurable theme** (`convex/lib/themeConfig.ts` + `convex/publicConfig.ts` +
+  `src/client/lib/theme.ts`, `theme-init.js`): curated presets (**Emerald** default / Teal /
+  Indigo / Classic monochrome) + an optional accent-**hue** override (hue-only, so each preset's
+  AA-tuned lightness/chroma ramp is preserved). Resolved server-side (`resolveTheme`,
+  bounds-checked, fail-safe), exposed via the public `publicConfig.get`, applied client-side
+  through an unlayered `<style>` with a `theme-init.js` localStorage replay (no flash-of-default
+  on reload). Edited in Admin → Theme (`PATCH /api/v1/admin/theme`, audited `admin.theme.change`).
+  Brand hue stays distinct from the semantic success/health green. **Live (Emerald default).**
+- **i18n + RTL** (`messages/*.json` + **Paraglide/inlang**, `src/client/lib/i18n/`):
+  `messages/en.json` is the authoritative source, compiled to typed messages
+  (`bun run i18n:keys` + `i18n:compile`); `t()` is a thin shim over the compiled `m` (the old
+  hand-rolled TS catalogs are gone). Locales en/fa/ar/ru/zh, RTL via `<html dir>`, persisted
+  language switcher, Persian/Arabic-Indic digit normalization; non-English locales auto-filled
+  (`bun run i18n:translate`). Critical journey strings done; native review is a follow-up.
+  **Live (English authoritative; other locales first-pass MT).**
 - **S3 subscription mirrors** (`convex/storage.ts` `"use node"` + `convex/mirrorProviders.ts`):
   the censorship-resistance hedge, **opt-in + lazy**. Providers are a DB pool (`mirrorProviders`,
   admin CMS → "Storage mirrors", country-tiered, no env flag — replaced `S3_MIRRORS_ENABLED`/
@@ -196,10 +230,13 @@ Convex runs these natively (no Workers triggers, no node-cron):
   copy/download/`beforeunload`; per-platform `SetupGuidance` after issuance), `Account` (member
   view + regenerate / switch-backend / rotate / **redeem code** / support-ID display),
   `Login` (account-number sign-in: show/hide, password-manager autofill, digit normalization).
-  Localized via `lib/i18n`; a `LanguageSwitcher` in the header.
+  `Home` + `GetAccount` show loading **skeletons** (no config-gated/auth-state content flash);
+  the `Account` page surfaces a calm account-number **recovery** hint (rotate if you didn't save
+  it). Localized via `lib/i18n`; a `LanguageSwitcher` in the header.
 - Admin (lazy-loaded behind `AdminRouter`): `AdminEntry`/`AdminLogin`/`AdminBootstrap`/`AdminLayout`
-  - Tiers / Users / Tokens / BackendServers / **RateLimits** / **MembershipCodes** / Settings /
-    Audit pages + editors/modals. Custom History-API router; all data via TanStack Query + the
+  - **Dashboard** / Tiers / Users / **Admins** / Tokens / BackendServers / **Billing** /
+    **Storage** mirrors / **RateLimits** / **MembershipCodes** / **Theme** / Settings / Audit
+    pages + editors/modals. Custom History-API router; all data via TanStack Query + the
     zod-validating `apiClient` (`lib/api.ts`, `lib/queries.ts`); errors localized via `lib/errors.ts`.
 
 ---
@@ -209,13 +246,13 @@ Convex runs these natively (no Workers triggers, no node-cron):
 There are **no `TODO`/`FIXME` markers in `convex/` or `src/`**; open work lives here and in
 the companion docs. Sizes: S/M/L.
 
-| Item                                                                                                                                                                                                                                                                                                                                                        | Size | Where it's tracked                  |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ----------------------------------- |
-| **Self-service billing**: the crypto rail (NOWPayments) is **Live**; **Stripe + PayPal** adapters are scaffolded behind admin toggles and need their phase work (adapter `createCheckout`/`verifyAndParse` + webhook route + tests). Plus the non-code launch checklist: NOWPayments US-nonprofit ToS confirmation + the USDC→Coinbase/Kraken→ACH off-ramp. | M    | `docs/billing.md`, this file (§1.7) |
-| **Native-speaker translation review** + extracting remaining marketing copy into i18n keys (the non-English locales are a first-pass MT; the critical journey strings are done).                                                                                                                                                                            | M    | this file (§1.7), `.claude/plans/`  |
-| **`POP_REQUIRED` flip**: operational — flip in beta after the client soaks (boot-warm prerequisite is done), prod launches with it on. PoP `sid`-binding needs an httpOnly-compatible design (a public per-session token).                                                                                                                                  | S    | `.claude/plans/`, threat model      |
-| **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until tier linkage across backends is defined. Needs the portal's tier model.                                                                                                                                                                                             | M    | `convex/account.ts`                 |
-| **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                                                                                                              | M    | `deferred-security-bugs.md`         |
+| Item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Size | Where it's tracked                       |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------- |
+| **Self-service billing**: the crypto rail (NOWPayments) is **Live**; **Stripe + PayPal** adapters are scaffolded behind admin toggles and need their phase work (adapter `createCheckout`/`verifyAndParse` + webhook route + tests). Plus the non-code launch checklist: NOWPayments US-nonprofit ToS confirmation + the USDC→Coinbase/Kraken→ACH off-ramp. Admin → Billing now flags enabled-but-misconfigured rails (a client-side **readiness** check); a **live per-processor credential probe** (an actual API ping, beyond readiness) is a deferred follow-up. | M    | `docs/billing.md`, this file (§1.6/§1.7) |
+| **Native-speaker translation review** + extracting remaining marketing copy into i18n keys (the non-English locales are a first-pass MT; the critical journey strings are done).                                                                                                                                                                                                                                                                                                                                                                                     | M    | this file (§1.7), `.claude/plans/`       |
+| **`POP_REQUIRED` flip**: operational — flip in beta after the client soaks (boot-warm prerequisite is done), prod launches with it on. PoP `sid`-binding needs an httpOnly-compatible design (a public per-session token).                                                                                                                                                                                                                                                                                                                                           | S    | `.claude/plans/`, threat model           |
+| **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until tier linkage across backends is defined. Needs the portal's tier model.                                                                                                                                                                                                                                                                                                                                                                                                      | M    | `convex/account.ts`                      |
+| **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                                                                                                                                                                                                                                                                                                                       | M    | `deferred-security-bugs.md`              |
 
 ---
 
