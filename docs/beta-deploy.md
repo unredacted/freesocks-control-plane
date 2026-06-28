@@ -36,19 +36,34 @@ Files: `docker-compose.beta.yml`, `Caddyfile`, `docker/web.Dockerfile`,
 ## 1. Fill the two env files
 
 ```sh
-cp .env.beta.example   .env.beta      # infra: Caddy + Convex backend identity + Postgres
-cp .env.convex.example .env.convex    # app secrets: signing keys, pepper, Cap captcha, WebAuthn
-$EDITOR .env.beta .env.convex
+cp .env.beta.example   .env.beta      # infra: Caddy + backend identity + Postgres + E2EE pins
+cp .env.convex.example .env.convex    # Convex deployment secrets
+bun scripts/bootstrap-secrets.mjs     # generate every GENERATABLE secret (idempotent)
+$EDITOR .env.beta .env.convex         # then fill the EXTERNAL creds by hand (below)
 ```
 
-- `.env.beta`: `SITE_ADDRESS=beta.freesocks.org`, `ACME_EMAIL`, `INSTANCE_SECRET`
-  (`openssl rand -hex 32`), `POSTGRES_PASSWORD` (`openssl rand -hex 24`, URL-safe).
-- `.env.convex`: fill **every** `CHANGE_ME` (`openssl rand -hex 32` for the keys),
-  the Cap captcha keys (`CAP_SITE_KEY` / `CAP_SECRET`, created in the Cap dashboard
-  on first boot — see Operations below), and keep `WEBAUTHN_*` / `ENVIRONMENT` /
-  `TRUSTED_PROXY` as set. `ACCOUNT_ID_PEPPER` is **set once** (changing it
-  invalidates every account number). The `deployer` refuses to run while any
-  `CHANGE_ME` remains.
+**Generated for you** — the layered, idempotent secret setup (never overwrites a
+value already set, so it is safe to re-run on testing/beta/prod):
+
+- `bun scripts/bootstrap-secrets.mjs` fills `.env.beta`'s `INSTANCE_SECRET`,
+  `POSTGRES_PASSWORD`, `CAP_ADMIN_KEY` (it prints `CAP_ADMIN_KEY` — you need it to
+  log into the Cap dashboard), and generates the **CDN-blinding keypair**: the
+  `VITE_FS_*` public pins in `.env.beta` (baked into the SPA build) + the matching
+  `FS_*` secrets in `.env.convex`. Running it enables body-sealing; not running it
+  ships the SPA dark (plaintext dual-mode over TLS). See `docs/secrets.md`.
+- The **five core app secrets** (`SESSION_SIGNING_KEY`, `ADMIN_SESSION_SIGNING_KEY`,
+  `ADMIN_BOOTSTRAP_SECRET`, `IP_HASH_SALT`, `ACCOUNT_ID_PEPPER`) are auto-generated
+  ONCE by the `deployer` itself — **leave them `CHANGE_ME`**. `ACCOUNT_ID_PEPPER`
+  is set once (changing it invalidates every account number); retrieve the
+  generated `ADMIN_BOOTSTRAP_SECRET` with `bunx convex env get ADMIN_BOOTSTRAP_SECRET`.
+
+**Fill by hand** — the EXTERNAL credentials that can't be generated: `.env.beta`
+`SITE_ADDRESS` + `ACME_EMAIL`; `.env.convex` `CAP_SITE_KEY` / `CAP_SECRET` (created
+in the Cap dashboard on first boot — see Operations), `WEBAUTHN_RP_ID` /
+`WEBAUTHN_ORIGIN`, and any billing-rail keys. Keep `ENVIRONMENT=production` +
+`TRUSTED_PROXY=true`. The `deployer` aborts if a non-auto-generated `CHANGE_ME`
+remains (so a forgotten external cred fails fast, but the five core secrets and the
+bootstrap-filled values do not block it).
 
 To also seed a Remnawave instance automatically, set `REMNAWAVE_BASE_URL` +
 `REMNAWAVE_API_TOKEN` in `.env.convex` (else add it in the CMS in §4).

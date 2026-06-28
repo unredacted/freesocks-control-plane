@@ -189,14 +189,16 @@ services:
     build:
       context: .
       dockerfile: docker/web.Dockerfile
-      # To enable app-layer encryption (CDN-blinding) later, pass the public pins
-      # here as args (and set the private halves in the Convex deployment env),
-      # then rebuild. Left unset = ships dark (plaintext dual-mode over TLS).
-      # args:
-      #   VITE_FS_MANIFEST_PK: "..."
-      #   VITE_FS_MANIFEST_PK_PQ: "..."
-      #   VITE_FS_SERVER_HPKE_KID: "..."
-      #   VITE_FS_SERVER_HPKE_PK: "..."
+      # CDN-blinding (E2EE) public pins, interpolated from .env.beta — filled by
+      # `bun scripts/bootstrap-secrets.mjs` (the private halves go to the Convex
+      # deployment env via the deployer). Empty (the `:-` default, i.e. bootstrap
+      # not run) = the SPA ships DARK (plaintext dual-mode over TLS); filled =
+      # body-sealing is ON. Rebuild `web` after the bootstrap so the pins bake in.
+      args:
+        VITE_FS_SERVER_HPKE_PK: ${VITE_FS_SERVER_HPKE_PK:-}
+        VITE_FS_SERVER_HPKE_KID: ${VITE_FS_SERVER_HPKE_KID:-}
+        VITE_FS_MANIFEST_PK: ${VITE_FS_MANIFEST_PK:-}
+        VITE_FS_MANIFEST_PK_PQ: ${VITE_FS_MANIFEST_PK_PQ:-}
     restart: unless-stopped
     logging: *log
     ports:
