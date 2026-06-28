@@ -61,10 +61,18 @@ export async function evaluatePop(opts: {
   path: string;
   /** raw query string without a leading '?'. */
   query?: string;
-  /** v2: the host the client declared (x-fs-pop-host); bound into the message. */
+  /** The host the client declared (x-fs-pop-host); bound into the message. */
   host?: string;
-  /** v2: the reveal-leg response-ephemeral (x-fs-resp-eph header), bound in. */
+  /** The reveal-leg response-ephemeral (x-fs-resp-eph header), bound in. */
   respEph?: string;
+  /**
+   * The session's OWN stored public per-session token (sessions.popSessionToken).
+   * Bound into the message, so a signature verifies only for the session it was
+   * minted under — closing the cross-session signature-lift when one persisted
+   * key backs multiple sessions. The caller passes the STORED value (never a
+   * client-supplied one).
+   */
+  sessionToken: string;
   /** EXACT wire body bytes as received (string), '' for none. */
   wireBody: string;
   fields: PopFields;
@@ -89,10 +97,11 @@ export async function evaluatePop(opts: {
   }
 
   const bodyHashB64 = await digestB64Url(new TextEncoder().encode(opts.wireBody));
-  // buildPopMessage only folds host/respEph in for v2; v1 ignores them. The host
-  // is reconstructed from the client-declared header, so the signature verifies
-  // only if the client actually signed that host (authenticating it for the
-  // allowlist check the caller does on a v2 'ok').
+  // The host + sessionToken are reconstructed from server-side truth (the declared
+  // header for host, the SESSION's stored pst for sessionToken), so the signature
+  // verifies only if the client actually signed that exact host AND the token of
+  // the session its cookie maps to — authenticating the host for the caller's
+  // allowlist check and binding the signature to this one session.
   const message = buildPopMessage({
     version: fields.version,
     method: opts.method,
@@ -100,6 +109,7 @@ export async function evaluatePop(opts: {
     query: opts.query,
     host: opts.host ?? '',
     respEph: opts.respEph ?? '',
+    sessionToken: opts.sessionToken,
     bodyHashB64,
     ts: fields.ts,
     nonceB64: fields.nonceB64,

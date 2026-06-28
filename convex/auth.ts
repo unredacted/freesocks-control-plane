@@ -34,7 +34,14 @@ export const MEMBER_TTL_MS = 30 * 86_400_000;
 const FAILURE_FLOOR_MS = 300;
 
 type LoginResult =
-  | { ok: true; signedCookieValue: string; maxAgeSec: number; userId: Id<'users'> }
+  | {
+      ok: true;
+      signedCookieValue: string;
+      maxAgeSec: number;
+      userId: Id<'users'>;
+      /** Public per-session token for the fs_pop_sid cookie (only when PoP-bound). */
+      popSessionToken?: string;
+    }
   | { ok: false; reason: 'captcha' | 'invalid' };
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -104,14 +111,17 @@ export const accountLogin = internalAction({
     const user = await ctx.runQuery(internal.users.byAccountIdHash, { accountIdHash: hash });
     if (!user) return failInvalid();
 
-    // 5. Mint a member session + signed cookie.
+    // 5. Mint a member session + signed cookie. When PoP-bound, also mint the
+    //    public per-session token (handed to the client via the fs_pop_sid cookie
+    //    and signed into every PoP message to bind it to this session).
     const sid = randomHex(32);
+    const popSessionToken = popPublicKey ? randomHex(16) : undefined;
     await ctx.runMutation(internal.sessions.create, {
       sid,
       kind: 'member',
       userId: user._id,
       ttlMs: MEMBER_TTL_MS,
-      ...(popPublicKey ? { popPublicKey } : {}),
+      ...(popPublicKey ? { popPublicKey, popSessionToken } : {}),
     });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',
@@ -123,7 +133,13 @@ export const accountLogin = internalAction({
     const signingKey = process.env.SESSION_SIGNING_KEY;
     if (!signingKey) throw new Error('SESSION_SIGNING_KEY must be set');
     const signedCookieValue = await signValue(sid, signingKey);
-    return { ok: true, signedCookieValue, maxAgeSec: MEMBER_TTL_MS / 1000, userId: user._id };
+    return {
+      ok: true,
+      signedCookieValue,
+      maxAgeSec: MEMBER_TTL_MS / 1000,
+      userId: user._id,
+      popSessionToken,
+    };
   },
 });
 

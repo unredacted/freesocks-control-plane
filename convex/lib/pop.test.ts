@@ -21,6 +21,7 @@ async function signedRequest(opts: {
   query?: string;
   host?: string;
   respEph?: string;
+  sessionToken?: string;
   version?: string;
   wireBody: string;
   ts: number;
@@ -42,6 +43,7 @@ async function signedRequest(opts: {
     query: opts.query,
     host: opts.host,
     respEph: opts.respEph,
+    sessionToken: opts.sessionToken ?? '',
     bodyHashB64,
     ts: opts.ts,
     nonceB64,
@@ -53,7 +55,13 @@ async function signedRequest(opts: {
 
 describe('evaluatePop', () => {
   const now = 1_700_000_000_000;
-  const base = { method: 'POST', path: '/api/v1/account/regenerate', wireBody: '{"a":1}', ts: now };
+  const base = {
+    method: 'POST',
+    path: '/api/v1/account/regenerate',
+    sessionToken: 'pst-1',
+    wireBody: '{"a":1}',
+    ts: now,
+  };
 
   test('a valid, fresh, correctly-signed request verifies and yields a nonceHash', async () => {
     const { popPublicKey, fields } = await signedRequest(base);
@@ -132,6 +140,20 @@ describe('evaluatePop', () => {
     expect(ahead.verdict).toBe('ok');
     expect(behind.verdict).toBe('ok');
   });
+
+  test('a session-token mismatch fails (a signature is bound to one session)', async () => {
+    // Same key, but signed under session A's token; the server reconstructs with
+    // session B's stored token → the cross-session signature-lift is rejected.
+    const { popPublicKey, fields } = await signedRequest({ ...base, sessionToken: 'pst-A' });
+    const r = await evaluatePop({
+      popPublicKey,
+      ...base,
+      sessionToken: 'pst-B',
+      fields,
+      nowMs: now,
+    });
+    expect(r.verdict).toBe('invalid');
+  });
 });
 
 describe('allowedPopHosts', () => {
@@ -155,9 +177,15 @@ describe('allowedPopHosts', () => {
   });
 });
 
-describe('evaluatePop v2 host + reveal-ephemeral binding', () => {
+describe('evaluatePop host + reveal-ephemeral binding', () => {
   const now = 1_700_000_000_000;
-  const base = { method: 'GET', path: '/api/v1/account', wireBody: '', ts: now };
+  const base = {
+    method: 'GET',
+    path: '/api/v1/account',
+    sessionToken: 'pst-1',
+    wireBody: '',
+    ts: now,
+  };
 
   test('host must match what was signed (cross-vhost replay fails)', async () => {
     const { popPublicKey, fields } = await signedRequest({ ...base, host: 'app.freesocks.org' });
@@ -203,20 +231,6 @@ describe('evaluatePop v2 host + reveal-ephemeral binding', () => {
     });
     expect(ok.verdict).toBe('ok');
     expect(swapped.verdict).toBe('invalid');
-  });
-
-  test('a v1 signature still verifies (back-compat during rollout)', async () => {
-    const { popPublicKey, fields } = await signedRequest({ ...base, version: 'v1' });
-    // host/respEph are ignored for v1 on both sides.
-    const r = await evaluatePop({
-      popPublicKey,
-      ...base,
-      host: 'whatever',
-      respEph: 'whatever',
-      fields,
-      nowMs: now,
-    });
-    expect(r.verdict).toBe('ok');
   });
 });
 

@@ -120,10 +120,12 @@ interface SignMsg {
   path: string;
   query?: string;
   body?: string;
-  /** v2: the host to bind (location.host). */
+  /** The host to bind (location.host). */
   host?: string;
-  /** v2: the reveal-leg response-ephemeral (x-fs-resp-eph value), if any. */
+  /** The reveal-leg response-ephemeral (x-fs-resp-eph value), if any. */
   respEph?: string;
+  /** The public per-session token (fs_pop_sid cookie value), '' if none yet. */
+  sessionToken?: string;
   /** Server-time offset (serverTime - localTime) so a skewed client signs in-window. */
   tsOffset?: number;
 }
@@ -144,6 +146,7 @@ async function sign(
     query: msg.query,
     host: msg.host,
     respEph: msg.respEph,
+    sessionToken: msg.sessionToken ?? '',
     bodyHashB64,
     ts,
     nonceB64,
