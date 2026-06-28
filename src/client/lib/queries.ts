@@ -244,19 +244,33 @@ const AuditPage = z.object({
   entries: z.array(AuditEntry),
   nextCursor: z.string().nullable(),
 });
-export const adminAuditQuery = () =>
-  createInfiniteQuery(() => ({
-    queryKey: queryKeys.adminAudit,
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => {
-      const url = pageParam
-        ? `/api/v1/admin/audit?cursor=${encodeURIComponent(pageParam)}`
-        : '/api/v1/admin/audit';
-      return apiClient.get(url, AuditPage);
-    },
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-    staleTime: 30_000,
-  }));
+export interface AuditFilters {
+  action: string;
+  actorType: string;
+  /** Epoch-ms lower bound as a string ('' = none); the UI derives it from a date. */
+  since: string;
+}
+export const adminAuditQuery = (filtersRef: () => AuditFilters) =>
+  createInfiniteQuery(() => {
+    const { action, actorType, since } = filtersRef();
+    return {
+      // Same ['admin','audit'] prefix so prefix invalidations still hit every
+      // filter combination (mirrors adminUsersQuery).
+      queryKey: [...queryKeys.adminAudit, action, actorType, since],
+      initialPageParam: undefined as string | undefined,
+      queryFn: ({ pageParam }: { pageParam: string | undefined }) => {
+        const params = new URLSearchParams();
+        if (action) params.set('action', action);
+        if (actorType) params.set('actorType', actorType);
+        if (since) params.set('since', since);
+        if (pageParam) params.set('cursor', pageParam);
+        const qs = params.toString();
+        return apiClient.get(`/api/v1/admin/audit${qs ? `?${qs}` : ''}`, AuditPage);
+      },
+      getNextPageParam: (last: z.infer<typeof AuditPage>) => last.nextCursor ?? undefined,
+      staleTime: 30_000,
+    };
+  });
 
 /**
  * Global admin-editable settings (outline.enabled, default_backend, etc.).

@@ -467,6 +467,33 @@ describe('adminApi statusSummary', () => {
   });
 });
 
+describe('adminApi auditList filtering', () => {
+  test('filters by action, actorType, and since', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('auditLog', { actorType: 'admin', action: 'admin.user.disable' });
+      await ctx.db.insert('auditLog', { actorType: 'admin', action: 'admin.user.disable' });
+      await ctx.db.insert('auditLog', { actorType: 'system', action: 'membership.tier_change' });
+      await ctx.db.insert('auditLog', { actorType: 'webhook', action: 'billing.order.paid' });
+    });
+
+    const all = await t.query(internal.adminApi.auditList, {});
+    expect(all.entries.length).toBe(4);
+
+    const byAction = await t.query(internal.adminApi.auditList, { action: 'admin.user.disable' });
+    expect(byAction.entries).toHaveLength(2);
+    expect(byAction.entries.every((e) => e.action === 'admin.user.disable')).toBe(true);
+
+    const byActor = await t.query(internal.adminApi.auditList, { actorType: 'webhook' });
+    expect(byActor.entries).toHaveLength(1);
+    expect(byActor.entries[0]!.actorType).toBe('webhook');
+
+    // A future lower bound excludes everything (nothing was created ahead of now).
+    const future = await t.query(internal.adminApi.auditList, { since: Date.now() + 3_600_000 });
+    expect(future.entries).toHaveLength(0);
+  });
+});
+
 describe('adminApi.maskApiUrl', () => {
   test('keeps scheme+host and redacts the secret path', () => {
     expect(maskApiUrl('https://outline.example.com:8443/SeCrEtPaTh/abc')).toBe(

@@ -1382,8 +1382,17 @@ http.route({
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:audit:read'))) return ADMIN_UNAUTH();
-    const cursor = new URL(req.url).searchParams.get('cursor') ?? undefined;
-    return json(await ctx.runQuery(internal.adminApi.auditList, { cursor }));
+    const sp = new URL(req.url).searchParams;
+    const sinceRaw = sp.get('since');
+    const since = sinceRaw && Number.isFinite(Number(sinceRaw)) ? Number(sinceRaw) : undefined;
+    return json(
+      await ctx.runQuery(internal.adminApi.auditList, {
+        cursor: sp.get('cursor') ?? undefined,
+        action: sp.get('action') ?? undefined,
+        actorType: sp.get('actorType') ?? undefined,
+        since,
+      }),
+    );
   }),
 });
 

@@ -798,16 +798,51 @@ export const revokeToken = internalMutation({
  * Audit log page (newest first) with an opaque keyset cursor over
  * `_creationTime`. The cursor is just the last row's creation time stringified.
  */
+const AUDIT_ACTOR_TYPES = ['system', 'admin', 'member', 'anonymous', 'webhook'] as const;
+type AuditActorType = (typeof AUDIT_ACTOR_TYPES)[number];
+
 export const auditList = internalQuery({
-  args: { cursor: v.optional(v.string()), limit: v.optional(v.number()) },
-  handler: async (ctx, { cursor, limit }) => {
+  args: {
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    // Optional forensic filters. `action` and `actorType` each have an index;
+    // the most selective is chosen below. `since` is an epoch-ms lower bound.
+    action: v.optional(v.string()),
+    actorType: v.optional(v.string()),
+    since: v.optional(v.number()),
+  },
+  handler: async (ctx, { cursor, limit, action, actorType, since }) => {
     const pageSize = Math.min(Math.max(limit ?? 50, 1), 200);
-    let qry = ctx.db.query('auditLog').order('desc');
-    if (cursor) {
-      const before = Number(cursor);
-      if (Number.isFinite(before)) qry = qry.filter((f) => f.lt(f.field('_creationTime'), before));
-    }
-    const rows = await qry.take(pageSize + 1);
+    const before = cursor && Number.isFinite(Number(cursor)) ? Number(cursor) : null;
+
+    // Pick the most selective index for the primary filter (action > actorType).
+    // Every Convex index appends _creationTime, so newest-first ordering + the
+    // keyset cursor + the `since` bound (all ranges over _creationTime) compose
+    // on top of whichever index we choose. All three branches resolve to the
+    // same OrderedQuery type, so the .filter()/.take() below is written once.
+    const ordered = action
+      ? ctx.db
+          .query('auditLog')
+          .withIndex('by_action', (ix) => ix.eq('action', action))
+          .order('desc')
+      : actorType && (AUDIT_ACTOR_TYPES as readonly string[]).includes(actorType)
+        ? ctx.db
+            .query('auditLog')
+            .withIndex('by_actor', (ix) => ix.eq('actorType', actorType as AuditActorType))
+            .order('desc')
+        : ctx.db.query('auditLog').order('desc');
+
+    const rows = await ordered
+      .filter((f) => {
+        // Newest-first keyset cursor (upper bound) + optional `since` (lower
+        // bound). Neither set ⇒ an always-true sentinel (creation times > 0).
+        const upper = before != null ? f.lt(f.field('_creationTime'), before) : null;
+        const lower = since != null ? f.gte(f.field('_creationTime'), since) : null;
+        if (upper && lower) return f.and(upper, lower);
+        return upper ?? lower ?? f.gt(f.field('_creationTime'), 0);
+      })
+      .take(pageSize + 1);
+
     const hasMore = rows.length > pageSize;
     const page = rows.slice(0, pageSize);
     const last = page[page.length - 1];
