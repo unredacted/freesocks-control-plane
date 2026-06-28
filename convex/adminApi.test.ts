@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import { maskApiUrl } from './adminApi';
+import { resolveTheme } from './lib/themeConfig';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -491,6 +492,44 @@ describe('adminApi auditList filtering', () => {
     // A future lower bound excludes everything (nothing was created ahead of now).
     const future = await t.query(internal.adminApi.auditList, { since: Date.now() + 3_600_000 });
     expect(future.entries).toHaveLength(0);
+  });
+});
+
+describe('adminApi setTheme + resolveTheme', () => {
+  test('defaults to emerald / no hue when unset', async () => {
+    const t = convexTest(schema, modules);
+    const cfg = await t.run((ctx) => resolveTheme(ctx.db));
+    expect(cfg.preset).toBe('emerald');
+    expect(cfg.hue).toBeNull();
+  });
+
+  test('persists a preset + hue, readable by resolveTheme, and audits', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.adminApi.setTheme, { preset: 'teal', hue: 200 });
+    const cfg = await t.run((ctx) => resolveTheme(ctx.db));
+    expect(cfg.preset).toBe('teal');
+    expect(cfg.hue).toBe(200);
+
+    const audit = await t.run((ctx) =>
+      ctx.db
+        .query('auditLog')
+        .withIndex('by_action', (q) => q.eq('action', 'admin.theme.change'))
+        .collect(),
+    );
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.payload).toMatchObject({ preset: 'teal', hue: 200 });
+  });
+
+  test('rejects an unknown preset and drops an out-of-range hue', async () => {
+    const t = convexTest(schema, modules);
+    await expect(
+      t.mutation(internal.adminApi.setTheme, { preset: 'bogus', hue: null }),
+    ).rejects.toThrow(/unknown theme preset/i);
+
+    await t.mutation(internal.adminApi.setTheme, { preset: 'emerald', hue: 999 });
+    const cfg = await t.run((ctx) => resolveTheme(ctx.db));
+    expect(cfg.preset).toBe('emerald');
+    expect(cfg.hue).toBeNull(); // 999 is out of [0,360] → no override
   });
 });
 

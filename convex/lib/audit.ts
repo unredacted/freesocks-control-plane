@@ -69,6 +69,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.backend_server.upsert': ['slug', 'backend', 'created'],
   // Admin grant/extend of a membership from the Users page.
   'admin.user.grant_membership': ['tierId', 'durationDays'],
+  // Admin changes the brand theme (preset + optional hue override).
+  'admin.theme.change': ['preset', 'hue'],
 };
 
 /**

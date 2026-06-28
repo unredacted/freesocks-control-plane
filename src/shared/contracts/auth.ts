@@ -125,5 +125,13 @@ export const PublicConfig = z.object({
   /** Whether the opt-in "trouble connecting? try a mirror" affordance is available
    *  (≥1 active mirror provider). The SPA hides it entirely when false. */
   mirrorsEnabled: z.boolean().optional(),
+  /** Admin-selected brand theme (W3-3): a preset id + optional hue override,
+   *  applied client-side over the baked default. Optional for forward-compat. */
+  theme: z
+    .object({
+      preset: z.string(),
+      hue: z.number().nullable(),
+    })
+    .optional(),
 });
 export type PublicConfig = z.infer<typeof PublicConfig>;

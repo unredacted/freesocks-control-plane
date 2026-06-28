@@ -20,3 +20,23 @@
     document.documentElement.classList.add('dark');
   }
 })();
+
+// Brand-theme FOUC replay (W3-3): re-inject the admin-selected palette the SPA
+// cached on its last run, so a reload doesn't flash the baked default before the
+// public-config query resolves. The cached value is the full :root/.dark
+// override string built by src/client/lib/theme.ts — we just replay it here (no
+// preset logic duplicated). First-ever visit has no cache → the baked default
+// shows until the SPA applies the configured theme.
+(function () {
+  try {
+    const css = localStorage.getItem('fs_theme_css');
+    if (css) {
+      const el = document.createElement('style');
+      el.id = 'fs-theme';
+      el.textContent = css;
+      document.head.appendChild(el);
+    }
+  } catch (_) {
+    /* no cached theme / storage blocked → the baked default shows */
+  }
+})();

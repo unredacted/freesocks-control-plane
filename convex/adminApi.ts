@@ -25,6 +25,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 import { applyMembership } from './lifecycle';
+import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
 import { normalizeSupportId } from './lib/supportId';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import {
@@ -1291,5 +1292,62 @@ export const statusSummary = internalQuery({
       },
       generatedAt: iso(now),
     };
+  },
+});
+
+// === theme ==================================================================
+
+/** Upsert one appSettings row by key — used by the dedicated config writers
+ *  whose keys live OUTSIDE SETTINGS_DEFAULTS (theme.*, like billing.*). */
+async function upsertSetting(
+  ctx: MutationCtx,
+  key: string,
+  value: string,
+  actorAdminId?: Id<'adminUsers'>,
+): Promise<void> {
+  const existing = await ctx.db
+    .query('appSettings')
+    .withIndex('by_key', (q) => q.eq('key', key))
+    .unique();
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      value,
+      updatedByAdminId: actorAdminId,
+      updatedAt: Date.now(),
+    });
+  } else {
+    await ctx.db.insert('appSettings', {
+      key,
+      value,
+      updatedByAdminId: actorAdminId,
+      updatedAt: Date.now(),
+    });
+  }
+}
+
+/** Admin sets the brand theme (preset + optional hue override). Writes the
+ *  appSettings `theme.*` namespace + audits; resolveTheme/publicConfig read it
+ *  back. Invalid preset → reject; out-of-range hue → null (no override). */
+export const setTheme = internalMutation({
+  args: {
+    preset: v.string(),
+    hue: v.union(v.number(), v.null()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { preset, hue, actorAdminId }) => {
+    if (!(THEME_PRESET_IDS as readonly string[]).includes(preset)) {
+      throw new Error(`unknown theme preset "${preset}"`);
+    }
+    const cleanHue = sanitizeHue(hue);
+    await upsertSetting(ctx, 'theme.preset', JSON.stringify(preset), actorAdminId);
+    await upsertSetting(ctx, 'theme.hue', JSON.stringify(cleanHue), actorAdminId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.theme.change',
+      targetType: 'theme',
+      payload: { preset, hue: cleanHue },
+    });
+    return { preset, hue: cleanHue };
   },
 });

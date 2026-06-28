@@ -20,6 +20,7 @@
   import AdminMembershipCodes from './AdminMembershipCodes.svelte';
   import AdminBilling from './AdminBilling.svelte';
   import AdminRateLimits from './AdminRateLimits.svelte';
+  import AdminTheme from './AdminTheme.svelte';
   import Link from '../../components/Link.svelte';
 </script>
 
@@ -52,6 +53,8 @@
   <AdminAudit />
 {:else if router.pathname === '/admin/settings'}
   <AdminSettings />
+{:else if router.pathname === '/admin/theme'}
+  <AdminTheme />
 {:else}
   <div class="text-center py-16">
     <h1 class="text-3xl font-display font-bold mb-2">Not found</h1>

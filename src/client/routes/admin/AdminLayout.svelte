@@ -6,6 +6,7 @@
   import { apiClient } from '../../lib/api';
   import { clearSessionKey } from '../../lib/pop';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
+  import Palette from '@lucide/svelte/icons/palette';
   import Layers from '@lucide/svelte/icons/layers';
   import UsersIcon from '@lucide/svelte/icons/users';
   import KeyIcon from '@lucide/svelte/icons/key';
@@ -56,6 +57,7 @@
     { to: '/admin/rate-limits', label: 'Rate limits', icon: Gauge },
     { to: '/admin/audit', label: 'Audit log', icon: History },
     { to: '/admin/settings', label: 'Settings', icon: Settings },
+    { to: '/admin/theme', label: 'Theme', icon: Palette },
   ];
 
   let mobileOpen = $state(false);

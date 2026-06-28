@@ -8,6 +8,7 @@
  */
 import { query } from './_generated/server';
 import { resolveBillingConfig } from './lib/billingConfig';
+import { resolveTheme } from './lib/themeConfig';
 
 export const get = query({
   args: {},
@@ -103,6 +104,9 @@ export const get = query({
         cryptoMinMonths: billing.cryptoMinMonths,
       },
       mirrorsEnabled,
+      // Admin-selected brand theme (preset + optional hue), applied client-side
+      // over the baked default. Non-secret; always present (fail-safe default).
+      theme: await resolveTheme(ctx.db),
     };
   },
 });

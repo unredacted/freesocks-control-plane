@@ -2,6 +2,7 @@
   import Link from './components/Link.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import PopWarm from './components/PopWarm.svelte';
+  import ThemeSync from './components/ThemeSync.svelte';
   import { Toaster } from '@client/components/ui/sonner';
   import { ModeWatcher } from 'mode-watcher';
   import ErrorBoundary from './components/ErrorBoundary.svelte';
@@ -61,6 +62,7 @@
 
 <QueryClientProvider client={queryClient}>
   <PopWarm />
+  <ThemeSync />
   <ErrorBoundary>
     <div class="min-h-screen flex flex-col">
       <!-- a11y: first focusable element, lets keyboard users jump the header. -->

@@ -1407,6 +1407,32 @@ http.route({
   }),
 });
 
+// --- admin: theme (brand palette; shares the admin:settings:write scope) ----
+
+http.route({
+  path: '/api/v1/admin/theme',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<{ preset?: string; hue?: number | null }>(req);
+    if (typeof body.preset !== 'string') {
+      return errorJson('validation', 'preset is required', 400);
+    }
+    try {
+      return json(
+        await ctx.runMutation(internal.adminApi.setTheme, {
+          preset: body.preset,
+          hue: typeof body.hue === 'number' ? body.hue : null,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 // --- admin: settings --------------------------------------------------------
 
 http.route({
