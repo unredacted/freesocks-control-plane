@@ -75,6 +75,35 @@ ids), enforced by an allowlist, and is covered by a test that asserts a
 - `failed`/`expired`: terminal, no grant. Abandoned `pending`/`confirming` orders
   are swept to `expired` after `BILLING_PENDING_TTL_HOURS` (default 48).
 
+## Gift purchases
+
+A signed-in member can buy membership for **other people** instead of extending
+their own. The checkout takes an `orderKind` (`'self'` — the default — or `'gift'`)
+and, for a gift, a `quantity` of **1–50** codes (`MAX_GIFT_QUANTITY`,
+`convex/billing.ts`). The charged amount scales by quantity
+(`duration.amountCents * quantity`); the payer-PII invariant is unchanged (the
+order still stores no payer identity).
+
+Flow (gift):
+
+1. The buyer's client pre-generates `quantity` CSPRNG codes and posts only their
+   **hashes** with the checkout; the processor redirect/IPN is identical to a self
+   purchase.
+2. On the **paid** webhook, the grant action mints `quantity` single-use
+   redemption codes (`redemptionCodes`, **hash-only**, bound to the buyer) — the
+   same table admin-minted membership codes use — and stashes the **plaintexts**
+   in a **transient `giftReveal` buffer** on the order row.
+3. The buyer polls the order, sees each plaintext code **once** (the
+   `GiftRevealModal`), and acknowledges saving them, which clears the buffer. The
+   **`billing-gift-reveal-sweep`** cron (hourly) clears any un-acknowledged buffer
+   after its window, so plaintext gift codes never linger at rest.
+4. Recipients redeem a code exactly like an admin-minted membership code (Account
+   → redeem), extending their own membership by the purchased duration.
+
+Gift codes are bearer credentials (anyone holding one can redeem it), so the
+reveal-once + sweep design keeps the plaintext out of long-term storage. The buyer
+manages their codes from the `GiftCodes` panel.
+
 ## NOWPayments setup (crypto rail — ship first)
 
 1. Create a NOWPayments account; generate an **API key** and an **IPN secret**.

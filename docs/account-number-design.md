@@ -192,9 +192,10 @@ built, and neither is planned.
 
 ## 7. Security
 
-- **Brute-force**: with 10¹⁶ space and 10 attempts/IP/hour, finding one valid
-  number across 100M issued requires ~10⁹ hours per IP. Per-prefix cap further
-  bounds chosen-prefix attacks. Combined with Turnstile, infeasible.
+- **Brute-force**: with the current 10³² space (32 digits, ~106 bits) and 10
+  attempts/IP/hour, hitting one valid number even across 100M issued is
+  astronomically infeasible. The per-(prefix,IP) cap further bounds chosen-prefix
+  attacks, and the self-hosted Cap captcha gates every attempt.
 - **Timing attacks**: see §3, constant-time response and `timingSafeEqual`
   string compare (already in `lib/crypto.ts`).
 - **Exposure paths**: never log the submitted identifier, only log the prefix
@@ -209,8 +210,7 @@ built, and neither is planned.
   signed in) rotates via `POST /api/v1/account/account-id/rotate`, which
   immediately invalidates the old number. If they've already lost access, the
   account is unrecoverable by design. _(The original OIDC recovery path is gone.)_
-- **2FA / device association**: future work. Note in `docs/account-id.md` as
-  out of scope for v1.
+- **2FA / device association**: future work, out of scope for v1.
 
 ## 8. Audit and admin
 

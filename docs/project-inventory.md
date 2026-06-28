@@ -26,6 +26,8 @@ Detailed companions, referenced rather than duplicated here:
 - [`docs/backends.md`](backends.md): proxy-backend dispatch (Convex actions) + adding a backend.
 - [`docs/outline-setup.md`](outline-setup.md): registering/operating Outline servers via the admin CMS.
 - [`docs/account-number-design.md`](account-number-design.md): account-number auth design + implementation status.
+- [`docs/secrets.md`](secrets.md): every secret/credential — who generates it (deployer auto-gen / `bun run bootstrap` / external), rotation, and blast radius.
+- [`docs/billing.md`](billing.md): self-service membership purchases — self-upgrade + **gift codes** — and the USD off-ramp ops.
 - [`docs/deferred-security-bugs.md`](deferred-security-bugs.md): audit findings, re-annotated against the Convex code.
 
 **Status legend**
@@ -155,9 +157,13 @@ Detailed companions, referenced rather than duplicated here:
   `userId`-bound order (no payer PII stored) → processor invoice → `/api/webhooks/<processor>`
   verifies + dedupes + grants exactly once via `applyMembership`. Catalog/toggles in the
   `appSettings` `billing.*` namespace, edited in Admin → Billing. The SPA `UpgradeMembership`
-  panel + `/account?order=<ref>` polling complete the loop. **Live (NOWPayments; Stripe/PayPal
-  scaffolded behind admin toggles).** The USD off-ramp is a documented ops runbook
-  (NOWPayments → USDC → Coinbase/Kraken → ACH).
+  panel + `/account?order=<ref>` polling complete the loop. **Gift purchases**: the same
+  checkout takes `orderKind:'gift'` + a `quantity` (1–50) and mints that many shareable,
+  hash-only redemption codes bound to the buyer; the plaintexts reveal once
+  (`GiftRevealModal`) and the `billing-gift-reveal-sweep` cron clears any un-acknowledged
+  buffer (see `docs/billing.md`). **Live (NOWPayments; Stripe/PayPal scaffolded behind admin
+  toggles).** The USD off-ramp is a documented ops runbook (NOWPayments → USDC →
+  Coinbase/Kraken → ACH).
 - **Billing webhook seam** (legacy/ops): `POST /api/webhooks/billing` (`convex/webhooks.ts`),
   HMAC-SHA256-verified (`WEBHOOK_SIGNING_SECRET`) + deduped by `eventId` (`webhookEvents`
   table) → maps `{accountId, tierSlug, expiresAtMs?}` onto `lifecycle.setMembership`. Kept as
@@ -219,9 +225,16 @@ Convex runs these natively (no Workers triggers, no node-cron):
 - `session-sweep` / `rate-limit-sweep` / `replay-guard-sweep` (daily): drop expired
   `sessions` / `rateLimits` / `replayGuard` rows.
 - `epoch-key-rotate` (10 min) / `epoch-key-sweep` (daily): CDN-blinding HPKE epoch keys.
+- `admin-invite-sweep` (daily): drop expired admin-invite tokens (multi-admin onboarding).
 - `retention-audit` / `retention-webhooks` / `retention-tier-history` /
-  `retention-free-grants` (daily): bounded deletes of the append-only tables past their
-  retention window (P2).
+  `retention-free-grants` / `retention-subscriptions` / `retention-billing-orders` (daily):
+  bounded deletes of the append-only tables past their retention window (P2).
+- `billing-pending-sweep` (15 min): expire abandoned membership checkouts (never grants).
+- `billing-gift-reveal-sweep` (hourly): clear the transient plaintext gift-code reveal from
+  paid gift orders the buyer never acknowledged, so plaintext never lingers at rest (the
+  codes stay hash-only in `redemptionCodes`).
+- `mirror-refresh` (6h): re-fetch + re-upload active subscription mirrors (no-op unless S3
+  mirroring is configured).
 
 ### 1.9 Frontend SPA (Svelte 5 runes): **Live**
 

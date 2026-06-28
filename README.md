@@ -29,7 +29,7 @@ router and native cron jobs. There is no separate web framework or edge worker.
 
 - **[Convex](https://docs.convex.dev) 1.40**: reactive document DB + serverless functions, run **self-hosted** (Docker; SQLite or Postgres). Schema and validators are TypeScript (`v.*`), so there is no SQL and no migration set.
 - **HTTP router** (`convex/http.ts`): every public route is an `httpAction`, served on the Convex HTTP-actions port (`:3211`). This is the surface the SPA and API consumers call.
-- **Native crons** (`convex/crons.ts`): grace/disable sweep, tombstone sweep, backend healthcheck, free-tier cleanup, session/rate-limit/replay-guard sweeps, HPKE epoch-key rotation, and append-only-table retention sweeps.
+- **Native crons** (`convex/crons.ts`): grace/disable sweep, tombstone sweep, backend healthcheck, free-tier cleanup, session/rate-limit/replay-guard + admin-invite sweeps, HPKE epoch-key rotation, append-only-table retention sweeps, billing pending/gift-reveal sweeps, and S3 mirror refresh.
 - **Self-hosted [Cap](https://trycap.dev) captcha** (the `cap` + `valkey` compose services) gates anonymous account creation + login; verified server-side in `convex/lib/captcha.ts`. The widget + its proof-of-work WASM are bundled and served same-origin — no third-party scripts.
 - **Proxy backends**: **Remnawave** and **Outline** behind a common action dispatch (`convex/backends.ts` + `convex/lib/backends/*`); per-tier backend selection plus optional end-user choice. See [`docs/backends.md`](docs/backends.md).
 - **`@simplewebauthn/server`** for admin passkey auth (a `"use node"` action module).
