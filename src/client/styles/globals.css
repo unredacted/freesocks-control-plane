@@ -11,7 +11,13 @@
     --card-foreground: oklch(0.145 0 0);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
+    /* Brand accent — FreeSocks "Emerald" (oklch hue ~158). Mid-lightness so it
+       reads as both a button background (with the near-white --primary-foreground)
+       and as text/links (`text-primary`) at ~AA contrast in light mode; the .dark
+       block lightens it for dark surfaces. Hue/chroma are the single brand knob,
+       so an admin-configurable theme picker (presets + hue override) can later
+       swap them per deployment by overriding --primary/--ring at runtime. */
+    --primary: oklch(0.52 0.13 158);
     --primary-foreground: oklch(0.985 0 0);
     --secondary: oklch(0.97 0 0);
     --secondary-foreground: oklch(0.205 0 0);
@@ -23,7 +29,7 @@
     --destructive-foreground: oklch(0.985 0 0);
     --border: oklch(0.922 0 0);
     --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
+    --ring: oklch(0.58 0.11 158);
     --radius: 0.625rem;
   }
 
@@ -39,7 +45,8 @@
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.325 0 0);
     --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
+    /* Brand accent, lightened for dark surfaces (dark --primary-foreground sits on it). */
+    --primary: oklch(0.72 0.13 158);
     --primary-foreground: oklch(0.205 0 0);
     --secondary: oklch(0.355 0 0);
     --secondary-foreground: oklch(0.985 0 0);
@@ -51,7 +58,7 @@
     --destructive-foreground: oklch(0.985 0 0);
     --border: oklch(0.385 0 0);
     --input: oklch(0.385 0 0);
-    --ring: oklch(0.556 0 0);
+    --ring: oklch(0.64 0.1 158);
   }
 }
 
