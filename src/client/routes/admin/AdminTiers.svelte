@@ -8,6 +8,7 @@
   import { Button } from '@client/components/ui/button';
   import TierEditor from './TierEditor.svelte';
   import Plus from '@lucide/svelte/icons/plus';
+  import Copy from '@lucide/svelte/icons/copy';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
   import { TierAdmin, type TierUpsert } from '../../../shared/contracts/admin';
@@ -20,7 +21,15 @@
 
   let editing = $state<TierAdmin | null>(null);
   let creating = $state(false);
+  let cloning = $state<TierUpsert | null>(null);
   let pendingDelete = $state<TierAdmin | null>(null);
+
+  // Duplicate: copy a tier's fields into a fresh create form. The slug must be
+  // unique, so suffix it; never inherit the default-free flag (one per backend).
+  function cloneDraft(src: TierAdmin): TierUpsert {
+    const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = src;
+    return { ...rest, slug: `${src.slug}-copy`, name: `${src.name} (copy)`, isDefaultFree: false };
+  }
 
   function invalidate() {
     void qc.invalidateQueries({ queryKey: queryKeys.adminTiers });
@@ -39,6 +48,7 @@
     onSuccess: (_tier, vars) => {
       editing = null;
       creating = false;
+      cloning = null;
       invalidate();
       toast.success(vars.id ? 'Tier saved' : 'Tier created', {
         description: vars.id ? 'Existing users are being updated in the background.' : undefined,
@@ -119,6 +129,10 @@
             </div>
             <div class="flex gap-2">
               <Button size="sm" variant="outline" onclick={() => (editing = tier)}>Edit</Button>
+              <Button size="sm" variant="outline" onclick={() => (cloning = cloneDraft(tier))}>
+                <Copy class="size-3.5" />
+                Duplicate
+              </Button>
               <Button
                 size="sm"
                 variant="destructive"
@@ -145,6 +159,14 @@
     <TierEditor
       busy={saveTier.isPending}
       onCancel={() => (creating = false)}
+      onSave={(body) => saveTier.mutate({ id: null, body })}
+    />
+  {/if}
+  {#if cloning}
+    <TierEditor
+      initial={cloning}
+      busy={saveTier.isPending}
+      onCancel={() => (cloning = null)}
       onSave={(body) => saveTier.mutate({ id: null, body })}
     />
   {/if}

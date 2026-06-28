@@ -25,11 +25,13 @@
   interface Props {
     /** Absent → create mode. */
     tier?: TierAdmin | null;
+    /** Create mode only: pre-fill the form (e.g. duplicating an existing tier). */
+    initial?: TierUpsert | null;
     onCancel: () => void;
     onSave: (draft: TierUpsert) => void;
     busy?: boolean;
   }
-  let { tier = null, onCancel, onSave, busy = false }: Props = $props();
+  let { tier = null, initial = null, onCancel, onSave, busy = false }: Props = $props();
 
   const isEdit = !!tier;
   let open = $state(true);
@@ -56,9 +58,12 @@
   // captures-initial-prop analysis, same as before the Dialog port.
   let draft = $state<TierUpsert>(
     ((t: TierAdmin | null) => {
-      if (!t) return { ...CREATE_DEFAULTS };
-      const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = $state.snapshot(t);
-      return { ...rest };
+      if (t) {
+        const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = $state.snapshot(t);
+        return { ...rest };
+      }
+      // Create mode: pre-filled (duplicate) or blank defaults.
+      return initial ? { ...initial } : { ...CREATE_DEFAULTS };
     })(tier),
   );
 
@@ -86,7 +91,9 @@
 <Dialog.Root bind:open {onOpenChange}>
   <Dialog.Content class="sm:max-w-lg max-h-[90vh] overflow-y-auto">
     <Dialog.Header>
-      <Dialog.Title>{isEdit ? `Edit tier · ${tier?.name}` : 'New tier'}</Dialog.Title>
+      <Dialog.Title>
+        {isEdit ? `Edit tier · ${tier?.name}` : initial ? 'Duplicate tier' : 'New tier'}
+      </Dialog.Title>
       {#if !isEdit}
         <Dialog.Description>
           Defines an entitlement template (limits + backend). New sign-ups land on the default-free
