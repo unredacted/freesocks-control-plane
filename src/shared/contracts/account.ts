@@ -165,5 +165,8 @@ export const CreateAccountResponse = z.object({
     backend: BackendId,
   }),
   authenticated: z.literal(true),
+  // PoP sid-binding: non-secret public per-session token the client persists +
+  // signs into every request. Absent for clients without the signing worker.
+  popSessionToken: z.string().optional(),
 });
 export type CreateAccountResponse = z.infer<typeof CreateAccountResponse>;

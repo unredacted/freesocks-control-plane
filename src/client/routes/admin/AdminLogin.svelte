@@ -10,7 +10,7 @@
   import { Button } from '@client/components/ui/button';
   import { Input } from '@client/components/ui/input';
   import { router } from '../../stores/router.svelte';
-  import { ensureSessionKey } from '../../lib/pop';
+  import { ensureSessionKey, setSessionToken } from '../../lib/pop';
   import { POP_PUBKEY_FIELD } from '../../../shared/crypto/pop';
 
   let busy = $state(false);
@@ -84,6 +84,10 @@
         const body = (await verifyRes.json().catch(() => ({}))) as { error?: { message?: string } };
         throw new Error(body.error?.message ?? 'Sign-in failed');
       }
+      // PoP sid-binding: persist the public per-session token from the response
+      // so every later admin request signs it (admin login bypasses apiClient).
+      const okBody = (await verifyRes.json().catch(() => ({}))) as { popSessionToken?: string };
+      setSessionToken('admin', okBody.popSessionToken);
       router.navigate('/admin/tiers');
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);

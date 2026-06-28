@@ -40,14 +40,14 @@ import { bytesToB64Url, canonicalQuery, normalizePath, sha256 } from './envelope
 
 export const POP_PREFIX = 'FCP-PoP';
 /**
- * Current PoP canonical-message version the client signs. v2 (Phase 3) adds two
- * lines after the query: the host and the reveal-leg response-ephemeral, so a
- * captured request cannot be replayed cross-vhost and an active CDN cannot swap
- * the GET reveal-leg ephemeral header undetected. The server still accepts v1
- * during rollout (POP_ACCEPTED_VERSIONS).
+ * The single PoP canonical-message version. This is pre-prod (beta), so there is
+ * no inter-release wire compatibility to preserve and exactly ONE format is
+ * accepted: `v1` binds host + reveal-leg ephemeral + the per-session token (see
+ * buildPopMessage). The version line stays for crypto domain separation and a
+ * clean future bump after prod launch.
  */
-export const POP_VERSION = 'v2';
-export const POP_ACCEPTED_VERSIONS = ['v1', 'v2'] as const;
+export const POP_VERSION = 'v1';
+export const POP_ACCEPTED_VERSIONS = ['v1'] as const;
 /** WebCrypto JWK `alg` for the session key; stored on the session row for agility. */
 export const POP_ALG = 'ES256';
 
@@ -78,17 +78,25 @@ export const POP_PUBKEY_FIELD = 'fsPopPub';
 export const POP_WINDOW_MS = 60_000;
 
 export interface PopMessageParts {
-  /** Canonical-message version ('v2' default; 'v1' only for back-compat verify). */
+  /** Canonical-message version (defaults to the single POP_VERSION). */
   version?: string;
   method: string;
   /** Pathname only, no query string. */
   path: string;
   /** Raw query string without a leading '?'. */
   query?: string;
-  /** v2: the host (location.host). Bound so a request cannot be replayed cross-vhost. */
+  /** The host (location.host). Bound so a request cannot be replayed cross-vhost. */
   host?: string;
-  /** v2: the reveal-leg response-ephemeral (the x-fs-resp-eph header value), or ''. */
+  /** The reveal-leg response-ephemeral (the x-fs-resp-eph header value), or ''. */
   respEph?: string;
+  /**
+   * The public per-session token (the server's stored sessions.popSessionToken,
+   * delivered to the client in the login response). Binds the signature to one
+   * session, so it cannot be lifted onto another session that reuses the same
+   * persisted key. Empty string only for a client with no token yet (then the
+   * server, reconstructing with the session's real token, rejects it → re-auth).
+   */
+  sessionToken: string;
   /** base64url SHA-256 of the exact wire body bytes (see digestB64Url). */
   bodyHashB64: string;
   /** Epoch milliseconds. */
@@ -98,21 +106,23 @@ export interface PopMessageParts {
 }
 
 /**
- * Build the canonical PoP message bytes. Identical on client and server. v2
- * inserts host + reveal-ephemeral after the query; v1 (back-compat) omits them.
+ * Build the canonical PoP message bytes. Identical on client and server — the
+ * single source of truth, so the two cannot drift. One format: host + reveal-leg
+ * ephemeral + per-session token are always included.
  */
 export function buildPopMessage(p: PopMessageParts): Uint8Array {
-  const version = p.version ?? POP_VERSION;
   const lines = [
-    `${POP_PREFIX} ${version}`,
+    `${POP_PREFIX} ${p.version ?? POP_VERSION}`,
     p.method.toUpperCase(),
     normalizePath(p.path),
     canonicalQuery(p.query),
+    p.host ?? '',
+    p.respEph ?? '',
+    p.sessionToken,
+    p.bodyHashB64,
+    String(p.ts),
+    p.nonceB64,
   ];
-  if (version === 'v2') {
-    lines.push(p.host ?? '', p.respEph ?? '');
-  }
-  lines.push(p.bodyHashB64, String(p.ts), p.nonceB64);
   return new TextEncoder().encode(lines.join('\n'));
 }
 

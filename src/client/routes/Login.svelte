@@ -34,7 +34,7 @@
   const ACCOUNT_ID_LEN = 32;
   const digitsOnly = $derived(accountId.replace(/\D/g, '').slice(0, ACCOUNT_ID_LEN));
 
-  const LoginResult = z.object({ ok: z.boolean() });
+  const LoginResult = z.object({ ok: z.boolean(), popSessionToken: z.string().optional() });
 
   const login = createMutation(() => ({
     mutationFn: () =>

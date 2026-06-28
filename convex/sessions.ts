@@ -23,15 +23,23 @@ export const create = internalMutation({
     // clients that could not run the signing worker (legacy fallback).
     popPublicKey: v.optional(v.string()),
     popAlg: v.optional(v.string()),
+    // The public per-session token (binds each PoP signature to this session).
+    // Stored only when the session is PoP-bound (popPublicKey present).
+    popSessionToken: v.optional(v.string()),
   },
-  handler: async (ctx, { sid, kind, userId, adminUserId, ttlMs, popPublicKey, popAlg }) => {
+  handler: async (
+    ctx,
+    { sid, kind, userId, adminUserId, ttlMs, popPublicKey, popAlg, popSessionToken },
+  ) => {
     await ctx.db.insert('sessions', {
       sid,
       kind,
       userId,
       adminUserId,
       expiresAt: Date.now() + ttlMs,
-      ...(popPublicKey ? { popPublicKey, popAlg: popAlg ?? 'ES256', popBoundAt: Date.now() } : {}),
+      ...(popPublicKey
+        ? { popPublicKey, popAlg: popAlg ?? 'ES256', popBoundAt: Date.now(), popSessionToken }
+        : {}),
     });
     return null;
   },

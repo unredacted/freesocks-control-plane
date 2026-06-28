@@ -302,9 +302,18 @@ http.route({
       sameSite: 'Lax',
       secure: secureCookies(),
     });
-    return json({ accountId: result.accountId, tier: result.tier, authenticated: true }, 200, {
-      'set-cookie': cookie,
-    });
+    return json(
+      {
+        accountId: result.accountId,
+        tier: result.tier,
+        authenticated: true,
+        // Public per-session token (PoP sid-binding): the client persists it and
+        // signs it into every PoP message. Non-secret. Absent for unbound clients.
+        popSessionToken: result.popSessionToken,
+      },
+      200,
+      { 'set-cookie': cookie },
+    );
   }),
 });
 
@@ -365,7 +374,7 @@ http.route({
       sameSite: 'Lax',
       secure: secureCookies(),
     });
-    return json({ ok: true }, 200, { 'set-cookie': cookie });
+    return json({ ok: true, popSessionToken: res.popSessionToken }, 200, { 'set-cookie': cookie });
   }),
 });
 
@@ -902,7 +911,9 @@ http.route({
         sameSite: 'Strict',
         secure: secureCookies(),
       });
-      return json({ ok: true, username: out.username }, 200, { 'set-cookie': cookie });
+      return json({ ok: true, username: out.username, popSessionToken: out.popSessionToken }, 200, {
+        'set-cookie': cookie,
+      });
     } catch (err) {
       return convexError(err);
     }

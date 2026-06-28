@@ -20,6 +20,7 @@ import {
 const modules = import.meta.glob('./**/*.*s');
 const SIGN_KEY = 'test-session-signing-key';
 const PATH = '/api/v1/me';
+const PST = 'pst-test'; // the public per-session token, bound into the signature
 
 async function seedUser(t: ReturnType<typeof convexTest>): Promise<Id<'users'>> {
   return t.run(async (ctx) => {
@@ -55,6 +56,7 @@ async function seedSession(
   t: ReturnType<typeof convexTest>,
   userId: Id<'users'>,
   popPublicKey?: string,
+  popSessionToken?: string,
 ): Promise<string> {
   const sid = `sid-${Math.random().toString(16).slice(2)}`;
   await t.run(async (ctx) => {
@@ -63,7 +65,9 @@ async function seedSession(
       kind: 'member',
       userId,
       expiresAt: Date.now() + 3_600_000,
-      ...(popPublicKey ? { popPublicKey, popAlg: 'ES256', popBoundAt: Date.now() } : {}),
+      ...(popPublicKey
+        ? { popPublicKey, popAlg: 'ES256', popBoundAt: Date.now(), popSessionToken }
+        : {}),
     });
   });
   return sid;
@@ -72,6 +76,7 @@ async function seedSession(
 async function buildReq(opts: {
   sid: string;
   priv?: CryptoKey;
+  sessionToken?: string;
   nonceByte?: number;
   ts?: number;
 }): Promise<Request> {
@@ -81,7 +86,14 @@ async function buildReq(opts: {
     const ts = opts.ts ?? Date.now();
     const nonceB64 = bytesToB64Url(new Uint8Array(16).fill(opts.nonceByte ?? 3));
     const bodyHashB64 = await digestB64Url(new TextEncoder().encode(''));
-    const msg = buildPopMessage({ method: 'GET', path: PATH, bodyHashB64, ts, nonceB64 });
+    const msg = buildPopMessage({
+      method: 'GET',
+      path: PATH,
+      sessionToken: opts.sessionToken ?? '',
+      bodyHashB64,
+      ts,
+      nonceB64,
+    });
     headers.set(POP_SIG_HEADER, bytesToB64Url(await signP1363(opts.priv, msg)));
     headers.set(POP_TS_HEADER, String(ts));
     headers.set(POP_NONCE_HEADER, nonceB64);
@@ -98,8 +110,8 @@ describe('resolveMember + PoP (Phase 2 verify path)', () => {
     const t = convexTest(schema, modules);
     const userId = await seedUser(t);
     const { priv, pubB64 } = await makeKey();
-    const sid = await seedSession(t, userId, pubB64);
-    const req = await buildReq({ sid, priv });
+    const sid = await seedSession(t, userId, pubB64, PST);
+    const req = await buildReq({ sid, priv, sessionToken: PST });
 
     const auth = await t.action(async (ctx) => resolveMember(ctx, req));
     expect(auth?.userId).toBe(userId);
@@ -110,8 +122,8 @@ describe('resolveMember + PoP (Phase 2 verify path)', () => {
     const t = convexTest(schema, modules);
     const userId = await seedUser(t);
     const { priv, pubB64 } = await makeKey();
-    const sid = await seedSession(t, userId, pubB64);
-    const req = await buildReq({ sid, priv, nonceByte: 9 });
+    const sid = await seedSession(t, userId, pubB64, PST);
+    const req = await buildReq({ sid, priv, sessionToken: PST, nonceByte: 9 });
 
     expect((await t.action(async (ctx) => resolveMember(ctx, req)))?.userId).toBe(userId);
     // Same signed request again: the nonce is now spent.
@@ -122,7 +134,7 @@ describe('resolveMember + PoP (Phase 2 verify path)', () => {
     const t = convexTest(schema, modules);
     const userId = await seedUser(t);
     const { pubB64 } = await makeKey();
-    const sid = await seedSession(t, userId, pubB64);
+    const sid = await seedSession(t, userId, pubB64, PST);
     const req = await buildReq({ sid }); // cookie only, no PoP headers
 
     expect(await t.action(async (ctx) => resolveMember(ctx, req))).toBeNull();
@@ -133,8 +145,30 @@ describe('resolveMember + PoP (Phase 2 verify path)', () => {
     const userId = await seedUser(t);
     const { pubB64 } = await makeKey();
     const stranger = await makeKey();
-    const sid = await seedSession(t, userId, pubB64);
-    const req = await buildReq({ sid, priv: stranger.priv });
+    const sid = await seedSession(t, userId, pubB64, PST);
+    const req = await buildReq({ sid, priv: stranger.priv, sessionToken: PST });
+
+    expect(await t.action(async (ctx) => resolveMember(ctx, req))).toBeNull();
+  });
+
+  test('a bound session whose signed token does not match the stored pst is rejected', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedUser(t);
+    const { priv, pubB64 } = await makeKey();
+    // The session stores pst-A; the client signs pst-B (e.g. a signature lifted
+    // from another session that reuses this key) → reconstruction mismatch.
+    const sid = await seedSession(t, userId, pubB64, 'pst-A');
+    const req = await buildReq({ sid, priv, sessionToken: 'pst-B' });
+
+    expect(await t.action(async (ctx) => resolveMember(ctx, req))).toBeNull();
+  });
+
+  test('a bound session with NO stored token (pre-upgrade) is rejected → re-auth', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedUser(t);
+    const { priv, pubB64 } = await makeKey();
+    const sid = await seedSession(t, userId, pubB64); // bound but no popSessionToken
+    const req = await buildReq({ sid, priv, sessionToken: PST });
 
     expect(await t.action(async (ctx) => resolveMember(ctx, req))).toBeNull();
   });

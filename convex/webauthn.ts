@@ -223,7 +223,13 @@ export const authenticateVerify = internalAction({
   handler: async (
     ctx,
     { challengeId, response, requestId, popPublicKey },
-  ): Promise<{ ok: true; username: string; signedCookieValue: string; maxAgeSec: number }> => {
+  ): Promise<{
+    ok: true;
+    username: string;
+    signedCookieValue: string;
+    maxAgeSec: number;
+    popSessionToken?: string;
+  }> => {
     const consumed = await ctx.runMutation(internal.admins.consumeAuthChallenge, { challengeId });
     if (!consumed)
       throw new ConvexError({ code: 'validation', message: 'Invalid or expired challenge' });
@@ -266,12 +272,13 @@ export const authenticateVerify = internalAction({
     await ctx.runMutation(internal.admins.touchLogin, { adminUserId });
 
     const sid = randomHex(32);
+    const popSessionToken = popPublicKey ? randomHex(16) : undefined;
     await ctx.runMutation(internal.sessions.create, {
       sid,
       kind: 'admin',
       adminUserId,
       ttlMs: ADMIN_TTL_MS,
-      ...(popPublicKey ? { popPublicKey } : {}),
+      ...(popPublicKey ? { popPublicKey, popSessionToken } : {}),
     });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'admin',
@@ -287,6 +294,7 @@ export const authenticateVerify = internalAction({
       username: admin.username,
       signedCookieValue,
       maxAgeSec: ADMIN_TTL_MS / 1000,
+      popSessionToken,
     };
   },
 });

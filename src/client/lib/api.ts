@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 import type { ApiError } from '../../shared/contracts/common';
-import { augmentLoginBody, signedHeaders } from './pop';
+import { augmentLoginBody, captureSessionToken, signedHeaders } from './pop';
 
 /**
  * CDN-blinding sealing is OFF unless the server HPKE pin is baked at build
@@ -105,6 +105,9 @@ async function request<S extends z.ZodTypeAny>(
     throw new ApiCallError(res.status, json);
   }
   if (seal) json = await (await loadE2ee()).openInbound(seal, path, method, json);
+  // PoP sid-binding: a member login / account-create response carries the public
+  // per-session token; persist it (no-op for every other route) before parsing.
+  captureSessionToken(path, method, json);
   const parsed = schema.safeParse(json);
   if (!parsed.success) {
     throw new ApiCallError(500, {

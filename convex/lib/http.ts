@@ -144,9 +144,11 @@ export async function wireBodyText(req: Request): Promise<string> {
  * unauthenticated.
  *
  *  - Bound session (popPublicKey set): a fresh, in-window, non-replayed
- *    signature from the bound key is REQUIRED. Missing/invalid/replayed -> false
- *    (the re-bind rule: never silently accept a new key on an old sid, which a
- *    captured cookie could abuse).
+ *    signature from the bound key is REQUIRED, AND it must bind the session's own
+ *    public per-session token (so a signature cannot be lifted onto another
+ *    session that reuses the same persisted key). Missing/invalid/replayed/
+ *    wrong-token -> false (the re-bind rule: never silently accept a new key on
+ *    an old sid, which a captured cookie could abuse).
  *  - Legacy/unbound session (predates Phase 2): cookie alone is accepted until
  *    POP_REQUIRED is enabled, then rejected so the client re-logs-in and binds.
  */
@@ -155,13 +157,18 @@ async function sessionPopOk(
   req: Request,
   sid: string,
   popPublicKey: string | undefined,
+  sessionToken: string | undefined,
 ): Promise<boolean> {
   if (!popPublicKey) return process.env.POP_REQUIRED !== 'true';
+  // A PoP-bound session must also carry its public per-session token (minted at
+  // login + bound into the signature). A bound session without one predates this
+  // change → force re-auth. Beta-only breakage; no inter-release compat is kept.
+  if (!sessionToken) return false;
   const fields = extractPopFields(req);
   if (!fields) return false;
   const url = new URL(req.url);
-  // v2 binds host + the reveal-leg ephemeral; both come from request headers (the
-  // signature authenticates them). v1 ignores them (back-compat during rollout).
+  // host + reveal-leg ephemeral are client-declared headers (the signature
+  // authenticates them); the session token is the server's OWN stored pst.
   const host = req.headers.get(POP_HOST_HEADER) ?? undefined;
   const respEph = req.headers.get('x-fs-resp-eph') ?? undefined;
   const { verdict, nonceHash } = await evaluatePop({
@@ -171,19 +178,18 @@ async function sessionPopOk(
     query: url.search.startsWith('?') ? url.search.slice(1) : url.search,
     host,
     respEph,
+    sessionToken,
     wireBody: await wireBodyText(req),
     fields,
     nowMs: Date.now(),
   });
   if (verdict !== 'ok' || !nonceHash) return false;
-  // v2 cross-vhost check: the now-authenticated declared host must be in the
+  // Cross-vhost check: the now-authenticated declared host must be in the
   // allowlist when one is configured (else the bind is tamper-evident but not
   // enforced, so a deployment without POP_EXPECTED_HOST/WEBAUTHN_ORIGIN cannot
-  // lock itself out).
-  if (fields.version !== 'v1') {
-    const allowed = allowedPopHosts();
-    if (allowed.length > 0 && (!host || !allowed.includes(host.toLowerCase()))) return false;
-  }
+  // lock itself out). The host is always bound now (single v1 message).
+  const allowed = allowedPopHosts();
+  if (allowed.length > 0 && (!host || !allowed.includes(host.toLowerCase()))) return false;
   const consumed = await ctx.runMutation(internal.replayGuard.consumeNonce, {
     sid,
     nonceHash,
@@ -283,7 +289,7 @@ export async function resolveMember(
     if (sid) {
       const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
       if (sess && sess.kind === 'member' && sess.userId) {
-        if (await sessionPopOk(ctx, req, sid, sess.popPublicKey)) {
+        if (await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken)) {
           return { userId: sess.userId, source: 'cookie' };
         }
         // Bound session without a valid PoP signature: fall through (no bearer
@@ -344,7 +350,10 @@ export async function resolveAdmin(
         const adminRow = await ctx.runQuery(internal.admins.getById, {
           adminUserId: sess.adminUserId,
         });
-        if (adminRow?.isActive && (await sessionPopOk(ctx, req, sid, sess.popPublicKey))) {
+        if (
+          adminRow?.isActive &&
+          (await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken))
+        ) {
           return { adminUserId: sess.adminUserId, sid };
         }
         // Inactive admin, or a bound session without valid PoP: fall through to

@@ -62,6 +62,48 @@ function signEligible(path: string, method: string): boolean {
   return p.startsWith('/api/');
 }
 
+// --- public per-session token (PoP sid-binding) -------------------------------
+// The server mints a non-secret token per session and returns it in the login
+// response BODY; the client persists it (localStorage, per realm) and signs it
+// into every PoP message so a signature is bound to exactly one session. Read on
+// the main thread (Workers have no localStorage) and passed to the Worker.
+
+const popSidKey = (realm: Realm): string => `fs_pop_sid:${realm}`;
+
+/** Persist (or clear) the realm's public per-session token. */
+export function setSessionToken(realm: Realm, token: string | null | undefined): void {
+  try {
+    if (token) localStorage.setItem(popSidKey(realm), token);
+    else localStorage.removeItem(popSidKey(realm));
+  } catch {
+    // localStorage unavailable (private mode / disabled): the request then signs
+    // an empty token and the server rejects it → re-auth. Fails safe.
+  }
+}
+
+/** The realm's stored public per-session token, or '' if none. */
+function readSessionToken(realm: Realm): string {
+  try {
+    return localStorage.getItem(popSidKey(realm)) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * After a MEMBER session-establish response (login / account creation), persist
+ * the returned public per-session token. Called from the apiClient once the
+ * (sealed) response is opened. No-op for any other route.
+ */
+export function captureSessionToken(path: string, method: string, body: unknown): void {
+  if (!isMemberSessionEstablish(normalizePath(path), method)) return;
+  const token =
+    body && typeof body === 'object'
+      ? (body as Record<string, unknown>).popSessionToken
+      : undefined;
+  if (typeof token === 'string') setSessionToken('member', token);
+}
+
 // --- worker RPC ---------------------------------------------------------------
 
 let worker: Worker | null = null;
@@ -133,8 +175,9 @@ export async function ensureSessionKey(realm: Realm = 'member'): Promise<string 
   return r.ok && r.pubB64 ? r.pubB64 : null;
 }
 
-/** Delete the realm's session key (logout), so the next login binds a fresh one. */
+/** Delete the realm's session key + per-session token (logout); next login re-binds. */
 export async function clearSessionKey(realm: Realm = 'member'): Promise<void> {
+  setSessionToken(realm, null);
   await call({ type: 'clear', realm });
 }
 
@@ -240,6 +283,7 @@ export async function signedHeaders(
     query,
     host,
     respEph: respEph ?? '',
+    sessionToken: readSessionToken(realmForPath(path)),
     body: wireBody ?? '',
     tsOffset: await serverTimeOffset(),
   });
