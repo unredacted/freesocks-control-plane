@@ -1,6 +1,7 @@
 <script lang="ts">
   import { z } from 'zod';
   import { Button } from '@client/components/ui/button';
+  import { Skeleton } from '@client/components/ui/skeleton';
   import CapWidget from '../components/CapWidget.svelte';
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
@@ -163,16 +164,29 @@
       {t('get.title')}
     </h1>
     <!-- Pre-creation guidance only. Once authed, the success callout below is
-         the single "account ready" message — no redundant restatement here. -->
-    {#if me.isPending && !created}
-      <p class="text-sm text-muted-foreground max-w-md mx-auto">{t('common.loading')}</p>
-    {:else if !isAuthed}
+         the single "account ready" message — no redundant restatement here.
+         Suppressed while the auth check is still pending (the skeleton below is
+         the sole loading affordance), so a signed-in visitor never sees the
+         anonymous intro flash. -->
+    {#if !me.isPending && !isAuthed}
       <p class="text-sm text-muted-foreground max-w-md mx-auto">{t('get.introTwoSteps')}</p>
     {/if}
   </header>
 
-  <!-- STEP 1: create account (no proxy server required) -->
-  {#if !created && !me.data?.authenticated}
+  <!-- STEP 1: create account (no proxy server required). While the auth check
+       is still pending, a skeleton mirrors this card so a signed-in visitor
+       never sees the create-account form flash before their account view. -->
+  {#if me.isPending && !created}
+    <div class="max-w-xl mx-auto rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
+      <div class="flex items-center gap-2.5">
+        <Skeleton class="size-7 rounded-full" />
+        <Skeleton class="h-6 w-40" />
+      </div>
+      <Skeleton class="h-16 w-full rounded-lg" />
+      <Skeleton class="h-11 w-full rounded-md" />
+      <Skeleton class="mx-auto h-3 w-3/4" />
+    </div>
+  {:else if !created && !me.data?.authenticated}
     <div class="max-w-xl mx-auto rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
       <div class="flex items-center gap-2.5">
         <span
@@ -409,7 +423,7 @@
     </div>
   {/if}
 
-  {#if !isAuthed}
+  {#if !me.isPending && !isAuthed}
     <p class="text-xs text-muted-foreground text-center max-w-sm mx-auto">
       {t('get.haveAccountPrefix')}
       <Link href="/login" class="text-primary underline">{t('nav.signIn')}</Link>.

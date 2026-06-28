@@ -15,6 +15,7 @@
    */
   import Link from '../components/Link.svelte';
   import { Button } from '@client/components/ui/button';
+  import { Skeleton } from '@client/components/ui/skeleton';
   import TierComparison from '../components/TierComparison.svelte';
   import { meQuery, configQuery } from '../lib/queries';
   import { membershipTier, tierLimits, type TierLimits } from '../lib/tiers';
@@ -226,7 +227,13 @@
           <li class="flex items-start gap-3">
             <Smartphone class="size-4 text-primary mt-0.5 shrink-0" />
             <div>
-              <p class="text-sm font-medium tabular-nums">{freeTierLine}</p>
+              <!-- DB-driven; empty until /api/v1/config resolves. A skeleton bar
+                   holds the line's place so it doesn't pop in from blank. -->
+              {#if freeTierLine}
+                <p class="text-sm font-medium tabular-nums">{freeTierLine}</p>
+              {:else}
+                <Skeleton class="h-5 w-32" />
+              {/if}
               <p class="text-xs text-muted-foreground leading-snug">
                 {t('home.freeCard.membershipLine', { limits: membershipLimits })}
               </p>
