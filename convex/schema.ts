@@ -102,6 +102,12 @@ export default defineSchema({
     hwidEnabled: v.boolean(),
     trafficStrategy,
     remnawaveSquadUuid: v.optional(v.string()),
+    // Cross-backend peer (D-1): the equivalent tier on the OTHER backend, so a
+    // member on this tier can switch backends (account.switchBackend). Optional;
+    // free tiers auto-resolve their peer via the per-backend default-free row and
+    // need no explicit link. Resolved (incl. a reverse lookup) in convex/tiers.ts
+    // getPeerTier; set by an admin in the tier editor.
+    peerTierId: v.optional(v.id('tiers')),
     isDefaultFree: v.boolean(),
     isActive: v.boolean(),
     priority: v.number(),

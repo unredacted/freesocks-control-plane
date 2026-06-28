@@ -56,13 +56,19 @@ export function base64UrlEncode(buf: ArrayBuffer | Uint8Array): string {
 }
 
 /**
- * Length-checked constant-time string compare (HMAC sigs, bootstrap secret).
- * Matches src/server/lib/crypto.timingSafeEqual so signed cookies verify
- * identically across the migration.
+ * Constant-time string compare (HMAC sigs, bootstrap secret). Verifies signed
+ * cookies and the admin-bootstrap secret.
+ *
+ * No early length-branch: a length mismatch is folded into the accumulator and
+ * the loop always runs over the longer string, so the result does not short-
+ * circuit on length (L1). Both call sites compare against a FIXED-length secret,
+ * so this only removes a benign "your input wasn't N chars" signal — defense in
+ * depth, not a known leak. Out-of-range `charCodeAt` is NaN; `|| 0` maps it to 0
+ * (a real NUL also maps to 0, which XORs correctly on both sides).
  */
 export function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  let result = a.length ^ b.length;
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) result |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
   return result === 0;
 }

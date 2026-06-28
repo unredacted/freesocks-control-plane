@@ -22,6 +22,12 @@ export const TierAdmin = z.object({
   hwidEnabled: z.boolean(),
   trafficStrategy: TrafficStrategy,
   remnawaveSquadUuid: z.string().uuid().nullable(),
+  /**
+   * D-1: the cross-backend peer tier id (opaque), or null — the equivalent tier
+   * on the OTHER backend used by account.switchBackend. Free tiers auto-peer via
+   * the per-backend default-free row and leave this null.
+   */
+  peerTierId: z.string().nullable(),
   isDefaultFree: z.boolean(),
   isActive: z.boolean(),
   priority: z.number().int(),

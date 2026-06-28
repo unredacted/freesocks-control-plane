@@ -150,6 +150,7 @@
   {#if editing}
     <TierEditor
       tier={editing}
+      allTiers={tiers.data ?? []}
       busy={saveTier.isPending}
       onCancel={() => (editing = null)}
       onSave={(body) => saveTier.mutate({ id: editing!.id, body })}
@@ -157,6 +158,7 @@
   {/if}
   {#if creating}
     <TierEditor
+      allTiers={tiers.data ?? []}
       busy={saveTier.isPending}
       onCancel={() => (creating = false)}
       onSave={(body) => saveTier.mutate({ id: null, body })}
@@ -165,6 +167,7 @@
   {#if cloning}
     <TierEditor
       initial={cloning}
+      allTiers={tiers.data ?? []}
       busy={saveTier.isPending}
       onCancel={() => (cloning = null)}
       onSave={(body) => saveTier.mutate({ id: null, body })}

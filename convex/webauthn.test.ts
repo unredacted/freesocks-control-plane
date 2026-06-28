@@ -6,6 +6,22 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { hmacSha256Hex, sha256Hex } from './lib/crypto';
+import { verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
+
+// Mock ONLY the two cryptographic verifiers, so the post-verify happy-path
+// (counter bump, credential insert, session mint + signed cookie) is reachable in
+// convex-test without a real/virtual authenticator. generate*Options stay REAL
+// (the options tests rely on them). Every existing *Verify test bails BEFORE these
+// are reached (bad/expired challenge, unknown credential, bootstrap lock), so they
+// are unaffected. The full ceremony with a genuine authenticator is the e2e todo.
+vi.mock('@simplewebauthn/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@simplewebauthn/server')>();
+  return {
+    ...actual,
+    verifyRegistrationResponse: vi.fn(),
+    verifyAuthenticationResponse: vi.fn(),
+  };
+});
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -144,6 +160,51 @@ describe('registerBootstrapVerify', () => {
       }),
     ).rejects.toThrow(/No valid challenge/);
   });
+
+  test('happy path: a verified attestation inserts the credential (post-verify logic)', async () => {
+    const t = convexTest(schema, modules);
+    // Lock open (admin row, no credential yet) + a pending registration challenge.
+    const adminId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert('adminUsers', {
+        username: 'first',
+        displayName: 'First',
+        isActive: true,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('webauthnRegistrationChallenges', {
+        adminUserId: id,
+        challenge: 'stored-challenge',
+        expiresAt: Date.now() + 60_000,
+      });
+      return id;
+    });
+    vi.mocked(verifyRegistrationResponse).mockResolvedValue({
+      verified: true,
+      registrationInfo: {
+        credential: {
+          id: 'new-cred-id',
+          publicKey: new Uint8Array([1, 2, 3, 4]),
+          counter: 0,
+          transports: [],
+        },
+        aaguid: 'aaguid-test',
+      },
+    } as unknown as Awaited<ReturnType<typeof verifyRegistrationResponse>>);
+
+    const res = await t.action(internal.webauthn.registerBootstrapVerify, {
+      adminId,
+      response: { id: 'new-cred-id', rawId: 'new-cred-id', response: {}, type: 'public-key' },
+      deviceLabel: 'My Key',
+    });
+    expect(res.ok).toBe(true);
+    const creds = await t.run(async (ctx) =>
+      (await ctx.db.query('passkeyCredentials').collect()).filter((c) => c.adminUserId === adminId),
+    );
+    expect(creds).toHaveLength(1);
+    expect(creds[0]!.credentialId).toBe('new-cred-id');
+    expect(creds[0]!.counter).toBe(0);
+    expect(creds[0]!.deviceLabel).toBe('My Key');
+  });
 });
 
 describe('authenticateOptions (M4 anti-enumeration + throttle)', () => {
@@ -241,6 +302,42 @@ describe('authenticateVerify', () => {
       ),
     );
     expect(row?.consumedAt).toBeTypeOf('number');
+  });
+
+  test('happy path: a verified assertion bumps the counter and mints an admin session', async () => {
+    vi.stubEnv('ADMIN_SESSION_SIGNING_KEY', 'test-admin-signing-key');
+    const t = convexTest(schema, modules);
+    const { adminId } = await seedAdminWithCredential(t, 'admin', 'cred-1');
+    await t.run((ctx) =>
+      ctx.db.insert('webauthnAuthChallenges', {
+        challengeId: 'ch-auth',
+        challenge: 'stored-challenge',
+        expiresAt: Date.now() + 60_000,
+      }),
+    );
+    vi.mocked(verifyAuthenticationResponse).mockResolvedValue({
+      verified: true,
+      authenticationInfo: { newCounter: 7 },
+    } as unknown as Awaited<ReturnType<typeof verifyAuthenticationResponse>>);
+
+    const res = await t.action(internal.webauthn.authenticateVerify, {
+      challengeId: 'ch-auth',
+      response: { id: 'cred-1', rawId: 'cred-1', response: {}, type: 'public-key' },
+    });
+    expect(res.ok).toBe(true);
+    expect(res.username).toBe('admin');
+    expect(typeof res.signedCookieValue).toBe('string');
+    // The counter advanced to the verifier's value + an admin session row minted.
+    const cred = await t.run(async (ctx) =>
+      (await ctx.db.query('passkeyCredentials').collect()).find((c) => c.credentialId === 'cred-1'),
+    );
+    expect(cred?.counter).toBe(7);
+    const sessions = await t.run(async (ctx) =>
+      (await ctx.db.query('sessions').collect()).filter(
+        (s) => s.kind === 'admin' && s.adminUserId === adminId,
+      ),
+    );
+    expect(sessions).toHaveLength(1);
   });
 });
 

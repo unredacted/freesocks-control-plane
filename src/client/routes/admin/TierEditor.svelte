@@ -27,11 +27,20 @@
     tier?: TierAdmin | null;
     /** Create mode only: pre-fill the form (e.g. duplicating an existing tier). */
     initial?: TierUpsert | null;
+    /** All tiers, for the cross-backend peer selector (D-1). */
+    allTiers?: TierAdmin[];
     onCancel: () => void;
     onSave: (draft: TierUpsert) => void;
     busy?: boolean;
   }
-  let { tier = null, initial = null, onCancel, onSave, busy = false }: Props = $props();
+  let {
+    tier = null,
+    initial = null,
+    allTiers = [],
+    onCancel,
+    onSave,
+    busy = false,
+  }: Props = $props();
 
   const isEdit = !!tier;
   let open = $state(true);
@@ -47,6 +56,7 @@
     hwidEnabled: true,
     trafficStrategy: 'MONTH',
     remnawaveSquadUuid: null,
+    peerTierId: null,
     isDefaultFree: false,
     isActive: true,
     priority: 100,
@@ -80,6 +90,20 @@
       : false,
   );
   let canSave = $derived(!isPristine && !!draft.name && (isEdit || !!draft.slug));
+
+  // Cross-backend peer selector (D-1): an admin links a PAID tier to its
+  // equivalent on the OTHER backend so members on it can switch backends. Free
+  // tiers auto-peer via the per-backend default-free row, so the selector is
+  // hidden for them. Candidates are active tiers on the other backend (not self).
+  const NONE = '__none__';
+  let peerCandidates = $derived(
+    allTiers.filter((t) => t.backend !== draft.backend && t.id !== tier?.id && t.isActive),
+  );
+  let peerLabel = $derived(
+    draft.peerTierId
+      ? (allTiers.find((t) => t.id === draft.peerTierId)?.name ?? 'Linked tier')
+      : 'None',
+  );
 
   function onOpenChange(next: boolean) {
     if (!next && busy) return;
@@ -161,6 +185,33 @@
           </p>
         {/if}
       </div>
+      {#if !draft.isDefaultFree}
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="tier-peer">
+            Cross-backend peer (optional)
+          </label>
+          <Select.Root
+            type="single"
+            value={draft.peerTierId ?? NONE}
+            onValueChange={(v) => (draft = { ...draft, peerTierId: v === NONE ? null : v })}
+          >
+            <Select.Trigger id="tier-peer" class="w-full">{peerLabel}</Select.Trigger>
+            <Select.Content>
+              <Select.Item value={NONE}>None</Select.Item>
+              {#each peerCandidates as t (t.id)}
+                <Select.Item value={t.id}>
+                  {t.name} · {ADMIN_BACKEND_LABELS[t.backend]}
+                </Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+          <p class="text-xs text-muted-foreground/80 mt-1 leading-snug">
+            The equivalent tier on the other backend, so members on this tier can switch backends
+            (Account → switch server type). The link resolves both ways, so setting it on either
+            tier is enough. Free tiers link automatically.
+          </p>
+        </div>
+      {/if}
       <div>
         <label class="text-xs text-muted-foreground mb-1 block" for="tier-traffic">
           Monthly traffic (GB, 0 = unlimited)

@@ -52,3 +52,50 @@ export const getDefaultFree = internalQuery({
     );
   },
 });
+
+/**
+ * Resolve a tier's cross-backend peer for a backend switch (D-1). Returns the
+ * equivalent ACTIVE tier on `targetBackend`, or null if none is linked:
+ *   - FREE tier (isDefaultFree): the per-backend default-free row is its peer, so
+ *     a free user always switches cleanly (preserves the prior behavior).
+ *   - PAID tier: the admin-declared `peerTierId` on the other backend. The link is
+ *     resolved in EITHER direction (a single admin-set link works both ways): the
+ *     tier's own `peerTierId`, OR a tier on the target backend whose `peerTierId`
+ *     points back here.
+ * The caller (account.switchBackend) has already ensured targetBackend differs
+ * from the current one.
+ */
+export const getPeerTier = internalQuery({
+  args: {
+    tierId: v.id('tiers'),
+    targetBackend: v.union(v.literal('remnawave'), v.literal('outline')),
+  },
+  handler: async (ctx, { tierId, targetBackend }) => {
+    const tier = await ctx.db.get(tierId);
+    if (!tier) return null;
+    if (tier.isDefaultFree) {
+      const active = await ctx.db
+        .query('tiers')
+        .withIndex('by_active', (q) => q.eq('isActive', true))
+        .collect();
+      return (
+        active
+          .slice()
+          .sort((a, b) => a.priority - b.priority)
+          .find((t) => t.isDefaultFree && t.backend === targetBackend) ?? null
+      );
+    }
+    // Forward link: this tier points at an active peer on the target backend.
+    if (tier.peerTierId) {
+      const peer = await ctx.db.get(tier.peerTierId);
+      if (peer && peer.isActive && peer.backend === targetBackend) return peer;
+    }
+    // Reverse link: an active tier on the target backend points back at this one
+    // (so the admin only has to set the link on one side).
+    const active = await ctx.db
+      .query('tiers')
+      .withIndex('by_active', (q) => q.eq('isActive', true))
+      .collect();
+    return active.find((t) => t.backend === targetBackend && t.peerTierId === tierId) ?? null;
+  },
+});

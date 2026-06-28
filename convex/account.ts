@@ -272,11 +272,13 @@ export const switchBackend = internalAction({
       };
     }
 
-    // Free-tier users switch via the default-free peer tier; paid cross-backend
-    // switching awaits the billing portal's tier linkage (interim 409).
-    const peerTier = currentTier.isDefaultFree
-      ? await ctx.runQuery(internal.tiers.getDefaultFree, { backend: target })
-      : null;
+    // Resolve the cross-backend peer (D-1): a free tier auto-peers via the
+    // per-backend default-free row; a paid tier uses the admin-linked peerTierId
+    // (either direction). No peer → an actionable 409 (an admin can now link one).
+    const peerTier = await ctx.runQuery(internal.tiers.getPeerTier, {
+      tierId: currentTier._id,
+      targetBackend: target,
+    });
     if (!peerTier) {
       return {
         ok: false,

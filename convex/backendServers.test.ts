@@ -89,6 +89,47 @@ describe('pickCandidatesForIssue', () => {
       await t.query(internal.backendServers.pickCandidatesForIssue, { backend: 'outline' }),
     ).toEqual([]);
   });
+
+  test('a probed-but-stale instance is preferred over a never-probed one (fallback)', async () => {
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    // Neither is "fresh" (one probed >30min ago, one never probed), so the
+    // no-fresh-instances fallback ranks them. The never-probed instance must NOT
+    // win on a phantom rtt of 0 despite its lower key count — probed-ness sorts
+    // first (regression guard for the `?? 0` scoring bug).
+    await seedInstance(t, {
+      slug: 'rw-probed-stale',
+      keyCount: 9,
+      lastHealthOkAt: now - 40 * 60_000,
+      lastHealthRttMs: 40,
+    });
+    await seedInstance(t, { slug: 'rw-never-probed', keyCount: 0 });
+    const picks = await t.query(internal.backendServers.pickCandidatesForIssue, {
+      backend: 'remnawave',
+    });
+    expect(picks.map((p) => p.slug)).toEqual(['rw-probed-stale', 'rw-never-probed']);
+  });
+
+  test('among fresh instances, lower measured rtt wins at equal load', async () => {
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    await seedInstance(t, {
+      slug: 'rw-fast',
+      keyCount: 2,
+      lastHealthOkAt: now - 60_000,
+      lastHealthRttMs: 20,
+    });
+    await seedInstance(t, {
+      slug: 'rw-slow',
+      keyCount: 2,
+      lastHealthOkAt: now - 60_000,
+      lastHealthRttMs: 300,
+    });
+    const picks = await t.query(internal.backendServers.pickCandidatesForIssue, {
+      backend: 'remnawave',
+    });
+    expect(picks.map((p) => p.slug)).toEqual(['rw-fast', 'rw-slow']);
+  });
 });
 
 describe('admin CRUD (createBackendServer / updateBackendServer)', () => {

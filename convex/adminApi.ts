@@ -63,6 +63,9 @@ const tierUpsertFields = {
   hwidEnabled: v.boolean(),
   trafficStrategy,
   remnawaveSquadUuid: v.union(v.string(), v.null()),
+  // Optional at create (most tiers leave it unset); the SPA's TierUpsert always
+  // sends it (null default), but other internal callers / tests may omit it.
+  peerTierId: v.optional(v.union(v.id('tiers'), v.null())),
   isDefaultFree: v.boolean(),
   isActive: v.boolean(),
   priority: v.number(),
@@ -88,6 +91,7 @@ function mapTier(t: Doc<'tiers'>) {
     hwidEnabled: t.hwidEnabled,
     trafficStrategy: t.trafficStrategy,
     remnawaveSquadUuid: t.remnawaveSquadUuid ?? null,
+    peerTierId: (t.peerTierId as string | undefined) ?? null,
     isDefaultFree: t.isDefaultFree,
     isActive: t.isActive,
     priority: t.priority,
@@ -230,6 +234,7 @@ export const createTier = internalMutation({
       hwidEnabled: a.hwidEnabled,
       trafficStrategy: a.trafficStrategy,
       remnawaveSquadUuid: a.remnawaveSquadUuid ?? undefined,
+      peerTierId: a.peerTierId ?? undefined,
       isDefaultFree: a.isDefaultFree,
       isActive: a.isActive,
       priority: a.priority,
@@ -257,6 +262,7 @@ export const updateTier = internalMutation({
     hwidEnabled: v.optional(v.boolean()),
     trafficStrategy: v.optional(trafficStrategy),
     remnawaveSquadUuid: v.optional(v.union(v.string(), v.null())),
+    peerTierId: v.optional(v.union(v.id('tiers'), v.null())),
     isDefaultFree: v.optional(v.boolean()),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
@@ -276,7 +282,10 @@ export const updateTier = internalMutation({
     const fields: Partial<Doc<'tiers'>> = { updatedAt: Date.now() };
     for (const [k, val] of Object.entries(patch) as [keyof typeof patch, unknown][]) {
       if (val === undefined) continue;
-      if ((k === 'description' || k === 'remnawaveSquadUuid') && val === null) {
+      if (
+        (k === 'description' || k === 'remnawaveSquadUuid' || k === 'peerTierId') &&
+        val === null
+      ) {
         (fields as Record<string, unknown>)[k] = undefined;
       } else {
         (fields as Record<string, unknown>)[k] = val;

@@ -210,6 +210,68 @@ describe('account.switchBackend guards', () => {
     expect(res).toMatchObject({ ok: false, code: 'tier.no_peer', status: 409 });
   });
 
+  test('a paid tier with a linked peer switches to it (D-1 tier-linkage, forward)', async () => {
+    const t = convexTest(schema, modules);
+    const fromTier = await seedTier(t, {
+      slug: 'member',
+      backend: 'remnawave',
+      isDefaultFree: false,
+    });
+    const peerTier = await seedTier(t, {
+      slug: 'member-outline',
+      backend: 'outline',
+      isDefaultFree: false,
+    });
+    // Link the paid remnawave tier forward to its outline peer.
+    await t.run((ctx) => ctx.db.patch(fromTier, { peerTierId: peerTier }));
+    const userId = await seedUser(t, fromTier);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'outline.enabled',
+        value: 'true',
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.action(internal.account.regenerate, { userId }); // an existing key to tombstone
+
+    const res = await t.action(internal.account.switchBackend, { userId, target: 'outline' });
+    expect(res).toMatchObject({ ok: true, backend: 'outline' });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.tierId).toBe(peerTier);
+    });
+  });
+
+  test('the peer link resolves in reverse (only the other tier points back)', async () => {
+    const t = convexTest(schema, modules);
+    const fromTier = await seedTier(t, {
+      slug: 'member',
+      backend: 'remnawave',
+      isDefaultFree: false,
+    });
+    const peerTier = await seedTier(t, {
+      slug: 'member-outline',
+      backend: 'outline',
+      isDefaultFree: false,
+    });
+    // Link set ONLY on the outline side; switching FROM remnawave must still find it.
+    await t.run((ctx) => ctx.db.patch(peerTier, { peerTierId: fromTier }));
+    const userId = await seedUser(t, fromTier);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'outline.enabled',
+        value: 'true',
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.action(internal.account.regenerate, { userId });
+
+    const res = await t.action(internal.account.switchBackend, { userId, target: 'outline' });
+    expect(res).toMatchObject({ ok: true, backend: 'outline' });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.tierId).toBe(peerTier);
+    });
+  });
+
   test('a free user switches via the default-free peer tier', async () => {
     const t = convexTest(schema, modules);
     const fromTier = await seedTier(t, { slug: 'free', backend: 'remnawave' });

@@ -40,7 +40,10 @@ async function scoringWeights(ctx: QueryCtx): Promise<{ latency: number; keyCoun
  * Top-N scored active instances of a given backend type for new-key issuance
  * (lower score wins). The action picks one at random among them. Score =
  * latency_weight * lastHealthRttMs + key_count_weight * keyCount, then admin
- * `priority` as a tiebreak. Instances never health-checked contribute rtt 0.
+ * `priority` as a tiebreak. An instance we have NEVER successfully probed sorts
+ * after every probed one (we have no evidence it works), so it can't win the pool
+ * on a phantom rtt of 0 — only relevant in the no-fresh-instances fallback below,
+ * since the `fresh` set is already probed-by-definition.
  */
 export const pickCandidatesForIssue = internalQuery({
   args: {
@@ -66,8 +69,19 @@ export const pickCandidatesForIssue = internalQuery({
     const usable = fresh.length > 0 ? fresh : candidates;
     const w = await scoringWeights(ctx);
     return usable
-      .map((s) => ({ s, score: w.latency * (s.lastHealthRttMs ?? 0) + w.keyCount * s.keyCount }))
-      .sort((a, b) => a.score - b.score || a.s.priority - b.s.priority)
+      .map((s) => ({
+        s,
+        // Probed-ness is the PRIMARY sort key: an instance with no successful
+        // healthcheck yet (lastHealthRttMs == null) is less trustworthy than any
+        // probed one and must sort last, not score as rtt=0 ("fastest"). In the
+        // common `fresh` path every instance is probed, so this is a no-op there.
+        probed: s.lastHealthRttMs != null,
+        score: w.latency * (s.lastHealthRttMs ?? 0) + w.keyCount * s.keyCount,
+      }))
+      .sort(
+        (a, b) =>
+          Number(b.probed) - Number(a.probed) || a.score - b.score || a.s.priority - b.s.priority,
+      )
       .slice(0, limit ?? 3)
       .map((x) => x.s);
   },

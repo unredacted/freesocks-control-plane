@@ -46,8 +46,29 @@ describe('timingSafeEqual', () => {
     expect(timingSafeEqual('abcdef', 'abcdeg')).toBe(false);
   });
 
-  test('false for length mismatch', () => {
+  test('false for length mismatch (either operand longer)', () => {
     expect(timingSafeEqual('abc', 'abcd')).toBe(false);
+    expect(timingSafeEqual('abcd', 'abc')).toBe(false);
+  });
+
+  test('false when one operand is a prefix of the other (no early-return shortcut)', () => {
+    // The rewrite drops the length-branch and folds the length delta in; a shared
+    // prefix must still fail when the lengths differ.
+    expect(timingSafeEqual('abc', 'abcdef')).toBe(false);
+    expect(timingSafeEqual('abcdef', 'abc')).toBe(false);
+  });
+
+  test('true for two empty strings; false when only one is empty', () => {
+    expect(timingSafeEqual('', '')).toBe(true);
+    expect(timingSafeEqual('', 'a')).toBe(false);
+    expect(timingSafeEqual('a', '')).toBe(false);
+  });
+
+  test('handles a NUL char (charCode 0) without spurious equality', () => {
+    expect(timingSafeEqual('\0', '\0')).toBe(true);
+    expect(timingSafeEqual('\0', 'a')).toBe(false);
+    // A trailing NUL must not read as equal to a shorter string (length is folded in).
+    expect(timingSafeEqual('a\0', 'a')).toBe(false);
   });
 });
 
