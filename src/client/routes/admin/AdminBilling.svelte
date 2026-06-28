@@ -114,6 +114,47 @@
     failed: 'bg-destructive/15 text-destructive',
     expired: 'bg-muted text-muted-foreground',
   };
+
+  // --- W3-8b: per-rail readiness ---------------------------------------------
+  // A rail can actually take payments only when its credentials AND the public
+  // base URL are set; a rail toggled on without them returns 503 on its
+  // checkout/webhook. A typed-but-unsaved secret counts (it persists in the same
+  // PATCH), so the warning clears as the admin fills the form in rather than
+  // false-alarming mid-edit.
+  function railState(key: BillingProcessor): {
+    enabled: boolean;
+    ready: boolean;
+    missing: string[];
+  } {
+    const enabled = !!draft?.rails[key];
+    const missing: string[] = [];
+    const has = (saved: boolean | undefined, typed: string) => !!saved || typed.trim().length > 0;
+    if (secretsDraft.publicBaseUrl.trim().length === 0) missing.push('public base URL');
+    if (key === 'nowpayments') {
+      if (!has(ss?.nowpayments.apiKey, secretsDraft.nowpayments.apiKey)) missing.push('API key');
+      if (!has(ss?.nowpayments.ipnSecret, secretsDraft.nowpayments.ipnSecret))
+        missing.push('IPN secret');
+    } else if (key === 'stripe') {
+      if (!has(ss?.stripe.apiKey, secretsDraft.stripe.apiKey)) missing.push('API key');
+      if (!has(ss?.stripe.webhookSecret, secretsDraft.stripe.webhookSecret))
+        missing.push('webhook secret');
+    } else {
+      if (!has(ss?.paypal.clientId, secretsDraft.paypal.clientId)) missing.push('client ID');
+      if (!has(ss?.paypal.secret, secretsDraft.paypal.secret)) missing.push('secret');
+      if (!has(ss?.paypal.webhookId, secretsDraft.paypal.webhookId)) missing.push('webhook ID');
+    }
+    return { enabled, ready: missing.length === 0, missing };
+  }
+
+  let billingReadinessWarning = $derived.by(() => {
+    if (!draft) return null;
+    const states = RAILS.map((r) => railState(r.key));
+    if (draft.enabled && !states.some((s) => s.ready))
+      return 'Billing is enabled but no payment rail is ready — members would see a purchase option that cannot complete. Set a rail’s credentials and the public base URL below, then Save.';
+    if (states.some((s) => s.enabled && !s.ready))
+      return 'An enabled rail is missing credentials — its checkout and webhook return 503 until you set them and Save.';
+    return null;
+  });
 </script>
 
 <AdminLayout>
@@ -136,16 +177,46 @@
         <span class="text-sm font-medium">Billing enabled (members can purchase)</span>
       </label>
 
+      {#if billingReadinessWarning}
+        <div
+          class="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+          role="status"
+        >
+          <span aria-hidden="true">⚠</span>
+          <span>{billingReadinessWarning}</span>
+        </div>
+      {/if}
+
       <div>
         <p class="mb-2 text-xs font-medium text-muted-foreground">Payment rails</p>
         <div class="space-y-1.5">
           {#each RAILS as rail (rail.key)}
-            <label class="flex items-center gap-2">
+            {@const rs = railState(rail.key)}
+            <label class="flex flex-wrap items-center gap-2">
               <Checkbox
                 checked={draft.rails[rail.key]}
                 onCheckedChange={(v) => draft && (draft.rails[rail.key] = !!v)}
               />
               <span class="text-sm">{rail.label}</span>
+              {#if rs.enabled && rs.ready}
+                <span
+                  class="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400"
+                >
+                  ready
+                </span>
+              {:else if rs.enabled && !rs.ready}
+                <span class="rounded bg-destructive/15 px-1.5 py-0.5 text-[11px] text-destructive">
+                  enabled · missing {rs.missing.join(', ')}
+                </span>
+              {:else if rs.ready}
+                <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                  configured · off
+                </span>
+              {:else}
+                <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                  not configured
+                </span>
+              {/if}
             </label>
           {/each}
         </div>
