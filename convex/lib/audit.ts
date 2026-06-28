@@ -71,6 +71,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.backend_server.delete': ['slug'],
   // Admin grant/extend of a membership from the Users page.
   'admin.user.grant_membership': ['tierId', 'durationDays'],
+  // Idempotent tier upsert by slug (Ansible / IaC + declarative squad binding);
+  // `squadBound` is a boolean — the Remnawave squad UUID is NEVER logged.
+  'admin.tier.upsert': ['slug', 'backend', 'created', 'squadBound'],
   // Admin changes the brand theme (preset + optional hue override).
   'admin.theme.change': ['preset', 'hue'],
 };

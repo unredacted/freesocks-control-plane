@@ -208,6 +208,78 @@ export const create = internalMutation({
   },
 });
 
+/**
+ * Idempotent provider upsert addressed by name (IaC / declarative config).
+ * Mirrors upsertBackendServerBySlug / upsertTierBySlug: MISSING → create (all
+ * credentials required); EXISTING → patch (reuses update()'s keep-secret-on-blank
+ * merge, so a converge that omits the secret never wipes it). Like its
+ * create/update siblings, the mirror domain is not audited and the secret is
+ * never returned or logged.
+ */
+export const upsertByName = internalMutation({
+  args: {
+    name: v.string(),
+    endpoint: v.optional(v.string()),
+    bucket: v.optional(v.string()),
+    publicUrl: v.optional(v.string()),
+    region: v.optional(v.string()),
+    accessKeyId: v.optional(v.string()),
+    secretAccessKey: v.optional(v.string()),
+    countryCodes: v.optional(v.array(v.string())),
+    isActive: v.optional(v.boolean()),
+    priority: v.optional(v.number()),
+  },
+  handler: async (ctx, a) => {
+    const name = a.name.trim();
+    if (!name)
+      throw new ConvexError({ code: 'validation', message: 'A provider name is required' });
+    const existing = await ctx.db
+      .query('mirrorProviders')
+      .withIndex('by_name', (q) => q.eq('name', name))
+      .unique();
+
+    if (!existing) {
+      // CREATE — all credentials required (mirrors create()).
+      if (!a.endpoint || !a.bucket || !a.publicUrl || !a.accessKeyId || !a.secretAccessKey) {
+        throw new ConvexError({
+          code: 'validation',
+          message:
+            'A new mirror provider needs endpoint, bucket, public URL, access key ID and secret',
+        });
+      }
+      const id = await ctx.db.insert('mirrorProviders', {
+        name,
+        endpoint: a.endpoint,
+        bucket: a.bucket,
+        publicUrl: a.publicUrl,
+        region: a.region?.trim() || 'us-east-1',
+        accessKeyId: a.accessKeyId,
+        secretAccessKey: a.secretAccessKey,
+        countryCodes: normalizeCountryCodes(a.countryCodes),
+        isActive: a.isActive ?? true,
+        priority: a.priority ?? 0,
+        updatedAt: Date.now(),
+      });
+      return { ...mapProviderAdmin((await ctx.db.get(id))!), created: true };
+    }
+
+    // UPDATE — patch provided fields; blank/absent secret keeps the stored one.
+    const fields: Partial<Doc<'mirrorProviders'>> = { updatedAt: Date.now() };
+    if (a.endpoint !== undefined && a.endpoint !== '') fields.endpoint = a.endpoint;
+    if (a.bucket !== undefined && a.bucket !== '') fields.bucket = a.bucket;
+    if (a.publicUrl !== undefined && a.publicUrl !== '') fields.publicUrl = a.publicUrl;
+    if (a.region !== undefined && a.region.trim() !== '') fields.region = a.region.trim();
+    if (a.accessKeyId !== undefined && a.accessKeyId !== '') fields.accessKeyId = a.accessKeyId;
+    if (a.secretAccessKey !== undefined && a.secretAccessKey !== '')
+      fields.secretAccessKey = a.secretAccessKey;
+    if (a.countryCodes !== undefined) fields.countryCodes = normalizeCountryCodes(a.countryCodes);
+    if (a.isActive !== undefined) fields.isActive = a.isActive;
+    if (a.priority !== undefined) fields.priority = a.priority;
+    await ctx.db.patch(existing._id, fields);
+    return { ...mapProviderAdmin((await ctx.db.get(existing._id))!), created: false };
+  },
+});
+
 export const update = internalMutation({
   args: {
     id: v.id('mirrorProviders'),

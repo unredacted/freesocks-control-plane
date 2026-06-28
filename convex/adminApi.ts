@@ -322,6 +322,121 @@ export const deleteTier = internalMutation({
   },
 });
 
+/**
+ * Idempotent tier upsert addressed by slug — the IaC converge primitive for
+ * tiers + the mechanism behind declarative squad↔tier binding (the squad UUID
+ * is just a tier field). Mirrors `upsertBackendServerBySlug`: all fields are
+ * optional and the slug is authoritative (from the path).
+ *  - MISSING tier → CREATE, defaulting the mechanical entitlement fields so a
+ *    minimal `{slug}` yields a sane template. `isDefaultFree` defaults FALSE so
+ *    a converge can NEVER silently steal the sign-up default tier.
+ *  - EXISTING tier → PATCH only the provided fields (reuses updateTier's
+ *    nullable-normalize + the one-default-free-per-backend invariant). This is
+ *    the squad-bind path: `{remnawaveSquadUuid}` alone binds a squad to an
+ *    already-seeded tier without disturbing its other entitlements.
+ * Audited as `admin.tier.upsert`; the squad UUID is NEVER logged (only a
+ * `squadBound` boolean records that this call set one).
+ */
+export const upsertTierBySlug = internalMutation({
+  args: {
+    slug: v.string(),
+    name: v.optional(v.string()),
+    description: v.optional(v.union(v.string(), v.null())),
+    backend: v.optional(backendId),
+    monthlyTrafficGb: v.optional(v.number()),
+    deviceLimit: v.optional(v.number()),
+    hwidLimit: v.optional(v.number()),
+    hwidEnabled: v.optional(v.boolean()),
+    trafficStrategy: v.optional(trafficStrategy),
+    remnawaveSquadUuid: v.optional(v.union(v.string(), v.null())),
+    isDefaultFree: v.optional(v.boolean()),
+    isActive: v.optional(v.boolean()),
+    priority: v.optional(v.number()),
+    expirationDaysAfterMembershipLapse: v.optional(v.number()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, a) => {
+    const existing = await ctx.db
+      .query('tiers')
+      .withIndex('by_slug', (q) => q.eq('slug', a.slug))
+      .unique();
+    const squadBound = a.remnawaveSquadUuid != null && a.remnawaveSquadUuid !== '';
+
+    if (!existing) {
+      // CREATE — default the mechanical fields; never default isDefaultFree on.
+      const backend = a.backend ?? 'remnawave';
+      const id = await ctx.db.insert('tiers', {
+        slug: a.slug,
+        name: a.name ?? a.slug,
+        description: a.description ?? undefined,
+        backend,
+        monthlyTrafficGb: a.monthlyTrafficGb ?? 0,
+        deviceLimit: a.deviceLimit ?? 0,
+        hwidLimit: a.hwidLimit ?? 0,
+        hwidEnabled: a.hwidEnabled ?? false,
+        trafficStrategy: a.trafficStrategy ?? 'MONTH',
+        remnawaveSquadUuid: a.remnawaveSquadUuid ?? undefined,
+        isDefaultFree: a.isDefaultFree ?? false,
+        isActive: a.isActive ?? true,
+        priority: a.priority ?? 0,
+        expirationDaysAfterMembershipLapse: a.expirationDaysAfterMembershipLapse ?? 0,
+        updatedAt: Date.now(),
+      });
+      if (a.isDefaultFree) await clearOtherDefaultFree(ctx, backend, id);
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: a.actorAdminId ?? undefined,
+        action: 'admin.tier.upsert',
+        targetType: 'tier',
+        targetId: id,
+        payload: { slug: a.slug, backend, created: true, squadBound },
+      });
+      return { ...mapTier((await ctx.db.get(id))!), created: true };
+    }
+
+    // UPDATE — patch only the provided fields (mirrors updateTier). The slug is
+    // the address, so it is never itself patched here.
+    const fields: Partial<Doc<'tiers'>> = { updatedAt: Date.now() };
+    const patchable = [
+      'name',
+      'description',
+      'backend',
+      'monthlyTrafficGb',
+      'deviceLimit',
+      'hwidLimit',
+      'hwidEnabled',
+      'trafficStrategy',
+      'remnawaveSquadUuid',
+      'isDefaultFree',
+      'isActive',
+      'priority',
+      'expirationDaysAfterMembershipLapse',
+    ] as const;
+    for (const k of patchable) {
+      const val = (a as Record<string, unknown>)[k];
+      if (val === undefined) continue;
+      if ((k === 'description' || k === 'remnawaveSquadUuid') && val === null) {
+        (fields as Record<string, unknown>)[k] = undefined;
+      } else {
+        (fields as Record<string, unknown>)[k] = val;
+      }
+    }
+    await ctx.db.patch(existing._id, fields);
+    const effectiveDefaultFree = a.isDefaultFree ?? existing.isDefaultFree;
+    const effectiveBackend = a.backend ?? existing.backend;
+    if (effectiveDefaultFree) await clearOtherDefaultFree(ctx, effectiveBackend, existing._id);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'admin.tier.upsert',
+      targetType: 'tier',
+      targetId: existing._id,
+      payload: { slug: a.slug, backend: effectiveBackend, created: false, squadBound },
+    });
+    return { ...mapTier((await ctx.db.get(existing._id))!), created: false };
+  },
+});
+
 // === users ==================================================================
 
 const userStatus = v.union(

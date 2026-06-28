@@ -86,6 +86,118 @@ describe('adminApi tiers', () => {
   });
 });
 
+describe('adminApi upsertTierBySlug', () => {
+  test('minimal {slug} creates with safe defaults; re-run patches (idempotent)', async () => {
+    const t = convexTest(schema, modules);
+    const created = await t.mutation(internal.adminApi.upsertTierBySlug, { slug: 'premium' });
+    expect(created.created).toBe(true);
+    expect(created.name).toBe('premium'); // name defaults to slug
+    expect(created.backend).toBe('remnawave'); // default backend
+    expect(created.isDefaultFree).toBe(false); // never silently steal the default
+    expect(created.isActive).toBe(true);
+
+    // Re-run patches one field → not created, exactly one row (idempotent).
+    const updated = await t.mutation(internal.adminApi.upsertTierBySlug, {
+      slug: 'premium',
+      name: 'Premium',
+      priority: 9,
+    });
+    expect(updated.created).toBe(false);
+    expect(updated.name).toBe('Premium');
+    expect(updated.priority).toBe(9);
+    const rows = await t.run((ctx) => ctx.db.query('tiers').collect());
+    expect(rows.filter((r) => r.slug === 'premium')).toHaveLength(1);
+  });
+
+  test('binds a squad to an existing tier without disturbing other fields; UUID never logged', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.adminApi.createTier, tierUpsert({ slug: 'member', name: 'Member' }));
+    const SQUAD = 'sq-11112222-3333-4444';
+    const bound = await t.mutation(internal.adminApi.upsertTierBySlug, {
+      slug: 'member',
+      remnawaveSquadUuid: SQUAD,
+    });
+    expect(bound.created).toBe(false);
+    expect(bound.remnawaveSquadUuid).toBe(SQUAD);
+    expect(bound.name).toBe('Member'); // untouched
+
+    // Audit recorded the bind as a boolean — the UUID is NEVER persisted.
+    const audits = await t.run((ctx) =>
+      ctx.db
+        .query('auditLog')
+        .filter((q) => q.eq(q.field('action'), 'admin.tier.upsert'))
+        .collect(),
+    );
+    expect(audits.length).toBeGreaterThan(0);
+    const last = audits[audits.length - 1]!;
+    expect((last.payload as Record<string, unknown>).squadBound).toBe(true);
+    expect(JSON.stringify(last)).not.toContain(SQUAD);
+
+    // Unbind with null clears it.
+    const unbound = await t.mutation(internal.adminApi.upsertTierBySlug, {
+      slug: 'member',
+      remnawaveSquadUuid: null,
+    });
+    expect(unbound.remnawaveSquadUuid).toBeNull();
+  });
+
+  test('isDefaultFree:true via upsert clears the peer default on the same backend', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(
+      internal.adminApi.createTier,
+      tierUpsert({ slug: 'free-a', backend: 'remnawave', isDefaultFree: true }),
+    );
+    // Upsert a second remnawave tier as the default → the first must be cleared.
+    await t.mutation(internal.adminApi.upsertTierBySlug, {
+      slug: 'free-b',
+      backend: 'remnawave',
+      isDefaultFree: true,
+    });
+    const rows = await t.run((ctx) => ctx.db.query('tiers').collect());
+    const defaults = rows.filter((r) => r.backend === 'remnawave' && r.isDefaultFree);
+    expect(defaults).toHaveLength(1);
+    expect(defaults[0]!.slug).toBe('free-b');
+  });
+});
+
+describe('mirrorProviders upsertByName', () => {
+  const provider = (overrides: Record<string, unknown> = {}) => ({
+    name: 'r2-eu',
+    endpoint: 'https://r2.example.com',
+    bucket: 'subs',
+    publicUrl: 'https://cdn.example.com',
+    accessKeyId: 'AKIA-public',
+    secretAccessKey: 'super-secret',
+    ...overrides,
+  });
+
+  test('creates on first call, then keeps the secret on a blank re-run (idempotent)', async () => {
+    const t = convexTest(schema, modules);
+    const created = await t.mutation(internal.mirrorProviders.upsertByName, provider());
+    expect(created.created).toBe(true);
+    expect(created.secretAccessKeySet).toBe(true);
+
+    const updated = await t.mutation(internal.mirrorProviders.upsertByName, {
+      name: 'r2-eu',
+      publicUrl: 'https://cdn2.example.com',
+      // no secret → keep the stored one
+    });
+    expect(updated.created).toBe(false);
+    expect(updated.publicUrl).toBe('https://cdn2.example.com');
+
+    const rows = await t.run((ctx) => ctx.db.query('mirrorProviders').collect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.secretAccessKey).toBe('super-secret'); // survived the blank re-run
+  });
+
+  test('refuses to create a new provider without full credentials', async () => {
+    const t = convexTest(schema, modules);
+    await expect(
+      t.mutation(internal.mirrorProviders.upsertByName, { name: 'incomplete', bucket: 'x' }),
+    ).rejects.toThrow(/needs endpoint|required/i);
+  });
+});
+
 describe('adminApi usersSearch', () => {
   test('returns seeded users in the UserAdmin shape', async () => {
     const t = convexTest(schema, modules);

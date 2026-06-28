@@ -1236,6 +1236,32 @@ http.route({
   }),
 });
 
+// PUT /api/v1/admin/tiers/by-slug/{slug}: idempotent upsert (Ansible / IaC +
+// declarative squad↔tier binding). A distinct METHOD (PUT) from the by-id
+// PATCH/DELETE prefix routes above, so the two never collide; the slug comes
+// from the path (authoritative).
+http.route({
+  pathPrefix: '/api/v1/admin/tiers/by-slug/',
+  method: 'PUT',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:tiers:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const slug = decodeURIComponent(lastPathSegment(req));
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.adminApi.upsertTierBySlug, {
+          ...body,
+          slug,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 // --- admin: users -----------------------------------------------------------
 
 http.route({
@@ -1809,6 +1835,25 @@ http.route({
     const id = lastPathSegment(req) as Id<'mirrorProviders'>;
     try {
       return json(await ctx.runMutation(internal.mirrorProviders.remove, { id }));
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// PUT /api/v1/admin/mirror-providers/by-name/{name}: idempotent upsert (IaC).
+// PUT, so it never collides with the by-id PATCH/DELETE prefix routes above.
+http.route({
+  pathPrefix: '/api/v1/admin/mirror-providers/by-name/',
+  method: 'PUT',
+  handler: guard(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const name = decodeURIComponent(lastPathSegment(req));
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.mirrorProviders.upsertByName, { ...body, name } as never),
+      );
     } catch (err) {
       return adminError(err);
     }
