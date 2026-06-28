@@ -76,6 +76,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.tier.upsert': ['slug', 'backend', 'created', 'squadBound'],
   // Admin changes the brand theme (preset + optional hue override).
   'admin.theme.change': ['preset', 'hue'],
+  // W3-8: admin lifecycle — deactivate/reactivate an admin, revoke a passkey
+  // (username + device label are non-secret display strings).
+  'admin.admin.deactivate': ['username'],
+  'admin.admin.reactivate': ['username'],
+  'admin.passkey.revoke': ['deviceLabel'],
 };
 
 /**

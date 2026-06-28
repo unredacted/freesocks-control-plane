@@ -13,6 +13,7 @@ import { AuthMeResponse, PublicConfig } from '../../shared/contracts/auth';
 import { AccountResponse, SubscriptionContentResponse } from '../../shared/contracts/account';
 import {
   AdminListResponse,
+  AdminCredentialsResponse,
   AdminStatusSummary,
   AppSettingsRecord,
   AuditEntry,
@@ -40,6 +41,7 @@ export const queryKeys = {
   adminAuthStatus: ['admin', 'auth-status'] as const,
   adminStatus: ['admin', 'status'] as const,
   adminAdmins: ['admin', 'admins'] as const,
+  adminCredentials: (adminId: string) => ['admin', 'admins', adminId, 'credentials'] as const,
   adminTiers: ['admin', 'tiers'] as const,
   adminUsers: (q: string, status = '', tier = '') => ['admin', 'users', q, status, tier] as const,
   adminTokens: ['admin', 'tokens'] as const,
@@ -192,6 +194,21 @@ export const adminAdminsQuery = () =>
     queryKey: queryKeys.adminAdmins,
     queryFn: async () => (await apiClient.get('/api/v1/admin/admins', AdminListResponse)).admins,
     staleTime: 15_000,
+  }));
+
+/** An admin's passkeys — fetched lazily (only when a row is expanded). */
+export const adminCredentialsQuery = (adminId: () => string | null, enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminCredentials(adminId() ?? ''),
+    queryFn: async () =>
+      (
+        await apiClient.get(
+          `/api/v1/admin/admins/credentials/${encodeURIComponent(adminId()!)}`,
+          AdminCredentialsResponse,
+        )
+      ).credentials,
+    enabled: enabled() && !!adminId(),
+    staleTime: 10_000,
   }));
 
 // P1-16: paginated via createInfiniteQuery so the admin can "Load more" instead

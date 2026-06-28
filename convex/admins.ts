@@ -6,8 +6,10 @@
  * they're race-safe (serializable), giving the replay/TOCTOU guarantees the old
  * Hono+D1 code relied on transactions for.
  */
-import { internalMutation, internalQuery } from './_generated/server';
-import { v } from 'convex/values';
+import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
+import type { Id } from './_generated/dataModel';
+import { ConvexError, v } from 'convex/values';
+import { writeAuditLog } from './lib/audit';
 
 // --- bootstrap status (drives the SPA's bootstrap-vs-login decision, served
 //     via GET /api/admin/auth/status; internal so the raw channel can't read it) ---
@@ -233,6 +235,125 @@ export const listAdminsWithCounts = internalQuery({
       });
     }
     return out;
+  },
+});
+
+// --- admin lifecycle (W3-8a): deactivate / reactivate + per-passkey revoke ----
+
+/**
+ * Count the admins who can ACTUALLY sign in right now — active rows that still
+ * have ≥1 passkey. The last-admin guard keys off this so a deactivate or a
+ * passkey-revoke can never lock everyone out (the bootstrap secret is the only
+ * other way back in, and it may be unset in prod, so we never rely on it).
+ * `excludeAdminId` drops one admin from the tally (the one being deactivated);
+ * `excludeCredentialId` drops one credential (the one being revoked) when
+ * judging whether its owner would still be signable afterwards.
+ */
+async function effectiveAdminCount(
+  ctx: MutationCtx,
+  opts: { excludeAdminId?: Id<'adminUsers'>; excludeCredentialId?: Id<'passkeyCredentials'> } = {},
+): Promise<number> {
+  const admins = await ctx.db.query('adminUsers').collect();
+  let n = 0;
+  for (const a of admins) {
+    if (!a.isActive) continue;
+    if (opts.excludeAdminId && a._id === opts.excludeAdminId) continue;
+    const creds = await ctx.db
+      .query('passkeyCredentials')
+      .withIndex('by_admin', (q) => q.eq('adminUserId', a._id))
+      .collect();
+    const usable = creds.filter((c) => c._id !== opts.excludeCredentialId);
+    if (usable.length > 0) n++;
+  }
+  return n;
+}
+
+/** A masked passkey list for one admin (drives the management UI's revoke). */
+export const listCredentials = internalQuery({
+  args: { adminUserId: v.id('adminUsers') },
+  handler: async (ctx, { adminUserId }) => {
+    const rows = await ctx.db
+      .query('passkeyCredentials')
+      .withIndex('by_admin', (q) => q.eq('adminUserId', adminUserId))
+      .collect();
+    // Never return publicKey/counter — only the non-secret display fields.
+    return rows.map((r) => ({
+      id: r._id as string,
+      deviceLabel: r.deviceLabel ?? null,
+      aaguid: r.aaguid ?? null,
+      lastUsedAt: r.lastUsedAt ? new Date(r.lastUsedAt).toISOString() : null,
+      createdAt: new Date(r._creationTime).toISOString(),
+    }));
+  },
+});
+
+/**
+ * Activate / deactivate an admin. A deactivated admin is rejected by
+ * `resolveAdmin` (existing sessions die on their next request) AND by the login
+ * verify path (no fresh session). LAST-ADMIN GUARD: refuse to deactivate the
+ * final admin who can still sign in — that would lock everyone out.
+ * Reactivation is unguarded. Idempotent (no-op + audit skip when unchanged).
+ */
+export const setAdminActive = internalMutation({
+  args: {
+    adminUserId: v.id('adminUsers'),
+    isActive: v.boolean(),
+    actorAdminId: v.id('adminUsers'),
+  },
+  handler: async (ctx, { adminUserId, isActive, actorAdminId }) => {
+    const target = await ctx.db.get(adminUserId);
+    if (!target) throw new ConvexError({ code: 'not_found', message: 'Admin not found' });
+    if (target.isActive === isActive) {
+      return { ok: true as const, isActive, username: target.username };
+    }
+    if (!isActive && (await effectiveAdminCount(ctx, { excludeAdminId: adminUserId })) < 1) {
+      throw new ConvexError({
+        code: 'admin.last_admin',
+        message:
+          'Cannot deactivate the last admin who can still sign in. Add or activate another admin with a passkey first.',
+      });
+    }
+    await ctx.db.patch(adminUserId, { isActive, updatedAt: Date.now() });
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId,
+      action: isActive ? 'admin.admin.reactivate' : 'admin.admin.deactivate',
+      targetType: 'adminUser',
+      targetId: adminUserId,
+      payload: { username: target.username },
+    });
+    return { ok: true as const, isActive, username: target.username };
+  },
+});
+
+/**
+ * Revoke (delete) one passkey credential. LAST-ADMIN GUARD: refuse if removing
+ * it would leave zero admins able to sign in (it is the owner's last passkey
+ * AND no other active admin has one). Idempotent: a missing credential is a
+ * no-op, not an error.
+ */
+export const revokeCredential = internalMutation({
+  args: { credentialId: v.id('passkeyCredentials'), actorAdminId: v.id('adminUsers') },
+  handler: async (ctx, { credentialId, actorAdminId }) => {
+    const cred = await ctx.db.get(credentialId);
+    if (!cred) return { ok: true as const, revoked: false };
+    if ((await effectiveAdminCount(ctx, { excludeCredentialId: credentialId })) < 1) {
+      throw new ConvexError({
+        code: 'admin.last_admin',
+        message:
+          'Cannot revoke the last passkey that can sign in. Register another passkey (or admin) first.',
+      });
+    }
+    await ctx.db.delete(credentialId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId,
+      action: 'admin.passkey.revoke',
+      targetType: 'adminUser',
+      targetId: cred.adminUserId,
+      payload: { deviceLabel: cred.deviceLabel ?? null },
+    });
+    return { ok: true as const, revoked: true };
   },
 });
 

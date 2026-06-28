@@ -1182,6 +1182,72 @@ http.route({
   }),
 });
 
+// GET /api/v1/admin/admins/credentials/{adminId}: an admin's passkeys (masked).
+// Longer prefix than /admins/, so it wins for GET/DELETE on this path.
+http.route({
+  pathPrefix: '/api/v1/admin/admins/credentials/',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:admins:read'))) return ADMIN_UNAUTH();
+    const adminId = lastPathSegment(req) as Id<'adminUsers'>;
+    return json({
+      credentials: await ctx.runQuery(internal.admins.listCredentials, { adminUserId: adminId }),
+    });
+  }),
+});
+
+// DELETE /api/v1/admin/admins/credentials/{credentialId}: revoke one passkey
+// (last-admin guarded). Requires a cookie session for the audit actor.
+http.route({
+  pathPrefix: '/api/v1/admin/admins/credentials/',
+  method: 'DELETE',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:admins:write');
+    if (!admin) return ADMIN_UNAUTH();
+    if (!admin.adminUserId)
+      return errorJson('auth.forbidden', 'Managing admins requires an admin session', 403);
+    const credentialId = lastPathSegment(req) as Id<'passkeyCredentials'>;
+    try {
+      return json(
+        await ctx.runMutation(internal.admins.revokeCredential, {
+          credentialId,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// PATCH /api/v1/admin/admins/{id}: activate / deactivate an admin (last-admin
+// guarded). Requires a cookie session (real actor for audit + self-lockout).
+http.route({
+  pathPrefix: '/api/v1/admin/admins/',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:admins:write');
+    if (!admin) return ADMIN_UNAUTH();
+    if (!admin.adminUserId)
+      return errorJson('auth.forbidden', 'Managing admins requires an admin session', 403);
+    const id = lastPathSegment(req) as Id<'adminUsers'>;
+    const body = await readJson<{ isActive?: boolean }>(req);
+    if (typeof body.isActive !== 'boolean')
+      return errorJson('validation', 'isActive (boolean) required', 400);
+    try {
+      return json(
+        await ctx.runMutation(internal.admins.setAdminActive, {
+          adminUserId: id,
+          isActive: body.isActive,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 // --- admin: tiers -----------------------------------------------------------
 
 http.route({

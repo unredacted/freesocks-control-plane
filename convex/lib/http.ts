@@ -338,11 +338,17 @@ export async function resolveAdmin(
     if (sid) {
       const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
       if (sess && sess.kind === 'admin' && sess.adminUserId) {
-        if (await sessionPopOk(ctx, req, sid, sess.popPublicKey)) {
+        // A deactivated admin's session must stop authorizing immediately
+        // (W3-8a): re-check isActive on every request, so revoking access does
+        // not wait for the session TTL.
+        const adminRow = await ctx.runQuery(internal.admins.getById, {
+          adminUserId: sess.adminUserId,
+        });
+        if (adminRow?.isActive && (await sessionPopOk(ctx, req, sid, sess.popPublicKey))) {
           return { adminUserId: sess.adminUserId, sid };
         }
-        // Bound admin session without valid PoP: fall through to the token path
-        // (no admin token present -> unauthenticated -> re-auth).
+        // Inactive admin, or a bound session without valid PoP: fall through to
+        // the token path (no admin token present -> unauthenticated -> re-auth).
       }
     }
   }
@@ -379,7 +385,11 @@ export async function adminSessionProbe(
   const sid = await verifySignedValue(raw, key);
   if (!sid) return null;
   const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
-  return sess && sess.kind === 'admin' && sess.adminUserId ? sess.adminUserId : null;
+  if (!(sess && sess.kind === 'admin' && sess.adminUserId)) return null;
+  // A deactivated admin reads as signed-out (so the SPA shows login, not an
+  // admin shell whose every call 401s).
+  const adminRow = await ctx.runQuery(internal.admins.getById, { adminUserId: sess.adminUserId });
+  return adminRow?.isActive ? sess.adminUserId : null;
 }
 
 export function hasScope(scopes: string[] | undefined, required: string): boolean {

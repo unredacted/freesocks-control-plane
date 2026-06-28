@@ -256,6 +256,13 @@ export const authenticateVerify = internalAction({
     const adminUserId = credRow.adminUserId as Id<'adminUsers'>;
     const admin = await ctx.runQuery(internal.admins.getById, { adminUserId });
     if (!admin) throw new ConvexError({ code: 'validation', message: 'Admin user not found' });
+    // A deactivated admin cannot mint a fresh session, even with a valid passkey
+    // (W3-8a — pairs with the resolveAdmin per-request isActive gate).
+    if (!admin.isActive)
+      throw new ConvexError({
+        code: 'auth.forbidden',
+        message: 'This admin account is deactivated.',
+      });
     await ctx.runMutation(internal.admins.touchLogin, { adminUserId });
 
     const sid = randomHex(32);

@@ -230,6 +230,19 @@ export const CreateInviteResponse = z.object({
 });
 export type CreateInviteResponse = z.infer<typeof CreateInviteResponse>;
 
+/** One of an admin's registered passkeys (masked — never the public key). */
+export const AdminCredential = z.object({
+  id: z.string(),
+  deviceLabel: z.string().nullable(),
+  aaguid: z.string().nullable(),
+  lastUsedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type AdminCredential = z.infer<typeof AdminCredential>;
+
+/** GET /api/v1/admin/admins/credentials/{adminId}. */
+export const AdminCredentialsResponse = z.object({ credentials: z.array(AdminCredential) });
+
 /**
  * Operator status snapshot for the admin dashboard (`GET /api/v1/admin/status`).
  * Counts + health booleans only — never a backend secret. Also consumed by the
