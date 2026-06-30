@@ -191,6 +191,19 @@ export async function kidFromPublicKey(pkBytes: Uint8Array): Promise<string> {
 }
 
 /**
+ * Raw SHA-256 of the exact UTF-8 base64url string, as lowercase hex (64 chars,
+ * ungrouped). The hashing primitive behind the out-of-band fingerprint: the
+ * ungrouped form goes verbatim into a single-line DNS TXT pin record (no
+ * spaces), while `fingerprintB64Url` groups it for on-screen display. Keeping
+ * one primitive guarantees the DNS value and the displayed fingerprint are the
+ * same hash.
+ */
+export async function sha256HexOfB64Url(b64url: string): Promise<string> {
+  const h = await sha256(new TextEncoder().encode(b64url));
+  return [...h].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
  * Out-of-band verification fingerprint of a baked base64url public-key string:
  * the FULL SHA-256 of the exact UTF-8 base64url string (NOT the decoded key
  * bytes — that is `kidFromPublicKey`), as lowercase hex grouped in 4-char chunks.
@@ -201,8 +214,7 @@ export async function kidFromPublicKey(pkBytes: Uint8Array): Promise<string> {
  * meaningful against an active CDN.
  */
 export async function fingerprintB64Url(b64url: string): Promise<string> {
-  const h = await sha256(new TextEncoder().encode(b64url));
-  const hex = [...h].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const hex = await sha256HexOfB64Url(b64url);
   return (hex.match(/.{4}/g) ?? []).join(' ');
 }
 

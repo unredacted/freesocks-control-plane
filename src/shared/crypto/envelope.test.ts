@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, test } from 'vitest';
 import { createHash } from 'node:crypto';
-import { fingerprintB64Url } from './envelope';
+import { fingerprintB64Url, sha256HexOfB64Url } from './envelope';
 
 /** The EXACT form scripts/e2ee-fingerprint.mjs publishes, computed independently
  *  with node:crypto. If fingerprintB64Url (crypto.subtle) ever diverges from this,
@@ -26,5 +26,22 @@ describe('fingerprintB64Url', () => {
 
   test('hashes the base64url STRING (distinct inputs → distinct fingerprints)', async () => {
     expect(await fingerprintB64Url('aaaa')).not.toBe(await fingerprintB64Url('bbbb'));
+  });
+});
+
+describe('sha256HexOfB64Url (the DNS TXT pin form)', () => {
+  test('is ungrouped 64-char lowercase hex (no spaces — safe for a single-line TXT value)', async () => {
+    const hex = await sha256HexOfB64Url('AbCd_base64url-example');
+    expect(hex).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test('matches node:crypto AND is exactly the ungrouped form of fingerprintB64Url', async () => {
+    for (const s of ['', 'A', 'VITE_FS_SERVER_HPKE_PK-example-value', 'x'.repeat(120)]) {
+      const hex = await sha256HexOfB64Url(s);
+      expect(hex).toBe(createHash('sha256').update(s, 'utf8').digest('hex'));
+      // grouping the ungrouped hex reproduces the displayed fingerprint byte-for-byte,
+      // so the value published in DNS and the value shown on screen are one hash.
+      expect((hex.match(/.{4}/g) ?? []).join(' ')).toBe(await fingerprintB64Url(s));
+    }
   });
 });

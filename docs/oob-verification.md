@@ -41,23 +41,45 @@ through as many of these independent channels as are available:
    entirely for the sensitive flows, and it answers the IP-correlation metadata
    gap that the CDN otherwise has. A user who can reach Tor can fetch the bundle
    without the CDN ever seeing the request.
-3. **DNSSEC TXT (only if DNS is independent of the CDN).** A signed TXT record
-   carrying the fingerprint. CAVEAT: if the CDN also runs your DNS, this is not an
-   independent path and adds nothing; flag that in the release notes. Skip it
-   unless DNS is hosted separately and DNSSEC-signed.
-4. **Verifier extension / native app (Phase 4, scaffold in `verifier-extension/`).**
-   The real active-CDN defense: trusted code ships through the browser web store
-   (not the CDN) and checks the served `index.html` hash against the pinned
-   reproducible build (MEGA model). An operator pins + publishes it; a native app
-   reusing the existing proxy clients is the stronger sibling.
+3. **DNS TXT pin (`_fcp-pin`).** Publish a TXT record carrying the same key
+   fingerprints so a user can confirm them through their own resolver, a path that
+   does not run through the CDN's HTTP. `bun scripts/e2ee-fingerprint.mjs` prints the
+   ready-to-publish record:
 
-The in-app **"Verify connection" panel** (opened from the E2EE banner) shows the SAME
-fingerprints — it and the script both call `fingerprintB64Url`, so the value on the
-running page is byte-identical to the one published here, and it adds a live
-manifest-attestation check (`/api/v1/e2ee/keys`). The panel is a _convenience_, not
-the trust root: a tampered page could lie about its own status, so the guarantee
-still comes from comparing through a channel the CDN doesn't control (the signed
-release or the `.onion` mirror) or from the verifier extension above.
+   ```
+   name:   _fcp-pin.<your-app-host>
+   value:  "v=fcp1; hpke=<sha256-hex>; ed25519=<sha256-hex>; mldsa=<sha256-hex>"
+   verify: dig +short TXT _fcp-pin.<your-app-host>
+   ```
+
+   The `hpke`/`ed25519`/`mldsa` values are the **ungrouped** hex of the same
+   fingerprints above (`mldsa` is omitted for an Ed25519-only deployment); the in-app
+   "Verify via DNS" panel computes them with the same primitive (`sha256HexOfB64Url`),
+   so the page and the record are one hash. The user runs the `dig` themselves and
+   compares: strict `connect-src 'self'` (and COEP `require-corp`) forbid an in-page
+   DNS lookup by design, so this is deliberately a manual check, not an automatic one.
+   CAVEAT: independent **only if** your DNS provider is not the same company as the
+   CDN; sign the zone with DNSSEC and tell users to prefer a validating resolver. If
+   DNS and the CDN share a provider this path adds little, so say so in the release
+   notes and lean on the signed release / `.onion`.
+
+4. **Verifier extension / native app (Phase 4, scaffold in `verifier-extension/`).**
+   The strongest active-CDN defense: trusted code ships through the browser web store
+   (not the CDN) and checks the served `index.html` hash against the pinned
+   reproducible build (MEGA model); a native app reusing the existing proxy clients is
+   the stronger sibling. **Not built yet:** the repo carries only an unpublished
+   scaffold (no `pinned.js`, not in any web store). Until it is published, anchors 1-3
+   above are the verification path, and the in-app panel says as much.
+
+The in-app **"Verify connection" panel** (opened from the E2EE badge in the header /
+admin sidebar) shows the SAME fingerprints — it and the script both call
+`fingerprintB64Url`, so the value on the running page is byte-identical to the one
+published here — adds a live manifest-attestation check (`/api/v1/e2ee/keys`), and
+surfaces the **"Verify via DNS"** lookup (the `_fcp-pin` `dig` command + the expected
+record) so a user can check off-CDN without leaving the page. The panel is a
+_convenience_, not the trust root: a tampered page could lie about its own status, so
+the guarantee still comes from comparing through a channel the CDN doesn't control —
+the DNS lookup you run yourself, the signed release, or the `.onion` mirror.
 
 ## Reproducible build
 
@@ -102,11 +124,14 @@ A third party who does not trust us (or the CDN) reproduces a release:
 ## Per-release operator checklist
 
 1. From a clean checkout at the tag: `bun install --frozen-lockfile`.
-2. `bun scripts/e2ee-fingerprint.mjs` -> record the manifest + static-key fingerprints.
+2. `bun scripts/e2ee-fingerprint.mjs` -> record the manifest + static-key fingerprints
+   AND the ready-to-publish `_fcp-pin` DNS TXT record it prints.
 3. `bash scripts/verify-reproducible.sh` -> record `dist-sha256`.
 4. `git tag -s <version>` and publish a GitHub release with both values.
 5. Deploy the same `dist/` to the CDN origin and to the `.onion` mirror.
-6. If DNS is independent + DNSSEC-signed, update the TXT record.
+6. Publish/update the `_fcp-pin` TXT record (value from step 2) so users can `dig` it;
+   sign the zone with DNSSEC. Skip only if DNS shares a provider with the CDN (and note
+   that in the release notes, since it is then not an independent path).
 7. On an emergency key compromise, run
    `bunx convex run lib/e2eeCrypto:signRevocation '{"revokedKids":["<kid>"]}'`
    and announce the new revoked-kid list version through the same channels.

@@ -15,6 +15,7 @@ import {
   fingerprintB64Url,
   isSealedWire,
   routePolicy,
+  sha256HexOfB64Url,
   SUITE_ID,
   type RoutePolicy,
 } from '../../shared/crypto/envelope';
@@ -95,6 +96,24 @@ export async function connectionFingerprints(): Promise<{
     hpke: PK_B64 ? await fingerprintB64Url(PK_B64) : undefined,
     manifest: MANIFEST_PK ? await fingerprintB64Url(MANIFEST_PK) : undefined,
     manifestPq: MANIFEST_PK_PQ ? await fingerprintB64Url(MANIFEST_PK_PQ) : undefined,
+  };
+}
+
+/**
+ * The ungrouped-hex (no-spaces) fingerprints in the exact `_fcp-pin` DNS TXT
+ * field layout, so the "Verify via DNS" panel shows precisely what `dig` should
+ * return and what `scripts/e2ee-fingerprint.mjs` publishes. Undefined fields
+ * (e.g. no ML-DSA key baked) are omitted from the record by the consumer.
+ */
+export async function dnsPinFields(): Promise<{
+  hpke?: string;
+  ed25519?: string;
+  mldsa?: string;
+}> {
+  return {
+    hpke: PK_B64 ? await sha256HexOfB64Url(PK_B64) : undefined,
+    ed25519: MANIFEST_PK ? await sha256HexOfB64Url(MANIFEST_PK) : undefined,
+    mldsa: MANIFEST_PK_PQ ? await sha256HexOfB64Url(MANIFEST_PK_PQ) : undefined,
   };
 }
 

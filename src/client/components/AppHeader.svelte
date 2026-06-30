@@ -2,6 +2,7 @@
   import Link from './Link.svelte';
   import ThemeToggle from './ThemeToggle.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
+  import E2eeBadge from './E2eeBadge.svelte';
   import { Button } from '@client/components/ui/button';
   import { meQuery } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
@@ -29,6 +30,7 @@
       FreeSocks
     </Link>
     <nav class="flex items-center gap-2">
+      <E2eeBadge />
       {#if !me.isPending && me.data?.authenticated}
         <!-- Signed in: a single account CTA. The account page itself leads with
              the membership upsell for free-tier members, so a separate

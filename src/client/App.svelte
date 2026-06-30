@@ -1,7 +1,9 @@
 <script lang="ts">
   import Link from './components/Link.svelte';
   import AppHeader from './components/AppHeader.svelte';
-  import E2eeBanner from './components/E2eeBanner.svelte';
+  import E2eeAlert from './components/E2eeAlert.svelte';
+  import E2eeVerifyModal from './components/E2eeVerifyModal.svelte';
+  import { e2eeSession } from './lib/e2ee-status.svelte';
   import PopWarm from './components/PopWarm.svelte';
   import ThemeSync from './components/ThemeSync.svelte';
   import { Toaster } from '@client/components/ui/sonner';
@@ -34,6 +36,11 @@
 
   // DevTools only in development; in production it's tree-shaken away.
   const isDev = import.meta.env.DEV;
+
+  // Compile-time gate (Vite inlines it) so a dark build tree-shakes the verify
+  // modal and never pulls the e2ee chunk through it.
+  const E2EE_ENABLED =
+    !!import.meta.env.VITE_FS_SERVER_HPKE_PK && !!import.meta.env.VITE_FS_SERVER_HPKE_KID;
 
   // a11y: on a client-side route change, move focus to the main region so
   // keyboard + screen-reader users land in the new content (a SPA navigation
@@ -73,9 +80,14 @@
       >
         {t('app.skipToContent')}
       </a>
-      <!-- E2EE status indicator: covers member + admin (above the route chrome,
-           outside the {#key} remount wrapper so it doesn't re-fade on navigation). -->
-      <E2eeBanner />
+      <!-- E2EE attestation-failure escalation: a loud bar shown ONLY when the live
+           key check fails (the quiet steady-state signal is the <E2eeBadge/> in the
+           header / admin sidebar). Above the route chrome, outside the {#key} remount
+           wrapper so it doesn't re-fade on navigation; covers member + admin. -->
+      <E2eeAlert />
+      {#if E2EE_ENABLED}
+        <E2eeVerifyModal bind:open={e2eeSession.verifyOpen} />
+      {/if}
       {#if !onAdminRoute}
         <AppHeader />
       {/if}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { z } from 'zod';
   import Link from '../../components/Link.svelte';
+  import E2eeBadge from '../../components/E2eeBadge.svelte';
   import { router } from '../../stores/router.svelte';
   import { cn } from '../../lib/utils';
   import { apiClient } from '../../lib/api';
@@ -66,7 +67,10 @@
 <div class="md:grid md:grid-cols-[220px_1fr] md:gap-10 min-h-[80vh]">
   <!-- Mobile top bar with hamburger -->
   <div class="md:hidden flex items-center justify-between border-b border-border pb-3 mb-4">
-    <Link href="/" class="font-display text-xl font-bold tracking-tight">FreeSocks</Link>
+    <div class="flex items-center gap-2">
+      <Link href="/" class="font-display text-xl font-bold tracking-tight">FreeSocks</Link>
+      <E2eeBadge />
+    </div>
     <button
       type="button"
       aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
@@ -91,7 +95,7 @@
   >
     <Link
       href="/"
-      class="hidden md:flex md:items-center md:gap-2 font-display text-xl font-bold tracking-tight mb-8"
+      class="hidden md:flex md:items-center md:gap-2 font-display text-xl font-bold tracking-tight mb-4"
     >
       FreeSocks
       <span
@@ -100,6 +104,9 @@
         Admin
       </span>
     </Link>
+    <div class="mb-8 hidden md:block">
+      <E2eeBadge />
+    </div>
     <nav class="space-y-0.5">
       {#each NAV as item (item.to)}
         {@const active = item.to === router.pathname}

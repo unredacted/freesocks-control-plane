@@ -2,6 +2,7 @@
   import { Button } from '@client/components/ui/button';
   import * as Dialog from '@client/components/ui/dialog';
   import { t } from '../lib/i18n/index.svelte';
+  import { e2eeSession, ensureAttestationChecked } from '../lib/e2ee-status.svelte';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
   import CopyIcon from '@lucide/svelte/icons/copy';
@@ -9,37 +10,49 @@
   /**
    * "Verify this connection" panel. Shows the out-of-band-comparable fingerprints
    * of the baked E2EE keys (the SAME values scripts/e2ee-fingerprint.mjs prints),
-   * the live server attestation, and how to verify off-CDN. The heavy e2ee chunk
-   * is lazy-imported only when the panel is opened, so a dark build never pulls it.
+   * the live server attestation (read from the shared e2ee-status store, so the
+   * badge and this panel share one fetch), and how to verify off-CDN - including a
+   * DNS TXT pin the user looks up themselves with dig. The heavy e2ee chunk is
+   * lazy-imported only when the panel is opened, so a dark build never pulls it.
    * Honest by design: the in-page check is a convenience; the trust root is the
-   * off-CDN comparison (signed release / .onion) — see the caveat. Mirrors the
-   * RotateAccountIdModal dialog shape.
+   * off-CDN comparison (signed release / .onion / the DNS lookup you run yourself).
+   * Mirrors the RotateAccountIdModal dialog shape.
    */
   interface Props {
     open: boolean;
   }
   let { open = $bindable() }: Props = $props();
 
-  interface Att {
-    reachable: boolean;
-    attested: boolean;
-    epochKid?: string;
-    notAfter?: number;
-    revocationVersion?: number;
-  }
   let fps = $state<{ hpke?: string; manifest?: string; manifestPq?: string }>({});
   let pins = $state<{ hpkeKid?: string; suiteId: string }>({ suiteId: '' });
-  let att = $state<Att | null>(null);
+  let dns = $state<{ hpke?: string; ed25519?: string; mldsa?: string }>({});
   let copied = $state<string | null>(null);
 
+  // The _fcp-pin record lives at the app's own hostname (no port); show the exact
+  // lookup the user runs on their own machine + the answer it should return.
+  const host = typeof location !== 'undefined' ? location.hostname : '';
+  const digCommand = $derived(`dig +short TXT _fcp-pin.${host}`);
+  const txtValue = $derived(
+    [
+      'v=fcp1',
+      dns.hpke ? `hpke=${dns.hpke}` : null,
+      dns.ed25519 ? `ed25519=${dns.ed25519}` : null,
+      dns.mldsa ? `mldsa=${dns.mldsa}` : null,
+    ]
+      .filter(Boolean)
+      .join('; '),
+  );
+
   // Lazy-load the e2ee chunk + populate on open (keeps a dark build from pulling it).
+  // Attestation comes from the shared store (one fetch across badge + panel).
   $effect(() => {
     if (!open) return;
+    void ensureAttestationChecked();
     void import('../lib/e2ee').then(async (m) => {
       const p = m.e2eePins();
       pins = { hpkeKid: p.hpkeKid, suiteId: p.suiteId };
       fps = await m.connectionFingerprints();
-      att = await m.verifyConnection();
+      dns = await m.dnsPinFields();
     });
   });
 
@@ -51,11 +64,11 @@
         if (copied === label) copied = null;
       }, 1500);
     } catch {
-      /* clipboard unavailable — the value is selectable in the <code> block */
+      /* clipboard unavailable - the value is selectable in the code block */
     }
   }
 
-  const fmtExpiry = (ms?: number) => (ms ? new Date(ms).toLocaleString() : '');
+  const fmtExpiry = (ms?: number | null) => (ms ? new Date(ms).toLocaleString() : '');
 
   let rows = $derived([
     { label: t('e2ee.fpHpke'), value: fps.hpke },
@@ -107,18 +120,21 @@
 
       <section class="space-y-1">
         <h3 class="font-semibold">{t('e2ee.attestationHeading')}</h3>
-        {#if att == null}
+        {#if e2eeSession.attestation === 'pending'}
           <p class="text-xs text-muted-foreground">…</p>
-        {:else if att.attested}
+        {:else if e2eeSession.attestation === 'active'}
           <p class="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
             <ShieldCheck class="size-4 shrink-0" />{t('e2ee.attestationOk')}
           </p>
-          {#if att.epochKid}
+          {#if e2eeSession.epochKid}
             <p class="text-xs text-muted-foreground">
-              {t('e2ee.attestationEpoch', { kid: att.epochKid, expiry: fmtExpiry(att.notAfter) })}
+              {t('e2ee.attestationEpoch', {
+                kid: e2eeSession.epochKid,
+                expiry: fmtExpiry(e2eeSession.notAfter),
+              })}
             </p>
           {/if}
-        {:else if att.reachable}
+        {:else if e2eeSession.attestation === 'warn'}
           <p class="inline-flex items-center gap-1.5 text-destructive">
             <ShieldAlert class="size-4 shrink-0" />{t('e2ee.attestationFail')}
           </p>
@@ -130,6 +146,40 @@
       <section class="space-y-1">
         <h3 class="font-semibold">{t('e2ee.compareHeading')}</h3>
         <p class="text-muted-foreground">{t('e2ee.compareBody')}</p>
+      </section>
+
+      <section class="space-y-2">
+        <h3 class="font-semibold">{t('e2ee.dnsHeading')}</h3>
+        <p class="text-muted-foreground">{t('e2ee.dnsBody')}</p>
+        <div class="rounded-md border border-border bg-muted/30 p-2">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs text-muted-foreground">{t('e2ee.dnsCommand')}</span>
+            <button
+              type="button"
+              class="text-xs underline underline-offset-2 hover:no-underline inline-flex items-center gap-1"
+              onclick={() => copy('dns-cmd', digCommand)}
+            >
+              <CopyIcon class="size-3" />{copied === 'dns-cmd' ? t('e2ee.copied') : t('e2ee.copy')}
+            </button>
+          </div>
+          <code class="mt-1 block break-all font-mono text-[11px] leading-relaxed"
+            >{digCommand}</code
+          >
+        </div>
+        <div class="rounded-md border border-border bg-muted/30 p-2">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs text-muted-foreground">{t('e2ee.dnsExpected')}</span>
+            <button
+              type="button"
+              class="text-xs underline underline-offset-2 hover:no-underline inline-flex items-center gap-1"
+              onclick={() => copy('dns-txt', txtValue)}
+            >
+              <CopyIcon class="size-3" />{copied === 'dns-txt' ? t('e2ee.copied') : t('e2ee.copy')}
+            </button>
+          </div>
+          <code class="mt-1 block break-all font-mono text-[11px] leading-relaxed">{txtValue}</code>
+        </div>
+        <p class="text-xs text-muted-foreground">{t('e2ee.dnsCaveat')}</p>
       </section>
 
       <section class="space-y-1">

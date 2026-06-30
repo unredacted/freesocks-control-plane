@@ -11,7 +11,7 @@
 // Reads the public VITE_FS_* values from the environment, falling back to
 // .env.local. Run: bun scripts/e2ee-fingerprint.mjs
 import { readFileSync } from 'node:fs';
-import { fingerprintB64Url } from '../src/shared/crypto/envelope.ts';
+import { fingerprintB64Url, sha256HexOfB64Url } from '../src/shared/crypto/envelope.ts';
 
 function loadEnv() {
   const env = { ...process.env };
@@ -50,4 +50,38 @@ for (const [label, key, optional] of fields) {
   if (key === 'VITE_FS_E2EE_SUITE_ID') console.log(`${label}: ${v}`);
   else console.log(`${label}\n  ${key}\n  sha256: ${await fingerprintB64Url(v)}`);
 }
+
+// DNS TXT pin: a single record the operator publishes so a user can verify the
+// pinned keys through a channel the CDN doesn't serve (`dig` on their own machine
+// hits their resolver, not this site). The values are the SAME ungrouped-hex
+// fingerprints the in-app "Verify via DNS" panel shows (both call
+// sha256HexOfB64Url), so the page and the record are one hash. mldsa= is omitted
+// for an Ed25519-only deployment. Strict connect-src 'self' forbids an in-page DNS
+// lookup, which is why this is a manual `dig`, not an automatic check.
+const pin = {
+  hpke: env.VITE_FS_SERVER_HPKE_PK ? await sha256HexOfB64Url(env.VITE_FS_SERVER_HPKE_PK) : null,
+  ed25519: env.VITE_FS_MANIFEST_PK ? await sha256HexOfB64Url(env.VITE_FS_MANIFEST_PK) : null,
+  mldsa: env.VITE_FS_MANIFEST_PK_PQ ? await sha256HexOfB64Url(env.VITE_FS_MANIFEST_PK_PQ) : null,
+};
+const txt = ['v=fcp1']
+  .concat(pin.hpke ? [`hpke=${pin.hpke}`] : [])
+  .concat(pin.ed25519 ? [`ed25519=${pin.ed25519}`] : [])
+  .concat(pin.mldsa ? [`mldsa=${pin.mldsa}`] : [])
+  .join('; ');
+// Host hint: derived from PUBLIC_BASE_URL/APP_HOST when present, else a placeholder.
+function appHost() {
+  const raw = env.APP_HOST || env.PUBLIC_BASE_URL || env.VITE_PUBLIC_BASE_URL;
+  if (!raw) return '<your-app-host>';
+  try {
+    return new URL(raw.includes('://') ? raw : `https://${raw}`).hostname;
+  } catch {
+    return raw.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  }
+}
+const host = appHost();
+console.log('\nDNS TXT pin (publish so users can verify off-CDN with `dig`):');
+console.log(`  name:   _fcp-pin.${host}`);
+console.log(`  value:  "${txt}"`);
+console.log(`  verify: dig +short TXT _fcp-pin.${host}`);
+
 if (missing) process.exitCode = 1;
