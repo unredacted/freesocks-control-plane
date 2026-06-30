@@ -1,6 +1,7 @@
 <script lang="ts">
   import Link from './components/Link.svelte';
   import AppHeader from './components/AppHeader.svelte';
+  import E2eeBanner from './components/E2eeBanner.svelte';
   import PopWarm from './components/PopWarm.svelte';
   import ThemeSync from './components/ThemeSync.svelte';
   import { Toaster } from '@client/components/ui/sonner';
@@ -72,6 +73,9 @@
       >
         {t('app.skipToContent')}
       </a>
+      <!-- E2EE status indicator: covers member + admin (above the route chrome,
+           outside the {#key} remount wrapper so it doesn't re-fade on navigation). -->
+      <E2eeBanner />
       {#if !onAdminRoute}
         <AppHeader />
       {/if}

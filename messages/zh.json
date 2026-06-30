@@ -135,7 +135,8 @@
         "title": "账户与安全",
         "desc": "您的支持 ID 和账号控制。"
       }
-    }
+    },
+    "keyActionsHint": "这些更改只会改变您的代理连接——您的 32 位账号保持不变。"
   },
   "renew": {
     "expiringTitle": "你的会员即将到期",
@@ -149,7 +150,11 @@
     "rateLimited": "尝试次数过多。请等待一分钟后重试。",
     "backendUnavailable": "当前没有可用的代理服务器。你的账户是安全的——请几分钟后再创建密钥。",
     "generic": "出错了，请重试。",
-    "captchaFailed": "真人验证失败。请完成验证后重试。"
+    "captchaFailed": "真人验证失败。请完成验证后重试。",
+    "renderTitle": "出问题了",
+    "renderBody": "页面渲染失败。这是应用的一个bug，通常刷新页面即可解决。如果问题持续出现，请提交报告。",
+    "reloadPage": "重新加载页面",
+    "tryAgain": "再试一次"
   },
   "setup": {
     "title": "设置你的代理应用",
@@ -161,7 +166,8 @@
     "step": {
       "install": "安装应用",
       "import": "打开它，添加订阅/配置文件，并粘贴你的链接",
-      "connect": "选择一个服务器并连接"
+      "connect": "选择一个服务器并连接",
+      "importConfig": "打开它，选择手动添加服务器，然后输入如下所示的配置。"
     },
     "noDeviceLimit": "无设备限制",
     "hwidNote": "如果套餐包含有限数量的设备，请在应用程序的设置中启用“设备识别”（HWID），以便识别您的设备。"
@@ -314,12 +320,15 @@
     "body": "Unredacted 是美国 501(c)(3) 非营利组织，FreeSocks 是其运营的项目之一。捐款支持这项工作。详情请见 Unredacted 网站。"
   },
   "qr": {
-    "ariaLabel": "订阅链接二维码"
+    "ariaLabel": "订阅链接二维码",
+    "failed": "无法生成二维码。"
   },
   "app": {
     "skipToContent": "跳到主要内容",
     "notFound": "页面不存在",
-    "goHome": "返回首页"
+    "goHome": "返回首页",
+    "adminLoadFailedTitle": "无法加载管理控制台",
+    "adminLoadFailedBody": "此部分的联网请求失败。请重新加载以重试。"
   },
   "footer": {
     "operatedPrefix": "运营方：",
@@ -559,5 +568,35 @@
         }
       ]
     }
+  },
+  "e2ee": {
+    "bannerActive": "端到端加密",
+    "bannerActiveDetail": "您的账号和密钥已加密存储在此服务器上，对网络和任何 CDN 都隐藏。",
+    "bannerWarn": "无法验证加密密钥",
+    "bannerWarnDetail": "暂时不要输入您的账号——请先通过带外方式验证此连接。",
+    "bannerOff": "标准 TLS — 此部署中未启用额外的端到端加密。",
+    "verify": "核实",
+    "verifyTitle": "验证此连接",
+    "verifyIntro": "FreeSocks 使用 HPKE 将您的账号和代理密钥与此服务器进行加密，因此即使 CDN 遭到入侵也无法读取它们。这些指纹可以识别您的浏览器正在使用的密钥——请将它们与带外发布的密钥值进行比较，以确保密钥未被替换。",
+    "fingerprintsHeading": "关键指纹",
+    "fpHpke": "服务器密钥（HPKE / X-Wing）",
+    "fpKid": "密钥 ID",
+    "fpManifest": "清单密钥（Ed25519）",
+    "fpManifestPq": "清单密钥（ML-DSA-65，后量子时代）",
+    "fpSuite": "密码套件",
+    "copy": "复制",
+    "copied": "已复制",
+    "attestationHeading": "在线服务器证明",
+    "attestationOk": "已验证——服务器正在验证由您的应用信任的清单密钥签名的有效密钥。",
+    "attestationEpoch": "当前键{kid} ，过期{expiry} 。",
+    "attestationFail": "无法验证服务器的当前密钥——可能是网络问题，或者 CDN 篡改了密钥端点。请在继续操作前进行带外验证。",
+    "attestationUnreachable": "无法连接到密钥认证端点（已固定的密钥仍在被使用）。",
+    "bundleHeading": "此页面捆绑包",
+    "bundleHint": "浏览器加载的代码的完整性哈希值。将其与已签名版本中发布的构建哈希值进行比较。",
+    "compareHeading": "如何验证",
+    "compareBody": "将上述指纹与 GitHub 发布说明和 .onion 镜像（CDN 无法控制的渠道）中的值进行比较。它们必须匹配。",
+    "verifierExtension": "如需在每次访问时进行自动检查，请安装验证器扩展程序。",
+    "caveat": "这种页面内检查只是为了方便。被篡改的页面可能会谎报自身的状态，因此真正的保障来自于通过 CDN 无法更改的渠道（例如签名版本或 .onion 镜像）来比较这些值，或者使用验证器扩展。",
+    "close": "关闭"
   }
 }

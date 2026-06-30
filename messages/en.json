@@ -568,5 +568,35 @@
         }
       ]
     }
+  },
+  "e2ee": {
+    "bannerActive": "End-to-end encrypted",
+    "bannerActiveDetail": "Your account number and key are sealed to this server — hidden from the network and any CDN.",
+    "bannerWarn": "Couldn't verify the encryption key",
+    "bannerWarnDetail": "Don't enter your account number yet — verify this connection out-of-band first.",
+    "bannerOff": "Standard TLS — extra end-to-end encryption isn't enabled on this deployment.",
+    "verify": "Verify",
+    "verifyTitle": "Verify this connection",
+    "verifyIntro": "FreeSocks seals your account number and proxy key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using — compare them against the values published out-of-band to be sure they haven't been swapped.",
+    "fingerprintsHeading": "Key fingerprints",
+    "fpHpke": "Server key (HPKE / X-Wing)",
+    "fpKid": "Key id",
+    "fpManifest": "Manifest key (Ed25519)",
+    "fpManifestPq": "Manifest key (ML-DSA-65, post-quantum)",
+    "fpSuite": "Cipher suite",
+    "copy": "Copy",
+    "copied": "Copied",
+    "attestationHeading": "Live server attestation",
+    "attestationOk": "Verified — the server is attesting a valid key signed by the manifest key your app trusts.",
+    "attestationEpoch": "Current key {kid}, expires {expiry}.",
+    "attestationFail": "Could not verify the server's current key — a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing.",
+    "attestationUnreachable": "Couldn't reach the key-attestation endpoint (the pinned key is still in use).",
+    "bundleHeading": "This page bundle",
+    "bundleHint": "The integrity hash of the code your browser loaded. Compare it to the published build hash in the signed release.",
+    "compareHeading": "How to verify",
+    "compareBody": "Compare the fingerprints above against the values in the signed GitHub release notes and the .onion mirror — channels a CDN doesn't control. They must match.",
+    "verifierExtension": "For an automatic check on every visit, install the verifier extension.",
+    "caveat": "This in-page check is a convenience. A tampered page could lie about its own status, so the real guarantee comes from comparing these values through a channel the CDN can't alter — the signed release or the .onion mirror — or using the verifier extension.",
+    "close": "Close"
   }
 }

@@ -21,8 +21,10 @@ noted as such.
 
 Publish, on every release, two values:
 
-- the **manifest public-key fingerprint** (`bun scripts/e2ee-fingerprint.mjs`),
-  which anchors the epoch keys and the revoked-kid list, and
+- the **key fingerprints** (`bun scripts/e2ee-fingerprint.mjs`): the manifest
+  public keys — Ed25519 **and** ML-DSA-65 (the script emits both, matching the
+  client's hybrid requirement) — which anchor the epoch keys + the revoked-kid
+  list, plus the static HPKE key, and
 - the **reproducible `dist-sha256`** (`bash scripts/verify-reproducible.sh`),
   which identifies the exact served bundle.
 
@@ -48,6 +50,14 @@ through as many of these independent channels as are available:
    (not the CDN) and checks the served `index.html` hash against the pinned
    reproducible build (MEGA model). An operator pins + publishes it; a native app
    reusing the existing proxy clients is the stronger sibling.
+
+The in-app **"Verify connection" panel** (opened from the E2EE banner) shows the SAME
+fingerprints — it and the script both call `fingerprintB64Url`, so the value on the
+running page is byte-identical to the one published here, and it adds a live
+manifest-attestation check (`/api/v1/e2ee/keys`). The panel is a _convenience_, not
+the trust root: a tampered page could lie about its own status, so the guarantee
+still comes from comparing through a channel the CDN doesn't control (the signed
+release or the `.onion` mirror) or from the verifier extension above.
 
 ## Reproducible build
 

@@ -116,8 +116,11 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
   until that is handled + browser-verified. See `vite.config.ts` + the Caddyfile in
   `docs/convex-self-hosting.md`.
 - **Out-of-band trust + reproducible build.** A signed release + `.onion` mirror publish the manifest
-  fingerprint and the reproducible `dist-sha256`; CI builds twice and asserts identical output. The
-  real active-CDN defense (a store-delivered verifier) is Phase 4. See `docs/oob-verification.md`.
+  fingerprint (Ed25519 + ML-DSA-65) and the reproducible `dist-sha256`; CI builds twice and asserts
+  identical output. The real active-CDN defense (a store-delivered verifier) is Phase 4. An in-app
+  **E2EE banner + "Verify connection" panel** surface the active status + the same fingerprints (plus a
+  live manifest-attestation check) so users can read them off the running page and compare off-CDN — a
+  convenience layer over this OOB trust root, never a substitute for it. See `docs/oob-verification.md`.
 
 ## Documented residual limits
 

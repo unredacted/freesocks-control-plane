@@ -190,6 +190,22 @@ export async function kidFromPublicKey(pkBytes: Uint8Array): Promise<string> {
   return [...h.slice(0, 8)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Out-of-band verification fingerprint of a baked base64url public-key string:
+ * the FULL SHA-256 of the exact UTF-8 base64url string (NOT the decoded key
+ * bytes — that is `kidFromPublicKey`), as lowercase hex grouped in 4-char chunks.
+ * This is the single source of truth shared by the in-app "Verify connection"
+ * panel and the `scripts/e2ee-fingerprint.mjs` publisher, so the value a user
+ * sees in the browser is byte-identical to the one published out of band (signed
+ * release / .onion). Comparing the two off-CDN is what makes the pinned key
+ * meaningful against an active CDN.
+ */
+export async function fingerprintB64Url(b64url: string): Promise<string> {
+  const h = await sha256(new TextEncoder().encode(b64url));
+  const hex = [...h].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return (hex.match(/.{4}/g) ?? []).join(' ');
+}
+
 // --- route policy -------------------------------------------------------------
 
 /**

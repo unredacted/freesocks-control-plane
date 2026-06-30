@@ -1,15 +1,17 @@
 // Print the out-of-band verification anchors for the CDN-blinding keys: the
-// fingerprints of the baked manifest + static HPKE public keys (CDN-blinding
-// Phase 3f). Publish these through an INDEPENDENT trust path (a signed GitHub
-// release, the .onion mirror, optionally a DNSSEC TXT) so a user can confirm the
-// key their bundle pins matches the key published outside the CDN. The pinned
-// key alone proves nothing against an active CDN; an independent path is what
-// makes it meaningful. See docs/oob-verification.md.
+// fingerprints of the baked manifest (Ed25519 + ML-DSA-65) + static HPKE public
+// keys (CDN-blinding Phase 3f). Publish these through an INDEPENDENT trust path (a
+// signed GitHub release, the .onion mirror, optionally a DNSSEC TXT) so a user can
+// confirm the key their bundle pins matches the key published outside the CDN. The
+// pinned key alone proves nothing against an active CDN; an independent path is
+// what makes it meaningful. The in-app "Verify connection" panel shows the SAME
+// values (both call fingerprintB64Url), so a user can compare in either place. See
+// docs/oob-verification.md.
 //
 // Reads the public VITE_FS_* values from the environment, falling back to
 // .env.local. Run: bun scripts/e2ee-fingerprint.mjs
 import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { fingerprintB64Url } from '../src/shared/crypto/envelope.ts';
 
 function loadEnv() {
   const env = { ...process.env };
@@ -24,30 +26,28 @@ function loadEnv() {
   return env;
 }
 
-/** sha256 of the exact baked base64url string, grouped hex (the published form). */
-function fingerprint(b64url) {
-  const hex = createHash('sha256').update(b64url, 'utf8').digest('hex');
-  return (hex.match(/.{4}/g) ?? []).join(' ');
-}
-
 const env = loadEnv();
+// [label, env var, optional]. The PQ manifest key is optional — a deployment may
+// run an Ed25519-only manifest (valid, just not hybrid), so its absence is not a
+// hard failure; the classical manifest, the HPKE key, and the suite id are.
 const fields = [
-  ['Manifest key (Ed25519)', 'VITE_FS_MANIFEST_PK'],
-  ['Static HPKE key (X-Wing)', 'VITE_FS_SERVER_HPKE_PK'],
-  ['HPKE suite id', 'VITE_FS_E2EE_SUITE_ID'],
+  ['Manifest key (Ed25519)', 'VITE_FS_MANIFEST_PK', false],
+  ['Manifest key (ML-DSA-65, post-quantum)', 'VITE_FS_MANIFEST_PK_PQ', true],
+  ['Static HPKE key (X-Wing)', 'VITE_FS_SERVER_HPKE_PK', false],
+  ['HPKE suite id', 'VITE_FS_E2EE_SUITE_ID', false],
 ];
 
 console.log('CDN-blinding out-of-band verification anchors');
 console.log('(publish via a signed release + the .onion mirror; see docs/oob-verification.md)\n');
 let missing = false;
-for (const [label, key] of fields) {
+for (const [label, key, optional] of fields) {
   const v = env[key];
   if (!v) {
     console.log(`${label}: (unset: ${key})`);
-    missing = true;
+    if (!optional) missing = true;
     continue;
   }
   if (key === 'VITE_FS_E2EE_SUITE_ID') console.log(`${label}: ${v}`);
-  else console.log(`${label}\n  ${key}\n  sha256: ${fingerprint(v)}`);
+  else console.log(`${label}\n  ${key}\n  sha256: ${await fingerprintB64Url(v)}`);
 }
 if (missing) process.exitCode = 1;

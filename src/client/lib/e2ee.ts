@@ -12,8 +12,10 @@
  */
 import {
   b64UrlToBytes,
+  fingerprintB64Url,
   isSealedWire,
   routePolicy,
+  SUITE_ID,
   type RoutePolicy,
 } from '../../shared/crypto/envelope';
 import { clientOpenResponse, clientPrepareRequest } from '../../shared/crypto/channel';
@@ -24,6 +26,7 @@ import {
   verifyManifest,
   verifyManifestPq,
 } from '../../shared/crypto/manifest';
+import { markSealedResponse } from './e2ee-status.svelte';
 
 const PK_B64 = import.meta.env.VITE_FS_SERVER_HPKE_PK as string | undefined;
 const KID = import.meta.env.VITE_FS_SERVER_HPKE_KID as string | undefined;
@@ -54,6 +57,45 @@ function verifyManifestHybrid(
 
 export function sealingEnabled(): boolean {
   return !!PK_B64 && !!KID;
+}
+
+/**
+ * The baked public E2EE identity, for the "Verify connection" panel (all
+ * base64url strings; the key fields are undefined in a dark build). Non-secret by
+ * design — these are the public halves baked into the bundle.
+ */
+export function e2eePins(): {
+  hpkePk?: string;
+  hpkeKid?: string;
+  manifestPk?: string;
+  manifestPkPq?: string;
+  suiteId: string;
+} {
+  return {
+    hpkePk: PK_B64,
+    hpkeKid: KID,
+    manifestPk: MANIFEST_PK,
+    manifestPkPq: MANIFEST_PK_PQ,
+    suiteId: SUITE_ID,
+  };
+}
+
+/**
+ * Out-of-band-comparable fingerprints of the baked public keys — the SAME values
+ * `scripts/e2ee-fingerprint.mjs` publishes (both call `fingerprintB64Url`), so a
+ * user can compare what the browser shows against the signed release / .onion
+ * mirror. Undefined fields mean that key isn't baked.
+ */
+export async function connectionFingerprints(): Promise<{
+  hpke?: string;
+  manifest?: string;
+  manifestPq?: string;
+}> {
+  return {
+    hpke: PK_B64 ? await fingerprintB64Url(PK_B64) : undefined,
+    manifest: MANIFEST_PK ? await fingerprintB64Url(MANIFEST_PK) : undefined,
+    manifestPq: MANIFEST_PK_PQ ? await fingerprintB64Url(MANIFEST_PK_PQ) : undefined,
+  };
 }
 
 let _serverPub: Promise<CryptoKey> | null = null;
@@ -187,6 +229,79 @@ async function currentEpoch(): Promise<{ kid: string; pub: CryptoKey } | null> {
   return e ? { kid: e.kid, pub: e.pub } : null;
 }
 
+export interface ConnectionAttestation {
+  /** The /api/v1/e2ee/keys endpoint responded. */
+  reachable: boolean;
+  /** The current epoch key verified against the baked manifest key(s), unexpired + not revoked. */
+  attested: boolean;
+  epochKid?: string;
+  notAfter?: number;
+  /** The verified revoked-kid list version (anti-rollback), if present. */
+  revocationVersion?: number;
+}
+
+/**
+ * Live, READ-ONLY attestation check for the "Verify connection" panel + the
+ * banner's active state: fetch the server-attested epoch key and verify the
+ * manifest chain in-browser exactly as the seal path does, but WITHOUT mutating
+ * the seal state machine (a pure diagnostic). `attested:false` with
+ * `reachable:true` is the tell that a CDN may be tampering with the epoch
+ * endpoint. The endpoint is `cache-control: max-age=60`, so this is cheap even
+ * alongside the seal path's own fetch. Never throws.
+ */
+export async function verifyConnection(): Promise<ConnectionAttestation> {
+  if (!sealingEnabled() || !MANIFEST_PK) return { reachable: false, attested: false };
+  try {
+    const res = await fetch('/api/v1/e2ee/keys', { credentials: 'omit' });
+    if (!res.ok) return { reachable: false, attested: false };
+    const body = (await res.json()) as {
+      epoch?: {
+        kid: string;
+        publicKey: string;
+        notAfter: number;
+        sig: string;
+        sigPq?: string;
+      } | null;
+      revocation?: {
+        version: number;
+        revokedKids: string[];
+        notAfter: number;
+        sig: string;
+        sigPq?: string;
+      } | null;
+    };
+    let revocationVersion: number | undefined;
+    const r = body.revocation;
+    if (
+      r &&
+      verifyManifestHybrid(
+        revocationStatement({
+          version: r.version,
+          notAfter: r.notAfter,
+          revokedKids: r.revokedKids,
+        }),
+        r.sig,
+        r.sigPq,
+      )
+    ) {
+      revocationVersion = r.version;
+    }
+    const e = body.epoch;
+    if (!e) return { reachable: true, attested: false, revocationVersion };
+    const attested =
+      verifyManifestHybrid(
+        epochStatement({ kid: e.kid, publicKeyB64: e.publicKey, notAfter: e.notAfter }),
+        e.sig,
+        e.sigPq,
+      ) &&
+      e.notAfter > Date.now() &&
+      !isRevoked(e.kid);
+    return { reachable: true, attested, epochKid: e.kid, notAfter: e.notAfter, revocationVersion };
+  } catch {
+    return { reachable: false, attested: false };
+  }
+}
+
 export interface OutboundSeal {
   policy: RoutePolicy;
   /** Replacement request body string (sealed envelope, or plain JSON carrying fsRespEph). */
@@ -252,13 +367,15 @@ export async function openInbound(
   json: unknown,
 ): Promise<unknown> {
   if (seal.policy.response === 'reveal' && seal.respEphPriv && isSealedWire(json)) {
-    return clientOpenResponse({
+    const opened = await clientOpenResponse({
       serverKid: KID!,
       method: method.toUpperCase(),
       path,
       respEphPriv: seal.respEphPriv,
       wire: json,
     });
+    markSealedResponse(); // a sealed response was actually opened (drives the "active" UI)
+    return opened;
   }
   return json;
 }
