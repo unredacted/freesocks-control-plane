@@ -69,7 +69,7 @@
   <div class="md:hidden flex items-center justify-between border-b border-border pb-3 mb-4">
     <div class="flex items-center gap-2">
       <Link href="/" class="font-display text-xl font-bold tracking-tight">FreeSocks</Link>
-      <E2eeBadge />
+      <E2eeBadge context="admin" />
     </div>
     <button
       type="button"
@@ -105,7 +105,7 @@
       </span>
     </Link>
     <div class="mb-8 hidden md:block">
-      <E2eeBadge />
+      <E2eeBadge context="admin" />
     </div>
     <nav class="space-y-0.5">
       {#each NAV as item (item.to)}

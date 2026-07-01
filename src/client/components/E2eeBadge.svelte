@@ -16,6 +16,12 @@
    * loud "don't enter your account number" escalation lives in E2eeAlert — this badge
    * is the quiet steady-state signal and the entry point to the Verify panel.
    */
+  interface Props {
+    /** 'admin' shows deployment-scoped tooltips (admin actions are not in the E2EE layer). */
+    context?: 'member' | 'admin';
+  }
+  let { context = 'member' }: Props = $props();
+
   const enabled =
     !!import.meta.env.VITE_FS_SERVER_HPKE_PK && !!import.meta.env.VITE_FS_SERVER_HPKE_KID;
 
@@ -27,14 +33,26 @@
   // `warn` is the only state that deviates from the green "encrypted" look; pending
   // and unreachable both keep the pinned-key-in-use green (detail is in the panel).
   const warn = $derived(enabled && e2eeSession.attestation === 'warn');
+
+  // Admin tooltips are deployment-scoped ("members' flows are encrypted on this
+  // deployment"); member tooltips speak to the current user's own account + key.
+  const badgeTitle = $derived(
+    context === 'admin'
+      ? warn
+        ? t('e2ee.badgeWarnTitleAdmin')
+        : t('e2ee.badgeActiveTitleAdmin')
+      : warn
+        ? t('e2ee.badgeWarnTitle')
+        : t('e2ee.badgeActiveTitle'),
+  );
 </script>
 
 {#if enabled}
   <button
     type="button"
     onclick={openVerify}
-    title={warn ? t('e2ee.badgeWarnTitle') : t('e2ee.badgeActiveTitle')}
-    aria-label={warn ? t('e2ee.badgeWarnTitle') : t('e2ee.badgeActiveTitle')}
+    title={badgeTitle}
+    aria-label={badgeTitle}
     class="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-all hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {warn
       ? 'border-amber-500/40 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20'
       : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 dark:text-emerald-400'}"

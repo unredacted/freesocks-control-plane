@@ -3,6 +3,7 @@
   import * as Dialog from '@client/components/ui/dialog';
   import { t } from '../lib/i18n/index.svelte';
   import { e2eeSession, ensureAttestationChecked } from '../lib/e2ee-status.svelte';
+  import { router } from '../stores/router.svelte';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
   import CopyIcon from '@lucide/svelte/icons/copy';
@@ -27,6 +28,11 @@
   let pins = $state<{ hpkeKid?: string; suiteId: string }>({ suiteId: '' });
   let dns = $state<{ hpke?: string; ed25519?: string; mldsa?: string }>({});
   let copied = $state<string | null>(null);
+
+  // Admin surface: the HPKE layer's scope is the member account-number/key flows,
+  // NOT admin actions - so on /admin the panel adds a line saying so, to keep the
+  // badge from over-implying that admin actions are sealed.
+  const isAdmin = $derived(router.pathname.startsWith('/admin'));
 
   // The _fcp-pin record lives at the app's own hostname (no port); show the exact
   // lookup the user runs on their own machine + the answer it should return.
@@ -85,6 +91,19 @@
     </Dialog.Header>
 
     <div class="space-y-4 text-sm">
+      <section class="space-y-1">
+        <h3 class="font-semibold">{t('e2ee.protectHeading')}</h3>
+        {#if isAdmin}
+          <p class="rounded-md border border-border bg-muted/40 p-2 text-muted-foreground">
+            {t('e2ee.protectAdmin')}
+          </p>
+        {/if}
+        <p class="text-muted-foreground">{t('e2ee.protectScope')}</p>
+        <p class="text-muted-foreground">{t('e2ee.protectServerReads')}</p>
+        <p class="text-muted-foreground">{t('e2ee.protectMetadata')}</p>
+        <p class="text-muted-foreground">{t('e2ee.protectTunnel')}</p>
+      </section>
+
       <section class="space-y-2">
         <h3 class="font-semibold">{t('e2ee.fingerprintsHeading')}</h3>
         {#each rows as row (row.label)}
