@@ -9,6 +9,7 @@
 import { query } from './_generated/server';
 import { resolveBillingConfig } from './lib/billingConfig';
 import { resolveTheme } from './lib/themeConfig';
+import { resolveVerification } from './lib/verificationConfig';
 
 export const get = query({
   args: {},
@@ -107,6 +108,10 @@ export const get = query({
       // Admin-selected brand theme (preset + optional hue), applied client-side
       // over the baked default. Non-secret; always present (fail-safe default).
       theme: await resolveTheme(ctx.db),
+      // Admin-configured E2EE verification channels (non-secret): which off-CDN
+      // channels the "Verify connection" panel shows, and whether to surface the
+      // whole E2EE badge/panel at all. The panel renders only the set channels.
+      verification: await resolveVerification(ctx.db),
     };
   },
 });

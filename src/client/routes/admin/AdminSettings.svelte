@@ -17,7 +17,7 @@
   import { apiErrorMessage } from '../../lib/errors';
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import AdminListState from './AdminListState.svelte';
-  import { appSettingsQuery, queryKeys } from '../../lib/queries';
+  import { appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { AppSettingsRecord } from '../../../shared/contracts/admin';
   import { toast } from 'svelte-sonner';
@@ -73,6 +73,49 @@
     },
     onError: (err) => {
       toast.error('Could not save settings', { description: apiErrorMessage(err) });
+    },
+  }));
+
+  // E2EE verification config lives in its own namespace (publicConfig.verification),
+  // not the settings bag, so it has its own draft + save (mirrors the theme page).
+  // Server sanitizes each URL (https-only / .onion) and returns the cleaned values.
+  const cfg = configQuery();
+  let vDraft = $state<{
+    showPanel: boolean;
+    releaseUrl: string;
+    onionAddress: string;
+    sourceUrl: string;
+  }>({ showPanel: true, releaseUrl: '', onionAddress: '', sourceUrl: '' });
+  let vInit = $state(false);
+  $effect(() => {
+    const v = cfg.data?.verification;
+    if (v && !vInit) {
+      vDraft = {
+        showPanel: v.showPanel,
+        releaseUrl: v.releaseUrl,
+        onionAddress: v.onionAddress,
+        sourceUrl: v.sourceUrl,
+      };
+      vInit = true;
+    }
+  });
+  const saveVerification = createMutation(() => ({
+    mutationFn: async () => {
+      const Resp = z.object({
+        showPanel: z.boolean(),
+        releaseUrl: z.string(),
+        onionAddress: z.string(),
+        sourceUrl: z.string(),
+      });
+      return apiClient.patch('/api/v1/admin/verification', vDraft, Resp);
+    },
+    onSuccess: (updated) => {
+      vDraft = { ...updated };
+      void qc.invalidateQueries({ queryKey: queryKeys.config });
+      toast.success('Verification settings saved');
+    },
+    onError: (err) => {
+      toast.error('Could not save verification settings', { description: apiErrorMessage(err) });
     },
   }));
 </script>
@@ -321,6 +364,68 @@
           {save.isPending ? 'Saving…' : 'Save settings'}
         </Button>
       </div>
+
+      <!-- E2EE verification (own namespace + own save) -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">End-to-end encryption verification</CardTitle>
+          <CardDescription>
+            Controls the "E2EE" badge and its Verify panel. The links below are shown to users as
+            out-of-band ways to confirm the app hasn't been tampered with; leave one blank to hide
+            it. Turning the panel off hides the badge entirely (encryption still runs).
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-3 text-sm">
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={vDraft.showPanel}
+              onCheckedChange={(v) => (vDraft = { ...vDraft, showPanel: v === true })}
+            />
+            <span>Show the E2EE badge and verify panel</span>
+          </label>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="verify-release">
+              Release / verification URL (https)
+            </label>
+            <Input
+              id="verify-release"
+              placeholder="https://github.com/org/repo/releases/latest"
+              value={vDraft.releaseUrl}
+              oninput={(e) =>
+                (vDraft = { ...vDraft, releaseUrl: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="verify-source">
+              Source code URL (https)
+            </label>
+            <Input
+              id="verify-source"
+              placeholder="https://github.com/org/repo"
+              value={vDraft.sourceUrl}
+              oninput={(e) =>
+                (vDraft = { ...vDraft, sourceUrl: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="verify-onion">
+              Tor .onion mirror (optional)
+            </label>
+            <Input
+              id="verify-onion"
+              placeholder="abcd…xyz.onion"
+              value={vDraft.onionAddress}
+              oninput={(e) =>
+                (vDraft = { ...vDraft, onionAddress: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+          <div class="flex justify-end">
+            <Button onclick={() => saveVerification.mutate()} disabled={saveVerification.isPending}>
+              {saveVerification.isPending ? 'Saving…' : 'Save verification'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   {/if}
 </AdminLayout>

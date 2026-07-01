@@ -4,6 +4,7 @@
   import { t } from '../lib/i18n/index.svelte';
   import { e2eeSession, ensureAttestationChecked } from '../lib/e2ee-status.svelte';
   import { router } from '../stores/router.svelte';
+  import { configQuery } from '../lib/queries';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
   import CopyIcon from '@lucide/svelte/icons/copy';
@@ -33,6 +34,13 @@
   // NOT admin actions - so on /admin the panel adds a line saying so, to keep the
   // badge from over-implying that admin actions are sealed.
   const isAdmin = $derived(router.pathname.startsWith('/admin'));
+
+  // Admin-configured off-CDN channels; the panel lists only those actually set.
+  const cfg = configQuery();
+  const verification = $derived(cfg.data?.verification);
+  const hasChannel = $derived(
+    !!(verification?.releaseUrl || verification?.onionAddress || verification?.sourceUrl),
+  );
 
   // The _fcp-pin record lives at the app's own hostname (no port); show the exact
   // lookup the user runs on their own machine + the answer it should return.
@@ -100,7 +108,6 @@
         {/if}
         <p class="text-muted-foreground">{t('e2ee.protectScope')}</p>
         <p class="text-muted-foreground">{t('e2ee.protectServerReads')}</p>
-        <p class="text-muted-foreground">{t('e2ee.protectMetadata')}</p>
         <p class="text-muted-foreground">{t('e2ee.protectTunnel')}</p>
       </section>
 
@@ -157,14 +164,50 @@
           <p class="inline-flex items-center gap-1.5 text-destructive">
             <ShieldAlert class="size-4 shrink-0" />{t('e2ee.attestationFail')}
           </p>
+        {:else if e2eeSession.attestation === 'unconfigured'}
+          <p class="text-xs text-muted-foreground">{t('e2ee.attestationUnconfigured')}</p>
         {:else}
           <p class="text-xs text-muted-foreground">{t('e2ee.attestationUnreachable')}</p>
         {/if}
       </section>
 
-      <section class="space-y-1">
+      <section class="space-y-2">
         <h3 class="font-semibold">{t('e2ee.compareHeading')}</h3>
         <p class="text-muted-foreground">{t('e2ee.compareBody')}</p>
+        {#if hasChannel}
+          <ul class="space-y-1.5">
+            {#if verification?.releaseUrl}
+              <li>
+                <a
+                  href={verification.releaseUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="break-all text-primary underline underline-offset-2 hover:no-underline"
+                >
+                  {t('e2ee.channelRelease')}
+                </a>
+              </li>
+            {/if}
+            {#if verification?.sourceUrl}
+              <li>
+                <a
+                  href={verification.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="break-all text-primary underline underline-offset-2 hover:no-underline"
+                >
+                  {t('e2ee.channelSource')}
+                </a>
+              </li>
+            {/if}
+            {#if verification?.onionAddress}
+              <li class="text-muted-foreground">
+                {t('e2ee.channelOnion')}:
+                <code class="break-all font-mono text-[11px]">{verification.onionAddress}</code>
+              </li>
+            {/if}
+          </ul>
+        {/if}
       </section>
 
       <section class="space-y-2">
@@ -201,13 +244,10 @@
         <p class="text-xs text-muted-foreground">{t('e2ee.dnsCaveat')}</p>
       </section>
 
-      <section class="space-y-1">
-        <h3 class="font-semibold">{t('e2ee.bundleHeading')}</h3>
-        <p class="text-muted-foreground">{t('e2ee.bundleHint')}</p>
-        <p class="text-muted-foreground">{t('e2ee.verifierExtension')}</p>
-      </section>
-
-      <p class="border-t border-border pt-3 text-xs text-muted-foreground">{t('e2ee.caveat')}</p>
+      <div class="space-y-1 border-t border-border pt-3 text-xs text-muted-foreground">
+        <p>{t('e2ee.caveat')}</p>
+        <p>{t('e2ee.verifierExtension')}</p>
+      </div>
     </div>
 
     <Dialog.Footer>

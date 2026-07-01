@@ -21,7 +21,7 @@
 const SEALING_CONFIGURED =
   !!import.meta.env.VITE_FS_SERVER_HPKE_PK && !!import.meta.env.VITE_FS_SERVER_HPKE_KID;
 
-export type E2eeAttestation = 'pending' | 'active' | 'warn' | 'unreachable';
+export type E2eeAttestation = 'pending' | 'active' | 'warn' | 'unreachable' | 'unconfigured';
 
 export const e2eeSession = $state<{
   lastSealedAt: number | null;
@@ -66,7 +66,14 @@ export async function ensureAttestationChecked(): Promise<void> {
   const att = await verifyConnection();
   e2eeSession.epochKid = att.epochKid ?? null;
   e2eeSession.notAfter = att.notAfter ?? null;
-  e2eeSession.attestation = att.attested ? 'active' : att.reachable ? 'warn' : 'unreachable';
+  e2eeSession.attestation =
+    att.configured === false
+      ? 'unconfigured' // manifest key not baked: can't verify (not a network fault)
+      : att.attested
+        ? 'active'
+        : att.reachable
+          ? 'warn'
+          : 'unreachable';
 }
 
 /** Open the shared "Verify connection" modal from anywhere (badge or alert). */

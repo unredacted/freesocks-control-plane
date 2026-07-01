@@ -26,6 +26,7 @@ import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
+import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { normalizeSupportId } from './lib/supportId';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import {
@@ -1499,5 +1500,61 @@ export const setTheme = internalMutation({
       payload: { preset, hue: cleanHue },
     });
     return { preset, hue: cleanHue };
+  },
+});
+
+/**
+ * Set the E2EE verification config (V-config): the off-CDN channels shown in the
+ * "Verify connection" panel + the master show/hide toggle. Sanitizes each URL
+ * (https-only for release/source; .onion for the mirror) so a bad value stores as
+ * '' rather than a broken/unsafe link. Audited (URLs are non-secret).
+ */
+export const setVerification = internalMutation({
+  args: {
+    showPanel: v.boolean(),
+    releaseUrl: v.string(),
+    onionAddress: v.string(),
+    sourceUrl: v.string(),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { showPanel, releaseUrl, onionAddress, sourceUrl, actorAdminId }) => {
+    const clean = {
+      showPanel,
+      releaseUrl: sanitizeHttpsUrl(releaseUrl),
+      onionAddress: sanitizeOnion(onionAddress),
+      sourceUrl: sanitizeHttpsUrl(sourceUrl),
+    };
+    await upsertSetting(
+      ctx,
+      'verification.showPanel',
+      JSON.stringify(clean.showPanel),
+      actorAdminId,
+    );
+    await upsertSetting(
+      ctx,
+      'verification.releaseUrl',
+      JSON.stringify(clean.releaseUrl),
+      actorAdminId,
+    );
+    await upsertSetting(
+      ctx,
+      'verification.onionAddress',
+      JSON.stringify(clean.onionAddress),
+      actorAdminId,
+    );
+    await upsertSetting(
+      ctx,
+      'verification.sourceUrl',
+      JSON.stringify(clean.sourceUrl),
+      actorAdminId,
+    );
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.verification.change',
+      targetType: 'verification',
+      payload: clean,
+    });
+    return clean;
   },
 });

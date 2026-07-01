@@ -1542,6 +1542,34 @@ http.route({
   }),
 });
 
+http.route({
+  path: '/api/v1/admin/verification',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<{
+      showPanel?: boolean;
+      releaseUrl?: string;
+      onionAddress?: string;
+      sourceUrl?: string;
+    }>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.adminApi.setVerification, {
+          showPanel: body.showPanel !== false, // default on
+          releaseUrl: typeof body.releaseUrl === 'string' ? body.releaseUrl : '',
+          onionAddress: typeof body.onionAddress === 'string' ? body.onionAddress : '',
+          sourceUrl: typeof body.sourceUrl === 'string' ? body.sourceUrl : '',
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 // --- admin: settings --------------------------------------------------------
 
 http.route({

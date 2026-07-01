@@ -133,5 +133,16 @@ export const PublicConfig = z.object({
       hue: z.number().nullable(),
     })
     .optional(),
+  /** Admin-configured E2EE verification channels (non-secret): the off-CDN
+   *  channels the "Verify connection" panel shows (empty string = unset, omitted)
+   *  and whether to surface the E2EE badge/panel at all. Optional for forward-compat. */
+  verification: z
+    .object({
+      showPanel: z.boolean(),
+      releaseUrl: z.string(),
+      onionAddress: z.string(),
+      sourceUrl: z.string(),
+    })
+    .optional(),
 });
 export type PublicConfig = z.infer<typeof PublicConfig>;

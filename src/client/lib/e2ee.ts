@@ -253,6 +253,12 @@ export interface ConnectionAttestation {
   reachable: boolean;
   /** The current epoch key verified against the baked manifest key(s), unexpired + not revoked. */
   attested: boolean;
+  /**
+   * The live attestation is even possible on this build: false when the manifest
+   * public key wasn't baked, so we CANNOT verify (distinct from "reachable but the
+   * check failed" and from "couldn't reach the endpoint"). Absent = configured.
+   */
+  configured?: boolean;
   epochKid?: string;
   notAfter?: number;
   /** The verified revoked-kid list version (anti-rollback), if present. */
@@ -269,7 +275,11 @@ export interface ConnectionAttestation {
  * alongside the seal path's own fetch. Never throws.
  */
 export async function verifyConnection(): Promise<ConnectionAttestation> {
-  if (!sealingEnabled() || !MANIFEST_PK) return { reachable: false, attested: false };
+  // No manifest key baked -> the live check is impossible on this build (NOT a
+  // network failure). Report it distinctly so the panel doesn't say "couldn't reach."
+  if (!sealingEnabled() || !MANIFEST_PK) {
+    return { reachable: false, attested: false, configured: false };
+  }
   try {
     const res = await fetch('/api/v1/e2ee/keys', { credentials: 'omit' });
     if (!res.ok) return { reachable: false, attested: false };

@@ -2,6 +2,11 @@
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
   import { t } from '../lib/i18n/index.svelte';
   import { e2eeSession, openVerify } from '../lib/e2ee-status.svelte';
+  import { configQuery } from '../lib/queries';
+
+  // Suppressed along with the badge when the operator hides the E2EE surface.
+  const cfg = configQuery();
+  const show = $derived(cfg.data?.verification?.showPanel ?? true);
 
   /**
    * Loud, full-width escalation shown ONLY when the live attestation is reachable
@@ -13,7 +18,7 @@
    */
 </script>
 
-{#if e2eeSession.attestation === 'warn'}
+{#if show && e2eeSession.attestation === 'warn'}
   <div
     role="alert"
     class="flex items-center justify-center gap-2 border-b border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs text-destructive"

@@ -4,6 +4,7 @@
   import LockIcon from '@lucide/svelte/icons/lock';
   import { t } from '../lib/i18n/index.svelte';
   import { e2eeSession, ensureAttestationChecked, openVerify } from '../lib/e2ee-status.svelte';
+  import { configQuery } from '../lib/queries';
 
   /**
    * Compact E2EE status badge for the app chrome (mounted in the member header and
@@ -21,6 +22,12 @@
     context?: 'member' | 'admin';
   }
   let { context = 'member' }: Props = $props();
+
+  // The operator can hide the whole E2EE surface via admin config (default on;
+  // undefined while the public config loads → shown, so a normal deployment never
+  // flickers the badge away on first paint).
+  const cfg = configQuery();
+  const show = $derived(cfg.data?.verification?.showPanel ?? true);
 
   const enabled =
     !!import.meta.env.VITE_FS_SERVER_HPKE_PK && !!import.meta.env.VITE_FS_SERVER_HPKE_KID;
@@ -47,29 +54,31 @@
   );
 </script>
 
-{#if enabled}
-  <button
-    type="button"
-    onclick={openVerify}
-    title={badgeTitle}
-    aria-label={badgeTitle}
-    class="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-all hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {warn
-      ? 'border-amber-500/40 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20'
-      : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 dark:text-emerald-400'}"
-  >
-    {#if warn}
-      <ShieldAlert class="size-3.5 shrink-0" />
-    {:else}
-      <ShieldCheck class="size-3.5 shrink-0" />
-    {/if}
-    <span>{t('e2ee.badgeLabel')}</span>
-  </button>
-{:else}
-  <span
-    title={t('e2ee.badgeOffTitle')}
-    class="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs font-medium text-muted-foreground"
-  >
-    <LockIcon class="size-3.5 shrink-0" />
-    <span>{t('e2ee.badgeOff')}</span>
-  </span>
+{#if show}
+  {#if enabled}
+    <button
+      type="button"
+      onclick={openVerify}
+      title={badgeTitle}
+      aria-label={badgeTitle}
+      class="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-all hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {warn
+        ? 'border-amber-500/40 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20'
+        : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 dark:text-emerald-400'}"
+    >
+      {#if warn}
+        <ShieldAlert class="size-3.5 shrink-0" />
+      {:else}
+        <ShieldCheck class="size-3.5 shrink-0" />
+      {/if}
+      <span>{t('e2ee.badgeLabel')}</span>
+    </button>
+  {:else}
+    <span
+      title={t('e2ee.badgeOffTitle')}
+      class="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs font-medium text-muted-foreground"
+    >
+      <LockIcon class="size-3.5 shrink-0" />
+      <span>{t('e2ee.badgeOff')}</span>
+    </span>
+  {/if}
 {/if}
