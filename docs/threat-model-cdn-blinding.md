@@ -55,6 +55,17 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
   (the static key cannot decrypt a reveal response).
 - **Dual-mode:** plaintext requests pass through unchanged, so this rolled out without a flag day and
   works in builds where the pinned key was not baked.
+- **Admin secret surface (2026-06-29):** the same seal/reveal legs now also cover the admin plane's
+  secret-bearing bodies — the reveal responses that mint an `fsv1_` API token, an admin invite token,
+  or membership codes, and the request bodies that upload long-lived infra credentials
+  (Remnawave/Outline, S3, payment-processor keys). `routePolicy` is now **method-aware** (`"METHOD /path"`)
+  so a path's GET list stays plaintext while its POST create seals; parameterized edit routes match by
+  method + prefix. Admin _sessions_ were already covered by Layer 2; this closes the passive-CDN harvest
+  of admin _secret bodies_. It is deliberately **NOT anti-tamper**: an active CDN that rewrites the
+  bundle defeats browser-delivered sealing on the admin plane exactly as on the member plane — the
+  defense there is out-of-band bundle verification + the (planned) verifier extension / native app, not
+  sealing. The passkey login ceremony is left unsealed on purpose (the assertion is single-use +
+  origin-bound + non-exfiltratable, so a passive CDN can do nothing with it).
 
 See `convex/lib/e2ee.ts`, `convex/lib/e2eeCrypto.ts`, `src/shared/crypto/{envelope,hpke,channel}.ts`,
 `src/client/lib/e2ee.ts`.

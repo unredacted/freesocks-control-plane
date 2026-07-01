@@ -348,7 +348,7 @@ export async function prepareOutbound(
   bodyStr: string | undefined,
 ): Promise<OutboundSeal | undefined> {
   if (!sealingEnabled()) return undefined;
-  const policy = routePolicy(path);
+  const policy = routePolicy(path, method);
   if (!policy) return undefined;
   const m = method.toUpperCase();
   // Seal target: for a request-seal route (login) prefer the current epoch key;

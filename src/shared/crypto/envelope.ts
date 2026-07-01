@@ -233,18 +233,64 @@ export interface RoutePolicy {
   response: 'reveal' | 'plain';
 }
 
+const SEAL_REQ: RoutePolicy = { request: 'seal', response: 'plain' };
+const REVEAL: RoutePolicy = { request: 'plain', response: 'reveal' };
+
+/**
+ * Keyed by `"METHOD /path"` (method-aware): several admin paths serve BOTH a GET
+ * list (no seal) and a POST create (seal) at the same path, so a path-only policy
+ * couldn't seal the create without breaking the list. Member account routes are
+ * unchanged in behavior, just method-keyed. Admin entries seal SECRET bodies only:
+ * `REVEAL` = the server hands back a freshly-minted secret (token/invite/codes);
+ * `SEAL_REQ` = the admin uploads a long-lived infra credential. This is PASSIVE-CDN
+ * confidentiality, NOT an anti-tamper measure (an active CDN that rewrites the
+ * bundle is out of scope for sealing — see docs/oob-verification.md).
+ */
 export const SEALED_ROUTES: Record<string, RoutePolicy> = {
-  '/api/v1/auth/account-login': { request: 'seal', response: 'plain' },
-  // POST mints + reveals the account number (and binds the PoP key); GET reveals
-  // the authenticated account view. Both share this reveal policy.
-  '/api/v1/account': { request: 'plain', response: 'reveal' },
-  '/api/v1/account/regenerate': { request: 'plain', response: 'reveal' },
-  '/api/v1/account/switch-backend': { request: 'plain', response: 'reveal' },
-  '/api/v1/account/account-id/rotate': { request: 'plain', response: 'reveal' },
+  // Member account-plane. POST /account mints+reveals the account number (and binds
+  // the PoP key); GET /account reveals the authenticated view. Both reveal.
+  'POST /api/v1/auth/account-login': SEAL_REQ,
+  'GET /api/v1/account': REVEAL,
+  'POST /api/v1/account': REVEAL,
+  'POST /api/v1/account/regenerate': REVEAL,
+  'POST /api/v1/account/switch-backend': REVEAL,
+  'POST /api/v1/account/account-id/rotate': REVEAL,
+  // Admin secret reveals (server returns a fresh secret once).
+  'POST /api/v1/admin/tokens': REVEAL,
+  'POST /api/v1/admin/membership-codes': REVEAL,
+  'POST /api/v1/admin/admins/invite': REVEAL,
+  // Admin credential uploads (admin sends infra secrets). Dual-mode server keeps
+  // plaintext `fsv1_`-token / Ansible callers working.
+  'POST /api/v1/admin/backend-servers': SEAL_REQ,
+  'POST /api/v1/admin/backend-servers/test-connection': SEAL_REQ,
+  'POST /api/v1/admin/mirror-providers': SEAL_REQ,
+  'POST /api/v1/admin/mirror-providers/test-connection': SEAL_REQ,
+  'PATCH /api/v1/admin/billing/config': SEAL_REQ,
 };
 
-export function routePolicy(path: string): RoutePolicy | undefined {
-  return SEALED_ROUTES[normalizePath(path)];
+/**
+ * Parameterized routes (path params), matched by method + prefix when the exact
+ * lookup misses. Method-scoped so the read verbs under a prefix (GET/DELETE, no
+ * body) are never asked to seal an empty request body.
+ */
+const SEALED_PREFIXES: { method: string; prefix: string; policy: RoutePolicy }[] = [
+  // by-slug/by-name BEFORE the shorter prefix so the specific rule wins; they're
+  // PUT (the shorter prefixes are PATCH), so there's no method overlap anyway.
+  { method: 'PUT', prefix: '/api/v1/admin/backend-servers/by-slug/', policy: SEAL_REQ },
+  { method: 'PATCH', prefix: '/api/v1/admin/backend-servers/', policy: SEAL_REQ },
+  { method: 'PUT', prefix: '/api/v1/admin/mirror-providers/by-name/', policy: SEAL_REQ },
+  { method: 'PATCH', prefix: '/api/v1/admin/mirror-providers/', policy: SEAL_REQ },
+  // Member gift-code reveal (same secret class; the buyer polls this GET).
+  { method: 'GET', prefix: '/api/v1/billing/order/', policy: REVEAL },
+];
+
+export function routePolicy(path: string, method: string): RoutePolicy | undefined {
+  const p = normalizePath(path);
+  const m = method.toUpperCase();
+  return (
+    SEALED_ROUTES[`${m} ${p}`] ??
+    SEALED_PREFIXES.find((r) => r.method === m && p.startsWith(r.prefix))?.policy
+  );
 }
 
 /** Request body field carrying the client's base64url response-ephemeral public key (reveal leg). */

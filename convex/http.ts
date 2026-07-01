@@ -766,7 +766,7 @@ http.route({
 http.route({
   pathPrefix: '/api/v1/billing/order/',
   method: 'GET',
-  handler: httpAction(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const opaqueRef = lastPathSegment(req);
@@ -1174,7 +1174,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/admins/invite',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:admins:write');
     if (!admin) return ADMIN_UNAUTH();
     // Inviting a new admin is a human-admin action, so require a cookie session
@@ -1432,7 +1432,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/tokens',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:tokens:write');
     if (!admin) return ADMIN_UNAUTH();
     // Token creation must be attributed to a concrete admin row. A pure
@@ -1676,7 +1676,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/billing/config',
   method: 'PATCH',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
     if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
@@ -1708,7 +1708,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/membership-codes',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:users:write');
     if (!admin) return ADMIN_UNAUTH();
     // Minting must be attributed to a concrete admin row (like token creation).
@@ -1773,7 +1773,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/backend-servers',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:servers:write'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     if (body.backend !== 'remnawave' && body.backend !== 'outline') {
@@ -1792,7 +1792,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/backend-servers/test-connection',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     if (body.backend !== 'remnawave' && body.backend !== 'outline') {
@@ -1809,7 +1809,7 @@ http.route({
 http.route({
   pathPrefix: '/api/v1/admin/backend-servers/by-slug/',
   method: 'PUT',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
     if (!admin) return ADMIN_UNAUTH();
     const slug = decodeURIComponent(lastPathSegment(req));
@@ -1856,7 +1856,7 @@ http.route({
 http.route({
   pathPrefix: '/api/v1/admin/backend-servers/',
   method: 'PATCH',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:servers:write'))) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'backendServers'>;
     const body = await readJson<Record<string, unknown>>(req);
@@ -1900,7 +1900,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/mirror-providers',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     try {
@@ -1915,7 +1915,7 @@ http.route({
 http.route({
   path: '/api/v1/admin/mirror-providers/test-connection',
   method: 'POST',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     const result = await ctx.runAction(internal.storage.testProviderConnection, body as never);
@@ -1926,7 +1926,7 @@ http.route({
 http.route({
   pathPrefix: '/api/v1/admin/mirror-providers/',
   method: 'PATCH',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'mirrorProviders'>;
     const body = await readJson<Record<string, unknown>>(req);
@@ -1957,7 +1957,7 @@ http.route({
 http.route({
   pathPrefix: '/api/v1/admin/mirror-providers/by-name/',
   method: 'PUT',
-  handler: guard(async (ctx, req) => {
+  handler: sealed(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
     const name = decodeURIComponent(lastPathSegment(req));
     const body = await readJson<Record<string, unknown>>(req);

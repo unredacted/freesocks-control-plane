@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, test } from 'vitest';
 import { createHash } from 'node:crypto';
-import { fingerprintB64Url, sha256HexOfB64Url } from './envelope';
+import { fingerprintB64Url, routePolicy, sha256HexOfB64Url } from './envelope';
 
 /** The EXACT form scripts/e2ee-fingerprint.mjs publishes, computed independently
  *  with node:crypto. If fingerprintB64Url (crypto.subtle) ever diverges from this,
@@ -26,6 +26,62 @@ describe('fingerprintB64Url', () => {
 
   test('hashes the base64url STRING (distinct inputs → distinct fingerprints)', async () => {
     expect(await fingerprintB64Url('aaaa')).not.toBe(await fingerprintB64Url('bbbb'));
+  });
+});
+
+describe('routePolicy (method-aware)', () => {
+  test('member account-plane still resolves, by method', () => {
+    expect(routePolicy('/api/v1/auth/account-login', 'POST')).toEqual({
+      request: 'seal',
+      response: 'plain',
+    });
+    // /account reveals on both GET (view) and POST (mint).
+    expect(routePolicy('/api/v1/account', 'GET')).toEqual({ request: 'plain', response: 'reveal' });
+    expect(routePolicy('/api/v1/account', 'POST')).toEqual({
+      request: 'plain',
+      response: 'reveal',
+    });
+    expect(routePolicy('/api/v1/account/regenerate', 'POST')?.response).toBe('reveal');
+  });
+
+  test('admin reveals seal the response on POST but NOT the GET list at the same path', () => {
+    expect(routePolicy('/api/v1/admin/tokens', 'POST')).toEqual({
+      request: 'plain',
+      response: 'reveal',
+    });
+    expect(routePolicy('/api/v1/admin/tokens', 'GET')).toBeUndefined(); // the list is not sealed
+    expect(routePolicy('/api/v1/admin/membership-codes', 'POST')?.response).toBe('reveal');
+    expect(routePolicy('/api/v1/admin/admins/invite', 'POST')?.response).toBe('reveal');
+  });
+
+  test('admin credential uploads seal the request on the write verb, not the GET list', () => {
+    expect(routePolicy('/api/v1/admin/backend-servers', 'POST')).toEqual({
+      request: 'seal',
+      response: 'plain',
+    });
+    expect(routePolicy('/api/v1/admin/backend-servers', 'GET')).toBeUndefined();
+    expect(routePolicy('/api/v1/admin/backend-servers/test-connection', 'POST')?.request).toBe(
+      'seal',
+    );
+    expect(routePolicy('/api/v1/admin/mirror-providers', 'POST')?.request).toBe('seal');
+    expect(routePolicy('/api/v1/admin/billing/config', 'PATCH')?.request).toBe('seal');
+  });
+
+  test('parameterized routes match by method + prefix', () => {
+    expect(routePolicy('/api/v1/admin/backend-servers/k57abc', 'PATCH')?.request).toBe('seal');
+    expect(routePolicy('/api/v1/admin/backend-servers/by-slug/lon-1', 'PUT')?.request).toBe('seal');
+    expect(routePolicy('/api/v1/admin/mirror-providers/k99xyz', 'PATCH')?.request).toBe('seal');
+    expect(routePolicy('/api/v1/billing/order/ref_abc123', 'GET')?.response).toBe('reveal');
+    // Read/delete verbs under a sealed prefix carry no body -> never sealed.
+    expect(routePolicy('/api/v1/admin/backend-servers/k57abc', 'GET')).toBeUndefined();
+    expect(routePolicy('/api/v1/admin/backend-servers/by-slug/lon-1', 'DELETE')).toBeUndefined();
+  });
+
+  test('non-secret admin routes and query strings', () => {
+    expect(routePolicy('/api/v1/admin/tiers', 'POST')).toBeUndefined();
+    expect(routePolicy('/api/v1/admin/settings', 'PATCH')).toBeUndefined();
+    // query + trailing slash are normalized away before lookup
+    expect(routePolicy('/api/v1/admin/tokens?x=1', 'post')?.response).toBe('reveal');
   });
 });
 

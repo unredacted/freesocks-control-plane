@@ -69,7 +69,7 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
   const url = new URL(req.url);
   const path = url.pathname;
   const method = req.method.toUpperCase();
-  const policy = routePolicy(path);
+  const policy = routePolicy(path, method);
   if (!policy) return handler(ctx, req);
 
   let handlerReq = req;
