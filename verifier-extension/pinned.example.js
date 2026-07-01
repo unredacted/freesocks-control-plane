@@ -1,16 +1,18 @@
-// Pinned trust anchors for the verifier extension. COPY this to `pinned.js` and
-// fill the values from a REPRODUCIBLE build of the release you are pinning (see
-// docs/oob-verification.md). pinned.js is what makes the extension trustworthy:
-// it ships inside the store-reviewed extension, NOT from the CDN, so the CDN
-// cannot change it.
+// TEMPLATE / reference shape for pinned.js. The real pinned.js is GENERATED from a
+// reproducible build:
+//   bun run build && bun run verifier:pin      (scripts/gen-verifier-pin.mjs)
+// pinned.js is what makes the extension trustworthy: it ships inside the
+// store-reviewed extension, NOT from the CDN, so the CDN cannot change it. See
+// docs/oob-verification.md.
 //
-//   indexSha384  hex SHA-384 of dist/index.html from the reproducible build:
-//                  shasum -a 384 dist/index.html
-//                (index.html carries SRI for every script/style, so pinning its
-//                 hash transitively pins the whole bundle.)
+//   indexSha384  hex SHA-384 of a NONCE-NORMALIZED dist/index.html. Do NOT use a
+//                raw `shasum -a 384 dist/index.html`: Caddy templates a per-request
+//                CSP nonce into <meta name="csp-nonce">, so the pin is computed over
+//                the canonicalized tag (the generator + background.js apply the same
+//                normalization). index.html carries SRI for every chunk, so pinning
+//                it transitively pins the whole bundle.
 //   manifestPk / manifestPkPq
-//                the baked manifest public keys (bun scripts/e2ee-fingerprint.mjs,
-//                or VITE_FS_MANIFEST_PK / VITE_FS_MANIFEST_PK_PQ from the build env);
+//                the baked manifest public keys (VITE_FS_MANIFEST_PK / _PK_PQ);
 //                used by the optional manifest-signature check (see README).
 export const PINNED = {
   origin: 'https://app.freesocks.org',

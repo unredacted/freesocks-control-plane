@@ -1515,14 +1515,19 @@ export const setVerification = internalMutation({
     releaseUrl: v.string(),
     onionAddress: v.string(),
     sourceUrl: v.string(),
+    extensionUrl: v.string(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { showPanel, releaseUrl, onionAddress, sourceUrl, actorAdminId }) => {
+  handler: async (
+    ctx,
+    { showPanel, releaseUrl, onionAddress, sourceUrl, extensionUrl, actorAdminId },
+  ) => {
     const clean = {
       showPanel,
       releaseUrl: sanitizeHttpsUrl(releaseUrl),
       onionAddress: sanitizeOnion(onionAddress),
       sourceUrl: sanitizeHttpsUrl(sourceUrl),
+      extensionUrl: sanitizeHttpsUrl(extensionUrl),
     };
     await upsertSetting(
       ctx,
@@ -1546,6 +1551,12 @@ export const setVerification = internalMutation({
       ctx,
       'verification.sourceUrl',
       JSON.stringify(clean.sourceUrl),
+      actorAdminId,
+    );
+    await upsertSetting(
+      ctx,
+      'verification.extensionUrl',
+      JSON.stringify(clean.extensionUrl),
       actorAdminId,
     );
     await writeAuditLog(ctx, {

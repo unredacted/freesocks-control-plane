@@ -246,7 +246,20 @@
 
       <div class="space-y-1 border-t border-border pt-3 text-xs text-muted-foreground">
         <p>{t('e2ee.caveat')}</p>
-        <p>{t('e2ee.verifierExtension')}</p>
+        {#if verification?.extensionUrl}
+          <p>
+            <a
+              href={verification.extensionUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="break-all text-primary underline underline-offset-2 hover:no-underline"
+            >
+              {t('e2ee.verifierExtensionInstall')}
+            </a>
+          </p>
+        {:else}
+          <p>{t('e2ee.verifierExtension')}</p>
+        {/if}
       </div>
     </div>
 

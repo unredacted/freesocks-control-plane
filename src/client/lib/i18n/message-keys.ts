@@ -128,6 +128,7 @@ export type MessageKey =
   | "e2ee.protectServerReads"
   | "e2ee.protectTunnel"
   | "e2ee.verifierExtension"
+  | "e2ee.verifierExtensionInstall"
   | "e2ee.verify"
   | "e2ee.verifyIntro"
   | "e2ee.verifyTitle"

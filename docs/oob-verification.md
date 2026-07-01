@@ -65,11 +65,18 @@ through as many of these independent channels as are available:
 
 4. **Verifier extension / native app (Phase 4, scaffold in `verifier-extension/`).**
    The strongest active-CDN defense: trusted code ships through the browser web store
-   (not the CDN) and checks the served `index.html` hash against the pinned
-   reproducible build (MEGA model); a native app reusing the existing proxy clients is
-   the stronger sibling. **Not built yet:** the repo carries only an unpublished
-   scaffold (no `pinned.js`, not in any web store). Until it is published, anchors 1-3
-   above are the verification path, and the in-app panel says as much.
+   (not the CDN) and checks the served `index.html` against the pinned reproducible
+   build. Its pin is GENERATED — `bun run build && bun run verifier:pin` writes
+   `verifier-extension/pinned.js` from the built `dist/`: SHA-384 of a NONCE-NORMALIZED
+   `index.html` (Caddy templates a per-request CSP nonce into `<meta name="csp-nonce">`,
+   so the generator and the extension's `background.js` canonicalize that one tag before
+   hashing; the SRI `integrity=` attributes pin every chunk, so the normalized-index hash
+   pins the whole bundle). Once published to a web store, set the listing URL in Admin →
+   Settings → verification (`verification.extensionUrl`) and the in-app panel links to it;
+   until then the panel says "planned, not available yet." A native app reusing the
+   existing proxy clients is the stronger sibling (the extension's own self-fetch can be
+   gamed by a sophisticated active CDN). **Pin generation is automated; packaging +
+   web-store publication remain operator actions.**
 
 The in-app **"Verify connection" panel** (opened from the E2EE badge in the header /
 admin sidebar) shows the SAME fingerprints — it and the script both call
@@ -129,10 +136,13 @@ A third party who does not trust us (or the CDN) reproduces a release:
 3. `bash scripts/verify-reproducible.sh` -> record `dist-sha256`.
 4. `git tag -s <version>` and publish a GitHub release with both values.
 5. Deploy the same `dist/` to the CDN origin and to the `.onion` mirror.
-6. Publish/update the `_fcp-pin` TXT record (value from step 2) so users can `dig` it;
+6. If shipping the verifier extension: `bun run verifier:pin` (regenerates
+   `verifier-extension/pinned.js` from this build), package `verifier-extension/`, update
+   the web-store listing, and set that listing URL in Admin → Settings → verification.
+7. Publish/update the `_fcp-pin` TXT record (value from step 2) so users can `dig` it;
    sign the zone with DNSSEC. Skip only if DNS shares a provider with the CDN (and note
    that in the release notes, since it is then not an independent path).
-7. On an emergency key compromise, run
+8. On an emergency key compromise, run
    `bunx convex run lib/e2eeCrypto:signRevocation '{"revokedKids":["<kid>"]}'`
    and announce the new revoked-kid list version through the same channels.
 

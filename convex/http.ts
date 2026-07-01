@@ -1553,6 +1553,7 @@ http.route({
       releaseUrl?: string;
       onionAddress?: string;
       sourceUrl?: string;
+      extensionUrl?: string;
     }>(req);
     try {
       return json(
@@ -1561,6 +1562,7 @@ http.route({
           releaseUrl: typeof body.releaseUrl === 'string' ? body.releaseUrl : '',
           onionAddress: typeof body.onionAddress === 'string' ? body.onionAddress : '',
           sourceUrl: typeof body.sourceUrl === 'string' ? body.sourceUrl : '',
+          extensionUrl: typeof body.extensionUrl === 'string' ? body.extensionUrl : '',
           actorAdminId: admin.adminUserId,
         }),
       );

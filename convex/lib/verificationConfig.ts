@@ -19,6 +19,8 @@ export interface VerificationConfig {
   onionAddress: string;
   /** Public source-repo URL for the reproducible-build path; '' = unset. */
   sourceUrl: string;
+  /** Published verifier-extension URL (web store); '' = unset (panel shows "planned"). */
+  extensionUrl: string;
 }
 
 export const VERIFICATION_DEFAULTS: VerificationConfig = {
@@ -26,6 +28,7 @@ export const VERIFICATION_DEFAULTS: VerificationConfig = {
   releaseUrl: '',
   onionAddress: '',
   sourceUrl: '',
+  extensionUrl: '',
 };
 
 const MAX_URL = 512;
@@ -78,5 +81,6 @@ export async function resolveVerification(db: DatabaseReader): Promise<Verificat
     releaseUrl: sanitizeHttpsUrl(await read('verification.releaseUrl')),
     onionAddress: sanitizeOnion(await read('verification.onionAddress')),
     sourceUrl: sanitizeHttpsUrl(await read('verification.sourceUrl')),
+    extensionUrl: sanitizeHttpsUrl(await read('verification.extensionUrl')),
   };
 }

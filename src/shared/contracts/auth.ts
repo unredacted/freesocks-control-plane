@@ -142,6 +142,7 @@ export const PublicConfig = z.object({
       releaseUrl: z.string(),
       onionAddress: z.string(),
       sourceUrl: z.string(),
+      extensionUrl: z.string(),
     })
     .optional(),
 });

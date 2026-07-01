@@ -612,6 +612,7 @@
     "dnsExpected": "It should return",
     "dnsCaveat": "Independent only if your DNS isn't run by the same company as the CDN; a DNSSEC-validating resolver is best. For full assurance, confirm the same values in the signed release too.",
     "verifierExtension": "A verifier browser extension that re-checks this build on every visit is planned, but not available yet.",
+    "verifierExtensionInstall": "Install the verifier extension - it re-checks this build against the published one on every visit (the strongest protection against a tampered page).",
     "caveat": "This in-page check is a convenience. A tampered page could lie about its own status, so the real proof comes from comparing these values somewhere outside this server, such as the DNS lookup above or a published release.",
     "close": "Close"
   }

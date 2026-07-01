@@ -85,7 +85,8 @@
     releaseUrl: string;
     onionAddress: string;
     sourceUrl: string;
-  }>({ showPanel: true, releaseUrl: '', onionAddress: '', sourceUrl: '' });
+    extensionUrl: string;
+  }>({ showPanel: true, releaseUrl: '', onionAddress: '', sourceUrl: '', extensionUrl: '' });
   let vInit = $state(false);
   $effect(() => {
     const v = cfg.data?.verification;
@@ -95,6 +96,7 @@
         releaseUrl: v.releaseUrl,
         onionAddress: v.onionAddress,
         sourceUrl: v.sourceUrl,
+        extensionUrl: v.extensionUrl,
       };
       vInit = true;
     }
@@ -106,6 +108,7 @@
         releaseUrl: z.string(),
         onionAddress: z.string(),
         sourceUrl: z.string(),
+        extensionUrl: z.string(),
       });
       return apiClient.patch('/api/v1/admin/verification', vDraft, Resp);
     },
@@ -417,6 +420,18 @@
               value={vDraft.onionAddress}
               oninput={(e) =>
                 (vDraft = { ...vDraft, onionAddress: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="verify-extension">
+              Verifier extension URL (https, optional)
+            </label>
+            <Input
+              id="verify-extension"
+              placeholder="https://chromewebstore.google.com/detail/…"
+              value={vDraft.extensionUrl}
+              oninput={(e) =>
+                (vDraft = { ...vDraft, extensionUrl: (e.target as HTMLInputElement).value })}
             />
           </div>
           <div class="flex justify-end">

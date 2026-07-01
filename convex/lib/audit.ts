@@ -45,7 +45,13 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // W2: admin retunes a rate-limit policy.
   'settings.ratelimit_change': ['policyKey', 'max', 'windowMs', 'enabled'],
   // E2EE verification channels (non-secret URLs + the show/hide toggle).
-  'admin.verification.change': ['showPanel', 'releaseUrl', 'onionAddress', 'sourceUrl'],
+  'admin.verification.change': [
+    'showPanel',
+    'releaseUrl',
+    'onionAddress',
+    'sourceUrl',
+    'extensionUrl',
+  ],
   // W4: admin mints / revokes membership codes (never the code/hash itself).
   'membership_code.mint': ['count', 'tierId', 'durationDays'],
   'membership_code.revoke': ['codeId'],
