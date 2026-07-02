@@ -19,6 +19,7 @@ import type * as auth from "../auth.js";
 import type * as backendServers from "../backendServers.js";
 import type * as backends from "../backends.js";
 import type * as billing from "../billing.js";
+import type * as cronHeartbeat from "../cronHeartbeat.js";
 import type * as crons from "../crons.js";
 import type * as freeTier from "../freeTier.js";
 import type * as health from "../health.js";
@@ -85,6 +86,7 @@ declare const fullApi: ApiFromModules<{
   backendServers: typeof backendServers;
   backends: typeof backends;
   billing: typeof billing;
+  cronHeartbeat: typeof cronHeartbeat;
   crons: typeof crons;
   freeTier: typeof freeTier;
   health: typeof health;

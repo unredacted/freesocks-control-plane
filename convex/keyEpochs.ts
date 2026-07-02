@@ -12,6 +12,7 @@
  */
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
+import { recordHeartbeat } from './cronHeartbeat';
 import { v } from 'convex/values';
 
 /** Keep an expired epoch openable for this long so in-flight requests sealed to a
@@ -29,6 +30,7 @@ export const EPOCH_SWEEP_GRACE_MS = 10 * 60_000;
 export const maybeRotate = internalMutation({
   args: {},
   handler: async (ctx) => {
+    await recordHeartbeat(ctx, 'epoch-key-rotate');
     if (!process.env.FS_MANIFEST_SK) return null;
     await ctx.scheduler.runAfter(0, internal.lib.e2eeCrypto.rotateEpochKey, {});
     return null;
@@ -90,6 +92,7 @@ export const byKid = internalQuery({
 export const sweepExpired = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'epoch-key-sweep');
     const cutoff = Date.now() - EPOCH_SWEEP_GRACE_MS;
     const expired = await ctx.db
       .query('keyEpochs')

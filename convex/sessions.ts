@@ -8,6 +8,7 @@
  * sweep), so a stale-but-unswept cookie never authenticates.
  */
 import { internalMutation, internalQuery } from './_generated/server';
+import { recordHeartbeat } from './cronHeartbeat';
 import { v } from 'convex/values';
 import { b64UrlToBytes } from '../src/shared/crypto/envelope';
 import { POP_ALG, POP_ALG_ED } from '../src/shared/crypto/pop';
@@ -91,6 +92,7 @@ export const deleteBySid = internalMutation({
 export const sweepExpired = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'session-sweep');
     const now = Date.now();
     const expired = await ctx.db
       .query('sessions')

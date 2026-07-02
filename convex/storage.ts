@@ -19,6 +19,7 @@
  */
 import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
+import { heartbeatFromAction } from './cronHeartbeat';
 import { v } from 'convex/values';
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomHex, sha256Hex } from './lib/crypto';
@@ -300,6 +301,7 @@ const REFRESH_PAGE = 50;
 export const refreshActiveMirrors = internalAction({
   args: {},
   handler: async (ctx): Promise<{ refreshed: number; scanned: number }> => {
+    await heartbeatFromAction(ctx, 'mirror-refresh');
     const providers = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
     if (providers.length === 0) {
       return { refreshed: 0, scanned: 0 };

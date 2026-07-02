@@ -28,6 +28,7 @@ import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { normalizeSupportId } from './lib/supportId';
+import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import {
   billingConfigWrites,
@@ -1497,6 +1498,32 @@ export const statusSummary = internalQuery({
         number | null
       >((max, s) => (max == null || s.lastHealthOkAt! > max ? s.lastHealthOkAt! : max), null);
 
+    // Per-cron liveness (W4-B4): join the heartbeat rows against the known cron
+    // cadences (CRON_META). `pending` = never observed since heartbeats shipped;
+    // `stale` = overdue past ~1.5 cadences. Stamped at each job's run START, so
+    // this is a pure "is the scheduler firing it?" signal — independent of the
+    // job's own success (which surfaces via drift / healthcheck freshness).
+    const hbByName = new Map(
+      (await ctx.db.query('cronHeartbeats').collect()).map((h) => [h.name, h]),
+    );
+    const crons = CRON_META.map((c) => {
+      const hb = hbByName.get(c.name);
+      const lastRunAt = hb?.lastRunAt ?? null;
+      const ageMs = lastRunAt != null ? now - lastRunAt : null;
+      const state: 'ok' | 'stale' | 'pending' =
+        lastRunAt == null ? 'pending' : ageMs! > cronStaleAfterMs(c.everyMs) ? 'stale' : 'ok';
+      return {
+        name: c.name,
+        description: c.description,
+        everyMs: c.everyMs,
+        state,
+        lastRunAt: lastRunAt != null ? iso(lastRunAt) : null,
+        ageSeconds: ageMs != null ? Math.max(0, Math.round(ageMs / 1000)) : null,
+        runCount: hb?.runCount ?? 0,
+      };
+    });
+    const cronsStale = crons.filter((c) => c.state === 'stale').length;
+
     return {
       users: usersByStatus,
       backendDrift,
@@ -1512,6 +1539,8 @@ export const statusSummary = internalQuery({
         lastOkAt: lastOkMs != null ? iso(lastOkMs) : null,
         staleSeconds: lastOkMs != null ? Math.max(0, Math.round((now - lastOkMs) / 1000)) : null,
       },
+      crons,
+      cronsStale,
       generatedAt: iso(now),
     };
   },

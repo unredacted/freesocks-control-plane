@@ -9,6 +9,7 @@
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
+import { heartbeatFromAction } from './cronHeartbeat';
 import { v } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
 import type { BackendConfig } from './lib/backends/registry';
@@ -187,6 +188,7 @@ export const markFleetStats = internalMutation({
 export const healthcheck = internalAction({
   args: {},
   handler: async (ctx): Promise<{ checked: number; healthy: number }> => {
+    await heartbeatFromAction(ctx, 'backend-healthcheck');
     const servers = await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
     let healthy = 0;
     for (const s of servers) {

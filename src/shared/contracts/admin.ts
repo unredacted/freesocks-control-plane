@@ -337,6 +337,24 @@ export const AdminStatusSummary = z.object({
     lastOkAt: z.string().datetime().nullable(),
     staleSeconds: z.number().int().nonnegative().nullable(),
   }),
+  // Per-cron liveness (W4-B4): one entry per scheduled job, from the heartbeat
+  // each cron stamps at its run start vs the job's known cadence. Additive —
+  // the default keeps a pre-deploy backend (which omits it) valid.
+  crons: z
+    .array(
+      z.object({
+        name: z.string(),
+        description: z.string(),
+        everyMs: z.number().int().positive(),
+        state: z.enum(['ok', 'stale', 'pending']),
+        lastRunAt: z.string().datetime().nullable(),
+        ageSeconds: z.number().int().nonnegative().nullable(),
+        runCount: z.number().int().nonnegative(),
+      }),
+    )
+    .default([]),
+  /** Count of scheduled jobs overdue past their cadence. Additive default 0. */
+  cronsStale: z.number().int().nonnegative().default(0),
   generatedAt: z.string().datetime(),
 });
 export type AdminStatusSummary = z.infer<typeof AdminStatusSummary>;

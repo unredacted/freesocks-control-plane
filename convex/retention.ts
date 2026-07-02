@@ -7,6 +7,7 @@
  */
 import { internalMutation } from './_generated/server';
 import { v } from 'convex/values';
+import { recordHeartbeat } from './cronHeartbeat';
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
@@ -21,6 +22,7 @@ const num = (envKey: string, fallbackDays: number): number => {
 export const sweepAuditLog = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'retention-audit');
     const cutoff = Date.now() - num('AUDIT_RETENTION_DAYS', 180) * DAY;
     const rows = await ctx.db
       .query('auditLog')
@@ -35,6 +37,7 @@ export const sweepAuditLog = internalMutation({
 export const sweepWebhookEvents = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'retention-webhooks');
     const cutoff = Date.now() - num('WEBHOOK_RETENTION_DAYS', 90) * DAY;
     const rows = await ctx.db
       .query('webhookEvents')
@@ -53,6 +56,7 @@ export const sweepWebhookEvents = internalMutation({
 export const sweepWebauthnAuthChallenges = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'retention-webauthn-auth');
     const cutoff = Date.now() - num('WEBAUTHN_CHALLENGE_RETENTION_DAYS', 1) * DAY;
     const rows = await ctx.db
       .query('webauthnAuthChallenges')
@@ -67,6 +71,7 @@ export const sweepWebauthnAuthChallenges = internalMutation({
 export const sweepWebauthnRegistrationChallenges = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'retention-webauthn-reg');
     const cutoff = Date.now() - num('WEBAUTHN_CHALLENGE_RETENTION_DAYS', 1) * DAY;
     const rows = await ctx.db
       .query('webauthnRegistrationChallenges')
@@ -81,6 +86,7 @@ export const sweepWebauthnRegistrationChallenges = internalMutation({
 export const sweepTierHistory = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'retention-tier-history');
     const cutoff = Date.now() - num('TIER_HISTORY_RETENTION_DAYS', 365) * DAY;
     const rows = await ctx.db
       .query('tierHistory')
@@ -102,6 +108,7 @@ export const sweepTierHistory = internalMutation({
 export const sweepDeletedSubscriptions = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'retention-subscriptions');
     const cutoff = Date.now() - num('SUBSCRIPTION_RETENTION_DAYS', 90) * DAY;
     const rows = await ctx.db
       .query('subscriptions')
@@ -116,6 +123,7 @@ export const sweepDeletedSubscriptions = internalMutation({
 export const sweepFreeGrants = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'retention-free-grants');
     const cutoff = Date.now() - num('FREE_GRANT_RETENTION_DAYS', 30) * DAY;
     const rows = await ctx.db
       .query('freeGrants')
@@ -137,6 +145,7 @@ export const sweepFreeGrants = internalMutation({
 export const expireStalePendingOrders = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'billing-pending-sweep');
     const cutoff = Date.now() - num('BILLING_PENDING_TTL_HOURS', 48) * HOUR;
     const page = limit ?? PAGE;
     let expired = 0;
@@ -163,6 +172,7 @@ export const expireStalePendingOrders = internalMutation({
 export const clearStaleGiftReveals = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'billing-gift-reveal-sweep');
     const cutoff = Date.now() - num('BILLING_GIFT_REVEAL_TTL_HOURS', 24) * HOUR;
     const rows = await ctx.db
       .query('billingOrders')
@@ -187,6 +197,7 @@ export const clearStaleGiftReveals = internalMutation({
 export const sweepBillingOrders = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'retention-billing-orders');
     const cutoff = Date.now() - num('BILLING_ORDER_RETENTION_DAYS', 365) * DAY;
     const page = limit ?? PAGE;
     let removed = 0;

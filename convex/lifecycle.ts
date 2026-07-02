@@ -12,6 +12,7 @@
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
+import { heartbeatFromAction } from './cronHeartbeat';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { deleteSubscriptionEverywhere } from './lib/issuance';
@@ -305,6 +306,7 @@ export const applyDisableTransition = internalMutation({
 export const runGraceSweep = internalAction({
   args: {},
   handler: async (ctx): Promise<{ toGrace: number; toDisabled: number }> => {
+    await heartbeatFromAction(ctx, 'grace-sweep');
     const now = Date.now();
 
     // active → grace: drain the exact-range page repeatedly. Each applied user
@@ -392,6 +394,7 @@ export const findTombstonedDue = internalQuery({
 export const sweepTombstones = internalAction({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }): Promise<{ removed: number }> => {
+    await heartbeatFromAction(ctx, 'tombstone-sweep');
     const due = await ctx.runQuery(internal.lifecycle.findTombstonedDue, {
       now: Date.now(),
       limit: limit ?? 100,
@@ -480,6 +483,7 @@ export const markUserDeleted = internalMutation({
 export const cleanupExpiredFree = internalAction({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }): Promise<{ removed: number }> => {
+    await heartbeatFromAction(ctx, 'cleanup-expired-free');
     // Admin-tunable (appSettings 'freetier.expiryDays', default 90); replaced the
     // FREE_TIER_EXPIRY_DAYS env var, and matches what issuance stamps on the key.
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});

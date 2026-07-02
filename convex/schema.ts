@@ -285,6 +285,19 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('by_key', ['key']),
 
+  // Per-cron liveness heartbeats (one row per scheduled job, keyed by cron name).
+  // Every target in convex/crons.ts stamps this at the START of its run, so
+  // freshness reflects that the SCHEDULER is firing the job — deliberately
+  // decoupled from whether the job's work succeeds (backend health / drift are
+  // surfaced separately). statusSummary joins these against the known cadences
+  // (cronHeartbeat.CRON_META) to flag any job that has gone stale. Fixed
+  // cardinality (~one row per cron), upserted in place, so it never grows.
+  cronHeartbeats: defineTable({
+    name: v.string(),
+    lastRunAt: v.number(),
+    runCount: v.number(),
+  }).index('by_name', ['name']),
+
   webhookEvents: defineTable({
     // `eventId` is the dedupe hash (was the string PK in SQLite). Convex PKs
     // are opaque `_id`s, so dedupe is via this indexed field.

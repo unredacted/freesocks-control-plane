@@ -24,6 +24,38 @@
       ? { label: 'Healthy', tone: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' }
       : { label: 'Stale', tone: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' };
   }
+
+  // --- Scheduled-jobs (cron) freshness -------------------------------------
+  type CronState = 'ok' | 'stale' | 'pending';
+  const cronOrder: Record<CronState, number> = { stale: 0, pending: 1, ok: 2 };
+
+  function cronTone(state: CronState) {
+    if (state === 'stale')
+      return { label: 'Stale', tone: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' };
+    if (state === 'pending') return { label: 'Pending', tone: 'bg-muted text-muted-foreground' };
+    return { label: 'OK', tone: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' };
+  }
+
+  /** Humanize a cron cadence (all jobs are 10m / 15m / 1h / 6h / daily). */
+  function fmtEvery(ms: number): string {
+    if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+    if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h`;
+    return 'daily';
+  }
+
+  /** Relative "last ran" from an age in seconds. */
+  function ago(seconds: number | null): string {
+    if (seconds == null) return 'never';
+    if (seconds < 90) return `${seconds}s ago`;
+    if (seconds < 5400) return `${Math.round(seconds / 60)}m ago`;
+    if (seconds < 129600) return `${Math.round(seconds / 3600)}h ago`;
+    return `${Math.round(seconds / 86400)}d ago`;
+  }
+
+  /** Sort attention-first: stale, then pending, then ok (stable within a group). */
+  function cronsSorted<T extends { state: CronState }>(crons: readonly T[]): T[] {
+    return [...crons].sort((a, b) => cronOrder[a.state] - cronOrder[b.state]);
+  }
 </script>
 
 {#snippet stat(label: string, value: number)}
@@ -89,6 +121,21 @@
       </a>
     {/if}
 
+    <!-- Cron liveness: a loud strip when any scheduled job is overdue past its
+         cadence (the scheduler or a job may be wedged). Detail is in the card below. -->
+    {#if s.cronsStale > 0}
+      <div
+        class="mb-6 flex items-center gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300"
+      >
+        <TriangleAlert class="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        <span>
+          {s.cronsStale}
+          {s.cronsStale === 1 ? 'scheduled job is' : 'scheduled jobs are'} overdue past their cadence
+          — the cron system or a job may be wedged. See Scheduled jobs below.
+        </span>
+      </div>
+    {/if}
+
     <div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {@render stat('Active members', s.users.active)}
       {@render stat('Expiring (grace)', s.users.grace)}
@@ -129,6 +176,46 @@
                     )} this month · v{b.fleetStats.panelVersion}
                   </span>
                 {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </CardContent>
+    </Card>
+
+    <!-- Scheduled-jobs liveness (W4-B4): per-cron heartbeat freshness vs cadence.
+         Stamped at each job's run start, so this tracks whether the scheduler is
+         firing the job — independent of the job's own success. -->
+    <Card class="mt-6">
+      <CardHeader>
+        <CardTitle class="text-lg">
+          Scheduled jobs — {s.crons.filter((c) => c.state === 'ok').length}/{s.crons.length} healthy
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {#if s.crons.length === 0}
+          <p class="text-sm text-muted-foreground">No cron heartbeats recorded yet.</p>
+        {:else}
+          <ul class="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            {#each cronsSorted(s.crons) as c (c.name)}
+              {@const t = cronTone(c.state)}
+              <li class="flex items-start gap-2 py-0.5">
+                <span class="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium {t.tone}"
+                  >{t.label}</span
+                >
+                <div class="min-w-0">
+                  <div>
+                    <code class="font-mono text-xs text-foreground">{c.name}</code>
+                    <span class="ms-1 text-xs text-muted-foreground"
+                      >every {fmtEvery(c.everyMs)}</span
+                    >
+                  </div>
+                  <div class="text-xs text-muted-foreground">
+                    {c.description} · {c.state === 'pending'
+                      ? 'not yet observed'
+                      : `ran ${ago(c.ageSeconds)}`}
+                  </div>
+                </div>
               </li>
             {/each}
           </ul>

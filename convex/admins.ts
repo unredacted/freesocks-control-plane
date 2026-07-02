@@ -7,6 +7,7 @@
  * Hono+D1 code relied on transactions for.
  */
 import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
+import { recordHeartbeat } from './cronHeartbeat';
 import type { Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
@@ -412,6 +413,7 @@ export const consumeInvite = internalMutation({
 export const sweepExpiredInvites = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'admin-invite-sweep');
     const expired = await ctx.db
       .query('adminInvites')
       .withIndex('by_expires', (q) => q.lt('expiresAt', Date.now()))

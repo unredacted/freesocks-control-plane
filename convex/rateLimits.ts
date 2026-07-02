@@ -15,6 +15,7 @@
  */
 import { internalMutation, internalQuery } from './_generated/server';
 import type { MutationCtx } from './_generated/server';
+import { recordHeartbeat } from './cronHeartbeat';
 import { ConvexError, v } from 'convex/values';
 import {
   RATE_LIMIT_DEFAULTS,
@@ -231,6 +232,7 @@ export const resetPolicy = internalMutation({
 export const sweepExpired = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'rate-limit-sweep');
     const now = Date.now();
     const expired = await ctx.db
       .query('rateLimits')

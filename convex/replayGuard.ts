@@ -14,6 +14,7 @@
  * is the PoP freshness window plus a margin; a daily cron sweeps `expiresAt`.
  */
 import { internalMutation } from './_generated/server';
+import { recordHeartbeat } from './cronHeartbeat';
 import { v } from 'convex/values';
 
 export const consumeNonce = internalMutation({
@@ -36,6 +37,7 @@ export const consumeNonce = internalMutation({
 export const sweepExpired = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
+    await recordHeartbeat(ctx, 'replay-guard-sweep');
     const now = Date.now();
     const expired = await ctx.db
       .query('replayGuard')
