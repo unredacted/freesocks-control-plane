@@ -19,6 +19,7 @@ import {
   AdminListResponse,
   AdminCredentialsResponse,
   AdminStatusSummary,
+  AdminUserBackendState,
   AppSettingsRecord,
   AuditEntry,
   BackendServerAdmin,
@@ -46,6 +47,7 @@ export const queryKeys = {
   adminTiers: ['admin', 'tiers'] as const,
   adminUsers: (q: string, status = '', tier = '', drift = false) =>
     ['admin', 'users', q, status, tier, drift] as const,
+  adminUserBackendState: (userId: string) => ['admin', 'users', userId, 'backend-state'] as const,
   adminTokens: ['admin', 'tokens'] as const,
   adminAudit: ['admin', 'audit'] as const,
   adminSettings: ['admin', 'settings'] as const,
@@ -259,6 +261,20 @@ export const adminUsersQuery = (filtersRef: () => AdminUserFilters) =>
       staleTime: 30_000,
     };
   });
+
+/**
+ * Live backend state for ONE user (the admin per-user detail expander). Lazy:
+ * only fetched while `enabled()` (a row is expanded), so the users list stays a
+ * cheap DB read and no live backend call rides on browsing.
+ */
+export const adminUserBackendStateQuery = (userId: () => string, enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminUserBackendState(userId()),
+    queryFn: () =>
+      apiClient.get(`/api/v1/admin/users/${userId()}/backend-state`, AdminUserBackendState),
+    staleTime: 15_000,
+    enabled: enabled() && !!userId(),
+  }));
 
 export const adminTokensQuery = () =>
   createQuery(() => ({

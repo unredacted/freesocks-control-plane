@@ -159,22 +159,28 @@ these still match. The provider tests assert the paths, so a drift here fails CI
 that was missing when the `PATCH /api/users/{uuid}` / `/api/hwid-devices` mismatches shipped (they
 "passed" only because the tests mocked the wrong paths too).
 
-| Op            | Method + path                                      | Notes                                                                                                                |
-| ------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| issue         | `POST /api/users`                                  | body carries `activeInternalSquads: string[]` for squad assignment                                                   |
-| get           | `GET /api/users/{uuid}`                            |                                                                                                                      |
-| update        | `PATCH /api/users`                                 | **`uuid` is in the request BODY, not the path** (the route has no path param; the DTO requires `uuid` or `username`) |
-| set status    | `POST /api/users/{uuid}/actions/{enable\|disable}` | dedicated action endpoints, not a `status` field on update                                                           |
-| reset traffic | `POST /api/users/{uuid}/actions/reset-traffic`     |                                                                                                                      |
-| delete        | `DELETE /api/users/{uuid}`                         | a 404 is treated as success (idempotent teardown)                                                                    |
-| list devices  | `GET /api/hwid/devices/{userUuid}`                 | the HWID controller is `/api/hwid`; `userUuid` is a **path** param (not `?userUuid=`)                                |
-| delete device | `POST /api/hwid/devices/delete`                    | body `{ userUuid, hwid }`                                                                                            |
+| Op            | Method + path                                           | Notes                                                                                                                |
+| ------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| issue         | `POST /api/users`                                       | body carries `activeInternalSquads: string[]` for squad assignment                                                   |
+| get           | `GET /api/users/{uuid}`                                 |                                                                                                                      |
+| update        | `PATCH /api/users`                                      | **`uuid` is in the request BODY, not the path** (the route has no path param; the DTO requires `uuid` or `username`) |
+| set status    | `POST /api/users/{uuid}/actions/{enable\|disable}`      | dedicated action endpoints, not a `status` field on update                                                           |
+| reset traffic | `POST /api/users/{uuid}/actions/reset-traffic`          |                                                                                                                      |
+| delete        | `DELETE /api/users/{uuid}`                              | a 404 is treated as success (idempotent teardown)                                                                    |
+| list devices  | `GET /api/hwid/devices/{userUuid}`                      | the HWID controller is `/api/hwid`; `userUuid` is a **path** param (not `?userUuid=`)                                |
+| delete device | `POST /api/hwid/devices/delete`                         | body `{ userUuid, hwid }`                                                                                            |
+| user usage    | `GET /api/bandwidth-stats/users/{uuid}?start&end`       | member usage trend; **aggregate only** — the per-node `series`/`topNodes` are dropped (privacy)                      |
+| fleet stats   | `GET /api/system/stats` + `GET /api/system/stats/recap` | admin dashboard (online / nodes / countries / traffic + panel `version`); cached by the healthcheck cron             |
 
 Most responses are wrapped in `{ response: ... }`; the provider's `unwrap()` tolerates both wrapped
 and bare. HWID device metadata is surfaced as `platform` / `deviceModel` / first-seen / last-seen
 (mapped from `createdAt` / `updatedAt`); the device `requestIp` and `userAgent` are deliberately
 **not** read (metadata minimization). Subscription content is fetched from the panel's public
 subscription URL, not an admin API route.
+
+**Token scopes.** The FCP panel token needs, beyond user + HWID management, the **read** scopes
+`user-usage:read`, `stats:read`, and `recap:read` for the usage/fleet observability. All the
+observability additions are read-only, so keep the token least-privilege — none of them write.
 
 ## Testing the Remnawave integration against a real panel
 

@@ -89,6 +89,33 @@ export const UserSearchQuery = z.object({
 });
 export type UserSearchQuery = z.infer<typeof UserSearchQuery>;
 
+/**
+ * Live backend state for one user (the admin per-user detail expander). `state`
+ * is null when the user has no subscription or the backend was unreachable. The
+ * live `status` here is compared against the user's LOCAL status to spot drift.
+ */
+export const AdminUserBackendState = z.object({
+  state: z
+    .object({
+      status: z.enum(['active', 'disabled', 'limited', 'expired', 'unknown']),
+      trafficLimitBytes: z.number().nullable(),
+      usedTrafficBytes: z.number(),
+      trafficLimitStrategy: z.enum(['NO_RESET', 'DAY', 'WEEK', 'MONTH']).nullable(),
+      lastTrafficResetAt: z.string().nullable(),
+      devices: z.array(
+        z.object({
+          hwid: z.string(),
+          platform: z.string().nullable(),
+          deviceModel: z.string().nullable(),
+          firstSeenAt: z.string().nullable(),
+          lastSeenAt: z.string().nullable(),
+        }),
+      ),
+    })
+    .nullable(),
+});
+export type AdminUserBackendState = z.infer<typeof AdminUserBackendState>;
+
 export const AuditEntry = z.object({
   id: z.string(),
   actorType: z.enum(['system', 'admin', 'member', 'anonymous', 'webhook']),

@@ -1432,6 +1432,29 @@ http.route({
   }),
 });
 
+// GET /api/v1/admin/users/{id}/backend-state — live backend state for ONE user
+// (status + used/limit + reset cadence + devices). A separate lazy call, NOT part
+// of the users list (which is a pure DB query and can't do backend HTTP); the CMS
+// fetches it on-demand when an admin expands a row. Surfaces LIVE backend status
+// vs FCP's local status, complementing the backend-drift badge.
+http.route({
+  pathPrefix: '/api/v1/admin/users/',
+  method: 'GET',
+  handler: guard(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:users:read'))) return ADMIN_UNAUTH();
+    const { id, op } = userIdAndOp(req);
+    if (op !== 'backend-state') return errorJson('not_found', `Unknown user route "${op}"`, 404);
+    try {
+      const state = await ctx.runAction(internal.adminApi.userBackendState, {
+        userId: id as Id<'users'>,
+      });
+      return json({ state });
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 // POST /api/v1/admin/users/{id}/{op}
 //   op ∈ disable | re-enable | reset-traffic | resync   (no body)
 //   op = grant-membership                               (body: { tierId, durationDays })

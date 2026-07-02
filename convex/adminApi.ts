@@ -673,6 +673,58 @@ export const recordUserOpAudit = internalMutation({
 });
 
 /**
+ * Live backend state for ONE user (the admin per-user detail expander): status,
+ * used/limit, reset cadence, devices. Its own action because the users LIST is a
+ * pure DB query that can't call the backend. Returns null when there's no
+ * subscription or the backend is unreachable — a convenience read, never blocking.
+ */
+export const userBackendState = internalAction({
+  args: { userId: v.id('users') },
+  handler: async (
+    ctx,
+    { userId },
+  ): Promise<{
+    status: 'active' | 'disabled' | 'limited' | 'expired' | 'unknown';
+    trafficLimitBytes: number | null;
+    usedTrafficBytes: number;
+    trafficLimitStrategy: 'NO_RESET' | 'DAY' | 'WEEK' | 'MONTH' | null;
+    lastTrafficResetAt: string | null;
+    devices: {
+      hwid: string;
+      platform: string | null;
+      deviceModel: string | null;
+      firstSeenAt: string | null;
+      lastSeenAt: string | null;
+    }[];
+  } | null> => {
+    const sub = await ctx.runQuery(internal.adminApi.activeSubForUser, { userId });
+    if (!sub) return null;
+    try {
+      const state = await ctx.runAction(internal.backends.getUser, {
+        backend: sub.backend,
+        backendUserId: sub.backendUserId,
+      });
+      return {
+        status: state.status,
+        trafficLimitBytes: state.trafficLimitBytes,
+        usedTrafficBytes: state.usedTrafficBytes,
+        trafficLimitStrategy: state.trafficLimitStrategy ?? null,
+        lastTrafficResetAt: state.lastTrafficResetAt ?? null,
+        devices: state.devices.map((d) => ({
+          hwid: d.hwid,
+          platform: d.platform ?? null,
+          deviceModel: d.deviceModel ?? null,
+          firstSeenAt: d.firstSeenAt ?? null,
+          lastSeenAt: d.lastSeenAt ?? null,
+        })),
+      };
+    } catch {
+      return null;
+    }
+  },
+});
+
+/**
  * HTTP entry for the three user ops the admin SPA exposes
  * (`disable` | `reset-traffic` | `resync`). Lives in an action because two of
  * them touch the proxy backend over HTTP. Returns `{ ok: true }` (the SPA

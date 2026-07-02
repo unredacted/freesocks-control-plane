@@ -9,9 +9,10 @@
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
   import { formatDate } from '../../lib/i18n/format';
+  import { formatBytes } from '../../lib/utils';
   import AdminListState from './AdminListState.svelte';
   import { UserAdmin } from '../../../shared/contracts/admin';
-  import { adminTiersQuery, adminUsersQuery } from '../../lib/queries';
+  import { adminTiersQuery, adminUsersQuery, adminUserBackendStateQuery } from '../../lib/queries';
   import * as Select from '@client/components/ui/select';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -94,6 +95,14 @@
   }));
   const tiers = adminTiersQuery();
   const qc = useQueryClient();
+
+  // Per-user LIVE backend state (status/usage/devices), lazily fetched only for
+  // the currently-expanded row — the users list itself stays a cheap DB read.
+  let expandedUserId = $state<string | null>(null);
+  const backendState = adminUserBackendStateQuery(
+    () => expandedUserId ?? '',
+    () => expandedUserId !== null,
+  );
 
   // Flatten the infinite-query pages into a single list (P1-16).
   let userRows = $derived(users.data?.pages.flatMap((p) => p.users) ?? []);
@@ -339,7 +348,47 @@
               <Button size="sm" variant="outline" disabled={busy} onclick={() => startGrant(u)}>
                 Grant membership
               </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onclick={() => (expandedUserId = expandedUserId === u.id ? null : u.id)}
+              >
+                {expandedUserId === u.id ? 'Hide live' : 'Live details'}
+              </Button>
             </div>
+            {#if expandedUserId === u.id}
+              <!-- Live backend state (lazy): the actual key status/usage on the panel,
+                   vs FCP's local status — a per-user complement to the drift badge. -->
+              <div class="mt-3 rounded-lg border border-border bg-muted/30 p-3 text-xs space-y-1.5">
+                {#if backendState.isPending}
+                  <Skeleton class="h-4 w-56" />
+                {:else if backendState.isError}
+                  <p class="text-muted-foreground">Couldn't load live backend state.</p>
+                {:else if backendState.data?.state}
+                  {@const s = backendState.data.state}
+                  <div>
+                    Backend status: <strong class="text-foreground">{s.status}</strong>
+                    {#if (s.status === 'active') !== (u.status === 'active')}
+                      <span class="ml-1 text-amber-600 dark:text-amber-400"
+                        >· local "{u.status}" (mismatch)</span
+                      >
+                    {/if}
+                  </div>
+                  <div class="text-muted-foreground tabular-nums">
+                    Usage: {formatBytes(s.usedTrafficBytes)} / {s.trafficLimitBytes === null
+                      ? 'unlimited'
+                      : formatBytes(s.trafficLimitBytes)}
+                  </div>
+                  <div class="text-muted-foreground">
+                    {s.devices.length} device{s.devices.length === 1 ? '' : 's'} connected
+                  </div>
+                {:else}
+                  <p class="text-muted-foreground">
+                    No live data (no subscription, or the backend is unreachable).
+                  </p>
+                {/if}
+              </div>
+            {/if}
           </CardContent>
         </Card>
       {/each}
