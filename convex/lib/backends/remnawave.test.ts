@@ -161,7 +161,15 @@ describe('remnawaveGetUser', () => {
           ? jsonRes({
               response: {
                 total: 1,
-                devices: [{ hwid: 'd1', firstSeenAt: '2026-01-01T00:00:00.000Z' }],
+                devices: [
+                  {
+                    hwid: 'd1',
+                    platform: 'ios',
+                    deviceModel: 'iPhone',
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    updatedAt: '2026-01-02T00:00:00.000Z',
+                  },
+                ],
               },
             })
           : jsonRes({ error: 'nope' }, devicesStatus);
@@ -186,7 +194,16 @@ describe('remnawaveGetUser', () => {
     const state = await remnawaveGetUser(cfg, UUID);
     expect(state.trafficLimitBytes).toBe(500);
     expect(state.usedTrafficBytes).toBe(250);
-    expect(state.devices).toEqual([{ hwid: 'd1', firstSeenAt: '2026-01-01T00:00:00.000Z' }]);
+    // createdAt -> firstSeenAt, updatedAt -> lastSeenAt; platform/model pass through.
+    expect(state.devices).toEqual([
+      {
+        hwid: 'd1',
+        platform: 'ios',
+        deviceModel: 'iPhone',
+        firstSeenAt: '2026-01-01T00:00:00.000Z',
+        lastSeenAt: '2026-01-02T00:00:00.000Z',
+      },
+    ]);
   });
 
   test('degrades to no devices when the hwid endpoint fails', async () => {

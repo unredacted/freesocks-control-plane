@@ -44,10 +44,16 @@ const RemnawaveUser = z.object({
 });
 type RemnawaveUser = z.infer<typeof RemnawaveUser>;
 
+// The device object Remnawave returns. Extra fields (userId/osVersion/
+// userAgent/requestIp) are stripped by Zod — we deliberately do NOT surface the
+// IP or user-agent (metadata minimization). Dates are kept as plain strings
+// (display-only), so a panel date-format change can't fail-parse the whole list.
 const HwidDevice = z.object({
   hwid: z.string(),
-  firstSeenAt: z.string().datetime().nullable().optional(),
-  lastSeenAt: z.string().datetime().nullable().optional(),
+  platform: z.string().nullish(),
+  deviceModel: z.string().nullish(),
+  createdAt: z.string().nullish(),
+  updatedAt: z.string().nullish(),
 });
 const HwidDevicesResponse = z.object({ devices: z.array(HwidDevice).default([]) });
 
@@ -216,8 +222,10 @@ async function listDevices(cfg: RemnawaveConfig, userUuid: string): Promise<Back
     });
     return result.devices.map((d) => ({
       hwid: d.hwid,
-      firstSeenAt: d.firstSeenAt ?? undefined,
-      lastSeenAt: d.lastSeenAt ?? undefined,
+      platform: d.platform ?? undefined,
+      deviceModel: d.deviceModel ?? undefined,
+      firstSeenAt: d.createdAt ?? undefined,
+      lastSeenAt: d.updatedAt ?? undefined,
     }));
   } catch {
     // Some panel versions don't expose this endpoint; degrade to "no devices".

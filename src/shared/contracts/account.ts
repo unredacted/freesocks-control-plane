@@ -56,8 +56,13 @@ export const AccountResponse = z.object({
       devices: z.array(
         z.object({
           hwid: z.string(),
-          firstSeenAt: z.string().datetime().optional(),
-          lastSeenAt: z.string().datetime().optional(),
+          // Display-only device metadata (never IP or user-agent). Dates are
+          // plain strings, not strict .datetime(), so a backend date-format
+          // change can't reject the whole account response.
+          platform: z.string().optional(),
+          deviceModel: z.string().optional(),
+          firstSeenAt: z.string().optional(),
+          lastSeenAt: z.string().optional(),
         }),
       ),
     })

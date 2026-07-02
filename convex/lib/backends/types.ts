@@ -58,6 +58,10 @@ export interface IssuedUser {
 
 export interface BackendDevice {
   hwid: string;
+  // Display-only device metadata (never the IP or user-agent). firstSeenAt /
+  // lastSeenAt map from the backend's created/updated timestamps.
+  platform?: string;
+  deviceModel?: string;
   firstSeenAt?: string;
   lastSeenAt?: string;
 }

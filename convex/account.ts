@@ -87,7 +87,13 @@ interface AccountView {
     trafficLimitBytes: number | null;
     trafficUsedBytes: number;
     backend: Backend;
-    devices: { hwid: string; firstSeenAt?: string; lastSeenAt?: string }[];
+    devices: {
+      hwid: string;
+      platform?: string;
+      deviceModel?: string;
+      firstSeenAt?: string;
+      lastSeenAt?: string;
+    }[];
   } | null;
 }
 
@@ -120,7 +126,13 @@ export const getAccountView = internalAction({
         expireAt: null as string | null,
         trafficLimitBytes: trafficLimitFromTier,
         usedTrafficBytes: 0,
-        devices: [] as { hwid: string; firstSeenAt?: string | null; lastSeenAt?: string | null }[],
+        devices: [] as {
+          hwid: string;
+          platform?: string | null;
+          deviceModel?: string | null;
+          firstSeenAt?: string | null;
+          lastSeenAt?: string | null;
+        }[],
       };
       try {
         const state = await ctx.runAction(internal.backends.getUser, {
@@ -149,6 +161,8 @@ export const getAccountView = internalAction({
         backend: sub.backend,
         devices: live.devices.map((d) => ({
           hwid: d.hwid,
+          platform: d.platform ?? undefined,
+          deviceModel: d.deviceModel ?? undefined,
           firstSeenAt: d.firstSeenAt ?? undefined,
           lastSeenAt: d.lastSeenAt ?? undefined,
         })),

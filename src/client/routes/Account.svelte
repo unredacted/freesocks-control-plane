@@ -659,10 +659,20 @@
             </div>
             <ul class="rounded-lg border border-border divide-y divide-border bg-card">
               {#each data.subscription.devices as d (d.hwid)}
+                {@const label = [d.platform, d.deviceModel].filter(Boolean).join(' · ')}
                 <li class="flex items-center justify-between gap-3 px-4 py-3">
                   <div class="flex items-center gap-3 min-w-0">
                     <Smartphone class="size-4 text-muted-foreground shrink-0" />
-                    <code class="font-mono text-xs truncate">{d.hwid.slice(0, 24)}…</code>
+                    <div class="min-w-0">
+                      {#if label}
+                        <p class="text-sm font-medium truncate">{label}</p>
+                        <code class="font-mono text-xs text-muted-foreground truncate block">
+                          {d.hwid.slice(0, 24)}…
+                        </code>
+                      {:else}
+                        <code class="font-mono text-xs truncate block">{d.hwid.slice(0, 24)}…</code>
+                      {/if}
+                    </div>
                   </div>
                   <div class="flex items-center gap-3 shrink-0">
                     <span class="text-muted-foreground text-xs tabular-nums">
