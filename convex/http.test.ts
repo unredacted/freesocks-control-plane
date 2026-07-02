@@ -269,6 +269,30 @@ describe('route-level scope enforcement', () => {
   });
 });
 
+describe('account-id rotate throttle (policy account.rotate, max 5)', () => {
+  test('the 6th rotate in the window is a 429 rate_limit.exceeded', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    const rotate = () =>
+      t.fetch('/api/v1/account/account-id/rotate', {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: '{}',
+      });
+    // The first 5 pass the gate (they may 200 or surface a downstream error, but
+    // must NOT be a 429); the 6th trips the per-user policy.
+    for (let i = 0; i < 5; i++) {
+      const r = await rotate();
+      expect(r.status).not.toBe(429);
+    }
+    const blocked = await rotate();
+    expect(blocked.status).toBe(429);
+    const json = (await blocked.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('rate_limit.exceeded');
+  });
+});
+
 describe('/api/v1/me cookie resolution', () => {
   test('a valid member cookie authenticates; garbage does not', async () => {
     const t = convexTest(schema, modules);

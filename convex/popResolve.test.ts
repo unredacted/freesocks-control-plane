@@ -2,9 +2,11 @@
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
+import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { resolveMember } from './lib/http';
+import { resolveMember, resolveAdmin } from './lib/http';
 import { signValue } from './lib/cookies';
+import { sha256Hex } from './lib/crypto';
 import { bytesToB64Url } from '../src/shared/crypto/envelope';
 import {
   buildPopMessage,
@@ -219,5 +221,108 @@ describe('resolveMember + PoP (Phase 2 verify path)', () => {
     const req = await buildReq({ sid });
 
     expect(await t.action(async (ctx) => resolveMember(ctx, req))).toBeNull();
+  });
+});
+
+// --- token scope enforcement (P1-1) at the resolve* layer -------------------
+
+/** Insert an fsv1_ token row directly and return its plaintext. */
+async function insertToken(
+  t: ReturnType<typeof convexTest>,
+  opts: { scopes: string[]; subjectType: 'service' | 'user'; subjectUserId?: Id<'users'> },
+): Promise<string> {
+  const plaintext = `fsv1_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  const tokenHash = await sha256Hex(plaintext);
+  await t.run(async (ctx) => {
+    const admin = await ctx.db.insert('adminUsers', {
+      username: `tok-${plaintext.slice(-8)}`,
+      displayName: 'T',
+      isActive: true,
+      updatedAt: Date.now(),
+    });
+    await ctx.db.insert('apiTokens', {
+      name: 'test',
+      tokenHash,
+      tokenPrefix: plaintext.slice(0, 12),
+      createdByAdminId: admin,
+      scopes: opts.scopes,
+      subjectType: opts.subjectType,
+      subjectUserId: opts.subjectUserId,
+      updatedAt: Date.now(),
+    });
+  });
+  return plaintext;
+}
+
+const tokenReq = (plaintext: string) =>
+  new Request(`http://localhost${PATH}`, {
+    headers: { authorization: `Bearer ${plaintext}` },
+  });
+
+describe('token scope enforcement (resolveMember / resolveAdmin)', () => {
+  test('a user token lacking the required scope resolves to null; carrying it succeeds', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedUser(t);
+    const lacking = await insertToken(t, {
+      scopes: ['subscription:write'],
+      subjectType: 'user',
+      subjectUserId: userId,
+    });
+    const carrying = await insertToken(t, {
+      scopes: ['account:read'],
+      subjectType: 'user',
+      subjectUserId: userId,
+    });
+
+    expect(
+      await t.action(async (ctx) => resolveMember(ctx, tokenReq(lacking), 'account:read')),
+    ).toBeNull();
+    const ok = await t.action(async (ctx) =>
+      resolveMember(ctx, tokenReq(carrying), 'account:read'),
+    );
+    expect(ok?.userId).toBe(userId);
+    expect(ok?.source).toBe('token');
+  });
+
+  test('an admin token with only a read scope is rejected on a write-scoped route', async () => {
+    const t = convexTest(schema, modules);
+    const readOnly = await insertToken(t, {
+      scopes: ['admin:tiers:read'],
+      subjectType: 'service',
+    });
+    const writer = await insertToken(t, {
+      scopes: ['admin:tiers:write'],
+      subjectType: 'service',
+    });
+
+    expect(
+      await t.action(async (ctx) => resolveAdmin(ctx, tokenReq(readOnly), 'admin:tiers:write')),
+    ).toBeNull();
+    const ok = await t.action(async (ctx) =>
+      resolveAdmin(ctx, tokenReq(writer), 'admin:tiers:write'),
+    );
+    expect(ok?.tokenScopes).toEqual(['admin:tiers:write']);
+  });
+});
+
+// --- account.rotate rate-limit policy (max: 5 / window) ---------------------
+
+describe("rateLimits.enforce policy 'account.rotate'", () => {
+  test('5 calls in the window are allowed, the 6th is refused with a retryAfterMs', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedUser(t);
+    const call = () =>
+      t.mutation(internal.rateLimits.enforce, {
+        policyKey: 'account.rotate',
+        subject: userId,
+      });
+
+    for (let i = 0; i < 5; i++) {
+      const r = await call();
+      expect(r.allowed).toBe(true);
+    }
+    const sixth = await call();
+    expect(sixth.allowed).toBe(false);
+    expect(sixth.retryAfterMs).toBeGreaterThan(0);
   });
 });
