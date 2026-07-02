@@ -1,0 +1,98 @@
+# Ephemeral Remnawave panel for FCP's provider integration test (Phase 5).
+#
+# NOT for production and NOT part of the FCP stack — a throwaway panel that a
+# real end-to-end test drives FCP's Remnawave provider against, so a contract
+# drift (endpoint path / response shape / version bump) fails a test instead of
+# silently shipping. Pinned to the latest Remnawave release (2.8.0) + Postgres 18.
+#
+# Fresh state every `up` (no persistent DB volume) so the bootstrap can always
+# register the first admin. Bring the whole thing up + test + tear down with:
+#   bun run test:integration:remnawave
+# or manually:
+#   docker compose -f docker-compose.remnawave-test.yml up -d
+#   bun scripts/remnawave-test-bootstrap.mjs        # prints REMNAWAVE_TEST_URL/TOKEN
+#   docker compose -f docker-compose.remnawave-test.yml down -v
+name: rw-test
+
+services:
+  rw-test-backend:
+    image: remnawave/backend:2.8.0
+    container_name: rw-test-backend
+    hostname: rw-test-backend
+    restart: 'no'
+    env_file:
+      - docker/remnawave-test/.env
+    volumes:
+      - valkey-socket:/var/run/valkey
+    # No host ports: the API is reached only through rw-test-proxy (which injects
+    # the X-Forwarded-* headers Remnawave's proxy guard requires).
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -f http://localhost:3001/health || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    depends_on:
+      rw-test-db:
+        condition: service_healthy
+      rw-test-redis:
+        condition: service_healthy
+
+  # TLS-terminating-style reverse proxy (mirrors beta/prod: FCP -> Caddy -> panel).
+  # Injects X-Forwarded-Proto: https + X-Forwarded-For so the panel's ProxyCheck
+  # middleware accepts requests; FCP's provider hits this over plain localhost HTTP.
+  rw-test-proxy:
+    image: caddy:2-alpine
+    container_name: rw-test-proxy
+    hostname: rw-test-proxy
+    restart: 'no'
+    volumes:
+      - ./docker/remnawave-test/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      rw-test-backend:
+        condition: service_started
+
+  rw-test-db:
+    image: postgres:18.4
+    container_name: rw-test-db
+    hostname: rw-test-db
+    shm_size: 512mb
+    restart: 'no'
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+      - TZ=UTC # Remnawave requires the DB timezone to be UTC.
+    # No persistent volume: ephemeral, so every `up` is a clean first-admin DB.
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d postgres']
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  rw-test-redis:
+    image: valkey/valkey:9-alpine
+    container_name: rw-test-redis
+    hostname: rw-test-redis
+    restart: 'no'
+    volumes:
+      - valkey-socket:/var/run/valkey
+    command: >
+      valkey-server
+      --save ""
+      --appendonly no
+      --maxmemory-policy noeviction
+      --loglevel warning
+      --unixsocket /var/run/valkey/valkey.sock
+      --unixsocketperm 777
+      --port 0
+    healthcheck:
+      test: ['CMD', 'valkey-cli', '-s', '/var/run/valkey/valkey.sock', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  valkey-socket:

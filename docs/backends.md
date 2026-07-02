@@ -176,6 +176,41 @@ and bare. HWID device metadata is surfaced as `platform` / `deviceModel` / first
 **not** read (metadata minimization). Subscription content is fetched from the panel's public
 subscription URL, not an admin API route.
 
+## Testing the Remnawave integration against a real panel
+
+The fast suite (`bun run test`) mocks `fetch`, so it can't catch a wrong endpoint path
+or a response-shape drift — it only proves the code matches _our own_ mock. The
+**integration test** closes that gap by driving the real provider (`remnawave.ts`)
+against a **live Remnawave panel**:
+
+```
+bun run test:integration:remnawave     # needs Docker
+```
+
+That one command (`scripts/remnawave-integration.sh`) stands up an ephemeral panel
+(`docker-compose.remnawave-test.yml`, pinned to the latest Remnawave release + Postgres 18),
+bootstraps an admin + mints an API token (`scripts/remnawave-test-bootstrap.mjs`), runs
+`convex/lib/backends/remnawave.integration.test.ts` (the full user lifecycle: issue → get →
+update → enable/disable → reset-traffic → delete), then tears the panel down. It's excluded
+from the fast suite (`vitest.integration.config.ts`; gated on `REMNAWAVE_TEST_URL` +
+`REMNAWAVE_TEST_TOKEN`), so it never blocks CI unless explicitly run.
+
+Two Remnawave quirks the harness handles (both bit us / would bite a naive caller):
+
+- **Proxy guard.** The panel's `ProxyCheckMiddleware` rejects any request without
+  `X-Forwarded-Proto: https` + `X-Forwarded-For`. A Caddy sidecar injects them —
+  mirroring the beta/prod topology (FCP → reverse proxy → panel), so the provider is
+  tested **unmodified**. In production the same headers come from the real TLS proxy.
+- **Controller names ≠ OpenAPI resource labels.** The HWID controller is `/api/hwid`
+  (not `hwid-user-devices`) and the API-tokens controller is `/api/tokens` (not
+  `api-tokens`). Trust the NestJS `@Controller()` string, not the `resource` label.
+- **Dashboard vs API auth.** Minting a token uses an admin JWT + an
+  `X-Remnawave-Client-Type: browser` header; FCP's own runtime token is a ROLE.API
+  token that skips that check.
+
+When adding a new backend read/write (§"Adding a backend type"), extend the integration
+test so the real contract stays pinned by an executable check, not just a comment.
+
 ## Sensitive data
 
 Backends need credentials that must never leak:

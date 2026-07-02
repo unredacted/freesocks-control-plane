@@ -1,0 +1,17 @@
+# Minimal reverse proxy in front of the test Remnawave panel. Remnawave's
+# ProxyCheckMiddleware requires requests to arrive with X-Forwarded-Proto: https
+# and X-Forwarded-For (i.e. through a TLS-terminating reverse proxy) — exactly the
+# beta/prod topology (FCP -> Caddy -> Remnawave). This injects those headers so
+# FCP's provider can hit the panel over plain localhost HTTP, UNMODIFIED, and the
+# test faithfully mirrors how FCP reaches a real panel.
+{
+	admin off
+	auto_https off
+}
+
+:3000 {
+	reverse_proxy rw-test-backend:3000 {
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-For {remote_host}
+	}
+}
