@@ -97,6 +97,18 @@ crons.daily(
   internal.retention.sweepBillingOrders,
   {},
 );
+crons.daily(
+  'retention-webauthn-auth',
+  { hourUTC: 4, minuteUTC: 30 },
+  internal.retention.sweepWebauthnAuthChallenges,
+  {},
+);
+crons.daily(
+  'retention-webauthn-reg',
+  { hourUTC: 4, minuteUTC: 35 },
+  internal.retention.sweepWebauthnRegistrationChallenges,
+  {},
+);
 
 // Expire abandoned membership checkouts (pending/confirming with no terminal
 // webhook past the TTL). Frequent: abandoned checkouts are common, and an

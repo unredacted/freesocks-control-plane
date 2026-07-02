@@ -234,7 +234,9 @@ export default defineSchema({
     challenge: v.string(),
     expiresAt: v.number(),
     consumedAt: v.optional(v.number()),
-  }).index('by_admin_expires', ['adminUserId', 'expiresAt']),
+  })
+    .index('by_admin_expires', ['adminUserId', 'expiresAt'])
+    .index('by_expires', ['expiresAt']),
 
   // Single-use, short-lived admin INVITE tokens (multi-admin onboarding). An
   // existing admin mints one for a pre-created (credential-less) adminUsers row;
@@ -285,6 +287,11 @@ export default defineSchema({
     source: v.string(),
     payload: v.string(),
     processedAt: v.optional(v.number()),
+    // Dedupe-claim lifecycle: 'pending' = claimed, grant not yet confirmed;
+    // 'processed' = grant applied exactly once (terminal — replays no-op);
+    // 'failed' = grant threw, safe to re-apply on the sender's retry. Absent
+    // (legacy rows) is treated as terminal so historical events never re-grant.
+    status: v.optional(v.union(v.literal('pending'), v.literal('processed'), v.literal('failed'))),
   })
     .index('by_event_id', ['eventId'])
     .index('by_source', ['source']),

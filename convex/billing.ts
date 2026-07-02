@@ -488,42 +488,53 @@ export const ingestEvent = internalAction({
     );
     if (!verified.ok) throw new Error(`webhook verify failed: ${verified.reason}`);
 
-    const dedupe = await ctx.runMutation(internal.webhooks.recordEvent, {
+    // Claim the dedupe id: a `processed` replay never reapplies, but a claim
+    // whose grant threw stays retryable (see webhooks.claimEvent). applyEvent's
+    // own `status === 'paid'` guard keeps a retry-after-commit exactly-once.
+    const claim = await ctx.runMutation(internal.webhooks.claimEvent, {
       eventId: verified.dedupeId,
       source: `billing.${a.processor}`,
       payload: JSON.stringify(verified.summary),
     });
-    if (dedupe.duplicate) return { ok: true, duplicate: true, applied: false };
+    if (!claim.proceed) return { ok: true, duplicate: true, applied: false };
 
-    // Gift order being paid: pre-generate the shareable codes here (CSPRNG lives
-    // in the action) so applyEvent can insert them hash-only + stash the plaintext
-    // reveal atomically with the single-grant status flip.
-    let giftCodes: { plaintext: string; hash: string; prefix: string }[] | undefined;
-    if (verified.status === 'paid' && verified.orderRef) {
-      const plan = await ctx.runQuery(internal.billing.orderMintPlan, {
-        orderRef: verified.orderRef,
-      });
-      if (plan && plan.kind === 'gift' && !plan.alreadyPaid) {
-        giftCodes = [];
-        for (let i = 0; i < plan.quantity; i++) {
-          const plaintext = generateMembershipCode();
-          giftCodes.push({
-            plaintext,
-            hash: await sha256Hex(plaintext),
-            prefix: membershipCodePrefix(plaintext),
-          });
+    try {
+      // Gift order being paid: pre-generate the shareable codes here (CSPRNG lives
+      // in the action) so applyEvent can insert them hash-only + stash the plaintext
+      // reveal atomically with the single-grant status flip.
+      let giftCodes: { plaintext: string; hash: string; prefix: string }[] | undefined;
+      if (verified.status === 'paid' && verified.orderRef) {
+        const plan = await ctx.runQuery(internal.billing.orderMintPlan, {
+          orderRef: verified.orderRef,
+        });
+        if (plan && plan.kind === 'gift' && !plan.alreadyPaid) {
+          giftCodes = [];
+          for (let i = 0; i < plan.quantity; i++) {
+            const plaintext = generateMembershipCode();
+            giftCodes.push({
+              plaintext,
+              hash: await sha256Hex(plaintext),
+              prefix: membershipCodePrefix(plaintext),
+            });
+          }
         }
       }
-    }
 
-    const res = await ctx.runMutation(internal.billing.applyEvent, {
-      processor: a.processor,
-      orderRef: verified.orderRef ?? undefined,
-      status: verified.status,
-      processorRef: verified.processorRef,
-      giftCodes,
-    });
-    return { ok: true, applied: res.applied };
+      const res = await ctx.runMutation(internal.billing.applyEvent, {
+        processor: a.processor,
+        orderRef: verified.orderRef ?? undefined,
+        status: verified.status,
+        processorRef: verified.processorRef,
+        giftCodes,
+      });
+      await ctx.runMutation(internal.webhooks.markEventProcessed, {
+        eventId: verified.dedupeId,
+      });
+      return { ok: true, applied: res.applied };
+    } catch (err) {
+      await ctx.runMutation(internal.webhooks.markEventFailed, { eventId: verified.dedupeId });
+      throw err;
+    }
   },
 });
 

@@ -45,6 +45,38 @@ export const sweepWebhookEvents = internalMutation({
   },
 });
 
+/**
+ * Passkey assertion challenges: minutes-long TTLs, but the rows were insert-only
+ * (consumption is a patch) and grew without bound. Delete anything expired at
+ * least a day ago — consumed or not — via the by_expires index.
+ */
+export const sweepWebauthnAuthChallenges = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const cutoff = Date.now() - num('WEBAUTHN_CHALLENGE_RETENTION_DAYS', 1) * DAY;
+    const rows = await ctx.db
+      .query('webauthnAuthChallenges')
+      .withIndex('by_expires', (q) => q.lt('expiresAt', cutoff))
+      .take(limit ?? PAGE);
+    for (const r of rows) await ctx.db.delete(r._id);
+    return { removed: rows.length };
+  },
+});
+
+/** Passkey registration challenges: same shape as the assertion sweep above. */
+export const sweepWebauthnRegistrationChallenges = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const cutoff = Date.now() - num('WEBAUTHN_CHALLENGE_RETENTION_DAYS', 1) * DAY;
+    const rows = await ctx.db
+      .query('webauthnRegistrationChallenges')
+      .withIndex('by_expires', (q) => q.lt('expiresAt', cutoff))
+      .take(limit ?? PAGE);
+    for (const r of rows) await ctx.db.delete(r._id);
+    return { removed: rows.length };
+  },
+});
+
 /** Tier-change history: keep ~365 days. */
 export const sweepTierHistory = internalMutation({
   args: { limit: v.optional(v.number()) },

@@ -573,6 +573,18 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.rotate',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson(
+        'rate_limit.exceeded',
+        'Too many rotations. Please wait and try again.',
+        429,
+        { retryAfterMs: rl.retryAfterMs },
+      );
+    }
     const result = await ctx.runAction(internal.auth.rotateAccountId, {
       userId: member.userId,
       requestId: newRequestId(),

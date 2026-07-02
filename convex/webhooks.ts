@@ -51,52 +51,104 @@ export const ingest = internalAction({
     if (!eventId || !accountId || !tierSlug)
       throw new Error('eventId, accountId, tierSlug required');
 
-    // Dedupe first: a replayed eventId never reapplies. Persist a REDACTED
-    // payload: the raw body carries the account-number plaintext, which must
-    // never be stored; keep only the 4-digit prefix for tracing.
+    // Claim the eventId first: a `processed` replay never reapplies, but a
+    // `failed` (or crashed-mid-flight `pending`) claim stays retryable so a
+    // grant that threw isn't silently dropped by the sender's retry. Persist a
+    // REDACTED payload: the raw body carries the account-number plaintext,
+    // which must never be stored; keep only the 4-digit prefix for tracing.
     const safePayload = JSON.stringify({
       eventId,
       accountIdPrefix: normalizeAccountId(accountId).slice(0, 4),
       tierSlug,
       expiresAtMs: expiresAtMs ?? null,
     });
-    const dedupe = await ctx.runMutation(internal.webhooks.recordEvent, {
+    const claim = await ctx.runMutation(internal.webhooks.claimEvent, {
       eventId,
       source: 'billing',
       payload: safePayload,
     });
-    if (dedupe.duplicate) return { ok: true, duplicate: true, applied: false };
+    if (!claim.proceed) return { ok: true, duplicate: true, applied: false };
 
-    // Map account number → user (status-blind so a lapsed account can renew).
-    const accountHash = await hashAccountId(accountId);
-    const user = await ctx.runQuery(internal.users.byAccountIdHashInternal, {
-      accountIdHash: accountHash,
-    });
-    if (!user) return { ok: true, applied: false, reason: 'unknown_user' };
+    try {
+      // Map account number → user (status-blind so a lapsed account can renew).
+      const accountHash = await hashAccountId(accountId);
+      const user = await ctx.runQuery(internal.users.byAccountIdHashInternal, {
+        accountIdHash: accountHash,
+      });
+      // Unknown user/tier is a permanent ACK (the sender must stop retrying),
+      // so mark processed — only an exception below leaves the claim retryable.
+      if (!user) {
+        await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId });
+        return { ok: true, applied: false, reason: 'unknown_user' };
+      }
 
-    const tier = await ctx.runQuery(internal.tiers.getBySlug, { slug: tierSlug });
-    if (!tier) return { ok: true, applied: false, reason: 'unknown_tier' };
+      const tier = await ctx.runQuery(internal.tiers.getBySlug, { slug: tierSlug });
+      if (!tier) {
+        await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId });
+        return { ok: true, applied: false, reason: 'unknown_tier' };
+      }
 
-    await ctx.runMutation(internal.lifecycle.setMembership, {
-      userId: user._id,
-      tierId: tier._id,
-      expiresAtMs: expiresAtMs ?? null,
-      reason: 'billing.webhook',
-      triggeredBy: 'webhook',
-    });
-    return { ok: true, applied: true };
+      await ctx.runMutation(internal.lifecycle.setMembership, {
+        userId: user._id,
+        tierId: tier._id,
+        expiresAtMs: expiresAtMs ?? null,
+        reason: 'billing.webhook',
+        triggeredBy: 'webhook',
+      });
+      await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId });
+      return { ok: true, applied: true };
+    } catch (err) {
+      await ctx.runMutation(internal.webhooks.markEventFailed, { eventId });
+      throw err;
+    }
   },
 });
 
-export const recordEvent = internalMutation({
+/**
+ * Serializable dedupe claim shared by every webhook ingest path. Outcomes:
+ * no row → insert a 'pending' claim and proceed; 'processed' (or a legacy row
+ * with no status — written by the pre-claim code only for completed ingests)
+ * → terminal duplicate; 'pending'/'failed' → re-claim and proceed, so a grant
+ * that crashed or threw is re-applied by the sender's retry instead of lost.
+ * Serializable OCC guarantees one winner when two claims race on the insert.
+ */
+export const claimEvent = internalMutation({
   args: { eventId: v.string(), source: v.string(), payload: v.string() },
   handler: async (ctx, { eventId, source, payload }) => {
     const existing = await ctx.db
       .query('webhookEvents')
       .withIndex('by_event_id', (q) => q.eq('eventId', eventId))
       .unique();
-    if (existing) return { duplicate: true as const };
-    await ctx.db.insert('webhookEvents', { eventId, source, payload, processedAt: Date.now() });
-    return { duplicate: false as const };
+    if (!existing) {
+      await ctx.db.insert('webhookEvents', { eventId, source, payload, status: 'pending' });
+      return { proceed: true as const, retry: false };
+    }
+    if (existing.status === 'pending' || existing.status === 'failed') {
+      await ctx.db.patch(existing._id, { status: 'pending' });
+      return { proceed: true as const, retry: true };
+    }
+    return { proceed: false as const };
+  },
+});
+
+export const markEventProcessed = internalMutation({
+  args: { eventId: v.string() },
+  handler: async (ctx, { eventId }) => {
+    const row = await ctx.db
+      .query('webhookEvents')
+      .withIndex('by_event_id', (q) => q.eq('eventId', eventId))
+      .unique();
+    if (row) await ctx.db.patch(row._id, { status: 'processed', processedAt: Date.now() });
+  },
+});
+
+export const markEventFailed = internalMutation({
+  args: { eventId: v.string() },
+  handler: async (ctx, { eventId }) => {
+    const row = await ctx.db
+      .query('webhookEvents')
+      .withIndex('by_event_id', (q) => q.eq('eventId', eventId))
+      .unique();
+    if (row) await ctx.db.patch(row._id, { status: 'failed' });
   },
 });

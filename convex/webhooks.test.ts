@@ -145,6 +145,103 @@ describe('webhooks.ingest', () => {
     const res = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
     expect(res).toEqual({ ok: true, applied: false, reason: 'unknown_tier' });
   });
+
+  // H-1: the dedupe row is a CLAIM, not a receipt. A grant that throws must
+  // leave the event retryable — the old code committed the dedupe row first,
+  // so the portal's retry was swallowed as duplicate and the paid grant lost.
+  test('a failed grant leaves the event retryable; the retry applies exactly once', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, accountId, memberTierId } = await seedUserAndTiers(t);
+    const body = JSON.stringify({
+      eventId: 'evt-retry',
+      accountId,
+      tierSlug: 'member',
+      expiresAtMs: Date.now() + 30 * 86_400_000,
+    });
+    const signature = await hmacSha256Hex(SECRET, body);
+
+    // Force a throw INSIDE the grant path (after the claim): hashAccountId
+    // requires the pepper, so unsetting it fails the user lookup step.
+    vi.stubEnv('ACCOUNT_ID_PEPPER', '');
+    await expect(t.action(internal.webhooks.ingest, { rawBody: body, signature })).rejects.toThrow(
+      /ACCOUNT_ID_PEPPER/,
+    );
+    await t.run(async (ctx) => {
+      const ev = await ctx.db
+        .query('webhookEvents')
+        .withIndex('by_event_id', (q) => q.eq('eventId', 'evt-retry'))
+        .unique();
+      expect(ev?.status).toBe('failed');
+      expect(ev?.processedAt).toBeUndefined();
+    });
+
+    // The sender retries the same eventId: the failed claim re-opens and the
+    // grant applies.
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+    const retry = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
+    expect(retry).toEqual({ ok: true, applied: true });
+    const expiryAfterRetry = await t.run(async (ctx) => {
+      const ev = await ctx.db
+        .query('webhookEvents')
+        .withIndex('by_event_id', (q) => q.eq('eventId', 'evt-retry'))
+        .unique();
+      expect(ev?.status).toBe('processed');
+      expect(ev?.processedAt).toBeGreaterThan(0);
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(memberTierId);
+      return user?.membershipExpiresAt;
+    });
+
+    // A third delivery is now a terminal duplicate — nothing re-applies.
+    const third = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
+    expect(third).toEqual({ ok: true, duplicate: true, applied: false });
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      expect(user?.membershipExpiresAt).toBe(expiryAfterRetry);
+    });
+  });
+
+  // Legacy rows written before the status field existed have status:undefined
+  // (+ processedAt). They must be treated as terminal, never re-granted.
+  test('a legacy status-less event row is a terminal duplicate', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, accountId, freeTierId } = await seedUserAndTiers(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('webhookEvents', {
+        eventId: 'evt-legacy',
+        source: 'billing',
+        payload: '{}',
+        processedAt: Date.now(),
+      });
+    });
+    const body = JSON.stringify({ eventId: 'evt-legacy', accountId, tierSlug: 'member' });
+    const signature = await hmacSha256Hex(SECRET, body);
+    const res = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
+    expect(res).toEqual({ ok: true, duplicate: true, applied: false });
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(freeTierId); // no re-grant
+    });
+  });
+
+  test('unknown user/tier ACKs are marked processed (the sender must stop retrying)', async () => {
+    const t = convexTest(schema, modules);
+    await seedUserAndTiers(t);
+    const body = JSON.stringify({
+      eventId: 'evt-ack-processed',
+      accountId: '99998888777766665555444433332222',
+      tierSlug: 'member',
+    });
+    const signature = await hmacSha256Hex(SECRET, body);
+    await t.action(internal.webhooks.ingest, { rawBody: body, signature });
+    await t.run(async (ctx) => {
+      const ev = await ctx.db
+        .query('webhookEvents')
+        .withIndex('by_event_id', (q) => q.eq('eventId', 'evt-ack-processed'))
+        .unique();
+      expect(ev?.status).toBe('processed');
+    });
+  });
 });
 
 describe('webhooks.ingest config gate (pass 2)', () => {

@@ -310,6 +310,97 @@ describe('billing.ingestEvent (NOWPayments)', () => {
       async (ctx) => (await ctx.db.get(userId))?.membershipExpiresAt,
     );
     expect(expiryAfterSecond).toBe(expiryAfterFirst); // granted exactly once
+    await t.run(async (ctx) => {
+      const ev = await ctx.db
+        .query('webhookEvents')
+        .withIndex('by_source', (q) => q.eq('source', 'billing.nowpayments'))
+        .unique();
+      expect(ev?.status).toBe('processed');
+    });
+  });
+
+  // H-1: a grant that throws AFTER the dedupe claim must stay retryable — the
+  // old code committed the dedupe row first, so the processor's IPN retry was
+  // swallowed as duplicate and the paid membership silently lost.
+  test('an applyEvent throw leaves the IPN retryable; the retry grants exactly once', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    const orderId = await insertPendingOrder(t, userId, memberTierId, 'ref-retry', 91);
+    // Force the grant to throw mid-mutation: applyMembership rejects a missing tier.
+    await t.run((ctx) => ctx.db.delete(memberTierId));
+
+    const payload = { payment_status: 'finished', payment_id: 77, order_id: 'ref-retry' };
+    const signature = await signIpn(payload);
+    await expect(
+      t.action(internal.billing.ingestEvent, {
+        processor: 'nowpayments',
+        rawBody: JSON.stringify(payload),
+        signature,
+      }),
+    ).rejects.toThrow(/tier not found/);
+
+    await t.run(async (ctx) => {
+      const ev = await ctx.db
+        .query('webhookEvents')
+        .withIndex('by_source', (q) => q.eq('source', 'billing.nowpayments'))
+        .unique();
+      expect(ev?.status).toBe('failed');
+      const order = await ctx.db.get(orderId);
+      expect(order?.status).toBe('pending'); // the paid flip rolled back with the throw
+    });
+
+    // Operator fixes the tier; the processor's automatic retry then lands.
+    const newTierId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert('tiers', {
+        slug: 'member',
+        name: 'FreeSocks Membership',
+        backend: 'remnawave',
+        monthlyTrafficGb: 0,
+        deviceLimit: 0,
+        hwidLimit: 0,
+        hwidEnabled: false,
+        trafficStrategy: 'NO_RESET',
+        isDefaultFree: false,
+        isActive: true,
+        priority: 10,
+        expirationDaysAfterMembershipLapse: 7,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(orderId, { tierId: id });
+      return id;
+    });
+
+    const retry = await t.action(internal.billing.ingestEvent, {
+      processor: 'nowpayments',
+      rawBody: JSON.stringify(payload),
+      signature,
+    });
+    expect(retry).toEqual({ ok: true, applied: true });
+
+    const expiryAfterRetry = await t.run(async (ctx) => {
+      const ev = await ctx.db
+        .query('webhookEvents')
+        .withIndex('by_source', (q) => q.eq('source', 'billing.nowpayments'))
+        .unique();
+      expect(ev?.status).toBe('processed');
+      const order = await ctx.db.get(orderId);
+      expect(order?.status).toBe('paid');
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(newTierId);
+      return user?.membershipExpiresAt;
+    });
+
+    // A further replay is a terminal duplicate.
+    const third = await t.action(internal.billing.ingestEvent, {
+      processor: 'nowpayments',
+      rawBody: JSON.stringify(payload),
+      signature,
+    });
+    expect(third).toEqual({ ok: true, duplicate: true, applied: false });
+    const expiryAfterThird = await t.run(
+      async (ctx) => (await ctx.db.get(userId))?.membershipExpiresAt,
+    );
+    expect(expiryAfterThird).toBe(expiryAfterRetry);
   });
 
   test('a bad signature is rejected', async () => {

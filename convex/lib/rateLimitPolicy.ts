@@ -41,6 +41,10 @@ export const RATE_LIMIT_DEFAULTS = {
   'account.regenerate': { max: 10, windowMs: HOUR, enabled: true },
   'account.switch-backend': { max: 10, windowMs: HOUR, enabled: true },
   'account.refresh-membership': { max: 1, windowMs: 30_000, enabled: true },
+  // Account-number rotation mints a fresh credential; throttle hard vs. churn.
+  'account.rotate': { max: 5, windowMs: HOUR, enabled: true },
+  // Member device (HWID) revocation: cheap backend call, but cap the churn.
+  'account.device-revoke': { max: 10, windowMs: HOUR, enabled: true },
   // Membership code redemption (W4): throttle hard against code guessing.
   'code.redeem': { max: 5, windowMs: HOUR, enabled: true },
   // Per-IP throttle on the billing webhook (generous; a legit portal calls it).

@@ -103,12 +103,14 @@ export const consumeLatestRegistrationChallenge = internalMutation({
   args: { adminUserId: v.id('adminUsers') },
   handler: async (ctx, { adminUserId }) => {
     const now = Date.now();
+    // Range-scan only the unexpired suffix (TTL is minutes, so this is a handful
+    // of rows at most) instead of collecting the admin's full challenge history.
     const rows = await ctx.db
       .query('webauthnRegistrationChallenges')
-      .withIndex('by_admin_expires', (q) => q.eq('adminUserId', adminUserId))
+      .withIndex('by_admin_expires', (q) => q.eq('adminUserId', adminUserId).gt('expiresAt', now))
       .collect();
     const row = rows
-      .filter((r) => !r.consumedAt && r.expiresAt > now)
+      .filter((r) => !r.consumedAt)
       .sort((a, b) => b._creationTime - a._creationTime)[0];
     if (!row) return null;
     await ctx.db.patch(row._id, { consumedAt: now });

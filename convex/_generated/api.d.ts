@@ -48,6 +48,8 @@ import type * as lib_processors_stripe from "../lib/processors/stripe.js";
 import type * as lib_processors_types from "../lib/processors/types.js";
 import type * as lib_rateLimitPolicy from "../lib/rateLimitPolicy.js";
 import type * as lib_supportId from "../lib/supportId.js";
+import type * as lib_themeConfig from "../lib/themeConfig.js";
+import type * as lib_verificationConfig from "../lib/verificationConfig.js";
 import type * as lifecycle from "../lifecycle.js";
 import type * as membershipCodes from "../membershipCodes.js";
 import type * as mirrorProviders from "../mirrorProviders.js";
@@ -112,6 +114,8 @@ declare const fullApi: ApiFromModules<{
   "lib/processors/types": typeof lib_processors_types;
   "lib/rateLimitPolicy": typeof lib_rateLimitPolicy;
   "lib/supportId": typeof lib_supportId;
+  "lib/themeConfig": typeof lib_themeConfig;
+  "lib/verificationConfig": typeof lib_verificationConfig;
   lifecycle: typeof lifecycle;
   membershipCodes: typeof membershipCodes;
   mirrorProviders: typeof mirrorProviders;
