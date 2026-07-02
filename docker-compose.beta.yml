@@ -18,10 +18,19 @@ x-logging: &log
     max-size: '10m'
     max-file: '5'
 
+# Per-service resource ceilings (sized for a 4 GB / 2 vCPU host). These are
+# OOM-kill guards, not reservations — the long-lived sum deliberately
+# over-commits a little because dashboard/backup rarely peak; `restart:
+# unless-stopped` recovers an OOM-killed container. pids_limit bounds
+# fork-bomb blast radius.
+
 services:
   backend:
     # Pinned to the digest tested in dev (immutable). Re-pin when you upgrade.
     image: ghcr.io/get-convex/convex-backend@sha256:edd7959f3464ed661f6663f646db205d5d61bda606c969b074dfb3c69ed71463
+    mem_limit: 1500m
+    cpus: 1.5
+    pids_limit: 512
     restart: unless-stopped
     logging: *log
     stop_grace_period: 10s
@@ -64,6 +73,9 @@ services:
     # Pinned by digest like every other image (re-pin on upgrade:
     # docker buildx imagetools inspect postgres:18).
     image: postgres:18@sha256:fd03421d521b789274856f57ba64914f8271255ef1415ac307cbc907121c8c7b
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 512
     restart: unless-stopped
     logging: *log
     stop_grace_period: 10s
@@ -90,6 +102,9 @@ services:
     build:
       context: .
       dockerfile: docker/backup.Dockerfile
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
     restart: unless-stopped
     logging: *log
     stop_grace_period: 10s
@@ -119,6 +134,9 @@ services:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
   dashboard:
     image: ghcr.io/get-convex/convex-dashboard@sha256:bbc4d2c43d19fd6f2791dd6c5153a76e127f3eea489c1639e5acf66999c216bf
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 256
     restart: unless-stopped
     logging: *log
     stop_grace_period: 10s
@@ -144,6 +162,9 @@ services:
   cap:
     # Pinned by digest (re-pin on upgrade: docker buildx imagetools inspect tiago2/cap:latest).
     image: tiago2/cap:latest@sha256:97455d85b5517172397c7053837d377c72ded6250777928d5435c3eab2f58779
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 256
     restart: unless-stopped
     logging: *log
     stop_grace_period: 10s
@@ -173,6 +194,9 @@ services:
   valkey:
     # Pinned by digest (re-pin: docker buildx imagetools inspect valkey/valkey:8-alpine).
     image: valkey/valkey:8-alpine@sha256:77643d152547b446fc15cbafaff22004545663fcd40c6b28038ad283837baa75
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
     restart: unless-stopped
     logging: *log
     stop_grace_period: 10s
@@ -199,6 +223,9 @@ services:
         VITE_FS_SERVER_HPKE_KID: ${VITE_FS_SERVER_HPKE_KID:-}
         VITE_FS_MANIFEST_PK: ${VITE_FS_MANIFEST_PK:-}
         VITE_FS_MANIFEST_PK_PQ: ${VITE_FS_MANIFEST_PK_PQ:-}
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 256
     restart: unless-stopped
     logging: *log
     ports:
@@ -229,6 +256,9 @@ services:
   # deployer. The key is accepted by the backend because it shares INSTANCE_SECRET.
   keygen:
     image: ghcr.io/get-convex/convex-backend@sha256:edd7959f3464ed661f6663f646db205d5d61bda606c969b074dfb3c69ed71463
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
     restart: 'no'
     entrypoint: ['/bin/bash', '-c']
     command: ["./generate_admin_key.sh | grep '|' | tail -n1 > /keys/admin_key"]
@@ -247,6 +277,9 @@ services:
     build:
       context: .
       dockerfile: docker/deploy.Dockerfile
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 256
     restart: 'no'
     environment:
       - CONVEX_SELF_HOSTED_URL=http://backend:3210
