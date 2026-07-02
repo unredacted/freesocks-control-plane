@@ -322,10 +322,10 @@ export const runGraceSweep = internalAction({
       const st = await ctx.runQuery(internal.lifecycle.activeSubAndTier, { userId });
       if (st) {
         try {
-          await ctx.runAction(internal.backends.updateUser, {
+          await ctx.runAction(internal.backends.setUserStatus, {
             backend: st.backend,
             backendUserId: st.backendUserId,
-            patch: { status: 'disabled' },
+            active: false,
           });
         } catch {
           // Backend unreachable: leave the user in `grace` so the next sweep

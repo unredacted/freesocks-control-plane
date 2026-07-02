@@ -690,10 +690,10 @@ export const runUserOp = internalAction({
       const sub = await ctx.runQuery(internal.adminApi.activeSubForUser, { userId });
       if (sub) {
         try {
-          await ctx.runAction(internal.backends.updateUser, {
+          await ctx.runAction(internal.backends.setUserStatus, {
             backend: sub.backend,
             backendUserId: sub.backendUserId,
-            patch: { status: 'disabled' },
+            active: false,
           });
         } catch {
           /* best-effort: local state is authoritative; cron/edit will reconcile */
@@ -707,10 +707,10 @@ export const runUserOp = internalAction({
       const sub = await ctx.runQuery(internal.adminApi.activeSubForUser, { userId });
       if (sub) {
         try {
-          await ctx.runAction(internal.backends.updateUser, {
+          await ctx.runAction(internal.backends.setUserStatus, {
             backend: sub.backend,
             backendUserId: sub.backendUserId,
-            patch: { status: 'active' },
+            active: true,
           });
         } catch {
           /* best-effort: local state is authoritative; cron/edit will reconcile */

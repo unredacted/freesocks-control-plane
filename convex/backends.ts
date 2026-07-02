@@ -180,6 +180,23 @@ export const revokeDevice = internalAction({
   },
 });
 
+// Enable/disable a user via the backend's dedicated status action (Remnawave's
+// /actions/{enable|disable}), decoupled from the field-update `updateUser` path.
+export const setUserStatus = internalAction({
+  args: { backend: backendId, backendUserId: v.string(), active: v.boolean() },
+  handler: async (ctx, { backendUserId, active }): Promise<null> => {
+    if (mockBackendEnabled()) return null;
+    const server = await resolveInstanceByKey(ctx, backendUserId);
+    if (!server) throw new Error('Subscription key not resolvable to a backend instance');
+    const provider = PROVIDERS[server.backend];
+    if (!provider.setStatus) {
+      throw new Error(`${server.backend} does not support status changes`);
+    }
+    await provider.setStatus(server.config as BackendConfig, backendUserId, active);
+    return null;
+  },
+});
+
 export const fetchSubscriptionContent = internalAction({
   args: {
     backend: backendId,

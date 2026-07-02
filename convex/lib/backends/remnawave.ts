@@ -279,12 +279,30 @@ export async function remnawaveUpdateUser(
     // present+null/'' clears the squad; a value sets it.
     body.activeInternalSquads = patch.remnawaveSquadUuid ? [patch.remnawaveSquadUuid] : [];
   }
-  if (patch.status !== undefined) body.status = patch.status === 'active' ? 'ACTIVE' : 'DISABLED';
   await call(cfg, {
     method: 'PATCH',
     path: '/api/users',
     body,
     schema: RemnawaveUser,
+  });
+}
+
+/**
+ * Enable / disable a user via Remnawave's dedicated action endpoints
+ * (`POST /api/users/{uuid}/actions/{enable|disable}`) rather than folding status
+ * into the field-update PATCH. More faithful to the API and decoupled from the
+ * (heavier) update call. Remnawave rejects setting LIMITED/EXPIRED here (it owns
+ * those), which matches our two-state active|disabled model.
+ */
+export async function remnawaveSetStatus(
+  cfg: RemnawaveConfig,
+  backendUserId: string,
+  active: boolean,
+): Promise<void> {
+  await call(cfg, {
+    method: 'POST',
+    path: `/api/users/${backendUserId}/actions/${active ? 'enable' : 'disable'}`,
+    schema: z.unknown(),
   });
 }
 

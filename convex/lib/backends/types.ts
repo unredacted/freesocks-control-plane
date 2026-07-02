@@ -78,7 +78,8 @@ export interface UpdateUserPatch {
   hwidDeviceLimit?: number | null;
   trafficLimitStrategy?: TrafficLimitStrategy;
   remnawaveSquadUuid?: string | null;
-  status?: 'active' | 'disabled';
+  // Status changes go through the dedicated `setStatus` provider op
+  // (Remnawave's /actions/{enable|disable}), not this field-update patch.
 }
 
 export interface SubscriptionContent {

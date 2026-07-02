@@ -223,12 +223,20 @@ export async function outlineUpdate(
 ): Promise<void> {
   if (patch.trafficLimitBytes !== undefined)
     await setDataLimit(cfg, backendUserId, patch.trafficLimitBytes);
-  // No native disable: 0-byte limit is the closest soft cutoff (use delete for hard).
-  if (patch.status === 'disabled') await setDataLimit(cfg, backendUserId, 0);
-  if (patch.status === 'active' && patch.trafficLimitBytes === undefined) {
-    await setDataLimit(cfg, backendUserId, null);
-  }
   // hwid / strategy / squad / tag / description / expireAt: not applicable to Outline.
+  // Status changes go through outlineSetStatus (the setStatus provider op).
+}
+
+/**
+ * Outline has no native enable/disable, so the soft cutoff is a 0-byte data
+ * limit (disable) vs clearing the limit (enable); a hard cutoff uses delete.
+ */
+export async function outlineSetStatus(
+  cfg: OutlineServerConfig,
+  backendUserId: string,
+  active: boolean,
+): Promise<void> {
+  await setDataLimit(cfg, backendUserId, active ? null : 0);
 }
 
 export async function outlineDelete(

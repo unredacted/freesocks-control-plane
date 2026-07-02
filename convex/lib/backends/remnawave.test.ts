@@ -6,6 +6,7 @@ import {
   remnawaveHealth,
   remnawaveIssueUser,
   remnawaveResetTraffic,
+  remnawaveSetStatus,
   remnawaveTestConnection,
   remnawaveUpdateUser,
   type RemnawaveConfig,
@@ -219,13 +220,16 @@ describe('remnawaveUpdateUser (Bug 14: squad clear vs set vs absent)', () => {
     await remnawaveUpdateUser(cfg, UUID, { remnawaveSquadUuid: 'sq-9' });
     expect(calls[0]!.body!.activeInternalSquads).toEqual(['sq-9']);
   });
+});
 
-  test('maps the local status to the Remnawave enum', async () => {
-    mockFetch(() => jsonRes(userObj()));
-    await remnawaveUpdateUser(cfg, UUID, { status: 'active' });
-    expect(calls[0]!.body!.status).toBe('ACTIVE');
-    await remnawaveUpdateUser(cfg, UUID, { status: 'disabled' });
-    expect(calls[1]!.body!.status).toBe('DISABLED');
+describe('remnawaveSetStatus (dedicated enable/disable action)', () => {
+  test('POSTs the enable/disable action endpoints (not a status PATCH)', async () => {
+    mockFetch(() => jsonRes({}));
+    await remnawaveSetStatus(cfg, UUID, true);
+    expect(calls[0]!.method).toBe('POST');
+    expect(calls[0]!.path).toBe(`/api/users/${UUID}/actions/enable`);
+    await remnawaveSetStatus(cfg, UUID, false);
+    expect(calls[1]!.path).toBe(`/api/users/${UUID}/actions/disable`);
   });
 });
 

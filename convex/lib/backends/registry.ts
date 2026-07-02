@@ -27,6 +27,7 @@ import {
   remnawaveHealth,
   remnawaveIssueUser,
   remnawaveResetTraffic,
+  remnawaveSetStatus,
   remnawaveTestConnection,
   remnawaveUpdateUser,
 } from './remnawave';
@@ -36,6 +37,7 @@ import {
   outlineGetState,
   outlineHealth,
   outlineIssue,
+  outlineSetStatus,
   outlineTestConnection,
   outlineUpdate,
 } from './outline';
@@ -74,6 +76,9 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // Optional: revoke one HWID device (frees a slot under the tier's device
   // cap). Absent for backends with no device concept (Outline).
   removeDevice?(config: C, backendUserId: string, hwid: string): Promise<void>;
+  // Optional: enable/disable a user via the backend's dedicated status action
+  // (Remnawave: /actions/{enable|disable}). Absent for backends without it.
+  setStatus?(config: C, backendUserId: string, active: boolean): Promise<void>;
   fetchContent(
     config: C,
     backendShortId: string,
@@ -91,6 +96,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   resetTraffic: (c, id) => remnawaveResetTraffic(c, id),
   remove: (c, id) => remnawaveDeleteUser(c, id),
   removeDevice: (c, id, hwid) => remnawaveDeleteDevice(c, id, hwid),
+  setStatus: (c, id, active) => remnawaveSetStatus(c, id, active),
   fetchContent: (c, shortId, ua, subUrl) => remnawaveFetchSubscription(c, shortId, ua, subUrl),
   health: (c) => remnawaveHealth(c),
   testConnection: (c) => remnawaveTestConnection(c),
@@ -104,6 +110,7 @@ const outlineProvider: BackendProvider<OutlineInstanceConfig> = {
   // Outline exposes no per-key traffic reset; metrics roll on the server window.
   resetTraffic: async () => {},
   remove: (c, id) => outlineDelete(c, id),
+  setStatus: (c, id, active) => outlineSetStatus(c, id, active),
   fetchContent: (c, shortId) => outlineFetchContent(c, shortId),
   health: async (c) => {
     const started = Date.now();
