@@ -353,6 +353,72 @@ export const switchBackend = internalAction({
   },
 });
 
+type RevokeDeviceResult =
+  | { ok: true }
+  | { ok: false; code: string; message: string; status: number };
+
+/**
+ * Revoke one of the member's HWID devices, freeing a slot under the tier's
+ * device cap without a full key regenerate. The hwid must belong to the
+ * member's own current key (verified against the backend's live device list
+ * before the delete — a member can never name someone else's device).
+ */
+export const revokeDevice = internalAction({
+  args: { userId: v.id('users'), hwid: v.string(), requestId: v.optional(v.string()) },
+  handler: async (ctx, { userId, hwid, requestId }): Promise<RevokeDeviceResult> => {
+    const user = await ctx.runQuery(internal.users.get, { id: userId });
+    if (!user) return { ok: false, code: 'not_found', message: 'user not found', status: 404 };
+    const sub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+    if (!sub) {
+      return {
+        ok: false,
+        code: 'devices.no_subscription',
+        message: 'No active subscription',
+        status: 404,
+      };
+    }
+    if (sub.backend !== 'remnawave') {
+      return {
+        ok: false,
+        code: 'devices.unsupported',
+        message: 'This backend does not support device management',
+        status: 409,
+      };
+    }
+
+    // Ownership check: the hwid must be on the member's own key right now.
+    const state = await ctx.runAction(internal.backends.getUser, {
+      backend: sub.backend,
+      backendUserId: sub.backendUserId,
+    });
+    if (!state.devices.some((d) => d.hwid === hwid)) {
+      return {
+        ok: false,
+        code: 'devices.not_found',
+        message: 'Device not found on this account',
+        status: 404,
+      };
+    }
+
+    await ctx.runAction(internal.backends.revokeDevice, {
+      backend: sub.backend,
+      backendUserId: sub.backendUserId,
+      hwid,
+    });
+    await ctx.runMutation(internal.audit.record, {
+      actorType: 'member',
+      actorId: userId,
+      action: 'subscription.device_revoke',
+      targetType: 'subscription',
+      targetId: sub._id,
+      // Never the full hwid (it's a device identifier): a short prefix traces it.
+      payload: { hwidPrefix: hwid.slice(0, 8) },
+      requestId,
+    });
+    return { ok: true };
+  },
+});
+
 /** Local entitlement snapshot (CiviCRM live lookup removed). Read-only query. */
 export const refreshMembership = internalAction({
   args: { userId: v.id('users') },

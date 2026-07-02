@@ -165,6 +165,21 @@ export const deleteUser = internalAction({
   },
 });
 
+export const revokeDevice = internalAction({
+  args: { backend: backendId, backendUserId: v.string(), hwid: v.string() },
+  handler: async (ctx, { backendUserId, hwid }): Promise<null> => {
+    if (mockBackendEnabled()) return null;
+    const server = await resolveInstanceByKey(ctx, backendUserId);
+    if (!server) throw new Error('Subscription key not resolvable to a backend instance');
+    const provider = PROVIDERS[server.backend];
+    if (!provider.removeDevice) {
+      throw new Error(`${server.backend} does not support device management`);
+    }
+    await provider.removeDevice(server.config as BackendConfig, backendUserId, hwid);
+    return null;
+  },
+});
+
 export const fetchSubscriptionContent = internalAction({
   args: {
     backend: backendId,

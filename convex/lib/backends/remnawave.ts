@@ -222,6 +222,27 @@ async function listDevices(cfg: RemnawaveConfig, userUuid: string): Promise<Back
   }
 }
 
+/**
+ * Revoke one HWID device from a user, freeing a slot under the tier's device
+ * cap without the nuclear full-key regenerate. Unlike listDevices (which
+ * degrades to "no devices" on panels without the endpoint), a failed delete
+ * THROWS — the member asked for a specific effect and must not be told it
+ * succeeded when it didn't. The response body is version-dependent (some
+ * panels echo the remaining device list), so it is deliberately not parsed.
+ */
+export async function remnawaveDeleteDevice(
+  cfg: RemnawaveConfig,
+  backendUserId: string,
+  hwid: string,
+): Promise<void> {
+  await call(cfg, {
+    method: 'POST',
+    path: '/api/hwid-devices/delete',
+    body: { userUuid: backendUserId, hwid },
+    schema: z.unknown(),
+  });
+}
+
 export async function remnawaveGetUser(
   cfg: RemnawaveConfig,
   backendUserId: string,

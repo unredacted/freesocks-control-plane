@@ -137,6 +137,21 @@ export const SwitchBackendResponse = z.object({
 export type SwitchBackendResponse = z.infer<typeof SwitchBackendResponse>;
 
 /**
+ * Revoke one of the member's HWID devices (frees a slot under the tier's device
+ * cap without a full key regenerate). The server verifies the hwid belongs to
+ * the member's own current key before deleting it on the backend.
+ */
+export const RevokeDeviceRequest = z.object({
+  hwid: z.string().min(1).max(256),
+});
+export type RevokeDeviceRequest = z.infer<typeof RevokeDeviceRequest>;
+
+export const RevokeDeviceResponse = z.object({
+  ok: z.literal(true),
+});
+export type RevokeDeviceResponse = z.infer<typeof RevokeDeviceResponse>;
+
+/**
  * Body for `POST /api/v1/account` (anonymous free-account creation). Turnstile
  * gates it (same widget as login). `backend` is an optional preference for which
  * default-free tier (and thus backend) the account lands on, honored only when

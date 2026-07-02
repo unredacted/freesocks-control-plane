@@ -110,7 +110,8 @@
     "getOne": "Get a free account",
     "failed": "Sign-in failed",
     "success": "Signed in",
-    "sessionExpired": "Please sign in again — your session may have ended."
+    "sessionExpired": "Please sign in again — your session may have ended.",
+    "digitProgress": "{count} of {total} digits entered"
   },
   "account": {
     "title": "Your account",
@@ -176,7 +177,11 @@
         "title": "Account & security",
         "desc": "Your support ID and account-number controls."
       }
-    }
+    },
+    "deviceRevoke": "Revoke",
+    "deviceRevokedTitle": "Device revoked",
+    "deviceRevokedBody": "The slot is free. That device loses access until it re-imports your subscription.",
+    "deviceRevokeFailedTitle": "Couldn't revoke the device"
   },
   "hero": {
     "titleDefault": "Your subscription",
@@ -423,7 +428,17 @@
     "renderTitle": "Something went wrong",
     "renderBody": "The page failed to render. This is a bug in the app, and refreshing usually fixes it. If it keeps happening, please report it.",
     "reloadPage": "Reload page",
-    "tryAgain": "Try again"
+    "tryAgain": "Try again",
+    "sessionExpired": "Your session has ended. Please sign in again.",
+    "invalidAccountId": "That account number wasn't recognized. Check it and try again.",
+    "codeInvalid": "That code can't be redeemed. Check it for typos and try again.",
+    "changeInProgress": "Another change is already in progress — try again in a moment.",
+    "backendDisabled": "That option is currently unavailable.",
+    "noPeerTier": "Switching isn't available for your plan yet.",
+    "deviceNotFound": "That device is no longer on your account.",
+    "deviceUnsupported": "Your current server type doesn't support removing individual devices.",
+    "billing": "The payment service couldn't process this. Please try again later.",
+    "serverError": "The server had a problem handling this. Please try again in a few minutes."
   },
   "setup": {
     "title": "Set up your proxy app",
@@ -614,5 +629,11 @@
     "verifierExtensionInstall": "Install the verifier extension - it re-checks this build against the published one on every visit (the strongest protection against a tampered page).",
     "caveat": "This in-page check is a convenience. A tampered page could lie about its own status, so the real proof comes from comparing these values somewhere outside this server, such as the DNS lookup above or a published release.",
     "close": "Close"
+  },
+  "deviceRevoke": {
+    "title": "Revoke this device?",
+    "body": "The device ending …{suffix} will be disconnected and its slot freed. It can reconnect later by re-importing your subscription URL.",
+    "confirm": "Revoke device",
+    "working": "Revoking…"
   }
 }

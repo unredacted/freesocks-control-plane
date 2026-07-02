@@ -70,7 +70,8 @@
     "getOne": "获取免费账户",
     "failed": "登录失败",
     "success": "已登录",
-    "sessionExpired": "请重新登录 — 你的会话可能已结束。"
+    "sessionExpired": "请重新登录 — 你的会话可能已结束。",
+    "digitProgress": "{count}位数，共{total}位数字"
   },
   "account": {
     "title": "你的账户",
@@ -136,7 +137,11 @@
         "desc": "您的支持 ID 和账号控制。"
       }
     },
-    "keyActionsHint": "这些更改只会改变您的代理连接——您的 32 位账号保持不变。"
+    "keyActionsHint": "这些更改只会改变您的代理连接——您的 32 位账号保持不变。",
+    "deviceRevoke": "撤销",
+    "deviceRevokedTitle": "设备被撤销",
+    "deviceRevokedBody": "该插槽空闲。该设备将失去访问权限，直到重新导入您的订阅。",
+    "deviceRevokeFailedTitle": "无法撤销该设备"
   },
   "renew": {
     "expiringTitle": "你的会员即将到期",
@@ -154,7 +159,17 @@
     "renderTitle": "出问题了",
     "renderBody": "页面渲染失败。这是应用的一个bug，通常刷新页面即可解决。如果问题持续出现，请提交报告。",
     "reloadPage": "重新加载页面",
-    "tryAgain": "再试一次"
+    "tryAgain": "再试一次",
+    "sessionExpired": "您的会话已结束。请重新登录。",
+    "invalidAccountId": "系统无法识别该账号。请检查并重试。",
+    "codeInvalid": "该代码无法兑换。请检查是否有拼写错误，然后重试。",
+    "changeInProgress": "另一项更改已在进行中——请稍后再试。",
+    "backendDisabled": "目前无法选择此选项。",
+    "noPeerTier": "您的套餐目前尚不支持切换。",
+    "deviceNotFound": "该设备已不在您的帐户中。",
+    "deviceUnsupported": "您当前的服务器类型不支持移除单个设备。",
+    "billing": "支付服务无法处理此笔交易。请稍后再试。",
+    "serverError": "服务器处理此请求时出现问题，请稍后再试。"
   },
   "setup": {
     "title": "设置你的代理应用",
@@ -614,5 +629,11 @@
     "verifierExtensionInstall": "安装验证器扩展程序 - 每次访问时，它都会将此版本与已发布的版本进行重新检查（这是防止页面被篡改的最强保护措施）。",
     "caveat": "页面内检查只是为了方便。被篡改的页面可能会谎报自身状态，因此真正的验证方法是将这些数据与服务器外部的值进行比较，例如上述 DNS 查询或已发布的版本。",
     "close": "关闭"
+  },
+  "deviceRevoke": {
+    "title": "撤销此设备？",
+    "body": "设备名称以… {suffix}结尾，该设备将被断开连接并释放其插槽。稍后可通过重新导入订阅 URL 来重新连接。",
+    "confirm": "撤销装置",
+    "working": "撤销……"
   }
 }

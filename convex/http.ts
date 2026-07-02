@@ -612,6 +612,38 @@ http.route({
   }),
 });
 
+// Revoke one of the member's HWID devices, freeing a slot under the tier's
+// device cap without the nuclear full-key regenerate. Ownership of the hwid is
+// verified server-side against the member's own key.
+http.route({
+  path: '/api/v1/account/devices/revoke',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'subscription:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const body = await readJson<{ hwid?: string }>(req);
+    if (typeof body.hwid !== 'string' || body.hwid.length === 0 || body.hwid.length > 256) {
+      return errorJson('validation', 'hwid required', 400);
+    }
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.device-revoke',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
+    const result = await ctx.runAction(internal.account.revokeDevice, {
+      userId: member.userId,
+      hwid: body.hwid,
+      requestId: newRequestId(),
+    });
+    if (!result.ok) return errorJson(result.code, result.message, result.status);
+    return json({ ok: true });
+  }),
+});
+
 // Redeem a membership code (W4). Member-authenticated; the code is a bearer
 // secret so the route is sealed like the other member actions. Every failure
 // (unknown / revoked / used / rate-limited / malformed) returns one generic

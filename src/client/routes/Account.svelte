@@ -13,6 +13,7 @@
   import { deliveryPref } from '../lib/deliveryPref.svelte';
   import MembershipCallout from '../components/MembershipCallout.svelte';
   import RegenerateModal from '../components/RegenerateModal.svelte';
+  import RevokeDeviceModal from '../components/RevokeDeviceModal.svelte';
   import SwitchBackendModal from '../components/SwitchBackendModal.svelte';
   import TierComparison from '../components/TierComparison.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
@@ -200,6 +201,35 @@
     onError: (err) => {
       liveMessage = t('account.switchFailedTitle');
       toast.error(t('account.switchFailedTitle'), { description: apiErrorMessage(err) });
+    },
+  }));
+
+  // Mutation: revoke one HWID device (frees a slot under the tier's device cap
+  // without a full regenerate). Confirmation-gated; the server verifies the
+  // hwid belongs to this member's key.
+  let revokeTargetHwid = $state<string | null>(null);
+  let revokeDeviceOpen = $state(false);
+  const revokeDevice = createMutation(() => ({
+    mutationFn: () => {
+      if (!revokeTargetHwid) throw new Error('No device selected');
+      return apiClient.post(
+        '/api/v1/account/devices/revoke',
+        { hwid: revokeTargetHwid },
+        z.object({ ok: z.literal(true) }),
+      );
+    },
+    onSuccess: () => {
+      revokeDeviceOpen = false;
+      revokeTargetHwid = null;
+      void qc.invalidateQueries({ queryKey: queryKeys.account });
+      liveMessage = t('account.deviceRevokedTitle');
+      toast.success(t('account.deviceRevokedTitle'), {
+        description: t('account.deviceRevokedBody'),
+      });
+    },
+    onError: (err) => {
+      liveMessage = t('account.deviceRevokeFailedTitle');
+      toast.error(t('account.deviceRevokeFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
 
@@ -423,7 +453,7 @@
           </span>
           {#if userStatus === 'grace'}
             <span
-              class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-600 dark:text-amber-400"
+              class="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400"
             >
               {t('account.statusGrace')}
             </span>
@@ -629,14 +659,30 @@
             </div>
             <ul class="rounded-lg border border-border divide-y divide-border bg-card">
               {#each data.subscription.devices as d (d.hwid)}
-                <li class="flex items-center justify-between px-4 py-3">
+                <li class="flex items-center justify-between gap-3 px-4 py-3">
                   <div class="flex items-center gap-3 min-w-0">
                     <Smartphone class="size-4 text-muted-foreground shrink-0" />
                     <code class="font-mono text-xs truncate">{d.hwid.slice(0, 24)}…</code>
                   </div>
-                  <span class="text-muted-foreground text-xs tabular-nums shrink-0 ms-3">
-                    {d.lastSeenAt ? t('account.lastSeen', { date: formatDate(d.lastSeenAt) }) : '-'}
-                  </span>
+                  <div class="flex items-center gap-3 shrink-0">
+                    <span class="text-muted-foreground text-xs tabular-nums">
+                      {d.lastSeenAt
+                        ? t('account.lastSeen', { date: formatDate(d.lastSeenAt) })
+                        : '-'}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      class="min-h-9 text-destructive hover:text-destructive"
+                      disabled={revokeDevice.isPending || actionsDisabled}
+                      onclick={() => {
+                        revokeTargetHwid = d.hwid;
+                        revokeDeviceOpen = true;
+                      }}
+                    >
+                      {t('account.deviceRevoke')}
+                    </Button>
+                  </div>
                 </li>
               {/each}
             </ul>
@@ -781,6 +827,18 @@
           }}
           onConfirm={() => switchBackend.mutate()}
           busy={switchBackend.isPending}
+        />
+      {/if}
+      {#if revokeTargetHwid}
+        <RevokeDeviceModal
+          bind:open={revokeDeviceOpen}
+          hwid={revokeTargetHwid}
+          onCancel={() => {
+            revokeDeviceOpen = false;
+            revokeTargetHwid = null;
+          }}
+          onConfirm={() => revokeDevice.mutate()}
+          busy={revokeDevice.isPending}
         />
       {/if}
     {/if}

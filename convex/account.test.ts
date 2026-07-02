@@ -174,6 +174,140 @@ describe('account issuance lock (P1-3)', () => {
   });
 });
 
+describe('account.revokeDevice', () => {
+  const UUID = '550e8400-e29b-41d4-a716-446655440042';
+  const HWID = 'device-hwid-abcdef0123456789';
+
+  function jsonRes(obj: unknown): Response {
+    return new Response(JSON.stringify(obj), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
+  /** Seed a real (non-mock) remnawave instance + user + active subscription. */
+  async function seedWithSub(
+    t: ReturnType<typeof convexTest>,
+    backend: 'remnawave' | 'outline' = 'remnawave',
+  ): Promise<Id<'users'>> {
+    const tierId = await seedTier(t, { backend });
+    const userId = await seedUser(t, tierId);
+    await t.run(async (ctx) => {
+      const instanceId = await ctx.db.insert('backendServers', {
+        backend,
+        name: 'test',
+        slug: 'test',
+        config:
+          backend === 'remnawave'
+            ? { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' }
+            : { type: 'outline', apiUrl: 'https://outline.test/secret/', websocketEnabled: false },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend,
+        backendUserId: UUID,
+        backendShortId: 'short1',
+        backendServerId: instanceId,
+        subscriptionUrl: 'https://panel.test/sub/short1',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+    });
+    return userId;
+  }
+
+  /** Fetch stub covering getUser (user + device list) and the device delete. */
+  function stubPanelFetch(devices: { hwid: string }[]): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const u = typeof input === 'string' ? input : input.toString();
+      if (u.includes('/api/hwid-devices/delete')) return jsonRes({ ok: true });
+      if (u.includes('/api/hwid-devices')) return jsonRes({ devices });
+      return jsonRes({
+        uuid: UUID,
+        shortUuid: 'short1',
+        username: 'u',
+        status: 'ACTIVE',
+        trafficLimitBytes: null,
+        trafficLimitStrategy: 'MONTH',
+        usedTrafficBytes: 0,
+        expireAt: null,
+        hwidDeviceLimit: null,
+        subscriptionUrl: 'https://panel.test/sub/short1',
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  // These run against the REAL remnawave provider (stubbed fetch), not the
+  // dev mock — the mock reports no devices, so ownership would never pass.
+  beforeEach(() => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  test('revokes an owned device on the backend and audits a truncated hwid', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedWithSub(t);
+    const fetchMock = stubPanelFetch([{ hwid: HWID }]);
+
+    const res = await t.action(internal.account.revokeDevice, { userId, hwid: HWID });
+    expect(res).toEqual({ ok: true });
+
+    const deleteCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).includes('/api/hwid-devices/delete'),
+    );
+    expect(deleteCall).toBeTruthy();
+
+    await t.run(async (ctx) => {
+      const audit = (await ctx.db.query('auditLog').collect()).find(
+        (r) => r.action === 'subscription.device_revoke',
+      );
+      expect(audit).toBeTruthy();
+      const payload = JSON.stringify(audit!.payload ?? {});
+      expect(payload).toContain(HWID.slice(0, 8));
+      expect(payload).not.toContain(HWID); // never the full identifier
+    });
+  });
+
+  test('a hwid not on the member’s key is refused, and nothing is deleted', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedWithSub(t);
+    const fetchMock = stubPanelFetch([{ hwid: HWID }]);
+
+    const res = await t.action(internal.account.revokeDevice, {
+      userId,
+      hwid: 'someone-elses-device',
+    });
+    expect(res).toMatchObject({ ok: false, code: 'devices.not_found', status: 404 });
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input).includes('/api/hwid-devices/delete')),
+    ).toBe(false);
+  });
+
+  test('an outline subscription is refused as unsupported', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedWithSub(t, 'outline');
+    const res = await t.action(internal.account.revokeDevice, { userId, hwid: HWID });
+    expect(res).toMatchObject({ ok: false, code: 'devices.unsupported', status: 409 });
+  });
+
+  test('no active subscription is a 404', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    const res = await t.action(internal.account.revokeDevice, { userId, hwid: HWID });
+    expect(res).toMatchObject({ ok: false, code: 'devices.no_subscription', status: 404 });
+  });
+});
+
 describe('account.switchBackend guards', () => {
   test('same-backend switch is a validation error', async () => {
     const t = convexTest(schema, modules);
@@ -295,6 +429,105 @@ describe('account.switchBackend guards', () => {
       // P1-6 ordering: the old key is tombstoned, the new one active.
       expect(subs.filter((s) => s.state === 'disabled')).toHaveLength(1);
       expect(subs.filter((s) => s.state === 'active')).toHaveLength(1);
+    });
+  });
+});
+
+/**
+ * deleteSubscriptionEverywhere ordering (P1-5), driven via the tombstone sweep.
+ * The invariant: the backend DELETE happens FIRST and is not swallowed — if it
+ * throws, the local row must NOT be marked `deleted` (so the next sweep retries)
+ * and the instance keyCount must be left alone. Runs against the REAL remnawave
+ * provider with a stubbed fetch, mirroring the revokeDevice suite.
+ */
+describe('deleteSubscriptionEverywhere ordering (P1-5)', () => {
+  const UUID = '550e8400-e29b-41d4-a716-446655440099';
+
+  beforeEach(() => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Seed a real remnawave instance + a DISABLED sub whose grace has elapsed. */
+  async function seedDueTombstone(t: ReturnType<typeof convexTest>): Promise<{
+    userId: Id<'users'>;
+    subId: Id<'subscriptions'>;
+    instanceId: Id<'backendServers'>;
+  }> {
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    return t.run(async (ctx) => {
+      const instanceId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'test',
+        slug: 'test',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: UUID,
+        backendShortId: 'short9',
+        backendServerId: instanceId,
+        subscriptionUrl: 'https://panel.test/sub/short9',
+        subscriptionMirrors: [],
+        state: 'disabled',
+        deletedAt: Date.now() - 1_000, // grace elapsed → due for the sweep
+        updatedAt: Date.now(),
+      });
+      return { userId, subId, instanceId };
+    });
+  }
+
+  test('a failing backend DELETE leaves the local row disabled (not deleted) and keyCount untouched', async () => {
+    const t = convexTest(schema, modules);
+    const { subId, instanceId } = await seedDueTombstone(t);
+    // Every DELETE to the panel returns 500 → remnawaveDeleteUser throws (a 500 is
+    // NOT the idempotent 404 short-circuit), so deleteSubscriptionEverywhere must
+    // propagate without marking the row.
+    const fetchMock = vi.fn(
+      async (_input: string | URL, _init?: RequestInit) =>
+        new Response('upstream boom', { status: 500 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { removed } = await t.action(internal.lifecycle.sweepTombstones, {});
+    expect(removed).toBe(0); // the throw was counted as not-removed
+
+    // A DELETE was actually attempted (ordering: backend first).
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input).includes(`/api/users/${UUID}`) && init?.method === 'DELETE',
+      ),
+    ).toBe(true);
+
+    await t.run(async (ctx) => {
+      const sub = await ctx.db.get(subId);
+      // The row is still selectable by the next sweep — NOT tombstoned to deleted.
+      expect(sub!.state).toBe('disabled');
+      // keyCount decrement only happens AFTER a successful backend delete.
+      expect((await ctx.db.get(instanceId))!.keyCount).toBe(1);
+    });
+  });
+
+  test('a succeeding backend DELETE marks the row deleted and decrements keyCount', async () => {
+    const t = convexTest(schema, modules);
+    const { subId, instanceId } = await seedDueTombstone(t);
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { removed } = await t.action(internal.lifecycle.sweepTombstones, {});
+    expect(removed).toBe(1);
+
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subId))!.state).toBe('deleted');
+      expect((await ctx.db.get(instanceId))!.keyCount).toBe(0);
     });
   });
 });

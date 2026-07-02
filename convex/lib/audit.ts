@@ -40,6 +40,8 @@ export interface AuditEntry {
  */
 export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
   'subscription.switch_backend': ['fromBackend', 'toBackend', 'fromTier', 'toTier'],
+  // Member revokes one HWID device (truncated identifier only, never the full hwid).
+  'subscription.device_revoke': ['hwidPrefix'],
   'membership.tier_change': ['fromTierId', 'toTierId', 'reason'],
   'user.create.free': ['ipCountry', 'asn'],
   // W2: admin retunes a rate-limit policy.

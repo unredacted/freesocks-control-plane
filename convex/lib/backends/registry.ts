@@ -20,6 +20,7 @@ import type {
   UserState,
 } from './types';
 import {
+  remnawaveDeleteDevice,
   remnawaveDeleteUser,
   remnawaveFetchSubscription,
   remnawaveGetUser,
@@ -70,6 +71,9 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   update(config: C, backendUserId: string, patch: UpdateUserPatch): Promise<void>;
   resetTraffic(config: C, backendUserId: string): Promise<void>;
   remove(config: C, backendUserId: string): Promise<void>;
+  // Optional: revoke one HWID device (frees a slot under the tier's device
+  // cap). Absent for backends with no device concept (Outline).
+  removeDevice?(config: C, backendUserId: string, hwid: string): Promise<void>;
   fetchContent(
     config: C,
     backendShortId: string,
@@ -86,6 +90,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   update: (c, id, patch) => remnawaveUpdateUser(c, id, patch),
   resetTraffic: (c, id) => remnawaveResetTraffic(c, id),
   remove: (c, id) => remnawaveDeleteUser(c, id),
+  removeDevice: (c, id, hwid) => remnawaveDeleteDevice(c, id, hwid),
   fetchContent: (c, shortId, ua, subUrl) => remnawaveFetchSubscription(c, shortId, ua, subUrl),
   health: (c) => remnawaveHealth(c),
   testConnection: (c) => remnawaveTestConnection(c),
