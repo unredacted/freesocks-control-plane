@@ -45,13 +45,38 @@
   // so we don't re-query on every keystroke); `actorType` + `since` apply
   // immediately. `since` is a date the server takes as an epoch-ms lower bound.
   const ACTOR_OPTIONS = ['', 'system', 'admin', 'member', 'anonymous', 'webhook'] as const;
-  let actionInput = $state('');
-  let actionFilter = $state('');
-  let actorTypeFilter = $state('');
-  let sinceInput = $state(''); // YYYY-MM-DD from the date field
+
+  // Seed filters from the URL query string so a refresh/deep-link restores them
+  // (they're otherwise $state-only). Read window.location.search directly (not
+  // the router) on init; write back via history.replaceState below.
+  const initialParams =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+
+  let actionInput = $state(initialParams.get('action') ?? '');
+  let actionFilter = $state(initialParams.get('action') ?? '');
+  let actorTypeFilter = $state(initialParams.get('actorType') ?? '');
+  let sinceInput = $state(initialParams.get('since') ?? ''); // YYYY-MM-DD from the date field
   let sinceMs = $derived(
     sinceInput && Number.isFinite(Date.parse(sinceInput)) ? String(Date.parse(sinceInput)) : '',
   );
+
+  // Reflect the filters into the URL (only non-default values) so refresh/
+  // deep-link preserves them. replaceState (not pushState) keeps the back button
+  // behaving like the pre-filter page; `since` is stored as the date string.
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams();
+    if (actionFilter) params.set('action', actionFilter);
+    if (actorTypeFilter) params.set('actorType', actorTypeFilter);
+    if (sinceInput) params.set('since', sinceInput);
+    const qs = params.toString();
+    const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    if (next !== window.location.pathname + window.location.search) {
+      window.history.replaceState(window.history.state, '', next);
+    }
+  });
 
   // createInfiniteQuery accumulates pages: `audit.data.pages` is an array of
   // server pages; flatten for rendering. `hasNextPage` is derived from the
@@ -127,7 +152,7 @@
       {/each}
     </div>
   {:else if audit.isError}
-    <AdminListState error={audit.error} />
+    <AdminListState error={audit.error} onRetry={() => void audit.refetch()} />
   {:else}
     {#if entries.length === 0}
       <AdminListState

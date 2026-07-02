@@ -160,7 +160,7 @@ describe('membershipCodes redeem flow', () => {
       count: 1,
       actorAdminId: admin,
     });
-    const list = await t.query(internal.membershipCodes.listCodes, {});
+    const { codes: list } = await t.query(internal.membershipCodes.listCodes, {});
     await t.mutation(internal.membershipCodes.revokeCode, {
       id: list[0]!.id as Id<'redemptionCodes'>,
       actorAdminId: admin,
@@ -182,7 +182,7 @@ describe('membershipCodes redeem flow', () => {
       note: 'launch batch',
       actorAdminId: admin,
     });
-    const list = await t.query(internal.membershipCodes.listCodes, {});
+    const { codes: list } = await t.query(internal.membershipCodes.listCodes, {});
     expect(list).toHaveLength(3);
     expect(list[0]).toMatchObject({ tierSlug: 'patron', durationDays: 30, status: 'active' });
     expect(list[0]!.codePrefix).toMatch(/^FSM-/);

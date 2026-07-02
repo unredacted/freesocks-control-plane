@@ -100,7 +100,7 @@
       {/each}
     </div>
   {:else if tiers.isError}
-    <AdminListState error={tiers.error} />
+    <AdminListState error={tiers.error} onRetry={() => void tiers.refetch()} />
   {:else}
     <div class="space-y-4">
       {#each tiers.data ?? [] as tier (tier.id)}

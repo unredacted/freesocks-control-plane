@@ -25,6 +25,9 @@
   let statusFilter = $state('');
   const codes = adminMembershipCodesQuery(() => statusFilter);
 
+  // Flatten the infinite-query pages into a single list (mirrors AdminUsers).
+  let codeRows = $derived(codes.data?.pages.flatMap((p) => p.codes) ?? []);
+
   // Mint form state.
   let tierId = $state('');
   let durationDays = $state(30);
@@ -173,12 +176,12 @@
       {#each Array(3) as _, i (i)}<Skeleton class="h-12 w-full" />{/each}
     </div>
   {:else if codes.isError}
-    <AdminListState error={codes.error} />
-  {:else if (codes.data?.length ?? 0) === 0}
+    <AdminListState error={codes.error} onRetry={() => void codes.refetch()} />
+  {:else if codeRows.length === 0}
     <AdminListState emptyText="No codes yet." />
   {:else}
     <ul class="divide-y divide-border rounded-lg border border-border bg-card">
-      {#each codes.data ?? [] as code (code.id)}
+      {#each codeRows as code (code.id)}
         <li class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
           <div class="flex items-center gap-3">
             <code class="font-mono">{code.codePrefix}…</code>
@@ -206,6 +209,17 @@
         </li>
       {/each}
     </ul>
+    {#if codes.hasNextPage}
+      <div class="mt-4 flex justify-center">
+        <Button
+          variant="outline"
+          onclick={() => codes.fetchNextPage()}
+          disabled={codes.isFetchingNextPage}
+        >
+          {codes.isFetchingNextPage ? 'Loading…' : 'Load more'}
+        </Button>
+      </div>
+    {/if}
   {/if}
 
   <!-- Revoke confirmation (irreversible; mirrors the token-revoke pattern). -->

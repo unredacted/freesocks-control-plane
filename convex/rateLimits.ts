@@ -183,6 +183,50 @@ export const setPolicy = internalMutation({
   },
 });
 
+/**
+ * Admin write: revert one policy to its compiled default by DELETING the stored
+ * `ratelimit.<key>` override row (so `resolvePolicy` falls back to the compiled
+ * default). Idempotent — a policy that's already at the default (no row) is a
+ * no-op that still audits the deliberate action. Audited under the same
+ * `settings.ratelimit_change` action, with the compiled-default values in the
+ * payload so the log reads consistently with a set.
+ */
+export const resetPolicy = internalMutation({
+  args: {
+    policyKey: v.string(),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { policyKey, actorAdminId }) => {
+    if (!isRateLimitPolicyKey(policyKey)) {
+      throw new ConvexError({
+        code: 'validation',
+        message: `Unknown rate-limit policy "${policyKey}"`,
+      });
+    }
+    const settingKey = policySettingKey(policyKey);
+    const existing = await ctx.db
+      .query('appSettings')
+      .withIndex('by_key', (q) => q.eq('key', settingKey))
+      .unique();
+    if (existing) await ctx.db.delete(existing._id);
+    const def = RATE_LIMIT_DEFAULTS[policyKey];
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId,
+      action: 'settings.ratelimit_change',
+      targetType: 'rate_limit_policy',
+      targetId: policyKey,
+      payload: {
+        policyKey,
+        max: def.max,
+        windowMs: def.windowMs,
+        enabled: def.enabled,
+      },
+    });
+    return { ok: true as const };
+  },
+});
+
 /** Cron: delete a page of elapsed rate-limit windows. */
 export const sweepExpired = internalMutation({
   args: { limit: v.optional(v.number()) },

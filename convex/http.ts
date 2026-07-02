@@ -1675,16 +1675,28 @@ http.route({
       max?: number;
       windowMs?: number;
       enabled?: boolean;
+      // `reset: true` reverts the policy to its compiled default (deletes the
+      // stored override); the tuning fields are then ignored.
+      reset?: boolean;
     }>(req);
-    if (
-      typeof body.policyKey !== 'string' ||
-      typeof body.max !== 'number' ||
-      typeof body.windowMs !== 'number' ||
-      typeof body.enabled !== 'boolean'
-    ) {
-      return errorJson('validation', 'policyKey, max, windowMs, enabled are required', 400);
+    if (typeof body.policyKey !== 'string') {
+      return errorJson('validation', 'policyKey is required', 400);
     }
     try {
+      if (body.reset === true) {
+        await ctx.runMutation(internal.rateLimits.resetPolicy, {
+          policyKey: body.policyKey,
+          actorAdminId: admin.adminUserId,
+        });
+        return json({ policies: await ctx.runQuery(internal.rateLimits.listPolicies, {}) });
+      }
+      if (
+        typeof body.max !== 'number' ||
+        typeof body.windowMs !== 'number' ||
+        typeof body.enabled !== 'boolean'
+      ) {
+        return errorJson('validation', 'policyKey, max, windowMs, enabled are required', 400);
+      }
       await ctx.runMutation(internal.rateLimits.setPolicy, {
         policyKey: body.policyKey,
         max: body.max,
@@ -1746,8 +1758,13 @@ http.route({
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:users:read'))) return ADMIN_UNAUTH();
-    const status = new URL(req.url).searchParams.get('status') ?? undefined;
-    return json({ codes: await ctx.runQuery(internal.membershipCodes.listCodes, { status }) });
+    const sp = new URL(req.url).searchParams;
+    return json(
+      await ctx.runQuery(internal.membershipCodes.listCodes, {
+        status: sp.get('status') ?? undefined,
+        cursor: sp.get('cursor') ?? undefined,
+      }),
+    );
   }),
 });
 

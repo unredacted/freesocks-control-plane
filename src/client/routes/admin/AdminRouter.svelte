@@ -22,9 +22,43 @@
   import AdminRateLimits from './AdminRateLimits.svelte';
   import AdminTheme from './AdminTheme.svelte';
   import Link from '../../components/Link.svelte';
+  import { adminAuthStatusQuery } from '../../lib/queries';
+
+  // Routes that don't require an admin session: /admin (the smart entry point,
+  // which shows login/bootstrap itself) and /admin/register (the invite landing,
+  // gated by its own token). Everything else renders authed chrome + fires
+  // authed queries, so we probe the auth-status query first and hold a neutral
+  // loading state until `signedIn` is known.
+  //
+  // Before this gate, deep-linking to /admin/users while signed out rendered the
+  // full AdminLayout, fired authed queries, then bounced on the reactive 401
+  // (query-client.ts) — a chrome-flash. The bounce there stays as the backstop
+  // (e.g. an expired session mid-session); this just avoids the flash on the
+  // common signed-out deep-link path.
+  const PUBLIC_ADMIN_PATHS = new Set(['/admin', '/admin/register']);
+  let needsAuth = $derived(!PUBLIC_ADMIN_PATHS.has(router.pathname));
+
+  const authStatus = adminAuthStatusQuery();
+
+  // Bounce signed-out deep-links to /admin (which renders the login/bootstrap
+  // flow). `replace: true` so the back button doesn't re-enter the guarded path.
+  $effect(() => {
+    if (needsAuth && authStatus.data && !authStatus.data.signedIn) {
+      router.navigate('/admin', { replace: true });
+    }
+  });
 </script>
 
-{#if router.pathname === '/admin'}
+{#if needsAuth && (authStatus.isPending || !authStatus.data)}
+  <!--
+    Hold a neutral loading state until the auth-status probe resolves, so a
+    signed-out deep-link never flashes the authed chrome before bouncing.
+  -->
+  <div class="max-w-md mx-auto py-12 text-muted-foreground text-center">Loading…</div>
+{:else if needsAuth && !authStatus.data?.signedIn}
+  <!-- Signed out: the $effect above is navigating to /admin; render the entry meanwhile. -->
+  <AdminEntry />
+{:else if router.pathname === '/admin'}
   <AdminEntry />
 {:else if router.pathname === '/admin/dashboard'}
   <AdminDashboard />

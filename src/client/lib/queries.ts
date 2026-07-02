@@ -25,10 +25,7 @@ import {
 import { ListTokensResponse } from '../../shared/contracts/tokens';
 import { AdminAuthStatus } from '../../shared/contracts/auth';
 import { RateLimitListResponse } from '../../shared/contracts/rateLimits';
-import {
-  MembershipCodeListResponse,
-  PurchasedCodesResponse,
-} from '../../shared/contracts/membershipCodes';
+import { MembershipCodePage, PurchasedCodesResponse } from '../../shared/contracts/membershipCodes';
 import { AdminBillingOverview, OrderStatusResponse } from '../../shared/contracts/billing';
 
 // --- Cache keys --------------------------------------------------------------
@@ -365,20 +362,29 @@ export const adminBillingQuery = (statusRef: () => string) =>
     };
   });
 
-/** W4: minted membership codes (masked), optionally filtered by status. */
+/**
+ * W4: minted membership codes (masked), optionally filtered by status.
+ * Paginated via createInfiniteQuery (mirrors adminUsersQuery / adminAuditQuery)
+ * so the admin can "Load more" instead of silently seeing only the first page.
+ * Server uses an opaque keyset cursor over `_creationTime`, echoed as nextCursor.
+ */
 export const adminMembershipCodesQuery = (statusRef: () => string) =>
-  createQuery(() => {
+  createInfiniteQuery(() => {
     const status = statusRef();
     return {
       queryKey: queryKeys.adminMembershipCodes(status),
-      queryFn: async () => {
-        const params = status ? `?status=${encodeURIComponent(status)}` : '';
-        const result = await apiClient.get(
-          `/api/v1/admin/membership-codes${params}`,
-          MembershipCodeListResponse,
+      initialPageParam: undefined as string | undefined,
+      queryFn: ({ pageParam }: { pageParam: string | undefined }) => {
+        const params = new URLSearchParams();
+        if (status) params.set('status', status);
+        if (pageParam) params.set('cursor', pageParam);
+        const qs = params.toString();
+        return apiClient.get(
+          `/api/v1/admin/membership-codes${qs ? `?${qs}` : ''}`,
+          MembershipCodePage,
         );
-        return result.codes;
       },
+      getNextPageParam: (last: z.infer<typeof MembershipCodePage>) => last.nextCursor ?? undefined,
       staleTime: 30_000,
     };
   });

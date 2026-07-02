@@ -58,6 +58,17 @@ export const MembershipCodeListResponse = z.object({
 });
 export type MembershipCodeListResponse = z.infer<typeof MembershipCodeListResponse>;
 
+/**
+ * One page of the admin codes list. Paginated via an opaque keyset cursor over
+ * `_creationTime` (mirrors the users/audit list pages); `nextCursor` is null on
+ * the last page.
+ */
+export const MembershipCodePage = z.object({
+  codes: z.array(MembershipCodeAdmin),
+  nextCursor: z.string().nullable(),
+});
+export type MembershipCodePage = z.infer<typeof MembershipCodePage>;
+
 // --- member: codes I purchased (gift codes) --------------------------------
 
 /** A gift code the member bought — masked (prefix + status), never the recipient. */

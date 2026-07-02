@@ -72,7 +72,7 @@
       {/each}
     </div>
   {:else if providers.isError}
-    <AdminListState error={providers.error} />
+    <AdminListState error={providers.error} onRetry={() => void providers.refetch()} />
   {:else if (providers.data?.length ?? 0) === 0}
     <div
       class="text-sm text-muted-foreground border border-dashed rounded-lg p-8 text-center space-y-2"

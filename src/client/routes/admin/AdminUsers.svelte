@@ -45,16 +45,41 @@
     return u.accountIdPrefix ? `Account ${u.accountIdPrefix}…` : `User ${u.id.slice(0, 8)}`;
   }
 
+  // Seed filters from the URL query string so a refresh/deep-link restores them
+  // (they're otherwise $state-only). We read window.location.search directly
+  // (not the router) on init and write back via history.replaceState below.
+  const initialParams =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+
   // The text the user has typed but not yet committed (Enter or Search button).
   // We only update the actual queryKey input on commit so each keystroke
   // doesn't fire a fresh request: that's the whole point of separating
   // input-state from query-state.
-  let inputText = $state('');
-  let activeQuery = $state('');
+  let inputText = $state(initialParams.get('q') ?? '');
+  let activeQuery = $state(initialParams.get('q') ?? '');
   // Server-supported list filters (UserSearchQuery): wired here for the first
   // time — the API honored them, the UI just never offered them.
-  let statusFilter = $state('');
-  let tierFilter = $state('');
+  let statusFilter = $state(initialParams.get('status') ?? '');
+  let tierFilter = $state(initialParams.get('tier') ?? '');
+
+  // Reflect the committed filters into the URL query string (only non-default
+  // values) so refresh/deep-link preserves them. replaceState (not pushState)
+  // keeps the back button behaving like the pre-filter page. We don't touch the
+  // router — this is a pure URL sync.
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams();
+    if (activeQuery) params.set('q', activeQuery);
+    if (statusFilter) params.set('status', statusFilter);
+    if (tierFilter) params.set('tier', tierFilter);
+    const qs = params.toString();
+    const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    if (next !== window.location.pathname + window.location.search) {
+      window.history.replaceState(window.history.state, '', next);
+    }
+  });
 
   const STATUS_OPTIONS = ['', 'active', 'grace', 'disabled'] as const;
 
@@ -221,7 +246,7 @@
       {/each}
     </div>
   {:else if users.isError}
-    <AdminListState error={users.error} />
+    <AdminListState error={users.error} onRetry={() => void users.refetch()} />
   {:else}
     <div class="space-y-3">
       {#each userRows as u (u.id)}

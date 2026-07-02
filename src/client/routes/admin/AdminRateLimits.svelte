@@ -85,6 +85,26 @@
     onError: (err) => toast.error('Update failed', { description: apiErrorMessage(err) }),
   }));
 
+  // Revert a customized policy to its compiled default (deletes the stored
+  // override server-side). Fires immediately with a toast, matching the page's
+  // save affordance — a policy at its default is harmless to re-derive.
+  const reset = createMutation(() => ({
+    mutationFn: (policyKey: string) =>
+      apiClient.patch(
+        '/api/v1/admin/rate-limits',
+        { policyKey, reset: true },
+        RateLimitListResponse,
+      ),
+    onSuccess: (_data, policyKey) => {
+      void qc.invalidateQueries({ queryKey: queryKeys.adminRateLimits });
+      // Drop any unsaved draft so the row snaps back to the (now default) value.
+      drafts = Object.fromEntries(Object.entries(drafts).filter(([k]) => k !== policyKey));
+      winUi = Object.fromEntries(Object.entries(winUi).filter(([k]) => k !== policyKey));
+      toast.success(`Reset ${policyKey} to default`);
+    },
+    onError: (err) => toast.error('Reset failed', { description: apiErrorMessage(err) }),
+  }));
+
   // Validate BEFORE mutating: an out-of-bounds value gets a readable toast
   // (firstIssueMessage), never a raw ZodError dump from inside mutationFn.
   function submitPolicy(
@@ -118,7 +138,7 @@
       {#each Array(5) as _, i (i)}<Skeleton class="h-14 w-full" />{/each}
     </div>
   {:else if policies.isError}
-    <AdminListState error={policies.error} />
+    <AdminListState error={policies.error} onRetry={() => void policies.refetch()} />
   {:else}
     <ul class="divide-y divide-border rounded-lg border border-border bg-card">
       {#each policies.data ?? [] as p (p.key)}
@@ -187,6 +207,16 @@
           <Button size="sm" disabled={!dirty || save.isPending} onclick={() => submitPolicy(p, d)}>
             Save
           </Button>
+          {#if !p.isDefault}
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={reset.isPending}
+              onclick={() => reset.mutate(p.key)}
+            >
+              Reset to default
+            </Button>
+          {/if}
         </li>
       {/each}
     </ul>

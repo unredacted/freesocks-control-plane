@@ -143,22 +143,44 @@ function maskCode(c: Doc<'redemptionCodes'>, tierSlugById: Map<string, string>) 
   };
 }
 
-/** Admin list: most recent codes, masked (never the hash/plaintext). */
+/**
+ * Admin list: codes newest-first, masked (never the hash/plaintext), with an
+ * opaque keyset cursor over `_creationTime` (mirrors adminApi.auditList /
+ * usersSearch). The `by_status` index appends `_creationTime`, so newest-first
+ * ordering + the cursor upper-bound compose on either the filtered or the
+ * unfiltered scan.
+ */
 export const listCodes = internalQuery({
-  args: { status: v.optional(v.string()), limit: v.optional(v.number()) },
-  handler: async (ctx, { status, limit }) => {
+  args: {
+    status: v.optional(v.string()),
+    cursor: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { status, cursor, limit }) => {
     const tiers = await ctx.db.query('tiers').collect();
     const tierSlugById = new Map<string, string>(tiers.map((t) => [t._id as string, t.slug]));
-    const pageSize = Math.min(Math.max(limit ?? 100, 1), 500);
-    const rows =
+    const pageSize = Math.min(Math.max(limit ?? 50, 1), 200);
+    const before = cursor && Number.isFinite(Number(cursor)) ? Number(cursor) : null;
+
+    const ordered =
       status === 'active' || status === 'redeemed' || status === 'revoked'
-        ? await ctx.db
+        ? ctx.db
             .query('redemptionCodes')
             .withIndex('by_status', (q) => q.eq('status', status))
             .order('desc')
-            .take(pageSize)
-        : await ctx.db.query('redemptionCodes').order('desc').take(pageSize);
-    return rows.map((c) => maskCode(c, tierSlugById));
+        : ctx.db.query('redemptionCodes').order('desc');
+
+    const rows = await ordered
+      .filter((f) =>
+        before != null ? f.lt(f.field('_creationTime'), before) : f.gt(f.field('_creationTime'), 0),
+      )
+      .take(pageSize + 1);
+
+    const hasMore = rows.length > pageSize;
+    const page = rows.slice(0, pageSize);
+    const last = page[page.length - 1];
+    const nextCursor = hasMore && last ? String(last._creationTime) : null;
+    return { codes: page.map((c) => maskCode(c, tierSlugById)), nextCursor };
   },
 });
 
