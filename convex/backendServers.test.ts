@@ -297,7 +297,8 @@ describe('generic dispatch (convex/backends.ts via the provider registry)', () =
       'fetch',
       vi.fn(async (input: string | URL) => {
         const u = typeof input === 'string' ? input : input.toString();
-        if (u.includes('/api/hwid-devices')) return jsonRes({ devices: [] });
+        if (u.includes('/api/hwid/devices'))
+          return jsonRes({ response: { total: 0, devices: [] } });
         return jsonRes(remnaUser({ status: 'LIMITED' }));
       }),
     );

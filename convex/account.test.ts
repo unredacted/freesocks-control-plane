@@ -226,8 +226,9 @@ describe('account.revokeDevice', () => {
   function stubPanelFetch(devices: { hwid: string }[]): ReturnType<typeof vi.fn> {
     const fetchMock = vi.fn(async (input: string | URL) => {
       const u = typeof input === 'string' ? input : input.toString();
-      if (u.includes('/api/hwid-devices/delete')) return jsonRes({ ok: true });
-      if (u.includes('/api/hwid-devices')) return jsonRes({ devices });
+      if (u.includes('/api/hwid/devices/delete')) return jsonRes({ ok: true });
+      if (u.includes('/api/hwid/devices'))
+        return jsonRes({ response: { total: devices.length, devices } });
       return jsonRes({
         uuid: UUID,
         shortUuid: 'short1',
@@ -262,7 +263,7 @@ describe('account.revokeDevice', () => {
     expect(res).toEqual({ ok: true });
 
     const deleteCall = fetchMock.mock.calls.find(([input]) =>
-      String(input).includes('/api/hwid-devices/delete'),
+      String(input).includes('/api/hwid/devices/delete'),
     );
     expect(deleteCall).toBeTruthy();
 
@@ -288,7 +289,7 @@ describe('account.revokeDevice', () => {
     });
     expect(res).toMatchObject({ ok: false, code: 'devices.not_found', status: 404 });
     expect(
-      fetchMock.mock.calls.some(([input]) => String(input).includes('/api/hwid-devices/delete')),
+      fetchMock.mock.calls.some(([input]) => String(input).includes('/api/hwid/devices/delete')),
     ).toBe(false);
   });
 

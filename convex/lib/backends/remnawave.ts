@@ -208,7 +208,10 @@ async function listDevices(cfg: RemnawaveConfig, userUuid: string): Promise<Back
   try {
     const result = await call(cfg, {
       method: 'GET',
-      path: `/api/hwid-devices?userUuid=${encodeURIComponent(userUuid)}`,
+      // Remnawave HWID controller is `/api/hwid`; a user's devices live at
+      // `devices/{userUuid}` (path param, NOT a `?userUuid=` query). See the
+      // contract table in docs/backends.md.
+      path: `/api/hwid/devices/${encodeURIComponent(userUuid)}`,
       schema: HwidDevicesResponse,
     });
     return result.devices.map((d) => ({
@@ -237,7 +240,9 @@ export async function remnawaveDeleteDevice(
 ): Promise<void> {
   await call(cfg, {
     method: 'POST',
-    path: '/api/hwid-devices/delete',
+    // `/api/hwid/devices/delete` (the HWID controller is `/api/hwid`); the body
+    // carries the ids. Response echoes the remaining list, deliberately unparsed.
+    path: '/api/hwid/devices/delete',
     body: { userUuid: backendUserId, hwid },
     schema: z.unknown(),
   });
@@ -260,7 +265,9 @@ export async function remnawaveUpdateUser(
   backendUserId: string,
   patch: UpdateUserPatch,
 ): Promise<void> {
-  const body: Record<string, unknown> = {};
+  // Remnawave's update is `PATCH /api/users` with the target `uuid` IN THE BODY
+  // (the route has no path param; the DTO requires uuid or username). Seed it here.
+  const body: Record<string, unknown> = { uuid: backendUserId };
   if (patch.trafficLimitBytes !== undefined) body.trafficLimitBytes = patch.trafficLimitBytes;
   if (patch.trafficLimitStrategy !== undefined)
     body.trafficLimitStrategy = patch.trafficLimitStrategy;
@@ -275,7 +282,7 @@ export async function remnawaveUpdateUser(
   if (patch.status !== undefined) body.status = patch.status === 'active' ? 'ACTIVE' : 'DISABLED';
   await call(cfg, {
     method: 'PATCH',
-    path: `/api/users/${backendUserId}`,
+    path: '/api/users',
     body,
     schema: RemnawaveUser,
   });

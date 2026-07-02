@@ -154,9 +154,15 @@ describe('remnawaveIssueUser', () => {
 describe('remnawaveGetUser', () => {
   function routeUserAndDevices(user: Record<string, unknown>, devicesStatus = 200): void {
     mockFetch((path, method) => {
-      if (path === '/api/hwid-devices')
+      // Real Remnawave: GET /api/hwid/devices/{userUuid}, wrapped in {response}.
+      if (path.startsWith('/api/hwid/devices'))
         return devicesStatus === 200
-          ? jsonRes({ devices: [{ hwid: 'd1', firstSeenAt: '2026-01-01T00:00:00.000Z' }] })
+          ? jsonRes({
+              response: {
+                total: 1,
+                devices: [{ hwid: 'd1', firstSeenAt: '2026-01-01T00:00:00.000Z' }],
+              },
+            })
           : jsonRes({ error: 'nope' }, devicesStatus);
       if (path.startsWith('/api/users/') && method === 'GET') return jsonRes(user);
       throw new Error(`unexpected ${method} ${path}`);
@@ -195,6 +201,9 @@ describe('remnawaveUpdateUser (Bug 14: squad clear vs set vs absent)', () => {
     mockFetch(() => jsonRes(userObj()));
     await remnawaveUpdateUser(cfg, UUID, { trafficLimitBytes: 10 });
     expect(calls[0]!.method).toBe('PATCH');
+    // Remnawave update is PATCH /api/users with the uuid in the BODY (no path param).
+    expect(calls[0]!.path).toBe('/api/users');
+    expect(calls[0]!.body!.uuid).toBe(UUID);
     expect('activeInternalSquads' in calls[0]!.body!).toBe(false);
     expect(calls[0]!.body!.trafficLimitBytes).toBe(10);
   });
