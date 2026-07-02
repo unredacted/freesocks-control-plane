@@ -17,7 +17,7 @@ import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { randomHex } from './lib/crypto';
 import { issueNewSubscription } from './lib/issuance';
-import { computeExpireAtIso, gbToBytes } from './lib/backends/types';
+import { computeExpireAtIso, gbToBytes, type UsageSeries } from './lib/backends/types';
 
 type Backend = 'remnawave' | 'outline';
 
@@ -208,6 +208,27 @@ export const getAccountView = internalAction({
       },
       subscription,
     };
+  },
+});
+
+/**
+ * Member usage trend (aggregate, read-live-and-never-stored). Resolves the
+ * member's current subscription and asks the backend for the last `days` of
+ * usage; null when there's no sub or the backend has no usage history (Outline).
+ * Kept OUT of getAccountView so it doesn't add a second live backend call to the
+ * main account load — the client fetches it lazily when the member opens the panel.
+ */
+export const getUsage = internalAction({
+  args: { userId: v.id('users'), days: v.optional(v.number()) },
+  handler: async (ctx, { userId, days }): Promise<{ usage: UsageSeries | null }> => {
+    const sub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+    if (!sub) return { usage: null };
+    const usage = await ctx.runAction(internal.backends.getUserUsage, {
+      backend: sub.backend,
+      backendUserId: sub.backendUserId,
+      days: days ?? 30,
+    });
+    return { usage };
   },
 });
 

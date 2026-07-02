@@ -15,6 +15,7 @@ import { describe, expect, test } from 'vitest';
 import {
   remnawaveDeleteUser,
   remnawaveGetUser,
+  remnawaveGetUserUsage,
   remnawaveIssueUser,
   remnawaveResetTraffic,
   remnawaveSetStatus,
@@ -61,6 +62,13 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave provider — real panel (int
       state.lastTrafficResetAt === undefined || typeof state.lastTrafficResetAt === 'string',
     ).toBe(true);
     expect(state.devices).toEqual([]);
+
+    // 2b) Usage — GET /api/bandwidth-stats/users/{uuid} (aggregate sparkline).
+    //     A fresh user has no traffic yet, so total is 0, but the path + shape parse.
+    const usage = await remnawaveGetUserUsage(cfg, uuid, 7);
+    expect(Array.isArray(usage.points)).toBe(true);
+    expect(Array.isArray(usage.labels)).toBe(true);
+    expect(usage.total).toBeGreaterThanOrEqual(0);
 
     // 3) Update — PATCH /api/users with uuid in the BODY (the headline bug we
     //    fixed). Prove it landed by reading the changed limit back.

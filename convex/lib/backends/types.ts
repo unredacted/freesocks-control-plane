@@ -94,3 +94,15 @@ export interface SubscriptionContent {
   content: string;
   contentType: string;
 }
+
+/**
+ * Aggregate per-bucket traffic usage for one user over a time range — the member
+ * "usage trend" sparkline. Deliberately aggregate-only: the backend's per-node /
+ * per-country breakdown is NOT surfaced (metadata minimization). Read live and
+ * never persisted by FCP.
+ */
+export interface UsageSeries {
+  points: number[]; // bytes per bucket (usually per day)
+  labels: string[]; // bucket labels (dates), 1:1 with `points`
+  total: number; // sum of `points`, bytes
+}

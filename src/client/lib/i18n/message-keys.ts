@@ -423,4 +423,9 @@ export type MessageKey =
   | "upgrade.starting"
   | "upgrade.subtitle"
   | "upgrade.title"
-  | "upgrade.total";
+  | "upgrade.total"
+  | "usage.none"
+  | "usage.show"
+  | "usage.title"
+  | "usage.total"
+  | "usage.unavailable";

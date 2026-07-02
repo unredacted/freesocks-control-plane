@@ -259,6 +259,13 @@
       }
     ]
   },
+  "usage": {
+    "show": "Show usage trend",
+    "title": "Usage (last 30 days)",
+    "total": "{amount} used in the last 30 days",
+    "unavailable": "Usage isn't available right now.",
+    "none": "No usage recorded yet."
+  },
   "regen": {
     "title": "Create a new subscription URL?",
     "body": "Your current subscription URL (ending …{suffix}) will be replaced with a new one. The old URL becomes read-only for 24 hours, then is deleted.",

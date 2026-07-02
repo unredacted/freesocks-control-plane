@@ -89,6 +89,23 @@ export const AccountResponse = z.object({
 });
 export type AccountResponse = z.infer<typeof AccountResponse>;
 
+/**
+ * Aggregate usage trend for the member's key (the usage-panel sparkline). Read
+ * live from the backend, never persisted; `null` when the backend has no usage
+ * history (e.g. Outline) or the read failed. Deliberately aggregate-only — no
+ * per-node/per-country breakdown (metadata minimization).
+ */
+export const AccountUsageResponse = z.object({
+  usage: z
+    .object({
+      points: z.array(z.number()),
+      labels: z.array(z.string()),
+      total: z.number(),
+    })
+    .nullable(),
+});
+export type AccountUsageResponse = z.infer<typeof AccountUsageResponse>;
+
 export const RegenerateRequest = z.object({
   confirm: z.literal(true),
 });

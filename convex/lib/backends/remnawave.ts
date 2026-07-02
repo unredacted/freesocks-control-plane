@@ -11,6 +11,7 @@ import type {
   IssuedUser,
   SubscriptionContent,
   UpdateUserPatch,
+  UsageSeries,
   UserState,
 } from './types';
 
@@ -272,6 +273,37 @@ export async function remnawaveGetUser(
     schema: RemnawaveUser,
   });
   return toState(user, await listDevices(cfg, backendUserId));
+}
+
+/**
+ * Aggregate traffic-usage series for the member "usage trend" (last `days` days).
+ * `GET /api/bandwidth-stats/users/{uuid}?start&end`. The response also carries a
+ * per-node / per-country breakdown (`series` / `topNodes`) which we DELIBERATELY
+ * DROP — only the aggregate sparkline reaches the member (metadata minimization).
+ */
+const UserUsageResponse = z.object({
+  categories: z.array(z.string()).default([]),
+  sparklineData: z.array(z.number()).default([]),
+});
+
+export async function remnawaveGetUserUsage(
+  cfg: RemnawaveConfig,
+  backendUserId: string,
+  days: number,
+): Promise<UsageSeries> {
+  const end = new Date();
+  const start = new Date(Date.now() - Math.max(1, days) * DAY_MS);
+  const ymd = (d: Date) => d.toISOString().slice(0, 10);
+  const result = await call(cfg, {
+    method: 'GET',
+    path: `/api/bandwidth-stats/users/${encodeURIComponent(backendUserId)}?start=${ymd(start)}&end=${ymd(end)}&topNodesLimit=1`,
+    schema: UserUsageResponse,
+  });
+  return {
+    points: result.sparklineData,
+    labels: result.categories,
+    total: result.sparklineData.reduce((a, b) => a + b, 0),
+  };
 }
 
 export async function remnawaveUpdateUser(

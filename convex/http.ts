@@ -443,6 +443,22 @@ http.route({
   }),
 });
 
+// Aggregate usage trend for the member's key (last ~30 days). Non-secret member
+// stats, read live from the backend and NEVER persisted; unsealed (TLS + PoP).
+// Lazy — the SPA calls this only when the member opens the usage panel, so it
+// doesn't add a second live backend call to the main /account load. Degrades to
+// `{ usage: null }` for backends without usage history (Outline) or on any error.
+http.route({
+  path: '/api/v1/account/usage',
+  method: 'GET',
+  handler: guard(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:read');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const { usage } = await ctx.runAction(internal.account.getUsage, { userId: member.userId });
+    return json({ usage });
+  }),
+});
+
 // Raw subscription content (the actual proxy config) for manual setup. Fetched
 // server-side from the backend and returned over the SEALED reveal-leg channel,
 // so a privacy-minded member can copy their config by hand WITHOUT their proxy

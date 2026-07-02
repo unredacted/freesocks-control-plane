@@ -29,6 +29,7 @@ import type {
   IssuedUser,
   SubscriptionContent,
   UpdateUserPatch,
+  UsageSeries,
   UserState,
 } from './lib/backends/types';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
@@ -194,6 +195,25 @@ export const setUserStatus = internalAction({
     }
     await provider.setStatus(server.config as BackendConfig, backendUserId, active);
     return null;
+  },
+});
+
+// Aggregate member usage series (read-only). Best-effort: degrades to null when
+// unsupported (Outline / older panel) or unreachable, so the account page never
+// breaks on it. Read live, never persisted.
+export const getUserUsage = internalAction({
+  args: { backend: backendId, backendUserId: v.string(), days: v.optional(v.number()) },
+  handler: async (ctx, { backendUserId, days }): Promise<UsageSeries | null> => {
+    if (mockBackendEnabled()) return null;
+    const server = await resolveInstanceByKey(ctx, backendUserId);
+    if (!server) return null;
+    const provider = PROVIDERS[server.backend];
+    if (!provider.getUserUsage) return null;
+    try {
+      return await provider.getUserUsage(server.config as BackendConfig, backendUserId, days ?? 30);
+    } catch {
+      return null;
+    }
   },
 });
 

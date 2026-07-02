@@ -35,10 +35,19 @@
   import Sparkles from '@lucide/svelte/icons/sparkles';
   import Gift from '@lucide/svelte/icons/gift';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
+  import Gauge from '@lucide/svelte/icons/gauge';
+  import Sparkline from '../components/Sparkline.svelte';
+  import { formatBytes } from '../lib/utils';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { clearSessionKey } from '../lib/pop';
-  import { accountQuery, billingOrderQuery, configQuery, queryKeys } from '../lib/queries';
+  import {
+    accountQuery,
+    accountUsageQuery,
+    billingOrderQuery,
+    configQuery,
+    queryKeys,
+  } from '../lib/queries';
   import { router } from '../stores/router.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -47,6 +56,11 @@
   const account = accountQuery();
   const config = configQuery();
   const qc = useQueryClient();
+
+  // Usage trend: lazy — only fetched once the member opens the panel, so it never
+  // adds a second live backend call to the main account load.
+  let usageOpen = $state(false);
+  const usage = accountUsageQuery(() => usageOpen);
 
   // Convenience accessor: Svelte's narrowing reads better than account.data
   // sprinkled across the template.
@@ -615,6 +629,41 @@
             />
           {/if}
           <RawConfig />
+        {/if}
+
+        <!-- Usage trend: lazy panel. The query is disabled until the member opens
+             it, so a live backend usage call never rides on the main account load. -->
+        {#if !usageOpen}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+            onclick={() => (usageOpen = true)}
+          >
+            <Gauge class="size-4" />
+            {t('usage.show')}
+          </button>
+        {:else}
+          <div class="rounded-lg border border-border bg-card p-4 space-y-3">
+            <h3 class="text-sm font-semibold flex items-center gap-2">
+              <Gauge class="size-4 text-muted-foreground" />
+              {t('usage.title')}
+            </h3>
+            {#if usage.isPending}
+              <Skeleton class="h-12 w-full" />
+            {:else if usage.isError}
+              <p class="text-sm text-muted-foreground">{t('usage.unavailable')}</p>
+            {:else if usage.data?.usage && usage.data.usage.points.some((p) => p > 0)}
+              {@const u = usage.data.usage}
+              <div class="text-primary">
+                <Sparkline points={u.points} class="w-full h-12" />
+              </div>
+              <p class="text-xs text-muted-foreground tabular-nums">
+                {t('usage.total', { amount: formatBytes(u.total) })}
+              </p>
+            {:else}
+              <p class="text-sm text-muted-foreground">{t('usage.none')}</p>
+            {/if}
+          </div>
         {/if}
 
         <!-- Key actions: regenerate, and switch backend when eligible. -->

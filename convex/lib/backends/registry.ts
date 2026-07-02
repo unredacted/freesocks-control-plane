@@ -17,6 +17,7 @@ import type {
   IssuedUser,
   SubscriptionContent,
   UpdateUserPatch,
+  UsageSeries,
   UserState,
 } from './types';
 import {
@@ -24,6 +25,7 @@ import {
   remnawaveDeleteUser,
   remnawaveFetchSubscription,
   remnawaveGetUser,
+  remnawaveGetUserUsage,
   remnawaveHealth,
   remnawaveIssueUser,
   remnawaveResetTraffic,
@@ -79,6 +81,9 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // Optional: enable/disable a user via the backend's dedicated status action
   // (Remnawave: /actions/{enable|disable}). Absent for backends without it.
   setStatus?(config: C, backendUserId: string, active: boolean): Promise<void>;
+  // Optional: aggregate traffic-usage series for the member usage trend (read-only;
+  // Remnawave bandwidth-stats). Absent for backends without per-user usage history.
+  getUserUsage?(config: C, backendUserId: string, days: number): Promise<UsageSeries>;
   fetchContent(
     config: C,
     backendShortId: string,
@@ -97,6 +102,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   remove: (c, id) => remnawaveDeleteUser(c, id),
   removeDevice: (c, id, hwid) => remnawaveDeleteDevice(c, id, hwid),
   setStatus: (c, id, active) => remnawaveSetStatus(c, id, active),
+  getUserUsage: (c, id, days) => remnawaveGetUserUsage(c, id, days),
   fetchContent: (c, shortId, ua, subUrl) => remnawaveFetchSubscription(c, shortId, ua, subUrl),
   health: (c) => remnawaveHealth(c),
   testConnection: (c) => remnawaveTestConnection(c),

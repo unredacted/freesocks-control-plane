@@ -10,7 +10,11 @@ import { createQuery, createInfiniteQuery } from '@tanstack/svelte-query';
 import { z } from 'zod';
 import { apiClient } from './api';
 import { AuthMeResponse, PublicConfig } from '../../shared/contracts/auth';
-import { AccountResponse, SubscriptionContentResponse } from '../../shared/contracts/account';
+import {
+  AccountResponse,
+  AccountUsageResponse,
+  SubscriptionContentResponse,
+} from '../../shared/contracts/account';
 import {
   AdminListResponse,
   AdminCredentialsResponse,
@@ -52,6 +56,7 @@ export const queryKeys = {
   adminBilling: (status: string) => ['admin', 'billing', status] as const,
   billingOrder: (ref: string) => ['billing', 'order', ref] as const,
   accountCodes: ['account', 'codes'] as const,
+  accountUsage: ['account', 'usage'] as const,
 };
 
 // --- Public surface ----------------------------------------------------------
@@ -103,6 +108,19 @@ export const accountQuery = (enabled?: () => boolean) =>
     queryFn: () => apiClient.get('/api/v1/account', AccountResponse),
     staleTime: 30_000,
     ...(enabled ? { enabled: enabled() } : {}),
+  }));
+
+/**
+ * Aggregate usage trend for the member's key (the usage-panel sparkline). Lazy:
+ * only fetched while `enabled()` (the panel is open), so it doesn't add a live
+ * backend call to every account view. Usage changes slowly ⇒ a longer staleTime.
+ */
+export const accountUsageQuery = (enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.accountUsage,
+    queryFn: () => apiClient.get('/api/v1/account/usage', AccountUsageResponse),
+    staleTime: 300_000,
+    enabled: enabled(),
   }));
 
 /**
