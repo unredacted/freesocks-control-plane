@@ -7,6 +7,10 @@ reference. Status: Phases 0 to 4 implemented on `v2`. The manifest trust anchor 
 publication + reproducible rebuilder (`docs/oob-verification.md`) and the verifier extension
 (`verifier-extension/`, the active-CDN defense, published through the web store).
 
+> **Naming:** the user-facing label for this feature is **"HPKE"** (the SPA badge,
+> verify panel, and member copy all say HPKE). Code identifiers and this doc keep
+> the historical `e2ee` name — they are the same thing.
+
 ## Why
 
 To stay reachable in censored regions the control plane will sit behind a TLS-terminating CDN

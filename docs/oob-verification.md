@@ -1,5 +1,8 @@
 # Out-of-band verification and reproducible build (CDN-blinding Phase 3f)
 
+> **Naming:** the user-facing label for the sealed channel is **"HPKE"**; code
+> identifiers and these docs keep the historical `e2ee` name.
+
 This is the runbook for the active-adversary tier of the CDN-blinding feature.
 Phases 1 to 3 defeat a PASSIVE CDN: the crown-jewel secrets are sealed, sessions
 are bound to a proof-of-possession key, and the login seals to a short-lived

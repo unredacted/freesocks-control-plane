@@ -47,7 +47,10 @@ is the **only** member credential.
 >
 > Below, sections describing the (removed) OIDC/CiviCRM/Drizzle-migration mechanics
 > are kept for historical context only; the design intent that survived is the
-> format, storage, rate-limit, timing, and security content.
+> format, storage, rate-limit, timing, and security content. In particular, every
+> `src/server/*` path and every SQL/Drizzle migration named in §2, §5, and §13 is
+> from the pre-Convex stack and no longer exists — the live implementation is
+> `convex/{auth,accountId}.ts` + `convex/lib/accountId.ts`.
 
 ## 1. Identifier format
 

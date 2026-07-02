@@ -54,7 +54,8 @@ _before_ `up`):
 | `CAP_ADMIN_KEY`     | Login to the self-hosted Cap captcha dashboard          | The bootstrap **prints it** (you need it to create the Cap site key/secret). |
 
 **CDN-blinding keypair → split across both files, generated as a UNIT** so the
-public pins always match the secret keys:
+public pins always match the secret keys (user-facing label: **"HPKE"**; code
+identifiers keep the historical `e2ee` name):
 
 | Var                                    | Home                                     | Purpose                                                                 |
 | -------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------- |

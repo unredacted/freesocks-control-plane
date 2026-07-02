@@ -30,7 +30,7 @@ router and native cron jobs. There is no separate web framework or edge worker.
 - **[Convex](https://docs.convex.dev) 1.40**: reactive document DB + serverless functions, run **self-hosted** (Docker; SQLite or Postgres). Schema and validators are TypeScript (`v.*`), so there is no SQL and no migration set.
 - **HTTP router** (`convex/http.ts`): every public route is an `httpAction`, served on the Convex HTTP-actions port (`:3211`). This is the surface the SPA and API consumers call.
 - **Native crons** (`convex/crons.ts`): grace/disable sweep, tombstone sweep, backend healthcheck, free-tier cleanup, session/rate-limit/replay-guard + admin-invite sweeps, HPKE epoch-key rotation, append-only-table retention sweeps, billing pending/gift-reveal sweeps, and S3 mirror refresh.
-- **Self-hosted [Cap](https://trycap.dev) captcha** (the `cap` + `valkey` compose services) gates anonymous account creation + login; verified server-side in `convex/lib/captcha.ts`. The widget + its proof-of-work WASM are bundled and served same-origin — no third-party scripts.
+- **Self-hosted [Cap](https://trycap.dev) captcha** (the `cap` + `valkey` services in the **beta** compose stack, `docker-compose.beta.yml`; the base dev `docker-compose.yml` is backend + dashboard only — local dev uses `CAP_DEV_BYPASS=true`) gates anonymous account creation + login; verified server-side in `convex/lib/captcha.ts`. The widget + its proof-of-work WASM are bundled and served same-origin — no third-party scripts.
 - **Proxy backends**: **Remnawave** and **Outline** behind a common action dispatch (`convex/backends.ts` + `convex/lib/backends/*`); per-tier backend selection plus optional end-user choice. See [`docs/backends.md`](docs/backends.md).
 - **`@simplewebauthn/server`** for admin passkey auth (a `"use node"` action module).
 - **`@aws-sdk/client-s3`** for optional multi-provider subscription mirroring (a `"use node"` action module).
@@ -149,7 +149,8 @@ from the SPA's build-time `VITE_*`); the full required/optional list is in
 to a clean slate with `docker compose --env-file .env.docker down -v` (wipes the
 `fcp_data` volume).
 
-To exercise the CDN-blinding E2EE locally, also generate its keys
+To exercise the CDN-blinding sealed channel locally (user-facing label: **"HPKE"**;
+code identifiers remain `e2ee`), also generate its keys
 (`bun scripts/gen-e2ee-keys.mjs`), `bunx convex env set` the printed `FS_*` secrets,
 and append the printed `VITE_FS_*` public vars to `.env.local`. See
 [`docs/threat-model-cdn-blinding.md`](docs/threat-model-cdn-blinding.md).
@@ -225,13 +226,19 @@ Highlights:
 ### Endpoints (served by `convex/http.ts`)
 
 - **Public / member:** `GET /healthz` (liveness), `GET /readyz` (deep readiness),
-  `GET /api/v1/config`, `POST /api/v1/account` (create), `GET /api/v1/account`,
+  `GET /api/v1/config`, `GET /api/v1/e2ee/keys` (HPKE epoch keys + revocations),
+  `POST /api/v1/account` (create), `GET /api/v1/account`,
   `POST /api/v1/auth/account-login`, `POST /api/v1/auth/logout`, `GET /api/v1/me`,
   `POST /api/v1/account/{regenerate,switch-backend,refresh-membership,redeem-code}`,
-  `POST /api/v1/account/account-id/rotate`.
-- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{status,tiers,users,admins,tokens,audit,settings,rate-limits,membership-codes,backend-servers,billing,mirror-providers,theme}/*` — each route enforces a specific scope on token callers; the Ansible role's idempotent `by-slug` / `by-name` upserts live under these.
+  `POST /api/v1/account/account-id/rotate`, `POST /api/v1/account/devices/revoke`,
+  `GET /api/v1/subscription/content` (sealed raw-config reveal),
+  `POST /api/v1/mirror/request` + `GET /api/v1/mirror` (opt-in S3 mirror),
+  `POST /api/v1/billing/checkout` + `GET /api/v1/billing/order/*` (self-service membership),
+  `POST /api/v1/account/gift-codes/ack` + `GET /api/v1/account/codes` (gift purchases).
+- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{status,tiers,users,admins,tokens,audit,settings,rate-limits,membership-codes,backend-servers,billing,mirror-providers,theme,verification}/*` — every route enforces a scope on token callers (several features share the broader `admin:settings:*` / `admin:users:*` scopes rather than one scope per feature); the Ansible role's idempotent `by-slug` / `by-name` upserts live under these.
 - **Plumbing:** `GET|POST /api/admin/auth/*` (WebAuthn passkey ceremonies + bootstrap),
-  `POST /api/webhooks/billing` (HMAC inbound).
+  `POST /api/webhooks/billing` (generic HMAC inbound), and the processor webhooks
+  `POST /api/webhooks/{nowpayments,stripe,paypal}`.
 
 ### Authentication paths
 

@@ -1,6 +1,13 @@
 # Project inventory: features, open work, and code status
 
-**Last reconciled against the code: 2026-06-28** (branch `v2`, after the improvement-roadmap
+**Last reconciled against the code: 2026-07-01** (branch `v2`, after the full-audit pass:
+the **retryable webhook dedupe claim** (a grant that throws no longer strands the event —
+`webhookEvents.status` pending/processed/failed), member **device revocation**
+(`POST /api/v1/account/devices/revoke`, Remnawave HWID), WebAuthn-challenge **retention
+sweeps**, compose **resource limits**, rate limits on rotate + device-revoke, translated
+member error codes, a lazy-loaded Cap widget, per-route titles + back/forward scroll
+restoration, a proactive admin auth gate, membership-code pagination, rate-limit
+reset-to-default, and URL-persisted admin filters; before that, the improvement-roadmap
 pass: an admin landing **dashboard** with a shared `GET /admin/status` and audit-log filtering,
 an admin-configurable **theme system**, **admin/passkey lifecycle** (deactivate/reactivate and
 per-passkey revoke, guarded), IaC-friendly **by-slug / by-name CRUD** with declarative
@@ -167,7 +174,15 @@ Detailed companions, referenced rather than duplicated here:
 - **Billing webhook seam** (legacy/ops): `POST /api/webhooks/billing` (`convex/webhooks.ts`),
   HMAC-SHA256-verified (`WEBHOOK_SIGNING_SECRET`) + deduped by `eventId` (`webhookEvents`
   table) → maps `{accountId, tierSlug, expiresAtMs?}` onto `lifecycle.setMembership`. Kept as
-  a generic inbound entitlement seam alongside the self-service rails above. **Live.**
+  a generic inbound entitlement seam alongside the self-service rails above. The dedupe row is
+  a **status-tracked claim** (`pending → processed | failed`, shared with the processor
+  webhooks): a grant that throws leaves the event retryable instead of silently ACKing the
+  sender's retry as a duplicate. **Live.**
+- **Member device revocation** (`convex/account.ts:revokeDevice` + `convex/backends.ts` +
+  `POST /api/v1/account/devices/revoke`): a member frees one HWID slot from the Account page
+  (ownership-checked against their own key, confirmation-gated, rate-limited via the
+  `account.device-revoke` policy) instead of the nuclear full-key regenerate. Remnawave only
+  (Outline has no device concept → typed 409). **Live.**
 - **Self-hosted Cap captcha** (`convex/lib/captcha.ts` + `src/client/components/CapWidget.svelte`):
   proof-of-work CAPTCHA gating free issuance + account login. Replaced Cloudflare Turnstile (W1)
   — the widget is bundled from npm and challenge traffic is same-origin (Caddy `/cap` → the `cap`
@@ -227,8 +242,10 @@ Convex runs these natively (no Workers triggers, no node-cron):
 - `epoch-key-rotate` (10 min) / `epoch-key-sweep` (daily): CDN-blinding HPKE epoch keys.
 - `admin-invite-sweep` (daily): drop expired admin-invite tokens (multi-admin onboarding).
 - `retention-audit` / `retention-webhooks` / `retention-tier-history` /
-  `retention-free-grants` / `retention-subscriptions` / `retention-billing-orders` (daily):
-  bounded deletes of the append-only tables past their retention window (P2).
+  `retention-free-grants` / `retention-subscriptions` / `retention-billing-orders` /
+  `retention-webauthn-auth` / `retention-webauthn-reg` (daily): bounded deletes of the
+  append-only tables past their retention window (P2; the WebAuthn challenge sweeps close
+  the last unswept-table gap).
 - `billing-pending-sweep` (15 min): expire abandoned membership checkouts (never grants).
 - `billing-gift-reveal-sweep` (hourly): clear the transient plaintext gift-code reveal from
   paid gift orders the buyer never acknowledged, so plaintext never lingers at rest (the
@@ -246,6 +263,11 @@ Convex runs these natively (no Workers triggers, no node-cron):
   `Home` + `GetAccount` show loading **skeletons** (no config-gated/auth-state content flash);
   the `Account` page surfaces a calm account-number **recovery** hint (rotate if you didn't save
   it). Localized via `lib/i18n`; a `LanguageSwitcher` in the header.
+- **Admin CMS is deliberately English-only** (decision 2026-07-01): operators are
+  English-speaking, so the 26 admin `.svelte` files bypass the Paraglide catalog entirely.
+  This is an intentional inconsistency with the fully-translated member surface, not an
+  oversight — don't file it as an i18n gap, and don't route admin strings through `t()`
+  without revisiting the decision here.
 - Admin (lazy-loaded behind `AdminRouter`): `AdminEntry`/`AdminLogin`/`AdminBootstrap`/`AdminLayout`
   - **Dashboard** / Tiers / Users / **Admins** / Tokens / BackendServers / **Billing** /
     **Storage** mirrors / **RateLimits** / **MembershipCodes** / **Theme** / Settings / Audit
