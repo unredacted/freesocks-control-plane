@@ -154,6 +154,8 @@ export const pushTierToBackend = internalAction({
           expireAt: computeExpireAtIso(st.membershipExpiresAt, freeExpiryDays),
         },
       });
+      // Push succeeded: clear any prior drift flag (no-op if it wasn't set).
+      await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: false });
     } catch (err) {
       if (n + 1 < PUSH_MAX_ATTEMPTS) {
         await ctx.scheduler.runAfter(
@@ -186,6 +188,28 @@ export const recordPushFailure = internalMutation({
       targetType: 'user',
       targetId: userId,
     });
+    // Flag the drift so an admin can see the backend never got this user's tier.
+    await ctx.db.patch(userId, { backendPushFailedAt: Date.now() });
+    return null;
+  },
+});
+
+/**
+ * Set or clear the user's backend push-drift flag (the admin "backend drift"
+ * signal). `failed:true` stamps now; `failed:false` clears it, but only writes
+ * when it was actually set — so a clear-on-every-successful-push is a no-op in the
+ * common (no drift) case.
+ */
+export const setBackendDrift = internalMutation({
+  args: { userId: v.id('users'), failed: v.boolean() },
+  handler: async (ctx, { userId, failed }) => {
+    const user = await ctx.db.get(userId);
+    if (!user) return null;
+    if (failed) {
+      await ctx.db.patch(userId, { backendPushFailedAt: Date.now() });
+    } else if (user.backendPushFailedAt != null) {
+      await ctx.db.patch(userId, { backendPushFailedAt: undefined });
+    }
     return null;
   },
 });
@@ -329,11 +353,14 @@ export const runGraceSweep = internalAction({
           });
         } catch {
           // Backend unreachable: leave the user in `grace` so the next sweep
-          // retries; disabling locally now would strand a still-routing key.
+          // retries; disabling locally now would strand a still-routing key. Flag
+          // the drift so the still-routing key is observable meanwhile.
+          await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: true });
           continue;
         }
       }
       await ctx.runMutation(internal.lifecycle.applyDisableTransition, { userId });
+      await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: false });
       toDisabled++;
     }
     return { toGrace, toDisabled };

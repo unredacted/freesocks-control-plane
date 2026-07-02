@@ -497,6 +497,7 @@ async function mapUser(
     membershipExpiresAt: u.membershipExpiresAt != null ? iso(u.membershipExpiresAt) : null,
     backendUserId: cur.backendUserId,
     backend: cur.backend,
+    backendPushFailedAt: u.backendPushFailedAt != null ? iso(u.backendPushFailedAt) : null,
     createdAt: iso(u._creationTime),
   };
 }
@@ -515,10 +516,11 @@ export const usersSearch = internalQuery({
     q: v.optional(v.string()),
     status: v.optional(userStatus),
     tier: v.optional(v.string()),
+    drift: v.optional(v.boolean()),
     cursor: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
-  handler: async (ctx, { q, status, tier, cursor, limit }) => {
+  handler: async (ctx, { q, status, tier, drift, cursor, limit }) => {
     const pageSize = Math.min(Math.max(limit ?? 50, 1), 200);
 
     // Tier slug → id map (for the `tier` filter) and id → slug map (for rows).
@@ -551,6 +553,7 @@ export const usersSearch = internalQuery({
       const filtered = matches
         .filter((u) => (status ? u.status === status : true))
         .filter((u) => (tier ? u.tierId === tierIdBySlug.get(tier) : true))
+        .filter((u) => (drift ? u.backendPushFailedAt != null : true))
         .slice(0, pageSize);
       const users = await Promise.all(filtered.map((u) => mapUser(ctx, u, tierSlugById)));
       return { users, nextCursor: null };
@@ -565,7 +568,9 @@ export const usersSearch = internalQuery({
     // Over-fetch to allow post-filtering without breaking the page size.
     const raw = await qry.take(pageSize * 4 + 1);
     const matchFilter = (u: Doc<'users'>) =>
-      (status ? u.status === status : true) && (tier ? u.tierId === tierIdBySlug.get(tier) : true);
+      (status ? u.status === status : true) &&
+      (tier ? u.tierId === tierIdBySlug.get(tier) : true) &&
+      (drift ? u.backendPushFailedAt != null : true);
     const filtered = raw.filter(matchFilter);
     const page = filtered.slice(0, pageSize);
     const last = page[page.length - 1];
@@ -695,8 +700,11 @@ export const runUserOp = internalAction({
             backendUserId: sub.backendUserId,
             active: false,
           });
+          await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: false });
         } catch {
-          /* best-effort: local state is authoritative; cron/edit will reconcile */
+          // Local state is authoritative, but the key may still route on the
+          // backend — flag the drift so the admin sees the push didn't land.
+          await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: true });
         }
       }
       return { ok: true };
@@ -712,8 +720,11 @@ export const runUserOp = internalAction({
             backendUserId: sub.backendUserId,
             active: true,
           });
+          await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: false });
         } catch {
-          /* best-effort: local state is authoritative; cron/edit will reconcile */
+          // Local state is authoritative, but the key may still be disabled on
+          // the backend — flag the drift so the admin sees the push didn't land.
+          await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: true });
         }
       }
       return { ok: true };
@@ -1400,7 +1411,11 @@ export const statusSummary = internalQuery({
     // counter (an appState row bumped on each status transition).
     const users = await ctx.db.query('users').collect();
     const usersByStatus = { active: 0, grace: 0, disabled: 0, deleted: 0 };
-    for (const u of users) usersByStatus[u.status] += 1;
+    let backendDrift = 0; // users whose last backend push failed and hasn't recovered
+    for (const u of users) {
+      usersByStatus[u.status] += 1;
+      if (u.backendPushFailedAt != null) backendDrift += 1;
+    }
 
     // Backends are small + admin-managed. Health + key counts only; never config.
     const serverRows = await ctx.db.query('backendServers').collect();
@@ -1429,6 +1444,7 @@ export const statusSummary = internalQuery({
 
     return {
       users: usersByStatus,
+      backendDrift,
       totals: {
         backends: backends.length,
         activeBackends: activeBackends.length,

@@ -40,7 +40,8 @@ export const queryKeys = {
   adminAdmins: ['admin', 'admins'] as const,
   adminCredentials: (adminId: string) => ['admin', 'admins', adminId, 'credentials'] as const,
   adminTiers: ['admin', 'tiers'] as const,
-  adminUsers: (q: string, status = '', tier = '') => ['admin', 'users', q, status, tier] as const,
+  adminUsers: (q: string, status = '', tier = '', drift = false) =>
+    ['admin', 'users', q, status, tier, drift] as const,
   adminTokens: ['admin', 'tokens'] as const,
   adminAudit: ['admin', 'audit'] as const,
   adminSettings: ['admin', 'settings'] as const,
@@ -216,20 +217,22 @@ export interface AdminUserFilters {
   q: string;
   status: string;
   tier: string;
+  drift: boolean;
 }
 export const adminUsersQuery = (filtersRef: () => AdminUserFilters) =>
   createInfiniteQuery(() => {
-    const { q, status, tier } = filtersRef();
+    const { q, status, tier, drift } = filtersRef();
     return {
       // Same ['admin','users', ...] prefix, so existing prefix invalidations
       // still hit every filter combination.
-      queryKey: queryKeys.adminUsers(q, status, tier),
+      queryKey: queryKeys.adminUsers(q, status, tier, drift),
       initialPageParam: undefined as string | undefined,
       queryFn: ({ pageParam }: { pageParam: string | undefined }) => {
         const params = new URLSearchParams();
         if (q) params.set('q', q);
         if (status) params.set('status', status);
         if (tier) params.set('tier', tier);
+        if (drift) params.set('drift', 'true');
         if (pageParam) params.set('cursor', pageParam);
         const qs = params.toString();
         return apiClient.get(`/api/v1/admin/users${qs ? `?${qs}` : ''}`, UsersPage);

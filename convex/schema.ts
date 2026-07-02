@@ -135,6 +135,11 @@ export default defineSchema({
     // at account creation, lazily backfilled for pre-W3 users. Unique (enforced
     // in the mutation). See convex/lib/supportId.ts.
     supportId: v.optional(v.string()),
+    // Set when a backend push (tier propagation, or an enable/disable) fails and
+    // hasn't since succeeded; cleared on the next successful push. Surfaced as the
+    // admin "backend drift" signal so otherwise-silent entitlement drift (a paid
+    // upgrade that never reached the panel, a disable the key ignored) is visible.
+    backendPushFailedAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_account_id_hash', ['accountIdHash'])

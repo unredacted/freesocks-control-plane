@@ -66,6 +66,12 @@ export const UserAdmin = z.object({
   backendUserId: z.string().nullable(),
   /** Which backend the subscription lives in, if any. */
   backend: BackendId.nullable(),
+  /**
+   * Set when the last backend push for this user failed and hasn't since
+   * recovered (a tier propagation that never reached the panel, or a disable the
+   * key ignored). Null = in sync. Surfaces as the "backend drift" badge.
+   */
+  backendPushFailedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
 });
 export type UserAdmin = z.infer<typeof UserAdmin>;
@@ -74,6 +80,8 @@ export const UserSearchQuery = z.object({
   q: z.string().optional(),
   status: UserStatus.optional(),
   tier: z.string().optional(),
+  // Restrict to users with unresolved backend push-drift.
+  drift: z.coerce.boolean().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   cursor: z.string().optional(),
 });
@@ -261,6 +269,8 @@ export const AdminStatusSummary = z.object({
     disabled: z.number().int().nonnegative(),
     deleted: z.number().int().nonnegative(),
   }),
+  /** Users whose last backend push failed and hasn't recovered (entitlement drift). */
+  backendDrift: z.number().int().nonnegative(),
   totals: z.object({
     backends: z.number().int().nonnegative(),
     activeBackends: z.number().int().nonnegative(),

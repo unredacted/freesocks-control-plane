@@ -1405,6 +1405,7 @@ http.route({
           q: u.searchParams.get('q') ?? undefined,
           status: (u.searchParams.get('status') as never) ?? undefined,
           tier: u.searchParams.get('tier') ?? undefined,
+          drift: u.searchParams.get('drift') === 'true' ? true : undefined,
           cursor: u.searchParams.get('cursor') ?? undefined,
           limit: Number.isFinite(limit) ? limit : undefined,
         }),

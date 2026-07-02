@@ -63,6 +63,8 @@
   // time — the API honored them, the UI just never offered them.
   let statusFilter = $state(initialParams.get('status') ?? '');
   let tierFilter = $state(initialParams.get('tier') ?? '');
+  // Restrict to users whose last backend push failed (entitlement drift).
+  let driftFilter = $state(initialParams.get('drift') === 'true');
 
   // Reflect the committed filters into the URL query string (only non-default
   // values) so refresh/deep-link preserves them. replaceState (not pushState)
@@ -74,6 +76,7 @@
     if (activeQuery) params.set('q', activeQuery);
     if (statusFilter) params.set('status', statusFilter);
     if (tierFilter) params.set('tier', tierFilter);
+    if (driftFilter) params.set('drift', 'true');
     const qs = params.toString();
     const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
     if (next !== window.location.pathname + window.location.search) {
@@ -87,6 +90,7 @@
     q: activeQuery,
     status: statusFilter,
     tier: tierFilter,
+    drift: driftFilter,
   }));
   const tiers = adminTiersQuery();
   const qc = useQueryClient();
@@ -212,13 +216,22 @@
         {/each}
       </Select.Content>
     </Select.Root>
-    {#if statusFilter || tierFilter}
+    <Button
+      size="sm"
+      variant={driftFilter ? 'default' : 'outline'}
+      onclick={() => (driftFilter = !driftFilter)}
+      title="Show only users whose last backend push failed (entitlement drift)"
+    >
+      Backend drift
+    </Button>
+    {#if statusFilter || tierFilter || driftFilter}
       <Button
         size="sm"
         variant="ghost"
         onclick={() => {
           statusFilter = '';
           tierFilter = '';
+          driftFilter = false;
         }}
       >
         Clear filters
@@ -277,6 +290,14 @@
               Backend: <strong class="text-foreground">{u.backend ?? '-'}</strong>
               {#if u.backendUserId}
                 · <code class="text-xs break-all">{u.backendUserId}</code>
+              {/if}
+              {#if u.backendPushFailedAt}
+                <span
+                  class="ml-2 inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-600 dark:text-amber-400"
+                  title={`Last backend push failed ${formatDate(u.backendPushFailedAt)}; the panel may be out of sync. Use Resync to re-push.`}
+                >
+                  backend drift
+                </span>
               {/if}
             </div>
             <div class="flex gap-2 pt-2">

@@ -72,6 +72,22 @@
       {/if}
     </div>
 
+    <!-- Backend push-drift: users whose tier/status never reached the panel. Only
+         shown when there's drift; links to the drift-filtered users list. -->
+    {#if s.backendDrift > 0}
+      <a
+        href="/admin/users?drift=true"
+        class="mb-6 flex items-center gap-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 hover:bg-amber-500/15 dark:text-amber-300"
+      >
+        <TriangleAlert class="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        <span>
+          {s.backendDrift}
+          {s.backendDrift === 1 ? 'user has' : 'users have'} unresolved backend drift — the panel may
+          be out of sync with their entitlement. Review and Resync →
+        </span>
+      </a>
+    {/if}
+
     <div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {@render stat('Active members', s.users.active)}
       {@render stat('Expiring (grace)', s.users.grace)}

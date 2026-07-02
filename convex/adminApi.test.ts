@@ -261,6 +261,47 @@ describe('adminApi usersSearch', () => {
     expect(disabled.users).toHaveLength(1);
     expect(disabled.users[0]!.status).toBe('disabled');
   });
+
+  test('drift filter + statusSummary count track the backend push-drift flag', async () => {
+    const t = convexTest(schema, modules);
+    const drifted = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const id = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        backendPushFailedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+      return id;
+    });
+
+    // Only the flagged user matches drift=true, and the row carries the stamp.
+    const drift = await t.query(internal.adminApi.usersSearch, { drift: true });
+    expect(drift.users).toHaveLength(1);
+    expect(drift.users[0]!.id).toBe(drifted);
+    expect(drift.users[0]!.backendPushFailedAt).not.toBeNull();
+    expect((await t.query(internal.adminApi.statusSummary, {})).backendDrift).toBe(1);
+
+    // Clearing the flag drops it from both surfaces (and is idempotent).
+    await t.mutation(internal.lifecycle.setBackendDrift, { userId: drifted, failed: false });
+    expect((await t.query(internal.adminApi.usersSearch, { drift: true })).users).toHaveLength(0);
+    expect((await t.query(internal.adminApi.statusSummary, {})).backendDrift).toBe(0);
+  });
 });
 
 describe('adminApi reEnableUser', () => {
