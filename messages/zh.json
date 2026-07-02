@@ -243,6 +243,24 @@
           "countPlural=other": "已过期 {count} 天"
         }
       }
+    ],
+    "keyLimited": "您本周期的数据流量已用完。流量将自动重置，或者您可以升级以获得更多流量。",
+    "keyExpired": "此密钥已过期。请续订会员资格或创建新密钥以重新连接。",
+    "keyDisabled": "此密钥目前已禁用。如果您的会员资格已过期，请续订；否则，请使用您的支持 ID 联系支持团队。",
+    "resetsInDays": [
+      {
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
+        "match": {
+          "countPlural=one": "1天内重置",
+          "countPlural=other": "重置时间为{count}天"
+        }
+      }
     ]
   },
   "regen": {

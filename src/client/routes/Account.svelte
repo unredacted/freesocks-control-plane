@@ -592,6 +592,9 @@
           expiresAt={data.subscription.expiresAt}
           trafficLimitBytes={data.subscription.trafficLimitBytes}
           trafficUsedBytes={data.subscription.trafficUsedBytes}
+          status={data.subscription.status}
+          resetStrategy={data.subscription.resetStrategy}
+          lastResetAt={data.subscription.lastResetAt}
           tierName={data.user.tier.name}
           backend={data.subscription.backend}
           hideUrl={effectiveDelivery === 'privacy'}

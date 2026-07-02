@@ -30,6 +30,10 @@ const RemnawaveUser = z.object({
   status: RemnawaveUserStatus,
   trafficLimitBytes: z.number().int().nonnegative().nullable(),
   trafficLimitStrategy: TrafficLimitStrategy,
+  // The reset anchor for the member's "resets in N days" hint. Display-only
+  // string; nullish on NO_RESET tiers / older panels (kept lenient like the
+  // device dates so a format change can't fail-parse the whole user).
+  lastTrafficResetAt: z.string().nullish(),
   // Remnawave omits this on the CREATE response (a brand-new user has used
   // nothing); default to 0 so issuance parses. On GET it's present and kept.
   usedTrafficBytes: z
@@ -149,6 +153,8 @@ function toState(user: RemnawaveUser, devices: BackendDevice[]): UserState {
   return {
     trafficLimitBytes: user.trafficLimitBytes,
     usedTrafficBytes: user.usedTrafficBytes,
+    trafficLimitStrategy: user.trafficLimitStrategy,
+    lastTrafficResetAt: user.lastTrafficResetAt ?? undefined,
     expireAt: user.expireAt,
     status,
     devices,

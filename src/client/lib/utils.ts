@@ -23,3 +23,15 @@ export function formatBytes(bytes: number, decimals = 1): string {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(decimals))} ${sizes[i]}`;
 }
+
+/**
+ * Whole days from now until `when` (rounded up; negative = in the past). Returns
+ * null when `when` is absent or unparseable. Single source for the "N days
+ * left / resets in N days" hints (previously inlined in SubscriptionHero + Account).
+ */
+export function daysUntil(when: string | number | Date | null | undefined): number | null {
+  if (when == null) return null;
+  const ms = when instanceof Date ? when.getTime() : new Date(when).getTime();
+  if (Number.isNaN(ms)) return null;
+  return Math.ceil((ms - Date.now()) / 86_400_000);
+}

@@ -86,6 +86,12 @@ interface AccountView {
     expiresAt: string | null;
     trafficLimitBytes: number | null;
     trafficUsedBytes: number;
+    // Live key state from the backend (undefined/'unknown' when it's unreachable).
+    // `status` explains a stopped VPN (limited = over quota, disabled = lapsed);
+    // resetStrategy + lastResetAt drive the "resets in N days" hint.
+    status?: 'active' | 'disabled' | 'limited' | 'expired' | 'unknown';
+    resetStrategy?: 'NO_RESET' | 'DAY' | 'WEEK' | 'MONTH';
+    lastResetAt?: string;
     backend: Backend;
     devices: {
       hwid: string;
@@ -126,6 +132,11 @@ export const getAccountView = internalAction({
         expireAt: null as string | null,
         trafficLimitBytes: trafficLimitFromTier,
         usedTrafficBytes: 0,
+        // Degrade default: backend unreachable ⇒ we don't know the key's status,
+        // so 'unknown' (the member badge only fires for limited/disabled).
+        status: 'unknown' as 'active' | 'disabled' | 'limited' | 'expired' | 'unknown',
+        resetStrategy: undefined as 'NO_RESET' | 'DAY' | 'WEEK' | 'MONTH' | undefined,
+        lastResetAt: undefined as string | undefined,
         devices: [] as {
           hwid: string;
           platform?: string | null;
@@ -143,6 +154,9 @@ export const getAccountView = internalAction({
           expireAt: state.expireAt,
           trafficLimitBytes: state.trafficLimitBytes,
           usedTrafficBytes: state.usedTrafficBytes,
+          status: state.status,
+          resetStrategy: state.trafficLimitStrategy,
+          lastResetAt: state.lastTrafficResetAt,
           devices: state.devices,
         };
       } catch {
@@ -158,6 +172,9 @@ export const getAccountView = internalAction({
         expiresAt: live.expireAt,
         trafficLimitBytes: live.trafficLimitBytes,
         trafficUsedBytes: live.usedTrafficBytes,
+        status: live.status,
+        resetStrategy: live.resetStrategy,
+        lastResetAt: live.lastResetAt,
         backend: sub.backend,
         devices: live.devices.map((d) => ({
           hwid: d.hwid,

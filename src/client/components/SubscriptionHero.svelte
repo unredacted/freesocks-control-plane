@@ -11,7 +11,7 @@
   import QrCodeIcon from '@lucide/svelte/icons/qr-code';
   import Link2 from '@lucide/svelte/icons/link-2';
   import Shield from '@lucide/svelte/icons/shield';
-  import { formatBytes } from '../lib/utils';
+  import { formatBytes, daysUntil } from '../lib/utils';
   import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
   import { toast } from 'svelte-sonner';
@@ -60,6 +60,12 @@
      * callers keep their behavior.
      */
     backend?: 'remnawave' | 'outline';
+    /** Live key state from the backend (undefined/'unknown' when unreachable).
+     *  `limited`/`disabled`/`expired` surface a "why your VPN stopped" callout. */
+    status?: 'active' | 'disabled' | 'limited' | 'expired' | 'unknown';
+    /** Traffic reset cadence + last-reset anchor → the "resets in N days" hint. */
+    resetStrategy?: 'NO_RESET' | 'DAY' | 'WEEK' | 'MONTH';
+    lastResetAt?: string;
   }
   let {
     title,
@@ -75,6 +81,9 @@
     showQr = true,
     hideUrl = false,
     backend = 'remnawave',
+    status,
+    resetStrategy,
+    lastResetAt,
   }: Props = $props();
 
   // Outline keys are bare `ss://` URLs that VPN clients import as a single
@@ -135,11 +144,32 @@
     usagePct >= 90 ? 'bg-destructive' : usagePct >= 70 ? 'bg-amber-500' : 'bg-primary',
   );
 
+  // Live key status that explains a stopped connection (active/unknown ⇒ no callout).
+  let keyIssue = $derived(
+    status === 'disabled'
+      ? 'disabled'
+      : status === 'expired'
+        ? 'expired'
+        : status === 'limited'
+          ? 'limited'
+          : null,
+  );
+
+  // Next traffic reset from the cadence + last-reset anchor (null for NO_RESET / no anchor).
+  let nextResetDays = $derived.by(() => {
+    if (!lastResetAt || !resetStrategy || resetStrategy === 'NO_RESET') return null;
+    const base = new Date(lastResetAt);
+    if (Number.isNaN(base.getTime())) return null;
+    const next = new Date(base);
+    if (resetStrategy === 'MONTH') next.setMonth(next.getMonth() + 1);
+    else if (resetStrategy === 'WEEK') next.setDate(next.getDate() + 7);
+    else next.setDate(next.getDate() + 1);
+    return daysUntil(next);
+  });
+
   // Expiry: convert + classify (so we can hint when it's close).
   let expiryDate = $derived(expiresAt ? new Date(expiresAt) : null);
-  let daysLeft = $derived(
-    expiryDate ? Math.ceil((expiryDate.getTime() - Date.now()) / 86_400_000) : null,
-  );
+  let daysLeft = $derived(daysUntil(expiresAt));
   let expiryUrgency = $derived(
     daysLeft !== null && daysLeft <= 7
       ? 'text-amber-700 dark:text-amber-400'
@@ -307,6 +337,22 @@
       <p class="text-sm text-muted-foreground">{t('hero.configBelowNote')}</p>
     {/if}
 
+    <!-- Live-status callout: explains a stopped connection (over quota / disabled /
+         expired). Silent when the key is active or the backend was unreachable. -->
+    {#if keyIssue}
+      <div
+        class="rounded-lg border px-3 py-2 text-sm {keyIssue === 'limited'
+          ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+          : 'border-destructive/40 bg-destructive/10 text-destructive'}"
+      >
+        {keyIssue === 'limited'
+          ? t('hero.keyLimited')
+          : keyIssue === 'expired'
+            ? t('hero.keyExpired')
+            : t('hero.keyDisabled')}
+      </div>
+    {/if}
+
     <!-- Metadata strip: traffic + expiry -->
     <div class="grid gap-4 sm:grid-cols-2 pt-2 border-t border-border/60">
       <!-- Traffic -->
@@ -344,6 +390,11 @@
                 : t('hero.leftThisPeriod', {
                     amount: formatBytes(trafficLimitBytes - trafficUsedBytes),
                   })}
+            </p>
+          {/if}
+          {#if nextResetDays !== null && nextResetDays >= 0}
+            <p class="text-[11px] text-muted-foreground mt-1 tabular-nums">
+              {t('hero.resetsInDays', { count: nextResetDays })}
             </p>
           {/if}
         {:else}

@@ -46,6 +46,12 @@ export const AccountResponse = z.object({
       expiresAt: z.string().datetime().nullable(),
       trafficLimitBytes: z.number().int().nonnegative().nullable(),
       trafficUsedBytes: z.number().int().nonnegative(),
+      // Live key state (additive/optional; absent or 'unknown' when the backend
+      // was unreachable). `status` explains a stopped VPN (limited = over quota,
+      // disabled = lapsed); resetStrategy + lastResetAt drive "resets in N days".
+      status: z.enum(['active', 'disabled', 'limited', 'expired', 'unknown']).optional(),
+      resetStrategy: z.enum(['NO_RESET', 'DAY', 'WEEK', 'MONTH']).optional(),
+      lastResetAt: z.string().optional(),
       /**
        * Backend that issued THIS specific subscription. May differ from the
        * tier's backend if the user just switched tiers/backends, since they keep

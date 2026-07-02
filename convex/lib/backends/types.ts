@@ -69,6 +69,10 @@ export interface BackendDevice {
 export interface UserState {
   trafficLimitBytes: number | null;
   usedTrafficBytes: number;
+  // Reset cadence for the member "resets in N days" hint (Remnawave-only;
+  // undefined for backends without periodic resets, e.g. Outline).
+  trafficLimitStrategy?: TrafficLimitStrategy;
+  lastTrafficResetAt?: string;
   expireAt: string | null;
   status: BackendUserStatus;
   devices: BackendDevice[];

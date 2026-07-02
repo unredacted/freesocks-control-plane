@@ -239,6 +239,24 @@
           "countPlural=other": "Expired {count} days ago"
         }
       }
+    ],
+    "keyLimited": "You've used all your data for this period. It resets automatically, or you can upgrade for more.",
+    "keyExpired": "This key has expired. Renew your membership or create a new key to reconnect.",
+    "keyDisabled": "This key is currently disabled. If your membership lapsed, renew it; otherwise contact support with your support ID.",
+    "resetsInDays": [
+      {
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
+        "match": {
+          "countPlural=one": "Resets in 1 day",
+          "countPlural=other": "Resets in {count} days"
+        }
+      }
     ]
   },
   "regen": {
