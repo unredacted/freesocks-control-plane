@@ -355,6 +355,28 @@ export const AdminStatusSummary = z.object({
     .default([]),
   /** Count of scheduled jobs overdue past their cadence. Additive default 0. */
   cronsStale: z.number().int().nonnegative().default(0),
+  // PoP enrollment readiness for the POP_REQUIRED enforcement flip. Enabling the
+  // flag rejects only cookie-only (unbound) sessions, so `readyToEnable` is true
+  // once none remain. Additive — the default keeps a pre-deploy backend valid.
+  pop: z
+    .object({
+      required: z.boolean(),
+      activeSessions: z.number().int().nonnegative(),
+      bound: z.number().int().nonnegative(),
+      unbound: z.number().int().nonnegative(),
+      unboundMember: z.number().int().nonnegative(),
+      unboundAdmin: z.number().int().nonnegative(),
+      readyToEnable: z.boolean(),
+    })
+    .default({
+      required: false,
+      activeSessions: 0,
+      bound: 0,
+      unbound: 0,
+      unboundMember: 0,
+      unboundAdmin: 0,
+      readyToEnable: false,
+    }),
   generatedAt: z.string().datetime(),
 });
 export type AdminStatusSummary = z.infer<typeof AdminStatusSummary>;

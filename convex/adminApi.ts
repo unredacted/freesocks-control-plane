@@ -1524,6 +1524,37 @@ export const statusSummary = internalQuery({
     });
     const cronsStale = crons.filter((c) => c.state === 'stale').length;
 
+    // PoP enrollment readiness (the POP_REQUIRED enforcement flip). Enforcement
+    // rejects ONLY cookie-only (unbound) sessions — a bound session is always
+    // verified regardless of the flag. So enabling POP_REQUIRED is safe exactly
+    // once no active session is unbound (nothing gets logged out). This makes the
+    // flip an observed decision instead of a timed guess, and it also surfaces
+    // clients that log in but cannot enroll a key (they show as persistent
+    // unbound sessions and would be locked out by the flip).
+    // NOTE: O(active sessions) — bounded by live logins; fine at beta scale.
+    const liveSessions = await ctx.db
+      .query('sessions')
+      .withIndex('by_expires', (q) => q.gt('expiresAt', now))
+      .collect();
+    let popBound = 0;
+    let unboundMember = 0;
+    let unboundAdmin = 0;
+    for (const row of liveSessions) {
+      if (row.popPublicKey != null) popBound += 1;
+      else if (row.kind === 'admin') unboundAdmin += 1;
+      else unboundMember += 1;
+    }
+    const pop = {
+      required: process.env.POP_REQUIRED === 'true',
+      activeSessions: liveSessions.length,
+      bound: popBound,
+      unbound: unboundMember + unboundAdmin,
+      unboundMember,
+      unboundAdmin,
+      // Nothing relies on cookie-only auth → enabling POP_REQUIRED logs no one out.
+      readyToEnable: unboundMember + unboundAdmin === 0,
+    };
+
     return {
       users: usersByStatus,
       backendDrift,
@@ -1541,6 +1572,7 @@ export const statusSummary = internalQuery({
       },
       crons,
       cronsStale,
+      pop,
       generatedAt: iso(now),
     };
   },

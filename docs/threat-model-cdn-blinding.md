@@ -104,6 +104,32 @@ asymmetric key the CDN never sees.
 See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/lib/pop.ts`,
 `convex/replayGuard.ts`, the verify path in `convex/lib/http.ts`.
 
+#### Enabling `POP_REQUIRED` (the enforcement flip) — runbook
+
+`POP_REQUIRED` stays unset (soft) during rollout and is flipped to `true` once the client has
+soaked. The flip's **entire blast radius is cookie-only (unbound) sessions**: bound sessions are
+always enforced, and every new login already attempts to bind, so enabling the flag affects only
+sessions that predate PoP or that belong to a client which could not enroll a key.
+
+- **Readiness is observed, not timed.** The admin dashboard's _Session protection_ card
+  (`adminApi.statusSummary.pop`) reports `bound / activeSessions` and the remaining cookie-only
+  count, split member vs admin. It reads **"Safe to enable"** exactly when `readyToEnable` is true
+  (zero unbound active sessions) — nothing would be logged out. Watch it until it stays at zero
+  across a full session-TTL window. A count that never reaches zero means a real client keeps
+  logging in without enrolling a key (no WebCrypto / IndexedDB) — those clients **will** be locked
+  out by the flip, so investigate before enforcing.
+- **Flip** (no redeploy — `resolveMember` / `resolveAdmin` read the env var per request):
+  ```
+  bunx convex env set POP_REQUIRED true
+  ```
+  Effect: an unbound session's next request returns 401; the SPA treats it as signed-out and the
+  member/admin re-logs-in, minting a bound session. Bound sessions are unaffected.
+- **Rollback** (instant, same mechanism): `bunx convex env remove POP_REQUIRED` (or set `false`).
+- **Caveat (intended posture).** With the flag on there is no cookie-only fallback: a browser that
+  cannot run the signing Worker or persist to IndexedDB cannot hold a session. That is the point (a
+  captured cookie alone is worthless) — which is precisely why the readiness card exists. Confirm
+  the unbound count is genuinely zero, not merely low, before enforcing.
+
 ### Layer 3: epoch keys, revocation, and bundle hardening (Phase 3)
 
 - **Epoch keys (request-direction forward secrecy).** The server mints a short-lived hybrid KEM

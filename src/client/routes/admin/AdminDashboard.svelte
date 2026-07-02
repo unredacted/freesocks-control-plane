@@ -183,6 +183,50 @@
       </CardContent>
     </Card>
 
+    <!-- PoP enrollment readiness (the POP_REQUIRED flip). Enforcement rejects only
+         cookie-only (unbound) sessions, so it is safe to enable once none remain. -->
+    <Card class="mt-6">
+      <CardHeader>
+        <CardTitle class="text-lg">Session protection (proof-of-possession)</CardTitle>
+      </CardHeader>
+      <CardContent class="space-y-2 text-sm">
+        <p class="text-muted-foreground">
+          {s.pop.bound}/{s.pop.activeSessions} active sessions are key-bound — a captured cookie alone
+          cannot be replayed.
+        </p>
+        {#if s.pop.required}
+          <div
+            class="flex items-center gap-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-emerald-700 dark:text-emerald-300"
+          >
+            <CheckCircle class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            <span>Enforced — cookie-only sessions are rejected (POP_REQUIRED is on).</span>
+          </div>
+        {:else if s.pop.readyToEnable}
+          <div
+            class="flex items-center gap-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-emerald-700 dark:text-emerald-300"
+          >
+            <CheckCircle class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            <span
+              >Safe to enable — no cookie-only sessions remain. Set <code class="font-mono"
+                >POP_REQUIRED=true</code
+              > to enforce.</span
+            >
+          </div>
+        {:else}
+          <div
+            class="flex items-center gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-300"
+          >
+            <TriangleAlert class="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>
+              {s.pop.unbound} cookie-only {s.pop.unbound === 1 ? 'session' : 'sessions'} ({s.pop
+                .unboundMember} member · {s.pop.unboundAdmin} admin) would be logged out if POP_REQUIRED
+              were enabled. Wait for these to expire or re-login before enforcing.
+            </span>
+          </div>
+        {/if}
+      </CardContent>
+    </Card>
+
     <!-- Scheduled-jobs liveness (W4-B4): per-cron heartbeat freshness vs cadence.
          Stamped at each job's run start, so this tracks whether the scheduler is
          firing the job — independent of the job's own success. -->

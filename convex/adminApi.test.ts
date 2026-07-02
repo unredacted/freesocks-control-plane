@@ -681,6 +681,111 @@ describe('adminApi statusSummary', () => {
     expect(s.healthcheck.ok).toBe(true);
     expect(typeof s.generatedAt).toBe('string');
   });
+
+  test('pop readiness counts bound vs cookie-only active sessions (excludes expired)', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const future = Date.now() + 3_600_000;
+      // 1 bound member, 1 cookie-only member, 1 cookie-only admin, 1 expired (ignored).
+      await ctx.db.insert('sessions', {
+        sid: 's-bound',
+        kind: 'member',
+        userId,
+        expiresAt: future,
+        popPublicKey: 'AAAA',
+        popAlg: 'EdDSA',
+      });
+      await ctx.db.insert('sessions', {
+        sid: 's-unbound-m',
+        kind: 'member',
+        userId,
+        expiresAt: future,
+      });
+      await ctx.db.insert('sessions', { sid: 's-unbound-a', kind: 'admin', expiresAt: future });
+      await ctx.db.insert('sessions', {
+        sid: 's-expired',
+        kind: 'member',
+        userId,
+        expiresAt: Date.now() - 1_000,
+      });
+    });
+
+    const s = await t.query(internal.adminApi.statusSummary, {});
+    expect(s.pop.activeSessions).toBe(3); // the expired row is not counted
+    expect(s.pop.bound).toBe(1);
+    expect(s.pop.unbound).toBe(2);
+    expect(s.pop.unboundMember).toBe(1);
+    expect(s.pop.unboundAdmin).toBe(1);
+    expect(s.pop.readyToEnable).toBe(false); // cookie-only sessions would be locked out
+    expect(s.pop.required).toBe(false); // POP_REQUIRED unset in tests
+  });
+
+  test('pop readiness: readyToEnable once every active session is key-bound', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const future = Date.now() + 3_600_000;
+      await ctx.db.insert('sessions', {
+        sid: 'b1',
+        kind: 'member',
+        userId,
+        expiresAt: future,
+        popPublicKey: 'AAAA',
+        popAlg: 'EdDSA',
+      });
+      await ctx.db.insert('sessions', {
+        sid: 'b2',
+        kind: 'admin',
+        expiresAt: future,
+        popPublicKey: 'BBBB',
+        popAlg: 'EdDSA',
+      });
+    });
+
+    const s = await t.query(internal.adminApi.statusSummary, {});
+    expect(s.pop.unbound).toBe(0);
+    expect(s.pop.bound).toBe(2);
+    expect(s.pop.readyToEnable).toBe(true);
+  });
 });
 
 describe('adminApi auditList filtering', () => {
