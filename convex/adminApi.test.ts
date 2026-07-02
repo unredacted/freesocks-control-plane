@@ -5,6 +5,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import { maskApiUrl } from './adminApi';
 import { resolveTheme } from './lib/themeConfig';
+import { UserAdmin, AdminStatusSummary } from '../src/shared/contracts/admin';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -301,6 +302,52 @@ describe('adminApi usersSearch', () => {
     await t.mutation(internal.lifecycle.setBackendDrift, { userId: drifted, failed: false });
     expect((await t.query(internal.adminApi.usersSearch, { drift: true })).users).toHaveLength(0);
     expect((await t.query(internal.adminApi.statusSummary, {})).backendDrift).toBe(0);
+  });
+});
+
+// Ties the SERVER output to the CLIENT zod contract, in CI. The admin pages
+// zod-validate every response and hard-error ("Something went wrong") on any
+// mismatch, so a mapUser/statusSummary field that drifts from the contract
+// (a required field the server omits, or a shape the client rejects) is a
+// user-visible outage the matched-version unit tests otherwise miss.
+describe('adminApi ↔ client contract agreement', () => {
+  test('usersSearch rows + statusSummary parse against the client contract', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      // One drifted (backendPushFailedAt set) + one clean, so both branches of
+      // the optional field are exercised against the contract.
+      await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        membershipExpiresAt: Date.now() + 86_400_000,
+        backendPushFailedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('users', { tierId, status: 'grace', updatedAt: Date.now() });
+    });
+
+    const { users } = await t.query(internal.adminApi.usersSearch, {});
+    expect(users).toHaveLength(2);
+    // Throws (failing the test) if any row violates the client's UserAdmin shape.
+    for (const u of users) UserAdmin.parse(u);
+
+    const summary = await t.query(internal.adminApi.statusSummary, {});
+    AdminStatusSummary.parse(summary);
   });
 });
 

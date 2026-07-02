@@ -277,8 +277,12 @@ services:
     build:
       context: .
       dockerfile: docker/deploy.Dockerfile
-    mem_limit: 512m
-    cpus: 0.5
+    # Transient one-shot (exits after deploy), so a generous ceiling does NOT count
+    # against the long-lived steady-state budget above. `convex deploy` bundles +
+    # typechecks convex/ (and `tsc` is memory-hungry); 512m OOM-killed it (exit 137)
+    # before the deploy ever ran, silently leaving the backend on the old code.
+    mem_limit: 2g
+    cpus: 1.0
     pids_limit: 256
     restart: 'no'
     environment:

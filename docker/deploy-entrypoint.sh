@@ -39,14 +39,17 @@ if [ -z "${admin_key}" ]; then
 fi
 export CONVEX_SELF_HOSTED_ADMIN_KEY="${admin_key}"
 
-# A4: a lightweight gate so a type-broken checkout can't deploy on the host.
-# (`convex deploy` typechecks convex/ too; this also covers the client + shared
-# contracts. The full suite — typecheck + test + lint + build — is the CI gate in
-# .github/workflows/ci.yml; not repeated here to keep restarts quick.)
+# A4: a fast convex-only type gate so a type-broken checkout can't deploy. Scoped
+# to convex/ ON PURPOSE: the full monorepo `bun run typecheck` (tsc -b + svelte-check)
+# is memory-hungry and OOM-killed the deployer (exit 137) before it could deploy. The
+# client + shared contracts are ALREADY gated in this same `up` by the web image build
+# (`bun run build` = tsc -b + vite; a type error there fails the build and aborts the
+# up) and by CI (.github/workflows/ci.yml). `convex deploy` below also typechecks
+# convex/, so this is belt-and-suspenders — clear errors before the (slower) deploy.
 # Set DEPLOY_SKIP_TYPECHECK=true to bypass in an emergency.
 if [ "${DEPLOY_SKIP_TYPECHECK:-false}" != "true" ]; then
-  echo "[deploy] typechecking before deploy"
-  bun run typecheck
+  echo "[deploy] typechecking convex/ before deploy"
+  bunx tsc -p convex/tsconfig.json --noEmit
 fi
 
 echo "[deploy] pushing functions to ${CONVEX_SELF_HOSTED_URL}"
