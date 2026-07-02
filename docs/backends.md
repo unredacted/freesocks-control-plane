@@ -31,6 +31,8 @@ wire protocol is pluggable.
      update(config, backendUserId, patch) -> void
      resetTraffic(config, backendUserId) -> void
      remove(config, backendUserId) -> void
+     removeDevice?(config, backendUserId, hwid) -> void   // optional: revoke one HWID device
+     setStatus?(config, backendUserId, active) -> void    // optional: enable/disable
      fetchContent(config, backendShortId, ua?) -> SubscriptionContent
      health(config) -> { keyCount: number | null, rttMs }
      testConnection(config) -> { ok, keyCount } | { ok:false, error }
@@ -81,8 +83,10 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
 - **Issuance** goes through `issueNewSubscription` in `convex/lib/issuance.ts`, which calls
   `internal.backends.issueUser` (and, with mirroring on, `fetchSubscriptionContent` +
   `internal.storage.mirrorContent`), then persists the row including `backendServerId`.
-- **Tier propagation** (`convex/lifecycle.ts -> pushTierToBackend`) and the **grace/disable sweep**
-  call `internal.backends.updateUser`.
+- **Tier propagation** (`convex/lifecycle.ts -> pushTierToBackend`) calls
+  `internal.backends.updateUser`; the **grace/disable sweep** + admin enable/disable call
+  `internal.backends.setUserStatus` (Remnawave's dedicated `/actions/{enable|disable}`), and member
+  **device revocation** calls `internal.backends.revokeDevice`.
 - **Teardown** (`deleteSubscriptionEverywhere`, used by free-tier cleanup + the tombstone sweep)
   calls `internal.backends.deleteUser`.
 - **`/account` reads** call `internal.backends.getUser`.
@@ -145,6 +149,32 @@ skip the env entirely and add every instance in the CMS.
    and add a `convex-test` case that issues through the dispatch (mirror `backendServers.test.ts`).
 
 Most domain code needs no changes; it already dispatches through `convex/backends.ts`.
+
+## Remnawave API contract (pinned)
+
+The Remnawave provider (`convex/lib/backends/remnawave.ts`) targets these exact routes, verified
+against the upstream contract in `remnawave/backend` (`libs/contract/api/{routes,controllers}.ts` +
+the NestJS controllers) on the **2.x** line. If you self-host a different panel version, confirm
+these still match. The provider tests assert the paths, so a drift here fails CI — this is the guard
+that was missing when the `PATCH /api/users/{uuid}` / `/api/hwid-devices` mismatches shipped (they
+"passed" only because the tests mocked the wrong paths too).
+
+| Op            | Method + path                                      | Notes                                                                                                                |
+| ------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| issue         | `POST /api/users`                                  | body carries `activeInternalSquads: string[]` for squad assignment                                                   |
+| get           | `GET /api/users/{uuid}`                            |                                                                                                                      |
+| update        | `PATCH /api/users`                                 | **`uuid` is in the request BODY, not the path** (the route has no path param; the DTO requires `uuid` or `username`) |
+| set status    | `POST /api/users/{uuid}/actions/{enable\|disable}` | dedicated action endpoints, not a `status` field on update                                                           |
+| reset traffic | `POST /api/users/{uuid}/actions/reset-traffic`     |                                                                                                                      |
+| delete        | `DELETE /api/users/{uuid}`                         | a 404 is treated as success (idempotent teardown)                                                                    |
+| list devices  | `GET /api/hwid/devices/{userUuid}`                 | the HWID controller is `/api/hwid`; `userUuid` is a **path** param (not `?userUuid=`)                                |
+| delete device | `POST /api/hwid/devices/delete`                    | body `{ userUuid, hwid }`                                                                                            |
+
+Most responses are wrapped in `{ response: ... }`; the provider's `unwrap()` tolerates both wrapped
+and bare. HWID device metadata is surfaced as `platform` / `deviceModel` / first-seen / last-seen
+(mapped from `createdAt` / `updatedAt`); the device `requestIp` and `userAgent` are deliberately
+**not** read (metadata minimization). Subscription content is fetched from the panel's public
+subscription URL, not an admin API route.
 
 ## Sensitive data
 
