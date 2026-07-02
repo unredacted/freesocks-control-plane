@@ -368,12 +368,12 @@
         </Button>
       </div>
 
-      <!-- E2EE verification (own namespace + own save) -->
+      <!-- HPKE verification (own namespace + own save) -->
       <Card>
         <CardHeader>
-          <CardTitle class="text-base">End-to-end encryption verification</CardTitle>
+          <CardTitle class="text-base">HPKE encryption verification</CardTitle>
           <CardDescription>
-            Controls the "E2EE" badge and its Verify panel. The links below are shown to users as
+            Controls the "HPKE" badge and its Verify panel. The links below are shown to users as
             out-of-band ways to confirm the app hasn't been tampered with; leave one blank to hide
             it. Turning the panel off hides the badge entirely (encryption still runs).
           </CardDescription>
@@ -384,7 +384,7 @@
               checked={vDraft.showPanel}
               onCheckedChange={(v) => (vDraft = { ...vDraft, showPanel: v === true })}
             />
-            <span>Show the E2EE badge and verify panel</span>
+            <span>Show the HPKE badge and verify panel</span>
           </label>
           <div>
             <label class="text-xs text-muted-foreground mb-1 block" for="verify-release">

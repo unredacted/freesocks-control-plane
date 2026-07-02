@@ -70,7 +70,9 @@
       {:else}
         <ShieldCheck class="size-3.5 shrink-0" />
       {/if}
-      <span>{t('e2ee.badgeLabel')}</span>
+      <!-- "HPKE" is a fixed acronym, not localizable text (MT transliterates it),
+         so it's hardcoded rather than routed through i18n. -->
+      <span>HPKE</span>
     </button>
   {:else}
     <span

@@ -95,7 +95,6 @@ export type MessageKey =
   | "e2ee.attestationUnreachable"
   | "e2ee.badgeActiveTitle"
   | "e2ee.badgeActiveTitleAdmin"
-  | "e2ee.badgeLabel"
   | "e2ee.badgeOff"
   | "e2ee.badgeOffTitle"
   | "e2ee.badgeWarnTitle"
