@@ -1429,6 +1429,9 @@ export const statusSummary = internalQuery({
         healthy: s.lastHealthOkAt != null && now - s.lastHealthOkAt < FRESH_MS,
         lastHealthOkAt: s.lastHealthOkAt != null ? iso(s.lastHealthOkAt) : null,
         lastHealthRttMs: s.lastHealthRttMs ?? null,
+        // Read-only fleet observability, cached by the healthcheck cron (null until
+        // the first successful fetch / for backends without a fleet, e.g. Outline).
+        fleetStats: s.fleetStats ?? null,
       }));
     const activeBackends = backends.filter((b) => b.isActive);
 

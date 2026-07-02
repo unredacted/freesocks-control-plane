@@ -370,6 +370,21 @@ export default defineSchema({
     lastHealthOkAt: v.optional(v.number()),
     lastHealthRttMs: v.optional(v.number()),
     keyCount: v.number(),
+    // Read-only fleet observability, cached by the backend-healthcheck cron so the
+    // admin dashboard never makes a live panel call. Best-effort: absent until the
+    // first successful fetch, and left as-is (not cleared) on a later failure.
+    fleetStats: v.optional(
+      v.object({
+        onlineNow: v.number(),
+        nodesOnline: v.number(),
+        nodesTotal: v.number(),
+        distinctCountries: v.number(),
+        monthTrafficBytes: v.number(),
+        lifetimeTrafficBytes: v.number(),
+        panelVersion: v.string(),
+      }),
+    ),
+    fleetStatsAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])

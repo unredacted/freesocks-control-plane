@@ -14,6 +14,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   remnawaveDeleteUser,
+  remnawaveFleetStats,
   remnawaveGetUser,
   remnawaveGetUserUsage,
   remnawaveIssueUser,
@@ -69,6 +70,12 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave provider — real panel (int
     expect(Array.isArray(usage.points)).toBe(true);
     expect(Array.isArray(usage.labels)).toBe(true);
     expect(usage.total).toBeGreaterThanOrEqual(0);
+
+    // 2c) Fleet stats — GET /api/system/stats + /stats/recap (admin observability).
+    const fleet = await remnawaveFleetStats(cfg);
+    expect(typeof fleet.onlineNow).toBe('number');
+    expect(typeof fleet.nodesTotal).toBe('number');
+    expect(fleet.panelVersion).toBeTruthy();
 
     // 3) Update — PATCH /api/users with uuid in the BODY (the headline bug we
     //    fixed). Prove it landed by reading the changed limit back.

@@ -12,6 +12,7 @@
   import AdminListState from './AdminListState.svelte';
   import { adminStatusQuery } from '../../lib/queries';
   import { formatDateTime } from '../../lib/i18n/format';
+  import { formatBytes } from '../../lib/utils';
   import CheckCircle from '@lucide/svelte/icons/check-circle';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 
@@ -118,6 +119,16 @@
                     ? ` · ${b.lastHealthRttMs}ms`
                     : ''}{b.lastHealthOkAt ? ` · ok ${formatDateTime(b.lastHealthOkAt)}` : ''}
                 </span>
+                {#if b.fleetStats}
+                  <!-- Fleet observability (cached by the healthcheck cron). The panel
+                       version surfaces contract-version drift at a glance. -->
+                  <span class="w-full text-xs text-muted-foreground tabular-nums">
+                    {b.fleetStats.onlineNow} online · {b.fleetStats.nodesOnline}/{b.fleetStats
+                      .nodesTotal} nodes · {b.fleetStats.distinctCountries} countries · {formatBytes(
+                      b.fleetStats.monthTrafficBytes,
+                    )} this month · v{b.fleetStats.panelVersion}
+                  </span>
+                {/if}
               </li>
             {/each}
           </ul>

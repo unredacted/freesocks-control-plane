@@ -106,3 +106,18 @@ export interface UsageSeries {
   labels: string[]; // bucket labels (dates), 1:1 with `points`
   total: number; // sum of `points`, bytes
 }
+
+/**
+ * Fleet-wide observability for one backend panel (admin dashboard). Read-only,
+ * cached by the healthcheck cron so the dashboard never makes a live panel call.
+ * `panelVersion` surfaces version drift (relevant to the pinned API contract).
+ */
+export interface FleetStats {
+  onlineNow: number;
+  nodesOnline: number;
+  nodesTotal: number;
+  distinctCountries: number;
+  monthTrafficBytes: number;
+  lifetimeTrafficBytes: number;
+  panelVersion: string;
+}

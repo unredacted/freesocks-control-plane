@@ -154,6 +154,28 @@ export const markHealthy = internalMutation({
   },
 });
 
+/** Cache the latest read-only fleet stats on the instance row (for the admin
+ *  dashboard). Stamped by the healthcheck cron; best-effort, so it's only called
+ *  when a fetch succeeded — a failed fetch leaves the last values in place. */
+export const markFleetStats = internalMutation({
+  args: {
+    id: v.id('backendServers'),
+    fleetStats: v.object({
+      onlineNow: v.number(),
+      nodesOnline: v.number(),
+      nodesTotal: v.number(),
+      distinctCountries: v.number(),
+      monthTrafficBytes: v.number(),
+      lifetimeTrafficBytes: v.number(),
+      panelVersion: v.string(),
+    }),
+  },
+  handler: async (ctx, { id, fleetStats }) => {
+    await ctx.db.patch(id, { fleetStats, fleetStatsAt: Date.now(), updatedAt: Date.now() });
+    return null;
+  },
+});
+
 /**
  * Cron: ping each active instance through its provider's health probe. On
  * success, stamp lastHealthOkAt (which keeps it in pickCandidatesForIssue's
@@ -169,9 +191,23 @@ export const healthcheck = internalAction({
     let healthy = 0;
     for (const s of servers) {
       try {
-        const { keyCount, rttMs } = await PROVIDERS[s.backend].health(s.config as BackendConfig);
+        const provider = PROVIDERS[s.backend];
+        const { keyCount, rttMs } = await provider.health(s.config as BackendConfig);
         await ctx.runMutation(internal.backendServers.markHealthy, { id: s._id, keyCount, rttMs });
         healthy++;
+        // Best-effort fleet observability (read-only) — a failure here must NOT
+        // mark the instance unhealthy, so it's caught on its own and just skips.
+        if (provider.getFleetStats) {
+          try {
+            const fleetStats = await provider.getFleetStats(s.config as BackendConfig);
+            await ctx.runMutation(internal.backendServers.markFleetStats, {
+              id: s._id,
+              fleetStats,
+            });
+          } catch {
+            /* fleet stats unavailable this cycle; last stamped values are kept */
+          }
+        }
       } catch {
         /* unhealthy: ages out of the fresh window; secret config never logged */
       }

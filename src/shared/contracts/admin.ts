@@ -289,6 +289,20 @@ export const AdminStatusSummary = z.object({
       healthy: z.boolean(),
       lastHealthOkAt: z.string().datetime().nullable(),
       lastHealthRttMs: z.number().nullable(),
+      // Read-only fleet observability, cached by the healthcheck cron. Null for
+      // backends without a fleet (Outline) or before the first fetch. Additive.
+      fleetStats: z
+        .object({
+          onlineNow: z.number(),
+          nodesOnline: z.number(),
+          nodesTotal: z.number(),
+          distinctCountries: z.number(),
+          monthTrafficBytes: z.number(),
+          lifetimeTrafficBytes: z.number(),
+          panelVersion: z.string(),
+        })
+        .nullable()
+        .optional(),
     }),
   ),
   healthcheck: z.object({

@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import type {
   BackendDevice,
+  FleetStats,
   IssueUserSpec,
   IssuedUser,
   SubscriptionContent,
@@ -303,6 +304,39 @@ export async function remnawaveGetUserUsage(
     points: result.sparklineData,
     labels: result.categories,
     total: result.sparklineData.reduce((a, b) => a + b, 0),
+  };
+}
+
+// Fleet observability from two panel endpoints (both admin, read-only). Schemas
+// pick only what the dashboard shows; unknown fields are stripped. Traffic totals
+// arrive as bigint strings, so parse to Number for display (beta-scale safe).
+const SystemStatsResponse = z.object({
+  onlineStats: z.object({ onlineNow: z.number() }),
+  nodes: z.object({ totalOnline: z.number(), totalBytesLifetime: z.string() }),
+});
+const RecapResponse = z.object({
+  thisMonth: z.object({ traffic: z.string() }),
+  total: z.object({ nodes: z.number(), traffic: z.string(), distinctCountries: z.number() }),
+  version: z.string(),
+});
+
+export async function remnawaveFleetStats(cfg: RemnawaveConfig): Promise<FleetStats> {
+  const [sys, recap] = await Promise.all([
+    call(cfg, { method: 'GET', path: '/api/system/stats', schema: SystemStatsResponse }),
+    call(cfg, { method: 'GET', path: '/api/system/stats/recap', schema: RecapResponse }),
+  ]);
+  const toNum = (s: string) => {
+    const n = Number(s);
+    return Number.isFinite(n) ? n : 0;
+  };
+  return {
+    onlineNow: sys.onlineStats.onlineNow,
+    nodesOnline: sys.nodes.totalOnline,
+    nodesTotal: recap.total.nodes,
+    distinctCountries: recap.total.distinctCountries,
+    monthTrafficBytes: toNum(recap.thisMonth.traffic),
+    lifetimeTrafficBytes: toNum(recap.total.traffic),
+    panelVersion: recap.version,
   };
 }
 

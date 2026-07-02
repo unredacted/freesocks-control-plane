@@ -16,6 +16,7 @@ import type {
   IssueUserSpec,
   IssuedUser,
   SubscriptionContent,
+  FleetStats,
   UpdateUserPatch,
   UsageSeries,
   UserState,
@@ -24,6 +25,7 @@ import {
   remnawaveDeleteDevice,
   remnawaveDeleteUser,
   remnawaveFetchSubscription,
+  remnawaveFleetStats,
   remnawaveGetUser,
   remnawaveGetUserUsage,
   remnawaveHealth,
@@ -84,6 +86,9 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // Optional: aggregate traffic-usage series for the member usage trend (read-only;
   // Remnawave bandwidth-stats). Absent for backends without per-user usage history.
   getUserUsage?(config: C, backendUserId: string, days: number): Promise<UsageSeries>;
+  // Optional: fleet-wide observability for the admin dashboard (read-only; Remnawave
+  // system stats + recap). Absent for backends without a fleet concept (Outline).
+  getFleetStats?(config: C): Promise<FleetStats>;
   fetchContent(
     config: C,
     backendShortId: string,
@@ -103,6 +108,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   removeDevice: (c, id, hwid) => remnawaveDeleteDevice(c, id, hwid),
   setStatus: (c, id, active) => remnawaveSetStatus(c, id, active),
   getUserUsage: (c, id, days) => remnawaveGetUserUsage(c, id, days),
+  getFleetStats: (c) => remnawaveFleetStats(c),
   fetchContent: (c, shortId, ua, subUrl) => remnawaveFetchSubscription(c, shortId, ua, subUrl),
   health: (c) => remnawaveHealth(c),
   testConnection: (c) => remnawaveTestConnection(c),
