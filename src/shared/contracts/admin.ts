@@ -70,8 +70,10 @@ export const UserAdmin = z.object({
    * Set when the last backend push for this user failed and hasn't since
    * recovered (a tier propagation that never reached the panel, or a disable the
    * key ignored). Null = in sync. Surfaces as the "backend drift" badge.
+   * Optional (additive): tolerated absent so a client built ahead of the backend
+   * deploy still parses the response — it just shows no drift until both are live.
    */
-  backendPushFailedAt: z.string().datetime().nullable(),
+  backendPushFailedAt: z.string().datetime().nullable().optional(),
   createdAt: z.string().datetime(),
 });
 export type UserAdmin = z.infer<typeof UserAdmin>;
@@ -269,8 +271,9 @@ export const AdminStatusSummary = z.object({
     disabled: z.number().int().nonnegative(),
     deleted: z.number().int().nonnegative(),
   }),
-  /** Users whose last backend push failed and hasn't recovered (entitlement drift). */
-  backendDrift: z.number().int().nonnegative(),
+  /** Users whose last backend push failed and hasn't recovered (entitlement drift).
+   *  Optional-with-default (additive): a pre-deploy backend that omits it reads 0. */
+  backendDrift: z.number().int().nonnegative().default(0),
   totals: z.object({
     backends: z.number().int().nonnegative(),
     activeBackends: z.number().int().nonnegative(),
