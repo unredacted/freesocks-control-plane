@@ -18,9 +18,13 @@
    * The PoW WASM + pako are served SAME-ORIGIN (cap-wasm-config, imported first)
    * so nothing is fetched from cdn.jsdelivr.net — preserving the zero-third-party
    * guarantee and working where that CDN is blocked.
+   *
+   * The widget package (+ its WASM plumbing) is LAZY-imported on mount: Login and
+   * GetAccount sit on the statically-routed member entry chunk, so a static
+   * import here would make every first-time visitor on the Home page download
+   * the captcha machinery they may never use — real bytes on a censored, slow
+   * link. cap-wasm-config must still load BEFORE the widget registers.
    */
-  import '../lib/cap-wasm-config';
-  import '@cap.js/widget';
   import { t } from '../lib/i18n/index.svelte';
 
   interface Props {
@@ -41,6 +45,27 @@
   let el = $state<HTMLElement | null>(null);
   let failed = $state(false);
   let retryNonce = $state(0);
+  let widgetReady = $state(false);
+
+  $effect(() => {
+    void retryNonce; // a retry after a chunk-load failure re-attempts the import
+    if (widgetReady) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await import('../lib/cap-wasm-config');
+        await import('@cap.js/widget');
+        if (!cancelled) widgetReady = true;
+      } catch (err) {
+        // Flaky network dropped the lazy chunk — same recovery UI as a solve error.
+        console.error('Cap widget failed to load', err);
+        if (!cancelled) failed = true;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  });
 
   // data-cap-api-endpoint must be "<endpoint>/<siteKey>/" (trailing slash).
   const endpoint = $derived(`${apiEndpoint.replace(/\/$/, '')}/${siteKey}/`);
@@ -116,6 +141,13 @@
     <button type="button" class="mt-3 text-primary underline hover:no-underline" onclick={retry}>
       {t('common.retry')}
     </button>
+  </div>
+{:else if !widgetReady}
+  <div
+    class="flex min-h-11 items-center rounded-md border border-border px-3 text-sm text-muted-foreground"
+    role="status"
+  >
+    {t('common.loading')}
   </div>
 {:else}
   {#key retryNonce}

@@ -28,6 +28,28 @@ export function firstIssueMessage(err: ZodError): string {
   return path ? `${path}: ${issue.message}` : issue.message;
 }
 
+/**
+ * Business-logic codes → catalog keys. Server error messages are English; a
+ * member in fa/ar/ru/zh must get a translated string for every code they can
+ * realistically hit, so unmapped codes should be the exception (they fall back
+ * to the raw server message below). Add here when introducing a member-facing
+ * error code.
+ */
+const CODE_MESSAGES: Record<string, () => string> = {
+  'auth.unauthenticated': () => t('error.sessionExpired'),
+  'auth.invalid_account_id': () => t('error.invalidAccountId'),
+  'code.invalid': () => t('error.codeInvalid'),
+  'issuance.in_progress': () => t('error.changeInProgress'),
+  'backend.disabled': () => t('error.backendDisabled'),
+  'tier.no_peer': () => t('error.noPeerTier'),
+  'devices.not_found': () => t('error.deviceNotFound'),
+  'devices.unsupported': () => t('error.deviceUnsupported'),
+  'devices.no_subscription': () => t('error.generic'),
+  'billing.error': () => t('error.billing'),
+  'content.unavailable': () => t('error.backendUnavailable'),
+  not_found: () => t('error.generic'),
+};
+
 export function apiErrorMessage(err: unknown): string {
   if (err instanceof ApiCallError) {
     if (err.status === 0) return t('error.offline');
@@ -41,7 +63,14 @@ export function apiErrorMessage(err: unknown): string {
       code === 'account.create_failed'
     )
       return t('error.generic');
-    // A real, specific server message (e.g. a validation detail) — show it.
+    const mapped = CODE_MESSAGES[code];
+    if (mapped) return mapped();
+    // `http.<status>` means the body carried no structured envelope at all
+    // (e.g. a reverse-proxy 502 page) — never worth echoing.
+    if (code.startsWith('http.')) {
+      return err.status >= 500 ? t('error.serverError') : t('error.generic');
+    }
+    // An unmapped, specific server message (e.g. a validation detail) — show it.
     return err.payload.error.message || t('error.generic');
   }
   return t('error.generic');

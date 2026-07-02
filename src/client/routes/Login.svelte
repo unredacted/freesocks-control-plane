@@ -3,6 +3,7 @@
   import { Button } from '@client/components/ui/button';
   import CapWidget from '../components/CapWidget.svelte';
   import InlineError from '../components/InlineError.svelte';
+  import Link from '../components/Link.svelte';
   import { configQuery } from '../lib/queries';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
@@ -144,6 +145,14 @@
           {#if reveal}<EyeOff class="size-4" />{:else}<Eye class="size-4" />{/if}
         </button>
       </div>
+      <!-- Why-is-the-button-disabled feedback: a partial paste otherwise leaves
+           a dead submit button with no explanation. aria-live so screen readers
+           hear the progress without polling. -->
+      {#if digitsOnly.length > 0 && digitsOnly.length < ACCOUNT_ID_LEN}
+        <p class="text-xs text-muted-foreground tabular-nums" aria-live="polite">
+          {t('login.digitProgress', { count: digitsOnly.length, total: ACCOUNT_ID_LEN })}
+        </p>
+      {/if}
     </div>
 
     <CapWidget
@@ -164,6 +173,6 @@
 
   <p class="text-xs text-muted-foreground text-center">
     {t('login.noAccount')}{' '}
-    <a href="/get-account" class="text-primary underline">{t('login.getOne')}</a>
+    <Link href="/get-account" class="text-primary underline">{t('login.getOne')}</Link>
   </p>
 </div>

@@ -142,7 +142,7 @@
   );
   let expiryUrgency = $derived(
     daysLeft !== null && daysLeft <= 7
-      ? 'text-amber-600 dark:text-amber-400'
+      ? 'text-amber-700 dark:text-amber-400'
       : 'text-muted-foreground',
   );
 </script>

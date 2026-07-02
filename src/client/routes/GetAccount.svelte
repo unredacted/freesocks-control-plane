@@ -252,11 +252,30 @@
         </div>
       {/if}
 
-      <CapWidget
-        apiEndpoint={captchaEndpoint}
-        siteKey={captchaSiteKey}
-        onVerify={(t) => (token = t || null)}
-      />
+      <!-- The captcha config comes from /api/v1/config; without it the widget
+           would render with an empty site key and fail opaquely. Surface the
+           load failure with a retry instead of a silent dead-end. -->
+      {#if config.isError}
+        <div class="space-y-2">
+          <InlineError message={apiErrorMessage(config.error)} />
+          <Button variant="outline" size="sm" onclick={() => config.refetch()}>
+            {t('common.retry')}
+          </Button>
+        </div>
+      {:else if !config.data}
+        <div
+          class="flex min-h-11 items-center rounded-md border border-border px-3 text-sm text-muted-foreground"
+          role="status"
+        >
+          {t('common.loading')}
+        </div>
+      {:else}
+        <CapWidget
+          apiEndpoint={captchaEndpoint}
+          siteKey={captchaSiteKey}
+          onVerify={(t) => (token = t || null)}
+        />
+      {/if}
 
       {#if createAccount.error}
         <InlineError message={apiErrorMessage(createAccount.error)} />

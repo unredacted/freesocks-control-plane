@@ -42,6 +42,20 @@
   const E2EE_ENABLED =
     !!import.meta.env.VITE_FS_SERVER_HPKE_PK && !!import.meta.env.VITE_FS_SERVER_HPKE_KID;
 
+  // Per-route document titles (localized, reactive to locale changes) so
+  // history entries, tabs, and deep links are tellable apart. Admin stays a
+  // plain English label (the CMS is deliberately uncatalogued).
+  $effect(() => {
+    const path = router.pathname;
+    let title = 'FreeSocks';
+    if (path === '/get-account') title = `${t('nav.getAccount')} · FreeSocks`;
+    else if (path === '/account') title = `${t('nav.account')} · FreeSocks`;
+    else if (path === '/login') title = `${t('nav.signIn')} · FreeSocks`;
+    else if (path.startsWith('/admin')) title = 'Admin · FreeSocks';
+    else if (path !== '/') title = `${t('app.notFound')} · FreeSocks`;
+    document.title = title;
+  });
+
   // a11y: on a client-side route change, move focus to the main region so
   // keyboard + screen-reader users land in the new content (a SPA navigation
   // otherwise leaves focus on the clicked link and announces nothing). Skipped
