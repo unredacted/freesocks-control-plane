@@ -118,13 +118,20 @@ sessions that predate PoP or that belong to a client which could not enroll a ke
   across a full session-TTL window. A count that never reaches zero means a real client keeps
   logging in without enrolling a key (no WebCrypto / IndexedDB) — those clients **will** be locked
   out by the flip, so investigate before enforcing.
-- **Flip** (no redeploy — `resolveMember` / `resolveAdmin` read the env var per request):
-  ```
-  bunx convex env set POP_REQUIRED true
-  ```
-  Effect: an unbound session's next request returns 401; the SPA treats it as signed-out and the
-  member/admin re-logs-in, minting a bound session. Bound sessions are unaffected.
-- **Rollback** (instant, same mechanism): `bunx convex env remove POP_REQUIRED` (or set `false`).
+- **Flip.** Set `POP_REQUIRED=true` on the deployment. On the beta/prod box the self-hosted
+  Convex CLI creds live in the compose stack (the admin key is in the `convexkey` volume, the
+  backend is only reachable in-network), so a bare `bunx convex env set` from the host shell fails
+  with _"No CONVEX_DEPLOYMENT set"_ — drive it through the deployer instead. Declarative (preferred):
+  add `POP_REQUIRED=true` to `.env.convex`, then
+  `docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --no-deps --force-recreate deployer`
+  and confirm `env set POP_REQUIRED` in `docker compose ... logs deployer`. No function redeploy is
+  needed — `resolveMember` / `resolveAdmin` read the var per request. Effect: an unbound session's
+  next request returns 401; the SPA treats it as signed-out and re-logs-in, minting a bound session.
+  Bound sessions are unaffected. (From a machine whose CLI is already pointed at the deployment — a
+  dev box with `.env.local`, or `docker compose run --rm --no-deps --entrypoint bash deployer` with
+  the admin key exported — `bunx convex env set POP_REQUIRED true` works directly.)
+- **Rollback:** remove the line from `.env.convex` and re-run the deployer (or `bunx convex env
+remove POP_REQUIRED` where the CLI is configured). Takes effect on the next request.
 - **Caveat (intended posture).** With the flag on there is no cookie-only fallback: a browser that
   cannot run the signing Worker or persist to IndexedDB cannot hold a session. That is the point (a
   captured cookie alone is worthless) — which is precisely why the readiness card exists. Confirm

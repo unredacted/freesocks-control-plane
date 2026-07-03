@@ -93,6 +93,24 @@ optional one-time bootstrap.)
 > `bunx convex env get ADMIN_BOOTSTRAP_SECRET`. A standalone `bunx convex deploy`
 > (no compose) still needs them set manually.
 
+> **Which file, and applying a change later.** Every var in this section is a Convex
+> **deployment** env var and belongs in **`.env.convex`** (the deployer pushes each one
+> via `convex env set` on `up`). Compose/build config — ports, `INSTANCE_SECRET`,
+> `POSTGRES_PASSWORD`, the `VITE_FS_*` build pins, backup creds — belongs in `.env.beta`
+> instead; a deployment var placed there will **not** reach the backend. `.env.convex.example`
+> lists every deployment var (optional ones commented). To change one after the first deploy,
+> edit `.env.convex` and re-run just the deployer:
+>
+> ```sh
+> docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --no-deps --force-recreate deployer
+> docker compose -f docker-compose.beta.yml --env-file .env.beta logs --tail=50 deployer   # look for: env set <KEY>  →  [deploy] OK
+> ```
+>
+> A bare `bunx convex env set` from the host shell fails with _"No CONVEX_DEPLOYMENT set"_ — the
+> self-hosted CLI creds (URL + admin key) live in the stack, not your shell, so drive env changes
+> through the deployer (or a `docker compose run --rm --no-deps --entrypoint bash deployer` shell
+> that exports the admin key from `/keys/admin_key`).
+
 **Optional / feature-gated:**
 
 | Var                                                                         | Default                              | Used by                                                                                                                                                                                                                                                                                                                                                                                                           |
