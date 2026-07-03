@@ -583,6 +583,64 @@ http.route({
   }),
 });
 
+// Switch the member's connection profile (transport → squad) within the same
+// backend. Same saga shape as switch-backend (re-issue + tombstone); the reveal
+// leg is sealed (SEALED_ROUTES) since the response carries the new subscription URL.
+http.route({
+  path: '/api/v1/account/switch-profile',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'subscription:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const body = await readJson<{ profile?: 'evade' | 'privacy'; confirm?: boolean }>(req);
+    if (body.profile !== 'evade' && body.profile !== 'privacy') {
+      return errorJson('validation', 'profile must be "evade" or "privacy"', 400);
+    }
+    if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.switch-profile',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
+    const lock = await ctx.runMutation(internal.account.acquireIssuanceLock, {
+      userId: member.userId,
+    });
+    if (!lock.acquired) {
+      return errorJson('issuance.in_progress', 'Another change is already in progress.', 409);
+    }
+    const requestId = newRequestId();
+    let result;
+    try {
+      result = await ctx.runAction(internal.account.switchProfile, {
+        userId: member.userId,
+        target: body.profile,
+        requestId,
+      });
+    } catch (err) {
+      return issuanceErrorResponse(err, requestId);
+    } finally {
+      await ctx.runMutation(internal.account.releaseIssuanceLock, { userId: member.userId });
+    }
+    if (!result.ok) return errorJson(result.code, result.message, result.status);
+    const {
+      ok: _ok,
+      status: _status,
+      code: _code,
+      message: _message,
+      ...payload
+    } = result as typeof result & {
+      status?: number;
+      code?: string;
+      message?: string;
+    };
+    return json(payload);
+  }),
+});
+
 http.route({
   path: '/api/v1/account/account-id/rotate',
   method: 'POST',
@@ -1781,6 +1839,30 @@ http.route({
     try {
       return json(
         await ctx.runMutation(internal.adminApi.setBillingConfig, {
+          patch: body,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// Set the connection-profile catalog (per-profile label + squad binding + the
+// default). The Ansible panel-bootstrap PATCHes this to bind the fronted/Reality
+// squads it creates (dual-mode: an fsv1_ token with admin:settings:write works);
+// also editable in the admin CMS. Squad UUIDs are write-only (never read back).
+http.route({
+  path: '/api/v1/admin/connection-profiles',
+  method: 'PATCH',
+  handler: sealed(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.adminApi.setConnectionProfiles, {
           patch: body,
           actorAdminId: admin.adminUserId,
         }),

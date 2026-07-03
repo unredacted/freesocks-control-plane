@@ -17,6 +17,17 @@ export const setTier = internalMutation({
   },
 });
 
+/** Set a member's chosen connection profile (transport/squad), orthogonal to
+ *  their tier. Re-issuing the key into the new squad is the caller's job
+ *  (account.switchProfile). */
+export const setConnectionProfile = internalMutation({
+  args: { userId: v.id('users'), profileId: v.union(v.literal('evade'), v.literal('privacy')) },
+  handler: async (ctx, { userId, profileId }) => {
+    await ctx.db.patch(userId, { connectionProfileId: profileId, updatedAt: Date.now() });
+    return null;
+  },
+});
+
 /**
  * Account-number login lookup. The caller (a Node action) hashes the submitted
  * number and passes the hash; we match it against the unique index. Returns

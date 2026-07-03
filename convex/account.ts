@@ -77,6 +77,7 @@ interface AccountView {
       backend: Backend;
     };
     membership: { expiresAt: string | null; isCurrent: boolean } | null;
+    connectionProfileId: 'evade' | 'privacy';
     createdAt: string;
   };
   subscription: {
@@ -123,6 +124,10 @@ export const getAccountView = internalAction({
       }
     }
 
+    // Member's chosen connection profile (or the catalog default) — surfaced so
+    // the client renders the selected transport server-authoritatively.
+    const connectionProfileId =
+      user.connectionProfileId ?? (await ctx.runQuery(internal.connectionProfiles.defaultId, {}));
     const trafficLimitFromTier =
       tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null;
     let subscription: AccountView['subscription'] = null;
@@ -204,6 +209,7 @@ export const getAccountView = internalAction({
               isCurrent: user.status === 'active',
             }
           : null,
+        connectionProfileId,
         createdAt: new Date(user._creationTime).toISOString(),
       },
       subscription,
@@ -249,6 +255,12 @@ export const regenerate = internalAction({
 
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const freeExpiryDays = Number(settings['freetier.expiryDays'] ?? 90);
+    // Squad from the member's chosen connection profile; falls back to the tier's
+    // own squad when no profile is chosen or its squad isn't bound yet — so this
+    // is behaviour-preserving until a profile squad is actually bound.
+    const profileSquad = await ctx.runQuery(internal.connectionProfiles.resolveSquad, {
+      profileId: user.connectionProfileId ?? null,
+    });
     const issued = await issueNewSubscription(ctx, {
       userId,
       backend: tier.backend,
@@ -260,7 +272,7 @@ export const regenerate = internalAction({
         expireAt: computeExpireAtIso(user.membershipExpiresAt, freeExpiryDays),
         hwidDeviceLimit: tier.hwidEnabled ? tier.hwidLimit : null,
         tag: tier.slug,
-        remnawaveSquadUuid: tier.remnawaveSquadUuid ?? null,
+        remnawaveSquadUuid: profileSquad ?? tier.remnawaveSquadUuid ?? null,
       },
     });
 
@@ -341,6 +353,11 @@ export const switchBackend = internalAction({
     }
 
     const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+    // Carry the member's chosen connection profile across the backend switch
+    // (falls back to the peer tier's squad when unbound; ignored on Outline).
+    const profileSquad = await ctx.runQuery(internal.connectionProfiles.resolveSquad, {
+      profileId: user.connectionProfileId ?? null,
+    });
     const issued = await issueNewSubscription(ctx, {
       userId,
       backend: peerTier.backend,
@@ -356,7 +373,7 @@ export const switchBackend = internalAction({
         ),
         hwidDeviceLimit: peerTier.hwidEnabled ? peerTier.hwidLimit : null,
         tag: peerTier.slug,
-        remnawaveSquadUuid: peerTier.remnawaveSquadUuid ?? null,
+        remnawaveSquadUuid: profileSquad ?? peerTier.remnawaveSquadUuid ?? null,
       },
     });
 
@@ -400,6 +417,105 @@ export const switchBackend = internalAction({
         monthlyTrafficGb: peerTier.monthlyTrafficGb,
         deviceLimit: peerTier.deviceLimit,
       },
+      oldSubscriptionDeletedAt: oldDeletedAt !== null ? new Date(oldDeletedAt).toISOString() : null,
+    };
+  },
+});
+
+type SwitchProfileResult =
+  | {
+      ok: true;
+      subscriptionUrl: string;
+      shortUuid: string;
+      profile: { id: 'evade' | 'privacy'; label: string };
+      oldSubscriptionDeletedAt: string | null;
+    }
+  | { ok: false; code: string; message: string; status: number };
+
+/**
+ * Switch the member's connection profile (transport → Remnawave squad) WITHIN the
+ * same backend. Mirrors switchBackend's saga (issue new key → tombstone the old
+ * with 24h grace → audit) but with no tier/backend change: it re-issues the key
+ * into the chosen profile's squad and records the choice on the user. Same-squad
+ * behaviour is preserved when the target profile has no squad bound yet (falls
+ * back to the tier squad), so it degrades cleanly before the Ansible bootstrap.
+ */
+export const switchProfile = internalAction({
+  args: {
+    userId: v.id('users'),
+    target: v.union(v.literal('evade'), v.literal('privacy')),
+    requestId: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, target, requestId }): Promise<SwitchProfileResult> => {
+    const user = await ctx.runQuery(internal.users.get, { id: userId });
+    if (!user) return { ok: false, code: 'not_found', message: 'user not found', status: 404 };
+    const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
+    if (!tier) return { ok: false, code: 'not_found', message: 'tier not found', status: 404 };
+
+    // No-op guard: choosing the profile you already have shouldn't churn a new key.
+    if ((user.connectionProfileId ?? null) === target) {
+      return {
+        ok: false,
+        code: 'validation',
+        message: 'Already on the requested profile',
+        status: 400,
+      };
+    }
+
+    const profiles = await ctx.runQuery(internal.connectionProfiles.list, {});
+    const chosen = profiles.find((p) => p.id === target);
+    if (!chosen) {
+      return { ok: false, code: 'validation', message: 'Unknown connection profile', status: 400 };
+    }
+
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
+    const profileSquad = await ctx.runQuery(internal.connectionProfiles.resolveSquad, {
+      profileId: target,
+    });
+    const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+    const issued = await issueNewSubscription(ctx, {
+      userId,
+      backend: tier.backend,
+      spec: {
+        username: `freesocks-${tier.slug}-${randomHex(8)}`,
+        trafficLimitBytes: tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null,
+        trafficLimitStrategy: tier.trafficStrategy,
+        expireAt: computeExpireAtIso(
+          user.membershipExpiresAt,
+          Number(settings['freetier.expiryDays'] ?? 90),
+        ),
+        hwidDeviceLimit: tier.hwidEnabled ? tier.hwidLimit : null,
+        tag: tier.slug,
+        remnawaveSquadUuid: profileSquad ?? tier.remnawaveSquadUuid ?? null,
+      },
+    });
+
+    // Tombstone the OLD key before recording the choice (issueNew already
+    // repointed currentSubscriptionId), same 24h grace as regenerate/switch.
+    let oldDeletedAt: number | null = null;
+    if (oldSub) {
+      const tomb = await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, {
+        backendUserId: oldSub.backendUserId,
+        graceMs: 24 * 60 * 60 * 1000,
+      });
+      oldDeletedAt = tomb?.deletedAt ?? null;
+    }
+    await ctx.runMutation(internal.users.setConnectionProfile, { userId, profileId: target });
+    await ctx.runMutation(internal.audit.record, {
+      actorType: 'member',
+      actorId: userId,
+      action: 'subscription.switch_profile',
+      targetType: 'subscription',
+      targetId: issued.subscriptionId,
+      // Never the squad uuid — only which profile.
+      payload: { fromProfile: user.connectionProfileId ?? null, toProfile: target },
+      requestId,
+    });
+    return {
+      ok: true,
+      subscriptionUrl: issued.subscriptionUrl,
+      shortUuid: issued.backendShortId,
+      profile: { id: chosen.id, label: chosen.label },
       oldSubscriptionDeletedAt: oldDeletedAt !== null ? new Date(oldDeletedAt).toISOString() : null,
     };
   },

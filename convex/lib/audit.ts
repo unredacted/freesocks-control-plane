@@ -40,6 +40,8 @@ export interface AuditEntry {
  */
 export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
   'subscription.switch_backend': ['fromBackend', 'toBackend', 'fromTier', 'toTier'],
+  // Member switches connection profile (transport/squad) within a backend.
+  'subscription.switch_profile': ['fromProfile', 'toProfile'],
   // Member revokes one HWID device (truncated identifier only, never the full hwid).
   'subscription.device_revoke': ['hwidPrefix'],
   'membership.tier_change': ['fromTierId', 'toTierId', 'reason'],
@@ -84,6 +86,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Idempotent tier upsert by slug (Ansible / IaC + declarative squad binding);
   // `squadBound` is a boolean — the Remnawave squad UUID is NEVER logged.
   'admin.tier.upsert': ['slug', 'backend', 'created', 'squadBound'],
+  // Admin/IaC binds a connection profile's squad or renames it. `squadBound` is a
+  // boolean — the Remnawave squad UUID is NEVER logged (only which key changed).
+  'admin.connection_profile.update': ['key', 'squadBound'],
   // Admin changes the brand theme (preset + optional hue override).
   'admin.theme.change': ['preset', 'hue'],
   // W3-8: admin lifecycle — deactivate/reactivate an admin, revoke a passkey

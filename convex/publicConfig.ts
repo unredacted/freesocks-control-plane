@@ -10,6 +10,7 @@ import { query } from './_generated/server';
 import { resolveBillingConfig } from './lib/billingConfig';
 import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
+import { resolveConnectionProfiles, publicProjection } from './lib/connectionProfiles';
 
 export const get = query({
   args: {},
@@ -112,6 +113,10 @@ export const get = query({
       // channels the "Verify connection" panel shows, and whether to surface the
       // whole E2EE badge/panel at all. The panel renders only the set channels.
       verification: await resolveVerification(ctx.db),
+      // Member-facing connection-profile catalog (id + label + isDefault +
+      // available = squad bound). NEVER the squad UUID — publicProjection strips
+      // it, like the tier projection above. Drives the transport chooser.
+      connectionProfiles: publicProjection(await resolveConnectionProfiles(ctx.db)),
     };
   },
 });

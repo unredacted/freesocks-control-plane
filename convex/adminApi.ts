@@ -26,6 +26,7 @@ import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
+import { connectionProfileWrites, resolveConnectionProfiles } from './lib/connectionProfiles';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { normalizeSupportId } from './lib/supportId';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
@@ -1699,5 +1700,60 @@ export const setVerification = internalMutation({
       payload: clean,
     });
     return clean;
+  },
+});
+
+// === connection profiles =====================================================
+
+/**
+ * Admin sets the connection-profile catalog (per-profile label + squad, and the
+ * default). Writes the appSettings `connectionProfile.*` namespace via
+ * upsertSetting; resolveConnectionProfiles / publicConfig read it back. Audited
+ * as a `squadBound` BOOLEAN per key — the Remnawave squad UUID (infra detail) is
+ * never logged. This is the headless seam the Ansible panel-bootstrap PATCHes to
+ * bind the fronted / Reality squads it creates; also editable in the admin CMS.
+ * Returns the squad-bound view (labels + isDefault + squadBound), never a UUID.
+ */
+export const setConnectionProfiles = internalMutation({
+  args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { patch, actorAdminId }) => {
+    let writes: Array<{ key: string; value: string }>;
+    try {
+      writes = connectionProfileWrites(patch);
+    } catch (e) {
+      throw new ConvexError({
+        code: 'validation',
+        message: e instanceof Error ? e.message : 'invalid connection-profile config',
+      });
+    }
+    if (writes.length === 0) {
+      throw new ConvexError({
+        code: 'validation',
+        message: 'no recognized connection-profile fields',
+      });
+    }
+    for (const { key, value } of writes) {
+      await upsertSetting(ctx, key, value, actorAdminId);
+      const isSquadKey = key.endsWith('.squadUuid');
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: actorAdminId ?? undefined,
+        action: 'admin.connection_profile.update',
+        targetType: 'connection_profile',
+        targetId: key,
+        // Never the squad UUID — only which key changed + whether a squad is now bound.
+        payload: isSquadKey
+          ? { key, squadBound: (JSON.parse(value) as string).trim().length > 0 }
+          : { key },
+      });
+    }
+    return {
+      profiles: (await resolveConnectionProfiles(ctx.db)).map((p) => ({
+        id: p.id,
+        label: p.label,
+        isDefault: p.isDefault,
+        squadBound: p.squadUuid !== null,
+      })),
+    };
   },
 });

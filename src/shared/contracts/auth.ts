@@ -145,5 +145,19 @@ export const PublicConfig = z.object({
       extensionUrl: z.string(),
     })
     .optional(),
+  /** Member-facing connection-profile catalog (the transport chooser): id +
+   *  label + whether it's the default + `available` (its Remnawave squad is
+   *  bound). NEVER the squad UUID. Optional/defaulted for forward-compat. */
+  connectionProfiles: z
+    .array(
+      z.object({
+        id: z.enum(['evade', 'privacy']),
+        label: z.string(),
+        isDefault: z.boolean(),
+        available: z.boolean(),
+      }),
+    )
+    .optional()
+    .default([]),
 });
 export type PublicConfig = z.infer<typeof PublicConfig>;

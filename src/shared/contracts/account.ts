@@ -36,6 +36,9 @@ export const AccountResponse = z.object({
         isCurrent: z.boolean(),
       })
       .nullable(),
+    /** The member's chosen connection profile (transport). The server sends the
+     *  resolved catalog default when unset. Optional for rolling-deploy compat. */
+    connectionProfileId: z.enum(['evade', 'privacy']).optional(),
     createdAt: z.string().datetime(),
   }),
   subscription: z
@@ -163,6 +166,22 @@ export const SwitchBackendResponse = z.object({
   oldSubscriptionDeletedAt: z.string().datetime().nullable(),
 });
 export type SwitchBackendResponse = z.infer<typeof SwitchBackendResponse>;
+
+export const SwitchProfileRequest = z.object({
+  profile: z.enum(['evade', 'privacy']),
+  confirm: z.literal(true),
+});
+export type SwitchProfileRequest = z.infer<typeof SwitchProfileRequest>;
+
+export const SwitchProfileResponse = z.object({
+  subscriptionUrl: z.string().url(),
+  shortUuid: z.string(),
+  profile: z.object({ id: z.enum(['evade', 'privacy']), label: z.string() }),
+  /** ISO timestamp the previous key stops working (24h grace); null when there
+   *  was no live previous subscription to tombstone (see SwitchBackendResponse). */
+  oldSubscriptionDeletedAt: z.string().datetime().nullable(),
+});
+export type SwitchProfileResponse = z.infer<typeof SwitchProfileResponse>;
 
 /**
  * Revoke one of the member's HWID devices (frees a slot under the tier's device

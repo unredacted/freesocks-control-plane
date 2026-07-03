@@ -140,6 +140,11 @@ export default defineSchema({
     // admin "backend drift" signal so otherwise-silent entitlement drift (a paid
     // upgrade that never reached the panel, a disable the key ignored) is visible.
     backendPushFailedAt: v.optional(v.number()),
+    // Member-chosen connection profile (transport → Remnawave squad), orthogonal
+    // to the entitlement tier: the tier sets limits, this selects which squad the
+    // key issues into. Unset → the catalog default (see lib/connectionProfiles.ts).
+    // Additive/optional; legacy rows + new free signups default cleanly.
+    connectionProfileId: v.optional(v.union(v.literal('evade'), v.literal('privacy'))),
     updatedAt: v.number(),
   })
     .index('by_account_id_hash', ['accountIdHash'])
