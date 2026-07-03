@@ -3,22 +3,43 @@
   import Zap from '@lucide/svelte/icons/zap';
   import Check from '@lucide/svelte/icons/check';
   import { t } from '../lib/i18n/index.svelte';
-  import { deliveryPref, setDeliveryPref } from '../lib/deliveryPref.svelte';
 
   /**
-   * "What matters most to you?" picker. Both options are always shown; the one
-   * the server recommends (country-based) carries a "Recommended" badge and is
-   * the highlighted default until the member picks. The choice is client-side
-   * only (localStorage) — it reorders the delivery panels below, nothing more.
+   * "What matters most to you?" picker — the member-facing connection profile
+   * (transport) choice. Both options are always shown; the one the server
+   * recommends (country-based) carries a "Recommended" badge.
+   *
+   * Two modes, driven by `serverBacked`:
+   *  - serverBacked=false (no profile squad bound yet, or no subscription): the
+   *    choice is a client-side presentation preference only (which delivery panels
+   *    lead). Picking calls `onChoose` and the parent persists it locally.
+   *  - serverBacked=true: picking a different option re-issues the member's key
+   *    into that profile's Remnawave squad (server-authoritative). `onChoose`
+   *    opens the parent's confirm dialog; localStorage is only an optimistic hint.
    */
   interface Props {
-    /** Server's country-based recommendation (highlighted), if any. */
+    /** Highlighted current choice (the parent passes the optimistic-or-server value). */
+    selected: 'privacy' | 'evade';
+    /** Server's country-based recommendation, badged. */
     suggested?: 'privacy' | 'evade';
+    /** True once a profile squad is bound AND the member has a subscription to re-issue. */
+    serverBacked?: boolean;
+    /** Per-option availability (its squad is bound) — used to disable an unbound
+     *  option in server mode. Ignored when serverBacked is false. */
+    available?: { evade: boolean; privacy: boolean };
+    /** True while a switch is in flight (disables the buttons). */
+    busy?: boolean;
+    /** Called when the member picks an option other than the current one. */
+    onChoose: (mode: 'privacy' | 'evade') => void;
   }
-  let { suggested = 'evade' }: Props = $props();
-
-  // Explicit choice wins; otherwise fall to the country suggestion.
-  let selected = $derived(deliveryPref() ?? suggested);
+  let {
+    selected,
+    suggested = 'evade',
+    serverBacked = false,
+    available = { evade: true, privacy: true },
+    busy = false,
+    onChoose,
+  }: Props = $props();
 
   const OPTIONS = [
     { mode: 'evade', icon: Zap, titleKey: 'delivery.evadeTitle', bodyKey: 'delivery.evadeBody' },
@@ -29,20 +50,40 @@
       bodyKey: 'delivery.privacyBody',
     },
   ] as const;
+
+  // In server mode a not-yet-bound option can't meaningfully be chosen (it would
+  // fall back to the same squad); disable it unless it's the current selection.
+  function isDisabled(mode: 'privacy' | 'evade'): boolean {
+    if (busy) return true;
+    if (serverBacked && mode !== selected && !available[mode]) return true;
+    return false;
+  }
+
+  function choose(mode: 'privacy' | 'evade') {
+    if (isDisabled(mode) || mode === selected) return;
+    onChoose(mode);
+  }
 </script>
 
 <section class="space-y-3 rounded-xl border border-border bg-card p-4 sm:p-5">
   <div>
     <h2 class="font-display text-base font-semibold">{t('delivery.title')}</h2>
-    <p class="text-sm text-muted-foreground">{t('delivery.subtitle')}</p>
+    <p class="text-sm text-muted-foreground">
+      {serverBacked ? t('delivery.subtitleServer') : t('delivery.subtitle')}
+    </p>
   </div>
   <div class="grid gap-3 sm:grid-cols-2">
     {#each OPTIONS as opt (opt.mode)}
+      {@const disabled = isDisabled(opt.mode)}
       <button
         type="button"
-        onclick={() => setDeliveryPref(opt.mode)}
+        onclick={() => choose(opt.mode)}
+        {disabled}
         aria-pressed={selected === opt.mode}
-        class="relative rounded-lg border p-4 text-start transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {selected ===
+        title={disabled && serverBacked && opt.mode !== selected && !available[opt.mode]
+          ? t('delivery.unavailable')
+          : undefined}
+        class="relative rounded-lg border p-4 text-start transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 {selected ===
         opt.mode
           ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
           : 'border-border hover:border-primary/40'}"

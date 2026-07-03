@@ -10,7 +10,8 @@
   import GiftCodes from '../components/GiftCodes.svelte';
   import GiftRevealModal from '../components/GiftRevealModal.svelte';
   import DeliveryPreference from '../components/DeliveryPreference.svelte';
-  import { deliveryPref } from '../lib/deliveryPref.svelte';
+  import SwitchProfileModal from '../components/SwitchProfileModal.svelte';
+  import { deliveryPref, setDeliveryPref } from '../lib/deliveryPref.svelte';
   import MembershipCallout from '../components/MembershipCallout.svelte';
   import RegenerateModal from '../components/RegenerateModal.svelte';
   import RevokeDeviceModal from '../components/RevokeDeviceModal.svelte';
@@ -66,9 +67,33 @@
   // sprinkled across the template.
   let data = $derived(account.data);
 
-  // Delivery emphasis: the member's explicit (client-side) choice wins, else the
-  // server's country-based suggestion, else evade. Orders the panels below.
-  let effectiveDelivery = $derived(deliveryPref() ?? data?.suggestedDelivery ?? 'evade');
+  // Connection-profile (transport) catalog from public config. `available` means
+  // the profile's Remnawave squad is bound; until at least one is bound (and the
+  // member has a key to re-issue) the picker is a local presentation preference
+  // only — choosing wouldn't change the issued squad, so we skip the server round-trip.
+  let boundProfiles = $derived(config.data?.connectionProfiles ?? []);
+  let profileAvailability = $derived({
+    evade: boundProfiles.find((p) => p.id === 'evade')?.available ?? false,
+    privacy: boundProfiles.find((p) => p.id === 'privacy')?.available ?? false,
+  });
+  let profileServerBacked = $derived(
+    !!data?.subscription && (profileAvailability.evade || profileAvailability.privacy),
+  );
+
+  // Delivery emphasis. Server-backed → the member's server-side profile is
+  // authoritative (localStorage is just an optimistic bridge); otherwise the
+  // local device-only choice wins, then the server's country suggestion, else evade.
+  let effectiveDelivery = $derived<'privacy' | 'evade'>(
+    profileServerBacked
+      ? (data?.user.connectionProfileId ?? deliveryPref() ?? data?.suggestedDelivery ?? 'evade')
+      : (deliveryPref() ?? data?.suggestedDelivery ?? 'evade'),
+  );
+
+  // Localized profile title for toasts + the confirm dialog. The server's stored
+  // label is English-only; the SPA is i18n'd, so copy is keyed off the profile id.
+  function profileLabel(id: 'privacy' | 'evade'): string {
+    return id === 'privacy' ? t('delivery.privacyTitle') : t('delivery.evadeTitle');
+  }
 
   // a11y: sonner toasts aren't reliably announced; this feeds a visually
   // hidden role="status" region so async outcomes are spoken once. Keep the
@@ -82,6 +107,12 @@
   // right "from X to Y" copy even after the mutation lands and the account
   // query updates `data.subscription.backend` to the new value.
   let pendingSwitchTarget = $state<'remnawave' | 'outline' | null>(null);
+
+  // Connection-profile switch (transport → squad). Mirrors the backend switch:
+  // a confirm dialog, then a re-issue with 24h grace. `pendingProfile` also drives
+  // the picker optimistically while the mutation + account refetch are in flight.
+  let switchProfileOpen = $state(false);
+  let pendingProfile = $state<'privacy' | 'evade' | null>(null);
 
   // 401 from /api/v1/account means the cookie session is missing or expired;
   // bounce to the account-number sign-in form (no OIDC anymore). The once-flag
@@ -217,6 +248,57 @@
       toast.error(t('account.switchFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
+
+  // Mutation: switch the connection profile (transport → Remnawave squad) within
+  // the same backend. Re-issues the key into the chosen profile's squad and
+  // tombstones the old one with a 24h grace window (same saga as switch-backend).
+  const switchProfile = createMutation(() => ({
+    mutationFn: () => {
+      if (!pendingProfile) throw new Error('No profile selected');
+      return apiClient.post(
+        '/api/v1/account/switch-profile',
+        { profile: pendingProfile, confirm: true },
+        z.object({
+          subscriptionUrl: z.string(),
+          shortUuid: z.string(),
+          profile: z.object({ id: z.enum(['evade', 'privacy']), label: z.string() }),
+          // Null when there was no live previous subscription to tombstone.
+          oldSubscriptionDeletedAt: z.string().nullable(),
+        }),
+      );
+    },
+    onSuccess: (result) => {
+      switchProfileOpen = false;
+      // Keep the local presentation hint in sync so the delivery panels don't
+      // flash the old focus before the account query returns the new profile.
+      setDeliveryPref(result.profile.id);
+      pendingProfile = null;
+      void qc.invalidateQueries({ queryKey: queryKeys.account });
+      liveMessage = t('delivery.switchSuccessTitle', { label: profileLabel(result.profile.id) });
+      toast.success(t('delivery.switchSuccessTitle', { label: profileLabel(result.profile.id) }), {
+        description: result.oldSubscriptionDeletedAt
+          ? t('delivery.switchSuccessBodyGrace')
+          : t('delivery.switchSuccessBody'),
+      });
+    },
+    onError: (err) => {
+      pendingProfile = null;
+      liveMessage = t('delivery.switchFailedTitle');
+      toast.error(t('delivery.switchFailedTitle'), { description: apiErrorMessage(err) });
+    },
+  }));
+
+  // The delivery picker's choice handler. Server-backed → open the confirm dialog
+  // (a real key re-issue); otherwise it's a local device-only presentation toggle.
+  function chooseProfile(mode: 'privacy' | 'evade') {
+    if (!profileServerBacked) {
+      setDeliveryPref(mode);
+      return;
+    }
+    if (mode === effectiveDelivery || switchProfile.isPending || actionsDisabled) return;
+    pendingProfile = mode;
+    switchProfileOpen = true;
+  }
 
   // Mutation: revoke one HWID device (frees a slot under the tier's device cap
   // without a full regenerate). Confirmation-gated; the server verifies the
@@ -596,7 +678,14 @@
 
       <!-- Delivery focus: privacy promotes the raw E2EE config + warns the
            subscription link is fetched through a CDN; evade keeps the link as the star. -->
-      <DeliveryPreference suggested={data.suggestedDelivery} />
+      <DeliveryPreference
+        selected={pendingProfile ?? effectiveDelivery}
+        suggested={data.suggestedDelivery}
+        serverBacked={profileServerBacked}
+        available={profileAvailability}
+        busy={switchProfile.isPending}
+        onChoose={chooseProfile}
+      />
 
       {#if data.subscription}
         <SubscriptionHero
@@ -889,6 +978,19 @@
           }}
           onConfirm={() => switchBackend.mutate()}
           busy={switchBackend.isPending}
+        />
+      {/if}
+      {#if pendingProfile}
+        <SwitchProfileModal
+          bind:open={switchProfileOpen}
+          targetLabel={profileLabel(pendingProfile)}
+          deviceCount={data.subscription.devices.length}
+          onCancel={() => {
+            switchProfileOpen = false;
+            pendingProfile = null;
+          }}
+          onConfirm={() => switchProfile.mutate()}
+          busy={switchProfile.isPending}
         />
       {/if}
       {#if revokeTargetHwid}

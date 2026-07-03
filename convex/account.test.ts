@@ -435,6 +435,143 @@ describe('account.switchBackend guards', () => {
 });
 
 /**
+ * switchProfile saga: re-issue the member's key into the chosen connection
+ * profile's Remnawave squad (transport choice), tombstone the old key with 24h
+ * grace, record the choice — WITHIN the same backend (no tier/peer change). The
+ * squad UUID must flow into issuance but never reach the audit log.
+ */
+describe('account.switchProfile saga', () => {
+  // The live-provider test stubs fetch; unstub after each so the dev-mock tests stay clean.
+  afterEach(() => vi.unstubAllGlobals());
+
+  test('choosing the profile you already have is a no-op validation error (no key churn)', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) => ctx.db.patch(userId, { connectionProfileId: 'privacy' }));
+
+    const res = await t.action(internal.account.switchProfile, { userId, target: 'privacy' });
+    expect(res).toMatchObject({ ok: false, code: 'validation', status: 400 });
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query('subscriptions').collect()).toHaveLength(0);
+    });
+  });
+
+  test('re-issues into the chosen squad, tombstones the old key, records the choice, audits without the squad uuid', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const SQUAD = '11111111-2222-3333-4444-555555555555';
+    const NEW_UUID = '550e8400-e29b-41d4-a716-446655440077';
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run(async (ctx) => {
+      // Bind the privacy profile's squad — the infra detail that must never be audited.
+      await ctx.db.insert('appSettings', {
+        key: 'connectionProfile.privacy.squadUuid',
+        value: JSON.stringify(SQUAD),
+        updatedAt: Date.now(),
+      });
+      const instanceId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'test',
+        slug: 'test',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'old-key-uuid',
+        backendShortId: 'oldshort',
+        backendServerId: instanceId,
+        subscriptionUrl: 'https://panel.test/sub/oldshort',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+    });
+    // The only HTTP the saga makes is the create (POST /api/users); the tombstone is DB-only.
+    const fetchMock = vi.fn(
+      async (_input: string | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            response: {
+              uuid: NEW_UUID,
+              shortUuid: 'newshort',
+              username: 'u',
+              status: 'ACTIVE',
+              trafficLimitBytes: null,
+              trafficLimitStrategy: 'MONTH',
+              usedTrafficBytes: 0,
+              expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+              hwidDeviceLimit: null,
+              subscriptionUrl: 'https://panel.test/sub/newshort',
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const before = Date.now();
+    const res = await t.action(internal.account.switchProfile, { userId, target: 'privacy' });
+    expect(res).toMatchObject({ ok: true, profile: { id: 'privacy' } });
+
+    // The new key was issued INTO the profile's squad (squad-from-profile overrides the tier).
+    const createCall = fetchMock.mock.calls.find(
+      ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
+    );
+    expect(createCall).toBeTruthy();
+    const body = JSON.parse(String(createCall![1]!.body));
+    expect(body.activeInternalSquads).toEqual([SQUAD]);
+
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      expect(user!.connectionProfileId).toBe('privacy');
+      const subs = await ctx.db.query('subscriptions').collect();
+      const old = subs.find((s) => s.state === 'disabled')!;
+      const fresh = subs.find((s) => s.state === 'active')!;
+      expect(old).toBeTruthy();
+      expect(fresh).toBeTruthy();
+      // 24h grace, mirroring regenerate / switch-backend.
+      expect(old.deletedAt!).toBeGreaterThanOrEqual(before + 24 * 3_600_000 - 5_000);
+      expect(user!.currentSubscriptionId).toBe(fresh._id);
+
+      const audit = (await ctx.db.query('auditLog').collect()).find(
+        (r) => r.action === 'subscription.switch_profile',
+      );
+      expect(audit).toBeTruthy();
+      const payload = JSON.stringify(audit!.payload ?? {});
+      expect(payload).toContain('privacy'); // toProfile recorded
+      expect(payload).not.toContain(SQUAD); // the squad uuid is NEVER audited
+    });
+  });
+
+  test('falls back to the tier squad (behaviour-preserving) when the target profile has no squad bound', async () => {
+    // dev mock ON (top-level beforeEach) → issuance short-circuits; assert it still
+    // succeeds and records the choice even with no profile squad bound.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId }); // an existing key to tombstone
+
+    const res = await t.action(internal.account.switchProfile, { userId, target: 'privacy' });
+    expect(res).toMatchObject({ ok: true, profile: { id: 'privacy' } });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.connectionProfileId).toBe('privacy');
+      const subs = await ctx.db.query('subscriptions').collect();
+      expect(subs.filter((s) => s.state === 'disabled')).toHaveLength(1);
+      expect(subs.filter((s) => s.state === 'active')).toHaveLength(1);
+    });
+  });
+});
+
+/**
  * deleteSubscriptionEverywhere ordering (P1-5), driven via the tombstone sweep.
  * The invariant: the backend DELETE happens FIRST and is not swallowed — if it
  * throws, the local row must NOT be marked `deleted` (so the next sweep retries)

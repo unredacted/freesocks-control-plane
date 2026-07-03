@@ -9,7 +9,7 @@
   import RawConfig from '../components/RawConfig.svelte';
   import InlineError from '../components/InlineError.svelte';
   import DeliveryPreference from '../components/DeliveryPreference.svelte';
-  import { deliveryPref } from '../lib/deliveryPref.svelte';
+  import { deliveryPref, setDeliveryPref } from '../lib/deliveryPref.svelte';
   import SetupGuidance from '../components/SetupGuidance.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import RedeemCode from '../components/RedeemCode.svelte';
@@ -359,7 +359,13 @@
 
       <!-- Delivery focus FIRST — above the key (and the create button), so the
            choice shapes how the subscription is presented. -->
-      <DeliveryPreference suggested={account.data?.suggestedDelivery} />
+      <!-- Onboarding: a local presentation preference only (no key to re-issue
+           here). Switching the server-side profile lives on the account page. -->
+      <DeliveryPreference
+        selected={effectiveDelivery}
+        suggested={account.data?.suggestedDelivery}
+        onChoose={setDeliveryPref}
+      />
 
       {#if subscription}
         <SubscriptionHero

@@ -121,6 +121,82 @@
       toast.error('Could not save verification settings', { description: apiErrorMessage(err) });
     },
   }));
+
+  // Connection profiles (transport → Remnawave squad), own namespace like theme /
+  // verification. Squad UUIDs are WRITE-ONLY: publicConfig exposes only `available`
+  // (bound?), never the value, so the squad inputs start blank and a blank leaves
+  // the current binding untouched (keep-secret-on-blank, like backend credentials).
+  let cpDraft = $state<{
+    default: 'evade' | 'privacy';
+    evadeLabel: string;
+    privacyLabel: string;
+    evadeSquad: string;
+    privacySquad: string;
+  }>({ default: 'evade', evadeLabel: '', privacyLabel: '', evadeSquad: '', privacySquad: '' });
+  let cpInit = $state(false);
+  $effect(() => {
+    const profiles = cfg.data?.connectionProfiles;
+    if (profiles && profiles.length > 0 && !cpInit) {
+      cpDraft = {
+        default: profiles.find((p) => p.isDefault)?.id ?? 'evade',
+        evadeLabel: profiles.find((p) => p.id === 'evade')?.label ?? '',
+        privacyLabel: profiles.find((p) => p.id === 'privacy')?.label ?? '',
+        evadeSquad: '',
+        privacySquad: '',
+      };
+      cpInit = true;
+    }
+  });
+  // Live "is this profile's squad bound?" straight from config (never the uuid).
+  let cpAvailable = $derived({
+    evade: cfg.data?.connectionProfiles?.find((p) => p.id === 'evade')?.available ?? false,
+    privacy: cfg.data?.connectionProfiles?.find((p) => p.id === 'privacy')?.available ?? false,
+  });
+  const saveConnectionProfiles = createMutation(() => ({
+    mutationFn: async () => {
+      const CpResp = z.object({
+        profiles: z.array(
+          z.object({
+            id: z.enum(['evade', 'privacy']),
+            label: z.string(),
+            isDefault: z.boolean(),
+            squadBound: z.boolean(),
+          }),
+        ),
+      });
+      const profiles: {
+        evade: { label: string; squadUuid?: string };
+        privacy: { label: string; squadUuid?: string };
+      } = {
+        evade: { label: cpDraft.evadeLabel },
+        privacy: { label: cpDraft.privacyLabel },
+      };
+      // Only send a squad when the admin typed one — blank keeps the current binding.
+      if (cpDraft.evadeSquad.trim()) profiles.evade.squadUuid = cpDraft.evadeSquad.trim();
+      if (cpDraft.privacySquad.trim()) profiles.privacy.squadUuid = cpDraft.privacySquad.trim();
+      return apiClient.patch(
+        '/api/v1/admin/connection-profiles',
+        { default: cpDraft.default, profiles },
+        CpResp,
+      );
+    },
+    onSuccess: (updated) => {
+      // Reset the write-only squad inputs; refresh config so `available` + labels update.
+      cpDraft = {
+        default: updated.profiles.find((p) => p.isDefault)?.id ?? cpDraft.default,
+        evadeLabel: updated.profiles.find((p) => p.id === 'evade')?.label ?? cpDraft.evadeLabel,
+        privacyLabel:
+          updated.profiles.find((p) => p.id === 'privacy')?.label ?? cpDraft.privacyLabel,
+        evadeSquad: '',
+        privacySquad: '',
+      };
+      void qc.invalidateQueries({ queryKey: queryKeys.config });
+      toast.success('Connection profiles saved');
+    },
+    onError: (err) => {
+      toast.error('Could not save connection profiles', { description: apiErrorMessage(err) });
+    },
+  }));
 </script>
 
 <AdminLayout>
@@ -437,6 +513,120 @@
           <div class="flex justify-end">
             <Button onclick={() => saveVerification.mutate()} disabled={saveVerification.isPending}>
               {saveVerification.isPending ? 'Saving…' : 'Save verification'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Connection profiles</CardTitle>
+          <CardDescription>
+            The member-facing transport choice: "Stay connected" (a CDN-fronted squad) and "Maximize
+            privacy" (a direct VLESS-Reality squad). Bind each to the Remnawave internal-squad UUID
+            it should issue keys into. Squad UUIDs are write-only; leave a field blank to keep the
+            current binding. The Ansible panel-bootstrap sets these automatically. Until a squad is
+            bound the member picker stays a local presentation preference (issuance falls back to
+            the tier's own squad).
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-5 text-sm">
+          <!-- Stay connected (evade) -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between gap-2">
+              <label class="flex items-center gap-2 font-medium">
+                <input
+                  type="radio"
+                  name="cp-default"
+                  checked={cpDraft.default === 'evade'}
+                  onchange={() => (cpDraft = { ...cpDraft, default: 'evade' })}
+                />
+                Stay connected <span class="text-xs text-muted-foreground">(default?)</span>
+              </label>
+              <span
+                class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide {cpAvailable.evade
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-muted text-muted-foreground'}"
+              >
+                {cpAvailable.evade ? 'Squad bound' : 'Not set'}
+              </span>
+            </div>
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-label"
+                >Label</label
+              >
+              <Input
+                id="cp-evade-label"
+                value={cpDraft.evadeLabel}
+                oninput={(e) =>
+                  (cpDraft = { ...cpDraft, evadeLabel: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-squad"
+                >Remnawave squad UUID (write-only)</label
+              >
+              <Input
+                id="cp-evade-squad"
+                placeholder={cpAvailable.evade ? 'Bound — leave blank to keep' : 'Not set'}
+                value={cpDraft.evadeSquad}
+                oninput={(e) =>
+                  (cpDraft = { ...cpDraft, evadeSquad: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+          </div>
+
+          <!-- Maximize privacy (privacy) -->
+          <div class="space-y-2 border-t border-border pt-4">
+            <div class="flex items-center justify-between gap-2">
+              <label class="flex items-center gap-2 font-medium">
+                <input
+                  type="radio"
+                  name="cp-default"
+                  checked={cpDraft.default === 'privacy'}
+                  onchange={() => (cpDraft = { ...cpDraft, default: 'privacy' })}
+                />
+                Maximize privacy <span class="text-xs text-muted-foreground">(default?)</span>
+              </label>
+              <span
+                class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide {cpAvailable.privacy
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-muted text-muted-foreground'}"
+              >
+                {cpAvailable.privacy ? 'Squad bound' : 'Not set'}
+              </span>
+            </div>
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="cp-privacy-label"
+                >Label</label
+              >
+              <Input
+                id="cp-privacy-label"
+                value={cpDraft.privacyLabel}
+                oninput={(e) =>
+                  (cpDraft = { ...cpDraft, privacyLabel: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="cp-privacy-squad"
+                >Remnawave squad UUID (write-only)</label
+              >
+              <Input
+                id="cp-privacy-squad"
+                placeholder={cpAvailable.privacy ? 'Bound — leave blank to keep' : 'Not set'}
+                value={cpDraft.privacySquad}
+                oninput={(e) =>
+                  (cpDraft = { ...cpDraft, privacySquad: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+          </div>
+
+          <div class="flex justify-end">
+            <Button
+              onclick={() => saveConnectionProfiles.mutate()}
+              disabled={saveConnectionProfiles.isPending}
+            >
+              {saveConnectionProfiles.isPending ? 'Saving…' : 'Save connection profiles'}
             </Button>
           </div>
         </CardContent>

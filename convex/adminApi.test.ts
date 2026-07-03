@@ -5,6 +5,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import { maskApiUrl } from './adminApi';
 import { resolveTheme } from './lib/themeConfig';
+import { resolveConnectionProfiles } from './lib/connectionProfiles';
 import { UserAdmin, AdminStatusSummary } from '../src/shared/contracts/admin';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -850,6 +851,63 @@ describe('adminApi setTheme + resolveTheme', () => {
     const cfg = await t.run((ctx) => resolveTheme(ctx.db));
     expect(cfg.preset).toBe('emerald');
     expect(cfg.hue).toBeNull(); // 999 is out of [0,360] → no override
+  });
+});
+
+describe('adminApi setConnectionProfiles', () => {
+  test('binds squad + label + default; the returned view is squad-BOUND, never the uuid', async () => {
+    const t = convexTest(schema, modules);
+    const out = await t.mutation(internal.adminApi.setConnectionProfiles, {
+      patch: {
+        default: 'privacy',
+        profiles: {
+          evade: { squadUuid: 'fronted-squad-uuid' },
+          privacy: { squadUuid: 'reality-squad-uuid', label: 'Max privacy' },
+        },
+      },
+    });
+    const priv = out.profiles.find((p) => p.id === 'privacy')!;
+    expect(priv.squadBound).toBe(true);
+    expect(priv.label).toBe('Max privacy');
+    expect(priv.isDefault).toBe(true);
+    expect(out.profiles.find((p) => p.id === 'evade')!.squadBound).toBe(true);
+    // The admin view exposes only the boolean — the squad UUID never leaves the resolver.
+    expect(JSON.stringify(out)).not.toContain('reality-squad-uuid');
+    expect(JSON.stringify(out)).not.toContain('fronted-squad-uuid');
+
+    // Server-only resolver reads the bound squads back (the issuance path).
+    const resolved = await t.run((ctx) => resolveConnectionProfiles(ctx.db));
+    expect(resolved.find((p) => p.id === 'privacy')!.squadUuid).toBe('reality-squad-uuid');
+    expect(resolved.find((p) => p.id === 'evade')!.squadUuid).toBe('fronted-squad-uuid');
+  });
+
+  test('audits a squad bind as a boolean, never the uuid', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.adminApi.setConnectionProfiles, {
+      patch: { profiles: { privacy: { squadUuid: 'super-secret-squad' } } },
+    });
+    const audit = await t.run((ctx) =>
+      ctx.db
+        .query('auditLog')
+        .withIndex('by_action', (q) => q.eq('action', 'admin.connection_profile.update'))
+        .collect(),
+    );
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.payload).toMatchObject({
+      key: 'connectionProfile.privacy.squadUuid',
+      squadBound: true,
+    });
+    expect(JSON.stringify(audit[0]!.payload)).not.toContain('super-secret-squad');
+  });
+
+  test('rejects a bad default id and an empty patch', async () => {
+    const t = convexTest(schema, modules);
+    await expect(
+      t.mutation(internal.adminApi.setConnectionProfiles, { patch: { default: 'nope' } }),
+    ).rejects.toThrow(/invalid default profile id/i);
+    await expect(
+      t.mutation(internal.adminApi.setConnectionProfiles, { patch: { profiles: {} } }),
+    ).rejects.toThrow(/no recognized connection-profile fields/i);
   });
 });
 

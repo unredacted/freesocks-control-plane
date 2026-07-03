@@ -443,7 +443,35 @@
     "evadeBody": "当你所在地区网站被封锁时最合适。我们会提供更难被封锁的备用链接。",
     "privacyTitle": "最大化隐私",
     "privacyBody": "追求最强保密性时最合适。我们会优先采用不让你的配置落到第三方服务器的方式。",
-    "recommended": "推荐"
+    "recommended": "推荐",
+    "subtitleServer": "选择一个焦点。更改焦点后，系统会重新颁发匹配服务器的密钥；您当前的密钥将继续有效 24 小时。",
+    "unavailable": "暂无",
+    "confirmTitle": "切换到“ {label} \"？",
+    "confirmBody": "这将重新颁发您用于{label}服务器的代理密钥。您当前的密钥将继续有效 24 小时，因此您可以先在所有设备上重新导入。",
+    "confirmPoint1": "为{label}服务器颁发新的订阅 URL",
+    "confirmPoint2": "您当前的密钥将继续有效 24 小时，然后将被删除。",
+    "confirmPoint3": "您需要在您使用的每个 VPN 客户端中重新导入新的 URL。",
+    "confirmPointDevices": [
+      {
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
+        "match": {
+          "countPlural=one": "您当前已连接 1 台设备；请重新导入到该设备。",
+          "countPlural=other": "您当前已连接{count}个设备；请重新导入所有设备。"
+        }
+      }
+    ],
+    "confirm": "切换焦点",
+    "working": "交换…",
+    "switchSuccessTitle": "切换到“ {label}",
+    "switchSuccessBodyGrace": "在每台设备上重新导入新的订阅网址。您的旧密钥还能再用24小时。",
+    "switchSuccessBody": "在每台设备上重新导入新的订阅网址。",
+    "switchFailedTitle": "无法切换焦点"
   },
   "faq": {
     "title": "常见问题解答",
