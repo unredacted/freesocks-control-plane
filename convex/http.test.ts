@@ -688,3 +688,31 @@ describe('opt-in mirror routes require a member session', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('test-connection tolerates an upsert-shaped body (strict-validator guard)', () => {
+  test('backend-servers/test-connection with extra name/slug/… fields → 200, not 500', async () => {
+    const t = convexTest(schema, modules);
+    const token = await insertToken(t, { scopes: ['admin:servers:read'], subjectType: 'service' });
+    // The full upsert body carries name/slug/isActive/priority — none declared by
+    // testBackendConnection. The route must forward ONLY the connection fields;
+    // otherwise Convex's strict arg validator throws and this 500s (the exact
+    // trap the Ansible role hit reusing its upsert body). apiUrl points at a
+    // refused port so the provider returns a clean {ok:false}, never a throw.
+    const res = await t.fetch('/api/v1/admin/backend-servers/test-connection', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        backend: 'outline',
+        name: 'srv',
+        slug: 'srv',
+        isActive: true,
+        priority: 0,
+        apiUrl: 'https://127.0.0.1:1/proxy/secret',
+        websocketEnabled: false,
+      }),
+    });
+    expect(res.status).toBe(200); // NOT 500 — the undeclared fields were filtered out
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(false); // unreachable origin → clean verdict, not a validation throw
+  });
+});

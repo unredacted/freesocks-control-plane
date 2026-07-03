@@ -1901,7 +1901,19 @@ http.route({
     if (body.backend !== 'remnawave' && body.backend !== 'outline') {
       return json({ ok: false, error: 'Pick a backend type first' });
     }
-    const result = await ctx.runAction(internal.adminApi.testBackendConnection, body as never);
+    // Forward ONLY the connection fields the action declares. Convex arg
+    // validators are strict, so a caller that reuses the fuller upsert body
+    // (which carries name/slug/isActive/… — e.g. the Ansible role, or a future
+    // client) would otherwise be rejected here and 500 instead of getting an
+    // {ok} verdict. Be liberal in what this read-only probe accepts.
+    const result = await ctx.runAction(internal.adminApi.testBackendConnection, {
+      backend: body.backend,
+      baseUrl: body.baseUrl,
+      apiToken: body.apiToken,
+      apiUrl: body.apiUrl,
+      websocketEnabled: body.websocketEnabled,
+      websocketDomain: body.websocketDomain,
+    } as never);
     return json(result);
   }),
 });
@@ -2021,7 +2033,16 @@ http.route({
   handler: sealed(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
-    const result = await ctx.runAction(internal.storage.testProviderConnection, body as never);
+    // Same strict-validator hygiene as backend-servers/test-connection: forward
+    // only the fields testProviderConnection declares, so a caller that reuses a
+    // fuller provider body (name/publicUrl/…) gets an {ok} verdict, not a 500.
+    const result = await ctx.runAction(internal.storage.testProviderConnection, {
+      endpoint: body.endpoint,
+      bucket: body.bucket,
+      region: body.region,
+      accessKeyId: body.accessKeyId,
+      secretAccessKey: body.secretAccessKey,
+    } as never);
     return json(result);
   }),
 });
