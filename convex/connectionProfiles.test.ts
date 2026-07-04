@@ -51,7 +51,25 @@ describe('connectionProfiles lib', () => {
     expect(profiles.find((p) => p.id === 'evade')!.isDefault).toBe(false);
     expect(await t.run((ctx) => resolveProfileSquad(ctx.db, 'privacy'))).toBe('squad-reality');
     expect(await t.run((ctx) => resolveProfileSquad(ctx.db, 'evade'))).toBeNull(); // unbound → null
-    expect(await t.run((ctx) => resolveProfileSquad(ctx.db, null))).toBeNull();
+    // No explicit choice → the DEFAULT profile's squad (here default=privacy).
+    expect(await t.run((ctx) => resolveProfileSquad(ctx.db, null))).toBe('squad-reality');
+  });
+
+  test('no explicit choice resolves the DEFAULT profile squad (new-member issuance)', async () => {
+    // Regression: a never-chosen member (connectionProfileId null) must issue into
+    // the default profile's squad, not NO squad (which yields Remnawave "No hosts
+    // found"). Default is evade (unset default), bound to the fronted squad.
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: CONNECTION_PROFILE_KEYS.squad('evade'),
+        value: JSON.stringify('squad-fronted'),
+        updatedAt: Date.now(),
+      }),
+    );
+    expect(await t.run((ctx) => resolveProfileSquad(ctx.db, null))).toBe('squad-fronted');
+    expect(await t.run((ctx) => resolveProfileSquad(ctx.db, undefined))).toBe('squad-fronted');
+    expect(await t.run((ctx) => resolveProfileSquad(ctx.db, 'evade'))).toBe('squad-fronted');
   });
 
   test('fail-safe: corrupt JSON / invalid default never throws', async () => {

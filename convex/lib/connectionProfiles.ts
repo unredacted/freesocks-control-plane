@@ -85,15 +85,25 @@ export async function resolveConnectionProfiles(db: DatabaseReader): Promise<Con
   return out;
 }
 
-/** The squad a profile issues into (issuance path). null when unknown/unbound —
- *  callers fall back to the tier's own squad, so behavior is unchanged until a
- *  profile is actually bound. */
+/** The squad a profile issues into (issuance path). When the member has made no
+ *  explicit choice (id null/invalid), this resolves the DEFAULT profile's squad —
+ *  a new member follows the catalog default (bound to the fronted squad). Without
+ *  that fallback a never-chosen member would issue into NO squad (empty
+ *  activeInternalSquads) and Remnawave returns a "No hosts found" placeholder.
+ *  Returns null only when the resolved profile has no squad bound, in which case
+ *  callers fall back to the tier's own squad. */
 export async function resolveProfileSquad(
   db: DatabaseReader,
   id: ConnectionProfileId | null | undefined,
 ): Promise<string | null> {
-  if (!isConnectionProfileId(id)) return null;
-  const squad = await readSetting(db, CONNECTION_PROFILE_KEYS.squad(id));
+  let profileId: ConnectionProfileId;
+  if (isConnectionProfileId(id)) {
+    profileId = id;
+  } else {
+    const rawDefault = await readSetting(db, CONNECTION_PROFILE_KEYS.defaultId);
+    profileId = isConnectionProfileId(rawDefault) ? rawDefault : DEFAULT_CONNECTION_PROFILE;
+  }
+  const squad = await readSetting(db, CONNECTION_PROFILE_KEYS.squad(profileId));
   return typeof squad === 'string' && squad.trim() ? squad : null;
 }
 
