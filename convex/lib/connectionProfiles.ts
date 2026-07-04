@@ -1,6 +1,6 @@
 /**
  * Connection profiles (2026-07-03): the member-facing transport choice —
- * "Stay connected" (evade) = a CDN-fronted WS+XHTTP Remnawave squad, and
+ * "Stay connected" (evade) = a CDN-fronted WebSocket Remnawave squad, and
  * "Maximize privacy" (privacy) = a non-fronted VLESS-Reality squad. A profile is
  * ORTHOGONAL to the entitlement tier: the tier sets limits, the chosen profile
  * sets which Remnawave squad the key is issued into (activeInternalSquads).
