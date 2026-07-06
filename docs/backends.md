@@ -96,8 +96,10 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
   capability), with a short server-side TTL cache on `subscriptions.subCache` keyed by User-Agent
   (Remnawave formats config by UA). It forwards the caller's UA and re-emits the allowlisted
   `subscription-userinfo` / `profile-*` headers `fetchContent` returns (`SubscriptionContent.headers`),
-  so the fronted URL is a faithful stand-in. `getAccountView` returns this URL (built from
-  `PUBLIC_BASE_URL`) for the evade path; privacy members still copy via the sealed
+  so the fronted URL is a faithful stand-in. `getAccountView` returns the raw backend URL + the opaque
+  `subToken` (both in the sealed reveal-leg); the SPA builds the fronted `<origin>/api/v1/sub/<token>`
+  URL client-side (`subscriptionDisplayUrl` in `src/client/lib/utils.ts`), so no deployment-origin env
+  is needed and every UI surface fronts uniformly. Privacy members still copy via the sealed
   `/api/v1/subscription/content`. See `docs/threat-model-cdn-blinding.md`.
 
 ### The `backend` discriminator: where it lives

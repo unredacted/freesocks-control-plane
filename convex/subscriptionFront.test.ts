@@ -173,19 +173,20 @@ describe('getAccountView subscription URL', () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  test('returns the FCP-fronted URL when PUBLIC_BASE_URL is set (trailing slash trimmed)', async () => {
-    vi.stubEnv('PUBLIC_BASE_URL', 'https://beta.example/');
+  test('exposes the raw backend url + the opaque subToken (SPA builds the fronted URL)', async () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedSub(t);
     const view = await t.action(internal.account.getAccountView, { userId });
-    expect(view?.subscription?.url).toBe('https://beta.example/api/v1/sub/tok_abc');
+    // The server returns the RAW backend URL; the SPA fronts it from subToken +
+    // its own origin (subscriptionDisplayUrl), so there's no PUBLIC_BASE_URL dep.
+    expect(view?.subscription?.url).toBe('https://panel.internal/sub/short-1');
+    expect(view?.subscription?.subToken).toBe('tok_abc');
   });
 
-  test('falls back to the backend URL when PUBLIC_BASE_URL is unset', async () => {
-    vi.stubEnv('PUBLIC_BASE_URL', '');
+  test('subToken is null for a legacy subscription issued before the token existed', async () => {
     const t = convexTest(schema, modules);
-    const { userId } = await seedSub(t);
+    const { userId } = await seedSub(t, { subToken: undefined });
     const view = await t.action(internal.account.getAccountView, { userId });
-    expect(view?.subscription?.url).toBe('https://panel.internal/sub/short-1');
+    expect(view?.subscription?.subToken).toBeNull();
   });
 });

@@ -122,8 +122,9 @@ Detailed companions, referenced rather than duplicated here:
   FCP-origin subscription URL (opaque per-sub `subToken`, rotates per key) instead of the backend
   panel URL, so the proxy app fetches config from us — hiding the backend origin, with a short
   User-Agent-keyed TTL cache (`subscriptions.subCache`) fronting the backend. Public/unauthenticated
-  (the token is the capability); requires `PUBLIC_BASE_URL` (else falls back to the backend URL).
-  Privacy members never receive it and copy via the sealed `/api/v1/subscription/content`. See
+  (the token is the capability); the SPA builds the URL from its own origin + the sealed `subToken`
+  (`subscriptionDisplayUrl`), so no deployment-origin env is needed. Every member UI surface
+  (account view + sign-up) fronts uniformly. Privacy members copy via sealed `/api/v1/subscription/content`. See
   `docs/backends.md` + `docs/threat-model-cdn-blinding.md`.
 - Switch-backend interim: free-tier users switch via the default-free peer tier on the target
   backend; **paid cross-backend switching returns 409** until the billing portal defines tier

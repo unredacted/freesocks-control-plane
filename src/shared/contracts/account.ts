@@ -43,7 +43,14 @@ export const AccountResponse = z.object({
   }),
   subscription: z
     .object({
+      // The RAW backend subscription URL (fallback). The SPA prefers the
+      // FCP-fronted URL it builds from `subToken` + its own origin (see
+      // subscriptionDisplayUrl); `url` is only used for legacy subs with no token.
       url: z.string().url(),
+      // Opaque per-subscription capability for the FCP-fronted URL
+      // (`<origin>/api/v1/sub/<subToken>`). Sealed in this reveal-leg response like
+      // the rest of the subscription. Nullish for legacy subs / rolling deploys.
+      subToken: z.string().nullish(),
       shortUuid: z.string(),
       mirrors: z.array(SubscriptionMirror),
       expiresAt: z.string().datetime().nullable(),

@@ -240,9 +240,12 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   URL (the client hides it) and copy their Reality config via the SEALED `/api/v1/subscription/content`
   path, so their config never crosses an unsealed edge. The token is an unguessable per-subscription
   capability that rotates on every regenerate/switch, and a short server-side TTL cache
-  (`subscriptions.subCache`, keyed by User-Agent) fronts the backend. As with mirrors, the principled
-  fix for the privacy population is the native app (sealed fetch). Requires `PUBLIC_BASE_URL`; unset →
-  the client falls back to the backend URL (feature off).
+  (`subscriptions.subCache`, keyed by User-Agent) fronts the backend. The account reveal-leg carries
+  the RAW backend URL + the opaque `subToken` (both HPKE-sealed); the SPA builds the fronted
+  `<origin>/api/v1/sub/<token>` URL client-side from its own origin (`subscriptionDisplayUrl`), so the
+  capability is sealed in delivery and there's no deployment-origin env dependency — only the proxy
+  client's later fetch of the URL is unavoidably unsealed (a dumb client can't decrypt). As with
+  mirrors, the principled fix for the privacy population is the native app (sealed fetch).
 
 ## Verification (tests)
 

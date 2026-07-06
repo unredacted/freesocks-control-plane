@@ -39,7 +39,7 @@
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import Gauge from '@lucide/svelte/icons/gauge';
   import Sparkline from '../components/Sparkline.svelte';
-  import { formatBytes } from '../lib/utils';
+  import { formatBytes, subscriptionDisplayUrl } from '../lib/utils';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { clearSessionKey } from '../lib/pop';
@@ -735,10 +735,14 @@
           />
 
           {#if data.subscription}
+            {@const subUrl = subscriptionDisplayUrl(
+              data.subscription.subToken,
+              data.subscription.url,
+            )}
             <SubscriptionHero
               eyebrow={t('hero.eyebrowAccessKey')}
               backendLabel={config.data?.backends.labels[data.subscription.backend]}
-              subscriptionUrl={data.subscription.url}
+              subscriptionUrl={subUrl}
               expiresAt={data.subscription.expiresAt}
               trafficLimitBytes={data.subscription.trafficLimitBytes}
               trafficUsedBytes={data.subscription.trafficUsedBytes}
@@ -761,7 +765,7 @@
                 <MirrorHelp
                   mirrors={data.subscription.mirrors}
                   geoCountry={data.geoCountry}
-                  subscriptionUrl={data.subscription.url}
+                  subscriptionUrl={subUrl}
                 />
               {/if}
               <RawConfig />

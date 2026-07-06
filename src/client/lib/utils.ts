@@ -16,6 +16,27 @@ export type WithoutChildren<T> = T extends { children?: any } ? Omit<T, 'childre
 export type WithoutChildrenOrChild<T> = WithoutChildren<WithoutChild<T>>;
 export type WithElementRef<T, U extends HTMLElement = HTMLElement> = T & { ref?: U | null };
 
+/**
+ * The member-facing subscription URL. When the subscription carries an FCP
+ * `subToken`, build the FCP-fronted URL from the CURRENT origin — the SPA and the
+ * `/api` surface share one public origin, so `<origin>/api/v1/sub/<token>` is
+ * same-origin and routes to Convex, which serves the config (cached) and hides the
+ * backend panel URL. Building it here (not server-side) needs no deployment-origin
+ * env var and fronts every UI surface uniformly. The token arrives HPKE-sealed in
+ * the account reveal-leg; only the proxy client's later fetch of this URL is
+ * necessarily unsealed (a dumb client can't decrypt). Falls back to the raw backend
+ * URL for legacy subscriptions issued before the token existed.
+ */
+export function subscriptionDisplayUrl(
+  subToken: string | null | undefined,
+  backendUrl: string,
+): string {
+  if (subToken && typeof location !== 'undefined') {
+    return `${location.origin}/api/v1/sub/${subToken}`;
+  }
+  return backendUrl;
+}
+
 export function formatBytes(bytes: number, decimals = 1): string {
   if (bytes === 0) return '0 B';
   const k = 1024;

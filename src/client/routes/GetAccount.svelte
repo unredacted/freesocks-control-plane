@@ -19,6 +19,7 @@
   import { freeTier } from '../lib/tiers';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
+  import { subscriptionDisplayUrl } from '../lib/utils';
   import { CreateAccountRequest, CreateAccountResponse } from '../../shared/contracts/account';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -368,13 +369,14 @@
       />
 
       {#if subscription}
+        {@const subUrl = subscriptionDisplayUrl(subscription.subToken, subscription.url)}
         <SubscriptionHero
           eyebrow={t('hero.eyebrowAccessKey')}
           title={subscription.backend === 'outline'
             ? t('hero.urlLabelAccessKey')
             : t('hero.urlLabelSubscription')}
           backendLabel={config.data?.backends.labels[subscription.backend]}
-          subscriptionUrl={subscription.url}
+          subscriptionUrl={subUrl}
           expiresAt={subscription.expiresAt}
           trafficLimitBytes={subscription.trafficLimitBytes}
           trafficUsedBytes={subscription.trafficUsedBytes}
@@ -392,7 +394,7 @@
             <MirrorHelp
               mirrors={subscription.mirrors}
               geoCountry={account.data?.geoCountry}
-              subscriptionUrl={subscription.url}
+              subscriptionUrl={subUrl}
             />
           {/if}
           <RawConfig />
