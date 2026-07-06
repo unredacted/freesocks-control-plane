@@ -230,6 +230,19 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   **native app**, which (unlike a dumb proxy client) can fetch the content over the sealed reveal-leg
   channel or `.onion`, closing the content gap without third-party plaintext. Until then the mirror is
   the dumb-client fallback; keep it dormant unless needed, and prefer a well-fronted primary endpoint.
+- **The FCP-fronted subscription URL (`GET /api/v1/sub/<token>`) is the first-party analogue of that
+  mirror trade-off, on our OWN edge.** The **evade** delivery path now hands the client an FCP-origin
+  subscription URL (in place of the backend panel URL) so the proxy app fetches config from us — this
+  hides the backend origin and gives us a cache/control point, but it also means the config transits
+  the FCP edge in plaintext for that unauthenticated fetch (a dumb proxy client can't do the reveal
+  leg — the same inherent limit as the content-fetch gap above). It does NOT regress the account-plane
+  protection, and it does NOT touch the **privacy** delivery path: privacy members never receive this
+  URL (the client hides it) and copy their Reality config via the SEALED `/api/v1/subscription/content`
+  path, so their config never crosses an unsealed edge. The token is an unguessable per-subscription
+  capability that rotates on every regenerate/switch, and a short server-side TTL cache
+  (`subscriptions.subCache`, keyed by User-Agent) fronts the backend. As with mirrors, the principled
+  fix for the privacy population is the native app (sealed fetch). Requires `PUBLIC_BASE_URL`; unset →
+  the client falls back to the backend URL (feature off).
 
 ## Verification (tests)
 

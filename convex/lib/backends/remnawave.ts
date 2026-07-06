@@ -436,9 +436,23 @@ export async function remnawaveFetchSubscription(
   try {
     const res = await fetch(url, { headers, signal: controller.signal });
     if (!res.ok) throw await RemnawaveApiError.fromResponse(res, 'subscription content');
+    // Pass through the well-known subscription metadata headers (never a secret)
+    // so the FCP-fronted URL is a faithful stand-in for the panel URL — the proxy
+    // app still sees its traffic/expiry counters + update cadence.
+    const passthrough: Record<string, string> = {};
+    for (const h of [
+      'subscription-userinfo',
+      'profile-update-interval',
+      'profile-title',
+      'profile-web-page-url',
+    ]) {
+      const val = res.headers.get(h);
+      if (val) passthrough[h] = val;
+    }
     return {
       content: await res.text(),
       contentType: res.headers.get('content-type') ?? 'text/plain',
+      headers: passthrough,
     };
   } finally {
     clearTimeout(timer);

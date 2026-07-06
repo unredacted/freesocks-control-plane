@@ -101,6 +101,14 @@
     "rotating": "در حال تغییر…",
     "rotateFailedTitle": "تغییر شمارهٔ حساب ناموفق بود",
     "refreshMembership": "قبلاً پرداخت کرده‌اید؟ عضویتم را بررسی کن",
+    "memberActiveTitle": "عضویت فعال",
+    "memberActiveExpiry": "فعال تا {date}",
+    "tab": {
+      "connection": "اتصال",
+      "membership": "عضویت",
+      "codes": "کدها و هدایا",
+      "security": "امنیت"
+    },
     "refreshing": "در حال به‌روزرسانی…",
     "regenSuccessTitle": "لینک اشتراک جدید ساخته شد",
     "regenSuccessBody": "آن را دوباره در همهٔ دستگاه‌هایتان وارد کنید. لینک قبلی تا ۲۴ ساعت دیگر کار می‌کند.",

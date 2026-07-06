@@ -21,6 +21,20 @@ import { computeExpireAtIso, gbToBytes, type UsageSeries } from './lib/backends/
 
 type Backend = 'remnawave' | 'outline';
 
+/**
+ * The member-facing subscription URL. When PUBLIC_BASE_URL is configured and the
+ * subscription carries a token, return the FCP-fronted URL (GET /api/v1/sub/<token>):
+ * the proxy app fetches config from THIS origin (cached) instead of the backend
+ * panel, so the backend origin is never exposed to the client. Falls back to the
+ * raw backend URL for legacy rows or when the origin isn't configured, so the
+ * feature degrades cleanly (the contract field is a URL, so this must be absolute).
+ */
+function memberSubscriptionUrl(subToken: string | undefined, backendUrl: string): string {
+  const base = process.env.PUBLIC_BASE_URL?.replace(/\/+$/, '');
+  if (base && subToken) return `${base}/api/v1/sub/${subToken}`;
+  return backendUrl;
+}
+
 // P1-3: a serializable per-user issuance lock. regenerate / switch-backend each
 // mint a NEW backend key and tombstone the old one; two concurrent runs would
 // mint two keys but tombstone only one, orphaning a live key forever. The lock
@@ -168,7 +182,7 @@ export const getAccountView = internalAction({
         /* backend unreachable: serve local data with zeroed live fields */
       }
       subscription = {
-        url: sub.subscriptionUrl,
+        url: memberSubscriptionUrl(sub.subToken, sub.subscriptionUrl),
         shortUuid: sub.backendShortId,
         mirrors: sub.subscriptionMirrors.map((m) => ({
           provider: m.provider,

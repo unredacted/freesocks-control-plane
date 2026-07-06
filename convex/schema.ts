@@ -162,6 +162,16 @@ export default defineSchema({
     subscriptionUrl: v.string(),
     subscriptionMirrors: v.array(subscriptionMirror),
     rawContentHash: v.optional(v.string()),
+    // Opaque per-subscription capability token for the FCP-fronted subscription
+    // URL (GET /api/v1/sub/<subToken>): the member's proxy app fetches its config
+    // from THIS origin instead of the backend panel. Rotates per key by
+    // construction (a new sub row = a new token). Minted in insertSubscription.
+    subToken: v.optional(v.string()),
+    // Small in-front content cache for the fronted route — a JSON blob
+    // {content, contentType, headers?, ua, at} (see convex/http.ts). Overwritten
+    // in place (no growth), dropped with the row, keyed by UA so we never serve
+    // one client's format to another. Never logged.
+    subCache: v.optional(v.string()),
     state: subscriptionState,
     updatedAt: v.number(),
     deletedAt: v.optional(v.number()),
@@ -176,7 +186,9 @@ export default defineSchema({
     // deleted-row retention sweep range-queries deletedAt under it.
     .index('by_state', ['state', 'deletedAt'])
     .index('by_backend_user_id', ['backendUserId'])
-    .index('by_backend_short_id', ['backendShortId']),
+    .index('by_backend_short_id', ['backendShortId'])
+    // The FCP-fronted subscription route resolves the sub by its opaque token.
+    .index('by_sub_token', ['subToken']),
 
   tierHistory: defineTable({
     userId: v.id('users'),

@@ -101,6 +101,14 @@
     "rotating": "Смена…",
     "rotateFailedTitle": "Не удалось сменить номер аккаунта",
     "refreshMembership": "Уже оплатили? Проверить членство",
+    "memberActiveTitle": "Членство активно",
+    "memberActiveExpiry": "Активно до {date}",
+    "tab": {
+      "connection": "Подключение",
+      "membership": "Членство",
+      "codes": "Коды и подарки",
+      "security": "Безопасность"
+    },
     "refreshing": "Обновление…",
     "regenSuccessTitle": "Создана новая ссылка подписки",
     "regenSuccessBody": "Импортируйте её заново на каждом устройстве. Старая ссылка работает ещё 24 часа.",

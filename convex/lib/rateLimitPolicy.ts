@@ -62,6 +62,10 @@ export const RATE_LIMIT_DEFAULTS = {
   // Opt-in mirror provisioning (per member): generous — this is a troubleshooting
   // flow a stuck user taps repeatedly, but the per-user cap is the real bound.
   'mirror.request': { max: 20, windowMs: HOUR, enabled: true },
+  // FCP-fronted subscription URL fetch (per IP). Proxy apps re-poll periodically
+  // and the short-TTL cache absorbs bursts, so this is generous — it's DoS
+  // hygiene, not access control (the token is a 128-bit unguessable capability).
+  'subscription.fetch': { max: 120, windowMs: MINUTE, enabled: true },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyKey = keyof typeof RATE_LIMIT_DEFAULTS;

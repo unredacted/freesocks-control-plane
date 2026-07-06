@@ -5,6 +5,7 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
+import { randomHex } from './lib/crypto';
 
 const mirror = v.object({
   provider: v.string(),
@@ -20,6 +21,20 @@ export const byBackendUserId = internalQuery({
     ctx.db
       .query('subscriptions')
       .withIndex('by_backend_user_id', (q) => q.eq('backendUserId', backendUserId))
+      .unique(),
+});
+
+/**
+ * Resolve a subscription by its opaque FCP-fronted token (the capability in
+ * GET /api/v1/sub/<subToken>). Returns the full row (incl. the `subCache` blob)
+ * or null. Internal — the row carries the live proxy key.
+ */
+export const bySubToken = internalQuery({
+  args: { subToken: v.string() },
+  handler: (ctx, { subToken }) =>
+    ctx.db
+      .query('subscriptions')
+      .withIndex('by_sub_token', (q) => q.eq('subToken', subToken))
       .unique(),
 });
 
@@ -65,8 +80,36 @@ export const insertSubscription = internalMutation({
     subscriptionMirrors: v.array(mirror),
     rawContentHash: v.optional(v.string()),
   },
-  handler: (ctx, a) =>
-    ctx.db.insert('subscriptions', { ...a, state: 'active', updatedAt: Date.now() }),
+  handler: async (ctx, a) => {
+    // Mint the opaque per-subscription token for the FCP-fronted URL. 128-bit;
+    // uniqueness enforced by an index read-check inside this mutation (Convex has
+    // no UNIQUE constraint), matching the slug/tokenHash/accountIdHash convention.
+    let subToken = randomHex(16);
+    while (
+      await ctx.db
+        .query('subscriptions')
+        .withIndex('by_sub_token', (q) => q.eq('subToken', subToken))
+        .first()
+    ) {
+      subToken = randomHex(16);
+    }
+    return ctx.db.insert('subscriptions', {
+      ...a,
+      subToken,
+      state: 'active',
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Write the small in-front content cache for the fronted route (a serialized
+ * {content, contentType, headers?, ua, at} blob — see convex/http.ts). Patched
+ * in place per subscription; no row growth.
+ */
+export const writeContentCache = internalMutation({
+  args: { subscriptionId: v.id('subscriptions'), subCache: v.string() },
+  handler: (ctx, { subscriptionId, subCache }) => ctx.db.patch(subscriptionId, { subCache }),
 });
 
 /**

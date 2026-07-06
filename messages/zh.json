@@ -101,6 +101,14 @@
     "rotating": "更换中…",
     "rotateFailedTitle": "无法更换账户号码",
     "refreshMembership": "已付款？查询我的会员状态",
+    "memberActiveTitle": "会员有效",
+    "memberActiveExpiry": "有效期至 {date}",
+    "tab": {
+      "connection": "连接",
+      "membership": "会员",
+      "codes": "兑换码与礼物",
+      "security": "安全"
+    },
     "refreshing": "刷新中…",
     "regenSuccessTitle": "已生成新的订阅链接",
     "regenSuccessBody": "请在每台设备上重新导入。旧链接还能用 24 小时。",

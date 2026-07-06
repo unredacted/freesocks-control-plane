@@ -99,6 +99,40 @@ function lastPathSegment(req: Request): string {
   return parts[parts.length - 1] ?? '';
 }
 
+// In-front cache TTL for the FCP-fronted subscription route (GET /api/v1/sub/*):
+// short, so a proxy app re-poll sees near-fresh config while bursts/re-loads are
+// absorbed and we don't hit the backend every time.
+const SUBSCRIPTION_CACHE_TTL_MS = 30_000;
+
+// The serialized `subscriptions.subCache` blob. Keyed by UA because Remnawave
+// formats the subscription by User-Agent — we must never serve one client's
+// format to another.
+interface SubCacheEntry {
+  content: string;
+  contentType: string;
+  headers?: Record<string, string>;
+  ua: string;
+  at: number;
+}
+
+/** The RAW subscription Response a proxy app consumes (not the JSON envelope):
+ *  the backend content-type + a short cache-control + the passed-through metadata
+ *  headers (traffic/expiry counters, update cadence). */
+function subscriptionResponse(entry: {
+  content: string;
+  contentType: string;
+  headers?: Record<string, string>;
+}): Response {
+  return new Response(entry.content, {
+    status: 200,
+    headers: {
+      'content-type': entry.contentType || 'text/plain',
+      'cache-control': `public, max-age=${Math.floor(SUBSCRIPTION_CACHE_TTL_MS / 1000)}`,
+      ...(entry.headers ?? {}),
+    },
+  });
+}
+
 /**
  * For `POST /api/v1/admin/users/{id}/{op}`: returns the id + op. Path shape is
  * `.../users/<id>/<op>`; both are the last two non-empty segments.
@@ -487,6 +521,85 @@ http.route({
         `[subscription] content fetch failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return errorJson('content.unavailable', 'Could not load the configuration right now.', 502);
+    }
+  }),
+});
+
+// FCP-fronted subscription URL (the evade delivery path): the member's proxy app
+// fetches its config from THIS origin instead of the backend panel, so the backend
+// origin is never exposed and we gain a cache/control point. PUBLIC + unauthenticated
+// — possession of the 128-bit `subToken` IS the capability, exactly like the backend
+// subscription URL it replaces (a proxy app can't do the E2EE reveal-leg). A small
+// per-subscription TTL cache (keyed by User-Agent, since Remnawave formats config by
+// UA) absorbs the app's periodic re-polls. NOTE: this necessarily serves data-plane
+// config over the FCP edge in plaintext for evade users; privacy users never receive
+// this URL (the client hides it) and use the sealed /subscription/content copy path.
+http.route({
+  pathPrefix: '/api/v1/sub/',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    const token = lastPathSegment(req);
+    if (!token) return errorJson('not_found', 'Not found', 404);
+    // DoS hygiene: a lenient per-IP throttle (the cache absorbs normal polling; the
+    // token is the real access control). Skip when the IP can't be resolved.
+    const ip = resolveClientIp(req);
+    if (ip) {
+      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+        policyKey: 'subscription.fetch',
+        subject: await ipHashSubject(ip),
+      });
+      if (!rl.allowed) {
+        return new Response('Too Many Requests', {
+          status: 429,
+          headers: { 'retry-after': String(Math.ceil((rl.retryAfterMs ?? 1000) / 1000)) },
+        });
+      }
+    }
+    const sub = await ctx.runQuery(internal.subscriptions.bySubToken, { subToken: token });
+    if (!sub) return errorJson('not_found', 'Not found', 404);
+
+    const now = Date.now();
+    const ua = req.headers.get('user-agent') ?? '';
+    let stale: SubCacheEntry | null = null;
+    if (sub.subCache) {
+      try {
+        const entry = JSON.parse(sub.subCache) as SubCacheEntry;
+        if (entry.ua === ua && now - entry.at < SUBSCRIPTION_CACHE_TTL_MS) {
+          return subscriptionResponse(entry); // fresh + same format → cache hit
+        }
+        stale = entry; // keep as a last-resort fallback if the backend is down
+      } catch {
+        /* malformed cache: ignore and refetch */
+      }
+    }
+    try {
+      const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
+        backend: sub.backend,
+        backendServerId: sub.backendServerId ?? undefined,
+        backendShortId: sub.backendShortId,
+        subscriptionUrl: sub.subscriptionUrl,
+        userAgent: ua || undefined,
+      });
+      const entry: SubCacheEntry = {
+        content: fetched.content,
+        contentType: fetched.contentType ?? 'text/plain',
+        headers: fetched.headers,
+        ua,
+        at: now,
+      };
+      await ctx.runMutation(internal.subscriptions.writeContentCache, {
+        subscriptionId: sub._id,
+        subCache: JSON.stringify(entry),
+      });
+      return subscriptionResponse(entry);
+    } catch (err) {
+      // Backend blip: serve the last-known content rather than break the member's
+      // client; only fail hard when there is nothing cached at all.
+      if (stale) return subscriptionResponse(stale);
+      console.error(
+        `[subscription] fronted fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return new Response('Subscription temporarily unavailable', { status: 502 });
     }
   }),
 });

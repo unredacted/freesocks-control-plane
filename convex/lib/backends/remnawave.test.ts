@@ -278,11 +278,36 @@ describe('remnawaveFetchSubscription', () => {
       'Clash/1.0',
       'https://sub.internal/happ/short123',
     );
-    expect(out).toEqual({ content: 'vmess://node\n', contentType: 'text/yaml' });
+    expect(out).toEqual({ content: 'vmess://node\n', contentType: 'text/yaml', headers: {} });
     expect(calls[0]!.path).toBe('/happ/short123'); // the provided URL, not the admin API
     // The subscription URL is a public capability — the admin Bearer is NOT sent.
     expect(calls[0]!.headers.authorization).toBeUndefined();
     expect(calls[0]!.headers['user-agent']).toBe('Clash/1.0');
+  });
+
+  test('captures the allowlisted subscription metadata headers (userinfo + update interval)', async () => {
+    mockFetch(
+      () =>
+        new Response('vmess://node\n', {
+          status: 200,
+          headers: {
+            'content-type': 'text/yaml',
+            'subscription-userinfo': 'upload=0; download=10; total=100; expire=0',
+            'profile-update-interval': '12',
+            'x-internal': 'must-be-dropped', // not allowlisted
+          },
+        }),
+    );
+    const out = await remnawaveFetchSubscription(
+      cfg,
+      'short123',
+      'Clash/1.0',
+      'https://sub.internal/s/x',
+    );
+    expect(out.headers).toEqual({
+      'subscription-userinfo': 'upload=0; download=10; total=100; expire=0',
+      'profile-update-interval': '12',
+    });
   });
 
   test('falls back to /api/sub/<shortId> when no subscription URL is given', async () => {
@@ -303,7 +328,7 @@ describe('remnawaveFetchSubscription', () => {
     } as unknown as Response;
     mockFetch(() => noCt);
     const out = await remnawaveFetchSubscription(cfg, 'short123');
-    expect(out).toEqual({ content: 'payload', contentType: 'text/plain' });
+    expect(out).toEqual({ content: 'payload', contentType: 'text/plain', headers: {} });
   });
 });
 

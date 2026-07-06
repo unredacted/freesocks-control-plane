@@ -1,6 +1,7 @@
 <script lang="ts">
   import { z } from 'zod';
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
+  import * as Tabs from '@client/components/ui/tabs';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
@@ -135,6 +136,24 @@
   let orderRef = $derived(router.searchParams.get('order'));
   const order = billingOrderQuery(() => orderRef);
   let orderPaidHandled = false;
+
+  // --- Tabbed sections (in-page strip, ?tab= synced) ----------------------
+  // The page groups into 4 tabs; the active one is reflected into the URL
+  // (?tab=) via replaceState — deep-linkable + reload-safe, WITHOUT a router
+  // navigation (mirrors AdminUsers' filter URL-sync), so it never disturbs the
+  // billing `?order=` param or the router's scroll-restoration state.
+  type AccountTab = 'connection' | 'membership' | 'codes' | 'security';
+  const ACCOUNT_TABS: readonly string[] = ['connection', 'membership', 'codes', 'security'];
+  const initialTab = router.searchParams.get('tab');
+  let activeTab = $state<AccountTab>(
+    initialTab && ACCOUNT_TABS.includes(initialTab) ? (initialTab as AccountTab) : 'connection',
+  );
+  $effect(() => {
+    const url = new URL(window.location.href);
+    if (activeTab === 'connection') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', activeTab);
+    window.history.replaceState(history.state, '', url);
+  });
   // Gift purchase: the buyer's OWN membership is untouched — instead the freshly
   // minted shareable codes are revealed ONCE here on return, then acknowledged.
   let giftRevealCodes = $state<string[]>([]);
@@ -190,6 +209,9 @@
     onSuccess: () => {
       regenerateOpen = false;
       void qc.invalidateQueries({ queryKey: queryKeys.account });
+      // The raw-config viewer reads a SEPARATE query key; invalidate it too so it
+      // re-fetches the newly-issued config instead of showing the previous one.
+      void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
       liveMessage = t('account.regenSuccessTitle');
       toast.success(t('account.regenSuccessTitle'), {
         description: t('account.regenSuccessBody'),
@@ -236,6 +258,8 @@
       // P2: the switch moves the user to the peer tier, so the header's `me`
       // tier label is now stale — refresh it too.
       void qc.invalidateQueries({ queryKey: queryKeys.me });
+      // Re-fetch the raw-config viewer (separate key) so it shows the new backend's config.
+      void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
       liveMessage = t('account.switchSuccessTitle', { tier: result.tier.name });
       toast.success(t('account.switchSuccessTitle', { tier: result.tier.name }), {
         description: result.oldSubscriptionDeletedAt
@@ -274,6 +298,9 @@
       setDeliveryPref(result.profile.id);
       pendingProfile = null;
       void qc.invalidateQueries({ queryKey: queryKeys.account });
+      // Re-fetch the raw-config viewer (separate key). In privacy mode this
+      // prominent block is the ONLY thing shown, so it must not stay stale.
+      void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
       liveMessage = t('delivery.switchSuccessTitle', { label: profileLabel(result.profile.id) });
       toast.success(t('delivery.switchSuccessTitle', { label: profileLabel(result.profile.id) }), {
         description: result.oldSubscriptionDeletedAt
@@ -666,294 +693,353 @@
       </div>
     {/if}
 
-    <!-- SECTION: Your connection — the proxy key is the main thing on this page,
-         so it leads. Delivery focus first (it shapes how the key is presented),
-         then the key + setup panels, key actions, and connected devices. -->
-    <section class="space-y-4">
-      {@render sectionHead(
-        KeyRound,
-        t('account.section.connection.title'),
-        t('account.section.connection.desc'),
-      )}
-
-      <!-- Delivery focus: privacy promotes the raw E2EE config + warns the
-           subscription link is fetched through a CDN; evade keeps the link as the star. -->
-      <DeliveryPreference
-        selected={pendingProfile ?? effectiveDelivery}
-        suggested={data.suggestedDelivery}
-        serverBacked={profileServerBacked}
-        available={profileAvailability}
-        busy={switchProfile.isPending}
-        onChoose={chooseProfile}
-      />
-
-      {#if data.subscription}
-        <SubscriptionHero
-          eyebrow={t('hero.eyebrowAccessKey')}
-          backendLabel={config.data?.backends.labels[data.subscription.backend]}
-          subscriptionUrl={data.subscription.url}
-          expiresAt={data.subscription.expiresAt}
-          trafficLimitBytes={data.subscription.trafficLimitBytes}
-          trafficUsedBytes={data.subscription.trafficUsedBytes}
-          status={data.subscription.status}
-          resetStrategy={data.subscription.resetStrategy}
-          lastResetAt={data.subscription.lastResetAt}
-          tierName={data.user.tier.name}
-          backend={data.subscription.backend}
-          hideUrl={effectiveDelivery === 'privacy'}
-        />
-        {#if effectiveDelivery === 'privacy'}
-          <!-- Privacy: the raw config IS the deliverable (the CDN-fetched link is
-               hidden above). No public mirrors — they'd expose the config to third parties. -->
-          <RawConfig prominent />
-          <SetupGuidance backend={data.subscription.backend} privacy />
-        {:else}
-          <!-- Stay connected: the subscription link is the star; mirrors next, raw config secondary. -->
-          <SetupGuidance backend={data.subscription.backend} />
-          {#if config.data?.mirrorsEnabled}
-            <MirrorHelp
-              mirrors={data.subscription.mirrors}
-              geoCountry={data.geoCountry}
-              subscriptionUrl={data.subscription.url}
-            />
-          {/if}
-          <RawConfig />
-        {/if}
-
-        <!-- Usage trend: lazy panel. The query is disabled until the member opens
-             it, so a live backend usage call never rides on the main account load. -->
-        {#if !usageOpen}
-          <button
-            type="button"
-            class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-            onclick={() => (usageOpen = true)}
-          >
-            <Gauge class="size-4" />
-            {t('usage.show')}
-          </button>
-        {:else}
-          <div class="rounded-lg border border-border bg-card p-4 space-y-3">
-            <h3 class="text-sm font-semibold flex items-center gap-2">
-              <Gauge class="size-4 text-muted-foreground" />
-              {t('usage.title')}
-            </h3>
-            {#if usage.isPending}
-              <Skeleton class="h-12 w-full" />
-            {:else if usage.isError}
-              <p class="text-sm text-muted-foreground">{t('usage.unavailable')}</p>
-            {:else if usage.data?.usage && usage.data.usage.points.some((p) => p > 0)}
-              {@const u = usage.data.usage}
-              <div class="text-primary">
-                <Sparkline points={u.points} class="w-full h-12" />
-              </div>
-              <p class="text-xs text-muted-foreground tabular-nums">
-                {t('usage.total', { amount: formatBytes(u.total) })}
-              </p>
-            {:else}
-              <p class="text-sm text-muted-foreground">{t('usage.none')}</p>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- Key actions: regenerate, and switch backend when eligible. -->
-        <div class="flex flex-wrap gap-2">
-          <Button
-            onclick={() => (regenerateOpen = true)}
-            disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
-            variant="outline"
-            size="sm"
-            class="min-h-11"
-          >
-            <RotateCcw class="size-4" />
-            {regenerate.isPending ? t('common.working') : t('account.regenerate')}
-          </Button>
-          {#if canSwitchBackend && oppositeBackend && config.data}
-            <Button
-              onclick={() => {
-                pendingSwitchTarget = oppositeBackend;
-                switchBackendOpen = true;
-              }}
-              disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
-              variant="outline"
-              size="sm"
-              class="min-h-11"
-            >
-              <ArrowLeftRight class="size-4" />
-              {switchBackend.isPending
-                ? t('switch.working')
-                : t('account.switchTo', { label: config.data.backends.labels[oppositeBackend] })}
-            </Button>
-          {/if}
-        </div>
-        <p class="text-xs text-muted-foreground">{t('account.keyActionsHint')}</p>
-
-        {#if data.subscription.devices.length > 0}
-          <div class="space-y-3">
-            <div class="flex items-baseline justify-between">
-              <h3 class="text-sm font-semibold flex items-center gap-2">
-                <Smartphone class="size-4 text-muted-foreground" />
-                {t('account.devicesTitle')}
-              </h3>
-              <span class="text-xs text-muted-foreground tabular-nums">
-                {t('common.deviceCount', { count: data.subscription.devices.length })}
-              </span>
-            </div>
-            <ul class="rounded-lg border border-border divide-y divide-border bg-card">
-              {#each data.subscription.devices as d (d.hwid)}
-                {@const label = [d.platform, d.deviceModel].filter(Boolean).join(' · ')}
-                <li class="flex items-center justify-between gap-3 px-4 py-3">
-                  <div class="flex items-center gap-3 min-w-0">
-                    <Smartphone class="size-4 text-muted-foreground shrink-0" />
-                    <div class="min-w-0">
-                      {#if label}
-                        <p class="text-sm font-medium truncate">{label}</p>
-                        <code class="font-mono text-xs text-muted-foreground truncate block">
-                          {d.hwid.slice(0, 24)}…
-                        </code>
-                      {:else}
-                        <code class="font-mono text-xs truncate block">{d.hwid.slice(0, 24)}…</code>
-                      {/if}
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-3 shrink-0">
-                    <span class="text-muted-foreground text-xs tabular-nums">
-                      {d.lastSeenAt
-                        ? t('account.lastSeen', { date: formatDate(d.lastSeenAt) })
-                        : '-'}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      class="min-h-9 text-destructive hover:text-destructive"
-                      disabled={revokeDevice.isPending || actionsDisabled}
-                      onclick={() => {
-                        revokeTargetHwid = d.hwid;
-                        revokeDeviceOpen = true;
-                      }}
-                    >
-                      {t('account.deviceRevoke')}
-                    </Button>
-                  </div>
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/if}
-      {:else}
-        <!-- Empty state when the user has no subscription yet -->
-        <div class="rounded-xl border border-dashed border-border p-8 text-center space-y-3">
-          <h3 class="text-lg font-semibold">{t('account.noSubTitle')}</h3>
-          <p class="text-sm text-muted-foreground max-w-sm mx-auto">
-            {t('account.noSubBody')}
-          </p>
-          <Button
-            onclick={() => regenerate.mutate()}
-            disabled={regenerate.isPending || actionsDisabled}
-            size="lg"
-            class="min-h-11"
-          >
-            <Plus class="size-4" />
-            {regenerate.isPending ? t('account.creating') : t('account.createSub')}
-          </Button>
-          {#if regenerate.error}
-            <InlineError
-              message={apiErrorMessage(regenerate.error)}
-              class="mx-auto max-w-sm text-start"
-            />
-          {/if}
-        </div>
-      {/if}
-    </section>
-
-    <!-- SECTION: Membership — plan + upgrade/extend. Only rendered when there's
-         something to act on; an active member has nothing to do here. Free users
-         get the comparison + the mission/impact card (upsell-first). -->
-    {#if membershipState !== 'active'}
-      <section class="space-y-4">
-        {@render sectionHead(
-          Sparkles,
-          t('account.section.membership.title'),
-          t('account.section.membership.desc'),
-        )}
-
-        {#if membershipState === 'no-membership'}
-          <TierComparison currentTierSlug={data.user.tier.slug} />
-        {/if}
-
-        <!-- Self-service purchase panel (self-gates on billing being enabled).
-             'upgrade' for free users, 'extend' for expiring/expired members. -->
-        <UpgradeMembership mode={membershipState === 'no-membership' ? 'upgrade' : 'extend'} />
-
-        {#if membershipState === 'no-membership'}
-          <!-- Already-paid recovery: re-read entitlement (e.g. a payment that
-               hasn't propagated yet). Slim link rather than a verbose callout. -->
-          <p class="text-xs text-muted-foreground">
-            <button
-              type="button"
-              class="rounded-sm underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onclick={() => refreshMembership.mutate()}
-              disabled={refreshMembership.isPending}
-            >
-              {refreshMembership.isPending
-                ? t('account.refreshing')
-                : t('account.refreshMembership')}
-            </button>
-          </p>
-          <MemberImpact />
-        {/if}
-      </section>
-    {/if}
-
-    <!-- SECTION: Codes & gifts — redeem a membership code, or buy codes to share.
-         Redeem is always available; GiftCodes self-gates on billing. -->
-    <section class="space-y-4">
-      {@render sectionHead(Gift, t('account.section.codes.title'), t('account.section.codes.desc'))}
-
-      <!-- W4: redeem a membership code (extends/upgrades the tier). -->
-      <RedeemCode />
-
-      <!-- Buy membership codes to share with friends/family (distinct from the
-           self-upgrade; doesn't touch your own membership). Self-gates on billing. -->
-      <GiftCodes />
-    </section>
-
-    <!-- SECTION: Account & security — support ID + account-number rotation. -->
-    <section class="space-y-4">
-      {@render sectionHead(
-        ShieldCheck,
-        t('account.section.security.title'),
-        t('account.section.security.desc'),
-      )}
-      <div class="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-4">
-        {#if data.user.supportId}
-          <div>
-            <p class="text-sm font-medium">{t('support.label')}</p>
-            <code class="mt-1 block select-all font-mono text-sm text-foreground"
-              >{data.user.supportId}</code
-            >
-            <p class="mt-1 text-xs text-muted-foreground">{t('support.hint')}</p>
-          </div>
-        {/if}
-        <div
-          class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between {data.user
-            .supportId
-            ? 'border-t border-border/60 pt-4'
-            : ''}"
-        >
-          <p class="text-xs text-muted-foreground sm:max-w-md">{t('account.rotateHint')}</p>
-          <Button
-            bind:ref={rotateTriggerEl}
-            onclick={() => (rotateConfirmOpen = true)}
-            variant="outline"
-            size="sm"
-            class="min-h-11 shrink-0"
-          >
-            <Hash class="size-4" />
-            {t('account.rotate')}
-          </Button>
-        </div>
+    <!-- Tabbed sections (in-page strip, ?tab= synced). Page-global chrome — the
+         header, pinned status band, and confirm modals — stays OUTSIDE the tabs. -->
+    <Tabs.Root bind:value={activeTab} class="gap-6">
+      <div class="overflow-x-auto -mx-1 px-1">
+        <Tabs.List class="w-full min-w-max sm:w-fit">
+          <Tabs.Trigger value="connection">
+            <KeyRound class="size-4" />{t('account.tab.connection')}
+          </Tabs.Trigger>
+          <Tabs.Trigger value="membership">
+            <Sparkles class="size-4" />{t('account.tab.membership')}
+          </Tabs.Trigger>
+          <Tabs.Trigger value="codes">
+            <Gift class="size-4" />{t('account.tab.codes')}
+          </Tabs.Trigger>
+          <Tabs.Trigger value="security">
+            <ShieldCheck class="size-4" />{t('account.tab.security')}
+          </Tabs.Trigger>
+        </Tabs.List>
       </div>
-    </section>
+
+      <!-- TAB: Your connection — the proxy key is the main thing on this page.
+         Delivery focus first, then the key + setup panels, actions, and devices. -->
+      <Tabs.Content value="connection">
+        <section class="space-y-4">
+          {@render sectionHead(
+            KeyRound,
+            t('account.section.connection.title'),
+            t('account.section.connection.desc'),
+          )}
+
+          <!-- Delivery focus: privacy promotes the raw E2EE config + warns the
+           subscription link is fetched through a CDN; evade keeps the link as the star. -->
+          <DeliveryPreference
+            selected={pendingProfile ?? effectiveDelivery}
+            suggested={data.suggestedDelivery}
+            serverBacked={profileServerBacked}
+            available={profileAvailability}
+            busy={switchProfile.isPending}
+            onChoose={chooseProfile}
+          />
+
+          {#if data.subscription}
+            <SubscriptionHero
+              eyebrow={t('hero.eyebrowAccessKey')}
+              backendLabel={config.data?.backends.labels[data.subscription.backend]}
+              subscriptionUrl={data.subscription.url}
+              expiresAt={data.subscription.expiresAt}
+              trafficLimitBytes={data.subscription.trafficLimitBytes}
+              trafficUsedBytes={data.subscription.trafficUsedBytes}
+              status={data.subscription.status}
+              resetStrategy={data.subscription.resetStrategy}
+              lastResetAt={data.subscription.lastResetAt}
+              tierName={data.user.tier.name}
+              backend={data.subscription.backend}
+              hideUrl={effectiveDelivery === 'privacy'}
+            />
+            {#if effectiveDelivery === 'privacy'}
+              <!-- Privacy: the raw config IS the deliverable (the CDN-fetched link is
+               hidden above). No public mirrors — they'd expose the config to third parties. -->
+              <RawConfig prominent />
+              <SetupGuidance backend={data.subscription.backend} privacy />
+            {:else}
+              <!-- Stay connected: the subscription link is the star; mirrors next, raw config secondary. -->
+              <SetupGuidance backend={data.subscription.backend} />
+              {#if config.data?.mirrorsEnabled}
+                <MirrorHelp
+                  mirrors={data.subscription.mirrors}
+                  geoCountry={data.geoCountry}
+                  subscriptionUrl={data.subscription.url}
+                />
+              {/if}
+              <RawConfig />
+            {/if}
+
+            <!-- Usage trend: lazy panel. The query is disabled until the member opens
+             it, so a live backend usage call never rides on the main account load. -->
+            {#if !usageOpen}
+              <button
+                type="button"
+                class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+                onclick={() => (usageOpen = true)}
+              >
+                <Gauge class="size-4" />
+                {t('usage.show')}
+              </button>
+            {:else}
+              <div class="rounded-lg border border-border bg-card p-4 space-y-3">
+                <h3 class="text-sm font-semibold flex items-center gap-2">
+                  <Gauge class="size-4 text-muted-foreground" />
+                  {t('usage.title')}
+                </h3>
+                {#if usage.isPending}
+                  <Skeleton class="h-12 w-full" />
+                {:else if usage.isError}
+                  <p class="text-sm text-muted-foreground">{t('usage.unavailable')}</p>
+                {:else if usage.data?.usage && usage.data.usage.points.some((p) => p > 0)}
+                  {@const u = usage.data.usage}
+                  <div class="text-primary">
+                    <Sparkline points={u.points} class="w-full h-12" />
+                  </div>
+                  <p class="text-xs text-muted-foreground tabular-nums">
+                    {t('usage.total', { amount: formatBytes(u.total) })}
+                  </p>
+                {:else}
+                  <p class="text-sm text-muted-foreground">{t('usage.none')}</p>
+                {/if}
+              </div>
+            {/if}
+
+            <!-- Key actions: regenerate, and switch backend when eligible. -->
+            <div class="flex flex-wrap gap-2">
+              <Button
+                onclick={() => (regenerateOpen = true)}
+                disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
+                variant="outline"
+                size="sm"
+                class="min-h-11"
+              >
+                <RotateCcw class="size-4" />
+                {regenerate.isPending ? t('common.working') : t('account.regenerate')}
+              </Button>
+              {#if canSwitchBackend && oppositeBackend && config.data}
+                <Button
+                  onclick={() => {
+                    pendingSwitchTarget = oppositeBackend;
+                    switchBackendOpen = true;
+                  }}
+                  disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
+                  variant="outline"
+                  size="sm"
+                  class="min-h-11"
+                >
+                  <ArrowLeftRight class="size-4" />
+                  {switchBackend.isPending
+                    ? t('switch.working')
+                    : t('account.switchTo', {
+                        label: config.data.backends.labels[oppositeBackend],
+                      })}
+                </Button>
+              {/if}
+            </div>
+            <p class="text-xs text-muted-foreground">{t('account.keyActionsHint')}</p>
+
+            {#if data.subscription.devices.length > 0}
+              <div class="space-y-3">
+                <div class="flex items-baseline justify-between">
+                  <h3 class="text-sm font-semibold flex items-center gap-2">
+                    <Smartphone class="size-4 text-muted-foreground" />
+                    {t('account.devicesTitle')}
+                  </h3>
+                  <span class="text-xs text-muted-foreground tabular-nums">
+                    {t('common.deviceCount', { count: data.subscription.devices.length })}
+                  </span>
+                </div>
+                <ul class="rounded-lg border border-border divide-y divide-border bg-card">
+                  {#each data.subscription.devices as d (d.hwid)}
+                    {@const label = [d.platform, d.deviceModel].filter(Boolean).join(' · ')}
+                    <li class="flex items-center justify-between gap-3 px-4 py-3">
+                      <div class="flex items-center gap-3 min-w-0">
+                        <Smartphone class="size-4 text-muted-foreground shrink-0" />
+                        <div class="min-w-0">
+                          {#if label}
+                            <p class="text-sm font-medium truncate">{label}</p>
+                            <code class="font-mono text-xs text-muted-foreground truncate block">
+                              {d.hwid.slice(0, 24)}…
+                            </code>
+                          {:else}
+                            <code class="font-mono text-xs truncate block"
+                              >{d.hwid.slice(0, 24)}…</code
+                            >
+                          {/if}
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-3 shrink-0">
+                        <span class="text-muted-foreground text-xs tabular-nums">
+                          {d.lastSeenAt
+                            ? t('account.lastSeen', { date: formatDate(d.lastSeenAt) })
+                            : '-'}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          class="min-h-9 text-destructive hover:text-destructive"
+                          disabled={revokeDevice.isPending || actionsDisabled}
+                          onclick={() => {
+                            revokeTargetHwid = d.hwid;
+                            revokeDeviceOpen = true;
+                          }}
+                        >
+                          {t('account.deviceRevoke')}
+                        </Button>
+                      </div>
+                    </li>
+                  {/each}
+                </ul>
+              </div>
+            {/if}
+          {:else}
+            <!-- Empty state when the user has no subscription yet -->
+            <div class="rounded-xl border border-dashed border-border p-8 text-center space-y-3">
+              <h3 class="text-lg font-semibold">{t('account.noSubTitle')}</h3>
+              <p class="text-sm text-muted-foreground max-w-sm mx-auto">
+                {t('account.noSubBody')}
+              </p>
+              <Button
+                onclick={() => regenerate.mutate()}
+                disabled={regenerate.isPending || actionsDisabled}
+                size="lg"
+                class="min-h-11"
+              >
+                <Plus class="size-4" />
+                {regenerate.isPending ? t('account.creating') : t('account.createSub')}
+              </Button>
+              {#if regenerate.error}
+                <InlineError
+                  message={apiErrorMessage(regenerate.error)}
+                  class="mx-auto max-w-sm text-start"
+                />
+              {/if}
+            </div>
+          {/if}
+        </section>
+      </Tabs.Content>
+
+      <!-- TAB: Membership — plan + upgrade/extend. ALWAYS present now; an active
+         member sees a compact status + refresh instead of the upsell. -->
+      <Tabs.Content value="membership">
+        <section class="space-y-4">
+          {@render sectionHead(
+            Sparkles,
+            t('account.section.membership.title'),
+            t('account.section.membership.desc'),
+          )}
+
+          {#if membershipState === 'active'}
+            <!-- Active member: nothing to buy — just confirm the state + a refresh. -->
+            <div class="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-3">
+              <p class="text-sm font-medium">{t('account.memberActiveTitle')}</p>
+              {#if data.user.membership?.expiresAt}
+                <p class="text-sm text-muted-foreground">
+                  {t('account.memberActiveExpiry', {
+                    date: formatDate(data.user.membership.expiresAt),
+                  })}
+                </p>
+              {/if}
+              <p class="text-xs text-muted-foreground">
+                <button
+                  type="button"
+                  class="rounded-sm underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onclick={() => refreshMembership.mutate()}
+                  disabled={refreshMembership.isPending}
+                >
+                  {refreshMembership.isPending
+                    ? t('account.refreshing')
+                    : t('account.refreshMembership')}
+                </button>
+              </p>
+            </div>
+          {:else}
+            {#if membershipState === 'no-membership'}
+              <TierComparison currentTierSlug={data.user.tier.slug} />
+            {/if}
+
+            <!-- Self-service purchase panel (self-gates on billing being enabled).
+             'upgrade' for free users, 'extend' for expiring/expired members. -->
+            <UpgradeMembership mode={membershipState === 'no-membership' ? 'upgrade' : 'extend'} />
+
+            {#if membershipState === 'no-membership'}
+              <!-- Already-paid recovery: re-read entitlement (e.g. a payment that
+               hasn't propagated yet). Slim link rather than a verbose callout. -->
+              <p class="text-xs text-muted-foreground">
+                <button
+                  type="button"
+                  class="rounded-sm underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onclick={() => refreshMembership.mutate()}
+                  disabled={refreshMembership.isPending}
+                >
+                  {refreshMembership.isPending
+                    ? t('account.refreshing')
+                    : t('account.refreshMembership')}
+                </button>
+              </p>
+              <MemberImpact />
+            {/if}
+          {/if}
+        </section>
+      </Tabs.Content>
+
+      <!-- TAB: Codes & gifts — redeem a membership code, or buy codes to share.
+         Redeem is always available; GiftCodes self-gates on billing. -->
+      <Tabs.Content value="codes">
+        <section class="space-y-4">
+          {@render sectionHead(
+            Gift,
+            t('account.section.codes.title'),
+            t('account.section.codes.desc'),
+          )}
+
+          <!-- W4: redeem a membership code (extends/upgrades the tier). -->
+          <RedeemCode />
+
+          <!-- Buy membership codes to share with friends/family (distinct from the
+           self-upgrade; doesn't touch your own membership). Self-gates on billing. -->
+          <GiftCodes />
+        </section>
+      </Tabs.Content>
+
+      <!-- TAB: Account & security — support ID + account-number rotation. -->
+      <Tabs.Content value="security">
+        <section class="space-y-4">
+          {@render sectionHead(
+            ShieldCheck,
+            t('account.section.security.title'),
+            t('account.section.security.desc'),
+          )}
+          <div class="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-4">
+            {#if data.user.supportId}
+              <div>
+                <p class="text-sm font-medium">{t('support.label')}</p>
+                <code class="mt-1 block select-all font-mono text-sm text-foreground"
+                  >{data.user.supportId}</code
+                >
+                <p class="mt-1 text-xs text-muted-foreground">{t('support.hint')}</p>
+              </div>
+            {/if}
+            <div
+              class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between {data.user
+                .supportId
+                ? 'border-t border-border/60 pt-4'
+                : ''}"
+            >
+              <p class="text-xs text-muted-foreground sm:max-w-md">{t('account.rotateHint')}</p>
+              <Button
+                bind:ref={rotateTriggerEl}
+                onclick={() => (rotateConfirmOpen = true)}
+                variant="outline"
+                size="sm"
+                class="min-h-11 shrink-0"
+              >
+                <Hash class="size-4" />
+                {t('account.rotate')}
+              </Button>
+            </div>
+          </div>
+        </section>
+      </Tabs.Content>
+    </Tabs.Root>
 
     <!-- Subscription confirm modals (only when there IS a subscription). -->
     {#if data.subscription}

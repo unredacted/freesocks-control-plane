@@ -93,6 +93,11 @@ export interface UpdateUserPatch {
 export interface SubscriptionContent {
   content: string;
   contentType: string;
+  // A small allowlist of subscription metadata headers to re-emit when FCP fronts
+  // the subscription URL — traffic/expiry counters (`subscription-userinfo`) and
+  // client update hints the proxy app displays. Undefined for backends that don't
+  // emit them (Outline). Never carries a secret.
+  headers?: Record<string, string>;
 }
 
 /**

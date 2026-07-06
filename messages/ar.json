@@ -101,6 +101,14 @@
     "rotating": "جارٍ التغيير…",
     "rotateFailedTitle": "تعذّر تغيير رقم الحساب",
     "refreshMembership": "دفعت بالفعل؟ تحقّق من عضويتي",
+    "memberActiveTitle": "العضوية نشطة",
+    "memberActiveExpiry": "نشطة حتى {date}",
+    "tab": {
+      "connection": "الاتصال",
+      "membership": "العضوية",
+      "codes": "الرموز والهدايا",
+      "security": "الأمان"
+    },
     "refreshing": "جارٍ التحديث…",
     "regenSuccessTitle": "تم إنشاء رابط اشتراك جديد",
     "regenSuccessBody": "أعد استيراده على كل أجهزتك. يظل الرابط القديم يعمل لمدة 24 ساعة إضافية.",
