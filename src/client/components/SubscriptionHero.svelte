@@ -12,9 +12,7 @@
   import QrCodeIcon from '@lucide/svelte/icons/qr-code';
   import Link2 from '@lucide/svelte/icons/link-2';
   import Shield from '@lucide/svelte/icons/shield';
-  import Smartphone from '@lucide/svelte/icons/smartphone';
   import { formatBytes, daysUntil } from '../lib/utils';
-  import { IMPORT_APPS, IMPORT_PROFILE_NAME, type ImportApp } from '../lib/appLinks';
   import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
   import { toast } from 'svelte-sonner';
@@ -112,14 +110,6 @@
   let copied = $state<'primary' | 'fallback' | null>(null);
   let qrOpen = $state(false);
   let qrFallbackOpen = $state(false);
-
-  // One-tap import: when an app is picked, the QR + "Open" button carry that
-  // client's deep-link import scheme so scanning/tapping imports directly — a
-  // plain https QR just opens a browser. null = the plain link (default).
-  let importApp = $state<ImportApp | null>(null);
-  let qrValue = $derived(
-    importApp ? importApp.build(subscriptionUrl, IMPORT_PROFILE_NAME) : subscriptionUrl,
-  );
 
   async function copy(value: string, key: 'primary' | 'fallback') {
     try {
@@ -282,67 +272,20 @@
               </Button>
             {/if}
           </div>
-
-          <!-- One-tap import: pick your app and the QR + button carry its
-               deep-link import scheme. Scanning a plain https link just opens a
-               browser, so this is how a scan/tap lands straight in the app. -->
-          <div class="space-y-2 pt-1">
-            <p class="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
-              {t('hero.importTitle')}
-            </p>
-            <div class="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onclick={() => (importApp = null)}
-                aria-pressed={importApp === null}
-                class="min-h-9 rounded-md px-2.5 py-1 text-xs font-medium transition-colors {importApp ===
-                null
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted text-muted-foreground hover:text-foreground'}"
-              >
-                {t('hero.importPlain')}
-              </button>
-              {#each IMPORT_APPS as a (a.id)}
-                <button
-                  type="button"
-                  onclick={() => (importApp = a)}
-                  aria-pressed={importApp?.id === a.id}
-                  class="min-h-9 rounded-md px-2.5 py-1 text-xs font-medium transition-colors {importApp?.id ===
-                  a.id
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:text-foreground'}"
-                >
-                  {a.name}
-                </button>
-              {/each}
-            </div>
-            {#if importApp}
-              <a
-                href={qrValue}
-                class="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-              >
-                <Smartphone class="size-4" />
-                {t('hero.importOpen', { app: importApp.name })}
-              </a>
-              <p class="text-xs text-muted-foreground">{t('hero.importOpenHint')}</p>
-            {/if}
-          </div>
         </div>
 
         {#if showQr}
           <!-- Desktop: always-visible QR. Mobile: collapsible. -->
           <div class="hidden md:block">
-            <QrCode text={qrValue} size={144} />
+            <QrCode text={subscriptionUrl} size={144} />
             <p class="mt-2 text-xs text-muted-foreground text-center max-w-[144px]">
-              {importApp ? t('hero.importScan', { app: importApp.name }) : t('hero.scanPhone')}
+              {t('hero.scanPhone')}
             </p>
           </div>
           {#if qrOpen}
             <div class="md:hidden flex flex-col items-center pt-2" in:fade={{ duration: 200 }}>
-              <QrCode text={qrValue} size={192} />
-              <p class="mt-2 text-xs text-muted-foreground">
-                {importApp ? t('hero.importScan', { app: importApp.name }) : t('hero.scanOther')}
-              </p>
+              <QrCode text={subscriptionUrl} size={192} />
+              <p class="mt-2 text-xs text-muted-foreground">{t('hero.scanOther')}</p>
             </div>
           {/if}
         {/if}

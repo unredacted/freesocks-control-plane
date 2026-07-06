@@ -186,6 +186,7 @@
   },
   "setup": {
     "title": "设置你的代理应用",
+    "install": "安装",
     "intro": "复制上方的订阅链接，然后添加到兼容的应用中：",
     "android": "安卓",
     "ios": "iPhone / iPad",

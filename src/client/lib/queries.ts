@@ -23,6 +23,7 @@ import {
   AppSettingsRecord,
   AuditEntry,
   BackendServerAdmin,
+  ClientAdmin,
   MirrorProviderAdmin,
   TierAdmin,
   UserAdmin,
@@ -53,6 +54,7 @@ export const queryKeys = {
   adminSettings: ['admin', 'settings'] as const,
   adminBackendServers: ['admin', 'backend-servers'] as const,
   adminMirrorProviders: ['admin', 'mirror-providers'] as const,
+  adminClients: ['admin', 'clients'] as const,
   adminRateLimits: ['admin', 'rate-limits'] as const,
   adminMembershipCodes: (status: string) => ['admin', 'membership-codes', status] as const,
   adminBilling: (status: string) => ['admin', 'billing', status] as const,
@@ -370,6 +372,18 @@ export const adminMirrorProvidersQuery = () =>
         MirrorProvidersListResponse,
       );
       return result.providers;
+    },
+    staleTime: 30_000,
+  }));
+
+/** Recommended client apps (the CMS "set up your app" catalog) for AdminClients. */
+const ClientsListResponse = z.object({ clients: z.array(ClientAdmin) });
+export const adminClientsQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminClients,
+    queryFn: async () => {
+      const result = await apiClient.get('/api/v1/admin/clients', ClientsListResponse);
+      return result.clients;
     },
     staleTime: 30_000,
   }));

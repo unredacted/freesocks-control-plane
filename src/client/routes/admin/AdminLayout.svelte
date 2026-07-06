@@ -21,6 +21,7 @@
   import CreditCard from '@lucide/svelte/icons/credit-card';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import Cloud from '@lucide/svelte/icons/cloud';
+  import Smartphone from '@lucide/svelte/icons/smartphone';
   import LogOut from '@lucide/svelte/icons/log-out';
 
   interface Props {
@@ -53,6 +54,7 @@
     { to: '/admin/tokens', label: 'API tokens', icon: KeyIcon },
     { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
     { to: '/admin/storage', label: 'Storage mirrors', icon: Cloud },
+    { to: '/admin/clients', label: 'Client apps', icon: Smartphone },
     { to: '/admin/membership-codes', label: 'Membership codes', icon: Ticket },
     { to: '/admin/billing', label: 'Billing', icon: CreditCard },
     { to: '/admin/rate-limits', label: 'Rate limits', icon: Gauge },

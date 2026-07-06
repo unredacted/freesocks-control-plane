@@ -400,6 +400,7 @@ export type MessageKey =
   | "setup.android"
   | "setup.desktop"
   | "setup.hwidNote"
+  | "setup.install"
   | "setup.intro"
   | "setup.ios"
   | "setup.noDeviceLimit"

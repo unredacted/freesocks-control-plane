@@ -22,7 +22,7 @@
   import MemberImpact from '../components/MemberImpact.svelte';
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import RotateAccountIdModal from '../components/RotateAccountIdModal.svelte';
-  import SetupGuidance from '../components/SetupGuidance.svelte';
+  import ConnectClient from '../components/ConnectClient.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
   import RedeemCode from '../components/RedeemCode.svelte';
@@ -783,10 +783,10 @@
               <!-- Privacy: the raw config IS the deliverable (the CDN-fetched link is
                hidden above). No public mirrors — they'd expose the config to third parties. -->
               <RawConfig prominent />
-              <SetupGuidance backend={data.subscription.backend} privacy />
+              <ConnectClient backend={data.subscription.backend} privacy />
             {:else}
               <!-- Stay connected: the subscription link is the star; mirrors next, raw config secondary. -->
-              <SetupGuidance backend={data.subscription.backend} />
+              <ConnectClient backend={data.subscription.backend} subscriptionUrl={subUrl} />
               {#if config.data?.mirrorsEnabled}
                 <MirrorHelp
                   mirrors={data.subscription.mirrors}

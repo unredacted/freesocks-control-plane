@@ -17,6 +17,7 @@
   import AdminSettings from './AdminSettings.svelte';
   import AdminBackendServers from './AdminBackendServers.svelte';
   import AdminStorage from './AdminStorage.svelte';
+  import AdminClients from './AdminClients.svelte';
   import AdminMembershipCodes from './AdminMembershipCodes.svelte';
   import AdminBilling from './AdminBilling.svelte';
   import AdminRateLimits from './AdminRateLimits.svelte';
@@ -77,6 +78,8 @@
   <AdminBackendServers />
 {:else if router.pathname === '/admin/storage'}
   <AdminStorage />
+{:else if router.pathname === '/admin/clients'}
+  <AdminClients />
 {:else if router.pathname === '/admin/membership-codes'}
   <AdminMembershipCodes />
 {:else if router.pathname === '/admin/billing'}

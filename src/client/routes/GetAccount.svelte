@@ -10,7 +10,7 @@
   import InlineError from '../components/InlineError.svelte';
   import DeliveryPreference from '../components/DeliveryPreference.svelte';
   import { deliveryPref, setDeliveryPref } from '../lib/deliveryPref.svelte';
-  import SetupGuidance from '../components/SetupGuidance.svelte';
+  import ConnectClient from '../components/ConnectClient.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import RedeemCode from '../components/RedeemCode.svelte';
   import Link from '../components/Link.svelte';
@@ -401,9 +401,9 @@
         {#if effectiveDelivery === 'privacy'}
           <!-- Privacy: raw config is the deliverable; CDN-fetched link hidden; no mirrors. -->
           <RawConfig prominent />
-          <SetupGuidance backend={subscription.backend} privacy />
+          <ConnectClient backend={subscription.backend} privacy />
         {:else}
-          <SetupGuidance backend={subscription.backend} />
+          <ConnectClient backend={subscription.backend} subscriptionUrl={subUrl} />
           {#if config.data?.mirrorsEnabled}
             <MirrorHelp
               mirrors={subscription.mirrors}
