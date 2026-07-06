@@ -159,5 +159,21 @@ export const PublicConfig = z.object({
     )
     .optional()
     .default([]),
+  /** CMS-managed recommended-client catalog for the single "set up your app"
+   *  section. Public-safe (no secrets). `schemeId` maps to a client-side deep-link
+   *  import builder (null = manual / QR only). Defaulted for forward-compat. */
+  clients: z
+    .array(
+      z.object({
+        name: z.string(),
+        platforms: z.array(z.string()),
+        backends: z.array(z.enum(['remnawave', 'outline'])),
+        homepageUrl: z.string(),
+        schemeId: z.string().nullable(),
+        hwid: z.boolean(),
+      }),
+    )
+    .optional()
+    .default([]),
 });
 export type PublicConfig = z.infer<typeof PublicConfig>;

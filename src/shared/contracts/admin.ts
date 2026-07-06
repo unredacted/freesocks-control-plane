@@ -239,6 +239,38 @@ export const MirrorProviderUpsert = z.object({
 });
 export type MirrorProviderUpsert = z.infer<typeof MirrorProviderUpsert>;
 
+// --- recommended client apps (CMS-managed "set up your app" catalog) ---
+
+/** One row in the clients list (GET /api/v1/admin/clients). No secrets. */
+export const ClientAdmin = z.object({
+  id: z.string(),
+  name: z.string().min(1).max(64),
+  platforms: z.array(z.string()),
+  backends: z.array(z.enum(['remnawave', 'outline'])),
+  homepageUrl: z.string(),
+  /** An appLinks deep-link builder id, or null = manual / QR import only. */
+  schemeId: z.string().nullable(),
+  hwid: z.boolean(),
+  enabled: z.boolean(),
+  priority: z.number().int(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type ClientAdmin = z.infer<typeof ClientAdmin>;
+
+/** Create/edit input. `schemeId` null/absent = a manual / QR-only client. */
+export const ClientUpsert = z.object({
+  name: z.string().min(1).max(64),
+  platforms: z.array(z.string()).default([]),
+  backends: z.array(z.enum(['remnawave', 'outline'])).default(['remnawave']),
+  homepageUrl: z.string().min(1),
+  schemeId: z.string().nullable().optional(),
+  hwid: z.boolean().default(false),
+  enabled: z.boolean().default(true),
+  priority: z.number().int().default(0),
+});
+export type ClientUpsert = z.infer<typeof ClientUpsert>;
+
 // --- admin management (multi-admin onboarding via invite links) ---
 
 /** One row in the admins list (GET /api/v1/admin/admins). */

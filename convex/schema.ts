@@ -452,6 +452,26 @@ export default defineSchema({
     .index('by_name', ['name'])
     .index('by_active', ['isActive', 'priority']),
 
+  // Recommended VPN client apps shown to members ("set up your app"). Fully
+  // DB-driven + CMS-managed: add / remove / enable / reorder with no deploy. The
+  // fussy per-app import URL SCHEME stays a tested code builder in
+  // src/client/lib/appLinks.ts, referenced here by `schemeId` (absent = manual /
+  // QR import only, e.g. Streisand, Outline). `name` is unique (enforced in the
+  // mutation via by_name). No secrets — safe to project publicly.
+  clients: defineTable({
+    name: v.string(),
+    platforms: v.array(v.string()), // 'android' | 'ios' | 'windows' | 'desktop'
+    backends: v.array(backendId), // which proxy backend(s) this app is for
+    homepageUrl: v.string(),
+    schemeId: v.optional(v.string()), // an appLinks builder id; absent = manual / QR only
+    hwid: v.boolean(), // supports Remnawave device-id (so the device limit is honored)
+    enabled: v.boolean(),
+    priority: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_name', ['name'])
+    .index('by_enabled', ['enabled', 'priority']),
+
   appSettings: defineTable({
     key: v.string(),
     value: v.string(),

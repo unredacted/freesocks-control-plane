@@ -8,6 +8,7 @@
 import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
 import { SETTINGS_DEFAULTS } from './appSettings';
+import { DEFAULT_CLIENTS } from './lib/clientCatalog';
 
 /** Insert the default-free tier if absent; return its id. */
 export const seedDefaultFreeTier = internalMutation({
@@ -173,6 +174,40 @@ export const seedBackendServersFromEnv = internalMutation({
  * admin-passkey bootstrap + fsv1_ issuance separately (they need a browser /
  * per-operator data); add more backend instances via the admin CMS.
  */
+/**
+ * Seed the recommended-client catalog from the compiled DEFAULT_CLIENTS.
+ * Idempotent by name (skips a client that already exists), so it's safe on a
+ * fresh deploy (via seedCutover) OR run once on an already-deployed instance
+ * (`bunx convex run seed:seedClients '{}'`). The clientCatalog resolver also
+ * falls back to DEFAULT_CLIENTS when the table is empty, so the UI is never blank.
+ */
+export const seedClients = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ inserted: number }> => {
+    let inserted = 0;
+    for (const c of DEFAULT_CLIENTS) {
+      const existing = await ctx.db
+        .query('clients')
+        .withIndex('by_name', (q) => q.eq('name', c.name))
+        .unique();
+      if (existing) continue;
+      await ctx.db.insert('clients', {
+        name: c.name,
+        platforms: c.platforms,
+        backends: c.backends,
+        homepageUrl: c.homepageUrl,
+        schemeId: c.schemeId ?? undefined,
+        hwid: c.hwid,
+        enabled: c.enabled,
+        priority: c.priority,
+        updatedAt: Date.now(),
+      });
+      inserted++;
+    }
+    return { inserted };
+  },
+});
+
 export const seedCutover = internalAction({
   args: {},
   handler: async (
@@ -182,16 +217,19 @@ export const seedCutover = internalAction({
     memberTierId: string;
     settingsInserted: number;
     backendInstancesInserted: number;
+    clientsInserted: number;
   }> => {
     const freeTierId = await ctx.runMutation(internal.seed.seedDefaultFreeTier, {});
     const memberTierId = await ctx.runMutation(internal.seed.seedMemberTier, {});
     const settings = await ctx.runMutation(internal.seed.seedAppSettings, {});
     const instances = await ctx.runMutation(internal.seed.seedBackendServersFromEnv, {});
+    const clients = await ctx.runMutation(internal.seed.seedClients, {});
     return {
       freeTierId,
       memberTierId,
       settingsInserted: settings.inserted,
       backendInstancesInserted: instances.inserted,
+      clientsInserted: clients.inserted,
     };
   },
 });

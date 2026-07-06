@@ -1599,6 +1599,74 @@ http.route({
   }),
 });
 
+// --- recommended client apps (the CMS-managed "set up your app" catalog) ------
+http.route({
+  path: '/api/v1/admin/clients',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.clients.listForAdmin, {}));
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/clients',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(await ctx.runMutation(internal.clients.create, body as never));
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/clients/by-name/',
+  method: 'PUT',
+  handler: guard(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const name = decodeURIComponent(lastPathSegment(req));
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(await ctx.runMutation(internal.clients.upsertByName, { ...body, name } as never));
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/clients/',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const id = lastPathSegment(req) as Id<'clients'>;
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(await ctx.runMutation(internal.clients.update, { id, ...body } as never));
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/clients/',
+  method: 'DELETE',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const id = lastPathSegment(req) as Id<'clients'>;
+    try {
+      return json(await ctx.runMutation(internal.clients.remove, { id }));
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 // --- admin: users -----------------------------------------------------------
 
 http.route({

@@ -11,6 +11,7 @@ import { resolveBillingConfig } from './lib/billingConfig';
 import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
 import { resolveConnectionProfiles, publicProjection } from './lib/connectionProfiles';
+import { resolveClients, publicClients } from './lib/clientCatalog';
 
 export const get = query({
   args: {},
@@ -117,6 +118,11 @@ export const get = query({
       // available = squad bound). NEVER the squad UUID — publicProjection strips
       // it, like the tier projection above. Drives the transport chooser.
       connectionProfiles: publicProjection(await resolveConnectionProfiles(ctx.db)),
+      // Member-facing recommended-client catalog (CMS-managed `clients` table, or
+      // the compiled defaults when unseeded). Public-safe: names, platforms, install
+      // links, hwid flag, and the import scheme id (the SPA maps it to a deep-link
+      // builder). No secrets. Drives the single "set up your app" section.
+      clients: publicClients(await resolveClients(ctx.db)),
     };
   },
 });
