@@ -103,6 +103,11 @@
     "refreshMembership": "已付款？查询我的会员状态",
     "memberActiveTitle": "会员有效",
     "memberActiveExpiry": "有效期至 {date}",
+    "membershipNudge": {
+      "title": "升级会员，畅享无限",
+      "body": "无限流量与设备。",
+      "cta": "查看会员"
+    },
     "tab": {
       "connection": "连接",
       "membership": "会员",
@@ -458,6 +463,7 @@
     "privacyBody": "追求最强保密性时最合适。我们会优先采用不让你的配置落到第三方服务器的方式。",
     "recommended": "推荐",
     "subtitleServer": "选择一个焦点。更改焦点后，系统会重新颁发匹配服务器的密钥；您当前的密钥将继续有效 24 小时。",
+    "subtitleSignup": "选择一个焦点。它会保存到你的账户，你的第一个密钥将使用它——可随时更改。",
     "unavailable": "暂无",
     "confirmTitle": "切换到“ {label} \"？",
     "confirmBody": "这将重新颁发您用于{label}服务器的代理密钥。您当前的密钥将继续有效 24 小时，因此您可以先在所有设备上重新导入。",

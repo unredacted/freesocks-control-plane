@@ -3,6 +3,7 @@
   import { quintOut } from 'svelte/easing';
   import { Button } from '@client/components/ui/button';
   import QrCode from './QrCode.svelte';
+  import Sparkline from './Sparkline.svelte';
   import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
   import Download from '@lucide/svelte/icons/download';
@@ -68,6 +69,11 @@
     /** Traffic reset cadence + last-reset anchor → the "resets in N days" hint. */
     resetStrategy?: 'NO_RESET' | 'DAY' | 'WEEK' | 'MONTH';
     lastResetAt?: string;
+    /** Aggregate usage trend (bytes per bucket) + period total, rendered under the
+     *  traffic stats. Optional: omitted at sign-up (no key yet) and for backends
+     *  without usage history (Outline degrades to null → no trend). */
+    usagePoints?: number[];
+    usageTotal?: number;
   }
   let {
     title,
@@ -86,6 +92,8 @@
     status,
     resetStrategy,
     lastResetAt,
+    usagePoints,
+    usageTotal,
   }: Props = $props();
 
   // Outline keys are bare `ss://` URLs that VPN clients import as a single
@@ -458,6 +466,21 @@
           <p class="text-[11px] text-muted-foreground tabular-nums">
             {t('hero.usedSoFar', { amount: formatBytes(trafficUsedBytes) })}
           </p>
+        {/if}
+
+        <!-- Usage trend, shown by default. A quiet/new key draws a flat baseline
+             (not hidden). Absent only when there's no usage data at all. -->
+        {#if usagePoints && usagePoints.length > 0}
+          <div class="mt-3 space-y-1">
+            <div class="text-primary">
+              <Sparkline points={usagePoints} class="w-full h-10" />
+            </div>
+            {#if usageTotal !== undefined}
+              <p class="text-[11px] text-muted-foreground tabular-nums">
+                {t('usage.total', { amount: formatBytes(usageTotal) })}
+              </p>
+            {/if}
+          </div>
         {/if}
       </div>
 

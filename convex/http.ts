@@ -696,6 +696,29 @@ http.route({
   }),
 });
 
+// Set the member's connection focus WITHOUT re-issuing — used at sign-up, before
+// the first key exists, so that first key is issued into the chosen profile's
+// squad. A member who already HAS a key changes focus via /switch-profile (which
+// re-issues); this plain set only records the preference. Not sealed (the profile
+// id is not a secret).
+http.route({
+  path: '/api/v1/account/connection-profile',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'subscription:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const body = await readJson<{ profile?: 'evade' | 'privacy' }>(req);
+    if (body.profile !== 'evade' && body.profile !== 'privacy') {
+      return errorJson('validation', 'profile must be "evade" or "privacy"', 400);
+    }
+    await ctx.runMutation(internal.users.setConnectionProfile, {
+      userId: member.userId,
+      profileId: body.profile,
+    });
+    return json({ ok: true, profile: body.profile });
+  }),
+});
+
 // Switch the member's connection profile (transport → squad) within the same
 // backend. Same saga shape as switch-backend (re-issue + tombstone); the reveal
 // leg is sealed (SEALED_ROUTES) since the response carries the new subscription URL.

@@ -128,12 +128,25 @@
   // outage here leaves the account intact and is shown as a retryable notice.
   // Reuses the member regenerate endpoint (create-or-replace).
   const createSubscription = createMutation(() => ({
-    mutationFn: () =>
-      apiClient.post(
+    mutationFn: async () => {
+      // Persist the chosen focus to the account (best-effort) BEFORE issuing the
+      // first key, so it lands in that profile's squad. No key exists yet, so this
+      // is a plain set (no re-issue); a keyed member switches via /switch-profile.
+      try {
+        await apiClient.post(
+          '/api/v1/account/connection-profile',
+          { profile: effectiveDelivery },
+          z.object({ ok: z.boolean(), profile: z.string() }),
+        );
+      } catch {
+        // Non-fatal: the first key just issues into the default profile.
+      }
+      return apiClient.post(
         '/api/v1/account/regenerate',
         { confirm: true },
         z.object({ subscriptionUrl: z.string(), shortUuid: z.string() }),
-      ),
+      );
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.account });
       toast.success(t('get.createSubToastTitle'), {
@@ -366,6 +379,7 @@
         selected={effectiveDelivery}
         suggested={account.data?.suggestedDelivery}
         onChoose={setDeliveryPref}
+        signup
       />
 
       {#if subscription}

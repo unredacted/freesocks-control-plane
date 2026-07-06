@@ -144,6 +144,11 @@
     "refreshMembership": "Already paid? Check for my membership",
     "memberActiveTitle": "Membership active",
     "memberActiveExpiry": "Active until {date}",
+    "membershipNudge": {
+      "title": "Go unlimited with a membership",
+      "body": "Unlimited bandwidth and devices.",
+      "cta": "View membership"
+    },
     "tab": {
       "connection": "Connection",
       "membership": "Membership",
@@ -522,6 +527,7 @@
     "title": "What matters most to you?",
     "subtitle": "Pick a focus. It's saved on this device only, and you can change it anytime.",
     "subtitleServer": "Pick a focus. Changing it re-issues your key for the matching servers; your current key keeps working for 24 hours.",
+    "subtitleSignup": "Pick a focus. It's saved to your account, and your first key uses it — you can change it anytime.",
     "evadeTitle": "Stay connected",
     "evadeBody": "Best when sites are blocked where you are. We'll surface backup links that are harder to block.",
     "privacyTitle": "Maximize privacy",

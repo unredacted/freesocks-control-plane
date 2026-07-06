@@ -31,6 +31,9 @@
     busy?: boolean;
     /** Called when the member picks an option other than the current one. */
     onChoose: (mode: 'privacy' | 'evade') => void;
+    /** Sign-up context: the pick persists to the account + shapes the first key
+     *  (no re-issue yet), so show sign-up-specific copy. */
+    signup?: boolean;
   }
   let {
     selected,
@@ -39,6 +42,7 @@
     available = { evade: true, privacy: true },
     busy = false,
     onChoose,
+    signup = false,
   }: Props = $props();
 
   const OPTIONS = [
@@ -69,7 +73,11 @@
   <div>
     <h2 class="font-display text-base font-semibold">{t('delivery.title')}</h2>
     <p class="text-sm text-muted-foreground">
-      {serverBacked ? t('delivery.subtitleServer') : t('delivery.subtitle')}
+      {signup
+        ? t('delivery.subtitleSignup')
+        : serverBacked
+          ? t('delivery.subtitleServer')
+          : t('delivery.subtitle')}
     </p>
   </div>
   <div class="grid gap-3 sm:grid-cols-2">

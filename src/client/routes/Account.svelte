@@ -37,9 +37,7 @@
   import Sparkles from '@lucide/svelte/icons/sparkles';
   import Gift from '@lucide/svelte/icons/gift';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
-  import Gauge from '@lucide/svelte/icons/gauge';
-  import Sparkline from '../components/Sparkline.svelte';
-  import { formatBytes, subscriptionDisplayUrl } from '../lib/utils';
+  import { subscriptionDisplayUrl } from '../lib/utils';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { clearSessionKey } from '../lib/pop';
@@ -61,8 +59,9 @@
 
   // Usage trend: lazy — only fetched once the member opens the panel, so it never
   // adds a second live backend call to the main account load.
-  let usageOpen = $state(false);
-  const usage = accountUsageQuery(() => usageOpen);
+  // Usage trend: eager (fetched whenever there's a subscription) so it renders by
+  // default under the traffic stats in the hero. Degrades to null (Outline/outage).
+  const usage = accountUsageQuery(() => !!account.data?.subscription);
 
   // Convenience accessor: Svelte's narrowing reads better than account.data
   // sprinkled across the template.
@@ -723,6 +722,31 @@
             t('account.section.connection.desc'),
           )}
 
+          <!-- Free members: a glowing pointer to the Membership tab (same tier-sheen
+               sheen as the upgrade panel). Hidden once they have a membership. -->
+          {#if membershipState === 'no-membership'}
+            <button
+              type="button"
+              onclick={() => (activeTab = 'membership')}
+              class="tier-sheen relative w-full overflow-hidden rounded-xl border border-primary/30 bg-card p-4 text-start transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-5"
+            >
+              <div class="flex items-center gap-3">
+                <div
+                  class="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                >
+                  <Sparkles class="size-5" />
+                </div>
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm font-semibold">{t('account.membershipNudge.title')}</p>
+                  <p class="text-sm text-muted-foreground">{t('account.membershipNudge.body')}</p>
+                </div>
+                <span class="shrink-0 text-sm font-medium text-primary"
+                  >{t('account.membershipNudge.cta')}</span
+                >
+              </div>
+            </button>
+          {/if}
+
           <!-- Delivery focus: privacy promotes the raw E2EE config + warns the
            subscription link is fetched through a CDN; evade keeps the link as the star. -->
           <DeliveryPreference
@@ -752,6 +776,8 @@
               tierName={data.user.tier.name}
               backend={data.subscription.backend}
               hideUrl={effectiveDelivery === 'privacy'}
+              usagePoints={usage.data?.usage?.points}
+              usageTotal={usage.data?.usage?.total}
             />
             {#if effectiveDelivery === 'privacy'}
               <!-- Privacy: the raw config IS the deliverable (the CDN-fetched link is
@@ -771,40 +797,7 @@
               <RawConfig />
             {/if}
 
-            <!-- Usage trend: lazy panel. The query is disabled until the member opens
-             it, so a live backend usage call never rides on the main account load. -->
-            {#if !usageOpen}
-              <button
-                type="button"
-                class="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-                onclick={() => (usageOpen = true)}
-              >
-                <Gauge class="size-4" />
-                {t('usage.show')}
-              </button>
-            {:else}
-              <div class="rounded-lg border border-border bg-card p-4 space-y-3">
-                <h3 class="text-sm font-semibold flex items-center gap-2">
-                  <Gauge class="size-4 text-muted-foreground" />
-                  {t('usage.title')}
-                </h3>
-                {#if usage.isPending}
-                  <Skeleton class="h-12 w-full" />
-                {:else if usage.isError}
-                  <p class="text-sm text-muted-foreground">{t('usage.unavailable')}</p>
-                {:else if usage.data?.usage && usage.data.usage.points.some((p) => p > 0)}
-                  {@const u = usage.data.usage}
-                  <div class="text-primary">
-                    <Sparkline points={u.points} class="w-full h-12" />
-                  </div>
-                  <p class="text-xs text-muted-foreground tabular-nums">
-                    {t('usage.total', { amount: formatBytes(u.total) })}
-                  </p>
-                {:else}
-                  <p class="text-sm text-muted-foreground">{t('usage.none')}</p>
-                {/if}
-              </div>
-            {/if}
+            <!-- Usage trend now renders by default in the hero, under the traffic stats. -->
 
             <!-- Key actions: regenerate, and switch backend when eligible. -->
             <div class="flex flex-wrap gap-2">
