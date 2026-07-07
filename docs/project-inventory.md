@@ -1,6 +1,21 @@
 # Project inventory: features, open work, and code status
 
-**Last reconciled against the code: 2026-07-01** (branch `v2`, after the full-audit pass:
+**Last reconciled against the code: 2026-07-07** (branch `v2`, after the pre-launch
+polish pass: **connection-profile descriptions** — admin-editable label + description that
+override the member picker's translated copy per-profile when set; **Remnawave squad-pool
+load balancing** — a profile binds a POOL of squads and issuance picks the least-loaded by
+the panel's per-squad member counts (cached in `remnawaveSquadStats` by the healthcheck
+cron), the pick persisted on the subscription so tier pushes never re-home a live key; per-
+instance **`maxKeys` capacity caps**; the **device-limit enforcement toggle**
+(`devices.enforcementEnabled`, default OFF = unlimited-by-default) that gates every
+`hwidDeviceLimit` send, plus the **FCP-front HWID fix** — `GET /api/v1/sub/<token>` now
+forwards `x-hwid`/`x-device-os`/`x-ver-os`/`x-device-model` so panel device registration +
+enforcement work through the front, with app-compatibility gating in the connect UI; the
+**privacy-by-default** hardening (explicit Caddy `log … output discard`, `RUST_LOG` request-
+line silencing, Cap error-log/geo posture — see `docs/privacy.md`); a **Docker refresh**
+(digest re-pins, valkey 8→9, a backup-sidecar healthcheck); and **first-deploy** fixes
+(loud `convex env set` failures, the bootstrap secret printed every deploy).
+Earlier: the full-audit pass:
 the **retryable webhook dedupe claim** (a grant that throws no longer strands the event —
 `webhookEvents.status` pending/processed/failed), member **device revocation**
 (`POST /api/v1/account/devices/revoke`, Remnawave HWID), WebAuthn-challenge **retention

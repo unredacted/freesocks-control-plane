@@ -170,9 +170,10 @@ export const seedBackendServersFromEnv = internalMutation({
 
 /**
  * One-shot cutover seed (P11) for a FRESH backend: default-free + member tiers +
- * app settings + the primary Remnawave instance (from env). Re-runnable. Run
- * admin-passkey bootstrap + fsv1_ issuance separately (they need a browser /
- * per-operator data); add more backend instances via the admin CMS.
+ * app settings + the primary Remnawave instance (from env) + the recommended-
+ * client catalog (seedClients). Re-runnable. Run admin-passkey bootstrap + fsv1_
+ * issuance separately (they need a browser / per-operator data); add more backend
+ * instances via the admin CMS.
  */
 /**
  * Seed the recommended-client catalog from the compiled DEFAULT_CLIENTS.

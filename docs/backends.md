@@ -182,6 +182,8 @@ that was missing when the `PATCH /api/users/{uuid}` / `/api/hwid-devices` mismat
 | delete device | `POST /api/hwid/devices/delete`                         | body `{ userUuid, hwid }`                                                                                            |
 | user usage    | `GET /api/bandwidth-stats/users/{uuid}?start&end`       | member usage trend; **aggregate only** — the per-node `series`/`topNodes` are dropped (privacy)                      |
 | fleet stats   | `GET /api/system/stats` + `GET /api/system/stats/recap` | admin dashboard (online / nodes / countries / traffic + panel `version`); cached by the healthcheck cron             |
+| squad stats   | `GET /api/internal-squads`                              | per-squad `info.membersCount` → the squad-pool balancer's load signal; cached in `remnawaveSquadStats` by the cron   |
+| sub content   | the public subscription URL (or `/api/sub/{shortUuid}`) | fetched with NO admin token; forwards the client's `user-agent` + HWID headers (see "HWID / device limits" below)    |
 
 Most responses are wrapped in `{ response: ... }`; the provider's `unwrap()` tolerates both wrapped
 and bare. HWID device metadata is surfaced as `platform` / `deviceModel` / first-seen / last-seen
@@ -227,6 +229,75 @@ Two Remnawave quirks the harness handles (both bit us / would bite a naive calle
 
 When adding a new backend read/write (§"Adding a backend type"), extend the integration
 test so the real contract stays pinned by an executable check, not just a comment.
+
+## Node load balancing (Remnawave squad pools)
+
+FCP's instance pool (`convex/backendServers.ts`) already spreads keys across
+distinct backend-server rows by score (`latency_weight*rtt + key_count_weight*keyCount`,
+admin-tunable) and skips instances at their optional `maxKeys` cap (all-at-capacity
+→ the retryable `backend.unavailable`). But a typical Remnawave deployment runs a
+**single panel**, and node placement there is driven by which **internal squad** a
+user is in — the panel maps squads → nodes. So FCP balances _nodes_ by balancing
+_squads_:
+
+- A connection profile (`evade` / `privacy`) can bind a **pool** of squad UUIDs
+  (`connectionProfile.<id>.squadUuids` in `appSettings`; the legacy single
+  `.squadUuid` still works as a one-element pool). Set it in Admin → Settings →
+  Connection profiles (one UUID per line) or via `PATCH /api/v1/admin/connection-profiles`.
+- At issuance FCP picks the **least-loaded** squad of the pool, using the panel's
+  authoritative per-squad `info.membersCount` from `GET /api/internal-squads`,
+  cached in `remnawaveSquadStats` by the `backend-healthcheck` cron (~10 min).
+  Fresh-known squads win (lowest count first); stale/never-observed ones sort
+  after; all-unknown falls back to declaration order, deterministically.
+- The chosen squad is **persisted on the subscription row** (`remnawaveSquadUuid`).
+  A tier push (`lifecycle.pushTierToBackend`) re-sends _that_ squad — it never
+  re-picks — so renewals/downgrades can't thrash a live key across squads.
+- Each squad in a pool must live on the **same panel** the tier's backend routes
+  to (FCP can't validate this; the CMS help text says so). Admin → Settings shows
+  a read-only per-squad load panel.
+
+Operator sizing: define one squad per node group, add them all to the profile's
+pool, and FCP fills the emptiest. `maxKeys` on an instance is a hard cap for the
+multi-panel / Outline case.
+
+## HWID / device limits
+
+Remnawave enforces per-user device limits by **device fingerprint (HWID)**, and
+it takes **two** conditions to actually enforce:
+
+1. **Panel:** `HWID_DEVICE_LIMIT_ENABLED=true` on the Remnawave panel (set in the
+   panel's own env / the Ansible role — **FCP can neither read nor set it**).
+2. **Per-user:** a non-null `hwidDeviceLimit` on the user, which FCP sends only
+   when _both_ the tier opts in (`hwidEnabled`) _and_ the deployment-level toggle
+   `devices.enforcementEnabled` is on (Admin → Settings → Device limits).
+
+When enforced, a subscription fetched **without** a valid `x-hwid` header is
+rejected by the panel with **404**; a fetch **with** `x-hwid` registers/refreshes
+that device and counts it against the limit.
+
+**The FCP front forwards HWID headers.** Members fetch their config from
+`GET /api/v1/sub/<token>` (the FCP origin), and FCP fetches the panel
+server-side. It forwards the client's `x-hwid` / `x-device-os` / `x-ver-os` /
+`x-device-model`, and **bypasses the UA cache when `x-hwid` is present** (each
+device must reach the panel to register + be counted). A panel 404 is passed
+through as 404 (authoritative — not a 502, and never a stale body). Without this
+forwarding, enforcement _and_ device registration would be dead through the front
+(the device list would always be empty) — this was a latent gap.
+
+**Not every app sends HWID.** Only apps that implement Remnawave device
+identification (today **Karing** and **Throne**; tracked per-app as
+`clients.hwid`) honor the limit. On a device-limited plan the connect UI splits
+apps into "works with your device limit" vs "not recommended", and shows the HWID
+hint — **only** when `devices.enforcementEnabled` is on and the member's tier is
+device-limited. With the toggle off (the unlimited-by-default posture) the device
+UI is neutralized entirely.
+
+**Privacy-profile members** import a static raw config (not a polling URL), so
+they never send an HWID and can't honor a device limit — device limits are an
+evade-profile / fronted-URL concept.
+
+The device list + member self-service **revoke** (`POST /api/v1/account/devices/revoke`)
+are Remnawave-only; Outline has no device concept and returns a typed 409.
 
 ## Sensitive data
 

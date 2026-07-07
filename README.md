@@ -300,6 +300,10 @@ censorship-resistance choice. There are **no third-party runtime scripts at all*
 captcha widget + its proof-of-work WASM + pako are bundled and served same-origin.
 Apply `tabular-nums` to counters, file sizes, dates, and any number that re-renders.
 
+The control plane also never persists a client IP anywhere by default (app, Caddy, and Cap
+are all configured for it); the end-to-end posture + a downstream-deployer checklist is in
+[`docs/privacy.md`](docs/privacy.md).
+
 ### Router
 
 `src/client/stores/router.svelte.ts` is a History-API router exposing a reactive

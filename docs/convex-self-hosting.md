@@ -163,12 +163,24 @@ members to carry). On a fresh backend:
 1. **Stand up + deploy**: steps 1 to 4 above, then `bunx convex deploy -y` (CI uses
    `CONVEX_SELF_HOSTED_URL` + `CONVEX_SELF_HOSTED_ADMIN_KEY`).
 2. **Set env**: every Required var in §5 (and `ENVIRONMENT` left at `production`
-   so cookies are `Secure`; `TRUSTED_PROXY=true` since you're behind the proxy in §7).
-3. **Seed tiers + settings** (idempotent):
+   so cookies are `Secure`; set `TRUSTED_PROXY_HOPS` to the number of proxies in
+   front of the backend since you're behind the proxy in §7 — `1` when Caddy is
+   the public edge. The legacy `TRUSTED_PROXY=true` is still accepted as an alias
+   for `TRUSTED_PROXY_HOPS=1`).
+3. **Seed tiers + settings + client catalog** (idempotent):
    ```sh
    bunx convex run seed:seedCutover '{}'
    ```
-   Adjust the tier limits afterward in the admin CMS (Tiers) or edit `convex/seed.ts`.
+   `seedCutover` seeds the default-free + member tiers, app settings, the primary
+   Remnawave instance (from `REMNAWAVE_*` env, if set), and the recommended-client
+   catalog. Then reconcile the paid tier to the unlimited membership + set the
+   device-limit default (both idempotent no-ops on a re-run):
+   ```sh
+   bunx convex run seed:reconfigureMembershipTier '{}'
+   bunx convex run seed:migrateDeviceEnforcementDefault '{}'
+   ```
+   (The beta compose `deployer` service runs all three automatically.) Adjust the
+   tier limits afterward in the admin CMS (Tiers) or edit `convex/seed.ts`.
 4. **Register Outline servers** (only if using the Outline backend): admin CMS →
    **Backend servers** (the `apiUrl` secret is stored server-side, never echoed back).
 5. **Bootstrap the first admin passkey**: open `/admin` in a browser; the wizard

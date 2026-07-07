@@ -99,9 +99,14 @@ first request once DNS resolves (`logs web`); the backend `data` + Postgres
 ## 3. Bootstrap the first admin passkey
 
 Open `https://beta.freesocks.org/admin` in a browser. While no passkey exists, the
-bootstrap wizard appears: paste the `ADMIN_BOOTSTRAP_SECRET` you set in
-`.env.convex`, then register a passkey. Bootstrap **locks forever** once any
-credential exists.
+bootstrap wizard appears: paste the `ADMIN_BOOTSTRAP_SECRET`, then register a
+passkey. Bootstrap **locks forever** once any credential exists.
+
+The `deployer` **prints the bootstrap secret at the end of every deploy** (look
+for the `ADMIN_BOOTSTRAP_SECRET = …` line in `docker compose ... logs deployer`),
+so you don't have to fish it out — it's auto-generated into the deployment env,
+not `.env.convex`. You can also read it any time with
+`bunx convex env get ADMIN_BOOTSTRAP_SECRET` or from the dashboard's env screen.
 
 ## 4. Add a backend instance (the subscription step needs one)
 
@@ -188,11 +193,17 @@ See `docs/threat-model-cdn-blinding.md`.
 ## Notes
 
 - **Image pinning.** EVERY image is pinned by digest: the Convex backend +
-  dashboard (and `keygen`, which reuses the backend image), `cap`, `valkey`,
-  `postgres:18` (compose + the backup image), and the `caddy:2-alpine` /
-  `oven/bun` Dockerfile bases. Verified against upstream 2026-06-11 (all pins
-  were at the then-current stable digests). Re-pin on intentional upgrades:
-  `docker buildx imagetools inspect <image:tag>`.
+  dashboard (and `keygen`, which reuses the backend image), `cap`,
+  `valkey:9-alpine`, `postgres:18` (compose + the backup image), and the
+  `caddy:2-alpine` / `oven/bun` Dockerfile bases. Re-pinned to current stable
+  digests 2026-07-07 (valkey 8→9, transparent — Cap uses it as a plain
+  Redis-compatible store). Re-pin on intentional upgrades:
+  `docker buildx imagetools inspect <image:tag>` (keep the backend/keygen pair
+  and the postgres compose/backup-Dockerfile pair matched).
+- **Privacy defaults.** The stack does not persist client IPs anywhere by
+  default — Caddy access logs are explicitly discarded, the backend's request
+  log is silenced, and Cap is configured not to surface a peer IP. The full
+  chain + a downstream-deployer checklist is in [`docs/privacy.md`](privacy.md).
 - **Datastore.** The stack runs **Postgres 18** (the `postgres` service). Set
   `POSTGRES_PASSWORD` in `.env.beta`; the backend connects with `POSTGRES_URL` (no
   db name) and uses the database named after `INSTANCE_NAME` with hyphens replaced
@@ -316,11 +327,14 @@ ssh -L 3000:127.0.0.1:3000 <beta-host>   # then open http://127.0.0.1:3000
 The `backup` service `pg_dump`s the datastore every `BACKUP_INTERVAL_SECONDS`
 and uploads offsite via `BACKUP_S3_*`, pruning to `BACKUP_RETENTION` local
 copies. **Offsite storage is enforced**: with `BACKUP_S3_*` unset the container
-exits fatally (visible in `docker compose ps`) unless
-`BACKUP_ALLOW_LOCAL_ONLY=true` explicitly accepts the risk — accounts are
-anonymous, so a lost datastore is unrecoverable. Also back up the **secret set**
-(the `bunx convex env` values, especially `ACCOUNT_ID_PEPPER` — losing it
-invalidates every account number).
+exits fatally and **crash-loops on first deploy** (visible in `docker compose
+ps`) unless `BACKUP_ALLOW_LOCAL_ONLY=true` explicitly accepts the risk — accounts
+are anonymous, so a lost datastore is unrecoverable. This is intentional; if a
+first deploy shows the backup container restarting, that's why. The sidecar also
+has a **liveness healthcheck** (a `/backups/.heartbeat` file touched each cycle),
+so a wedged loop shows `unhealthy` rather than a silent stall. Also back up the
+**secret set** (the `bunx convex env` values, especially `ACCOUNT_ID_PEPPER` —
+losing it invalidates every account number).
 
 **Pre-launch check:** `docker compose -f docker-compose.beta.yml logs backup |
 grep uploading` must show offsite uploads (not the LOCAL ONLY warning), and the
