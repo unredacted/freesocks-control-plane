@@ -87,11 +87,27 @@
       : (deliveryPref() ?? data?.suggestedDelivery ?? 'evade'),
   );
 
-  // Localized profile title for toasts + the confirm dialog. The server's stored
-  // label is English-only; the SPA is i18n'd, so copy is keyed off the profile id.
+  // Profile title for toasts + the confirm dialog: an admin-set label from the
+  // public catalog overrides the translated copy verbatim (all locales, by
+  // design — the server ships null unless the admin actually set one); otherwise
+  // the SPA's i18n copy keyed off the profile id.
   function profileLabel(id: 'privacy' | 'evade'): string {
+    const custom = boundProfiles.find((p) => p.id === id)?.label;
+    if (custom?.trim()) return custom;
     return id === 'privacy' ? t('delivery.privacyTitle') : t('delivery.evadeTitle');
   }
+
+  // Admin copy overrides for the picker cards (same rule as profileLabel).
+  let profileOverrides = $derived({
+    evade: {
+      title: boundProfiles.find((p) => p.id === 'evade')?.label ?? null,
+      body: boundProfiles.find((p) => p.id === 'evade')?.description ?? null,
+    },
+    privacy: {
+      title: boundProfiles.find((p) => p.id === 'privacy')?.label ?? null,
+      body: boundProfiles.find((p) => p.id === 'privacy')?.description ?? null,
+    },
+  });
 
   // a11y: sonner toasts aren't reliably announced; this feeds a visually
   // hidden role="status" region so async outcomes are spoken once. Keep the
@@ -799,6 +815,7 @@
             available={profileAvailability}
             busy={switchProfile.isPending}
             onChoose={chooseProfile}
+            overrides={profileOverrides}
           />
 
           {#if data.subscription}

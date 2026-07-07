@@ -146,13 +146,17 @@ export const PublicConfig = z.object({
     })
     .optional(),
   /** Member-facing connection-profile catalog (the transport chooser): id +
-   *  label + whether it's the default + `available` (its Remnawave squad is
-   *  bound). NEVER the squad UUID. Optional/defaulted for forward-compat. */
+   *  admin copy overrides + whether it's the default + `available` (its
+   *  Remnawave squad is bound). `label`/`description` are null unless the admin
+   *  set them — a non-null value overrides the SPA's translated copy verbatim
+   *  (all locales); null keeps the i18n defaults. NEVER the squad UUID.
+   *  Optional/defaulted for forward-compat. */
   connectionProfiles: z
     .array(
       z.object({
         id: z.enum(['evade', 'privacy']),
-        label: z.string(),
+        label: z.string().nullable(),
+        description: z.string().nullable().optional().default(null),
         isDefault: z.boolean(),
         available: z.boolean(),
       }),

@@ -391,6 +391,18 @@
         suggested={account.data?.suggestedDelivery}
         onChoose={setDeliveryPref}
         signup
+        overrides={{
+          evade: {
+            title: config.data?.connectionProfiles.find((p) => p.id === 'evade')?.label ?? null,
+            body:
+              config.data?.connectionProfiles.find((p) => p.id === 'evade')?.description ?? null,
+          },
+          privacy: {
+            title: config.data?.connectionProfiles.find((p) => p.id === 'privacy')?.label ?? null,
+            body:
+              config.data?.connectionProfiles.find((p) => p.id === 'privacy')?.description ?? null,
+          },
+        }}
       />
 
       {#if subscription}

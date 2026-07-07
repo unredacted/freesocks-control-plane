@@ -92,27 +92,97 @@ describe('connectionProfiles lib', () => {
     expect(profiles.find((p) => p.id === 'evade')!.isDefault).toBe(true); // invalid default → evade
   });
 
-  test('publicProjection strips squadUuid + sets available', () => {
+  test('publicProjection strips squadUuid + sets available + nulls non-custom copy', () => {
     const pub = publicProjection([
-      { id: 'evade', label: 'Stay connected', squadUuid: 'sq-front', isDefault: true },
-      { id: 'privacy', label: 'Maximize privacy', squadUuid: null, isDefault: false },
+      {
+        id: 'evade',
+        label: 'Stay connected',
+        labelCustom: false,
+        description: null,
+        squadUuid: 'sq-front',
+        isDefault: true,
+      },
+      {
+        id: 'privacy',
+        label: 'Custom privacy title',
+        labelCustom: true,
+        description: 'Custom body',
+        squadUuid: null,
+        isDefault: false,
+      },
     ]);
     expect(pub).toEqual([
-      { id: 'evade', label: 'Stay connected', isDefault: true, available: true },
-      { id: 'privacy', label: 'Maximize privacy', isDefault: false, available: false },
+      // Non-custom label ships as null so the SPA's i18n stays authoritative.
+      { id: 'evade', label: null, description: null, isDefault: true, available: true },
+      {
+        id: 'privacy',
+        label: 'Custom privacy title',
+        description: 'Custom body',
+        isDefault: false,
+        available: false,
+      },
     ]);
     expect(JSON.stringify(pub)).not.toContain('sq-front'); // squad uuid never leaks
+  });
+
+  test('description: stored value resolves, blank/whitespace clears to null', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_PROFILE_KEYS.description('evade'),
+        value: JSON.stringify('Fastest, works behind heavy filtering.'),
+        updatedAt: now,
+      });
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_PROFILE_KEYS.description('privacy'),
+        value: JSON.stringify('   '), // whitespace-only = cleared
+        updatedAt: now,
+      });
+    });
+    const profiles = await t.run((ctx) => resolveConnectionProfiles(ctx.db));
+    expect(profiles.find((p) => p.id === 'evade')!.description).toBe(
+      'Fastest, works behind heavy filtering.',
+    );
+    expect(profiles.find((p) => p.id === 'privacy')!.description).toBeNull();
+  });
+
+  test('labelCustom tracks stored-vs-default labels', async () => {
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: CONNECTION_PROFILE_KEYS.label('privacy'),
+        value: JSON.stringify('Max privacy'),
+        updatedAt: Date.now(),
+      }),
+    );
+    const profiles = await t.run((ctx) => resolveConnectionProfiles(ctx.db));
+    const evade = profiles.find((p) => p.id === 'evade')!;
+    const priv = profiles.find((p) => p.id === 'privacy')!;
+    expect(evade.labelCustom).toBe(false);
+    expect(evade.label).toBe('Stay connected'); // compiled default, admin-side only
+    expect(priv.labelCustom).toBe(true);
+    expect(priv.label).toBe('Max privacy');
+    const pub = publicProjection(profiles);
+    expect(pub.find((p) => p.id === 'evade')!.label).toBeNull();
+    expect(pub.find((p) => p.id === 'privacy')!.label).toBe('Max privacy');
   });
 
   test('connectionProfileWrites validates ids + maps to appSettings keys', () => {
     const writes = connectionProfileWrites({
       default: 'privacy',
-      profiles: { evade: { squadUuid: 'sq-front' }, privacy: { label: 'P' } },
+      profiles: {
+        evade: { squadUuid: 'sq-front', description: 'Own copy' },
+        privacy: { label: 'P', description: '' },
+      },
     });
     const byKey = Object.fromEntries(writes.map((w) => [w.key, JSON.parse(w.value)]));
     expect(byKey[CONNECTION_PROFILE_KEYS.defaultId]).toBe('privacy');
     expect(byKey[CONNECTION_PROFILE_KEYS.squad('evade')]).toBe('sq-front');
     expect(byKey[CONNECTION_PROFILE_KEYS.label('privacy')]).toBe('P');
+    expect(byKey[CONNECTION_PROFILE_KEYS.description('evade')]).toBe('Own copy');
+    // An explicit empty string is a valid clear-write (resolves back to null).
+    expect(byKey[CONNECTION_PROFILE_KEYS.description('privacy')]).toBe('');
     expect(() => connectionProfileWrites({ default: 'nope' })).toThrow();
     expect(() => connectionProfileWrites('x')).toThrow();
     // Unknown profile ids are ignored, not an error.

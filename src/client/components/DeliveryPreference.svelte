@@ -34,6 +34,12 @@
     /** Sign-up context: the pick persists to the account + shapes the first key
      *  (no re-issue yet), so show sign-up-specific copy. */
     signup?: boolean;
+    /** Admin-set copy from the public profile catalog. A non-empty title/body
+     *  overrides the translated i18n copy verbatim (all locales, by design);
+     *  null/absent keeps the i18n default. */
+    overrides?: Partial<
+      Record<'privacy' | 'evade', { title?: string | null; body?: string | null }>
+    >;
   }
   let {
     selected,
@@ -43,6 +49,7 @@
     busy = false,
     onChoose,
     signup = false,
+    overrides = {},
   }: Props = $props();
 
   const OPTIONS = [
@@ -54,6 +61,15 @@
       bodyKey: 'delivery.privacyBody',
     },
   ] as const;
+
+  function optTitle(mode: 'privacy' | 'evade', titleKey: Parameters<typeof t>[0]): string {
+    const o = overrides[mode]?.title;
+    return o?.trim() ? o : t(titleKey);
+  }
+  function optBody(mode: 'privacy' | 'evade', bodyKey: Parameters<typeof t>[0]): string {
+    const o = overrides[mode]?.body;
+    return o?.trim() ? o : t(bodyKey);
+  }
 
   // In server mode a not-yet-bound option can't meaningfully be chosen (it would
   // fall back to the same squad); disable it unless it's the current selection.
@@ -99,7 +115,7 @@
         <div class="flex items-center justify-between gap-2">
           <span class="flex items-center gap-2 text-sm font-semibold">
             <opt.icon class="size-4 shrink-0 text-primary" />
-            {t(opt.titleKey)}
+            {optTitle(opt.mode, opt.titleKey)}
           </span>
           {#if suggested === opt.mode}
             <span
@@ -111,7 +127,7 @@
             <Check class="size-4 shrink-0 text-primary" />
           {/if}
         </div>
-        <p class="mt-1 text-xs text-muted-foreground">{t(opt.bodyKey)}</p>
+        <p class="mt-1 text-xs text-muted-foreground">{optBody(opt.mode, opt.bodyKey)}</p>
       </button>
     {/each}
   </div>

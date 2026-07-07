@@ -1724,9 +1724,14 @@ export const setConnectionProfiles = internalMutation({
       });
     }
     return {
+      // label/description are null unless the admin set them (same rule as the
+      // public projection) — returning the compiled default label here would
+      // round-trip into the admin form and get written back as a custom
+      // override, pinning English over the SPA's i18n.
       profiles: (await resolveConnectionProfiles(ctx.db)).map((p) => ({
         id: p.id,
-        label: p.label,
+        label: p.labelCustom ? p.label : null,
+        description: p.description,
         isDefault: p.isDefault,
         squadBound: p.squadUuid !== null,
       })),

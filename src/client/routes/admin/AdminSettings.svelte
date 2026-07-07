@@ -130,17 +130,31 @@
     default: 'evade' | 'privacy';
     evadeLabel: string;
     privacyLabel: string;
+    evadeDescription: string;
+    privacyDescription: string;
     evadeSquad: string;
     privacySquad: string;
-  }>({ default: 'evade', evadeLabel: '', privacyLabel: '', evadeSquad: '', privacySquad: '' });
+  }>({
+    default: 'evade',
+    evadeLabel: '',
+    privacyLabel: '',
+    evadeDescription: '',
+    privacyDescription: '',
+    evadeSquad: '',
+    privacySquad: '',
+  });
   let cpInit = $state(false);
   $effect(() => {
     const profiles = cfg.data?.connectionProfiles;
     if (profiles && profiles.length > 0 && !cpInit) {
+      // label/description arrive null unless the admin set them (blank input =
+      // members see the app's own translated copy).
       cpDraft = {
         default: profiles.find((p) => p.isDefault)?.id ?? 'evade',
         evadeLabel: profiles.find((p) => p.id === 'evade')?.label ?? '',
         privacyLabel: profiles.find((p) => p.id === 'privacy')?.label ?? '',
+        evadeDescription: profiles.find((p) => p.id === 'evade')?.description ?? '',
+        privacyDescription: profiles.find((p) => p.id === 'privacy')?.description ?? '',
         evadeSquad: '',
         privacySquad: '',
       };
@@ -158,18 +172,19 @@
         profiles: z.array(
           z.object({
             id: z.enum(['evade', 'privacy']),
-            label: z.string(),
+            label: z.string().nullable(),
+            description: z.string().nullable(),
             isDefault: z.boolean(),
             squadBound: z.boolean(),
           }),
         ),
       });
       const profiles: {
-        evade: { label: string; squadUuid?: string };
-        privacy: { label: string; squadUuid?: string };
+        evade: { label: string; description: string; squadUuid?: string };
+        privacy: { label: string; description: string; squadUuid?: string };
       } = {
-        evade: { label: cpDraft.evadeLabel },
-        privacy: { label: cpDraft.privacyLabel },
+        evade: { label: cpDraft.evadeLabel, description: cpDraft.evadeDescription },
+        privacy: { label: cpDraft.privacyLabel, description: cpDraft.privacyDescription },
       };
       // Only send a squad when the admin typed one — blank keeps the current binding.
       if (cpDraft.evadeSquad.trim()) profiles.evade.squadUuid = cpDraft.evadeSquad.trim();
@@ -182,11 +197,13 @@
     },
     onSuccess: (updated) => {
       // Reset the write-only squad inputs; refresh config so `available` + labels update.
+      // label/description come back null when cleared — reflect that as blank inputs.
       cpDraft = {
         default: updated.profiles.find((p) => p.isDefault)?.id ?? cpDraft.default,
-        evadeLabel: updated.profiles.find((p) => p.id === 'evade')?.label ?? cpDraft.evadeLabel,
-        privacyLabel:
-          updated.profiles.find((p) => p.id === 'privacy')?.label ?? cpDraft.privacyLabel,
+        evadeLabel: updated.profiles.find((p) => p.id === 'evade')?.label ?? '',
+        privacyLabel: updated.profiles.find((p) => p.id === 'privacy')?.label ?? '',
+        evadeDescription: updated.profiles.find((p) => p.id === 'evade')?.description ?? '',
+        privacyDescription: updated.profiles.find((p) => p.id === 'privacy')?.description ?? '',
         evadeSquad: '',
         privacySquad: '',
       };
@@ -527,7 +544,9 @@
             it should issue keys into. Squad UUIDs are write-only; leave a field blank to keep the
             current binding. The Ansible panel-bootstrap sets these automatically. Until a squad is
             bound the member picker stays a local presentation preference (issuance falls back to
-            the tier's own squad).
+            the tier's own squad). A custom label/description replaces the member picker's
+            translated copy verbatim in EVERY language — leave blank to keep the app's own
+            translations.
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-5 text-sm">
@@ -553,14 +572,32 @@
             </div>
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-label"
-                >Label</label
+                >Label <span class="opacity-70">(blank = translated default)</span></label
               >
               <Input
                 id="cp-evade-label"
+                placeholder="Stay connected"
                 value={cpDraft.evadeLabel}
                 oninput={(e) =>
                   (cpDraft = { ...cpDraft, evadeLabel: (e.target as HTMLInputElement).value })}
               />
+            </div>
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-description"
+                >Description <span class="opacity-70">(blank = translated default)</span></label
+              >
+              <textarea
+                id="cp-evade-description"
+                rows="2"
+                class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
+                placeholder="Shown on the member's picker card"
+                value={cpDraft.evadeDescription}
+                oninput={(e) =>
+                  (cpDraft = {
+                    ...cpDraft,
+                    evadeDescription: (e.target as HTMLTextAreaElement).value,
+                  })}
+              ></textarea>
             </div>
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-squad"
@@ -598,14 +635,32 @@
             </div>
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="cp-privacy-label"
-                >Label</label
+                >Label <span class="opacity-70">(blank = translated default)</span></label
               >
               <Input
                 id="cp-privacy-label"
+                placeholder="Maximize privacy"
                 value={cpDraft.privacyLabel}
                 oninput={(e) =>
                   (cpDraft = { ...cpDraft, privacyLabel: (e.target as HTMLInputElement).value })}
               />
+            </div>
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="cp-privacy-description"
+                >Description <span class="opacity-70">(blank = translated default)</span></label
+              >
+              <textarea
+                id="cp-privacy-description"
+                rows="2"
+                class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
+                placeholder="Shown on the member's picker card"
+                value={cpDraft.privacyDescription}
+                oninput={(e) =>
+                  (cpDraft = {
+                    ...cpDraft,
+                    privacyDescription: (e.target as HTMLTextAreaElement).value,
+                  })}
+              ></textarea>
             </div>
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="cp-privacy-squad"

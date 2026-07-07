@@ -910,15 +910,25 @@ describe('adminApi setConnectionProfiles', () => {
         default: 'privacy',
         profiles: {
           evade: { squadUuid: 'fronted-squad-uuid' },
-          privacy: { squadUuid: 'reality-squad-uuid', label: 'Max privacy' },
+          privacy: {
+            squadUuid: 'reality-squad-uuid',
+            label: 'Max privacy',
+            description: 'Direct Reality, no CDN in the path.',
+          },
         },
       },
     });
     const priv = out.profiles.find((p) => p.id === 'privacy')!;
     expect(priv.squadBound).toBe(true);
     expect(priv.label).toBe('Max privacy');
+    expect(priv.description).toBe('Direct Reality, no CDN in the path.');
     expect(priv.isDefault).toBe(true);
-    expect(out.profiles.find((p) => p.id === 'evade')!.squadBound).toBe(true);
+    const evade = out.profiles.find((p) => p.id === 'evade')!;
+    expect(evade.squadBound).toBe(true);
+    // No custom copy set on evade → nulls (never the compiled English default,
+    // which would round-trip through the admin form and pin English over i18n).
+    expect(evade.label).toBeNull();
+    expect(evade.description).toBeNull();
     // The admin view exposes only the boolean — the squad UUID never leaves the resolver.
     expect(JSON.stringify(out)).not.toContain('reality-squad-uuid');
     expect(JSON.stringify(out)).not.toContain('fronted-squad-uuid');

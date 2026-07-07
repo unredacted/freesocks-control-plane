@@ -20,18 +20,27 @@ export const CONNECTION_PROFILE_IDS = ['evade', 'privacy'] as const;
 export type ConnectionProfileId = (typeof CONNECTION_PROFILE_IDS)[number];
 export const DEFAULT_CONNECTION_PROFILE: ConnectionProfileId = 'evade';
 
-/** Server-side profile: id + admin label + the squad it issues into. */
+/** Server-side profile: id + admin label/description + the squad it issues into. */
 export interface ConnectionProfile {
   id: ConnectionProfileId;
   label: string;
+  /** True when the label came from a stored admin value (vs the compiled
+   *  DEFAULT_LABELS fallback) — the public projection only ships a label the
+   *  admin actually set, so the SPA's i18n stays authoritative otherwise. */
+  labelCustom: boolean;
+  /** Admin-set member-facing description; null = the SPA renders its i18n copy. */
+  description: string | null;
   squadUuid: string | null; // null until bound; issuance then falls back to the tier squad
   isDefault: boolean;
 }
 
-/** Public-safe projection — the exact shape publicConfig ships (NO squadUuid). */
+/** Public-safe projection — the exact shape publicConfig ships (NO squadUuid).
+ *  `label`/`description` are null unless the admin set them: a non-null value
+ *  overrides the SPA's translated copy verbatim (all locales), by design. */
 export interface PublicConnectionProfile {
   id: ConnectionProfileId;
-  label: string;
+  label: string | null;
+  description: string | null;
   isDefault: boolean;
   available: boolean; // squad bound → selectable (else it would fall back to the tier squad)
 }
@@ -39,6 +48,7 @@ export interface PublicConnectionProfile {
 /** appSettings keys — `connectionProfile.<id>.<field>` (parallels the theme and billing namespaces). */
 export const CONNECTION_PROFILE_KEYS = {
   label: (id: ConnectionProfileId) => `connectionProfile.${id}.label`,
+  description: (id: ConnectionProfileId) => `connectionProfile.${id}.description`,
   squad: (id: ConnectionProfileId) => `connectionProfile.${id}.squadUuid`,
   defaultId: 'connectionProfile.default',
 } as const;
@@ -96,10 +106,15 @@ export async function resolveConnectionProfiles(db: DatabaseReader): Promise<Con
   const out: ConnectionProfile[] = [];
   for (const id of CONNECTION_PROFILE_IDS) {
     const label = ns.get(CONNECTION_PROFILE_KEYS.label(id));
+    const description = ns.get(CONNECTION_PROFILE_KEYS.description(id));
     const squad = ns.get(CONNECTION_PROFILE_KEYS.squad(id));
+    const labelCustom = typeof label === 'string' && label.trim().length > 0;
     out.push({
       id,
-      label: typeof label === 'string' && label.trim() ? label : DEFAULT_LABELS[id],
+      label: labelCustom ? (label as string) : DEFAULT_LABELS[id],
+      labelCustom,
+      description:
+        typeof description === 'string' && description.trim() ? (description as string) : null,
       squadUuid: typeof squad === 'string' && squad.trim() ? squad : null,
       isDefault: id === defaultId,
     });
@@ -132,16 +147,20 @@ export async function resolveProfileSquad(
 export function publicProjection(profiles: ConnectionProfile[]): PublicConnectionProfile[] {
   return profiles.map((p) => ({
     id: p.id,
-    label: p.label,
+    // Only an admin-set label/description overrides the SPA's i18n copy; the
+    // compiled English defaults must NOT ship (they'd pin English on every locale).
+    label: p.labelCustom ? p.label : null,
+    description: p.description,
     isDefault: p.isDefault,
     available: p.squadUuid !== null,
   }));
 }
 
 /**
- * Admin PATCH → appSettings writes. Validates ids; `label`/`squadUuid` optional
- * per id; `default` optional. Returns the key/value pairs the mutation persists
- * (mirrors `billingConfigWrites`). Throws on a malformed patch.
+ * Admin PATCH → appSettings writes. Validates ids; `label`/`description`/
+ * `squadUuid` optional per id (an empty string clears back to the i18n/compiled
+ * fallback); `default` optional. Returns the key/value pairs the mutation
+ * persists (mirrors `billingConfigWrites`). Throws on a malformed patch.
  */
 export function connectionProfileWrites(patch: unknown): Array<{ key: string; value: string }> {
   if (!patch || typeof patch !== 'object') {
@@ -160,6 +179,12 @@ export function connectionProfileWrites(patch: unknown): Array<{ key: string; va
     const e = entry as Record<string, unknown>;
     if (typeof e.label === 'string') {
       writes.push({ key: CONNECTION_PROFILE_KEYS.label(id), value: JSON.stringify(e.label) });
+    }
+    if (typeof e.description === 'string') {
+      writes.push({
+        key: CONNECTION_PROFILE_KEYS.description(id),
+        value: JSON.stringify(e.description),
+      });
     }
     if (typeof e.squadUuid === 'string') {
       writes.push({ key: CONNECTION_PROFILE_KEYS.squad(id), value: JSON.stringify(e.squadUuid) });
