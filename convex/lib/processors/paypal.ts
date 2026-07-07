@@ -187,9 +187,21 @@ export async function verifyAndParse(args: {
 
   let status: OrderStatus = 'pending';
   if (eventType === 'CHECKOUT.ORDER.APPROVED') {
-    // PayPal doesn't auto-capture a redirect order — capture it now.
-    const captured = await captureOrder(args.cfg, token, processorRef).catch(() => false);
-    status = captured ? 'paid' : 'confirming';
+    // PayPal doesn't auto-capture a redirect order — capture it now. A transient
+    // capture failure must NOT be swallowed into ok:true/status:'confirming': that
+    // 200-acks the webhook (marked processed), so PayPal never redelivers and the
+    // capture never happens — the buyer approved but is never charged. Instead
+    // fail the verify → ingest 400s → PayPal redelivers → captureOrder retries,
+    // idempotent via its 422 ORDER_ALREADY_CAPTURED guard. (Review #1.)
+    try {
+      await captureOrder(args.cfg, token, processorRef);
+    } catch (e) {
+      return {
+        ok: false,
+        reason: `paypal capture failed: ${e instanceof Error ? e.message : 'unknown'}`,
+      };
+    }
+    status = 'paid';
   } else if (eventType === 'PAYMENT.CAPTURE.COMPLETED') {
     status = 'paid';
   } else if (eventType === 'PAYMENT.CAPTURE.DENIED' || eventType === 'CHECKOUT.ORDER.DECLINED') {

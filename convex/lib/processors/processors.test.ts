@@ -293,7 +293,7 @@ describe('paypal.verifyAndParse', () => {
     if (r.ok) expect(r.orderRef).toBe('order-nested'); // nested extraction
   });
 
-  test('an APPROVED order whose capture fails maps to confirming (not paid)', async () => {
+  test('an APPROVED order whose capture fails is REJECTED (retryable), not silently confirming', async () => {
     vi.stubGlobal('fetch', ppFetch({ capture: 'fail' }));
     const r = await paypal.verifyAndParse({
       rawBody: JSON.stringify({
@@ -304,7 +304,11 @@ describe('paypal.verifyAndParse', () => {
       headers: PP_HEADERS,
       cfg: PP_CFG,
     });
-    expect(r.ok && r.status).toBe('confirming');
+    // Must NOT 200-ack as 'confirming' (that marks the webhook processed → PayPal
+    // never retries → the buyer is never charged). Fail so ingest 400s and PayPal
+    // redelivers; the retry is idempotent via the 422 guard. (Review #1.)
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/capture failed/i);
   });
 
   test('an already-captured APPROVED redelivery still maps to paid (idempotent)', async () => {

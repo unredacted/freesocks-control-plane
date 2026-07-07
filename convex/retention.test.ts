@@ -96,6 +96,69 @@ describe('retention sweeps (P2)', () => {
     });
   });
 
+  // Review #5: gift orders paid before giftRevealPending existed carry a reveal but
+  // no flag → invisible to clearStaleGiftReveals. The backfill flags exactly the
+  // unacked pre-flag paid gift orders (not self orders, not acked, not already-flagged).
+  test('backfillGiftRevealPending flags only unacked pre-flag paid gift orders', async () => {
+    const t = convexTest(schema, modules);
+    const ids = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'member',
+        name: 'Member',
+        backend: 'remnawave',
+        monthlyTrafficGb: 0,
+        deviceLimit: 0,
+        hwidLimit: 0,
+        hwidEnabled: false,
+        trafficStrategy: 'NO_RESET',
+        isDefaultFree: false,
+        isActive: true,
+        priority: 10,
+        expirationDaysAfterMembershipLapse: 7,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const mk = (opaqueRef: string, kind: 'self' | 'gift', extra: Record<string, unknown>) =>
+        ctx.db.insert('billingOrders', {
+          processor: 'nowpayments',
+          opaqueRef,
+          userId,
+          tierId,
+          durationDays: 91,
+          amountCents: 1400,
+          currency: 'USD',
+          status: 'paid',
+          paidAt: Date.now(),
+          kind,
+          ...extra,
+          updatedAt: Date.now(),
+        });
+      return {
+        preFlag: await mk('g-preflag', 'gift', { giftReveal: ['CODE-A'] }), // no flag → should flag
+        selfOrder: await mk('self-1', 'self', {}), // not a gift → skip
+        acked: await mk('g-acked', 'gift', { giftReveal: ['CODE-C'], giftRevealAck: true }), // acked → skip
+        alreadyFlagged: await mk('g-flagged', 'gift', {
+          giftReveal: ['CODE-B'],
+          giftRevealPending: true,
+        }),
+      };
+    });
+
+    const res = await t.mutation(internal.retention.backfillGiftRevealPending, {});
+    expect(res.flagged).toBe(1);
+
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(ids.preFlag))?.giftRevealPending).toBe(true);
+      expect((await ctx.db.get(ids.selfOrder))?.giftRevealPending).toBeUndefined();
+      expect((await ctx.db.get(ids.acked))?.giftRevealPending).toBeUndefined();
+      expect((await ctx.db.get(ids.alreadyFlagged))?.giftRevealPending).toBe(true); // untouched
+    });
+  });
+
   test('sweepFreeGrants deletes grants past the window, keeps recent ones', async () => {
     const t = convexTest(schema, modules);
     const now = Date.now();

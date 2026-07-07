@@ -197,6 +197,44 @@ export const clearStaleGiftReveals = internalMutation({
   },
 });
 
+/**
+ * One-off backfill (Review #5): gift orders paid BEFORE `giftRevealPending` existed
+ * carry a plaintext `giftReveal` but no flag, so clearStaleGiftReveals (which scans
+ * only the by_gift_reveal_pending index) never clears them. Flag any unacked paid
+ * gift order so the normal sweep clears it on its next run. Paged by the by_status
+ * index + a _creationTime cursor, idempotent (a flagged row no longer matches).
+ * Run `bunx convex run retention:backfillGiftRevealPending '{}'`; if it returns a
+ * nextCursor, re-run with `{"cursor": <n>}` until null. Likely a no-op (gifting is new).
+ */
+export const backfillGiftRevealPending = internalMutation({
+  args: { limit: v.optional(v.number()), cursor: v.optional(v.number()) },
+  handler: async (ctx, { limit, cursor }) => {
+    const page = limit ?? PAGE;
+    const rows = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_status', (q) =>
+        cursor != null
+          ? q.eq('status', 'paid').gt('_creationTime', cursor)
+          : q.eq('status', 'paid'),
+      )
+      .take(page);
+    let flagged = 0;
+    for (const r of rows) {
+      if (
+        r.kind === 'gift' &&
+        (r.giftReveal?.length ?? 0) > 0 &&
+        r.giftRevealPending === undefined &&
+        r.giftRevealAck !== true
+      ) {
+        await ctx.db.patch(r._id, { giftRevealPending: true, updatedAt: Date.now() });
+        flagged++;
+      }
+    }
+    const nextCursor = rows.length === page ? (rows[rows.length - 1]?._creationTime ?? null) : null;
+    return { scanned: rows.length, flagged, nextCursor };
+  },
+});
+
 /** Terminal billing orders (paid/failed/expired): keep ~365 days for accounting. */
 export const sweepBillingOrders = internalMutation({
   args: { limit: v.optional(v.number()) },
