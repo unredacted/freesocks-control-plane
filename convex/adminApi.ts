@@ -24,6 +24,9 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+// One shared by-key upsert (Review P3): the local upsertSetting + setBillingConfig's
+// inline copy both delegate here (also appSettings.set/setMany use it).
+import { upsertSettingRow as upsertSetting } from './appSettings';
 import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
 import { connectionProfileWrites, resolveConnectionProfiles } from './lib/connectionProfiles';
@@ -250,6 +253,25 @@ export const createTier = internalMutation({
   },
 });
 
+/** Nullable-optional tier fields whose explicit `null` maps to Convex "absent". */
+const TIER_NULLABLE_KEYS = new Set(['description', 'remnawaveSquadUuid', 'peerTierId']);
+
+/**
+ * Build a tier patch `fields` object from provided args: skip undefined, map an
+ * explicit null on a nullable field to undefined (Convex "absent"), pass the rest
+ * through. Shared by updateTier + upsertTierBySlug's update path. (Review P3.)
+ * Callers pass only tier fields (upsert strips slug/actorAdminId first).
+ */
+function buildTierPatchFields(patch: Record<string, unknown>): Partial<Doc<'tiers'>> {
+  const fields: Partial<Doc<'tiers'>> = { updatedAt: Date.now() };
+  for (const [k, val] of Object.entries(patch)) {
+    if (val === undefined) continue;
+    (fields as Record<string, unknown>)[k] =
+      TIER_NULLABLE_KEYS.has(k) && val === null ? undefined : val;
+  }
+  return fields;
+}
+
 export const updateTier = internalMutation({
   // All fields optional: the SPA sends a partial patch (TierUpsert minus
   // anything unchanged). `description` / `remnawaveSquadUuid` accept null.
@@ -282,18 +304,7 @@ export const updateTier = internalMutation({
       if (clash) throw new Error(`A tier with slug "${patch.slug}" already exists`);
     }
     // Normalize the nullable-optional contract fields to Convex's "absent" form.
-    const fields: Partial<Doc<'tiers'>> = { updatedAt: Date.now() };
-    for (const [k, val] of Object.entries(patch) as [keyof typeof patch, unknown][]) {
-      if (val === undefined) continue;
-      if (
-        (k === 'description' || k === 'remnawaveSquadUuid' || k === 'peerTierId') &&
-        val === null
-      ) {
-        (fields as Record<string, unknown>)[k] = undefined;
-      } else {
-        (fields as Record<string, unknown>)[k] = val;
-      }
-    }
+    const fields = buildTierPatchFields(patch);
     await ctx.db.patch(id, fields);
     // Compute the post-patch effective row: a patch may flip isDefaultFree on,
     // OR move an already-default tier to another backend — both must clear the
@@ -406,33 +417,11 @@ export const upsertTierBySlug = internalMutation({
       return { ...mapTier((await ctx.db.get(id))!), created: true };
     }
 
-    // UPDATE — patch only the provided fields (mirrors updateTier). The slug is
-    // the address, so it is never itself patched here.
-    const fields: Partial<Doc<'tiers'>> = { updatedAt: Date.now() };
-    const patchable = [
-      'name',
-      'description',
-      'backend',
-      'monthlyTrafficGb',
-      'deviceLimit',
-      'hwidLimit',
-      'hwidEnabled',
-      'trafficStrategy',
-      'remnawaveSquadUuid',
-      'isDefaultFree',
-      'isActive',
-      'priority',
-      'expirationDaysAfterMembershipLapse',
-    ] as const;
-    for (const k of patchable) {
-      const val = (a as Record<string, unknown>)[k];
-      if (val === undefined) continue;
-      if ((k === 'description' || k === 'remnawaveSquadUuid') && val === null) {
-        (fields as Record<string, unknown>)[k] = undefined;
-      } else {
-        (fields as Record<string, unknown>)[k] = val;
-      }
-    }
+    // UPDATE — patch only the provided fields (shares buildTierPatchFields with
+    // updateTier). The slug is the address + actorAdminId isn't a tier field, so
+    // strip both before normalizing.
+    const { slug: _slug, actorAdminId: _actor, ...tierPatch } = a;
+    const fields = buildTierPatchFields(tierPatch);
     await ctx.db.patch(existing._id, fields);
     const effectiveDefaultFree = a.isDefaultFree ?? existing.isDefaultFree;
     const effectiveBackend = a.backend ?? existing.backend;
@@ -1086,6 +1075,63 @@ export const backendServersList = internalQuery({
   },
 });
 
+type BackendServerConfig = Doc<'backendServers'>['config'];
+
+interface BackendServerConfigArgs {
+  backend: 'remnawave' | 'outline';
+  baseUrl?: string;
+  apiToken?: string;
+  apiUrl?: string;
+  websocketEnabled?: boolean;
+  websocketDomain?: string | null;
+  prometheusUrl?: string | null;
+}
+
+/**
+ * Build a fresh backend-server config from create/upsert args (validates the
+ * required fields per backend). Shared by createBackendServer +
+ * upsertBackendServerBySlug's create path. (Review P3: was inlined twice.)
+ */
+function buildBackendServerConfig(a: BackendServerConfigArgs): BackendServerConfig {
+  if (a.backend === 'remnawave') {
+    if (!a.baseUrl || !a.apiToken)
+      throw new Error('A Remnawave instance needs a base URL and an API token');
+    return { type: 'remnawave', baseUrl: a.baseUrl, apiToken: a.apiToken };
+  }
+  if (!a.apiUrl) throw new Error('An Outline instance needs an apiUrl');
+  return {
+    type: 'outline',
+    apiUrl: a.apiUrl,
+    websocketEnabled: a.websocketEnabled ?? false,
+    websocketDomain: a.websocketDomain ?? undefined,
+    prometheusUrl: a.prometheusUrl ?? undefined,
+  };
+}
+
+/**
+ * Merge a config patch into an existing backend-server config, KEEPING the stored
+ * secret when the incoming one is blank/absent (edits never wipe the credential).
+ * The backend TYPE is immutable. Shared by updateBackendServer +
+ * upsertBackendServerBySlug's update path. (Review P3: was inlined twice.)
+ */
+function mergeBackendServerConfig(
+  existing: BackendServerConfig,
+  patch: Omit<BackendServerConfigArgs, 'backend'>,
+): BackendServerConfig {
+  if (existing.type === 'remnawave') {
+    const cfg = { ...existing };
+    if (patch.baseUrl !== undefined && patch.baseUrl !== '') cfg.baseUrl = patch.baseUrl;
+    if (patch.apiToken !== undefined && patch.apiToken !== '') cfg.apiToken = patch.apiToken;
+    return cfg;
+  }
+  const cfg = { ...existing };
+  if (patch.apiUrl !== undefined && patch.apiUrl !== '') cfg.apiUrl = patch.apiUrl;
+  if (patch.websocketEnabled !== undefined) cfg.websocketEnabled = patch.websocketEnabled;
+  if (patch.websocketDomain !== undefined) cfg.websocketDomain = patch.websocketDomain ?? undefined;
+  if (patch.prometheusUrl !== undefined) cfg.prometheusUrl = patch.prometheusUrl ?? undefined;
+  return cfg;
+}
+
 export const createBackendServer = internalMutation({
   args: {
     backend: backendId,
@@ -1109,21 +1155,7 @@ export const createBackendServer = internalMutation({
       .unique();
     if (clash) throw new Error(`A backend server with slug "${a.slug}" already exists`);
 
-    let config;
-    if (a.backend === 'remnawave') {
-      if (!a.baseUrl || !a.apiToken)
-        throw new Error('A Remnawave instance needs a base URL and an API token');
-      config = { type: 'remnawave' as const, baseUrl: a.baseUrl, apiToken: a.apiToken };
-    } else {
-      if (!a.apiUrl) throw new Error('An Outline instance needs an apiUrl');
-      config = {
-        type: 'outline' as const,
-        apiUrl: a.apiUrl,
-        websocketEnabled: a.websocketEnabled ?? false,
-        websocketDomain: a.websocketDomain ?? undefined,
-        prometheusUrl: a.prometheusUrl ?? undefined,
-      };
-    }
+    const config = buildBackendServerConfig(a);
     const id = await ctx.db.insert('backendServers', {
       backend: a.backend,
       name: a.name,
@@ -1169,23 +1201,8 @@ export const updateBackendServer = internalMutation({
     if (patch.isActive !== undefined) fields.isActive = patch.isActive;
     if (patch.priority !== undefined) fields.priority = patch.priority;
 
-    // The backend TYPE is immutable; merge config into the existing variant. An
-    // empty/absent secret keeps the stored one, so editing other fields never
-    // wipes the credential.
-    if (existing.config.type === 'remnawave') {
-      const cfg = { ...existing.config };
-      if (patch.baseUrl !== undefined && patch.baseUrl !== '') cfg.baseUrl = patch.baseUrl;
-      if (patch.apiToken !== undefined && patch.apiToken !== '') cfg.apiToken = patch.apiToken;
-      fields.config = cfg;
-    } else {
-      const cfg = { ...existing.config };
-      if (patch.apiUrl !== undefined && patch.apiUrl !== '') cfg.apiUrl = patch.apiUrl;
-      if (patch.websocketEnabled !== undefined) cfg.websocketEnabled = patch.websocketEnabled;
-      if (patch.websocketDomain !== undefined)
-        cfg.websocketDomain = patch.websocketDomain ?? undefined;
-      if (patch.prometheusUrl !== undefined) cfg.prometheusUrl = patch.prometheusUrl ?? undefined;
-      fields.config = cfg;
-    }
+    // The backend TYPE is immutable; a blank/absent secret keeps the stored one.
+    fields.config = mergeBackendServerConfig(existing.config, patch);
     await ctx.db.patch(id, fields);
     return mapBackendServer((await ctx.db.get(id))!);
   },
@@ -1234,22 +1251,8 @@ export const upsertBackendServerBySlug = internalMutation({
       .unique();
 
     if (!existing) {
-      // CREATE path (mirrors createBackendServer).
-      let config;
-      if (a.backend === 'remnawave') {
-        if (!a.baseUrl || !a.apiToken)
-          throw new Error('A Remnawave instance needs a base URL and an API token');
-        config = { type: 'remnawave' as const, baseUrl: a.baseUrl, apiToken: a.apiToken };
-      } else {
-        if (!a.apiUrl) throw new Error('An Outline instance needs an apiUrl');
-        config = {
-          type: 'outline' as const,
-          apiUrl: a.apiUrl,
-          websocketEnabled: a.websocketEnabled ?? false,
-          websocketDomain: a.websocketDomain ?? undefined,
-          prometheusUrl: a.prometheusUrl ?? undefined,
-        };
-      }
+      // CREATE path — shares the reshape with createBackendServer.
+      const config = buildBackendServerConfig(a);
       const id = await ctx.db.insert('backendServers', {
         backend: a.backend,
         name: a.name ?? a.slug,
@@ -1281,19 +1284,7 @@ export const upsertBackendServerBySlug = internalMutation({
     if (a.name !== undefined) fields.name = a.name;
     if (a.isActive !== undefined) fields.isActive = a.isActive;
     if (a.priority !== undefined) fields.priority = a.priority;
-    if (existing.config.type === 'remnawave') {
-      const cfg = { ...existing.config };
-      if (a.baseUrl !== undefined && a.baseUrl !== '') cfg.baseUrl = a.baseUrl;
-      if (a.apiToken !== undefined && a.apiToken !== '') cfg.apiToken = a.apiToken;
-      fields.config = cfg;
-    } else {
-      const cfg = { ...existing.config };
-      if (a.apiUrl !== undefined && a.apiUrl !== '') cfg.apiUrl = a.apiUrl;
-      if (a.websocketEnabled !== undefined) cfg.websocketEnabled = a.websocketEnabled;
-      if (a.websocketDomain !== undefined) cfg.websocketDomain = a.websocketDomain ?? undefined;
-      if (a.prometheusUrl !== undefined) cfg.prometheusUrl = a.prometheusUrl ?? undefined;
-      fields.config = cfg;
-    }
+    fields.config = mergeBackendServerConfig(existing.config, a);
     await ctx.db.patch(existing._id, fields);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -1446,22 +1437,8 @@ export const setBillingConfig = internalMutation({
     if (writes.length === 0) {
       throw new ConvexError({ code: 'validation', message: 'no recognized billing fields' });
     }
-    const now = Date.now();
     for (const { key, value } of writes) {
-      const existing = await ctx.db
-        .query('appSettings')
-        .withIndex('by_key', (q) => q.eq('key', key))
-        .unique();
-      if (existing) {
-        await ctx.db.patch(existing._id, { value, updatedByAdminId: actorAdminId, updatedAt: now });
-      } else {
-        await ctx.db.insert('appSettings', {
-          key,
-          value,
-          updatedByAdminId: actorAdminId,
-          updatedAt: now,
-        });
-      }
+      await upsertSetting(ctx, key, value, actorAdminId);
       await writeAuditLog(ctx, {
         actorType: 'admin',
         actorId: actorAdminId,
@@ -1610,34 +1587,6 @@ export const statusSummary = internalQuery({
 });
 
 // === theme ==================================================================
-
-/** Upsert one appSettings row by key — used by the dedicated config writers
- *  whose keys live OUTSIDE SETTINGS_DEFAULTS (theme.*, like billing.*). */
-async function upsertSetting(
-  ctx: MutationCtx,
-  key: string,
-  value: string,
-  actorAdminId?: Id<'adminUsers'>,
-): Promise<void> {
-  const existing = await ctx.db
-    .query('appSettings')
-    .withIndex('by_key', (q) => q.eq('key', key))
-    .unique();
-  if (existing) {
-    await ctx.db.patch(existing._id, {
-      value,
-      updatedByAdminId: actorAdminId,
-      updatedAt: Date.now(),
-    });
-  } else {
-    await ctx.db.insert('appSettings', {
-      key,
-      value,
-      updatedByAdminId: actorAdminId,
-      updatedAt: Date.now(),
-    });
-  }
-}
 
 /** Admin sets the brand theme (preset + optional hue override). Writes the
  *  appSettings `theme.*` namespace + audits; resolveTheme/publicConfig read it

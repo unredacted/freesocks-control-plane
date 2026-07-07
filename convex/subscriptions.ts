@@ -3,7 +3,8 @@
 // on the raw Convex channel. The old public `get` / `activeForUser` queries
 // were dead code and were deleted outright.
 import { internalMutation, internalQuery } from './_generated/server';
-import type { Id } from './_generated/dataModel';
+import type { DatabaseReader } from './_generated/server';
+import type { Doc, Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { randomHex } from './lib/crypto';
 
@@ -39,30 +40,38 @@ export const bySubToken = internalQuery({
 });
 
 /**
- * The resolver shared by /account + /subscription (replaces
- * lib/current-subscription.resolveActiveSubscription): prefer the user's
- * `currentSubscriptionId` (so a freshly regenerated key shows immediately), but
- * only if it's still active, never a tombstoned row during the 24h grace
- * window. Falls back to the newest active row.
+ * Core current-or-active resolution (replaces lib/current-subscription): prefer the
+ * user's `currentSubscriptionId` (so a freshly regenerated key shows immediately),
+ * but only if it's still active — never a tombstoned row during the 24h grace
+ * window — else the newest active row. Plain fn so both resolveCurrentOrActive and
+ * mirrorContextForUser share ONE copy of the rule.
  */
+async function currentOrActiveSub(
+  db: DatabaseReader,
+  user: Doc<'users'>,
+): Promise<Doc<'subscriptions'> | null> {
+  if (user.currentSubscriptionId) {
+    const cur = await db.get(user.currentSubscriptionId);
+    if (cur && cur.state === 'active') return cur;
+  }
+  // Newest active row via the (userId, state) index — within the equal prefix the
+  // index orders by _creationTime, so desc->first is newest.
+  return (
+    (await db
+      .query('subscriptions')
+      .withIndex('by_user_state', (q) => q.eq('userId', user._id).eq('state', 'active'))
+      .order('desc')
+      .first()) ?? null
+  );
+}
+
+/** The resolver shared by /account + /subscription. */
 export const resolveCurrentOrActive = internalQuery({
   args: { userId: v.id('users') },
   handler: async (ctx, { userId }) => {
     const user = await ctx.db.get(userId);
     if (!user) return null;
-    if (user.currentSubscriptionId) {
-      const cur = await ctx.db.get(user.currentSubscriptionId);
-      if (cur && cur.state === 'active') return cur;
-    }
-    // Newest active row via the (userId, state) index — within the equal
-    // prefix the index orders by _creationTime, so desc->first is newest.
-    return (
-      (await ctx.db
-        .query('subscriptions')
-        .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
-        .order('desc')
-        .first()) ?? null
-    );
+    return currentOrActiveSub(ctx.db, user);
   },
 });
 
@@ -228,18 +237,7 @@ export const mirrorContextForUser = internalQuery({
   handler: async (ctx, { userId }): Promise<MirrorContext | null> => {
     const user = await ctx.db.get(userId);
     if (!user) return null;
-    let sub = null;
-    if (user.currentSubscriptionId) {
-      const cur = await ctx.db.get(user.currentSubscriptionId);
-      if (cur && cur.state === 'active') sub = cur;
-    }
-    if (!sub) {
-      sub = await ctx.db
-        .query('subscriptions')
-        .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
-        .order('desc')
-        .first();
-    }
+    const sub = await currentOrActiveSub(ctx.db, user);
     if (!sub) return null;
     return {
       subscriptionId: sub._id,
