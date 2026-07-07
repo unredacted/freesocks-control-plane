@@ -4,8 +4,14 @@
 @custom-variant dark (&:is(.dark *));
 
 @layer base {
+  /* Light theme. The neutral ladder is stepped like the .dark block, inverted:
+     an off-white page with pure-white cards/popovers a step above it, fills
+     (secondary/muted/accent) clearly below white so badges/skeletons read as
+     surfaces, and border/input dark enough to draw a visible hairline on BOTH
+     the page and the cards. muted-foreground is tuned for AA on white AND on
+     the muted fill (~5.9:1 / ~5.3:1). */
   :root {
-    --background: oklch(1 0 0);
+    --background: oklch(0.985 0 0);
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.145 0 0);
@@ -19,16 +25,16 @@
        swap them per deployment by overriding --primary/--ring at runtime. */
     --primary: oklch(0.52 0.13 158);
     --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
+    --secondary: oklch(0.94 0 0);
     --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
+    --muted: oklch(0.94 0 0);
+    --muted-foreground: oklch(0.44 0 0);
+    --accent: oklch(0.94 0 0);
     --accent-foreground: oklch(0.205 0 0);
     --destructive: oklch(0.577 0.245 27.325);
     --destructive-foreground: oklch(0.985 0 0);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
+    --border: oklch(0.86 0 0);
+    --input: oklch(0.86 0 0);
     --ring: oklch(0.58 0.11 158);
     --radius: 0.625rem;
   }
