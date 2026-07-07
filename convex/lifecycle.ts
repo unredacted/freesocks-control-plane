@@ -18,6 +18,8 @@ import { v } from 'convex/values';
 import { deleteSubscriptionEverywhere } from './lib/issuance';
 import { computeExpireAtIso, gbToBytes } from './lib/backends/types';
 import { writeAuditLog } from './lib/audit';
+import { resolveProfileSquad } from './lib/connectionProfiles';
+import { resolveDefaultFreeTier } from './tiers';
 
 // --- entitlement seam ------------------------------------------------------
 
@@ -42,15 +44,23 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
   if (!toTier) throw new Error('tier not found');
 
   if (user.tierId === a.tierId) {
-    if (a.expiresAtMs !== (user.membershipExpiresAt ?? null)) {
+    const expiryMoved = a.expiresAtMs !== (user.membershipExpiresAt ?? null);
+    const statusLifted = user.status === 'grace' || user.status === 'disabled';
+    if (expiryMoved || statusLifted) {
       await ctx.db.patch(a.userId, {
         membershipExpiresAt: a.expiresAtMs ?? undefined,
-        // A renewed/extended membership re-activates a lapsed (grace/disabled) user.
-        ...(user.status === 'grace' || user.status === 'disabled'
-          ? { status: 'active' as const }
+        // A renewed/extended membership re-activates a lapsed (grace/disabled) user
+        // and clears the lapse markers (mirrors the admin re-enable path).
+        ...(statusLifted
+          ? { status: 'active' as const, disabledReason: undefined, suspendedAt: undefined }
           : {}),
         updatedAt: Date.now(),
       });
+      // Re-push so a same-tier renewal re-enables the backend key (the grace sweep
+      // disabled it via setUserStatus(false)) and extends its expiry. Previously
+      // this branch returned without a push, so the common monthly re-up left the
+      // Remnawave key DISABLED. (Review #2.)
+      await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, { userId: a.userId });
     }
     return;
   }
@@ -58,7 +68,9 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
   await ctx.db.patch(a.userId, {
     tierId: a.tierId,
     membershipExpiresAt: a.expiresAtMs ?? undefined,
-    ...(user.status === 'grace' || user.status === 'disabled' ? { status: 'active' as const } : {}),
+    ...(user.status === 'grace' || user.status === 'disabled'
+      ? { status: 'active' as const, disabledReason: undefined, suspendedAt: undefined }
+      : {}),
     updatedAt: Date.now(),
   });
   await ctx.db.insert('tierHistory', {
@@ -98,6 +110,48 @@ export const setMembership = internalMutation({
   },
 });
 
+/**
+ * Auto-downgrade a returning lapsed member (status=disabled, reason
+ * 'membership_lapsed') to the active default-free tier, so they regain a working
+ * key at free limits instead of staying locked out; the account view then prompts
+ * an upgrade. Called from accountLogin (Review #1). No-op unless the user is a
+ * lapsed paid member (admin-disabled, already-free, and grace users are untouched).
+ */
+export const downgradeLapsedToFree = internalMutation({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }): Promise<null> => {
+    const user = await ctx.db.get(userId);
+    if (!user) return null;
+    if (user.status !== 'disabled' || user.disabledReason !== 'membership_lapsed') return null;
+    const currentTier = await ctx.db.get(user.tierId);
+    if (currentTier?.isDefaultFree) return null; // already free — nothing to downgrade
+
+    // Resolve the default-free tier for the member's current key backend so the
+    // re-push applies free limits to the existing subscription in place; fall back
+    // to any active default-free tier if that backend has none configured.
+    const sub = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+      .order('desc')
+      .first();
+    const free =
+      (sub ? await resolveDefaultFreeTier(ctx.db, sub.backend) : null) ??
+      (await resolveDefaultFreeTier(ctx.db));
+    if (!free) return null; // no free tier configured — leave as-is (login still works)
+
+    // Tier change → applyMembership lifts disabled→active locally and schedules
+    // pushTierToBackend, which (Review #2) re-enables the key at free-tier limits
+    // in the member's profile squad.
+    await applyMembership(ctx, {
+      userId,
+      tierId: free._id,
+      expiresAtMs: null,
+      reason: 'membership_lapsed_downgrade',
+    });
+    return null;
+  },
+});
+
 /** The user's active subscription + their tier's backend spec (for push/disable). */
 export const activeSubAndTier = internalQuery({
   args: { userId: v.id('users') },
@@ -112,13 +166,21 @@ export const activeSubAndTier = internalQuery({
       .order('desc')
       .first();
     if (!sub) return null;
+    // Squad from the member's chosen connection profile, falling back to the
+    // tier's own squad — MUST mirror the issuance path (account.ts) so a tier
+    // push doesn't re-home the key to the tier squad and discard the member's
+    // profile choice (or clear activeInternalSquads → "No hosts found"). (Review #3.)
+    const profileSquad = await resolveProfileSquad(ctx.db, user.connectionProfileId ?? null);
     return {
       backend: sub.backend,
       backendUserId: sub.backendUserId,
+      // The user's local status, so the push can re-enable a key the grace sweep
+      // disabled (updateUser never touches enable/disable state). (Review #2.)
+      userStatus: user.status,
       trafficLimitBytes: tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null,
       trafficLimitStrategy: tier.trafficStrategy,
       hwidDeviceLimit: tier.hwidEnabled ? tier.hwidLimit : null,
-      remnawaveSquadUuid: tier.remnawaveSquadUuid ?? null,
+      remnawaveSquadUuid: profileSquad ?? tier.remnawaveSquadUuid ?? null,
       // Raw ms (this is a query — the ISO is computed in the action, which can
       // call Date.now()), so a renewal re-pushes the backend expiry.
       membershipExpiresAt: user.membershipExpiresAt ?? null,
@@ -143,6 +205,17 @@ export const pushTierToBackend = internalAction({
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const freeExpiryDays = Number(settings['freetier.expiryDays'] ?? 90);
     try {
+      // Re-enable a key the grace sweep disabled: updateUser/remnawaveUpdateUser
+      // never touches enable/disable state, so a renewal or lapsed→free downgrade
+      // must flip the backend user active again. Idempotent (enabling an already-
+      // enabled key is a no-op), so it's safe on every active push. (Review #2.)
+      if (st.userStatus === 'active') {
+        await ctx.runAction(internal.backends.setUserStatus, {
+          backend: st.backend,
+          backendUserId: st.backendUserId,
+          active: true,
+        });
+      }
       await ctx.runAction(internal.backends.updateUser, {
         backend: st.backend,
         backendUserId: st.backendUserId,

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test';
-import { describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
@@ -315,5 +315,171 @@ describe('account issuance lock (P1-3)', () => {
     expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
       true,
     );
+  });
+});
+
+// Review #2/#3: a tier push (renewal, downgrade, upgrade) must re-enable a key the
+// grace sweep disabled and preserve the member's connection-profile squad.
+describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
+  beforeEach(() => {
+    vi.stubEnv('DEV_MOCK_BACKEND', 'true');
+    vi.stubEnv('ENVIRONMENT', 'development');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  async function seedActiveSub(
+    t: ReturnType<typeof convexTest>,
+    userId: Id<'users'>,
+    backendUserId: string,
+  ): Promise<void> {
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId,
+        backendShortId: `${backendUserId}-s`,
+        subscriptionUrl: 'https://x/sub',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+    });
+  }
+
+  test('activeSubAndTier returns the profile squad (not the tier squad) + userStatus', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t);
+    const userId = await t.run(async (ctx) => {
+      await ctx.db.patch(memberTierId, { remnawaveSquadUuid: 'TIER_SQUAD' });
+      await ctx.db.insert('appSettings', {
+        key: 'connectionProfile.privacy.squadUuid',
+        value: JSON.stringify('PRIVACY_SQUAD'),
+        updatedAt: Date.now(),
+      });
+      return ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        connectionProfileId: 'privacy',
+        membershipExpiresAt: Date.now() + 30 * DAY,
+        updatedAt: Date.now(),
+      });
+    });
+    await seedActiveSub(t, userId, 'bu-squad');
+
+    const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
+    expect(st?.remnawaveSquadUuid).toBe('PRIVACY_SQUAD');
+    expect(st?.userStatus).toBe('active');
+  });
+
+  test('activeSubAndTier falls back to the tier squad when no profile squad is bound', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t);
+    const userId = await t.run(async (ctx) => {
+      await ctx.db.patch(memberTierId, { remnawaveSquadUuid: 'TIER_SQUAD' });
+      return ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        connectionProfileId: 'evade',
+        membershipExpiresAt: Date.now() + 30 * DAY,
+        updatedAt: Date.now(),
+      });
+    });
+    await seedActiveSub(t, userId, 'bu-fallback');
+
+    const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
+    expect(st?.remnawaveSquadUuid).toBe('TIER_SQUAD');
+  });
+
+  test('pushTierToBackend runs cleanly for an active user and clears drift (mock backend)', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        backendPushFailedAt: Date.now(), // pretend a prior push drifted
+        membershipExpiresAt: Date.now() + 30 * DAY,
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedActiveSub(t, userId, 'bu-push');
+
+    await t.action(internal.lifecycle.pushTierToBackend, { userId });
+    // Push succeeded against the mock (incl. the setUserStatus(active) re-enable
+    // branch) → the drift flag is cleared.
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.backendPushFailedAt).toBeUndefined();
+  });
+
+  test('same-tier renewal of a disabled member re-activates locally + schedules a push', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'disabled',
+        disabledReason: 'membership_lapsed',
+        suspendedAt: Date.now(),
+        membershipExpiresAt: Date.now() - DAY,
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedActiveSub(t, userId, 'bu-renew');
+
+    await t.mutation(internal.lifecycle.setMembership, {
+      userId,
+      tierId: memberTierId, // SAME tier — the common monthly re-up
+      expiresAtMs: Date.now() + 30 * DAY,
+      reason: 'test.renew',
+    });
+    const afterLocal = await t.run((ctx) => ctx.db.get(userId));
+    expect(afterLocal?.status).toBe('active');
+    expect(afterLocal?.disabledReason).toBeUndefined();
+
+    // The fix (Review #2): the same-tier branch now SCHEDULES a backend push. It
+    // previously returned without one, so the re-enable never reached the backend.
+    // (pushTierToBackend's re-enable + drift-clear is covered by the direct-call
+    // test above.)
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(scheduled.some((f) => f.name.includes('pushTierToBackend'))).toBe(true);
+  });
+
+  test('downgradeLapsedToFree moves a lapsed member to the free tier', async () => {
+    const t = convexTest(schema, modules);
+    const { freeTierId, memberTierId } = await seedTiers(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'disabled',
+        disabledReason: 'membership_lapsed',
+        suspendedAt: Date.now(),
+        membershipExpiresAt: Date.now() - DAY,
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedActiveSub(t, userId, 'bu-downgrade');
+
+    await t.mutation(internal.lifecycle.downgradeLapsedToFree, { userId });
+    await t.finishInProgressScheduledFunctions();
+    const u = await t.run((ctx) => ctx.db.get(userId));
+    expect(u?.tierId).toBe(freeTierId);
+    expect(u?.status).toBe('active');
+    expect(u?.disabledReason).toBeUndefined();
+  });
+
+  test('downgradeLapsedToFree is a no-op for an admin-disabled member', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'disabled',
+        disabledReason: 'admin_action',
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.lifecycle.downgradeLapsedToFree, { userId });
+    const u = await t.run((ctx) => ctx.db.get(userId));
+    expect(u?.tierId).toBe(memberTierId);
+    expect(u?.status).toBe('disabled');
   });
 });

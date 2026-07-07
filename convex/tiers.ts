@@ -1,6 +1,7 @@
 // Pass 2: all internal — tier rows leak backend infra detail (remnawaveSquadUuid);
 // the safe public projection is publicConfig.get, the admin one adminApi.tiersList.
 import { internalQuery } from './_generated/server';
+import type { DatabaseReader } from './_generated/server';
 import { v } from 'convex/values';
 
 /** All tiers (admin list + the cache-free replacement for TierPolicyService.listAll). */
@@ -34,23 +35,33 @@ export const getBySlug = internalQuery({
 });
 
 /**
+ * Plain resolver for the active default-free tier, optionally constrained to a
+ * backend. Shared by the getDefaultFree query and lifecycle.downgradeLapsedToFree
+ * (a mutation — which can't call a query, so it needs the DatabaseReader form).
+ */
+export async function resolveDefaultFreeTier(
+  db: DatabaseReader,
+  backend?: 'remnawave' | 'outline',
+) {
+  const active = await db
+    .query('tiers')
+    .withIndex('by_active', (q) => q.eq('isActive', true))
+    .collect();
+  return (
+    active
+      .slice()
+      .sort((a, b) => a.priority - b.priority)
+      .find((t) => t.isDefaultFree && (backend === undefined || t.backend === backend)) ?? null
+  );
+}
+
+/**
  * The active default-free tier, optionally constrained to a backend so a free
  * user requesting an Outline key gets the Outline-backed default-free tier.
  */
 export const getDefaultFree = internalQuery({
   args: { backend: v.optional(v.union(v.literal('remnawave'), v.literal('outline'))) },
-  handler: async (ctx, { backend }) => {
-    const active = await ctx.db
-      .query('tiers')
-      .withIndex('by_active', (q) => q.eq('isActive', true))
-      .collect();
-    return (
-      active
-        .slice()
-        .sort((a, b) => a.priority - b.priority)
-        .find((t) => t.isDefaultFree && (backend === undefined || t.backend === backend)) ?? null
-    );
-  },
+  handler: (ctx, { backend }) => resolveDefaultFreeTier(ctx.db, backend),
 });
 
 /**

@@ -111,10 +111,17 @@ export const accountLogin = internalAction({
 
     if (!validFormat || !prefixRl.allowed) return failInvalid();
 
-    // 4. Single indexed lookup; the query returns null for unknown OR
-    //    disabled/deleted owners (no oracle distinction).
+    // 4. Single indexed lookup; the query returns null for unknown, deleted, or
+    //    admin-disabled owners (no oracle distinction). A lapsed member IS returned.
     const user = await ctx.runQuery(internal.users.byAccountIdHash, { accountIdHash: hash });
     if (!user) return failInvalid();
+
+    // 4b. A returning lapsed member (admitted above) is auto-downgraded to the free
+    //     tier so they regain a working key at free limits; the account view then
+    //     prompts an upgrade. No-op for active/grace/already-free members. (Review #1.)
+    if (user.status === 'disabled' && user.disabledReason === 'membership_lapsed') {
+      await ctx.runMutation(internal.lifecycle.downgradeLapsedToFree, { userId: user._id });
+    }
 
     // 5. Mint a member session + signed cookie. When PoP-bound, also mint the
     //    public per-session token (returned in the response body + signed into

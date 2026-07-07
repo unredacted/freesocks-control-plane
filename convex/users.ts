@@ -30,10 +30,14 @@ export const setConnectionProfile = internalMutation({
 
 /**
  * Account-number login lookup. The caller (a Node action) hashes the submitted
- * number and passes the hash; we match it against the unique index. Returns
- * null when unknown OR the owner is disabled/deleted; the caller treats both
- * identically (no existence oracle). Rate-limiting + constant-time padding are
- * the caller's responsibility (see the account-login HTTP action, P6/P7).
+ * number and passes the hash; we match it against the unique index. Returns null
+ * when unknown, `deleted`, or admin-disabled — the caller treats all of these
+ * identically (no existence oracle). A LAPSED member (status=disabled, reason
+ * 'membership_lapsed') IS returned so they can log back in to renew; the caller
+ * auto-downgrades them to the free tier (Review #1). A successful login for a real
+ * member is not an oracle — only *failures* must stay indistinguishable.
+ * Rate-limiting + constant-time padding are the caller's responsibility (see the
+ * account-login HTTP action, P6/P7).
  */
 export const byAccountIdHash = internalQuery({
   args: { accountIdHash: v.string() },
@@ -42,7 +46,10 @@ export const byAccountIdHash = internalQuery({
       .query('users')
       .withIndex('by_account_id_hash', (q) => q.eq('accountIdHash', accountIdHash))
       .unique();
-    if (!user || user.status === 'disabled' || user.status === 'deleted') return null;
+    if (!user || user.status === 'deleted') return null;
+    // Admit lapsed members (auto-downgraded to free on login); keep admin-disabled
+    // (reason 'admin_action' or any non-lapse reason) locked out. (Review #1.)
+    if (user.status === 'disabled' && user.disabledReason !== 'membership_lapsed') return null;
     return user;
   },
 });

@@ -120,6 +120,81 @@ describe('auth.accountLogin', () => {
     expect(res).toEqual({ ok: false, reason: 'invalid' });
   });
 
+  test('a lapsed member (membership_lapsed) logs in and is downgraded to free', async () => {
+    stubFetch(true);
+    // Mock backend so the scheduled re-enable push runs cleanly.
+    vi.stubEnv('DEV_MOCK_BACKEND', 'true');
+    vi.stubEnv('ENVIRONMENT', 'development');
+    const t = convexTest(schema, modules);
+    const { userId, freeTierId } = await t.run(async (ctx) => {
+      const freeTierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const memberTierId = await ctx.db.insert('tiers', {
+        slug: 'member',
+        name: 'Member',
+        backend: 'remnawave',
+        monthlyTrafficGb: 500,
+        deviceLimit: 3,
+        hwidLimit: 3,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: false,
+        isActive: true,
+        priority: 10,
+        expirationDaysAfterMembershipLapse: 7,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'disabled',
+        disabledReason: 'membership_lapsed',
+        suspendedAt: Date.now(),
+        membershipExpiresAt: Date.now() - 86_400_000,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'bu-login',
+        backendShortId: 'bs-login',
+        subscriptionUrl: 'https://x/sub',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      return { userId, freeTierId };
+    });
+    const minted = await t.action(internal.accountId.mintForUser, { userId });
+
+    const res = await t.action(internal.auth.accountLogin, {
+      accountId: minted.accountId,
+      captchaToken: 'tok',
+      ip: '203.0.113.20',
+    });
+    expect(res.ok).toBe(true);
+
+    // The lapsed member is downgraded to the free tier + re-activated (they now see
+    // an upgrade prompt); the scheduled push re-enables the key against the mock.
+    await t.finishInProgressScheduledFunctions();
+    const u = await t.run((ctx) => ctx.db.get(userId));
+    expect(u?.tierId).toBe(freeTierId);
+    expect(u?.status).toBe('active');
+    expect(u?.disabledReason).toBeUndefined();
+  });
+
   test('a failed Turnstile returns the turnstile failure', async () => {
     stubFetch(false);
     const t = convexTest(schema, modules);
