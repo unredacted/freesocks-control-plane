@@ -562,19 +562,23 @@ export const usersSearch = internalQuery({
       (drift ? u.backendPushFailedAt != null : true);
 
     const WINDOW = pageSize * 4;
-    const MAX_ITERS = 50; // backstop: at most 50*WINDOW rows scanned per request
+    const MAX_ITERS = 50; // backstop: bounded windows/request (each a by_creation_time seek)
     const page: Doc<'users'>[] = [];
     let before = cursor && Number.isFinite(Number(cursor)) ? Number(cursor) : null;
     let exhausted = false;
     let iters = 0;
     while (page.length < pageSize && !exhausted && iters < MAX_ITERS) {
       iters++;
-      let qry = ctx.db.query('users').order('desc');
-      if (before != null) {
-        const b = before;
-        qry = qry.filter((f) => f.lt(f.field('_creationTime'), b));
-      }
-      const window = await qry.take(WINDOW);
+      // Seek via the by_creation_time index range, NOT a .filter() over the full
+      // desc scan — a filter re-reads from the newest row every window (discarded
+      // rows still count against the read limit), making the loop quadratic. The
+      // index bound makes each window O(WINDOW). (Re-review follow-up.)
+      const b = before;
+      const window = await ctx.db
+        .query('users')
+        .withIndex('by_creation_time', (q) => (b != null ? q.lt('_creationTime', b) : q))
+        .order('desc')
+        .take(WINDOW);
       exhausted = window.length < WINDOW;
       for (const u of window) {
         if (matchFilter(u)) {

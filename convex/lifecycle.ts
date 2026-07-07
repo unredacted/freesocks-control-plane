@@ -111,11 +111,12 @@ export const setMembership = internalMutation({
 });
 
 /**
- * Auto-downgrade a returning lapsed member (status=disabled, reason
- * 'membership_lapsed') to the active default-free tier, so they regain a working
- * key at free limits instead of staying locked out; the account view then prompts
- * an upgrade. Called from accountLogin (Review #1). No-op unless the user is a
- * lapsed paid member (admin-disabled, already-free, and grace users are untouched).
+ * Auto-lift a returning lapsed member (status=disabled, reason 'membership_lapsed')
+ * so they regain a working key + see an upgrade prompt instead of staying locked
+ * out. Called from accountLogin (Review #1). No-op for admin-disabled / grace /
+ * active users. A member on a PAID tier is moved to the default-free tier; one
+ * already ON a free tier (odd lapsed-free state) is lifted in place — either way
+ * the lapse is cleared and a backend re-enable is scheduled (never left disabled).
  */
 export const downgradeLapsedToFree = internalMutation({
   args: { userId: v.id('users') },
@@ -124,11 +125,23 @@ export const downgradeLapsedToFree = internalMutation({
     if (!user) return null;
     if (user.status !== 'disabled' || user.disabledReason !== 'membership_lapsed') return null;
     const currentTier = await ctx.db.get(user.tierId);
-    if (currentTier?.isDefaultFree) return null; // already free — nothing to downgrade
 
-    // Resolve the default-free tier for the member's current key backend so the
-    // re-push applies free limits to the existing subscription in place; fall back
-    // to any active default-free tier if that backend has none configured.
+    // Already free but somehow lapsed: lift in place (same-tier, no expiry) rather
+    // than no-op — else login admits them but they stay disabled locally + on the
+    // backend forever. (Re-review follow-up.)
+    if (currentTier?.isDefaultFree) {
+      await applyMembership(ctx, {
+        userId,
+        tierId: user.tierId,
+        expiresAtMs: null,
+        reason: 'membership_lapsed_downgrade',
+      });
+      return null;
+    }
+
+    // Paid tier: resolve the default-free tier for the member's current key backend
+    // so the re-push applies free limits to the existing subscription in place;
+    // fall back to any active default-free tier if that backend has none.
     const sub = await ctx.db
       .query('subscriptions')
       .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))

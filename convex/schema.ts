@@ -206,6 +206,14 @@ export default defineSchema({
     ipCountry: v.optional(v.string()),
     asn: v.optional(v.number()),
     tlsFingerprint: v.optional(v.string()),
+    // Vestigial Turnstile-era columns — NOTHING writes them since the Cap migration
+    // (the freeTier pass-throughs were removed). Retained ONLY so `convex deploy`
+    // doesn't reject the schema: Convex validates existing docs against it, and
+    // pre-Cap grants (written before 2026-06-10) can still carry these fields until
+    // the 30-day `retention-free-grants` sweep clears them (~2026-07-10). Safe to
+    // DROP in a deploy after that window, once no freeGrants row has them.
+    turnstileAction: v.optional(v.string()),
+    turnstileCdata: v.optional(v.string()),
     userAgentHash: v.optional(v.string()),
     grantedAt: v.number(),
     grantedDayBucket: v.number(),

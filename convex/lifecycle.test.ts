@@ -517,4 +517,27 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     expect(u?.tierId).toBe(memberTierId);
     expect(u?.status).toBe('disabled');
   });
+
+  test('downgradeLapsedToFree lifts a member already ON a free tier (not left disabled)', async () => {
+    const t = convexTest(schema, modules);
+    const { freeTierId } = await seedTiers(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: freeTierId,
+        status: 'disabled',
+        disabledReason: 'membership_lapsed',
+        suspendedAt: Date.now(),
+        membershipExpiresAt: Date.now() - DAY, // odd lapsed-free state
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedActiveSub(t, userId, 'bu-freelapsed');
+
+    await t.mutation(internal.lifecycle.downgradeLapsedToFree, { userId });
+    const u = await t.run((ctx) => ctx.db.get(userId));
+    expect(u?.tierId).toBe(freeTierId); // stays free…
+    expect(u?.status).toBe('active'); // …but is lifted in place, not left disabled
+    expect(u?.disabledReason).toBeUndefined();
+    expect(u?.membershipExpiresAt).toBeUndefined(); // lapsed expiry cleared
+  });
 });
