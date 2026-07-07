@@ -59,11 +59,12 @@ async function seedServer(t: ReturnType<typeof convexTest>): Promise<Id<'backend
 }
 
 describe('backends dispatch', () => {
-  test('issueUser with zero active instances throws the pool-empty error', async () => {
+  test('issueUser with zero active instances throws the typed pool-empty error', async () => {
     const t = convexTest(schema, modules);
+    // Typed ConvexError({code:'backend.unavailable'}) → mapped to 503 by code (Review P3).
     await expect(
       t.action(internal.backends.issueUser, { backend: 'remnawave', spec: SPEC }),
-    ).rejects.toThrow(/No active remnawave instances/);
+    ).rejects.toThrow(/backend\.unavailable/);
   });
 
   test('deleteUser with no hint and no resolvable row is a tolerated no-op', async () => {

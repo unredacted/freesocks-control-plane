@@ -21,45 +21,69 @@ import { computeExpireAtIso, gbToBytes, type UsageSeries } from './lib/backends/
 
 type Backend = 'remnawave' | 'outline';
 
-// P1-3: a serializable per-user issuance lock. regenerate / switch-backend each
-// mint a NEW backend key and tombstone the old one; two concurrent runs would
-// mint two keys but tombstone only one, orphaning a live key forever. The lock
-// makes only one issuance saga run per user at a time. A short TTL means a
-// crashed saga self-heals (the next attempt re-acquires once it expires).
-const ISSUE_LOCK_TTL_MS = 30_000;
+// P1-3: a serializable per-user issuance lock. regenerate / switch-backend /
+// switch-profile each mint a NEW backend key and tombstone the old one; two
+// concurrent runs would mint two keys but tombstone only one, orphaning a live key
+// forever. The lock makes only one issuance saga run per user at a time.
+//
+// Review #7: the TTL must exceed a worst-case saga — a switch chains several
+// backend HTTP calls (8s timeout each, see remnawave.ts) plus S3 mirror work, so
+// the old 30s could expire mid-saga and let a SECOND saga acquire (the exact
+// double-issue this lock prevents). And release is owner-checked via a nonce, so
+// even after such a takeover a stale saga's `finally` can't delete the NEW holder's
+// lock (a blind delete previously could).
+const ISSUE_LOCK_TTL_MS = 120_000;
+
+/** Parse a lock row's value; tolerates the legacy plain-number (expiry-only) form. */
+function parseLock(value: string): { exp: number; token: string | null } {
+  try {
+    const o = JSON.parse(value) as { exp?: number; token?: string };
+    if (o && typeof o.exp === 'number') {
+      return { exp: o.exp, token: typeof o.token === 'string' ? o.token : null };
+    }
+  } catch {
+    /* legacy format: a bare expiry number */
+  }
+  const n = Number(value);
+  return { exp: Number.isFinite(n) ? n : 0, token: null };
+}
 
 export const acquireIssuanceLock = internalMutation({
   args: { userId: v.id('users') },
-  handler: async (ctx, { userId }): Promise<{ acquired: boolean }> => {
+  handler: async (ctx, { userId }): Promise<{ acquired: boolean; token?: string }> => {
     const key = `issue-lock:${userId}`;
     const now = Date.now();
+    const token = randomHex(16);
+    const value = JSON.stringify({ exp: now + ISSUE_LOCK_TTL_MS, token });
     const row = await ctx.db
       .query('appState')
       .withIndex('by_key', (q) => q.eq('key', key))
       .unique();
     if (row) {
-      const exp = Number(row.value);
-      if (Number.isFinite(exp) && exp > now) return { acquired: false };
-      await ctx.db.patch(row._id, { value: String(now + ISSUE_LOCK_TTL_MS), updatedAt: now });
-      return { acquired: true };
+      if (parseLock(row.value).exp > now) return { acquired: false }; // held + unexpired
+      await ctx.db.patch(row._id, { value, updatedAt: now }); // take over an expired lock
+      return { acquired: true, token };
     }
-    await ctx.db.insert('appState', {
-      key,
-      value: String(now + ISSUE_LOCK_TTL_MS),
-      updatedAt: now,
-    });
-    return { acquired: true };
+    await ctx.db.insert('appState', { key, value, updatedAt: now });
+    return { acquired: true, token };
   },
 });
 
 export const releaseIssuanceLock = internalMutation({
-  args: { userId: v.id('users') },
-  handler: async (ctx, { userId }): Promise<null> => {
+  args: { userId: v.id('users'), token: v.optional(v.string()) },
+  handler: async (ctx, { userId, token }): Promise<null> => {
     const row = await ctx.db
       .query('appState')
       .withIndex('by_key', (q) => q.eq('key', `issue-lock:${userId}`))
       .unique();
-    if (row) await ctx.db.delete(row._id);
+    if (!row) return null;
+    // Owner-checked: delete only when the caller's nonce matches the held one, so a
+    // saga whose lock already expired + was re-acquired by another can't delete the
+    // NEW holder's lock. A missing token on either side (legacy row / legacy caller)
+    // falls back to an unconditional delete. (Review #7.)
+    const held = parseLock(row.value).token;
+    if (token && held && held !== token) return null;
+    await ctx.db.delete(row._id);
     return null;
   },
 });

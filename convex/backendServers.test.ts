@@ -254,7 +254,7 @@ describe('generic dispatch (convex/backends.ts via the provider registry)', () =
         backend: 'outline',
         spec: { username: 'u', trafficLimitBytes: null, expireAt: null, tag: 'free' },
       }),
-    ).rejects.toThrow(/No active outline instances/);
+    ).rejects.toThrow(/backend\.unavailable/);
   });
 
   test('getUser resolves the instance from the subscription row by key', async () => {

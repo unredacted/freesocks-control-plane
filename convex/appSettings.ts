@@ -1,4 +1,6 @@
 import { internalMutation, internalQuery } from './_generated/server';
+import type { MutationCtx } from './_generated/server';
+import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 
 /**
@@ -54,17 +56,45 @@ export const resolved = internalQuery({
   },
 });
 
+/** Upsert one setting row (JSON-encoded value) — the shared by-key upsert. */
+export async function upsertSettingRow(
+  ctx: MutationCtx,
+  key: string,
+  value: string,
+  updatedByAdminId?: Id<'adminUsers'>,
+): Promise<void> {
+  const existing = await ctx.db
+    .query('appSettings')
+    .withIndex('by_key', (q) => q.eq('key', key))
+    .unique();
+  const now = Date.now();
+  if (existing) await ctx.db.patch(existing._id, { value, updatedByAdminId, updatedAt: now });
+  else await ctx.db.insert('appSettings', { key, value, updatedByAdminId, updatedAt: now });
+}
+
 /** Upsert one setting (JSON-encoded). Admin-gated at the HTTP layer. */
 export const set = internalMutation({
   args: { key: v.string(), value: v.string(), updatedByAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { key, value, updatedByAdminId }) => {
-    const existing = await ctx.db
-      .query('appSettings')
-      .withIndex('by_key', (q) => q.eq('key', key))
-      .unique();
-    const now = Date.now();
-    if (existing) await ctx.db.patch(existing._id, { value, updatedByAdminId, updatedAt: now });
-    else await ctx.db.insert('appSettings', { key, value, updatedByAdminId, updatedAt: now });
+    await upsertSettingRow(ctx, key, value, updatedByAdminId);
+    return null;
+  },
+});
+
+/**
+ * Atomic multi-key upsert (one transaction), so the admin settings PATCH applies a
+ * whole patch or none — a mid-loop failure can't leave it half-applied with no
+ * indication which half landed. (Review P3.)
+ */
+export const setMany = internalMutation({
+  args: {
+    entries: v.array(v.object({ key: v.string(), value: v.string() })),
+    updatedByAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { entries, updatedByAdminId }) => {
+    for (const { key, value } of entries) {
+      await upsertSettingRow(ctx, key, value, updatedByAdminId);
+    }
     return null;
   },
 });

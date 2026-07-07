@@ -23,7 +23,7 @@ import { internalAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import type {
   IssueUserSpec,
   IssuedUser,
@@ -87,7 +87,9 @@ export const issueUser = internalAction({
       backend,
     });
     if (candidates.length === 0)
-      throw new Error(`No active ${backend} instances available to issue a key`);
+      // Typed so the HTTP layer maps it to an actionable 503 by CODE, not a brittle
+      // message regex (issuanceErrorResponse). (Review P3.)
+      throw new ConvexError({ code: 'backend.unavailable', backend });
     // Random pick among the top candidates (CSPRNG, can't live in the query).
     const idx = new Uint32Array(1);
     crypto.getRandomValues(idx);

@@ -127,8 +127,9 @@ describe('account.regenerate saga', () => {
     const tierId = await seedTier(t);
     const userId = await seedUser(t, tierId);
 
+    // issueUser now throws a typed ConvexError({code:'backend.unavailable'}) (Review P3).
     await expect(t.action(internal.account.regenerate, { userId })).rejects.toThrow(
-      /No active remnawave instances/,
+      /backend\.unavailable/,
     );
     await t.run(async (ctx) => {
       expect(await ctx.db.query('subscriptions').collect()).toHaveLength(0);
@@ -144,16 +145,17 @@ describe('account issuance lock (P1-3)', () => {
     const tierId = await seedTier(t);
     const userId = await seedUser(t, tierId);
 
-    expect(await t.mutation(internal.account.acquireIssuanceLock, { userId })).toEqual({
-      acquired: true,
-    });
-    expect(await t.mutation(internal.account.acquireIssuanceLock, { userId })).toEqual({
-      acquired: false,
-    });
-    await t.mutation(internal.account.releaseIssuanceLock, { userId });
-    expect(await t.mutation(internal.account.acquireIssuanceLock, { userId })).toEqual({
-      acquired: true,
-    });
+    // acquire now also returns an owner nonce (Review #7).
+    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
+      true,
+    );
+    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
+      false,
+    );
+    await t.mutation(internal.account.releaseIssuanceLock, { userId }); // legacy tokenless release
+    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
+      true,
+    );
   });
 
   test('an expired lock row self-heals (crashed saga cannot wedge the user)', async () => {
@@ -164,13 +166,33 @@ describe('account issuance lock (P1-3)', () => {
     await t.run(async (ctx) => {
       await ctx.db.insert('appState', {
         key: `issue-lock:${userId}`,
-        value: String(Date.now() - 1_000), // already expired
+        value: String(Date.now() - 1_000), // legacy bare-number format, already expired
         updatedAt: Date.now(),
       });
     });
-    expect(await t.mutation(internal.account.acquireIssuanceLock, { userId })).toEqual({
-      acquired: true,
-    });
+    // parseLock tolerates the legacy format → the expired lock is taken over.
+    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
+      true,
+    );
+  });
+
+  test('release is owner-checked: a stale token cannot free another saga’s lock (Review #7)', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+
+    const held = await t.mutation(internal.account.acquireIssuanceLock, { userId });
+    expect(held.acquired).toBe(true);
+    // A release with the WRONG token must NOT free the lock…
+    await t.mutation(internal.account.releaseIssuanceLock, { userId, token: 'not-the-holder' });
+    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
+      false,
+    );
+    // …but the real holder's token does.
+    await t.mutation(internal.account.releaseIssuanceLock, { userId, token: held.token });
+    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
+      true,
+    );
   });
 });
 

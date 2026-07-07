@@ -71,8 +71,16 @@ function convexError(err: unknown): Response {
  * never a bare 500. Pairs with src/client/lib/api.ts's non-envelope fallback.
  */
 function issuanceErrorResponse(err: unknown, requestId: string): Response {
+  // A missing/empty proxy backend surfaces as a typed
+  // ConvexError({code:'backend.unavailable'}) from backends.issueUser → a 503 the
+  // user can act on. Match on the CODE (the message regex is only a legacy fallback
+  // for any pre-typed error). (Review P3.)
+  const code =
+    err instanceof ConvexError && typeof (err.data as { code?: unknown })?.code === 'string'
+      ? (err.data as { code: string }).code
+      : null;
   const msg = err instanceof Error ? err.message : String(err);
-  if (/No active .* instances/i.test(msg)) {
+  if (code === 'backend.unavailable' || /No active .* instances/i.test(msg)) {
     return errorJson(
       'backend.unavailable',
       'No proxy server is available right now. Please try again later or contact support.',
@@ -85,6 +93,68 @@ function issuanceErrorResponse(err: unknown, requestId: string): Response {
     'Could not create a subscription right now. Please try again later.',
     502,
   );
+}
+
+/**
+ * The shared member issuance-saga scaffold (regenerate / switch-backend /
+ * switch-profile): rate-limit → acquire the per-user issuance lock → run → map
+ * issuance errors → ALWAYS release the lock (owner-nonce checked, Review #7).
+ * Centralizes three near-identical copies and removes the risk of a route
+ * forgetting the `finally` release (a lock leak). The caller's `run` performs the
+ * action call and shapes the success Response. (Review P3.)
+ */
+async function withIssuanceSaga(
+  ctx: ActionCtx,
+  userId: Id<'users'>,
+  policyKey: string,
+  run: (requestId: string) => Promise<Response>,
+): Promise<Response> {
+  const rl = await ctx.runMutation(internal.rateLimits.enforce, { policyKey, subject: userId });
+  if (!rl.allowed) {
+    return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
+      retryAfterMs: rl.retryAfterMs,
+    });
+  }
+  const lock = await ctx.runMutation(internal.account.acquireIssuanceLock, { userId });
+  if (!lock.acquired) {
+    return errorJson('issuance.in_progress', 'Another change is already in progress.', 409);
+  }
+  const requestId = newRequestId();
+  try {
+    return await run(requestId);
+  } catch (err) {
+    return issuanceErrorResponse(err, requestId);
+  } finally {
+    await ctx.runMutation(internal.account.releaseIssuanceLock, { userId, token: lock.token });
+  }
+}
+
+/**
+ * Shape a saga action's discriminated result into a Response: the error envelope on
+ * failure, else the payload with the envelope fields (ok/status/code/message)
+ * stripped. Used by switch-backend / switch-profile (regenerate returns raw).
+ */
+function sagaResult(result: {
+  ok: boolean;
+  status?: number;
+  code?: string;
+  message?: string;
+}): Response {
+  if (!result.ok) {
+    return errorJson(
+      result.code ?? 'issuance.failed',
+      result.message ?? 'Request failed',
+      result.status ?? 400,
+    );
+  }
+  const {
+    ok: _ok,
+    status: _status,
+    code: _code,
+    message: _message,
+    ...payload
+  } = result as Record<string, unknown> & { ok: boolean };
+  return json(payload);
 }
 
 const ADMIN_UNAUTH = () => errorJson('auth.unauthenticated', 'Authentication required', 401);
@@ -623,34 +693,13 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'account.regenerate',
-      subject: member.userId,
-    });
-    if (!rl.allowed) {
-      return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
-        retryAfterMs: rl.retryAfterMs,
-      });
-    }
-    // P1-3: only one issuance saga per user at a time (else two keys, one orphan).
-    const lock = await ctx.runMutation(internal.account.acquireIssuanceLock, {
-      userId: member.userId,
-    });
-    if (!lock.acquired) {
-      return errorJson('issuance.in_progress', 'Another change is already in progress.', 409);
-    }
-    const requestId = newRequestId();
-    try {
+    return withIssuanceSaga(ctx, member.userId, 'account.regenerate', async (requestId) => {
       const result = await ctx.runAction(internal.account.regenerate, {
         userId: member.userId,
         requestId,
       });
       return json(result);
-    } catch (err) {
-      return issuanceErrorResponse(err, requestId);
-    } finally {
-      await ctx.runMutation(internal.account.releaseIssuanceLock, { userId: member.userId });
-    }
+    });
   }),
 });
 
@@ -665,47 +714,15 @@ http.route({
       return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
     }
     if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
-    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'account.switch-backend',
-      subject: member.userId,
-    });
-    if (!rl.allowed) {
-      return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
-        retryAfterMs: rl.retryAfterMs,
-      });
-    }
-    const lock = await ctx.runMutation(internal.account.acquireIssuanceLock, {
-      userId: member.userId,
-    });
-    if (!lock.acquired) {
-      return errorJson('issuance.in_progress', 'Another change is already in progress.', 409);
-    }
-    const requestId = newRequestId();
-    let result;
-    try {
-      result = await ctx.runAction(internal.account.switchBackend, {
+    const target = body.backend;
+    return withIssuanceSaga(ctx, member.userId, 'account.switch-backend', async (requestId) => {
+      const result = await ctx.runAction(internal.account.switchBackend, {
         userId: member.userId,
-        target: body.backend,
+        target,
         requestId,
       });
-    } catch (err) {
-      return issuanceErrorResponse(err, requestId);
-    } finally {
-      await ctx.runMutation(internal.account.releaseIssuanceLock, { userId: member.userId });
-    }
-    if (!result.ok) return errorJson(result.code, result.message, result.status);
-    const {
-      ok: _ok,
-      status: _status,
-      code: _code,
-      message: _message,
-      ...payload
-    } = result as typeof result & {
-      status?: number;
-      code?: string;
-      message?: string;
-    };
-    return json(payload);
+      return sagaResult(result);
+    });
   }),
 });
 
@@ -746,47 +763,15 @@ http.route({
       return errorJson('validation', 'profile must be "evade" or "privacy"', 400);
     }
     if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
-    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'account.switch-profile',
-      subject: member.userId,
-    });
-    if (!rl.allowed) {
-      return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
-        retryAfterMs: rl.retryAfterMs,
-      });
-    }
-    const lock = await ctx.runMutation(internal.account.acquireIssuanceLock, {
-      userId: member.userId,
-    });
-    if (!lock.acquired) {
-      return errorJson('issuance.in_progress', 'Another change is already in progress.', 409);
-    }
-    const requestId = newRequestId();
-    let result;
-    try {
-      result = await ctx.runAction(internal.account.switchProfile, {
+    const target = body.profile;
+    return withIssuanceSaga(ctx, member.userId, 'account.switch-profile', async (requestId) => {
+      const result = await ctx.runAction(internal.account.switchProfile, {
         userId: member.userId,
-        target: body.profile,
+        target,
         requestId,
       });
-    } catch (err) {
-      return issuanceErrorResponse(err, requestId);
-    } finally {
-      await ctx.runMutation(internal.account.releaseIssuanceLock, { userId: member.userId });
-    }
-    if (!result.ok) return errorJson(result.code, result.message, result.status);
-    const {
-      ok: _ok,
-      status: _status,
-      code: _code,
-      message: _message,
-      ...payload
-    } = result as typeof result & {
-      status?: number;
-      code?: string;
-      message?: string;
-    };
-    return json(payload);
+      return sagaResult(result);
+    });
   }),
 });
 
@@ -1956,13 +1941,15 @@ http.route({
         return errorJson('validation', `Unknown setting "${key}"`, 400);
       }
     }
-    for (const [key, value] of Object.entries(body)) {
-      await ctx.runMutation(internal.appSettings.set, {
+    // One transaction (Review P3): the whole patch applies or none, so a mid-way
+    // failure can't leave settings half-updated with no indication which half.
+    await ctx.runMutation(internal.appSettings.setMany, {
+      entries: Object.entries(body).map(([key, value]) => ({
         key,
         value: JSON.stringify(value),
-        updatedByAdminId: admin.adminUserId,
-      });
-    }
+      })),
+      updatedByAdminId: admin.adminUserId,
+    });
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     return json({ settings });
   }),
