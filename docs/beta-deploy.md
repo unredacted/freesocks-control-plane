@@ -202,11 +202,26 @@ See `docs/threat-model-cdn-blinding.md`.
   search storage (until S3). Postgres data is the `pgdata` volume; PG18's image
   volume is `/var/lib/postgresql`, not the pre-18 `/data` path. Back up with
   `bunx convex export` and/or `pg_dump`.
-- **Client IP.** `TRUSTED_PROXY=true` is safe because Caddy (no `trusted_proxies`)
-  overwrites `X-Forwarded-For` with the real client IP, so the free-tier per-IP cap
-  cannot be spoofed. `CF_FRONTED` is left UNSET in this topology: there is no Cloudflare
-  edge in front, so a client-supplied `cf-connecting-ip` would be spoofable — the backend
-  ignores that header unless `CF_FRONTED=true`, and Caddy strips it upstream anyway.
+- **Client IP.** Trust is topology-dependent — the backend reads the resolved IP per
+  `convex/lib/http.ts:resolveClientIp`; verify live via the admin self-diagnostic
+  `GET /api/v1/admin/client-ip` (returns `{ resolvedIp, rule, hops, chain }` for your own request):
+  - **(a) Caddy is the public edge** (default): `TRUSTED_PROXY=true` (≡ `TRUSTED_PROXY_HOPS=1`);
+    `CADDY_TRUSTED_PROXIES` unset. Caddy overwrites `X-Forwarded-For` with the immediate peer, so
+    the chain is one entry and can't be spoofed.
+  - **(b) Something fronts Caddy** (Pangolin / CF Tunnel / ngrok / LB — **this beta runs behind
+    Pangolin over Tailscale**): set `CADDY_TRUSTED_PROXIES` to the fronting peer's IP/CIDR (e.g. the
+    tailnet `100.64.0.0/10`, or the peer `/32`) on the `web` service, and `TRUSTED_PROXY_HOPS=2` on
+    the backend (+1 per extra appending hop). Caddy then trusts + preserves the fronting proxy's XFF
+    and appends the peer; the backend **right-anchors** the chain, so it stays correct even if a hop
+    appends rather than discards a client-supplied header (Traefik/Pangolin discard by default). If
+    the diagnostic's `chain` rightmost entry is the compose gateway `172.18.0.1` instead of the
+    Tailscale peer, Docker's userland proxy masked the source — add `172.18.0.1` to
+    `CADDY_TRUSTED_PROXIES` and bump `TRUSTED_PROXY_HOPS`.
+  - **(c) Cloudflare CDN edge**: `CF_FRONTED=true` + origin locked to CF-only traffic.
+
+  `CF_FRONTED` unset trusts no `cf-connecting-ip` (it would be spoofable); Caddy strips it upstream
+  anyway.
+
 - **Dashboard.** By default, reach it over an SSH tunnel:
   `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 <beta-host>`, then open
   `http://127.0.0.1:6791` (function `console.*` logs live here, under **Logs**).

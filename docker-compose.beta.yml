@@ -239,6 +239,10 @@ services:
     environment:
       - SITE_ADDRESS=${SITE_ADDRESS:-beta.freesocks.org}
       - ACME_EMAIL=${ACME_EMAIL:-}
+      # Client-IP trust: set to the fronting proxy's peer IP/CIDR (e.g. the tailnet
+      # 100.64.0.0/10) ONLY when something fronts Caddy (Pangolin / CF Tunnel / LB).
+      # Empty = Caddy is the public edge (overwrites XFF). See Caddyfile + docs.
+      - CADDY_TRUSTED_PROXIES=${CADDY_TRUSTED_PROXIES:-}
       # Optional Convex-dashboard exposure (see the commented site blocks in
       # Caddyfile + docs/beta-deploy.md). Empty unless you opt in; Caddy only
       # references them when those blocks are uncommented.

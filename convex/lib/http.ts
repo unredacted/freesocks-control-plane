@@ -219,36 +219,84 @@ export function bearerToken(req: Request): string | null {
   return t || null;
 }
 
+export type ClientIpRule = 'cf' | 'xff-hops' | 'xff-legacy' | 'none';
+
+export interface ClientIpResolution {
+  ip: string | null;
+  rule: ClientIpRule;
+  /** Effective number of trusted appending hops off the RIGHT of the XFF chain (0 when no XFF trust). */
+  hops: number;
+  /** The parsed, trimmed, non-empty X-Forwarded-For chain (left→right), for diagnosis. */
+  chain: string[];
+}
+
 /**
- * Resolve the client IP with fail-closed trust rules. A header is only
- * trustworthy if the immediate upstream is KNOWN to set/overwrite it, so both
- * trust sources are opt-in and deployment-dependent:
+ * Effective trusted-proxy hop count. `TRUSTED_PROXY_HOPS` (an integer ≥1) is the
+ * generic knob and WINS when set — a garbage or <1 value pins to 0 (fail closed)
+ * rather than silently falling back, so a typo can't quietly widen trust.
+ * `TRUSTED_PROXY=true` remains a legacy alias for hops=1 (single-Caddy edge).
+ */
+function trustedProxyHops(): { hops: number; legacy: boolean } {
+  const raw = process.env.TRUSTED_PROXY_HOPS;
+  if (raw !== undefined && raw.trim() !== '') {
+    const n = Number(raw.trim());
+    return { hops: Number.isInteger(n) && n >= 1 ? n : 0, legacy: false };
+  }
+  return process.env.TRUSTED_PROXY === 'true'
+    ? { hops: 1, legacy: true }
+    : { hops: 0, legacy: false };
+}
+
+/**
+ * Resolve the client IP with fail-closed, RIGHT-ANCHORED trust rules. A header is
+ * only trustworthy if the immediate upstream is KNOWN to set it, so trust is
+ * opt-in and deployment-dependent:
  *
  *   - `CF_FRONTED=true`: a real Cloudflare edge sits in front and overwrites
  *     `cf-connecting-ip` with the true client IP for every request entering
- *     THROUGH Cloudflare. Enable this ONLY when the origin also rejects direct
- *     (non-CF) traffic (firewall / authenticated origin pulls); otherwise an
- *     attacker hits the origin directly and spoofs the header. Off by default.
- *   - `TRUSTED_PROXY=true`: a normalizing reverse proxy (e.g. Caddy with no
- *     `trusted_proxies`) overwrites `x-forwarded-for` with the immediate peer,
- *     so XFF[0] is the real client and cannot be spoofed.
+ *     THROUGH Cloudflare. Enable ONLY when the origin also rejects direct
+ *     (non-CF) traffic; otherwise an attacker hits the origin directly and
+ *     spoofs the header. Off by default. CF wins when set.
+ *   - `TRUSTED_PROXY_HOPS=N` (or the legacy `TRUSTED_PROXY=true` ≡ N=1): trust N
+ *     appending reverse-proxy hops. We take `chain[len - N]` — counting from the
+ *     RIGHT, because the rightmost entries are appended by our own trusted infra
+ *     and cannot be client-forged, while leftmost entries can be prepended by a
+ *     malicious client if any hop appends rather than overwrites. A single Caddy
+ *     edge overwrites XFF to one entry (N=1 → that entry); a fronting proxy
+ *     (Pangolin / CF Tunnel / ngrok / LB) in front of Caddy appends one more
+ *     (N=2 → the real client, second-from-right). See docs/beta-deploy.md.
  *
- * A client-supplied `cf-connecting-ip` is IGNORED unless CF_FRONTED is set:
- * Caddy and most proxies forward that header untouched, so trusting it
- * unconditionally lets any client choose its own rate-limit bucket. With
- * neither flag set we return null rather than a shared fallback (which would
- * itself be one giant rate-limit-bypass bucket).
+ * A chain shorter than `hops` → null (fail closed — the same semantics an
+ * unresolvable IP already has on every route; a direct-to-origin request can't
+ * then pick its own rate-limit bucket). With no trust configured we return null
+ * rather than a shared fallback (which would be one giant rate-limit-bypass
+ * bucket). `resolveClientIpDetailed` exposes the rule/hops/chain for the admin
+ * self-diagnostic endpoint; `resolveClientIp` is the string-or-null hot path.
  */
-export function resolveClientIp(req: Request): string | null {
+export function resolveClientIpDetailed(req: Request): ClientIpResolution {
+  const { hops, legacy } = trustedProxyHops();
+  const chain = (req.headers.get('x-forwarded-for') ?? '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
   if (process.env.CF_FRONTED === 'true') {
     const cf = req.headers.get('cf-connecting-ip')?.trim();
-    if (cf) return cf;
+    if (cf) return { ip: cf, rule: 'cf', hops, chain };
   }
-  if (process.env.TRUSTED_PROXY === 'true') {
-    const first = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-    if (first) return first;
+  if (hops >= 1 && chain.length >= hops) {
+    return {
+      ip: chain[chain.length - hops]!,
+      rule: legacy ? 'xff-legacy' : 'xff-hops',
+      hops,
+      chain,
+    };
   }
-  return null;
+  return { ip: null, rule: 'none', hops, chain };
+}
+
+export function resolveClientIp(req: Request): string | null {
+  return resolveClientIpDetailed(req).ip;
 }
 
 /**

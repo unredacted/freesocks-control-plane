@@ -94,9 +94,12 @@ Detailed companions, referenced rather than duplicated here:
 - Cap reached (same IP, day): `freetier.cap_reached` (429). There is no key to hand back, so
   the visitor signs in with their existing number. `releaseFreeSlot` compensates if the
   mint/session step fails, so a transient error doesn't burn the IP's daily allowance.
-- Fail-closed client-IP resolution (`convex/lib/http.ts`): `x-forwarded-for` only when
-  `TRUSTED_PROXY=true`; `cf-connecting-ip` only when `CF_FRONTED=true` (a real Cloudflare
-  edge in front, else it's client-spoofable); refuse on an unresolvable IP. Caddy also
+- Fail-closed client-IP resolution (`convex/lib/http.ts`): `x-forwarded-for` right-anchored to
+  the trusted end, taking `chain[len - hops]` where `hops` = `TRUSTED_PROXY_HOPS` (or `1` via the
+  legacy `TRUSTED_PROXY=true`); `2`+ when a proxy fronts Caddy (Pangolin / CF Tunnel / ngrok / LB,
+  with `CADDY_TRUSTED_PROXIES` set on the `web` service). `cf-connecting-ip` only when
+  `CF_FRONTED=true` (a real Cloudflare edge in front, else it's client-spoofable); refuse on an
+  unresolvable/too-short chain. Admin self-diagnostic: `GET /api/v1/admin/client-ip`. Caddy also
   strips client-supplied `CF-Connecting-IP` upstream as defense in depth.
 - `cleanup-expired-free` daily cron removes lapsed free users (backend + S3 + local).
 

@@ -11,6 +11,21 @@
 {
 	# Let's Encrypt contact (expiry notices). Override via the ACME_EMAIL env.
 	email {$ACME_EMAIL:ops@freesocks.org}
+
+	# Client-IP trust (see the @api block + docs/beta-deploy.md §"Client IP").
+	# Default is a TEST-NET-1 sentinel matching NOTHING → Caddy overwrites XFF with
+	# the immediate peer (topology (a): Caddy is the public edge, TRUSTED_PROXY=true
+	# / TRUSTED_PROXY_HOPS=1 on the backend). When ANYTHING fronts Caddy (Pangolin /
+	# CF Tunnel / ngrok / LB, topology (b)), set CADDY_TRUSTED_PROXIES to that peer's
+	# IP/CIDR (e.g. the tailnet 100.64.0.0/10, or a /32): Caddy then trusts + PRESERVES
+	# the fronting proxy's XFF and APPENDS the peer → a 2-entry chain, and the backend
+	# reads the real client with TRUSTED_PROXY_HOPS=2.
+	# NOTE: use a SINGLE CIDR here. A space-separated multi-CIDR value is NOT reliably
+	# split by `{$VAR}` single-token expansion; 100.64.0.0/10 covers a whole tailnet
+	# in one CIDR. `caddy validate` (CI) guards this block's syntax.
+	servers {
+		trusted_proxies static {$CADDY_TRUSTED_PROXIES:192.0.2.255/32}
+	}
 }
 
 {$SITE_ADDRESS:beta.freesocks.org} {
@@ -131,20 +146,26 @@
 	# --- API + health -> Convex HTTP actions (:3211 over the compose network) --
 	@api path /api/* /healthz /readyz
 	handle @api {
-		# Client-IP trust: with no trusted_proxies configured, Caddy OVERWRITES any
-		# client-sent X-Forwarded-For with the immediate peer (the real client,
-		# since Caddy is the edge), so XFF[0] cannot be spoofed. That is what the
-		# backend trusts for the free-tier per-IP cap (TRUSTED_PROXY=true).
+		# Client-IP trust — topology matrix (the backend reads the resulting XFF
+		# per convex/lib/http.ts:resolveClientIp; verify live via the admin
+		# self-diagnostic GET /api/v1/admin/client-ip):
+		#   (a) Caddy IS the public edge: CADDY_TRUSTED_PROXIES unset (the sentinel
+		#       above) → Caddy OVERWRITES X-Forwarded-For with the immediate peer, so
+		#       the chain is 1 entry and TRUSTED_PROXY=true (≡ HOPS=1) reads it
+		#       unspoofably.
+		#   (b) Something FRONTS Caddy (Pangolin / CF Tunnel / ngrok / LB): set
+		#       CADDY_TRUSTED_PROXIES to that peer (global block above) → Caddy
+		#       preserves the fronting XFF + appends the peer (a 2-entry chain), and
+		#       the backend reads the real client with TRUSTED_PROXY_HOPS=2. The
+		#       backend right-anchors the chain, so it stays correct even if a hop
+		#       appends rather than discards a client-supplied header.
+		#   (c) Cloudflare CDN edge: CF_FRONTED=true on the backend + origin locked
+		#       to CF-only (see docs/threat-model-cdn-blinding.md).
 		reverse_proxy backend:3211 {
-			# Defense in depth for the client-IP trust rules: strip any
-			# client-supplied CF-Connecting-IP before it reaches the backend. The
-			# backend only honours that header when CF_FRONTED=true (a real
-			# Cloudflare edge in front); in this Caddy-direct topology CF_FRONTED is
-			# unset, but stripping here means the two layers can never disagree and a
-			# request hitting Caddy directly can't spoof its IP. If you later put
-			# Cloudflare in front, set `trusted_proxies` here + CF_FRONTED=true on the
-			# backend AND lock the origin to CF-only traffic (see
-			# docs/threat-model-cdn-blinding.md).
+			# Defense in depth: strip any client-supplied CF-Connecting-IP before it
+			# reaches the backend. The backend only honours that header when
+			# CF_FRONTED=true (topology (c)); stripping here means the two layers can
+			# never disagree and a request hitting Caddy directly can't spoof its IP.
 			header_up -CF-Connecting-IP
 		}
 	}

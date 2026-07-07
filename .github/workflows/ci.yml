@@ -50,3 +50,17 @@ jobs:
           bun-version: '1.3.14'
       - run: bun install --frozen-lockfile
       - run: bash scripts/verify-reproducible.sh | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Validate the Caddyfile adapts + parses (catches the servers/trusted_proxies
+  # block + the {$CADDY_TRUSTED_PROXIES} placeholder syntax). All active env
+  # placeholders carry defaults, so no env is needed. Pinned to the SAME digest as
+  # docker/web.Dockerfile so CI validates against the exact deployed Caddy.
+  caddyfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate Caddyfile
+        run: |
+          docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine@sha256:77c07d5ebfa5be9fd6c820d2094ae662c9e7eeb9bf98346b7f639900263ee2a2 \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

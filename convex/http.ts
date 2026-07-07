@@ -31,6 +31,7 @@ import {
   readJson,
   resolveAdmin,
   resolveClientIp,
+  resolveClientIpDetailed,
   resolveCountry,
   resolveMember,
   secureCookies,
@@ -1861,6 +1862,23 @@ http.route({
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:status:read'))) return ADMIN_UNAUTH();
     return json(await ctx.runQuery(internal.adminApi.statusSummary, {}));
+  }),
+});
+
+// --- admin: client-IP self-diagnostic (verify TRUSTED_PROXY_HOPS / fronting) --
+// Returns how THIS request's client IP resolved, for the caller's own request
+// only — computed transiently, never stored/logged/audited (json() is no-store),
+// consistent with the no-raw-IPs-at-rest posture. `chain`'s rightmost entry is
+// the peer Caddy saw: if it shows the compose gateway (172.18.0.1) instead of the
+// expected fronting peer, Docker's userland proxy masked the source → add the
+// gateway to CADDY_TRUSTED_PROXIES and bump TRUSTED_PROXY_HOPS. See docs.
+http.route({
+  path: '/api/v1/admin/client-ip',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:status:read'))) return ADMIN_UNAUTH();
+    const d = resolveClientIpDetailed(req);
+    return json({ resolvedIp: d.ip, rule: d.rule, hops: d.hops, chain: d.chain });
   }),
 });
 

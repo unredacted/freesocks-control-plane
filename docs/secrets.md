@@ -88,9 +88,11 @@ fast). All live in `.env.convex` unless noted.
 | `REMNAWAVE_BASE_URL`, `REMNAWAVE_API_TOKEN`                             | Optional one-time cutover seed of the first backend instance; afterwards managed in the admin CMS (`backendServers`).                         |
 
 **Topology flags (keep as shipped):** `ENVIRONMENT=production` (Secure cookies),
-`TRUSTED_PROXY=true` (behind Caddy), **`CF_FRONTED` unset** (no real Cloudflare
-edge — setting it trusts a spoofable `cf-connecting-ip`). `POP_REQUIRED` /
-`POP_EXPECTED_HOST` are CDN-blinding rollout toggles (see
+`TRUSTED_PROXY=true` when Caddy is the public edge — or `TRUSTED_PROXY_HOPS=2` +
+the compose var `CADDY_TRUSTED_PROXIES` when a proxy fronts Caddy (Pangolin / CF
+Tunnel / ngrok / LB; see `docs/beta-deploy.md` §"Client IP"). **`CF_FRONTED` unset**
+(no real Cloudflare edge — setting it trusts a spoofable `cf-connecting-ip`).
+`POP_REQUIRED` / `POP_EXPECTED_HOST` are CDN-blinding rollout toggles (see
 `docs/threat-model-cdn-blinding.md`).
 
 ---
