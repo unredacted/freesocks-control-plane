@@ -427,6 +427,35 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     expect(st?.remnawaveSquadUuid).toBe('TIER_SQUAD');
   });
 
+  test('device-limit toggle: OFF (default) forces hwidDeviceLimit null; ON uses the tier limit', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t); // member tier: hwidEnabled, hwidLimit 3
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        membershipExpiresAt: Date.now() + 30 * DAY,
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedActiveSub(t, userId, 'bu-hwid');
+
+    // No enforcement row → the default OFF → unlimited (null) despite hwidEnabled.
+    const off = await t.query(internal.lifecycle.activeSubAndTier, { userId });
+    expect(off?.hwidDeviceLimit).toBeNull();
+
+    // Flip enforcement ON → the tier's limit is sent.
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'devices.enforcementEnabled',
+        value: JSON.stringify(true),
+        updatedAt: Date.now(),
+      }),
+    );
+    const on = await t.query(internal.lifecycle.activeSubAndTier, { userId });
+    expect(on?.hwidDeviceLimit).toBe(3);
+  });
+
   test('activeSubAndTier PRESERVES the subscription-persisted squad (no pool re-pick thrash)', async () => {
     // Squad pools: the key was issued into squadA (persisted on the sub row).
     // Even though the profile's pool now prefers a different squad (squadB,

@@ -27,6 +27,13 @@ export const SETTINGS_DEFAULTS = {
   // "hardened privacy" instead of the default "evade censorship". Admin-tunable;
   // empty = always suggest evade. The choice itself is client-side only.
   'delivery.privacyCountries': [] as string[],
+  // Master switch for per-tier device (HWID) limits. OFF (default) = FCP sends
+  // hwidDeviceLimit:null for every user regardless of the tier's hwidEnabled, so
+  // devices are effectively unlimited and the device UI is neutralized. ON =
+  // per-tier hwidEnabled/hwidLimit apply and the connect UI gates apps by HWID
+  // support. Enforcement ALSO requires HWID_DEVICE_LIMIT_ENABLED=true on the
+  // Remnawave panel (FCP can't read that); see docs/backends.md.
+  'devices.enforcementEnabled': false,
 } as const;
 
 // `getAll` / `get` (public queries) were deleted in pass 2: dead code (the SPA

@@ -39,6 +39,7 @@ import {
   mockGetUser,
   mockIssueUser,
 } from './lib/backends/mock';
+import { isRemnawaveNotFound } from './lib/backends/remnawave';
 
 // Keep in sync with BACKEND_IDS (src/shared/contracts/backends.ts).
 const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
@@ -230,20 +231,34 @@ export const fetchSubscriptionContent = internalAction({
     // raw content. Remnawave fetches THIS (the shortUuid is a public capability,
     // no admin token), not the admin API. Callers resolve it from the sub row.
     subscriptionUrl: v.optional(v.string()),
+    // HWID identification headers forwarded from the member's proxy app (the
+    // FCP-fronted /api/v1/sub/ route), so panel device registration + limits work.
+    hwidHeaders: v.optional(v.record(v.string(), v.string())),
   },
   handler: async (
     ctx,
-    { backendServerId, backendShortId, userAgent, subscriptionUrl },
+    { backendServerId, backendShortId, userAgent, subscriptionUrl, hwidHeaders },
   ): Promise<SubscriptionContent> => {
     if (mockBackendEnabled()) return mockFetchContent();
     if (!backendServerId) throw new Error('backendServerId required to fetch subscription content');
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new Error('Backend instance not found for subscription content fetch');
-    return PROVIDERS[server.backend].fetchContent(
-      server.config as BackendConfig,
-      backendShortId,
-      userAgent,
-      subscriptionUrl,
-    );
+    try {
+      return await PROVIDERS[server.backend].fetchContent(
+        server.config as BackendConfig,
+        backendShortId,
+        userAgent,
+        subscriptionUrl,
+        hwidHeaders,
+      );
+    } catch (err) {
+      // A panel 404 on a HWID-gated fetch (no/invalid x-hwid) is AUTHORITATIVE,
+      // not an outage — surface it as a typed error so the fronted route passes
+      // 404 through instead of serving a stale entry or a generic 502.
+      if (isRemnawaveNotFound(err)) {
+        throw new ConvexError({ code: 'subscription.device_rejected' });
+      }
+      throw err;
+    }
   },
 });

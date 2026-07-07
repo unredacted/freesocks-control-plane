@@ -236,8 +236,9 @@
           <label class="text-xs text-muted-foreground mb-1 block" for="tier-hwid">HWID limit</label>
           <Input id="tier-hwid" type="number" min={0} bind:value={draft.hwidLimit} />
           <p class="text-xs text-muted-foreground/80 mt-1 leading-snug">
-            Xray-only. Number of distinct device fingerprints allowed per subscription (when
-            enforcement is on).
+            Xray-only. Number of distinct device fingerprints allowed per subscription. Only takes
+            effect when the global device-limit toggle is on (Settings → Device limits) AND the
+            Remnawave panel has HWID_DEVICE_LIMIT_ENABLED=true.
           </p>
         </div>
       {/if}

@@ -29,6 +29,10 @@ export const AccountResponse = z.object({
        * type, server-side logic; client just gates on `peerBackend`).
        */
       backend: BackendId,
+      /** True when this tier's device limit is actually enforced (tier opts in
+       *  AND the global toggle is on). The SPA gates app-compatibility copy on
+       *  it. Optional/defaulted for forward-compat. */
+      deviceLimited: z.boolean().optional().default(false),
     }),
     membership: z
       .object({

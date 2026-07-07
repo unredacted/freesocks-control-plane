@@ -112,4 +112,10 @@ bunx convex run seed:seedCutover '{}'
 echo "[deploy] reconfiguring the membership tier (no-op if already unlimited)"
 bunx convex run seed:reconfigureMembershipTier '{}'
 
+# One-time device-limit-enforcement default: keep prior behavior for an EXISTING
+# deployment (users present + a device-limited tier) by seeding the toggle ON;
+# a fresh install stays OFF (unlimited-by-default). No-op once the key is set.
+echo "[deploy] setting the device-limit enforcement default (no-op if already set)"
+bunx convex run seed:migrateDeviceEnforcementDefault '{}'
+
 echo "[deploy] OK"

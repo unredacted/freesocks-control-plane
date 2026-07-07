@@ -654,7 +654,18 @@ http.route({
 
     const now = Date.now();
     const ua = req.headers.get('user-agent') ?? '';
-    const cached = parseSubCache(sub.subCache);
+    // Forward the client's HWID identification headers so the panel registers
+    // the device + enforces the limit (device-limited tiers). When present we
+    // BYPASS the UA cache: registration is per-device and two devices can share
+    // a UA, so a cached body would both hide the second device from the panel
+    // and mask an over-limit rejection.
+    const hwidHeaders: Record<string, string> = {};
+    for (const h of ['x-hwid', 'x-device-os', 'x-ver-os', 'x-device-model']) {
+      const val = req.headers.get(h);
+      if (val) hwidHeaders[h] = val;
+    }
+    const hasHwid = 'x-hwid' in hwidHeaders;
+    const cached = hasHwid ? [] : parseSubCache(sub.subCache);
     const fresh = cached.find((e) => e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS);
     if (fresh) return subscriptionResponse(fresh); // fresh + same format → cache hit
     // Last-resort fallback MUST match this UA — never serve another client's
@@ -667,6 +678,7 @@ http.route({
         backendShortId: sub.backendShortId,
         subscriptionUrl: sub.subscriptionUrl,
         userAgent: ua || undefined,
+        ...(hasHwid ? { hwidHeaders } : {}),
       });
       const entry: SubCacheEntry = {
         content: fetched.content,
@@ -675,12 +687,28 @@ http.route({
         ua,
         at: now,
       };
-      await ctx.runMutation(internal.subscriptions.writeContentCache, {
-        subscriptionId: sub._id,
-        entry: JSON.stringify(entry),
-      });
+      // Don't cache an hwid'd response — the next device (different hwid, same
+      // UA) must reach the panel too, for its own registration + enforcement.
+      if (!hasHwid) {
+        await ctx.runMutation(internal.subscriptions.writeContentCache, {
+          subscriptionId: sub._id,
+          entry: JSON.stringify(entry),
+        });
+      }
       return subscriptionResponse(entry);
     } catch (err) {
+      // A HWID rejection (panel 404 for a device-limited key fetched without a
+      // valid x-hwid) is authoritative — pass 404 through, and never serve a
+      // stale body for it (that would defeat the device limit).
+      if (
+        err instanceof ConvexError &&
+        (err.data as { code?: string })?.code === 'subscription.device_rejected'
+      ) {
+        return new Response(
+          'Device limit reached, or your app must send a device identifier (HWID).',
+          { status: 404 },
+        );
+      }
       // Backend blip: serve the last-known content FOR THIS UA rather than break
       // the member's client; only fail hard when nothing is cached for it.
       if (stale) return subscriptionResponse(stale);

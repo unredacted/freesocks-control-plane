@@ -99,6 +99,11 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
     backendShortId: string,
     userAgent?: string,
     subscriptionUrl?: string,
+    // HWID identification headers forwarded from the member's proxy app through
+    // the FCP-fronted /api/v1/sub/ route, so panel-side device registration +
+    // limit enforcement still work when FCP fetches on the client's behalf.
+    // Backends without a device concept (Outline) ignore them.
+    hwidHeaders?: Record<string, string>,
   ): Promise<SubscriptionContent>;
   health(config: C): Promise<BackendHealth>;
   testConnection(config: C): Promise<TestConnectionResult>;
@@ -115,7 +120,8 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   getUserUsage: (c, id, days) => remnawaveGetUserUsage(c, id, days),
   getFleetStats: (c) => remnawaveFleetStats(c),
   getSquadStats: (c) => remnawaveGetSquadStats(c),
-  fetchContent: (c, shortId, ua, subUrl) => remnawaveFetchSubscription(c, shortId, ua, subUrl),
+  fetchContent: (c, shortId, ua, subUrl, hwid) =>
+    remnawaveFetchSubscription(c, shortId, ua, subUrl, hwid),
   health: (c) => remnawaveHealth(c),
   testConnection: (c) => remnawaveTestConnection(c),
 };

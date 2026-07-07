@@ -843,10 +843,18 @@
               <!-- Privacy: the raw config IS the deliverable (the CDN-fetched link is
                hidden above). No public mirrors — they'd expose the config to third parties. -->
               <RawConfig prominent />
-              <ConnectClient backend={data.subscription.backend} privacy />
+              <ConnectClient
+                backend={data.subscription.backend}
+                privacy
+                deviceLimited={data.user.tier.deviceLimited ?? false}
+              />
             {:else}
               <!-- Stay connected: the subscription link is the star; mirrors next, raw config secondary. -->
-              <ConnectClient backend={data.subscription.backend} subscriptionUrl={subUrl} />
+              <ConnectClient
+                backend={data.subscription.backend}
+                subscriptionUrl={subUrl}
+                deviceLimited={data.user.tier.deviceLimited ?? false}
+              />
               {#if config.data?.mirrorsEnabled}
                 <MirrorHelp
                   mirrors={data.subscription.mirrors}

@@ -30,8 +30,17 @@
     /** Privacy/delivery mode hides the auto-updating link → deliver the raw config
      *  below, so step 2 says "enter the configuration below" instead of "paste your link". */
     privacy?: boolean;
+    /** True when the member's plan enforces a device limit (tier opts in AND the
+     *  global toggle is on). Only then do we split apps by HWID support + show
+     *  the HWID note; otherwise the device-limit concept is irrelevant and hidden. */
+    deviceLimited?: boolean;
   }
-  let { backend = 'remnawave', subscriptionUrl, privacy = false }: Props = $props();
+  let {
+    backend = 'remnawave',
+    subscriptionUrl,
+    privacy = false,
+    deviceLimited = false,
+  }: Props = $props();
 
   const config = configQuery();
 
@@ -47,6 +56,12 @@
   // Catalog for this backend (already enabled + priority-sorted server-side).
   let clients = $derived((config.data?.clients ?? []).filter((c) => c.backends.includes(backend)));
   let currentClients = $derived(clients.filter((c) => c.platforms.includes(active)));
+  // On a device-limited plan, HWID-capable apps honor the limit; others each
+  // consume a slot per launch (or, with panel enforcement on, fail to connect),
+  // so we surface them separately. `gateDevices` is true only when it matters.
+  let gateDevices = $derived(deviceLimited && backend !== 'outline');
+  let compatClients = $derived(currentClients.filter((c) => c.hwid));
+  let incompatClients = $derived(currentClients.filter((c) => !c.hwid));
 
   // A one-tap import link is possible only with a (non-privacy) subscription URL
   // and an app that has an import scheme.
@@ -113,59 +128,85 @@
     aria-labelledby="connect-tab-{active}"
     class="mt-4"
   >
-    <!-- Recommended apps for this platform (CMS-managed catalog). -->
-    <ul class="space-y-2">
-      {#each currentClients as c (c.name)}
-        {@const link = importLink(c.schemeId)}
-        <li class="rounded-lg border border-border bg-background/40 p-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <div class="min-w-0">
-              <span class="text-sm font-semibold">{c.name}</span>
-              {#if !c.hwid}
-                <span class="ms-2 text-xs text-muted-foreground">({t('setup.noDeviceLimit')})</span>
-              {/if}
-            </div>
-            <div class="flex flex-wrap items-center gap-2">
-              <a
-                href={c.homepageUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                class="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border px-3 py-1 text-sm font-medium hover:bg-muted"
-              >
-                <ExternalLink class="size-3.5" />
-                {t('setup.install')}
-              </a>
-              {#if link}
-                <a
-                  href={link}
-                  class="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                >
-                  <Smartphone class="size-3.5" />
-                  {t('hero.importOpen', { app: c.name })}
-                </a>
-                <button
-                  type="button"
-                  onclick={() => (qrFor = qrFor === c.name ? null : c.name)}
-                  aria-expanded={qrFor === c.name}
-                  aria-label={t('hero.importScan', { app: c.name })}
-                  class="inline-flex min-h-9 items-center rounded-md border border-border px-2 py-1 hover:bg-muted"
-                >
-                  <QrCodeIcon class="size-4" />
-                </button>
-              {/if}
-            </div>
+    {#snippet clientCard(c: (typeof currentClients)[number])}
+      {@const link = importLink(c.schemeId)}
+      <li class="rounded-lg border border-border bg-background/40 p-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="min-w-0">
+            <span class="text-sm font-semibold">{c.name}</span>
+            {#if !gateDevices && !c.hwid}
+              <span class="ms-2 text-xs text-muted-foreground">({t('setup.noDeviceLimit')})</span>
+            {/if}
           </div>
-          {#if link && qrFor === c.name}
-            <div class="mt-3 flex flex-col items-center">
-              <QrCode text={link} size={168} />
-              <p class="mt-2 text-xs text-muted-foreground">
-                {t('hero.importScan', { app: c.name })}
-              </p>
-            </div>
-          {/if}
-        </li>
-      {/each}
-    </ul>
+          <div class="flex flex-wrap items-center gap-2">
+            <a
+              href={c.homepageUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border px-3 py-1 text-sm font-medium hover:bg-muted"
+            >
+              <ExternalLink class="size-3.5" />
+              {t('setup.install')}
+            </a>
+            {#if link}
+              <a
+                href={link}
+                class="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+              >
+                <Smartphone class="size-3.5" />
+                {t('hero.importOpen', { app: c.name })}
+              </a>
+              <button
+                type="button"
+                onclick={() => (qrFor = qrFor === c.name ? null : c.name)}
+                aria-expanded={qrFor === c.name}
+                aria-label={t('hero.importScan', { app: c.name })}
+                class="inline-flex min-h-9 items-center rounded-md border border-border px-2 py-1 hover:bg-muted"
+              >
+                <QrCodeIcon class="size-4" />
+              </button>
+            {/if}
+          </div>
+        </div>
+        {#if link && qrFor === c.name}
+          <div class="mt-3 flex flex-col items-center">
+            <QrCode text={link} size={168} />
+            <p class="mt-2 text-xs text-muted-foreground">
+              {t('hero.importScan', { app: c.name })}
+            </p>
+          </div>
+        {/if}
+      </li>
+    {/snippet}
+
+    <!-- Recommended apps for this platform (CMS-managed catalog). On a
+         device-limited plan, split by HWID support so members pick an app that
+         actually honors the limit; otherwise a single flat list. -->
+    {#if gateDevices}
+      <p class="text-xs font-medium text-muted-foreground">{t('setup.deviceCompatibleTitle')}</p>
+      <ul class="mt-2 space-y-2">
+        {#each compatClients as c (c.name)}
+          {@render clientCard(c)}
+        {/each}
+      </ul>
+      {#if incompatClients.length > 0}
+        <p class="mt-4 text-xs font-medium text-muted-foreground">
+          {t('setup.deviceIncompatibleTitle')}
+        </p>
+        <p class="mt-1 text-xs text-muted-foreground">{t('setup.deviceIncompatibleNote')}</p>
+        <ul class="mt-2 space-y-2 opacity-75">
+          {#each incompatClients as c (c.name)}
+            {@render clientCard(c)}
+          {/each}
+        </ul>
+      {/if}
+    {:else}
+      <ul class="space-y-2">
+        {#each currentClients as c (c.name)}
+          {@render clientCard(c)}
+        {/each}
+      </ul>
+    {/if}
 
     <!-- The same three steps as before (install → import → connect). -->
     <ol class="mt-4 space-y-3 text-sm">
@@ -191,7 +232,7 @@
         <span>{t('setup.step.connect')}</span>
       </li>
     </ol>
-    {#if backend !== 'outline'}
+    {#if gateDevices}
       <p class="mt-3 text-xs text-muted-foreground">{t('setup.hwidNote')}</p>
     {/if}
   </div>

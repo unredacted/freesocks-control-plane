@@ -17,7 +17,12 @@ import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { randomHex } from './lib/crypto';
 import { issueNewSubscription } from './lib/issuance';
-import { computeExpireAtIso, gbToBytes, type UsageSeries } from './lib/backends/types';
+import {
+  computeExpireAtIso,
+  gbToBytes,
+  resolveHwidLimit,
+  type UsageSeries,
+} from './lib/backends/types';
 
 type Backend = 'remnawave' | 'outline';
 
@@ -99,6 +104,9 @@ interface AccountView {
       monthlyTrafficGb: number;
       deviceLimit: number;
       backend: Backend;
+      // True when this member's tier enforces a device limit AND enforcement is
+      // globally enabled — the SPA gates app compatibility only when true.
+      deviceLimited: boolean;
     };
     membership: { expiresAt: string | null; isCurrent: boolean } | null;
     connectionProfileId: 'evade' | 'privacy';
@@ -138,6 +146,8 @@ export const getAccountView = internalAction({
     const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
     if (!tier) return null;
     const sub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
+    const deviceLimited = !!settings['devices.enforcementEnabled'] && tier.hwidEnabled;
 
     // W3: lazily backfill the support ID for pre-W3 accounts. Non-fatal — the
     // account view still renders if minting transiently fails.
@@ -234,6 +244,7 @@ export const getAccountView = internalAction({
           monthlyTrafficGb: tier.monthlyTrafficGb,
           deviceLimit: tier.deviceLimit,
           backend: tier.backend,
+          deviceLimited,
         },
         membership: user.membershipExpiresAt
           ? {
@@ -302,7 +313,7 @@ export const regenerate = internalAction({
         trafficLimitStrategy: tier.trafficStrategy,
         // Member term, else the free window — Remnawave requires a real date.
         expireAt: computeExpireAtIso(user.membershipExpiresAt, freeExpiryDays),
-        hwidDeviceLimit: tier.hwidEnabled ? tier.hwidLimit : null,
+        hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
         tag: tier.slug,
         remnawaveSquadUuid: profileSquad ?? tier.remnawaveSquadUuid ?? null,
       },
@@ -403,7 +414,7 @@ export const switchBackend = internalAction({
           user.membershipExpiresAt,
           Number(settings['freetier.expiryDays'] ?? 90),
         ),
-        hwidDeviceLimit: peerTier.hwidEnabled ? peerTier.hwidLimit : null,
+        hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], peerTier),
         tag: peerTier.slug,
         remnawaveSquadUuid: profileSquad ?? peerTier.remnawaveSquadUuid ?? null,
       },
@@ -516,7 +527,7 @@ export const switchProfile = internalAction({
           user.membershipExpiresAt,
           Number(settings['freetier.expiryDays'] ?? 90),
         ),
-        hwidDeviceLimit: tier.hwidEnabled ? tier.hwidLimit : null,
+        hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
         tag: tier.slug,
         remnawaveSquadUuid: profileSquad ?? tier.remnawaveSquadUuid ?? null,
       },

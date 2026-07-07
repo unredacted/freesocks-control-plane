@@ -72,14 +72,19 @@ async function seedSub(
 // A mutable content + header source for the fronted-fetch mock, plus a call count.
 let mockBody = 'RAW-CONFIG-1';
 let mockHeaders: Record<string, string> = { 'content-type': 'text/yaml' };
+let mockStatus = 200;
 let fetchCalls = 0;
+// Request headers seen by the LAST stubbed panel fetch (to assert forwarding).
+let lastReqHeaders: Record<string, string> = {};
 function stubFrontFetch(): void {
   fetchCalls = 0;
+  lastReqHeaders = {};
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => {
+    vi.fn(async (_url: string, init?: { headers?: Record<string, string> }) => {
       fetchCalls += 1;
-      return new Response(mockBody, { status: 200, headers: mockHeaders });
+      lastReqHeaders = { ...(init?.headers ?? {}) };
+      return new Response(mockBody, { status: mockStatus, headers: mockHeaders });
     }),
   );
 }
@@ -109,6 +114,7 @@ describe('GET /api/v1/sub/<token>', () => {
   beforeEach(() => {
     vi.stubEnv('IP_HASH_SALT', 'test-salt');
     mockBody = 'RAW-CONFIG-1';
+    mockStatus = 200;
     mockHeaders = {
       'content-type': 'text/yaml',
       'subscription-userinfo': 'upload=0; download=10; total=100; expire=0',
@@ -181,6 +187,61 @@ describe('GET /api/v1/sub/<token>', () => {
     const c2 = await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'sing-box/1' } });
     expect(await c2.text()).toBe('RAW-CONFIG-SINGBOX');
     expect(fetchCalls).toBe(2); // neither re-poll hit the backend
+  });
+
+  test('forwards the client HWID headers to the panel fetch', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    await t.fetch('/api/v1/sub/tok_abc', {
+      headers: {
+        'user-agent': 'Karing/1',
+        'x-hwid': 'device-abc-123',
+        'x-device-os': 'iOS',
+        'x-ver-os': '17.0',
+        'x-device-model': 'iPhone15,2',
+      },
+    });
+    expect(lastReqHeaders['x-hwid']).toBe('device-abc-123');
+    expect(lastReqHeaders['x-device-os']).toBe('iOS');
+    expect(lastReqHeaders['x-ver-os']).toBe('17.0');
+    expect(lastReqHeaders['x-device-model']).toBe('iPhone15,2');
+    expect(lastReqHeaders['user-agent']).toBe('Karing/1');
+  });
+
+  test('an hwid request BYPASSES the cache (each device reaches the panel to register)', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    // Two devices, same UA, different hwid → two panel fetches (no cache collision).
+    await t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'Karing/1', 'x-hwid': 'device-A' },
+    });
+    await t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'Karing/1', 'x-hwid': 'device-B' },
+    });
+    expect(fetchCalls).toBe(2);
+    expect(lastReqHeaders['x-hwid']).toBe('device-B');
+    // And an hwid response is not written to the cache: a subsequent no-hwid poll
+    // still hits the backend (nothing cached for this UA).
+    const noHwid = await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Karing/1' } });
+    expect(noHwid.status).toBe(200);
+    expect(fetchCalls).toBe(3);
+  });
+
+  test('panel 404 (HWID rejection) passes through as 404, not a 502 or a stale body', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    // Prime a cached body for this UA (no hwid) so we can prove 404 doesn't serve it.
+    await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Karing/1' } });
+    expect(fetchCalls).toBe(1);
+    // Now the panel rejects the device-limited fetch with 404.
+    mockStatus = 404;
+    mockBody = 'not found';
+    const res = await t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'Karing/1', 'x-hwid': 'unregistered-device' },
+    });
+    expect(res.status).toBe(404);
+    // Not the stale cached body.
+    expect(await res.text()).not.toBe('RAW-CONFIG-1');
   });
 
   // Review #11: on a backend outage the stale fallback must match the requester's

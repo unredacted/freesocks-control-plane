@@ -26,6 +26,9 @@ export const get = query({
       // Free-account lifetime (days). Public so the signup flow can state the
       // real validity (DB-driven) instead of a hardcoded number that drifts.
       'freetier.expiryDays': 90,
+      // Whether per-tier device (HWID) limits are enforced — drives the connect
+      // UI's app-compatibility gating. Non-secret boolean.
+      'devices.enforcementEnabled': false,
     };
     for (const row of rows) {
       if (!(row.key in settings)) continue;
@@ -107,6 +110,11 @@ export const get = query({
         cryptoMinMonths: billing.cryptoMinMonths,
       },
       mirrorsEnabled,
+      // Device-limit enforcement master switch (non-secret). When false the SPA
+      // hides device-limit UI + app-compatibility gating (unlimited-by-default).
+      devices: {
+        enforcementEnabled: settings['devices.enforcementEnabled'] as boolean,
+      },
       // Admin-selected brand theme (preset + optional hue), applied client-side
       // over the baked default. Non-secret; always present (fail-safe default).
       theme: await resolveTheme(ctx.db),

@@ -16,7 +16,8 @@ import { heartbeatFromAction } from './cronHeartbeat';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { deleteSubscriptionEverywhere } from './lib/issuance';
-import { computeExpireAtIso, gbToBytes } from './lib/backends/types';
+import { computeExpireAtIso, gbToBytes, resolveHwidLimit } from './lib/backends/types';
+import { SETTINGS_DEFAULTS } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import { resolveProfileSquad } from './lib/connectionProfiles';
 import { resolveDefaultFreeTier } from './tiers';
@@ -188,6 +189,21 @@ export const activeSubAndTier = internalQuery({
     const profileSquad =
       sub.remnawaveSquadUuid ??
       (await resolveProfileSquad(ctx.db, user.connectionProfileId ?? null));
+    // Read the device-limit master toggle (fail-safe to the compiled default) so
+    // the tier push honors it exactly like the issuance path — flipping it off
+    // clears hwidDeviceLimit on the next push.
+    const enforcementRow = await ctx.db
+      .query('appSettings')
+      .withIndex('by_key', (q) => q.eq('key', 'devices.enforcementEnabled'))
+      .unique();
+    let enforcementEnabled = SETTINGS_DEFAULTS['devices.enforcementEnabled'] as boolean;
+    if (enforcementRow) {
+      try {
+        enforcementEnabled = JSON.parse(enforcementRow.value) === true;
+      } catch {
+        /* keep the default */
+      }
+    }
     return {
       backend: sub.backend,
       backendUserId: sub.backendUserId,
@@ -196,7 +212,7 @@ export const activeSubAndTier = internalQuery({
       userStatus: user.status,
       trafficLimitBytes: tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null,
       trafficLimitStrategy: tier.trafficStrategy,
-      hwidDeviceLimit: tier.hwidEnabled ? tier.hwidLimit : null,
+      hwidDeviceLimit: resolveHwidLimit(enforcementEnabled, tier),
       remnawaveSquadUuid: profileSquad ?? tier.remnawaveSquadUuid ?? null,
       // Raw ms (this is a query — the ISO is computed in the action, which can
       // call Date.now()), so a renewal re-pushes the backend expiry.

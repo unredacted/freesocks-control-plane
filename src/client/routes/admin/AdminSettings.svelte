@@ -279,6 +279,32 @@
         </CardContent>
       </Card>
 
+      <!-- Device (HWID) limits -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Device limits</CardTitle>
+          <CardDescription>
+            Master switch for per-tier device (HWID) limits. When OFF (the default), every user is
+            effectively unlimited and the device UI is hidden. When ON, each tier's device limit
+            applies and the connect screen steers members to HWID-capable apps.
+            <strong class="text-foreground">
+              Enforcement also requires HWID_DEVICE_LIMIT_ENABLED=true on the Remnawave panel</strong
+            >
+            — FCP can't read or set that panel setting. Set the per-tier limit under Tiers.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="text-sm">
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={draft['devices.enforcementEnabled'] === true}
+              onCheckedChange={(v) =>
+                (draft = { ...draft, 'devices.enforcementEnabled': v === true })}
+            />
+            <span>Enforce per-tier device limits</span>
+          </label>
+        </CardContent>
+      </Card>
+
       <!-- End-user backend choice -->
       <Card>
         <CardHeader>

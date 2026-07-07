@@ -37,6 +37,21 @@ export function computeExpireAtIso(
   return new Date(ms).toISOString();
 }
 
+/**
+ * The per-user Remnawave `hwidDeviceLimit` to send: the tier's limit ONLY when
+ * device-limit enforcement is globally enabled AND the tier opts in. When the
+ * master toggle is off (the unlimited-by-default posture) this is null for every
+ * user regardless of tier, so a client that doesn't send an x-hwid header is
+ * never rejected. Panel-side enforcement additionally requires
+ * HWID_DEVICE_LIMIT_ENABLED=true (outside FCP's control).
+ */
+export function resolveHwidLimit(
+  enforcementEnabled: boolean,
+  tier: { hwidEnabled: boolean; hwidLimit: number },
+): number | null {
+  return enforcementEnabled && tier.hwidEnabled ? tier.hwidLimit : null;
+}
+
 export interface IssueUserSpec {
   username: string;
   trafficLimitBytes: number | null;

@@ -424,9 +424,17 @@
         {#if effectiveDelivery === 'privacy'}
           <!-- Privacy: raw config is the deliverable; CDN-fetched link hidden; no mirrors. -->
           <RawConfig prominent />
-          <ConnectClient backend={subscription.backend} privacy />
+          <ConnectClient
+            backend={subscription.backend}
+            privacy
+            deviceLimited={account.data?.user.tier.deviceLimited ?? false}
+          />
         {:else}
-          <ConnectClient backend={subscription.backend} subscriptionUrl={subUrl} />
+          <ConnectClient
+            backend={subscription.backend}
+            subscriptionUrl={subUrl}
+            deviceLimited={account.data?.user.tier.deviceLimited ?? false}
+          />
           {#if config.data?.mirrorsEnabled}
             <MirrorHelp
               mirrors={subscription.mirrors}

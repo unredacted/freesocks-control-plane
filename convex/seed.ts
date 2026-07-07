@@ -208,6 +208,39 @@ export const seedClients = internalMutation({
   },
 });
 
+/**
+ * One-time migration for the device-limit master toggle
+ * (`devices.enforcementEnabled`, default OFF = unlimited-by-default). Preserves
+ * prior behavior for an EXISTING deployment that was relying on per-tier device
+ * limits: if the key has never been set AND the deployment already has users AND
+ * some active tier opts into HWID, seed it ON. A FRESH install (no users yet)
+ * is left OFF — the new unlimited-by-default posture. Idempotent (a no-op once
+ * the key exists), so it's safe on every deploy.
+ */
+export const migrateDeviceEnforcementDefault = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ seeded: boolean }> => {
+    const existing = await ctx.db
+      .query('appSettings')
+      .withIndex('by_key', (q) => q.eq('key', 'devices.enforcementEnabled'))
+      .unique();
+    if (existing) return { seeded: false }; // already configured — never override
+    const anyUser = await ctx.db.query('users').first();
+    if (!anyUser) return { seeded: false }; // fresh install → keep the OFF default
+    const tiers = await ctx.db
+      .query('tiers')
+      .withIndex('by_active', (q) => q.eq('isActive', true))
+      .collect();
+    if (!tiers.some((t) => t.hwidEnabled)) return { seeded: false };
+    await ctx.db.insert('appSettings', {
+      key: 'devices.enforcementEnabled',
+      value: JSON.stringify(true),
+      updatedAt: Date.now(),
+    });
+    return { seeded: true };
+  },
+});
+
 export const seedCutover = internalAction({
   args: {},
   handler: async (

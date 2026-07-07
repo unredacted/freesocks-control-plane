@@ -91,6 +91,13 @@ class RemnawaveApiError extends Error {
   }
 }
 
+/** True when the error is a Remnawave HTTP 404 (e.g. a HWID-gated subscription
+ *  fetch made without a valid x-hwid header — the panel rejects it). Lets the
+ *  fronted route pass the rejection through as 404 rather than a generic 502. */
+export function isRemnawaveNotFound(err: unknown): boolean {
+  return err instanceof RemnawaveApiError && err.meta?.status === 404;
+}
+
 /** Some endpoints wrap the payload in `{ response: {...} }`; tolerate both. */
 function unwrap(json: unknown): unknown {
   if (json && typeof json === 'object' && 'response' in json) {
@@ -446,6 +453,7 @@ export async function remnawaveFetchSubscription(
   backendShortId: string,
   userAgent?: string,
   subscriptionUrl?: string,
+  hwidHeaders?: Record<string, string>,
 ): Promise<SubscriptionContent> {
   // The raw content lives at the panel-provided PUBLIC subscription URL (the
   // shortUuid is the capability), NOT the admin API — `/api/subscriptions/...`
@@ -456,6 +464,10 @@ export async function remnawaveFetchSubscription(
   const url = subscriptionUrl ?? new URL(`/api/sub/${backendShortId}`, cfg.baseUrl).toString();
   const headers: Record<string, string> = {};
   if (userAgent) headers['user-agent'] = userAgent;
+  // Forward the client's HWID identification headers so the panel registers the
+  // device + enforces the limit (with HWID_DEVICE_LIMIT_ENABLED on, a fetch
+  // without x-hwid is rejected 404 — the caller passes that through).
+  if (hwidHeaders) for (const [k, val] of Object.entries(hwidHeaders)) headers[k] = val;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 8000);
   try {

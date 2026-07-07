@@ -125,6 +125,13 @@ export const PublicConfig = z.object({
   /** Whether the opt-in "trouble connecting? try a mirror" affordance is available
    *  (≥1 active mirror provider). The SPA hides it entirely when false. */
   mirrorsEnabled: z.boolean().optional(),
+  /** Device-limit (HWID) enforcement master switch. When false, device limits
+   *  are off deployment-wide and the connect UI hides app-compatibility gating.
+   *  Optional/defaulted for forward-compat. */
+  devices: z
+    .object({ enforcementEnabled: z.boolean() })
+    .optional()
+    .default({ enforcementEnabled: false }),
   /** Admin-selected brand theme (W3-3): a preset id + optional hue override,
    *  applied client-side over the baked default. Optional for forward-compat. */
   theme: z
