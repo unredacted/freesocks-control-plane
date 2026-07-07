@@ -10,11 +10,18 @@ export function formatDate(
   value: string | number | Date,
   opts: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' },
 ): string {
-  return new Date(value).toLocaleDateString(getLocale(), opts);
+  // Guard unparseable input (e.g. the deliberately-lenient plain-string device
+  // firstSeen/lastSeen fields): toLocaleDateString on an Invalid Date renders the
+  // literal "Invalid Date". Fall back to the raw value instead.
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString(getLocale(), opts);
 }
 
 export function formatDateTime(value: string | number | Date): string {
-  return new Date(value).toLocaleString(getLocale());
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString(getLocale());
 }
 
 /**
