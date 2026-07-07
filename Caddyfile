@@ -12,6 +12,17 @@
 	# Let's Encrypt contact (expiry notices). Override via the ACME_EMAIL env.
 	email {$ACME_EMAIL:ops@freesocks.org}
 
+	# Privacy default: NO access logs. FCP serves users in censored regions and
+	# never persists a client IP at rest (the app HMAC-buckets it, never logs it —
+	# see convex/lib/http.ts + docs/privacy.md). Caddy would still see the real
+	# client IP, so we discard the access log EXPLICITLY (a null sink) rather than
+	# leaving it off "by omission" — the intent is now tamper-evident, and a
+	# future edit that wants logging has to consciously remove this. Caddy's own
+	# runtime/error log (no per-request client IPs) still goes to stderr.
+	log default {
+		output discard
+	}
+
 	# Client-IP trust (see the @api block + docs/beta-deploy.md §"Client IP").
 	# Default is a TEST-NET-1 sentinel matching NOTHING → Caddy overwrites XFF with
 	# the immediate peer (topology (a): Caddy is the public edge, TRUSTED_PROXY=true
@@ -140,7 +151,13 @@
 			-X-Powered-By
 		}
 		uri strip_prefix /cap
-		reverse_proxy cap:3000
+		reverse_proxy cap:3000 {
+			# Symmetry with the backend proxy: strip any client-supplied
+			# CF-Connecting-IP so a request hitting Caddy directly can't hand Cap a
+			# spoofed client IP. Cap rate-limits on the compose peer (Caddy) by
+			# default — do NOT set RATELIMIT_IP_HEADER to a client header.
+			header_up -CF-Connecting-IP
+		}
 	}
 
 	# --- API + health -> Convex HTTP actions (:3211 over the compose network) --

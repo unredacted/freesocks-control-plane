@@ -57,7 +57,15 @@ services:
       - POSTGRES_URL=postgresql://convex:${POSTGRES_PASSWORD}@postgres:5432
       # Don't echo internal error detail to API clients in prod.
       - REDACT_LOGS_TO_CLIENT=${REDACT_LOGS_TO_CLIENT:-true}
-      - RUST_LOG=${RUST_LOG:-info}
+      # Privacy default: silence the per-request HTTP access log
+      # (convex-cloud-http logs the immediate peer's socket + request line) while
+      # keeping warnings/errors. FCP never persists client IPs, so the request
+      # log is pure noise here — and the peer is Caddy's container, but quiet-by-
+      # default is the posture. Verify after deploy:
+      #   docker compose -f docker-compose.beta.yml logs backend | grep 'GET /api'  # → empty
+      # If a Convex version renames that target, fall back to RUST_LOG=warn.
+      # See docs/privacy.md.
+      - RUST_LOG=${RUST_LOG:-info,convex-cloud-http=warn}
     healthcheck:
       test: curl -f http://localhost:3210/version
       interval: 10s
@@ -176,6 +184,11 @@ services:
     environment:
       - ADMIN_KEY=${CAP_ADMIN_KEY:?set CAP_ADMIN_KEY in .env.beta (>=32 chars)}
       - REDIS_URL=redis://valkey:6379
+      # Privacy default: quiet Cap's error logging so a client IP can't surface
+      # in a stack trace. Cap rate-limits on the compose peer (Caddy) and its IP
+      # geolocation stays off (dashboard default) — do NOT enable either against a
+      # real-client header. See docs/privacy.md.
+      - DISABLE_ERROR_LOGGING=${CAP_DISABLE_ERROR_LOGGING:-true}
     healthcheck:
       # The image ships NO wget/curl (verified against the pinned digest) — a
       # wget-based check fails with exit 127 on every probe and marks a
