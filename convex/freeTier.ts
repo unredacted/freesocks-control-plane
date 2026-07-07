@@ -55,8 +55,6 @@ export const claimFreeSlot = internalMutation({
     ipCountry: v.optional(v.string()),
     asn: v.optional(v.number()),
     tlsFingerprint: v.optional(v.string()),
-    turnstileAction: v.optional(v.string()),
-    turnstileCdata: v.optional(v.string()),
     userAgentHash: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -81,8 +79,6 @@ export const claimFreeSlot = internalMutation({
       ipCountry: args.ipCountry,
       asn: args.asn,
       tlsFingerprint: args.tlsFingerprint,
-      turnstileAction: args.turnstileAction,
-      turnstileCdata: args.turnstileCdata,
       userAgentHash: args.userAgentHash,
       grantedAt: now,
       grantedDayBucket: args.dayBucket,
@@ -128,8 +124,6 @@ export const createFreeAccount = internalAction({
     asn: v.optional(v.number()),
     tlsFingerprint: v.optional(v.string()),
     userAgent: v.optional(v.string()),
-    turnstileAction: v.optional(v.string()),
-    turnstileCdata: v.optional(v.string()),
     requestId: v.string(),
     backend: v.optional(v.union(v.literal('remnawave'), v.literal('outline'))),
     // PoP (CDN-blinding Phase 2): account creation establishes a member session,
@@ -164,8 +158,6 @@ export const createFreeAccount = internalAction({
       ipCountry: a.ipCountry,
       asn: a.asn,
       tlsFingerprint: a.tlsFingerprint,
-      turnstileAction: a.turnstileAction,
-      turnstileCdata: a.turnstileCdata,
       userAgentHash: a.userAgent ? await sha256Hex(a.userAgent) : undefined,
     });
     if (!claim.claimed) return { ok: false as const, reason: 'cap_reached' as const };

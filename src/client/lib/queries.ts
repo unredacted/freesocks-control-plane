@@ -89,8 +89,9 @@ export const meQuery = () =>
  * Public config (member portal URLs, Cap captcha site key, environment, backend
  * toggles). Most fields are env-var driven and only change on redeploy, but
  * the backend toggles are admin-editable at runtime, so we set staleTime to
- * 5 min instead of Infinity. That bounds the worst-case staleness after an
- * admin flips a toggle to roughly the server-side KV cache window.
+ * 5 min instead of Infinity, bounding the worst-case client staleness after an
+ * admin flips a toggle (publicConfig is read straight from Convex — there is no
+ * server-side cache in front of it).
  */
 export const configQuery = () =>
   createQuery(() => ({
@@ -328,9 +329,9 @@ export const adminAuditQuery = (filtersRef: () => AuditFilters) =>
 /**
  * Global admin-editable settings (outline.enabled, default_backend, etc.).
  * Used by AdminSettings.svelte for the form, and by the public surface
- * (/get-account chooser, AppHeader nudges) to read the toggles. Cached server-side
- * 5 min via KV; client-side we set staleTime to 60s so admin edits propagate
- * quickly across tabs.
+ * (/get-account chooser, AppHeader nudges) to read the toggles. Read straight from
+ * Convex (no server-side cache); client-side we set staleTime to 60s so admin edits
+ * propagate quickly across tabs.
  */
 const SettingsResponse = z.object({ settings: AppSettingsRecord });
 export const appSettingsQuery = () =>

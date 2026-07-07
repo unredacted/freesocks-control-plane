@@ -206,8 +206,6 @@ export default defineSchema({
     ipCountry: v.optional(v.string()),
     asn: v.optional(v.number()),
     tlsFingerprint: v.optional(v.string()),
-    turnstileAction: v.optional(v.string()),
-    turnstileCdata: v.optional(v.string()),
     userAgentHash: v.optional(v.string()),
     grantedAt: v.number(),
     grantedDayBucket: v.number(),

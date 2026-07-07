@@ -57,8 +57,6 @@
   const config = configQuery();
   const qc = useQueryClient();
 
-  // Usage trend: lazy — only fetched once the member opens the panel, so it never
-  // adds a second live backend call to the main account load.
   // Usage trend: eager (fetched whenever there's a subscription) so it renders by
   // default under the traffic stats in the hero. Degrades to null (Outline/outage).
   const usage = accountUsageQuery(() => !!account.data?.subscription);
