@@ -160,7 +160,6 @@ export const listCodes = internalQuery({
     const tiers = await ctx.db.query('tiers').collect();
     const tierSlugById = new Map<string, string>(tiers.map((t) => [t._id as string, t.slug]));
     const pageSize = Math.min(Math.max(limit ?? 50, 1), 200);
-    const before = cursor && Number.isFinite(Number(cursor)) ? Number(cursor) : null;
 
     const ordered =
       status === 'active' || status === 'redeemed' || status === 'revoked'
@@ -170,17 +169,13 @@ export const listCodes = internalQuery({
             .order('desc')
         : ctx.db.query('redemptionCodes').order('desc');
 
-    const rows = await ordered
-      .filter((f) =>
-        before != null ? f.lt(f.field('_creationTime'), before) : f.gt(f.field('_creationTime'), 0),
-      )
-      .take(pageSize + 1);
-
-    const hasMore = rows.length > pageSize;
-    const page = rows.slice(0, pageSize);
-    const last = page[page.length - 1];
-    const nextCursor = hasMore && last ? String(last._creationTime) : null;
-    return { codes: page.map((c) => maskCode(c, tierSlugById)), nextCursor };
+    // paginate()'s compound (_creationTime,_id) cursor avoids the ms-collision skip
+    // the hand-rolled _creationTime keyset had at a page boundary. (Review P2.)
+    const res = await ordered.paginate({ cursor: cursor ?? null, numItems: pageSize });
+    return {
+      codes: res.page.map((c) => maskCode(c, tierSlugById)),
+      nextCursor: res.isDone ? null : res.continueCursor,
+    };
   },
 });
 

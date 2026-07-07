@@ -67,14 +67,36 @@ async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
   }
 }
 
+/** Read the whole connectionProfile.* namespace in ONE indexed range scan → a
+ *  key→parsedValue map. resolveConnectionProfiles needs all keys, so one range
+ *  read beats the five sequential point reads it used to do. (Review P2.) */
+async function readProfileNamespace(db: DatabaseReader): Promise<Map<string, unknown>> {
+  const rows = await db
+    .query('appSettings')
+    // ['connectionProfile.', 'connectionProfile/') — '/' is the next byte after '.'
+    // so this range captures exactly the connectionProfile.* keys.
+    .withIndex('by_key', (q) => q.gte('key', 'connectionProfile.').lt('key', 'connectionProfile/'))
+    .collect();
+  const map = new Map<string, unknown>();
+  for (const r of rows) {
+    try {
+      map.set(r.key, JSON.parse(r.value));
+    } catch {
+      /* skip malformed */
+    }
+  }
+  return map;
+}
+
 /** Resolve the full catalog, fail-safe. Always returns every known id. */
 export async function resolveConnectionProfiles(db: DatabaseReader): Promise<ConnectionProfile[]> {
-  const rawDefault = await readSetting(db, CONNECTION_PROFILE_KEYS.defaultId);
+  const ns = await readProfileNamespace(db);
+  const rawDefault = ns.get(CONNECTION_PROFILE_KEYS.defaultId);
   const defaultId = isConnectionProfileId(rawDefault) ? rawDefault : DEFAULT_CONNECTION_PROFILE;
   const out: ConnectionProfile[] = [];
   for (const id of CONNECTION_PROFILE_IDS) {
-    const label = await readSetting(db, CONNECTION_PROFILE_KEYS.label(id));
-    const squad = await readSetting(db, CONNECTION_PROFILE_KEYS.squad(id));
+    const label = ns.get(CONNECTION_PROFILE_KEYS.label(id));
+    const squad = ns.get(CONNECTION_PROFILE_KEYS.squad(id));
     out.push({
       id,
       label: typeof label === 'string' && label.trim() ? label : DEFAULT_LABELS[id],

@@ -331,11 +331,18 @@ export const findDisableTransitions = internalQuery({
       .take(pageSize);
     const due: Id<'users'>[] = [];
     let lastExpiry = afterExpiry;
+    // Memoize the per-tier grace window across the page (tiers are ~a handful and
+    // many users share one) so this is O(distinct tiers), not O(users). (Review P2.)
+    const windowByTier = new Map<Id<'tiers'>, number>();
     for (const u of rows) {
       if (u.membershipExpiresAt == null) continue;
       lastExpiry = u.membershipExpiresAt;
-      const tier = await ctx.db.get(u.tierId);
-      const windowMs = (tier?.expirationDaysAfterMembershipLapse ?? 7) * 86_400_000;
+      let windowMs = windowByTier.get(u.tierId);
+      if (windowMs === undefined) {
+        const tier = await ctx.db.get(u.tierId);
+        windowMs = (tier?.expirationDaysAfterMembershipLapse ?? 7) * 86_400_000;
+        windowByTier.set(u.tierId, windowMs);
+      }
       if (u.membershipExpiresAt + windowMs < now) due.push(u._id);
     }
     return { due, lastExpiry, hasMore: rows.length === pageSize };

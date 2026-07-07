@@ -1023,13 +1023,10 @@ export const auditList = internalQuery({
   },
   handler: async (ctx, { cursor, limit, action, actorType, since }) => {
     const pageSize = Math.min(Math.max(limit ?? 50, 1), 200);
-    const before = cursor && Number.isFinite(Number(cursor)) ? Number(cursor) : null;
 
     // Pick the most selective index for the primary filter (action > actorType).
     // Every Convex index appends _creationTime, so newest-first ordering + the
-    // keyset cursor + the `since` bound (all ranges over _creationTime) compose
-    // on top of whichever index we choose. All three branches resolve to the
-    // same OrderedQuery type, so the .filter()/.take() below is written once.
+    // `since` lower bound + paginate's keyset compose on whichever index we choose.
     const ordered = action
       ? ctx.db
           .query('auditLog')
@@ -1042,22 +1039,19 @@ export const auditList = internalQuery({
             .order('desc')
         : ctx.db.query('auditLog').order('desc');
 
-    const rows = await ordered
-      .filter((f) => {
-        // Newest-first keyset cursor (upper bound) + optional `since` (lower
-        // bound). Neither set ⇒ an always-true sentinel (creation times > 0).
-        const upper = before != null ? f.lt(f.field('_creationTime'), before) : null;
-        const lower = since != null ? f.gte(f.field('_creationTime'), since) : null;
-        if (upper && lower) return f.and(upper, lower);
-        return upper ?? lower ?? f.gt(f.field('_creationTime'), 0);
-      })
-      .take(pageSize + 1);
-
-    const hasMore = rows.length > pageSize;
-    const page = rows.slice(0, pageSize);
-    const last = page[page.length - 1];
-    const nextCursor = hasMore && last ? String(last._creationTime) : null;
-    return { entries: page.map(mapAudit), nextCursor };
+    // paginate()'s compound (_creationTime,_id) cursor replaces the hand-rolled
+    // keyset — bulk-written audit rows share a creation-ms, exactly the collision
+    // the old strict-lt cursor could skip at a page boundary. `since` stays a
+    // lower-bound filter (unset ⇒ an always-true sentinel). (Review P2.)
+    const res = await ordered
+      .filter((f) =>
+        since != null ? f.gte(f.field('_creationTime'), since) : f.gt(f.field('_creationTime'), 0),
+      )
+      .paginate({ cursor: cursor ?? null, numItems: pageSize });
+    return {
+      entries: res.page.map(mapAudit),
+      nextCursor: res.isDone ? null : res.continueCursor,
+    };
   },
 });
 
@@ -1396,7 +1390,7 @@ export const billingOverview = internalQuery({
     const secretStatus = processorSecretStatus(await resolveProcessorSecrets(ctx.db));
     const pageSize = Math.min(Math.max(limit ?? 50, 1), 200);
     const useStatus = status && BILLING_ORDER_STATUSES.has(status);
-    let qry = useStatus
+    const qry = useStatus
       ? ctx.db
           .query('billingOrders')
           .withIndex('by_status', (q) =>
@@ -1404,16 +1398,15 @@ export const billingOverview = internalQuery({
           )
           .order('desc')
       : ctx.db.query('billingOrders').order('desc');
-    if (cursor) {
-      const before = Number(cursor);
-      if (Number.isFinite(before)) qry = qry.filter((f) => f.lt(f.field('_creationTime'), before));
-    }
-    const rows = await qry.take(pageSize + 1);
-    const hasMore = rows.length > pageSize;
-    const page = rows.slice(0, pageSize);
-    const last = page[page.length - 1];
-    const nextCursor = hasMore && last ? String(last._creationTime) : null;
-    return { config, secretStatus, orders: page.map(mapBillingOrder), nextCursor };
+    // paginate()'s compound (_creationTime,_id) cursor avoids the ms-collision skip
+    // the hand-rolled _creationTime keyset had at a page boundary. (Review P2.)
+    const res = await qry.paginate({ cursor: cursor ?? null, numItems: pageSize });
+    return {
+      config,
+      secretStatus,
+      orders: res.page.map(mapBillingOrder),
+      nextCursor: res.isDone ? null : res.continueCursor,
+    };
   },
 });
 

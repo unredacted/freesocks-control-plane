@@ -189,4 +189,27 @@ describe('membershipCodes redeem flow', () => {
     // No plaintext/hash leaks into the list shape.
     expect(JSON.stringify(list[0])).not.toMatch(/[0-9a-f]{64}/);
   });
+
+  test('listCodes pages through every row via the cursor, no dupes or gaps (Review P2)', async () => {
+    const t = convexTest(schema, modules);
+    const { patron, admin } = await seedTiers(t);
+    await t.action(internal.membershipCodes.mintCodes, {
+      tierId: patron,
+      durationDays: 30,
+      count: 5,
+      actorAdminId: admin,
+    });
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    for (let i = 0; i < 10; i++) {
+      const res: { codes: Array<{ id: string }>; nextCursor: string | null } = await t.query(
+        internal.membershipCodes.listCodes,
+        { limit: 2, ...(cursor ? { cursor } : {}) },
+      );
+      for (const c of res.codes) seen.add(c.id);
+      if (!res.nextCursor) break;
+      cursor = res.nextCursor;
+    }
+    expect(seen.size).toBe(5); // all rows visited exactly once across pages
+  });
 });
