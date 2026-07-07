@@ -74,7 +74,10 @@ if [ -f "${CONVEX_ENV_FILE}" ]; then
       exit 1
       ;;
     esac
-    bunx convex env set "${key}" "${val}" >/dev/null
+    if ! bunx convex env set "${key}" "${val}" >/dev/null; then
+      echo "[deploy] ERROR: failed to set deployment env ${key}" >&2
+      exit 1
+    fi
     echo "[deploy]   env set ${key}"
   done <"${CONVEX_ENV_FILE}"
 else
@@ -93,11 +96,11 @@ if existing_env="$(bunx convex env list 2>/dev/null)"; then
     if printf '%s\n' "${existing_env}" | grep -q "^${name}="; then
       continue # already set — persisted in the deployment; leave it
     fi
-    bunx convex env set "${name}" "$(rand_hex32)" >/dev/null
-    echo "[deploy]   generated ${name}"
-    if [ "${name}" = "ADMIN_BOOTSTRAP_SECRET" ]; then
-      echo "[deploy]   -> retrieve with: bunx convex env get ADMIN_BOOTSTRAP_SECRET (for the first admin passkey)"
+    if ! bunx convex env set "${name}" "$(rand_hex32)" >/dev/null; then
+      echo "[deploy] ERROR: failed to generate deployment secret ${name}" >&2
+      exit 1
     fi
+    echo "[deploy]   generated ${name}"
   done
 else
   echo "[deploy] WARNING: could not list deployment env; skipping secret auto-generation" >&2
@@ -119,3 +122,22 @@ echo "[deploy] setting the device-limit enforcement default (no-op if already se
 bunx convex run seed:migrateDeviceEnforcementDefault '{}'
 
 echo "[deploy] OK"
+# First-run reminder (printed EVERY deploy, not only when the secret is freshly
+# generated): the first admin registers a passkey at /admin using this secret.
+# It never lands in .env.convex (it's a deployment env var), so surface how to
+# read it. Harmless to re-print — retrieving it doesn't change or expose more
+# than an operator with deploy access already has.
+# Print it right here while we already hold the admin key + URL — the operator
+# doesn't have to figure out how to read a deployment env var afterwards.
+bootstrap_secret="$(bunx convex env get ADMIN_BOOTSTRAP_SECRET 2>/dev/null | tr -d '[:space:]' || true)"
+echo "[deploy] ---------------------------------------------------------------"
+echo "[deploy] First admin passkey: open https://<your-site>/admin and enter the"
+echo "[deploy] bootstrap secret below. It locks forever once a passkey exists."
+if [ -n "${bootstrap_secret}" ]; then
+  echo "[deploy]   ADMIN_BOOTSTRAP_SECRET = ${bootstrap_secret}"
+else
+  echo "[deploy]   (couldn't read it here — retrieve from the Convex dashboard's"
+  echo "[deploy]    Settings → Environment Variables, or on-host: bunx convex env get"
+  echo "[deploy]    ADMIN_BOOTSTRAP_SECRET)"
+fi
+echo "[deploy] ---------------------------------------------------------------"
