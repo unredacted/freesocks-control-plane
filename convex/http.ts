@@ -2181,6 +2181,18 @@ http.route({
   }),
 });
 
+// GET /api/v1/admin/squad-stats: per-squad load snapshots (the squad-pool
+// balancer's input), read-only for the Connection-profiles admin card. Squad
+// UUIDs are shown — the admin set them; they never reach the public config.
+http.route({
+  path: '/api/v1/admin/squad-stats',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
+    return json({ squads: await ctx.runQuery(internal.backendServers.listSquadStats, {}) });
+  }),
+});
+
 http.route({
   path: '/api/v1/admin/backend-servers',
   method: 'POST',

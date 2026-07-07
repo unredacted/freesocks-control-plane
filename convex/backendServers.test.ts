@@ -43,6 +43,7 @@ async function seedInstance(
     isActive?: boolean;
     lastHealthOkAt?: number;
     lastHealthRttMs?: number;
+    maxKeys?: number;
   },
 ): Promise<Id<'backendServers'>> {
   const backend = o.backend ?? 'remnawave';
@@ -58,6 +59,7 @@ async function seedInstance(
       isActive: o.isActive ?? true,
       priority: o.priority ?? 0,
       keyCount: o.keyCount ?? 0,
+      ...(o.maxKeys != null ? { maxKeys: o.maxKeys } : {}),
       ...(o.lastHealthOkAt != null ? { lastHealthOkAt: o.lastHealthOkAt } : {}),
       ...(o.lastHealthRttMs != null ? { lastHealthRttMs: o.lastHealthRttMs } : {}),
       updatedAt: Date.now(),
@@ -108,6 +110,50 @@ describe('pickCandidatesForIssue', () => {
       backend: 'remnawave',
     });
     expect(picks.map((p) => p.slug)).toEqual(['rw-probed-stale', 'rw-never-probed']);
+  });
+
+  test('maxKeys: an at-capacity instance is skipped; all-at-capacity returns []', async () => {
+    const t = convexTest(schema, modules);
+    await seedInstance(t, { slug: 'rw-full', keyCount: 10, maxKeys: 10 });
+    await seedInstance(t, { slug: 'rw-room', keyCount: 999, maxKeys: 1000 });
+    await seedInstance(t, { slug: 'rw-uncapped', keyCount: 5000 }); // no cap → always eligible
+    const picks = await t.query(internal.backendServers.pickCandidatesForIssue, {
+      backend: 'remnawave',
+    });
+    expect(picks.map((p) => p.slug).sort()).toEqual(['rw-room', 'rw-uncapped']);
+
+    // Saturate everything → empty (the dispatch maps this to backend.unavailable).
+    const t2 = convexTest(schema, modules);
+    await seedInstance(t2, { slug: 'rw-a', keyCount: 3, maxKeys: 3 });
+    await seedInstance(t2, { slug: 'rw-b', keyCount: 7, maxKeys: 5 }); // over-cap counts as full
+    expect(
+      await t2.query(internal.backendServers.pickCandidatesForIssue, { backend: 'remnawave' }),
+    ).toEqual([]);
+  });
+
+  test('maxKeys: a full-but-fresh instance cannot win via the fresh window', async () => {
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    // The only FRESH instance is full; the stale one has room. The capacity
+    // filter runs before the fresh/fallback split, so the stale-with-room
+    // instance must be picked rather than the fresh-but-full one.
+    await seedInstance(t, {
+      slug: 'rw-fresh-full',
+      keyCount: 10,
+      maxKeys: 10,
+      lastHealthOkAt: now - 60_000,
+      lastHealthRttMs: 20,
+    });
+    await seedInstance(t, {
+      slug: 'rw-stale-room',
+      keyCount: 2,
+      lastHealthOkAt: now - 40 * 60_000,
+      lastHealthRttMs: 30,
+    });
+    const picks = await t.query(internal.backendServers.pickCandidatesForIssue, {
+      backend: 'remnawave',
+    });
+    expect(picks.map((p) => p.slug)).toEqual(['rw-stale-room']);
   });
 
   test('among fresh instances, lower measured rtt wins at equal load', async () => {

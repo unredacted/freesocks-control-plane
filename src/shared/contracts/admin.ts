@@ -165,6 +165,9 @@ export const BackendServerAdmin = z.object({
   isActive: z.boolean(),
   priority: z.number().int(),
   keyCount: z.number().int().nonnegative(),
+  // Hard capacity cap: at keyCount >= maxKeys the instance is skipped at
+  // issuance. null = uncapped. Optional for forward-compat with older servers.
+  maxKeys: z.number().int().positive().nullable().optional().default(null),
   lastHealthOkAt: z.string().datetime().nullable(),
   lastHealthRttMs: z.number().nonnegative().nullable(),
   config: z.discriminatedUnion('type', [RemnawaveConfigSummary, OutlineConfigSummary]),
@@ -184,6 +187,8 @@ export const BackendServerUpsert = z.object({
   slug: z.string().min(1).max(64),
   isActive: z.boolean().default(true),
   priority: z.number().int().default(0),
+  // Capacity cap: positive integer; null clears, absent keeps the current cap.
+  maxKeys: z.number().int().positive().nullable().optional(),
   // Remnawave instance:
   baseUrl: z.string().url().optional(),
   apiToken: z.string().min(1).optional(),

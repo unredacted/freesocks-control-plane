@@ -366,6 +366,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     t: ReturnType<typeof convexTest>,
     userId: Id<'users'>,
     backendUserId: string,
+    remnawaveSquadUuid?: string,
   ): Promise<void> {
     await t.run(async (ctx) => {
       await ctx.db.insert('subscriptions', {
@@ -375,6 +376,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
         backendShortId: `${backendUserId}-s`,
         subscriptionUrl: 'https://x/sub',
         subscriptionMirrors: [],
+        ...(remnawaveSquadUuid ? { remnawaveSquadUuid } : {}),
         state: 'active',
         updatedAt: Date.now(),
       });
@@ -423,6 +425,75 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
 
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
     expect(st?.remnawaveSquadUuid).toBe('TIER_SQUAD');
+  });
+
+  test('activeSubAndTier PRESERVES the subscription-persisted squad (no pool re-pick thrash)', async () => {
+    // Squad pools: the key was issued into squadA (persisted on the sub row).
+    // Even though the profile's pool now prefers a different squad (squadB,
+    // fewer members), a tier push must re-send squadA — re-homing a live key
+    // on every renewal would thrash users across squads.
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t);
+    const userId = await t.run(async (ctx) => {
+      await ctx.db.patch(memberTierId, { remnawaveSquadUuid: 'TIER_SQUAD' });
+      await ctx.db.insert('appSettings', {
+        key: 'connectionProfile.privacy.squadUuids',
+        value: JSON.stringify(['SQUAD_A', 'SQUAD_B']),
+        updatedAt: Date.now(),
+      });
+      const serverId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'rw',
+        slug: 'rw-squads',
+        config: { type: 'remnawave', baseUrl: 'https://rw.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+      // SQUAD_B is currently the least-loaded (a fresh pick would choose it).
+      const now = Date.now();
+      await ctx.db.insert('remnawaveSquadStats', {
+        backendServerId: serverId,
+        squadUuid: 'SQUAD_A',
+        membersCount: 40,
+        lastStatsAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert('remnawaveSquadStats', {
+        backendServerId: serverId,
+        squadUuid: 'SQUAD_B',
+        membersCount: 1,
+        lastStatsAt: now,
+        updatedAt: now,
+      });
+      return ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        connectionProfileId: 'privacy',
+        membershipExpiresAt: Date.now() + 30 * DAY,
+        updatedAt: Date.now(),
+      });
+    });
+    await seedActiveSub(t, userId, 'bu-pinned', 'SQUAD_A');
+
+    const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
+    expect(st?.remnawaveSquadUuid).toBe('SQUAD_A'); // pinned, NOT re-picked to SQUAD_B
+
+    // A pre-pool row (no persisted squad) falls back to the pool's first squad,
+    // deterministically — stable across pushes.
+    const legacyUserId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        connectionProfileId: 'privacy',
+        membershipExpiresAt: Date.now() + 30 * DAY,
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedActiveSub(t, legacyUserId, 'bu-legacy');
+    const stLegacy = await t.query(internal.lifecycle.activeSubAndTier, { userId: legacyUserId });
+    expect(stLegacy?.remnawaveSquadUuid).toBe('SQUAD_A'); // pool[0], not least-loaded
   });
 
   test('pushTierToBackend runs cleanly for an active user and clears drift (mock backend)', async () => {

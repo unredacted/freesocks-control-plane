@@ -88,6 +88,9 @@ export const insertSubscription = internalMutation({
     subscriptionUrl: v.string(),
     subscriptionMirrors: v.array(mirror),
     rawContentHash: v.optional(v.string()),
+    // The squad-pool pick this key was issued into (Remnawave only) — read back
+    // by lifecycle.activeSubAndTier so tier pushes never re-home a live key.
+    remnawaveSquadUuid: v.optional(v.string()),
   },
   handler: async (ctx, a) => {
     // Mint the opaque per-subscription token for the FCP-fronted URL. 128-bit;

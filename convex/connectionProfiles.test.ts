@@ -5,6 +5,8 @@ import schema from './schema';
 import {
   resolveConnectionProfiles,
   resolveProfileSquad,
+  resolveProfilePool,
+  pickSquadFromPool,
   publicProjection,
   connectionProfileWrites,
   CONNECTION_PROFILE_KEYS,
@@ -100,6 +102,7 @@ describe('connectionProfiles lib', () => {
         labelCustom: false,
         description: null,
         squadUuid: 'sq-front',
+        squadUuids: ['sq-front'],
         isDefault: true,
       },
       {
@@ -108,6 +111,7 @@ describe('connectionProfiles lib', () => {
         labelCustom: true,
         description: 'Custom body',
         squadUuid: null,
+        squadUuids: [],
         isDefault: false,
       },
     ]);
@@ -168,6 +172,102 @@ describe('connectionProfiles lib', () => {
     expect(pub.find((p) => p.id === 'privacy')!.label).toBe('Max privacy');
   });
 
+  test('squad pools: squadUuids overrides legacy squadUuid; legacy resolves as a one-element pool', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      // evade: legacy single squad only (backward compat).
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_PROFILE_KEYS.squad('evade'),
+        value: JSON.stringify('sq-legacy'),
+        updatedAt: now,
+      });
+      // privacy: a pool (and a stale legacy key the pool must shadow).
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_PROFILE_KEYS.squad('privacy'),
+        value: JSON.stringify('sq-old'),
+        updatedAt: now,
+      });
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_PROFILE_KEYS.squads('privacy'),
+        value: JSON.stringify(['sq-a', 'sq-b', 'sq-a']), // dupe dropped
+        updatedAt: now,
+      });
+    });
+    expect(await t.run((ctx) => resolveProfilePool(ctx.db, 'evade'))).toEqual(['sq-legacy']);
+    expect(await t.run((ctx) => resolveProfilePool(ctx.db, 'privacy'))).toEqual(['sq-a', 'sq-b']);
+    // The deterministic single-squad view = the pool's first element.
+    expect(await t.run((ctx) => resolveProfileSquad(ctx.db, 'privacy'))).toBe('sq-a');
+    const profiles = await t.run((ctx) => resolveConnectionProfiles(ctx.db));
+    expect(profiles.find((p) => p.id === 'privacy')!.squadUuids).toEqual(['sq-a', 'sq-b']);
+    // Corrupt pool JSON falls back to the legacy single squad, never throws.
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: CONNECTION_PROFILE_KEYS.squads('evade'),
+        value: 'not json{',
+        updatedAt: Date.now(),
+      }),
+    );
+    expect(await t.run((ctx) => resolveProfilePool(ctx.db, 'evade'))).toEqual(['sq-legacy']);
+  });
+
+  test('pickSquadFromPool: least-loaded fresh squad wins; stale/unknown deprioritized; deterministic fallback', async () => {
+    const t = convexTest(schema, modules);
+    // Fast paths need no stats rows.
+    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, []))).toBeNull();
+    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, ['only']))).toBe('only');
+    // All-unknown → declaration order (deterministic).
+    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, ['first', 'second']))).toBe('first');
+
+    const serverId = await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'rw',
+        slug: 'rw',
+        config: { type: 'remnawave', baseUrl: 'https://rw.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('remnawaveSquadStats', {
+        backendServerId: serverId,
+        squadUuid: 'sq-busy',
+        name: 'busy',
+        membersCount: 50,
+        lastStatsAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert('remnawaveSquadStats', {
+        backendServerId: serverId,
+        squadUuid: 'sq-idle',
+        name: 'idle',
+        membersCount: 3,
+        lastStatsAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert('remnawaveSquadStats', {
+        backendServerId: serverId,
+        squadUuid: 'sq-stale',
+        name: 'stale',
+        membersCount: 0, // lowest count, but STALE → must not win over fresh
+        lastStatsAt: now - 45 * 60_000,
+        updatedAt: now - 45 * 60_000,
+      });
+    });
+    // Least-loaded fresh squad wins regardless of declaration order.
+    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, ['sq-busy', 'sq-idle']))).toBe('sq-idle');
+    // A stale zero-count squad loses to any fresh one...
+    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, ['sq-stale', 'sq-busy']))).toBe(
+      'sq-busy',
+    );
+    // ...and a never-observed squad also loses to a fresh one.
+    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, ['sq-new', 'sq-idle']))).toBe('sq-idle');
+  });
+
   test('connectionProfileWrites validates ids + maps to appSettings keys', () => {
     const writes = connectionProfileWrites({
       default: 'privacy',
@@ -183,6 +283,19 @@ describe('connectionProfiles lib', () => {
     expect(byKey[CONNECTION_PROFILE_KEYS.description('evade')]).toBe('Own copy');
     // An explicit empty string is a valid clear-write (resolves back to null).
     expect(byKey[CONNECTION_PROFILE_KEYS.description('privacy')]).toBe('');
+    // Squad pools: valid array maps (deduped); bad shapes throw; [] is a clear-write.
+    const poolWrites = connectionProfileWrites({
+      profiles: { evade: { squadUuids: ['sq-1', 'sq-2', 'sq-1'] }, privacy: { squadUuids: [] } },
+    });
+    const poolByKey = Object.fromEntries(poolWrites.map((w) => [w.key, JSON.parse(w.value)]));
+    expect(poolByKey[CONNECTION_PROFILE_KEYS.squads('evade')]).toEqual(['sq-1', 'sq-2']);
+    expect(poolByKey[CONNECTION_PROFILE_KEYS.squads('privacy')]).toEqual([]);
+    expect(() =>
+      connectionProfileWrites({ profiles: { evade: { squadUuids: 'not-an-array' } } }),
+    ).toThrow(/squadUuids/);
+    expect(() =>
+      connectionProfileWrites({ profiles: { evade: { squadUuids: ['ok', ''] } } }),
+    ).toThrow(/squadUuids/);
     expect(() => connectionProfileWrites({ default: 'nope' })).toThrow();
     expect(() => connectionProfileWrites('x')).toThrow();
     // Unknown profile ids are ignored, not an error.

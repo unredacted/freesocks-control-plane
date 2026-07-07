@@ -44,6 +44,10 @@ export async function issueNewSubscription(
       subscriptionUrl: issued.subscriptionUrl,
       subscriptionMirrors: [],
       rawContentHash: undefined,
+      // Persist which squad the key was issued into (the squad-pool pick), so
+      // tier pushes re-send the SAME squad instead of re-picking.
+      remnawaveSquadUuid:
+        input.backend === 'remnawave' ? (input.spec.remnawaveSquadUuid ?? undefined) : undefined,
     });
     await ctx.runMutation(internal.subscriptions.setCurrentSubscription, {
       userId: input.userId,

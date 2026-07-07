@@ -126,3 +126,15 @@ export interface FleetStats {
   lifetimeTrafficBytes: number;
   panelVersion: string;
 }
+
+/**
+ * Per-squad load snapshot for the squad-pool balancer (Remnawave internal
+ * squads). `membersCount` is the panel's authoritative user count for the
+ * squad — the balancer's primary signal. Read-only, refreshed by the
+ * healthcheck cron into `remnawaveSquadStats`.
+ */
+export interface SquadStats {
+  squadUuid: string;
+  name: string;
+  membersCount: number;
+}

@@ -173,6 +173,7 @@ function mapBackendServer(s: Doc<'backendServers'>) {
     isActive: s.isActive,
     priority: s.priority,
     keyCount: s.keyCount,
+    maxKeys: s.maxKeys ?? null,
     lastHealthOkAt: s.lastHealthOkAt != null ? iso(s.lastHealthOkAt) : null,
     lastHealthRttMs: s.lastHealthRttMs ?? null,
     config,
@@ -1085,6 +1086,14 @@ interface BackendServerConfigArgs {
   prometheusUrl?: string | null;
 }
 
+/** maxKeys is a hard capacity cap consumed by pickCandidatesForIssue; only a
+ *  positive integer makes sense (null clears the cap, absent keeps it). */
+function checkMaxKeys(n: number | null | undefined): void {
+  if (typeof n === 'number' && (!Number.isInteger(n) || n < 1)) {
+    throw new Error('maxKeys must be a positive integer (or null to clear the cap)');
+  }
+}
+
 /**
  * Build a fresh backend-server config from create/upsert args (validates the
  * required fields per backend). Shared by createBackendServer +
@@ -1137,6 +1146,7 @@ export const createBackendServer = internalMutation({
     slug: v.string(),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
+    maxKeys: v.optional(v.union(v.number(), v.null())),
     // Remnawave:
     baseUrl: v.optional(v.string()),
     apiToken: v.optional(v.string()),
@@ -1152,6 +1162,7 @@ export const createBackendServer = internalMutation({
       .withIndex('by_slug', (q) => q.eq('slug', a.slug))
       .unique();
     if (clash) throw new Error(`A backend server with slug "${a.slug}" already exists`);
+    checkMaxKeys(a.maxKeys);
 
     const config = buildBackendServerConfig(a);
     const id = await ctx.db.insert('backendServers', {
@@ -1162,6 +1173,7 @@ export const createBackendServer = internalMutation({
       isActive: a.isActive ?? true,
       priority: a.priority ?? 0,
       keyCount: 0,
+      maxKeys: a.maxKeys ?? undefined,
       updatedAt: Date.now(),
     });
     return mapBackendServer((await ctx.db.get(id))!);
@@ -1175,6 +1187,7 @@ export const updateBackendServer = internalMutation({
     slug: v.optional(v.string()),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
+    maxKeys: v.optional(v.union(v.number(), v.null())),
     // Secret-bearing fields are present only when the admin retyped them (rotate).
     baseUrl: v.optional(v.string()),
     apiToken: v.optional(v.string()),
@@ -1193,11 +1206,14 @@ export const updateBackendServer = internalMutation({
         .unique();
       if (clash) throw new Error(`A backend server with slug "${patch.slug}" already exists`);
     }
+    checkMaxKeys(patch.maxKeys);
     const fields: Partial<Doc<'backendServers'>> = { updatedAt: Date.now() };
     if (patch.name !== undefined) fields.name = patch.name;
     if (patch.slug !== undefined) fields.slug = patch.slug;
     if (patch.isActive !== undefined) fields.isActive = patch.isActive;
     if (patch.priority !== undefined) fields.priority = patch.priority;
+    // null clears the cap (patch-to-undefined unsets the optional field).
+    if (patch.maxKeys !== undefined) fields.maxKeys = patch.maxKeys ?? undefined;
 
     // The backend TYPE is immutable; a blank/absent secret keeps the stored one.
     fields.config = mergeBackendServerConfig(existing.config, patch);
@@ -1234,6 +1250,7 @@ export const upsertBackendServerBySlug = internalMutation({
     name: v.optional(v.string()),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
+    maxKeys: v.optional(v.union(v.number(), v.null())),
     baseUrl: v.optional(v.string()),
     apiToken: v.optional(v.string()),
     apiUrl: v.optional(v.string()),
@@ -1248,6 +1265,7 @@ export const upsertBackendServerBySlug = internalMutation({
       .withIndex('by_slug', (q) => q.eq('slug', a.slug))
       .unique();
 
+    checkMaxKeys(a.maxKeys);
     if (!existing) {
       // CREATE path — shares the reshape with createBackendServer.
       const config = buildBackendServerConfig(a);
@@ -1259,6 +1277,7 @@ export const upsertBackendServerBySlug = internalMutation({
         isActive: a.isActive ?? true,
         priority: a.priority ?? 0,
         keyCount: 0,
+        maxKeys: a.maxKeys ?? undefined,
         updatedAt: Date.now(),
       });
       await writeAuditLog(ctx, {
@@ -1282,6 +1301,7 @@ export const upsertBackendServerBySlug = internalMutation({
     if (a.name !== undefined) fields.name = a.name;
     if (a.isActive !== undefined) fields.isActive = a.isActive;
     if (a.priority !== undefined) fields.priority = a.priority;
+    if (a.maxKeys !== undefined) fields.maxKeys = a.maxKeys ?? undefined;
     fields.config = mergeBackendServerConfig(existing.config, a);
     await ctx.db.patch(existing._id, fields);
     await writeAuditLog(ctx, {

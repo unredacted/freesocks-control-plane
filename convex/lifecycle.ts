@@ -179,11 +179,15 @@ export const activeSubAndTier = internalQuery({
       .order('desc')
       .first();
     if (!sub) return null;
-    // Squad from the member's chosen connection profile, falling back to the
-    // tier's own squad — MUST mirror the issuance path (account.ts) so a tier
-    // push doesn't re-home the key to the tier squad and discard the member's
-    // profile choice (or clear activeInternalSquads → "No hosts found"). (Review #3.)
-    const profileSquad = await resolveProfileSquad(ctx.db, user.connectionProfileId ?? null);
+    // The squad this key was issued into, PRESERVED: a tier push must re-send
+    // the key's own squad, never re-pick from the pool (that would thrash live
+    // keys across squads on every renewal) and never re-home to the tier squad
+    // (which would discard the member's profile choice, or clear
+    // activeInternalSquads → "No hosts found"). (Review #3 + squad pools.)
+    // Pre-pool rows have no persisted squad → stable pool-first fallback.
+    const profileSquad =
+      sub.remnawaveSquadUuid ??
+      (await resolveProfileSquad(ctx.db, user.connectionProfileId ?? null));
     return {
       backend: sub.backend,
       backendUserId: sub.backendUserId,

@@ -20,7 +20,7 @@ export const CONNECTION_PROFILE_IDS = ['evade', 'privacy'] as const;
 export type ConnectionProfileId = (typeof CONNECTION_PROFILE_IDS)[number];
 export const DEFAULT_CONNECTION_PROFILE: ConnectionProfileId = 'evade';
 
-/** Server-side profile: id + admin label/description + the squad it issues into. */
+/** Server-side profile: id + admin label/description + the squad POOL it issues into. */
 export interface ConnectionProfile {
   id: ConnectionProfileId;
   label: string;
@@ -30,7 +30,11 @@ export interface ConnectionProfile {
   labelCustom: boolean;
   /** Admin-set member-facing description; null = the SPA renders its i18n copy. */
   description: string | null;
-  squadUuid: string | null; // null until bound; issuance then falls back to the tier squad
+  squadUuid: string | null; // legacy single binding; null until bound
+  /** The squad POOL issuance balances across: the stored `.squadUuids` list when
+   *  set, else the legacy single `.squadUuid` as a one-element pool, else empty
+   *  (issuance then falls back to the tier squad). */
+  squadUuids: string[];
   isDefault: boolean;
 }
 
@@ -50,6 +54,7 @@ export const CONNECTION_PROFILE_KEYS = {
   label: (id: ConnectionProfileId) => `connectionProfile.${id}.label`,
   description: (id: ConnectionProfileId) => `connectionProfile.${id}.description`,
   squad: (id: ConnectionProfileId) => `connectionProfile.${id}.squadUuid`,
+  squads: (id: ConnectionProfileId) => `connectionProfile.${id}.squadUuids`,
   defaultId: 'connectionProfile.default',
 } as const;
 
@@ -62,6 +67,17 @@ const DEFAULT_LABELS: Record<ConnectionProfileId, string> = {
 
 export function isConnectionProfileId(v: unknown): v is ConnectionProfileId {
   return typeof v === 'string' && (CONNECTION_PROFILE_IDS as readonly string[]).includes(v);
+}
+
+/** Fail-safe parse of a stored squad pool: a JSON array of non-empty strings,
+ *  de-duplicated in declaration order; anything else resolves to []. */
+function sanitizePool(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry === 'string' && entry.trim() && !out.includes(entry)) out.push(entry);
+  }
+  return out;
 }
 
 async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
@@ -109,30 +125,33 @@ export async function resolveConnectionProfiles(db: DatabaseReader): Promise<Con
     const description = ns.get(CONNECTION_PROFILE_KEYS.description(id));
     const squad = ns.get(CONNECTION_PROFILE_KEYS.squad(id));
     const labelCustom = typeof label === 'string' && label.trim().length > 0;
+    const squadUuid = typeof squad === 'string' && squad.trim() ? squad : null;
+    const pool = sanitizePool(ns.get(CONNECTION_PROFILE_KEYS.squads(id)));
     out.push({
       id,
       label: labelCustom ? (label as string) : DEFAULT_LABELS[id],
       labelCustom,
       description:
         typeof description === 'string' && description.trim() ? (description as string) : null,
-      squadUuid: typeof squad === 'string' && squad.trim() ? squad : null,
+      squadUuid,
+      squadUuids: pool.length > 0 ? pool : squadUuid ? [squadUuid] : [],
       isDefault: id === defaultId,
     });
   }
   return out;
 }
 
-/** The squad a profile issues into (issuance path). When the member has made no
- *  explicit choice (id null/invalid), this resolves the DEFAULT profile's squad —
- *  a new member follows the catalog default (bound to the fronted squad). Without
- *  that fallback a never-chosen member would issue into NO squad (empty
- *  activeInternalSquads) and Remnawave returns a "No hosts found" placeholder.
- *  Returns null only when the resolved profile has no squad bound, in which case
- *  callers fall back to the tier's own squad. */
-export async function resolveProfileSquad(
+/** The squad POOL a profile issues into (issuance path). When the member has
+ *  made no explicit choice (id null/invalid), this resolves the DEFAULT
+ *  profile's pool — a new member follows the catalog default (bound to the
+ *  fronted squads). Without that fallback a never-chosen member would issue
+ *  into NO squad (empty activeInternalSquads) and Remnawave returns a "No
+ *  hosts found" placeholder. Returns [] only when the resolved profile has no
+ *  squad bound, in which case callers fall back to the tier's own squad. */
+export async function resolveProfilePool(
   db: DatabaseReader,
   id: ConnectionProfileId | null | undefined,
-): Promise<string | null> {
+): Promise<string[]> {
   let profileId: ConnectionProfileId;
   if (isConnectionProfileId(id)) {
     profileId = id;
@@ -140,8 +159,60 @@ export async function resolveProfileSquad(
     const rawDefault = await readSetting(db, CONNECTION_PROFILE_KEYS.defaultId);
     profileId = isConnectionProfileId(rawDefault) ? rawDefault : DEFAULT_CONNECTION_PROFILE;
   }
+  const pool = sanitizePool(await readSetting(db, CONNECTION_PROFILE_KEYS.squads(profileId)));
+  if (pool.length > 0) return pool;
   const squad = await readSetting(db, CONNECTION_PROFILE_KEYS.squad(profileId));
-  return typeof squad === 'string' && squad.trim() ? squad : null;
+  return typeof squad === 'string' && squad.trim() ? [squad] : [];
+}
+
+/** Legacy single-squad resolution: the pool's FIRST squad (declaration order),
+ *  deterministic and stable — used where a re-pick would thrash a live key
+ *  (the tier push falls back here for pre-pool subscription rows with no
+ *  persisted squad). Issuance uses `pickSquadFromPool` instead. */
+export async function resolveProfileSquad(
+  db: DatabaseReader,
+  id: ConnectionProfileId | null | undefined,
+): Promise<string | null> {
+  const pool = await resolveProfilePool(db, id);
+  return pool[0] ?? null;
+}
+
+// A squad-stats snapshot older than this is treated as unknown load (the
+// healthcheck cron refreshes every 10 min; 30 min matches the instance pool's
+// "fresh" window).
+const SQUAD_STATS_STALE_MS = 30 * 60_000;
+
+/** Least-loaded squad from a pool, using the panel-authoritative per-squad
+ *  member counts cached in `remnawaveSquadStats` by the healthcheck cron.
+ *  Fresh-known squads win over stale/unknown ones (lowest membersCount first);
+ *  among all-unknown the pool's declaration order decides, deterministically.
+ *  Between cron refreshes the counts can drift by a few issuances — bounded and
+ *  self-correcting, no local counters needed. */
+export async function pickSquadFromPool(
+  db: DatabaseReader,
+  squadUuids: string[],
+): Promise<string | null> {
+  if (squadUuids.length <= 1) return squadUuids[0] ?? null;
+  const now = Date.now();
+  const scored: { uuid: string; order: number; fresh: boolean; members: number }[] = [];
+  for (let order = 0; order < squadUuids.length; order++) {
+    const uuid = squadUuids[order]!;
+    const row = await db
+      .query('remnawaveSquadStats')
+      .withIndex('by_squad', (q) => q.eq('squadUuid', uuid))
+      .unique();
+    const fresh = row != null && now - row.lastStatsAt < SQUAD_STATS_STALE_MS;
+    scored.push({
+      uuid,
+      order,
+      fresh,
+      members: fresh ? row.membersCount : Number.POSITIVE_INFINITY,
+    });
+  }
+  scored.sort(
+    (a, b) => Number(b.fresh) - Number(a.fresh) || a.members - b.members || a.order - b.order,
+  );
+  return scored[0]!.uuid;
 }
 
 export function publicProjection(profiles: ConnectionProfile[]): PublicConnectionProfile[] {
@@ -152,7 +223,7 @@ export function publicProjection(profiles: ConnectionProfile[]): PublicConnectio
     label: p.labelCustom ? p.label : null,
     description: p.description,
     isDefault: p.isDefault,
-    available: p.squadUuid !== null,
+    available: p.squadUuids.length > 0,
   }));
 }
 
@@ -188,6 +259,20 @@ export function connectionProfileWrites(patch: unknown): Array<{ key: string; va
     }
     if (typeof e.squadUuid === 'string') {
       writes.push({ key: CONNECTION_PROFILE_KEYS.squad(id), value: JSON.stringify(e.squadUuid) });
+    }
+    if ('squadUuids' in e && e.squadUuids !== undefined) {
+      if (
+        !Array.isArray(e.squadUuids) ||
+        e.squadUuids.some((s) => typeof s !== 'string' || !s.trim())
+      ) {
+        throw new Error('squadUuids must be an array of non-empty strings');
+      }
+      // Empty array is a valid clear-write (drops the pool back to the legacy
+      // single squadUuid, or unbound).
+      writes.push({
+        key: CONNECTION_PROFILE_KEYS.squads(id),
+        value: JSON.stringify(sanitizePool(e.squadUuids)),
+      });
     }
   }
   return writes;

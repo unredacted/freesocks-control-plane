@@ -43,6 +43,7 @@
       slug: s?.slug ?? '',
       isActive: s?.isActive ?? true,
       priority: s?.priority ?? 0,
+      maxKeys: s?.maxKeys ?? null,
       baseUrl: rw?.baseUrl ?? '',
       apiTokenSet: rw?.apiTokenSet ?? false,
       apiUrlMasked: ol?.apiUrlMasked ?? '',
@@ -57,6 +58,8 @@
   let slug = $state(init.slug);
   let isActive = $state(init.isActive);
   let priority = $state(init.priority);
+  // Free-text so the field can be blank (= no cap); parsed on save.
+  let maxKeysText = $state(init.maxKeys != null ? String(init.maxKeys) : '');
   // Remnawave (apiToken) + Outline (apiUrl) secrets stay blank until retyped.
   let baseUrl = $state(init.baseUrl);
   let apiToken = $state('');
@@ -119,6 +122,9 @@
 
   function buildPayload(): Record<string, unknown> {
     const common: Record<string, unknown> = { name, slug, isActive, priority };
+    // Blank = clear the cap (null); a positive integer sets it.
+    const parsedMax = parseInt(maxKeysText.trim(), 10);
+    common.maxKeys = Number.isInteger(parsedMax) && parsedMax >= 1 ? parsedMax : null;
     if (backend === 'remnawave') {
       if (baseUrl) common.baseUrl = baseUrl;
       if (apiToken) common.apiToken = apiToken;
@@ -324,11 +330,28 @@
               (priority = Math.max(0, parseInt((e.target as HTMLInputElement).value, 10) || 0))}
           />
         </div>
-        <label class="flex items-center gap-3 text-sm pt-5">
-          <Checkbox checked={isActive} onCheckedChange={(v) => (isActive = v === true)} />
-          <span>Active (eligible for new key issuance)</span>
-        </label>
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-max-keys"
+            >Max keys (capacity cap)</label
+          >
+          <Input
+            id="srv-max-keys"
+            type="number"
+            min={1}
+            placeholder="No cap"
+            value={maxKeysText}
+            oninput={(e) => (maxKeysText = (e.target as HTMLInputElement).value)}
+          />
+          <p class="mt-1 text-[11px] text-muted-foreground">
+            When reached, this instance is skipped at issuance (all instances full → members see a
+            retryable "unavailable"). Blank = no cap.
+          </p>
+        </div>
       </div>
+      <label class="flex items-center gap-3 text-sm">
+        <Checkbox checked={isActive} onCheckedChange={(v) => (isActive = v === true)} />
+        <span>Active (eligible for new key issuance)</span>
+      </label>
     </div>
 
     <Dialog.Footer>

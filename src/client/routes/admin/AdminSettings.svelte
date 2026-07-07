@@ -17,7 +17,12 @@
   import { apiErrorMessage } from '../../lib/errors';
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import AdminListState from './AdminListState.svelte';
-  import { appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
+  import {
+    adminSquadStatsQuery,
+    appSettingsQuery,
+    configQuery,
+    queryKeys,
+  } from '../../lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { AppSettingsRecord } from '../../../shared/contracts/admin';
   import { toast } from 'svelte-sonner';
@@ -166,6 +171,18 @@
     evade: cfg.data?.connectionProfiles?.find((p) => p.id === 'evade')?.available ?? false,
     privacy: cfg.data?.connectionProfiles?.find((p) => p.id === 'privacy')?.available ?? false,
   });
+  // Per-squad load (panel-authoritative member counts, stamped by the
+  // healthcheck cron) — the read-only window into whether a pool is balancing.
+  const squadStats = adminSquadStatsQuery();
+  // One squad UUID per line (commas also accepted); trims + dedupes.
+  function parseSquadList(text: string): string[] {
+    const out: string[] = [];
+    for (const raw of text.split(/[\n,]/)) {
+      const s = raw.trim();
+      if (s && !out.includes(s)) out.push(s);
+    }
+    return out;
+  }
   const saveConnectionProfiles = createMutation(() => ({
     mutationFn: async () => {
       const CpResp = z.object({
@@ -180,15 +197,18 @@
         ),
       });
       const profiles: {
-        evade: { label: string; description: string; squadUuid?: string };
-        privacy: { label: string; description: string; squadUuid?: string };
+        evade: { label: string; description: string; squadUuids?: string[] };
+        privacy: { label: string; description: string; squadUuids?: string[] };
       } = {
         evade: { label: cpDraft.evadeLabel, description: cpDraft.evadeDescription },
         privacy: { label: cpDraft.privacyLabel, description: cpDraft.privacyDescription },
       };
-      // Only send a squad when the admin typed one — blank keeps the current binding.
-      if (cpDraft.evadeSquad.trim()) profiles.evade.squadUuid = cpDraft.evadeSquad.trim();
-      if (cpDraft.privacySquad.trim()) profiles.privacy.squadUuid = cpDraft.privacySquad.trim();
+      // Only send squads when the admin typed any — blank keeps the current
+      // binding. One UUID per line; 2+ = a load-balanced pool.
+      const evadeSquads = parseSquadList(cpDraft.evadeSquad);
+      const privacySquads = parseSquadList(cpDraft.privacySquad);
+      if (evadeSquads.length > 0) profiles.evade.squadUuids = evadeSquads;
+      if (privacySquads.length > 0) profiles.privacy.squadUuids = privacySquads;
       return apiClient.patch(
         '/api/v1/admin/connection-profiles',
         { default: cpDraft.default, profiles },
@@ -601,15 +621,17 @@
             </div>
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-squad"
-                >Remnawave squad UUID (write-only)</label
+                >Remnawave squad UUIDs (write-only, one per line — 2+ = load-balanced pool)</label
               >
-              <Input
+              <textarea
                 id="cp-evade-squad"
+                rows="2"
+                class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 font-mono text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
                 placeholder={cpAvailable.evade ? 'Bound — leave blank to keep' : 'Not set'}
                 value={cpDraft.evadeSquad}
                 oninput={(e) =>
-                  (cpDraft = { ...cpDraft, evadeSquad: (e.target as HTMLInputElement).value })}
-              />
+                  (cpDraft = { ...cpDraft, evadeSquad: (e.target as HTMLTextAreaElement).value })}
+              ></textarea>
             </div>
           </div>
 
@@ -664,17 +686,42 @@
             </div>
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="cp-privacy-squad"
-                >Remnawave squad UUID (write-only)</label
+                >Remnawave squad UUIDs (write-only, one per line — 2+ = load-balanced pool)</label
               >
-              <Input
+              <textarea
                 id="cp-privacy-squad"
+                rows="2"
+                class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 font-mono text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
                 placeholder={cpAvailable.privacy ? 'Bound — leave blank to keep' : 'Not set'}
                 value={cpDraft.privacySquad}
                 oninput={(e) =>
-                  (cpDraft = { ...cpDraft, privacySquad: (e.target as HTMLInputElement).value })}
-              />
+                  (cpDraft = { ...cpDraft, privacySquad: (e.target as HTMLTextAreaElement).value })}
+              ></textarea>
             </div>
           </div>
+
+          {#if squadStats.data && squadStats.data.length > 0}
+            <div class="border-t border-border pt-4">
+              <p class="mb-2 text-xs font-medium text-muted-foreground">
+                Squad load (panel member counts, refreshed by the healthcheck cron — issuance picks
+                the least-loaded squad of a profile's pool)
+              </p>
+              <div class="space-y-1">
+                {#each squadStats.data as sq (sq.squadUuid)}
+                  <div class="flex items-center justify-between gap-2 text-xs">
+                    <span class="truncate">
+                      <span class="font-medium">{sq.name ?? 'unnamed'}</span>
+                      <span class="ml-1 font-mono text-muted-foreground">{sq.squadUuid}</span>
+                    </span>
+                    <span class="shrink-0 tabular-nums text-muted-foreground">
+                      {sq.membersCount}
+                      {sq.membersCount === 1 ? 'member' : 'members'}
+                    </span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
 
           <div class="flex justify-end">
             <Button

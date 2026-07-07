@@ -174,6 +174,12 @@ export default defineSchema({
     // don't thrash and we never serve one client's format to another — on both the
     // fresh-hit and stale-fallback paths. Never logged.
     subCache: v.optional(v.string()),
+    // Which Remnawave internal squad this key was issued into (the squad-pool
+    // pick, persisted so tier pushes re-send the SAME squad instead of
+    // re-picking — a re-pick would thrash live keys across squads on every
+    // renewal). Absent on pre-pool rows and non-Remnawave subs; the push then
+    // falls back to the profile/tier squad resolution.
+    remnawaveSquadUuid: v.optional(v.string()),
     state: subscriptionState,
     updatedAt: v.number(),
     deletedAt: v.optional(v.number()),
@@ -407,6 +413,10 @@ export default defineSchema({
     lastHealthOkAt: v.optional(v.number()),
     lastHealthRttMs: v.optional(v.number()),
     keyCount: v.number(),
+    // Optional hard capacity cap: at keyCount >= maxKeys the instance is skipped
+    // by pickCandidatesForIssue (all-at-capacity → backend.unavailable). Absent
+    // (or null-cleared) = uncapped.
+    maxKeys: v.optional(v.number()),
     // Read-only fleet observability, cached by the backend-healthcheck cron so the
     // admin dashboard never makes a live panel call. Best-effort: absent until the
     // first successful fetch, and left as-is (not cleared) on a later failure.
@@ -426,6 +436,27 @@ export default defineSchema({
   })
     .index('by_slug', ['slug'])
     .index('by_backend_active', ['backend', 'isActive', 'priority']),
+
+  // Per-squad load cache for the Remnawave squad-pool balancer. One row per
+  // internal squad observed on a panel, refreshed by the backend-healthcheck
+  // cron from GET /api/internal-squads (info.membersCount is the panel's
+  // authoritative per-squad user count — no local counters needed; between
+  // cron cycles the drift is bounded and self-correcting). Stats-only, no
+  // secrets; pool MEMBERSHIP lives in the connectionProfile.* appSettings
+  // namespace, never here. `nodesOnline`/`usersOnline` are reserved for a
+  // future accessible-nodes join (realtime node load).
+  remnawaveSquadStats: defineTable({
+    backendServerId: v.id('backendServers'),
+    squadUuid: v.string(),
+    name: v.optional(v.string()),
+    membersCount: v.number(),
+    nodesOnline: v.optional(v.number()),
+    usersOnline: v.optional(v.number()),
+    lastStatsAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_squad', ['squadUuid'])
+    .index('by_server', ['backendServerId']),
 
   // S3 subscription-mirror providers (the censorship-resistance hedge): a
   // variable-length POOL of S3-compatible buckets the subscription content is

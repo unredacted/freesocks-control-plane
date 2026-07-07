@@ -7,19 +7,24 @@ import { internalQuery } from './_generated/server';
 import { v } from 'convex/values';
 import {
   resolveConnectionProfiles,
-  resolveProfileSquad,
+  resolveProfilePool,
+  pickSquadFromPool,
   DEFAULT_CONNECTION_PROFILE,
 } from './lib/connectionProfiles';
 
-/** The squad a profile issues into (issuance path). null when unknown/unbound —
- *  the caller then falls back to the tier's own squad. */
+/** The squad a NEW key issues into: the LEAST-LOADED squad of the profile's
+ *  pool (panel-authoritative member counts, cached by the healthcheck cron;
+ *  single-squad pools short-circuit). null when unknown/unbound — the caller
+ *  then falls back to the tier's own squad. Callers persist the pick on the
+ *  subscription row so later tier pushes re-send the SAME squad. */
 export const resolveSquad = internalQuery({
   args: { profileId: v.union(v.literal('evade'), v.literal('privacy'), v.null()) },
-  handler: (ctx, { profileId }) => resolveProfileSquad(ctx.db, profileId),
+  handler: async (ctx, { profileId }) =>
+    pickSquadFromPool(ctx.db, await resolveProfilePool(ctx.db, profileId)),
 });
 
 /** Admin/status view + the switchProfile validity check: id/label/isDefault plus
- *  a `squadBound` boolean — NEVER the squad UUID. */
+ *  a `squadBound` boolean — NEVER the squad UUIDs. */
 export const list = internalQuery({
   args: {},
   handler: async (ctx) =>
@@ -27,7 +32,7 @@ export const list = internalQuery({
       id: p.id,
       label: p.label,
       isDefault: p.isDefault,
-      squadBound: p.squadUuid !== null,
+      squadBound: p.squadUuids.length > 0,
     })),
 });
 

@@ -53,6 +53,7 @@ export const queryKeys = {
   adminAudit: ['admin', 'audit'] as const,
   adminSettings: ['admin', 'settings'] as const,
   adminBackendServers: ['admin', 'backend-servers'] as const,
+  adminSquadStats: ['admin', 'squad-stats'] as const,
   adminMirrorProviders: ['admin', 'mirror-providers'] as const,
   adminClients: ['admin', 'clients'] as const,
   adminRateLimits: ['admin', 'rate-limits'] as const,
@@ -360,6 +361,27 @@ export const adminBackendServersQuery = () =>
       return result.servers;
     },
     staleTime: 30_000,
+  }));
+
+/** Per-squad load snapshots (the squad-pool balancer's input), shown read-only
+ *  on the AdminSettings Connection-profiles card. Refreshed by the
+ *  backend-healthcheck cron (~10 min), so a short staleTime is fine. */
+const SquadStatsResponse = z.object({
+  squads: z.array(
+    z.object({
+      squadUuid: z.string(),
+      name: z.string().nullable(),
+      membersCount: z.number(),
+      lastStatsAt: z.number(),
+    }),
+  ),
+});
+export const adminSquadStatsQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminSquadStats,
+    queryFn: async () =>
+      (await apiClient.get('/api/v1/admin/squad-stats', SquadStatsResponse)).squads,
+    staleTime: 60_000,
   }));
 
 /** S3 mirror providers (subscription mirrors) for the AdminStorage CMS page. */

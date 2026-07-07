@@ -10,6 +10,7 @@ import type {
   FleetStats,
   IssueUserSpec,
   IssuedUser,
+  SquadStats,
   SubscriptionContent,
   UpdateUserPatch,
   UsageSeries,
@@ -338,6 +339,30 @@ export async function remnawaveFleetStats(cfg: RemnawaveConfig): Promise<FleetSt
     lifetimeTrafficBytes: toNum(recap.total.traffic),
     panelVersion: recap.version,
   };
+}
+
+// Per-squad load for the squad-pool balancer. `info.membersCount` is the
+// panel's authoritative user count per internal squad. Lenient: a squad row
+// missing `info` is skipped (never fails the whole fetch on shape drift).
+const InternalSquadsResponse = z.object({
+  internalSquads: z.array(
+    z.object({
+      uuid: z.string(),
+      name: z.string(),
+      info: z.object({ membersCount: z.number() }).optional(),
+    }),
+  ),
+});
+
+export async function remnawaveGetSquadStats(cfg: RemnawaveConfig): Promise<SquadStats[]> {
+  const result = await call(cfg, {
+    method: 'GET',
+    path: '/api/internal-squads',
+    schema: InternalSquadsResponse,
+  });
+  return result.internalSquads
+    .filter((s) => s.info != null)
+    .map((s) => ({ squadUuid: s.uuid, name: s.name, membersCount: s.info!.membersCount }));
 }
 
 export async function remnawaveUpdateUser(
