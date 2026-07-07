@@ -285,19 +285,41 @@ export const clearMirrors = internalMutation({
   },
 });
 
-/** Replace a subscription's S3 mirrors + content hash (the refresh cron). No-op
- *  if the row is gone or no longer active (tombstoned mid-refresh). */
+/**
+ * Merge a refresh round's results into a subscription's S3 mirrors + content hash
+ * (the refresh cron). No-op if the row is gone or no longer active (tombstoned
+ * mid-refresh). MERGE by provider (Review #2) rather than replace: a refreshed
+ * provider → its fresh entry; a provider that FAILED this round → keep its existing
+ * entry marked `status:'failed'` (so it isn't dropped — the member's account view
+ * and the per-user cap both still count it, and the next refresh retries it);
+ * others untouched. Wholesale-replacing with only the successes silently dropped a
+ * failed provider's entry, shrinking `triedProviders` (re-provision past the cap).
+ */
 export const updateMirrors = internalMutation({
   args: {
     subscriptionId: v.id('subscriptions'),
-    mirrors: v.array(mirror),
+    successes: v.array(mirror),
+    failedProviders: v.array(v.string()),
     rawContentHash: v.string(),
   },
-  handler: async (ctx, { subscriptionId, mirrors, rawContentHash }) => {
+  handler: async (ctx, { subscriptionId, successes, failedProviders, rawContentHash }) => {
     const row = await ctx.db.get(subscriptionId);
     if (!row || row.state !== 'active') return null;
+    const fresh = new Map(successes.map((m) => [m.provider, m]));
+    const failed = new Set(failedProviders);
+    const merged = row.subscriptionMirrors.map((m) => {
+      const hit = fresh.get(m.provider);
+      if (hit) {
+        fresh.delete(m.provider);
+        return hit;
+      }
+      return failed.has(m.provider) ? { ...m, status: 'failed' as const } : m;
+    });
+    // Defensive: a success for a provider not previously mirrored (refresh targets
+    // are always already-mirrored, so normally none).
+    for (const m of fresh.values()) merged.push(m);
     await ctx.db.patch(subscriptionId, {
-      subscriptionMirrors: mirrors,
+      subscriptionMirrors: merged,
       rawContentHash,
       updatedAt: Date.now(),
     });

@@ -200,10 +200,12 @@ export const getAccountView = internalAction({
         url: sub.subscriptionUrl,
         subToken: sub.subToken ?? null,
         shortUuid: sub.backendShortId,
-        mirrors: sub.subscriptionMirrors.map((m) => ({
-          provider: m.provider,
-          publicUrl: m.publicUrl,
-        })),
+        // Don't advertise a mirror whose last refresh failed (Review #2): it's kept
+        // in the DB so the cap holds + the next refresh retries it, but the member
+        // shouldn't be handed a URL we couldn't refresh.
+        mirrors: sub.subscriptionMirrors
+          .filter((m) => m.status !== 'failed')
+          .map((m) => ({ provider: m.provider, publicUrl: m.publicUrl })),
         expiresAt: live.expireAt,
         trafficLimitBytes: live.trafficLimitBytes,
         trafficUsedBytes: live.usedTrafficBytes,

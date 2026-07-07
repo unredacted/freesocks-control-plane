@@ -116,3 +116,53 @@ describe('subscriptions.resolveCurrentOrActive', () => {
     expect(await t.query(internal.subscriptions.resolveCurrentOrActive, { userId })).toBeNull();
   });
 });
+
+describe('subscriptions.updateMirrors — refresh merge (Review #2)', () => {
+  test('a failed provider is retained (status:failed) not dropped; triedProviders (cap) holds', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const { userId, subId } = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave' as const,
+        backendUserId: 'bu',
+        backendShortId: 'short',
+        subscriptionUrl: 'https://sub.example/x',
+        subscriptionMirrors: [
+          { provider: 'A', publicUrl: 'https://a/old', objectPath: 'p', status: 'ok' as const },
+          { provider: 'B', publicUrl: 'https://b/old', objectPath: 'p', status: 'ok' as const },
+        ],
+        state: 'active' as const,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+      return { userId, subId };
+    });
+
+    // Refresh round: A refreshed (new URL), B failed.
+    await t.mutation(internal.subscriptions.updateMirrors, {
+      subscriptionId: subId,
+      successes: [{ provider: 'A', publicUrl: 'https://a/new', objectPath: 'p', status: 'ok' }],
+      failedProviders: ['B'],
+      rawContentHash: 'h2',
+    });
+
+    const row = await t.run((ctx) => ctx.db.get(subId));
+    const byProvider = new Map((row?.subscriptionMirrors ?? []).map((m) => [m.provider, m]));
+    expect(byProvider.get('A')?.publicUrl).toBe('https://a/new'); // refreshed in place
+    expect(byProvider.get('A')?.status).toBe('ok');
+    expect(byProvider.get('B')).toBeTruthy(); // NOT dropped…
+    expect(byProvider.get('B')?.status).toBe('failed'); // …marked failed…
+    expect(byProvider.get('B')?.publicUrl).toBe('https://b/old'); // …stale entry retained
+
+    // The per-user cap counts BOTH providers still (failed one included), so the
+    // member can't re-provision past the cap.
+    const mc = await t.query(internal.subscriptions.mirrorContextForUser, { userId });
+    expect(new Set(mc?.triedProviders)).toEqual(new Set(['A', 'B']));
+  });
+});

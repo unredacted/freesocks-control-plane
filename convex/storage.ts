@@ -335,9 +335,16 @@ export const refreshActiveMirrors = internalAction({
             content: fetched.content,
             contentType: fetched.contentType,
           });
+          // Providers we attempted but that didn't come back a success this round →
+          // updateMirrors keeps their existing entry marked failed (Review #2),
+          // rather than dropping it. (uploadToProviders throws only if ALL fail,
+          // caught above → the sub is skipped, entries untouched.)
+          const succeeded = new Set(mirrors.map((m) => m.provider));
+          const failedProviders = targets.map((t) => t.name).filter((n) => !succeeded.has(n));
           await ctx.runMutation(internal.subscriptions.updateMirrors, {
             subscriptionId: sub.id,
-            mirrors,
+            successes: mirrors,
+            failedProviders,
             rawContentHash: hash,
           });
           refreshed++;
