@@ -173,6 +173,25 @@ describe('freeTier.createFreeAccount', () => {
     vi.unstubAllEnvs();
   });
 
+  // Review #9: a failure after the slot claim must leave NO orphan — in particular
+  // no member session pointing at the user the compensation deletes (the session is
+  // created last, after cookie signing). Force mint to throw via an empty pepper.
+  test('a failure after the slot claim leaves no orphan user/session/grant', async () => {
+    const t = convexTest(schema, modules);
+    await seedFreeTier(t);
+    vi.stubEnv('ACCOUNT_ID_PEPPER', ''); // mintForUser throws → catch → releaseFreeSlot
+
+    await expect(
+      t.action(internal.freeTier.createFreeAccount, { ip: '203.0.113.99', requestId: 'req-fail' }),
+    ).rejects.toThrow();
+
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query('users').collect()).toHaveLength(0);
+      expect(await ctx.db.query('sessions').collect()).toHaveLength(0);
+      expect(await ctx.db.query('freeGrants').collect()).toHaveLength(0);
+    });
+  });
+
   test('mints a user + account number + member session, with NO subscription or backend call', async () => {
     const t = convexTest(schema, modules);
     const tierId = await seedFreeTier(t);

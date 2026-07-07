@@ -11,6 +11,91 @@ const DAY = 86_400_000;
 afterEach(() => vi.useRealTimers());
 
 describe('retention sweeps (P2)', () => {
+  // Review #5: the gift-reveal sweep scans a dedicated pending index, so a backlog
+  // of paid self-orders can't starve it (the old by_status='paid' scan cleared
+  // nothing once >PAGE paid orders predated the window), and recent reveals are kept.
+  test('clearStaleGiftReveals clears stale pending gift reveals, keeps recent + self-orders', async () => {
+    const t = convexTest(schema, modules);
+    vi.useFakeTimers();
+    const t0 = new Date('2026-01-01T00:00:00Z').getTime();
+    vi.setSystemTime(t0);
+    const { tierId, userId, staleGift, selfOrder } = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'member',
+        name: 'Member',
+        backend: 'remnawave',
+        monthlyTrafficGb: 0,
+        deviceLimit: 0,
+        hwidLimit: 0,
+        hwidEnabled: false,
+        trafficStrategy: 'NO_RESET',
+        isDefaultFree: false,
+        isActive: true,
+        priority: 10,
+        expirationDaysAfterMembershipLapse: 7,
+        updatedAt: t0,
+      });
+      const userId = await ctx.db.insert('users', { tierId, status: 'active', updatedAt: t0 });
+      const mk = (opaqueRef: string, kind: 'self' | 'gift', pending: boolean) =>
+        ctx.db.insert('billingOrders', {
+          processor: 'nowpayments',
+          opaqueRef,
+          userId,
+          tierId,
+          durationDays: 91,
+          amountCents: 1400,
+          currency: 'USD',
+          status: 'paid',
+          paidAt: t0,
+          kind,
+          ...(pending ? { giftReveal: ['CODE-XYZ'], giftRevealPending: true } : {}),
+          updatedAt: t0,
+        });
+      const staleGift = await mk('g-stale', 'gift', true);
+      // Paid self-orders — the "backlog" that starved the old by_status='paid' scan.
+      await mk('self-1', 'self', false);
+      await mk('self-2', 'self', false);
+      const selfOrder = await mk('self-3', 'self', false);
+      return { tierId, userId, staleGift, selfOrder };
+    });
+
+    // Advance past the 24h TTL so the stale gift is due; a reveal created NOW is
+    // within the window and must be kept.
+    vi.setSystemTime(t0 + 25 * 60 * 60 * 1000);
+    const recentGift = await t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'nowpayments',
+        opaqueRef: 'g-recent',
+        userId,
+        tierId,
+        durationDays: 91,
+        amountCents: 1400,
+        currency: 'USD',
+        status: 'paid',
+        paidAt: Date.now(),
+        kind: 'gift',
+        giftReveal: ['CODE-RECENT'],
+        giftRevealPending: true,
+        updatedAt: Date.now(),
+      }),
+    );
+
+    const res = await t.mutation(internal.retention.clearStaleGiftReveals, {});
+    expect(res.cleared).toBe(1);
+
+    await t.run(async (ctx) => {
+      const stale = await ctx.db.get(staleGift);
+      expect(stale?.giftReveal).toBeUndefined();
+      expect(stale?.giftRevealPending).toBeUndefined();
+      expect(stale?.giftRevealAck).toBe(true);
+      const recent = await ctx.db.get(recentGift);
+      expect(recent?.giftReveal).toEqual(['CODE-RECENT']); // within window → kept
+      expect(recent?.giftRevealPending).toBe(true);
+      const self = await ctx.db.get(selfOrder);
+      expect(self?.status).toBe('paid'); // untouched
+    });
+  });
+
   test('sweepFreeGrants deletes grants past the window, keeps recent ones', async () => {
     const t = convexTest(schema, modules);
     const now = Date.now();

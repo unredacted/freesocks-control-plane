@@ -186,8 +186,12 @@ export const createFreeAccount = internalAction({
 
       // Mint a member session + signed cookie so the caller is signed in (same
       // shape as auth.accountLogin; the HTTP layer wraps it in a Set-Cookie).
+      // Create the session LAST — after the (pure) cookie signing — so a throw
+      // can't leave a session row pointing at a user the catch below deletes
+      // (releaseFreeSlot removes the user + grant, not the session). (Review #9.)
       const sid = randomHex(32);
       const popSessionToken = a.popPublicKey ? randomHex(16) : undefined;
+      const signedCookieValue = await signValue(sid, signingKey);
       await ctx.runMutation(internal.sessions.create, {
         sid,
         kind: 'member',
@@ -197,7 +201,6 @@ export const createFreeAccount = internalAction({
           ? { popPublicKey: a.popPublicKey, popAlg: a.popAlg, popSessionToken }
           : {}),
       });
-      const signedCookieValue = await signValue(sid, signingKey);
 
       return {
         ok: true as const,

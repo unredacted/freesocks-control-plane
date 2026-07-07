@@ -167,10 +167,12 @@ export default defineSchema({
     // from THIS origin instead of the backend panel. Rotates per key by
     // construction (a new sub row = a new token). Minted in insertSubscription.
     subToken: v.optional(v.string()),
-    // Small in-front content cache for the fronted route — a JSON blob
-    // {content, contentType, headers?, ua, at} (see convex/http.ts). Overwritten
-    // in place (no growth), dropped with the row, keyed by UA so we never serve
-    // one client's format to another. Never logged.
+    // Small in-front content cache for the fronted route — a JSON blob holding a
+    // BOUNDED per-UA list of {content, contentType, headers?, ua, at} entries (see
+    // convex/http.ts + subscriptions.writeContentCache). Bounded (no growth),
+    // dropped with the row, keyed by UA so multiple clients (phone + desktop)
+    // don't thrash and we never serve one client's format to another — on both the
+    // fresh-hit and stale-fallback paths. Never logged.
     subCache: v.optional(v.string()),
     state: subscriptionState,
     updatedAt: v.number(),
@@ -360,12 +362,19 @@ export default defineSchema({
     quantity: v.optional(v.number()),
     giftReveal: v.optional(v.array(v.string())),
     giftRevealAck: v.optional(v.boolean()),
+    // True while a paid gift order still holds an unacked plaintext reveal; unset
+    // on ack or by the gift-reveal sweep. A dedicated flag + index so the sweep
+    // scans ONLY pending reveals (oldest-first via the appended _creationTime),
+    // never the whole paid-orders table — which starved it once paid self-orders
+    // outnumbered the page window. (Review #5.)
+    giftRevealPending: v.optional(v.boolean()),
     updatedAt: v.number(),
   })
     .index('by_opaque_ref', ['opaqueRef'])
     .index('by_processor_ref', ['processor', 'processorRef'])
     .index('by_user', ['userId'])
-    .index('by_status', ['status']),
+    .index('by_status', ['status'])
+    .index('by_gift_reveal_pending', ['giftRevealPending']),
 
   apiTokens: defineTable({
     name: v.string(),

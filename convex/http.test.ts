@@ -187,9 +187,17 @@ describe('request-body caps (413)', () => {
 
 describe('account-login throttle runs BEFORE the captcha verify', () => {
   test('11th attempt from one IP is a 429 even while captcha always fails', async () => {
-    // CAP_* unset → verifyCaptcha fails closed; the action would answer 403
-    // captcha. The per-IP gate (default 10/h) must trip FIRST on attempt 11 —
-    // proving login floods can't drive Cap siteverify QPS.
+    // Captcha CONFIGURED but always failing (siteverify → {success:false}) → the
+    // action answers 403 captcha. The per-IP gate (default 10/h) must trip FIRST on
+    // attempt 11 — proving login floods can't drive Cap siteverify QPS. (An
+    // UNconfigured Cap would answer 503 config instead — see Review #12.)
+    vi.stubEnv('CAP_API_ENDPOINT', 'http://cap:3000');
+    vi.stubEnv('CAP_SITE_KEY', 'sk');
+    vi.stubEnv('CAP_SECRET', 'secret');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ success: false }), { status: 200 })),
+    );
     const t = convexTest(schema, modules);
     const attempt = () =>
       t.fetch('/api/v1/auth/account-login', {

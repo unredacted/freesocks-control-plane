@@ -104,9 +104,10 @@ function lastPathSegment(req: Request): string {
 // absorbed and we don't hit the backend every time.
 const SUBSCRIPTION_CACHE_TTL_MS = 30_000;
 
-// The serialized `subscriptions.subCache` blob. Keyed by UA because Remnawave
+// One entry in the serialized `subscriptions.subCache` blob (a bounded per-UA
+// list — see subscriptions.writeContentCache). Keyed by UA because Remnawave
 // formats the subscription by User-Agent — we must never serve one client's
-// format to another.
+// format to another, on BOTH the fresh-hit and the stale-fallback paths. (Review #11.)
 interface SubCacheEntry {
   content: string;
   contentType: string;
@@ -131,6 +132,19 @@ function subscriptionResponse(entry: {
       ...(entry.headers ?? {}),
     },
   });
+}
+
+/** Parse the bounded per-UA subCache blob; tolerates a legacy single-entry blob. */
+function parseSubCache(blob: string | null | undefined): SubCacheEntry[] {
+  if (!blob) return [];
+  try {
+    const parsed = JSON.parse(blob) as unknown;
+    if (Array.isArray(parsed)) return parsed as SubCacheEntry[];
+    if (parsed && typeof parsed === 'object') return [parsed as SubCacheEntry];
+    return [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -402,6 +416,11 @@ http.route({
       popAlg: typeof popAlgRaw === 'string' ? popAlgRaw : undefined,
     });
     if (!res.ok) {
+      if (res.reason === 'config') {
+        // Cap unconfigured (CAP_* unset) — a loud misconfig signal, not a generic
+        // captcha failure, matching the account-create route. (Review #12.)
+        return errorJson('config', 'Captcha not configured', 503);
+      }
       if (res.reason === 'captcha') {
         return errorJson('auth.captcha_failed', 'Captcha verification failed', 403);
       }
@@ -560,18 +579,12 @@ http.route({
 
     const now = Date.now();
     const ua = req.headers.get('user-agent') ?? '';
-    let stale: SubCacheEntry | null = null;
-    if (sub.subCache) {
-      try {
-        const entry = JSON.parse(sub.subCache) as SubCacheEntry;
-        if (entry.ua === ua && now - entry.at < SUBSCRIPTION_CACHE_TTL_MS) {
-          return subscriptionResponse(entry); // fresh + same format → cache hit
-        }
-        stale = entry; // keep as a last-resort fallback if the backend is down
-      } catch {
-        /* malformed cache: ignore and refetch */
-      }
-    }
+    const cached = parseSubCache(sub.subCache);
+    const fresh = cached.find((e) => e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS);
+    if (fresh) return subscriptionResponse(fresh); // fresh + same format → cache hit
+    // Last-resort fallback MUST match this UA — never serve another client's
+    // format (the same invariant the fresh path enforces). (Review #11.)
+    const stale = cached.find((e) => e.ua === ua) ?? null;
     try {
       const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
         backend: sub.backend,
@@ -589,12 +602,12 @@ http.route({
       };
       await ctx.runMutation(internal.subscriptions.writeContentCache, {
         subscriptionId: sub._id,
-        subCache: JSON.stringify(entry),
+        entry: JSON.stringify(entry),
       });
       return subscriptionResponse(entry);
     } catch (err) {
-      // Backend blip: serve the last-known content rather than break the member's
-      // client; only fail hard when there is nothing cached at all.
+      // Backend blip: serve the last-known content FOR THIS UA rather than break
+      // the member's client; only fail hard when nothing is cached for it.
       if (stale) return subscriptionResponse(stale);
       console.error(
         `[subscription] fronted fetch failed: ${err instanceof Error ? err.message : String(err)}`,

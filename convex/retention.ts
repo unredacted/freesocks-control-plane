@@ -174,22 +174,26 @@ export const clearStaleGiftReveals = internalMutation({
   handler: async (ctx, { limit }) => {
     await recordHeartbeat(ctx, 'billing-gift-reveal-sweep');
     const cutoff = Date.now() - num('BILLING_GIFT_REVEAL_TTL_HOURS', 24) * HOUR;
+    // Scan ONLY unacked gift reveals (giftRevealPending=true) older than the TTL,
+    // via a dedicated index (Convex appends _creationTime → oldest first). The old
+    // by_status='paid' scan cleared nothing once >PAGE paid self-orders predated
+    // the window; here cleared rows drop giftRevealPending and leave the eq(true)
+    // index by construction, so the sweep always makes progress. (Review #5.)
     const rows = await ctx.db
       .query('billingOrders')
-      .withIndex('by_status', (q) => q.eq('status', 'paid').lt('_creationTime', cutoff))
+      .withIndex('by_gift_reveal_pending', (q) =>
+        q.eq('giftRevealPending', true).lt('_creationTime', cutoff),
+      )
       .take(limit ?? PAGE);
-    let cleared = 0;
     for (const r of rows) {
-      if (r.kind === 'gift' && r.giftReveal && r.giftReveal.length > 0) {
-        await ctx.db.patch(r._id, {
-          giftReveal: undefined,
-          giftRevealAck: true,
-          updatedAt: Date.now(),
-        });
-        cleared++;
-      }
+      await ctx.db.patch(r._id, {
+        giftReveal: undefined,
+        giftRevealAck: true,
+        giftRevealPending: undefined,
+        updatedAt: Date.now(),
+      });
     }
-    return { cleared };
+    return { cleared: rows.length };
   },
 });
 

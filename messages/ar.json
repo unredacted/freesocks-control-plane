@@ -384,8 +384,7 @@
   },
   "footer": {
     "operatedPrefix": "يديره",
-    "operatedSuffix": "، منظمة أمريكية غير ربحية 501(c)(3)",
-    "apiDocs": "وثائق API"
+    "operatedSuffix": "، منظمة أمريكية غير ربحية 501(c)(3)"
   },
   "upgrade": {
     "title": "الترقية إلى عضوية FreeSocks",

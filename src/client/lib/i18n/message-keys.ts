@@ -202,7 +202,6 @@ export type MessageKey =
   | "faq.q9.question"
   | "faq.subtitle"
   | "faq.title"
-  | "footer.apiDocs"
   | "footer.operatedPrefix"
   | "footer.operatedSuffix"
   | "get.accountReady"

@@ -384,8 +384,7 @@
   },
   "footer": {
     "operatedPrefix": "اداره‌شده توسط",
-    "operatedSuffix": "، یک سازمان غیرانتفاعی 501(c)(3) آمریکایی",
-    "apiDocs": "مستندات API"
+    "operatedSuffix": "، یک سازمان غیرانتفاعی 501(c)(3) آمریکایی"
   },
   "upgrade": {
     "title": "به عضویت FreeSocks ارتقا دهید",

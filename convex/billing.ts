@@ -322,12 +322,27 @@ export const createCheckout = internalAction({
 
 // --- webhook ingest ----------------------------------------------------------
 
+// Monotonic status precedence (Review #8): webhooks can arrive out of order
+// (esp. NOWPayments under retry, whose dedupe id is per-(payment,status) so a
+// late distinct status is NOT a duplicate). A non-paid update only ever advances
+// the order forward — a late 'pending' after 'confirming', or 'confirming' after
+// a terminal 'failed'/'expired', is ignored rather than walking the lifecycle
+// backward. 'paid' is terminal and guarded separately at the top of applyEvent.
+const STATUS_RANK: Record<OrderStatus, number> = {
+  pending: 0,
+  confirming: 1,
+  failed: 2,
+  expired: 2,
+  paid: 3,
+};
+
 /**
  * Serializable order-status apply + single grant. Looks the order up by our
  * opaque ref (every rail echoes it: NOWPayments order_id, Stripe
  * client_reference_id, PayPal custom_id). Once `paid`, all further events are
  * no-ops — so two concurrent "paid" webhooks grant membership EXACTLY ONCE
- * (the loser re-reads status==='paid'). Non-paid statuses just advance the order.
+ * (the loser re-reads status==='paid'). Non-paid statuses advance the order
+ * forward only (monotonic — see STATUS_RANK).
  */
 export const applyEvent = internalMutation({
   args: {
@@ -366,6 +381,7 @@ export const applyEvent = internalMutation({
           paidAt: now,
           processorRef: a.processorRef || order.processorRef,
           giftReveal: codes.map((c) => c.plaintext),
+          giftRevealPending: true, // sweep/ack clears it — see retention.clearStaleGiftReveals (Review #5)
           updatedAt: now,
         });
         for (const c of codes) {
@@ -431,8 +447,10 @@ export const applyEvent = internalMutation({
       return { applied: true, granted: true };
     }
 
-    // Non-paid update (waiting/confirming/failed/expired): advance the order only.
-    if (order.status !== a.status) {
+    // Non-paid update (pending/confirming/failed/expired): advance the order
+    // FORWARD only, so an out-of-order or re-delivered webhook can't walk it
+    // backward (e.g. a late 'pending' after 'confirming'). (Review #8.)
+    if (STATUS_RANK[a.status] > STATUS_RANK[order.status]) {
       await ctx.db.patch(order._id, { status: a.status, updatedAt: now });
     }
     return { applied: true, granted: false };
@@ -592,6 +610,7 @@ export const ackGiftReveal = internalMutation({
     await ctx.db.patch(order._id, {
       giftReveal: undefined,
       giftRevealAck: true,
+      giftRevealPending: undefined, // leaves the by_gift_reveal_pending index (Review #5)
       updatedAt: Date.now(),
     });
     return { ok: true };

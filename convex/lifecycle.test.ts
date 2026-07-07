@@ -152,6 +152,41 @@ describe('lifecycle grace/disable transitions', () => {
       expect(u?.suspendedAt).toBeGreaterThan(0);
     });
   });
+
+  test('findTombstonedDue returns only disabled subs past their deletedAt (Review #6)', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t);
+    const now = Date.now();
+    const dueId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        updatedAt: now,
+      });
+      const mk = (buid: string, state: 'disabled' | 'active', deletedAt?: number) =>
+        ctx.db.insert('subscriptions', {
+          userId,
+          backend: 'remnawave',
+          backendUserId: buid,
+          backendShortId: `${buid}-s`,
+          subscriptionUrl: 'https://x/sub',
+          subscriptionMirrors: [],
+          state,
+          ...(deletedAt !== undefined ? { deletedAt } : {}),
+          updatedAt: now,
+        });
+      const due = await mk('bu-due', 'disabled', now - 1000); // past grace → due
+      await mk('bu-future', 'disabled', now + 100_000); // grace not elapsed → excluded
+      await mk('bu-nodel', 'disabled'); // no deletedAt → excluded (gt(...,0) guard)
+      await mk('bu-active', 'active', now - 1000); // wrong state → excluded
+      return due;
+    });
+
+    const res = await t.query(internal.lifecycle.findTombstonedDue, { now, limit: 100 });
+    expect(res).toHaveLength(1);
+    expect(res[0]!.backendUserId).toBe('bu-due');
+    expect(dueId).toBeDefined();
+  });
 });
 
 describe('lifecycle.setMembership', () => {

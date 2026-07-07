@@ -448,18 +448,18 @@ export const runGraceSweep = internalAction({
 export const findTombstonedDue = internalQuery({
   args: { now: v.number(), limit: v.number() },
   handler: async (ctx, { now, limit }) => {
-    const disabled = await ctx.db
+    // Exact index range on by_state = ['state','deletedAt'] (mirrors
+    // findGraceTransitions / retention.sweepDeletedSubscriptions), not a
+    // take(500)+JS-filter that could leave due rows beyond the 500-window
+    // unprocessed for extra sweeps. gt(...,0) excludes rows with no deletedAt
+    // (undefined sorts below numbers), preserving the old null-guard. (Review #6.)
+    const due = await ctx.db
       .query('subscriptions')
-      .withIndex('by_state', (q) => q.eq('state', 'disabled'))
-      .take(500);
-    const due: { backend: 'remnawave' | 'outline'; backendUserId: string }[] = [];
-    for (const s of disabled) {
-      if (s.deletedAt != null && s.deletedAt < now) {
-        due.push({ backend: s.backend, backendUserId: s.backendUserId });
-        if (due.length >= limit) break;
-      }
-    }
-    return due;
+      .withIndex('by_state', (q) =>
+        q.eq('state', 'disabled').gt('deletedAt', 0).lt('deletedAt', now),
+      )
+      .take(limit);
+    return due.map((s) => ({ backend: s.backend, backendUserId: s.backendUserId }));
   },
 });
 

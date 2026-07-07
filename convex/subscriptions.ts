@@ -102,14 +102,56 @@ export const insertSubscription = internalMutation({
   },
 });
 
+// Bounded per-UA content cache (Review #11): keep the N most-recently-written UA
+// formats so multiple clients on one subscription (phone + desktop, distinct UAs)
+// don't evict each other into a refetch-on-every-request thrash. Small cap — a
+// short-TTL edge cache, not durable storage.
+const SUB_CACHE_MAX = 4;
+interface SubCacheEntry {
+  content: string;
+  contentType: string;
+  headers?: Record<string, string>;
+  ua: string;
+  at: number;
+}
+
 /**
- * Write the small in-front content cache for the fronted route (a serialized
- * {content, contentType, headers?, ua, at} blob — see convex/http.ts). Patched
- * in place per subscription; no row growth.
+ * Merge one freshly-fetched UA entry into the subscription's bounded per-UA
+ * content cache for the fronted route (a serialized list of
+ * {content, contentType, headers?, ua, at} — see convex/http.ts). Serializable
+ * read-merge-write so concurrent distinct-UA writes don't clobber each other;
+ * replaces this UA's slot and keeps the most-recent SUB_CACHE_MAX (bounded — no
+ * row growth). Migrates a legacy single-entry blob transparently.
  */
 export const writeContentCache = internalMutation({
-  args: { subscriptionId: v.id('subscriptions'), subCache: v.string() },
-  handler: (ctx, { subscriptionId, subCache }) => ctx.db.patch(subscriptionId, { subCache }),
+  args: { subscriptionId: v.id('subscriptions'), entry: v.string() },
+  handler: async (ctx, { subscriptionId, entry }) => {
+    const sub = await ctx.db.get(subscriptionId);
+    if (!sub) return;
+    let incoming: SubCacheEntry;
+    try {
+      incoming = JSON.parse(entry) as SubCacheEntry;
+    } catch {
+      return;
+    }
+    let existing: SubCacheEntry[] = [];
+    if (sub.subCache) {
+      try {
+        const parsed = JSON.parse(sub.subCache) as unknown;
+        existing = Array.isArray(parsed)
+          ? (parsed as SubCacheEntry[])
+          : parsed && typeof parsed === 'object'
+            ? [parsed as SubCacheEntry] // migrate a legacy single-entry blob
+            : [];
+      } catch {
+        existing = [];
+      }
+    }
+    const merged = [incoming, ...existing.filter((e) => e.ua !== incoming.ua)]
+      .sort((a, b) => b.at - a.at)
+      .slice(0, SUB_CACHE_MAX);
+    await ctx.db.patch(subscriptionId, { subCache: JSON.stringify(merged) });
+  },
 });
 
 /**

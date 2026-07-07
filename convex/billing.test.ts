@@ -285,6 +285,40 @@ describe('billing.ingestEvent (NOWPayments)', () => {
     });
   });
 
+  // Review #8: webhooks can arrive out of order (NOWPayments dedupe is
+  // per-(payment,status), so a late DISTINCT status is not a duplicate). A non-paid
+  // update must advance the order forward only — never regress.
+  test('an out-of-order webhook cannot walk the order status backward', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-oo');
+    const apply = (status: 'pending' | 'confirming' | 'failed' | 'expired', ref: string) =>
+      t.mutation(internal.billing.applyEvent, {
+        processor: 'nowpayments',
+        orderRef: 'ref-oo',
+        status,
+        processorRef: ref,
+      });
+    const readStatus = async () =>
+      (
+        await t.run((ctx) =>
+          ctx.db
+            .query('billingOrders')
+            .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-oo'))
+            .unique(),
+        )
+      )?.status;
+
+    await apply('confirming', 'p1');
+    expect(await readStatus()).toBe('confirming');
+    await apply('pending', 'p2'); // late 'pending' — must be ignored
+    expect(await readStatus()).toBe('confirming');
+    await apply('failed', 'p3'); // advance to a terminal state
+    expect(await readStatus()).toBe('failed');
+    await apply('confirming', 'p4'); // late 'confirming' after 'failed' — ignored
+    expect(await readStatus()).toBe('failed');
+  });
+
   test('a replayed IPN (same payment×status) is a deduped no-op', async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);

@@ -207,6 +207,22 @@ describe('auth.accountLogin', () => {
     expect(res).toEqual({ ok: false, reason: 'captcha' });
   });
 
+  test('an unconfigured captcha returns a distinct config reason (→ 503), not a generic failure', async () => {
+    // CAP_* unset and not dev-bypass → verifyCaptcha reports configured:false, so
+    // accountLogin surfaces 'config' (mapped to 503), not a generic captcha/invalid.
+    vi.stubEnv('CAP_API_ENDPOINT', '');
+    vi.stubEnv('CAP_SITE_KEY', '');
+    vi.stubEnv('CAP_SECRET', '');
+    const t = convexTest(schema, modules);
+    const { accountId } = await seedUserWithAccount(t);
+    const res = await t.action(internal.auth.accountLogin, {
+      accountId,
+      captchaToken: 'tok',
+      ip: '203.0.113.30',
+    });
+    expect(res).toEqual({ ok: false, reason: 'config' });
+  });
+
   test('a failure is padded to the constant-time floor (~300ms)', async () => {
     stubFetch(true);
     const t = convexTest(schema, modules);

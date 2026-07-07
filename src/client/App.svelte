@@ -183,7 +183,6 @@
             >
               {t('renew.donate')}
             </a>
-            <a class="hover:text-foreground" href="/api/docs">{t('footer.apiDocs')}</a>
           </nav>
         </div>
       </footer>

@@ -384,8 +384,7 @@
   },
   "footer": {
     "operatedPrefix": "运营方：",
-    "operatedSuffix": "（美国 501(c)(3) 非营利组织）",
-    "apiDocs": "API 文档"
+    "operatedSuffix": "（美国 501(c)(3) 非营利组织）"
   },
   "upgrade": {
     "title": "升级到 FreeSocks 会员",

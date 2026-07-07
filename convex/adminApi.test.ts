@@ -264,6 +264,54 @@ describe('adminApi usersSearch', () => {
     expect(disabled.users[0]!.status).toBe('disabled');
   });
 
+  // Review #4: a sparse post-filter must not truncate. With limit=2 (scan window
+  // = 8), the only matching rows sit PAST the first window; the continuation loop
+  // must still find them, not return an empty page with a null cursor (the old
+  // single over-fetch did exactly that).
+  test('a sparse filter with matches beyond the first scan window is not truncated', async () => {
+    const t = convexTest(schema, modules);
+    const drifted = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      // Two drifted users FIRST (oldest _creationTime, so desc-order puts them last)…
+      const d1 = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        backendPushFailedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      const d2 = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        backendPushFailedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      // …then 10 non-drift users (newer), so the drift rows fall past the first
+      // window of 8 (= limit*4).
+      for (let i = 0; i < 10; i++) {
+        await ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+      }
+      return [d1, d2];
+    });
+
+    const res = await t.query(internal.adminApi.usersSearch, { drift: true, limit: 2 });
+    expect(res.users).toHaveLength(2);
+    expect(new Set(res.users.map((u) => u.id))).toEqual(new Set(drifted));
+  });
+
   test('drift filter + statusSummary count track the backend push-drift flag', async () => {
     const t = convexTest(schema, modules);
     const drifted = await t.run(async (ctx) => {

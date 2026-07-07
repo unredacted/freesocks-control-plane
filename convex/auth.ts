@@ -42,7 +42,7 @@ type LoginResult =
       /** Public per-session token, returned in the response body (only when PoP-bound). */
       popSessionToken?: string;
     }
-  | { ok: false; reason: 'captcha' | 'invalid' };
+  | { ok: false; reason: 'captcha' | 'invalid' | 'config' };
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -75,8 +75,12 @@ export const accountLogin = internalAction({
     };
 
     // 1. Captcha (self-hosted Cap), independent of account validity, so a fast
-    //    distinct return here is fine (it's not an enumeration oracle).
+    //    distinct return here is fine (it's not an enumeration oracle). An
+    //    unconfigured Cap returns a distinct 'config' reason (→ 503 at the HTTP
+    //    layer), so a misconfig is debuggable rather than a generic 403 captcha
+    //    failure — mirroring the account-create route. (Review #12.)
     const cap = await verifyCaptcha(captchaToken);
+    if (!cap.configured) return { ok: false, reason: 'config' };
     if (!cap.success) return { ok: false, reason: 'captcha' };
 
     // 2. Normalize + ALWAYS hash (keeps timing constant regardless of validity).

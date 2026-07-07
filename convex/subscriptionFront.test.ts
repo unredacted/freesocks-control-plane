@@ -162,6 +162,46 @@ describe('GET /api/v1/sub/<token>', () => {
     expect(await res2.text()).toBe('RAW-CONFIG-SINGBOX');
     expect(fetchCalls).toBe(2);
   });
+
+  // Review #11: the bounded per-UA cache retains multiple clients' formats, so two
+  // apps on one subscription don't evict each other into a refetch-per-request
+  // thrash (the old single-slot cache dropped UA1's entry when UA2 wrote).
+  test('two UAs are cached independently (no thrash on alternating polls)', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Clash/1' } }); // fetch #1
+    mockBody = 'RAW-CONFIG-SINGBOX';
+    await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'sing-box/1' } }); // fetch #2
+    expect(fetchCalls).toBe(2);
+    // Re-poll UA1: still cached (would have refetched under the old single slot).
+    mockBody = 'RAW-CONFIG-WOULD-REFETCH';
+    const c1 = await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Clash/1' } });
+    expect(await c1.text()).toBe('RAW-CONFIG-1');
+    // Re-poll UA2: still cached with ITS format.
+    const c2 = await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'sing-box/1' } });
+    expect(await c2.text()).toBe('RAW-CONFIG-SINGBOX');
+    expect(fetchCalls).toBe(2); // neither re-poll hit the backend
+  });
+
+  // Review #11: on a backend outage the stale fallback must match the requester's
+  // UA — never serve another client's format. A UA with nothing cached gets 502.
+  test('backend-down stale fallback never serves another UA’s format', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Clash/1' } }); // prime UA1
+    expect(fetchCalls).toBe(1);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('backend down');
+      }),
+    );
+    // A different UA has nothing cached → 502, NOT UA1's cached content.
+    const other = await t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'sing-box/1' },
+    });
+    expect(other.status).toBe(502);
+  });
 });
 
 describe('getAccountView subscription URL', () => {

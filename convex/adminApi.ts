@@ -561,25 +561,55 @@ export const usersSearch = internalQuery({
       return { users, nextCursor: null };
     }
 
-    // Unfiltered/paginated browse: keyset over _creationTime desc.
-    let qry = ctx.db.query('users').order('desc');
-    if (cursor) {
-      const before = Number(cursor);
-      if (Number.isFinite(before)) qry = qry.filter((f) => f.lt(f.field('_creationTime'), before));
-    }
-    // Over-fetch to allow post-filtering without breaking the page size.
-    const raw = await qry.take(pageSize * 4 + 1);
+    // Unfiltered/paginated browse: keyset over _creationTime desc. The
+    // status/tier/drift post-filters have no supporting index, so we scan windows
+    // and filter in JS — but keep ADVANCING the keyset until the page fills or the
+    // table is exhausted. The old single over-fetch (pageSize*4+1) returned a short
+    // page with nextCursor:null once a sparse filter (e.g. `drift` over many users)
+    // had few matches in that one window, hiding thousands of unscanned rows. (Review #4.)
     const matchFilter = (u: Doc<'users'>) =>
       (status ? u.status === status : true) &&
       (tier ? u.tierId === tierIdBySlug.get(tier) : true) &&
       (drift ? u.backendPushFailedAt != null : true);
-    const filtered = raw.filter(matchFilter);
-    const page = filtered.slice(0, pageSize);
+
+    const WINDOW = pageSize * 4;
+    const MAX_ITERS = 50; // backstop: at most 50*WINDOW rows scanned per request
+    const page: Doc<'users'>[] = [];
+    let before = cursor && Number.isFinite(Number(cursor)) ? Number(cursor) : null;
+    let exhausted = false;
+    let iters = 0;
+    while (page.length < pageSize && !exhausted && iters < MAX_ITERS) {
+      iters++;
+      let qry = ctx.db.query('users').order('desc');
+      if (before != null) {
+        const b = before;
+        qry = qry.filter((f) => f.lt(f.field('_creationTime'), b));
+      }
+      const window = await qry.take(WINDOW);
+      exhausted = window.length < WINDOW;
+      for (const u of window) {
+        if (matchFilter(u)) {
+          page.push(u);
+          if (page.length >= pageSize) break;
+        }
+      }
+      // Resume from the last RETURNED row when the page filled (so no match is
+      // skipped), else from the last RAW row scanned.
+      if (page.length >= pageSize) {
+        before = page[page.length - 1]!._creationTime;
+      } else if (window.length > 0) {
+        before = window[window.length - 1]!._creationTime;
+      }
+    }
+    if (iters >= MAX_ITERS && page.length < pageSize && !exhausted) {
+      console.warn('[usersSearch] filtered browse hit the per-request scan cap; more rows remain');
+    }
+    // Emit a cursor whenever we returned a full page (keyset continues from the
+    // last returned row); the client pages until it gets a short/empty page. Never
+    // a short page with a null cursor while matches remain. Over-emitting at most
+    // costs one trailing empty request.
     const last = page[page.length - 1];
-    // More pages iff we filled the page AND there were rows beyond it.
-    const more =
-      page.length === pageSize && raw.length > filtered.indexOf(page[page.length - 1]!) + 1;
-    const nextCursor = more && last ? String(last._creationTime) : null;
+    const nextCursor = page.length === pageSize && last ? String(last._creationTime) : null;
     const users = await Promise.all(page.map((u) => mapUser(ctx, u, tierSlugById)));
     return { users, nextCursor };
   },
