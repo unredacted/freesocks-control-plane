@@ -38,11 +38,33 @@ export function subscriptionDisplayUrl(
 }
 
 export function formatBytes(bytes: number, decimals = 1): string {
-  if (bytes === 0) return '0 B';
+  // Guard non-positive + non-finite: Math.log(<=0) is NaN/-Infinity → sizes[NaN]
+  // is undefined → the literal "NaN undefined" (hit when remaining = limit - used
+  // goes negative over quota). `<= 0` also covers the old `=== 0` case.
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  // Clamp the unit index so a petabyte-scale value can't index past 'TB'.
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(decimals))} ${sizes[i]}`;
+}
+
+/**
+ * Copy `value` to the clipboard, returning whether it succeeded — never throws.
+ * `navigator.clipboard` is undefined on insecure contexts / older in-region
+ * browsers (disproportionately this product's audience), where a bare
+ * `navigator.clipboard.writeText` throws a synchronous TypeError and leaves a
+ * silently dead button. Callers own their own success/failure UX (toast + local
+ * "copied" state), so this stays free of any UI dependency.
+ */
+export async function copyText(value: string): Promise<boolean> {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.clipboard) return false;
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

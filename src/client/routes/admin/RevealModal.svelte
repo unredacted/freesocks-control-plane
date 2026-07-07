@@ -3,6 +3,7 @@
   import { Button } from '@client/components/ui/button';
   import { Checkbox } from '@client/components/ui/checkbox';
   import { toast } from 'svelte-sonner';
+  import { copyText } from '../../lib/utils';
 
   interface Props {
     open: boolean;
@@ -16,12 +17,11 @@
   let acknowledged = $state(false);
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(token.plaintext);
+    if (await copyText(token.plaintext)) {
       copied = true;
       toast.success('Token copied to clipboard');
       setTimeout(() => (copied = false), 2000);
-    } catch {
+    } else {
       toast.error('Copy failed: select the token text above and copy it manually.');
     }
   }

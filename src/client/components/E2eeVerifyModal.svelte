@@ -5,6 +5,7 @@
   import { e2eeSession, ensureAttestationChecked } from '../lib/e2ee-status.svelte';
   import { router } from '../stores/router.svelte';
   import { configQuery } from '../lib/queries';
+  import { copyText } from '../lib/utils';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
   import CopyIcon from '@lucide/svelte/icons/copy';
@@ -71,14 +72,12 @@
   });
 
   async function copy(label: string, value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
+    // Silent on failure: the value is selectable in the code block below.
+    if (await copyText(value)) {
       copied = label;
       setTimeout(() => {
         if (copied === label) copied = null;
       }, 1500);
-    } catch {
-      /* clipboard unavailable - the value is selectable in the code block */
     }
   }
 

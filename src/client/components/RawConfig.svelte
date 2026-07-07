@@ -8,6 +8,8 @@
   import { subscriptionContentQuery } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
   import { apiErrorMessage } from '../lib/errors';
+  import { copyText } from '../lib/utils';
+  import { toast } from 'svelte-sonner';
 
   /**
    * Lazy, E2EE-preserving raw-config viewer. The proxy config is fetched
@@ -39,11 +41,13 @@
     if (startOpen) open = true;
   });
 
-  function copy(text: string) {
-    void navigator.clipboard.writeText(text).then(() => {
+  async function copy(text: string) {
+    if (await copyText(text)) {
       copied = true;
       setTimeout(() => (copied = false), 1500);
-    });
+    } else {
+      toast.error(t('common.copyFailed'));
+    }
   }
 
   // Remnawave's default subscription is base64(newline-joined links). Decode it

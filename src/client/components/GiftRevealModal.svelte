@@ -12,6 +12,7 @@
   import { Checkbox } from '@client/components/ui/checkbox';
   import { toast } from 'svelte-sonner';
   import { t } from '../lib/i18n/index.svelte';
+  import { copyText } from '../lib/utils';
   import Copy from '@lucide/svelte/icons/copy';
   import Gift from '@lucide/svelte/icons/gift';
 
@@ -35,13 +36,8 @@
   });
 
   async function copyAll() {
-    try {
-      if (!navigator.clipboard) throw new Error('no clipboard');
-      await navigator.clipboard.writeText(codes.join('\n'));
-      toast.success(t('common.copied'));
-    } catch {
-      toast.error(t('common.copyFailed'));
-    }
+    if (await copyText(codes.join('\n'))) toast.success(t('common.copied'));
+    else toast.error(t('common.copyFailed'));
   }
 
   function onOpenChange(next: boolean) {

@@ -18,6 +18,7 @@
   import { Checkbox } from '@client/components/ui/checkbox';
   import { toast } from 'svelte-sonner';
   import { t } from '../lib/i18n/index.svelte';
+  import { copyText } from '../lib/utils';
   import Copy from '@lucide/svelte/icons/copy';
   import Download from '@lucide/svelte/icons/download';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
@@ -49,13 +50,8 @@
   });
 
   async function copy() {
-    try {
-      if (!navigator.clipboard) throw new Error('no clipboard');
-      await navigator.clipboard.writeText(accountId);
-      toast.success(t('common.copied'));
-    } catch {
-      toast.error(t('common.copyFailed'));
-    }
+    if (await copyText(accountId)) toast.success(t('common.copied'));
+    else toast.error(t('common.copyFailed'));
   }
 
   function download() {

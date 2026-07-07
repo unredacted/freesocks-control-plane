@@ -12,6 +12,7 @@
   import { Input } from '@client/components/ui/input';
   import AdminListState from './AdminListState.svelte';
   import { adminMembershipCodesQuery, adminTiersQuery } from '../../lib/queries';
+  import { copyText } from '../../lib/utils';
   import {
     MintCodesRequest,
     MintCodesResponse,
@@ -87,12 +88,8 @@
 
   async function copyAll() {
     if (!revealed) return;
-    try {
-      await navigator.clipboard.writeText(revealed.codes.join('\n'));
-      toast.success('Codes copied to clipboard');
-    } catch {
-      toast.error('Copy failed — select the codes and copy manually');
-    }
+    if (await copyText(revealed.codes.join('\n'))) toast.success('Codes copied to clipboard');
+    else toast.error('Copy failed — select the codes and copy manually');
   }
   function downloadAll() {
     if (!revealed) return;

@@ -12,6 +12,7 @@
   import { COUNTRY_CODES, countryName } from '../lib/countries';
   import { MirrorRequestResponse, MirrorClearResponse } from '../../shared/contracts/mirror';
   import { queryKeys } from '../lib/queries';
+  import { copyText } from '../lib/utils';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
 
@@ -58,11 +59,13 @@
       : t('mirror.regionGlobal'),
   );
 
-  function copy(url: string) {
-    void navigator.clipboard.writeText(url).then(() => {
+  async function copy(url: string) {
+    if (await copyText(url)) {
       copiedUrl = url;
       setTimeout(() => (copiedUrl = null), 1500);
-    });
+    } else {
+      toast.error(t('common.copyFailed'));
+    }
   }
 
   const request = createMutation(() => ({

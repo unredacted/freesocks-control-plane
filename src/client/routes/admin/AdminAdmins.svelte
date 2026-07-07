@@ -12,6 +12,7 @@
   import { apiErrorMessage, firstIssueMessage } from '../../lib/errors';
   import { formatDate } from '../../lib/i18n/format';
   import { adminAdminsQuery, adminCredentialsQuery, queryKeys } from '../../lib/queries';
+  import { copyText } from '../../lib/utils';
   import {
     CreateInviteRequest,
     CreateInviteResponse,
@@ -63,12 +64,8 @@
 
   async function copyUrl() {
     if (!revealed) return;
-    try {
-      await navigator.clipboard.writeText(revealed.url);
-      toast.success('Invite link copied');
-    } catch {
-      toast.error('Copy failed — select the link and copy manually');
-    }
+    if (await copyText(revealed.url)) toast.success('Invite link copied');
+    else toast.error('Copy failed — select the link and copy manually');
   }
 
   // --- W3-8a: lifecycle (deactivate / reactivate + per-passkey revoke) -------

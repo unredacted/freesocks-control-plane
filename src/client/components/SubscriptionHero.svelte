@@ -12,7 +12,7 @@
   import QrCodeIcon from '@lucide/svelte/icons/qr-code';
   import Link2 from '@lucide/svelte/icons/link-2';
   import Shield from '@lucide/svelte/icons/shield';
-  import { formatBytes, daysUntil } from '../lib/utils';
+  import { formatBytes, daysUntil, copyText } from '../lib/utils';
   import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
   import { toast } from 'svelte-sonner';
@@ -112,17 +112,13 @@
   let qrFallbackOpen = $state(false);
 
   async function copy(value: string, key: 'primary' | 'fallback') {
-    try {
-      // Explicit guard (mirrors AccountNumberReveal): clipboard is undefined in
-      // insecure contexts / older in-region browsers — fail to the manual path.
-      if (!navigator.clipboard) throw new Error('clipboard unavailable');
-      await navigator.clipboard.writeText(value);
+    if (await copyText(value)) {
       copied = key;
       toast.success(t('common.copied'), { duration: 1500 });
       setTimeout(() => {
         if (copied === key) copied = null;
       }, 1500);
-    } catch {
+    } else {
       toast.error(t('common.copyFailed'));
     }
   }
@@ -394,9 +390,11 @@
           {#if usagePct >= 70}
             <p class="text-[11px] text-muted-foreground mt-1.5 tabular-nums">
               {usagePct >= 90
-                ? t('hero.nearlyOut', { amount: formatBytes(trafficLimitBytes - trafficUsedBytes) })
+                ? t('hero.nearlyOut', {
+                    amount: formatBytes(Math.max(0, trafficLimitBytes - trafficUsedBytes)),
+                  })
                 : t('hero.leftThisPeriod', {
-                    amount: formatBytes(trafficLimitBytes - trafficUsedBytes),
+                    amount: formatBytes(Math.max(0, trafficLimitBytes - trafficUsedBytes)),
                   })}
             </p>
           {/if}
