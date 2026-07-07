@@ -27,7 +27,7 @@ x-logging: &log
 services:
   backend:
     # Pinned to the digest tested in dev (immutable). Re-pin when you upgrade.
-    image: ghcr.io/get-convex/convex-backend@sha256:edd7959f3464ed661f6663f646db205d5d61bda606c969b074dfb3c69ed71463
+    image: ghcr.io/get-convex/convex-backend@sha256:104b8bc70e29b31fa4a57551596090bfc9eedc3d1f27fd4b8cd8d0e782b9b070
     mem_limit: 1500m
     cpus: 1.5
     pids_limit: 512
@@ -80,7 +80,7 @@ services:
   postgres:
     # Pinned by digest like every other image (re-pin on upgrade:
     # docker buildx imagetools inspect postgres:18).
-    image: postgres:18@sha256:fd03421d521b789274856f57ba64914f8271255ef1415ac307cbc907121c8c7b
+    image: postgres:18@sha256:4aabea78cf39b90e834caf3af7d602a18565f6fe2508705c8d01aa63245c2e20
     mem_limit: 1g
     cpus: 1.0
     pids_limit: 512
@@ -134,6 +134,20 @@ services:
       - BACKUP_ALLOW_LOCAL_ONLY=${BACKUP_ALLOW_LOCAL_ONLY:-}
     volumes:
       - backups:/backups
+    healthcheck:
+      # Liveness = the loop ticked within the last interval (+1h slack). backup.sh
+      # touches /backups/.heartbeat at the top of every cycle; a stale/missing
+      # file means the loop wedged (a crashed sidecar is already caught by the
+      # fail-fast gate + restart policy). The postgres:18 base has GNU stat.
+      test:
+        [
+          'CMD-SHELL',
+          'test -f /backups/.heartbeat && [ $(( $(date +%s) - $(stat -c %Y /backups/.heartbeat) )) -lt $(( ${BACKUP_INTERVAL_SECONDS:-86400} + 3600 )) ]',
+        ]
+      interval: 300s
+      # First dump can take a while on a large DB; don't flag unhealthy before it.
+      start_period: 120s
+      retries: 3
     depends_on:
       postgres:
         condition: service_healthy
@@ -141,7 +155,7 @@ services:
   # Admin-only Convex dashboard, bound to localhost (reach via SSH tunnel:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
   dashboard:
-    image: ghcr.io/get-convex/convex-dashboard@sha256:bbc4d2c43d19fd6f2791dd6c5153a76e127f3eea489c1639e5acf66999c216bf
+    image: ghcr.io/get-convex/convex-dashboard@sha256:60b04b339d6cd6623057b03e5275329a20011051907ec5e689a38a401cfdc409
     mem_limit: 512m
     cpus: 0.5
     pids_limit: 256
@@ -205,8 +219,10 @@ services:
 
   # Cap's datastore (Redis-compatible). Persists issued challenges/tokens.
   valkey:
-    # Pinned by digest (re-pin: docker buildx imagetools inspect valkey/valkey:8-alpine).
-    image: valkey/valkey:8-alpine@sha256:77643d152547b446fc15cbafaff22004545663fcd40c6b28038ad283837baa75
+    # Pinned by digest (re-pin: docker buildx imagetools inspect valkey/valkey:9-alpine).
+    # Cap uses it purely as a Redis-compatible store (challenges/tokens), so the
+    # 8→9 bump is transparent; the --save/--appendonly flags below are unchanged.
+    image: valkey/valkey:9-alpine@sha256:11dfc5d3ce9c570a516760935053687aea8e938be51b17cf112f71ab573e6f7b
     mem_limit: 256m
     cpus: 0.5
     pids_limit: 128
@@ -272,7 +288,7 @@ services:
   # running server needed) and write it to the shared `convexkey` volume for the
   # deployer. The key is accepted by the backend because it shares INSTANCE_SECRET.
   keygen:
-    image: ghcr.io/get-convex/convex-backend@sha256:edd7959f3464ed661f6663f646db205d5d61bda606c969b074dfb3c69ed71463
+    image: ghcr.io/get-convex/convex-backend@sha256:104b8bc70e29b31fa4a57551596090bfc9eedc3d1f27fd4b8cd8d0e782b9b070
     mem_limit: 256m
     cpus: 0.5
     pids_limit: 128

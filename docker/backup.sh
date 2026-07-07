@@ -70,8 +70,14 @@ backup_once() {
   done
 }
 
+# Liveness heartbeat: touched at the top of every cycle so the compose
+# healthcheck can tell a running loop from a wedged one (a crash-loop is already
+# caught by the fail-fast gate + restart policy; this catches a hung dump/upload).
+HEARTBEAT="${OUT_DIR}/.heartbeat"
+
 echo "[backup] sidecar up; interval=${INTERVAL}s retention=${RETENTION}"
 while true; do
+  touch "$HEARTBEAT"
   backup_once || echo "[backup] cycle failed; will retry next interval" >&2
   sleep "$INTERVAL"
 done
