@@ -16,6 +16,7 @@
     "test": "bun run i18n:compile && vitest run",
     "test:watch": "bun run i18n:compile && vitest",
     "test:integration:remnawave": "bash scripts/remnawave-integration.sh",
+    "test:integration:cap": "vitest run --config vitest.integration.config.ts convex/lib/captcha.integration.test.ts",
     "selfhost:up": "docker compose --env-file .env.docker up -d",
     "selfhost:down": "docker compose --env-file .env.docker down",
     "selfhost:admin-key": "docker compose --env-file .env.docker exec backend ./generate_admin_key.sh",

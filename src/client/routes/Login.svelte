@@ -23,6 +23,10 @@
   // fs_session cookie and we bounce to /account.
   const config = configQuery();
   let token = $state<string | null>(null);
+  // Instance ref so we can remount the captcha after a failed submit — the server
+  // consumes (spends) the Cap token on verify, so a stale token makes every retry
+  // fail until reload. (Third-pass audit; see CapWidget.reset().)
+  let capWidget = $state<ReturnType<typeof CapWidget>>();
   // P1-12: store the digits-only value the user has typed. We do NOT reformat the
   // input's bound value on every keystroke (that's what jumped the caret to the
   // end mid-edit); grouping is shown via the placeholder + monospace tracking,
@@ -65,6 +69,10 @@
       router.navigate('/account');
     },
     onError: (err) => {
+      // The verify consumed the token; drop it + remount for a fresh challenge so
+      // the next attempt isn't rejected with a stale-captcha error.
+      token = null;
+      capWidget?.reset();
       toast.error(t('login.failed'), { description: apiErrorMessage(err) });
     },
   }));
@@ -169,6 +177,7 @@
     </div>
 
     <CapWidget
+      bind:this={capWidget}
       apiEndpoint={captchaEndpoint}
       siteKey={captchaSiteKey}
       onVerify={(tok) => (token = tok || null)}

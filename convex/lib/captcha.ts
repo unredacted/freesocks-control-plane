@@ -13,6 +13,16 @@
  * (CAP_* unset) lets the caller answer 503 (misconfig) distinctly from a failed
  * challenge (403). Local dev with no Cap server: set ENVIRONMENT=development +
  * CAP_DEV_BYPASS=true to treat every token as valid (double-gated, never prod).
+ *
+ * SINGLE-USE (third-pass audit): a Cap token is CONSUMED on the first siteverify —
+ * a second verify of the same token returns success:false. Callers verify BEFORE
+ * the account-validity checks (auth.accountLogin / freeTier), so a token is spent
+ * even when the submission then fails for another reason (e.g. a mistyped account
+ * number). The CLIENT must therefore remount its captcha widget on any post-submit
+ * error to mint a fresh token, or every retry fails "captcha" until a page reload
+ * (see CapWidget.reset(), wired into Login.svelte + GetAccount.svelte onError).
+ * The gated captcha.integration.test.ts asserts the double-verify → false against a
+ * live Cap.
  */
 export interface CaptchaResult {
   success: boolean;

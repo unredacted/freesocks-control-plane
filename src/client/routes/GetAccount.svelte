@@ -34,6 +34,10 @@
   const qc = useQueryClient();
 
   let token = $state<string | null>(null);
+  // Instance ref so a failed create remounts the captcha — the server consumes
+  // (spends) the Cap token on verify, so a stale token makes every retry fail.
+  // (Third-pass audit; see CapWidget.reset().)
+  let capWidget = $state<ReturnType<typeof CapWidget>>();
   // Tracked separately from `config.data?.backends.defaultBackend` because the
   // user can pick a non-default; seeded in $effect once config loads.
   let chosenBackend = $state<'remnawave' | 'outline' | null>(null);
@@ -120,8 +124,14 @@
       // Cookie is set; reflect the new authenticated identity everywhere.
       void qc.invalidateQueries({ queryKey: queryKeys.me });
     },
-    // Failures render inline next to the CTA (see the destructive box below);
-    // no duplicate toast — one error surface per failure.
+    // Failures render inline next to the CTA (see the destructive box below); no
+    // duplicate toast — one error surface per failure. onError only remounts the
+    // captcha: the verify consumed the token, so without a fresh challenge every
+    // retry would fail with a stale-captcha error.
+    onError: () => {
+      token = null;
+      capWidget?.reset();
+    },
   }));
 
   // Step 2: provision the proxy key. Separate request from step 1, so a backend
@@ -285,6 +295,7 @@
         </div>
       {:else}
         <CapWidget
+          bind:this={capWidget}
           apiEndpoint={captchaEndpoint}
           siteKey={captchaSiteKey}
           onVerify={(t) => (token = t || null)}

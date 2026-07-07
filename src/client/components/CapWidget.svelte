@@ -120,7 +120,15 @@
     };
   });
 
-  function retry() {
+  /**
+   * Public: clear any solved token and remount the widget for a FRESH challenge.
+   * The server consumes a Cap token on verify (single-use), so after ANY failed
+   * submission the held token is spent — a consumer's onError MUST call this or
+   * every retry fails "captcha verification failed" until a page reload. Also
+   * doubles as the failure-state "retry" (re-attempts a chunk-load failure too).
+   * Callable via `bind:this` — see Login.svelte / GetAccount.svelte.
+   */
+  export function reset() {
     failed = false;
     onVerify('');
     retryNonce += 1;
@@ -138,7 +146,7 @@
       <li>{t('captcha.failedTip2')}</li>
       <li>{t('captcha.failedTip3')}</li>
     </ul>
-    <button type="button" class="mt-3 text-primary underline hover:no-underline" onclick={retry}>
+    <button type="button" class="mt-3 text-primary underline hover:no-underline" onclick={reset}>
       {t('common.retry')}
     </button>
   </div>
