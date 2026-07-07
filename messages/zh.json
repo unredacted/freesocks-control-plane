@@ -161,7 +161,9 @@
     "expiredTitle": "你的会员已过期",
     "body": "FreeSocks 由社区捐助运营。要续订会员，请捐款或联系我们获取会员码。",
     "donate": "捐款",
-    "contact": "联系我们"
+    "contact": "联系我们",
+    "lapsedBody": "您当前使用的是免费套餐。在下方续订以恢复您的会员资格。",
+    "renewCta": "续订会员"
   },
   "error": {
     "offline": "你似乎已离线。请检查网络连接后重试。",
@@ -169,6 +171,7 @@
     "backendUnavailable": "当前没有可用的代理服务器。你的账户是安全的——请几分钟后再创建密钥。",
     "generic": "出错了，请重试。",
     "captchaFailed": "真人验证失败。请完成验证后重试。",
+    "captchaUnconfigured": "服务暂时不可用，请几分钟后重试。",
     "renderTitle": "出问题了",
     "renderBody": "页面渲染失败。这是应用的一个bug，通常刷新页面即可解决。如果问题持续出现，请提交报告。",
     "reloadPage": "重新加载页面",

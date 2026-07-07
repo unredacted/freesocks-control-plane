@@ -35,7 +35,11 @@
   const ACCOUNT_ID_LEN = 32;
   const digitsOnly = $derived(accountId.replace(/\D/g, '').slice(0, ACCOUNT_ID_LEN));
 
-  const LoginResult = z.object({ ok: z.boolean(), popSessionToken: z.string().optional() });
+  const LoginResult = z.object({
+    ok: z.boolean(),
+    popSessionToken: z.string().optional(),
+    lapsedDowngrade: z.boolean().optional(),
+  });
 
   const login = createMutation(() => ({
     mutationFn: () =>
@@ -44,7 +48,16 @@
         { accountId: digitsOnly, captchaToken: token! },
         LoginResult,
       ),
-    onSuccess: async () => {
+    onSuccess: async (res) => {
+      // Server auto-downgraded a lapsed membership → stash a one-time flag so
+      // /account shows the "membership expired" banner once. (Review #4.)
+      if (res?.lapsedDowngrade) {
+        try {
+          sessionStorage.setItem('fs_lapsed_downgrade', '1');
+        } catch {
+          /* private mode / storage disabled — the banner just won't show */
+        }
+      }
       // The cookie is set; refresh identity-derived caches before navigating.
       await queryClient.invalidateQueries({ queryKey: queryKeys.me });
       await queryClient.invalidateQueries({ queryKey: queryKeys.account });

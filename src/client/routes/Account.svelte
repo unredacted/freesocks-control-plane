@@ -468,12 +468,33 @@
       !!config.data?.backends.outlineEnabled,
   );
 
+  // In-app renew CTA target: point the expiry/lifecycle callouts at the Membership
+  // tab when self-service purchase is available, instead of the external donate
+  // URL. (Review #4.)
+  let billingEnabled = $derived(!!config.data?.billing?.enabled);
+
+  // One-time "your membership expired" banner: Login stashes a flag when the server
+  // auto-downgraded a lapsed member; read + clear it once so it shows only on the
+  // first /account load after that login. (Review #4.)
+  let justLapsed = $state(false);
+  $effect(() => {
+    try {
+      if (sessionStorage.getItem('fs_lapsed_downgrade') === '1') {
+        sessionStorage.removeItem('fs_lapsed_downgrade');
+        justLapsed = true;
+      }
+    } catch {
+      /* storage disabled — the banner just won't show */
+    }
+  });
+
   // Pinned status band: a payment-return callout plus any lifecycle/expiry
   // callouts, grouped into one container. `hasCallout` gates that container so an
   // empty wrapper never adds phantom spacing between sections.
   let showOrderCallout = $derived(!!orderRef && order.data?.status !== 'paid');
   let hasCallout = $derived(
-    showOrderCallout ||
+    justLapsed ||
+      showOrderCallout ||
       userStatus === 'grace' ||
       userStatus === 'disabled' ||
       membershipState === 'expiring-soon' ||
@@ -595,6 +616,21 @@
          down the page. Rendered above the key because they're time-sensitive. -->
     {#if hasCallout}
       <div class="space-y-3">
+        <!-- One-time "your membership expired → you're on the free tier now" banner
+             after an auto-downgrade at login (Review #4). The renew CTA opens the
+             Membership tab in-app. -->
+        {#if justLapsed}
+          <MembershipCallout
+            tone="info"
+            title={t('renew.expiredTitle')}
+            body={t('renew.lapsedBody')}
+            onCta={() => {
+              justLapsed = false;
+              activeTab = 'membership';
+            }}
+            ctaLabel={t('renew.renewCta')}
+          />
+        {/if}
         <!-- Post-payment confirmation (return from the processor's hosted page).
              The webhook — not this redirect — is the source of truth; we just poll. -->
         {#if showOrderCallout}
@@ -633,7 +669,8 @@
             title={t('account.graceTitle')}
             body={t('account.graceBody')}
             ctaUrl={config.data?.donateUrl}
-            ctaLabel={t('renew.donate')}
+            onCta={billingEnabled ? () => (activeTab = 'membership') : undefined}
+            ctaLabel={billingEnabled ? t('renew.renewCta') : t('renew.donate')}
           />
         {:else if userStatus === 'disabled'}
           <MembershipCallout
@@ -641,7 +678,8 @@
             title={t('account.disabledTitle')}
             body={t('account.disabledBody')}
             ctaUrl={config.data?.donateUrl}
-            ctaLabel={t('renew.donate')}
+            onCta={billingEnabled ? () => (activeTab = 'membership') : undefined}
+            ctaLabel={billingEnabled ? t('renew.renewCta') : t('renew.donate')}
           />
         {/if}
 
@@ -653,7 +691,8 @@
             title={t('renew.expiringTitle')}
             body={t('renew.body')}
             ctaUrl={config.data?.donateUrl}
-            ctaLabel={t('renew.donate')}
+            onCta={billingEnabled ? () => (activeTab = 'membership') : undefined}
+            ctaLabel={billingEnabled ? t('renew.renewCta') : t('renew.donate')}
           >
             {#snippet secondaryAction()}
               {#if config.data?.contactUrl}
@@ -673,7 +712,8 @@
             title={t('renew.expiredTitle')}
             body={t('renew.body')}
             ctaUrl={config.data?.donateUrl}
-            ctaLabel={t('renew.donate')}
+            onCta={billingEnabled ? () => (activeTab = 'membership') : undefined}
+            ctaLabel={billingEnabled ? t('renew.renewCta') : t('renew.donate')}
           >
             {#snippet secondaryAction()}
               {#if config.data?.contactUrl}

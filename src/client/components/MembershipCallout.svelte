@@ -10,12 +10,15 @@
     title: string;
     body: string;
     ctaUrl?: string;
-    /** Optional: omit (with no ctaUrl) for a callout whose only action is the secondary snippet. */
+    /** In-app action, an alternative to ctaUrl — renders a button, not an external
+     *  link. Takes precedence over ctaUrl when both are set. */
+    onCta?: () => void;
+    /** Optional: omit (with no ctaUrl/onCta) for a callout whose only action is the secondary snippet. */
     ctaLabel?: string;
     secondaryAction?: import('svelte').Snippet;
   }
 
-  let { tone, title, body, ctaUrl, ctaLabel, secondaryAction }: Props = $props();
+  let { tone, title, body, ctaUrl, onCta, ctaLabel, secondaryAction }: Props = $props();
 
   const TONE_CLASSES: Record<CalloutTone, string> = {
     info: 'bg-blue-500/10 border-blue-500/40',
@@ -28,7 +31,9 @@
   <p class="font-semibold">{title}</p>
   <p class="text-muted-foreground">{body}</p>
   <div class="flex flex-wrap items-center gap-3 pt-1">
-    {#if ctaUrl && ctaLabel}
+    {#if onCta && ctaLabel}
+      <Button size="sm" class="min-h-11" onclick={onCta}>{ctaLabel}</Button>
+    {:else if ctaUrl && ctaLabel}
       <a href={ctaUrl} target="_blank" rel="noopener noreferrer">
         <Button size="sm" class="min-h-11">{ctaLabel}</Button>
       </a>

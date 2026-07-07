@@ -47,6 +47,7 @@ const CODE_MESSAGES: Record<string, () => string> = {
   'devices.no_subscription': () => t('error.generic'),
   'billing.error': () => t('error.billing'),
   'content.unavailable': () => t('error.backendUnavailable'),
+  config: () => t('error.captchaUnconfigured'),
   not_found: () => t('error.generic'),
 };
 

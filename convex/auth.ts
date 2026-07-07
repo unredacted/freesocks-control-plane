@@ -41,6 +41,9 @@ type LoginResult =
       userId: Id<'users'>;
       /** Public per-session token, returned in the response body (only when PoP-bound). */
       popSessionToken?: string;
+      /** True when this login auto-downgraded a lapsed member to free (Review #4),
+       *  so the client can show a one-time "your membership expired" banner. */
+      lapsedDowngrade?: boolean;
     }
   | { ok: false; reason: 'captcha' | 'invalid' | 'config' };
 
@@ -123,8 +126,11 @@ export const accountLogin = internalAction({
     // 4b. A returning lapsed member (admitted above) is auto-downgraded to the free
     //     tier so they regain a working key at free limits; the account view then
     //     prompts an upgrade. No-op for active/grace/already-free members. (Review #1.)
+    //     The flag lets the client show a one-time "membership expired" banner (#4).
+    let lapsedDowngrade = false;
     if (user.status === 'disabled' && user.disabledReason === 'membership_lapsed') {
       await ctx.runMutation(internal.lifecycle.downgradeLapsedToFree, { userId: user._id });
+      lapsedDowngrade = true;
     }
 
     // 5. Mint a member session + signed cookie. When PoP-bound, also mint the
@@ -155,6 +161,7 @@ export const accountLogin = internalAction({
       maxAgeSec: MEMBER_TTL_MS / 1000,
       userId: user._id,
       popSessionToken,
+      lapsedDowngrade,
     };
   },
 });

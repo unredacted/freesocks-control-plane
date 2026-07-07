@@ -501,7 +501,11 @@ http.route({
       sameSite: 'Lax',
       secure: secureCookies(),
     });
-    return json({ ok: true, popSessionToken: res.popSessionToken }, 200, { 'set-cookie': cookie });
+    return json(
+      { ok: true, popSessionToken: res.popSessionToken, lapsedDowngrade: res.lapsedDowngrade },
+      200,
+      { 'set-cookie': cookie },
+    );
   }),
 });
 

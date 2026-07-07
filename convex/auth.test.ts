@@ -72,6 +72,7 @@ describe('auth.accountLogin', () => {
     expect(res.userId).toBe(userId);
     expect(res.signedCookieValue).toContain('.');
     expect(res.maxAgeSec).toBeGreaterThan(0);
+    expect(res.lapsedDowngrade).toBeFalsy(); // a normal (active) login didn't downgrade (Review #4)
 
     // A real session row was created for the user.
     await t.run(async (ctx) => {
@@ -185,6 +186,7 @@ describe('auth.accountLogin', () => {
       ip: '203.0.113.20',
     });
     expect(res.ok).toBe(true);
+    if (res.ok) expect(res.lapsedDowngrade).toBe(true); // one-time "expired" banner signal (Review #4)
 
     // The lapsed member is downgraded to the free tier + re-activated (they now see
     // an upgrade prompt); the scheduled push re-enables the key against the mock.

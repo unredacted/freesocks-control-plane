@@ -393,7 +393,9 @@
     "expiredTitle": "Your membership has expired",
     "body": "FreeSocks is community-funded — donations keep it running. To renew your membership, donate or contact us for a membership code.",
     "donate": "Donate",
-    "contact": "Contact us"
+    "contact": "Contact us",
+    "lapsedBody": "You're on the free tier now. Renew below to restore your membership.",
+    "renewCta": "Renew membership"
   },
   "upgrade": {
     "title": "Upgrade to a FreeSocks membership",
@@ -467,6 +469,7 @@
     "backendUnavailable": "No proxy server is available right now. Your account is safe — try creating your key again in a few minutes.",
     "generic": "Something went wrong. Please try again.",
     "captchaFailed": "The human check failed. Please complete it and try again.",
+    "captchaUnconfigured": "The service is temporarily unavailable. Please try again in a few minutes.",
     "renderTitle": "Something went wrong",
     "renderBody": "The page failed to render. This is a bug in the app, and refreshing usually fixes it. If it keeps happening, please report it.",
     "reloadPage": "Reload page",
