@@ -24,6 +24,9 @@
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import Waypoints from '@lucide/svelte/icons/waypoints';
   import LogOut from '@lucide/svelte/icons/log-out';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import type { LucideIcon } from '@lucide/svelte';
+  import * as Collapsible from '@client/components/ui/collapsible';
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -47,14 +50,26 @@
     }
   }
 
-  const NAV = [
+  // Nav items are either a leaf link ({ to, label, icon }) or a collapsible group
+  // ({ group, icon, children: [...] }). Backend servers + Remnawave (both server
+  // config) live under one "Servers" group; the router is unaffected (children keep
+  // their flat paths).
+  type NavLeaf = { to: string; label: string; icon: LucideIcon };
+  type NavGroup = { group: string; icon: LucideIcon; children: NavLeaf[] };
+  const NAV: (NavLeaf | NavGroup)[] = [
     { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/admin/tiers', label: 'Tiers', icon: Layers },
     { to: '/admin/users', label: 'Users', icon: UsersIcon },
     { to: '/admin/admins', label: 'Admins', icon: ShieldCheck },
     { to: '/admin/tokens', label: 'API tokens', icon: KeyIcon },
-    { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
-    { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
+    {
+      group: 'Servers',
+      icon: Server,
+      children: [
+        { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
+        { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
+      ],
+    },
     { to: '/admin/storage', label: 'Storage mirrors', icon: Cloud },
     { to: '/admin/clients', label: 'Client apps', icon: Smartphone },
     { to: '/admin/membership-codes', label: 'Membership codes', icon: Ticket },
@@ -66,6 +81,16 @@
   ];
 
   let mobileOpen = $state(false);
+
+  // The "Servers" group is a collapsible section. One group exists today; if you add
+  // another, give it its own open-state (this single var backs the one group).
+  const SERVER_PATHS = ['/admin/backend-servers', '/admin/remnawave'];
+  let serversOpen = $state(SERVER_PATHS.includes(router.pathname));
+  // Keep it open whenever the active route is one of its children (initial deep-link
+  // + later navigation in); stays user-toggleable the rest of the time.
+  $effect(() => {
+    if (SERVER_PATHS.includes(router.pathname)) serversOpen = true;
+  });
 </script>
 
 <div class="md:grid md:grid-cols-[220px_1fr] md:gap-10 min-h-[80vh]">
@@ -112,22 +137,60 @@
       <E2eeBadge context="admin" />
     </div>
     <nav class="space-y-0.5">
-      {#each NAV as item (item.to)}
-        {@const active = item.to === router.pathname}
-        <Link
-          href={item.to}
-          onclick={() => (mobileOpen = false)}
-          aria-current={active ? 'page' : undefined}
-          class={cn(
-            'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors',
-            active
-              ? 'bg-accent text-accent-foreground font-medium'
-              : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-          )}
-        >
-          <item.icon class="size-4 shrink-0" />
-          {item.label}
-        </Link>
+      {#each NAV as item, i (i)}
+        {#if 'children' in item}
+          <Collapsible.Root bind:open={serversOpen}>
+            <Collapsible.Trigger
+              class={cn(
+                'group flex w-full items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors',
+                item.children.some((c) => c.to === router.pathname)
+                  ? 'text-foreground font-medium'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              )}
+            >
+              <item.icon class="size-4 shrink-0" />
+              {item.group}
+              <ChevronDown
+                class="size-4 ms-auto shrink-0 transition-transform group-data-[state=open]:rotate-180"
+              />
+            </Collapsible.Trigger>
+            <Collapsible.Content class="mt-0.5 ms-3 space-y-0.5 border-s border-border ps-2">
+              {#each item.children as child (child.to)}
+                {@const active = child.to === router.pathname}
+                <Link
+                  href={child.to}
+                  onclick={() => (mobileOpen = false)}
+                  aria-current={active ? 'page' : undefined}
+                  class={cn(
+                    'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors',
+                    active
+                      ? 'bg-accent text-accent-foreground font-medium'
+                      : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                  )}
+                >
+                  <child.icon class="size-4 shrink-0" />
+                  {child.label}
+                </Link>
+              {/each}
+            </Collapsible.Content>
+          </Collapsible.Root>
+        {:else}
+          {@const active = item.to === router.pathname}
+          <Link
+            href={item.to}
+            onclick={() => (mobileOpen = false)}
+            aria-current={active ? 'page' : undefined}
+            class={cn(
+              'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors',
+              active
+                ? 'bg-accent text-accent-foreground font-medium'
+                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+            )}
+          >
+            <item.icon class="size-4 shrink-0" />
+            {item.label}
+          </Link>
+        {/if}
       {/each}
     </nav>
     <div class="mt-2 border-t border-border pt-2">
