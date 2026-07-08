@@ -264,6 +264,7 @@
                 </span>
               {/if}
             </div>
+            <p class="text-[11px] text-muted-foreground">{t('home.freeCard.cryptoNote')}</p>
             <p class="text-xs text-muted-foreground leading-snug">
               {t('home.freeCard.upsellBody', { limits: membershipLimits })}
             </p>

@@ -339,7 +339,7 @@
     "step1Title": "创建你的账户",
     "chooseBackend": "选择服务器类型",
     "backendAria": "服务器类型",
-    "backendMultiProtocol": "多协议（VLESS、Trojan、Shadowsocks）",
+    "backendMultiProtocol": "VLESS (Xray)",
     "backendShadowsocks": "通过 Outline 的 Shadowsocks",
     "createAccount": "创建我的账户",
     "freeAccountNote": "免费账户有效期 {days} 天，限 {devices}。无需电子邮件或密码。",
@@ -570,7 +570,7 @@
       "title": "免费套餐",
       "badge": "你将获得什么",
       "urlTitle": "X射线订阅网址",
-      "urlBody": "支持多种协议（VLESS/木马/Shadowsocks）。粘贴到任何兼容的客户端即可。",
+      "urlBody": "Xray-powered VLESS. Paste into any compatible client.",
       "membershipLine": "FreeSocks 会员资格为您提供{limits} 。",
       "noAuthTitle": "无需电子邮件或密码",
       "noAuthBody": "一次人工验证。保存您的账号即可登录。不收集邮箱地址。",
@@ -591,7 +591,7 @@
       },
       "protocols": {
         "title": "标准协议",
-        "body": "基于 Xray 的 VLESS / Trojan / Shadowsocks 恶意软件。适用于大多数 VPN 客户端。"
+        "body": "Xray-powered VLESS. Works in most VPN clients."
       }
     },
     "privacy": {

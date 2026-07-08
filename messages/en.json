@@ -338,7 +338,7 @@
     "step1Title": "Create your account",
     "chooseBackend": "Choose a connection type",
     "backendAria": "Connection type",
-    "backendMultiProtocol": "Multi-protocol (VLESS, Trojan, Shadowsocks)",
+    "backendMultiProtocol": "VLESS (Xray)",
     "backendShadowsocks": "Shadowsocks via Outline",
     "createAccount": "Create my account",
     "freeAccountNote": "Free accounts are valid for {days} days and limited to {devices}. No email or password.",
@@ -573,8 +573,8 @@
   "home": {
     "hero": {
       "eyebrow": "Operated by Unredacted, a US 501(c)(3) nonprofit",
-      "title": "Free proxies for users in heavily-censored regions.",
-      "subtitle": "Create a free account with one human-check, then get a subscription URL for any modern VPN client. No email or password. A FreeSocks membership unlocks {limits}."
+      "title": "A free VPN for users in heavily-censored regions.",
+      "subtitle": "Create a free account with one human-check, then get a subscription URL for any modern VPN client — censorship-resistant, and private by design for anyone who wants it. No email or password. A FreeSocks membership unlocks {limits}."
     },
     "cta": {
       "getMembership": "Get a membership"
@@ -583,14 +583,15 @@
       "title": "Free tier",
       "badge": "What you get",
       "urlTitle": "Xray subscription URL",
-      "urlBody": "Multi-protocol (VLESS / Trojan / Shadowsocks). Paste into any compatible client.",
+      "urlBody": "Xray-powered VLESS. Paste into any compatible client.",
       "membershipLine": "A FreeSocks membership gives you {limits}.",
       "noAuthTitle": "No email or password",
       "noAuthBody": "One human-check. Save your account number to sign in. No email collected.",
       "footnote": "Numbers reflect the current free-tier configuration. Solve the check to get yours.",
       "upsellTitle": "Want unlimited?",
       "upsellBody": "Get {limits} — and help keep FreeSocks free for others.",
-      "fromPerMonth": "from {price}/mo"
+      "fromPerMonth": "from {price}/mo",
+      "cryptoNote": "crypto accepted — Monero, Zcash"
     },
     "features": {
       "title": "What FreeSocks is",
@@ -604,7 +605,7 @@
       },
       "protocols": {
         "title": "Standard protocols",
-        "body": "Xray-powered VLESS / Trojan / Shadowsocks. Works in most VPN clients."
+        "body": "Xray-powered VLESS. Works in most VPN clients."
       }
     },
     "privacy": {

@@ -339,7 +339,7 @@
     "step1Title": "أنشئ حسابك",
     "chooseBackend": "اختر نوع الخادم",
     "backendAria": "نوع الخادم",
-    "backendMultiProtocol": "متعدد البروتوكولات (VLESS وTrojan وShadowsocks)",
+    "backendMultiProtocol": "VLESS (Xray)",
     "backendShadowsocks": "Shadowsocks عبر Outline",
     "createAccount": "إنشاء حسابي",
     "freeAccountNote": "الحسابات المجانية صالحة لمدة {days} يومًا ومحدودة بـ {devices}. بلا بريد إلكتروني أو كلمة مرور.",
@@ -570,7 +570,7 @@
       "title": "المستوى المجاني",
       "badge": "ما ستحصل عليه",
       "urlTitle": "رابط الاشتراك في خدمة الأشعة السينية",
-      "urlBody": "بروتوكولات متعددة (VLESS / Trojan / Shadowsocks). قم بلصقه في أي عميل متوافق.",
+      "urlBody": "Xray-powered VLESS. Paste into any compatible client.",
       "membershipLine": "تمنحك عضوية FreeSocks {limits} .",
       "noAuthTitle": "لا حاجة إلى بريد إلكتروني أو كلمة مرور",
       "noAuthBody": "عملية تحقق بشرية واحدة. احفظ رقم حسابك لتسجيل الدخول. لم يتم جمع أي بريد إلكتروني.",
@@ -591,7 +591,7 @@
       },
       "protocols": {
         "title": "البروتوكولات القياسية",
-        "body": "برنامج خبيث من نوع VLESS / Trojan / Shadowsocks مدعوم بتقنية Xray. يعمل في معظم برامج VPN."
+        "body": "Xray-powered VLESS. Works in most VPN clients."
       }
     },
     "privacy": {

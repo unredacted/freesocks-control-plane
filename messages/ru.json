@@ -339,7 +339,7 @@
     "step1Title": "Создайте аккаунт",
     "chooseBackend": "Выберите тип сервера",
     "backendAria": "Тип сервера",
-    "backendMultiProtocol": "Мультипротокол (VLESS, Trojan, Shadowsocks)",
+    "backendMultiProtocol": "VLESS (Xray)",
     "backendShadowsocks": "Shadowsocks через Outline",
     "createAccount": "Создать аккаунт",
     "freeAccountNote": "Бесплатные аккаунты действуют {days} дней · {devices}. Без почты и пароля.",
@@ -570,7 +570,7 @@
       "title": "Бесплатный уровень",
       "badge": "Что вы получите",
       "urlTitle": "URL-адрес подписки на рентгеновский снимок",
-      "urlBody": "Многопротокольный (VLESS / Троян / Shadowsocks). Вставьте в любой совместимый клиент.",
+      "urlBody": "Xray-powered VLESS. Paste into any compatible client.",
       "membershipLine": "Подписка на FreeSocks предоставляет вам {limits} .",
       "noAuthTitle": "Электронная почта и пароль не требуются.",
       "noAuthBody": "Одна проверка человеком. Сохраните номер своего счета для входа. Адрес электронной почты не собирается.",
@@ -591,7 +591,7 @@
       },
       "protocols": {
         "title": "Стандартные протоколы",
-        "body": "VLESS / Троян / Shadowsocks, работающий на основе технологии Xray. Совместим с большинством VPN-клиентов."
+        "body": "Xray-powered VLESS. Works in most VPN clients."
       }
     },
     "privacy": {

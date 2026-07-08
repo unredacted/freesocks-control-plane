@@ -339,7 +339,7 @@
     "step1Title": "حساب خود را بسازید",
     "chooseBackend": "نوع اتصال را انتخاب کنید",
     "backendAria": "نوع اتصال",
-    "backendMultiProtocol": "چندپروتکلی (VLESS، Trojan، Shadowsocks)",
+    "backendMultiProtocol": "VLESS (Xray)",
     "backendShadowsocks": "Shadowsocks از طریق Outline",
     "createAccount": "ساخت حساب من",
     "freeAccountNote": "حساب‌های رایگان {days} روز اعتبار دارند و به {devices} محدودند. بدون ایمیل یا رمز عبور.",
@@ -570,7 +570,7 @@
       "title": "سطح رایگان",
       "badge": "آنچه به دست می‌آورید",
       "urlTitle": "آدرس اشتراک Xray",
-      "urlBody": "چند پروتکلی (VLESS / Trojan / Shadowsocks). در هر کلاینت سازگار پیست کنید.",
+      "urlBody": "Xray-powered VLESS. Paste into any compatible client.",
       "membershipLine": "عضویت در FreeSocks به شما {limits} می‌دهد.",
       "noAuthTitle": "بدون ایمیل یا رمز عبور",
       "noAuthBody": "یک بررسی انسانی. شماره حساب خود را برای ورود ذخیره کنید. هیچ ایمیلی جمع‌آوری نمی‌شود.",
@@ -591,7 +591,7 @@
       },
       "protocols": {
         "title": "پروتکل‌های استاندارد",
-        "body": "VLESS / Trojan / Shadowsocks مجهز به اشعه ایکس. در اکثر کلاینت‌های VPN کار می‌کند."
+        "body": "Xray-powered VLESS. Works in most VPN clients."
       }
     },
     "privacy": {

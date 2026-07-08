@@ -302,6 +302,7 @@ export type MessageKey =
   | "home.features.protocols.title"
   | "home.features.title"
   | "home.freeCard.badge"
+  | "home.freeCard.cryptoNote"
   | "home.freeCard.footnote"
   | "home.freeCard.fromPerMonth"
   | "home.freeCard.membershipLine"
