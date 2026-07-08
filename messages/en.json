@@ -386,7 +386,8 @@
   },
   "footer": {
     "operatedPrefix": "Operated by",
-    "operatedSuffix": ", a US 501(c)(3) nonprofit"
+    "operatedSuffix": ", a US 501(c)(3) nonprofit",
+    "viewSource": "View source"
   },
   "renew": {
     "expiringTitle": "Your membership is expiring soon",

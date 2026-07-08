@@ -2,6 +2,8 @@
   import Link from './components/Link.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import E2eeAlert from './components/E2eeAlert.svelte';
+  import SiteBanner from './components/SiteBanner.svelte';
+  import FooterRepoLink from './components/FooterRepoLink.svelte';
   import E2eeVerifyModal from './components/E2eeVerifyModal.svelte';
   import { e2eeSession } from './lib/e2ee-status.svelte';
   import PopWarm from './components/PopWarm.svelte';
@@ -102,7 +104,10 @@
       {#if E2EE_ENABLED}
         <E2eeVerifyModal bind:open={e2eeSession.verifyOpen} />
       {/if}
+      <!-- Admin-configurable announcement bar. Member-facing only (the CMS has its
+           own chrome); an end-user broadcast has no place inside the admin UI. -->
       {#if !onAdminRoute}
+        <SiteBanner />
         <AppHeader />
       {/if}
 
@@ -183,6 +188,7 @@
             >
               {t('renew.donate')}
             </a>
+            <FooterRepoLink />
           </nav>
         </div>
       </footer>

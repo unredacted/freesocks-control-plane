@@ -122,6 +122,49 @@
     },
   }));
 
+  // Site chrome (announcement banner + footer repo link) lives in its own namespace
+  // (publicConfig.site), like verification — own draft + save. The server sanitizes
+  // the banner text (trim/cap) and the repo URL (https-only) and echoes the cleaned
+  // values back.
+  let sDraft = $state<{
+    bannerEnabled: boolean;
+    bannerText: string;
+    repoEnabled: boolean;
+    repoUrl: string;
+  }>({ bannerEnabled: false, bannerText: '', repoEnabled: false, repoUrl: '' });
+  let sInit = $state(false);
+  $effect(() => {
+    const s = cfg.data?.site;
+    if (s && !sInit) {
+      sDraft = {
+        bannerEnabled: s.bannerEnabled,
+        bannerText: s.bannerText,
+        repoEnabled: s.repoEnabled,
+        repoUrl: s.repoUrl,
+      };
+      sInit = true;
+    }
+  });
+  const saveSite = createMutation(() => ({
+    mutationFn: async () => {
+      const Resp = z.object({
+        bannerEnabled: z.boolean(),
+        bannerText: z.string(),
+        repoEnabled: z.boolean(),
+        repoUrl: z.string(),
+      });
+      return apiClient.patch('/api/v1/admin/site', sDraft, Resp);
+    },
+    onSuccess: (updated) => {
+      sDraft = { ...updated };
+      void qc.invalidateQueries({ queryKey: queryKeys.config });
+      toast.success('Site settings saved');
+    },
+    onError: (err) => {
+      toast.error('Could not save site settings', { description: apiErrorMessage(err) });
+    },
+  }));
+
   // Connection modes (transport) — the GENERIC catalog (label/description/default).
   // The Remnawave placement pool (which nodes each mode issues into) is managed on
   // the Remnawave admin page, not here.
@@ -536,6 +579,63 @@
           <div class="flex justify-end">
             <Button onclick={() => saveVerification.mutate()} disabled={saveVerification.isPending}>
               {saveVerification.isPending ? 'Saving…' : 'Save verification'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <!-- Site chrome: announcement banner + footer repo link (own namespace + own save) -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Site banner & footer link</CardTitle>
+          <CardDescription>
+            A site-wide announcement banner shown to members (e.g. planned maintenance), and a "View
+            source" link in the page footer. Both are optional and off by default. Banner text is
+            shown as-is in every language (not translated).
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-3 text-sm">
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={sDraft.bannerEnabled}
+              onCheckedChange={(v) => (sDraft = { ...sDraft, bannerEnabled: v === true })}
+            />
+            <span>Show the announcement banner</span>
+          </label>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-banner-text">
+              Banner text
+            </label>
+            <Input
+              id="site-banner-text"
+              placeholder="e.g. Scheduled maintenance tonight 03:00–04:00 UTC"
+              value={sDraft.bannerText}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, bannerText: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={sDraft.repoEnabled}
+              onCheckedChange={(v) => (sDraft = { ...sDraft, repoEnabled: v === true })}
+            />
+            <span>Show a "View source" link in the footer</span>
+          </label>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-repo-url">
+              Repository URL (https)
+            </label>
+            <Input
+              id="site-repo-url"
+              placeholder="https://github.com/org/repo"
+              value={sDraft.repoUrl}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, repoUrl: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+          <div class="flex justify-end">
+            <Button onclick={() => saveSite.mutate()} disabled={saveSite.isPending}>
+              {saveSite.isPending ? 'Saving…' : 'Save site settings'}
             </Button>
           </div>
         </CardContent>
