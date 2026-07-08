@@ -118,8 +118,9 @@ export const accountLogin = internalAction({
 
     if (!validFormat || !prefixRl.allowed) return failInvalid();
 
-    // 4. Single indexed lookup; the query returns null for unknown, deleted, or
-    //    admin-disabled owners (no oracle distinction). A lapsed member IS returned.
+    // 4. Single indexed lookup; the query returns null for unknown or deleted
+    //    owners (no oracle distinction). A lapsed member and an INACTIVE free user
+    //    ARE returned — both are handled (downgraded / reactivated) just below.
     const user = await ctx.runQuery(internal.users.byAccountIdHash, { accountIdHash: hash });
     if (!user) return failInvalid();
 
@@ -131,6 +132,13 @@ export const accountLogin = internalAction({
     if (user.status === 'disabled' && user.disabledReason === 'membership_lapsed') {
       await ctx.runMutation(internal.lifecycle.downgradeLapsedToFree, { userId: user._id });
       lapsedDowngrade = true;
+    }
+
+    // 4c. A returning INACTIVE free user (idle-swept — key reclaimed, row retained)
+    //     is reactivated: refreshFreeWindow flips them back to active + restarts the
+    //     idle clock, so their next regenerate issues a fresh key. (WS2.)
+    if (user.status === 'inactive') {
+      await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId: user._id });
     }
 
     // 5. Mint a member session + signed cookie. When PoP-bound, also mint the

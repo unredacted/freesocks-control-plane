@@ -7,8 +7,10 @@
  */
 import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
+import { v } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
 import { DEFAULT_CLIENTS } from './lib/clientCatalog';
+import { freeWindowDays } from './lifecycle';
 
 /** Insert the default-free tier if absent; return its id. */
 export const seedDefaultFreeTier = internalMutation({
@@ -265,5 +267,119 @@ export const seedCutover = internalAction({
       backendInstancesInserted: instances.inserted,
       clientsInserted: clients.inserted,
     };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// WS2 idle-free-lifecycle migrations. Idempotent + paginated; run post-deploy via
+// `bunx convex run seed:<name>`. `backfillFreeKeyExpiresAt` seeds the idle marker
+// on existing free users (without it the deactivate-idle-free sweep just ignores
+// legacy users). `reclassifyDeletedFreeToInactive` is OPERATOR-CHOICE: it flips
+// existing `status:'deleted'` free rows → `inactive` so previously-cleaned accounts
+// can log back in (their key/S3 are already gone; a return re-issues).
+// ---------------------------------------------------------------------------
+
+const MIGRATE_PAGE = 200;
+
+/** One page: seed `freeKeyExpiresAt` on default-free users that lack it, anchored
+ *  to the user's active-sub creation (else the user's own creation) + the window,
+ *  so a recently-issued key gets a FUTURE expiry (not swept) and a genuinely-old
+ *  idle account gets a PAST one (swept on the first run). */
+export const backfillFreeKeyExpiresAtBatch = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
+  handler: async (ctx, { cursor, numItems }) => {
+    const days = await freeWindowDays(ctx.db);
+    const freeTierIds = new Set(
+      (await ctx.db.query('tiers').collect())
+        .filter((t) => t.isDefaultFree)
+        .map((t) => String(t._id)),
+    );
+    const res = await ctx.db.query('users').paginate({ cursor, numItems });
+    let updated = 0;
+    for (const u of res.page) {
+      if (u.freeKeyExpiresAt != null) continue;
+      if (!freeTierIds.has(String(u.tierId))) continue;
+      const sub = await ctx.db
+        .query('subscriptions')
+        .withIndex('by_user_state', (q) => q.eq('userId', u._id).eq('state', 'active'))
+        .order('desc')
+        .first();
+      const anchor = sub?._creationTime ?? u._creationTime;
+      await ctx.db.patch(u._id, {
+        freeKeyExpiresAt: anchor + days * 86_400_000,
+        updatedAt: Date.now(),
+      });
+      updated++;
+    }
+    return { updated, isDone: res.isDone, continueCursor: res.continueCursor };
+  },
+});
+
+export const backfillFreeKeyExpiresAt = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ updated: number }> => {
+    let updated = 0;
+    let cursor: string | null = null;
+    for (let i = 0; i < 100_000; i++) {
+      const res: { updated: number; isDone: boolean; continueCursor: string } =
+        await ctx.runMutation(internal.seed.backfillFreeKeyExpiresAtBatch, {
+          cursor,
+          numItems: MIGRATE_PAGE,
+        });
+      updated += res.updated;
+      if (res.isDone) break;
+      cursor = res.continueCursor;
+    }
+    return { updated };
+  },
+});
+
+/** One page: flip `status:'deleted'` free rows → `inactive` with a PAST
+ *  `freeKeyExpiresAt` (so they stay inactive + are immediately purge-eligible),
+ *  letting previously-cleaned accounts return. All `deleted` rows are free-cleanup
+ *  casualties, but we still tier-guard defensively. */
+export const reclassifyDeletedFreeToInactiveBatch = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
+  handler: async (ctx, { cursor, numItems }) => {
+    const days = await freeWindowDays(ctx.db);
+    const freeTierIds = new Set(
+      (await ctx.db.query('tiers').collect())
+        .filter((t) => t.isDefaultFree)
+        .map((t) => String(t._id)),
+    );
+    const res = await ctx.db
+      .query('users')
+      .withIndex('by_status_expires', (q) => q.eq('status', 'deleted'))
+      .paginate({ cursor, numItems });
+    let updated = 0;
+    for (const u of res.page) {
+      if (!freeTierIds.has(String(u.tierId))) continue;
+      await ctx.db.patch(u._id, {
+        status: 'inactive',
+        freeKeyExpiresAt: u._creationTime + days * 86_400_000, // old → in the past
+        updatedAt: Date.now(),
+      });
+      updated++;
+    }
+    return { updated, isDone: res.isDone, continueCursor: res.continueCursor };
+  },
+});
+
+export const reclassifyDeletedFreeToInactive = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ updated: number }> => {
+    let updated = 0;
+    let cursor: string | null = null;
+    for (let i = 0; i < 100_000; i++) {
+      const res: { updated: number; isDone: boolean; continueCursor: string } =
+        await ctx.runMutation(internal.seed.reclassifyDeletedFreeToInactiveBatch, {
+          cursor,
+          numItems: MIGRATE_PAGE,
+        });
+      updated += res.updated;
+      if (res.isDone) break;
+      cursor = res.continueCursor;
+    }
+    return { updated };
   },
 });

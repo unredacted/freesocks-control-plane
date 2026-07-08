@@ -23,11 +23,12 @@ crons.interval('tombstone-sweep', { minutes: 10 }, internal.lifecycle.sweepTombs
 // (feeds pool selection). Per-type health lives in the provider registry.
 crons.interval('backend-healthcheck', { minutes: 10 }, internal.backendServers.healthcheck, {});
 
-// Delete free-tier users (+ backend/S3) past the expiry window.
+// Deactivate + RETAIN idle free users (reclaim the key, keep the row on the free
+// tier, reactivatable on return); never deletes — manual purgeInactiveFree removes.
 crons.daily(
-  'cleanup-expired-free',
+  'deactivate-idle-free',
   { hourUTC: 3, minuteUTC: 0 },
-  internal.lifecycle.cleanupExpiredFree,
+  internal.lifecycle.deactivateIdleFree,
   {},
 );
 

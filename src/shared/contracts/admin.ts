@@ -333,6 +333,9 @@ export const AdminStatusSummary = z.object({
     grace: z.number().int().nonnegative(),
     disabled: z.number().int().nonnegative(),
     deleted: z.number().int().nonnegative(),
+    // Idle free users (deactivated + retained). Additive: a pre-deploy backend
+    // that omits it reads 0.
+    inactive: z.number().int().nonnegative().default(0),
   }),
   /** Users whose last backend push failed and hasn't recovered (entitlement drift).
    *  Optional-with-default (additive): a pre-deploy backend that omits it reads 0. */

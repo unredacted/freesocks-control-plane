@@ -24,6 +24,7 @@ import { v } from 'convex/values';
 import { hmacSha256Hex, randomHex, sha256Hex } from './lib/crypto';
 import { signValue } from './lib/cookies';
 import { MEMBER_TTL_MS } from './auth';
+import { freeWindowExpiryMs } from './lifecycle';
 import { writeAuditLog } from './lib/audit';
 
 // Explicit return type breaks the same-file internal-reference inference cycle.
@@ -71,6 +72,9 @@ export const claimFreeSlot = internalMutation({
     const userId = await ctx.db.insert('users', {
       tierId: args.tierId,
       status: 'active',
+      // Start the idle clock so the deactivate-idle-free sweep can find this user
+      // once their free key ages out (never before).
+      freeKeyExpiresAt: await freeWindowExpiryMs(ctx.db),
       updatedAt: now,
     });
     const grantId = await ctx.db.insert('freeGrants', {

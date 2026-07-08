@@ -62,9 +62,9 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
   },
   { name: 'mirror-refresh', everyMs: 6 * HOUR, description: 'Refresh the S3 subscription mirrors' },
   {
-    name: 'cleanup-expired-free',
+    name: 'deactivate-idle-free',
     everyMs: DAY,
-    description: 'Delete free-tier users past the expiry window',
+    description: 'Deactivate + retain idle free users (reclaim key, keep row)',
   },
   { name: 'session-sweep', everyMs: DAY, description: 'Drop expired session rows' },
   { name: 'rate-limit-sweep', everyMs: DAY, description: 'Drop expired rate-limit rows' },

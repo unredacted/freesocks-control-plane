@@ -10,7 +10,7 @@
  * types to break Convex's self-reference inference cycle.
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { MutationCtx } from './_generated/server';
+import type { MutationCtx, DatabaseReader } from './_generated/server';
 import { internal } from './_generated/api';
 import { heartbeatFromAction } from './cronHeartbeat';
 import type { Id } from './_generated/dataModel';
@@ -137,6 +137,11 @@ export const downgradeLapsedToFree = internalMutation({
         expiresAtMs: null,
         reason: 'membership_lapsed_downgrade',
       });
+      // Start the free idle clock so a returning downgraded member isn't swept next run.
+      await ctx.db.patch(userId, {
+        freeKeyExpiresAt: await freeWindowExpiryMs(ctx.db),
+        updatedAt: Date.now(),
+      });
       return null;
     }
 
@@ -161,6 +166,10 @@ export const downgradeLapsedToFree = internalMutation({
       tierId: free._id,
       expiresAtMs: null,
       reason: 'membership_lapsed_downgrade',
+    });
+    await ctx.db.patch(userId, {
+      freeKeyExpiresAt: await freeWindowExpiryMs(ctx.db),
+      updatedAt: Date.now(),
     });
     return null;
   },
@@ -536,99 +545,257 @@ export const defaultFreeTierIds = internalQuery({
     (await ctx.db.query('tiers').collect()).filter((t) => t.isDefaultFree).map((t) => t._id),
 });
 
+/** The free-tier window in days — `freetier.expiryDays` (default 90). Fail-safe. */
+export async function freeWindowDays(db: DatabaseReader): Promise<number> {
+  const row = await db
+    .query('appSettings')
+    .withIndex('by_key', (q) => q.eq('key', 'freetier.expiryDays'))
+    .unique();
+  if (row) {
+    try {
+      const n = Number(JSON.parse(row.value));
+      if (Number.isFinite(n) && n > 0) return n;
+    } catch {
+      /* keep the default */
+    }
+  }
+  return 90;
+}
+
+/** The free-key window expiry (ms from now) — matching what issuance stamps on
+ *  the backend key. */
+export async function freeWindowExpiryMs(db: DatabaseReader): Promise<number> {
+  return Date.now() + (await freeWindowDays(db)) * 86_400_000;
+}
+
 /**
- * One page of expired free users on a SINGLE tier, oldest first, with a
- * `_creationTime` keyset cursor (`afterCreation`, exclusive). Targets the tier
- * via `by_tier` so paid members never crowd the page, and the cursor pages past
- * already-deleted old users instead of re-scanning them each run. (P1-4.)
+ * One page of ACTIVE free users on a SINGLE tier whose free key has expired and
+ * wasn't refreshed (`freeKeyExpiresAt < now`) — the deactivate-idle-free set.
+ * Paginated over `by_tier_status_freekey` (compound `(_creationTime,_id)` cursor —
+ * no same-ms skip), tier- + status-scoped so `inactive` rows are never re-scanned
+ * (no accretion) and paid users never appear. Read-only; the action applies.
+ * Legacy free users with an unset `freeKeyExpiresAt` are skipped by `gt(0)` until
+ * the backfill migration seeds them.
  */
-export const findExpiredFree = internalQuery({
+export const findIdleFree = internalQuery({
   args: {
     tierId: v.id('tiers'),
-    cutoff: v.number(),
-    limit: v.number(),
-    afterCreation: v.number(),
+    now: v.number(),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
   },
-  handler: async (ctx, { tierId, cutoff, limit, afterCreation }) => {
-    const rows = await ctx.db
+  handler: async (ctx, { tierId, now, cursor, numItems }) => {
+    const res = await ctx.db
       .query('users')
-      .withIndex('by_tier', (q) => q.eq('tierId', tierId).gt('_creationTime', afterCreation))
-      .order('asc')
-      .take(limit);
-    const expired: {
+      .withIndex('by_tier_status_freekey', (q) =>
+        q
+          .eq('tierId', tierId)
+          .eq('status', 'active')
+          .gt('freeKeyExpiresAt', 0)
+          .lt('freeKeyExpiresAt', now),
+      )
+      .paginate({ cursor, numItems });
+    const idle: {
       userId: Id<'users'>;
-      backend: 'remnawave' | 'outline';
-      backendUserId: string;
+      backend: 'remnawave' | 'outline' | null;
+      backendUserId: string | null;
     }[] = [];
-    let cursor = afterCreation;
-    let reachedCutoff = false;
-    for (const u of rows) {
-      cursor = u._creationTime;
-      if (u._creationTime >= cutoff) {
-        reachedCutoff = true; // asc order → nothing older remains on this tier
-        break;
-      }
-      if (u.status !== 'active') continue;
+    for (const u of res.page) {
       const sub = await ctx.db
         .query('subscriptions')
         .withIndex('by_user_state', (q) => q.eq('userId', u._id).eq('state', 'active'))
         .order('desc')
         .first();
-      if (!sub) continue;
-      expired.push({ userId: u._id, backend: sub.backend, backendUserId: sub.backendUserId });
+      idle.push({
+        userId: u._id,
+        backend: sub?.backend ?? null,
+        backendUserId: sub?.backendUserId ?? null,
+      });
     }
-    // More to scan on this tier iff we filled the page and haven't hit the cutoff.
-    const hasMore = !reachedCutoff && rows.length === limit;
-    return { expired, nextCursor: hasMore ? cursor : null };
+    return { idle, isDone: res.isDone, continueCursor: res.continueCursor };
   },
 });
 
-export const markUserDeleted = internalMutation({
+/** Deactivate one idle free user: RETAIN the row (status→inactive), keep the free
+ *  tier, reclaim the key. Re-reads + guards the read-then-act race: a regenerate/
+ *  reactivation between the sweep's read and now moves `freeKeyExpiresAt` to the
+ *  future (or flips status), leaving the user active. */
+export const markUserInactive = internalMutation({
   args: { userId: v.id('users') },
   handler: async (ctx, { userId }) => {
-    await ctx.db.patch(userId, { status: 'deleted', updatedAt: Date.now() });
+    const u = await ctx.db.get(userId);
+    if (!u || u.status !== 'active') return null;
+    if (u.freeKeyExpiresAt == null || u.freeKeyExpiresAt >= Date.now()) return null;
+    await ctx.db.patch(userId, {
+      status: 'inactive',
+      suspendedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    await writeAuditLog(ctx, {
+      actorType: 'system',
+      action: 'membership.transition.inactive',
+      targetType: 'user',
+      targetId: userId,
+    });
     return null;
   },
 });
 
-/** Cron: delete free-tier users past the expiry window (backend + S3 + local). */
-export const cleanupExpiredFree = internalAction({
+/** Re-stamp a free user's key window (the "still using the service" signal), and
+ *  if they were `inactive`, REACTIVATE them (→active) so a returning member's next
+ *  key issues normally. Called on login + on every free-tier (re)issue. */
+export const refreshFreeWindow = internalMutation({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }) => {
+    const u = await ctx.db.get(userId);
+    if (!u) return null;
+    const patch: {
+      freeKeyExpiresAt: number;
+      updatedAt: number;
+      status?: 'active';
+      suspendedAt?: undefined;
+    } = { freeKeyExpiresAt: await freeWindowExpiryMs(ctx.db), updatedAt: Date.now() };
+    const reactivating = u.status === 'inactive';
+    if (reactivating) {
+      patch.status = 'active';
+      patch.suspendedAt = undefined;
+    }
+    await ctx.db.patch(userId, patch);
+    if (reactivating) {
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'account.reactivate',
+        targetType: 'user',
+        targetId: userId,
+      });
+    }
+    return null;
+  },
+});
+
+/** Cron: deactivate + RETAIN idle free users (key reclaimed, row kept on the free
+ *  tier, reactivatable on return). Never deletes — manual `purgeInactiveFree`
+ *  removes long-inactive rows on operator demand. */
+export const deactivateIdleFree = internalAction({
   args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }): Promise<{ removed: number }> => {
-    await heartbeatFromAction(ctx, 'cleanup-expired-free');
-    // Admin-tunable (appSettings 'freetier.expiryDays', default 90); replaced the
-    // FREE_TIER_EXPIRY_DAYS env var, and matches what issuance stamps on the key.
-    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
-    const expiryDays = Number(settings['freetier.expiryDays'] ?? 90);
-    const cutoff = Date.now() - expiryDays * 86_400_000;
+  handler: async (ctx, { limit }): Promise<{ deactivated: number }> => {
+    await heartbeatFromAction(ctx, 'deactivate-idle-free');
+    const now = Date.now();
     const pageSize = limit ?? 100;
     const tierIds = await ctx.runQuery(internal.lifecycle.defaultFreeTierIds, {});
-    let removed = 0;
+    let deactivated = 0;
     for (const tierId of tierIds) {
-      let afterCreation = 0;
+      // Collect the due set read-only across pages (cursor stable — no mutation
+      // between pages), then apply.
+      const due: {
+        userId: Id<'users'>;
+        backend: 'remnawave' | 'outline' | null;
+        backendUserId: string | null;
+      }[] = [];
+      let cursor: string | null = null;
       for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
-        const { expired, nextCursor } = await ctx.runQuery(internal.lifecycle.findExpiredFree, {
+        // Annotate to break the same-module self-referential inference.
+        const res: {
+          idle: {
+            userId: Id<'users'>;
+            backend: 'remnawave' | 'outline' | null;
+            backendUserId: string | null;
+          }[];
+          isDone: boolean;
+          continueCursor: string;
+        } = await ctx.runQuery(internal.lifecycle.findIdleFree, {
           tierId,
-          cutoff,
-          limit: pageSize,
-          afterCreation,
+          now,
+          cursor,
+          numItems: pageSize,
         });
-        for (const e of expired) {
-          try {
+        due.push(...res.idle);
+        if (res.isDone) break;
+        cursor = res.continueCursor;
+        if (page === SWEEP_MAX_PAGES - 1) {
+          console.warn('[deactivate-free] hit the per-run page cap; remainder next run');
+        }
+      }
+      for (const e of due) {
+        try {
+          if (e.backendUserId && e.backend) {
             await deleteSubscriptionEverywhere(ctx, {
               backend: e.backend,
               backendUserId: e.backendUserId,
             });
-            await ctx.runMutation(internal.lifecycle.markUserDeleted, { userId: e.userId });
-            removed++;
-          } catch {
-            /* best-effort; teardown failure leaves the row for the next sweep */
           }
+          await ctx.runMutation(internal.lifecycle.markUserInactive, { userId: e.userId });
+          deactivated++;
+        } catch {
+          /* best-effort; teardown failure leaves the user active for the next run */
         }
-        if (nextCursor == null) break;
-        afterCreation = nextCursor;
-        if (page === SWEEP_MAX_PAGES - 1) {
-          console.warn('[cleanup-free] hit the per-run page cap; remainder next run');
+      }
+    }
+    return { deactivated };
+  },
+});
+
+/** One page of long-`inactive` free users past the purge threshold. Delete-and-
+ *  re-query drain (deleting removes them from the range), so no cursor needed. */
+export const findPurgeableInactive = internalQuery({
+  args: { tierId: v.id('tiers'), cutoff: v.number(), numItems: v.number() },
+  handler: async (ctx, { tierId, cutoff, numItems }) => {
+    const rows = await ctx.db
+      .query('users')
+      .withIndex('by_tier_status_freekey', (q) =>
+        q
+          .eq('tierId', tierId)
+          .eq('status', 'inactive')
+          .gt('freeKeyExpiresAt', 0)
+          .lt('freeKeyExpiresAt', cutoff),
+      )
+      .take(numItems);
+    return rows.map((u) => ({ userId: u._id }));
+  },
+});
+
+/** Hard-delete a long-inactive free user's row + its subscription rows. Guarded
+ *  to the `inactive` state so a user who returned between the query and now is
+ *  spared. Only reached via the operator-run purge. */
+export const deleteInactiveUser = internalMutation({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }) => {
+    const u = await ctx.db.get(userId);
+    if (!u || u.status !== 'inactive') return null;
+    const subs = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    for (const s of subs) await ctx.db.delete(s._id);
+    await ctx.db.delete(userId);
+    return null;
+  },
+});
+
+/**
+ * MANUAL, operator-run purge of long-inactive free users (NOT a cron):
+ * `bunx convex run lifecycle:purgeInactiveFree '{"olderThanDays":180}'`. Their key
+ * was already reclaimed at deactivation, so this is a pure local-row reclaim. Uses
+ * `freeKeyExpiresAt` as the "idle since" marker; drains delete-and-re-query.
+ */
+export const purgeInactiveFree = internalAction({
+  args: { olderThanDays: v.number(), limit: v.optional(v.number()) },
+  handler: async (ctx, { olderThanDays, limit }): Promise<{ removed: number }> => {
+    const pageSize = limit ?? 200;
+    const cutoff = Date.now() - olderThanDays * 86_400_000;
+    const tierIds = await ctx.runQuery(internal.lifecycle.defaultFreeTierIds, {});
+    let removed = 0;
+    for (const tierId of tierIds) {
+      for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
+        const rows = await ctx.runQuery(internal.lifecycle.findPurgeableInactive, {
+          tierId,
+          cutoff,
+          numItems: pageSize,
+        });
+        if (rows.length === 0) break;
+        for (const e of rows) {
+          await ctx.runMutation(internal.lifecycle.deleteInactiveUser, { userId: e.userId });
+          removed++;
         }
       }
     }

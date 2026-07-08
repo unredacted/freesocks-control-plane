@@ -440,6 +440,7 @@ const userStatus = v.union(
   v.literal('grace'),
   v.literal('disabled'),
   v.literal('deleted'),
+  v.literal('inactive'),
 );
 
 /**
@@ -1482,7 +1483,7 @@ export const statusSummary = internalQuery({
     // base grows past Convex's per-query read limit, move this to a maintained
     // counter (an appState row bumped on each status transition).
     const users = await ctx.db.query('users').collect();
-    const usersByStatus = { active: 0, grace: 0, disabled: 0, deleted: 0 };
+    const usersByStatus = { active: 0, grace: 0, disabled: 0, deleted: 0, inactive: 0 };
     let backendDrift = 0; // users whose last backend push failed and hasn't recovered
     for (const u of users) {
       usersByStatus[u.status] += 1;

@@ -128,7 +128,7 @@ export const releaseIssuanceLock = internalMutation({
 interface AccountView {
   user: {
     id: Id<'users'>;
-    status: 'active' | 'grace' | 'disabled' | 'deleted';
+    status: 'active' | 'grace' | 'disabled' | 'deleted' | 'inactive';
     supportId: string | null;
     tier: {
       slug: string;
@@ -366,6 +366,11 @@ export const regenerate = internalAction({
       requestedMode: user.connectionModeId ?? null,
       requestId,
     });
+    // Free key (re)issued → refresh the idle window (and reactivate if the member
+    // was inactive and regenerated from a still-valid session). (WS2.)
+    if (tier.isDefaultFree) {
+      await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
+    }
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',
       actorId: userId,
@@ -485,6 +490,9 @@ export const switchBackend = internalAction({
       requestedMode: user.connectionModeId ?? null,
       requestId,
     });
+    if (peerTier.isDefaultFree) {
+      await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
+    }
     await ctx.runMutation(internal.users.setTier, { userId, tierId: peerTier._id });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',
@@ -608,6 +616,9 @@ export const switchMode = internalAction({
       oldDeletedAt = tomb?.deletedAt ?? null;
     }
     await ctx.runMutation(internal.users.setConnectionMode, { userId, modeId: target });
+    if (tier.isDefaultFree) {
+      await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
+    }
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',
       actorId: userId,

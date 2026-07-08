@@ -55,6 +55,10 @@ const userStatus = v.union(
   v.literal('grace'),
   v.literal('disabled'),
   v.literal('deleted'),
+  // Idle free user: key reclaimed, row RETAINED on the free tier, and
+  // login-reactivatable (unlike 'deleted', which kills the account number).
+  // Set by the deactivate-idle-free sweep; cleared back to 'active' on return.
+  v.literal('inactive'),
 );
 const subscriptionState = v.union(v.literal('active'), v.literal('disabled'), v.literal('deleted'));
 const actorType = v.union(
@@ -144,12 +148,22 @@ export default defineSchema({
     // issues into. A plain string validated against the mode catalog (see
     // lib/connectionModes.ts), unset → the catalog default. Additive/optional.
     connectionModeId: v.optional(v.string()),
+    // Free-tier idle marker: the issued key's backend `expireAt` (ms). Stamped at
+    // free-account creation + re-stamped on every free key issuance / reactivation,
+    // so it advances only when the member acts — the "still using the service"
+    // signal the deactivate-idle-free sweep keys off (an ACTIVE free user whose
+    // key has expired and wasn't refreshed is deactivated). Unset for paid users.
+    freeKeyExpiresAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_account_id_hash', ['accountIdHash'])
     .index('by_account_id_prefix', ['accountIdPrefix'])
     .index('by_support_id', ['supportId'])
     .index('by_status_expires', ['status', 'membershipExpiresAt'])
+    // Idle-free sweep: (tierId, status, freeKeyExpiresAt) — scan ONLY active free
+    // users due for deactivation; `inactive` rows fall outside the range, so the
+    // sweep never re-scans its own output (no accretion).
+    .index('by_tier_status_freekey', ['tierId', 'status', 'freeKeyExpiresAt'])
     .index('by_tier', ['tierId']),
 
   subscriptions: defineTable({

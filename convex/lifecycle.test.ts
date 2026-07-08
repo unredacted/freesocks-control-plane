@@ -263,73 +263,170 @@ describe('lifecycle.setMembership', () => {
   });
 });
 
-describe('lifecycle.findExpiredFree (P1-4 per-tier cursor)', () => {
-  test('returns only pre-cutoff active free users with a live sub, and pages via the cursor', async () => {
+describe('lifecycle idle-free deactivate + retain (WS2)', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test('findIdleFree pages ALL due users incl. a same-freeKeyExpiresAt collision', async () => {
     const t = convexTest(schema, modules);
     const { freeTierId, memberTierId } = await seedTiers(t);
-    const cutoff = Date.now() - 90 * DAY;
-
-    // Helper: insert a user with a controllable _creationTime by inserting then
-    // can't set _creationTime directly; convex-test stamps it. So insert in order
-    // and rely on ascending creation order. We make 3 "old" free users (with subs)
-    // by inserting them, then patch nothing — instead assert via the query with a
-    // cutoff in the FUTURE so all inserted users count as "before cutoff".
-    const futureCutoff = Date.now() + DAY;
-    const ids: Id<'users'>[] = [];
-    await t.run(async (ctx) => {
-      for (let i = 0; i < 3; i++) {
-        const uid = await ctx.db.insert('users', {
-          tierId: freeTierId,
-          status: 'active',
-          updatedAt: Date.now(),
-        });
-        await ctx.db.insert('subscriptions', {
-          userId: uid,
-          backend: 'remnawave',
-          backendUserId: `bu-${i}`,
-          backendShortId: `bs-${i}`,
-          subscriptionUrl: 'https://x/sub',
-          subscriptionMirrors: [],
-          state: 'active',
-          updatedAt: Date.now(),
-        });
-        ids.push(uid);
+    const now = Date.now();
+    const stale = now - DAY; // key expired yesterday
+    const ids = await t.run(async (ctx) => {
+      const out: Id<'users'>[] = [];
+      // 5 idle free users, ALL sharing the same freeKeyExpiresAt (the exact
+      // collision the old bare-_creationTime keyset skipped at a page boundary).
+      for (let i = 0; i < 5; i++) {
+        out.push(
+          await ctx.db.insert('users', {
+            tierId: freeTierId,
+            status: 'active',
+            freeKeyExpiresAt: stale,
+            updatedAt: now,
+          }),
+        );
       }
-      // A paid member on the member tier must never be returned by a free scan.
+      // Not due: a future key window; and a paid member (wrong tier).
       await ctx.db.insert('users', {
-        tierId: memberTierId,
+        tierId: freeTierId,
         status: 'active',
-        updatedAt: Date.now(),
+        freeKeyExpiresAt: now + 30 * DAY,
+        updatedAt: now,
       });
+      await ctx.db.insert('users', { tierId: memberTierId, status: 'active', updatedAt: now });
+      return out;
     });
 
-    // Page 1 (limit 2): the two oldest free users.
-    const page1 = await t.query(internal.lifecycle.findExpiredFree, {
-      tierId: freeTierId,
-      cutoff: futureCutoff,
-      limit: 2,
-      afterCreation: 0,
-    });
-    expect(page1.expired.map((e) => e.userId)).toEqual(ids.slice(0, 2));
-    expect(page1.nextCursor).not.toBeNull();
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < 10; i++) {
+      // Annotated to break the same-module self-referential inference.
+      const res: {
+        idle: { userId: Id<'users'> }[];
+        isDone: boolean;
+        continueCursor: string;
+      } = await t.query(internal.lifecycle.findIdleFree, {
+        tierId: freeTierId,
+        now,
+        cursor,
+        numItems: 2,
+      });
+      seen.push(...res.idle.map((e) => String(e.userId)));
+      if (res.isDone) break;
+      cursor = res.continueCursor;
+    }
+    // All 5 due users returned exactly once; the future + paid users excluded.
+    expect(seen.sort()).toEqual(ids.map(String).sort());
+  });
 
-    // Page 2: the third, then drained.
-    const page2 = await t.query(internal.lifecycle.findExpiredFree, {
-      tierId: freeTierId,
-      cutoff: futureCutoff,
-      limit: 2,
-      afterCreation: page1.nextCursor!,
+  test('deactivateIdleFree RETAINS the row (status→inactive, key reclaimed), never deletes', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', 'true');
+    vi.stubEnv('ENVIRONMENT', 'development');
+    const t = convexTest(schema, modules);
+    const { freeTierId } = await seedTiers(t);
+    const now = Date.now();
+    const userId = await t.run(async (ctx) => {
+      const uid = await ctx.db.insert('users', {
+        tierId: freeTierId,
+        status: 'active',
+        freeKeyExpiresAt: now - DAY,
+        updatedAt: now,
+      });
+      await ctx.db.insert('subscriptions', {
+        userId: uid,
+        backend: 'remnawave',
+        backendUserId: 'bu-idle',
+        backendShortId: 'bs-idle',
+        subscriptionUrl: 'https://x/sub',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: now,
+      });
+      return uid;
     });
-    expect(page2.expired.map((e) => e.userId)).toEqual([ids[2]]);
 
-    // With the REAL (past) cutoff, none of the just-created users qualify.
-    const none = await t.query(internal.lifecycle.findExpiredFree, {
-      tierId: freeTierId,
-      cutoff,
-      limit: 10,
-      afterCreation: 0,
+    const res = await t.action(internal.lifecycle.deactivateIdleFree, {});
+    expect(res.deactivated).toBe(1);
+    await t.run(async (ctx) => {
+      const u = await ctx.db.get(userId);
+      expect(u).not.toBeNull(); // RETAINED
+      expect(u!.status).toBe('inactive'); // NOT 'deleted'
+      expect(u!.tierId).toBe(freeTierId); // kept on the free tier
     });
-    expect(none.expired).toHaveLength(0);
+    // Idempotent: a second run finds nothing (the row left the active range).
+    expect((await t.action(internal.lifecycle.deactivateIdleFree, {})).deactivated).toBe(0);
+    await t.run(async (ctx) => {
+      const all = await ctx.db.query('users').collect();
+      expect(all.every((u) => u.status !== 'deleted')).toBe(true);
+    });
+  });
+
+  test('refreshFreeWindow reactivates an inactive user + pushes the window forward', async () => {
+    const t = convexTest(schema, modules);
+    const { freeTierId } = await seedTiers(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: freeTierId,
+        status: 'inactive',
+        suspendedAt: Date.now(),
+        freeKeyExpiresAt: Date.now() - 10 * DAY,
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.lifecycle.refreshFreeWindow, { userId });
+    await t.run(async (ctx) => {
+      const u = await ctx.db.get(userId);
+      expect(u!.status).toBe('active');
+      expect(u!.suspendedAt).toBeUndefined();
+      expect(u!.freeKeyExpiresAt!).toBeGreaterThan(Date.now());
+      const reactivated = (await ctx.db.query('auditLog').collect()).find(
+        (r) => r.action === 'account.reactivate',
+      );
+      expect(reactivated).toBeTruthy();
+    });
+  });
+
+  test('markUserInactive is a no-op if the user was refreshed between read and apply (race)', async () => {
+    const t = convexTest(schema, modules);
+    const { freeTierId } = await seedTiers(t);
+    // freeKeyExpiresAt in the FUTURE → the guard must refuse to deactivate.
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: freeTierId,
+        status: 'active',
+        freeKeyExpiresAt: Date.now() + 30 * DAY,
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.lifecycle.markUserInactive, { userId });
+    expect((await t.run((ctx) => ctx.db.get(userId)))!.status).toBe('active');
+  });
+
+  test('purgeInactiveFree removes only over-threshold inactive rows', async () => {
+    const t = convexTest(schema, modules);
+    const { freeTierId } = await seedTiers(t);
+    const now = Date.now();
+    const { oldId, recentId } = await t.run(async (ctx) => {
+      const oldId = await ctx.db.insert('users', {
+        tierId: freeTierId,
+        status: 'inactive',
+        freeKeyExpiresAt: now - 200 * DAY, // idle long ago
+        updatedAt: now,
+      });
+      const recentId = await ctx.db.insert('users', {
+        tierId: freeTierId,
+        status: 'inactive',
+        freeKeyExpiresAt: now - 5 * DAY, // recently inactive
+        updatedAt: now,
+      });
+      return { oldId, recentId };
+    });
+
+    const res = await t.action(internal.lifecycle.purgeInactiveFree, { olderThanDays: 180 });
+    expect(res.removed).toBe(1);
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(oldId)).toBeNull(); // purged
+      expect(await ctx.db.get(recentId)).not.toBeNull(); // kept
+    });
   });
 });
 

@@ -85,7 +85,7 @@
     }
   });
 
-  const STATUS_OPTIONS = ['', 'active', 'grace', 'disabled', 'deleted'] as const;
+  const STATUS_OPTIONS = ['', 'active', 'grace', 'disabled', 'inactive', 'deleted'] as const;
 
   const users = adminUsersQuery(() => ({
     q: activeQuery,

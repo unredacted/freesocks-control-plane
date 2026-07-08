@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const TierSlug = z.enum(['free', 'member', 'patron', 'custom']);
 export type TierSlug = z.infer<typeof TierSlug>;
 
-export const UserStatus = z.enum(['active', 'grace', 'disabled', 'deleted']);
+export const UserStatus = z.enum(['active', 'grace', 'disabled', 'deleted', 'inactive']);
 export type UserStatus = z.infer<typeof UserStatus>;
 
 export const SubscriptionFormat = z.enum(['auto', 'clash', 'singbox', 'v2ray', 'ssconf', 'raw']);

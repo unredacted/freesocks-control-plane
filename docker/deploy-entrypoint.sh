@@ -121,6 +121,14 @@ bunx convex run seed:reconfigureMembershipTier '{}'
 echo "[deploy] setting the device-limit enforcement default (no-op if already set)"
 bunx convex run seed:migrateDeviceEnforcementDefault '{}'
 
+# Seed the free-tier idle marker (freeKeyExpiresAt) on any free users that lack it,
+# so the deactivate-idle-free sweep can find aged-out free keys. Idempotent (skips
+# users that already have it). NOTE: reclassifying historical status:'deleted' free
+# rows → 'inactive' (so cleaned accounts can return) is an operator choice, run on
+# demand: bunx convex run seed:reclassifyDeletedFreeToInactive '{}'
+echo "[deploy] backfilling the free-tier idle marker (idempotent)"
+bunx convex run seed:backfillFreeKeyExpiresAt '{}'
+
 echo "[deploy] OK"
 # First-run reminder (printed EVERY deploy, not only when the secret is freshly
 # generated): the first admin registers a passkey at /admin using this secret.
