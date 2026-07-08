@@ -420,6 +420,8 @@
       }
     ],
     "perMonth": "{price}/mo",
+    "fromPerMonth": "From {price}/month",
+    "benefitsShort": "Unlimited bandwidth and devices",
     "save": "save {pct}%",
     "methodLabel": "Payment method",
     "payNowpayments": "Cryptocurrency",
