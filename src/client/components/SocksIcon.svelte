@@ -1,11 +1,10 @@
 <script lang="ts">
   /**
    * A sock (footwear) brand glyph for FreeSocks. Lucide ships no socks icon, so
-   * this is a hand-rolled solid mark: two overlapping rounded rects (a vertical
-   * leg + a horizontal foot sharing a left edge) that fuse into a seamless
-   * L-shaped sock — rounded cuff at the top, rounded toe at the right, rounded
-   * heel at the bottom-left. Filled with `currentColor` so it inherits text color
-   * like a lucide icon. Pass a `class` (e.g. `size-4`) exactly as with a lucide icon.
+   * this is hand-rolled in lucide's outline style (24×24, stroke-width 2, round
+   * caps/joins, currentColor): a leg that bends at the ankle into a foot with a
+   * rounded toe and heel, plus a cuff line at the opening — the cues that read as
+   * a sock rather than a bare L. Pass a `class` (e.g. `size-4`) like a lucide icon.
    */
   let { class: className = '' }: { class?: string } = $props();
 </script>
@@ -15,10 +14,14 @@
   width="24"
   height="24"
   viewBox="0 0 24 24"
-  fill="currentColor"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
   class={className}
   aria-hidden="true"
 >
-  <rect x="7.5" y="3" width="6.5" height="12" rx="2" />
-  <rect x="7.5" y="11" width="12.5" height="8" rx="3.5" />
+  <path d="M8 4h6v7q0 2.8 3 2.8a3.4 3.4 0 0 1 0 6.8h-7a2.9 2.9 0 0 1-2-2.9V4Z" />
+  <path d="M8 7.2h6" />
 </svg>

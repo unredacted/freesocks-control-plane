@@ -1,7 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img" aria-label="FreeSocks">
   <rect x="1" y="1" width="30" height="30" rx="7" fill="#18181b" stroke="#3f3f46" stroke-width="1" />
-  <!-- Sock = FreeSocks. Two rounded rects (leg + foot) merge into an L-shaped
-       sock. Monochrome to match the app's zinc theme. -->
-  <rect x="9" y="6" width="8.5" height="15" rx="2.5" fill="#fafafa" />
-  <rect x="9" y="17" width="15" height="9" rx="4" fill="#fafafa" />
+  <!-- Sock = FreeSocks: a bent leg + foot with a rounded toe/heel and a cuff cut.
+       Reuses the app's SocksIcon path, filled + centered. Monochrome zinc theme. -->
+  <g transform="translate(16 16) scale(1.2) translate(-14.2 -12.3)">
+    <path d="M8 4h6v7q0 2.8 3 2.8a3.4 3.4 0 0 1 0 6.8h-7a2.9 2.9 0 0 1-2-2.9V4Z" fill="#fafafa" />
+    <path d="M8 7.2h6" stroke="#18181b" stroke-width="1.6" stroke-linecap="round" fill="none" />
+  </g>
 </svg>
