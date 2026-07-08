@@ -1,11 +1,27 @@
 # Project inventory: features, open work, and code status
 
-**Last reconciled against the code: 2026-07-07** (branch `v2`, after the pre-launch
-polish pass: **connection-profile descriptions** — admin-editable label + description that
-override the member picker's translated copy per-profile when set; **Remnawave squad-pool
-load balancing** — a profile binds a POOL of squads and issuance picks the least-loaded by
-the panel's per-squad member counts (cached in `remnawaveSquadStats` by the healthcheck
-cron), the pick persisted on the subscription so tier pushes never re-home a live key; per-
+**Last reconciled against the code: 2026-07-07** (branch `v2`, after the node-placement
+redesign — Phases 1–5a). That redesign replaced the earlier squad-pool "load balancing" (which
+balanced nothing in a real fleet: a Remnawave internal squad is a set of inbounds, not a node)
+with **issuance-time node placement**. The generic backend layer is now **squad-free** — it
+carries an opaque **`placement` handle** (`subscriptions.backendPlacement`); only Remnawave-local
+code maps it to a squad UUID. A **connection mode** (renamed from "connection profile"; `evade` /
+`privacy`, data-driven with a `deliveryStyle` capability flag) binds a **pool of per-node squads**
+(`remnawave.modePlacement.<id>.squads`), and issuance homes each new key to the **least-loaded
+node** of that pool by node telemetry (`usersOnline` + optional realtime bandwidth, cached in
+`remnawaveNodeStats` by the healthcheck cron); the pick is persisted so tier pushes never re-home
+a live key. Remnawave specifics moved behind a namespaced admin surface — **Admin → Remnawave**
+(`PATCH /api/v1/admin/remnawave/mode-placements` [`admin:servers:write`],
+`GET /api/v1/admin/remnawave/node-stats` [`admin:servers:read`]) — while the generic mode
+catalog (labels/description/default) stays at `PATCH /api/v1/admin/connection-modes`
+(`admin:settings:write`). A `seed:migrateConnectionModes` cutover migration (run by the beta
+deployer) copies live subs/users/settings onto the new fields; the deprecated fields
+(`subscriptions.remnawaveSquadUuid`, `users.connectionProfileId`, `tiers.remnawaveSquadUuid`, the
+`remnawaveSquadStats` table) are **dropped from the schema in a follow-up deploy** once that
+migration has run. See `docs/backends.md` § "Node placement".
+
+Earlier the pre-launch polish pass added: **connection-mode descriptions** — admin-editable
+label + description that override the member picker's translated copy per-mode when set; per-
 instance **`maxKeys` capacity caps**; the **device-limit enforcement toggle**
 (`devices.enforcementEnabled`, default OFF = unlimited-by-default) that gates every
 `hwidDeviceLimit` send, plus the **FCP-front HWID fix** — `GET /api/v1/sub/<token>` now
@@ -172,14 +188,19 @@ Detailed companions, referenced rather than duplicated here:
   membership**; backend shown; **paginated**); **Admins** (invite links + deactivate/reactivate
   - per-passkey revoke, §1.1); **API tokens** (create / reveal-once / revoke; scope **group**
     toggles); **Backend servers** (CRUD + test-connection; secret `config`/`apiUrl` stored
-    server-side, only ever returned masked); **Billing** (per-rail config + a **readiness** check
+    server-side, only ever returned masked); **Remnawave** (per-mode node-placement squad pools —
+    write-only UUIDs — + a read-only per-placement node-load table; §Node placement in
+    `docs/backends.md`); **Billing** (per-rail config + a **readiness** check
     that flags enabled-but-misconfigured rails; §1.7); **Storage mirrors** (provider pool, §1.7);
     **Theme** (preset gallery + hue slider + live preview; §1.7); **Rate-limit policies** (W2);
     **Membership codes** (W4); App settings; **Audit log** (filter by action / actor / since).
-- **IaC-addressable mutations** (for the Ansible role): idempotent **`PUT …/backend-servers/by-slug/{slug}`** + **`DELETE …/by-slug/{slug}`**, **`PUT …/tiers/by-slug/{slug}`** (also the
-  declarative squad↔tier bind — `remnawaveSquadUuid` is a tier field), and **`PUT
+- **IaC-addressable mutations** (for the Ansible role): idempotent **`PUT …/backend-servers/by-slug/{slug}`** + **`DELETE …/by-slug/{slug}`**, **`PUT …/tiers/by-slug/{slug}`**, and **`PUT
 …/mirror-providers/by-name/{name}`**. Each is a single keep-secret-on-blank upsert; no
   client-side id resolution. Backed by `convex/adminApi.ts` / `convex/mirrorProviders.ts`.
+  Node placement is bound separately via **`PATCH …/remnawave/mode-placements`**
+  (`admin:servers:write`): the role creates one squad per node and binds each connection mode's
+  pool there. (The legacy tier-level `remnawaveSquadUuid` bind on the by-slug tier upsert is
+  **deprecated** — retained transitionally, dropped with the Phase-5b schema cleanup.)
 
 ### 1.7 Integrations & runtime
 

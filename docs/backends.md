@@ -67,7 +67,7 @@ wire protocol is pluggable.
 
 The contract stays permissive about per-type differences: `issueUser` takes a superset `spec` and
 each provider applies what it supports (Outline drops `hwidDeviceLimit` / `trafficLimitStrategy` /
-`remnawaveSquadUuid`); `updateUser` is a sparse PATCH; `getUser` returns a normalized `UserState`
+the opaque `placement` handle); `updateUser` is a sparse PATCH; `getUser` returns a normalized `UserState`
 and the read path is fault-tolerant (an unresolved key returns a sentinel `active/unknown` state
 rather than 500-ing `/account`); `fetchSubscriptionContent` lets each type decide what "content" is
 and is only called when S3 mirroring is on.
@@ -170,20 +170,20 @@ these still match. The provider tests assert the paths, so a drift here fails CI
 that was missing when the `PATCH /api/users/{uuid}` / `/api/hwid-devices` mismatches shipped (they
 "passed" only because the tests mocked the wrong paths too).
 
-| Op            | Method + path                                           | Notes                                                                                                                |
-| ------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| issue         | `POST /api/users`                                       | body carries `activeInternalSquads: string[]` for squad assignment                                                   |
-| get           | `GET /api/users/{uuid}`                                 |                                                                                                                      |
-| update        | `PATCH /api/users`                                      | **`uuid` is in the request BODY, not the path** (the route has no path param; the DTO requires `uuid` or `username`) |
-| set status    | `POST /api/users/{uuid}/actions/{enable\|disable}`      | dedicated action endpoints, not a `status` field on update                                                           |
-| reset traffic | `POST /api/users/{uuid}/actions/reset-traffic`          |                                                                                                                      |
-| delete        | `DELETE /api/users/{uuid}`                              | a 404 is treated as success (idempotent teardown)                                                                    |
-| list devices  | `GET /api/hwid/devices/{userUuid}`                      | the HWID controller is `/api/hwid`; `userUuid` is a **path** param (not `?userUuid=`)                                |
-| delete device | `POST /api/hwid/devices/delete`                         | body `{ userUuid, hwid }`                                                                                            |
-| user usage    | `GET /api/bandwidth-stats/users/{uuid}?start&end`       | member usage trend; **aggregate only** — the per-node `series`/`topNodes` are dropped (privacy)                      |
-| fleet stats   | `GET /api/system/stats` + `GET /api/system/stats/recap` | admin dashboard (online / nodes / countries / traffic + panel `version`); cached by the healthcheck cron             |
-| squad stats   | `GET /api/internal-squads`                              | per-squad `info.membersCount` → the squad-pool balancer's load signal; cached in `remnawaveSquadStats` by the cron   |
-| sub content   | the public subscription URL (or `/api/sub/{shortUuid}`) | fetched with NO admin token; forwards the client's `user-agent` + HWID headers (see "HWID / device limits" below)    |
+| Op            | Method + path                                                                                                                         | Notes                                                                                                                                             |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| issue         | `POST /api/users`                                                                                                                     | body carries `activeInternalSquads: [placement]` — the generic `placement` handle mapped to a squad UUID (see "Node placement")                   |
+| get           | `GET /api/users/{uuid}`                                                                                                               |                                                                                                                                                   |
+| update        | `PATCH /api/users`                                                                                                                    | **`uuid` is in the request BODY, not the path** (the route has no path param; the DTO requires `uuid` or `username`)                              |
+| set status    | `POST /api/users/{uuid}/actions/{enable\|disable}`                                                                                    | dedicated action endpoints, not a `status` field on update                                                                                        |
+| reset traffic | `POST /api/users/{uuid}/actions/reset-traffic`                                                                                        |                                                                                                                                                   |
+| delete        | `DELETE /api/users/{uuid}`                                                                                                            | a 404 is treated as success (idempotent teardown)                                                                                                 |
+| list devices  | `GET /api/hwid/devices/{userUuid}`                                                                                                    | the HWID controller is `/api/hwid`; `userUuid` is a **path** param (not `?userUuid=`)                                                             |
+| delete device | `POST /api/hwid/devices/delete`                                                                                                       | body `{ userUuid, hwid }`                                                                                                                         |
+| user usage    | `GET /api/bandwidth-stats/users/{uuid}?start&end`                                                                                     | member usage trend; **aggregate only** — the per-node `series`/`topNodes` are dropped (privacy)                                                   |
+| fleet stats   | `GET /api/system/stats` + `GET /api/system/stats/recap`                                                                               | admin dashboard (online / nodes / countries / traffic + panel `version`); cached by the healthcheck cron                                          |
+| node stats    | `GET /api/internal-squads` + `…/{uuid}/accessible-nodes` + `GET /api/nodes` (+ best-effort `GET /api/bandwidth-stats/nodes/realtime`) | per-squad node load (usersOnline / online / realtime bytes) → the issuance-time node-placement picker; cached in `remnawaveNodeStats` by the cron |
+| sub content   | the public subscription URL (or `/api/sub/{shortUuid}`)                                                                               | fetched with NO admin token; forwards the client's `user-agent` + HWID headers (see "HWID / device limits" below)                                 |
 
 Most responses are wrapped in `{ response: ... }`; the provider's `unwrap()` tolerates both wrapped
 and bare. HWID device metadata is surfaced as `platform` / `deviceModel` / first-seen / last-seen
@@ -192,8 +192,12 @@ and bare. HWID device metadata is surfaced as `platform` / `deviceModel` / first
 subscription URL, not an admin API route.
 
 **Token scopes.** The FCP panel token needs, beyond user + HWID management, the **read** scopes
-`user-usage:read`, `stats:read`, and `recap:read` for the usage/fleet observability. All the
-observability additions are read-only, so keep the token least-privilege — none of them write.
+`user-usage:read`, `stats:read`, and `recap:read` for the usage/fleet observability, plus
+**node-read** (`nodes:read` / `internal-squads:read`) for the node-placement telemetry
+(`getNodeStats`). All the observability additions are read-only, so keep the token
+least-privilege — none of them write. If the node-read scope is missing, `getNodeStats`
+fail-softs (empty stats) and the placement picker degrades to declaration order — keys still
+issue, they just stop favoring the emptier node.
 
 ## Testing the Remnawave integration against a real panel
 
@@ -230,35 +234,58 @@ Two Remnawave quirks the harness handles (both bit us / would bite a naive calle
 When adding a new backend read/write (§"Adding a backend type"), extend the integration
 test so the real contract stays pinned by an executable check, not just a comment.
 
-## Node load balancing (Remnawave squad pools)
+## Node placement (issuance-time, Remnawave)
 
-FCP's instance pool (`convex/backendServers.ts`) already spreads keys across
-distinct backend-server rows by score (`latency_weight*rtt + key_count_weight*keyCount`,
+FCP's instance pool (`convex/backendServers.ts`) spreads keys across distinct
+backend-server rows by score (`latency_weight*rtt + key_count_weight*keyCount`,
 admin-tunable) and skips instances at their optional `maxKeys` cap (all-at-capacity
-→ the retryable `backend.unavailable`). But a typical Remnawave deployment runs a
-**single panel**, and node placement there is driven by which **internal squad** a
-user is in — the panel maps squads → nodes. So FCP balances _nodes_ by balancing
-_squads_:
+→ the retryable `backend.unavailable`). That's the **generic** capacity layer.
 
-- A connection profile (`evade` / `privacy`) can bind a **pool** of squad UUIDs
-  (`connectionProfile.<id>.squadUuids` in `appSettings`; the legacy single
-  `.squadUuid` still works as a one-element pool). Set it in Admin → Settings →
-  Connection profiles (one UUID per line) or via `PATCH /api/v1/admin/connection-profiles`.
-- At issuance FCP picks the **least-loaded** squad of the pool, using the panel's
-  authoritative per-squad `info.membersCount` from `GET /api/internal-squads`,
-  cached in `remnawaveSquadStats` by the `backend-healthcheck` cron (~10 min).
-  Fresh-known squads win (lowest count first); stale/never-observed ones sort
-  after; all-unknown falls back to declaration order, deterministically.
-- The chosen squad is **persisted on the subscription row** (`remnawaveSquadUuid`).
-  A tier push (`lifecycle.pushTierToBackend`) re-sends _that_ squad — it never
-  re-picks — so renewals/downgrades can't thrash a live key across squads.
-- Each squad in a pool must live on the **same panel** the tier's backend routes
-  to (FCP can't validate this; the CMS help text says so). Admin → Settings shows
-  a read-only per-squad load panel.
+Remnawave adds a second, **Remnawave-local** layer: which **node** a key lands on.
+Remnawave has no entry-node balancer — a key's node is decided by which **internal
+squad** it's assigned to, and the operator models **one internal squad per node**
+(via Ansible). So FCP does one-time, **sticky-per-key node placement** at issuance:
+home each new key to the emptiest node.
 
-Operator sizing: define one squad per node group, add them all to the profile's
-pool, and FCP fills the emptiest. `maxKeys` on an instance is a hard cap for the
-multi-panel / Outline case.
+The generic layer stays backend-agnostic: it carries an opaque **`placement`
+handle** (a `string`) end to end (`IssueUserSpec.placement`, persisted as
+`subscriptions.backendPlacement`). Only Remnawave-local code interprets it as a
+squad UUID (`activeInternalSquads: [placement]`); Outline ignores it. Nothing in
+`lib/backends/{types,registry}.ts`, `backends.ts`, `issuance.ts`, or
+`subscriptions.ts` mentions "squad".
+
+How a placement is chosen (all Remnawave-local, under `convex/remnawaveNodes.ts` +
+`convex/lib/remnawavePlacement.ts`):
+
+- A **connection mode** (`evade` / `privacy`, data-driven — see
+  `convex/lib/connectionModes.ts`) binds a **pool** of squad UUIDs, stored in
+  `appSettings` under `remnawave.modePlacement.<id>.squads`. Bind it in
+  **Admin → Remnawave** (one UUID per line, per mode) or via
+  `PATCH /api/v1/admin/remnawave/mode-placements` (scope `admin:servers:write`) —
+  the Ansible panel-bootstrap PATCHes this after it creates the per-node squads.
+  Squad UUIDs are **write-only** (never echoed back; audited as a `poolBound`
+  boolean).
+- At issuance FCP picks the **least-loaded node** of the mode's pool
+  (`pickByNodeLoad`): per-squad node load — `usersOnline` (primary) + optional
+  realtime bandwidth (secondary; weights `remnawave.nodePlacement.*_weight`, default
+  usersOnline-only) — is aggregated from the squad's accessible nodes and cached in
+  `remnawaveNodeStats` by the `backend-healthcheck` cron (~10 min). Fresh + online
+  squads win (lowest load first); stale / offline / unroutable ones sort last but
+  stay selectable; a single-element or empty pool short-circuits.
+- The chosen placement is **persisted on the subscription row**
+  (`subscriptions.backendPlacement`). A tier push (`lifecycle.pushTierToBackend`)
+  re-sends _that_ placement — it never re-picks (`stablePlacement` only fills a row
+  that has none, deterministically) — so renewals/downgrades can't thrash a live
+  key across nodes. Only **regenerate** / **switch-mode** / **switch-backend**
+  re-pick.
+- Each squad in a pool must live on the **same panel** the tier's backend routes to
+  (FCP can't validate this). **Admin → Remnawave** shows a read-only per-placement
+  node-load panel (`GET /api/v1/admin/remnawave/node-stats`, scope
+  `admin:servers:read`).
+
+Operator sizing: one squad per node, add them all to the mode's pool, and FCP fills
+the emptiest node at issuance. `maxKeys` on an instance is the generic hard cap for
+the multi-panel / Outline case.
 
 ## HWID / device limits
 
@@ -292,9 +319,9 @@ hint — **only** when `devices.enforcementEnabled` is on and the member's tier 
 device-limited. With the toggle off (the unlimited-by-default posture) the device
 UI is neutralized entirely.
 
-**Privacy-profile members** import a static raw config (not a polling URL), so
-they never send an HWID and can't honor a device limit — device limits are an
-evade-profile / fronted-URL concept.
+**Privacy-mode members** (a connection mode whose `deliveryStyle` is `rawConfig`)
+import a static raw config (not a polling URL), so they never send an HWID and
+can't honor a device limit — device limits are an `url`-delivery / fronted concept.
 
 The device list + member self-service **revoke** (`POST /api/v1/account/devices/revoke`)
 are Remnawave-only; Outline has no device concept and returns a typed 409.
