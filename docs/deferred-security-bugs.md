@@ -438,7 +438,10 @@ issuance; see plan doc).
 
 > **CLOSED.** `convex/lib/backends/remnawave.ts` (the `remnawaveUpdateUser` PATCH)
 > distinguishes "field absent" (skip) from "field present and null/''" (clears via
-> `activeInternalSquads: []`); a value sets it.
+> `activeInternalSquads: []`); a value sets it. (Node-placement redesign, 2026-07-07:
+> the field is now the generic opaque `placement`, not `remnawaveSquadUuid`; the
+> tier-level squad field and its CMS management were removed — squads are bound per
+> connection mode via /admin/remnawave/mode-placements. The clear-vs-skip fix stands.)
 
 **Location** `src/server/providers/remnawave/backend.ts:90-92` _(now `convex/lib/backends/remnawave.ts`)_
 
