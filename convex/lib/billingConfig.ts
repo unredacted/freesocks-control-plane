@@ -14,7 +14,6 @@
 import type { DatabaseReader } from '../_generated/server';
 
 export type BillingProcessor = 'nowpayments' | 'stripe' | 'paypal';
-export const BILLING_PROCESSORS: readonly BillingProcessor[] = ['nowpayments', 'stripe', 'paypal'];
 
 export interface BillingDuration {
   months: number;

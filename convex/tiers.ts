@@ -4,21 +4,6 @@ import { internalQuery } from './_generated/server';
 import type { DatabaseReader } from './_generated/server';
 import { v } from 'convex/values';
 
-/** All tiers (admin list + the cache-free replacement for TierPolicyService.listAll). */
-export const list = internalQuery({
-  args: {},
-  handler: (ctx) => ctx.db.query('tiers').collect(),
-});
-
-export const listActive = internalQuery({
-  args: {},
-  handler: (ctx) =>
-    ctx.db
-      .query('tiers')
-      .withIndex('by_active', (q) => q.eq('isActive', true))
-      .collect(),
-});
-
 export const get = internalQuery({
   args: { id: v.id('tiers') },
   handler: (ctx, { id }) => ctx.db.get(id),

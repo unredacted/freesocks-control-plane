@@ -11,7 +11,6 @@ import { writeAuditLog } from './lib/audit';
 import {
   pickByNodeLoad,
   resolvePlacementPool,
-  resolveModePlacementStable,
   modePlacementWrites,
   resolveBoundModeIds,
 } from './lib/remnawavePlacement';
@@ -62,13 +61,6 @@ export const resolvePlacement = internalQuery({
   args: { modeId: v.union(v.string(), v.null()) },
   handler: async (ctx, { modeId }) =>
     pickByNodeLoad(ctx.db, await resolvePlacementPool(ctx.db, modeId)),
-});
-
-/** Deterministic first-of-pool for a mode — the tier-push preserve fallback for
- *  rows with no persisted placement (never re-picks by load, so no thrash). */
-export const stablePlacement = internalQuery({
-  args: { modeId: v.union(v.string(), v.null()) },
-  handler: (ctx, { modeId }) => resolveModePlacementStable(ctx.db, modeId),
 });
 
 /** Cache the latest per-placement node-load snapshots (upsert by placement).
