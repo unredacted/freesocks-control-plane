@@ -346,6 +346,38 @@ describe('account-id rotate throttle (policy account.rotate, max 5)', () => {
   });
 });
 
+describe('public GET throttles (WS5)', () => {
+  test('/api/v1/config is per-IP rate limited past its policy', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.rateLimits.setPolicy, {
+      policyKey: 'config.fetch',
+      max: 1,
+      windowMs: 60_000,
+      enabled: true,
+    });
+    const headers = { 'x-forwarded-for': '203.0.113.77' };
+    expect((await t.fetch('/api/v1/config', { headers })).status).toBe(200);
+    const blocked = await t.fetch('/api/v1/config', { headers });
+    expect(blocked.status).toBe(429);
+    expect(((await blocked.json()) as { error: { code: string } }).error.code).toBe(
+      'rate_limit.exceeded',
+    );
+  });
+
+  test('/api/v1/e2ee/keys is per-IP rate limited past its policy', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.rateLimits.setPolicy, {
+      policyKey: 'e2ee.keys.fetch',
+      max: 1,
+      windowMs: 60_000,
+      enabled: true,
+    });
+    const headers = { 'x-forwarded-for': '203.0.113.78' };
+    expect((await t.fetch('/api/v1/e2ee/keys', { headers })).status).toBe(200);
+    expect((await t.fetch('/api/v1/e2ee/keys', { headers })).status).toBe(429);
+  });
+});
+
 describe('/api/v1/me cookie resolution', () => {
   test('a valid member cookie authenticates; garbage does not', async () => {
     const t = convexTest(schema, modules);

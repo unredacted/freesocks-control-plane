@@ -276,10 +276,35 @@ http.route({
   }),
 });
 
+/** Best-effort per-IP throttle for an unauthenticated public GET (origin-DoS
+ *  hygiene, not access control). Skips silently when the client IP can't be
+ *  resolved (no trusted proxy configured) so a misconfigured proxy never bricks a
+ *  public read. Returns a 429 Response when limited, else null. */
+async function throttlePublicGet(
+  ctx: ActionCtx,
+  req: Request,
+  policyKey: 'config.fetch' | 'e2ee.keys.fetch',
+): Promise<Response | null> {
+  const ip = resolveClientIp(req);
+  if (!ip) return null;
+  const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey,
+    subject: await ipHashSubject(ip),
+  });
+  if (rl.allowed) return null;
+  return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+    retryAfterMs: rl.retryAfterMs,
+  });
+}
+
 http.route({
   path: '/api/v1/config',
   method: 'GET',
-  handler: httpAction(async (ctx) => json(await ctx.runQuery(api.publicConfig.get, {}))),
+  handler: httpAction(async (ctx, req) => {
+    const limited = await throttlePublicGet(ctx, req, 'config.fetch');
+    if (limited) return limited;
+    return json(await ctx.runQuery(api.publicConfig.get, {}));
+  }),
 });
 
 // CDN-blinding Phase 3: the current manifest-signed epoch KEM public key (and,
@@ -290,7 +315,9 @@ http.route({
 http.route({
   path: '/api/v1/e2ee/keys',
   method: 'GET',
-  handler: httpAction(async (ctx) => {
+  handler: httpAction(async (ctx, req) => {
+    const limited = await throttlePublicGet(ctx, req, 'e2ee.keys.fetch');
+    if (limited) return limited;
     const [epoch, revocation] = await Promise.all([
       ctx.runQuery(internal.keyEpochs.current, {}),
       ctx.runQuery(internal.keyRevocations.current, {}),

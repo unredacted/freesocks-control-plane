@@ -66,6 +66,11 @@ export const RATE_LIMIT_DEFAULTS = {
   // and the short-TTL cache absorbs bursts, so this is generous — it's DoS
   // hygiene, not access control (the token is a 128-bit unguessable capability).
   'subscription.fetch': { max: 120, windowMs: MINUTE, enabled: true },
+  // Unauthenticated public GETs (per IP) — DoS-amplification hygiene, not access
+  // control. Generous: the SPA polls /config on load and /e2ee/keys before a
+  // sealed login, and both are briefly cacheable.
+  'config.fetch': { max: 120, windowMs: MINUTE, enabled: true },
+  'e2ee.keys.fetch': { max: 120, windowMs: MINUTE, enabled: true },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyKey = keyof typeof RATE_LIMIT_DEFAULTS;
