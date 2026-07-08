@@ -75,8 +75,9 @@ export interface ConnectionMode {
 }
 
 /** Public-safe projection publicConfig ships. `available` = the mode has a
- *  backend placement pool bound (else picking it would fall back to the tier
- *  squad); the caller supplies the bound-mode set (Remnawave-owned). */
+ *  backend placement pool bound; an unbound mode is disabled in the picker and
+ *  rejected server-side (issuing into it would mint a squad-less key). The caller
+ *  supplies the bound-mode set (Remnawave-owned). */
 export interface PublicConnectionMode {
   id: string;
   deliveryStyle: DeliveryStyle;

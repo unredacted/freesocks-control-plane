@@ -11,7 +11,7 @@
  * switch via the default-free peer tier; paid users get 409 until the billing
  * portal defines cross-backend tier linkage (CiviCRM linkage is gone).
  */
-import { internalAction, internalMutation } from './_generated/server';
+import { internalAction, internalMutation, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
@@ -25,6 +25,38 @@ import {
 } from './lib/backends/types';
 
 type Backend = 'remnawave' | 'outline';
+
+/**
+ * WS1 bring-up safety net: when a Remnawave key is issued with a null placement
+ * (only possible when NO mode has a pool bound anywhere on the deploy), the key
+ * has no inbounds. We still issue it (keys must mint during bring-up) but never
+ * SILENTLY — audit it so an admin sees they must bind a placement pool. A no-op
+ * for Outline or when a placement resolved. `switchMode` can't reach this (it
+ * rejects unbound targets first).
+ */
+async function auditIfPlacementless(
+  ctx: ActionCtx,
+  args: {
+    backend: Backend;
+    placement: string | null;
+    userId: Id<'users'>;
+    subscriptionId: Id<'subscriptions'>;
+    requestedMode: string | null;
+    requestId?: string;
+  },
+): Promise<void> {
+  if (args.backend !== 'remnawave' || args.placement !== null) return;
+  console.warn('[placement] issued a squad-less key: no Remnawave pool bound on this deploy');
+  await ctx.runMutation(internal.audit.record, {
+    actorType: 'member',
+    actorId: args.userId,
+    action: 'subscription.issued_without_placement',
+    targetType: 'subscription',
+    targetId: args.subscriptionId,
+    payload: { requestedMode: args.requestedMode },
+    requestId: args.requestId,
+  });
+}
 
 // P1-3: a serializable per-user issuance lock. regenerate / switch-backend /
 // switch-profile each mint a NEW backend key and tombstone the old one; two
@@ -326,6 +358,14 @@ export const regenerate = internalAction({
         graceMs: 24 * 60 * 60 * 1000,
       });
     }
+    await auditIfPlacementless(ctx, {
+      backend: tier.backend,
+      placement: nodePlacement,
+      userId,
+      subscriptionId: issued.subscriptionId,
+      requestedMode: user.connectionModeId ?? null,
+      requestId,
+    });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',
       actorId: userId,
@@ -437,6 +477,14 @@ export const switchBackend = internalAction({
       oldDeletedAt = tomb?.deletedAt ?? null;
     }
 
+    await auditIfPlacementless(ctx, {
+      backend: peerTier.backend,
+      placement: nodePlacement,
+      userId,
+      subscriptionId: issued.subscriptionId,
+      requestedMode: user.connectionModeId ?? null,
+      requestId,
+    });
     await ctx.runMutation(internal.users.setTier, { userId, tierId: peerTier._id });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',
@@ -512,6 +560,18 @@ export const switchMode = internalAction({
     const chosen = modes.find((m) => m.id === target);
     if (!chosen) {
       return { ok: false, code: 'validation', message: 'Unknown connection mode', status: 400 };
+    }
+    // Refuse to switch to a mode with no placement pool bound (Remnawave only):
+    // issuing into it would mint a squad-less "dead" key AND we'd have tombstoned
+    // the working key to do it. The picker also disables unbound modes; this is
+    // the server-authoritative guard. (WS1.)
+    if (tier.backend === 'remnawave' && !chosen.bound) {
+      return {
+        ok: false,
+        code: 'validation',
+        message: 'This connection mode is not available yet.',
+        status: 400,
+      };
     }
 
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});

@@ -13,6 +13,7 @@ import {
 } from './lib/connectionModes';
 import {
   resolveModeSquadPool,
+  resolvePlacementPool,
   resolveModePlacementStable,
   resolveBoundModeIds,
   modePlacementWrites,
@@ -211,5 +212,50 @@ describe('remnawave mode placement pools', () => {
     );
     // Unknown mode ids ignored.
     expect(modePlacementWrites({ modes: { bogus: { squadUuids: ['x'] } } })).toEqual([]);
+  });
+});
+
+describe('resolvePlacementPool — anti-squad-less fallback (WS1)', () => {
+  const bind = (t: ReturnType<typeof convexTest>, id: string, squads: string[]) =>
+    t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: `remnawave.modePlacement.${id}.squads`,
+        value: JSON.stringify(squads),
+        updatedAt: Date.now(),
+      }),
+    );
+
+  test('a bound mode resolves its OWN pool', async () => {
+    const t = convexTest(schema, modules);
+    await bind(t, 'privacy', ['P']);
+    expect(await t.run((ctx) => resolvePlacementPool(ctx.db, 'privacy'))).toEqual(['P']);
+  });
+
+  test('an UNBOUND mode falls back to the DEFAULT mode pool', async () => {
+    const t = convexTest(schema, modules);
+    await bind(t, 'evade', ['E']); // evade is the catalog default
+    // privacy has no pool → falls back to evade (default).
+    expect(await t.run((ctx) => resolvePlacementPool(ctx.db, 'privacy'))).toEqual(['E']);
+  });
+
+  test('requested + default both unbound → ANY bound pool (catalog order)', async () => {
+    const t = convexTest(schema, modules);
+    await bind(t, 'privacy', ['P']); // only privacy bound; evade (requested+default) unbound
+    expect(await t.run((ctx) => resolvePlacementPool(ctx.db, 'evade'))).toEqual(['P']);
+  });
+
+  test('nothing bound anywhere → [] (caller issues squad-less + audits)', async () => {
+    const t = convexTest(schema, modules);
+    expect(await t.run((ctx) => resolvePlacementPool(ctx.db, 'privacy'))).toEqual([]);
+  });
+
+  test('resolveModePlacementStable inherits the fallback (never clears a live squad)', async () => {
+    const t = convexTest(schema, modules);
+    await bind(t, 'evade', ['E']);
+    // A key whose mode (privacy) lost its pool still resolves a real squad on push.
+    expect(await t.run((ctx) => resolveModePlacementStable(ctx.db, 'privacy'))).toBe('E');
+    // Truly-unbound deploy → null (nothing to preserve).
+    const t2 = convexTest(schema, modules);
+    expect(await t2.run((ctx) => resolveModePlacementStable(ctx.db, 'privacy'))).toBeNull();
   });
 });

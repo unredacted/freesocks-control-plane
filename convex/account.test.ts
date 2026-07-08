@@ -584,21 +584,162 @@ describe('account.switchMode saga', () => {
     });
   });
 
-  test('falls back to the tier squad when the target mode has no placement pool bound', async () => {
-    // dev mock ON (top-level beforeEach) → issuance short-circuits; assert it still
-    // succeeds and records the choice even with no mode pool bound.
+  test('rejects a switch to an UNBOUND mode without tombstoning the working key (WS1)', async () => {
+    // mock OFF so a real issuance WOULD hit the network — the reject must fire first.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
-    const tierId = await seedTier(t);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
     const userId = await seedUser(t, tierId);
-    await t.action(internal.account.regenerate, { userId }); // an existing key to tombstone
+    await t.run(async (ctx) => {
+      // evade is bound; privacy is NOT — switching to privacy must be refused.
+      await ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.evade.squads',
+        value: JSON.stringify(['sq-evade']),
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'live-key',
+        backendShortId: 'liveshort',
+        subscriptionUrl: 'https://panel.test/sub/liveshort',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+    });
+    const fetchMock = vi.fn(
+      async (_input: string | URL, _init?: RequestInit) => new Response('{}', { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
 
     const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
-    expect(res).toMatchObject({ ok: true, mode: { id: 'privacy' } });
+    expect(res).toMatchObject({ ok: false, code: 'validation', status: 400 });
+    // No key was minted…
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
+      ),
+    ).toBe(false);
     await t.run(async (ctx) => {
-      expect((await ctx.db.get(userId))!.connectionModeId).toBe('privacy');
+      // …and the working key is untouched (not tombstoned, mode unchanged).
       const subs = await ctx.db.query('subscriptions').collect();
-      expect(subs.filter((s) => s.state === 'disabled')).toHaveLength(1);
-      expect(subs.filter((s) => s.state === 'active')).toHaveLength(1);
+      expect(subs).toHaveLength(1);
+      expect(subs[0]!.state).toBe('active');
+      expect((await ctx.db.get(userId))!.connectionModeId ?? null).not.toBe('privacy');
+    });
+  });
+
+  test('regenerate into an UNBOUND mode falls back to a bound pool (never squad-less) (WS1)', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run(async (ctx) => {
+      // The member chose privacy (unbound); only evade has a pool.
+      await ctx.db.patch(userId, { connectionModeId: 'privacy' });
+      await ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.evade.squads',
+        value: JSON.stringify(['sq-evade']),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'rw',
+        slug: 'rw',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+    });
+    const fetchMock = vi.fn(
+      async (_input: string | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            response: {
+              uuid: '550e8400-e29b-41d4-a716-446655440099',
+              shortUuid: 'sh',
+              username: 'u',
+              status: 'ACTIVE',
+              trafficLimitBytes: null,
+              trafficLimitStrategy: 'MONTH',
+              usedTrafficBytes: 0,
+              expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+              hwidDeviceLimit: null,
+              subscriptionUrl: 'https://panel.test/sub/sh',
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await t.action(internal.account.regenerate, { userId });
+    const createCall = fetchMock.mock.calls.find(
+      ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
+    );
+    expect(createCall).toBeTruthy();
+    // Unbound privacy fell back to the bound evade pool — NOT a squad-less key.
+    expect(JSON.parse(String(createCall![1]!.body)).activeInternalSquads).toEqual(['sq-evade']);
+  });
+
+  test('regenerate with NO pool bound anywhere issues squad-less + audits (WS1 bring-up)', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'rw',
+        slug: 'rw',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    const fetchMock = vi.fn(
+      async (_input: string | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            response: {
+              uuid: '550e8400-e29b-41d4-a716-4466554400aa',
+              shortUuid: 'sh',
+              username: 'u',
+              status: 'ACTIVE',
+              trafficLimitBytes: null,
+              trafficLimitStrategy: 'MONTH',
+              usedTrafficBytes: 0,
+              expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+              hwidDeviceLimit: null,
+              subscriptionUrl: 'https://panel.test/sub/sh',
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await t.action(internal.account.regenerate, { userId });
+    const createCall = fetchMock.mock.calls.find(
+      ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
+    );
+    // Still issues (bring-up must not hard-fail) but with no squad…
+    expect(JSON.parse(String(createCall![1]!.body)).activeInternalSquads).toBeUndefined();
+    // …and it's audited loudly so an admin knows to bind a pool.
+    await t.run(async (ctx) => {
+      const audit = (await ctx.db.query('auditLog').collect()).find(
+        (r) => r.action === 'subscription.issued_without_placement',
+      );
+      expect(audit).toBeTruthy();
     });
   });
 });
@@ -689,7 +830,9 @@ describe('deleteSubscriptionEverywhere ordering (P1-5)', () => {
   test('a succeeding backend DELETE marks the row deleted and decrements keyCount', async () => {
     const t = convexTest(schema, modules);
     const { subId, instanceId } = await seedDueTombstone(t);
-    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    const fetchMock = vi.fn(
+      async (_input: string | URL, _init?: RequestInit) => new Response('{}', { status: 200 }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     const { removed } = await t.action(internal.lifecycle.sweepTombstones, {});

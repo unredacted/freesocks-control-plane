@@ -11,6 +11,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import {
+  CONNECTION_MODES,
   CONNECTION_MODE_KEYS,
   DEFAULT_CONNECTION_MODE,
   isConnectionModeId,
@@ -51,7 +52,9 @@ async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
 /** The squad pool a mode issues into. When the member has made no explicit
  *  choice (id null/invalid), resolves the DEFAULT mode's pool — a new member
  *  follows the catalog default. Returns [] when the resolved mode has no pool
- *  bound (caller then falls back to the tier squad). */
+ *  bound; callers that must never issue a squad-less key use `resolvePlacementPool`
+ *  (which then falls back across modes). `resolveBoundModeIds` intentionally reads
+ *  THIS (raw, no fallback) so the public `available` flag stays truthful. */
 export async function resolveModeSquadPool(
   db: DatabaseReader,
   modeId: string | null | undefined,
@@ -64,13 +67,40 @@ export async function resolveModeSquadPool(
   return sanitizePool(await readSetting(db, MODE_POOL_KEY(id)));
 }
 
-/** Deterministic first-of-pool for a mode (declaration order) — used by the
- *  tier-push preserve fallback for rows with no persisted placement. */
+/**
+ * The pool a key is ACTUALLY issued into — the anti-squad-less invariant.
+ * Falls back so a bound-somewhere deploy never mints a key with no inbounds:
+ *   the mode's own pool → the DEFAULT mode's pool → ANY bound pool (catalog
+ *   order) → [].
+ * Only returns [] when NO mode has a pool bound anywhere (a fresh/misconfigured
+ * deploy — the caller issues squad-less + audits). All three issuance sites and
+ * the tier-push preserve path resolve through this; `resolveModeSquadPool` and
+ * `resolveBoundModeIds` stay raw so per-mode availability is reported honestly.
+ */
+export async function resolvePlacementPool(
+  db: DatabaseReader,
+  modeId: string | null | undefined,
+): Promise<string[]> {
+  const own = await resolveModeSquadPool(db, modeId);
+  if (own.length) return own;
+  const viaDefault = await resolveModeSquadPool(db, null);
+  if (viaDefault.length) return viaDefault;
+  const bound = await resolveBoundModeIds(db);
+  for (const def of CONNECTION_MODES) {
+    if (bound.has(def.id)) return resolveModeSquadPool(db, def.id);
+  }
+  return [];
+}
+
+/** Deterministic first-of-pool (declaration order) — the tier-push preserve
+ *  fallback for rows with no persisted placement. Routes through
+ *  `resolvePlacementPool` so a renewal never CLEARS the squad of a key whose mode
+ *  lost its pool (which would strand a live key). */
 export async function resolveModePlacementStable(
   db: DatabaseReader,
   modeId: string | null | undefined,
 ): Promise<string | null> {
-  return (await resolveModeSquadPool(db, modeId))[0] ?? null;
+  return (await resolvePlacementPool(db, modeId))[0] ?? null;
 }
 
 /** The set of mode ids that have ≥1 squad bound — drives the public `available`

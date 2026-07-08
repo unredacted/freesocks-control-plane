@@ -44,6 +44,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'subscription.switch_mode': ['fromMode', 'toMode'],
   // Member revokes one HWID device (truncated identifier only, never the full hwid).
   'subscription.device_revoke': ['hwidPrefix'],
+  // A key was issued with no placement (no Remnawave pool bound anywhere) — a
+  // bring-up misconfiguration signal. `requestedMode` is a non-secret mode id.
+  'subscription.issued_without_placement': ['requestedMode'],
   'membership.tier_change': ['fromTierId', 'toTierId', 'reason'],
   'user.create.free': ['ipCountry', 'asn'],
   // W2: admin retunes a rate-limit policy.

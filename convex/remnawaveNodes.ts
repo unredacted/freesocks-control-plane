@@ -10,7 +10,7 @@ import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import {
   pickByNodeLoad,
-  resolveModeSquadPool,
+  resolvePlacementPool,
   resolveModePlacementStable,
   modePlacementWrites,
   resolveBoundModeIds,
@@ -53,13 +53,15 @@ export const setModePlacements = internalMutation({
 
 /** The placement a NEW key issues into: the LEAST-LOADED node of the mode's
  *  placement pool (per-node load cached by the healthcheck cron; single-element
- *  pools short-circuit). null when the mode has no pool bound — the caller then
- *  falls back to the tier's own squad. The pick is persisted on the subscription
- *  row so later tier pushes re-send the SAME placement (no re-home). */
+ *  pools short-circuit). Resolves through `resolvePlacementPool`, so an unbound
+ *  mode falls back to the default mode's pool → any bound pool; null ONLY when no
+ *  pool is bound anywhere on the deploy (the caller then issues squad-less +
+ *  audits). The pick is persisted on the subscription row so later tier pushes
+ *  re-send the SAME placement (no re-home). */
 export const resolvePlacement = internalQuery({
   args: { modeId: v.union(v.string(), v.null()) },
   handler: async (ctx, { modeId }) =>
-    pickByNodeLoad(ctx.db, await resolveModeSquadPool(ctx.db, modeId)),
+    pickByNodeLoad(ctx.db, await resolvePlacementPool(ctx.db, modeId)),
 });
 
 /** Deterministic first-of-pool for a mode — the tier-push preserve fallback for

@@ -786,6 +786,15 @@ http.route({
     if (!isConnectionModeId(body.modeId)) {
       return errorJson('validation', 'unknown connection mode', 400);
     }
+    // Defense-in-depth (the picker already disables unbound modes, and issuance
+    // falls back so a stored unbound preference can't mint a dead key): refuse to
+    // persist an unbound mode when a bound alternative exists. Allowed on an
+    // all-unbound (bring-up) deploy so signup can still record the default. (WS1.)
+    const modes = await ctx.runQuery(internal.connectionModes.list, {});
+    const chosen = modes.find((m) => m.id === body.modeId);
+    if (chosen && !chosen.bound && modes.some((m) => m.bound)) {
+      return errorJson('validation', 'This connection mode is not available yet.', 400);
+    }
     await ctx.runMutation(internal.users.setConnectionMode, {
       userId: member.userId,
       modeId: body.modeId,

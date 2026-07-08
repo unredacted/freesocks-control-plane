@@ -154,8 +154,8 @@ export const downgradeLapsedToFree = internalMutation({
     if (!free) return null; // no free tier configured — leave as-is (login still works)
 
     // Tier change → applyMembership lifts disabled→active locally and schedules
-    // pushTierToBackend, which (Review #2) re-enables the key at free-tier limits
-    // in the member's profile squad.
+    // pushTierToBackend, which (Review #2) re-enables the key at free-tier limits,
+    // preserving the key's persisted placement.
     await applyMembership(ctx, {
       userId,
       tierId: free._id,

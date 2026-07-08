@@ -80,11 +80,13 @@
     return KNOWN[m.id]?.icon ?? Zap;
   }
 
-  // In server mode an unbound mode can't meaningfully be chosen (it would fall
-  // back to the tier squad); disable it unless it's the current selection.
+  // An unbound mode (no placement pool) can't meaningfully be chosen — issuing
+  // into it would mint a squad-less "dead" key — so availability ALWAYS gates
+  // selection, in both signup and server-backed contexts. The current selection
+  // stays enabled so a member sitting on a now-unbound mode still sees it.
   function isDisabled(m: Mode): boolean {
     if (busy) return true;
-    if (serverBacked && m.id !== selected && !m.available) return true;
+    if (m.id !== selected && !m.available) return true;
     return false;
   }
 
@@ -114,7 +116,7 @@
         onclick={() => choose(m)}
         {disabled}
         aria-pressed={selected === m.id}
-        title={disabled && serverBacked && m.id !== selected && !m.available
+        title={disabled && m.id !== selected && !m.available
           ? t('delivery.unavailable')
           : undefined}
         class="relative rounded-lg border p-4 text-start transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 {selected ===
