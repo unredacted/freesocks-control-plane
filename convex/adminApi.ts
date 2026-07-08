@@ -33,6 +33,7 @@ import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
 import { connectionModeWrites, resolveConnectionModes } from './lib/connectionModes';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
+import { sanitizeBannerText } from './lib/siteConfig';
 import { normalizeSupportId } from './lib/supportId';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
@@ -1694,6 +1695,47 @@ export const setVerification = internalMutation({
       actorId: actorAdminId ?? undefined,
       action: 'admin.verification.change',
       targetType: 'verification',
+      payload: clean,
+    });
+    return clean;
+  },
+});
+
+/**
+ * Set the site-chrome config: the announcement banner (on/off + text) and the
+ * footer "View source" repo link (on/off + https URL). Sanitizes the text (trim +
+ * cap) and the URL (https-only, else '') so a bad value stores harmlessly rather
+ * than as a broken/unsafe link. Audited (banner text + repo URL are non-secret).
+ */
+export const setSiteConfig = internalMutation({
+  args: {
+    bannerEnabled: v.boolean(),
+    bannerText: v.string(),
+    repoEnabled: v.boolean(),
+    repoUrl: v.string(),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { bannerEnabled, bannerText, repoEnabled, repoUrl, actorAdminId }) => {
+    const clean = {
+      bannerEnabled,
+      bannerText: sanitizeBannerText(bannerText),
+      repoEnabled,
+      repoUrl: sanitizeHttpsUrl(repoUrl),
+    };
+    await upsertSetting(
+      ctx,
+      'site.bannerEnabled',
+      JSON.stringify(clean.bannerEnabled),
+      actorAdminId,
+    );
+    await upsertSetting(ctx, 'site.bannerText', JSON.stringify(clean.bannerText), actorAdminId);
+    await upsertSetting(ctx, 'site.repoEnabled', JSON.stringify(clean.repoEnabled), actorAdminId);
+    await upsertSetting(ctx, 'site.repoUrl', JSON.stringify(clean.repoUrl), actorAdminId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.site.change',
+      targetType: 'site',
       payload: clean,
     });
     return clean;

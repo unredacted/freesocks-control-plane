@@ -152,6 +152,18 @@ export const PublicConfig = z.object({
       extensionUrl: z.string(),
     })
     .optional(),
+  /** Admin-configured site chrome (non-secret): the announcement banner (a
+   *  toggle + operator-typed text, rendered as escaped text — never HTML) and the
+   *  footer "View source" repo link (a toggle + an https-only URL; '' = unset).
+   *  Both default off/empty until set. Optional for forward-compat. */
+  site: z
+    .object({
+      bannerEnabled: z.boolean(),
+      bannerText: z.string(),
+      repoEnabled: z.boolean(),
+      repoUrl: z.string(),
+    })
+    .optional(),
   /** Member-facing connection-mode catalog (the transport chooser): id +
    *  `deliveryStyle` (url vs rawConfig — drives delivery behavior) + admin copy
    *  overrides + whether it's the default + `available` (its backend placement

@@ -59,6 +59,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'sourceUrl',
     'extensionUrl',
   ],
+  // Site chrome: the announcement banner (toggle + text) + footer repo link
+  // (toggle + https URL). All non-secret, operator-typed presentation values.
+  'admin.site.change': ['bannerEnabled', 'bannerText', 'repoEnabled', 'repoUrl'],
   // W4: admin mints / revokes membership codes (never the code/hash itself).
   'membership_code.mint': ['count', 'tierId', 'durationDays'],
   'membership_code.revoke': ['codeId'],

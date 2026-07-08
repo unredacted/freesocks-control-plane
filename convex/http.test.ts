@@ -320,6 +320,53 @@ describe('route-level scope enforcement', () => {
     });
     expect(statsDenied.status).toBe(401);
   });
+
+  test('PATCH /api/v1/admin/site: needs settings:write, sanitizes, round-trips via /config', async () => {
+    const t = convexTest(schema, modules);
+    const settingsW = await insertToken(t, {
+      scopes: ['admin:settings:write'],
+      subjectType: 'service',
+    });
+    const wrong = await insertToken(t, { scopes: ['admin:tiers:read'], subjectType: 'service' });
+    const body = JSON.stringify({
+      bannerEnabled: true,
+      bannerText: '  Service maintenance 03:00 UTC  ',
+      repoEnabled: true,
+      repoUrl: 'http://insecure.example', // non-https → must sanitize to ''
+    });
+
+    const wrongScope = await t.fetch('/api/v1/admin/site', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${wrong}`, 'content-type': 'application/json' },
+      body,
+    });
+    expect(wrongScope.status).toBe(401);
+
+    const ok = await t.fetch('/api/v1/admin/site', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${settingsW}`, 'content-type': 'application/json' },
+      body,
+    });
+    expect(ok.status).toBe(200);
+    const clean = (await ok.json()) as {
+      bannerText: string;
+      repoUrl: string;
+      bannerEnabled: boolean;
+    };
+    expect(clean.bannerText).toBe('Service maintenance 03:00 UTC'); // trimmed
+    expect(clean.repoUrl).toBe(''); // unsafe scheme dropped
+    expect(clean.bannerEnabled).toBe(true);
+
+    // The saved config is surfaced (non-secret) through the one public route.
+    const cfg = await t.fetch('/api/v1/config');
+    expect(cfg.status).toBe(200);
+    const pub = (await cfg.json()) as {
+      site?: { bannerEnabled: boolean; bannerText: string; repoUrl: string };
+    };
+    expect(pub.site?.bannerEnabled).toBe(true);
+    expect(pub.site?.bannerText).toBe('Service maintenance 03:00 UTC');
+    expect(pub.site?.repoUrl).toBe('');
+  });
 });
 
 describe('account-id rotate throttle (policy account.rotate, max 5)', () => {

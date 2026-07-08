@@ -10,6 +10,7 @@ import { query } from './_generated/server';
 import { resolveBillingConfig } from './lib/billingConfig';
 import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
+import { resolveSiteConfig } from './lib/siteConfig';
 import { resolveConnectionModes, publicProjection } from './lib/connectionModes';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { resolveClients, publicClients } from './lib/clientCatalog';
@@ -123,6 +124,10 @@ export const get = query({
       // channels the "Verify connection" panel shows, and whether to surface the
       // whole E2EE badge/panel at all. The panel renders only the set channels.
       verification: await resolveVerification(ctx.db),
+      // Admin-configured site chrome (non-secret): the announcement banner (toggle
+      // + text) and the footer "View source" repo link (toggle + https URL). Both
+      // resolve to safe defaults (off/empty) until the operator sets them.
+      site: await resolveSiteConfig(ctx.db),
       // Member-facing connection-mode catalog (id + label + description +
       // deliveryStyle + isDefault + available = placement pool bound). NEVER a
       // squad UUID. Drives the transport chooser + its delivery behavior.

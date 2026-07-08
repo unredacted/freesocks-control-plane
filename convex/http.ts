@@ -2023,6 +2023,34 @@ http.route({
   }),
 });
 
+http.route({
+  path: '/api/v1/admin/site',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<{
+      bannerEnabled?: boolean;
+      bannerText?: string;
+      repoEnabled?: boolean;
+      repoUrl?: string;
+    }>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.adminApi.setSiteConfig, {
+          bannerEnabled: body.bannerEnabled === true,
+          bannerText: typeof body.bannerText === 'string' ? body.bannerText : '',
+          repoEnabled: body.repoEnabled === true,
+          repoUrl: typeof body.repoUrl === 'string' ? body.repoUrl : '',
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 // --- admin: settings --------------------------------------------------------
 
 http.route({
