@@ -382,6 +382,14 @@
     </div>
   {/if}
 
+  <!-- Upsell: grouped directly under the gift-code box (both above Step 2) so the
+       two paths to the member tier sit together. A collapsible accordion with the
+       tier-sheen flair — the trigger shows the price/month + a prompt to upgrade;
+       expanding reveals the payment options. Self-gates on billing being live. -->
+  {#if isAuthed && !isCurrentMember && config.data?.billing?.enabled}
+    <UpgradeMembership mode="upgrade" collapsible />
+  {/if}
+
   <!-- STEP 2: create the proxy subscription (needs a proxy server). -->
   {#if isAuthed}
     <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
@@ -479,14 +487,6 @@
         </Button>
       {/if}
     </div>
-  {/if}
-
-  <!-- Upsell: offered below the create-key step (secondary to it). Condensed into a
-       collapsible accordion — the trigger shows the price/month + a prompt to
-       upgrade; expanding reveals the payment options. Self-gates on billing being
-       live (the member is signed in here, so checkout works). -->
-  {#if isAuthed && !isCurrentMember && config.data?.billing?.enabled}
-    <UpgradeMembership mode="upgrade" collapsible />
   {/if}
 
   {#if !me.isPending && !isAuthed}

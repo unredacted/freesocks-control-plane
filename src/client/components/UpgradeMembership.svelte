@@ -231,8 +231,12 @@
 {#if billing?.enabled && rails.length > 0 && durations.length > 0}
   {#if collapsible}
     <!-- Condensed accordion: the trigger shows the price/month + a prompt to
-         upgrade; expanding reveals the full payment form (roomy, full-width). -->
-    <section id="upgrade" class="overflow-hidden rounded-xl border border-primary/30 bg-card">
+         upgrade; expanding reveals the full payment form (roomy, full-width).
+         Carries the same tier-sheen glow ring as the prominent /account card. -->
+    <section
+      id="upgrade"
+      class="tier-sheen relative overflow-hidden rounded-xl border border-primary/30 bg-card"
+    >
       <Collapsible.Root bind:open>
         <Collapsible.Trigger
           class="group flex w-full items-center gap-3 p-4 text-start transition hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-5"
