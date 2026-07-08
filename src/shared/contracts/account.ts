@@ -245,3 +245,19 @@ export const CreateAccountResponse = z.object({
   popSessionToken: z.string().optional(),
 });
 export type CreateAccountResponse = z.infer<typeof CreateAccountResponse>;
+
+/**
+ * The member's enrolled passkeys (optional alternative login). Masked: only
+ * non-secret display fields — never the public key or signature counter.
+ */
+export const PasskeyEntry = z.object({
+  id: z.string(),
+  deviceLabel: z.string().nullable(),
+  aaguid: z.string().nullable(),
+  lastUsedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type PasskeyEntry = z.infer<typeof PasskeyEntry>;
+
+export const PasskeyListResponse = z.object({ passkeys: z.array(PasskeyEntry) });
+export type PasskeyListResponse = z.infer<typeof PasskeyListResponse>;

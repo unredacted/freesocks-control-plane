@@ -4,6 +4,8 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import CapWidget from '../components/CapWidget.svelte';
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
+  import PasskeyManager from '../components/PasskeyManager.svelte';
+  import { passkeysSupported } from '../lib/memberPasskey';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
@@ -47,6 +49,9 @@
   // its panel while the user creates a subscription in card 2.
   let revealedAccountId = $state<string | null>(null);
   let revealOpen = $state(false);
+  // Optional post-signup passkey step (shown after the account-number reveal).
+  const passkeySupported = passkeysSupported();
+  let showPasskeyPrompt = $state(false);
   let accountTier = $state<CreateAccountPayload['tier'] | null>(null);
   let created = $state(false);
 
@@ -145,6 +150,7 @@
       revealOpen = true; // A2: blocking, checkbox-gated reveal modal
       accountTier = data.tier;
       created = true;
+      showPasskeyPrompt = true; // offer a passkey once they've saved the number
       // Cookie is set; reflect the new authenticated identity everywhere.
       void qc.invalidateQueries({ queryKey: queryKeys.me });
     },
@@ -378,6 +384,22 @@
         <span>{t('reveal.confirmCheckbox')} ✓</span>
       </div>
     {/if}
+  {/if}
+
+  <!-- Optional post-signup step: offer a passkey so returning is one tap. Shown
+       once the account number has been revealed; the number stays the primary +
+       recovery credential, so this is fully skippable. -->
+  {#if showPasskeyPrompt && !revealOpen && passkeySupported}
+    <div class="mx-auto max-w-xl space-y-2">
+      <PasskeyManager showList={false} onEnrolled={() => (showPasskeyPrompt = false)} />
+      <button
+        type="button"
+        class="mx-auto block text-xs text-muted-foreground underline hover:text-foreground"
+        onclick={() => (showPasskeyPrompt = false)}
+      >
+        {t('passkey.notNow')}
+      </button>
+    </div>
   {/if}
 
   <!-- Got a gift code? Redeem during onboarding so the upgrade lands BEFORE the

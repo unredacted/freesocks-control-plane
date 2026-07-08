@@ -111,7 +111,30 @@
     "failed": "Sign-in failed",
     "success": "Signed in",
     "sessionExpired": "Please sign in again — your session may have ended.",
-    "digitProgress": "{count} of {total} digits entered"
+    "digitProgress": "{count} of {total} digits entered",
+    "or": "or"
+  },
+  "passkey": {
+    "title": "Passkeys",
+    "desc": "Sign in with Face ID, Touch ID, a security key, or your password manager — no account number to type.",
+    "warning": "Heads-up: a passkey saved on your phone or in your browser may sync to your Apple or Google account, which can link this anonymous account to that identity. Use a hardware security key, or skip passkeys, if that matters to you.",
+    "unsupported": "This device or browser doesn't support passkeys.",
+    "none": "No passkeys yet. Your account number still signs you in.",
+    "add": "Add a passkey",
+    "adding": "Adding…",
+    "added": "Passkey added",
+    "addFailed": "Couldn't add the passkey",
+    "remove": "Remove",
+    "removed": "Passkey removed",
+    "removeFailed": "Couldn't remove the passkey",
+    "deviceLabelLabel": "Device name (optional)",
+    "deviceLabelPlaceholder": "e.g. My phone",
+    "addedOn": "Added {date}",
+    "lastUsed": "last used {date}",
+    "signIn": "Sign in with a passkey",
+    "signingIn": "Authenticating…",
+    "signInFailed": "Passkey sign-in failed",
+    "notNow": "Not now"
   },
   "account": {
     "title": "Your account",

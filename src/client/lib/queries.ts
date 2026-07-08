@@ -13,6 +13,7 @@ import { AuthMeResponse, PublicConfig } from '../../shared/contracts/auth';
 import {
   AccountResponse,
   AccountUsageResponse,
+  PasskeyListResponse,
   SubscriptionContentResponse,
 } from '../../shared/contracts/account';
 import {
@@ -62,6 +63,7 @@ export const queryKeys = {
   billingOrder: (ref: string) => ['billing', 'order', ref] as const,
   accountCodes: ['account', 'codes'] as const,
   accountUsage: ['account', 'usage'] as const,
+  passkeys: ['account', 'passkeys'] as const,
 };
 
 // --- Public surface ----------------------------------------------------------
@@ -140,6 +142,19 @@ export const subscriptionContentQuery = (enabled: () => boolean) =>
     queryFn: () => apiClient.get('/api/v1/subscription/content', SubscriptionContentResponse),
     enabled: enabled(),
     staleTime: 60_000,
+  }));
+
+/**
+ * The member's enrolled passkeys (optional alternative login). Enabled only when
+ * `enabled()` is true (the Security tab is mounted + authenticated), so it doesn't
+ * fire for anonymous or unrelated views.
+ */
+export const passkeysQuery = (enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.passkeys,
+    queryFn: () => apiClient.get('/api/v1/account/passkeys', PasskeyListResponse),
+    enabled: enabled(),
+    staleTime: 30_000,
   }));
 
 /**

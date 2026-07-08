@@ -16,6 +16,12 @@
   import LogIn from '@lucide/svelte/icons/log-in';
   import Eye from '@lucide/svelte/icons/eye';
   import EyeOff from '@lucide/svelte/icons/eye-off';
+  import KeyRound from '@lucide/svelte/icons/key-round';
+  import {
+    signInWithPasskey,
+    passkeysSupported,
+    PasskeyCancelledError,
+  } from '../lib/memberPasskey';
 
   // The ONLY member sign-in path post-migration: the random account number
   // (no OIDC, no password). A Cap proof-of-work check gates every attempt; we just
@@ -92,6 +98,36 @@
   // Account.svelte bounces a 401'd member here with ?expired=1; surface a calm
   // explanation rather than dropping them on a bare form with no context.
   let sessionExpired = $derived(router.searchParams.get('expired') === '1');
+
+  // Optional passkey sign-in (usernameless/discoverable). Independent of the
+  // account-number form above; the account number stays the primary + recovery.
+  const passkeySupported = passkeysSupported();
+  let passkeyBusy = $state(false);
+  let passkeyError = $state<string | null>(null);
+  async function signInPasskey() {
+    passkeyBusy = true;
+    passkeyError = null;
+    try {
+      const { lapsedDowngrade } = await signInWithPasskey();
+      if (lapsedDowngrade) {
+        try {
+          sessionStorage.setItem('fs_lapsed_downgrade', '1');
+        } catch {
+          /* private mode — the banner just won't show */
+        }
+      }
+      await queryClient.invalidateQueries({ queryKey: queryKeys.me });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.account });
+      toast.success(t('login.success'));
+      router.navigate('/account');
+    } catch (err) {
+      if (err instanceof PasskeyCancelledError) return;
+      passkeyError = err instanceof Error ? err.message : String(err);
+      toast.error(t('passkey.signInFailed'), { description: passkeyError });
+    } finally {
+      passkeyBusy = false;
+    }
+  }
 </script>
 
 <div class="max-w-md mx-auto py-10 md:py-16 space-y-8">
@@ -192,6 +228,29 @@
       {login.isPending ? t('login.submitting') : t('login.submit')}
     </Button>
   </div>
+
+  {#if passkeySupported}
+    <div class="space-y-3">
+      <div class="flex items-center gap-3 text-xs text-muted-foreground">
+        <span class="h-px flex-1 bg-border"></span>
+        {t('login.or')}
+        <span class="h-px flex-1 bg-border"></span>
+      </div>
+      <Button
+        variant="outline"
+        size="lg"
+        class="w-full min-h-11"
+        disabled={passkeyBusy}
+        onclick={signInPasskey}
+      >
+        <KeyRound class="size-4" />
+        {passkeyBusy ? t('passkey.signingIn') : t('passkey.signIn')}
+      </Button>
+      {#if passkeyError}
+        <InlineError message={passkeyError} />
+      {/if}
+    </div>
+  {/if}
 
   <p class="text-xs text-muted-foreground text-center">
     {t('login.noAccount')}{' '}

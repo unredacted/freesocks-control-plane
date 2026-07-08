@@ -10,6 +10,7 @@
   import InlineError from '../components/InlineError.svelte';
   import GiftCodes from '../components/GiftCodes.svelte';
   import GiftRevealModal from '../components/GiftRevealModal.svelte';
+  import PasskeyManager from '../components/PasskeyManager.svelte';
   import ConnectionModeSwitcher from '../components/ConnectionModeSwitcher.svelte';
   import { connectionModePref } from '../lib/connectionModePref.svelte';
   import { resolveEffectiveModeId } from '../lib/connectionMode';
@@ -1026,6 +1027,7 @@
               </Button>
             </div>
           </div>
+          <PasskeyManager />
         </section>
       </Tabs.Content>
     </Tabs.Root>
