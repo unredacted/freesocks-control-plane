@@ -311,6 +311,48 @@ export default defineSchema({
     .index('by_challenge_id', ['challengeId'])
     .index('by_expires', ['expiresAt']),
 
+  // --- member passkeys (optional alternative login for MEMBERS) --------------
+  // Parallel to the admin passkey tables above, but keyed to `users` (members),
+  // NOT `adminUsers`. Kept as separate tables (rather than generalizing the admin
+  // ones) so the admin last-admin invariants stay isolated and member verify can
+  // ONLY match a member credential — cross-realm isolation: an admin passkey can
+  // never assert a member session, and vice-versa (same RP id, different table).
+  // A member passkey is an OPT-IN convenience credential; the account number
+  // stays valid as the portable recovery secret.
+  memberPasskeyCredentials: defineTable({
+    userId: v.id('users'),
+    credentialId: v.string(),
+    publicKey: v.string(),
+    counter: v.number(),
+    transports: v.optional(v.string()),
+    deviceLabel: v.optional(v.string()),
+    aaguid: v.optional(v.string()),
+    lastUsedAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId'])
+    .index('by_credential_id', ['credentialId']),
+
+  memberWebauthnRegistrationChallenges: defineTable({
+    userId: v.id('users'),
+    challenge: v.string(),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
+  })
+    .index('by_user_expires', ['userId', 'expiresAt'])
+    .index('by_expires', ['expiresAt']),
+
+  // Passkey ASSERTION challenges for member login. `userId` is absent (the
+  // usernameless discoverable flow), so there is no existence oracle. Swept daily.
+  memberWebauthnAuthChallenges: defineTable({
+    challengeId: v.string(),
+    challenge: v.string(),
+    userId: v.optional(v.id('users')),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
+  })
+    .index('by_challenge_id', ['challengeId'])
+    .index('by_expires', ['expiresAt']),
+
   // Accounts are anonymous by design: no contact details are ever collected,
   // and the control plane sends no notifications.
 

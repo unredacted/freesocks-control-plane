@@ -48,6 +48,13 @@ export const RATE_LIMIT_DEFAULTS = {
   'account.device-revoke': { max: 10, windowMs: HOUR, enabled: true },
   // Membership code redemption (W4): throttle hard against code guessing.
   'code.redeem': { max: 5, windowMs: HOUR, enabled: true },
+  // Member passkey LOGIN options (per IP): each call writes an assertion challenge
+  // row, so bound challenge-flooding. The assertion itself is cryptographic (not
+  // guessable), so no captcha gates it — this is the only throttle on that path.
+  'passkey.authenticate': { max: 30, windowMs: HOUR, enabled: true },
+  // Member passkey ENROLLMENT options (per member): cap churn on the add-a-passkey
+  // flow (already session-gated, so this is hygiene, not access control).
+  'account.passkey-register': { max: 20, windowMs: HOUR, enabled: true },
   // Per-IP throttle on the billing webhook (generous; a legit portal calls it).
   'webhook.billing.ip': { max: 60, windowMs: MINUTE, enabled: true },
   // Self-service membership checkout (per member): each call creates a hosted

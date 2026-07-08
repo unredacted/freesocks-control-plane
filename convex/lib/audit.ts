@@ -69,6 +69,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'tosUrl',
     'privacyUrl',
   ],
+  // Member opt-in passkeys: enroll / revoke (device label is a non-secret display
+  // string; the credential id / public key are never logged). Login is audited as
+  // `account.login.passkey` with NO payload (like `account.login.account_id`).
+  'account.passkey.register': ['deviceLabel'],
+  'account.passkey.revoke': ['deviceLabel'],
   // W4: admin mints / revokes membership codes (never the code/hash itself).
   'membership_code.mint': ['count', 'tierId', 'durationDays'],
   'membership_code.revoke': ['codeId'],

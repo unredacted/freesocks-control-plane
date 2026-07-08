@@ -110,6 +110,19 @@ crons.daily(
   internal.retention.sweepWebauthnRegistrationChallenges,
   {},
 );
+// Member passkey challenge tables (mirror the admin sweeps above).
+crons.daily(
+  'retention-member-webauthn-auth',
+  { hourUTC: 4, minuteUTC: 40 },
+  internal.memberPasskeys.sweepExpiredAuthChallenges,
+  {},
+);
+crons.daily(
+  'retention-member-webauthn-reg',
+  { hourUTC: 4, minuteUTC: 45 },
+  internal.memberPasskeys.sweepExpiredRegistrationChallenges,
+  {},
+);
 
 // Expire abandoned membership checkouts (pending/confirming with no terminal
 // webhook past the TTL). Frequent: abandoned checkouts are common, and an

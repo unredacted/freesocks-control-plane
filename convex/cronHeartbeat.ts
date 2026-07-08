@@ -104,6 +104,16 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     everyMs: DAY,
     description: 'Prune passkey registration challenges',
   },
+  {
+    name: 'retention-member-webauthn-auth',
+    everyMs: DAY,
+    description: 'Prune member passkey assertion challenges',
+  },
+  {
+    name: 'retention-member-webauthn-reg',
+    everyMs: DAY,
+    description: 'Prune member passkey registration challenges',
+  },
 ];
 
 /**

@@ -569,6 +569,62 @@ http.route({
   }),
 });
 
+// --- member passkey LOGIN (optional alternative to the account number) -------
+// Public + usernameless (discoverable). guard() / plaintext like the admin auth
+// surface: the assertion is a signed challenge (not a secret), so it doesn't need
+// the sealed channel the account NUMBER does. Cross-realm isolation is enforced in
+// memberWebauthn.authenticateVerify (only a member credential can match).
+http.route({
+  path: '/api/v1/auth/passkey/authenticate/options',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    try {
+      const out = await ctx.runAction(internal.memberWebauthn.authenticateOptions, {
+        ip: resolveClientIp(req) ?? undefined,
+      });
+      return json(out);
+    } catch (err) {
+      return convexError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/v1/auth/passkey/authenticate/verify',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const body = await readJson<{ challengeId?: string; response?: unknown }>(req);
+    if (!body.challengeId || !body.response) {
+      return errorJson('validation', 'challengeId and response required', 400);
+    }
+    // PoP (Phase 2): the client folds its session public key in so the new session
+    // is bound to it (mirrors account-login + the admin verify).
+    const popRaw = (body as Record<string, unknown>)[POP_PUBKEY_FIELD];
+    const popAlgRaw = (body as Record<string, unknown>)[POP_ALG_FIELD];
+    try {
+      const out = await ctx.runAction(internal.memberWebauthn.authenticateVerify, {
+        challengeId: body.challengeId,
+        response: body.response,
+        requestId: newRequestId(),
+        popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
+        popAlg: typeof popAlgRaw === 'string' ? popAlgRaw : undefined,
+      });
+      const cookie = buildSetCookie(MEMBER_COOKIE, out.signedCookieValue, {
+        maxAge: out.maxAgeSec,
+        sameSite: 'Lax',
+        secure: secureCookies(),
+      });
+      return json(
+        { ok: true, popSessionToken: out.popSessionToken, lapsedDowngrade: out.lapsedDowngrade },
+        200,
+        { 'set-cookie': cookie },
+      );
+    } catch (err) {
+      return convexError(err);
+    }
+  }),
+});
+
 http.route({
   path: '/api/v1/me',
   method: 'GET',
@@ -939,6 +995,80 @@ http.route({
     });
     if (!result.ok) return errorJson(result.code, result.message, result.status);
     return json({ ok: true });
+  }),
+});
+
+// --- member passkey management (Security tab: enroll / list / revoke) --------
+// Authenticated member actions → sealed + PoP-signed like the other account
+// routes. Enrolling a passkey is authorized by the existing session (no invite
+// token needed, unlike admin onboarding). The account number stays valid, so
+// revoke has no last-credential guard.
+http.route({
+  path: '/api/v1/account/passkey/register/options',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    try {
+      const out = await ctx.runAction(internal.memberWebauthn.registerOptions, {
+        userId: member.userId,
+        ip: resolveClientIp(req) ?? undefined,
+      });
+      return json(out);
+    } catch (err) {
+      return convexError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/v1/account/passkey/register/verify',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const body = await readJson<{ response?: unknown; deviceLabel?: string }>(req);
+    if (!body.response) return errorJson('validation', 'response required', 400);
+    try {
+      await ctx.runAction(internal.memberWebauthn.registerVerify, {
+        userId: member.userId,
+        response: body.response,
+        deviceLabel: typeof body.deviceLabel === 'string' ? body.deviceLabel : undefined,
+        requestId: newRequestId(),
+      });
+      return json({ ok: true });
+    } catch (err) {
+      return convexError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/v1/account/passkeys',
+  method: 'GET',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:read');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const passkeys = await ctx.runQuery(internal.memberPasskeys.listCredentials, {
+      userId: member.userId,
+    });
+    return json({ passkeys });
+  }),
+});
+
+http.route({
+  path: '/api/v1/account/passkey/revoke',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const body = await readJson<{ id?: string }>(req);
+    if (typeof body.id !== 'string' || !body.id) return errorJson('validation', 'id required', 400);
+    const result = await ctx.runMutation(internal.memberPasskeys.revokeCredential, {
+      credentialId: body.id,
+      userId: member.userId,
+    });
+    return json(result);
   }),
 });
 
