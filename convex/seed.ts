@@ -7,6 +7,8 @@
  */
 import { internalAction, internalMutation } from './_generated/server';
 import { internal } from './_generated/api';
+import { v } from 'convex/values';
+import type { Doc } from './_generated/dataModel';
 import { SETTINGS_DEFAULTS } from './appSettings';
 import { DEFAULT_CLIENTS } from './lib/clientCatalog';
 
@@ -265,5 +267,273 @@ export const seedCutover = internalAction({
       backendInstancesInserted: instances.inserted,
       clientsInserted: clients.inserted,
     };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Phase-5 cutover migrations: connection profiles → connection modes, and the
+// Remnawave squad handle → the generic `backendPlacement`. Each is idempotent +
+// paginated (safe on tables of any size, safe to re-run every deploy). Together
+// they clear EVERY deprecated field/row so the follow-up deploy can drop them
+// from the schema — Convex validates a pushed schema against existing rows, so a
+// field must be empty on all rows before it can leave the validator. The beta
+// deployer runs the `migrateConnectionModes` action (below) on every `up`.
+// The legacy key/field names are HARDCODED here on purpose: a migration targets
+// the exact shape that existed in prod, so it stays correct even if a live
+// constant is later renamed.
+// ---------------------------------------------------------------------------
+
+const MIGRATE_PAGE = 200;
+
+function safeJsonParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Copy each subscription's legacy `remnawaveSquadUuid` into the generic
+ * `backendPlacement` (set-once — never clobber a placement already there) and
+ * clear the old field. Keyset-paged by `_creationTime` (rows are patched, not
+ * deleted, so they keep their slot and the cursor always advances).
+ */
+export const migrateSubscriptionPlacementBatch = internalMutation({
+  args: { afterCreation: v.optional(v.number()) },
+  handler: async (ctx, { afterCreation }) => {
+    const rows = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_creation_time', (q) =>
+        afterCreation != null ? q.gt('_creationTime', afterCreation) : q,
+      )
+      .order('asc')
+      .take(MIGRATE_PAGE);
+    let migrated = 0;
+    for (const r of rows) {
+      const legacy = r.remnawaveSquadUuid;
+      if (legacy === undefined) continue; // never set / already cleared
+      if (r.backendPlacement == null && typeof legacy === 'string' && legacy.trim()) {
+        await ctx.db.patch(r._id, { backendPlacement: legacy, remnawaveSquadUuid: undefined });
+      } else {
+        await ctx.db.patch(r._id, { remnawaveSquadUuid: undefined });
+      }
+      migrated++;
+    }
+    const last = rows[rows.length - 1];
+    return {
+      done: rows.length < MIGRATE_PAGE,
+      nextCursor: last ? last._creationTime : (afterCreation ?? null),
+      migrated,
+      scanned: rows.length,
+    };
+  },
+});
+
+/**
+ * Copy each user's legacy `connectionProfileId` into `connectionModeId`
+ * (set-once) and clear the old field. Same keyset paging as above.
+ */
+export const migrateUserConnectionModeBatch = internalMutation({
+  args: { afterCreation: v.optional(v.number()) },
+  handler: async (ctx, { afterCreation }) => {
+    const rows = await ctx.db
+      .query('users')
+      .withIndex('by_creation_time', (q) =>
+        afterCreation != null ? q.gt('_creationTime', afterCreation) : q,
+      )
+      .order('asc')
+      .take(MIGRATE_PAGE);
+    let migrated = 0;
+    for (const r of rows) {
+      const legacy = r.connectionProfileId;
+      if (legacy === undefined) continue;
+      if (r.connectionModeId == null) {
+        await ctx.db.patch(r._id, { connectionModeId: legacy, connectionProfileId: undefined });
+      } else {
+        await ctx.db.patch(r._id, { connectionProfileId: undefined });
+      }
+      migrated++;
+    }
+    const last = rows[rows.length - 1];
+    return {
+      done: rows.length < MIGRATE_PAGE,
+      nextCursor: last ? last._creationTime : (afterCreation ?? null),
+      migrated,
+      scanned: rows.length,
+    };
+  },
+});
+
+/**
+ * Rename the legacy `connectionProfile.*` appSettings namespace:
+ *   connectionProfile.default            → connectionMode.default
+ *   connectionProfile.<id>.label         → connectionMode.<id>.label
+ *   connectionProfile.<id>.description   → connectionMode.<id>.description
+ *   connectionProfile.<id>.squadUuids[]  ┐ merged (deduped) into the Remnawave
+ *   connectionProfile.<id>.squadUuid     ┘ pool remnawave.modePlacement.<id>.squads
+ * The `connectionProfile.*` range is a handful of rows — one pass. Copies to the
+ * new key only if absent (never clobbers a value the new admin surface set), then
+ * deletes the old row. Idempotent (a second run finds no `connectionProfile.*`).
+ */
+export const migrateModeAppSettings = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query('appSettings')
+      // ['connectionProfile.', 'connectionProfile/') — '/' is the byte after '.'.
+      .withIndex('by_key', (q) =>
+        q.gte('key', 'connectionProfile.').lt('key', 'connectionProfile/'),
+      )
+      .collect();
+
+    const moveKey = async (src: Doc<'appSettings'>, to: string) => {
+      const exists = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', to))
+        .unique();
+      if (!exists) {
+        await ctx.db.insert('appSettings', { key: to, value: src.value, updatedAt: Date.now() });
+      }
+      await ctx.db.delete(src._id);
+    };
+
+    const poolById = new Map<string, string[]>();
+    let renamed = 0;
+    let deleted = 0;
+    for (const r of rows) {
+      if (r.key === 'connectionProfile.default') {
+        await moveKey(r, 'connectionMode.default');
+        renamed++;
+        continue;
+      }
+      const rest = r.key.slice('connectionProfile.'.length); // <id>.<field>
+      const dot = rest.indexOf('.');
+      if (dot < 0) continue; // malformed — leave it
+      const id = rest.slice(0, dot);
+      const field = rest.slice(dot + 1);
+      if (field === 'label' || field === 'description') {
+        await moveKey(r, `connectionMode.${id}.${field}`);
+        renamed++;
+      } else if (field === 'squadUuids' || field === 'squadUuid') {
+        const parsed = safeJsonParse(r.value);
+        const list =
+          field === 'squadUuids'
+            ? Array.isArray(parsed)
+              ? parsed
+              : []
+            : typeof parsed === 'string'
+              ? [parsed]
+              : [];
+        const acc = poolById.get(id) ?? [];
+        for (const s of list) if (typeof s === 'string' && s.trim()) acc.push(s.trim());
+        poolById.set(id, acc);
+        await ctx.db.delete(r._id);
+        deleted++;
+      }
+    }
+
+    let poolsWritten = 0;
+    for (const [id, list] of poolById) {
+      const deduped = [...new Set(list)];
+      if (deduped.length === 0) continue;
+      const key = `remnawave.modePlacement.${id}.squads`;
+      const existing = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique();
+      if (existing) {
+        // Merge with any pool already bound via /admin/remnawave/mode-placements.
+        const prev = safeJsonParse(existing.value);
+        const merged = [
+          ...new Set([
+            ...(Array.isArray(prev) ? prev.filter((s): s is string => typeof s === 'string') : []),
+            ...deduped,
+          ]),
+        ];
+        await ctx.db.patch(existing._id, { value: JSON.stringify(merged), updatedAt: Date.now() });
+      } else {
+        await ctx.db.insert('appSettings', {
+          key,
+          value: JSON.stringify(deduped),
+          updatedAt: Date.now(),
+        });
+      }
+      poolsWritten++;
+    }
+    return { renamed, poolsWritten, deleted };
+  },
+});
+
+/** Delete a page of the deprecated `remnawaveSquadStats` table (superseded by
+ *  `remnawaveNodeStats`). Delete-and-repeat until empty. */
+export const clearRemnawaveSquadStatsBatch = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query('remnawaveSquadStats').take(MIGRATE_PAGE);
+    for (const r of rows) await ctx.db.delete(r._id);
+    return { removed: rows.length, done: rows.length < MIGRATE_PAGE };
+  },
+});
+
+/**
+ * Drives the Phase-5 cutover: drain each paged migration to completion, then the
+ * one-pass settings rename. Idempotent — a second run migrates nothing. Once this
+ * has run in prod, the follow-up deploy drops the now-empty deprecated fields
+ * (`subscriptions.remnawaveSquadUuid`, `users.connectionProfileId`,
+ * `tiers.remnawaveSquadUuid`) + the `remnawaveSquadStats` table from the schema.
+ */
+export const migrateConnectionModes = internalAction({
+  args: {},
+  handler: async (
+    ctx,
+  ): Promise<{
+    subscriptionsMigrated: number;
+    usersMigrated: number;
+    settings: { renamed: number; poolsWritten: number; deleted: number };
+    squadStatsRemoved: number;
+  }> => {
+    const GUARD = 100_000; // backstop against a non-advancing cursor
+
+    // `res` is annotated to break the self-referential type inference: this action
+    // is exported from the same module whose `internal.seed.*` types it consumes.
+    type PageResult = { done: boolean; nextCursor: number | null; migrated: number };
+
+    let subscriptionsMigrated = 0;
+    let subCursor: number | null = null;
+    for (let i = 0; i < GUARD; i++) {
+      const res: PageResult = await ctx.runMutation(
+        internal.seed.migrateSubscriptionPlacementBatch,
+        { ...(subCursor != null ? { afterCreation: subCursor } : {}) },
+      );
+      subscriptionsMigrated += res.migrated;
+      subCursor = res.nextCursor;
+      if (res.done) break;
+    }
+
+    let usersMigrated = 0;
+    let userCursor: number | null = null;
+    for (let i = 0; i < GUARD; i++) {
+      const res: PageResult = await ctx.runMutation(internal.seed.migrateUserConnectionModeBatch, {
+        ...(userCursor != null ? { afterCreation: userCursor } : {}),
+      });
+      usersMigrated += res.migrated;
+      userCursor = res.nextCursor;
+      if (res.done) break;
+    }
+
+    const settings = await ctx.runMutation(internal.seed.migrateModeAppSettings, {});
+
+    let squadStatsRemoved = 0;
+    for (let i = 0; i < GUARD; i++) {
+      const res: { removed: number; done: boolean } = await ctx.runMutation(
+        internal.seed.clearRemnawaveSquadStatsBatch,
+        {},
+      );
+      squadStatsRemoved += res.removed;
+      if (res.done) break;
+    }
+
+    return { subscriptionsMigrated, usersMigrated, settings, squadStatsRemoved };
   },
 });
