@@ -306,6 +306,9 @@ describe('adminApi usersSearch', () => {
       await ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
       return id;
     });
+    // Rows seeded directly (no transition bumps) → reconcile builds the counter
+    // statusSummary reads. Mirrors the deploy flow (backfill → reconcile).
+    await t.action(internal.userStats.reconcileUserCounts, {});
 
     // Only the flagged user matches drift=true, and the row carries the stamp.
     const drift = await t.query(internal.adminApi.usersSearch, { drift: true });
@@ -683,6 +686,7 @@ describe('adminApi statusSummary', () => {
       });
     });
 
+    await t.action(internal.userStats.reconcileUserCounts, {});
     const s = await t.query(internal.adminApi.statusSummary, {});
     expect(s.users.active).toBe(2);
     expect(s.users.disabled).toBe(1);

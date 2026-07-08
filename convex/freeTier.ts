@@ -25,6 +25,7 @@ import { hmacSha256Hex, randomHex, sha256Hex } from './lib/crypto';
 import { signValue } from './lib/cookies';
 import { MEMBER_TTL_MS } from './auth';
 import { freeWindowExpiryMs } from './lifecycle';
+import { applyCountsDelta } from './lib/statusCounters';
 import { writeAuditLog } from './lib/audit';
 
 // Explicit return type breaks the same-file internal-reference inference cycle.
@@ -77,6 +78,7 @@ export const claimFreeSlot = internalMutation({
       freeKeyExpiresAt: await freeWindowExpiryMs(ctx.db),
       updatedAt: now,
     });
+    await applyCountsDelta(ctx, { statusTo: 'active' });
     const grantId = await ctx.db.insert('freeGrants', {
       userId,
       ipHash: args.ipHash,
@@ -95,8 +97,15 @@ export const claimFreeSlot = internalMutation({
 export const releaseFreeSlot = internalMutation({
   args: { userId: v.id('users'), grantId: v.id('freeGrants') },
   handler: async (ctx, { userId, grantId }) => {
+    const u = await ctx.db.get(userId);
     await ctx.db.delete(grantId);
     await ctx.db.delete(userId);
+    if (u) {
+      await applyCountsDelta(ctx, {
+        statusFrom: u.status,
+        driftDelta: u.backendPushFailedAt != null ? -1 : 0,
+      });
+    }
     return null;
   },
 });

@@ -66,6 +66,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     everyMs: DAY,
     description: 'Deactivate + retain idle free users (reclaim key, keep row)',
   },
+  {
+    name: 'user-counts-reconcile',
+    everyMs: DAY,
+    description: 'Recompute the user-status counter (self-heal)',
+  },
   { name: 'session-sweep', everyMs: DAY, description: 'Drop expired session rows' },
   { name: 'rate-limit-sweep', everyMs: DAY, description: 'Drop expired rate-limit rows' },
   {

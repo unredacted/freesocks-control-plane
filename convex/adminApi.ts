@@ -24,6 +24,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+import { applyCountsDelta, readUserCounts } from './lib/statusCounters';
 // One shared by-key upsert (Review P3): the local upsertSetting + setBillingConfig's
 // inline copy both delegate here (also appSettings.set/setMany use it).
 import { upsertSettingRow as upsertSetting } from './appSettings';
@@ -620,6 +621,7 @@ export const disableUser = internalMutation({
       suspendedAt: Date.now(),
       updatedAt: Date.now(),
     });
+    await applyCountsDelta(ctx, { statusFrom: user.status, statusTo: 'disabled' });
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -651,6 +653,7 @@ export const reEnableUser = internalMutation({
       suspendedAt: undefined,
       updatedAt: Date.now(),
     });
+    await applyCountsDelta(ctx, { statusFrom: 'disabled', statusTo: 'active' });
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -1479,16 +1482,19 @@ export const statusSummary = internalQuery({
     const now = Date.now();
     const FRESH_MS = 30 * 60_000; // mirrors the backendServers pool freshness window
 
-    // Users tallied by status. NOTE: O(users) — fine at beta scale; if the user
-    // base grows past Convex's per-query read limit, move this to a maintained
-    // counter (an appState row bumped on each status transition).
-    const users = await ctx.db.query('users').collect();
-    const usersByStatus = { active: 0, grace: 0, disabled: 0, deleted: 0, inactive: 0 };
-    let backendDrift = 0; // users whose last backend push failed and hasn't recovered
-    for (const u of users) {
-      usersByStatus[u.status] += 1;
-      if (u.backendPushFailedAt != null) backendDrift += 1;
-    }
+    // Users tallied by status via the maintained counter (statusCounters.ts) —
+    // bumped on every status transition + reconciled daily — so this is O(1)
+    // instead of the former O(users) collect() that 500-ed the /status health-gate
+    // once the user base passed Convex's per-query read limit (M2 / WS3).
+    const counts = await readUserCounts(ctx.db);
+    const usersByStatus = {
+      active: counts.active,
+      grace: counts.grace,
+      disabled: counts.disabled,
+      deleted: counts.deleted,
+      inactive: counts.inactive,
+    };
+    const backendDrift = counts.backendDrift;
 
     // Backends are small + admin-managed. Health + key counts only; never config.
     const serverRows = await ctx.db.query('backendServers').collect();

@@ -11,6 +11,7 @@ import { v } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
 import { DEFAULT_CLIENTS } from './lib/clientCatalog';
 import { freeWindowDays } from './lifecycle';
+import { applyCountsDelta } from './lib/statusCounters';
 
 /** Insert the default-free tier if absent; return its id. */
 export const seedDefaultFreeTier = internalMutation({
@@ -359,6 +360,7 @@ export const reclassifyDeletedFreeToInactiveBatch = internalMutation({
         freeKeyExpiresAt: u._creationTime + days * 86_400_000, // old → in the past
         updatedAt: Date.now(),
       });
+      await applyCountsDelta(ctx, { statusFrom: 'deleted', statusTo: 'inactive' });
       updated++;
     }
     return { updated, isDone: res.isDone, continueCursor: res.continueCursor };

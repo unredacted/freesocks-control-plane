@@ -129,6 +129,11 @@ bunx convex run seed:migrateDeviceEnforcementDefault '{}'
 echo "[deploy] backfilling the free-tier idle marker (idempotent)"
 bunx convex run seed:backfillFreeKeyExpiresAt '{}'
 
+# Recompute the user-status counter (feeds /admin/status) so it starts consistent
+# after the migrations above. Idempotent; also self-healed by a daily cron.
+echo "[deploy] reconciling the user-status counter"
+bunx convex run userStats:reconcileUserCounts '{}'
+
 echo "[deploy] OK"
 # First-run reminder (printed EVERY deploy, not only when the secret is freshly
 # generated): the first admin registers a passkey at /admin using this secret.

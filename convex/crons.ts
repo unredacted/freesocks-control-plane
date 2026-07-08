@@ -136,4 +136,13 @@ crons.interval(
 // configured. The censorship-fallback URL is only useful if it isn't stale.
 crons.interval('mirror-refresh', { hours: 6 }, internal.storage.refreshActiveMirrors, {});
 
+// Self-heal the maintained user-status counter (statusCounters.ts) that feeds the
+// /status health-gate — recomputes it exactly, correcting any missed transition bump.
+crons.daily(
+  'user-counts-reconcile',
+  { hourUTC: 4, minuteUTC: 0 },
+  internal.userStats.reconcileUserCounts,
+  {},
+);
+
 export default crons;
