@@ -10,7 +10,7 @@ import { UserAdmin, AdminStatusSummary } from '../src/shared/contracts/admin';
 
 const modules = import.meta.glob('./**/*.*s');
 
-/** Full TierUpsert payload (description + remnawaveSquadUuid are required-nullable). */
+/** Full TierUpsert payload (description is required-nullable). */
 function tierUpsert(overrides: Record<string, unknown> = {}) {
   return {
     slug: 'pro',
@@ -22,7 +22,6 @@ function tierUpsert(overrides: Record<string, unknown> = {}) {
     hwidLimit: 2,
     hwidEnabled: false,
     trafficStrategy: 'MONTH' as const,
-    remnawaveSquadUuid: null,
     isDefaultFree: false,
     isActive: true,
     priority: 5,
@@ -109,38 +108,6 @@ describe('adminApi upsertTierBySlug', () => {
     expect(updated.priority).toBe(9);
     const rows = await t.run((ctx) => ctx.db.query('tiers').collect());
     expect(rows.filter((r) => r.slug === 'premium')).toHaveLength(1);
-  });
-
-  test('binds a squad to an existing tier without disturbing other fields; UUID never logged', async () => {
-    const t = convexTest(schema, modules);
-    await t.mutation(internal.adminApi.createTier, tierUpsert({ slug: 'member', name: 'Member' }));
-    const SQUAD = 'sq-11112222-3333-4444';
-    const bound = await t.mutation(internal.adminApi.upsertTierBySlug, {
-      slug: 'member',
-      remnawaveSquadUuid: SQUAD,
-    });
-    expect(bound.created).toBe(false);
-    expect(bound.remnawaveSquadUuid).toBe(SQUAD);
-    expect(bound.name).toBe('Member'); // untouched
-
-    // Audit recorded the bind as a boolean — the UUID is NEVER persisted.
-    const audits = await t.run((ctx) =>
-      ctx.db
-        .query('auditLog')
-        .filter((q) => q.eq(q.field('action'), 'admin.tier.upsert'))
-        .collect(),
-    );
-    expect(audits.length).toBeGreaterThan(0);
-    const last = audits[audits.length - 1]!;
-    expect((last.payload as Record<string, unknown>).squadBound).toBe(true);
-    expect(JSON.stringify(last)).not.toContain(SQUAD);
-
-    // Unbind with null clears it.
-    const unbound = await t.mutation(internal.adminApi.upsertTierBySlug, {
-      slug: 'member',
-      remnawaveSquadUuid: null,
-    });
-    expect(unbound.remnawaveSquadUuid).toBeNull();
   });
 
   test('isDefaultFree:true via upsert clears the peer default on the same backend', async () => {

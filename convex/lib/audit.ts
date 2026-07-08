@@ -83,9 +83,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.backend_server.delete': ['slug'],
   // Admin grant/extend of a membership from the Users page.
   'admin.user.grant_membership': ['tierId', 'durationDays'],
-  // Idempotent tier upsert by slug (Ansible / IaC + declarative squad binding);
-  // `squadBound` is a boolean — the Remnawave squad UUID is NEVER logged.
-  'admin.tier.upsert': ['slug', 'backend', 'created', 'squadBound'],
+  // Idempotent tier upsert by slug (Ansible / IaC). Node placement is bound
+  // separately per connection mode (admin.remnawave.mode_placement.update).
+  'admin.tier.upsert': ['slug', 'backend', 'created'],
   // Admin/IaC edits a connection-mode label/description/default (generic).
   'admin.connection_mode.update': ['key'],
   // Admin/IaC binds a mode's Remnawave placement pool. `poolBound` is a boolean —

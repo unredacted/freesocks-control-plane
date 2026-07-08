@@ -14,11 +14,11 @@ a live key. Remnawave specifics moved behind a namespaced admin surface — **Ad
 (`PATCH /api/v1/admin/remnawave/mode-placements` [`admin:servers:write`],
 `GET /api/v1/admin/remnawave/node-stats` [`admin:servers:read`]) — while the generic mode
 catalog (labels/description/default) stays at `PATCH /api/v1/admin/connection-modes`
-(`admin:settings:write`). A `seed:migrateConnectionModes` cutover migration (run by the beta
-deployer) copies live subs/users/settings onto the new fields; the deprecated fields
+(`admin:settings:write`). A one-time `seed:migrateConnectionModes` cutover migration copied
+live subs/users/settings onto the new fields, after which the old fields
 (`subscriptions.remnawaveSquadUuid`, `users.connectionProfileId`, `tiers.remnawaveSquadUuid`, the
-`remnawaveSquadStats` table) are **dropped from the schema in a follow-up deploy** once that
-migration has run. See `docs/backends.md` § "Node placement".
+`remnawaveSquadStats` table) + the migration itself were **removed** (Phase 5b). See
+`docs/backends.md` § "Node placement".
 
 Earlier the pre-launch polish pass added: **connection-mode descriptions** — admin-editable
 label + description that override the member picker's translated copy per-mode when set; per-
@@ -199,8 +199,8 @@ Detailed companions, referenced rather than duplicated here:
   client-side id resolution. Backed by `convex/adminApi.ts` / `convex/mirrorProviders.ts`.
   Node placement is bound separately via **`PATCH …/remnawave/mode-placements`**
   (`admin:servers:write`): the role creates one squad per node and binds each connection mode's
-  pool there. (The legacy tier-level `remnawaveSquadUuid` bind on the by-slug tier upsert is
-  **deprecated** — retained transitionally, dropped with the Phase-5b schema cleanup.)
+  pool there. (The by-slug tier upsert no longer carries a squad field — the old tier-level
+  `remnawaveSquadUuid` bind was removed in Phase 5b; node placement is per connection mode.)
 
 ### 1.7 Integrations & runtime
 

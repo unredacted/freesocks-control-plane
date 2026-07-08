@@ -1,4 +1,4 @@
-// Pass 2: all internal — tier rows leak backend infra detail (remnawaveSquadUuid);
+// Pass 2: all internal — tier rows carry admin-only fields (peerTierId, backend);
 // the safe public projection is publicConfig.get, the admin one adminApi.tiersList.
 import { internalQuery } from './_generated/server';
 import type { DatabaseReader } from './_generated/server';

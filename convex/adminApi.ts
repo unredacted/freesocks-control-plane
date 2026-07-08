@@ -69,7 +69,6 @@ const tierUpsertFields = {
   hwidLimit: v.number(),
   hwidEnabled: v.boolean(),
   trafficStrategy,
-  remnawaveSquadUuid: v.union(v.string(), v.null()),
   // Optional at create (most tiers leave it unset); the SPA's TierUpsert always
   // sends it (null default), but other internal callers / tests may omit it.
   peerTierId: v.optional(v.union(v.id('tiers'), v.null())),
@@ -97,7 +96,6 @@ function mapTier(t: Doc<'tiers'>) {
     hwidLimit: t.hwidLimit,
     hwidEnabled: t.hwidEnabled,
     trafficStrategy: t.trafficStrategy,
-    remnawaveSquadUuid: t.remnawaveSquadUuid ?? null,
     peerTierId: (t.peerTierId as string | undefined) ?? null,
     isDefaultFree: t.isDefaultFree,
     isActive: t.isActive,
@@ -241,7 +239,6 @@ export const createTier = internalMutation({
       hwidLimit: a.hwidLimit,
       hwidEnabled: a.hwidEnabled,
       trafficStrategy: a.trafficStrategy,
-      remnawaveSquadUuid: a.remnawaveSquadUuid ?? undefined,
       peerTierId: a.peerTierId ?? undefined,
       isDefaultFree: a.isDefaultFree,
       isActive: a.isActive,
@@ -256,7 +253,7 @@ export const createTier = internalMutation({
 });
 
 /** Nullable-optional tier fields whose explicit `null` maps to Convex "absent". */
-const TIER_NULLABLE_KEYS = new Set(['description', 'remnawaveSquadUuid', 'peerTierId']);
+const TIER_NULLABLE_KEYS = new Set(['description', 'peerTierId']);
 
 /**
  * Build a tier patch `fields` object from provided args: skip undefined, map an
@@ -276,7 +273,7 @@ function buildTierPatchFields(patch: Record<string, unknown>): Partial<Doc<'tier
 
 export const updateTier = internalMutation({
   // All fields optional: the SPA sends a partial patch (TierUpsert minus
-  // anything unchanged). `description` / `remnawaveSquadUuid` accept null.
+  // anything unchanged). `description` accepts null.
   args: {
     id: v.id('tiers'),
     slug: v.optional(v.string()),
@@ -288,7 +285,6 @@ export const updateTier = internalMutation({
     hwidLimit: v.optional(v.number()),
     hwidEnabled: v.optional(v.boolean()),
     trafficStrategy: v.optional(trafficStrategy),
-    remnawaveSquadUuid: v.optional(v.union(v.string(), v.null())),
     peerTierId: v.optional(v.union(v.id('tiers'), v.null())),
     isDefaultFree: v.optional(v.boolean()),
     isActive: v.optional(v.boolean()),
@@ -356,11 +352,11 @@ export const deleteTier = internalMutation({
  *    minimal `{slug}` yields a sane template. `isDefaultFree` defaults FALSE so
  *    a converge can NEVER silently steal the sign-up default tier.
  *  - EXISTING tier → PATCH only the provided fields (reuses updateTier's
- *    nullable-normalize + the one-default-free-per-backend invariant). This is
- *    the squad-bind path: `{remnawaveSquadUuid}` alone binds a squad to an
- *    already-seeded tier without disturbing its other entitlements.
- * Audited as `admin.tier.upsert`; the squad UUID is NEVER logged (only a
- * `squadBound` boolean records that this call set one).
+ *    nullable-normalize + the one-default-free-per-backend invariant), so a
+ *    converge can adjust an already-seeded tier without disturbing its other
+ *    entitlements.
+ * Audited as `admin.tier.upsert`. (Node placement is bound separately, per
+ * connection mode, via /api/v1/admin/remnawave/mode-placements — never here.)
  */
 export const upsertTierBySlug = internalMutation({
   args: {
@@ -373,7 +369,6 @@ export const upsertTierBySlug = internalMutation({
     hwidLimit: v.optional(v.number()),
     hwidEnabled: v.optional(v.boolean()),
     trafficStrategy: v.optional(trafficStrategy),
-    remnawaveSquadUuid: v.optional(v.union(v.string(), v.null())),
     isDefaultFree: v.optional(v.boolean()),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
@@ -385,7 +380,6 @@ export const upsertTierBySlug = internalMutation({
       .query('tiers')
       .withIndex('by_slug', (q) => q.eq('slug', a.slug))
       .unique();
-    const squadBound = a.remnawaveSquadUuid != null && a.remnawaveSquadUuid !== '';
 
     if (!existing) {
       // CREATE — default the mechanical fields; never default isDefaultFree on.
@@ -400,7 +394,6 @@ export const upsertTierBySlug = internalMutation({
         hwidLimit: a.hwidLimit ?? 0,
         hwidEnabled: a.hwidEnabled ?? false,
         trafficStrategy: a.trafficStrategy ?? 'MONTH',
-        remnawaveSquadUuid: a.remnawaveSquadUuid ?? undefined,
         isDefaultFree: a.isDefaultFree ?? false,
         isActive: a.isActive ?? true,
         priority: a.priority ?? 0,
@@ -414,7 +407,7 @@ export const upsertTierBySlug = internalMutation({
         action: 'admin.tier.upsert',
         targetType: 'tier',
         targetId: id,
-        payload: { slug: a.slug, backend, created: true, squadBound },
+        payload: { slug: a.slug, backend, created: true },
       });
       return { ...mapTier((await ctx.db.get(id))!), created: true };
     }
@@ -434,7 +427,7 @@ export const upsertTierBySlug = internalMutation({
       action: 'admin.tier.upsert',
       targetType: 'tier',
       targetId: existing._id,
-      payload: { slug: a.slug, backend: effectiveBackend, created: false, squadBound },
+      payload: { slug: a.slug, backend: effectiveBackend, created: false },
     });
     return { ...mapTier((await ctx.db.get(existing._id))!), created: false };
   },

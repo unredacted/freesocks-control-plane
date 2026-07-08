@@ -101,7 +101,6 @@ export default defineSchema({
     hwidLimit: v.number(),
     hwidEnabled: v.boolean(),
     trafficStrategy,
-    remnawaveSquadUuid: v.optional(v.string()),
     // Cross-backend peer (D-1): the equivalent tier on the OTHER backend, so a
     // member on this tier can switch backends (account.switchBackend). Optional;
     // free tiers auto-resolve their peer via the per-backend default-free row and
@@ -145,10 +144,6 @@ export default defineSchema({
     // issues into. A plain string validated against the mode catalog (see
     // lib/connectionModes.ts), unset → the catalog default. Additive/optional.
     connectionModeId: v.optional(v.string()),
-    // DEPRECATED (dropped in the connection-mode cutover, Phase 5): the old
-    // enum field. Kept additive during migration; migrateUserConnectionMode
-    // copies it into connectionModeId then strips it.
-    connectionProfileId: v.optional(v.union(v.literal('evade'), v.literal('privacy'))),
     updatedAt: v.number(),
   })
     .index('by_account_id_hash', ['accountIdHash'])
@@ -184,10 +179,6 @@ export default defineSchema({
     // thrash live keys across nodes on every renewal. Absent on non-Remnawave
     // subs; the push then falls back to the mode's placement resolution.
     backendPlacement: v.optional(v.string()),
-    // DEPRECATED (dropped in the node-placement cutover, Phase 5): the old
-    // squad field. Kept additive during migration so existing rows still parse;
-    // migrateSubscriptionPlacement copies it into backendPlacement then strips it.
-    remnawaveSquadUuid: v.optional(v.string()),
     state: subscriptionState,
     updatedAt: v.number(),
     deletedAt: v.optional(v.number()),
@@ -444,22 +435,6 @@ export default defineSchema({
   })
     .index('by_slug', ['slug'])
     .index('by_backend_active', ['backend', 'isActive', 'priority']),
-
-  // DEPRECATED (dropped in the node-placement cutover, Phase 5, after
-  // clearRemnawaveSquadStats empties it): the old squad-member-count cache.
-  // Nothing writes it anymore — replaced by remnawaveNodeStats below.
-  remnawaveSquadStats: defineTable({
-    backendServerId: v.id('backendServers'),
-    squadUuid: v.string(),
-    name: v.optional(v.string()),
-    membersCount: v.number(),
-    nodesOnline: v.optional(v.number()),
-    usersOnline: v.optional(v.number()),
-    lastStatsAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index('by_squad', ['squadUuid'])
-    .index('by_server', ['backendServerId']),
 
   // Per-placement node-load cache for issuance-time node placement. One row per
   // internal squad (the placement handle), refreshed by the backend-healthcheck

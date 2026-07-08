@@ -383,11 +383,10 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     });
   }
 
-  test('activeSubAndTier returns the profile squad (not the tier squad) + userStatus', async () => {
+  test('activeSubAndTier returns the mode placement (from the mode pool) + userStatus', async () => {
     const t = convexTest(schema, modules);
     const { memberTierId } = await seedTiers(t);
     const userId = await t.run(async (ctx) => {
-      await ctx.db.patch(memberTierId, { remnawaveSquadUuid: 'TIER_SQUAD' });
       await ctx.db.insert('appSettings', {
         key: 'remnawave.modePlacement.privacy.squads',
         value: JSON.stringify(['PRIVACY_SQUAD']),
@@ -408,23 +407,24 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     expect(st?.userStatus).toBe('active');
   });
 
-  test('activeSubAndTier falls back to the tier squad when no profile squad is bound', async () => {
+  test('activeSubAndTier placement is null when the mode has no pool bound', async () => {
     const t = convexTest(schema, modules);
     const { memberTierId } = await seedTiers(t);
-    const userId = await t.run(async (ctx) => {
-      await ctx.db.patch(memberTierId, { remnawaveSquadUuid: 'TIER_SQUAD' });
-      return ctx.db.insert('users', {
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
         tierId: memberTierId,
         status: 'active',
-        connectionProfileId: 'evade',
+        connectionModeId: 'evade',
         membershipExpiresAt: Date.now() + 30 * DAY,
         updatedAt: Date.now(),
-      });
-    });
+      }),
+    );
     await seedActiveSub(t, userId, 'bu-fallback');
 
+    // No mode pool + no persisted placement → null (Remnawave then leaves
+    // activeInternalSquads unset; there is no longer a tier-squad fallback).
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
-    expect(st?.placement).toBe('TIER_SQUAD');
+    expect(st?.placement).toBeNull();
   });
 
   test('device-limit toggle: OFF (default) forces hwidDeviceLimit null; ON uses the tier limit', async () => {
@@ -464,7 +464,6 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     const t = convexTest(schema, modules);
     const { memberTierId } = await seedTiers(t);
     const userId = await t.run(async (ctx) => {
-      await ctx.db.patch(memberTierId, { remnawaveSquadUuid: 'TIER_SQUAD' });
       await ctx.db.insert('appSettings', {
         key: 'remnawave.modePlacement.privacy.squads',
         value: JSON.stringify(['SQUAD_A', 'SQUAD_B']),

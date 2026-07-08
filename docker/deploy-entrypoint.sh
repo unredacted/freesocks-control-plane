@@ -121,15 +121,6 @@ bunx convex run seed:reconfigureMembershipTier '{}'
 echo "[deploy] setting the device-limit enforcement default (no-op if already set)"
 bunx convex run seed:migrateDeviceEnforcementDefault '{}'
 
-# Phase-5 cutover: migrate connection profiles → connection modes and the
-# Remnawave squad handle → the generic backendPlacement, then clear the
-# deprecated remnawaveSquadStats table. Idempotent (skips already-migrated rows),
-# so it's safe on every deploy. This MUST run (with the deprecated schema fields
-# still present) before the follow-up deploy that drops those fields — Convex
-# validates a pushed schema against existing rows.
-echo "[deploy] migrating connection modes + Remnawave placement (idempotent)"
-bunx convex run seed:migrateConnectionModes '{}'
-
 echo "[deploy] OK"
 # First-run reminder (printed EVERY deploy, not only when the secret is freshly
 # generated): the first admin registers a passkey at /admin using this secret.

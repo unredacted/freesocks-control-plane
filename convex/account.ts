@@ -161,12 +161,9 @@ export const getAccountView = internalAction({
     }
 
     // Member's chosen connection mode (or the catalog default) — surfaced so the
-    // client renders the selected transport server-authoritatively. Reads the
-    // legacy field too for rows not yet migrated (Phase 5 strips it).
+    // client renders the selected transport server-authoritatively.
     const connectionModeId =
-      user.connectionModeId ??
-      user.connectionProfileId ??
-      (await ctx.runQuery(internal.connectionModes.defaultId, {}));
+      user.connectionModeId ?? (await ctx.runQuery(internal.connectionModes.defaultId, {}));
     const trafficLimitFromTier =
       tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null;
     let subscription: AccountView['subscription'] = null;
@@ -301,12 +298,11 @@ export const regenerate = internalAction({
 
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const freeExpiryDays = Number(settings['freetier.expiryDays'] ?? 90);
-    // Node placement from the member's chosen mode's pool (Remnawave only);
-    // falls back to the tier's own squad when the mode has no pool bound.
+    // Node placement from the member's chosen mode's pool (Remnawave only).
     const nodePlacement =
       tier.backend === 'remnawave'
         ? await ctx.runQuery(internal.remnawaveNodes.resolvePlacement, {
-            modeId: user.connectionModeId ?? user.connectionProfileId ?? null,
+            modeId: user.connectionModeId ?? null,
           })
         : null;
     const issued = await issueNewSubscription(ctx, {
@@ -320,7 +316,7 @@ export const regenerate = internalAction({
         expireAt: computeExpireAtIso(user.membershipExpiresAt, freeExpiryDays),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
         tag: tier.slug,
-        placement: nodePlacement ?? tier.remnawaveSquadUuid ?? null,
+        placement: nodePlacement,
       },
     });
 
@@ -401,12 +397,11 @@ export const switchBackend = internalAction({
     }
 
     const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
-    // Carry the member's chosen mode across the backend switch (Remnawave only;
-    // falls back to the peer tier's squad when the mode has no pool bound).
+    // Carry the member's chosen mode across the backend switch (Remnawave only).
     const nodePlacement =
       peerTier.backend === 'remnawave'
         ? await ctx.runQuery(internal.remnawaveNodes.resolvePlacement, {
-            modeId: user.connectionModeId ?? user.connectionProfileId ?? null,
+            modeId: user.connectionModeId ?? null,
           })
         : null;
     const issued = await issueNewSubscription(ctx, {
@@ -424,7 +419,7 @@ export const switchBackend = internalAction({
         ),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], peerTier),
         tag: peerTier.slug,
-        placement: nodePlacement ?? peerTier.remnawaveSquadUuid ?? null,
+        placement: nodePlacement,
       },
     });
 
@@ -503,7 +498,7 @@ export const switchMode = internalAction({
     if (!tier) return { ok: false, code: 'not_found', message: 'tier not found', status: 404 };
 
     // No-op guard: choosing the mode you already have shouldn't churn a new key.
-    if ((user.connectionModeId ?? user.connectionProfileId ?? null) === target) {
+    if ((user.connectionModeId ?? null) === target) {
       return {
         ok: false,
         code: 'validation',
@@ -538,7 +533,7 @@ export const switchMode = internalAction({
         ),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
         tag: tier.slug,
-        placement: nodePlacement ?? tier.remnawaveSquadUuid ?? null,
+        placement: nodePlacement,
       },
     });
 
@@ -561,7 +556,7 @@ export const switchMode = internalAction({
       targetId: issued.subscriptionId,
       // Never a placement/squad uuid — only which mode.
       payload: {
-        fromMode: user.connectionModeId ?? user.connectionProfileId ?? null,
+        fromMode: user.connectionModeId ?? null,
         toMode: target,
       },
       requestId,

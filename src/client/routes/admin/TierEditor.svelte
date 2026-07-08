@@ -55,7 +55,6 @@
     hwidLimit: 1,
     hwidEnabled: true,
     trafficStrategy: 'MONTH',
-    remnawaveSquadUuid: null,
     peerTierId: null,
     isDefaultFree: false,
     isActive: true,
