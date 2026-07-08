@@ -193,21 +193,29 @@ interface SubCacheEntry {
 }
 
 /** The RAW subscription Response a proxy app consumes (not the JSON envelope):
- *  the backend content-type + a short cache-control + the passed-through metadata
- *  headers (traffic/expiry counters, update cadence). */
-function subscriptionResponse(entry: {
-  content: string;
-  contentType: string;
-  headers?: Record<string, string>;
-}): Response {
-  return new Response(entry.content, {
-    status: 200,
-    headers: {
-      'content-type': entry.contentType || 'text/plain',
-      'cache-control': `public, max-age=${Math.floor(SUBSCRIPTION_CACHE_TTL_MS / 1000)}`,
-      ...(entry.headers ?? {}),
-    },
-  });
+ *  the backend content-type + cache-control + the passed-through metadata headers
+ *  (traffic/expiry counters, update cadence).
+ *
+ *  Caching (this route can sit behind a shared cache/CDN): the body is formatted
+ *  per User-Agent, so the public path MUST send `Vary: User-Agent` or a shared
+ *  cache cross-serves the first fetcher's format (Clash vs v2ray) to everyone on
+ *  the token. An HWID (device-specific) request is `private, no-store` — each
+ *  device must reach the panel to register + get its own body. */
+function subscriptionResponse(
+  entry: { content: string; contentType: string; headers?: Record<string, string> },
+  opts?: { hwid?: boolean },
+): Response {
+  const headers: Record<string, string> = {
+    'content-type': entry.contentType || 'text/plain',
+    ...(entry.headers ?? {}),
+  };
+  if (opts?.hwid) {
+    headers['cache-control'] = 'private, no-store';
+  } else {
+    headers['cache-control'] = `public, max-age=${Math.floor(SUBSCRIPTION_CACHE_TTL_MS / 1000)}`;
+    headers['vary'] = 'User-Agent';
+  }
+  return new Response(entry.content, { status: 200, headers });
 }
 
 /** Parse the bounded per-UA subCache blob; tolerates a legacy single-entry blob. */
@@ -707,7 +715,8 @@ http.route({
           entry: JSON.stringify(entry),
         });
       }
-      return subscriptionResponse(entry);
+      // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
+      return subscriptionResponse(entry, { hwid: hasHwid });
     } catch (err) {
       // A HWID rejection (panel 404 for a device-limited key fetched without a
       // valid x-hwid) is authoritative — pass 404 through, and never serve a

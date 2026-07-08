@@ -142,10 +142,29 @@ describe('GET /api/v1/sub/<token>', () => {
     expect(await res.text()).toBe('RAW-CONFIG-1');
     expect(res.headers.get('content-type')).toBe('text/yaml');
     expect(res.headers.get('cache-control')).toContain('max-age=');
+    // A shared cache MUST vary on UA (the body is UA-formatted). (WS4 / M1.)
+    expect(res.headers.get('vary')).toBe('User-Agent');
     expect(res.headers.get('subscription-userinfo')).toBe(
       'upload=0; download=10; total=100; expire=0',
     );
     expect(fetchCalls).toBe(1);
+  });
+
+  test('an x-hwid (device-specific) request is private/no-store and never shared-cached (WS4)', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    const res = await t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'Karing/1', 'x-hwid': 'device-aaa' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    expect(res.headers.get('vary')).toBeNull(); // device-specific → no shared caching at all
+    expect(fetchCalls).toBe(1);
+    // A different device (same UA) must reach the panel too — no cross-serve.
+    await t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'Karing/1', 'x-hwid': 'device-bbb' },
+    });
+    expect(fetchCalls).toBe(2);
   });
 
   test('same-UA re-poll within TTL is served from cache (no second backend fetch)', async () => {
