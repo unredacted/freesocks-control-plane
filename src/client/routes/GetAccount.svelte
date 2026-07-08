@@ -8,8 +8,9 @@
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
   import InlineError from '../components/InlineError.svelte';
-  import DeliveryPreference from '../components/DeliveryPreference.svelte';
-  import { connectionModePref, setConnectionModePref } from '../lib/connectionModePref.svelte';
+  import ConnectionModeSwitcher from '../components/ConnectionModeSwitcher.svelte';
+  import { connectionModePref } from '../lib/connectionModePref.svelte';
+  import { resolveEffectiveModeId } from '../lib/connectionMode';
   import ConnectClient from '../components/ConnectClient.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import RedeemCode from '../components/RedeemCode.svelte';
@@ -64,9 +65,21 @@
   let defaultModeId = $derived(
     connectionModes.find((m) => m.isDefault)?.id ?? connectionModes[0]?.id ?? 'evade',
   );
+  // Server-backed once a key exists AND a placement pool is bound — then the
+  // mode switcher re-issues (like /account) instead of only setting a local pref.
+  let profileServerBacked = $derived(!!subscription && connectionModes.some((m) => m.available));
+  // Server-backed → the persisted mode is authoritative (local pref is just an
+  // optimistic bridge); otherwise the local choice wins, then the suggestion, else default.
   let effectiveModeId = $derived(
-    connectionModePref() ?? account.data?.suggestedModeId ?? defaultModeId,
+    resolveEffectiveModeId({
+      serverBacked: profileServerBacked,
+      connectionModeId: account.data?.user.connectionModeId,
+      pref: connectionModePref(),
+      suggested: account.data?.suggestedModeId,
+      fallback: defaultModeId,
+    }),
   );
+  let actionsDisabled = $derived(account.data?.user.status === 'disabled');
   let rawConfigFirst = $derived(
     connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle === 'rawConfig',
   );
@@ -396,15 +409,17 @@
       </div>
 
       <!-- Delivery focus FIRST — above the key (and the create button), so the
-           choice shapes how the subscription is presented. -->
-      <!-- Onboarding: a local presentation preference only (no key to re-issue
-           here). Switching the server-side mode lives on the account page. -->
-      <DeliveryPreference
+           choice shapes how the subscription is presented. Before the first key
+           it's a local pref (shapes issuance at "Create subscription"); once a key
+           exists it re-issues via the confirm modal, exactly like /account. -->
+      <ConnectionModeSwitcher
         modes={connectionModes}
         selected={effectiveModeId}
-        suggested={account.data?.suggestedModeId}
-        onChoose={setConnectionModePref}
-        signup
+        suggested={account.data?.suggestedModeId ?? null}
+        serverBacked={profileServerBacked}
+        deviceCount={subscription?.devices.length ?? 0}
+        disabled={actionsDisabled}
+        signup={!subscription}
       />
 
       {#if subscription}

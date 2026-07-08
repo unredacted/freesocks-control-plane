@@ -10,9 +10,9 @@
   import InlineError from '../components/InlineError.svelte';
   import GiftCodes from '../components/GiftCodes.svelte';
   import GiftRevealModal from '../components/GiftRevealModal.svelte';
-  import DeliveryPreference from '../components/DeliveryPreference.svelte';
-  import SwitchModeModal from '../components/SwitchModeModal.svelte';
-  import { connectionModePref, setConnectionModePref } from '../lib/connectionModePref.svelte';
+  import ConnectionModeSwitcher from '../components/ConnectionModeSwitcher.svelte';
+  import { connectionModePref } from '../lib/connectionModePref.svelte';
+  import { resolveEffectiveModeId } from '../lib/connectionMode';
   import MembershipCallout from '../components/MembershipCallout.svelte';
   import RegenerateModal from '../components/RegenerateModal.svelte';
   import RevokeDeviceModal from '../components/RevokeDeviceModal.svelte';
@@ -80,30 +80,20 @@
   // Delivery emphasis. Server-backed → the member's server-side mode is
   // authoritative (localStorage is just an optimistic bridge); otherwise the
   // local device-only choice wins, then the server's country suggestion, else default.
-  let effectiveModeId = $derived<string>(
-    profileServerBacked
-      ? (data?.user.connectionModeId ??
-          connectionModePref() ??
-          data?.suggestedModeId ??
-          defaultModeId)
-      : (connectionModePref() ?? data?.suggestedModeId ?? defaultModeId),
+  let effectiveModeId = $derived(
+    resolveEffectiveModeId({
+      serverBacked: profileServerBacked,
+      connectionModeId: data?.user.connectionModeId,
+      pref: connectionModePref(),
+      suggested: data?.suggestedModeId,
+      fallback: defaultModeId,
+    }),
   );
 
   // The selected mode's delivery behavior (data-driven; replaces `=== 'privacy'`).
   let rawConfigFirst = $derived(
     connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle === 'rawConfig',
   );
-
-  // Mode title for toasts + the confirm dialog: an admin-set label from the
-  // catalog overrides the translated copy verbatim (all locales); otherwise the
-  // SPA's i18n copy for the known modes, else the id.
-  function modeLabel(id: string): string {
-    const custom = connectionModes.find((m) => m.id === id)?.label;
-    if (custom?.trim()) return custom;
-    if (id === 'privacy') return t('delivery.privacyTitle');
-    if (id === 'evade') return t('delivery.evadeTitle');
-    return id;
-  }
 
   // a11y: sonner toasts aren't reliably announced; this feeds a visually
   // hidden role="status" region so async outcomes are spoken once. Keep the
@@ -117,12 +107,6 @@
   // right "from X to Y" copy even after the mutation lands and the account
   // query updates `data.subscription.backend` to the new value.
   let pendingSwitchTarget = $state<'remnawave' | 'outline' | null>(null);
-
-  // Connection-mode switch (transport → node). Mirrors the backend switch: a
-  // confirm dialog, then a re-issue with 24h grace. `pendingModeId` also drives
-  // the picker optimistically while the mutation + account refetch are in flight.
-  let switchModeOpen = $state(false);
-  let pendingModeId = $state<string | null>(null);
 
   // 401 from /api/v1/account means the cookie session is missing or expired;
   // bounce to the account-number sign-in form (no OIDC anymore). The once-flag
@@ -281,60 +265,6 @@
       toast.error(t('account.switchFailedTitle'), { description: apiErrorMessage(err) });
     },
   }));
-
-  // Mutation: switch the connection mode (transport → node) within the same
-  // backend. Re-issues the key into the chosen mode's least-loaded node and
-  // tombstones the old one with a 24h grace window (same saga as switch-backend).
-  const switchMode = createMutation(() => ({
-    mutationFn: () => {
-      if (!pendingModeId) throw new Error('No mode selected');
-      return apiClient.post(
-        '/api/v1/account/switch-mode',
-        { modeId: pendingModeId, confirm: true },
-        z.object({
-          subscriptionUrl: z.string(),
-          shortUuid: z.string(),
-          mode: z.object({ id: z.string(), label: z.string().nullable() }),
-          // Null when there was no live previous subscription to tombstone.
-          oldSubscriptionDeletedAt: z.string().nullable(),
-        }),
-      );
-    },
-    onSuccess: (result) => {
-      switchModeOpen = false;
-      // Keep the local presentation hint in sync so the delivery panels don't
-      // flash the old focus before the account query returns the new mode.
-      setConnectionModePref(result.mode.id);
-      pendingModeId = null;
-      void qc.invalidateQueries({ queryKey: queryKeys.account });
-      // Re-fetch the raw-config viewer (separate key). In rawConfig mode this
-      // prominent block is the ONLY thing shown, so it must not stay stale.
-      void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
-      liveMessage = t('delivery.switchSuccessTitle', { label: modeLabel(result.mode.id) });
-      toast.success(t('delivery.switchSuccessTitle', { label: modeLabel(result.mode.id) }), {
-        description: result.oldSubscriptionDeletedAt
-          ? t('delivery.switchSuccessBodyGrace')
-          : t('delivery.switchSuccessBody'),
-      });
-    },
-    onError: (err) => {
-      pendingModeId = null;
-      liveMessage = t('delivery.switchFailedTitle');
-      toast.error(t('delivery.switchFailedTitle'), { description: apiErrorMessage(err) });
-    },
-  }));
-
-  // The delivery picker's choice handler. Server-backed → open the confirm dialog
-  // (a real key re-issue); otherwise it's a local device-only presentation toggle.
-  function chooseMode(modeId: string) {
-    if (!profileServerBacked) {
-      setConnectionModePref(modeId);
-      return;
-    }
-    if (modeId === effectiveModeId || switchMode.isPending || actionsDisabled) return;
-    pendingModeId = modeId;
-    switchModeOpen = true;
-  }
 
   // Mutation: revoke one HWID device (frees a slot under the tier's device cap
   // without a full regenerate). Confirmation-gated; the server verifies the
@@ -804,13 +734,13 @@
 
           <!-- Delivery focus: a rawConfig mode promotes the raw E2EE config + warns the
            subscription link is fetched through a CDN; url modes keep the link as the star. -->
-          <DeliveryPreference
+          <ConnectionModeSwitcher
             modes={connectionModes}
-            selected={pendingModeId ?? effectiveModeId}
-            suggested={data.suggestedModeId}
+            selected={effectiveModeId}
+            suggested={data.suggestedModeId ?? null}
             serverBacked={profileServerBacked}
-            busy={switchMode.isPending}
-            onChoose={chooseMode}
+            deviceCount={data.subscription?.devices.length ?? 0}
+            disabled={actionsDisabled}
           />
 
           {#if data.subscription}
@@ -1123,19 +1053,6 @@
           }}
           onConfirm={() => switchBackend.mutate()}
           busy={switchBackend.isPending}
-        />
-      {/if}
-      {#if pendingModeId}
-        <SwitchModeModal
-          bind:open={switchModeOpen}
-          targetLabel={modeLabel(pendingModeId)}
-          deviceCount={data.subscription.devices.length}
-          onCancel={() => {
-            switchModeOpen = false;
-            pendingModeId = null;
-          }}
-          onConfirm={() => switchMode.mutate()}
-          busy={switchMode.isPending}
         />
       {/if}
       {#if revokeTargetHwid}
