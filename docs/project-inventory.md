@@ -1,5 +1,18 @@
 # Project inventory: features, open work, and code status
 
+**Updated 2026-07-08 (audit-fix pass, branch `v2`).** A full-pass audit + fixes landed:
+(WS1) issuance never mints a squad-less Remnawave key — an unbound connection mode now
+falls back across pools (mode → default → any bound) and `switchMode` rejects an unbound
+target instead of tombstoning a live key; (WS2) **idle free users are deactivated + RETAINED,
+never deleted** — a new `users.status:'inactive'` (login-reactivatable) + `users.freeKeyExpiresAt`
+idle marker; the daily cron is now `deactivate-idle-free`, and operator-run `purgeInactiveFree`
+is the only removal path; (WS3) `adminApi.statusSummary` reads a maintained `appState`
+user-status counter (self-healed by a daily `user-counts-reconcile` cron) instead of an O(users)
+scan that 500-ed the /status health-gate; (WS4) the fronted `/api/v1/sub` route sends
+`Vary: User-Agent` (+ `private, no-store` for HWID requests); (WS5) `/api/v1/config` +
+`/api/v1/e2ee/keys` are per-IP rate-limited; (WS6) removed dead migration-era symbols
+(`tiers.list`/`listActive`, `BILLING_PROCESSORS`, `remnawaveNodes.stablePlacement`).
+
 **Last reconciled against the code: 2026-07-07** (branch `v2`, after the node-placement
 redesign — Phases 1–5a). That redesign replaced the earlier squad-pool "load balancing" (which
 balanced nothing in a real fleet: a Remnawave internal squad is a set of inbounds, not a node)
@@ -132,7 +145,8 @@ Detailed companions, referenced rather than duplicated here:
   `CF_FRONTED=true` (a real Cloudflare edge in front, else it's client-spoofable); refuse on an
   unresolvable/too-short chain. Admin self-diagnostic: `GET /api/v1/admin/client-ip`. Caddy also
   strips client-supplied `CF-Connecting-IP` upstream as defense in depth.
-- `cleanup-expired-free` daily cron removes lapsed free users (backend + S3 + local).
+- `deactivate-idle-free` daily cron reclaims idle free users' keys (backend + S3) and moves the
+  row to `inactive` (RETAINED, login-reactivatable) — never deletes; operator-run `purgeInactiveFree` removes.
 
 ### 1.3 Entitlements, tiers & lifecycle (`convex/lifecycle.ts`, `convex/tiers.ts`): **Live**
 
@@ -192,8 +206,10 @@ Detailed companions, referenced rather than duplicated here:
     write-only UUIDs — + a read-only per-placement node-load table; §Node placement in
     `docs/backends.md`); **Billing** (per-rail config + a **readiness** check
     that flags enabled-but-misconfigured rails; §1.7); **Storage mirrors** (provider pool, §1.7);
-    **Theme** (preset gallery + hue slider + live preview; §1.7); **Rate-limit policies** (W2);
-    **Membership codes** (W4); App settings; **Audit log** (filter by action / actor / since).
+    **Client apps** (the DB-driven recommended-client catalog — `convex/clients.ts`, `AdminClients.svelte`,
+    `/admin/clients`); **Theme** (preset gallery + hue slider + live preview; §1.7); **Rate-limit policies**
+    (W2); **Membership codes** (W4); App settings (incl. the **Verification** panel — `setVerification` /
+    `PATCH /api/v1/admin/verification`, surfaced in `E2eeVerifyModal`); **Audit log** (filter by action / actor / since).
 - **IaC-addressable mutations** (for the Ansible role): idempotent **`PUT …/backend-servers/by-slug/{slug}`** + **`DELETE …/by-slug/{slug}`**, **`PUT …/tiers/by-slug/{slug}`**, and **`PUT
 …/mirror-providers/by-name/{name}`**. Each is a single keep-secret-on-blank upsert; no
   client-side id resolution. Backed by `convex/adminApi.ts` / `convex/mirrorProviders.ts`.
@@ -215,9 +231,10 @@ Detailed companions, referenced rather than duplicated here:
   checkout takes `orderKind:'gift'` + a `quantity` (1–50) and mints that many shareable,
   hash-only redemption codes bound to the buyer; the plaintexts reveal once
   (`GiftRevealModal`) and the `billing-gift-reveal-sweep` cron clears any un-acknowledged
-  buffer (see `docs/billing.md`). **Live (NOWPayments; Stripe/PayPal scaffolded behind admin
-  toggles).** The USD off-ramp is a documented ops runbook (NOWPayments → USDC →
-  Coinbase/Kraken → ACH).
+  buffer (see `docs/billing.md`). **Code-complete (NOWPayments; Stripe/PayPal scaffolded behind
+  admin toggles) but DORMANT by default** — `billingConfig` ships every rail `enabled:false`
+  with placeholder prices, so no billing is active until an admin sets keys/prices and enables a
+  rail. The USD off-ramp is a documented ops runbook (NOWPayments → USDC → Coinbase/Kraken → ACH).
 - **Billing webhook seam** (legacy/ops): `POST /api/webhooks/billing` (`convex/webhooks.ts`),
   HMAC-SHA256-verified (`WEBHOOK_SIGNING_SECRET`) + deduped by `eventId` (`webhookEvents`
   table) → maps `{accountId, tierSlug, expiresAtMs?}` onto `lifecycle.setMembership`. Kept as
@@ -284,7 +301,9 @@ Convex runs these natively (no Workers triggers, no node-cron):
 - `backend-healthcheck` (10 min): ping active backend instances of every type; stamp
   `lastHealthOkAt` + rtt (feeds pool selection); for Remnawave, also refresh the
   `remnawaveNodeStats` node-load cache that feeds issuance-time node placement.
-- `cleanup-expired-free` (daily 03:00 UTC): delete expired free users (per-tier cursor).
+- `deactivate-idle-free` (daily 03:00 UTC): deactivate + RETAIN idle free users (reclaim key →
+  `status:'inactive'`; paginated over `by_tier_status_freekey`). Never deletes.
+- `user-counts-reconcile` (daily 04:00 UTC): recompute the `appState` user-status counter (self-heal).
 - `session-sweep` / `rate-limit-sweep` / `replay-guard-sweep` (daily): drop expired
   `sessions` / `rateLimits` / `replayGuard` rows.
 - `epoch-key-rotate` (10 min) / `epoch-key-sweep` (daily): CDN-blinding HPKE epoch keys.
@@ -347,14 +366,15 @@ the companion docs. Sizes: S/M/L.
 > dormant subsystems. They are intentionally retained. If you believe one should go, decide
 > it deliberately and update this table.
 
-| Symbol / artifact                                      | Location                                                                                                                                                              | Why it has no (full) caller                                                                                                                                             | Disposition                    |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| `webhooks.ingest` billing seam                         | `convex/webhooks.ts`, `convex/http.ts`                                                                                                                                | The single inbound point for the future billing portal; HMAC + dedupe + `setMembership` are all live, but no portal calls it today.                                     | **Keep** (seam ready)          |
-| Entire **Outline** subsystem                           | `convex/backends.ts` (outline branches), `convex/lib/backends/outline.ts`, `convex/backendServers.ts` (generic pool; Outline rows live there), admin server routes/UI | Fully wired but unreachable until `outline.enabled=true` + a server is registered. Within it: pool scoring uses a `latency*0` placeholder; `prometheusUrl` is reserved. | **Keep** (dormant)             |
-| S3 mirroring (`storage.ts`)                            | `convex/storage.ts`, `convex/mirrorProviders.ts`, `convex/lib/issuance.ts`                                                                                            | Skipped entirely unless ≥1 active mirror provider is configured (admin CMS → Storage mirrors).                                                                          | **Keep** (dormant)             |
-| `appState` table                                       | `convex/schema.ts`                                                                                                                                                    | Generic singleton key/value (e.g. tier-propagation cursors). Forward-compat for cursored sweeps.                                                                        | **Keep** (scaffolding)         |
-| `components/ui/label/`, other unused shadcn primitives | `src/client/components/ui/`                                                                                                                                           | shadcn primitives are kept as a complete kit even when a given primitive has no current import.                                                                         | **Keep** (kit completeness)    |
-| `fetchSubscriptionContent` (Remnawave/Outline)         | `convex/backends.ts`, `convex/lib/backends/*`                                                                                                                         | Only invoked when S3 mirroring is on; part of the backend interface contract regardless.                                                                                | **Keep** (interface + dormant) |
+| Symbol / artifact                                      | Location                                                                                                                                                              | Why it has no (full) caller                                                                                                                                                                                          | Disposition                   |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `webhooks.ingest` billing seam                         | `convex/webhooks.ts`, `convex/http.ts`                                                                                                                                | The single inbound point for the future billing portal; HMAC + dedupe + `setMembership` are all live, but no portal calls it today.                                                                                  | **Keep** (seam ready)         |
+| Entire **Outline** subsystem                           | `convex/backends.ts` (outline branches), `convex/lib/backends/outline.ts`, `convex/backendServers.ts` (generic pool; Outline rows live there), admin server routes/UI | Fully wired but unreachable until `outline.enabled=true` + a server is registered. Within it: `prometheusUrl` is reserved. (Pool scoring now uses real `lastHealthRttMs` — the old `latency*0` placeholder is gone.) | **Keep** (dormant)            |
+| S3 mirroring (`storage.ts`)                            | `convex/storage.ts`, `convex/mirrorProviders.ts`, `convex/lib/issuance.ts`                                                                                            | Skipped entirely unless ≥1 active mirror provider is configured (admin CMS → Storage mirrors).                                                                                                                       | **Keep** (dormant)            |
+| `appState` table                                       | `convex/schema.ts`                                                                                                                                                    | Generic singleton key/value (issuance lock, the `stats:userCounts` user-status counter, tier-propagation cursors).                                                                                                   | **Keep** (live + scaffolding) |
+| `components/ui/label/`, other unused shadcn primitives | `src/client/components/ui/`                                                                                                                                           | shadcn primitives are kept as a complete kit even when a given primitive has no current import.                                                                                                                      | **Keep** (kit completeness)   |
+| Dev **mock backend**                                   | `convex/lib/backends/mock.ts`                                                                                                                                         | Short-circuits every dispatch op so the full issuance/account flow works locally with no real instance. Double-gated: `DEV_MOCK_BACKEND=true` AND `ENVIRONMENT=development`.                                         | **Keep** (dev scaffolding)    |
+| `fetchSubscriptionContent` (Remnawave/Outline)         | `convex/backends.ts`, `convex/lib/backends/*`                                                                                                                         | **Live** — the FCP-fronted `GET /api/v1/sub/<token>` serves member config through it (also the S3 mirror path). Part of the backend interface contract.                                                              | **Live**                      |
 
 ---
 

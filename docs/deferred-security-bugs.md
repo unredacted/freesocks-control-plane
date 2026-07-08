@@ -107,9 +107,10 @@ left and it stays blocked on the fork's response contract.
 
 **Still open / deferred on Convex:** **Bug 15 (full WSS issuance only)**: latent
 while Outline is disabled (blocked on the fork's real WSS create-key contract, which
-is not in this repo); Outline scoring **RTT capture** (the `pickCandidatesForIssue`
-latency term is a `0` placeholder), latent while Outline is disabled. Both are gated
-on enabling Outline and are intentionally deferred until then.
+is not in this repo), intentionally deferred until Outline is enabled. (The former
+Outline **RTT-capture `0` placeholder** is RESOLVED — the node-placement redesign
+made `pickCandidatesForIssue` score on real `lastHealthRttMs`, and the Outline health
+probe now times its round-trip.)
 
 **Test gaps (mostly closed, 2026-06-09):** the `convex-test` suite covers
 auth/free-tier/lifecycle/subscriptions/webhooks/admin-API + the lib units (incl. the
