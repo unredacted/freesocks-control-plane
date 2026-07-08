@@ -17,13 +17,13 @@ export const setTier = internalMutation({
   },
 });
 
-/** Set a member's chosen connection profile (transport/squad), orthogonal to
- *  their tier. Re-issuing the key into the new squad is the caller's job
- *  (account.switchProfile). */
-export const setConnectionProfile = internalMutation({
-  args: { userId: v.id('users'), profileId: v.union(v.literal('evade'), v.literal('privacy')) },
-  handler: async (ctx, { userId, profileId }) => {
-    await ctx.db.patch(userId, { connectionProfileId: profileId, updatedAt: Date.now() });
+/** Set a member's chosen connection mode (transport), orthogonal to their tier.
+ *  The id is validated against the catalog at the HTTP boundary. Re-issuing the
+ *  key into the new placement is the caller's job (account.switchMode). */
+export const setConnectionMode = internalMutation({
+  args: { userId: v.id('users'), modeId: v.string() },
+  handler: async (ctx, { userId, modeId }) => {
+    await ctx.db.patch(userId, { connectionModeId: modeId, updatedAt: Date.now() });
     return null;
   },
 });

@@ -19,7 +19,7 @@ import { deleteSubscriptionEverywhere } from './lib/issuance';
 import { computeExpireAtIso, gbToBytes, resolveHwidLimit } from './lib/backends/types';
 import { SETTINGS_DEFAULTS } from './appSettings';
 import { writeAuditLog } from './lib/audit';
-import { resolveProfileSquad } from './lib/connectionProfiles';
+import { resolveModePlacementStable } from './lib/remnawavePlacement';
 import { resolveDefaultFreeTier } from './tiers';
 
 // --- entitlement seam ------------------------------------------------------
@@ -189,7 +189,10 @@ export const activeSubAndTier = internalQuery({
     const placement =
       sub.backendPlacement ??
       sub.remnawaveSquadUuid ?? // legacy rows pre-migration (Phase 5 copies it over)
-      (await resolveProfileSquad(ctx.db, user.connectionProfileId ?? null));
+      (await resolveModePlacementStable(
+        ctx.db,
+        user.connectionModeId ?? user.connectionProfileId ?? null,
+      ));
     // Read the device-limit master toggle (fail-safe to the compiled default) so
     // the tier push honors it exactly like the issuance path — flipping it off
     // clears hwidDeviceLimit on the next push.

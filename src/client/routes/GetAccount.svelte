@@ -9,7 +9,7 @@
   import RawConfig from '../components/RawConfig.svelte';
   import InlineError from '../components/InlineError.svelte';
   import DeliveryPreference from '../components/DeliveryPreference.svelte';
-  import { deliveryPref, setDeliveryPref } from '../lib/deliveryPref.svelte';
+  import { connectionModePref, setConnectionModePref } from '../lib/connectionModePref.svelte';
   import ConnectClient from '../components/ConnectClient.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import RedeemCode from '../components/RedeemCode.svelte';
@@ -57,8 +57,19 @@
   // 401 while the visitor is still anonymous on this page.
   const account = accountQuery(() => isAuthed);
   let subscription = $derived(account.data?.subscription ?? null);
-  // Delivery emphasis (client choice → country suggestion → evade); orders the panels.
-  let effectiveDelivery = $derived(deliveryPref() ?? account.data?.suggestedDelivery ?? 'evade');
+  // Connection-mode catalog + emphasis (client choice → country suggestion →
+  // catalog default); orders the panels. `rawConfigFirst` is data-driven off the
+  // selected mode's deliveryStyle (replaces the hardcoded `=== 'privacy'`).
+  let connectionModes = $derived(config.data?.connectionModes ?? []);
+  let defaultModeId = $derived(
+    connectionModes.find((m) => m.isDefault)?.id ?? connectionModes[0]?.id ?? 'evade',
+  );
+  let effectiveModeId = $derived(
+    connectionModePref() ?? account.data?.suggestedModeId ?? defaultModeId,
+  );
+  let rawConfigFirst = $derived(
+    connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle === 'rawConfig',
+  );
   // Hide the upgrade prompts (redeem a gift code + buy) once they're a member.
   let isCurrentMember = $derived(account.data?.user.membership?.isCurrent ?? false);
 
@@ -139,17 +150,17 @@
   // Reuses the member regenerate endpoint (create-or-replace).
   const createSubscription = createMutation(() => ({
     mutationFn: async () => {
-      // Persist the chosen focus to the account (best-effort) BEFORE issuing the
-      // first key, so it lands in that profile's squad. No key exists yet, so this
-      // is a plain set (no re-issue); a keyed member switches via /switch-profile.
+      // Persist the chosen mode to the account (best-effort) BEFORE issuing the
+      // first key, so it lands in that mode's placement. No key exists yet, so this
+      // is a plain set (no re-issue); a keyed member switches via /switch-mode.
       try {
         await apiClient.post(
-          '/api/v1/account/connection-profile',
-          { profile: effectiveDelivery },
-          z.object({ ok: z.boolean(), profile: z.string() }),
+          '/api/v1/account/connection-mode',
+          { modeId: effectiveModeId },
+          z.object({ ok: z.boolean(), modeId: z.string() }),
         );
       } catch {
-        // Non-fatal: the first key just issues into the default profile.
+        // Non-fatal: the first key just issues into the default mode.
       }
       return apiClient.post(
         '/api/v1/account/regenerate',
@@ -385,24 +396,13 @@
       <!-- Delivery focus FIRST — above the key (and the create button), so the
            choice shapes how the subscription is presented. -->
       <!-- Onboarding: a local presentation preference only (no key to re-issue
-           here). Switching the server-side profile lives on the account page. -->
+           here). Switching the server-side mode lives on the account page. -->
       <DeliveryPreference
-        selected={effectiveDelivery}
-        suggested={account.data?.suggestedDelivery}
-        onChoose={setDeliveryPref}
+        modes={connectionModes}
+        selected={effectiveModeId}
+        suggested={account.data?.suggestedModeId}
+        onChoose={setConnectionModePref}
         signup
-        overrides={{
-          evade: {
-            title: config.data?.connectionProfiles.find((p) => p.id === 'evade')?.label ?? null,
-            body:
-              config.data?.connectionProfiles.find((p) => p.id === 'evade')?.description ?? null,
-          },
-          privacy: {
-            title: config.data?.connectionProfiles.find((p) => p.id === 'privacy')?.label ?? null,
-            body:
-              config.data?.connectionProfiles.find((p) => p.id === 'privacy')?.description ?? null,
-          },
-        }}
       />
 
       {#if subscription}
@@ -419,14 +419,14 @@
           trafficUsedBytes={subscription.trafficUsedBytes}
           tierName={account.data?.user.tier.name ?? accountTier?.name ?? ''}
           backend={subscription.backend}
-          hideUrl={effectiveDelivery === 'privacy'}
+          hideUrl={rawConfigFirst}
         />
-        {#if effectiveDelivery === 'privacy'}
-          <!-- Privacy: raw config is the deliverable; CDN-fetched link hidden; no mirrors. -->
+        {#if rawConfigFirst}
+          <!-- rawConfig mode: raw config is the deliverable; CDN link hidden; no mirrors. -->
           <RawConfig prominent />
           <ConnectClient
             backend={subscription.backend}
-            privacy
+            rawConfigFirst
             deviceLimited={account.data?.user.tier.deviceLimited ?? false}
           />
         {:else}

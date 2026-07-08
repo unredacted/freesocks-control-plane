@@ -24,12 +24,13 @@
 
   interface Props {
     backend?: 'remnawave' | 'outline';
-    /** The FCP-fronted subscription URL (evade). Absent in privacy mode / before a
-     *  key exists → we show install + manual-import guidance, no deep-link buttons. */
+    /** The FCP-fronted subscription URL. Absent in rawConfig mode / before a key
+     *  exists → we show install + manual-import guidance, no deep-link buttons. */
     subscriptionUrl?: string;
-    /** Privacy/delivery mode hides the auto-updating link → deliver the raw config
-     *  below, so step 2 says "enter the configuration below" instead of "paste your link". */
-    privacy?: boolean;
+    /** A rawConfig-delivery mode hides the auto-updating link → deliver the raw
+     *  config below, so step 2 says "enter the configuration below" instead of
+     *  "paste your link". */
+    rawConfigFirst?: boolean;
     /** True when the member's plan enforces a device limit (tier opts in AND the
      *  global toggle is on). Only then do we split apps by HWID support + show
      *  the HWID note; otherwise the device-limit concept is irrelevant and hidden. */
@@ -38,7 +39,7 @@
   let {
     backend = 'remnawave',
     subscriptionUrl,
-    privacy = false,
+    rawConfigFirst = false,
     deviceLimited = false,
   }: Props = $props();
 
@@ -63,9 +64,9 @@
   let compatClients = $derived(currentClients.filter((c) => c.hwid));
   let incompatClients = $derived(currentClients.filter((c) => !c.hwid));
 
-  // A one-tap import link is possible only with a (non-privacy) subscription URL
-  // and an app that has an import scheme.
-  let canImport = $derived(!privacy && !!subscriptionUrl);
+  // A one-tap import link is possible only with a (non-rawConfig) subscription
+  // URL and an app that has an import scheme.
+  let canImport = $derived(!rawConfigFirst && !!subscriptionUrl);
   function importLink(schemeId: string | null): string | null {
     return canImport && subscriptionUrl
       ? buildImportLink(schemeId, subscriptionUrl, IMPORT_PROFILE_NAME)
@@ -222,7 +223,7 @@
           class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums"
           >2</span
         >
-        <span>{privacy ? t('setup.step.importConfig') : t('setup.step.import')}</span>
+        <span>{rawConfigFirst ? t('setup.step.importConfig') : t('setup.step.import')}</span>
       </li>
       <li class="flex gap-3">
         <span

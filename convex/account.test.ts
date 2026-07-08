@@ -457,29 +457,37 @@ describe('account.switchBackend guards', () => {
 });
 
 /**
- * switchProfile saga: re-issue the member's key into the chosen connection
- * profile's Remnawave squad (transport choice), tombstone the old key with 24h
- * grace, record the choice — WITHIN the same backend (no tier/peer change). The
- * squad UUID must flow into issuance but never reach the audit log.
+ * switchMode saga: re-issue the member's key into the chosen connection mode's
+ * least-loaded node (transport choice), tombstone the old key with 24h grace,
+ * record the choice — WITHIN the same backend (no tier/peer change). The squad
+ * UUID (placement) must flow into issuance but never reach the audit log.
  */
-describe('account.switchProfile saga', () => {
+describe('account.switchMode saga', () => {
   // The live-provider test stubs fetch; unstub after each so the dev-mock tests stay clean.
   afterEach(() => vi.unstubAllGlobals());
 
-  test('choosing the profile you already have is a no-op validation error (no key churn)', async () => {
+  test('choosing the mode you already have is a no-op validation error (no key churn)', async () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);
     const userId = await seedUser(t, tierId);
-    await t.run((ctx) => ctx.db.patch(userId, { connectionProfileId: 'privacy' }));
+    await t.run((ctx) => ctx.db.patch(userId, { connectionModeId: 'privacy' }));
 
-    const res = await t.action(internal.account.switchProfile, { userId, target: 'privacy' });
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
     expect(res).toMatchObject({ ok: false, code: 'validation', status: 400 });
     await t.run(async (ctx) => {
       expect(await ctx.db.query('subscriptions').collect()).toHaveLength(0);
     });
   });
 
-  test('re-issues into the chosen squad, tombstones the old key, records the choice, audits without the squad uuid', async () => {
+  test('rejects an unknown mode id', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    const res = await t.action(internal.account.switchMode, { userId, target: 'nonsense' });
+    expect(res).toMatchObject({ ok: false, code: 'validation', status: 400 });
+  });
+
+  test('re-issues into the mode placement, tombstones the old key, records the choice, audits without the squad uuid', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const SQUAD = '11111111-2222-3333-4444-555555555555';
@@ -488,10 +496,10 @@ describe('account.switchProfile saga', () => {
     const tierId = await seedTier(t, { backend: 'remnawave' });
     const userId = await seedUser(t, tierId);
     await t.run(async (ctx) => {
-      // Bind the privacy profile's squad — the infra detail that must never be audited.
+      // Bind the privacy mode's placement pool — the infra detail never audited.
       await ctx.db.insert('appSettings', {
-        key: 'connectionProfile.privacy.squadUuid',
-        value: JSON.stringify(SQUAD),
+        key: 'connectionMode.privacy.squadUuids',
+        value: JSON.stringify([SQUAD]),
         updatedAt: Date.now(),
       });
       const instanceId = await ctx.db.insert('backendServers', {
@@ -541,10 +549,10 @@ describe('account.switchProfile saga', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const before = Date.now();
-    const res = await t.action(internal.account.switchProfile, { userId, target: 'privacy' });
-    expect(res).toMatchObject({ ok: true, profile: { id: 'privacy' } });
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
+    expect(res).toMatchObject({ ok: true, mode: { id: 'privacy' } });
 
-    // The new key was issued INTO the profile's squad (squad-from-profile overrides the tier).
+    // The new key was issued INTO the mode's placement (single-squad pool → that squad).
     const createCall = fetchMock.mock.calls.find(
       ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
     );
@@ -554,7 +562,7 @@ describe('account.switchProfile saga', () => {
 
     await t.run(async (ctx) => {
       const user = await ctx.db.get(userId);
-      expect(user!.connectionProfileId).toBe('privacy');
+      expect(user!.connectionModeId).toBe('privacy');
       const subs = await ctx.db.query('subscriptions').collect();
       const old = subs.find((s) => s.state === 'disabled')!;
       const fresh = subs.find((s) => s.state === 'active')!;
@@ -563,29 +571,31 @@ describe('account.switchProfile saga', () => {
       // 24h grace, mirroring regenerate / switch-backend.
       expect(old.deletedAt!).toBeGreaterThanOrEqual(before + 24 * 3_600_000 - 5_000);
       expect(user!.currentSubscriptionId).toBe(fresh._id);
+      // The key persists its placement so tier pushes never re-home it.
+      expect(fresh.backendPlacement).toBe(SQUAD);
 
       const audit = (await ctx.db.query('auditLog').collect()).find(
-        (r) => r.action === 'subscription.switch_profile',
+        (r) => r.action === 'subscription.switch_mode',
       );
       expect(audit).toBeTruthy();
       const payload = JSON.stringify(audit!.payload ?? {});
-      expect(payload).toContain('privacy'); // toProfile recorded
+      expect(payload).toContain('privacy'); // toMode recorded
       expect(payload).not.toContain(SQUAD); // the squad uuid is NEVER audited
     });
   });
 
-  test('falls back to the tier squad (behaviour-preserving) when the target profile has no squad bound', async () => {
+  test('falls back to the tier squad when the target mode has no placement pool bound', async () => {
     // dev mock ON (top-level beforeEach) → issuance short-circuits; assert it still
-    // succeeds and records the choice even with no profile squad bound.
+    // succeeds and records the choice even with no mode pool bound.
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);
     const userId = await seedUser(t, tierId);
     await t.action(internal.account.regenerate, { userId }); // an existing key to tombstone
 
-    const res = await t.action(internal.account.switchProfile, { userId, target: 'privacy' });
-    expect(res).toMatchObject({ ok: true, profile: { id: 'privacy' } });
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
+    expect(res).toMatchObject({ ok: true, mode: { id: 'privacy' } });
     await t.run(async (ctx) => {
-      expect((await ctx.db.get(userId))!.connectionProfileId).toBe('privacy');
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('privacy');
       const subs = await ctx.db.query('subscriptions').collect();
       expect(subs.filter((s) => s.state === 'disabled')).toHaveLength(1);
       expect(subs.filter((s) => s.state === 'active')).toHaveLength(1);

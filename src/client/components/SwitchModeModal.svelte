@@ -4,15 +4,15 @@
   import { t } from '../lib/i18n/index.svelte';
 
   /**
-   * Confirmation dialog for `/api/v1/account/switch-profile` (the connection
-   * profile / transport choice). Mirrors SwitchBackendModal: switching a profile
-   * re-issues the member's key into a different Remnawave squad and tombstones
-   * the old one with a 24h grace window, so it warrants the same explicit
-   * confirmation. Purely presentational — the mutation lives in Account.svelte.
+   * Confirmation dialog for `/api/v1/account/switch-mode` (the connection-mode /
+   * transport choice). Mirrors SwitchBackendModal: switching a mode re-issues the
+   * member's key into a different node/placement and tombstones the old one with
+   * a 24h grace window, so it warrants the same explicit confirmation. Purely
+   * presentational — the mutation lives in Account.svelte.
    */
   interface Props {
     open: boolean;
-    /** Human label of the profile being switched TO (localized title). */
+    /** Human label of the mode being switched TO (localized title). */
     targetLabel: string;
     deviceCount: number;
     onCancel: () => void;

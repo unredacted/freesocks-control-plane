@@ -29,7 +29,8 @@ import { writeAuditLog } from './lib/audit';
 import { upsertSettingRow as upsertSetting } from './appSettings';
 import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
-import { connectionProfileWrites, resolveConnectionProfiles } from './lib/connectionProfiles';
+import { connectionModeWrites, resolveConnectionModes } from './lib/connectionModes';
+import { modePlacementWrites, resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { normalizeSupportId } from './lib/supportId';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
@@ -1699,61 +1700,62 @@ export const setVerification = internalMutation({
   },
 });
 
-// === connection profiles =====================================================
+// === connection modes ========================================================
 
 /**
- * Admin sets the connection-profile catalog (per-profile label + squad, and the
- * default). Writes the appSettings `connectionProfile.*` namespace via
- * upsertSetting; resolveConnectionProfiles / publicConfig read it back. Audited
- * as a `squadBound` BOOLEAN per key — the Remnawave squad UUID (infra detail) is
- * never logged. This is the headless seam the Ansible panel-bootstrap PATCHes to
- * bind the fronted / Reality squads it creates; also editable in the admin CMS.
- * Returns the squad-bound view (labels + isDefault + squadBound), never a UUID.
+ * Admin sets the connection-mode catalog: per-mode label/description + the
+ * default (generic, via connectionModeWrites) AND the per-mode Remnawave
+ * placement pool (squad UUIDs, via modePlacementWrites). Writes the appSettings
+ * `connectionMode.*` namespace; resolveConnectionModes / publicConfig read it
+ * back. Squad UUIDs are write-only + audited as a `poolBound` BOOLEAN, never
+ * logged. Returns the catalog view (label null unless admin-set, so it doesn't
+ * round-trip the compiled default into the form + pin English over i18n).
  */
-export const setConnectionProfiles = internalMutation({
+export const setConnectionModes = internalMutation({
   args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { patch, actorAdminId }) => {
     let writes: Array<{ key: string; value: string }>;
     try {
-      writes = connectionProfileWrites(patch);
+      writes = [...connectionModeWrites(patch), ...modePlacementWrites(patch)];
     } catch (e) {
       throw new ConvexError({
         code: 'validation',
-        message: e instanceof Error ? e.message : 'invalid connection-profile config',
+        message: e instanceof Error ? e.message : 'invalid connection-mode config',
       });
     }
     if (writes.length === 0) {
       throw new ConvexError({
         code: 'validation',
-        message: 'no recognized connection-profile fields',
+        message: 'no recognized connection-mode fields',
       });
     }
     for (const { key, value } of writes) {
       await upsertSetting(ctx, key, value, actorAdminId);
-      const isSquadKey = key.endsWith('.squadUuid');
+      const isPoolKey = key.endsWith('.squadUuids');
       await writeAuditLog(ctx, {
         actorType: 'admin',
         actorId: actorAdminId ?? undefined,
-        action: 'admin.connection_profile.update',
-        targetType: 'connection_profile',
+        action: 'admin.connection_mode.update',
+        targetType: 'connection_mode',
         targetId: key,
-        // Never the squad UUID — only which key changed + whether a squad is now bound.
-        payload: isSquadKey
-          ? { key, squadBound: (JSON.parse(value) as string).trim().length > 0 }
+        // Never a squad UUID — only which key changed + whether a pool is bound.
+        payload: isPoolKey
+          ? { key, poolBound: (JSON.parse(value) as string[]).length > 0 }
           : { key },
       });
     }
+    const [modes, bound] = await Promise.all([
+      resolveConnectionModes(ctx.db),
+      resolveBoundModeIds(ctx.db),
+    ]);
     return {
-      // label/description are null unless the admin set them (same rule as the
-      // public projection) — returning the compiled default label here would
-      // round-trip into the admin form and get written back as a custom
-      // override, pinning English over the SPA's i18n.
-      profiles: (await resolveConnectionProfiles(ctx.db)).map((p) => ({
-        id: p.id,
-        label: p.labelCustom ? p.label : null,
-        description: p.description,
-        isDefault: p.isDefault,
-        squadBound: p.squadUuid !== null,
+      modes: modes.map((m) => ({
+        id: m.id,
+        label: m.label,
+        description: m.description,
+        deliveryStyle: m.deliveryStyle,
+        isDefault: m.isDefault,
+        bound: bound.has(m.id),
       })),
     };
   },

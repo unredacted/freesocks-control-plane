@@ -6,6 +6,29 @@
  */
 import { internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
+import {
+  pickByNodeLoad,
+  resolveModeSquadPool,
+  resolveModePlacementStable,
+} from './lib/remnawavePlacement';
+
+/** The placement a NEW key issues into: the LEAST-LOADED node of the mode's
+ *  placement pool (per-node load cached by the healthcheck cron; single-element
+ *  pools short-circuit). null when the mode has no pool bound — the caller then
+ *  falls back to the tier's own squad. The pick is persisted on the subscription
+ *  row so later tier pushes re-send the SAME placement (no re-home). */
+export const resolvePlacement = internalQuery({
+  args: { modeId: v.union(v.string(), v.null()) },
+  handler: async (ctx, { modeId }) =>
+    pickByNodeLoad(ctx.db, await resolveModeSquadPool(ctx.db, modeId)),
+});
+
+/** Deterministic first-of-pool for a mode — the tier-push preserve fallback for
+ *  rows with no persisted placement (never re-picks by load, so no thrash). */
+export const stablePlacement = internalQuery({
+  args: { modeId: v.union(v.string(), v.null()) },
+  handler: (ctx, { modeId }) => resolveModePlacementStable(ctx.db, modeId),
+});
 
 /** Cache the latest per-placement node-load snapshots (upsert by placement).
  *  Fed by the backend-healthcheck cron via provider.getNodeStats → the picker

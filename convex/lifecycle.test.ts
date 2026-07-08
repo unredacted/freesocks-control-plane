@@ -389,14 +389,14 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     const userId = await t.run(async (ctx) => {
       await ctx.db.patch(memberTierId, { remnawaveSquadUuid: 'TIER_SQUAD' });
       await ctx.db.insert('appSettings', {
-        key: 'connectionProfile.privacy.squadUuid',
-        value: JSON.stringify('PRIVACY_SQUAD'),
+        key: 'connectionMode.privacy.squadUuids',
+        value: JSON.stringify(['PRIVACY_SQUAD']),
         updatedAt: Date.now(),
       });
       return ctx.db.insert('users', {
         tierId: memberTierId,
         status: 'active',
-        connectionProfileId: 'privacy',
+        connectionModeId: 'privacy',
         membershipExpiresAt: Date.now() + 30 * DAY,
         updatedAt: Date.now(),
       });
@@ -456,17 +456,17 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     expect(on?.hwidDeviceLimit).toBe(3);
   });
 
-  test('activeSubAndTier PRESERVES the subscription-persisted squad (no pool re-pick thrash)', async () => {
-    // Squad pools: the key was issued into squadA (persisted on the sub row).
-    // Even though the profile's pool now prefers a different squad (squadB,
-    // fewer members), a tier push must re-send squadA — re-homing a live key
-    // on every renewal would thrash users across squads.
+  test('activeSubAndTier PRESERVES the subscription-persisted placement (no re-pick thrash)', async () => {
+    // Node pools: the key was issued into SQUAD_A (persisted on the sub row).
+    // Even though the mode's pool now prefers a different node (SQUAD_B, fewer
+    // users), a tier push must re-send SQUAD_A — re-homing a live key on every
+    // renewal would thrash users across nodes.
     const t = convexTest(schema, modules);
     const { memberTierId } = await seedTiers(t);
     const userId = await t.run(async (ctx) => {
       await ctx.db.patch(memberTierId, { remnawaveSquadUuid: 'TIER_SQUAD' });
       await ctx.db.insert('appSettings', {
-        key: 'connectionProfile.privacy.squadUuids',
+        key: 'connectionMode.privacy.squadUuids',
         value: JSON.stringify(['SQUAD_A', 'SQUAD_B']),
         updatedAt: Date.now(),
       });
@@ -482,24 +482,28 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
       });
       // SQUAD_B is currently the least-loaded (a fresh pick would choose it).
       const now = Date.now();
-      await ctx.db.insert('remnawaveSquadStats', {
+      await ctx.db.insert('remnawaveNodeStats', {
         backendServerId: serverId,
-        squadUuid: 'SQUAD_A',
-        membersCount: 40,
+        placement: 'SQUAD_A',
+        usersOnline: 40,
+        online: true,
+        nodeCount: 1,
         lastStatsAt: now,
         updatedAt: now,
       });
-      await ctx.db.insert('remnawaveSquadStats', {
+      await ctx.db.insert('remnawaveNodeStats', {
         backendServerId: serverId,
-        squadUuid: 'SQUAD_B',
-        membersCount: 1,
+        placement: 'SQUAD_B',
+        usersOnline: 1,
+        online: true,
+        nodeCount: 1,
         lastStatsAt: now,
         updatedAt: now,
       });
       return ctx.db.insert('users', {
         tierId: memberTierId,
         status: 'active',
-        connectionProfileId: 'privacy',
+        connectionModeId: 'privacy',
         membershipExpiresAt: Date.now() + 30 * DAY,
         updatedAt: Date.now(),
       });
@@ -509,13 +513,13 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
     expect(st?.placement).toBe('SQUAD_A'); // pinned, NOT re-picked to SQUAD_B
 
-    // A pre-pool row (no persisted squad) falls back to the pool's first squad,
-    // deterministically — stable across pushes.
+    // A pre-pool row (no persisted placement) falls back to the pool's first
+    // squad deterministically (stablePlacement, not least-loaded) — stable across pushes.
     const legacyUserId = await t.run((ctx) =>
       ctx.db.insert('users', {
         tierId: memberTierId,
         status: 'active',
-        connectionProfileId: 'privacy',
+        connectionModeId: 'privacy',
         membershipExpiresAt: Date.now() + 30 * DAY,
         updatedAt: Date.now(),
       }),

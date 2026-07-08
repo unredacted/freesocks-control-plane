@@ -10,7 +10,8 @@ import { query } from './_generated/server';
 import { resolveBillingConfig } from './lib/billingConfig';
 import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
-import { resolveConnectionProfiles, publicProjection } from './lib/connectionProfiles';
+import { resolveConnectionModes, publicProjection } from './lib/connectionModes';
+import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { resolveClients, publicClients } from './lib/clientCatalog';
 
 export const get = query({
@@ -122,10 +123,13 @@ export const get = query({
       // channels the "Verify connection" panel shows, and whether to surface the
       // whole E2EE badge/panel at all. The panel renders only the set channels.
       verification: await resolveVerification(ctx.db),
-      // Member-facing connection-profile catalog (id + label + isDefault +
-      // available = squad bound). NEVER the squad UUID — publicProjection strips
-      // it, like the tier projection above. Drives the transport chooser.
-      connectionProfiles: publicProjection(await resolveConnectionProfiles(ctx.db)),
+      // Member-facing connection-mode catalog (id + label + description +
+      // deliveryStyle + isDefault + available = placement pool bound). NEVER a
+      // squad UUID. Drives the transport chooser + its delivery behavior.
+      connectionModes: publicProjection(
+        await resolveConnectionModes(ctx.db),
+        await resolveBoundModeIds(ctx.db),
+      ),
       // Member-facing recommended-client catalog (CMS-managed `clients` table, or
       // the compiled defaults when unseeded). Public-safe: names, platforms, install
       // links, hwid flag, and the import scheme id (the SPA maps it to a deep-link

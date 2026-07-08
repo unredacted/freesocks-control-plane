@@ -11,8 +11,8 @@
   import GiftCodes from '../components/GiftCodes.svelte';
   import GiftRevealModal from '../components/GiftRevealModal.svelte';
   import DeliveryPreference from '../components/DeliveryPreference.svelte';
-  import SwitchProfileModal from '../components/SwitchProfileModal.svelte';
-  import { deliveryPref, setDeliveryPref } from '../lib/deliveryPref.svelte';
+  import SwitchModeModal from '../components/SwitchModeModal.svelte';
+  import { connectionModePref, setConnectionModePref } from '../lib/connectionModePref.svelte';
   import MembershipCallout from '../components/MembershipCallout.svelte';
   import RegenerateModal from '../components/RegenerateModal.svelte';
   import RevokeDeviceModal from '../components/RevokeDeviceModal.svelte';
@@ -65,49 +65,45 @@
   // sprinkled across the template.
   let data = $derived(account.data);
 
-  // Connection-profile (transport) catalog from public config. `available` means
-  // the profile's Remnawave squad is bound; until at least one is bound (and the
+  // Connection-mode (transport) catalog from public config. `available` means
+  // the mode's placement pool is bound; until at least one is bound (and the
   // member has a key to re-issue) the picker is a local presentation preference
-  // only — choosing wouldn't change the issued squad, so we skip the server round-trip.
-  let boundProfiles = $derived(config.data?.connectionProfiles ?? []);
-  let profileAvailability = $derived({
-    evade: boundProfiles.find((p) => p.id === 'evade')?.available ?? false,
-    privacy: boundProfiles.find((p) => p.id === 'privacy')?.available ?? false,
-  });
+  // only — choosing wouldn't change the issued node, so we skip the server round-trip.
+  let connectionModes = $derived(config.data?.connectionModes ?? []);
+  let defaultModeId = $derived(
+    connectionModes.find((m) => m.isDefault)?.id ?? connectionModes[0]?.id ?? 'evade',
+  );
   let profileServerBacked = $derived(
-    !!data?.subscription && (profileAvailability.evade || profileAvailability.privacy),
+    !!data?.subscription && connectionModes.some((m) => m.available),
   );
 
-  // Delivery emphasis. Server-backed → the member's server-side profile is
+  // Delivery emphasis. Server-backed → the member's server-side mode is
   // authoritative (localStorage is just an optimistic bridge); otherwise the
-  // local device-only choice wins, then the server's country suggestion, else evade.
-  let effectiveDelivery = $derived<'privacy' | 'evade'>(
+  // local device-only choice wins, then the server's country suggestion, else default.
+  let effectiveModeId = $derived<string>(
     profileServerBacked
-      ? (data?.user.connectionProfileId ?? deliveryPref() ?? data?.suggestedDelivery ?? 'evade')
-      : (deliveryPref() ?? data?.suggestedDelivery ?? 'evade'),
+      ? (data?.user.connectionModeId ??
+          connectionModePref() ??
+          data?.suggestedModeId ??
+          defaultModeId)
+      : (connectionModePref() ?? data?.suggestedModeId ?? defaultModeId),
   );
 
-  // Profile title for toasts + the confirm dialog: an admin-set label from the
-  // public catalog overrides the translated copy verbatim (all locales, by
-  // design — the server ships null unless the admin actually set one); otherwise
-  // the SPA's i18n copy keyed off the profile id.
-  function profileLabel(id: 'privacy' | 'evade'): string {
-    const custom = boundProfiles.find((p) => p.id === id)?.label;
-    if (custom?.trim()) return custom;
-    return id === 'privacy' ? t('delivery.privacyTitle') : t('delivery.evadeTitle');
-  }
+  // The selected mode's delivery behavior (data-driven; replaces `=== 'privacy'`).
+  let rawConfigFirst = $derived(
+    connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle === 'rawConfig',
+  );
 
-  // Admin copy overrides for the picker cards (same rule as profileLabel).
-  let profileOverrides = $derived({
-    evade: {
-      title: boundProfiles.find((p) => p.id === 'evade')?.label ?? null,
-      body: boundProfiles.find((p) => p.id === 'evade')?.description ?? null,
-    },
-    privacy: {
-      title: boundProfiles.find((p) => p.id === 'privacy')?.label ?? null,
-      body: boundProfiles.find((p) => p.id === 'privacy')?.description ?? null,
-    },
-  });
+  // Mode title for toasts + the confirm dialog: an admin-set label from the
+  // catalog overrides the translated copy verbatim (all locales); otherwise the
+  // SPA's i18n copy for the known modes, else the id.
+  function modeLabel(id: string): string {
+    const custom = connectionModes.find((m) => m.id === id)?.label;
+    if (custom?.trim()) return custom;
+    if (id === 'privacy') return t('delivery.privacyTitle');
+    if (id === 'evade') return t('delivery.evadeTitle');
+    return id;
+  }
 
   // a11y: sonner toasts aren't reliably announced; this feeds a visually
   // hidden role="status" region so async outcomes are spoken once. Keep the
@@ -122,11 +118,11 @@
   // query updates `data.subscription.backend` to the new value.
   let pendingSwitchTarget = $state<'remnawave' | 'outline' | null>(null);
 
-  // Connection-profile switch (transport → squad). Mirrors the backend switch:
-  // a confirm dialog, then a re-issue with 24h grace. `pendingProfile` also drives
+  // Connection-mode switch (transport → node). Mirrors the backend switch: a
+  // confirm dialog, then a re-issue with 24h grace. `pendingModeId` also drives
   // the picker optimistically while the mutation + account refetch are in flight.
-  let switchProfileOpen = $state(false);
-  let pendingProfile = $state<'privacy' | 'evade' | null>(null);
+  let switchModeOpen = $state(false);
+  let pendingModeId = $state<string | null>(null);
 
   // 401 from /api/v1/account means the cookie session is missing or expired;
   // bounce to the account-number sign-in form (no OIDC anymore). The once-flag
@@ -286,43 +282,43 @@
     },
   }));
 
-  // Mutation: switch the connection profile (transport → Remnawave squad) within
-  // the same backend. Re-issues the key into the chosen profile's squad and
+  // Mutation: switch the connection mode (transport → node) within the same
+  // backend. Re-issues the key into the chosen mode's least-loaded node and
   // tombstones the old one with a 24h grace window (same saga as switch-backend).
-  const switchProfile = createMutation(() => ({
+  const switchMode = createMutation(() => ({
     mutationFn: () => {
-      if (!pendingProfile) throw new Error('No profile selected');
+      if (!pendingModeId) throw new Error('No mode selected');
       return apiClient.post(
-        '/api/v1/account/switch-profile',
-        { profile: pendingProfile, confirm: true },
+        '/api/v1/account/switch-mode',
+        { modeId: pendingModeId, confirm: true },
         z.object({
           subscriptionUrl: z.string(),
           shortUuid: z.string(),
-          profile: z.object({ id: z.enum(['evade', 'privacy']), label: z.string() }),
+          mode: z.object({ id: z.string(), label: z.string().nullable() }),
           // Null when there was no live previous subscription to tombstone.
           oldSubscriptionDeletedAt: z.string().nullable(),
         }),
       );
     },
     onSuccess: (result) => {
-      switchProfileOpen = false;
+      switchModeOpen = false;
       // Keep the local presentation hint in sync so the delivery panels don't
-      // flash the old focus before the account query returns the new profile.
-      setDeliveryPref(result.profile.id);
-      pendingProfile = null;
+      // flash the old focus before the account query returns the new mode.
+      setConnectionModePref(result.mode.id);
+      pendingModeId = null;
       void qc.invalidateQueries({ queryKey: queryKeys.account });
-      // Re-fetch the raw-config viewer (separate key). In privacy mode this
+      // Re-fetch the raw-config viewer (separate key). In rawConfig mode this
       // prominent block is the ONLY thing shown, so it must not stay stale.
       void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
-      liveMessage = t('delivery.switchSuccessTitle', { label: profileLabel(result.profile.id) });
-      toast.success(t('delivery.switchSuccessTitle', { label: profileLabel(result.profile.id) }), {
+      liveMessage = t('delivery.switchSuccessTitle', { label: modeLabel(result.mode.id) });
+      toast.success(t('delivery.switchSuccessTitle', { label: modeLabel(result.mode.id) }), {
         description: result.oldSubscriptionDeletedAt
           ? t('delivery.switchSuccessBodyGrace')
           : t('delivery.switchSuccessBody'),
       });
     },
     onError: (err) => {
-      pendingProfile = null;
+      pendingModeId = null;
       liveMessage = t('delivery.switchFailedTitle');
       toast.error(t('delivery.switchFailedTitle'), { description: apiErrorMessage(err) });
     },
@@ -330,14 +326,14 @@
 
   // The delivery picker's choice handler. Server-backed → open the confirm dialog
   // (a real key re-issue); otherwise it's a local device-only presentation toggle.
-  function chooseProfile(mode: 'privacy' | 'evade') {
+  function chooseMode(modeId: string) {
     if (!profileServerBacked) {
-      setDeliveryPref(mode);
+      setConnectionModePref(modeId);
       return;
     }
-    if (mode === effectiveDelivery || switchProfile.isPending || actionsDisabled) return;
-    pendingProfile = mode;
-    switchProfileOpen = true;
+    if (modeId === effectiveModeId || switchMode.isPending || actionsDisabled) return;
+    pendingModeId = modeId;
+    switchModeOpen = true;
   }
 
   // Mutation: revoke one HWID device (frees a slot under the tier's device cap
@@ -806,16 +802,15 @@
             </button>
           {/if}
 
-          <!-- Delivery focus: privacy promotes the raw E2EE config + warns the
-           subscription link is fetched through a CDN; evade keeps the link as the star. -->
+          <!-- Delivery focus: a rawConfig mode promotes the raw E2EE config + warns the
+           subscription link is fetched through a CDN; url modes keep the link as the star. -->
           <DeliveryPreference
-            selected={pendingProfile ?? effectiveDelivery}
-            suggested={data.suggestedDelivery}
+            modes={connectionModes}
+            selected={pendingModeId ?? effectiveModeId}
+            suggested={data.suggestedModeId}
             serverBacked={profileServerBacked}
-            available={profileAvailability}
-            busy={switchProfile.isPending}
-            onChoose={chooseProfile}
-            overrides={profileOverrides}
+            busy={switchMode.isPending}
+            onChoose={chooseMode}
           />
 
           {#if data.subscription}
@@ -835,21 +830,21 @@
               lastResetAt={data.subscription.lastResetAt}
               tierName={data.user.tier.name}
               backend={data.subscription.backend}
-              hideUrl={effectiveDelivery === 'privacy'}
+              hideUrl={rawConfigFirst}
               usagePoints={usage.data?.usage?.points}
               usageTotal={usage.data?.usage?.total}
             />
-            {#if effectiveDelivery === 'privacy'}
-              <!-- Privacy: the raw config IS the deliverable (the CDN-fetched link is
-               hidden above). No public mirrors — they'd expose the config to third parties. -->
+            {#if rawConfigFirst}
+              <!-- rawConfig mode: the raw config IS the deliverable (the CDN-fetched link
+               is hidden above). No public mirrors — they'd expose the config to third parties. -->
               <RawConfig prominent />
               <ConnectClient
                 backend={data.subscription.backend}
-                privacy
+                rawConfigFirst
                 deviceLimited={data.user.tier.deviceLimited ?? false}
               />
             {:else}
-              <!-- Stay connected: the subscription link is the star; mirrors next, raw config secondary. -->
+              <!-- url mode: the subscription link is the star; mirrors next, raw config secondary. -->
               <ConnectClient
                 backend={data.subscription.backend}
                 subscriptionUrl={subUrl}
@@ -1130,17 +1125,17 @@
           busy={switchBackend.isPending}
         />
       {/if}
-      {#if pendingProfile}
-        <SwitchProfileModal
-          bind:open={switchProfileOpen}
-          targetLabel={profileLabel(pendingProfile)}
+      {#if pendingModeId}
+        <SwitchModeModal
+          bind:open={switchModeOpen}
+          targetLabel={modeLabel(pendingModeId)}
           deviceCount={data.subscription.devices.length}
           onCancel={() => {
-            switchProfileOpen = false;
-            pendingProfile = null;
+            switchModeOpen = false;
+            pendingModeId = null;
           }}
-          onConfirm={() => switchProfile.mutate()}
-          busy={switchProfile.isPending}
+          onConfirm={() => switchMode.mutate()}
+          busy={switchMode.isPending}
         />
       {/if}
       {#if revokeTargetHwid}

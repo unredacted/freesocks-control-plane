@@ -15,6 +15,11 @@ import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
+import {
+  CONNECTION_MODES,
+  DEFAULT_CONNECTION_MODE,
+  isConnectionModeId,
+} from './lib/connectionModes';
 import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sealed } from './lib/e2ee';
@@ -565,9 +570,16 @@ http.route({
     const geoCountry = resolveCountry(req);
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const privacyCountries = (settings['delivery.privacyCountries'] as string[] | undefined) ?? [];
-    const suggestedDelivery =
-      geoCountry && privacyCountries.includes(geoCountry) ? 'privacy' : 'evade';
-    return json({ ...view, geoCountry, suggestedDelivery });
+    // Suggest the hardened (rawConfig) mode for the admin-listed countries, else
+    // the catalog default. Data-driven off the mode catalog; the choice itself
+    // stays client-side and the country list never leaves the server.
+    const hardenedModeId =
+      CONNECTION_MODES.find((m) => m.deliveryStyle === 'rawConfig')?.id ?? DEFAULT_CONNECTION_MODE;
+    const suggestedModeId =
+      geoCountry && privacyCountries.includes(geoCountry)
+        ? hardenedModeId
+        : DEFAULT_CONNECTION_MODE;
+    return json({ ...view, geoCountry, suggestedModeId });
   }),
 });
 
@@ -759,46 +771,46 @@ http.route({
   }),
 });
 
-// Set the member's connection focus WITHOUT re-issuing — used at sign-up, before
-// the first key exists, so that first key is issued into the chosen profile's
-// squad. A member who already HAS a key changes focus via /switch-profile (which
-// re-issues); this plain set only records the preference. Not sealed (the profile
-// id is not a secret).
+// Set the member's connection mode WITHOUT re-issuing — used at sign-up, before
+// the first key exists, so that first key is issued into the chosen mode's
+// placement. A member who already HAS a key changes it via /switch-mode (which
+// re-issues); this plain set only records the preference. Not sealed (the mode
+// id is not a secret). The id is validated against the live mode catalog.
 http.route({
-  path: '/api/v1/account/connection-profile',
+  path: '/api/v1/account/connection-mode',
   method: 'POST',
   handler: guard(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const body = await readJson<{ profile?: 'evade' | 'privacy' }>(req);
-    if (body.profile !== 'evade' && body.profile !== 'privacy') {
-      return errorJson('validation', 'profile must be "evade" or "privacy"', 400);
+    const body = await readJson<{ modeId?: string }>(req);
+    if (!isConnectionModeId(body.modeId)) {
+      return errorJson('validation', 'unknown connection mode', 400);
     }
-    await ctx.runMutation(internal.users.setConnectionProfile, {
+    await ctx.runMutation(internal.users.setConnectionMode, {
       userId: member.userId,
-      profileId: body.profile,
+      modeId: body.modeId,
     });
-    return json({ ok: true, profile: body.profile });
+    return json({ ok: true, modeId: body.modeId });
   }),
 });
 
-// Switch the member's connection profile (transport → squad) within the same
-// backend. Same saga shape as switch-backend (re-issue + tombstone); the reveal
-// leg is sealed (SEALED_ROUTES) since the response carries the new subscription URL.
+// Switch the member's connection mode (transport) within the same backend. Same
+// saga shape as switch-backend (re-issue + tombstone); the reveal leg is sealed
+// (SEALED_ROUTES) since the response carries the new subscription URL.
 http.route({
-  path: '/api/v1/account/switch-profile',
+  path: '/api/v1/account/switch-mode',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const body = await readJson<{ profile?: 'evade' | 'privacy'; confirm?: boolean }>(req);
-    if (body.profile !== 'evade' && body.profile !== 'privacy') {
-      return errorJson('validation', 'profile must be "evade" or "privacy"', 400);
+    const body = await readJson<{ modeId?: string; confirm?: boolean }>(req);
+    if (!isConnectionModeId(body.modeId)) {
+      return errorJson('validation', 'unknown connection mode', 400);
     }
     if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
-    const target = body.profile;
-    return withIssuanceSaga(ctx, member.userId, 'account.switch-profile', async (requestId) => {
-      const result = await ctx.runAction(internal.account.switchProfile, {
+    const target = body.modeId;
+    return withIssuanceSaga(ctx, member.userId, 'account.switch-mode', async (requestId) => {
+      const result = await ctx.runAction(internal.account.switchMode, {
         userId: member.userId,
         target,
         requestId,
@@ -2103,12 +2115,14 @@ http.route({
   }),
 });
 
-// Set the connection-profile catalog (per-profile label + squad binding + the
-// default). The Ansible panel-bootstrap PATCHes this to bind the fronted/Reality
-// squads it creates (dual-mode: an fsv1_ token with admin:settings:write works);
-// also editable in the admin CMS. Squad UUIDs are write-only (never read back).
+// Set the connection-mode catalog (per-mode label/description + the default) and
+// the per-mode Remnawave placement pool. The Ansible panel-bootstrap PATCHes this
+// to bind the squads it creates (dual-mode: an fsv1_ token with
+// admin:settings:write works); also editable in the admin CMS. Squad UUIDs are
+// write-only (never read back). (The placement pool moves to the namespaced
+// /admin/remnawave/* endpoint in a later phase.)
 http.route({
-  path: '/api/v1/admin/connection-profiles',
+  path: '/api/v1/admin/connection-modes',
   method: 'PATCH',
   handler: sealed(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
@@ -2116,7 +2130,7 @@ http.route({
     const body = await readJson<Record<string, unknown>>(req);
     try {
       return json(
-        await ctx.runMutation(internal.adminApi.setConnectionProfiles, {
+        await ctx.runMutation(internal.adminApi.setConnectionModes, {
           patch: body,
           actorAdminId: admin.adminUserId,
         }),

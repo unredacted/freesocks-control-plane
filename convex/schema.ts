@@ -140,10 +140,14 @@ export default defineSchema({
     // admin "backend drift" signal so otherwise-silent entitlement drift (a paid
     // upgrade that never reached the panel, a disable the key ignored) is visible.
     backendPushFailedAt: v.optional(v.number()),
-    // Member-chosen connection profile (transport → Remnawave squad), orthogonal
-    // to the entitlement tier: the tier sets limits, this selects which squad the
-    // key issues into. Unset → the catalog default (see lib/connectionProfiles.ts).
-    // Additive/optional; legacy rows + new free signups default cleanly.
+    // Member-chosen connection mode (transport), orthogonal to the entitlement
+    // tier: the tier sets limits, this selects which backend placement the key
+    // issues into. A plain string validated against the mode catalog (see
+    // lib/connectionModes.ts), unset → the catalog default. Additive/optional.
+    connectionModeId: v.optional(v.string()),
+    // DEPRECATED (dropped in the connection-mode cutover, Phase 5): the old
+    // enum field. Kept additive during migration; migrateUserConnectionMode
+    // copies it into connectionModeId then strips it.
     connectionProfileId: v.optional(v.union(v.literal('evade'), v.literal('privacy'))),
     updatedAt: v.number(),
   })

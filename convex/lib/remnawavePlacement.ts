@@ -10,6 +10,113 @@
  * sees a squad or a node.
  */
 import type { DatabaseReader } from '../_generated/server';
+import {
+  CONNECTION_MODE_KEYS,
+  DEFAULT_CONNECTION_MODE,
+  isConnectionModeId,
+} from './connectionModes';
+
+// The per-mode squad pool a mode's keys are placed across. Remnawave-specific
+// (squad UUIDs); relocated to remnawave.modePlacement.* + edited via the
+// /admin/remnawave/* endpoint in the namespaced-surface phase. For now it sits
+// alongside the mode catalog under connectionMode.<id>.squadUuids.
+const POOL_KEY_SUFFIX = '.squadUuids';
+const MODE_POOL_KEY = (id: string) => `connectionMode.${id}${POOL_KEY_SUFFIX}`;
+
+/** Fail-safe parse of a stored squad pool: a JSON array of non-empty strings,
+ *  de-duplicated in declaration order; anything else resolves to []. */
+function sanitizePool(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry === 'string' && entry.trim() && !out.includes(entry)) out.push(entry);
+  }
+  return out;
+}
+
+async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
+  const row = await db
+    .query('appSettings')
+    .withIndex('by_key', (q) => q.eq('key', key))
+    .unique();
+  if (!row) return undefined;
+  try {
+    return JSON.parse(row.value);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The squad pool a mode issues into. When the member has made no explicit
+ *  choice (id null/invalid), resolves the DEFAULT mode's pool — a new member
+ *  follows the catalog default. Returns [] when the resolved mode has no pool
+ *  bound (caller then falls back to the tier squad). */
+export async function resolveModeSquadPool(
+  db: DatabaseReader,
+  modeId: string | null | undefined,
+): Promise<string[]> {
+  const id = isConnectionModeId(modeId)
+    ? modeId
+    : isConnectionModeId(await readSetting(db, CONNECTION_MODE_KEYS.defaultId))
+      ? ((await readSetting(db, CONNECTION_MODE_KEYS.defaultId)) as string)
+      : DEFAULT_CONNECTION_MODE;
+  return sanitizePool(await readSetting(db, MODE_POOL_KEY(id)));
+}
+
+/** Deterministic first-of-pool for a mode (declaration order) — used by the
+ *  tier-push preserve fallback for rows with no persisted placement. */
+export async function resolveModePlacementStable(
+  db: DatabaseReader,
+  modeId: string | null | undefined,
+): Promise<string | null> {
+  return (await resolveModeSquadPool(db, modeId))[0] ?? null;
+}
+
+/** The set of mode ids that have ≥1 squad bound — drives the public `available`
+ *  flag. Reads only the pool keys (one range scan over the mode namespace). */
+export async function resolveBoundModeIds(db: DatabaseReader): Promise<Set<string>> {
+  const rows = await db
+    .query('appSettings')
+    .withIndex('by_key', (q) => q.gte('key', 'connectionMode.').lt('key', 'connectionMode/'))
+    .collect();
+  const bound = new Set<string>();
+  for (const r of rows) {
+    if (!r.key.endsWith(POOL_KEY_SUFFIX)) continue;
+    const id = r.key.slice('connectionMode.'.length, -POOL_KEY_SUFFIX.length);
+    try {
+      if (sanitizePool(JSON.parse(r.value)).length > 0) bound.add(id);
+    } catch {
+      /* malformed → not bound */
+    }
+  }
+  return bound;
+}
+
+/**
+ * Admin PATCH → the per-mode squad-pool appSettings writes (Remnawave-specific).
+ * Validates each mode id + that the pool is an array of non-empty strings; an
+ * empty array clears the pool. Throws on a malformed patch. Returns the key/value
+ * pairs the mutation persists.
+ */
+export function modePlacementWrites(patch: unknown): Array<{ key: string; value: string }> {
+  if (!patch || typeof patch !== 'object') {
+    throw new Error('mode-placement patch must be an object');
+  }
+  const modes = ((patch as Record<string, unknown>).modes ?? {}) as Record<string, unknown>;
+  const writes: Array<{ key: string; value: string }> = [];
+  for (const id of Object.keys(modes)) {
+    if (!isConnectionModeId(id)) continue;
+    const entry = modes[id];
+    if (!entry || typeof entry !== 'object') continue;
+    const squads = (entry as Record<string, unknown>).squadUuids;
+    if (squads === undefined) continue;
+    if (!Array.isArray(squads) || squads.some((s) => typeof s !== 'string' || !s.trim())) {
+      throw new Error('squadUuids must be an array of non-empty strings');
+    }
+    writes.push({ key: MODE_POOL_KEY(id), value: JSON.stringify(sanitizePool(squads)) });
+  }
+  return writes;
+}
 
 // A node-load snapshot older than this is treated as unknown load (the
 // healthcheck cron refreshes every 10 min; 30 min matches the instance pool's

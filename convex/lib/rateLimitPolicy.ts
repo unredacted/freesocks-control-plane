@@ -40,7 +40,7 @@ export const RATE_LIMIT_DEFAULTS = {
   // Authenticated member issuance actions (each mints/replaces a backend key).
   'account.regenerate': { max: 10, windowMs: HOUR, enabled: true },
   'account.switch-backend': { max: 10, windowMs: HOUR, enabled: true },
-  'account.switch-profile': { max: 10, windowMs: HOUR, enabled: true },
+  'account.switch-mode': { max: 10, windowMs: HOUR, enabled: true },
   'account.refresh-membership': { max: 1, windowMs: 30_000, enabled: true },
   // Account-number rotation mints a fresh credential; throttle hard vs. churn.
   'account.rotate': { max: 5, windowMs: HOUR, enabled: true },

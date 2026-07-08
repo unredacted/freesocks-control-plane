@@ -5,7 +5,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import { maskApiUrl } from './adminApi';
 import { resolveTheme } from './lib/themeConfig';
-import { resolveConnectionProfiles } from './lib/connectionProfiles';
+import { resolveModeSquadPool } from './lib/remnawavePlacement';
 import { UserAdmin, AdminStatusSummary } from '../src/shared/contracts/admin';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -902,29 +902,30 @@ describe('adminApi setTheme + resolveTheme', () => {
   });
 });
 
-describe('adminApi setConnectionProfiles', () => {
-  test('binds squad + label + default; the returned view is squad-BOUND, never the uuid', async () => {
+describe('adminApi setConnectionModes', () => {
+  test('binds pool + label + default; the returned view is BOUND, never the uuid', async () => {
     const t = convexTest(schema, modules);
-    const out = await t.mutation(internal.adminApi.setConnectionProfiles, {
+    const out = await t.mutation(internal.adminApi.setConnectionModes, {
       patch: {
         default: 'privacy',
-        profiles: {
-          evade: { squadUuid: 'fronted-squad-uuid' },
+        modes: {
+          evade: { squadUuids: ['fronted-squad-uuid'] },
           privacy: {
-            squadUuid: 'reality-squad-uuid',
+            squadUuids: ['reality-squad-uuid'],
             label: 'Max privacy',
             description: 'Direct Reality, no CDN in the path.',
           },
         },
       },
     });
-    const priv = out.profiles.find((p) => p.id === 'privacy')!;
-    expect(priv.squadBound).toBe(true);
+    const priv = out.modes.find((m) => m.id === 'privacy')!;
+    expect(priv.bound).toBe(true);
     expect(priv.label).toBe('Max privacy');
     expect(priv.description).toBe('Direct Reality, no CDN in the path.');
+    expect(priv.deliveryStyle).toBe('rawConfig');
     expect(priv.isDefault).toBe(true);
-    const evade = out.profiles.find((p) => p.id === 'evade')!;
-    expect(evade.squadBound).toBe(true);
+    const evade = out.modes.find((m) => m.id === 'evade')!;
+    expect(evade.bound).toBe(true);
     // No custom copy set on evade → nulls (never the compiled English default,
     // which would round-trip through the admin form and pin English over i18n).
     expect(evade.label).toBeNull();
@@ -933,27 +934,28 @@ describe('adminApi setConnectionProfiles', () => {
     expect(JSON.stringify(out)).not.toContain('reality-squad-uuid');
     expect(JSON.stringify(out)).not.toContain('fronted-squad-uuid');
 
-    // Server-only resolver reads the bound squads back (the issuance path).
-    const resolved = await t.run((ctx) => resolveConnectionProfiles(ctx.db));
-    expect(resolved.find((p) => p.id === 'privacy')!.squadUuid).toBe('reality-squad-uuid');
-    expect(resolved.find((p) => p.id === 'evade')!.squadUuid).toBe('fronted-squad-uuid');
+    // Server-only resolver reads the bound pools back (the issuance path).
+    const priv2 = await t.run((ctx) => resolveModeSquadPool(ctx.db, 'privacy'));
+    expect(priv2).toEqual(['reality-squad-uuid']);
+    const evade2 = await t.run((ctx) => resolveModeSquadPool(ctx.db, 'evade'));
+    expect(evade2).toEqual(['fronted-squad-uuid']);
   });
 
-  test('audits a squad bind as a boolean, never the uuid', async () => {
+  test('audits a pool bind as a boolean, never the uuid', async () => {
     const t = convexTest(schema, modules);
-    await t.mutation(internal.adminApi.setConnectionProfiles, {
-      patch: { profiles: { privacy: { squadUuid: 'super-secret-squad' } } },
+    await t.mutation(internal.adminApi.setConnectionModes, {
+      patch: { modes: { privacy: { squadUuids: ['super-secret-squad'] } } },
     });
     const audit = await t.run((ctx) =>
       ctx.db
         .query('auditLog')
-        .withIndex('by_action', (q) => q.eq('action', 'admin.connection_profile.update'))
+        .withIndex('by_action', (q) => q.eq('action', 'admin.connection_mode.update'))
         .collect(),
     );
     expect(audit).toHaveLength(1);
     expect(audit[0]!.payload).toMatchObject({
-      key: 'connectionProfile.privacy.squadUuid',
-      squadBound: true,
+      key: 'connectionMode.privacy.squadUuids',
+      poolBound: true,
     });
     expect(JSON.stringify(audit[0]!.payload)).not.toContain('super-secret-squad');
   });
@@ -961,11 +963,11 @@ describe('adminApi setConnectionProfiles', () => {
   test('rejects a bad default id and an empty patch', async () => {
     const t = convexTest(schema, modules);
     await expect(
-      t.mutation(internal.adminApi.setConnectionProfiles, { patch: { default: 'nope' } }),
-    ).rejects.toThrow(/invalid default profile id/i);
+      t.mutation(internal.adminApi.setConnectionModes, { patch: { default: 'nope' } }),
+    ).rejects.toThrow(/invalid default mode id/i);
     await expect(
-      t.mutation(internal.adminApi.setConnectionProfiles, { patch: { profiles: {} } }),
-    ).rejects.toThrow(/no recognized connection-profile fields/i);
+      t.mutation(internal.adminApi.setConnectionModes, { patch: { modes: {} } }),
+    ).rejects.toThrow(/no recognized connection-mode fields/i);
   });
 });
 

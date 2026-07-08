@@ -40,9 +40,10 @@ export const AccountResponse = z.object({
         isCurrent: z.boolean(),
       })
       .nullable(),
-    /** The member's chosen connection profile (transport). The server sends the
-     *  resolved catalog default when unset. Optional for rolling-deploy compat. */
-    connectionProfileId: z.enum(['evade', 'privacy']).optional(),
+    /** The member's chosen connection mode (transport) id. The server sends the
+     *  resolved catalog default when unset. A plain string (data-driven catalog).
+     *  Optional for rolling-deploy compat. */
+    connectionModeId: z.string().optional(),
     createdAt: z.string().datetime(),
   }),
   subscription: z
@@ -95,11 +96,12 @@ export const AccountResponse = z.object({
    */
   geoCountry: z.string().nullable().optional(),
   /**
-   * Server's country-based RECOMMENDATION for the delivery preference: 'privacy'
-   * only for the admin-listed `delivery.privacyCountries`, else 'evade'. Just the
-   * highlighted default in the picker — the member's actual choice is client-side.
+   * Server's country-based RECOMMENDATION for the connection mode: the hardened
+   * (rawConfig) mode id only for the admin-listed `delivery.privacyCountries`,
+   * else the catalog default. Just the highlighted default in the picker — the
+   * member's actual choice is client-side. A plain string (data-driven catalog).
    */
-  suggestedDelivery: z.enum(['privacy', 'evade']).optional(),
+  suggestedModeId: z.string().nullable().optional(),
 });
 export type AccountResponse = z.infer<typeof AccountResponse>;
 
@@ -178,21 +180,21 @@ export const SwitchBackendResponse = z.object({
 });
 export type SwitchBackendResponse = z.infer<typeof SwitchBackendResponse>;
 
-export const SwitchProfileRequest = z.object({
-  profile: z.enum(['evade', 'privacy']),
+export const SwitchModeRequest = z.object({
+  modeId: z.string(),
   confirm: z.literal(true),
 });
-export type SwitchProfileRequest = z.infer<typeof SwitchProfileRequest>;
+export type SwitchModeRequest = z.infer<typeof SwitchModeRequest>;
 
-export const SwitchProfileResponse = z.object({
+export const SwitchModeResponse = z.object({
   subscriptionUrl: z.string().url(),
   shortUuid: z.string(),
-  profile: z.object({ id: z.enum(['evade', 'privacy']), label: z.string() }),
+  mode: z.object({ id: z.string(), label: z.string().nullable() }),
   /** ISO timestamp the previous key stops working (24h grace); null when there
    *  was no live previous subscription to tombstone (see SwitchBackendResponse). */
   oldSubscriptionDeletedAt: z.string().datetime().nullable(),
 });
-export type SwitchProfileResponse = z.infer<typeof SwitchProfileResponse>;
+export type SwitchModeResponse = z.infer<typeof SwitchModeResponse>;
 
 /**
  * Revoke one of the member's HWID devices (frees a slot under the tier's device

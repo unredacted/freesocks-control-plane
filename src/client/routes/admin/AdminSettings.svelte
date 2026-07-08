@@ -127,12 +127,12 @@
     },
   }));
 
-  // Connection profiles (transport → Remnawave squad), own namespace like theme /
-  // verification. Squad UUIDs are WRITE-ONLY: publicConfig exposes only `available`
-  // (bound?), never the value, so the squad inputs start blank and a blank leaves
-  // the current binding untouched (keep-secret-on-blank, like backend credentials).
+  // Connection modes (transport). Squad UUIDs (the Remnawave placement pool) are
+  // WRITE-ONLY: publicConfig exposes only `available` (pool bound?), never the
+  // value, so the squad inputs start blank and a blank leaves the current binding
+  // untouched (keep-secret-on-blank, like backend credentials).
   let cpDraft = $state<{
-    default: 'evade' | 'privacy';
+    default: string;
     evadeLabel: string;
     privacyLabel: string;
     evadeDescription: string;
@@ -150,26 +150,26 @@
   });
   let cpInit = $state(false);
   $effect(() => {
-    const profiles = cfg.data?.connectionProfiles;
-    if (profiles && profiles.length > 0 && !cpInit) {
+    const modes = cfg.data?.connectionModes;
+    if (modes && modes.length > 0 && !cpInit) {
       // label/description arrive null unless the admin set them (blank input =
       // members see the app's own translated copy).
       cpDraft = {
-        default: profiles.find((p) => p.isDefault)?.id ?? 'evade',
-        evadeLabel: profiles.find((p) => p.id === 'evade')?.label ?? '',
-        privacyLabel: profiles.find((p) => p.id === 'privacy')?.label ?? '',
-        evadeDescription: profiles.find((p) => p.id === 'evade')?.description ?? '',
-        privacyDescription: profiles.find((p) => p.id === 'privacy')?.description ?? '',
+        default: modes.find((m) => m.isDefault)?.id ?? 'evade',
+        evadeLabel: modes.find((m) => m.id === 'evade')?.label ?? '',
+        privacyLabel: modes.find((m) => m.id === 'privacy')?.label ?? '',
+        evadeDescription: modes.find((m) => m.id === 'evade')?.description ?? '',
+        privacyDescription: modes.find((m) => m.id === 'privacy')?.description ?? '',
         evadeSquad: '',
         privacySquad: '',
       };
       cpInit = true;
     }
   });
-  // Live "is this profile's squad bound?" straight from config (never the uuid).
+  // Live "is this mode's placement pool bound?" straight from config (never the uuid).
   let cpAvailable = $derived({
-    evade: cfg.data?.connectionProfiles?.find((p) => p.id === 'evade')?.available ?? false,
-    privacy: cfg.data?.connectionProfiles?.find((p) => p.id === 'privacy')?.available ?? false,
+    evade: cfg.data?.connectionModes?.find((m) => m.id === 'evade')?.available ?? false,
+    privacy: cfg.data?.connectionModes?.find((m) => m.id === 'privacy')?.available ?? false,
   });
   // Per-placement node load (users online, stamped by the
   // healthcheck cron) — the read-only window into whether a pool is balancing.
@@ -186,32 +186,30 @@
   const saveConnectionProfiles = createMutation(() => ({
     mutationFn: async () => {
       const CpResp = z.object({
-        profiles: z.array(
+        modes: z.array(
           z.object({
-            id: z.enum(['evade', 'privacy']),
+            id: z.string(),
             label: z.string().nullable(),
             description: z.string().nullable(),
+            deliveryStyle: z.enum(['url', 'rawConfig']),
             isDefault: z.boolean(),
-            squadBound: z.boolean(),
+            bound: z.boolean(),
           }),
         ),
       });
-      const profiles: {
-        evade: { label: string; description: string; squadUuids?: string[] };
-        privacy: { label: string; description: string; squadUuids?: string[] };
-      } = {
+      const modes: Record<string, { label: string; description: string; squadUuids?: string[] }> = {
         evade: { label: cpDraft.evadeLabel, description: cpDraft.evadeDescription },
         privacy: { label: cpDraft.privacyLabel, description: cpDraft.privacyDescription },
       };
       // Only send squads when the admin typed any — blank keeps the current
-      // binding. One UUID per line; 2+ = a load-balanced pool.
+      // binding. One UUID per line; 2+ = a load-balanced node pool.
       const evadeSquads = parseSquadList(cpDraft.evadeSquad);
       const privacySquads = parseSquadList(cpDraft.privacySquad);
-      if (evadeSquads.length > 0) profiles.evade.squadUuids = evadeSquads;
-      if (privacySquads.length > 0) profiles.privacy.squadUuids = privacySquads;
+      if (evadeSquads.length > 0) modes.evade!.squadUuids = evadeSquads;
+      if (privacySquads.length > 0) modes.privacy!.squadUuids = privacySquads;
       return apiClient.patch(
-        '/api/v1/admin/connection-profiles',
-        { default: cpDraft.default, profiles },
+        '/api/v1/admin/connection-modes',
+        { default: cpDraft.default, modes },
         CpResp,
       );
     },
@@ -219,19 +217,19 @@
       // Reset the write-only squad inputs; refresh config so `available` + labels update.
       // label/description come back null when cleared — reflect that as blank inputs.
       cpDraft = {
-        default: updated.profiles.find((p) => p.isDefault)?.id ?? cpDraft.default,
-        evadeLabel: updated.profiles.find((p) => p.id === 'evade')?.label ?? '',
-        privacyLabel: updated.profiles.find((p) => p.id === 'privacy')?.label ?? '',
-        evadeDescription: updated.profiles.find((p) => p.id === 'evade')?.description ?? '',
-        privacyDescription: updated.profiles.find((p) => p.id === 'privacy')?.description ?? '',
+        default: updated.modes.find((m) => m.isDefault)?.id ?? cpDraft.default,
+        evadeLabel: updated.modes.find((m) => m.id === 'evade')?.label ?? '',
+        privacyLabel: updated.modes.find((m) => m.id === 'privacy')?.label ?? '',
+        evadeDescription: updated.modes.find((m) => m.id === 'evade')?.description ?? '',
+        privacyDescription: updated.modes.find((m) => m.id === 'privacy')?.description ?? '',
         evadeSquad: '',
         privacySquad: '',
       };
       void qc.invalidateQueries({ queryKey: queryKeys.config });
-      toast.success('Connection profiles saved');
+      toast.success('Connection modes saved');
     },
     onError: (err) => {
-      toast.error('Could not save connection profiles', { description: apiErrorMessage(err) });
+      toast.error('Could not save connection modes', { description: apiErrorMessage(err) });
     },
   }));
 </script>
