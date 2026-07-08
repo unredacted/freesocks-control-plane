@@ -387,7 +387,9 @@
   "footer": {
     "operatedPrefix": "Operated by",
     "operatedSuffix": ", a US 501(c)(3) nonprofit",
-    "viewSource": "View source"
+    "viewSource": "View source",
+    "terms": "Terms of Service",
+    "privacy": "Privacy Policy"
   },
   "renew": {
     "expiringTitle": "Your membership is expiring soon",

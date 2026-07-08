@@ -205,6 +205,8 @@ export type MessageKey =
   | "faq.title"
   | "footer.operatedPrefix"
   | "footer.operatedSuffix"
+  | "footer.privacy"
+  | "footer.terms"
   | "footer.viewSource"
   | "get.accountReady"
   | "get.backendAria"

@@ -131,7 +131,16 @@
     bannerText: string;
     repoEnabled: boolean;
     repoUrl: string;
-  }>({ bannerEnabled: false, bannerText: '', repoEnabled: false, repoUrl: '' });
+    tosUrl: string;
+    privacyUrl: string;
+  }>({
+    bannerEnabled: false,
+    bannerText: '',
+    repoEnabled: false,
+    repoUrl: '',
+    tosUrl: '',
+    privacyUrl: '',
+  });
   let sInit = $state(false);
   $effect(() => {
     const s = cfg.data?.site;
@@ -141,6 +150,8 @@
         bannerText: s.bannerText,
         repoEnabled: s.repoEnabled,
         repoUrl: s.repoUrl,
+        tosUrl: s.tosUrl,
+        privacyUrl: s.privacyUrl,
       };
       sInit = true;
     }
@@ -152,6 +163,8 @@
         bannerText: z.string(),
         repoEnabled: z.boolean(),
         repoUrl: z.string(),
+        tosUrl: z.string(),
+        privacyUrl: z.string(),
       });
       return apiClient.patch('/api/v1/admin/site', sDraft, Resp);
     },
@@ -589,9 +602,10 @@
         <CardHeader>
           <CardTitle class="text-base">Site banner & footer link</CardTitle>
           <CardDescription>
-            A site-wide announcement banner shown to members (e.g. planned maintenance), and a "View
-            source" link in the page footer. Both are optional and off by default. Banner text is
-            shown as-is in every language (not translated).
+            A site-wide announcement banner shown to members (e.g. planned maintenance), and footer
+            links: a "View source" repo link plus optional Terms of Service and Privacy Policy
+            links. All are optional and off/empty by default. Banner text is shown as-is in every
+            language (not translated).
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-3 text-sm">
@@ -632,6 +646,33 @@
               oninput={(e) =>
                 (sDraft = { ...sDraft, repoUrl: (e.target as HTMLInputElement).value })}
             />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-tos-url">
+              Terms of Service URL (https)
+            </label>
+            <Input
+              id="site-tos-url"
+              placeholder="https://example.org/terms"
+              value={sDraft.tosUrl}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, tosUrl: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-privacy-url">
+              Privacy Policy URL (https)
+            </label>
+            <Input
+              id="site-privacy-url"
+              placeholder="https://example.org/privacy"
+              value={sDraft.privacyUrl}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, privacyUrl: (e.target as HTMLInputElement).value })}
+            />
+            <p class="text-xs text-muted-foreground mt-1">
+              Leave a URL blank to hide that footer link. Both must be https.
+            </p>
           </div>
           <div class="flex justify-end">
             <Button onclick={() => saveSite.mutate()} disabled={saveSite.isPending}>

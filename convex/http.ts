@@ -2034,6 +2034,8 @@ http.route({
       bannerText?: string;
       repoEnabled?: boolean;
       repoUrl?: string;
+      tosUrl?: string;
+      privacyUrl?: string;
     }>(req);
     try {
       return json(
@@ -2042,6 +2044,8 @@ http.route({
           bannerText: typeof body.bannerText === 'string' ? body.bannerText : '',
           repoEnabled: body.repoEnabled === true,
           repoUrl: typeof body.repoUrl === 'string' ? body.repoUrl : '',
+          tosUrl: typeof body.tosUrl === 'string' ? body.tosUrl : '',
+          privacyUrl: typeof body.privacyUrl === 'string' ? body.privacyUrl : '',
           actorAdminId: admin.adminUserId,
         }),
       );

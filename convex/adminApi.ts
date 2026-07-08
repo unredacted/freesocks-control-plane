@@ -1713,14 +1713,21 @@ export const setSiteConfig = internalMutation({
     bannerText: v.string(),
     repoEnabled: v.boolean(),
     repoUrl: v.string(),
+    tosUrl: v.string(),
+    privacyUrl: v.string(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { bannerEnabled, bannerText, repoEnabled, repoUrl, actorAdminId }) => {
+  handler: async (
+    ctx,
+    { bannerEnabled, bannerText, repoEnabled, repoUrl, tosUrl, privacyUrl, actorAdminId },
+  ) => {
     const clean = {
       bannerEnabled,
       bannerText: sanitizeBannerText(bannerText),
       repoEnabled,
       repoUrl: sanitizeHttpsUrl(repoUrl),
+      tosUrl: sanitizeHttpsUrl(tosUrl),
+      privacyUrl: sanitizeHttpsUrl(privacyUrl),
     };
     await upsertSetting(
       ctx,
@@ -1731,6 +1738,8 @@ export const setSiteConfig = internalMutation({
     await upsertSetting(ctx, 'site.bannerText', JSON.stringify(clean.bannerText), actorAdminId);
     await upsertSetting(ctx, 'site.repoEnabled', JSON.stringify(clean.repoEnabled), actorAdminId);
     await upsertSetting(ctx, 'site.repoUrl', JSON.stringify(clean.repoUrl), actorAdminId);
+    await upsertSetting(ctx, 'site.tosUrl', JSON.stringify(clean.tosUrl), actorAdminId);
+    await upsertSetting(ctx, 'site.privacyUrl', JSON.stringify(clean.privacyUrl), actorAdminId);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,

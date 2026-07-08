@@ -162,6 +162,8 @@ export const PublicConfig = z.object({
       bannerText: z.string(),
       repoEnabled: z.boolean(),
       repoUrl: z.string(),
+      tosUrl: z.string(),
+      privacyUrl: z.string(),
     })
     .optional(),
   /** Member-facing connection-mode catalog (the transport chooser): id +

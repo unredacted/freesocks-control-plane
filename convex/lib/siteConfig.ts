@@ -21,6 +21,10 @@ export interface SiteConfig {
   repoEnabled: boolean;
   /** Public source-repo URL shown in the footer (https-only); '' = unset (hidden). */
   repoUrl: string;
+  /** Public Terms of Service URL shown in the footer (https-only); '' = unset (hidden). */
+  tosUrl: string;
+  /** Public Privacy Policy URL shown in the footer (https-only); '' = unset (hidden). */
+  privacyUrl: string;
 }
 
 export const SITE_DEFAULTS: SiteConfig = {
@@ -28,6 +32,8 @@ export const SITE_DEFAULTS: SiteConfig = {
   bannerText: '',
   repoEnabled: false,
   repoUrl: '',
+  tosUrl: '',
+  privacyUrl: '',
 };
 
 const MAX_BANNER = 280;
@@ -64,5 +70,7 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
     repoEnabled: typeof repoEnabledVal === 'boolean' ? repoEnabledVal : SITE_DEFAULTS.repoEnabled,
     // https-only (rejects `javascript:`/`data:`) so it's safe to render as an <a href>.
     repoUrl: sanitizeHttpsUrl(await read('site.repoUrl')),
+    tosUrl: sanitizeHttpsUrl(await read('site.tosUrl')),
+    privacyUrl: sanitizeHttpsUrl(await read('site.privacyUrl')),
   };
 }
