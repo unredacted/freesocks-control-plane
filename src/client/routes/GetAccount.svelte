@@ -23,7 +23,7 @@
   import { CreateAccountRequest, CreateAccountResponse } from '../../shared/contracts/account';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import KeyIcon from '@lucide/svelte/icons/key-round';
+  import SocksIcon from '../components/SocksIcon.svelte';
   import CheckCircle from '@lucide/svelte/icons/check-circle';
   import Plus from '@lucide/svelte/icons/plus';
 
@@ -187,12 +187,6 @@
 
 <div class="max-w-4xl mx-auto py-8 md:py-12 space-y-6">
   <header class="text-center space-y-3">
-    <div
-      class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 text-primary px-3 py-1 text-xs font-semibold uppercase tracking-wider"
-    >
-      <KeyIcon class="size-3.5" />
-      {t('get.badge')}
-    </div>
     <h1
       class="text-3xl md:text-4xl font-display font-bold tracking-tight bg-gradient-to-br from-foreground to-foreground/70 bg-clip-text text-transparent"
     >
@@ -323,7 +317,7 @@
         size="lg"
         class="w-full"
       >
-        <KeyIcon class="size-4" />
+        <SocksIcon class="size-4" />
         {createAccount.isPending ? t('common.working') : t('get.createAccount')}
       </Button>
 
@@ -333,7 +327,7 @@
     </div>
   {:else}
     <div
-      class="rounded-xl border border-primary/40 bg-primary/5 px-4 py-3 flex items-center gap-2.5 text-sm"
+      class="mx-auto max-w-xl rounded-xl border border-primary/40 bg-primary/5 px-4 py-3 flex items-center gap-2.5 text-sm"
     >
       <CheckCircle class="size-4 text-primary shrink-0" />
       <span>

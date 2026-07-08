@@ -25,7 +25,7 @@
   import { router } from '../stores/router.svelte';
   import { fly, fade, slide } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
-  import KeyIcon from '@lucide/svelte/icons/key-round';
+  import SocksIcon from '../components/SocksIcon.svelte';
   import Lock from '@lucide/svelte/icons/lock';
   import Globe from '@lucide/svelte/icons/globe';
   import Smartphone from '@lucide/svelte/icons/smartphone';
@@ -159,7 +159,7 @@
         {#if !me.isPending && me.data?.authenticated}
           <Link href="/account">
             <Button size="lg" class="text-base">
-              <KeyIcon class="size-4" />
+              <SocksIcon class="size-4" />
               {t('nav.account')}
               <ArrowRight class="size-4" />
             </Button>
@@ -172,7 +172,7 @@
         {:else}
           <Link href="/get-account">
             <Button size="lg" class="text-base">
-              <KeyIcon class="size-4" />
+              <SocksIcon class="size-4" />
               {t('nav.getAccount')}
               <ArrowRight class="size-4" />
             </Button>

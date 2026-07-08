@@ -6,7 +6,7 @@
   import { Button } from '@client/components/ui/button';
   import { meQuery } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
-  import KeyIcon from '@lucide/svelte/icons/key-round';
+  import SocksIcon from './SocksIcon.svelte';
   import User from '@lucide/svelte/icons/user-round';
   import LogIn from '@lucide/svelte/icons/log-in';
 
@@ -25,7 +25,7 @@
         class="inline-flex items-center justify-center size-7 rounded-md bg-primary text-primary-foreground transition-transform group-hover:scale-105"
         aria-hidden="true"
       >
-        <KeyIcon class="size-4" />
+        <SocksIcon class="size-4" />
       </span>
       FreeSocks
     </Link>
@@ -44,7 +44,7 @@
       {:else}
         <Link href="/get-account">
           <Button variant="ghost" size="sm" class="max-sm:min-h-11">
-            <KeyIcon class="size-4" />
+            <SocksIcon class="size-4" />
             <span class="hidden sm:inline">{t('nav.getAccount')}</span>
           </Button>
         </Link>
