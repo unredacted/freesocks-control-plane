@@ -16,6 +16,12 @@ export const SETTINGS_DEFAULTS = {
   'subscription.backend_labels': { remnawave: 'Xray', outline: 'Outline' },
   'backend.scoring.latency_weight': 1,
   'backend.scoring.key_count_weight': 100,
+  // Issuance-time node placement (Remnawave): weights for choosing the
+  // least-loaded node of a mode's placement pool. usersOnline is the primary
+  // signal; bandwidth defaults to 0 (usersOnline-only) until the realtime shape
+  // is pinned against a live panel. Read by lib/remnawavePlacement.ts.
+  'remnawave.nodePlacement.usersOnline_weight': 1,
+  'remnawave.nodePlacement.bandwidth_weight': 0,
   // Free-account lifetime (days): drives both the issued key's backend expiry
   // and the cleanup-expired-free sweep. Admin-editable (replaced the
   // FREE_TIER_EXPIRY_DAYS env var).

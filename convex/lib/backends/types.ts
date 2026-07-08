@@ -148,13 +148,17 @@ export interface FleetStats {
 }
 
 /**
- * Per-squad load snapshot for the squad-pool balancer (Remnawave internal
- * squads). `membersCount` is the panel's authoritative user count for the
- * squad — the balancer's primary signal. Read-only, refreshed by the
- * healthcheck cron into `remnawaveSquadStats`.
+ * Per-placement load snapshot for issuance-time node placement. A placement is
+ * the opaque handle a key is homed to (Remnawave: an internal squad, which maps
+ * to one or more nodes); the load is aggregated from that placement's node(s).
+ * `usersOnline` is the primary signal (fewest wins). Read-only, refreshed by the
+ * healthcheck cron. Squad-free by design — the generic layer never sees a squad.
  */
-export interface SquadStats {
-  squadUuid: string;
-  name: string;
-  membersCount: number;
+export interface NodeStats {
+  placement: string; // opaque handle (Remnawave: internal-squad uuid)
+  label: string; // display name (squad name)
+  usersOnline: number; // summed over the placement's mapped nodes
+  trafficBytesRealtime?: number; // summed realtime throughput, when available
+  online: boolean; // ≥1 mapped node connected & not disabled
+  nodeCount: number; // mapped nodes: 0 = unroutable, >1 = aggregated
 }

@@ -17,7 +17,7 @@ import type {
   IssuedUser,
   SubscriptionContent,
   FleetStats,
-  SquadStats,
+  NodeStats,
   UpdateUserPatch,
   UsageSeries,
   UserState,
@@ -27,7 +27,7 @@ import {
   remnawaveDeleteUser,
   remnawaveFetchSubscription,
   remnawaveFleetStats,
-  remnawaveGetSquadStats,
+  remnawaveGetNodeStats,
   remnawaveGetUser,
   remnawaveGetUserUsage,
   remnawaveHealth,
@@ -91,9 +91,9 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // Optional: fleet-wide observability for the admin dashboard (read-only; Remnawave
   // system stats + recap). Absent for backends without a fleet concept (Outline).
   getFleetStats?(config: C): Promise<FleetStats>;
-  // Optional: per-squad load for the squad-pool balancer (read-only; Remnawave
-  // internal squads). Absent for backends without a squad concept (Outline).
-  getSquadStats?(config: C): Promise<SquadStats[]>;
+  // Optional: per-placement node-load snapshot for issuance-time node placement
+  // (read-only). Absent for backends with no intra-instance node concept (Outline).
+  getNodeStats?(config: C): Promise<NodeStats[]>;
   fetchContent(
     config: C,
     backendShortId: string,
@@ -119,7 +119,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   setStatus: (c, id, active) => remnawaveSetStatus(c, id, active),
   getUserUsage: (c, id, days) => remnawaveGetUserUsage(c, id, days),
   getFleetStats: (c) => remnawaveFleetStats(c),
-  getSquadStats: (c) => remnawaveGetSquadStats(c),
+  getNodeStats: (c) => remnawaveGetNodeStats(c),
   fetchContent: (c, shortId, ua, subUrl, hwid) =>
     remnawaveFetchSubscription(c, shortId, ua, subUrl, hwid),
   health: (c) => remnawaveHealth(c),

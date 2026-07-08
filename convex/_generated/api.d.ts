@@ -60,6 +60,7 @@ import type * as membershipCodes from "../membershipCodes.js";
 import type * as mirrorProviders from "../mirrorProviders.js";
 import type * as publicConfig from "../publicConfig.js";
 import type * as rateLimits from "../rateLimits.js";
+import type * as remnawaveNodes from "../remnawaveNodes.js";
 import type * as replayGuard from "../replayGuard.js";
 import type * as retention from "../retention.js";
 import type * as seed from "../seed.js";
@@ -131,6 +132,7 @@ declare const fullApi: ApiFromModules<{
   mirrorProviders: typeof mirrorProviders;
   publicConfig: typeof publicConfig;
   rateLimits: typeof rateLimits;
+  remnawaveNodes: typeof remnawaveNodes;
   replayGuard: typeof replayGuard;
   retention: typeof retention;
   seed: typeof seed;

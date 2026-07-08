@@ -171,7 +171,7 @@
     evade: cfg.data?.connectionProfiles?.find((p) => p.id === 'evade')?.available ?? false,
     privacy: cfg.data?.connectionProfiles?.find((p) => p.id === 'privacy')?.available ?? false,
   });
-  // Per-squad load (panel-authoritative member counts, stamped by the
+  // Per-placement node load (users online, stamped by the
   // healthcheck cron) — the read-only window into whether a pool is balancing.
   const squadStats = adminSquadStatsQuery();
   // One squad UUID per line (commas also accepted); trims + dedupes.
@@ -729,19 +729,22 @@
           {#if squadStats.data && squadStats.data.length > 0}
             <div class="border-t border-border pt-4">
               <p class="mb-2 text-xs font-medium text-muted-foreground">
-                Squad load (panel member counts, refreshed by the healthcheck cron — issuance picks
-                the least-loaded squad of a profile's pool)
+                Node load (users online per placement, refreshed by the healthcheck cron — issuance
+                homes a new key to the least-loaded node of a profile's pool)
               </p>
               <div class="space-y-1">
-                {#each squadStats.data as sq (sq.squadUuid)}
+                {#each squadStats.data as sq (sq.placement)}
                   <div class="flex items-center justify-between gap-2 text-xs">
                     <span class="truncate">
-                      <span class="font-medium">{sq.name ?? 'unnamed'}</span>
-                      <span class="ml-1 font-mono text-muted-foreground">{sq.squadUuid}</span>
+                      <span class="font-medium">{sq.label ?? 'unnamed'}</span>
+                      <span class="ml-1 font-mono text-muted-foreground">{sq.placement}</span>
+                      {#if !sq.online}
+                        <span class="ml-1 text-amber-600 dark:text-amber-400">· offline</span>
+                      {/if}
                     </span>
                     <span class="shrink-0 tabular-nums text-muted-foreground">
-                      {sq.membersCount}
-                      {sq.membersCount === 1 ? 'member' : 'members'}
+                      {sq.usersOnline}
+                      {sq.usersOnline === 1 ? 'user' : 'users'}
                     </span>
                   </div>
                 {/each}

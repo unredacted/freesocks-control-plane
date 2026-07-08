@@ -6,7 +6,6 @@ import {
   resolveConnectionProfiles,
   resolveProfileSquad,
   resolveProfilePool,
-  pickSquadFromPool,
   publicProjection,
   connectionProfileWrites,
   CONNECTION_PROFILE_KEYS,
@@ -209,63 +208,6 @@ describe('connectionProfiles lib', () => {
       }),
     );
     expect(await t.run((ctx) => resolveProfilePool(ctx.db, 'evade'))).toEqual(['sq-legacy']);
-  });
-
-  test('pickSquadFromPool: least-loaded fresh squad wins; stale/unknown deprioritized; deterministic fallback', async () => {
-    const t = convexTest(schema, modules);
-    // Fast paths need no stats rows.
-    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, []))).toBeNull();
-    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, ['only']))).toBe('only');
-    // All-unknown → declaration order (deterministic).
-    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, ['first', 'second']))).toBe('first');
-
-    const serverId = await t.run((ctx) =>
-      ctx.db.insert('backendServers', {
-        backend: 'remnawave',
-        name: 'rw',
-        slug: 'rw',
-        config: { type: 'remnawave', baseUrl: 'https://rw.example', apiToken: 'tok' },
-        isActive: true,
-        priority: 0,
-        keyCount: 0,
-        updatedAt: Date.now(),
-      }),
-    );
-    const now = Date.now();
-    await t.run(async (ctx) => {
-      await ctx.db.insert('remnawaveSquadStats', {
-        backendServerId: serverId,
-        squadUuid: 'sq-busy',
-        name: 'busy',
-        membersCount: 50,
-        lastStatsAt: now,
-        updatedAt: now,
-      });
-      await ctx.db.insert('remnawaveSquadStats', {
-        backendServerId: serverId,
-        squadUuid: 'sq-idle',
-        name: 'idle',
-        membersCount: 3,
-        lastStatsAt: now,
-        updatedAt: now,
-      });
-      await ctx.db.insert('remnawaveSquadStats', {
-        backendServerId: serverId,
-        squadUuid: 'sq-stale',
-        name: 'stale',
-        membersCount: 0, // lowest count, but STALE → must not win over fresh
-        lastStatsAt: now - 45 * 60_000,
-        updatedAt: now - 45 * 60_000,
-      });
-    });
-    // Least-loaded fresh squad wins regardless of declaration order.
-    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, ['sq-busy', 'sq-idle']))).toBe('sq-idle');
-    // A stale zero-count squad loses to any fresh one...
-    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, ['sq-stale', 'sq-busy']))).toBe(
-      'sq-busy',
-    );
-    // ...and a never-observed squad also loses to a fresh one.
-    expect(await t.run((ctx) => pickSquadFromPool(ctx.db, ['sq-new', 'sq-idle']))).toBe('sq-idle');
   });
 
   test('connectionProfileWrites validates ids + maps to appSettings keys', () => {

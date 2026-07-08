@@ -363,15 +363,17 @@ export const adminBackendServersQuery = () =>
     staleTime: 30_000,
   }));
 
-/** Per-squad load snapshots (the squad-pool balancer's input), shown read-only
- *  on the AdminSettings Connection-profiles card. Refreshed by the
- *  backend-healthcheck cron (~10 min), so a short staleTime is fine. */
-const SquadStatsResponse = z.object({
-  squads: z.array(
+/** Per-placement node-load snapshots (the node-placement picker's input), shown
+ *  read-only in the admin CMS. Refreshed by the backend-healthcheck cron
+ *  (~10 min), so a short staleTime is fine. */
+const NodeStatsResponse = z.object({
+  nodes: z.array(
     z.object({
-      squadUuid: z.string(),
-      name: z.string().nullable(),
-      membersCount: z.number(),
+      placement: z.string(),
+      label: z.string().nullable(),
+      usersOnline: z.number(),
+      online: z.boolean(),
+      nodeCount: z.number(),
       lastStatsAt: z.number(),
     }),
   ),
@@ -380,7 +382,7 @@ export const adminSquadStatsQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.adminSquadStats,
     queryFn: async () =>
-      (await apiClient.get('/api/v1/admin/squad-stats', SquadStatsResponse)).squads,
+      (await apiClient.get('/api/v1/admin/squad-stats', NodeStatsResponse)).nodes,
     staleTime: 60_000,
   }));
 

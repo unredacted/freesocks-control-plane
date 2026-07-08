@@ -10,7 +10,7 @@ import type {
   FleetStats,
   IssueUserSpec,
   IssuedUser,
-  SquadStats,
+  NodeStats,
   SubscriptionContent,
   UpdateUserPatch,
   UsageSeries,
@@ -349,28 +349,127 @@ export async function remnawaveFleetStats(cfg: RemnawaveConfig): Promise<FleetSt
   };
 }
 
-// Per-squad load for the squad-pool balancer. `info.membersCount` is the
-// panel's authoritative user count per internal squad. Lenient: a squad row
-// missing `info` is skipped (never fails the whole fetch on shape drift).
+// --- Node-load placement telemetry ------------------------------------------
+// FCP homes a new key to the least-loaded NODE. A key is assigned to an internal
+// SQUAD (activeInternalSquads), and a squad maps to one or more nodes; the squad's
+// load is aggregated from those nodes. We therefore fetch: the squad list, the
+// per-squad node membership (accessible-nodes), and the per-node load (/api/nodes)
+// + best-effort realtime bandwidth. All schemas are LENIENT (strip unknowns,
+// nullish) so a panel-version field drift degrades gracefully rather than failing
+// the whole cron. Field names verified against remnawave/backend `main` (nodes.schema,
+// internal-squads accessible-nodes command) — re-confirm on a panel upgrade.
+
 const InternalSquadsResponse = z.object({
-  internalSquads: z.array(
-    z.object({
-      uuid: z.string(),
-      name: z.string(),
-      info: z.object({ membersCount: z.number() }).optional(),
-    }),
-  ),
+  internalSquads: z.array(z.object({ uuid: z.string(), name: z.string() })),
 });
 
-export async function remnawaveGetSquadStats(cfg: RemnawaveConfig): Promise<SquadStats[]> {
-  const result = await call(cfg, {
+// /api/nodes → (unwrapped) an array of nodes. Only the load-relevant fields.
+const NodesResponse = z.array(
+  z.object({
+    uuid: z.string(),
+    isConnected: z.boolean().nullish(),
+    isDisabled: z.boolean().nullish(),
+    usersOnline: z.number().nullish(),
+    trafficUsedBytes: z.number().nullish(),
+  }),
+);
+
+// /api/internal-squads/{uuid}/accessible-nodes → (unwrapped) { accessibleNodes: [{ uuid, … }] }.
+const AccessibleNodesResponse = z.object({
+  accessibleNodes: z.array(z.object({ uuid: z.string() })),
+});
+
+// /api/bandwidth-stats/nodes/realtime — best-effort; shape is version-sensitive,
+// so parse VERY loosely: an array of { nodeUuid?/uuid?, ...bytes-ish }. We only
+// use it as a secondary tiebreak and skip it silently if it doesn't parse.
+const RealtimeNodesResponse = z
+  .array(
+    z
+      .object({
+        nodeUuid: z.string().nullish(),
+        uuid: z.string().nullish(),
+        totalBytes: z.number().nullish(),
+        bytes: z.number().nullish(),
+      })
+      .passthrough(),
+  )
+  .nullish();
+
+/**
+ * Per-placement (per-squad) load snapshot for node placement. Aggregates each
+ * squad's node load from /api/nodes over the squad's accessible-nodes. N+1
+ * accessible-nodes calls (one per squad) — fine at beta squad counts; the cron
+ * runs it every 10 min best-effort.
+ */
+export async function remnawaveGetNodeStats(cfg: RemnawaveConfig): Promise<NodeStats[]> {
+  const squads = await call(cfg, {
     method: 'GET',
     path: '/api/internal-squads',
     schema: InternalSquadsResponse,
   });
-  return result.internalSquads
-    .filter((s) => s.info != null)
-    .map((s) => ({ squadUuid: s.uuid, name: s.name, membersCount: s.info!.membersCount }));
+  const nodes = await call(cfg, { method: 'GET', path: '/api/nodes', schema: NodesResponse });
+  const nodeById = new Map(nodes.map((n) => [n.uuid, n]));
+
+  // Secondary signal: realtime per-node bytes. Best-effort — never fail the pull.
+  const realtimeById = new Map<string, number>();
+  try {
+    const rt = await call(cfg, {
+      method: 'GET',
+      path: '/api/bandwidth-stats/nodes/realtime',
+      schema: RealtimeNodesResponse,
+    });
+    for (const r of rt ?? []) {
+      const id = r.nodeUuid ?? r.uuid;
+      const bytes = r.totalBytes ?? r.bytes;
+      if (id && typeof bytes === 'number') realtimeById.set(id, bytes);
+    }
+  } catch {
+    /* realtime unavailable this cycle → usersOnline-only scoring */
+  }
+
+  const out: NodeStats[] = [];
+  for (const squad of squads.internalSquads) {
+    let accessible: z.infer<typeof AccessibleNodesResponse>;
+    try {
+      accessible = await call(cfg, {
+        method: 'GET',
+        path: `/api/internal-squads/${encodeURIComponent(squad.uuid)}/accessible-nodes`,
+        schema: AccessibleNodesResponse,
+      });
+    } catch {
+      // A squad whose node membership can't be read is emitted as unroutable
+      // (nodeCount 0 → the picker deprioritizes/skips it), never dropped silently.
+      out.push({
+        placement: squad.uuid,
+        label: squad.name,
+        usersOnline: 0,
+        online: false,
+        nodeCount: 0,
+      });
+      continue;
+    }
+    let usersOnline = 0;
+    let realtime = 0;
+    let online = false;
+    let mapped = 0;
+    for (const { uuid } of accessible.accessibleNodes) {
+      const n = nodeById.get(uuid);
+      if (!n) continue; // node not in /api/nodes (deleted mid-cycle) — skip
+      mapped++;
+      usersOnline += n.usersOnline ?? 0;
+      realtime += realtimeById.get(uuid) ?? 0;
+      if (n.isConnected && !n.isDisabled) online = true;
+    }
+    out.push({
+      placement: squad.uuid,
+      label: squad.name,
+      usersOnline,
+      ...(realtimeById.size > 0 ? { trafficBytesRealtime: realtime } : {}),
+      online,
+      nodeCount: mapped,
+    });
+  }
+  return out;
 }
 
 export async function remnawaveUpdateUser(

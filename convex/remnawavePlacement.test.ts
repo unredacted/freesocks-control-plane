@@ -1,0 +1,179 @@
+/// <reference types="vite/client" />
+/**
+ * Issuance-time node placement: the least-loaded-node picker
+ * (lib/remnawavePlacement.pickByNodeLoad) over the cron-fed remnawaveNodeStats
+ * cache, plus the remnawaveGetNodeStats provider aggregation (squad → nodes →
+ * per-node load).
+ */
+import { convexTest } from 'convex-test';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import schema from './schema';
+import type { Id } from './_generated/dataModel';
+import { pickByNodeLoad } from './lib/remnawavePlacement';
+import { remnawaveGetNodeStats } from './lib/backends/remnawave';
+
+const modules = import.meta.glob('./**/*.*s');
+
+async function seedServer(t: ReturnType<typeof convexTest>): Promise<Id<'backendServers'>> {
+  return t.run((ctx) =>
+    ctx.db.insert('backendServers', {
+      backend: 'remnawave',
+      name: 'rw',
+      slug: 'rw',
+      config: { type: 'remnawave', baseUrl: 'https://rw.example', apiToken: 'tok' },
+      isActive: true,
+      priority: 0,
+      keyCount: 0,
+      updatedAt: Date.now(),
+    }),
+  );
+}
+
+function seedNode(
+  t: ReturnType<typeof convexTest>,
+  backendServerId: Id<'backendServers'>,
+  o: {
+    placement: string;
+    usersOnline: number;
+    online?: boolean;
+    nodeCount?: number;
+    ageMs?: number;
+  },
+) {
+  const now = Date.now();
+  const at = now - (o.ageMs ?? 0);
+  return t.run((ctx) =>
+    ctx.db.insert('remnawaveNodeStats', {
+      backendServerId,
+      placement: o.placement,
+      label: o.placement,
+      usersOnline: o.usersOnline,
+      online: o.online ?? true,
+      nodeCount: o.nodeCount ?? 1,
+      lastStatsAt: at,
+      updatedAt: at,
+    }),
+  );
+}
+
+describe('pickByNodeLoad', () => {
+  test('fast paths: empty → null, single → that element, all-unknown → declaration order', async () => {
+    const t = convexTest(schema, modules);
+    expect(await t.run((ctx) => pickByNodeLoad(ctx.db, []))).toBeNull();
+    expect(await t.run((ctx) => pickByNodeLoad(ctx.db, ['only']))).toBe('only');
+    // No stats rows for either → all-unknown → declaration order (deterministic).
+    expect(await t.run((ctx) => pickByNodeLoad(ctx.db, ['first', 'second']))).toBe('first');
+  });
+
+  test('least-loaded fresh+online node wins regardless of declaration order', async () => {
+    const t = convexTest(schema, modules);
+    const server = await seedServer(t);
+    await seedNode(t, server, { placement: 'busy', usersOnline: 50 });
+    await seedNode(t, server, { placement: 'idle', usersOnline: 3 });
+    expect(await t.run((ctx) => pickByNodeLoad(ctx.db, ['busy', 'idle']))).toBe('idle');
+  });
+
+  test('stale / offline / unroutable / never-observed nodes lose to a fresh+online one', async () => {
+    const t = convexTest(schema, modules);
+    const server = await seedServer(t);
+    // Lowest count but STALE (>30 min) → must not win.
+    await seedNode(t, server, { placement: 'stale', usersOnline: 0, ageMs: 45 * 60_000 });
+    // Offline (no connected node) → must not win despite a low count.
+    await seedNode(t, server, { placement: 'offline', usersOnline: 0, online: false });
+    // Unroutable (maps to zero nodes) → must not win.
+    await seedNode(t, server, { placement: 'unrouted', usersOnline: 0, nodeCount: 0 });
+    // The one fresh+online node.
+    await seedNode(t, server, { placement: 'live', usersOnline: 9 });
+    expect(
+      await t.run((ctx) => pickByNodeLoad(ctx.db, ['stale', 'offline', 'unrouted', 'live'])),
+    ).toBe('live');
+    // A never-observed placement also loses to the fresh one.
+    expect(await t.run((ctx) => pickByNodeLoad(ctx.db, ['never-seen', 'live']))).toBe('live');
+  });
+
+  test('a bound-but-all-degraded pool still returns a placement (declaration order), never null', async () => {
+    const t = convexTest(schema, modules);
+    const server = await seedServer(t);
+    await seedNode(t, server, { placement: 'a', usersOnline: 0, online: false });
+    await seedNode(t, server, { placement: 'b', usersOnline: 0, nodeCount: 0 });
+    // Neither is usable → falls back to declaration order (a), so a key still issues.
+    expect(await t.run((ctx) => pickByNodeLoad(ctx.db, ['a', 'b']))).toBe('a');
+  });
+});
+
+describe('remnawaveGetNodeStats (provider aggregation)', () => {
+  const cfg = { baseUrl: 'https://panel.test', apiToken: 'tok' };
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  // Route the panel's endpoints to canned JSON.
+  function stubPanel(handlers: Record<string, unknown>): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const path = new URL(url).pathname;
+        // accessible-nodes is /api/internal-squads/{uuid}/accessible-nodes
+        const key = path.includes('/accessible-nodes') ? `accessible:${path.split('/')[3]}` : path;
+        const body = handlers[key];
+        if (body === undefined) return new Response('null', { status: 404 });
+        return new Response(JSON.stringify({ response: body }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+  }
+
+  test('aggregates per-squad load over its accessible nodes (1:1 and 1:many)', async () => {
+    stubPanel({
+      '/api/internal-squads': {
+        internalSquads: [
+          { uuid: 'sq-a', name: 'A' },
+          { uuid: 'sq-b', name: 'B' },
+        ],
+      },
+      '/api/nodes': [
+        { uuid: 'n1', isConnected: true, isDisabled: false, usersOnline: 4, trafficUsedBytes: 10 },
+        { uuid: 'n2', isConnected: true, isDisabled: false, usersOnline: 6, trafficUsedBytes: 20 },
+        { uuid: 'n3', isConnected: false, isDisabled: false, usersOnline: 0, trafficUsedBytes: 0 },
+      ],
+      'accessible:sq-a': { accessibleNodes: [{ uuid: 'n1' }] }, // 1:1
+      'accessible:sq-b': { accessibleNodes: [{ uuid: 'n2' }, { uuid: 'n3' }] }, // 1:many
+      '/api/bandwidth-stats/nodes/realtime': [],
+    });
+    const stats = await remnawaveGetNodeStats(cfg);
+    const a = stats.find((s) => s.placement === 'sq-a')!;
+    const b = stats.find((s) => s.placement === 'sq-b')!;
+    expect(a).toMatchObject({ usersOnline: 4, online: true, nodeCount: 1, label: 'A' });
+    // sq-b aggregates n2 (6) + n3 (0); online because n2 is connected.
+    expect(b).toMatchObject({ usersOnline: 6, online: true, nodeCount: 2 });
+  });
+
+  test('a squad mapping to zero known nodes is emitted as unroutable (nodeCount 0, offline)', async () => {
+    stubPanel({
+      '/api/internal-squads': { internalSquads: [{ uuid: 'sq-x', name: 'X' }] },
+      '/api/nodes': [
+        { uuid: 'n1', isConnected: true, isDisabled: false, usersOnline: 1, trafficUsedBytes: 0 },
+      ],
+      'accessible:sq-x': { accessibleNodes: [] },
+      '/api/bandwidth-stats/nodes/realtime': [],
+    });
+    const stats = await remnawaveGetNodeStats(cfg);
+    expect(stats).toEqual([
+      expect.objectContaining({ placement: 'sq-x', usersOnline: 0, online: false, nodeCount: 0 }),
+    ]);
+  });
+
+  test('a disabled node does not count as online', async () => {
+    stubPanel({
+      '/api/internal-squads': { internalSquads: [{ uuid: 'sq-a', name: 'A' }] },
+      '/api/nodes': [
+        { uuid: 'n1', isConnected: true, isDisabled: true, usersOnline: 5, trafficUsedBytes: 0 },
+      ],
+      'accessible:sq-a': { accessibleNodes: [{ uuid: 'n1' }] },
+      '/api/bandwidth-stats/nodes/realtime': [],
+    });
+    const [a] = await remnawaveGetNodeStats(cfg);
+    expect(a).toMatchObject({ usersOnline: 5, online: false, nodeCount: 1 });
+  });
+});

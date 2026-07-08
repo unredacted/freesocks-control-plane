@@ -441,14 +441,9 @@ export default defineSchema({
     .index('by_slug', ['slug'])
     .index('by_backend_active', ['backend', 'isActive', 'priority']),
 
-  // Per-squad load cache for the Remnawave squad-pool balancer. One row per
-  // internal squad observed on a panel, refreshed by the backend-healthcheck
-  // cron from GET /api/internal-squads (info.membersCount is the panel's
-  // authoritative per-squad user count — no local counters needed; between
-  // cron cycles the drift is bounded and self-correcting). Stats-only, no
-  // secrets; pool MEMBERSHIP lives in the connectionProfile.* appSettings
-  // namespace, never here. `nodesOnline`/`usersOnline` are reserved for a
-  // future accessible-nodes join (realtime node load).
+  // DEPRECATED (dropped in the node-placement cutover, Phase 5, after
+  // clearRemnawaveSquadStats empties it): the old squad-member-count cache.
+  // Nothing writes it anymore — replaced by remnawaveNodeStats below.
   remnawaveSquadStats: defineTable({
     backendServerId: v.id('backendServers'),
     squadUuid: v.string(),
@@ -460,6 +455,26 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_squad', ['squadUuid'])
+    .index('by_server', ['backendServerId']),
+
+  // Per-placement node-load cache for issuance-time node placement. One row per
+  // internal squad (the placement handle), refreshed by the backend-healthcheck
+  // cron: `usersOnline` (+ optional realtime bandwidth) aggregated from the
+  // squad's accessible nodes via GET /api/nodes. The least-loaded placement is
+  // chosen at issuance. Stats-only, no secrets; pool MEMBERSHIP (which squads a
+  // mode may use) lives in the appSettings namespace, never here.
+  remnawaveNodeStats: defineTable({
+    backendServerId: v.id('backendServers'),
+    placement: v.string(), // the internal-squad uuid
+    label: v.optional(v.string()),
+    usersOnline: v.number(),
+    trafficBytesRealtime: v.optional(v.number()),
+    online: v.boolean(),
+    nodeCount: v.number(),
+    lastStatsAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_placement', ['placement'])
     .index('by_server', ['backendServerId']),
 
   // S3 subscription-mirror providers (the censorship-resistance hedge): a

@@ -2209,15 +2209,16 @@ http.route({
   }),
 });
 
-// GET /api/v1/admin/squad-stats: per-squad load snapshots (the squad-pool
-// balancer's input), read-only for the Connection-profiles admin card. Squad
-// UUIDs are shown — the admin set them; they never reach the public config.
+// GET /api/v1/admin/squad-stats: per-placement node-load snapshots (the node
+// placement picker's input), read-only for the admin CMS. Placement handles
+// (squad UUIDs) are shown — the admin set them; they never reach public config.
+// (Path is renamed to /admin/remnawave/node-stats in the namespaced-surface phase.)
 http.route({
   path: '/api/v1/admin/squad-stats',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
-    return json({ squads: await ctx.runQuery(internal.backendServers.listSquadStats, {}) });
+    return json({ nodes: await ctx.runQuery(internal.remnawaveNodes.listNodeStats, {}) });
   }),
 });
 

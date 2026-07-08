@@ -181,63 +181,9 @@ export const markFleetStats = internalMutation({
   },
 });
 
-/** Upsert the per-squad load snapshot (squad-pool balancer input). Rows are
- *  scoped by (backendServerId, squadUuid); squad UUIDs are panel-generated and
- *  globally unique in practice, but scoping keeps two panels' rows disjoint. */
-export const markSquadStats = internalMutation({
-  args: {
-    backendServerId: v.id('backendServers'),
-    squads: v.array(
-      v.object({ squadUuid: v.string(), name: v.string(), membersCount: v.number() }),
-    ),
-  },
-  handler: async (ctx, { backendServerId, squads }) => {
-    const now = Date.now();
-    for (const squad of squads) {
-      const existing = await ctx.db
-        .query('remnawaveSquadStats')
-        .withIndex('by_squad', (q) => q.eq('squadUuid', squad.squadUuid))
-        .unique();
-      if (existing) {
-        await ctx.db.patch(existing._id, {
-          backendServerId,
-          name: squad.name,
-          membersCount: squad.membersCount,
-          lastStatsAt: now,
-          updatedAt: now,
-        });
-      } else {
-        await ctx.db.insert('remnawaveSquadStats', {
-          backendServerId,
-          squadUuid: squad.squadUuid,
-          name: squad.name,
-          membersCount: squad.membersCount,
-          lastStatsAt: now,
-          updatedAt: now,
-        });
-      }
-    }
-    return null;
-  },
-});
-
-/** Per-squad load snapshots for the admin CMS (read-only; no secrets — squad
- *  UUIDs are infra detail but load numbers + names are safe for the admin,
- *  who set the UUIDs in the first place). */
-export const listSquadStats = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const rows = await ctx.db.query('remnawaveSquadStats').collect();
-    return rows
-      .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
-      .map((r) => ({
-        squadUuid: r.squadUuid,
-        name: r.name ?? null,
-        membersCount: r.membersCount,
-        lastStatsAt: r.lastStatsAt,
-      }));
-  },
-});
+// Node-load telemetry (feeds issuance-time node placement) lives in the
+// Remnawave-namespaced module convex/remnawaveNodes.ts (markNodeStats /
+// listNodeStats). The healthcheck cron below stamps it via provider.getNodeStats.
 
 /**
  * Cron: ping each active instance through its provider's health probe. On
@@ -272,20 +218,20 @@ export const healthcheck = internalAction({
             /* fleet stats unavailable this cycle; last stamped values are kept */
           }
         }
-        // Best-effort per-squad load for the squad-pool balancer — same
+        // Best-effort per-node load for issuance-time node placement — same
         // isolation as fleet stats: a failure keeps the last snapshot and
         // must NOT mark the instance unhealthy.
-        if (provider.getSquadStats) {
+        if (provider.getNodeStats) {
           try {
-            const squads = await provider.getSquadStats(s.config as BackendConfig);
-            if (squads.length > 0) {
-              await ctx.runMutation(internal.backendServers.markSquadStats, {
+            const nodes = await provider.getNodeStats(s.config as BackendConfig);
+            if (nodes.length > 0) {
+              await ctx.runMutation(internal.remnawaveNodes.markNodeStats, {
                 backendServerId: s._id,
-                squads,
+                nodes,
               });
             }
           } catch {
-            /* squad stats unavailable this cycle; picker falls back gracefully */
+            /* node stats unavailable this cycle; picker falls back gracefully */
           }
         }
       } catch {

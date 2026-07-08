@@ -177,44 +177,6 @@ export async function resolveProfileSquad(
   return pool[0] ?? null;
 }
 
-// A squad-stats snapshot older than this is treated as unknown load (the
-// healthcheck cron refreshes every 10 min; 30 min matches the instance pool's
-// "fresh" window).
-const SQUAD_STATS_STALE_MS = 30 * 60_000;
-
-/** Least-loaded squad from a pool, using the panel-authoritative per-squad
- *  member counts cached in `remnawaveSquadStats` by the healthcheck cron.
- *  Fresh-known squads win over stale/unknown ones (lowest membersCount first);
- *  among all-unknown the pool's declaration order decides, deterministically.
- *  Between cron refreshes the counts can drift by a few issuances — bounded and
- *  self-correcting, no local counters needed. */
-export async function pickSquadFromPool(
-  db: DatabaseReader,
-  squadUuids: string[],
-): Promise<string | null> {
-  if (squadUuids.length <= 1) return squadUuids[0] ?? null;
-  const now = Date.now();
-  const scored: { uuid: string; order: number; fresh: boolean; members: number }[] = [];
-  for (let order = 0; order < squadUuids.length; order++) {
-    const uuid = squadUuids[order]!;
-    const row = await db
-      .query('remnawaveSquadStats')
-      .withIndex('by_squad', (q) => q.eq('squadUuid', uuid))
-      .unique();
-    const fresh = row != null && now - row.lastStatsAt < SQUAD_STATS_STALE_MS;
-    scored.push({
-      uuid,
-      order,
-      fresh,
-      members: fresh ? row.membersCount : Number.POSITIVE_INFINITY,
-    });
-  }
-  scored.sort(
-    (a, b) => Number(b.fresh) - Number(a.fresh) || a.members - b.members || a.order - b.order,
-  );
-  return scored[0]!.uuid;
-}
-
 export function publicProjection(profiles: ConnectionProfile[]): PublicConnectionProfile[] {
   return profiles.map((p) => ({
     id: p.id,

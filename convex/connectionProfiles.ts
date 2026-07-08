@@ -8,19 +8,19 @@ import { v } from 'convex/values';
 import {
   resolveConnectionProfiles,
   resolveProfilePool,
-  pickSquadFromPool,
   DEFAULT_CONNECTION_PROFILE,
 } from './lib/connectionProfiles';
+import { pickByNodeLoad } from './lib/remnawavePlacement';
 
-/** The squad a NEW key issues into: the LEAST-LOADED squad of the profile's
- *  pool (panel-authoritative member counts, cached by the healthcheck cron;
- *  single-squad pools short-circuit). null when unknown/unbound — the caller
- *  then falls back to the tier's own squad. Callers persist the pick on the
- *  subscription row so later tier pushes re-send the SAME squad. */
+/** The placement a NEW key issues into: the LEAST-LOADED node of the profile's
+ *  placement pool (per-node load cached by the healthcheck cron; single-element
+ *  pools short-circuit). null when unbound — the caller then falls back to the
+ *  tier's own squad. Callers persist the pick on the subscription row so later
+ *  tier pushes re-send the SAME placement (no re-home). */
 export const resolveSquad = internalQuery({
   args: { profileId: v.union(v.literal('evade'), v.literal('privacy'), v.null()) },
   handler: async (ctx, { profileId }) =>
-    pickSquadFromPool(ctx.db, await resolveProfilePool(ctx.db, profileId)),
+    pickByNodeLoad(ctx.db, await resolveProfilePool(ctx.db, profileId)),
 });
 
 /** Admin/status view + the switchProfile validity check: id/label/isDefault plus
