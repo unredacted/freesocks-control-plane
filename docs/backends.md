@@ -131,7 +131,9 @@ rotate it.
 falls back to all active), then scores `latency_weight * lastHealthRttMs + key_count_weight *
 keyCount`, then admin `priority`. Weights are admin-tunable via the `backend.scoring.*` settings.
 The `backend-healthcheck` cron pings every active instance through its provider's `health` probe
-and stamps `lastHealthOkAt` + rtt (+ key count for types that report one, i.e. Outline).
+and stamps `lastHealthOkAt` + rtt (+ key count for types that report one, i.e. Outline). For
+Remnawave instances it also refreshes the `remnawaveNodeStats` node-load cache (via the
+provider's `getNodeStats`) that feeds issuance-time node placement (see "Node placement").
 
 **Bootstrapping Remnawave from env**: the cutover seed (`seed:seedCutover`) creates the first
 Remnawave instance from `REMNAWAVE_BASE_URL` / `REMNAWAVE_API_TOKEN` if they are set, as a one-time

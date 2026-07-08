@@ -282,7 +282,8 @@ Convex runs these natively (no Workers triggers, no node-cron):
 - `grace-sweep` (10 min): `active→grace→disabled` (cursor-drained; backend-disable first).
 - `tombstone-sweep` (10 min): hard-delete subscriptions past their 24h regenerate/switch grace.
 - `backend-healthcheck` (10 min): ping active backend instances of every type; stamp
-  `lastHealthOkAt` + rtt (feeds pool selection).
+  `lastHealthOkAt` + rtt (feeds pool selection); for Remnawave, also refresh the
+  `remnawaveNodeStats` node-load cache that feeds issuance-time node placement.
 - `cleanup-expired-free` (daily 03:00 UTC): delete expired free users (per-tier cursor).
 - `session-sweep` / `rate-limit-sweep` / `replay-guard-sweep` (daily): drop expired
   `sessions` / `rateLimits` / `replayGuard` rows.
