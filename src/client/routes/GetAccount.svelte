@@ -382,6 +382,16 @@
     </div>
   {/if}
 
+  <!-- Upsell: grouped directly under the gift-code box (both above Step 2) so the
+       two paths to the member tier sit together, and rendered compact + narrow so
+       it doesn't outshout redemption. Self-gates on billing being live (the member
+       is signed in here, so checkout works). -->
+  {#if isAuthed && !isCurrentMember && config.data?.billing?.enabled}
+    <div class="mx-auto max-w-xl">
+      <UpgradeMembership mode="upgrade" compact />
+    </div>
+  {/if}
+
   <!-- STEP 2: create the proxy subscription (needs a proxy server). -->
   {#if isAuthed}
     <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
@@ -478,20 +488,6 @@
           {createSubscription.isPending ? t('account.creating') : t('account.createSub')}
         </Button>
       {/if}
-    </div>
-  {/if}
-
-  <!-- Upsell: the moment the free account exists, offer the paid membership —
-       not gated on first creating the free subscription. The panel self-gates
-       on billing being live (and the member is signed in here, so checkout
-       works). -->
-  {#if isAuthed && !isCurrentMember && config.data?.billing?.enabled}
-    <div class="space-y-3">
-      <div class="space-y-1">
-        <h2 class="font-display text-lg font-semibold">{t('get.upsellTitle')}</h2>
-        <p class="text-sm text-muted-foreground">{t('get.upsellBody')}</p>
-      </div>
-      <UpgradeMembership mode="upgrade" />
     </div>
   {/if}
 

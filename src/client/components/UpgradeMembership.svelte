@@ -28,8 +28,13 @@
   interface Props {
     /** 'upgrade' for free users, 'extend' for expiring/expired members (heading copy). */
     mode?: 'upgrade' | 'extend';
+    /** Compact styling for a secondary placement (e.g. below the gift-code box on
+     *  /get-account): drops the glowing tier-sheen ring + Sparkles and shrinks the
+     *  heading so it doesn't outshout a nearby primary CTA. Behavior (payment
+     *  methods, durations, checkout) is unchanged — styling only. */
+    compact?: boolean;
   }
-  let { mode = 'upgrade' }: Props = $props();
+  let { mode = 'upgrade', compact = false }: Props = $props();
 
   const config = configQuery();
   let billing = $derived(config.data?.billing);
@@ -111,11 +116,19 @@
 {#if billing?.enabled && rails.length > 0 && durations.length > 0}
   <section
     id="upgrade"
-    class="tier-sheen relative space-y-4 overflow-hidden rounded-xl border border-primary/30 bg-card p-4 sm:p-5"
+    class="relative space-y-4 overflow-hidden rounded-xl border bg-card p-4 sm:p-5 {compact
+      ? 'border-border'
+      : 'tier-sheen border-primary/30'}"
   >
     <div>
-      <h2 class="flex items-center gap-2 font-display text-base font-semibold">
-        <Sparkles class="size-4 shrink-0 text-primary" aria-hidden="true" />
+      <h2
+        class="flex items-center gap-2 font-display font-semibold {compact
+          ? 'text-sm'
+          : 'text-base'}"
+      >
+        {#if !compact}
+          <Sparkles class="size-4 shrink-0 text-primary" aria-hidden="true" />
+        {/if}
         {mode === 'extend' ? t('upgrade.extendTitle') : t('upgrade.title')}
       </h2>
       <p class="text-sm text-muted-foreground">{t('upgrade.subtitle')}</p>
