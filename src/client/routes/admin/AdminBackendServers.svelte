@@ -145,7 +145,7 @@
                 >
               {/if}
             </div>
-            <div class="flex gap-2 pt-2">
+            <div class="flex flex-wrap gap-2 pt-2">
               <Button size="sm" variant="outline" onclick={() => (editing = s)}>Edit</Button>
               <Button size="sm" variant="destructive" onclick={() => (pendingDelete = s)}>
                 Remove

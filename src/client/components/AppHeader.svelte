@@ -15,7 +15,7 @@
 </script>
 
 <header class="border-b border-border bg-background/80 backdrop-blur sticky top-0 z-10">
-  <div class="container mx-auto px-4 py-3 flex items-center justify-between">
+  <div class="container mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-y-2">
     <Link
       href="/"
       class="group font-display text-xl font-bold tracking-tight flex items-center gap-2"
@@ -36,22 +36,27 @@
              the membership upsell for free-tier members, so a separate
              "Membership" button here would just be a second link to /account. -->
         <Link href="/account">
-          <Button variant="default" size="sm" class="max-sm:min-h-11">
+          <Button variant="default" size="sm" class="max-sm:min-h-11" aria-label={t('nav.account')}>
             <User class="size-4" />
             <span class="hidden sm:inline">{t('nav.account')}</span>
           </Button>
         </Link>
       {:else}
         <Link href="/get-account">
-          <Button variant="ghost" size="sm" class="max-sm:min-h-11">
+          <Button
+            variant="ghost"
+            size="sm"
+            class="max-sm:min-h-11"
+            aria-label={t('nav.getAccount')}
+          >
             <SocksIcon class="size-4" />
             <span class="hidden sm:inline">{t('nav.getAccount')}</span>
           </Button>
         </Link>
         <Link href="/login">
-          <Button variant="outline" size="sm" class="max-sm:min-h-11">
+          <Button variant="outline" size="sm" class="max-sm:min-h-11" aria-label={t('nav.signIn')}>
             <LogIn class="size-4" />
-            {t('nav.signIn')}
+            <span class="hidden sm:inline">{t('nav.signIn')}</span>
           </Button>
         </Link>
       {/if}

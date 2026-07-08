@@ -159,7 +159,7 @@
           needs a small code add.
         </p>
       </div>
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label class="text-xs text-muted-foreground mb-1 block" for="cl-priority">Priority</label>
           <Input

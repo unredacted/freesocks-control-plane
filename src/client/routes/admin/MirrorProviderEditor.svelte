@@ -179,7 +179,7 @@
           autocomplete="off"
         />
       </div>
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label class="text-xs text-muted-foreground mb-1 block" for="mp-bucket">Bucket</label>
           <Input id="mp-bucket" bind:value={bucket} placeholder="subs" autocomplete="off" />
@@ -258,7 +258,7 @@
         {/if}
       </div>
 
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label class="text-xs text-muted-foreground mb-1 block" for="mp-priority">Priority</label>
           <Input

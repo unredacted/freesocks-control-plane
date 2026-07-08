@@ -317,7 +317,7 @@
         {/if}
       </div>
 
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label class="text-xs text-muted-foreground mb-1 block" for="srv-priority">Priority</label
           >

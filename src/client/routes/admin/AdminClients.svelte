@@ -112,7 +112,7 @@
               Device limit (HWID): <strong class="text-foreground">{c.hwid ? 'yes' : 'no'}</strong>
               · Priority: <strong class="text-foreground tabular-nums">{c.priority}</strong>
             </div>
-            <div class="flex gap-2 pt-2">
+            <div class="flex flex-wrap gap-2 pt-2">
               <Button size="sm" variant="outline" onclick={() => (editing = c)}>Edit</Button>
               <Button size="sm" variant="destructive" onclick={() => (pendingDelete = c)}>
                 Remove

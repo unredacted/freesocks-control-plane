@@ -127,7 +127,7 @@
               <strong>{tier.deviceLimit}</strong> · Strategy:
               <strong>{tier.trafficStrategy}</strong>
             </div>
-            <div class="flex gap-2">
+            <div class="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" onclick={() => (editing = tier)}>Edit</Button>
               <Button size="sm" variant="outline" onclick={() => (cloning = cloneDraft(tier))}>
                 <Copy class="size-3.5" />

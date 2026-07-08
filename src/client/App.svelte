@@ -88,7 +88,7 @@
   <PopWarm />
   <ThemeSync />
   <ErrorBoundary>
-    <div class="min-h-screen flex flex-col">
+    <div class="min-h-screen flex flex-col overflow-x-clip">
       <!-- a11y: first focusable element, lets keyboard users jump the header. -->
       <a
         href="#main"

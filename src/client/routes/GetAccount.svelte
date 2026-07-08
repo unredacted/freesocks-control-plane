@@ -246,7 +246,7 @@
           <div
             role="radiogroup"
             aria-label={t('get.backendAria')}
-            class="grid grid-cols-2 gap-2 rounded-lg border border-border p-1"
+            class="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-lg border border-border p-1"
           >
             <button
               type="button"
