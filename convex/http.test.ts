@@ -275,6 +275,51 @@ describe('route-level scope enforcement', () => {
     expect(view.user.status).toBe('active');
     expect(view.subscription).toBeNull();
   });
+
+  test('remnawave placement routes enforce the servers scope (moved off settings:write)', async () => {
+    const t = convexTest(schema, modules);
+    // The pool bind moved from admin:settings:write (the old /connection-profiles
+    // route) to admin:servers:write — the Ansible panel-bootstrap token that mints
+    // per-node squads must now carry servers:write to bind them.
+    const serversW = await insertToken(t, {
+      scopes: ['admin:servers:write'],
+      subjectType: 'service',
+    });
+    const settingsW = await insertToken(t, {
+      scopes: ['admin:settings:write'],
+      subjectType: 'service',
+    });
+    const serversR = await insertToken(t, {
+      scopes: ['admin:servers:read'],
+      subjectType: 'service',
+    });
+    const body = JSON.stringify({ modes: { evade: { squadUuids: ['sq-x'] } } });
+
+    const bound = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${serversW}`, 'content-type': 'application/json' },
+      body,
+    });
+    expect(bound.status).toBe(200);
+
+    // The OLD scope (settings:write) is now rejected on the pool bind.
+    const wrongScope = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${settingsW}`, 'content-type': 'application/json' },
+      body,
+    });
+    expect(wrongScope.status).toBe(401);
+
+    // node-stats is servers:read; settings:write cannot read it.
+    const statsOk = await t.fetch('/api/v1/admin/remnawave/node-stats', {
+      headers: { authorization: `Bearer ${serversR}` },
+    });
+    expect(statsOk.status).toBe(200);
+    const statsDenied = await t.fetch('/api/v1/admin/remnawave/node-stats', {
+      headers: { authorization: `Bearer ${settingsW}` },
+    });
+    expect(statsDenied.status).toBe(401);
+  });
 });
 
 describe('account-id rotate throttle (policy account.rotate, max 5)', () => {

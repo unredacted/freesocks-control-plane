@@ -17,12 +17,7 @@
   import { apiErrorMessage } from '../../lib/errors';
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import AdminListState from './AdminListState.svelte';
-  import {
-    adminSquadStatsQuery,
-    appSettingsQuery,
-    configQuery,
-    queryKeys,
-  } from '../../lib/queries';
+  import { appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { AppSettingsRecord } from '../../../shared/contracts/admin';
   import { toast } from 'svelte-sonner';
@@ -127,26 +122,21 @@
     },
   }));
 
-  // Connection modes (transport). Squad UUIDs (the Remnawave placement pool) are
-  // WRITE-ONLY: publicConfig exposes only `available` (pool bound?), never the
-  // value, so the squad inputs start blank and a blank leaves the current binding
-  // untouched (keep-secret-on-blank, like backend credentials).
+  // Connection modes (transport) — the GENERIC catalog (label/description/default).
+  // The Remnawave placement pool (which nodes each mode issues into) is managed on
+  // the Remnawave admin page, not here.
   let cpDraft = $state<{
     default: string;
     evadeLabel: string;
     privacyLabel: string;
     evadeDescription: string;
     privacyDescription: string;
-    evadeSquad: string;
-    privacySquad: string;
   }>({
     default: 'evade',
     evadeLabel: '',
     privacyLabel: '',
     evadeDescription: '',
     privacyDescription: '',
-    evadeSquad: '',
-    privacySquad: '',
   });
   let cpInit = $state(false);
   $effect(() => {
@@ -160,30 +150,11 @@
         privacyLabel: modes.find((m) => m.id === 'privacy')?.label ?? '',
         evadeDescription: modes.find((m) => m.id === 'evade')?.description ?? '',
         privacyDescription: modes.find((m) => m.id === 'privacy')?.description ?? '',
-        evadeSquad: '',
-        privacySquad: '',
       };
       cpInit = true;
     }
   });
-  // Live "is this mode's placement pool bound?" straight from config (never the uuid).
-  let cpAvailable = $derived({
-    evade: cfg.data?.connectionModes?.find((m) => m.id === 'evade')?.available ?? false,
-    privacy: cfg.data?.connectionModes?.find((m) => m.id === 'privacy')?.available ?? false,
-  });
-  // Per-placement node load (users online, stamped by the
-  // healthcheck cron) — the read-only window into whether a pool is balancing.
-  const squadStats = adminSquadStatsQuery();
-  // One squad UUID per line (commas also accepted); trims + dedupes.
-  function parseSquadList(text: string): string[] {
-    const out: string[] = [];
-    for (const raw of text.split(/[\n,]/)) {
-      const s = raw.trim();
-      if (s && !out.includes(s)) out.push(s);
-    }
-    return out;
-  }
-  const saveConnectionProfiles = createMutation(() => ({
+  const saveConnectionModes = createMutation(() => ({
     mutationFn: async () => {
       const CpResp = z.object({
         modes: z.array(
@@ -197,16 +168,10 @@
           }),
         ),
       });
-      const modes: Record<string, { label: string; description: string; squadUuids?: string[] }> = {
+      const modes = {
         evade: { label: cpDraft.evadeLabel, description: cpDraft.evadeDescription },
         privacy: { label: cpDraft.privacyLabel, description: cpDraft.privacyDescription },
       };
-      // Only send squads when the admin typed any — blank keeps the current
-      // binding. One UUID per line; 2+ = a load-balanced node pool.
-      const evadeSquads = parseSquadList(cpDraft.evadeSquad);
-      const privacySquads = parseSquadList(cpDraft.privacySquad);
-      if (evadeSquads.length > 0) modes.evade!.squadUuids = evadeSquads;
-      if (privacySquads.length > 0) modes.privacy!.squadUuids = privacySquads;
       return apiClient.patch(
         '/api/v1/admin/connection-modes',
         { default: cpDraft.default, modes },
@@ -214,7 +179,6 @@
       );
     },
     onSuccess: (updated) => {
-      // Reset the write-only squad inputs; refresh config so `available` + labels update.
       // label/description come back null when cleared — reflect that as blank inputs.
       cpDraft = {
         default: updated.modes.find((m) => m.isDefault)?.id ?? cpDraft.default,
@@ -222,8 +186,6 @@
         privacyLabel: updated.modes.find((m) => m.id === 'privacy')?.label ?? '',
         evadeDescription: updated.modes.find((m) => m.id === 'evade')?.description ?? '',
         privacyDescription: updated.modes.find((m) => m.id === 'privacy')?.description ?? '',
-        evadeSquad: '',
-        privacySquad: '',
       };
       void qc.invalidateQueries({ queryKey: queryKeys.config });
       toast.success('Connection modes saved');
@@ -581,39 +543,27 @@
 
       <Card>
         <CardHeader>
-          <CardTitle class="text-base">Connection profiles</CardTitle>
+          <CardTitle class="text-base">Connection modes</CardTitle>
           <CardDescription>
-            The member-facing transport choice: "Stay connected" (a CDN-fronted squad) and "Maximize
-            privacy" (a direct VLESS-Reality squad). Bind each to the Remnawave internal-squad UUID
-            it should issue keys into. Squad UUIDs are write-only; leave a field blank to keep the
-            current binding. The Ansible panel-bootstrap sets these automatically. Until a squad is
-            bound the member picker stays a local presentation preference (issuance falls back to
-            the tier's own squad). A custom label/description replaces the member picker's
-            translated copy verbatim in EVERY language — leave blank to keep the app's own
-            translations.
+            The member-facing transport choice: "Stay connected" (evade) and "Maximize privacy"
+            (privacy). Set the default and, optionally, a custom label/description that replaces the
+            member picker's translated copy verbatim in EVERY language (leave blank to keep the
+            app's own translations). Which Remnawave nodes each mode issues into — the placement
+            pool + live node load — is managed on the <strong>Remnawave</strong> page.
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-5 text-sm">
-          <!-- Stay connected (evade) -->
+          <!-- evade -->
           <div class="space-y-2">
-            <div class="flex items-center justify-between gap-2">
-              <label class="flex items-center gap-2 font-medium">
-                <input
-                  type="radio"
-                  name="cp-default"
-                  checked={cpDraft.default === 'evade'}
-                  onchange={() => (cpDraft = { ...cpDraft, default: 'evade' })}
-                />
-                Stay connected <span class="text-xs text-muted-foreground">(default?)</span>
-              </label>
-              <span
-                class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide {cpAvailable.evade
-                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                  : 'bg-muted text-muted-foreground'}"
-              >
-                {cpAvailable.evade ? 'Squad bound' : 'Not set'}
-              </span>
-            </div>
+            <label class="flex items-center gap-2 font-medium">
+              <input
+                type="radio"
+                name="cp-default"
+                checked={cpDraft.default === 'evade'}
+                onchange={() => (cpDraft = { ...cpDraft, default: 'evade' })}
+              />
+              Stay connected (evade) <span class="text-xs text-muted-foreground">(default?)</span>
+            </label>
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-label"
                 >Label <span class="opacity-70">(blank = translated default)</span></label
@@ -643,42 +593,20 @@
                   })}
               ></textarea>
             </div>
-            <div>
-              <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-squad"
-                >Remnawave squad UUIDs (write-only, one per line — 2+ = load-balanced pool)</label
-              >
-              <textarea
-                id="cp-evade-squad"
-                rows="2"
-                class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 font-mono text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
-                placeholder={cpAvailable.evade ? 'Bound — leave blank to keep' : 'Not set'}
-                value={cpDraft.evadeSquad}
-                oninput={(e) =>
-                  (cpDraft = { ...cpDraft, evadeSquad: (e.target as HTMLTextAreaElement).value })}
-              ></textarea>
-            </div>
           </div>
 
-          <!-- Maximize privacy (privacy) -->
+          <!-- privacy -->
           <div class="space-y-2 border-t border-border pt-4">
-            <div class="flex items-center justify-between gap-2">
-              <label class="flex items-center gap-2 font-medium">
-                <input
-                  type="radio"
-                  name="cp-default"
-                  checked={cpDraft.default === 'privacy'}
-                  onchange={() => (cpDraft = { ...cpDraft, default: 'privacy' })}
-                />
-                Maximize privacy <span class="text-xs text-muted-foreground">(default?)</span>
-              </label>
-              <span
-                class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide {cpAvailable.privacy
-                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                  : 'bg-muted text-muted-foreground'}"
-              >
-                {cpAvailable.privacy ? 'Squad bound' : 'Not set'}
-              </span>
-            </div>
+            <label class="flex items-center gap-2 font-medium">
+              <input
+                type="radio"
+                name="cp-default"
+                checked={cpDraft.default === 'privacy'}
+                onchange={() => (cpDraft = { ...cpDraft, default: 'privacy' })}
+              />
+              Maximize privacy (privacy)
+              <span class="text-xs text-muted-foreground">(default?)</span>
+            </label>
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="cp-privacy-label"
                 >Label <span class="opacity-70">(blank = translated default)</span></label
@@ -708,54 +636,14 @@
                   })}
               ></textarea>
             </div>
-            <div>
-              <label class="text-xs text-muted-foreground mb-1 block" for="cp-privacy-squad"
-                >Remnawave squad UUIDs (write-only, one per line — 2+ = load-balanced pool)</label
-              >
-              <textarea
-                id="cp-privacy-squad"
-                rows="2"
-                class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 font-mono text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
-                placeholder={cpAvailable.privacy ? 'Bound — leave blank to keep' : 'Not set'}
-                value={cpDraft.privacySquad}
-                oninput={(e) =>
-                  (cpDraft = { ...cpDraft, privacySquad: (e.target as HTMLTextAreaElement).value })}
-              ></textarea>
-            </div>
           </div>
-
-          {#if squadStats.data && squadStats.data.length > 0}
-            <div class="border-t border-border pt-4">
-              <p class="mb-2 text-xs font-medium text-muted-foreground">
-                Node load (users online per placement, refreshed by the healthcheck cron — issuance
-                homes a new key to the least-loaded node of a profile's pool)
-              </p>
-              <div class="space-y-1">
-                {#each squadStats.data as sq (sq.placement)}
-                  <div class="flex items-center justify-between gap-2 text-xs">
-                    <span class="truncate">
-                      <span class="font-medium">{sq.label ?? 'unnamed'}</span>
-                      <span class="ml-1 font-mono text-muted-foreground">{sq.placement}</span>
-                      {#if !sq.online}
-                        <span class="ml-1 text-amber-600 dark:text-amber-400">· offline</span>
-                      {/if}
-                    </span>
-                    <span class="shrink-0 tabular-nums text-muted-foreground">
-                      {sq.usersOnline}
-                      {sq.usersOnline === 1 ? 'user' : 'users'}
-                    </span>
-                  </div>
-                {/each}
-              </div>
-            </div>
-          {/if}
 
           <div class="flex justify-end">
             <Button
-              onclick={() => saveConnectionProfiles.mutate()}
-              disabled={saveConnectionProfiles.isPending}
+              onclick={() => saveConnectionModes.mutate()}
+              disabled={saveConnectionModes.isPending}
             >
-              {saveConnectionProfiles.isPending ? 'Saving…' : 'Save connection profiles'}
+              {saveConnectionModes.isPending ? 'Saving…' : 'Save connection modes'}
             </Button>
           </div>
         </CardContent>

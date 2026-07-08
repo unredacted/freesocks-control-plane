@@ -498,7 +498,7 @@ describe('account.switchMode saga', () => {
     await t.run(async (ctx) => {
       // Bind the privacy mode's placement pool — the infra detail never audited.
       await ctx.db.insert('appSettings', {
-        key: 'connectionMode.privacy.squadUuids',
+        key: 'remnawave.modePlacement.privacy.squads',
         value: JSON.stringify([SQUAD]),
         updatedAt: Date.now(),
       });

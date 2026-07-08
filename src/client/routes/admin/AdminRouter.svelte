@@ -16,6 +16,7 @@
   import AdminAudit from './AdminAudit.svelte';
   import AdminSettings from './AdminSettings.svelte';
   import AdminBackendServers from './AdminBackendServers.svelte';
+  import AdminRemnawave from './AdminRemnawave.svelte';
   import AdminStorage from './AdminStorage.svelte';
   import AdminClients from './AdminClients.svelte';
   import AdminMembershipCodes from './AdminMembershipCodes.svelte';
@@ -76,6 +77,8 @@
   <AdminTokens />
 {:else if router.pathname === '/admin/backend-servers'}
   <AdminBackendServers />
+{:else if router.pathname === '/admin/remnawave'}
+  <AdminRemnawave />
 {:else if router.pathname === '/admin/storage'}
   <AdminStorage />
 {:else if router.pathname === '/admin/clients'}

@@ -17,11 +17,12 @@ import {
 } from './connectionModes';
 
 // The per-mode squad pool a mode's keys are placed across. Remnawave-specific
-// (squad UUIDs); relocated to remnawave.modePlacement.* + edited via the
-// /admin/remnawave/* endpoint in the namespaced-surface phase. For now it sits
-// alongside the mode catalog under connectionMode.<id>.squadUuids.
-const POOL_KEY_SUFFIX = '.squadUuids';
-const MODE_POOL_KEY = (id: string) => `connectionMode.${id}${POOL_KEY_SUFFIX}`;
+// (squad UUIDs), so it lives in the Remnawave-namespaced appSettings prefix
+// (`remnawave.modePlacement.<id>.squads`), edited via /admin/remnawave/*, NOT
+// under the generic connectionMode.* catalog.
+const POOL_PREFIX = 'remnawave.modePlacement.';
+const POOL_KEY_SUFFIX = '.squads';
+const MODE_POOL_KEY = (id: string) => `${POOL_PREFIX}${id}${POOL_KEY_SUFFIX}`;
 
 /** Fail-safe parse of a stored squad pool: a JSON array of non-empty strings,
  *  de-duplicated in declaration order; anything else resolves to []. */
@@ -73,16 +74,16 @@ export async function resolveModePlacementStable(
 }
 
 /** The set of mode ids that have ≥1 squad bound — drives the public `available`
- *  flag. Reads only the pool keys (one range scan over the mode namespace). */
+ *  flag. One range scan over the Remnawave placement namespace. */
 export async function resolveBoundModeIds(db: DatabaseReader): Promise<Set<string>> {
   const rows = await db
     .query('appSettings')
-    .withIndex('by_key', (q) => q.gte('key', 'connectionMode.').lt('key', 'connectionMode/'))
+    .withIndex('by_key', (q) => q.gte('key', POOL_PREFIX).lt('key', POOL_PREFIX.slice(0, -1) + '/'))
     .collect();
   const bound = new Set<string>();
   for (const r of rows) {
     if (!r.key.endsWith(POOL_KEY_SUFFIX)) continue;
-    const id = r.key.slice('connectionMode.'.length, -POOL_KEY_SUFFIX.length);
+    const id = r.key.slice(POOL_PREFIX.length, -POOL_KEY_SUFFIX.length);
     try {
       if (sanitizePool(JSON.parse(r.value)).length > 0) bound.add(id);
     } catch {

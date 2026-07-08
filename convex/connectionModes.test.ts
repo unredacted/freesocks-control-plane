@@ -149,7 +149,7 @@ describe('remnawave mode placement pools', () => {
     await t.run(async (ctx) => {
       const now = Date.now();
       await ctx.db.insert('appSettings', {
-        key: 'connectionMode.evade.squadUuids',
+        key: 'remnawave.modePlacement.evade.squads',
         value: JSON.stringify(['sq-a', 'sq-b', 'sq-a']), // dupe dropped
         updatedAt: now,
       });
@@ -169,7 +169,7 @@ describe('remnawave mode placement pools', () => {
     // Corrupt JSON → [] (never throws).
     await t.run((ctx) =>
       ctx.db.insert('appSettings', {
-        key: 'connectionMode.privacy.squadUuids',
+        key: 'remnawave.modePlacement.privacy.squads',
         value: 'not json{',
         updatedAt: Date.now(),
       }),
@@ -182,12 +182,12 @@ describe('remnawave mode placement pools', () => {
     await t.run(async (ctx) => {
       const now = Date.now();
       await ctx.db.insert('appSettings', {
-        key: 'connectionMode.evade.squadUuids',
+        key: 'remnawave.modePlacement.evade.squads',
         value: JSON.stringify(['sq-a']),
         updatedAt: now,
       });
       await ctx.db.insert('appSettings', {
-        key: 'connectionMode.privacy.squadUuids',
+        key: 'remnawave.modePlacement.privacy.squads',
         value: JSON.stringify([]), // empty → not bound
         updatedAt: now,
       });
@@ -201,8 +201,8 @@ describe('remnawave mode placement pools', () => {
       modes: { evade: { squadUuids: ['sq-1', 'sq-2', 'sq-1'] }, privacy: { squadUuids: [] } },
     });
     const byKey = Object.fromEntries(writes.map((w) => [w.key, JSON.parse(w.value)]));
-    expect(byKey['connectionMode.evade.squadUuids']).toEqual(['sq-1', 'sq-2']);
-    expect(byKey['connectionMode.privacy.squadUuids']).toEqual([]);
+    expect(byKey['remnawave.modePlacement.evade.squads']).toEqual(['sq-1', 'sq-2']);
+    expect(byKey['remnawave.modePlacement.privacy.squads']).toEqual([]);
     expect(() => modePlacementWrites({ modes: { evade: { squadUuids: 'nope' } } })).toThrow(
       /squadUuids/,
     );

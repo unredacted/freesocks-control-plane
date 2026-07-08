@@ -5,12 +5,51 @@
  * goes through a `backend === 'remnawave'` gate in account.ts / lifecycle.ts).
  */
 import { internalMutation, internalQuery } from './_generated/server';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
+import { upsertSettingRow } from './appSettings';
+import { writeAuditLog } from './lib/audit';
 import {
   pickByNodeLoad,
   resolveModeSquadPool,
   resolveModePlacementStable,
+  modePlacementWrites,
+  resolveBoundModeIds,
 } from './lib/remnawavePlacement';
+
+/**
+ * Admin binds each mode's Remnawave placement pool (the squads a mode's keys are
+ * issued across). Remnawave-namespaced: squad UUIDs are write-only + audited as a
+ * `poolBound` boolean, never logged. Returns which modes now have a pool bound.
+ */
+export const setModePlacements = internalMutation({
+  args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { patch, actorAdminId }) => {
+    let writes: Array<{ key: string; value: string }>;
+    try {
+      writes = modePlacementWrites(patch);
+    } catch (e) {
+      throw new ConvexError({
+        code: 'validation',
+        message: e instanceof Error ? e.message : 'invalid mode-placement config',
+      });
+    }
+    if (writes.length === 0) {
+      throw new ConvexError({ code: 'validation', message: 'no recognized mode-placement fields' });
+    }
+    for (const { key, value } of writes) {
+      await upsertSettingRow(ctx, key, value, actorAdminId);
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: actorAdminId ?? undefined,
+        action: 'admin.remnawave.mode_placement.update',
+        targetType: 'connection_mode',
+        targetId: key,
+        payload: { key, poolBound: (JSON.parse(value) as string[]).length > 0 },
+      });
+    }
+    return { bound: [...(await resolveBoundModeIds(ctx.db))] };
+  },
+});
 
 /** The placement a NEW key issues into: the LEAST-LOADED node of the mode's
  *  placement pool (per-node load cached by the healthcheck cron; single-element

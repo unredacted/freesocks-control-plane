@@ -902,24 +902,34 @@ describe('adminApi setTheme + resolveTheme', () => {
   });
 });
 
-describe('adminApi setConnectionModes', () => {
-  test('binds pool + label + default; the returned view is BOUND, never the uuid', async () => {
+describe('adminApi connection modes + remnawave placements', () => {
+  test('splits generic catalog (label/default) from the Remnawave placement pool; view is BOUND, never the uuid', async () => {
     const t = convexTest(schema, modules);
+    // Remnawave-namespaced pool bind: squad UUIDs are write-only + return only
+    // which modes are now bound.
+    const placed = await t.mutation(internal.remnawaveNodes.setModePlacements, {
+      patch: {
+        modes: {
+          evade: { squadUuids: ['fronted-squad-uuid'] },
+          privacy: { squadUuids: ['reality-squad-uuid'] },
+        },
+      },
+    });
+    expect([...placed.bound].sort()).toEqual(['evade', 'privacy']);
+    expect(JSON.stringify(placed)).not.toContain('reality-squad-uuid');
+    expect(JSON.stringify(placed)).not.toContain('fronted-squad-uuid');
+
+    // Generic catalog copy + default live behind the settings scope — no squads here.
     const out = await t.mutation(internal.adminApi.setConnectionModes, {
       patch: {
         default: 'privacy',
         modes: {
-          evade: { squadUuids: ['fronted-squad-uuid'] },
-          privacy: {
-            squadUuids: ['reality-squad-uuid'],
-            label: 'Max privacy',
-            description: 'Direct Reality, no CDN in the path.',
-          },
+          privacy: { label: 'Max privacy', description: 'Direct Reality, no CDN in the path.' },
         },
       },
     });
     const priv = out.modes.find((m) => m.id === 'privacy')!;
-    expect(priv.bound).toBe(true);
+    expect(priv.bound).toBe(true); // pool bound above
     expect(priv.label).toBe('Max privacy');
     expect(priv.description).toBe('Direct Reality, no CDN in the path.');
     expect(priv.deliveryStyle).toBe('rawConfig');
@@ -930,7 +940,7 @@ describe('adminApi setConnectionModes', () => {
     // which would round-trip through the admin form and pin English over i18n).
     expect(evade.label).toBeNull();
     expect(evade.description).toBeNull();
-    // The admin view exposes only the boolean — the squad UUID never leaves the resolver.
+    // Neither the catalog view nor the pool return ever carries a squad UUID.
     expect(JSON.stringify(out)).not.toContain('reality-squad-uuid');
     expect(JSON.stringify(out)).not.toContain('fronted-squad-uuid');
 
@@ -943,18 +953,18 @@ describe('adminApi setConnectionModes', () => {
 
   test('audits a pool bind as a boolean, never the uuid', async () => {
     const t = convexTest(schema, modules);
-    await t.mutation(internal.adminApi.setConnectionModes, {
+    await t.mutation(internal.remnawaveNodes.setModePlacements, {
       patch: { modes: { privacy: { squadUuids: ['super-secret-squad'] } } },
     });
     const audit = await t.run((ctx) =>
       ctx.db
         .query('auditLog')
-        .withIndex('by_action', (q) => q.eq('action', 'admin.connection_mode.update'))
+        .withIndex('by_action', (q) => q.eq('action', 'admin.remnawave.mode_placement.update'))
         .collect(),
     );
     expect(audit).toHaveLength(1);
     expect(audit[0]!.payload).toMatchObject({
-      key: 'connectionMode.privacy.squadUuids',
+      key: 'remnawave.modePlacement.privacy.squads',
       poolBound: true,
     });
     expect(JSON.stringify(audit[0]!.payload)).not.toContain('super-secret-squad');

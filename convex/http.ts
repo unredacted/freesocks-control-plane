@@ -2223,16 +2223,44 @@ http.route({
   }),
 });
 
-// GET /api/v1/admin/squad-stats: per-placement node-load snapshots (the node
-// placement picker's input), read-only for the admin CMS. Placement handles
+// --- admin: Remnawave-specific config (namespaced /admin/remnawave/*) --------
+// Backend-specific surface, kept OFF the generic admin API so FCP stays
+// backend-agnostic. Reuses the admin:servers:* scopes (same class as
+// backend-servers). Squad UUIDs are write-only; node load is read-only.
+
+// GET /api/v1/admin/remnawave/node-stats: per-placement node-load snapshots (the
+// node-placement picker's input), read-only for the admin CMS. Placement handles
 // (squad UUIDs) are shown — the admin set them; they never reach public config.
-// (Path is renamed to /admin/remnawave/node-stats in the namespaced-surface phase.)
 http.route({
-  path: '/api/v1/admin/squad-stats',
+  path: '/api/v1/admin/remnawave/node-stats',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
     return json({ nodes: await ctx.runQuery(internal.remnawaveNodes.listNodeStats, {}) });
+  }),
+});
+
+// PATCH /api/v1/admin/remnawave/mode-placements: bind each mode's squad pool (the
+// nodes its keys are issued across). Write-only squad UUIDs; dual-mode (an fsv1_
+// token with admin:servers:write works — the Ansible panel-bootstrap PATCHes this
+// after it creates the per-node squads).
+http.route({
+  path: '/api/v1/admin/remnawave/mode-placements',
+  method: 'PATCH',
+  handler: sealed(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.remnawaveNodes.setModePlacements, {
+          patch: body,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
   }),
 });
 

@@ -389,7 +389,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     const userId = await t.run(async (ctx) => {
       await ctx.db.patch(memberTierId, { remnawaveSquadUuid: 'TIER_SQUAD' });
       await ctx.db.insert('appSettings', {
-        key: 'connectionMode.privacy.squadUuids',
+        key: 'remnawave.modePlacement.privacy.squads',
         value: JSON.stringify(['PRIVACY_SQUAD']),
         updatedAt: Date.now(),
       });
@@ -466,7 +466,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     const userId = await t.run(async (ctx) => {
       await ctx.db.patch(memberTierId, { remnawaveSquadUuid: 'TIER_SQUAD' });
       await ctx.db.insert('appSettings', {
-        key: 'connectionMode.privacy.squadUuids',
+        key: 'remnawave.modePlacement.privacy.squads',
         value: JSON.stringify(['SQUAD_A', 'SQUAD_B']),
         updatedAt: Date.now(),
       });

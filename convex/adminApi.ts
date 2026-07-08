@@ -30,7 +30,7 @@ import { upsertSettingRow as upsertSetting } from './appSettings';
 import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
 import { connectionModeWrites, resolveConnectionModes } from './lib/connectionModes';
-import { modePlacementWrites, resolveBoundModeIds } from './lib/remnawavePlacement';
+import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { normalizeSupportId } from './lib/supportId';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
@@ -1703,20 +1703,19 @@ export const setVerification = internalMutation({
 // === connection modes ========================================================
 
 /**
- * Admin sets the connection-mode catalog: per-mode label/description + the
- * default (generic, via connectionModeWrites) AND the per-mode Remnawave
- * placement pool (squad UUIDs, via modePlacementWrites). Writes the appSettings
- * `connectionMode.*` namespace; resolveConnectionModes / publicConfig read it
- * back. Squad UUIDs are write-only + audited as a `poolBound` BOOLEAN, never
- * logged. Returns the catalog view (label null unless admin-set, so it doesn't
- * round-trip the compiled default into the form + pin English over i18n).
+ * Admin sets the GENERIC connection-mode catalog: per-mode label/description +
+ * the default. Writes the appSettings `connectionMode.*` namespace. The
+ * Remnawave placement pool (which squads a mode issues into) is backend-specific
+ * and set separately via remnawaveNodes.setModePlacements. Returns the catalog
+ * view (label null unless admin-set, so it doesn't round-trip the compiled
+ * default into the form + pin English over i18n).
  */
 export const setConnectionModes = internalMutation({
   args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { patch, actorAdminId }) => {
     let writes: Array<{ key: string; value: string }>;
     try {
-      writes = [...connectionModeWrites(patch), ...modePlacementWrites(patch)];
+      writes = connectionModeWrites(patch);
     } catch (e) {
       throw new ConvexError({
         code: 'validation',
@@ -1731,17 +1730,13 @@ export const setConnectionModes = internalMutation({
     }
     for (const { key, value } of writes) {
       await upsertSetting(ctx, key, value, actorAdminId);
-      const isPoolKey = key.endsWith('.squadUuids');
       await writeAuditLog(ctx, {
         actorType: 'admin',
         actorId: actorAdminId ?? undefined,
         action: 'admin.connection_mode.update',
         targetType: 'connection_mode',
         targetId: key,
-        // Never a squad UUID — only which key changed + whether a pool is bound.
-        payload: isPoolKey
-          ? { key, poolBound: (JSON.parse(value) as string[]).length > 0 }
-          : { key },
+        payload: { key },
       });
     }
     const [modes, bound] = await Promise.all([

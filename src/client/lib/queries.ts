@@ -53,7 +53,7 @@ export const queryKeys = {
   adminAudit: ['admin', 'audit'] as const,
   adminSettings: ['admin', 'settings'] as const,
   adminBackendServers: ['admin', 'backend-servers'] as const,
-  adminSquadStats: ['admin', 'squad-stats'] as const,
+  adminNodeStats: ['admin', 'remnawave', 'node-stats'] as const,
   adminMirrorProviders: ['admin', 'mirror-providers'] as const,
   adminClients: ['admin', 'clients'] as const,
   adminRateLimits: ['admin', 'rate-limits'] as const,
@@ -378,11 +378,11 @@ const NodeStatsResponse = z.object({
     }),
   ),
 });
-export const adminSquadStatsQuery = () =>
+export const adminNodeStatsQuery = () =>
   createQuery(() => ({
-    queryKey: queryKeys.adminSquadStats,
+    queryKey: queryKeys.adminNodeStats,
     queryFn: async () =>
-      (await apiClient.get('/api/v1/admin/squad-stats', NodeStatsResponse)).nodes,
+      (await apiClient.get('/api/v1/admin/remnawave/node-stats', NodeStatsResponse)).nodes,
     staleTime: 60_000,
   }));
 
