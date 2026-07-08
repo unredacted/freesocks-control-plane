@@ -121,14 +121,14 @@ describe('remnawaveIssueUser', () => {
     expect(issued.backendUserId).toBe(UUID);
   });
 
-  test('maps a squad uuid into activeInternalSquads', async () => {
+  test('maps the placement handle into activeInternalSquads', async () => {
     mockFetch(() => jsonRes(userObj()));
     await remnawaveIssueUser(cfg, {
       username: 'u',
       trafficLimitBytes: null,
       expireAt: null,
       tag: 'member',
-      remnawaveSquadUuid: 'squad-1',
+      placement: 'squad-1',
     });
     expect(calls[0]!.body!.activeInternalSquads).toEqual(['squad-1']);
   });
@@ -226,15 +226,15 @@ describe('remnawaveUpdateUser (Bug 14: squad clear vs set vs absent)', () => {
     expect(calls[0]!.body!.trafficLimitBytes).toBe(10);
   });
 
-  test('clears the squad when present and null', async () => {
+  test('clears the squad when placement is present and null', async () => {
     mockFetch(() => jsonRes(userObj()));
-    await remnawaveUpdateUser(cfg, UUID, { remnawaveSquadUuid: null });
+    await remnawaveUpdateUser(cfg, UUID, { placement: null });
     expect(calls[0]!.body!.activeInternalSquads).toEqual([]);
   });
 
-  test('sets the squad when present and a value', async () => {
+  test('sets the squad when placement is present and a value', async () => {
     mockFetch(() => jsonRes(userObj()));
-    await remnawaveUpdateUser(cfg, UUID, { remnawaveSquadUuid: 'sq-9' });
+    await remnawaveUpdateUser(cfg, UUID, { placement: 'sq-9' });
     expect(calls[0]!.body!.activeInternalSquads).toEqual(['sq-9']);
   });
 });

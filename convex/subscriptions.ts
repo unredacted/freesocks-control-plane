@@ -88,9 +88,10 @@ export const insertSubscription = internalMutation({
     subscriptionUrl: v.string(),
     subscriptionMirrors: v.array(mirror),
     rawContentHash: v.optional(v.string()),
-    // The squad-pool pick this key was issued into (Remnawave only) — read back
-    // by lifecycle.activeSubAndTier so tier pushes never re-home a live key.
-    remnawaveSquadUuid: v.optional(v.string()),
+    // The opaque backend placement handle this key was issued into (Remnawave:
+    // the chosen squad) — read back by lifecycle.activeSubAndTier so tier pushes
+    // never re-home a live key.
+    placement: v.optional(v.string()),
   },
   handler: async (ctx, a) => {
     // Mint the opaque per-subscription token for the FCP-fronted URL. 128-bit;
@@ -105,8 +106,11 @@ export const insertSubscription = internalMutation({
     ) {
       subToken = randomHex(16);
     }
+    const { placement, ...rest } = a;
     return ctx.db.insert('subscriptions', {
-      ...a,
+      ...rest,
+      // Map the generic arg onto the schema field name.
+      backendPlacement: placement,
       subToken,
       state: 'active',
       updatedAt: Date.now(),

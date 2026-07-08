@@ -58,7 +58,7 @@ const issueSpec = v.object({
   description: v.optional(v.string()),
   hwidDeviceLimit: v.optional(v.union(v.number(), v.null())),
   trafficLimitStrategy: v.optional(trafficStrategy),
-  remnawaveSquadUuid: v.optional(v.union(v.string(), v.null())),
+  placement: v.optional(v.union(v.string(), v.null())),
 });
 
 const updatePatch = v.object({
@@ -68,7 +68,7 @@ const updatePatch = v.object({
   description: v.optional(v.string()),
   hwidDeviceLimit: v.optional(v.union(v.number(), v.null())),
   trafficLimitStrategy: v.optional(trafficStrategy),
-  remnawaveSquadUuid: v.optional(v.union(v.string(), v.null())),
+  placement: v.optional(v.union(v.string(), v.null())),
   status: v.optional(v.union(v.literal('active'), v.literal('disabled'))),
 });
 

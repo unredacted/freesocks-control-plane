@@ -366,7 +366,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     t: ReturnType<typeof convexTest>,
     userId: Id<'users'>,
     backendUserId: string,
-    remnawaveSquadUuid?: string,
+    placement?: string,
   ): Promise<void> {
     await t.run(async (ctx) => {
       await ctx.db.insert('subscriptions', {
@@ -376,7 +376,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
         backendShortId: `${backendUserId}-s`,
         subscriptionUrl: 'https://x/sub',
         subscriptionMirrors: [],
-        ...(remnawaveSquadUuid ? { remnawaveSquadUuid } : {}),
+        ...(placement ? { backendPlacement: placement } : {}),
         state: 'active',
         updatedAt: Date.now(),
       });
@@ -404,7 +404,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     await seedActiveSub(t, userId, 'bu-squad');
 
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
-    expect(st?.remnawaveSquadUuid).toBe('PRIVACY_SQUAD');
+    expect(st?.placement).toBe('PRIVACY_SQUAD');
     expect(st?.userStatus).toBe('active');
   });
 
@@ -424,7 +424,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     await seedActiveSub(t, userId, 'bu-fallback');
 
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
-    expect(st?.remnawaveSquadUuid).toBe('TIER_SQUAD');
+    expect(st?.placement).toBe('TIER_SQUAD');
   });
 
   test('device-limit toggle: OFF (default) forces hwidDeviceLimit null; ON uses the tier limit', async () => {
@@ -507,7 +507,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     await seedActiveSub(t, userId, 'bu-pinned', 'SQUAD_A');
 
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
-    expect(st?.remnawaveSquadUuid).toBe('SQUAD_A'); // pinned, NOT re-picked to SQUAD_B
+    expect(st?.placement).toBe('SQUAD_A'); // pinned, NOT re-picked to SQUAD_B
 
     // A pre-pool row (no persisted squad) falls back to the pool's first squad,
     // deterministically — stable across pushes.
@@ -522,7 +522,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     );
     await seedActiveSub(t, legacyUserId, 'bu-legacy');
     const stLegacy = await t.query(internal.lifecycle.activeSubAndTier, { userId: legacyUserId });
-    expect(stLegacy?.remnawaveSquadUuid).toBe('SQUAD_A'); // pool[0], not least-loaded
+    expect(stLegacy?.placement).toBe('SQUAD_A'); // pool[0], not least-loaded
   });
 
   test('pushTierToBackend runs cleanly for an active user and clears drift (mock backend)', async () => {

@@ -61,7 +61,10 @@ export interface IssueUserSpec {
   // Remnawave-only:
   hwidDeviceLimit?: number | null;
   trafficLimitStrategy?: TrafficLimitStrategy;
-  remnawaveSquadUuid?: string | null;
+  // Opaque, backend-defined placement handle (where within the backend this key
+  // is homed). The generic layer treats it as a black box; Remnawave maps it to
+  // an internal-squad UUID (activeInternalSquads), Outline ignores it.
+  placement?: string | null;
 }
 
 export interface IssuedUser {
@@ -100,7 +103,9 @@ export interface UpdateUserPatch {
   description?: string;
   hwidDeviceLimit?: number | null;
   trafficLimitStrategy?: TrafficLimitStrategy;
-  remnawaveSquadUuid?: string | null;
+  // Opaque backend placement handle (see IssueUserSpec.placement). Present+null/''
+  // clears it; Remnawave maps it to activeInternalSquads.
+  placement?: string | null;
   // Status changes go through the dedicated `setStatus` provider op
   // (Remnawave's /actions/{enable|disable}), not this field-update patch.
 }

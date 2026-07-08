@@ -214,7 +214,8 @@ export async function remnawaveIssueUser(
       // Remnawave restricts tags to [A-Z0-9_]; coerce our lowercase slug.
       tag: toRemnawaveTag(spec.tag),
       description: spec.description,
-      activeInternalSquads: spec.remnawaveSquadUuid ? [spec.remnawaveSquadUuid] : undefined,
+      // The opaque placement handle IS the internal-squad UUID for Remnawave.
+      activeInternalSquads: spec.placement ? [spec.placement] : undefined,
     },
     schema: RemnawaveUser,
   });
@@ -387,9 +388,9 @@ export async function remnawaveUpdateUser(
   if (patch.hwidDeviceLimit !== undefined) body.hwidDeviceLimit = patch.hwidDeviceLimit;
   if (patch.description !== undefined) body.description = patch.description;
   if (patch.tag !== undefined) body.tag = toRemnawaveTag(patch.tag);
-  if (patch.remnawaveSquadUuid !== undefined) {
-    // present+null/'' clears the squad; a value sets it.
-    body.activeInternalSquads = patch.remnawaveSquadUuid ? [patch.remnawaveSquadUuid] : [];
+  if (patch.placement !== undefined) {
+    // The placement handle IS the squad UUID; present+null/'' clears it, a value sets it.
+    body.activeInternalSquads = patch.placement ? [patch.placement] : [];
   }
   await call(cfg, {
     method: 'PATCH',

@@ -315,7 +315,7 @@ export const regenerate = internalAction({
         expireAt: computeExpireAtIso(user.membershipExpiresAt, freeExpiryDays),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
         tag: tier.slug,
-        remnawaveSquadUuid: profileSquad ?? tier.remnawaveSquadUuid ?? null,
+        placement: profileSquad ?? tier.remnawaveSquadUuid ?? null,
       },
     });
 
@@ -416,7 +416,7 @@ export const switchBackend = internalAction({
         ),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], peerTier),
         tag: peerTier.slug,
-        remnawaveSquadUuid: profileSquad ?? peerTier.remnawaveSquadUuid ?? null,
+        placement: profileSquad ?? peerTier.remnawaveSquadUuid ?? null,
       },
     });
 
@@ -529,7 +529,7 @@ export const switchProfile = internalAction({
         ),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
         tag: tier.slug,
-        remnawaveSquadUuid: profileSquad ?? tier.remnawaveSquadUuid ?? null,
+        placement: profileSquad ?? tier.remnawaveSquadUuid ?? null,
       },
     });
 

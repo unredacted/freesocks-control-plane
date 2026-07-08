@@ -180,14 +180,15 @@ export const activeSubAndTier = internalQuery({
       .order('desc')
       .first();
     if (!sub) return null;
-    // The squad this key was issued into, PRESERVED: a tier push must re-send
-    // the key's own squad, never re-pick from the pool (that would thrash live
-    // keys across squads on every renewal) and never re-home to the tier squad
-    // (which would discard the member's profile choice, or clear
-    // activeInternalSquads → "No hosts found"). (Review #3 + squad pools.)
-    // Pre-pool rows have no persisted squad → stable pool-first fallback.
-    const profileSquad =
-      sub.remnawaveSquadUuid ??
+    // The placement this key was issued into, PRESERVED: a tier push must re-send
+    // the key's own placement, never re-pick (that would thrash live keys across
+    // nodes on every renewal) and never re-home to the tier squad (which would
+    // discard the member's mode choice, or clear activeInternalSquads → "No hosts
+    // found"). (Review #3 + node placement.) Rows with no persisted placement
+    // fall back to a stable mode-first resolution.
+    const placement =
+      sub.backendPlacement ??
+      sub.remnawaveSquadUuid ?? // legacy rows pre-migration (Phase 5 copies it over)
       (await resolveProfileSquad(ctx.db, user.connectionProfileId ?? null));
     // Read the device-limit master toggle (fail-safe to the compiled default) so
     // the tier push honors it exactly like the issuance path — flipping it off
@@ -213,7 +214,7 @@ export const activeSubAndTier = internalQuery({
       trafficLimitBytes: tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null,
       trafficLimitStrategy: tier.trafficStrategy,
       hwidDeviceLimit: resolveHwidLimit(enforcementEnabled, tier),
-      remnawaveSquadUuid: profileSquad ?? tier.remnawaveSquadUuid ?? null,
+      placement: placement ?? tier.remnawaveSquadUuid ?? null,
       // Raw ms (this is a query — the ISO is computed in the action, which can
       // call Date.now()), so a renewal re-pushes the backend expiry.
       membershipExpiresAt: user.membershipExpiresAt ?? null,
@@ -256,7 +257,7 @@ export const pushTierToBackend = internalAction({
           trafficLimitBytes: st.trafficLimitBytes,
           trafficLimitStrategy: st.trafficLimitStrategy,
           hwidDeviceLimit: st.hwidDeviceLimit,
-          remnawaveSquadUuid: st.remnawaveSquadUuid,
+          placement: st.placement,
           // Push the entitlement expiry too, so a renewal extends the backend key.
           expireAt: computeExpireAtIso(st.membershipExpiresAt, freeExpiryDays),
         },

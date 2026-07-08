@@ -174,11 +174,15 @@ export default defineSchema({
     // don't thrash and we never serve one client's format to another — on both the
     // fresh-hit and stale-fallback paths. Never logged.
     subCache: v.optional(v.string()),
-    // Which Remnawave internal squad this key was issued into (the squad-pool
-    // pick, persisted so tier pushes re-send the SAME squad instead of
-    // re-picking — a re-pick would thrash live keys across squads on every
-    // renewal). Absent on pre-pool rows and non-Remnawave subs; the push then
-    // falls back to the profile/tier squad resolution.
+    // Opaque backend placement handle this key was issued into (Remnawave: the
+    // internal-squad UUID chosen by node-load placement). Persisted so tier
+    // pushes re-send the SAME placement instead of re-picking — a re-pick would
+    // thrash live keys across nodes on every renewal. Absent on non-Remnawave
+    // subs; the push then falls back to the mode's placement resolution.
+    backendPlacement: v.optional(v.string()),
+    // DEPRECATED (dropped in the node-placement cutover, Phase 5): the old
+    // squad field. Kept additive during migration so existing rows still parse;
+    // migrateSubscriptionPlacement copies it into backendPlacement then strips it.
     remnawaveSquadUuid: v.optional(v.string()),
     state: subscriptionState,
     updatedAt: v.number(),
