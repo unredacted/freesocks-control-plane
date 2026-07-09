@@ -520,6 +520,9 @@
   "setup": {
     "title": "Set up your proxy app",
     "install": "Install",
+    "openSource": "Open source",
+    "proprietary": "Proprietary",
+    "viewSource": "Source",
     "intro": "Copy your subscription link above, then add it to a compatible app:",
     "android": "Android",
     "ios": "iPhone / iPad",

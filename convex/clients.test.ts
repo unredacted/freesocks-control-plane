@@ -138,6 +138,58 @@ describe('clientCatalog resolve + project', () => {
     expect(projected[0]).not.toHaveProperty('priority');
   });
 
+  test('DEFAULT_CLIENTS carry open-source metadata (labels + source repos)', () => {
+    const find = (name: string) => DEFAULT_CLIENTS.find((c) => c.name === name);
+    // 7 of the 8 originals are open source; Shadowrocket is the lone proprietary one.
+    expect(find('Hiddify')?.openSource).toBe(true);
+    expect(find('Hiddify')?.license).toBe('GPL-3.0');
+    expect(find('Shadowrocket')?.openSource).toBe(false);
+    expect(find('Shadowrocket')?.license).toBe('Proprietary');
+    // the verified open-source additions are present + labeled OSS
+    for (const name of ['Anywhere', 'v2rayN', 'FlClash', 'Mihomo Party']) {
+      expect(find(name)?.openSource, name).toBe(true);
+    }
+    // every open-source app advertises a public source repo
+    for (const c of DEFAULT_CLIENTS) {
+      if (c.openSource) expect(c.sourceUrl, c.name).toBeTruthy();
+    }
+  });
+
+  test('publicClients ranks open-source ahead of proprietary, then by priority', () => {
+    const projected = publicClients([
+      {
+        name: 'Proprietary-best-priority',
+        platforms: [],
+        backends: ['remnawave'],
+        homepageUrl: 'x',
+        schemeId: null,
+        hwid: false,
+        openSource: false,
+        enabled: true,
+        priority: 1,
+      },
+      {
+        name: 'OSS-worst-priority',
+        platforms: [],
+        backends: ['remnawave'],
+        homepageUrl: 'x',
+        schemeId: null,
+        hwid: false,
+        openSource: true,
+        sourceUrl: 'https://example.com/src',
+        enabled: true,
+        priority: 99,
+      },
+    ]);
+    // The open-source app wins despite the worse (higher) priority number.
+    expect(projected.map((c) => c.name)).toEqual([
+      'OSS-worst-priority',
+      'Proprietary-best-priority',
+    ]);
+    expect(projected[0].openSource).toBe(true);
+    expect(projected[0].sourceUrl).toBe('https://example.com/src');
+  });
+
   test('publicConfig.get ships the clients catalog (defaults when unseeded)', async () => {
     const t = convexTest(schema, modules);
     const cfg = await t.query(api.publicConfig.get, {});

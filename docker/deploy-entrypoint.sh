@@ -121,6 +121,13 @@ bunx convex run seed:reconfigureMembershipTier '{}'
 echo "[deploy] setting the device-limit enforcement default (no-op if already set)"
 bunx convex run seed:migrateDeviceEnforcementDefault '{}'
 
+# One-time backfill of the client-catalog open-source metadata (openSource /
+# license / sourceUrl) onto client rows that predate those fields, plus insertion
+# of the new open-source client apps. Idempotent (only patches rows still missing
+# the metadata, so it never clobbers admin edits).
+echo "[deploy] backfilling client-catalog open-source metadata (idempotent)"
+bunx convex run seed:migrateClientCatalogMeta '{}'
+
 # Seed the free-tier idle marker (freeKeyExpiresAt) on any free users that lack it,
 # so the deactivate-idle-free sweep can find aged-out free keys. Idempotent (skips
 # users that already have it). NOTE: reclassifying historical status:'deleted' free

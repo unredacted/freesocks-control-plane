@@ -135,6 +135,29 @@
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="min-w-0">
             <span class="text-sm font-semibold">{c.name}</span>
+            {#if c.openSource}
+              <span
+                class="ms-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+              >
+                {t('setup.openSource')}
+              </span>
+            {:else}
+              <span
+                class="ms-2 inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+              >
+                {t('setup.proprietary')}
+              </span>
+            {/if}
+            {#if c.sourceUrl}
+              <a
+                href={c.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="ms-2 text-xs text-muted-foreground underline hover:text-foreground"
+              >
+                {t('setup.viewSource')}
+              </a>
+            {/if}
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <a

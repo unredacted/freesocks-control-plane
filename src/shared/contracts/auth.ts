@@ -198,6 +198,9 @@ export const PublicConfig = z.object({
         homepageUrl: z.string(),
         schemeId: z.string().nullable(),
         hwid: z.boolean(),
+        openSource: z.boolean().optional().default(false),
+        license: z.string().optional(),
+        sourceUrl: z.string().optional(),
       }),
     )
     .optional()

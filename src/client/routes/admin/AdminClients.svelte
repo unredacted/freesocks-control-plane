@@ -83,6 +83,17 @@
             <CardTitle class="text-lg flex items-center justify-between flex-wrap gap-2">
               <span>{c.name}</span>
               <span class="flex items-center gap-2">
+                {#if c.openSource}
+                  <span class="text-xs px-2 py-1 rounded bg-primary/10 text-primary font-medium">
+                    Open source
+                  </span>
+                {:else}
+                  <span
+                    class="text-xs px-2 py-1 rounded bg-muted text-muted-foreground font-medium"
+                  >
+                    Proprietary
+                  </span>
+                {/if}
                 {#if c.schemeId}
                   <span class="text-xs px-2 py-1 rounded bg-primary/10 text-primary font-medium">
                     {c.schemeId}
@@ -111,6 +122,21 @@
             <div class="text-muted-foreground">
               Device limit (HWID): <strong class="text-foreground">{c.hwid ? 'yes' : 'no'}</strong>
               · Priority: <strong class="text-foreground tabular-nums">{c.priority}</strong>
+            </div>
+            <div class="text-muted-foreground">
+              License:
+              <strong class="text-foreground">
+                {c.license || (c.openSource ? 'Open source' : 'Proprietary')}
+              </strong>
+              {#if c.sourceUrl}
+                ·
+                <a
+                  href={c.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="underline break-all">source</a
+                >
+              {/if}
             </div>
             <div class="flex flex-wrap gap-2 pt-2">
               <Button size="sm" variant="outline" onclick={() => (editing = c)}>Edit</Button>

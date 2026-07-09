@@ -26,6 +26,9 @@ function mapClient(r: Doc<'clients'>) {
     homepageUrl: r.homepageUrl,
     schemeId: r.schemeId ?? null,
     hwid: r.hwid,
+    openSource: r.openSource ?? false,
+    license: r.license ?? null,
+    sourceUrl: r.sourceUrl ?? null,
     enabled: r.enabled,
     priority: r.priority,
     createdAt: new Date(r._creationTime).toISOString(),
@@ -58,8 +61,12 @@ export const create = internalMutation({
     platforms: v.array(v.string()),
     backends: v.array(backendId),
     homepageUrl: v.string(),
-    schemeId: v.optional(v.string()),
+    // Accept null (the editor sends `x || null` for empty optional text fields).
+    schemeId: v.optional(v.union(v.string(), v.null())),
     hwid: v.optional(v.boolean()),
+    openSource: v.optional(v.boolean()),
+    license: v.optional(v.union(v.string(), v.null())),
+    sourceUrl: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
   },
@@ -89,6 +96,9 @@ export const create = internalMutation({
       homepageUrl: a.homepageUrl.trim(),
       schemeId: a.schemeId?.trim() || undefined,
       hwid: a.hwid ?? false,
+      openSource: a.openSource ?? false,
+      license: a.license?.trim() || undefined,
+      sourceUrl: a.sourceUrl?.trim() || undefined,
       enabled: a.enabled ?? true,
       priority: a.priority ?? 0,
       updatedAt: Date.now(),
@@ -107,6 +117,9 @@ export const update = internalMutation({
     // null clears the scheme (client becomes manual / QR only).
     schemeId: v.optional(v.union(v.string(), v.null())),
     hwid: v.optional(v.boolean()),
+    openSource: v.optional(v.boolean()),
+    license: v.optional(v.union(v.string(), v.null())),
+    sourceUrl: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
   },
@@ -139,6 +152,9 @@ export const update = internalMutation({
     }
     if (patch.schemeId !== undefined) fields.schemeId = patch.schemeId?.trim() || undefined;
     if (patch.hwid !== undefined) fields.hwid = patch.hwid;
+    if (patch.openSource !== undefined) fields.openSource = patch.openSource;
+    if (patch.license !== undefined) fields.license = patch.license?.trim() || undefined;
+    if (patch.sourceUrl !== undefined) fields.sourceUrl = patch.sourceUrl?.trim() || undefined;
     if (patch.enabled !== undefined) fields.enabled = patch.enabled;
     if (patch.priority !== undefined) fields.priority = patch.priority;
     await ctx.db.patch(id, fields);
@@ -167,6 +183,9 @@ export const upsertByName = internalMutation({
     homepageUrl: v.optional(v.string()),
     schemeId: v.optional(v.union(v.string(), v.null())),
     hwid: v.optional(v.boolean()),
+    openSource: v.optional(v.boolean()),
+    license: v.optional(v.union(v.string(), v.null())),
+    sourceUrl: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
   },
@@ -191,6 +210,9 @@ export const upsertByName = internalMutation({
         homepageUrl: a.homepageUrl.trim(),
         schemeId: a.schemeId?.trim() || undefined,
         hwid: a.hwid ?? false,
+        openSource: a.openSource ?? false,
+        license: a.license?.trim() || undefined,
+        sourceUrl: a.sourceUrl?.trim() || undefined,
         enabled: a.enabled ?? true,
         priority: a.priority ?? 0,
         updatedAt: Date.now(),
@@ -204,6 +226,9 @@ export const upsertByName = internalMutation({
       fields.homepageUrl = a.homepageUrl.trim();
     if (a.schemeId !== undefined) fields.schemeId = a.schemeId?.trim() || undefined;
     if (a.hwid !== undefined) fields.hwid = a.hwid;
+    if (a.openSource !== undefined) fields.openSource = a.openSource;
+    if (a.license !== undefined) fields.license = a.license?.trim() || undefined;
+    if (a.sourceUrl !== undefined) fields.sourceUrl = a.sourceUrl?.trim() || undefined;
     if (a.enabled !== undefined) fields.enabled = a.enabled;
     if (a.priority !== undefined) fields.priority = a.priority;
     await ctx.db.patch(existing._id, fields);

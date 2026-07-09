@@ -24,6 +24,9 @@ export interface CatalogClient {
   homepageUrl: string;
   schemeId: string | null; // an appLinks builder id; null = manual / QR only
   hwid: boolean; // supports Remnawave device-id (so the per-account device limit is honored)
+  openSource?: boolean; // true → OSS badge + ranked ahead of proprietary apps
+  license?: string; // short label, e.g. 'GPL-3.0', 'Apache-2.0', 'Proprietary'
+  sourceUrl?: string; // public source repo (OSS only)
   enabled: boolean;
   priority: number;
 }
@@ -36,6 +39,9 @@ export interface PublicClient {
   homepageUrl: string;
   schemeId: string | null;
   hwid: boolean;
+  openSource: boolean;
+  license?: string;
+  sourceUrl?: string;
 }
 
 /**
@@ -52,6 +58,9 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     homepageUrl: 'https://hiddify.com',
     schemeId: 'hiddify',
     hwid: false,
+    openSource: true,
+    license: 'GPL-3.0',
+    sourceUrl: 'https://github.com/hiddify/hiddify-app',
     enabled: true,
     priority: 10,
   },
@@ -62,8 +71,25 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     homepageUrl: 'https://karing.app',
     schemeId: 'karing',
     hwid: true,
+    openSource: true,
+    license: 'GPL-3.0',
+    sourceUrl: 'https://github.com/KaringX/karing',
     enabled: true,
     priority: 20,
+  },
+  {
+    // One of the very few open-source Xray/VLESS clients on iOS (also Android).
+    name: 'Anywhere',
+    platforms: ['ios', 'android', 'desktop'],
+    backends: ['remnawave'],
+    homepageUrl: 'https://github.com/NodePassProject/Anywhere',
+    schemeId: 'anywhere',
+    hwid: false,
+    openSource: true,
+    license: 'GPL-3.0',
+    sourceUrl: 'https://github.com/NodePassProject/Anywhere',
+    enabled: true,
+    priority: 25,
   },
   {
     name: 'sing-box',
@@ -72,6 +98,9 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     homepageUrl: 'https://sing-box.sagernet.org',
     schemeId: 'sing-box',
     hwid: false,
+    openSource: true,
+    license: 'GPL-3.0',
+    sourceUrl: 'https://github.com/SagerNet/sing-box',
     enabled: true,
     priority: 30,
   },
@@ -82,18 +111,26 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     homepageUrl: 'https://github.com/2dust/v2rayNG',
     schemeId: 'v2rayng',
     hwid: false,
+    openSource: true,
+    license: 'GPL-3.0',
+    sourceUrl: 'https://github.com/2dust/v2rayNG',
     enabled: true,
     priority: 40,
   },
   {
-    name: 'Shadowrocket',
-    platforms: ['ios'],
+    // The canonical open-source Xray desktop GUI (sibling to v2rayNG). Manual /
+    // QR import (no one-tap URL scheme).
+    name: 'v2rayN',
+    platforms: ['windows', 'desktop'],
     backends: ['remnawave'],
-    homepageUrl: 'https://apps.apple.com/app/shadowrocket/id932747118',
-    schemeId: 'shadowrocket',
+    homepageUrl: 'https://github.com/2dust/v2rayN',
+    schemeId: null,
     hwid: false,
+    openSource: true,
+    license: 'GPL-3.0',
+    sourceUrl: 'https://github.com/2dust/v2rayN',
     enabled: true,
-    priority: 50,
+    priority: 45,
   },
   {
     name: 'Clash',
@@ -102,8 +139,40 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     homepageUrl: 'https://github.com/clash-verge-rev/clash-verge-rev',
     schemeId: 'clash',
     hwid: false,
+    openSource: true,
+    license: 'GPL-3.0',
+    sourceUrl: 'https://github.com/clash-verge-rev/clash-verge-rev',
     enabled: true,
     priority: 60,
+  },
+  {
+    // Clash-family (mihomo core) → needs the Clash-format subscription. Manual
+    // import (paste the subscription URL) to avoid shipping an unverified scheme.
+    name: 'FlClash',
+    platforms: ['android', 'windows', 'desktop'],
+    backends: ['remnawave'],
+    homepageUrl: 'https://github.com/chen08209/FlClash',
+    schemeId: null,
+    hwid: false,
+    openSource: true,
+    license: 'GPL-3.0',
+    sourceUrl: 'https://github.com/chen08209/FlClash',
+    enabled: true,
+    priority: 62,
+  },
+  {
+    // Clash-family (mihomo core) → needs the Clash-format subscription. Manual import.
+    name: 'Mihomo Party',
+    platforms: ['windows', 'desktop'],
+    backends: ['remnawave'],
+    homepageUrl: 'https://github.com/mihomo-party-org/mihomo-party',
+    schemeId: null,
+    hwid: false,
+    openSource: true,
+    license: 'GPL-3.0',
+    sourceUrl: 'https://github.com/mihomo-party-org/mihomo-party',
+    enabled: true,
+    priority: 64,
   },
   {
     name: 'Throne',
@@ -112,8 +181,25 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     homepageUrl: 'https://github.com/throneproj/Throne',
     schemeId: null,
     hwid: true,
+    openSource: true,
+    license: 'GPL-3.0',
+    sourceUrl: 'https://github.com/throneproj/Throne',
     enabled: true,
     priority: 70,
+  },
+  {
+    // The one proprietary app we still recommend (popular, capable iOS client) —
+    // labeled as such and sorted after every open-source option.
+    name: 'Shadowrocket',
+    platforms: ['ios'],
+    backends: ['remnawave'],
+    homepageUrl: 'https://apps.apple.com/app/shadowrocket/id932747118',
+    schemeId: 'shadowrocket',
+    hwid: false,
+    openSource: false,
+    license: 'Proprietary',
+    enabled: true,
+    priority: 75,
   },
   {
     name: 'Outline',
@@ -122,6 +208,9 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     homepageUrl: 'https://getoutline.org/get-started/#step-3',
     schemeId: null,
     hwid: false,
+    openSource: true,
+    license: 'Apache-2.0',
+    sourceUrl: 'https://github.com/Jigsaw-Code/outline-apps',
     enabled: true,
     priority: 80,
   },
@@ -141,17 +230,22 @@ export async function resolveClients(db: DatabaseReader): Promise<CatalogClient[
     homepageUrl: r.homepageUrl,
     schemeId: r.schemeId ?? null,
     hwid: r.hwid,
+    openSource: r.openSource ?? false,
+    license: r.license ?? undefined,
+    sourceUrl: r.sourceUrl ?? undefined,
     enabled: r.enabled,
     priority: r.priority,
   }));
 }
 
-/** Public-safe, enabled-only, priority-sorted list for publicConfig.get. */
+/** Public-safe, enabled-only list for publicConfig.get. Open-source apps rank
+ *  ahead of proprietary ones (more trustworthy for this audience), then by the
+ *  admin-set priority. */
 export function publicClients(clients: CatalogClient[]): PublicClient[] {
   return clients
     .filter((c) => c.enabled)
     .slice()
-    .sort((a, b) => a.priority - b.priority)
+    .sort((a, b) => Number(!!b.openSource) - Number(!!a.openSource) || a.priority - b.priority)
     .map((c) => ({
       name: c.name,
       platforms: c.platforms,
@@ -159,5 +253,8 @@ export function publicClients(clients: CatalogClient[]): PublicClient[] {
       homepageUrl: c.homepageUrl,
       schemeId: c.schemeId,
       hwid: c.hwid,
+      openSource: c.openSource ?? false,
+      license: c.license,
+      sourceUrl: c.sourceUrl,
     }));
 }

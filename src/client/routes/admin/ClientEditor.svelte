@@ -37,6 +37,9 @@
     homepageUrl: c?.homepageUrl ?? '',
     schemeId: c?.schemeId ?? '',
     hwid: c?.hwid ?? false,
+    openSource: c?.openSource ?? false,
+    license: c?.license ?? '',
+    sourceUrl: c?.sourceUrl ?? '',
     enabled: c?.enabled ?? true,
     priority: c?.priority ?? 0,
   }))(client);
@@ -47,6 +50,9 @@
   let homepageUrl = $state(init.homepageUrl);
   let schemeId = $state(init.schemeId);
   let hwid = $state(init.hwid);
+  let openSource = $state(init.openSource);
+  let license = $state(init.license);
+  let sourceUrl = $state(init.sourceUrl);
   let enabled = $state(init.enabled);
   let priority = $state(init.priority);
 
@@ -65,6 +71,9 @@
       homepageUrl,
       schemeId: schemeId || null,
       hwid,
+      openSource,
+      license: license || null,
+      sourceUrl: sourceUrl || null,
       enabled,
       priority,
     };
@@ -180,6 +189,36 @@
             <Checkbox checked={enabled} onCheckedChange={(v) => (enabled = v === true)} />
             <span>Enabled (shown to members)</span>
           </label>
+        </div>
+      </div>
+      <div>
+        <label class="flex items-center gap-3 text-sm">
+          <Checkbox checked={openSource} onCheckedChange={(v) => (openSource = v === true)} />
+          <span>Open source</span>
+        </label>
+        <p class="text-xs text-muted-foreground/80 mt-1">
+          Open-source apps get an "Open source" badge + a link to their source, and rank ahead of
+          proprietary apps in the member list.
+        </p>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="cl-license">License</label>
+          <Input
+            id="cl-license"
+            bind:value={license}
+            placeholder="e.g. GPL-3.0 or Proprietary"
+            autocomplete="off"
+          />
+        </div>
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="cl-source">Source URL</label>
+          <Input
+            id="cl-source"
+            bind:value={sourceUrl}
+            placeholder="https://github.com/…"
+            autocomplete="off"
+          />
         </div>
       </div>
     </div>

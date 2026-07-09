@@ -14,6 +14,7 @@
  *  - v2rayNG:      v2rayng://install-sub?url=<enc>#<name>              (name in fragment, %-encoded)
  *  - Shadowrocket: sub://<base64(url#name)>                            (iOS; standard base64)
  *  - Clash family: clash://install-config?url=<enc>&name=<enc>        (ClashX / Verge / Meta / Stash)
+ *  - Anywhere:     anywhere://add-proxy?link=<enc>                    (NodePass Anywhere, iOS/Android)
  *
  * The account/reveal legs deliver the subscription URL HPKE-sealed; only the proxy
  * client's later fetch of it is unsealed (a dumb client can't decrypt).
@@ -40,6 +41,7 @@ export const SCHEME_BUILDERS: Record<
   v2rayng: (u, n) => `v2rayng://install-sub?url=${enc(u)}#${enc(n)}`,
   shadowrocket: (u, n) => `sub://${base64(`${u}#${n}`)}`,
   clash: (u, n) => `clash://install-config?url=${enc(u)}&name=${enc(n)}`,
+  anywhere: (u) => `anywhere://add-proxy?link=${enc(u)}`,
 };
 
 /** The scheme ids the admin CMS can assign to a client (for the editor dropdown). */

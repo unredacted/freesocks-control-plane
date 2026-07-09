@@ -255,6 +255,10 @@ export const ClientAdmin = z.object({
   /** An appLinks deep-link builder id, or null = manual / QR import only. */
   schemeId: z.string().nullable(),
   hwid: z.boolean(),
+  /** Open-source signal: OSS apps get a badge + rank ahead of proprietary ones. */
+  openSource: z.boolean(),
+  license: z.string().nullable(),
+  sourceUrl: z.string().nullable(),
   enabled: z.boolean(),
   priority: z.number().int(),
   createdAt: z.string().datetime(),
@@ -270,6 +274,9 @@ export const ClientUpsert = z.object({
   homepageUrl: z.string().min(1),
   schemeId: z.string().nullable().optional(),
   hwid: z.boolean().default(false),
+  openSource: z.boolean().default(false),
+  license: z.string().nullable().optional(),
+  sourceUrl: z.string().nullable().optional(),
   enabled: z.boolean().default(true),
   priority: z.number().int().default(0),
 });

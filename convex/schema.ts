@@ -557,6 +557,12 @@ export default defineSchema({
     homepageUrl: v.string(),
     schemeId: v.optional(v.string()), // an appLinks builder id; absent = manual / QR only
     hwid: v.boolean(), // supports Remnawave device-id (so the device limit is honored)
+    // Open-source signal: OSS apps get a badge + rank ahead of proprietary ones.
+    // Optional so existing rows validate; `undefined` until the backfill migration
+    // (seed:migrateClientCatalogMeta) or an admin edit sets it.
+    openSource: v.optional(v.boolean()),
+    license: v.optional(v.string()), // short label: 'GPL-3.0', 'Apache-2.0', 'Proprietary'
+    sourceUrl: v.optional(v.string()), // public source repo (OSS only)
     enabled: v.boolean(),
     priority: v.number(),
     updatedAt: v.number(),

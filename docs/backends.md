@@ -328,6 +328,38 @@ can't honor a device limit — device limits are an `url`-delivery / fronted con
 The device list + member self-service **revoke** (`POST /api/v1/account/devices/revoke`)
 are Remnawave-only; Outline has no device concept and returns a typed 409.
 
+## Subscription formats (Clash, sing-box, base64)
+
+Remnawave emits the subscription in **different formats chosen by the requesting
+client's `User-Agent`** (raw v2ray/base64, sing-box JSON, Clash / Clash.Meta YAML).
+FCP's fronted URL is **format-agnostic and transparent**: `GET /api/v1/sub/<token>`
+forwards the caller's exact `User-Agent` upstream (`http.ts` →
+`backends.fetchSubscriptionContent` → `remnawave.ts`), sends no `Accept` / format
+override, passes Remnawave's `Content-Type` + body straight back, and caches
+per-exact-UA. So a **Clash-family client** (Clash Verge Rev, FlClash, Mihomo Party,
+Clash Meta) that imports the fronted URL receives Clash YAML **iff the Remnawave
+panel is configured to emit Clash output for that UA** — a **panel / Ansible
+subscription-template** concern, _not_ an FCP code change. If Clash clients get
+base64 instead of YAML, fix the panel's subscription templates; the FCP front
+already does the right thing.
+
+Constraints to know:
+
+- **Clash-family clients are `url`-delivery only.** In a `rawConfig` connection
+  mode (privacy) the URL is hidden, the import deep-links are suppressed, and the
+  raw-config copy path (`/api/v1/subscription/content`) sends no UA → it always
+  returns the base64 default, never Clash. Recommend Clash apps for `url`/evade mode.
+- **S3 mirror URLs serve one fixed format** (the base64 default). The mirror
+  refresh/provision jobs fetch with no UA (`convex/storage.ts`) and S3 does no UA
+  negotiation, so a Clash client pointed at a _mirror_ URL gets base64, not YAML.
+  Hand Clash users the primary fronted URL.
+- **The per-sub UA cache holds a few buckets** (keyed by exact UA), so a Clash UA
+  gets its own bucket and never collapses into another client's format.
+
+The recommended-client catalog marks the Clash-family additions (FlClash, Mihomo
+Party) `schemeId: null` (manual paste of the subscription URL) rather than shipping
+an unverified one-tap import scheme.
+
 ## Sensitive data
 
 Backends need credentials that must never leak:

@@ -202,6 +202,9 @@ export const seedClients = internalMutation({
         homepageUrl: c.homepageUrl,
         schemeId: c.schemeId ?? undefined,
         hwid: c.hwid,
+        openSource: c.openSource ?? false,
+        license: c.license ?? undefined,
+        sourceUrl: c.sourceUrl ?? undefined,
         enabled: c.enabled,
         priority: c.priority,
         updatedAt: Date.now(),
@@ -242,6 +245,56 @@ export const migrateDeviceEnforcementDefault = internalMutation({
       updatedAt: Date.now(),
     });
     return { seeded: true };
+  },
+});
+
+/**
+ * One-time backfill of the client-catalog open-source metadata
+ * (openSource / license / sourceUrl) onto rows that predate those fields, and
+ * insertion of any DEFAULT_CLIENTS entry that's missing (the new OSS additions).
+ * Idempotent: an existing row is patched ONLY while it still lacks `openSource`
+ * (so it never clobbers a later admin edit); missing rows are inserted once.
+ * Safe on every deploy (run from deploy-entrypoint after seedCutover).
+ */
+export const migrateClientCatalogMeta = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ patched: number; inserted: number }> => {
+    let patched = 0;
+    let inserted = 0;
+    for (const c of DEFAULT_CLIENTS) {
+      const existing = await ctx.db
+        .query('clients')
+        .withIndex('by_name', (q) => q.eq('name', c.name))
+        .unique();
+      if (existing) {
+        if (existing.openSource === undefined) {
+          await ctx.db.patch(existing._id, {
+            openSource: c.openSource ?? false,
+            license: c.license ?? undefined,
+            sourceUrl: c.sourceUrl ?? undefined,
+            updatedAt: Date.now(),
+          });
+          patched++;
+        }
+        continue; // already backfilled — leave admin edits alone
+      }
+      await ctx.db.insert('clients', {
+        name: c.name,
+        platforms: c.platforms,
+        backends: c.backends,
+        homepageUrl: c.homepageUrl,
+        schemeId: c.schemeId ?? undefined,
+        hwid: c.hwid,
+        openSource: c.openSource ?? false,
+        license: c.license ?? undefined,
+        sourceUrl: c.sourceUrl ?? undefined,
+        enabled: c.enabled,
+        priority: c.priority,
+        updatedAt: Date.now(),
+      });
+      inserted++;
+    }
+    return { patched, inserted };
   },
 });
 
