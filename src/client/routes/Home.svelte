@@ -18,7 +18,7 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import TierComparison from '../components/TierComparison.svelte';
   import { meQuery, configQuery } from '../lib/queries';
-  import { membershipTier, tierLimits, type TierLimits } from '../lib/tiers';
+  import { membershipTier, tierLimits, deviceLimitsShown, type TierLimits } from '../lib/tiers';
   import { baselinePerMonth } from '../lib/billing';
   import { t } from '../lib/i18n/index.svelte';
   import { formatMoney } from '../lib/i18n/format';
@@ -47,11 +47,15 @@
   // Compose a localized limits phrase from the structured (DB-driven) tier
   // limits: the numbers come from config, the words from the catalog. Reading
   // t() inside makes any $derived that calls this re-run on a locale change.
-  function limitsText(info: TierLimits): string {
-    if (info.unlimitedBandwidth && info.unlimitedDevices) return t('home.limits.unlimitedBoth');
+  function limitsText(info: TierLimits, showDevices: boolean): string {
     const bandwidth = info.unlimitedBandwidth
       ? t('home.limits.unlimitedBandwidth')
       : t('tiers.gbPerMonth', { gb: info.gb });
+    // Device limits are an opt-in, Remnawave-only feature; when enforcement is
+    // off (the default) the whole device dimension is hidden — everyone is
+    // effectively unlimited — so the phrase is bandwidth-only.
+    if (!showDevices) return bandwidth;
+    if (info.unlimitedBandwidth && info.unlimitedDevices) return t('home.limits.unlimitedBoth');
     const devices = info.unlimitedDevices
       ? t('home.limits.unlimitedDevices')
       : t('home.limits.upToDevices', { count: info.devices });
@@ -63,11 +67,13 @@
   const freeTierLine = $derived.by(() => {
     const ft = freeTier;
     if (!ft) return '';
-    const devices = t('common.deviceCount', { count: ft.deviceLimit });
     const bandwidth =
       ft.monthlyTrafficGb === 0
         ? t('hero.unlimited')
         : t('tiers.gbPerMonth', { gb: ft.monthlyTrafficGb });
+    // Hide the device count when device-limit enforcement is off (the default).
+    if (!deviceLimitsShown(config.data)) return bandwidth;
+    const devices = t('common.deviceCount', { count: ft.deviceLimit });
     return `${devices} · ${bandwidth}`;
   });
 
@@ -75,7 +81,9 @@
   // contradicts the admin-set tier. `description` is the admin-editable line;
   // `membershipLimits` is the localized phrase from the tier's limits.
   const memberTier = $derived(membershipTier(config.data));
-  const membershipLimits = $derived(limitsText(tierLimits(memberTier)));
+  const membershipLimits = $derived(
+    limitsText(tierLimits(memberTier), deviceLimitsShown(config.data)),
+  );
 
   // Headline membership price = the shortest term's per-month rate (the standard
   // monthly), DB-driven + locale-formatted — mirrors TierComparison's "from $X/mo".

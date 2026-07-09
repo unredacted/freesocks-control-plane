@@ -21,6 +21,7 @@
   import { t } from '../lib/i18n/index.svelte';
   import { formatMoney } from '../lib/i18n/format';
   import { perMonthCents, savingsPct, baselinePerMonth } from '../lib/billing';
+  import { deviceLimitsShown } from '../lib/tiers';
   import { CheckoutResponse, type BillingProcessor } from '../../shared/contracts/billing';
   import { createMutation } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -44,6 +45,10 @@
   let durations = $derived(billing?.durations ?? []);
   let currency = $derived(billing?.currency ?? 'USD');
   let cryptoMin = $derived(billing?.cryptoMinMonths ?? 3);
+  // Device limits are an opt-in Remnawave feature; when the admin enforcement
+  // toggle is off (the default) devices are unlimited for everyone, so drop the
+  // "and devices" from the membership benefit copy.
+  let showDevices = $derived(deviceLimitsShown(config.data));
 
   // The "price per month" shown on the collapsed accordion trigger: the standard
   // monthly rate (shortest term's per-month), falling back to the cheapest
@@ -255,7 +260,7 @@
                 >
                 ·
               {/if}
-              {t('upgrade.benefitsShort')}
+              {showDevices ? t('upgrade.benefitsShort') : t('upgrade.benefitsShortNoDevices')}
             </div>
           </div>
           <ChevronDown
@@ -282,7 +287,9 @@
           <Sparkles class="size-4 shrink-0 text-primary" aria-hidden="true" />
           {mode === 'extend' ? t('upgrade.extendTitle') : t('upgrade.title')}
         </h2>
-        <p class="text-sm text-muted-foreground">{t('upgrade.subtitle')}</p>
+        <p class="text-sm text-muted-foreground">
+          {showDevices ? t('upgrade.subtitle') : t('upgrade.subtitleNoDevices')}
+        </p>
       </div>
       {@render formBody()}
     </section>

@@ -135,9 +135,6 @@
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="min-w-0">
             <span class="text-sm font-semibold">{c.name}</span>
-            {#if !gateDevices && !c.hwid}
-              <span class="ms-2 text-xs text-muted-foreground">({t('setup.noDeviceLimit')})</span>
-            {/if}
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <a

@@ -43,3 +43,13 @@ export function tierLimits(tier: Tier | undefined): TierLimits {
     devices: tier.deviceLimit,
   };
 }
+
+/**
+ * Whether device-limit UI should be shown at all. Device limits are an opt-in,
+ * Remnawave-only feature gated by the admin `devices.enforcementEnabled` toggle;
+ * when off (the default) every user is effectively unlimited, so the SPA hides
+ * every device-limit / device-count mention and the connected-devices list.
+ */
+export function deviceLimitsShown(config: PublicConfig | undefined): boolean {
+  return config?.devices?.enforcementEnabled === true;
+}

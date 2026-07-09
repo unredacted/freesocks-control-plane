@@ -19,7 +19,7 @@
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import { meQuery, configQuery, accountQuery, queryKeys } from '../lib/queries';
-  import { freeTier } from '../lib/tiers';
+  import { freeTier, deviceLimitsShown } from '../lib/tiers';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { subscriptionDisplayUrl } from '../lib/utils';
@@ -341,7 +341,11 @@
       </Button>
 
       <p class="text-xs text-muted-foreground text-center">
-        {t('get.freeAccountNote', { days: freeDays, devices: freeDevicesLabel })}
+        {#if deviceLimitsShown(config.data)}
+          {t('get.freeAccountNote', { days: freeDays, devices: freeDevicesLabel })}
+        {:else}
+          {t('get.freeAccountNoteNoDevices', { days: freeDays })}
+        {/if}
       </p>
     </div>
   {:else}

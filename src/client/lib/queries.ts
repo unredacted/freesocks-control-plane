@@ -114,20 +114,30 @@ export const accountQuery = (enabled?: () => boolean) =>
   createQuery(() => ({
     queryKey: queryKeys.account,
     queryFn: () => apiClient.get('/api/v1/account', AccountResponse),
-    staleTime: 30_000,
+    // The traffic counter (trafficUsedBytes) rides on this query; the usage graph
+    // on accountUsageQuery. Both are pinned to the SAME 60s cadence (staleTime +
+    // focused refetchInterval) and co-invalidated together, so the two traffic
+    // surfaces move in lockstep. (Each is a live read from a DIFFERENT Remnawave
+    // endpoint, so their underlying freshness can still differ regardless of
+    // client cadence.)
+    staleTime: 60_000,
+    refetchInterval: 60_000,
     ...(enabled ? { enabled: enabled() } : {}),
   }));
 
 /**
  * Aggregate usage trend for the member's key (the usage-panel sparkline). Lazy:
  * only fetched while `enabled()` (the panel is open), so it doesn't add a live
- * backend call to every account view. Usage changes slowly ⇒ a longer staleTime.
+ * backend call to every account view. Pinned to the SAME 60s cadence as
+ * accountQuery (staleTime + focused refetchInterval) so the usage graph and the
+ * traffic counter refresh together; the timer only runs while the panel is mounted.
  */
 export const accountUsageQuery = (enabled: () => boolean) =>
   createQuery(() => ({
     queryKey: queryKeys.accountUsage,
     queryFn: () => apiClient.get('/api/v1/account/usage', AccountUsageResponse),
-    staleTime: 300_000,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
     enabled: enabled(),
   }));
 

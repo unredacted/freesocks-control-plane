@@ -6,6 +6,7 @@
   import { t } from '../lib/i18n/index.svelte';
   import { formatMoney } from '../lib/i18n/format';
   import { baselinePerMonth } from '../lib/billing';
+  import { deviceLimitsShown } from '../lib/tiers';
 
   /**
    * Tier comparison cards, rendered ENTIRELY from `/api/v1/config` — name,
@@ -28,6 +29,9 @@
   let billing = $derived(config.data?.billing);
   let billingEnabled = $derived(billing?.enabled ?? false);
   let membershipSlug = $derived(billing?.tierSlug ?? 'member');
+  // Device limits are an opt-in Remnawave feature; hide the device row entirely
+  // when the admin enforcement toggle is off (the default unlimited posture).
+  let showDevices = $derived(deviceLimitsShown(config.data));
 
   // The headline monthly price = the SHORTEST term's per-month (e.g. the 1-month
   // plan at $5/mo), NOT the cheapest amortized annual ($4.17/mo) — that read as a
@@ -94,10 +98,12 @@
               <Check class="mt-0.5 size-4 shrink-0 text-primary" />
               <span class="tabular-nums">{bandwidthLabel(tier.monthlyTrafficGb)}</span>
             </li>
-            <li class="flex items-start gap-2">
-              <Check class="mt-0.5 size-4 shrink-0 text-primary" />
-              <span class="tabular-nums">{deviceLabel(tier.deviceLimit)}</span>
-            </li>
+            {#if showDevices}
+              <li class="flex items-start gap-2">
+                <Check class="mt-0.5 size-4 shrink-0 text-primary" />
+                <span class="tabular-nums">{deviceLabel(tier.deviceLimit)}</span>
+              </li>
+            {/if}
             <li class="flex items-start gap-2">
               <Check class="mt-0.5 size-4 shrink-0 text-primary" />
               <span class="text-muted-foreground">{t('tiers.mirrors')}</span>

@@ -170,6 +170,7 @@
     "membershipNudge": {
       "title": "Go unlimited with a membership",
       "body": "Unlimited bandwidth and devices.",
+      "bodyNoDevices": "Unlimited bandwidth.",
       "cta": "View membership"
     },
     "tab": {
@@ -365,6 +366,7 @@
     "backendShadowsocks": "Shadowsocks via Outline",
     "createAccount": "Create my account",
     "freeAccountNote": "Free accounts are valid for {days} days and limited to {devices}. No email or password.",
+    "freeAccountNoteNoDevices": "Free accounts are valid for {days} days. No email or password.",
     "accountReady": "Your account is ready.",
     "step2Title": "Create your subscription",
     "step2Intro": "Create a proxy subscription to get a URL you can paste into any compatible VPN client.",
@@ -427,6 +429,7 @@
     "title": "Upgrade to a FreeSocks membership",
     "extendTitle": "Extend your membership",
     "subtitle": "Unlimited bandwidth and devices. Choose a length and how to pay.",
+    "subtitleNoDevices": "Unlimited bandwidth. Choose a length and how to pay.",
     "durationLabel": "Membership length",
     "cryptoMinNote": "Crypto payments start at {months} months — shorter terms fall below the network minimum. Pick another method for shorter terms.",
     "months": [
@@ -447,6 +450,7 @@
     "perMonth": "{price}/mo",
     "fromPerMonth": "From {price}/month",
     "benefitsShort": "Unlimited bandwidth and devices",
+    "benefitsShortNoDevices": "Unlimited bandwidth",
     "save": "save {pct}%",
     "methodLabel": "Payment method",
     "payNowpayments": "Cryptocurrency",

@@ -42,6 +42,7 @@
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { clearSessionKey } from '../lib/pop';
+  import { deviceLimitsShown } from '../lib/tiers';
   import {
     accountQuery,
     accountUsageQuery,
@@ -203,6 +204,8 @@
     onSuccess: () => {
       regenerateOpen = false;
       void qc.invalidateQueries({ queryKey: queryKeys.account });
+      // Keep the usage graph in step with the traffic counter (same cadence).
+      void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
       // The raw-config viewer reads a SEPARATE query key; invalidate it too so it
       // re-fetches the newly-issued config instead of showing the previous one.
       void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
@@ -249,6 +252,8 @@
       switchBackendOpen = false;
       pendingSwitchTarget = null;
       void qc.invalidateQueries({ queryKey: queryKeys.account });
+      // Keep the usage graph in step with the traffic counter (same cadence).
+      void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
       // P2: the switch moves the user to the peer tier, so the header's `me`
       // tier label is now stale — refresh it too.
       void qc.invalidateQueries({ queryKey: queryKeys.me });
@@ -285,6 +290,7 @@
       revokeDeviceOpen = false;
       revokeTargetHwid = null;
       void qc.invalidateQueries({ queryKey: queryKeys.account });
+      void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
       liveMessage = t('account.deviceRevokedTitle');
       toast.success(t('account.deviceRevokedTitle'), {
         description: t('account.deviceRevokedBody'),
@@ -310,6 +316,7 @@
       ),
     onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: queryKeys.account });
+      void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
       void qc.invalidateQueries({ queryKey: queryKeys.me });
       if (result.isCurrent) {
         toast.success(t('account.refreshWelcome', { tier: result.tierName }));
@@ -724,7 +731,11 @@
                 </div>
                 <div class="min-w-0 flex-1">
                   <p class="text-sm font-semibold">{t('account.membershipNudge.title')}</p>
-                  <p class="text-sm text-muted-foreground">{t('account.membershipNudge.body')}</p>
+                  <p class="text-sm text-muted-foreground">
+                    {deviceLimitsShown(config.data)
+                      ? t('account.membershipNudge.body')
+                      : t('account.membershipNudge.bodyNoDevices')}
+                  </p>
                 </div>
                 <span class="shrink-0 text-sm font-medium text-primary"
                   >{t('account.membershipNudge.cta')}</span
@@ -827,7 +838,7 @@
             </div>
             <p class="text-xs text-muted-foreground">{t('account.keyActionsHint')}</p>
 
-            {#if data.subscription.devices.length > 0}
+            {#if deviceLimitsShown(config.data) && data.subscription.devices.length > 0}
               <div class="space-y-3">
                 <div class="flex items-baseline justify-between">
                   <h3 class="text-sm font-semibold flex items-center gap-2">
