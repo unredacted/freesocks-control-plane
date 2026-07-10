@@ -14,6 +14,7 @@
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { z } from 'zod';
   import { toast } from 'svelte-sonner';
+  import { RemnawaveLoggingReport } from '../../../shared/contracts/admin';
 
   /**
    * Remnawave-specific admin config (the namespaced /api/v1/admin/remnawave/*
@@ -70,6 +71,35 @@
     onError: (err) => {
       toast.error('Could not save node placement', { description: apiErrorMessage(err) });
     },
+  }));
+
+  // Node logging privacy: enforce the no-client-IP-logging Xray posture on the
+  // Remnawave config profiles (docs/privacy.md §5). Check = dry-run (read-only);
+  // Apply writes the log/policy block (and restarts the affected nodes).
+  let logReport = $state<z.infer<typeof RemnawaveLoggingReport> | null>(null);
+  let armApply = $state(false);
+  const checkLogging = createMutation(() => ({
+    mutationFn: () =>
+      apiClient.get('/api/v1/admin/remnawave/logging-status', RemnawaveLoggingReport),
+    onSuccess: (r) => (logReport = r),
+    onError: (err) =>
+      toast.error('Could not read logging status', { description: apiErrorMessage(err) }),
+  }));
+  const applyLogging = createMutation(() => ({
+    mutationFn: () =>
+      apiClient.post('/api/v1/admin/remnawave/harden-logging', {}, RemnawaveLoggingReport),
+    onSuccess: (r) => {
+      logReport = r;
+      const changed = r.instances.reduce(
+        (n, i) => n + i.profiles.filter((p) => p.changed).length,
+        0,
+      );
+      toast.success(
+        changed > 0 ? `Disabled IP logging on ${changed} profile(s)` : 'Logging already hardened',
+      );
+    },
+    onError: (err) =>
+      toast.error('Could not update logging', { description: apiErrorMessage(err) }),
   }));
 </script>
 
@@ -165,6 +195,86 @@
             No node stats yet — they populate after the first healthcheck cycle once a pool is
             bound.
           </p>
+        {/if}
+      </CardContent>
+    </Card>
+
+    <Card>
+      <CardHeader>
+        <CardTitle class="text-base">Node logging privacy</CardTitle>
+        <CardDescription>
+          Enforce the no-client-IP-logging posture on every Remnawave config profile: sets the Xray
+          <code>log</code> to no access/error log and turns off the per-user online-IP tracker (<code
+            >statsUserOnline</code
+          >), preserving inbounds, Reality keys, and routing (a safe read-modify-write). See
+          docs/privacy.md §5. Applying restarts the affected nodes (a brief reconnect).
+        </CardDescription>
+      </CardHeader>
+      <CardContent class="space-y-4 text-sm">
+        <div class="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onclick={() => checkLogging.mutate()}
+            disabled={checkLogging.isPending || applyLogging.isPending}
+          >
+            {checkLogging.isPending ? 'Checking…' : 'Check current logging'}
+          </Button>
+          <Button
+            variant={armApply ? 'destructive' : 'default'}
+            disabled={applyLogging.isPending}
+            onclick={() => {
+              if (armApply) {
+                armApply = false;
+                applyLogging.mutate();
+              } else {
+                armApply = true;
+              }
+            }}
+          >
+            {applyLogging.isPending
+              ? 'Applying…'
+              : armApply
+                ? 'Confirm — restarts nodes'
+                : 'Disable IP logging on all nodes'}
+          </Button>
+        </div>
+        {#if logReport}
+          {#if logReport.instances.length === 0}
+            <p class="text-muted-foreground">No active Remnawave instances to configure.</p>
+          {/if}
+          {#each logReport.instances as inst (inst.serverId)}
+            <div class="space-y-1">
+              <div class="font-medium">{inst.name}</div>
+              {#if !inst.ok}
+                <p class="text-xs text-destructive">Couldn't reach this panel: {inst.error}</p>
+              {:else if inst.profiles.length === 0}
+                <p class="text-xs text-muted-foreground">No config profiles.</p>
+              {:else}
+                {#each inst.profiles as p (p.uuid)}
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="truncate">{p.name}</span>
+                    {#if p.error}
+                      <span
+                        class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+                        title={p.error}>skipped</span
+                      >
+                    {:else if p.hardened}
+                      <span
+                        class="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400"
+                      >
+                        {p.changed ? 'hardened now' : 'no logging'}
+                      </span>
+                    {:else}
+                      <span
+                        class="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400"
+                        >logs IPs</span
+                      >
+                    {/if}
+                  </div>
+                {/each}
+              {/if}
+            </div>
+          {/each}
         {/if}
       </CardContent>
     </Card>

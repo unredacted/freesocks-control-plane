@@ -2471,6 +2471,57 @@ http.route({
   }),
 });
 
+// GET /api/v1/admin/remnawave/logging-status: dry-run report of the Xray
+// no-client-IP-logging posture across every Remnawave config profile (read-only;
+// touches the panel API but writes nothing).
+http.route({
+  path: '/api/v1/admin/remnawave/logging-status',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
+    try {
+      return json(
+        await ctx.runAction(internal.backendServers.hardenRemnawaveLogging, { dryRun: true }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// POST /api/v1/admin/remnawave/harden-logging: enforce the no-client-IP-logging
+// posture on every Remnawave config profile (safe read-modify-write of the Xray
+// log/policy — preserves inbounds/Reality/routing; restarts the affected nodes).
+// Audited by counts only (no config content).
+http.route({
+  path: '/api/v1/admin/remnawave/harden-logging',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
+    try {
+      const report = await ctx.runAction(internal.backendServers.hardenRemnawaveLogging, {
+        dryRun: false,
+      });
+      const profilesTotal = report.instances.reduce((n, i) => n + i.profiles.length, 0);
+      const profilesChanged = report.instances.reduce(
+        (n, i) => n + i.profiles.filter((p) => p.changed).length,
+        0,
+      );
+      await ctx.runMutation(internal.audit.record, {
+        actorType: 'admin',
+        actorId: admin.adminUserId,
+        action: 'admin.remnawave.logging_hardened',
+        targetType: 'backend',
+        payload: { instances: report.instances.length, profilesChanged, profilesTotal },
+      });
+      return json(report);
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
 http.route({
   path: '/api/v1/admin/backend-servers',
   method: 'POST',

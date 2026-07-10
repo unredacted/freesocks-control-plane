@@ -241,3 +241,59 @@ export const healthcheck = internalAction({
     return { checked: servers.length, healthy };
   },
 });
+
+/**
+ * Enforce the no-client-IP-logging posture on every active Remnawave instance's
+ * config profiles (docs/privacy.md §5), via each provider's `hardenLogging` — a
+ * SAFE read-modify-write that touches only the Xray `log`/`policy`, preserving
+ * inbounds/Reality/routing. `dryRun` reports what WOULD change without writing.
+ * Backends with no config-profile concept (Outline) are skipped. A per-instance
+ * failure is isolated + reported, never thrown, so one unreachable panel can't
+ * block the rest. Writing restarts the affected nodes (Remnawave auto-push).
+ */
+export const hardenRemnawaveLogging = internalAction({
+  args: { dryRun: v.boolean() },
+  handler: async (
+    ctx,
+    { dryRun },
+  ): Promise<{
+    instances: Array<{
+      serverId: string;
+      name: string;
+      ok: boolean;
+      error?: string;
+      profiles: Array<{
+        uuid: string;
+        name: string;
+        hardened: boolean;
+        changed: boolean;
+        error?: string;
+      }>;
+    }>;
+  }> => {
+    const servers = await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
+    const instances = [];
+    for (const s of servers) {
+      const provider = PROVIDERS[s.backend];
+      if (!provider.hardenLogging) continue; // no config-profile concept (Outline)
+      try {
+        const report = await provider.hardenLogging(s.config as BackendConfig, { dryRun });
+        instances.push({
+          serverId: s._id as string,
+          name: s.name,
+          ok: true as const,
+          profiles: report.profiles,
+        });
+      } catch (err) {
+        instances.push({
+          serverId: s._id as string,
+          name: s.name,
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err),
+          profiles: [],
+        });
+      }
+    }
+    return { instances };
+  },
+});

@@ -109,6 +109,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Admin/IaC binds a mode's Remnawave placement pool. `poolBound` is a boolean —
   // the squad UUIDs are NEVER logged (only which mode's pool + whether it's set).
   'admin.remnawave.mode_placement.update': ['key', 'poolBound'],
+  // Admin enforced the no-client-IP-logging posture on the Remnawave config
+  // profiles (Xray log/policy). Counts only — no config content is logged.
+  'admin.remnawave.logging_hardened': ['instances', 'profilesChanged', 'profilesTotal'],
   // Admin changes the brand theme (preset + optional hue override).
   'admin.theme.change': ['preset', 'hue'],
   // W3-8: admin lifecycle — deactivate/reactivate an admin, revoke a passkey

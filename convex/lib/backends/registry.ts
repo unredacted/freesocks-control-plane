@@ -30,12 +30,14 @@ import {
   remnawaveGetNodeStats,
   remnawaveGetUser,
   remnawaveGetUserUsage,
+  remnawaveHardenLogging,
   remnawaveHealth,
   remnawaveIssueUser,
   remnawaveResetTraffic,
   remnawaveSetStatus,
   remnawaveTestConnection,
   remnawaveUpdateUser,
+  type RemnawaveLoggingReport,
 } from './remnawave';
 import {
   outlineDelete,
@@ -94,6 +96,10 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // Optional: per-placement node-load snapshot for issuance-time node placement
   // (read-only). Absent for backends with no intra-instance node concept (Outline).
   getNodeStats?(config: C): Promise<NodeStats[]>;
+  // Optional: enforce the no-client-IP-logging posture on the backend's config
+  // (Remnawave config profiles: Xray log/policy). Absent for backends with no
+  // such config surface (Outline). `dryRun` reports what would change, no write.
+  hardenLogging?(config: C, opts: { dryRun: boolean }): Promise<RemnawaveLoggingReport>;
   fetchContent(
     config: C,
     backendShortId: string,
@@ -120,6 +126,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   getUserUsage: (c, id, days) => remnawaveGetUserUsage(c, id, days),
   getFleetStats: (c) => remnawaveFleetStats(c),
   getNodeStats: (c) => remnawaveGetNodeStats(c),
+  hardenLogging: (c, opts) => remnawaveHardenLogging(c, opts),
   fetchContent: (c, shortId, ua, subUrl, hwid) =>
     remnawaveFetchSubscription(c, shortId, ua, subUrl, hwid),
   health: (c) => remnawaveHealth(c),

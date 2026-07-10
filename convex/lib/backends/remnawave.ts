@@ -149,6 +149,130 @@ async function call<T>(
   }
 }
 
+// --- Config-profile logging privacy (no client-IP logging) ------------------
+
+/** The no-client-IP-logging Xray `log` block FCP enforces on every config profile
+ *  (matches docs/privacy.md §5): no access log (the per-connection source-IP
+ *  record), no error log, DNS logging off, and address masking as belt-and-
+ *  suspenders if an operator later raises the level. */
+export const PRIVACY_XRAY_LOG = {
+  access: 'none',
+  error: 'none',
+  loglevel: 'none',
+  dnsLog: false,
+  maskAddress: 'full',
+} as const;
+
+export interface RemnawaveLoggingProfile {
+  uuid: string;
+  name: string;
+  /** True once the profile carries the no-logging posture (already, or after apply). */
+  hardened: boolean;
+  /** True if this run changed it (apply) or WOULD change it (dry-run). */
+  changed: boolean;
+  /** Set when the profile was skipped (malformed / no inbounds) — never written. */
+  error?: string;
+}
+export interface RemnawaveLoggingReport {
+  profiles: RemnawaveLoggingProfile[];
+}
+
+/**
+ * Deep-merge the no-client-IP-logging posture into an Xray config: set `log` to
+ * PRIVACY_XRAY_LOG and `policy.levels."0".statsUserOnline` false, PRESERVING every
+ * other key (inbounds, outbounds, routing, streamSettings/Reality, dns, ...).
+ * Idempotent. THROWS if the config isn't a real Xray config (no non-empty
+ * `inbounds`), so a read-modify-write can NEVER PATCH a degenerate config that
+ * would wipe a node's inbounds. Exported for unit testing.
+ */
+export function hardenXrayLoggingConfig(config: unknown): {
+  config: Record<string, unknown>;
+  changed: boolean;
+} {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    throw new RemnawaveApiError('refusing to harden: config-profile config is not an object');
+  }
+  const c = { ...(config as Record<string, unknown>) };
+  if (!Array.isArray(c.inbounds) || c.inbounds.length === 0) {
+    throw new RemnawaveApiError('refusing to harden: config has no inbounds (would wipe the node)');
+  }
+  const obj = (val: unknown): Record<string, unknown> =>
+    val && typeof val === 'object' && !Array.isArray(val)
+      ? { ...(val as Record<string, unknown>) }
+      : {};
+  const logMatches = JSON.stringify(c.log ?? null) === JSON.stringify(PRIVACY_XRAY_LOG);
+  const policy = obj(c.policy);
+  const levels = obj(policy.levels);
+  const level0 = obj(levels['0']);
+  const statsOff = level0.statsUserOnline === false;
+  if (logMatches && statsOff) return { config: c, changed: false };
+  c.log = { ...PRIVACY_XRAY_LOG };
+  level0.statsUserOnline = false;
+  levels['0'] = level0;
+  policy.levels = levels;
+  c.policy = policy;
+  return { config: c, changed: true };
+}
+
+const ConfigProfileRow = z.object({ uuid: z.string(), name: z.string(), config: z.unknown() });
+// The list endpoint wraps in { response: ... }; after `call` unwraps, tolerate
+// both { configProfiles: [...] } and a bare array.
+const ConfigProfilesList = z.union([
+  z.object({ configProfiles: z.array(ConfigProfileRow) }),
+  z.array(ConfigProfileRow),
+]);
+
+/**
+ * Enforce the no-client-IP-logging posture on EVERY Remnawave config profile
+ * (docs/privacy.md §5) via a SAFE read-modify-write: GET the full config, merge
+ * ONLY `log` + `policy.levels."0".statsUserOnline`, then PATCH the whole config
+ * back — Remnawave replaces the config wholesale + re-derives inbounds, so the
+ * complete object must be sent, and everything else is preserved verbatim.
+ * Idempotent: an already-hardened profile is skipped (no needless node restart).
+ * `dryRun` reports what WOULD change without writing. A malformed profile is
+ * reported + skipped, never written. Remnawave 2.x only (Config Profiles API).
+ */
+export async function remnawaveHardenLogging(
+  cfg: RemnawaveConfig,
+  opts: { dryRun: boolean },
+): Promise<RemnawaveLoggingReport> {
+  const listed = await call(cfg, {
+    method: 'GET',
+    path: '/api/config-profiles',
+    schema: ConfigProfilesList,
+  });
+  const rows = Array.isArray(listed) ? listed : listed.configProfiles;
+  const report: RemnawaveLoggingReport = { profiles: [] };
+  for (const p of rows) {
+    try {
+      const merged = hardenXrayLoggingConfig(p.config);
+      if (merged.changed && !opts.dryRun) {
+        await call(cfg, {
+          method: 'PATCH',
+          path: '/api/config-profiles',
+          body: { uuid: p.uuid, config: merged.config },
+          schema: z.unknown(),
+        });
+      }
+      report.profiles.push({
+        uuid: p.uuid,
+        name: p.name,
+        hardened: opts.dryRun ? !merged.changed : true,
+        changed: merged.changed,
+      });
+    } catch (err) {
+      report.profiles.push({
+        uuid: p.uuid,
+        name: p.name,
+        hardened: false,
+        changed: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return report;
+}
+
 function toState(user: RemnawaveUser, devices: BackendDevice[]): UserState {
   const status =
     user.status === 'ACTIVE'

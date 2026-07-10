@@ -282,6 +282,31 @@ export const ClientUpsert = z.object({
 });
 export type ClientUpsert = z.infer<typeof ClientUpsert>;
 
+// --- Remnawave: enforce the no-client-IP-logging posture on config profiles ---
+
+/** Report from GET /logging-status (dry-run) or POST /harden-logging (apply):
+ *  per Remnawave instance, per config profile, whether it's hardened / changed. */
+export const RemnawaveLoggingReport = z.object({
+  instances: z.array(
+    z.object({
+      serverId: z.string(),
+      name: z.string(),
+      ok: z.boolean(),
+      error: z.string().optional(),
+      profiles: z.array(
+        z.object({
+          uuid: z.string(),
+          name: z.string(),
+          hardened: z.boolean(),
+          changed: z.boolean(),
+          error: z.string().optional(),
+        }),
+      ),
+    }),
+  ),
+});
+export type RemnawaveLoggingReport = z.infer<typeof RemnawaveLoggingReport>;
+
 // --- admin management (multi-admin onboarding via invite links) ---
 
 /** One row in the admins list (GET /api/v1/admin/admins). */
