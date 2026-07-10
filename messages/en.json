@@ -25,7 +25,7 @@
     },
     "q6": {
       "question": "What do you log about me?",
-      "answer": "As little as possible: only a hashed version of your account number — never your email or name — and no logs of the sites you visit or the traffic you send."
+      "answer": "As little as possible: only a hashed version of your account number — never your email, name, or IP address — and no logs of the sites you visit or the traffic you send."
     },
     "q7": {
       "question": "The link is blocked where I am. What can I do?",
@@ -645,7 +645,7 @@
       "subtitle": "FreeSocks is built to know as little about you as possible.",
       "point1": "We store only a hashed version of your account number — never the number itself.",
       "point2": "No email, phone number, or name. We never ask for them.",
-      "point3": "No logs of the sites you visit or the traffic you send.",
+      "point3": "No logs of the sites you visit or the traffic you send — and we don't store your IP address, on our servers or the proxy nodes.",
       "point4": "We store no payment details — you pay on the provider's own page, and the provider never sees your account or proxy subscription."
     },
     "how": {

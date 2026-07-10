@@ -131,13 +131,16 @@ Detailed companions, referenced rather than duplicated here:
   (`createFreeAccount`): mint user + reveal-once account number + support ID + member session.
   **Decoupled from proxy issuance**, so it never depends on a backend being available; the
   proxy key is created separately by the signed-in member (§1.4).
-- **Serializable per-(IP, day) cap**: `claimFreeSlot` reads the `freeGrants` for
-  `(ipHash, dayBucket)` over the `by_ip_day` index and inserts only if under cap. Convex's
-  serializable OCC makes two concurrent claims conflict, so the cap holds exactly (closes the
-  H1 over-issuance race **by construction**; see `deferred-security-bugs.md`).
-- Cap reached (same IP, day): `freetier.cap_reached` (429). There is no key to hand back, so
-  the visitor signs in with their existing number. `releaseFreeSlot` compensates if the
-  mint/session step fails, so a transient error doesn't burn the IP's daily allowance.
+- **Serializable per-(IP, day) cap — no stored IP**: the cap is the ephemeral, serializable
+  `freetier.create` rate-limit counter. `createFreeAccount` RESERVES a slot before creating the
+  account; Convex's serializable OCC makes two concurrent creates conflict on the bucket row, so the
+  cap holds exactly (closes the H1 over-issuance race **by construction**; see
+  `deferred-security-bugs.md`). The hashed IP lives only in that auto-expiring counter — there is
+  **no durable per-IP store** (the old `freeGrants.ipHash` ledger was removed; see `docs/privacy.md`).
+- Cap reached (same IP, day): `cap_reached` (`{ ok:false, reason:'cap_reached' }`). There is no key
+  to hand back, so the visitor signs in with their existing number. A compensating
+  `rateLimits.release` gives the slot back if the mint/session step fails, so a transient error
+  doesn't burn the IP's daily allowance.
 - Fail-closed client-IP resolution (`convex/lib/http.ts`): `x-forwarded-for` right-anchored to
   the trusted end, taking `chain[len - hops]` where `hops` = `TRUSTED_PROXY_HOPS` (or `1` via the
   legacy `TRUSTED_PROXY=true`); `2`+ when a proxy fronts Caddy (Pangolin / CF Tunnel / ngrok / LB,

@@ -28,14 +28,16 @@ durable record for the next maintainer who picks any of these up.
 > them through the tag at each heading.
 >
 > **Headline:** **H1 (free-tier over-issuance race) is now CLOSED _by
-> construction_.** The per-(ipHash, dayBucket) cap is the serializable Convex
-> mutation `freeTier.claimFreeSlot` (`convex/freeTier.ts`): it reads the
-> `freeGrants` for the bucket over the `by_ip_day` index, then inserts only if
-> under cap. Convex mutations run under serializable OCC, so two concurrent claims
-> have a read/write conflict: the loser aborts, retries, re-reads the larger
-> count, and sees the cap. Two racers can therefore **never** both observe
-> `< cap`. No slot column, no modulo, no UNIQUE trick. Proven by a 12-concurrent-
-> claims-@-cap-3 → exactly-3 test in `convex/freeTier.test.ts`.
+> construction_.** The per-(IP,day) cap is the serializable `freetier.create`
+> rate-limit counter (`convex/rateLimits.ts`): `createFreeAccount` reserves a slot
+> (increment) before creating the account. Convex mutations run under serializable
+> OCC, so two concurrent creates conflict on the bucket row: the loser aborts,
+> retries, re-reads the larger count, and sees the cap. Two racers can therefore
+> **never** both observe `< max`. **Privacy (2026-07):** the hashed IP now lives
+> ONLY in that ephemeral, auto-expiring bucket — there is no durable per-IP store
+> (the old `freeGrants.ipHash` serializable slot-claim was removed; see
+> `docs/privacy.md`). Proven by the cap-holds / distinct-IP / released-slot-
+> reclaimable tests in `convex/freeTier.test.ts`.
 
 ## Why these aren't fixed yet
 
@@ -52,11 +54,12 @@ history):
 - **M1** (PRNG → CSPRNG), **M2** (cookie separator), **M3** (audit-payload scrub),
   **M4** (admin-auth enumeration + per-IP throttle).
 - **H1** (free-tier race): **CLOSED by construction on Convex.** The old D1
-  `free_grants.slot` + `UNIQUE(ip_hash, granted_day_bucket, slot)` trick is itself
-  now obsolete (no D1); the cap is the serializable `freeTier.claimFreeSlot`
-  mutation described in the migration banner at the top of this file. The slot is
-  claimed before any backend work, and `releaseFreeSlot` compensates on issuance
-  failure, so a lost race or transient error rolls back only a bare user row.
+  `free_grants.slot` + `UNIQUE(ip_hash, granted_day_bucket, slot)` trick is obsolete
+  (no D1); the cap is now the serializable `freetier.create` rate-limit counter
+  described in the migration banner at the top of this file. The slot is reserved
+  before any side effect, and a compensating `rateLimits.release` gives it back on
+  issuance failure, so a lost race or transient error rolls back only a bare user
+  row — and no user IP is stored, even hashed (`docs/privacy.md`).
 - **Bug 5** (per-tier grace), **Bug 10** (tier_history ordering), **Bug 11**
   (cleanupExpired join), **Bug 14** (Remnawave squad clear), all re-confirmed
   CLOSED on the Convex port (see each section).
@@ -133,9 +136,11 @@ an e2e browser test, not `convex-test`.
 ### H1. Free-tier rate-limit race: CLOSED (Convex)
 
 > **CLOSED by construction.** See the migration banner at the top: the cap is the
-> serializable `freeTier.claimFreeSlot` mutation. The KV-counter TOCTOU described
-> below cannot occur in a serializable Convex mutation. The Durable-Object /
-> D1-stored-proc options floated here are no longer relevant. Historical text:
+> serializable `freetier.create` rate-limit counter (formerly the
+> `freeTier.claimFreeSlot` mutation — removed so that no user IP is stored, even
+> hashed). The KV-counter TOCTOU described below cannot occur in a serializable
+> Convex mutation. The Durable-Object / D1-stored-proc options floated here are no
+> longer relevant. Historical text:
 
 **Location** `src/server/services/rate-limit.ts:54-65`, `src/server/services/free-tier.ts:64-95` _(files removed in the Convex migration)_
 
