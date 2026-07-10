@@ -128,6 +128,12 @@ bunx convex run seed:migrateDeviceEnforcementDefault '{}'
 echo "[deploy] backfilling client-catalog open-source metadata (idempotent)"
 bunx convex run seed:migrateClientCatalogMeta '{}'
 
+# One-time purge of durable stored IPs (even hashed): empty the legacy freeGrants
+# per-(IP,day) cap ledger + clear auditLog.ipHash. The free-account cap is now the
+# ephemeral freetier.create rate limit (no durable IP stored). Idempotent.
+echo "[deploy] purging durable stored IPs (freeGrants + audit ipHash)"
+bunx convex run seed:purgeStoredIps '{}'
+
 # Seed the free-tier idle marker (freeKeyExpiresAt) on any free users that lack it,
 # so the deactivate-idle-free sweep can find aged-out free keys. Idempotent (skips
 # users that already have it). NOTE: reclassifying historical status:'deleted' free

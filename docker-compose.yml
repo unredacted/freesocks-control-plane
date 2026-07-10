@@ -62,7 +62,9 @@ services:
       - POSTGRES_URL
       - REDACT_LOGS_TO_CLIENT
       - RUST_BACKTRACE
-      - RUST_LOG=${RUST_LOG:-info}
+      # Privacy: silence the per-request HTTP access line (logs the peer socket +
+      # request line) like the beta stack, while keeping warn/error. See docs/privacy.md.
+      - RUST_LOG=${RUST_LOG:-info,convex-cloud-http=warn}
       - S3_ENDPOINT_URL
       - S3_STORAGE_EXPORTS_BUCKET
       - S3_STORAGE_FILES_BUCKET

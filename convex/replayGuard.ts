@@ -5,7 +5,7 @@
  * with the same (sid, nonce) inside the freshness window is rejected, so a
  * passive CDN that captured a signed request cannot replay it.
  *
- * Like the free-tier cap (freeTier.claimFreeSlot) and the rate limiter
+ * Like the free-tier cap (the freetier.create rate limit) and the rate limiter
  * (rateLimits.checkAndIncrement), the insert-if-absent runs as a SERIALIZABLE
  * mutation: concurrent callers racing the same (sid, nonceHash) conflict on the
  * read-check + insert under Convex OCC, so exactly one wins set semantics hold.

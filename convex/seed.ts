@@ -388,6 +388,74 @@ export const backfillFreeKeyExpiresAt = internalAction({
   },
 });
 
+// ---------------------------------------------------------------------------
+// No-stored-IP migration: purge every durable IP-derived value. `freeGrants`
+// (the old per-(IP,day) cap ledger, now superseded by the ephemeral
+// `freetier.create` rate limit) is emptied, and `auditLog.ipHash` is cleared.
+// Both idempotent; run post-deploy from deploy-entrypoint. The `freeGrants`
+// table + the `auditLog.ipHash` field are dropped from the schema in a FOLLOW-UP
+// deploy, once these rows are gone (Convex won't push a schema that drops a
+// populated table / a field existing rows still carry).
+// ---------------------------------------------------------------------------
+
+/** One page: delete `freeGrants` rows (the table is no longer written). */
+export const purgeFreeGrantsBatch = internalMutation({
+  args: { numItems: v.number() },
+  handler: async (ctx, { numItems }) => {
+    const rows = await ctx.db.query('freeGrants').take(numItems);
+    for (const r of rows) await ctx.db.delete(r._id);
+    return { deleted: rows.length, done: rows.length < numItems };
+  },
+});
+
+/** One page: clear the legacy `auditLog.ipHash` (patch to undefined drops the field). */
+export const clearAuditIpHashBatch = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
+  handler: async (ctx, { cursor, numItems }) => {
+    const res = await ctx.db.query('auditLog').paginate({ cursor, numItems });
+    let cleared = 0;
+    for (const row of res.page) {
+      if (row.ipHash !== undefined) {
+        await ctx.db.patch(row._id, { ipHash: undefined });
+        cleared++;
+      }
+    }
+    return { cleared, isDone: res.isDone, continueCursor: res.continueCursor };
+  },
+});
+
+/** Purge all durable stored IPs (even hashed): empty `freeGrants` + clear every
+ *  `auditLog.ipHash`. Idempotent — a re-run purges 0. */
+export const purgeStoredIps = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ freeGrantsDeleted: number; auditIpHashCleared: number }> => {
+    let freeGrantsDeleted = 0;
+    for (let i = 0; i < 100_000; i++) {
+      const r: { deleted: number; done: boolean } = await ctx.runMutation(
+        internal.seed.purgeFreeGrantsBatch,
+        { numItems: MIGRATE_PAGE },
+      );
+      freeGrantsDeleted += r.deleted;
+      if (r.done) break;
+    }
+    let auditIpHashCleared = 0;
+    let cursor: string | null = null;
+    for (let i = 0; i < 100_000; i++) {
+      const r: { cleared: number; isDone: boolean; continueCursor: string } = await ctx.runMutation(
+        internal.seed.clearAuditIpHashBatch,
+        {
+          cursor,
+          numItems: MIGRATE_PAGE,
+        },
+      );
+      auditIpHashCleared += r.cleared;
+      if (r.isDone) break;
+      cursor = r.continueCursor;
+    }
+    return { freeGrantsDeleted, auditIpHashCleared };
+  },
+});
+
 /** One page: flip `status:'deleted'` free rows → `inactive` with a PAST
  *  `freeKeyExpiresAt` (so they stay inactive + are immediately purge-eligible),
  *  letting previously-cleaned accounts return. All `deleted` rows are free-cleanup

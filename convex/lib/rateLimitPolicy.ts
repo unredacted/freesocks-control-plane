@@ -27,10 +27,12 @@ const MINUTE = 60_000;
  * allowlist (admin edits to unknown keys are rejected) and the fallback.
  */
 export const RATE_LIMIT_DEFAULTS = {
-  // Anonymous free-account creation. The hard cap is the per-(IP,day) serializable
-  // claim in freeTier.claimFreeSlot; `max` here IS that daily cap (raised 1 -> 3
-  // for carrier-grade-NAT regions). `windowMs` is the calendar day the claim keys
-  // on and is informational for this policy. `enabled:false` => no daily cap.
+  // Anonymous free-account creation — the per-(IP,day) cap. This IS the hard cap:
+  // freeTier.createFreeAccount RESERVES a slot here (increment) before creating the
+  // account, so NO durable IP is stored — the hashed IP lives only in this
+  // auto-expiring bucket. `max` = accounts per IP per `windowMs` (raised 1 -> 3 for
+  // carrier-grade-NAT regions); the counter is serializable, so it closes the H1
+  // over-issuance race the old freeGrants slot-claim used to. `enabled:false` => no cap.
   'freetier.create': { max: 3, windowMs: DAY, enabled: true },
   // Per-IP throttle on the account-create route, in front of the captcha verify.
   'account.create.ip': { max: 12, windowMs: HOUR, enabled: true },

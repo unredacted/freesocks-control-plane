@@ -85,6 +85,26 @@ export const enforce = internalMutation({
   },
 });
 
+/**
+ * Compensating decrement: hand one unit back on a bucket (floored at 0). Used
+ * only by flows that RESERVE a slot (increment) before a fallible side effect —
+ * e.g. free-account creation — so a transient failure doesn't burn the subject's
+ * daily allowance. No-op if the bucket is missing/empty (policy disabled, or the
+ * window already reset). Never fails open (it only ever LOWERS a counter).
+ */
+export const release = internalMutation({
+  args: { policyKey: v.string(), subject: v.string() },
+  handler: async (ctx, { policyKey, subject }) => {
+    if (!isRateLimitPolicyKey(policyKey)) return null;
+    const row = await ctx.db
+      .query('rateLimits')
+      .withIndex('by_bucket', (q) => q.eq('bucket', `${policyKey}:${subject}`))
+      .unique();
+    if (row && row.count > 0) await ctx.db.patch(row._id, { count: row.count - 1 });
+    return null;
+  },
+});
+
 /** Resolve a single policy (used by actions that need `max` up front, e.g. the free cap). */
 export const getPolicy = internalQuery({
   args: { policyKey: v.string() },

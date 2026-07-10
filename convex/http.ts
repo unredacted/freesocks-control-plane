@@ -390,7 +390,8 @@ http.route({
       );
     }
     // P1-2: per-IP throttle BEFORE the outbound captcha verify, so a flood can't
-    // drive verify QPS (the per-day cap is enforced later in claimFreeSlot).
+    // drive verify QPS (the per-day account cap is enforced later by the
+    // freetier.create rate limit inside createFreeAccount).
     const createRl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'account.create.ip',
       subject: await ipHashSubject(ip),
@@ -430,7 +431,6 @@ http.route({
       result = await ctx.runAction(internal.freeTier.createFreeAccount, {
         ip,
         ipCountry: req.headers.get('cf-ipcountry') ?? undefined,
-        userAgent: req.headers.get('user-agent') ?? undefined,
         requestId,
         backend,
         popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
