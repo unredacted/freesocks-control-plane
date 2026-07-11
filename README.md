@@ -1,24 +1,42 @@
 # FreeSocks Control Plane
 
-[FreeSocks](https://freesocks.org) is a service that distributes free, open & uncensored
-proxies to people in countries experiencing heavy Internet censorship. This is the
-control plane: a **self-hosted [Convex](https://convex.dev) backend + a static Svelte 5
-SPA** that hands out subscription URLs from one of two proxy backends,
+[![CI](https://github.com/unredacted/freesocks-control-plane/actions/workflows/ci.yml/badge.svg)](https://github.com/unredacted/freesocks-control-plane/actions/workflows/ci.yml)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
+
+[FreeSocks](https://freesocks.org) distributes free, open & uncensored proxy access to
+people in countries experiencing heavy Internet censorship. This repository is the
+**control plane** that runs the service: the sign-up flow, member accounts, proxy-key
+issuance, entitlements, payments, and the admin console — everything except the proxy
+servers themselves.
+
+It is built for hostile networks and privacy-hostile environments:
+
+- **Anonymous accounts.** No email, no phone, no password. Visitors pass a self-hosted
+  proof-of-work captcha and receive a random **account number** — the only credential,
+  stored only as a peppered keyed hash.
+- **No client IPs at rest.** The application, the reverse proxy, and the captcha service
+  are all configured to persist no client IP, even hashed ([`docs/privacy.md`](docs/privacy.md)).
+- **No third-party anything at runtime.** Zero external scripts, fonts, or CDNs: the
+  captcha WASM, fonts, and all assets are bundled and served same-origin under a pure
+  `'self'` CSP.
+- **Payments without payer identity.** Optional memberships are payable with Bitcoin
+  (via a self-hosted BTCPay Server), other cryptocurrencies, card, or PayPal — all as
+  redirects to processor-hosted pages, with **zero payer PII stored**
+  ([`docs/billing.md`](docs/billing.md)).
+- **Sealed channel + proof-of-possession sessions** to blind fronting CDNs
+  ([`docs/threat-model-cdn-blinding.md`](docs/threat-model-cdn-blinding.md)).
+
+Technically it is a **self-hosted [Convex](https://convex.dev) backend + a static Svelte 5
+SPA** that hands out subscription URLs from pluggable proxy backends —
 [Remnawave](https://remna.st) (multi-protocol; shown to users as **"Xray"**) or
-[Outline](https://getoutline.org/) (Shadowsocks access keys). It gates anonymous issuance
-through a self-hosted [Cap](https://trycap.dev) proof-of-work captcha (no third-party scripts), lets members
-sign back in with a self-service **account number**, and provides a passkey-gated admin CMS
-for tier, user, backend, token, and runtime-config management.
+[Outline](https://getoutline.org/) (Shadowsocks) — with a passkey-gated admin CMS for
+tier, user, backend, token, and runtime-config management. Everything is designed to be
+self-hosted by any operator; see [Quick start](#quick-start-local-via-docker) and
+[`docs/convex-self-hosting.md`](docs/convex-self-hosting.md).
 
 > **New here?** [`docs/project-inventory.md`](docs/project-inventory.md) is the at-a-glance
 > map: every feature (live / deferred), the open to-dos, and a register of intentional
 > scaffolding. Read it before removing anything as "dead code".
-
-> **Migration note.** This codebase was fully migrated off its previous Hono/Cloudflare-Workers
-> stack. Drizzle/D1, the `PlatformAdapter` + per-platform entrypoints, the `KvStore`
-> abstraction, Authentik OIDC, CiviCRM, and the wrangler/Fastly/Fly tooling are all gone.
-> The backend is now entirely Convex functions. Trust the source under `convex/` and `src/`
-> over any older description.
 
 ## Stack
 
@@ -169,7 +187,7 @@ docker-compose stack's `deployer` service runs `convex deploy` on `up`):
 CONVEX_SELF_HOSTED_URL=... CONVEX_SELF_HOSTED_ADMIN_KEY=... bunx convex deploy -y
 
 # SPA: static build; a reverse proxy serves dist/ and routes /api -> the actions origin
-VITE_CONVEX_SITE_URL=https://app.freesocks.org bun run build
+VITE_CONVEX_SITE_URL=https://app.example.org bun run build   # your deployment's public origin
 ```
 
 Convex does **not** serve the SPA. A reverse proxy (Caddy/nginx/…) terminates TLS, serves
@@ -311,6 +329,18 @@ are all configured for it); the end-to-end posture + a downstream-deployer check
 route: import the component, add an arm, and link via `<Link href="/foo">`. There is no
 file-based routing because SvelteKit is not in the stack.
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the toolchain (Bun-only), local setup, the
+checks a change must pass, and the project conventions that matter most (contracts,
+data-fetching, and the never-log-secrets rules).
+
+## Security
+
+Please report vulnerabilities privately — see [`SECURITY.md`](SECURITY.md). Do not open
+public issues for security problems: this software protects people in high-risk
+environments.
+
 ## License
 
-Same as upstream.
+[GPL-3.0](LICENSE).
