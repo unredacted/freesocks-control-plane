@@ -414,7 +414,7 @@
     "save": "省 {pct}%",
     "methodLabel": "支付方式",
     "payNowpayments": "加密货币",
-    "payNowpaymentsHint": "门罗币、比特币等",
+    "payNowpaymentsHint": "比特币、门罗币等",
     "payBtcpay": "比特币",
     "payBtcpayHint": "链上或闪电网络",
     "payBtcpayBadge": "无中介",
@@ -535,7 +535,7 @@
     },
     "q9": {
       "question": "我可以匿名支付吗？",
-      "answer": "是的。您可以使用加密货币支付——门罗币 (Monero) 或 Zcash 能最大程度保护您的隐私，或者您也可以使用比特币支付——无需注册账户、邮箱或银行卡。付款确认后，您的会员资格将自动激活。"
+      "answer": "是的。您可以使用加密货币支付——比特币，或使用门罗币 (Monero) 或 Zcash 以最大程度保护您的隐私——无需注册账户、邮箱或银行卡。付款确认后，您的会员资格将自动激活。"
     }
   },
   "gift": {
@@ -625,7 +625,7 @@
       "title": "会员资格",
       "lead": "免费版涵盖基本内容。",
       "descriptionFallback": "FreeSocks 会员资格可解除所有限制。",
-      "payNote": "可使用加密货币（门罗币等）、银行卡或PayPal支付。"
+      "payNote": "可使用加密货币（比特币、门罗币等）、银行卡或PayPal支付。"
     },
     "about": {
       "title": "关于",

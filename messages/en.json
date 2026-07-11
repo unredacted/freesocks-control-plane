@@ -37,7 +37,7 @@
     },
     "q9": {
       "question": "Can I pay anonymously?",
-      "answer": "Yes. You can pay with cryptocurrency — Monero or Zcash for the most privacy, or Bitcoin — with no account, email, or card. Your membership activates automatically once the payment confirms."
+      "answer": "Yes. You can pay with cryptocurrency — Bitcoin, or Monero and Zcash for the most privacy — with no account, email, or card. Your membership activates automatically once the payment confirms."
     }
   },
   "common": {
@@ -454,7 +454,7 @@
     "save": "save {pct}%",
     "methodLabel": "Payment method",
     "payNowpayments": "Cryptocurrency",
-    "payNowpaymentsHint": "Monero, Zcash, Bitcoin & more",
+    "payNowpaymentsHint": "Bitcoin, Monero, Zcash & more",
     "payNowpaymentsBadge": "Private",
     "cryptoPrivacyNote": "No account, email, or card needed — pay privately. Monero and Zcash offer the most privacy.",
     "payBtcpay": "Bitcoin",
@@ -626,7 +626,7 @@
       "upsellTitle": "Want unlimited?",
       "upsellBody": "Get {limits} — and help keep FreeSocks free for others.",
       "fromPerMonth": "from {price}/mo",
-      "cryptoNote": "Crypto accepted — Monero, Zcash, Bitcoin, Ethereum and more"
+      "cryptoNote": "Crypto accepted — Bitcoin, Monero, Zcash and more"
     },
     "features": {
       "title": "What FreeSocks is",
@@ -671,7 +671,7 @@
       "title": "Membership",
       "lead": "Free covers the basics.",
       "descriptionFallback": "A FreeSocks membership lifts every limit.",
-      "payNote": "Pay privately with Monero, Zcash, or Bitcoin — or use a card or PayPal."
+      "payNote": "Pay privately with Bitcoin, Monero, or Zcash — or use a card or PayPal."
     },
     "about": {
       "title": "About",
