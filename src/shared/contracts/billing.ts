@@ -10,7 +10,7 @@ import { z } from 'zod';
  * and polls GET /billing/order/<ref> until a terminal status.
  */
 
-export const BillingProcessor = z.enum(['nowpayments', 'stripe', 'paypal']);
+export const BillingProcessor = z.enum(['nowpayments', 'btcpay', 'stripe', 'paypal']);
 export type BillingProcessor = z.infer<typeof BillingProcessor>;
 
 export const CheckoutRequest = z.object({
@@ -60,6 +60,7 @@ export const BillingConfigView = z.object({
   enabled: z.boolean(),
   rails: z.object({
     nowpayments: z.boolean(),
+    btcpay: z.boolean().default(false),
     stripe: z.boolean(),
     paypal: z.boolean(),
   }),
@@ -68,6 +69,8 @@ export const BillingConfigView = z.object({
   durations: z.array(BillingDuration),
   /** Minimum term (months) purchasable with the crypto rail (per-coin minimums). */
   cryptoMinMonths: z.number().int(),
+  /** Minimum term (months) purchasable with the BTCPay rail (default 1). */
+  btcpayMinMonths: z.number().int().default(1),
 });
 export type BillingConfigView = z.infer<typeof BillingConfigView>;
 
@@ -78,6 +81,14 @@ export type BillingConfigView = z.infer<typeof BillingConfigView>;
 export const ProcessorSecretStatus = z.object({
   publicBaseUrl: z.string(),
   nowpayments: z.object({ apiKey: z.boolean(), ipnSecret: z.boolean(), apiUrl: z.string() }),
+  btcpay: z
+    .object({
+      apiKey: z.boolean(),
+      webhookSecret: z.boolean(),
+      apiUrl: z.string(),
+      storeId: z.string(),
+    })
+    .default({ apiKey: false, webhookSecret: false, apiUrl: '', storeId: '' }),
   stripe: z.object({ apiKey: z.boolean(), webhookSecret: z.boolean() }),
   paypal: z.object({
     clientId: z.boolean(),
@@ -97,6 +108,7 @@ export interface BillingConfigPatch extends Partial<BillingConfigView> {
   publicBaseUrl?: string;
   secrets?: {
     nowpayments?: { apiKey?: string; ipnSecret?: string; apiUrl?: string };
+    btcpay?: { apiKey?: string; webhookSecret?: string; apiUrl?: string; storeId?: string };
     stripe?: { apiKey?: string; webhookSecret?: string };
     paypal?: { clientId?: string; secret?: string; webhookId?: string; apiBase?: string };
   };

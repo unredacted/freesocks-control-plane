@@ -697,6 +697,78 @@ describe('stripe webhook route', () => {
   });
 });
 
+describe('btcpay webhook route', () => {
+  const signBtcpay = async (rawBody: string, secret: string): Promise<string> =>
+    `sha256=${await hmacSha256Hex(secret, rawBody)}`;
+
+  test('unset webhook secret answers a distinct 503', async () => {
+    const t = convexTest(schema, modules);
+    const res = await t.fetch('/api/webhooks/btcpay', { method: 'POST', body: '{}' });
+    expect(res.status).toBe(503);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('billing.not_configured');
+  });
+
+  test('bad signature is the generic 400 rejection', async () => {
+    vi.stubEnv('BTCPAY_WEBHOOK_SECRET', 'whsec-bp');
+    const t = convexTest(schema, modules);
+    const res = await t.fetch('/api/webhooks/btcpay', {
+      method: 'POST',
+      headers: { 'btcpay-sig': 'sha256=deadbeef' },
+      body: JSON.stringify({ type: 'InvoiceSettled', invoiceId: 'x' }),
+    });
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('webhook.rejected');
+  });
+
+  test('a valid settled invoice extends the bound member’s membership', async () => {
+    vi.stubEnv('BTCPAY_WEBHOOK_SECRET', 'whsec-bp');
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedMemberTierUser(t);
+    await t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'btcpay',
+        opaqueRef: 'btcpay-route-ref',
+        userId,
+        tierId: memberTierId,
+        durationDays: 91,
+        amountCents: 1400,
+        currency: 'USD',
+        status: 'pending',
+        updatedAt: Date.now(),
+      }),
+    );
+    const rawBody = JSON.stringify({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_route',
+      metadata: { orderId: 'btcpay-route-ref' },
+    });
+    const res = await t.fetch('/api/webhooks/btcpay', {
+      method: 'POST',
+      headers: { 'btcpay-sig': await signBtcpay(rawBody, 'whsec-bp') },
+      body: rawBody,
+    });
+    expect(res.status).toBe(200);
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(memberTierId);
+      expect(user?.membershipExpiresAt).toBeGreaterThan(Date.now());
+    });
+  });
+
+  test('an oversized body is rejected with 413', async () => {
+    vi.stubEnv('BTCPAY_WEBHOOK_SECRET', 'whsec-bp');
+    const t = convexTest(schema, modules);
+    const res = await t.fetch('/api/webhooks/btcpay', {
+      method: 'POST',
+      headers: { 'btcpay-sig': 'sha256=x' },
+      body: JSON.stringify({ pad: 'x'.repeat(70 * 1024) }),
+    });
+    expect(res.status).toBe(413);
+  });
+});
+
 describe('billing order poll route', () => {
   test('404 for an unknown ref', async () => {
     const t = convexTest(schema, modules);

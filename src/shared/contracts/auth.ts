@@ -107,6 +107,8 @@ export const PublicConfig = z.object({
     enabled: z.boolean(),
     rails: z.object({
       nowpayments: z.boolean(),
+      // Additive rail — default keeps a newer SPA parsing an older backend's config.
+      btcpay: z.boolean().default(false),
       stripe: z.boolean(),
       paypal: z.boolean(),
     }),
@@ -121,6 +123,9 @@ export const PublicConfig = z.object({
     /** Minimum term (months) the crypto rail accepts (per-coin minimums; XMR's
      * is high). The SPA disables shorter terms when crypto is the chosen method. */
     cryptoMinMonths: z.number().int(),
+    /** Minimum term (months) the BTCPay rail accepts (default 1; Lightning has
+     * no per-coin floor — this is an operator-tunable hygiene knob). */
+    btcpayMinMonths: z.number().int().default(1),
   }),
   /** Whether the opt-in "trouble connecting? try a mirror" affordance is available
    *  (≥1 active mirror provider). The SPA hides it entirely when false. */

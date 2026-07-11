@@ -81,6 +81,7 @@ const subscriptionMirror = v.object({
 // sync with the PaymentProcessor adapters in convex/lib/processors/.
 const billingProcessor = v.union(
   v.literal('nowpayments'),
+  v.literal('btcpay'),
   v.literal('stripe'),
   v.literal('paypal'),
 );

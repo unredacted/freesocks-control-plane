@@ -31,6 +31,7 @@
   let secretsDraft = $state({
     publicBaseUrl: '',
     nowpayments: { apiKey: '', ipnSecret: '', apiUrl: '' },
+    btcpay: { apiKey: '', webhookSecret: '', apiUrl: '', storeId: '' },
     stripe: { apiKey: '', webhookSecret: '' },
     paypal: { clientId: '', secret: '', webhookId: '', apiBase: '' },
   });
@@ -41,6 +42,8 @@
       const s = billing.data.secretStatus;
       secretsDraft.publicBaseUrl = s.publicBaseUrl;
       secretsDraft.nowpayments.apiUrl = s.nowpayments.apiUrl;
+      secretsDraft.btcpay.apiUrl = s.btcpay.apiUrl;
+      secretsDraft.btcpay.storeId = s.btcpay.storeId;
       secretsDraft.paypal.apiBase = s.paypal.apiBase;
       seeded = true;
     }
@@ -51,6 +54,7 @@
 
   const RAILS: { key: BillingProcessor; label: string }[] = [
     { key: 'nowpayments', label: 'Crypto (NOWPayments)' },
+    { key: 'btcpay', label: 'Bitcoin (BTCPay Server)' },
     { key: 'stripe', label: 'Card (Stripe)' },
     { key: 'paypal', label: 'PayPal' },
   ];
@@ -74,6 +78,12 @@
       secretsDraft = {
         publicBaseUrl: res.secretStatus.publicBaseUrl,
         nowpayments: { apiKey: '', ipnSecret: '', apiUrl: res.secretStatus.nowpayments.apiUrl },
+        btcpay: {
+          apiKey: '',
+          webhookSecret: '',
+          apiUrl: res.secretStatus.btcpay.apiUrl,
+          storeId: res.secretStatus.btcpay.storeId,
+        },
         stripe: { apiKey: '', webhookSecret: '' },
         paypal: {
           clientId: '',
@@ -98,6 +108,7 @@
       publicBaseUrl: secretsDraft.publicBaseUrl,
       secrets: {
         nowpayments: secretsDraft.nowpayments,
+        btcpay: secretsDraft.btcpay,
         stripe: secretsDraft.stripe,
         paypal: secretsDraft.paypal,
       },
@@ -134,6 +145,15 @@
       if (!has(ss?.nowpayments.apiKey, secretsDraft.nowpayments.apiKey)) missing.push('API key');
       if (!has(ss?.nowpayments.ipnSecret, secretsDraft.nowpayments.ipnSecret))
         missing.push('IPN secret');
+    } else if (key === 'btcpay') {
+      // The API URL + store id are non-secret; the status returns their values.
+      const hasStr = (saved: string | undefined, typed: string) =>
+        (saved ?? '').trim().length > 0 || typed.trim().length > 0;
+      if (!hasStr(ss?.btcpay.apiUrl, secretsDraft.btcpay.apiUrl)) missing.push('server URL');
+      if (!hasStr(ss?.btcpay.storeId, secretsDraft.btcpay.storeId)) missing.push('store ID');
+      if (!has(ss?.btcpay.apiKey, secretsDraft.btcpay.apiKey)) missing.push('API key');
+      if (!has(ss?.btcpay.webhookSecret, secretsDraft.btcpay.webhookSecret))
+        missing.push('webhook secret');
     } else if (key === 'stripe') {
       if (!has(ss?.stripe.apiKey, secretsDraft.stripe.apiKey)) missing.push('API key');
       if (!has(ss?.stripe.webhookSecret, secretsDraft.stripe.webhookSecret))
@@ -305,6 +325,28 @@
           aren't affected.
         </span>
       </label>
+
+      <label class="block">
+        <span class="mb-1 block text-xs font-medium text-muted-foreground"
+          >Bitcoin (BTCPay) minimum term (months)</span
+        >
+        <Input
+          type="number"
+          min={1}
+          class="min-h-9 w-24"
+          value={draft.btcpayMinMonths}
+          oninput={(e) =>
+            draft &&
+            (draft.btcpayMinMonths = Math.max(
+              1,
+              Math.round(Number((e.currentTarget as HTMLInputElement).value)),
+            ))}
+        />
+        <span class="mt-1 block text-xs text-muted-foreground">
+          Shortest term the BTCPay rail offers. Lightning has no floor (keep 1); raise it if you run
+          on-chain-only and small payments would be dwarfed by network fees.
+        </span>
+      </label>
     </section>
 
     <!-- Processor credentials: DB-stored (an env var is the fallback). Secret
@@ -372,6 +414,41 @@
               (secretsDraft.nowpayments.apiUrl = (e.currentTarget as HTMLInputElement).value)}
           />
         </label>
+      </div>
+
+      <div class="space-y-2 rounded-lg border border-border/60 p-3">
+        <p class="text-xs font-semibold">Bitcoin (BTCPay Server)</p>
+        <label class="block space-y-1">
+          <span class="text-xs text-muted-foreground">Server URL (your own BTCPay instance)</span>
+          <Input
+            class="min-h-9"
+            placeholder="https://pay.example.org"
+            value={secretsDraft.btcpay.apiUrl}
+            oninput={(e) =>
+              (secretsDraft.btcpay.apiUrl = (e.currentTarget as HTMLInputElement).value)}
+          />
+        </label>
+        <label class="block space-y-1">
+          <span class="text-xs text-muted-foreground">Store ID</span>
+          <Input
+            class="min-h-9"
+            value={secretsDraft.btcpay.storeId}
+            oninput={(e) =>
+              (secretsDraft.btcpay.storeId = (e.currentTarget as HTMLInputElement).value)}
+          />
+        </label>
+        {@render cred(
+          'API key (restricted: invoice create)',
+          !!ss?.btcpay.apiKey,
+          secretsDraft.btcpay.apiKey,
+          (v) => (secretsDraft.btcpay.apiKey = v),
+        )}
+        {@render cred(
+          'Webhook secret',
+          !!ss?.btcpay.webhookSecret,
+          secretsDraft.btcpay.webhookSecret,
+          (v) => (secretsDraft.btcpay.webhookSecret = v),
+        )}
       </div>
 
       <div class="space-y-2 rounded-lg border border-border/60 p-3">

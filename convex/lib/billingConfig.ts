@@ -13,7 +13,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 
-export type BillingProcessor = 'nowpayments' | 'stripe' | 'paypal';
+export type BillingProcessor = 'nowpayments' | 'btcpay' | 'stripe' | 'paypal';
 
 export interface BillingDuration {
   months: number;
@@ -39,12 +39,18 @@ export interface BillingConfig {
    * terms stay card/PayPal-only. Card/PayPal have no such floor (min 1).
    */
   cryptoMinMonths: number;
+  /**
+   * Minimum term (months) purchasable with the BTCPay rail. Defaults to 1:
+   * Lightning has no meaningful per-payment minimum, and the operator's own
+   * BTCPay policy (not a third party's coin list) governs on-chain floors.
+   */
+  btcpayMinMonths: number;
 }
 
 /** Compiled defaults. PLACEHOLDER prices — set real ones in Admin → Billing pre-launch. */
 export const BILLING_DEFAULTS: BillingConfig = {
   enabled: false,
-  rails: { nowpayments: false, stripe: false, paypal: false },
+  rails: { nowpayments: false, btcpay: false, stripe: false, paypal: false },
   tierSlug: 'member',
   currency: 'USD',
   durations: [
@@ -54,18 +60,21 @@ export const BILLING_DEFAULTS: BillingConfig = {
     { months: 12, amountCents: 5000 },
   ],
   cryptoMinMonths: 3,
+  btcpayMinMonths: 1,
 };
 
 /** The `appSettings` keys this config is persisted across (the `billing.` namespace). */
 export const BILLING_KEYS = {
   enabled: 'billing.enabled',
   rail_nowpayments: 'billing.nowpayments.enabled',
+  rail_btcpay: 'billing.btcpay.enabled',
   rail_stripe: 'billing.stripe.enabled',
   rail_paypal: 'billing.paypal.enabled',
   tierSlug: 'billing.membership.tierSlug',
   currency: 'billing.membership.currency',
   durations: 'billing.membership.durations',
   cryptoMinMonths: 'billing.nowpayments.minMonths',
+  btcpayMinMonths: 'billing.btcpay.minMonths',
 } as const;
 
 const MAX_MONTHS = 120; // 10 years — a sane upper bound on a single fixed term.
@@ -134,20 +143,24 @@ async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
 
 /** Resolve the full billing config from stored `billing.*` rows, fail-safe to defaults. */
 export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingConfig> {
-  const [enabled, np, st, pp, tierSlug, currency, durations, cryptoMin] = await Promise.all([
-    readSetting(db, BILLING_KEYS.enabled),
-    readSetting(db, BILLING_KEYS.rail_nowpayments),
-    readSetting(db, BILLING_KEYS.rail_stripe),
-    readSetting(db, BILLING_KEYS.rail_paypal),
-    readSetting(db, BILLING_KEYS.tierSlug),
-    readSetting(db, BILLING_KEYS.currency),
-    readSetting(db, BILLING_KEYS.durations),
-    readSetting(db, BILLING_KEYS.cryptoMinMonths),
-  ]);
+  const [enabled, np, bp, st, pp, tierSlug, currency, durations, cryptoMin, btcpayMin] =
+    await Promise.all([
+      readSetting(db, BILLING_KEYS.enabled),
+      readSetting(db, BILLING_KEYS.rail_nowpayments),
+      readSetting(db, BILLING_KEYS.rail_btcpay),
+      readSetting(db, BILLING_KEYS.rail_stripe),
+      readSetting(db, BILLING_KEYS.rail_paypal),
+      readSetting(db, BILLING_KEYS.tierSlug),
+      readSetting(db, BILLING_KEYS.currency),
+      readSetting(db, BILLING_KEYS.durations),
+      readSetting(db, BILLING_KEYS.cryptoMinMonths),
+      readSetting(db, BILLING_KEYS.btcpayMinMonths),
+    ]);
   return {
     enabled: asBool(enabled, BILLING_DEFAULTS.enabled),
     rails: {
       nowpayments: asBool(np, BILLING_DEFAULTS.rails.nowpayments),
+      btcpay: asBool(bp, BILLING_DEFAULTS.rails.btcpay),
       stripe: asBool(st, BILLING_DEFAULTS.rails.stripe),
       paypal: asBool(pp, BILLING_DEFAULTS.rails.paypal),
     },
@@ -155,6 +168,7 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     currency: asNonEmptyString(currency, BILLING_DEFAULTS.currency).toUpperCase(),
     durations: sanitizeDurations(durations),
     cryptoMinMonths: asMinMonths(cryptoMin, BILLING_DEFAULTS.cryptoMinMonths),
+    btcpayMinMonths: asMinMonths(btcpayMin, BILLING_DEFAULTS.btcpayMinMonths),
   };
 }
 
@@ -169,7 +183,9 @@ export function findDuration(cfg: BillingConfig, months: number): BillingDuratio
  * duration picker; the checkout action enforces it server-side.
  */
 export function minMonthsForProcessor(cfg: BillingConfig, processor: BillingProcessor): number {
-  return processor === 'nowpayments' ? cfg.cryptoMinMonths : 1;
+  if (processor === 'nowpayments') return cfg.cryptoMinMonths;
+  if (processor === 'btcpay') return cfg.btcpayMinMonths;
+  return 1;
 }
 
 /**
@@ -191,6 +207,7 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
   if (p.rails && typeof p.rails === 'object') {
     const r = p.rails as Record<string, unknown>;
     if ('nowpayments' in r) put(BILLING_KEYS.rail_nowpayments, asBool(r.nowpayments, false));
+    if ('btcpay' in r) put(BILLING_KEYS.rail_btcpay, asBool(r.btcpay, false));
     if ('stripe' in r) put(BILLING_KEYS.rail_stripe, asBool(r.stripe, false));
     if ('paypal' in r) put(BILLING_KEYS.rail_paypal, asBool(r.paypal, false));
   }
@@ -210,6 +227,12 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
       asMinMonths(p.cryptoMinMonths, BILLING_DEFAULTS.cryptoMinMonths),
     );
   }
+  if ('btcpayMinMonths' in p) {
+    put(
+      BILLING_KEYS.btcpayMinMonths,
+      asMinMonths(p.btcpayMinMonths, BILLING_DEFAULTS.btcpayMinMonths),
+    );
+  }
 
   return writes;
 }
@@ -226,6 +249,7 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
 export interface ProcessorSecrets {
   publicBaseUrl: string;
   nowpayments: { apiKey: string; ipnSecret: string; apiUrl: string };
+  btcpay: { apiKey: string; webhookSecret: string; apiUrl: string; storeId: string };
   stripe: { apiKey: string; webhookSecret: string };
   paypal: { clientId: string; secret: string; webhookId: string; apiBase: string };
 }
@@ -239,6 +263,10 @@ export const BILLING_SECRET_KEYS = {
   np_apiKey: 'billing.secret.nowpayments.apiKey',
   np_ipnSecret: 'billing.secret.nowpayments.ipnSecret',
   np_apiUrl: 'billing.nowpayments.apiUrl',
+  bp_apiKey: 'billing.secret.btcpay.apiKey',
+  bp_webhookSecret: 'billing.secret.btcpay.webhookSecret',
+  bp_apiUrl: 'billing.btcpay.apiUrl',
+  bp_storeId: 'billing.btcpay.storeId',
   stripe_apiKey: 'billing.secret.stripe.apiKey',
   stripe_webhookSecret: 'billing.secret.stripe.webhookSecret',
   pp_clientId: 'billing.secret.paypal.clientId',
@@ -259,11 +287,30 @@ function dbOrEnv(dbVal: unknown, envName: string, fallback = ''): string {
 
 /** Resolve all processor credentials (DB rows, env fallback). Internal use only. */
 export async function resolveProcessorSecrets(db: DatabaseReader): Promise<ProcessorSecrets> {
-  const [pub, npKey, npIpn, npUrl, stKey, stWh, ppCid, ppSec, ppWh, ppBase] = await Promise.all([
+  const [
+    pub,
+    npKey,
+    npIpn,
+    npUrl,
+    bpKey,
+    bpWh,
+    bpUrl,
+    bpStore,
+    stKey,
+    stWh,
+    ppCid,
+    ppSec,
+    ppWh,
+    ppBase,
+  ] = await Promise.all([
     readSetting(db, BILLING_SECRET_KEYS.publicBaseUrl),
     readSetting(db, BILLING_SECRET_KEYS.np_apiKey),
     readSetting(db, BILLING_SECRET_KEYS.np_ipnSecret),
     readSetting(db, BILLING_SECRET_KEYS.np_apiUrl),
+    readSetting(db, BILLING_SECRET_KEYS.bp_apiKey),
+    readSetting(db, BILLING_SECRET_KEYS.bp_webhookSecret),
+    readSetting(db, BILLING_SECRET_KEYS.bp_apiUrl),
+    readSetting(db, BILLING_SECRET_KEYS.bp_storeId),
     readSetting(db, BILLING_SECRET_KEYS.stripe_apiKey),
     readSetting(db, BILLING_SECRET_KEYS.stripe_webhookSecret),
     readSetting(db, BILLING_SECRET_KEYS.pp_clientId),
@@ -277,6 +324,14 @@ export async function resolveProcessorSecrets(db: DatabaseReader): Promise<Proce
       apiKey: dbOrEnv(npKey, 'NOWPAYMENTS_API_KEY'),
       ipnSecret: dbOrEnv(npIpn, 'NOWPAYMENTS_IPN_SECRET'),
       apiUrl: dbOrEnv(npUrl, 'NOWPAYMENTS_API_URL', NOWPAYMENTS_DEFAULT_API),
+    },
+    // BTCPay is self-hosted: the API URL is the operator's own server, so there
+    // is deliberately NO default (unset = rail not configured).
+    btcpay: {
+      apiKey: dbOrEnv(bpKey, 'BTCPAY_API_KEY'),
+      webhookSecret: dbOrEnv(bpWh, 'BTCPAY_WEBHOOK_SECRET'),
+      apiUrl: dbOrEnv(bpUrl, 'BTCPAY_API_URL'),
+      storeId: dbOrEnv(bpStore, 'BTCPAY_STORE_ID'),
     },
     stripe: {
       apiKey: dbOrEnv(stKey, 'STRIPE_API_KEY'),
@@ -295,6 +350,7 @@ export async function resolveProcessorSecrets(db: DatabaseReader): Promise<Proce
 export interface ProcessorSecretStatus {
   publicBaseUrl: string;
   nowpayments: { apiKey: boolean; ipnSecret: boolean; apiUrl: string };
+  btcpay: { apiKey: boolean; webhookSecret: boolean; apiUrl: string; storeId: string };
   stripe: { apiKey: boolean; webhookSecret: boolean };
   paypal: { clientId: boolean; secret: boolean; webhookId: boolean; apiBase: string };
 }
@@ -306,6 +362,12 @@ export function processorSecretStatus(s: ProcessorSecrets): ProcessorSecretStatu
       apiKey: set(s.nowpayments.apiKey),
       ipnSecret: set(s.nowpayments.ipnSecret),
       apiUrl: s.nowpayments.apiUrl,
+    },
+    btcpay: {
+      apiKey: set(s.btcpay.apiKey),
+      webhookSecret: set(s.btcpay.webhookSecret),
+      apiUrl: s.btcpay.apiUrl,
+      storeId: s.btcpay.storeId,
     },
     stripe: { apiKey: set(s.stripe.apiKey), webhookSecret: set(s.stripe.webhookSecret) },
     paypal: {
@@ -338,6 +400,11 @@ export function billingSecretWrites(patch: unknown): Array<{ key: string; value:
     putStr(BILLING_SECRET_KEYS.np_apiKey, np.apiKey);
     putStr(BILLING_SECRET_KEYS.np_ipnSecret, np.ipnSecret);
     putStr(BILLING_SECRET_KEYS.np_apiUrl, np.apiUrl);
+    const bp = (s.btcpay ?? {}) as Record<string, unknown>;
+    putStr(BILLING_SECRET_KEYS.bp_apiKey, bp.apiKey);
+    putStr(BILLING_SECRET_KEYS.bp_webhookSecret, bp.webhookSecret);
+    putStr(BILLING_SECRET_KEYS.bp_apiUrl, bp.apiUrl);
+    putStr(BILLING_SECRET_KEYS.bp_storeId, bp.storeId);
     const st = (s.stripe ?? {}) as Record<string, unknown>;
     putStr(BILLING_SECRET_KEYS.stripe_apiKey, st.apiKey);
     putStr(BILLING_SECRET_KEYS.stripe_webhookSecret, st.webhookSecret);

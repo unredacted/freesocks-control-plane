@@ -1188,10 +1188,15 @@ http.route({
     }>(req);
     if (
       body.processor !== 'nowpayments' &&
+      body.processor !== 'btcpay' &&
       body.processor !== 'stripe' &&
       body.processor !== 'paypal'
     ) {
-      return errorJson('validation', 'processor must be nowpayments, stripe, or paypal', 400);
+      return errorJson(
+        'validation',
+        'processor must be nowpayments, btcpay, stripe, or paypal',
+        400,
+      );
     }
     if (typeof body.months !== 'number' || !Number.isInteger(body.months) || body.months < 1) {
       return errorJson('validation', 'months must be a positive integer', 400);
@@ -1533,14 +1538,18 @@ http.route({
 // throttle, raw-body read, then per-processor verify + parse in
 // billing.ingestEvent. Factored because the three rails differ only in their
 // secret env var, signature header, and IP policy key.
-type BillingProcessorId = 'nowpayments' | 'stripe' | 'paypal';
+type BillingProcessorId = 'nowpayments' | 'btcpay' | 'stripe' | 'paypal';
 function processorWebhook(opts: {
   processor: BillingProcessorId;
   /** Single signature header (NOWPayments/Stripe). Omit for PayPal (uses headerNames). */
   sigHeader?: string;
   /** Header set PayPal verifies over (its API call needs all of them). */
   headerNames?: string[];
-  policyKey: 'webhook.nowpayments.ip' | 'webhook.stripe.ip' | 'webhook.paypal.ip';
+  policyKey:
+    | 'webhook.nowpayments.ip'
+    | 'webhook.btcpay.ip'
+    | 'webhook.stripe.ip'
+    | 'webhook.paypal.ip';
 }) {
   const notConfigured = () =>
     errorJson(
@@ -1603,6 +1612,16 @@ http.route({
     processor: 'nowpayments',
     sigHeader: 'x-nowpayments-sig',
     policyKey: 'webhook.nowpayments.ip',
+  }),
+});
+
+http.route({
+  path: '/api/webhooks/btcpay',
+  method: 'POST',
+  handler: processorWebhook({
+    processor: 'btcpay',
+    sigHeader: 'btcpay-sig',
+    policyKey: 'webhook.btcpay.ip',
   }),
 });
 

@@ -65,6 +65,9 @@ export const RATE_LIMIT_DEFAULTS = {
   // Per-IP throttle on the crypto IPN (a single payment fires several status
   // callbacks: waiting → confirming → finished — so this is generous).
   'webhook.nowpayments.ip': { max: 120, windowMs: MINUTE, enabled: true },
+  // Per-IP throttle on the BTCPay store webhook (same shape: several invoice
+  // events per payment — created → processing → settled).
+  'webhook.btcpay.ip': { max: 120, windowMs: MINUTE, enabled: true },
   // Per-IP throttle on the Stripe + PayPal webhooks (generous; legit senders).
   'webhook.stripe.ip': { max: 120, windowMs: MINUTE, enabled: true },
   'webhook.paypal.ip': { max: 120, windowMs: MINUTE, enabled: true },

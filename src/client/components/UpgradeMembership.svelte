@@ -45,6 +45,7 @@
   let durations = $derived(billing?.durations ?? []);
   let currency = $derived(billing?.currency ?? 'USD');
   let cryptoMin = $derived(billing?.cryptoMinMonths ?? 3);
+  let btcpayMin = $derived(billing?.btcpayMinMonths ?? 1);
   // Device limits are an opt-in Remnawave feature; when the admin enforcement
   // toggle is off (the default) devices are unlimited for everyone, so drop the
   // "and devices" from the membership benefit copy.
@@ -64,7 +65,7 @@
   let open = $state(false);
 
   // Render rails in a stable, sensible order, filtered to the ones turned on.
-  const RAIL_ORDER: BillingProcessor[] = ['nowpayments', 'stripe', 'paypal'];
+  const RAIL_ORDER: BillingProcessor[] = ['nowpayments', 'btcpay', 'stripe', 'paypal'];
   let rails = $derived(RAIL_ORDER.filter((r) => billing?.rails?.[r]));
 
   // Selection: raw state overrides a derived default, so nothing needs an effect
@@ -73,8 +74,15 @@
   let selectedProcessorRaw = $state<BillingProcessor | null>(null);
   let selectedProcessor = $derived(selectedProcessorRaw ?? rails[0] ?? null);
 
-  // Crypto (NOWPayments) only offers terms >= cryptoMin; card/PayPal offer all.
-  let minMonths = $derived(selectedProcessor === 'nowpayments' ? cryptoMin : 1);
+  // Crypto (NOWPayments) only offers terms >= cryptoMin; BTCPay has its own
+  // (default 1 — Lightning has no floor); card/PayPal offer all.
+  let minMonths = $derived(
+    selectedProcessor === 'nowpayments'
+      ? cryptoMin
+      : selectedProcessor === 'btcpay'
+        ? btcpayMin
+        : 1,
+  );
 
   // Honor an explicit duration pick while it's valid for the chosen method,
   // otherwise fall to the cheapest allowed term — so switching to crypto with a
@@ -91,9 +99,11 @@
   });
   let selectedDuration = $derived(durations.find((d) => d.months === selectedMonths) ?? null);
 
-  // Show the explainer only when crypto actually hides a term that's otherwise offered.
+  // Show the explainer only when the chosen method actually hides a term that's
+  // otherwise offered.
   let cryptoLimited = $derived(
-    selectedProcessor === 'nowpayments' && durations.some((d) => d.months < cryptoMin),
+    (selectedProcessor === 'nowpayments' || selectedProcessor === 'btcpay') &&
+      durations.some((d) => d.months < minMonths),
   );
 
   // Per-term value (per-month rate + "save X%") comes from the shared billing
@@ -103,16 +113,20 @@
   function railLabel(r: BillingProcessor): string {
     return r === 'nowpayments'
       ? t('upgrade.payNowpayments')
-      : r === 'stripe'
-        ? t('upgrade.payStripe')
-        : t('upgrade.payPaypal');
+      : r === 'btcpay'
+        ? t('upgrade.payBtcpay')
+        : r === 'stripe'
+          ? t('upgrade.payStripe')
+          : t('upgrade.payPaypal');
   }
   function railHint(r: BillingProcessor): string {
     return r === 'nowpayments'
       ? t('upgrade.payNowpaymentsHint')
-      : r === 'stripe'
-        ? t('upgrade.payStripeHint')
-        : t('upgrade.payPaypalHint');
+      : r === 'btcpay'
+        ? t('upgrade.payBtcpayHint')
+        : r === 'stripe'
+          ? t('upgrade.payStripeHint')
+          : t('upgrade.payPaypalHint');
   }
 
   const checkout = createMutation(() => ({
@@ -155,11 +169,13 @@
         >
           <div class="flex items-center gap-1.5 text-sm font-semibold">
             {railLabel(r)}
-            {#if r === 'nowpayments'}
+            {#if r === 'nowpayments' || r === 'btcpay'}
               <span
                 class="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
               >
-                {t('upgrade.payNowpaymentsBadge')}
+                {r === 'nowpayments'
+                  ? t('upgrade.payNowpaymentsBadge')
+                  : t('upgrade.payBtcpayBadge')}
               </span>
             {/if}
           </div>
@@ -209,7 +225,7 @@
     </div>
     {#if cryptoLimited}
       <p class="mt-2 text-xs text-muted-foreground">
-        {t('upgrade.cryptoMinNote', { months: cryptoMin })}
+        {t('upgrade.cryptoMinNote', { months: minMonths })}
       </p>
     {/if}
   </fieldset>

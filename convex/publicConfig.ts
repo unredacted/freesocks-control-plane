@@ -110,6 +110,7 @@ export const get = query({
         tierSlug: billing.tierSlug,
         durations: billing.durations,
         cryptoMinMonths: billing.cryptoMinMonths,
+        btcpayMinMonths: billing.btcpayMinMonths,
       },
       mirrorsEnabled,
       // Device-limit enforcement master switch (non-secret). When false the SPA

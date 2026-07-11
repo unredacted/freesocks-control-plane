@@ -8,7 +8,7 @@
  * fetch + signing.
  */
 
-export type ProcessorId = 'nowpayments' | 'stripe' | 'paypal';
+export type ProcessorId = 'nowpayments' | 'btcpay' | 'stripe' | 'paypal';
 
 /** Order lifecycle — kept in sync with the billingOrderStatus union in schema.ts. */
 export type OrderStatus = 'pending' | 'confirming' | 'paid' | 'failed' | 'expired';

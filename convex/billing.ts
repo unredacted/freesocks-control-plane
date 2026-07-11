@@ -30,6 +30,7 @@ import {
 } from './lib/billingConfig';
 import type { BillingConfig, ProcessorSecrets } from './lib/billingConfig';
 import * as nowpayments from './lib/processors/nowpayments';
+import * as btcpay from './lib/processors/btcpay';
 import * as stripe from './lib/processors/stripe';
 import * as paypal from './lib/processors/paypal';
 import type {
@@ -51,6 +52,7 @@ const orderKindValidator = v.union(v.literal('self'), v.literal('gift'));
 
 const processorValidator = v.union(
   v.literal('nowpayments'),
+  v.literal('btcpay'),
   v.literal('stripe'),
   v.literal('paypal'),
 );
@@ -88,6 +90,14 @@ async function createCheckoutForProcessor(
         params,
       );
     }
+    case 'btcpay': {
+      const bp = secrets.btcpay;
+      if (!bp.apiUrl || !bp.storeId || !bp.apiKey) throw new Error('BTCPay not configured');
+      return btcpay.createCheckout(
+        { apiUrl: bp.apiUrl, storeId: bp.storeId, apiKey: bp.apiKey },
+        params,
+      );
+    }
     case 'stripe': {
       if (!secrets.stripe.apiKey) throw new Error('Stripe API key not configured');
       return stripe.createCheckout({ apiKey: secrets.stripe.apiKey }, params);
@@ -120,6 +130,14 @@ async function verifyForProcessor(
         rawBody,
         signature,
         ipnSecret: secrets.nowpayments.ipnSecret,
+      });
+    }
+    case 'btcpay': {
+      if (!secrets.btcpay.webhookSecret) throw notConfigured('BTCPay');
+      return btcpay.verifyAndParse({
+        rawBody,
+        signature,
+        webhookSecret: secrets.btcpay.webhookSecret,
       });
     }
     case 'stripe': {

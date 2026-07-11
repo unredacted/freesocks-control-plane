@@ -202,6 +202,71 @@ describe('billing.createCheckout', () => {
     expect(orders).toHaveLength(0);
   });
 
+  test("creates a BTCPay invoice on the operator's own server and persists the order", async () => {
+    vi.stubEnv('BTCPAY_API_KEY', 'bp-key');
+    vi.stubEnv('BTCPAY_API_URL', 'https://pay.freesocks.example');
+    vi.stubEnv('BTCPAY_STORE_ID', 'store-1');
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await enableBilling(t);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'billing.btcpay.enabled',
+        value: 'true',
+        updatedAt: Date.now(),
+      }),
+    );
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ id: 'inv_bp', checkoutLink: 'https://pay.freesocks.example/i/inv_bp' }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.billing.createCheckout, {
+      userId,
+      processor: 'btcpay',
+      months: 3,
+    });
+    expect(res.redirectUrl).toBe('https://pay.freesocks.example/i/inv_bp');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', res.orderRef))
+        .unique();
+      expect(order?.processor).toBe('btcpay');
+      expect(order?.tierId).toBe(memberTierId);
+      expect(order?.status).toBe('pending');
+      expect(order?.processorRef).toBe('inv_bp');
+    });
+  });
+
+  test('refuses a BTCPay checkout when the rail is enabled but unconfigured', async () => {
+    // No BTCPAY_* env and no DB credentials: the dispatch must throw before any
+    // fetch, leaving no dangling order.
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTiersAndUser(t);
+    await enableBilling(t);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'billing.btcpay.enabled',
+        value: 'true',
+        updatedAt: Date.now(),
+      }),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      t.action(internal.billing.createCheckout, { userId, processor: 'btcpay', months: 3 }),
+    ).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+    const orders = await t.run((ctx) => ctx.db.query('billingOrders').collect());
+    expect(orders).toHaveLength(0);
+  });
+
   test('refuses when billing is disabled', async () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedTiersAndUser(t);
@@ -558,6 +623,155 @@ describe('billing.ingestEvent (Stripe)', () => {
         signature: 't=1,v1=deadbeef',
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe('billing.ingestEvent (BTCPay)', () => {
+  const SECRET = 'btcpay-whsec';
+  const signBtcpay = async (rawBody: string): Promise<string> =>
+    `sha256=${await hmacSha256Hex(SECRET, rawBody)}`;
+  beforeEach(() => vi.stubEnv('BTCPAY_WEBHOOK_SECRET', SECRET));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  test('a settled invoice marks the order paid and extends membership', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-btcpay');
+    const rawBody = JSON.stringify({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_1',
+      metadata: { orderId: 'ref-btcpay' },
+    });
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'btcpay',
+      rawBody,
+      signature: await signBtcpay(rawBody),
+    });
+    expect(res).toEqual({ ok: true, applied: true });
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-btcpay'))
+        .unique();
+      expect(order?.status).toBe('paid');
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(memberTierId);
+      expect(user?.membershipExpiresAt).toBeGreaterThan(Date.now());
+    });
+  });
+
+  test('a processing event advances to confirming without granting', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId, freeTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-btcpay-conf');
+    const rawBody = JSON.stringify({
+      type: 'InvoiceProcessing',
+      invoiceId: 'inv_2',
+      metadata: { orderId: 'ref-btcpay-conf' },
+    });
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'btcpay',
+      rawBody,
+      signature: await signBtcpay(rawBody),
+    });
+    expect(res).toEqual({ ok: true, applied: true });
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-btcpay-conf'))
+        .unique();
+      expect(order?.status).toBe('confirming');
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(freeTierId); // NOT granted
+    });
+  });
+
+  test('a redelivered settled event dedupes (no double grant)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-btcpay-dup');
+    const rawBody = JSON.stringify({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_3',
+      metadata: { orderId: 'ref-btcpay-dup' },
+    });
+    const signature = await signBtcpay(rawBody);
+    const first = await t.action(internal.billing.ingestEvent, {
+      processor: 'btcpay',
+      rawBody,
+      signature,
+    });
+    expect(first).toEqual({ ok: true, applied: true });
+    const expiryAfterFirst = await t.run(
+      async (ctx) => (await ctx.db.get(userId))!.membershipExpiresAt,
+    );
+    const second = await t.action(internal.billing.ingestEvent, {
+      processor: 'btcpay',
+      rawBody,
+      signature,
+    });
+    expect(second).toEqual({ ok: true, applied: false, duplicate: true });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.membershipExpiresAt).toBe(expiryAfterFirst);
+    });
+  });
+
+  test('a bad signature is rejected', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-btcpay-bad');
+    const rawBody = JSON.stringify({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_4',
+      metadata: { orderId: 'ref-btcpay-bad' },
+    });
+    await expect(
+      t.action(internal.billing.ingestEvent, {
+        processor: 'btcpay',
+        rawBody,
+        signature: 'sha256=deadbeef',
+      }),
+    ).rejects.toThrow();
+  });
+
+  test('a non-invoice store event is acked without touching any order', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-btcpay-noop');
+    const rawBody = JSON.stringify({ type: 'PayoutCreated', payoutId: 'p1' });
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'btcpay',
+      rawBody,
+      signature: await signBtcpay(rawBody),
+    });
+    expect(res).toEqual({ ok: true, applied: false });
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-btcpay-noop'))
+        .unique();
+      expect(order?.status).toBe('pending'); // untouched
+    });
+  });
+
+  test('unset webhook secret throws the typed billing.not_configured ConvexError', async () => {
+    vi.stubEnv('BTCPAY_WEBHOOK_SECRET', '');
+    const t = convexTest(schema, modules);
+    let thrown: unknown;
+    try {
+      await t.action(internal.billing.ingestEvent, {
+        processor: 'btcpay',
+        rawBody: '{}',
+        signature: 'sha256=x',
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(ConvexError);
+    expect((thrown as ConvexError<{ code: string }>).data.code).toBe('billing.not_configured');
   });
 });
 

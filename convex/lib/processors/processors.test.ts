@@ -1,15 +1,16 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import * as stripe from './stripe';
 import * as paypal from './paypal';
+import * as btcpay from './btcpay';
 import { hmacSha256Hex } from '../crypto';
 
 /**
- * Adapter-level coverage for the Stripe + PayPal payment rails. Both were fully
- * implemented + wired but had ZERO tests (only NOWPayments was exercised, at the
- * billing-domain level). These exercise the risky surfaces directly: webhook
- * authenticity (signature / verify-API), event→status mapping, order-ref
- * extraction, dedupe ids, and hosted-checkout request shaping. Stripe's verify
- * is pure HMAC (no network); everything else runs against a stubbed `fetch`.
+ * Adapter-level coverage for the Stripe + PayPal + BTCPay payment rails
+ * (NOWPayments is exercised at the billing-domain level). These exercise the
+ * risky surfaces directly: webhook authenticity (signature / verify-API),
+ * event→status mapping, order-ref extraction, dedupe ids, and hosted-checkout
+ * request shaping. Stripe's + BTCPay's verify are pure HMAC (no network);
+ * everything else runs against a stubbed `fetch`.
  */
 
 /** Minimal stand-in for a fetch Response (only the fields the adapters read). */
@@ -387,5 +388,185 @@ describe('paypal.createCheckout', () => {
       cancelUrl: 'https://x/no',
     });
     expect(out.redirectUrl).toBe('https://pp/payer');
+  });
+});
+
+// ===========================================================================
+// BTCPay Server
+// ===========================================================================
+
+describe('btcpay.verifyAndParse', () => {
+  const SECRET = 'btcpay-webhook-secret';
+
+  /** Sign a body the way BTCPay does: BTCPay-Sig = sha256=<HMAC-SHA256(secret, body)>. */
+  async function signed(bodyObj: unknown, secret = SECRET) {
+    const body = JSON.stringify(bodyObj);
+    const sig = await hmacSha256Hex(secret, body);
+    return { body, signature: `sha256=${sig}` };
+  }
+
+  test('rejects a missing signature header', async () => {
+    const r = await btcpay.verifyAndParse({
+      rawBody: '{}',
+      signature: null,
+      webhookSecret: SECRET,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/missing/i);
+  });
+
+  test('rejects a signature without the sha256= scheme', async () => {
+    const r = await btcpay.verifyAndParse({
+      rawBody: '{}',
+      signature: 'deadbeef',
+      webhookSecret: SECRET,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/malformed/i);
+  });
+
+  test('rejects a signature computed with the wrong secret', async () => {
+    const { body, signature } = await signed({ type: 'InvoiceSettled' }, 'wrong-secret');
+    const r = await btcpay.verifyAndParse({ rawBody: body, signature, webhookSecret: SECRET });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/mismatch/i);
+  });
+
+  test('accepts a valid signature and maps a settled invoice (order-ref from metadata)', async () => {
+    const { body, signature } = await signed({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_42',
+      storeId: 'store_1',
+      metadata: { orderId: 'order-abc' },
+    });
+    const r = await btcpay.verifyAndParse({ rawBody: body, signature, webhookSecret: SECRET });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('paid');
+      expect(r.orderRef).toBe('order-abc');
+      expect(r.processorRef).toBe('inv_42');
+      expect(r.dedupeId).toBe('btcpay:inv_42:InvoiceSettled');
+    }
+  });
+
+  test('a redelivery of the same transition produces the same dedupe id', async () => {
+    const event = {
+      type: 'InvoiceProcessing',
+      invoiceId: 'inv_7',
+      metadata: { orderId: 'o7' },
+    };
+    const a = await signed({ ...event, isRedelivery: false });
+    const b = await signed({ ...event, isRedelivery: true });
+    const ra = await btcpay.verifyAndParse({ ...a, rawBody: a.body, webhookSecret: SECRET });
+    const rb = await btcpay.verifyAndParse({ ...b, rawBody: b.body, webhookSecret: SECRET });
+    expect(ra.ok && rb.ok && ra.dedupeId === rb.dedupeId).toBe(true);
+  });
+
+  test('invoice event types map correctly', async () => {
+    const cases: [string, string][] = [
+      ['InvoiceSettled', 'paid'],
+      ['InvoiceProcessing', 'confirming'],
+      ['InvoiceReceivedPayment', 'confirming'],
+      ['InvoicePaymentSettled', 'confirming'],
+      ['InvoiceCreated', 'pending'],
+      ['InvoiceExpired', 'expired'],
+      ['InvoiceInvalid', 'failed'],
+    ];
+    for (const [type, expected] of cases) {
+      const { body, signature } = await signed({ type, invoiceId: 'i', metadata: {} });
+      const r = await btcpay.verifyAndParse({ rawBody: body, signature, webhookSecret: SECRET });
+      expect(r.ok && r.status).toBe(expected);
+    }
+  });
+
+  test('a non-invoice store event parses with no orderRef (acked, no grant)', async () => {
+    const { body, signature } = await signed({ type: 'PayoutCreated', payoutId: 'p1' });
+    const r = await btcpay.verifyAndParse({ rawBody: body, signature, webhookSecret: SECRET });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.orderRef).toBeNull();
+      expect(r.status).toBe('pending');
+    }
+  });
+
+  test('a valid signature over unparseable JSON fails closed', async () => {
+    const body = 'not-json{';
+    const sig = await hmacSha256Hex(SECRET, body);
+    const r = await btcpay.verifyAndParse({
+      rawBody: body,
+      signature: `sha256=${sig}`,
+      webhookSecret: SECRET,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/json/i);
+  });
+
+  test('the persisted summary allowlists only non-PII fields', async () => {
+    const { body, signature } = await signed({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_9',
+      storeId: 'store_1',
+      metadata: { orderId: 'o9', buyerEmail: 'leak@example.org' },
+      deliveryId: 'd1',
+    });
+    const r = await btcpay.verifyAndParse({ rawBody: body, signature, webhookSecret: SECRET });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(Object.keys(r.summary).sort()).toEqual(['invoice_id', 'order_id', 'store_id', 'type']);
+      expect(JSON.stringify(r.summary)).not.toContain('leak@example.org');
+    }
+  });
+});
+
+describe('btcpay.createCheckout', () => {
+  const cfg = { apiUrl: 'https://pay.example.org', storeId: 'store_1', apiKey: 'token-abc' };
+  const params = {
+    orderRef: 'order-1',
+    amountCents: 1500,
+    currency: 'usd',
+    description: 'FreeSocks Membership — 3 months',
+    ipnUrl: 'https://x/ipn',
+    successUrl: 'https://x/ok',
+    cancelUrl: 'https://x/no',
+  };
+
+  test('posts a Greenfield invoice and returns the checkout link + id', async () => {
+    let captured: { url: string; init?: RequestInit } | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        captured = { url: String(url), init };
+        return res({ id: 'inv_123', checkoutLink: 'https://pay.example.org/i/inv_123' });
+      }),
+    );
+    const out = await btcpay.createCheckout(cfg, params);
+    expect(out).toEqual({
+      redirectUrl: 'https://pay.example.org/i/inv_123',
+      processorRef: 'inv_123',
+    });
+    expect(captured!.url).toBe('https://pay.example.org/api/v1/stores/store_1/invoices');
+    const headers = captured!.init!.headers as Record<string, string>;
+    expect(headers.authorization).toBe('token token-abc');
+    const body = JSON.parse(String(captured!.init!.body));
+    expect(body.amount).toBe('15.00'); // cents → decimal string
+    expect(body.currency).toBe('USD'); // uppercased
+    expect(body.metadata.orderId).toBe('order-1'); // echoed back on webhooks
+    expect(body.checkout.redirectURL).toBe(params.successUrl);
+  });
+
+  test('throws when BTCPay returns a non-OK status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => res({ message: 'nope' }, { ok: false, status: 403 })),
+    );
+    await expect(btcpay.createCheckout(cfg, params)).rejects.toThrow(/403|btcpay/i);
+  });
+
+  test('throws when the invoice response is missing id/checkoutLink', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => res({ id: 'inv_x' })),
+    ); // no checkoutLink
+    await expect(btcpay.createCheckout(cfg, params)).rejects.toThrow(/schema mismatch/i);
   });
 });

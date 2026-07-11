@@ -1,10 +1,12 @@
 # Billing — self-service membership purchases
 
 FreeSocks members can buy a fixed-term **FreeSocks membership** (the single paid
-tier: unlimited bandwidth + devices) by paying with crypto (Monero + many coins,
-via **NOWPayments**), card (**Stripe**), or **PayPal**. Every rail is a full-page
-**redirect to a processor-hosted page** — the strict CSP forbids an embedded
-payment SDK, and a redirect is also the lower-PCI-scope option.
+tier: unlimited bandwidth + devices) by paying with **Bitcoin** (on-chain or
+Lightning, settled to the org's own **BTCPay Server** — no intermediary), crypto
+(Bitcoin, Monero, Zcash + many coins, via **NOWPayments**), card (**Stripe**), or
+**PayPal**. Every rail is a full-page **redirect to a processor-hosted page** —
+the strict CSP forbids an embedded payment SDK, and a redirect is also the
+lower-PCI-scope option.
 
 This is additive to the two pre-existing entitlement paths: the generic
 `/api/webhooks/billing` HMAC seam (`convex/webhooks.ts`) and admin-minted
@@ -26,7 +28,7 @@ SPA UpgradeMembership ──POST /api/v1/billing/checkout──▶ billing.creat
         └────────────── until paid/failed/expired ◀────── applyMembership(max(now,expiry)+days)
 ```
 
-- **Adapters** — `convex/lib/processors/{types,nowpayments,stripe,paypal}.ts`:
+- **Adapters** — `convex/lib/processors/{types,nowpayments,btcpay,stripe,paypal}.ts`:
   pure HTTP modules (config injected, no env/Convex access) mirroring the proxy
   backends. Each exposes `createCheckout()` and `verifyAndParse()`; errors never
   capture the API key or full URL.
@@ -153,6 +155,46 @@ Pre-launch checklist (see also the launch plan):
   USDC deposit + free USD ACH.
 - Re-check XMR support quarterly (MiCA/AMLR pressure on privacy coins is moving).
 
+## BTCPay Server setup (self-hosted Bitcoin rail — on-chain + Lightning)
+
+Unlike the hosted rails, BTCPay runs on the **operator's own server**: payments
+settle directly to the org's node/wallet with no intermediary, no third-party
+ToS, and no off-ramp dependency for the Bitcoin leg. Invoices are created via
+the Greenfield API; the payer gets BTCPay's hosted checkout page (on-chain
+address + Lightning invoice side by side).
+
+1. On your BTCPay Server: create (or reuse) a **store**, connect the wallet
+   and/or Lightning node, and note the **store ID** (Store Settings → General).
+2. Create a **restricted API key** (Account → Manage API keys) scoped to just
+   `btcpay.store.cancreateinvoice` for that store — the control plane only ever
+   creates invoices.
+3. Register a **store webhook** (Store Settings → Webhooks): URL
+   `https://<PUBLIC_BASE_URL host>/api/webhooks/btcpay`, a strong random
+   secret, and the invoice events (settled/processing/expired/invalid — "send
+   all events" also works; non-invoice events are acked and ignored).
+4. Set the Convex env (`bunx convex env set`) or paste the values into Admin →
+   Billing → Processor credentials:
+   - `BTCPAY_API_URL` — your BTCPay origin, e.g. `https://pay.example.org`.
+   - `BTCPAY_STORE_ID` — the store id from step 1.
+   - `BTCPAY_API_KEY` — the restricted key from step 2.
+   - `BTCPAY_WEBHOOK_SECRET` — the webhook secret from step 3. While unset,
+     `/api/webhooks/btcpay` answers a distinct `503 billing.not_configured`.
+   - `PUBLIC_BASE_URL` — required for any rail (return URL construction).
+5. In Admin → **Billing**: enable the **Bitcoin (BTCPay)** rail.
+6. **Webhook auth:** the `BTCPay-Sig` header is `sha256=<hex>` = HMAC-SHA256 of
+   the raw body with the webhook secret
+   (`convex/lib/processors/btcpay.ts:verifyAndParse`). Our opaque order ref
+   rides in the invoice's `metadata.orderId` and is echoed on every event.
+   Status mapping: `InvoiceSettled`→paid;
+   `InvoiceProcessing`/`InvoiceReceivedPayment`/`InvoicePaymentSettled`→confirming;
+   `InvoiceCreated`→pending; `InvoiceExpired`→expired; `InvoiceInvalid`→failed.
+7. **Minimum term:** `btcpayMinMonths` (Admin → Billing) defaults to **1** —
+   Lightning has no meaningful floor. If you run on-chain-only, consider raising
+   it (or your store's BTCPay policy) so fees don't dwarf small payments.
+8. **Redelivery:** BTCPay retries failed webhook deliveries and offers manual
+   redelivery per event in the store's webhook UI — combined with the
+   per-(invoice, event-type) dedupe id, replays are safe.
+
 ## Stripe setup (Phase 2)
 
 Hosted **Checkout Session** via redirect (never Stripe.js/Elements — CSP). Env:
@@ -184,6 +226,7 @@ the balance frequently, and treat the account as expendable.
 
 - `billing.checkout` — 10/hr per member (each call creates a hosted invoice).
 - `webhook.nowpayments.ip` — 120/min per IP (one payment fires several IPNs).
+- `webhook.btcpay.ip` — 120/min per IP (several invoice events per payment).
 
 Both are admin-tunable in Admin → Rate limits (no deploy).
 
