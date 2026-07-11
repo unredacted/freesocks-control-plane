@@ -51,8 +51,10 @@ and surfaces the TLS or auth error. Use it before saving.
      stored value unchanged.
    - **WSS-wrapped Shadowsocks**: leave unchecked unless your Outline host runs the
      non-stock FreeSocks fork that supports `websocket: {…}` on `POST /access-keys`.
-     Stock Outline servers should keep this off. (See the WSS caveat in
-     `deferred-security-bugs.md` (Bug 15) before routing to a WSS server.)
+     Stock Outline servers should keep this off. (The WSS `accessUrl`/`ssconf://`
+     response contract is still unverified against the fork — confirm it before
+     routing to a WSS server; see the deferred-items table in
+     `project-inventory.md` §2.)
    - **WSS domain**: only used when the above is on; the public hostname that terminates
      the WebSocket TLS.
    - **Prometheus URL**: reserved for future per-key metrics. Leave blank.

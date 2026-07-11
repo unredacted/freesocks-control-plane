@@ -79,7 +79,9 @@ Detailed companions, referenced rather than duplicated here:
 - [`docs/account-number-design.md`](account-number-design.md): account-number auth design + implementation status.
 - [`docs/secrets.md`](secrets.md): every secret/credential — who generates it (deployer auto-gen / `bun run bootstrap` / external), rotation, and blast radius.
 - [`docs/billing.md`](billing.md): self-service membership purchases — self-upgrade + **gift codes** — and the USD off-ramp ops.
-- [`docs/deferred-security-bugs.md`](deferred-security-bugs.md): audit findings, re-annotated against the Convex code.
+
+(Security-audit findings are tracked in the operator's private tracker, not in this repo;
+report new issues via [`SECURITY.md`](../SECURITY.md).)
 
 **Status legend**
 
@@ -134,8 +136,8 @@ Detailed companions, referenced rather than duplicated here:
 - **Serializable per-(IP, day) cap — no stored IP**: the cap is the ephemeral, serializable
   `freetier.create` rate-limit counter. `createFreeAccount` RESERVES a slot before creating the
   account; Convex's serializable OCC makes two concurrent creates conflict on the bucket row, so the
-  cap holds exactly (closes the H1 over-issuance race **by construction**; see
-  `deferred-security-bugs.md`). The hashed IP lives only in that auto-expiring counter — there is
+  cap holds exactly (closes the historical over-issuance race **by construction**,
+  proven in `convex/freeTier.test.ts`). The hashed IP lives only in that auto-expiring counter — there is
   **no durable per-IP store** (the old `freeGrants.ipHash` ledger was removed; see `docs/privacy.md`).
 - Cap reached (same IP, day): `cap_reached` (`{ ok:false, reason:'cap_reached' }`). There is no key
   to hand back, so the visitor signs in with their existing number. A compensating
@@ -357,7 +359,7 @@ the companion docs. Sizes: S/M/L.
 | **Native-speaker translation review** + extracting remaining marketing copy into i18n keys (the non-English locales are a first-pass MT; the critical journey strings are done).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | M    | this file (§1.7), `.claude/plans/`                                         |
 | **`POP_REQUIRED` flip**: operational — flip in beta after the client soaks (boot-warm prerequisite is done), prod launches with it on. PoP `sid`-binding needs an httpOnly-compatible design (a public per-session token).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | S    | `.claude/plans/`, threat model                                             |
 | **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until tier linkage across backends is defined. Needs the portal's tier model.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | M    | `convex/account.ts`                                                        |
-| **Outline WSS `accessUrl` / `ssconf://` contract** (Bug 15, latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | M    | `deferred-security-bugs.md`                                                |
+| **Outline WSS `accessUrl` / `ssconf://` contract** (latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | M    | `docs/outline-setup.md`                                                    |
 | **Deferred P2 perf/scale** (from the 2026-07 pre-launch review — its P0/P1 bug fixes + P3 cleanups all landed): (a) retention sweeps drain a single 1000-row page/day — loop pages via an action wrapper (Convex per-mutation write limits rule out an in-mutation loop) once any table sustains >~1000 rows/day; (b) `appSettings.resolved` does a full-table `collect()` on hot paths, though it already filters to `SETTINGS_DEFAULTS` keys (so per-key indexed reads would be a drop-in) — low benefit on a ~dozens-of-rows table, worth it only if that table grows large; (c) `adminApi.statusSummary` is O(users)+O(active sessions) — migrate to a maintained `appState` counter (bumped on each status transition) before the user base nears Convex's per-query read limit. All three are fine at beta scale. | M    | this file, in-code NOTEs (`retention.ts`, `appSettings.ts`, `adminApi.ts`) |
 
 ---
@@ -384,6 +386,6 @@ the companion docs. Sizes: S/M/L.
 ## How to keep this current
 
 When you flip something Deferred/Dormant → Live, enable a dormant feature, or intentionally
-retire a scaffold, update the relevant row here in the same change, and move security/bug
-items into `deferred-security-bugs.md`'s "Recently resolved" section. The companion docs hold
+retire a scaffold, update the relevant row here in the same change, and record resolved
+security/bug items in the operator's private audit tracker. The companion docs hold
 the detail; this file is the index.
