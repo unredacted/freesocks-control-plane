@@ -15,6 +15,7 @@
   import { resolveEffectiveModeId } from '../lib/connectionMode';
   import ConnectClient from '../components/ConnectClient.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
+  import DonateCard from '../components/DonateCard.svelte';
   import RedeemCode from '../components/RedeemCode.svelte';
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
@@ -421,6 +422,11 @@
        expanding reveals the payment options. Self-gates on billing being live. -->
   {#if isAuthed && !isCurrentMember && config.data?.billing?.enabled}
     <UpgradeMembership mode="upgrade" collapsible />
+  {/if}
+
+  <!-- Standalone donation (signed-in visitors; self-gates on billing + donations). -->
+  {#if isAuthed}
+    <DonateCard />
   {/if}
 
   <!-- STEP 2: create the proxy subscription (needs a proxy server). -->

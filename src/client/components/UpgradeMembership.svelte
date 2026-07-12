@@ -27,6 +27,7 @@
   import { toast } from 'svelte-sonner';
   import Sparkles from '@lucide/svelte/icons/sparkles';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import DonationAmountPicker from './DonationAmountPicker.svelte';
 
   interface Props {
     /** 'upgrade' for free users, 'extend' for expiring/expired members (heading copy). */
@@ -73,6 +74,9 @@
   let selectedMonthsRaw = $state<number | null>(null);
   let selectedProcessorRaw = $state<BillingProcessor | null>(null);
   let selectedProcessor = $derived(selectedProcessorRaw ?? rails[0] ?? null);
+
+  // Optional donation added on top of the membership (0 = none).
+  let donationCents = $state(0);
 
   // Crypto (NOWPayments) only offers terms >= cryptoMin; BTCPay has its own
   // (default 1 — Lightning has no floor); card/PayPal offer all.
@@ -130,7 +134,7 @@
   }
 
   const checkout = createMutation(() => ({
-    mutationFn: (vars: { processor: BillingProcessor; months: number }) =>
+    mutationFn: (vars: { processor: BillingProcessor; months: number; donationCents?: number }) =>
       apiClient.post('/api/v1/billing/checkout', vars, CheckoutResponse),
     onSuccess: (res) => {
       // Full-page redirect to the processor-hosted page (matches logout idiom).
@@ -143,7 +147,11 @@
 
   function submit() {
     if (selectedProcessor && selectedMonths) {
-      checkout.mutate({ processor: selectedProcessor, months: selectedMonths });
+      checkout.mutate({
+        processor: selectedProcessor,
+        months: selectedMonths,
+        donationCents: donationCents > 0 ? donationCents : undefined,
+      });
     }
   }
 </script>
@@ -230,11 +238,21 @@
     {/if}
   </fieldset>
 
+  {#if billing?.donation?.enabled}
+    <fieldset>
+      <legend class="mb-1 text-xs font-medium text-muted-foreground">{t('donate.addTitle')}</legend>
+      <p class="mb-2 text-xs text-muted-foreground">{t('donate.addSubtitle')}</p>
+      <DonationAmountPicker bind:cents={donationCents} allowNone />
+    </fieldset>
+  {/if}
+
   <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
       {#if selectedDuration}
         <span class="text-sm font-semibold tabular-nums">
-          {t('upgrade.total', { price: formatMoney(selectedDuration.amountCents, currency) })}
+          {t('upgrade.total', {
+            price: formatMoney(selectedDuration.amountCents + donationCents, currency),
+          })}
         </span>
       {/if}
       <p class="text-xs text-muted-foreground">{t('upgrade.noStoreNote')}</p>

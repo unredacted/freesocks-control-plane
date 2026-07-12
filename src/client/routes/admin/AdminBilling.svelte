@@ -69,6 +69,17 @@
     draft.durations = draft.durations.filter((_, idx) => idx !== i);
   }
 
+  function addAmount() {
+    if (!draft) return;
+    draft.donation.suggestedAmountsCents = [...draft.donation.suggestedAmountsCents, 0];
+  }
+  function removeAmount(i: number) {
+    if (!draft) return;
+    draft.donation.suggestedAmountsCents = draft.donation.suggestedAmountsCents.filter(
+      (_, idx) => idx !== i,
+    );
+  }
+
   const save = createMutation(() => ({
     mutationFn: (body: BillingConfigPatch) =>
       apiClient.patch('/api/v1/admin/billing/config', body, AdminBillingConfigResponse),
@@ -347,6 +358,112 @@
           on-chain-only and small payments would be dwarfed by network fees.
         </span>
       </label>
+
+      <!-- Donations: an optional add-on at checkout + a standalone give. Donations
+           this month raise every free user's monthly bandwidth cap. -->
+      <div class="border-t border-border pt-4">
+        <label class="flex items-center gap-2">
+          <Checkbox
+            checked={draft.donation.enabled}
+            onCheckedChange={(v) => draft && (draft.donation.enabled = !!v)}
+          />
+          <span class="text-sm font-medium">Donations enabled</span>
+        </label>
+        <p class="mt-1 text-xs text-muted-foreground">
+          Members can add a donation to a membership or give on its own. Donations in a calendar
+          month raise every free user's monthly bandwidth by the rate below (shared pool), capped,
+          then reset next month.
+        </p>
+
+        <p class="mb-2 mt-4 text-xs font-medium text-muted-foreground">Suggested amounts</p>
+        <div class="space-y-2">
+          {#each draft.donation.suggestedAmountsCents as amt, i (i)}
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-xs text-muted-foreground">{draft.currency}</span>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                class="min-h-9 w-28"
+                value={(amt / 100).toFixed(2)}
+                oninput={(e) =>
+                  draft &&
+                  (draft.donation.suggestedAmountsCents[i] = Math.max(
+                    0,
+                    Math.round(Number((e.currentTarget as HTMLInputElement).value) * 100),
+                  ))}
+              />
+              <Button variant="ghost" size="sm" onclick={() => removeAmount(i)}>Remove</Button>
+            </div>
+          {/each}
+        </div>
+        <Button variant="outline" size="sm" class="mt-2" onclick={addAmount}>Add amount</Button>
+
+        <label class="mt-4 block">
+          <span class="mb-1 block text-xs font-medium text-muted-foreground"
+            >Minimum donation ({draft.currency})</span
+          >
+          <Input
+            type="number"
+            min={0}
+            step="0.01"
+            class="min-h-9 w-28"
+            value={(draft.donation.minAmountCents / 100).toFixed(2)}
+            oninput={(e) =>
+              draft &&
+              (draft.donation.minAmountCents = Math.max(
+                0,
+                Math.round(Number((e.currentTarget as HTMLInputElement).value) * 100),
+              ))}
+          />
+        </label>
+
+        <label class="mt-4 block">
+          <span class="mb-1 block text-xs font-medium text-muted-foreground"
+            >Bandwidth per {draft.currency} donated (GB)</span
+          >
+          <Input
+            type="number"
+            min={0}
+            step="0.1"
+            class="min-h-9 w-24"
+            value={draft.donation.bonusGbPerUsd}
+            oninput={(e) =>
+              draft &&
+              (draft.donation.bonusGbPerUsd = Math.max(
+                0,
+                Number((e.currentTarget as HTMLInputElement).value),
+              ))}
+          />
+          <span class="mt-1 block text-xs text-muted-foreground">
+            Each unit of currency donated adds this many GB to the shared monthly pool every free
+            user receives.
+          </span>
+        </label>
+
+        <label class="mt-4 block">
+          <span class="mb-1 block text-xs font-medium text-muted-foreground"
+            >Monthly bonus cap (GB)</span
+          >
+          <Input
+            type="number"
+            min={0}
+            step="1"
+            class="min-h-9 w-24"
+            value={draft.donation.monthlyBonusCapGb}
+            oninput={(e) =>
+              draft &&
+              (draft.donation.monthlyBonusCapGb = Math.max(
+                0,
+                Number((e.currentTarget as HTMLInputElement).value),
+              ))}
+          />
+          <span class="mt-1 block text-xs text-muted-foreground">
+            Ceiling on the shared monthly bonus regardless of how much is donated (protects node
+            capacity).
+          </span>
+        </label>
+      </div>
     </section>
 
     <!-- Processor credentials: DB-stored (an env var is the fallback). Secret
@@ -538,8 +655,18 @@
               {o.status}
             </span>
             <code class="font-mono text-xs text-muted-foreground">{o.refPrefix}…</code>
+            {#if o.userHandle}
+              <code class="font-mono text-xs text-muted-foreground">{o.userHandle}</code>
+            {/if}
             <span class="capitalize">{o.processor}</span>
             <span class="tabular-nums">{formatMoney(o.amountCents, o.currency)}</span>
+            {#if o.donationCents > 0}
+              <span
+                class="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary tabular-nums"
+              >
+                +{formatMoney(o.donationCents, o.currency)} donated
+              </span>
+            {/if}
             <span class="text-xs text-muted-foreground">{o.durationDays}d</span>
             <span class="ms-auto text-xs text-muted-foreground tabular-nums">
               {o.paidAt ? `paid ${formatDate(o.paidAt)}` : formatDate(o.createdAt)}

@@ -21,6 +21,8 @@
   import TierComparison from '../components/TierComparison.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import MemberImpact from '../components/MemberImpact.svelte';
+  import DonateCard from '../components/DonateCard.svelte';
+  import Heart from '@lucide/svelte/icons/heart';
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import RotateAccountIdModal from '../components/RotateAccountIdModal.svelte';
   import ConnectClient from '../components/ConnectClient.svelte';
@@ -558,6 +560,15 @@
               {t('account.statusDisabled')}
             </span>
           {/if}
+          {#if data.user.donorSince}
+            <span
+              class="donation-sheen relative inline-flex items-center gap-1 overflow-hidden rounded-full border border-amber-500/40 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-500/20 dark:text-amber-300"
+              title={t('donate.badgeTooltip')}
+            >
+              <Heart class="size-3" aria-hidden="true" />
+              {t('donate.badge')}
+            </span>
+          {/if}
         </p>
       </div>
       <Button onclick={logout} variant="ghost" size="sm" class="min-h-11 shrink-0">
@@ -979,6 +990,10 @@
               <MemberImpact />
             {/if}
           {/if}
+
+          <!-- Standalone donation (available in every membership state; self-gates
+               on billing + donations being enabled). -->
+          <DonateCard />
         </section>
       </Tabs.Content>
 

@@ -188,3 +188,46 @@
     pointer-events: none;
   }
 }
+
+/* Donation flair: a warm-gold sheen (distinct from the primary tier-sheen) marking
+   a donation control + the persistent donor badge. Same masked-ring technique,
+   @supports + reduced-motion guarded — the fallback is the element's own static
+   gold ring (apply `ring-1 ring-amber-500/40` in markup). */
+@property --donation-sheen-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes donation-sheen-spin {
+  to {
+    --donation-sheen-angle: 360deg;
+  }
+}
+.donation-sheen {
+  --donation-gold: oklch(0.82 0.14 85);
+}
+@supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
+  .donation-sheen::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1.5px;
+    background: conic-gradient(
+      from var(--donation-sheen-angle),
+      transparent 0deg 170deg,
+      var(--donation-gold) 250deg,
+      transparent 330deg 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    animation: donation-sheen-spin 7s linear infinite;
+    pointer-events: none;
+  }
+}

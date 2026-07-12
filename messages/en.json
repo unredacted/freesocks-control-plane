@@ -398,6 +398,26 @@
     "title": "Donations support Unredacted",
     "body": "Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site."
   },
+  "donate": {
+    "addTitle": "Add a donation",
+    "addSubtitle": "Chip in to help keep FreeSocks free for everyone.",
+    "standaloneTitle": "Donate to FreeSocks",
+    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running — a donation also raises this month's bandwidth for every free user.",
+    "amountLabel": "Amount",
+    "none": "No thanks",
+    "custom": "Custom",
+    "customPlaceholder": "Other amount",
+    "impact": "Adds about {gb} GB to every free user this month",
+    "bonusActive": "Donations this month have added {gb} GB to every free user's monthly allowance.",
+    "minNote": "Minimum {amount}",
+    "give": "Donate {amount}",
+    "giving": "Starting…",
+    "startFailed": "Couldn't start the donation",
+    "badge": "Donor",
+    "badgeTooltip": "Thank you for supporting FreeSocks",
+    "thanksTitle": "You're a FreeSocks donor",
+    "thanksBody": "Thank you — your support helps keep FreeSocks free for everyone."
+  },
   "qr": {
     "ariaLabel": "QR code for the subscription URL",
     "failed": "Couldn't generate the QR code."
