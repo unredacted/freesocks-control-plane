@@ -98,8 +98,13 @@
         <p class="text-xs text-destructive">{apiErrorMessage(content.error)}</p>
       {:else if content.data}
         {@const text = prettify(content.data.content)}
-        <div class="flex justify-end">
-          <Button variant="outline" size="sm" class="min-h-11" onclick={() => copy(text)}>
+        <!-- Config text sits NEXT TO the copy button (mirrors SubscriptionHero's
+             fallback-URL row): the <pre> fills the row + scrolls, the button is
+             pinned beside it, top-aligned. -->
+        <div class="flex items-start gap-2">
+          <pre
+            class="max-h-72 min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-xs leading-relaxed text-foreground">{text}</pre>
+          <Button variant="outline" size="sm" class="min-h-11 shrink-0" onclick={() => copy(text)}>
             {#if copied}
               <Check class="size-3.5" />
             {:else}
@@ -108,8 +113,6 @@
             <span class="ms-1">{t('common.copy')}</span>
           </Button>
         </div>
-        <pre
-          class="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted p-3 font-mono text-xs leading-relaxed text-foreground">{text}</pre>
         <p class="text-xs text-muted-foreground/80">{t('rawconfig.addHint')}</p>
       {/if}
     </div>

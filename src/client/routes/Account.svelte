@@ -1047,6 +1047,7 @@
     {#if data.subscription}
       <RegenerateModal
         bind:open={regenerateOpen}
+        subToken={data.subscription.subToken ?? null}
         shortUuid={data.subscription.shortUuid}
         deviceCount={data.subscription.devices.length}
         onCancel={() => (regenerateOpen = false)}

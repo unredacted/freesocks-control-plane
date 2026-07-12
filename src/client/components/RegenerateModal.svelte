@@ -5,6 +5,10 @@
 
   interface Props {
     open: boolean;
+    /** The opaque FCP-fronted token — its tail matches the subscription URL the
+     *  page actually shows (…/api/v1/sub/<subToken>). Null on a legacy sub. */
+    subToken: string | null;
+    /** Raw Remnawave short id — the fallback suffix when no fronted token exists. */
     shortUuid: string;
     deviceCount: number;
     onCancel: () => void;
@@ -12,7 +16,20 @@
     busy: boolean;
   }
 
-  let { open = $bindable(), shortUuid, deviceCount, onCancel, onConfirm, busy }: Props = $props();
+  let {
+    open = $bindable(),
+    subToken,
+    shortUuid,
+    deviceCount,
+    onCancel,
+    onConfirm,
+    busy,
+  }: Props = $props();
+
+  // Match the URL the member sees/copies: the fronted token when present, else the
+  // raw URL whose tail is the shortUuid. Mirrors utils.ts:subscriptionDisplayUrl's
+  // own fallback so the "ending …" in the dialog always names the displayed URL.
+  const suffix = $derived((subToken ?? shortUuid).slice(-6));
 
   function onOpenChange(next: boolean) {
     // Sync the parent's `open` flag, and treat external close (Escape, outside
@@ -28,7 +45,7 @@
     <Dialog.Header>
       <Dialog.Title>{t('regen.title')}</Dialog.Title>
       <Dialog.Description>
-        {t('regen.body', { suffix: shortUuid.slice(-6) })}
+        {t('regen.body', { suffix })}
       </Dialog.Description>
     </Dialog.Header>
     <ul class="text-sm space-y-1 list-disc ps-5">
