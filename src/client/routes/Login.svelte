@@ -29,7 +29,7 @@
   // fs_session cookie and we bounce to /account.
   const config = configQuery();
   let token = $state<string | null>(null);
-  // Instance ref so we can remount the captcha after a failed submit — the server
+  // Instance ref so we can remount the captcha after a failed submit - the server
   // consumes (spends) the Cap token on verify, so a stale token makes every retry
   // fail until reload. (Third-pass audit; see CapWidget.reset().)
   let capWidget = $state<ReturnType<typeof CapWidget>>();
@@ -65,7 +65,7 @@
         try {
           sessionStorage.setItem('fs_lapsed_downgrade', '1');
         } catch {
-          /* private mode / storage disabled — the banner just won't show */
+          /* private mode / storage disabled - the banner just won't show */
         }
       }
       // The cookie is set; refresh identity-derived caches before navigating.
@@ -85,7 +85,7 @@
 
   function onInput(e: Event) {
     // Normalize non-ASCII digits, then keep what the user typed (incl. their own
-    // spaces) — no reformat, so the caret stays put.
+    // spaces) - no reformat, so the caret stays put.
     accountId = normalizeDigits((e.currentTarget as HTMLInputElement).value);
   }
   function onBlur() {
@@ -113,7 +113,7 @@
         try {
           sessionStorage.setItem('fs_lapsed_downgrade', '1');
         } catch {
-          /* private mode — the banner just won't show */
+          /* private mode - the banner just won't show */
         }
       }
       await queryClient.invalidateQueries({ queryKey: queryKeys.me });

@@ -10,7 +10,7 @@
     title: string;
     body: string;
     ctaUrl?: string;
-    /** In-app action, an alternative to ctaUrl — renders a button, not an external
+    /** In-app action, an alternative to ctaUrl - renders a button, not an external
      *  link. Takes precedence over ctaUrl when both are set. */
     onCta?: () => void;
     /** Optional: omit (with no ctaUrl/onCta) for a callout whose only action is the secondary snippet. */

@@ -7,7 +7,7 @@
  * How it applies: we inject a single `<style id="fs-theme">` that redefines
  * `--primary` + `--ring` for `:root` (light) and `.dark`. That element is
  * UNLAYERED, so it wins over globals.css's `@layer base` token defaults
- * regardless of specificity — and the `.dark` rule (declared after `:root`)
+ * regardless of specificity - and the `.dark` rule (declared after `:root`)
  * handles dark mode without the applier needing to react to mode toggles.
  *
  * Only hue/chroma/lightness of the brand tokens change between presets; the
@@ -106,7 +106,7 @@ export function themeCss(presetId: string, hue: number | null): string {
   );
 }
 
-/** Inject/replace the override <style> WITHOUT persisting — for live preview. */
+/** Inject/replace the override <style> WITHOUT persisting - for live preview. */
 export function applyThemeCss(css: string): void {
   if (typeof document === 'undefined') return;
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;

@@ -3,7 +3,7 @@
  * client catalog (convex/lib/clientCatalog.ts, surfaced via publicConfig.clients)
  * references a builder by its `schemeId`; this module is the single place the
  * fussy per-app URL-scheme ENCODING lives. A catalog entry with no `schemeId` (or
- * an unknown one) has no one-tap import — manual paste / in-app QR only (e.g.
+ * an unknown one) has no one-tap import - manual paste / in-app QR only (e.g.
  * Streisand, Outline). Wrapping the subscription URL in the client's scheme is
  * what makes a tap / QR scan import into the app instead of opening a browser.
  *
@@ -25,7 +25,7 @@ export const IMPORT_PROFILE_NAME = 'FreeSocks';
 
 const enc = encodeURIComponent;
 
-/** Standard base64 of an (ASCII) string — Shadowrocket's `sub://` form. */
+/** Standard base64 of an (ASCII) string - Shadowrocket's `sub://` form. */
 function base64(s: string): string {
   return typeof btoa === 'function' ? btoa(s) : s;
 }

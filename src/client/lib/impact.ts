@@ -1,8 +1,8 @@
 /**
  * Donation-impact chart series helpers. The public config ships a per-month
  * `{month, bonusGb}` history that is EMPTY until the first settled donation;
- * the impact charts still render then — as a flat zero baseline over the last
- * few months — so the graph is always present rather than a blank slot.
+ * the impact charts still render then - as a flat zero baseline over the last
+ * few months - so the graph is always present rather than a blank slot.
  */
 export interface ImpactPoint {
   month: string;

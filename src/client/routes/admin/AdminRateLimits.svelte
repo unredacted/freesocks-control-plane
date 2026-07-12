@@ -87,7 +87,7 @@
 
   // Revert a customized policy to its compiled default (deletes the stored
   // override server-side). Fires immediately with a toast, matching the page's
-  // save affordance — a policy at its default is harmless to re-derive.
+  // save affordance - a policy at its default is harmless to re-derive.
   const reset = createMutation(() => ({
     mutationFn: (policyKey: string) =>
       apiClient.patch(

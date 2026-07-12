@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 
 // format.ts imports getLocale() from ./index.svelte, a $state runes module the
-// plugin-less vitest config can't compile — mock it to a fixed locale so the
+// plugin-less vitest config can't compile - mock it to a fixed locale so the
 // date-guard logic is testable headless.
 vi.mock('./index.svelte', () => ({ getLocale: () => 'en-US' }));
 

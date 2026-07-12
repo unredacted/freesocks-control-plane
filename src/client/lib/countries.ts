@@ -1,6 +1,6 @@
 /**
  * ISO-3166-1 alpha-2 country codes for the "trouble connecting? pick your region"
- * mirror selector. Only the CODES are bundled — display names are rendered at
+ * mirror selector. Only the CODES are bundled - display names are rendered at
  * runtime via `Intl.DisplayNames` in the user's locale (so the picker is localized
  * for free, fa/ar/ru/zh included, with zero translation upkeep).
  */

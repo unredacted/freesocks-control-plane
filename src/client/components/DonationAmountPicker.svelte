@@ -14,7 +14,7 @@
   interface Props {
     /** Selected donation in cents (0 = none). Bindable. */
     cents: number;
-    /** Show a "No thanks" (0) chip — used for the optional membership add-on. */
+    /** Show a "No thanks" (0) chip - used for the optional membership add-on. */
     allowNone?: boolean;
   }
   let { cents = $bindable(0), allowNone = false }: Props = $props();

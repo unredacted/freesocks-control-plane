@@ -51,12 +51,12 @@ let attestationStarted = false;
  * into `e2eeSession`. Verdicts:
  *  - `active`      key verified against the baked manifest key, unexpired, not revoked.
  *  - `warn`        the endpoint answered but the key FAILS to verify (expired/revoked
- *                  or a CDN tampering with /api/v1/e2ee/keys) — the active-CDN tamper
+ *                  or a CDN tampering with /api/v1/e2ee/keys) - the active-CDN tamper
  *                  tell; this is the one state that must be surfaced loudly.
  *  - `unreachable` couldn't reach the endpoint (a network blip); the pinned key is
  *                  still in use, so this is NOT an alarm.
  * Lazy-imports the crypto chunk so the light badge can trigger it without eagerly
- * loading `e2ee.ts`. Idempotent — the first caller wins, later callers no-op.
+ * loading `e2ee.ts`. Idempotent - the first caller wins, later callers no-op.
  */
 export async function ensureAttestationChecked(): Promise<void> {
   if (!SEALING_CONFIGURED) return; // dark build: compile-time false → import() below is tree-shaken

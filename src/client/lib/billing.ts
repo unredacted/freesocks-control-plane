@@ -2,12 +2,12 @@
  * Shared membership pricing math, derived entirely from the DB duration prices
  * (Admin → Billing). The self-upgrade panel, the gift-code panel, and the tier
  * comparison card all render a per-month rate (and a "save X%" badge) from these,
- * so the savings recompute when an admin edits a price — there is no separate
+ * so the savings recompute when an admin edits a price - there is no separate
  * stored discount field to keep in sync.
  *
  * The baseline is the SHORTEST configured term's per-month rate (e.g. the 1-month
  * plan at $5/mo), so longer terms show their discount vs the standard monthly rate
- * — NOT the cheapest amortized term (which would read as a pricing bug).
+ * - NOT the cheapest amortized term (which would read as a pricing bug).
  */
 export interface Duration {
   months: number;

@@ -4,11 +4,11 @@ import { augmentLoginBody, captureSessionToken, signedHeaders } from './pop';
 
 /**
  * CDN-blinding sealing is OFF unless the server HPKE pin is baked at build
- * (the dark default). The whole e2ee module — and its heavy @hpke/@noble crypto
- * — is therefore LAZY-IMPORTED only when enabled: in a dark build this is a
+ * (the dark default). The whole e2ee module - and its heavy @hpke/@noble crypto
+ * - is therefore LAZY-IMPORTED only when enabled: in a dark build this is a
  * compile-time `false`, so the dynamic import (and the crypto chunk) is dropped
  * from the bundle entirely; in an enabled build it's a separate chunk fetched on
- * the first sealed request. (PoP signing stays static — it's a thin worker RPC.)
+ * the first sealed request. (PoP signing stays static - it's a thin worker RPC.)
  */
 const E2EE_ENABLED =
   !!import.meta.env.VITE_FS_SERVER_HPKE_PK && !!import.meta.env.VITE_FS_SERVER_HPKE_KID;

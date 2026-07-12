@@ -38,7 +38,7 @@
   const qc = useQueryClient();
 
   let token = $state<string | null>(null);
-  // Instance ref so a failed create remounts the captcha — the server consumes
+  // Instance ref so a failed create remounts the captcha - the server consumes
   // (spends) the Cap token on verify, so a stale token makes every retry fail.
   // (Third-pass audit; see CapWidget.reset().)
   let capWidget = $state<ReturnType<typeof CapWidget>>();
@@ -71,7 +71,7 @@
   let defaultModeId = $derived(
     connectionModes.find((m) => m.isDefault)?.id ?? connectionModes[0]?.id ?? 'evade',
   );
-  // Server-backed once a key exists AND a placement pool is bound — then the
+  // Server-backed once a key exists AND a placement pool is bound - then the
   // mode switcher re-issues (like /account) instead of only setting a local pref.
   let profileServerBacked = $derived(!!subscription && connectionModes.some((m) => m.available));
   // Server-backed → the persisted mode is authoritative (local pref is just an
@@ -156,7 +156,7 @@
       void qc.invalidateQueries({ queryKey: queryKeys.me });
     },
     // Failures render inline next to the CTA (see the destructive box below); no
-    // duplicate toast — one error surface per failure. onError only remounts the
+    // duplicate toast - one error surface per failure. onError only remounts the
     // captcha: the verify consumed the token, so without a fresh challenge every
     // retry would fail with a stale-captcha error.
     onError: () => {
@@ -213,7 +213,7 @@
       {t('get.title')}
     </h1>
     <!-- Pre-creation guidance only. Once authed, the success callout below is
-         the single "account ready" message — no redundant restatement here.
+         the single "account ready" message - no redundant restatement here.
          Suppressed while the auth check is still pending (the skeleton below is
          the sole loading affordance), so a signed-in visitor never sees the
          anonymous intro flash. -->
@@ -418,7 +418,7 @@
 
   <!-- Upsell: grouped directly under the gift-code box (both above Step 2) so the
        two paths to the member tier sit together. A collapsible accordion with the
-       tier-sheen flair — the trigger shows the price/month + a prompt to upgrade;
+       tier-sheen flair - the trigger shows the price/month + a prompt to upgrade;
        expanding reveals the payment options. Self-gates on billing being live. -->
   {#if isAuthed && !isCurrentMember && config.data?.billing?.enabled}
     <UpgradeMembership mode="upgrade" collapsible />
@@ -440,7 +440,7 @@
         <h2 class="text-lg font-display font-semibold">{t('get.step2Title')}</h2>
       </div>
 
-      <!-- Delivery focus FIRST — above the key (and the create button), so the
+      <!-- Delivery focus FIRST - above the key (and the create button), so the
            choice shapes how the subscription is presented. Before the first key
            it's a local pref (shapes issuance at "Create subscription"); once a key
            exists it re-issues via the confirm modal, exactly like /account. -->

@@ -2,7 +2,7 @@
   /**
    * Dependency-free dithered chart: a hand-rolled ordered-dither (4×4 Bayer)
    * fill on a LOW-RES backing <canvas>, upscaled with `image-rendering:
-   * pixelated` — the chunky pixel texture is the aesthetic. No chart library
+   * pixelated` - the chunky pixel texture is the aesthetic. No chart library
    * (keeps the bundle lean and the CSP pure-'self'; same rationale as
    * Sparkline.svelte). Every cell is the single `color` varying ONLY its alpha
    * (dense at the floor, dissolving toward the value line, with a soft top
@@ -12,7 +12,7 @@
    * canvas on older engines (the documented QrCode.svelte gotcha), and this
    * audience realistically runs them. Default approximates --donation-gold.
    *
-   * Static by design — no entrance animation, so the global reduced-motion
+   * Static by design - no entrance animation, so the global reduced-motion
    * clamp has nothing to neutralize. Decorative: the numeric stats beside it
    * are the accessible signal; `ariaLabel` summarizes the series for AT.
    */
@@ -27,7 +27,7 @@
     /** Backing-resolution basis in CSS px (the canvas stretches to its box). */
     width?: number;
     height?: number;
-    /** #rrggbb fill (hex only — see the oklch note above). */
+    /** #rrggbb fill (hex only - see the oklch note above). */
     color?: string;
     /** Explicit scale ceiling; defaults to max(values, 1). */
     max?: number;
@@ -46,7 +46,7 @@
     class: klass = '',
   }: Props = $props();
 
-  // CSS px per dither cell — chunky enough to read pixelated once upscaled.
+  // CSS px per dither cell - chunky enough to read pixelated once upscaled.
   const CELL = 2;
   // 4×4 ordered (Bayer) threshold matrix, normalized to 0–1.
   const BAYER = [

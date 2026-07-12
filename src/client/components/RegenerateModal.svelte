@@ -5,10 +5,10 @@
 
   interface Props {
     open: boolean;
-    /** The opaque FCP-fronted token — its tail matches the subscription URL the
+    /** The opaque FCP-fronted token - its tail matches the subscription URL the
      *  page actually shows (…/api/v1/sub/<subToken>). Null on a legacy sub. */
     subToken: string | null;
-    /** Raw Remnawave short id — the fallback suffix when no fronted token exists. */
+    /** Raw Remnawave short id - the fallback suffix when no fronted token exists. */
     shortUuid: string;
     deviceCount: number;
     onCancel: () => void;

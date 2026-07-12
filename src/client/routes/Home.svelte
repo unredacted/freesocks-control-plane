@@ -46,7 +46,7 @@
     router.navigate(me.data?.authenticated ? '/account' : '/get-account');
   }
 
-  // Donation impact (GB + user counts only — no dollar figures on the public
+  // Donation impact (GB + user counts only - no dollar figures on the public
   // page). The in-app donate controls live on the account Membership tab; an
   // anon visitor creates a free account first.
   const donation = $derived(config.data?.billing?.donation);
@@ -72,8 +72,8 @@
       ? t('home.limits.unlimitedBandwidth')
       : t('tiers.gbPerMonth', { gb: info.gb });
     // Device limits are an opt-in, Remnawave-only feature; when enforcement is
-    // off (the default) the whole device dimension is hidden — everyone is
-    // effectively unlimited — so the phrase is bandwidth-only.
+    // off (the default) the whole device dimension is hidden - everyone is
+    // effectively unlimited - so the phrase is bandwidth-only.
     if (!showDevices) return bandwidth;
     if (info.unlimitedBandwidth && info.unlimitedDevices) return t('home.limits.unlimitedBoth');
     const devices = info.unlimitedDevices
@@ -106,7 +106,7 @@
   );
 
   // Headline membership price = the shortest term's per-month rate (the standard
-  // monthly), DB-driven + locale-formatted — mirrors TierComparison's "from $X/mo".
+  // monthly), DB-driven + locale-formatted - mirrors TierComparison's "from $X/mo".
   // Null until the billing config loads.
   const membershipFromPrice = $derived.by(() => {
     const cents = baselinePerMonth(config.data?.billing?.durations ?? []);
@@ -133,7 +133,7 @@
     { n: 3, title: 'home.how.s3.title', body: 'home.how.s3.body' },
   ] as const;
 
-  // "What we store" — factual claims about how the system is built (hash-only,
+  // "What we store" - factual claims about how the system is built (hash-only,
   // no PII, no traffic logs). The strongest trust signal we can give an anxious,
   // surveillance-wary visitor, and copy the org can stand behind without legal
   // sign-off.
@@ -144,7 +144,7 @@
     'home.privacy.point4',
   ] as const;
 
-  // FAQ — single-open accordion. Answers ride the same catalog as the rest of
+  // FAQ - single-open accordion. Answers ride the same catalog as the rest of
   // the page (auto-translated).
   const FAQ = [
     { q: 'faq.q1.question', a: 'faq.q1.answer' },
@@ -183,7 +183,7 @@
         {t('home.hero.subtitle', { limits: membershipLimits })}
       </p>
 
-      <!-- Social-impact callout: what makes this VPN different — donations made
+      <!-- Social-impact callout: what makes this VPN different - donations made
            in-app buy bandwidth for every free user that month. Links down to the
            live impact section. Renders only while donations are live. -->
       {#if billingEnabled && donation?.enabled}
@@ -245,7 +245,7 @@
     -->
     <!-- Shown on every viewport: mobile is the majority of our audience, and this
          card is the at-a-glance "what you get" summary they'd otherwise miss. Not
-         aria-hidden — the specifics (limits, no-email) are informative. -->
+         aria-hidden - the specifics (limits, no-email) are informative. -->
     <div class="relative" in:fly={{ x: 20, duration: 600, delay: 150, easing: quintOut }}>
       <div
         class="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent rounded-2xl blur-3xl"
@@ -407,7 +407,7 @@
     </div>
   </section>
 
-  <!-- MEMBERSHIP / pricing — only when billing is live (reuses the comparison
+  <!-- MEMBERSHIP / pricing - only when billing is live (reuses the comparison
        card, which shows "from <price>/mo" + an Upgrade CTA). -->
   {#if billingEnabled}
     <section class="space-y-6">
@@ -480,7 +480,7 @@
     </section>
   {/if}
 
-  <!-- FAQ — single-open accordion, localized like the rest of the page. -->
+  <!-- FAQ - single-open accordion, localized like the rest of the page. -->
   <section class="space-y-8">
     <div class="max-w-2xl space-y-2">
       <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">{t('faq.title')}</h2>

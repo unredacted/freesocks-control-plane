@@ -93,7 +93,7 @@ export const meQuery = () =>
  * toggles). Most fields are env-var driven and only change on redeploy, but
  * the backend toggles are admin-editable at runtime, so we set staleTime to
  * 5 min instead of Infinity, bounding the worst-case client staleness after an
- * admin flips a toggle (publicConfig is read straight from Convex — there is no
+ * admin flips a toggle (publicConfig is read straight from Convex - there is no
  * server-side cache in front of it).
  */
 export const configQuery = () =>
@@ -144,7 +144,7 @@ export const accountUsageQuery = (enabled: () => boolean) =>
 /**
  * Raw subscription content (the proxy config), delivered SEALED. Lazy: only
  * fetched while `enabled()` (the RawConfig viewer is open), so the config isn't
- * pulled for every account view — it's a deliberate, on-demand reveal.
+ * pulled for every account view - it's a deliberate, on-demand reveal.
  */
 export const subscriptionContentQuery = (enabled: () => boolean) =>
   createQuery(() => ({
@@ -243,7 +243,7 @@ export const adminAdminsQuery = () =>
     staleTime: 15_000,
   }));
 
-/** An admin's passkeys — fetched lazily (only when a row is expanded). */
+/** An admin's passkeys - fetched lazily (only when a row is expanded). */
 export const adminCredentialsQuery = (adminId: () => string | null, enabled: () => boolean) =>
   createQuery(() => ({
     queryKey: queryKeys.adminCredentials(adminId() ?? ''),

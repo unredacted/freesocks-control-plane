@@ -3,7 +3,7 @@
    * Dependency-free inline-SVG sparkline: renders `points` as a normalized
    * polyline + soft area fill scaled to the viewBox. No chart library (keeps the
    * bundle lean and the CSP pure-'self'). Uses `currentColor`, so the parent
-   * picks the hue (e.g. `text-primary`). Decorative — the numeric total is the
+   * picks the hue (e.g. `text-primary`). Decorative - the numeric total is the
    * accessible signal, so this is aria-hidden.
    */
   interface Props {

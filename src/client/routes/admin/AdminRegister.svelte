@@ -14,7 +14,7 @@
   /**
    * Invite landing page (multi-admin onboarding). Opened from the one-time link
    * an existing admin shares (/admin/register?invite=<token>). The invite token
-   * is the authorization — the visitor has no session yet. On success the new
+   * is the authorization - the visitor has no session yet. On success the new
    * admin registers a discoverable passkey and can then sign in usernameless.
    */
   let inviteToken = $derived(router.searchParams.get('invite') ?? '');
@@ -87,7 +87,7 @@
         <CardTitle>You're set up</CardTitle>
         <CardDescription>
           Your passkey is registered{registeredUsername ? ` as ${registeredUsername}` : ''}. Sign in
-          with it — no username needed.
+          with it - no username needed.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -104,7 +104,7 @@
       <CardHeader>
         <CardTitle>Register your admin passkey</CardTitle>
         <CardDescription>
-          You've been invited as an admin. Register a passkey on this device to finish — you'll use
+          You've been invited as an admin. Register a passkey on this device to finish - you'll use
           it (Face ID, Touch ID, a security key, or your password manager) to sign in.
         </CardDescription>
       </CardHeader>

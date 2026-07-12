@@ -14,7 +14,7 @@
   /**
    * The connection-mode (transport) switcher, shared by BOTH /account and
    * /get-account so they behave identically (this file is the single source of the
-   * switch behavior — previously /account had it and /get-account silently didn't).
+   * switch behavior - previously /account had it and /get-account silently didn't).
    *
    * Wraps the presentational DeliveryPreference and owns the switch machinery:
    *  - `serverBacked` (a key exists AND a placement pool is bound) → a pick opens a
@@ -36,7 +36,7 @@
   interface Props {
     /** The public mode catalog (config.connectionModes). */
     modes: Mode[];
-    /** The parent's effectiveModeId — the base highlight (server-authoritative or local). */
+    /** The parent's effectiveModeId - the base highlight (server-authoritative or local). */
     selected: string;
     /** Server's country-based recommendation id, badged. */
     suggested?: string | null;

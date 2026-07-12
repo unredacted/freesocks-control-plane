@@ -12,7 +12,7 @@
    * Colors are fixed black-on-white in both themes. Deriving them from the
    * oklch() theme tokens silently fell back to canvas-default black for BOTH
    * squares on browsers without canvas oklch support (Chrome <111, Safari
-   * <15.4 — realistic for this audience), producing an unscannable QR. Max
+   * <15.4 - realistic for this audience), producing an unscannable QR. Max
    * contrast is also simply what scanners want.
    */
   interface Props {

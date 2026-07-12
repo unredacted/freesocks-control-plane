@@ -6,7 +6,7 @@
   import { t, type MessageKey } from '../lib/i18n/index.svelte';
 
   /**
-   * "What matters most to you?" picker — the member-facing connection-mode
+   * "What matters most to you?" picker - the member-facing connection-mode
    * (transport) choice. DATA-DRIVEN off the public mode catalog (`modes`); the
    * one the server recommends (country-based) carries a "Recommended" badge.
    *
@@ -80,8 +80,8 @@
     return KNOWN[m.id]?.icon ?? Zap;
   }
 
-  // An unbound mode (no placement pool) can't meaningfully be chosen — issuing
-  // into it would mint a squad-less "dead" key — so availability ALWAYS gates
+  // An unbound mode (no placement pool) can't meaningfully be chosen - issuing
+  // into it would mint a squad-less "dead" key - so availability ALWAYS gates
   // selection, in both signup and server-backed contexts. The current selection
   // stays enabled so a member sitting on a now-unbound mode still sees it.
   function isDisabled(m: Mode): boolean {

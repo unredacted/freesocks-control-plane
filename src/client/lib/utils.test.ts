@@ -21,7 +21,7 @@ describe('formatBytes', () => {
     expect(formatBytes(5 * 1024 * 1024 * 1024)).toBe('5 GB');
   });
 
-  test('clamps the unit index — a petabyte-scale value never renders "undefined"', () => {
+  test('clamps the unit index - a petabyte-scale value never renders "undefined"', () => {
     const out = formatBytes(1024 ** 5); // beyond TB
     expect(out).toContain('TB');
     expect(out).not.toContain('undefined');

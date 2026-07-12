@@ -1,14 +1,14 @@
 <script lang="ts">
   /**
-   * The single, catalog-driven "set up your app" section — the merge of the old
+   * The single, catalog-driven "set up your app" section - the merge of the old
    * SetupGuidance (per-platform recommended apps + 3-step guide) and the old
    * SubscriptionHero import chips (per-client deep-link QR). The client list is
    * DB-driven (publicConfig.clients, CMS-managed); the per-app import scheme comes
    * from a code builder keyed by the catalog's `schemeId` (buildImportLink).
    *
    * Per platform, each recommended app shows: an Install link, a device-limit tag,
-   * and — when we have a subscription URL (evade, non-privacy) and the app has an
-   * import scheme — a one-tap "Open in <app>" button + a scannable per-app QR that
+   * and - when we have a subscription URL (evade, non-privacy) and the app has an
+   * import scheme - a one-tap "Open in <app>" button + a scannable per-app QR that
    * lands straight in the app (a plain https QR would just open a browser). Privacy
    * mode hides the URL, so those apps import the raw config below (manual).
    *

@@ -31,7 +31,7 @@
   let dir = $derived(dirForLocale(getLocale()));
   let toasterPosition = $derived(dir === 'rtl' ? ('top-left' as const) : ('top-right' as const));
 
-  // PoP boot-warm lives in <PopWarm/> inside the provider below — it calls
+  // PoP boot-warm lives in <PopWarm/> inside the provider below - it calls
   // meQuery(), which reads the query client from context at init, so it CANNOT
   // run from this script (App hosts the provider; its script runs before the
   // provider child mounts).
@@ -139,7 +139,7 @@
                 <Admin />
               {:catch}
                 <!-- The lazy admin chunk failed to load (flaky network / stale
-                     cache) — without this branch the page is silently blank. -->
+                     cache) - without this branch the page is silently blank. -->
                 <div class="text-center py-16 space-y-3">
                   <h1 class="text-xl font-display font-bold">{t('app.adminLoadFailedTitle')}</h1>
                   <p class="text-sm text-muted-foreground">

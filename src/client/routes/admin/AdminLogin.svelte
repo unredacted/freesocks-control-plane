@@ -18,7 +18,7 @@
   // Usernameless (discoverable-credential) sign-in is the default. The username
   // field is a fallback only: some authenticators register a passkey WITHOUT
   // making it discoverable, so the browser won't surface it without an
-  // allowCredentials hint — a username lets the server supply that hint.
+  // allowCredentials hint - a username lets the server supply that hint.
   let useUsername = $state(false);
   let username = $state('');
 
@@ -101,7 +101,7 @@
   <Card>
     <CardHeader>
       <CardTitle>Admin sign-in</CardTitle>
-      <CardDescription>Sign in with your passkey — no username needed.</CardDescription>
+      <CardDescription>Sign in with your passkey - no username needed.</CardDescription>
     </CardHeader>
     <CardContent class="space-y-4">
       {#if error}

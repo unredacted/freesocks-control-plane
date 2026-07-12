@@ -13,7 +13,7 @@
     },
     "q3": {
       "question": "Do I need to give an email or password?",
-      "answer": "No. You pass a one-time human check and we generate a 32-digit account number — that's your only credential. We never ask for an email, phone number, or name."
+      "answer": "No. You pass a one-time human check and we generate a 32-digit account number - that's your only credential. We never ask for an email, phone number, or name."
     },
     "q4": {
       "question": "What if I lose my account number?",
@@ -25,7 +25,7 @@
     },
     "q6": {
       "question": "What do you log about me?",
-      "answer": "As little as possible: only a hashed version of your account number — never your email, name, or IP address — and no logs of the sites you visit or the traffic you send."
+      "answer": "As little as possible: only a hashed version of your account number - never your email, name, or IP address - and no logs of the sites you visit or the traffic you send."
     },
     "q7": {
       "question": "The link is blocked where I am. What can I do?",
@@ -33,17 +33,17 @@
     },
     "q8": {
       "question": "Can I buy a membership for someone else?",
-      "answer": "Yes — on your account page use \"Buy codes to share\" to purchase membership codes you can give to friends or family. Each one works on any account and doesn't affect yours."
+      "answer": "Yes - on your account page use \"Buy codes to share\" to purchase membership codes you can give to friends or family. Each one works on any account and doesn't affect yours."
     },
     "q9": {
       "question": "Can I pay anonymously?",
-      "answer": "Yes. You can pay with cryptocurrency — Bitcoin, or Monero and Zcash for the most privacy — with no account, email, or card. Your membership activates automatically once the payment confirms."
+      "answer": "Yes. You can pay with cryptocurrency - Bitcoin, or Monero and Zcash for the most privacy - with no account, email, or card. Your membership activates automatically once the payment confirms."
     }
   },
   "common": {
     "copy": "Copy",
     "copied": "Copied to clipboard",
-    "copyFailed": "Copy failed — select the text and copy it manually",
+    "copyFailed": "Copy failed - select the text and copy it manually",
     "download": "Download",
     "cancel": "Cancel",
     "close": "Close",
@@ -77,17 +77,17 @@
     "initial": "I'm human",
     "verifying": "Verifying…",
     "solved": "Verified",
-    "error": "Check failed — retry",
+    "error": "Check failed - retry",
     "failedTitle": "Couldn't complete the human check.",
     "failedBody": "The check runs on your device and didn't finish. This is usually a network problem, not something you did wrong.",
     "failedTip1": "Wait a moment, then try again",
-    "failedTip2": "Try a different network — or a VPN/proxy if sites are blocked where you are",
+    "failedTip2": "Try a different network - or a VPN/proxy if sites are blocked where you are",
     "failedTip3": "Still stuck? Try a private/incognito window or turn off browser extensions"
   },
   "reveal": {
     "title": "Save your account number now",
     "subtitle": "This 32-digit number is the ONLY way to sign in again. There is no email or password to recover it. If you lose it, your account is gone for good.",
-    "cannotRecover": "We cannot recover it for you — not even support can.",
+    "cannotRecover": "We cannot recover it for you - not even support can.",
     "saveHint": "Save it in a password manager, or write it down somewhere safe and private.",
     "confirmCheckbox": "I have saved my account number somewhere safe",
     "done": "I've saved it",
@@ -100,7 +100,7 @@
   },
   "login": {
     "title": "Sign in with your account number",
-    "subtitle": "Enter the 32-digit account number you saved. It's the only way to sign in — there's no email or password to recover.",
+    "subtitle": "Enter the 32-digit account number you saved. It's the only way to sign in - there's no email or password to recover.",
     "label": "Account number",
     "show": "Show",
     "hide": "Hide",
@@ -110,13 +110,13 @@
     "getOne": "Get a free account",
     "failed": "Sign-in failed",
     "success": "Signed in",
-    "sessionExpired": "Please sign in again — your session may have ended.",
+    "sessionExpired": "Please sign in again - your session may have ended.",
     "digitProgress": "{count} of {total} digits entered",
     "or": "or"
   },
   "passkey": {
     "title": "Passkeys",
-    "desc": "Sign in with Face ID, Touch ID, a security key, or your password manager — no account number to type.",
+    "desc": "Sign in with Face ID, Touch ID, a security key, or your password manager - no account number to type.",
     "warning": "Heads-up: a passkey saved on your phone or in your browser may sync to your Apple or Google account, which can link this anonymous account to that identity. Use a hardware security key, or skip passkeys, if that matters to you.",
     "unsupported": "This device or browser doesn't support passkeys.",
     "none": "No passkeys yet. Your account number still signs you in.",
@@ -149,7 +149,7 @@
     "redeemTitle": "Have a membership code?",
     "redeemPlaceholder": "FSM-XXXX-XXXX-XXXX",
     "redeemSubmit": "Redeem code",
-    "redeemSuccess": "Redeemed — you're now on {tier} for {days} more days.",
+    "redeemSuccess": "Redeemed - you're now on {tier} for {days} more days.",
     "redeemFailed": "That code is not valid, or has already been used.",
     "redeemAriaLabel": "Membership code",
     "switchTo": "Switch to {label}",
@@ -192,11 +192,11 @@
     "refreshNoneBody": "If you just paid, give it a moment and try again.",
     "refreshFailedTitle": "Could not refresh membership",
     "graceTitle": "Your account is in a grace period",
-    "graceBody": "Your membership has lapsed, so this account will be limited soon. Renew — donate or redeem a membership code below — to keep your plan.",
+    "graceBody": "Your membership has lapsed, so this account will be limited soon. Renew - donate or redeem a membership code below - to keep your plan.",
     "disabledTitle": "Your account is currently disabled",
     "disabledBody": "New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID.",
-    "rotateHint": "Replace your 32-digit account number if it may have leaked — or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately.",
-    "keyActionsHint": "These change your proxy connection only — your 32-digit account number stays the same.",
+    "rotateHint": "Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately.",
+    "keyActionsHint": "These change your proxy connection only - your 32-digit account number stays the same.",
     "section": {
       "connection": {
         "title": "Your connection",
@@ -245,7 +245,7 @@
     "downloaded": "Downloaded {filename}",
     "traffic": "Traffic",
     "unlimited": "Unlimited",
-    "configBelowNote": "Your full configuration is below — add the servers by hand. For privacy, the auto-updating subscription link isn't shown here (your app would fetch it through a CDN).",
+    "configBelowNote": "Your full configuration is below - add the servers by hand. For privacy, the auto-updating subscription link isn't shown here (your app would fetch it through a CDN).",
     "usedSoFar": "{amount} used so far",
     "leftThisPeriod": "{amount} left this period.",
     "nearlyOut": "Nearly out, only {amount} left this period.",
@@ -323,8 +323,8 @@
           "countPlural"
         ],
         "match": {
-          "countPlural=one": "You currently have 1 connected device — it will need the new URL",
-          "countPlural=other": "You currently have {count} connected devices — they will all need the new URL"
+          "countPlural=one": "You currently have 1 connected device - it will need the new URL",
+          "countPlural=other": "You currently have {count} connected devices - they will all need the new URL"
         }
       }
     ],
@@ -347,8 +347,8 @@
           "countPlural"
         ],
         "match": {
-          "countPlural=one": "You currently have 1 connected device — re-import on it",
-          "countPlural=other": "You currently have {count} connected devices — re-import on all of them"
+          "countPlural=one": "You currently have 1 connected device - re-import on it",
+          "countPlural=other": "You currently have {count} connected devices - re-import on all of them"
         }
       }
     ],
@@ -379,7 +379,7 @@
     "createAccountFailedTitle": "Could not create account",
     "createSubFailedTitle": "Could not create subscription",
     "haveAccountPrefix": "Already have an account?",
-    "lostNumberHint": "Lost your account number before saving it? You can switch to a new one —",
+    "lostNumberHint": "Lost your account number before saving it? You can switch to a new one -",
     "lostNumberLinkLabel": "change it from your account page",
     "upsellTitle": "Want unlimited?",
     "upsellBody": "Upgrade to a FreeSocks membership any time for unlimited bandwidth and devices.",
@@ -410,22 +410,27 @@
     "yourGb": "That's about {gb} GB of extra bandwidth for free users",
     "yourCount": [
       {
-        "declarations": ["input count", "local countPlural = count: plural"],
-        "selectors": ["countPlural"],
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
         "match": {
           "countPlural=one": "across 1 donation",
           "countPlural=other": "across {count} donations"
         }
       }
     ],
-    "empty": "No donations yet this month — the first one starts the counter.",
+    "empty": "No donations yet this month - the first one starts the counter.",
     "externalNote": "This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here."
   },
   "donate": {
     "addTitle": "Add a donation",
     "addSubtitle": "Chip in to help keep FreeSocks free for everyone.",
     "standaloneTitle": "Donate to FreeSocks",
-    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running — a donation also raises this month's bandwidth for every free user.",
+    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises this month's bandwidth for every free user.",
     "amountLabel": "Amount",
     "none": "No thanks",
     "custom": "Custom",
@@ -439,7 +444,7 @@
     "badge": "Donor",
     "badgeTooltip": "Thank you for supporting FreeSocks",
     "thanksTitle": "You're a FreeSocks donor",
-    "thanksBody": "Thank you — your support helps keep FreeSocks free for everyone."
+    "thanksBody": "Thank you - your support helps keep FreeSocks free for everyone."
   },
   "qr": {
     "ariaLabel": "QR code for the subscription URL",
@@ -462,7 +467,7 @@
   "renew": {
     "expiringTitle": "Your membership is expiring soon",
     "expiredTitle": "Your membership has expired",
-    "body": "FreeSocks is community-funded — donations keep it running. To renew your membership, donate or contact us for a membership code.",
+    "body": "FreeSocks is community-funded - donations keep it running. To renew your membership, donate or contact us for a membership code.",
     "donate": "Donate",
     "contact": "Contact us",
     "lapsedBody": "You're on the free tier now. Renew below to restore your membership.",
@@ -474,7 +479,7 @@
     "subtitle": "Unlimited bandwidth and devices. Choose a length and how to pay.",
     "subtitleNoDevices": "Unlimited bandwidth. Choose a length and how to pay.",
     "durationLabel": "Membership length",
-    "cryptoMinNote": "Crypto payments start at {months} months — shorter terms fall below the network minimum. Pick another method for shorter terms.",
+    "cryptoMinNote": "Crypto payments start at {months} months - shorter terms fall below the network minimum. Pick another method for shorter terms.",
     "months": [
       {
         "declarations": [
@@ -499,7 +504,7 @@
     "payNowpayments": "Cryptocurrency",
     "payNowpaymentsHint": "Bitcoin, Monero, Zcash & more",
     "payNowpaymentsBadge": "Private",
-    "cryptoPrivacyNote": "No account, email, or card needed — pay privately. Monero and Zcash offer the most privacy.",
+    "cryptoPrivacyNote": "No account, email, or card needed - pay privately. Monero and Zcash offer the most privacy.",
     "payBtcpay": "Bitcoin",
     "payBtcpayHint": "On-chain or Lightning",
     "payBtcpayBadge": "No intermediary",
@@ -513,7 +518,7 @@
     "startFailed": "Could not start checkout",
     "noStoreNote": "We never see your card or wallet, and store no payment details.",
     "confirmingTitle": "Confirming your payment…",
-    "confirmingBody": "Crypto can take a few minutes to confirm. You can leave this page — your membership activates automatically.",
+    "confirmingBody": "Crypto can take a few minutes to confirm. You can leave this page - your membership activates automatically.",
     "paidTitle": "Membership active",
     "paidBody": "Thank you! Your membership is now active.",
     "failedTitle": "Payment not completed",
@@ -535,7 +540,7 @@
     "copyAll": "Copy all",
     "reveal": {
       "title": "Save these codes now",
-      "body": "Copy and share each code. For security we show them only once — afterwards you will see only a prefix.",
+      "body": "Copy and share each code. For security we show them only once - afterwards you will see only a prefix.",
       "ack": "I have saved these codes",
       "saved": "I've saved them",
       "leaveWarning": "Your codes are still on screen. If you leave now without saving them, you will not be able to see them again."
@@ -544,7 +549,7 @@
   "error": {
     "offline": "You appear to be offline. Check your connection and try again.",
     "rateLimited": "Too many attempts. Please wait a minute and try again.",
-    "backendUnavailable": "No proxy server is available right now. Your account is safe — try creating your key again in a few minutes.",
+    "backendUnavailable": "No proxy server is available right now. Your account is safe - try creating your key again in a few minutes.",
     "generic": "Something went wrong. Please try again.",
     "captchaFailed": "The human check failed. Please complete it and try again.",
     "captchaUnconfigured": "The service is temporarily unavailable. Please try again in a few minutes.",
@@ -555,7 +560,7 @@
     "sessionExpired": "Your session has ended. Please sign in again.",
     "invalidAccountId": "That account number wasn't recognized. Check it and try again.",
     "codeInvalid": "That code can't be redeemed. Check it for typos and try again.",
-    "changeInProgress": "Another change is already in progress — try again in a moment.",
+    "changeInProgress": "Another change is already in progress - try again in a moment.",
     "backendDisabled": "That option is currently unavailable.",
     "noPeerTier": "Switching isn't available for your plan yet.",
     "deviceNotFound": "That device is no longer on your account.",
@@ -584,7 +589,7 @@
     "hwidNote": "On a device-limited plan, turn on \"device identification\" (HWID) in the app's settings so your device is recognized.",
     "deviceCompatibleTitle": "Works with your device limit",
     "deviceIncompatibleTitle": "Not recommended for your plan",
-    "deviceIncompatibleNote": "These apps don't identify your device, so each launch can use up a device slot — or fail to connect on a device-limited plan. Prefer an app above."
+    "deviceIncompatibleNote": "These apps don't identify your device, so each launch can use up a device slot - or fail to connect on a device-limited plan. Prefer an app above."
   },
   "mirror": {
     "disclosure": "Trouble connecting?",
@@ -593,7 +598,7 @@
     "addToAppHint": "Add each one as an extra subscription in your app, then try connecting.",
     "regionLabel": "Your region",
     "regionGlobal": "Global (any region)",
-    "regionNotStored": "Used only to pick a nearby mirror — it isn't stored.",
+    "regionNotStored": "Used only to pick a nearby mirror - it isn't stored.",
     "getButton": "Get a mirror link",
     "tryAnother": "Try another mirror",
     "working": "Working…",
@@ -613,8 +618,8 @@
   "delivery": {
     "title": "What matters most to you?",
     "subtitle": "Pick a focus. It's saved on this device only, and you can change it anytime.",
-    "subtitleServer": "Pick a focus. Changing it moves your existing key to the matching servers — your subscription URL stays the same.",
-    "subtitleSignup": "Pick a focus. It's saved to your account, and your first key uses it — you can change it anytime.",
+    "subtitleServer": "Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same.",
+    "subtitleSignup": "Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime.",
     "evadeTitle": "Stay connected",
     "evadeBody": "Best when sites are blocked where you are. We'll surface backup links that are harder to block.",
     "privacyTitle": "Maximize privacy",
@@ -623,8 +628,8 @@
     "unavailable": "Not available yet",
     "confirmTitle": "Switch to \"{label}\"?",
     "confirmBody": "This moves your existing key to the {label} servers, keeping the same subscription URL. Your apps keep working and pick up the new servers on their next refresh.",
-    "confirmPoint1": "Your key moves to the {label} servers — same subscription URL, nothing to re-import",
-    "confirmPoint2": "Takes effect within a minute — reconnect in your app if it doesn't refresh on its own",
+    "confirmPoint1": "Your key moves to the {label} servers - same subscription URL, nothing to re-import",
+    "confirmPoint2": "Takes effect within a minute - reconnect in your app if it doesn't refresh on its own",
     "confirmPoint3": "Using the raw config? Copy the new one after switching",
     "confirmPointDevices": [
       {
@@ -645,19 +650,19 @@
     "working": "Switching…",
     "switchSuccessTitle": "Switched to \"{label}\"",
     "switchSuccessBodyGrace": "Re-import the new subscription URL on each device. Your old key works for 24 more hours.",
-    "switchSuccessBody": "Same subscription URL — your apps will pick up the new servers on their next refresh.",
+    "switchSuccessBody": "Same subscription URL - your apps will pick up the new servers on their next refresh.",
     "switchFailedTitle": "Could not switch focus"
   },
   "home": {
     "impact": {
       "title": "Donations at work",
-      "body": "Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far — you could add to it too.",
+      "body": "Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too.",
       "cta": "Make a donation",
       "chartAria": "Bandwidth added to every free user by donations, month by month"
     },
     "hero": {
       "eyebrow": "Operated by Unredacted, a US 501(c)(3) nonprofit",
-      "title": "A free VPN for people in censored countries — private by design.",
+      "title": "A free VPN for people in censored countries & around the world",
       "subtitle": "FreeSocks exists to get people online where the internet is censored, and works as a privacy-friendly VPN anywhere. One human-check creates your account: no email, no password, nothing that identifies you. Paste your subscription URL into any modern VPN client. A FreeSocks membership unlocks {limits}.",
       "impactNote": "Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month.",
       "impactLink": "See the impact"
@@ -675,9 +680,9 @@
       "noAuthBody": "One human-check. Save your account number to sign in. No email collected.",
       "footnote": "Numbers reflect the current free-tier configuration. Solve the check to get yours.",
       "upsellTitle": "Want unlimited?",
-      "upsellBody": "Get {limits} — and help keep FreeSocks free for others.",
+      "upsellBody": "Get {limits} - and help keep FreeSocks free for others.",
       "fromPerMonth": "from {price}/mo",
-      "cryptoNote": "Crypto accepted — Bitcoin, Monero, Zcash and more"
+      "cryptoNote": "Crypto accepted - Bitcoin, Monero, Zcash and more"
     },
     "features": {
       "title": "What FreeSocks is",
@@ -697,10 +702,10 @@
     "privacy": {
       "title": "What we store",
       "subtitle": "FreeSocks is built to know as little about you as possible.",
-      "point1": "We store only a hashed version of your account number — never the number itself.",
+      "point1": "We store only a hashed version of your account number - never the number itself.",
       "point2": "No email, phone number, or name. We never ask for them.",
-      "point3": "No logs of the sites you visit or the traffic you send — and we don't store your IP address, on our servers or the proxy nodes.",
-      "point4": "We store no payment details — you pay on the provider's own page, and the provider never sees your account or proxy subscription."
+      "point3": "No logs of the sites you visit or the traffic you send - and we don't store your IP address, on our servers or the proxy nodes.",
+      "point4": "We store no payment details - you pay on the provider's own page, and the provider never sees your account or proxy subscription."
     },
     "how": {
       "title": "How it works",
@@ -722,7 +727,7 @@
       "title": "Membership",
       "lead": "Free covers the basics.",
       "descriptionFallback": "A FreeSocks membership lifts every limit.",
-      "payNote": "Pay privately with Bitcoin, Monero, or Zcash — or use a card or PayPal."
+      "payNote": "Pay privately with Bitcoin, Monero, or Zcash - or use a card or PayPal."
     },
     "about": {
       "title": "About",

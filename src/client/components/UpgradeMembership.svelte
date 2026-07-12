@@ -4,14 +4,14 @@
    * and at least one rail is live (it reads PublicConfig.billing). The member
    * picks a payment method + duration; "Continue to payment" creates a
    * processor-hosted invoice server-side and full-page redirects to it (the
-   * strict CSP forbids an embedded payment SDK — redirect is the only option).
+   * strict CSP forbids an embedded payment SDK - redirect is the only option).
    * No payer identity is sent to the processor; the order is bound to the member
    * server-side via an opaque ref.
    *
    * Method is chosen FIRST because it gates the durations: the crypto rail
    * (NOWPayments) has a per-coin minimum payment (XMR's is high) and the payer
    * picks the coin on the hosted page, so terms below `cryptoMinMonths` would be
-   * rejected there — we disable them here and the checkout action enforces it too.
+   * rejected there - we disable them here and the checkout action enforces it too.
    */
   import { Button } from '@client/components/ui/button';
   import * as Collapsible from '@client/components/ui/collapsible';
@@ -62,7 +62,7 @@
     return perMonths.length ? Math.min(...perMonths) : null;
   });
 
-  // Accordion open state — collapsed by default so the upsell stays condensed.
+  // Accordion open state - collapsed by default so the upsell stays condensed.
   let open = $state(false);
 
   // Render rails in a stable, sensible order, filtered to the ones turned on.
@@ -79,7 +79,7 @@
   let donationCents = $state(0);
 
   // Crypto (NOWPayments) only offers terms >= cryptoMin; BTCPay has its own
-  // (default 1 — Lightning has no floor); card/PayPal offer all.
+  // (default 1 - Lightning has no floor); card/PayPal offer all.
   let minMonths = $derived(
     selectedProcessor === 'nowpayments'
       ? cryptoMin
@@ -89,7 +89,7 @@
   );
 
   // Honor an explicit duration pick while it's valid for the chosen method,
-  // otherwise fall to the cheapest allowed term — so switching to crypto with a
+  // otherwise fall to the cheapest allowed term - so switching to crypto with a
   // 1-month pick auto-moves to the first eligible term (never a dead-end selection).
   let selectedMonths = $derived.by(() => {
     if (
@@ -111,7 +111,7 @@
   );
 
   // Per-term value (per-month rate + "save X%") comes from the shared billing
-  // helper, derived from the DB prices — edit prices in Admin → Billing and the
+  // helper, derived from the DB prices - edit prices in Admin → Billing and the
   // savings recompute. There is no separate stored discount field.
 
   function railLabel(r: BillingProcessor): string {

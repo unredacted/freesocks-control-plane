@@ -3,8 +3,8 @@
  *
  * The `remnawave` id is an implementation detail (the management panel); end
  * users see it as "Xray" (the server default in convex/appSettings.ts and the
- * protocol family the apps speak). Admin screens were split — "Xray" in the
- * tier editor, "Remnawave" in settings — so the same id read as two different
+ * protocol family the apps speak). Admin screens were split - "Xray" in the
+ * tier editor, "Remnawave" in settings - so the same id read as two different
  * products. One map ends that. Member-facing labels keep coming from
  * `config.backends.labels` (admin-editable), NOT from here.
  */

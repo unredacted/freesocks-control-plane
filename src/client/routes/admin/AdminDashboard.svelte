@@ -4,7 +4,7 @@
    * GET /api/v1/admin/status snapshot (the same endpoint the Ansible role
    * health-gates on): a backend-healthcheck-freshness strip, member counts by
    * status, total issued keys, and a per-backend health/key panel. Read-only
-   * and non-secret — there is never a backend `config` in this payload.
+   * and non-secret - there is never a backend `config` in this payload.
    */
   import AdminLayout from './AdminLayout.svelte';
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
@@ -92,7 +92,7 @@
       {#if s.healthcheck.ok}
         <CheckCircle class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
         <span>
-          Backend healthcheck is current — last successful probe
+          Backend healthcheck is current - last successful probe
           {s.healthcheck.staleSeconds != null ? `${s.healthcheck.staleSeconds}s ago` : 'recently'}.
         </span>
       {:else}
@@ -115,7 +115,7 @@
         <TriangleAlert class="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
         <span>
           {s.backendDrift}
-          {s.backendDrift === 1 ? 'user has' : 'users have'} unresolved backend drift — the panel may
+          {s.backendDrift === 1 ? 'user has' : 'users have'} unresolved backend drift - the panel may
           be out of sync with their entitlement. Review and Resync →
         </span>
       </a>
@@ -131,7 +131,7 @@
         <span>
           {s.cronsStale}
           {s.cronsStale === 1 ? 'scheduled job is' : 'scheduled jobs are'} overdue past their cadence
-          — the cron system or a job may be wedged. See Scheduled jobs below.
+          - the cron system or a job may be wedged. See Scheduled jobs below.
         </span>
       </div>
     {/if}
@@ -146,7 +146,7 @@
     <Card>
       <CardHeader>
         <CardTitle class="text-lg">
-          Backends — {s.totals.healthyBackends}/{s.totals.activeBackends} healthy
+          Backends - {s.totals.healthyBackends}/{s.totals.activeBackends} healthy
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -191,7 +191,7 @@
       </CardHeader>
       <CardContent class="space-y-2 text-sm">
         <p class="text-muted-foreground">
-          {s.pop.bound}/{s.pop.activeSessions} active sessions are key-bound — a captured cookie alone
+          {s.pop.bound}/{s.pop.activeSessions} active sessions are key-bound - a captured cookie alone
           cannot be replayed.
         </p>
         {#if s.pop.required}
@@ -199,7 +199,7 @@
             class="flex items-center gap-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-emerald-700 dark:text-emerald-300"
           >
             <CheckCircle class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-            <span>Enforced — cookie-only sessions are rejected (POP_REQUIRED is on).</span>
+            <span>Enforced - cookie-only sessions are rejected (POP_REQUIRED is on).</span>
           </div>
         {:else if s.pop.readyToEnable}
           <div
@@ -207,7 +207,7 @@
           >
             <CheckCircle class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
             <span
-              >Safe to enable — no cookie-only sessions remain. Set <code class="font-mono"
+              >Safe to enable - no cookie-only sessions remain. Set <code class="font-mono"
                 >POP_REQUIRED=true</code
               > to enforce.</span
             >
@@ -229,11 +229,11 @@
 
     <!-- Scheduled-jobs liveness (W4-B4): per-cron heartbeat freshness vs cadence.
          Stamped at each job's run start, so this tracks whether the scheduler is
-         firing the job — independent of the job's own success. -->
+         firing the job - independent of the job's own success. -->
     <Card class="mt-6">
       <CardHeader>
         <CardTitle class="text-lg">
-          Scheduled jobs — {s.crons.filter((c) => c.state === 'ok').length}/{s.crons.length} healthy
+          Scheduled jobs - {s.crons.filter((c) => c.state === 'ok').length}/{s.crons.length} healthy
         </CardTitle>
       </CardHeader>
       <CardContent>

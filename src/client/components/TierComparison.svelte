@@ -9,7 +9,7 @@
   import { deviceLimitsShown } from '../lib/tiers';
 
   /**
-   * Tier comparison cards, rendered ENTIRELY from `/api/v1/config` — name,
+   * Tier comparison cards, rendered ENTIRELY from `/api/v1/config` - name,
    * description, and the bandwidth/device limits are the live DB values, so
    * Admin → Tiers edits propagate here (and to every other view that renders
    * this) with no hardcoded copy to drift. The membership tier (the one whose
@@ -34,7 +34,7 @@
   let showDevices = $derived(deviceLimitsShown(config.data));
 
   // The headline monthly price = the SHORTEST term's per-month (e.g. the 1-month
-  // plan at $5/mo), NOT the cheapest amortized annual ($4.17/mo) — that read as a
+  // plan at $5/mo), NOT the cheapest amortized annual ($4.17/mo) - that read as a
   // pricing bug. Longer-term discounts live in the upgrade panel instead.
   let monthlyCents = $derived(baselinePerMonth(billing?.durations ?? []));
   let fromPerMonth = $derived(

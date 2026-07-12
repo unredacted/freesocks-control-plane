@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Locale picker (P1-15). A plain native <select> — keyboard-accessible, works
+   * Locale picker (P1-15). A plain native <select> - keyboard-accessible, works
    * without JS hydration quirks, and tiny. Persists via setLocale (localStorage
    * + <html lang/dir>). Labels are each language's endonym so a speaker
    * recognizes their own language regardless of the current UI locale.

@@ -1,6 +1,6 @@
 /**
  * Proof-of-possession signing Worker (CDN-blinding Phase 2). Owns the session's
- * NON-EXTRACTABLE session signing key — Ed25519 wherever the browser supports it
+ * NON-EXTRACTABLE session signing key - Ed25519 wherever the browser supports it
  * in WebCrypto (the preferred, non-NIST curve), else ECDSA P-256 (the fallback,
  * for older browsers). The key is generated here, persisted in IndexedDB (so it
  * survives a reload without forcing re-login), and used only to sign canonical
@@ -117,8 +117,8 @@ function algOf(key: CryptoKey): string {
 /**
  * Generate a fresh NON-EXTRACTABLE session keypair. Prefers Ed25519 (a rigid,
  * non-NIST curve); falls back to ECDSA P-256 on browsers without WebCrypto
- * Ed25519 (e.g. older Android WebView). A capability probe — raw public-key
- * export + a throwaway sign — runs before we commit to Ed25519, so an engine that
+ * Ed25519 (e.g. older Android WebView). A capability probe - raw public-key
+ * export + a throwaway sign - runs before we commit to Ed25519, so an engine that
  * exposes generateKey but not export/sign for it can never leave us with an
  * unusable persisted key (we fall back to P-256 instead).
  */

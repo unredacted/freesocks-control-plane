@@ -9,7 +9,7 @@
   /**
    * Donation-impact panel: what the community's donations are doing for free
    * users right now (bonus GB live this month, free accounts it reaches, and
-   * the per-month history as a dithered bar chart), plus — for donors — their
+   * the per-month history as a dithered bar chart), plus - for donors - their
    * own contribution. The nonprofit framing card grew into this once the
    * impact numbers became available from publicConfig (`billing.donation`).
    * Falls back to the plain framing when donations are disabled or there's no
@@ -20,14 +20,14 @@
 
   const donation = $derived(config.data?.billing?.donation);
   const history = $derived(donation?.history ?? []);
-  // Renders whenever donations are live (a zero month is honest data — the
+  // Renders whenever donations are live (a zero month is honest data - the
   // empty note explains it); the chart falls back to a flat zero baseline.
   const showImpact = $derived(!!config.data?.billing?.enabled && !!donation?.enabled);
   const chartSeries = $derived(impactChartSeries(history));
   const user = $derived(account.data?.user);
   const isDonor = $derived(!!user?.donorSince && (user?.donatedCentsTotal ?? 0) > 0);
   // Personal display framing: the member's lifetime giving converted at the
-  // current rate — an approximation for copy, not an accounting figure.
+  // current rate - an approximation for copy, not an accounting figure.
   const personalGb = $derived(
     Math.round(((user?.donatedCentsTotal ?? 0) / 100) * (donation?.bonusGbPerUsd ?? 0) * 10) / 10,
   );

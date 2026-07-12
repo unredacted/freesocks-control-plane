@@ -17,7 +17,7 @@
   import { toast } from 'svelte-sonner';
 
   /**
-   * Opt-in "trouble connecting?" affordance. Understated by design — the normal
+   * Opt-in "trouble connecting?" affordance. Understated by design - the normal
    * subscription URL stays primary. A member who can't connect provisions one
    * country-tiered mirror at a time (capped server-side); each is an extra
    * subscription URL they add in their app. The country picker is prefilled from
@@ -36,7 +36,7 @@
   let open = $state(false);
 
   // One-time snapshot of the props into local state (the IIFE breaks the
-  // compiler's "captures initial value of prop" analysis — same idiom as the
+  // compiler's "captures initial value of prop" analysis - same idiom as the
   // editors). `added` is seeded from props so it updates immediately on provision
   // without waiting for the parent to re-fetch.
   const init = ((m: Props['mirrors'], g: Props['geoCountry'], sub: string) => ({

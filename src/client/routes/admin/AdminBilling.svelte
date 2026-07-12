@@ -127,7 +127,7 @@
   }
 
   // Render helper: a "set ✓ / not set" badge for a write-only credential.
-  const setBadge = (isSet: boolean) => (isSet ? 'set ✓ — leave blank to keep' : 'not set');
+  const setBadge = (isSet: boolean) => (isSet ? 'set ✓ - leave blank to keep' : 'not set');
 
   const STATUS_TONE: Record<string, string> = {
     paid: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
@@ -181,9 +181,9 @@
     if (!draft) return null;
     const states = RAILS.map((r) => railState(r.key));
     if (draft.enabled && !states.some((s) => s.ready))
-      return 'Billing is enabled but no payment rail is ready — members would see a purchase option that cannot complete. Set a rail’s credentials and the public base URL below, then Save.';
+      return 'Billing is enabled but no payment rail is ready - members would see a purchase option that cannot complete. Set a rail’s credentials and the public base URL below, then Save.';
     if (states.some((s) => s.enabled && !s.ready))
-      return 'An enabled rail is missing credentials — its checkout and webhook return 503 until you set them and Save.';
+      return 'An enabled rail is missing credentials - its checkout and webhook return 503 until you set them and Save.';
     return null;
   });
 </script>
@@ -192,7 +192,7 @@
   <h1 class="mb-2 text-2xl font-bold">Billing</h1>
   <p class="mb-6 text-sm text-muted-foreground">
     Self-service membership purchases. Prices and processor credentials are admin-editable here (no
-    deploy) — set a rail's credentials below, or its checkout/webhook returns 503. Turn
+    deploy) - set a rail's credentials below, or its checkout/webhook returns 503. Turn
     <code class="font-mono">enabled</code> on only once prices are set and a rail is live.
   </p>
 
@@ -467,7 +467,7 @@
     </section>
 
     <!-- Processor credentials: DB-stored (an env var is the fallback). Secret
-         fields are WRITE-ONLY — the server never returns them; a blank box is
+         fields are WRITE-ONLY - the server never returns them; a blank box is
          left unchanged on save. -->
     {#snippet cred(label: string, isSet: boolean, value: string, onInput: (v: string) => void)}
       <label class="block space-y-1">
@@ -491,7 +491,7 @@
       <div>
         <h2 class="text-base font-semibold">Processor credentials</h2>
         <p class="text-sm text-muted-foreground">
-          Stored in the database (an env var is the fallback). Secret fields are write-only — leave
+          Stored in the database (an env var is the fallback). Secret fields are write-only - leave
           a box blank to keep the current value.
         </p>
       </div>

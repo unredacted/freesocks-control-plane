@@ -1,7 +1,7 @@
 /**
  * Map an API error to a localized, user-facing message (P1-9). Consumers use
  * this in their onError handlers instead of reading `err.payload.error.message`
- * raw — so a 429 reads "too many attempts", a network failure reads "offline",
+ * raw - so a 429 reads "too many attempts", a network failure reads "offline",
  * and a backend outage / parse failure reads a friendly localized string rather
  * than an opaque code or a TypeError.
  *
@@ -17,7 +17,7 @@ import { ApiCallError } from './api';
 import { t } from './i18n/index.svelte';
 
 /**
- * First human-readable issue out of a ZodError — for client-side form
+ * First human-readable issue out of a ZodError - for client-side form
  * validation (safeParse BEFORE mutate). Never surface a raw ZodError string
  * (a multi-line path dump) in a toast.
  */
@@ -67,11 +67,11 @@ export function apiErrorMessage(err: unknown): string {
     const mapped = CODE_MESSAGES[code];
     if (mapped) return mapped();
     // `http.<status>` means the body carried no structured envelope at all
-    // (e.g. a reverse-proxy 502 page) — never worth echoing.
+    // (e.g. a reverse-proxy 502 page) - never worth echoing.
     if (code.startsWith('http.')) {
       return err.status >= 500 ? t('error.serverError') : t('error.generic');
     }
-    // An unmapped, specific server message (e.g. a validation detail) — show it.
+    // An unmapped, specific server message (e.g. a validation detail) - show it.
     return err.payload.error.message || t('error.generic');
   }
   return t('error.generic');

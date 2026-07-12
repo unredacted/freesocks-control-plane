@@ -18,7 +18,7 @@ export type WithElementRef<T, U extends HTMLElement = HTMLElement> = T & { ref?:
 
 /**
  * The member-facing subscription URL. When the subscription carries an FCP
- * `subToken`, build the FCP-fronted URL from the CURRENT origin — the SPA and the
+ * `subToken`, build the FCP-fronted URL from the CURRENT origin - the SPA and the
  * `/api` surface share one public origin, so `<origin>/api/v1/sub/<token>` is
  * same-origin and routes to Convex, which serves the config (cached) and hides the
  * backend panel URL. Building it here (not server-side) needs no deployment-origin
@@ -50,7 +50,7 @@ export function formatBytes(bytes: number, decimals = 1): string {
 }
 
 /**
- * Copy `value` to the clipboard, returning whether it succeeded — never throws.
+ * Copy `value` to the clipboard, returning whether it succeeded - never throws.
  * `navigator.clipboard` is undefined on insecure contexts / older in-region
  * browsers (disproportionately this product's audience), where a bare
  * `navigator.clipboard.writeText` throws a synchronous TypeError and leaves a

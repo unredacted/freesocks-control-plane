@@ -3,9 +3,9 @@
   import { t } from '../lib/i18n/index.svelte';
 
   /**
-   * Footer links — admin-configurable via publicConfig.site: a "View source" repo
+   * Footer links - admin-configurable via publicConfig.site: a "View source" repo
    * link (toggle + https URL) plus optional Terms of Service / Privacy Policy links
-   * (https URL only — an empty URL hides the link). Its own component (not inline in
+   * (https URL only - an empty URL hides the link). Its own component (not inline in
    * App.svelte's footer) because App hosts the QueryClientProvider, so configQuery()
    * can only run from a child inside the provider tree. The server sanitizes each URL
    * to https-only, so '' (or an unsafe value) → hidden.

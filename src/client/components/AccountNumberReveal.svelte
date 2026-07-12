@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * A2 (launch P0): the reveal-once account-number moment — the single
+   * A2 (launch P0): the reveal-once account-number moment - the single
    * highest-stakes screen in the product. The 32-digit number is the user's
    * ONLY, unrecoverable credential. This modal makes losing it hard:
    *  - blocking AlertDialog: dismissal is refused until the user ticks
@@ -11,7 +11,7 @@
    *  - digits grouped into quads for transcription; copy/download use the raw form.
    *
    * Used for BOTH the initial reveal (GetAccount) and the rotate reveal
-   * (Account) — losing the new number after a rotation is equally fatal.
+   * (Account) - losing the new number after a rotation is equally fatal.
    */
   import * as AlertDialog from '@client/components/ui/alert-dialog';
   import { Button } from '@client/components/ui/button';

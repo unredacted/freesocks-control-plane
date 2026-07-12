@@ -80,7 +80,7 @@
 <AdminLayout>
   <h1 class="text-2xl font-bold mb-2">Theme</h1>
   <p class="text-sm text-muted-foreground mb-6">
-    The brand accent for the whole site — buttons, links, focus rings, the membership card. Changes
+    The brand accent for the whole site - buttons, links, focus rings, the membership card. Changes
     preview live here; <strong>Save</strong> applies them for everyone. The hue slider keeps each preset's
     tuned lightness, so any colour stays readable.
   </p>
@@ -105,7 +105,7 @@
   {#if current.hueAdjustable}
     <div class="mb-6 rounded-lg border border-border bg-card p-4">
       <div class="flex items-center justify-between">
-        <label class="text-sm font-medium" for="hue">Hue — {shownHue}°</label>
+        <label class="text-sm font-medium" for="hue">Hue - {shownHue}°</label>
         {#if hueOverride !== null}
           <Button variant="ghost" size="sm" onclick={() => (hueOverride = null)}>
             Reset to preset
@@ -127,7 +127,7 @@
       </p>
     </div>
   {:else}
-    <p class="mb-6 text-sm text-muted-foreground">Classic is monochrome — no hue to adjust.</p>
+    <p class="mb-6 text-sm text-muted-foreground">Classic is monochrome - no hue to adjust.</p>
   {/if}
 
   <div class="flex items-center gap-3">
@@ -135,7 +135,7 @@
       {save.isPending ? 'Saving…' : 'Save theme'}
     </Button>
     {#if dirty}
-      <span class="text-xs text-muted-foreground">Unsaved — previewing on this device only.</span>
+      <span class="text-xs text-muted-foreground">Unsaved - previewing on this device only.</span>
     {/if}
   </div>
 </AdminLayout>

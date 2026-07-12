@@ -72,7 +72,7 @@
   // Connection-mode (transport) catalog from public config. `available` means
   // the mode's placement pool is bound; until at least one is bound (and the
   // member has a key to re-issue) the picker is a local presentation preference
-  // only — choosing wouldn't change the issued node, so we skip the server round-trip.
+  // only - choosing wouldn't change the issued node, so we skip the server round-trip.
   let connectionModes = $derived(config.data?.connectionModes ?? []);
   let defaultModeId = $derived(
     connectionModes.find((m) => m.isDefault)?.id ?? connectionModes[0]?.id ?? 'evade',
@@ -129,14 +129,14 @@
   // Post-payment return: the processor sends the member back to
   // /account?order=<ref>. Poll the order until a terminal status; on 'paid',
   // refresh entitlement (account + me) and clear the param. The only polling
-  // query in the SPA — crypto 'confirming' can take minutes (refetchInterval).
+  // query in the SPA - crypto 'confirming' can take minutes (refetchInterval).
   let orderRef = $derived(router.searchParams.get('order'));
   const order = billingOrderQuery(() => orderRef);
   let orderPaidHandled = false;
 
   // --- Tabbed sections (in-page strip, ?tab= synced) ----------------------
   // The page groups into 4 tabs; the active one is reflected into the URL
-  // (?tab=) via replaceState — deep-linkable + reload-safe, WITHOUT a router
+  // (?tab=) via replaceState - deep-linkable + reload-safe, WITHOUT a router
   // navigation (mirrors AdminUsers' filter URL-sync), so it never disturbs the
   // billing `?order=` param or the router's scroll-restoration state.
   type AccountTab = 'connection' | 'membership' | 'codes' | 'security';
@@ -151,7 +151,7 @@
     else url.searchParams.set('tab', activeTab);
     window.history.replaceState(history.state, '', url);
   });
-  // Gift purchase: the buyer's OWN membership is untouched — instead the freshly
+  // Gift purchase: the buyer's OWN membership is untouched - instead the freshly
   // minted shareable codes are revealed ONCE here on return, then acknowledged.
   let giftRevealCodes = $state<string[]>([]);
   let giftRevealOpen = $state(false);
@@ -257,7 +257,7 @@
       // Keep the usage graph in step with the traffic counter (same cadence).
       void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
       // P2: the switch moves the user to the peer tier, so the header's `me`
-      // tier label is now stale — refresh it too.
+      // tier label is now stale - refresh it too.
       void qc.invalidateQueries({ queryKey: queryKeys.me });
       // Re-fetch the raw-config viewer (separate key) so it shows the new backend's config.
       void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
@@ -391,7 +391,7 @@
           : 'active',
   );
 
-  // Operational account status — a DIFFERENT axis from the membership
+  // Operational account status - a DIFFERENT axis from the membership
   // (entitlement) state above. `grace`/`disabled` come from the lifecycle sweep
   // and mean the account itself is winding down; without surfacing it the user
   // would see a normal-looking dashboard while their keys are about to stop.
@@ -436,7 +436,7 @@
         justLapsed = true;
       }
     } catch {
-      /* storage disabled — the banner just won't show */
+      /* storage disabled - the banner just won't show */
     }
   });
 
@@ -512,11 +512,11 @@
   <div class="max-w-4xl mx-auto py-8 space-y-10">
     <div class="sr-only" role="status" aria-live="polite">{liveMessage}</div>
 
-    <!-- Always-available overlays (portal out when closed — order-independent). -->
+    <!-- Always-available overlays (portal out when closed - order-independent). -->
     <!-- One-time reveal of freshly-purchased gift codes (on return from checkout). -->
     <GiftRevealModal bind:open={giftRevealOpen} codes={giftRevealCodes} onAck={ackGiftReveal} />
     <!-- A2: one-time reveal of a freshly rotated account number. Same blocking,
-         checkbox-gated modal as the initial issuance — losing the NEW number is
+         checkbox-gated modal as the initial issuance - losing the NEW number is
          equally fatal (the old one already stopped working). -->
     {#if revealedAccountId}
       <AccountNumberReveal
@@ -530,7 +530,7 @@
       />
     {/if}
     <!-- Rotate confirmation: a proper Dialog, consistent with Regenerate/Switch
-         (rotating invalidates the only credential — it deserves no less). -->
+         (rotating invalidates the only credential - it deserves no less). -->
     <RotateAccountIdModal
       bind:open={rotateConfirmOpen}
       onCancel={() => (rotateConfirmOpen = false)}
@@ -598,7 +598,7 @@
           />
         {/if}
         <!-- Post-payment confirmation (return from the processor's hosted page).
-             The webhook — not this redirect — is the source of truth; we just poll. -->
+             The webhook - not this redirect - is the source of truth; we just poll. -->
         {#if showOrderCallout}
           {#if order.isError || order.data?.status === 'failed' || order.data?.status === 'expired'}
             <MembershipCallout
@@ -627,7 +627,7 @@
           {/if}
         {/if}
 
-        <!-- Operational lifecycle (grace/disabled) — a different axis from the
+        <!-- Operational lifecycle (grace/disabled) - a different axis from the
              membership-entitlement callouts; both can apply. -->
         {#if userStatus === 'grace'}
           <MembershipCallout
@@ -650,7 +650,7 @@
         {/if}
 
         <!-- Membership-entitlement expiry. No-membership free users get no callout
-             here — they lead with the Membership section below (upsell-first). -->
+             here - they lead with the Membership section below (upsell-first). -->
         {#if membershipState === 'expiring-soon' && expiresAt && daysUntilExpiry !== null}
           <MembershipCallout
             tone="warn"
@@ -696,8 +696,8 @@
       </div>
     {/if}
 
-    <!-- Tabbed sections (in-page strip, ?tab= synced). Page-global chrome — the
-         header, pinned status band, and confirm modals — stays OUTSIDE the tabs. -->
+    <!-- Tabbed sections (in-page strip, ?tab= synced). Page-global chrome - the
+         header, pinned status band, and confirm modals - stays OUTSIDE the tabs. -->
     <Tabs.Root bind:value={activeTab} class="gap-6">
       <div class="overflow-x-auto -mx-1 px-1">
         <Tabs.List class="w-full min-w-max sm:w-fit">
@@ -716,7 +716,7 @@
         </Tabs.List>
       </div>
 
-      <!-- TAB: Your connection — the proxy key is the main thing on this page.
+      <!-- TAB: Your connection - the proxy key is the main thing on this page.
          Delivery focus first, then the key + setup panels, actions, and devices. -->
       <Tabs.Content value="connection">
         <section class="space-y-4">
@@ -789,7 +789,7 @@
             />
             {#if rawConfigFirst}
               <!-- rawConfig mode: the raw config IS the deliverable (the CDN-fetched link
-               is hidden above). No public mirrors — they'd expose the config to third parties. -->
+               is hidden above). No public mirrors - they'd expose the config to third parties. -->
               <RawConfig prominent />
               <ConnectClient
                 backend={data.subscription.backend}
@@ -929,7 +929,7 @@
         </section>
       </Tabs.Content>
 
-      <!-- TAB: Membership — plan + upgrade/extend. ALWAYS present now; an active
+      <!-- TAB: Membership - plan + upgrade/extend. ALWAYS present now; an active
          member sees a compact status + refresh instead of the upsell. -->
       <Tabs.Content value="membership">
         <section class="space-y-4">
@@ -940,7 +940,7 @@
           )}
 
           {#if membershipState === 'active'}
-            <!-- Active member: nothing to buy — just confirm the state + a refresh. -->
+            <!-- Active member: nothing to buy - just confirm the state + a refresh. -->
             <div class="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-3">
               <p class="text-sm font-medium">{t('account.memberActiveTitle')}</p>
               {#if data.user.membership?.expiresAt}
@@ -1000,7 +1000,7 @@
         </section>
       </Tabs.Content>
 
-      <!-- TAB: Codes & gifts — redeem a membership code, or buy codes to share.
+      <!-- TAB: Codes & gifts - redeem a membership code, or buy codes to share.
          Redeem is always available; GiftCodes self-gates on billing. -->
       <Tabs.Content value="codes">
         <section class="space-y-4">
@@ -1019,7 +1019,7 @@
         </section>
       </Tabs.Content>
 
-      <!-- TAB: Account & security — support ID + account-number rotation. -->
+      <!-- TAB: Account & security - support ID + account-number rotation. -->
       <Tabs.Content value="security">
         <section class="space-y-4">
           {@render sectionHead(

@@ -29,6 +29,6 @@ export function setConnectionModePref(modeId: string): void {
   try {
     localStorage.setItem(KEY, modeId);
   } catch {
-    /* private mode / blocked storage — the in-memory value still drives this session */
+    /* private mode / blocked storage - the in-memory value still drives this session */
   }
 }

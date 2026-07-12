@@ -32,7 +32,7 @@ async function signOutAdminAndRedirect(): Promise<void> {
   adminSignOutInFlight = true;
   try {
     // Clear the cookie server-side so the cookie-only status probe flips to
-    // signed-out (best effort — proceed even if it fails).
+    // signed-out (best effort - proceed even if it fails).
     await fetch('/api/admin/auth/logout', { method: 'POST', credentials: 'include' }).catch(
       () => {},
     );

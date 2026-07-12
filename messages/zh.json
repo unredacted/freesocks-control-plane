@@ -3,7 +3,7 @@
   "common": {
     "copy": "复制",
     "copied": "已复制到剪贴板",
-    "copyFailed": "复制失败——请选中文本手动复制",
+    "copyFailed": "复制失败--请选中文本手动复制",
     "download": "下载",
     "cancel": "取消",
     "close": "关闭",
@@ -37,17 +37,17 @@
     "initial": "我是真人",
     "verifying": "验证中…",
     "solved": "已验证",
-    "error": "验证失败——请重试",
+    "error": "验证失败--请重试",
     "failedTitle": "无法完成真人验证。",
     "failedBody": "该验证在你的设备上运行，但未能完成。这通常是网络问题，而不是你的错。",
     "failedTip1": "稍等片刻，然后重试",
-    "failedTip2": "换一个网络试试 — 如果你所在地区的网站被屏蔽，可使用 VPN/代理",
+    "failedTip2": "换一个网络试试 - 如果你所在地区的网站被屏蔽，可使用 VPN/代理",
     "failedTip3": "仍然无法通过？试试隐私/无痕窗口，或关闭浏览器扩展"
   },
   "reveal": {
     "title": "立即保存你的账户号码",
     "subtitle": "这个 32 位数字是再次登录的唯一方式。没有电子邮件或密码可用于找回。一旦丢失，你的账户将永久无法恢复。",
-    "cannotRecover": "我们无法为你找回——客服也不行。",
+    "cannotRecover": "我们无法为你找回--客服也不行。",
     "saveHint": "把它保存到密码管理器，或写在安全私密的地方。",
     "confirmCheckbox": "我已把账户号码保存在安全的地方",
     "done": "我已保存",
@@ -60,7 +60,7 @@
   },
   "login": {
     "title": "使用账户号码登录",
-    "subtitle": "输入你保存的 32 位账户号码。这是唯一的登录方式——没有可找回的电子邮件或密码。",
+    "subtitle": "输入你保存的 32 位账户号码。这是唯一的登录方式--没有可找回的电子邮件或密码。",
     "label": "账户号码",
     "show": "显示",
     "hide": "隐藏",
@@ -70,7 +70,7 @@
     "getOne": "获取免费账户",
     "failed": "登录失败",
     "success": "已登录",
-    "sessionExpired": "请重新登录 — 你的会话可能已结束。",
+    "sessionExpired": "请重新登录 - 你的会话可能已结束。",
     "digitProgress": "{count}位数，共{total}位数字"
   },
   "account": {
@@ -85,7 +85,7 @@
     "signOut": "退出登录",
     "redeemTitle": "有会员码？",
     "redeemSubmit": "兑换码",
-    "redeemSuccess": "已兑换——你现在是 {tier}，还有 {days} 天。",
+    "redeemSuccess": "已兑换--你现在是 {tier}，还有 {days} 天。",
     "redeemFailed": "该码无效或已被使用。",
     "redeemAriaLabel": "会员码",
     "switchTo": "切换到 {label}",
@@ -127,7 +127,7 @@
     "refreshNoneBody": "如果你刚刚付款，请稍等片刻再试。",
     "refreshFailedTitle": "无法刷新会员状态",
     "graceTitle": "你的账户处于宽限期",
-    "graceBody": "你的会员已到期，此账户即将受限。请续订——捐款或在下方兑换会员码——以保留你的套餐。",
+    "graceBody": "你的会员已到期，此账户即将受限。请续订--捐款或在下方兑换会员码--以保留你的套餐。",
     "disabledTitle": "你的账户当前已停用",
     "disabledBody": "此账户的新密钥与更改已暂停。请在下方兑换会员码以重新激活，或联系支持并提供你的支持 ID。",
     "redeemPlaceholder": "FSM-XXXX-XXXX-XXXX",
@@ -150,7 +150,7 @@
         "desc": "您的支持 ID 和账号控制。"
       }
     },
-    "keyActionsHint": "这些更改只会改变您的代理连接——您的 32 位账号保持不变。",
+    "keyActionsHint": "这些更改只会改变您的代理连接--您的 32 位账号保持不变。",
     "deviceRevoke": "撤销",
     "deviceRevokedTitle": "设备被撤销",
     "deviceRevokedBody": "该插槽空闲。该设备将失去访问权限，直到重新导入您的订阅。",
@@ -168,7 +168,7 @@
   "error": {
     "offline": "你似乎已离线。请检查网络连接后重试。",
     "rateLimited": "尝试次数过多。请等待一分钟后重试。",
-    "backendUnavailable": "当前没有可用的代理服务器。你的账户是安全的——请几分钟后再创建密钥。",
+    "backendUnavailable": "当前没有可用的代理服务器。你的账户是安全的--请几分钟后再创建密钥。",
     "generic": "出错了，请重试。",
     "captchaFailed": "真人验证失败。请完成验证后重试。",
     "captchaUnconfigured": "服务暂时不可用，请几分钟后重试。",
@@ -179,7 +179,7 @@
     "sessionExpired": "您的会话已结束。请重新登录。",
     "invalidAccountId": "系统无法识别该账号。请检查并重试。",
     "codeInvalid": "该代码无法兑换。请检查是否有拼写错误，然后重试。",
-    "changeInProgress": "另一项更改已在进行中——请稍后再试。",
+    "changeInProgress": "另一项更改已在进行中--请稍后再试。",
     "backendDisabled": "目前无法选择此选项。",
     "noPeerTier": "您的套餐目前尚不支持切换。",
     "deviceNotFound": "该设备已不在您的帐户中。",
@@ -229,10 +229,10 @@
     "downloaded": "已下载 {filename}",
     "traffic": "流量",
     "unlimited": "不限量",
-    "configBelowNote": "你的完整配置在下方 — 请手动添加服务器。为保护隐私，这里不显示可自动更新的订阅链接（你的应用会通过 CDN 获取它）。",
+    "configBelowNote": "你的完整配置在下方 - 请手动添加服务器。为保护隐私，这里不显示可自动更新的订阅链接（你的应用会通过 CDN 获取它）。",
     "usedSoFar": "已使用 {amount}",
     "leftThisPeriod": "本周期剩余 {amount}。",
-    "nearlyOut": "即将用尽——本周期仅剩 {amount}。",
+    "nearlyOut": "即将用尽--本周期仅剩 {amount}。",
     "expires": "到期",
     "noExpiry": "永不过期",
     "expiresToday": "今天到期",
@@ -300,8 +300,8 @@
           "countPlural"
         ],
         "match": {
-          "countPlural=one": "你当前有 1 台已连接设备——都需要导入新链接",
-          "countPlural=other": "你当前有 {count} 台已连接设备——都需要导入新链接"
+          "countPlural=one": "你当前有 1 台已连接设备--都需要导入新链接",
+          "countPlural=other": "你当前有 {count} 台已连接设备--都需要导入新链接"
         }
       }
     ],
@@ -324,8 +324,8 @@
           "countPlural"
         ],
         "match": {
-          "countPlural=one": "你当前有 1 台已连接设备——请全部重新导入",
-          "countPlural=other": "你当前有 {count} 台已连接设备——请全部重新导入"
+          "countPlural=one": "你当前有 1 台已连接设备--请全部重新导入",
+          "countPlural=other": "你当前有 {count} 台已连接设备--请全部重新导入"
         }
       }
     ],
@@ -355,7 +355,7 @@
     "createAccountFailedTitle": "无法创建账户",
     "createSubFailedTitle": "无法创建订阅",
     "haveAccountPrefix": "已有账户？",
-    "lostNumberHint": "保存前丢失了账户号码？可以换一个新号码——",
+    "lostNumberHint": "保存前丢失了账户号码？可以换一个新号码--",
     "lostNumberLinkLabel": "在账户页面更换",
     "upsellTitle": "想要无限制？",
     "upsellBody": "随时可升级到 FreeSocks 会员，享受无限流量与设备。",
@@ -428,13 +428,13 @@
     "startFailed": "无法开始付款",
     "noStoreNote": "我们绝不存储你的邮箱或支付信息。",
     "confirmingTitle": "正在确认你的付款…",
-    "confirmingBody": "加密货币确认可能需要几分钟。你可以离开此页面——会员将自动激活。",
+    "confirmingBody": "加密货币确认可能需要几分钟。你可以离开此页面--会员将自动激活。",
     "paidTitle": "会员已激活",
     "paidBody": "谢谢！你的会员现已激活。",
     "failedTitle": "付款未完成",
     "failedBody": "你的付款未成功，或结账已过期。你可以重试。",
     "payNowpaymentsBadge": "私人的",
-    "cryptoPrivacyNote": "无需账户、邮箱或银行卡——私密支付。门罗币和Zcash提供最高的隐私保护。"
+    "cryptoPrivacyNote": "无需账户、邮箱或银行卡--私密支付。门罗币和Zcash提供最高的隐私保护。"
   },
   "mirror": {
     "disclosure": "连接有问题？",
@@ -443,7 +443,7 @@
     "addToAppHint": "将每个链接作为额外的订阅添加到你的应用中，然后尝试连接。",
     "regionLabel": "你所在的地区",
     "regionGlobal": "全球（任意地区）",
-    "regionNotStored": "仅用于选择就近的镜像 — 不会被存储。",
+    "regionNotStored": "仅用于选择就近的镜像 - 不会被存储。",
     "getButton": "获取镜像链接",
     "tryAnother": "尝试其他镜像",
     "working": "处理中…",
@@ -462,14 +462,14 @@
   },
   "delivery": {
     "title": "你最看重什么？",
-    "subtitle": "选择一个侧重点 — 仅保存在本设备，可随时更改。",
+    "subtitle": "选择一个侧重点 - 仅保存在本设备，可随时更改。",
     "evadeTitle": "保持连接",
     "evadeBody": "当你所在地区网站被封锁时最合适。我们会提供更难被封锁的备用链接。",
     "privacyTitle": "最大化隐私",
     "privacyBody": "追求最强保密性时最合适。我们会优先采用不让你的配置落到第三方服务器的方式。",
     "recommended": "推荐",
     "subtitleServer": "选择一个焦点。更改焦点后，系统会重新颁发匹配服务器的密钥；您当前的密钥将继续有效 24 小时。",
-    "subtitleSignup": "选择一个焦点。它会保存到你的账户，你的第一个密钥将使用它——可随时更改。",
+    "subtitleSignup": "选择一个焦点。它会保存到你的账户，你的第一个密钥将使用它--可随时更改。",
     "unavailable": "暂无",
     "confirmTitle": "切换到“ {label} \"？",
     "confirmBody": "这将重新颁发您用于{label}服务器的代理密钥。您当前的密钥将继续有效 24 小时，因此您可以先在所有设备上重新导入。",
@@ -511,7 +511,7 @@
     },
     "q3": {
       "question": "我需要提供邮箱地址或密码吗？",
-      "answer": "不。您只需通过一次性人工审核，我们就会生成一个32位数的账号——这就是您唯一的凭证。我们绝不会索要您的邮箱地址、电话号码或姓名。"
+      "answer": "不。您只需通过一次性人工审核，我们就会生成一个32位数的账号--这就是您唯一的凭证。我们绝不会索要您的邮箱地址、电话号码或姓名。"
     },
     "q4": {
       "question": "如果我的账号丢失了怎么办？",
@@ -523,7 +523,7 @@
     },
     "q6": {
       "question": "你记录了我的哪些信息？",
-      "answer": "尽可能少地收集信息：只收集您账号的哈希版本——绝不会收集您的电子邮件或姓名——也不会记录您访问的网站或您发送的流量。"
+      "answer": "尽可能少地收集信息：只收集您账号的哈希版本--绝不会收集您的电子邮件或姓名--也不会记录您访问的网站或您发送的流量。"
     },
     "q7": {
       "question": "我这里无法访问该链接，该怎么办？",
@@ -531,11 +531,11 @@
     },
     "q8": {
       "question": "我可以为别人购买会员资格吗？",
-      "answer": "是的——在您的账户页面，使用“购买分享码”功能购买会员码，您可以将这些会员码赠送给朋友或家人。每个会员码都适用于任何账户，不会影响您的账户。"
+      "answer": "是的--在您的账户页面，使用“购买分享码”功能购买会员码，您可以将这些会员码赠送给朋友或家人。每个会员码都适用于任何账户，不会影响您的账户。"
     },
     "q9": {
       "question": "我可以匿名支付吗？",
-      "answer": "是的。您可以使用加密货币支付——比特币，或使用门罗币 (Monero) 或 Zcash 以最大程度保护您的隐私——无需注册账户、邮箱或银行卡。付款确认后，您的会员资格将自动激活。"
+      "answer": "是的。您可以使用加密货币支付--比特币，或使用门罗币 (Monero) 或 Zcash 以最大程度保护您的隐私--无需注册账户、邮箱或银行卡。付款确认后，您的会员资格将自动激活。"
     }
   },
   "gift": {
@@ -554,7 +554,7 @@
     "copyAll": "全部复制",
     "reveal": {
       "title": "立即保存这些代码",
-      "body": "复制并分享每个代码。出于安全考虑，我们只会显示一次完整代码——之后您将只会看到前缀。",
+      "body": "复制并分享每个代码。出于安全考虑，我们只会显示一次完整代码--之后您将只会看到前缀。",
       "ack": "我已经保存了这些代码。",
       "saved": "我把它们保存下来了。",
       "leaveWarning": "您的代码仍然显示在屏幕上。如果您现在不保存就离开，您将无法再次看到它们。"
@@ -577,7 +577,7 @@
       "noAuthBody": "一次人工验证。保存您的账号即可登录。不收集邮箱地址。",
       "footnote": "此处显示的数字反映的是当前免费套餐的配置。完成验证即可获取您的套餐配置。",
       "upsellTitle": "想要无限量供应？",
-      "upsellBody": "获取{limits} — 并帮助 FreeSocks 继续免费供他人使用。",
+      "upsellBody": "获取{limits} - 并帮助 FreeSocks 继续免费供他人使用。",
       "fromPerMonth": "来自{price} /月"
     },
     "features": {
@@ -601,7 +601,7 @@
       "point1": "我们只存储您账号的哈希版本，绝不会存储账号本身。",
       "point2": "无需提供电子邮件地址、电话号码或姓名。我们从不索取这些信息。",
       "point3": "不会记录您访问的网站或您发送的流量。",
-      "point4": "我们不会存储任何付款详情——您在服务提供商的页面上付款，服务提供商永远不会看到您的帐户或代理订阅信息。"
+      "point4": "我们不会存储任何付款详情--您在服务提供商的页面上付款，服务提供商永远不会看到您的帐户或代理订阅信息。"
     },
     "how": {
       "title": "工作原理",
@@ -664,7 +664,7 @@
     "bannerWarnDetail": "暂时不要输入您的账号 - 请先通过带外方式验证此连接。",
     "verify": "核实",
     "verifyTitle": "验证此连接",
-    "verifyIntro": "FreeSocks 使用 HPKE 将您的账号和代理密钥与此服务器进行加密，因此即使 CDN 遭到入侵也无法读取它们。这些指纹可以识别您的浏览器正在使用的密钥——请将它们与带外发布的密钥值进行比较，以确保密钥未被替换。",
+    "verifyIntro": "FreeSocks 使用 HPKE 将您的账号和代理密钥与此服务器进行加密，因此即使 CDN 遭到入侵也无法读取它们。这些指纹可以识别您的浏览器正在使用的密钥--请将它们与带外发布的密钥值进行比较，以确保密钥未被替换。",
     "protectHeading": "它保护的是什么",
     "protectScope": "您的账号和密钥已使用 HPKE 加密到此服务器，因此网络及其前面的任何 CDN 都无法读取它们。",
     "protectServerReads": "FreeSocks 本身可以读取这些信息来设置您的帐户，因此这保护您免受中间网络的侵害，而不是免受服务器的侵害。",
@@ -681,7 +681,7 @@
     "attestationHeading": "在线服务器证明",
     "attestationOk": "已验证 - 服务器正在验证由您的应用信任的清单密钥签名的有效密钥。",
     "attestationEpoch": "当前键{kid} ，过期{expiry} 。",
-    "attestationFail": "无法验证服务器的当前密钥——可能是网络问题，或者 CDN 篡改了密钥端点。请在继续操作前进行带外验证。",
+    "attestationFail": "无法验证服务器的当前密钥--可能是网络问题，或者 CDN 篡改了密钥端点。请在继续操作前进行带外验证。",
     "attestationUnreachable": "实时密钥验证功能暂时不可用。您的连接仍使用应用内置的已验证密钥。",
     "attestationUnconfigured": "此版本未启用实时密钥检查。",
     "compareHeading": "如何验证",
@@ -690,7 +690,7 @@
     "channelSource": "源代码（重新构建以进行比较）",
     "channelOnion": "Tor镜像",
     "dnsHeading": "通过 DNS 验证",
-    "dnsBody": "请在终端中使用您自己的 DNS 解析器查找该 PIN 码——该解析器使用的路径不应经过此站点或其 CDN。查询结果应包含与上面显示的相同的指纹。（如果没有任何返回结果，则可能是运营商尚未发布该记录；请改用已签名的发布版本。）",
+    "dnsBody": "请在终端中使用您自己的 DNS 解析器查找该 PIN 码--该解析器使用的路径不应经过此站点或其 CDN。查询结果应包含与上面显示的相同的指纹。（如果没有任何返回结果，则可能是运营商尚未发布该记录；请改用已签名的发布版本。）",
     "dnsCommand": "在终端中运行此命令。",
     "dnsExpected": "它应该返回",
     "dnsCaveat": "仅当您的 DNS 服务器与 CDN 服务器并非由同一家公司运营时，才应使用独立 DNS 服务器；最好使用支持 DNSSEC 验证的解析器。为确保万无一失，请同时确认已签署的发布文件中的相同值。",

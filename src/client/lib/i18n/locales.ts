@@ -2,7 +2,7 @@
  * i18n (P1-15): launch locales. English + the four censored-region audiences the
  * service targets, two of them RTL. The catalog is a plain typed object per
  * locale (en is the source of truth; the others fall back to en for any missing
- * key), so locales tree-shake and there's no runtime i18n dependency — in keeping
+ * key), so locales tree-shake and there's no runtime i18n dependency - in keeping
  * with the project's "bundle everything, zero third-party" stance.
  */
 export const LOCALES = [

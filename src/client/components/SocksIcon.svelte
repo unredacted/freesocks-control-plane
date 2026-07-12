@@ -3,7 +3,7 @@
    * A sock (footwear) brand glyph for FreeSocks. Lucide ships no socks icon, so
    * this is hand-rolled in lucide's outline style (24×24, stroke-width 2, round
    * caps/joins, currentColor): a leg that bends at the ankle into a foot with a
-   * rounded toe and heel, plus a cuff line at the opening — the cues that read as
+   * rounded toe and heel, plus a cuff line at the opening - the cues that read as
    * a sock rather than a bare L. Pass a `class` (e.g. `size-4`) like a lucide icon.
    */
   let { class: className = '' }: { class?: string } = $props();

@@ -24,7 +24,7 @@
   let creating = $state(false);
   let pendingDelete = $state<Provider | null>(null);
 
-  // Mirroring is active iff ≥1 provider is enabled — the same gate the issuance
+  // Mirroring is active iff ≥1 provider is enabled - the same gate the issuance
   // saga + refresh cron use. Surface it so an operator knows the feature's state.
   const activeCount = $derived((providers.data ?? []).filter((p) => p.isActive).length);
 
@@ -51,7 +51,7 @@
     <div>
       <h1 class="text-2xl font-bold">Storage mirrors</h1>
       <p class="text-sm text-muted-foreground mt-1">
-        S3-compatible buckets the subscription content is mirrored to — the censorship-resistance
+        S3-compatible buckets the subscription content is mirrored to - the censorship-resistance
         hedge, so a client can still fetch its key if the control plane is blocked. Mirroring runs
         while at least one provider below is enabled.
       </p>
@@ -89,10 +89,10 @@
         : 'bg-amber-500/10 border border-amber-500/40 text-amber-600'}"
     >
       {#if activeCount > 0}
-        Mirroring is <strong>active</strong> — new and refreshed keys are copied to {activeCount}
+        Mirroring is <strong>active</strong> - new and refreshed keys are copied to {activeCount}
         enabled {activeCount === 1 ? 'provider' : 'providers'}.
       {:else}
-        Mirroring is <strong>paused</strong> — no provider is enabled.
+        Mirroring is <strong>paused</strong> - no provider is enabled.
       {/if}
     </div>
     <div class="space-y-3">

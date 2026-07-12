@@ -4,7 +4,7 @@
   import { t } from '../lib/i18n/index.svelte';
 
   /**
-   * Confirmation dialog for rotating the account number — the most destructive
+   * Confirmation dialog for rotating the account number - the most destructive
    * member action (it invalidates the only credential immediately). Mirrors
    * RegenerateModal/SwitchBackendModal so all three destructive account actions
    * share one shape: Dialog with focus trap + Escape, consequences up front,

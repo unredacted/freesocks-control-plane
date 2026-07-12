@@ -16,9 +16,9 @@
    * identity referenced by billing.tierSlug / membership codes / webhooks);
    * create mode adds the slug. `updateTier` accepts every field, so an admin
    * can change a tier's description, limits, device-limit enforcement,
-   * strategy, priority, and flags after creation — keeping the public
+   * strategy, priority, and flags after creation - keeping the public
    * comparison cards (which render name/description/limits) DB-driven.
-   * Uses Dialog.Root (focus trap + Escape) — the old hand-rolled fixed
+   * Uses Dialog.Root (focus trap + Escape) - the old hand-rolled fixed
    * overlay had neither. The parent owns the mutation; this stays
    * presentational.
    */
@@ -229,7 +229,7 @@
             checked={draft.hwidEnabled}
             onCheckedChange={(v) => (draft = { ...draft, hwidEnabled: v === true })}
           />
-          <span>Enforce device limit (HWID) — off = unlimited devices</span>
+          <span>Enforce device limit (HWID) - off = unlimited devices</span>
         </label>
         <div>
           <label class="text-xs text-muted-foreground mb-1 block" for="tier-hwid">HWID limit</label>

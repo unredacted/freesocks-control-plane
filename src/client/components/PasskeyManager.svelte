@@ -17,7 +17,7 @@
    * Member passkey manager. In the account Security tab it lists + adds + removes
    * passkeys; on the sign-up step it's rendered with `showList={false}` as a
    * one-shot "add a passkey" prompt. Either way it leads with the sync/anonymity
-   * warning — a passkey is opt-in and the account number stays the recovery secret.
+   * warning - a passkey is opt-in and the account number stays the recovery secret.
    */
   let { showList = true, onEnrolled }: { showList?: boolean; onEnrolled?: () => void } = $props();
 

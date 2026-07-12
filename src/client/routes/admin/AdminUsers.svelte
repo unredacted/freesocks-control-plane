@@ -61,7 +61,7 @@
   let inputText = $state(initialParams.get('q') ?? '');
   let activeQuery = $state(initialParams.get('q') ?? '');
   // Server-supported list filters (UserSearchQuery): wired here for the first
-  // time — the API honored them, the UI just never offered them.
+  // time - the API honored them, the UI just never offered them.
   let statusFilter = $state(initialParams.get('status') ?? '');
   let tierFilter = $state(initialParams.get('tier') ?? '');
   // Restrict to users whose last backend push failed (entitlement drift).
@@ -70,7 +70,7 @@
   // Reflect the committed filters into the URL query string (only non-default
   // values) so refresh/deep-link preserves them. replaceState (not pushState)
   // keeps the back button behaving like the pre-filter page. We don't touch the
-  // router — this is a pure URL sync.
+  // router - this is a pure URL sync.
   $effect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams();
@@ -97,7 +97,7 @@
   const qc = useQueryClient();
 
   // Per-user LIVE backend state (status/usage/devices), lazily fetched only for
-  // the currently-expanded row — the users list itself stays a cheap DB read.
+  // the currently-expanded row - the users list itself stays a cheap DB read.
   let expandedUserId = $state<string | null>(null);
   const backendState = adminUserBackendStateQuery(
     () => expandedUserId ?? '',
@@ -358,7 +358,7 @@
             </div>
             {#if expandedUserId === u.id}
               <!-- Live backend state (lazy): the actual key status/usage on the panel,
-                   vs FCP's local status — a per-user complement to the drift badge. -->
+                   vs FCP's local status - a per-user complement to the drift badge. -->
               <div class="mt-3 rounded-lg border border-border bg-muted/30 p-3 text-xs space-y-1.5">
                 {#if backendState.isPending}
                   <Skeleton class="h-4 w-56" />

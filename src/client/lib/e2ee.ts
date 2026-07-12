@@ -63,7 +63,7 @@ export function sealingEnabled(): boolean {
 /**
  * The baked public E2EE identity, for the "Verify connection" panel (all
  * base64url strings; the key fields are undefined in a dark build). Non-secret by
- * design — these are the public halves baked into the bundle.
+ * design - these are the public halves baked into the bundle.
  */
 export function e2eePins(): {
   hpkePk?: string;
@@ -82,7 +82,7 @@ export function e2eePins(): {
 }
 
 /**
- * Out-of-band-comparable fingerprints of the baked public keys — the SAME values
+ * Out-of-band-comparable fingerprints of the baked public keys - the SAME values
  * `scripts/e2ee-fingerprint.mjs` publishes (both call `fingerprintB64Url`), so a
  * user can compare what the browser shows against the signed release / .onion
  * mirror. Undefined fields mean that key isn't baked.

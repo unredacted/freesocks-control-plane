@@ -16,7 +16,7 @@
    * server-side and delivered over the SEALED reveal-leg channel (the CDN sees
    * ciphertext), so a member can copy it by hand WITHOUT their proxy client
    * pulling the subscription URL through a CDN in plaintext. Fetched only while
-   * the panel is open — a deliberate, on-demand reveal, not auto-loaded.
+   * the panel is open - a deliberate, on-demand reveal, not auto-loaded.
    */
   interface Props {
     /** Open on mount + auto-open when promoted (privacy mode makes this the
@@ -60,7 +60,7 @@
         const decoded = atob(trimmed.replace(/\s+/g, ''));
         if (decoded.includes('://')) return decoded.trim();
       } catch {
-        /* not base64 — show raw */
+        /* not base64 - show raw */
       }
     }
     return raw;

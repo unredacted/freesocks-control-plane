@@ -7,7 +7,7 @@
  * a callable message returning a non-empty string, and the dynamic `t()`-style
  * lookup by the original dotted id works (the shim relies on it).
  *
- * Requires the Paraglide output (gitignored) — `bun run test` compiles it first.
+ * Requires the Paraglide output (gitignored) - `bun run test` compiles it first.
  */
 import { describe, expect, test } from 'vitest';
 import { m } from '../../../lib/paraglide/messages.js';

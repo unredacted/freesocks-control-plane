@@ -113,7 +113,7 @@
           </CardHeader>
           <CardContent class="text-sm space-y-1">
             <div class="text-muted-foreground">
-              Platforms: <strong class="text-foreground">{c.platforms.join(', ') || '—'}</strong> ·
+              Platforms: <strong class="text-foreground">{c.platforms.join(', ') || '-'}</strong> ·
               Backends: <strong class="text-foreground">{c.backends.join(', ')}</strong>
             </div>
             <div class="text-muted-foreground">

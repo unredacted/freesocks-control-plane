@@ -14,7 +14,7 @@
   /**
    * Modal editor for one S3 mirror provider. The secretAccessKey is write-only:
    * blanked on open, only re-submitted if the admin retypes it (so editing other
-   * fields never wipes the stored credential — same idiom as BackendServerEditor).
+   * fields never wipes the stored credential - same idiom as BackendServerEditor).
    */
   interface Props {
     provider?: z.infer<typeof MirrorProviderAdmin>;
@@ -90,7 +90,7 @@
         TestResp,
       );
       testResult = result.ok
-        ? { ok: true, message: 'Reachable — a health object was written to the bucket.' }
+        ? { ok: true, message: 'Reachable - a health object was written to the bucket.' }
         : { ok: false, message: result.error };
     } catch (err) {
       testResult = { ok: false, message: apiErrorMessage(err) };

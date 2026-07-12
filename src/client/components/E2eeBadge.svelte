@@ -14,7 +14,7 @@
    * attestation (shared via e2ee-status, one fetch per page) turns the badge amber
    * ONLY if the key endpoint is reachable but its key fails to verify (the active-CDN
    * tamper tell); a network blip stays green (the pinned key is still in use). The
-   * loud "don't enter your account number" escalation lives in E2eeAlert — this badge
+   * loud "don't enter your account number" escalation lives in E2eeAlert - this badge
    * is the quiet steady-state signal and the entry point to the Verify panel.
    */
   interface Props {

@@ -29,7 +29,7 @@
   const qc = useQueryClient();
 
   // The two shipped modes. (The generic catalog is data-driven; the pool editor
-  // stays keyed to the known modes — a novel mode would add a row here.)
+  // stays keyed to the known modes - a novel mode would add a row here.)
   let cpAvailable = $derived({
     evade: config.data?.connectionModes?.find((m) => m.id === 'evade')?.available ?? false,
     privacy: config.data?.connectionModes?.find((m) => m.id === 'privacy')?.available ?? false,
@@ -50,7 +50,7 @@
   const save = createMutation(() => ({
     mutationFn: async () => {
       const modes: Record<string, { squadUuids: string[] }> = {};
-      // Only send a mode when the admin typed something — blank keeps the current
+      // Only send a mode when the admin typed something - blank keeps the current
       // binding (keep-secret-on-blank). An explicit line clears/sets the pool.
       const evade = parseSquadList(draft.evade);
       const privacy = parseSquadList(draft.privacy);
@@ -116,7 +116,7 @@
       <CardHeader>
         <CardTitle class="text-base">Node placement pools</CardTitle>
         <CardDescription>
-          Bind each connection mode to a POOL of Remnawave internal-squad UUIDs — one squad per node
+          Bind each connection mode to a POOL of Remnawave internal-squad UUIDs - one squad per node
           (create them on the panel, e.g. via the Ansible role). At issuance FCP homes a new key to
           the least-loaded node of the chosen mode's pool. Squad UUIDs are write-only; one per line,
           2+ = a load-balanced pool. Leave a field blank to keep the current binding. The Ansible
@@ -147,7 +147,7 @@
               rows="2"
               class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 font-mono text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
               placeholder={cpAvailable[m.id as 'evade' | 'privacy']
-                ? 'Bound — leave blank to keep'
+                ? 'Bound - leave blank to keep'
                 : 'squad-uuid per line'}
               value={draft[m.id as 'evade' | 'privacy']}
               oninput={(e) =>
@@ -192,7 +192,7 @@
           </div>
         {:else}
           <p class="text-muted-foreground">
-            No node stats yet — they populate after the first healthcheck cycle once a pool is
+            No node stats yet - they populate after the first healthcheck cycle once a pool is
             bound.
           </p>
         {/if}
@@ -234,7 +234,7 @@
             {applyLogging.isPending
               ? 'Applying…'
               : armApply
-                ? 'Confirm — restarts nodes'
+                ? 'Confirm - restarts nodes'
                 : 'Disable IP logging on all nodes'}
           </Button>
         </div>

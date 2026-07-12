@@ -1,7 +1,7 @@
 /**
  * i18n runtime: a thin reactive layer over the Paraglide-compiled messages.
  *
- *  - Messages live in `messages/{locale}.json` (inlang message-format) — the
+ *  - Messages live in `messages/{locale}.json` (inlang message-format) - the
  *    source of truth. The Vite plugin (and `bun run i18n:compile`) compiles them
  *    to tree-shaken JS in `src/lib/paraglide`; `bun run i18n:translate`
  *    machine-fills the non-base locales so they no longer need hand-editing.

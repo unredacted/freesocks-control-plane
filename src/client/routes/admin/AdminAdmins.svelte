@@ -65,7 +65,7 @@
   async function copyUrl() {
     if (!revealed) return;
     if (await copyText(revealed.url)) toast.success('Invite link copied');
-    else toast.error('Copy failed — select the link and copy manually');
+    else toast.error('Copy failed - select the link and copy manually');
   }
 
   // --- W3-8a: lifecycle (deactivate / reactivate + per-passkey revoke) -------
@@ -118,7 +118,7 @@
 <AdminLayout>
   <h1 class="text-2xl font-bold mb-2">Admins</h1>
   <p class="text-sm text-muted-foreground mb-6">
-    Admins sign in with a passkey — no shared username or password. To add another admin, create an
+    Admins sign in with a passkey - no shared username or password. To add another admin, create an
     invite and send them the one-time link; they open it on their own device and register their
     passkey. Links are shown once and expire in 24 hours.
   </p>
@@ -299,7 +299,7 @@
         <AlertDialog.Description>
           Their existing sessions stop working immediately and they cannot sign in again until an
           admin reactivates them. If this is your own account, make sure another admin with a
-          passkey can still sign in — the last admin who can sign in cannot be deactivated.
+          passkey can still sign in - the last admin who can sign in cannot be deactivated.
         </AlertDialog.Description>
       </AlertDialog.Header>
       <AlertDialog.Footer>
@@ -328,7 +328,7 @@
         <AlertDialog.Title>Revoke this passkey?</AlertDialog.Title>
         <AlertDialog.Description>
           “{confirmRevoke?.cred.deviceLabel ?? 'Passkey'}” will no longer be able to sign in. This
-          cannot be undone — the device must re-register via a new invite. The last passkey that can
+          cannot be undone - the device must re-register via a new invite. The last passkey that can
           sign in cannot be revoked.
         </AlertDialog.Description>
       </AlertDialog.Header>

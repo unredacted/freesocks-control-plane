@@ -1,6 +1,6 @@
 /**
  * Locale-aware date formatting. `getLocale()` reads the i18n $state, so any
- * template calling these re-renders when the user switches language — the same
+ * template calling these re-renders when the user switches language - the same
  * reactivity contract as t(). Passing the APP locale (not `undefined`) matters:
  * a user who picks Farsi with an English browser gets Persian-digit dates.
  */

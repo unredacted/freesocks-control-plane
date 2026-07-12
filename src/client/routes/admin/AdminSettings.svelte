@@ -67,7 +67,7 @@
       draft = { ...updated };
       void qc.invalidateQueries({ queryKey: queryKeys.adminSettings });
       // Settings feed the public /api/v1/config (backend toggles, default, labels)
-      // — refresh it too so member tabs in this browser don't serve stale config.
+      // - refresh it too so member tabs in this browser don't serve stale config.
       void qc.invalidateQueries({ queryKey: queryKeys.config });
       toast.success('Settings saved');
     },
@@ -123,7 +123,7 @@
   }));
 
   // Site chrome (announcement banner + footer repo link) lives in its own namespace
-  // (publicConfig.site), like verification — own draft + save. The server sanitizes
+  // (publicConfig.site), like verification - own draft + save. The server sanitizes
   // the banner text (trim/cap) and the repo URL (https-only) and echoes the cleaned
   // values back.
   let sDraft = $state<{
@@ -178,7 +178,7 @@
     },
   }));
 
-  // Connection modes (transport) — the GENERIC catalog (label/description/default).
+  // Connection modes (transport) - the GENERIC catalog (label/description/default).
   // The Remnawave placement pool (which nodes each mode issues into) is managed on
   // the Remnawave admin page, not here.
   let cpDraft = $state<{
@@ -235,7 +235,7 @@
       );
     },
     onSuccess: (updated) => {
-      // label/description come back null when cleared — reflect that as blank inputs.
+      // label/description come back null when cleared - reflect that as blank inputs.
       cpDraft = {
         default: updated.modes.find((m) => m.isDefault)?.id ?? cpDraft.default,
         evadeLabel: updated.modes.find((m) => m.id === 'evade')?.label ?? '',
@@ -306,7 +306,7 @@
             <strong class="text-foreground">
               Enforcement also requires HWID_DEVICE_LIMIT_ENABLED=true on the Remnawave panel</strong
             >
-            — FCP can't read or set that panel setting. Set the per-tier limit under Tiers.
+            - FCP can't read or set that panel setting. Set the per-tier limit under Tiers.
           </CardDescription>
         </CardHeader>
         <CardContent class="text-sm">
@@ -500,7 +500,7 @@
             </label>
             <Input
               id="privacy-countries"
-              placeholder="(none — always suggest stay-connected)"
+              placeholder="(none - always suggest stay-connected)"
               value={privacyCountriesText}
               oninput={(e) => {
                 privacyCountriesText = (e.target as HTMLInputElement).value;
@@ -689,8 +689,8 @@
             The member-facing transport choice: "Stay connected" (evade) and "Maximize privacy"
             (privacy). Set the default and, optionally, a custom label/description that replaces the
             member picker's translated copy verbatim in EVERY language (leave blank to keep the
-            app's own translations). Which Remnawave nodes each mode issues into — the placement
-            pool + live node load — is managed on the <strong>Remnawave</strong> page.
+            app's own translations). Which Remnawave nodes each mode issues into - the placement
+            pool + live node load - is managed on the <strong>Remnawave</strong> page.
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-5 text-sm">

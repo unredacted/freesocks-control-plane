@@ -7,8 +7,8 @@
    * Confirmation dialog for `/api/v1/account/switch-mode` (the connection-mode /
    * transport choice). Switching now moves the member's EXISTING key to the new
    * mode's servers in place (same subscription URL/token), so it's a light,
-   * non-destructive confirm — not the re-issue-and-tombstone that regenerate /
-   * switch-backend warrant. Purely presentational — the mutation lives in the
+   * non-destructive confirm - not the re-issue-and-tombstone that regenerate /
+   * switch-backend warrant. Purely presentational - the mutation lives in the
    * ConnectionModeSwitcher.
    */
   interface Props {

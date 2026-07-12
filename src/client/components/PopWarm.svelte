@@ -8,7 +8,7 @@
    * This lives in its OWN component, rendered INSIDE <QueryClientProvider>,
    * because meQuery() -> createQuery() reads the query client from Svelte
    * context at init. App.svelte hosts the provider, so its script runs BEFORE
-   * its own provider child mounts — calling meQuery() there threw
+   * its own provider child mounts - calling meQuery() there threw
    * "No QueryClient was found in Svelte context" and crashed the whole SPA.
    * Renders nothing.
    */

@@ -39,7 +39,7 @@
   let revealed = $state<{ codes: string[]; batchId: string } | null>(null);
   let acknowledged = $state(false);
 
-  // Revoke is irreversible (a donor may be holding the code) — confirm first.
+  // Revoke is irreversible (a donor may be holding the code) - confirm first.
   let pendingRevoke = $state<{ id: string; codePrefix: string } | null>(null);
 
   const mint = createMutation(() => ({
@@ -89,7 +89,7 @@
   async function copyAll() {
     if (!revealed) return;
     if (await copyText(revealed.codes.join('\n'))) toast.success('Codes copied to clipboard');
-    else toast.error('Copy failed — select the codes and copy manually');
+    else toast.error('Copy failed - select the codes and copy manually');
   }
   function downloadAll() {
     if (!revealed) return;
@@ -113,7 +113,7 @@
   <h1 class="text-2xl font-bold mb-2">Membership codes</h1>
   <p class="text-sm text-muted-foreground mb-6">
     Mint redeemable codes that grant or extend a paid tier. Hand a code to a donor; they redeem it
-    on their account page. Codes are shown once — store them now.
+    on their account page. Codes are shown once - store them now.
   </p>
 
   <!-- Mint form -->
@@ -228,7 +228,7 @@
       <AlertDialog.Header>
         <AlertDialog.Title>Revoke code {pendingRevoke?.codePrefix}…?</AlertDialog.Title>
         <AlertDialog.Description>
-          The code becomes unusable immediately — a donor holding it will not be able to redeem it.
+          The code becomes unusable immediately - a donor holding it will not be able to redeem it.
           This cannot be undone.
         </AlertDialog.Description>
       </AlertDialog.Header>
@@ -266,7 +266,7 @@
           revealed?.codes ?? []
         ).join('\n')}</pre>
       <p class="text-xs text-muted-foreground">
-        Batch: <code class="select-all font-mono">{revealed?.batchId}</code> — shown in the list for cross-referencing
+        Batch: <code class="select-all font-mono">{revealed?.batchId}</code> - shown in the list for cross-referencing
         after this dialog closes.
       </p>
       <div class="flex gap-2">

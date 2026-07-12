@@ -4,7 +4,7 @@
    * processor to /account?order=ref; Account's poll hands us the plaintext codes).
    * Mirrors AccountNumberReveal: a blocking AlertDialog gated on an "I saved them"
    * checkbox + a beforeunload guard, because the codes are bearer secrets shown
-   * ONCE — the server clears the transient buffer on ack, and afterwards only a
+   * ONCE - the server clears the transient buffer on ack, and afterwards only a
    * prefix is ever shown.
    */
   import * as AlertDialog from '@client/components/ui/alert-dialog';

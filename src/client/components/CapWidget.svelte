@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Self-hosted Cap captcha widget (W1) — the replacement for the Cloudflare
+   * Self-hosted Cap captcha widget (W1) - the replacement for the Cloudflare
    * Turnstile component. `@cap.js/widget` is BUNDLED from npm (not a remote
    * script), and challenge traffic goes to our SAME-ORIGIN `/cap` path (Caddy
    * proxies it to the Cap service), so the app now loads ZERO third-party
@@ -16,13 +16,13 @@
    * rather than a silent dead-end.
    *
    * The PoW WASM + pako are served SAME-ORIGIN (cap-wasm-config, imported first)
-   * so nothing is fetched from cdn.jsdelivr.net — preserving the zero-third-party
+   * so nothing is fetched from cdn.jsdelivr.net - preserving the zero-third-party
    * guarantee and working where that CDN is blocked.
    *
    * The widget package (+ its WASM plumbing) is LAZY-imported on mount: Login and
    * GetAccount sit on the statically-routed member entry chunk, so a static
    * import here would make every first-time visitor on the Home page download
-   * the captcha machinery they may never use — real bytes on a censored, slow
+   * the captcha machinery they may never use - real bytes on a censored, slow
    * link. cap-wasm-config must still load BEFORE the widget registers.
    */
   import { t } from '../lib/i18n/index.svelte';
@@ -57,7 +57,7 @@
         await import('@cap.js/widget');
         if (!cancelled) widgetReady = true;
       } catch (err) {
-        // Flaky network dropped the lazy chunk — same recovery UI as a solve error.
+        // Flaky network dropped the lazy chunk - same recovery UI as a solve error.
         console.error('Cap widget failed to load', err);
         if (!cancelled) failed = true;
       }
@@ -123,10 +123,10 @@
   /**
    * Public: clear any solved token and remount the widget for a FRESH challenge.
    * The server consumes a Cap token on verify (single-use), so after ANY failed
-   * submission the held token is spent — a consumer's onError MUST call this or
+   * submission the held token is spent - a consumer's onError MUST call this or
    * every retry fails "captcha verification failed" until a page reload. Also
    * doubles as the failure-state "retry" (re-attempts a chunk-load failure too).
-   * Callable via `bind:this` — see Login.svelte / GetAccount.svelte.
+   * Callable via `bind:this` - see Login.svelte / GetAccount.svelte.
    */
   export function reset() {
     failed = false;

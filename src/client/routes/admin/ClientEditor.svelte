@@ -14,7 +14,7 @@
   /**
    * Modal editor for one recommended client app (the DB-driven catalog). No
    * secrets. `schemeId` picks the one-tap import deep-link builder (SCHEME_IDS,
-   * code-defined) — "None" = the app only supports manual / QR import.
+   * code-defined) - "None" = the app only supports manual / QR import.
    */
   interface Props {
     client?: z.infer<typeof ClientAdmin>;
