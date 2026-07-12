@@ -398,7 +398,7 @@
     "title": "Donations support Unredacted",
     "body": "Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site.",
     "collectiveTitle": "Donation impact",
-    "collectiveBody": "Donations raise every free user's monthly bandwidth for the month they're given. This is what the community's donations are doing right now.",
+    "collectiveBody": "Donations made through FreeSocks raise every free user's monthly bandwidth for the month they're given. This is what the community's donations are doing right now.",
     "bonusThisMonth": "GB added this month",
     "bonusThisMonthDetail": "on top of every free account's monthly allowance",
     "usersHelped": "free accounts reached",
@@ -418,7 +418,8 @@
         }
       }
     ],
-    "empty": "No donations yet this month — the first one starts the counter."
+    "empty": "No donations yet this month — the first one starts the counter.",
+    "externalNote": "This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here."
   },
   "donate": {
     "addTitle": "Add a donation",
@@ -650,14 +651,16 @@
   "home": {
     "impact": {
       "title": "Donations at work",
-      "body": "Every donation raises the monthly bandwidth of every free account for that month. This is what donors have added so far — you could add to it too.",
+      "body": "Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far — you could add to it too.",
       "cta": "Make a donation",
       "chartAria": "Bandwidth added to every free user by donations, month by month"
     },
     "hero": {
       "eyebrow": "Operated by Unredacted, a US 501(c)(3) nonprofit",
-      "title": "A free VPN for users in heavily-censored regions.",
-      "subtitle": "Create a free account with one human-check, then get a subscription URL for any modern VPN client — censorship-resistant, and private by design for anyone who wants it. No email or password. A FreeSocks membership unlocks {limits}."
+      "title": "A free VPN for people in censored countries — private by design.",
+      "subtitle": "FreeSocks exists to get people online where the internet is censored, and works as a privacy-friendly VPN anywhere. One human-check creates your account: no email, no password, nothing that identifies you. Paste your subscription URL into any modern VPN client. A FreeSocks membership unlocks {limits}.",
+      "impactNote": "Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month.",
+      "impactLink": "See the impact"
     },
     "cta": {
       "getMembership": "Get a membership"

@@ -57,6 +57,12 @@
   function goDonate() {
     router.navigate(me.data?.authenticated ? '/account?tab=membership' : '/get-account');
   }
+  // Hero callout → the impact section further down the page. Smooth only when
+  // the user hasn't asked for reduced motion (JS scrolls bypass the CSS clamp).
+  function scrollToImpact() {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.getElementById('impact')?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
+  }
 
   // Compose a localized limits phrase from the structured (DB-driven) tier
   // limits: the numbers come from config, the words from the catalog. Reading
@@ -176,6 +182,27 @@
       <p class="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
         {t('home.hero.subtitle', { limits: membershipLimits })}
       </p>
+
+      <!-- Social-impact callout: what makes this VPN different — donations made
+           in-app buy bandwidth for every free user that month. Links down to the
+           live impact section. Renders only while donations are live. -->
+      {#if billingEnabled && donation?.enabled}
+        <div
+          class="donation-sheen max-w-xl rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-sm leading-relaxed"
+        >
+          <Heart
+            class="inline size-3.5 -mt-0.5 me-1.5 text-amber-600 dark:text-amber-300"
+            aria-hidden="true"
+          />{t('home.hero.impactNote')}
+          <button
+            type="button"
+            class="ms-1.5 rounded-sm font-medium underline text-amber-700 dark:text-amber-300 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onclick={scrollToImpact}
+          >
+            {t('home.hero.impactLink')}
+          </button>
+        </div>
+      {/if}
 
       <div class="flex flex-wrap gap-3">
         {#if !me.isPending && me.data?.authenticated}
@@ -404,7 +431,7 @@
        flat zero baseline with the "first one starts the counter" note. All
        numbers are GB / user counts (no dollar figures). -->
   {#if billingEnabled && donation?.enabled}
-    <section class="rounded-2xl border border-border bg-card p-6 md:p-10">
+    <section id="impact" class="scroll-mt-24 rounded-2xl border border-border bg-card p-6 md:p-10">
       <div class="grid gap-8 md:grid-cols-2 md:items-center">
         <div class="max-w-xl space-y-3">
           <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
@@ -432,6 +459,10 @@
               {t('home.impact.cta')}
             </Button>
           </div>
+          <!-- Only in-app donations feed the counter; direct nonprofit gifts don't. -->
+          <p class="text-xs text-muted-foreground leading-relaxed">
+            {t('impact.externalNote')}
+          </p>
         </div>
         <div class="donation-sheen rounded-xl border border-amber-500/30 bg-background/60 p-4">
           <DitherChart

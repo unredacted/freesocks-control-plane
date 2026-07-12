@@ -562,9 +562,7 @@
   },
   "home": {
     "hero": {
-      "eyebrow": "由美国501(c)(3)非营利组织Unredacted运营",
-      "title": "为网络审查严格的地区用户提供免费代理。",
-      "subtitle": "只需一次人工验证即可创建一个免费帐户，然后即可获得适用于任何现代 VPN 客户端的订阅 URL。无需电子邮件或密码。FreeSocks 会员资格可解锁{limits} 。"
+      "eyebrow": "由美国501(c)(3)非营利组织Unredacted运营"
     },
     "cta": {
       "getMembership": "加入会员"

@@ -106,6 +106,10 @@
         {/if}
       </div>
     {/if}
+    <!-- Only in-app donations feed the counter; direct nonprofit gifts don't. -->
+    <p class="text-xs text-muted-foreground leading-relaxed">
+      {t('impact.externalNote')}
+    </p>
   {/if}
 
   <div class="pt-1 flex flex-wrap gap-3">
