@@ -15,12 +15,17 @@ export type BillingProcessor = z.infer<typeof BillingProcessor>;
 
 export const CheckoutRequest = z.object({
   processor: BillingProcessor,
-  /** A duration offered in PublicConfig.billing.durations (validated server-side against the catalog). */
-  months: z.number().int().positive(),
-  /** 'gift' buys `quantity` shareable codes instead of extending your own membership. Default 'self'. */
-  kind: z.enum(['self', 'gift']).optional(),
-  /** Number of codes for a gift order (1..50). Ignored for 'self'. */
+  /** A duration offered in PublicConfig.billing.durations (validated server-side against
+   *  the catalog). Optional — omitted for a standalone donation (kind 'donation'). */
+  months: z.number().int().positive().optional(),
+  /** 'gift' buys `quantity` shareable codes; 'donation' is a standalone donation (no
+   *  membership); default 'self' extends your own membership. */
+  kind: z.enum(['self', 'gift', 'donation']).optional(),
+  /** Number of codes for a gift order (1..50). Ignored for 'self'/'donation'. */
   quantity: z.number().int().positive().max(50).optional(),
+  /** Optional donation in cents — added on top of a membership (self/gift), or the
+   *  entire charge for a standalone donation (kind 'donation'). */
+  donationCents: z.number().int().nonnegative().optional(),
 });
 export type CheckoutRequest = z.infer<typeof CheckoutRequest>;
 
@@ -39,8 +44,8 @@ export const OrderStatusResponse = z.object({
   status: BillingOrderStatus,
   /** The member's membership expiry once `paid` (ISO); null while pending/failed. */
   membershipExpiresAt: z.string().datetime().nullable(),
-  /** 'self' extends the buyer's membership; 'gift' mints shareable codes. */
-  kind: z.enum(['self', 'gift']).default('self'),
+  /** 'self' extends the buyer's membership; 'gift' mints shareable codes; 'donation' grants nothing. */
+  kind: z.enum(['self', 'gift', 'donation']).default('self'),
   /** Gift orders only: the freshly-minted codes, revealed ONCE on return (empty
    *  once acknowledged / for self orders). Plaintext — show, let the buyer save, ack. */
   giftCodes: z.array(z.string()).default([]),
@@ -54,6 +59,24 @@ export const BillingDuration = z.object({
   amountCents: z.number().int(),
 });
 export type BillingDuration = z.infer<typeof BillingDuration>;
+
+/** Optional-donation config (add-on + standalone → free-user bandwidth pool). */
+export const DonationConfigView = z.object({
+  enabled: z.boolean(),
+  suggestedAmountsCents: z.array(z.number().int()),
+  minAmountCents: z.number().int(),
+  bonusGbPerUsd: z.number(),
+  monthlyBonusCapGb: z.number(),
+});
+export type DonationConfigView = z.infer<typeof DonationConfigView>;
+
+const DONATION_VIEW_DEFAULT: DonationConfigView = {
+  enabled: false,
+  suggestedAmountsCents: [],
+  minAmountCents: 0,
+  bonusGbPerUsd: 0,
+  monthlyBonusCapGb: 0,
+};
 
 /** The full (admin-editable) billing config — superset of PublicConfig.billing. */
 export const BillingConfigView = z.object({
@@ -71,6 +94,8 @@ export const BillingConfigView = z.object({
   cryptoMinMonths: z.number().int(),
   /** Minimum term (months) purchasable with the BTCPay rail (default 1). */
   btcpayMinMonths: z.number().int().default(1),
+  /** Defaulted so a transient SPA-newer-than-backend deploy skew still parses. */
+  donation: DonationConfigView.default(DONATION_VIEW_DEFAULT),
 });
 export type BillingConfigView = z.infer<typeof BillingConfigView>;
 
@@ -120,8 +145,12 @@ export const AdminBillingOrder = z.object({
   /** Only a prefix of the opaque ref (the full ref is the member's poll token). */
   refPrefix: z.string(),
   userId: z.string(),
+  /** The buyer's non-secret support id (FS-XXXX-XXXX), for the "who donated" column. */
+  userHandle: z.string().nullable().default(null),
   status: BillingOrderStatus,
   amountCents: z.number().int(),
+  /** The donation portion of amountCents (0 for a pure membership order). */
+  donationCents: z.number().int().nonnegative().default(0),
   currency: z.string(),
   durationDays: z.number().int(),
   processorRef: z.string().nullable(),

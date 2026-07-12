@@ -79,8 +79,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'membership_code.mint': ['count', 'tierId', 'durationDays'],
   'membership_code.revoke': ['codeId'],
   'membership_code.redeem': ['tierId', 'durationDays'],
-  // Billing: self-service membership purchases (never payer PII — no email/ref).
-  'billing.checkout.created': ['processor', 'months', 'kind', 'quantity'],
+  // Billing: self-service membership purchases + donations (never payer PII).
+  'billing.checkout.created': ['processor', 'months', 'kind', 'quantity', 'donationCents'],
   'billing.order.paid': [
     'processor',
     'tierSlug',
@@ -88,6 +88,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'amountCents',
     'kind',
     'quantity',
+    'donationCents',
   ],
   'billing.config.update': ['key'],
   // Multi-admin onboarding: invite minted / redeemed (username is a non-secret

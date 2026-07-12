@@ -46,6 +46,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description: 'Ping active backends; stamp health + fleet stats',
   },
   {
+    name: 'donation-bonus-reconcile',
+    everyMs: HOUR,
+    description: 'Re-cap free keys to the current donation bandwidth bonus',
+  },
+  {
     name: 'epoch-key-rotate',
     everyMs: 10 * MIN,
     description: 'Rotate the HPKE epoch key (CDN-blinding)',

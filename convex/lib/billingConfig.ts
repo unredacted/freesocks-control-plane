@@ -20,6 +20,27 @@ export interface BillingDuration {
   amountCents: number;
 }
 
+/**
+ * Optional donations. A supporter can add a donation on top of a membership
+ * checkout or give standalone. Donations in a calendar month accumulate into a
+ * shared pool that raises every free user's monthly bandwidth cap by
+ * `min(monthlyBonusCapGb, monthDonatedUSD * bonusGbPerUsd)` (see
+ * lib/donationBonus.ts). All fields are non-secret and shipped in publicConfig so
+ * the picker + the "adds N GB" copy can render.
+ */
+export interface DonationConfig {
+  /** Master switch for the donation UI (also gated by the billing `enabled` flag). */
+  enabled: boolean;
+  /** Preset amount chips shown in the picker (minor units / cents), ascending. */
+  suggestedAmountsCents: number[];
+  /** Floor for a standalone donation-only checkout (cents). */
+  minAmountCents: number;
+  /** GB added to the shared monthly pool per 1 unit of currency donated. */
+  bonusGbPerUsd: number;
+  /** Ceiling on the shared monthly bonus (GB) regardless of how much is donated. */
+  monthlyBonusCapGb: number;
+}
+
 export interface BillingConfig {
   /** Master switch. When false the checkout route refuses and the SPA hides the upgrade UI. */
   enabled: boolean;
@@ -45,6 +66,8 @@ export interface BillingConfig {
    * BTCPay policy (not a third party's coin list) governs on-chain floors.
    */
   btcpayMinMonths: number;
+  /** Optional-donation config (add-on + standalone → free-user bandwidth pool). */
+  donation: DonationConfig;
 }
 
 /** Compiled defaults. PLACEHOLDER prices — set real ones in Admin → Billing pre-launch. */
@@ -61,6 +84,13 @@ export const BILLING_DEFAULTS: BillingConfig = {
   ],
   cryptoMinMonths: 3,
   btcpayMinMonths: 1,
+  donation: {
+    enabled: true,
+    suggestedAmountsCents: [300, 500, 1000, 2500],
+    minAmountCents: 200,
+    bonusGbPerUsd: 1,
+    monthlyBonusCapGb: 100,
+  },
 };
 
 /** The `appSettings` keys this config is persisted across (the `billing.` namespace). */
@@ -75,10 +105,18 @@ export const BILLING_KEYS = {
   durations: 'billing.membership.durations',
   cryptoMinMonths: 'billing.nowpayments.minMonths',
   btcpayMinMonths: 'billing.btcpay.minMonths',
+  donation_enabled: 'billing.donation.enabled',
+  donation_suggestedAmounts: 'billing.donation.suggestedAmounts',
+  donation_minAmountCents: 'billing.donation.minAmountCents',
+  donation_bonusGbPerUsd: 'billing.donation.bonusGbPerUsd',
+  donation_monthlyBonusCapGb: 'billing.donation.monthlyBonusCapGb',
 } as const;
 
 const MAX_MONTHS = 120; // 10 years — a sane upper bound on a single fixed term.
 const MAX_AMOUNT_CENTS = 10_000_00; // $10,000 — guards a fat-fingered admin edit.
+const MAX_SUGGESTED_AMOUNTS = 8; // cap the preset-chip list length.
+const MAX_BONUS_GB_PER_USD = 1000; // sanity ceiling on the donation→bandwidth rate.
+const MAX_MONTHLY_CAP_GB = 100_000; // sanity ceiling on the shared monthly bonus.
 
 /** Coerce a single duration entry; returns null if unusable (dropped by the caller). */
 function sanitizeDuration(raw: unknown): BillingDuration | null {
@@ -128,6 +166,32 @@ function asMinMonths(raw: unknown, fallback: number): number {
     : fallback;
 }
 
+/** A positive integer amount of cents in [1, MAX_AMOUNT_CENTS]; else the fallback. */
+function asAmountCents(raw: unknown, fallback: number): number {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 && raw <= MAX_AMOUNT_CENTS
+    ? raw
+    : fallback;
+}
+
+/** A finite non-negative number clamped to [0, max]; else the fallback. */
+function asNonNegNumber(raw: unknown, fallback: number, max: number): number {
+  return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 && raw <= max ? raw : fallback;
+}
+
+/**
+ * Coerce the suggested-donation-amounts list: keep positive integer cents, dedupe,
+ * sort ascending, cap the count. Empty/all-invalid falls back to the defaults.
+ */
+export function sanitizeAmountsList(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [...BILLING_DEFAULTS.donation.suggestedAmountsCents];
+  const set = new Set<number>();
+  for (const v of raw) {
+    if (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_AMOUNT_CENTS) set.add(v);
+  }
+  const list = [...set].sort((a, b) => a - b).slice(0, MAX_SUGGESTED_AMOUNTS);
+  return list.length > 0 ? list : [...BILLING_DEFAULTS.donation.suggestedAmountsCents];
+}
+
 async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
   const row = await db
     .query('appSettings')
@@ -143,19 +207,40 @@ async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
 
 /** Resolve the full billing config from stored `billing.*` rows, fail-safe to defaults. */
 export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingConfig> {
-  const [enabled, np, bp, st, pp, tierSlug, currency, durations, cryptoMin, btcpayMin] =
-    await Promise.all([
-      readSetting(db, BILLING_KEYS.enabled),
-      readSetting(db, BILLING_KEYS.rail_nowpayments),
-      readSetting(db, BILLING_KEYS.rail_btcpay),
-      readSetting(db, BILLING_KEYS.rail_stripe),
-      readSetting(db, BILLING_KEYS.rail_paypal),
-      readSetting(db, BILLING_KEYS.tierSlug),
-      readSetting(db, BILLING_KEYS.currency),
-      readSetting(db, BILLING_KEYS.durations),
-      readSetting(db, BILLING_KEYS.cryptoMinMonths),
-      readSetting(db, BILLING_KEYS.btcpayMinMonths),
-    ]);
+  const [
+    enabled,
+    np,
+    bp,
+    st,
+    pp,
+    tierSlug,
+    currency,
+    durations,
+    cryptoMin,
+    btcpayMin,
+    dEnabled,
+    dAmounts,
+    dMin,
+    dRate,
+    dCap,
+  ] = await Promise.all([
+    readSetting(db, BILLING_KEYS.enabled),
+    readSetting(db, BILLING_KEYS.rail_nowpayments),
+    readSetting(db, BILLING_KEYS.rail_btcpay),
+    readSetting(db, BILLING_KEYS.rail_stripe),
+    readSetting(db, BILLING_KEYS.rail_paypal),
+    readSetting(db, BILLING_KEYS.tierSlug),
+    readSetting(db, BILLING_KEYS.currency),
+    readSetting(db, BILLING_KEYS.durations),
+    readSetting(db, BILLING_KEYS.cryptoMinMonths),
+    readSetting(db, BILLING_KEYS.btcpayMinMonths),
+    readSetting(db, BILLING_KEYS.donation_enabled),
+    readSetting(db, BILLING_KEYS.donation_suggestedAmounts),
+    readSetting(db, BILLING_KEYS.donation_minAmountCents),
+    readSetting(db, BILLING_KEYS.donation_bonusGbPerUsd),
+    readSetting(db, BILLING_KEYS.donation_monthlyBonusCapGb),
+  ]);
+  const d = BILLING_DEFAULTS.donation;
   return {
     enabled: asBool(enabled, BILLING_DEFAULTS.enabled),
     rails: {
@@ -169,6 +254,13 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     durations: sanitizeDurations(durations),
     cryptoMinMonths: asMinMonths(cryptoMin, BILLING_DEFAULTS.cryptoMinMonths),
     btcpayMinMonths: asMinMonths(btcpayMin, BILLING_DEFAULTS.btcpayMinMonths),
+    donation: {
+      enabled: asBool(dEnabled, d.enabled),
+      suggestedAmountsCents: sanitizeAmountsList(dAmounts),
+      minAmountCents: asAmountCents(dMin, d.minAmountCents),
+      bonusGbPerUsd: asNonNegNumber(dRate, d.bonusGbPerUsd, MAX_BONUS_GB_PER_USD),
+      monthlyBonusCapGb: asNonNegNumber(dCap, d.monthlyBonusCapGb, MAX_MONTHLY_CAP_GB),
+    },
   };
 }
 
@@ -232,6 +324,32 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
       BILLING_KEYS.btcpayMinMonths,
       asMinMonths(p.btcpayMinMonths, BILLING_DEFAULTS.btcpayMinMonths),
     );
+  }
+  if (p.donation && typeof p.donation === 'object') {
+    const dd = p.donation as Record<string, unknown>;
+    const def = BILLING_DEFAULTS.donation;
+    if ('enabled' in dd) put(BILLING_KEYS.donation_enabled, asBool(dd.enabled, def.enabled));
+    if ('suggestedAmountsCents' in dd) {
+      put(BILLING_KEYS.donation_suggestedAmounts, sanitizeAmountsList(dd.suggestedAmountsCents));
+    }
+    if ('minAmountCents' in dd) {
+      put(
+        BILLING_KEYS.donation_minAmountCents,
+        asAmountCents(dd.minAmountCents, def.minAmountCents),
+      );
+    }
+    if ('bonusGbPerUsd' in dd) {
+      put(
+        BILLING_KEYS.donation_bonusGbPerUsd,
+        asNonNegNumber(dd.bonusGbPerUsd, def.bonusGbPerUsd, MAX_BONUS_GB_PER_USD),
+      );
+    }
+    if ('monthlyBonusCapGb' in dd) {
+      put(
+        BILLING_KEYS.donation_monthlyBonusCapGb,
+        asNonNegNumber(dd.monthlyBonusCapGb, def.monthlyBonusCapGb, MAX_MONTHLY_CAP_GB),
+      );
+    }
   }
 
   return writes;

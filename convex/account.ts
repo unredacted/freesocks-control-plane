@@ -19,8 +19,8 @@ import { randomHex } from './lib/crypto';
 import { issueNewSubscription } from './lib/issuance';
 import {
   computeExpireAtIso,
-  gbToBytes,
   resolveHwidLimit,
+  resolveTrafficLimitBytes,
   type UsageSeries,
 } from './lib/backends/types';
 
@@ -142,6 +142,8 @@ interface AccountView {
     };
     membership: { expiresAt: string | null; isCurrent: boolean } | null;
     connectionModeId: string;
+    /** ISO of the member's first settled donation (null = not a donor). */
+    donorSince: string | null;
     createdAt: string;
   };
   subscription: {
@@ -196,8 +198,10 @@ export const getAccountView = internalAction({
     // client renders the selected transport server-authoritatively.
     const connectionModeId =
       user.connectionModeId ?? (await ctx.runQuery(internal.connectionModes.defaultId, {}));
-    const trafficLimitFromTier =
-      tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null;
+    // Fold the current shared donation bonus into the free-tier fallback so an
+    // outage (backend unreachable) still shows the raised cap, not the base.
+    const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
+    const trafficLimitFromTier = resolveTrafficLimitBytes(tier, bonusGb);
     let subscription: AccountView['subscription'] = null;
     if (sub) {
       // Best-effort live state; degrade to local data if the backend is down.
@@ -285,6 +289,7 @@ export const getAccountView = internalAction({
             }
           : null,
         connectionModeId,
+        donorSince: user.firstDonatedAt ? new Date(user.firstDonatedAt).toISOString() : null,
         createdAt: new Date(user._creationTime).toISOString(),
       },
       subscription,
@@ -337,12 +342,13 @@ export const regenerate = internalAction({
             modeId: user.connectionModeId ?? null,
           })
         : null;
+    const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {
       userId,
       backend: tier.backend,
       spec: {
         username: `freesocks-${tier.slug}-${randomHex(8)}`,
-        trafficLimitBytes: tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null,
+        trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
         trafficLimitStrategy: tier.trafficStrategy,
         // Member term, else the free window — Remnawave requires a real date.
         expireAt: computeExpireAtIso(user.membershipExpiresAt, freeExpiryDays),
@@ -449,13 +455,13 @@ export const switchBackend = internalAction({
             modeId: user.connectionModeId ?? null,
           })
         : null;
+    const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {
       userId,
       backend: peerTier.backend,
       spec: {
         username: `freesocks-${peerTier.slug}-${randomHex(8)}`,
-        trafficLimitBytes:
-          peerTier.monthlyTrafficGb > 0 ? gbToBytes(peerTier.monthlyTrafficGb) : null,
+        trafficLimitBytes: resolveTrafficLimitBytes(peerTier, bonusGb),
         trafficLimitStrategy: peerTier.trafficStrategy,
         // Entitlement unchanged by a backend switch: keep the member's term / free window.
         expireAt: computeExpireAtIso(
@@ -600,12 +606,13 @@ export const switchMode = internalAction({
         tier.backend === 'remnawave'
           ? await ctx.runQuery(internal.remnawaveNodes.resolvePlacement, { modeId: target })
           : null;
+      const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
       const issued = await issueNewSubscription(ctx, {
         userId,
         backend: tier.backend,
         spec: {
           username: `freesocks-${tier.slug}-${randomHex(8)}`,
-          trafficLimitBytes: tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null,
+          trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
           trafficLimitStrategy: tier.trafficStrategy,
           expireAt: computeExpireAtIso(
             user.membershipExpiresAt,

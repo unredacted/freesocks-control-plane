@@ -155,6 +155,10 @@ export default defineSchema({
     // signal the deactivate-idle-free sweep keys off (an ACTIVE free user whose
     // key has expired and wasn't refreshed is deactivated). Unset for paid users.
     freeKeyExpiresAt: v.optional(v.number()),
+    // Durable donor marker: the ms timestamp of the member's FIRST settled
+    // donation (set once, never cleared). Backs the persistent account donor
+    // badge so the read path needs no billing-order scan. Unset ⇒ not a donor.
+    firstDonatedAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_account_id_hash', ['accountIdHash'])
@@ -406,19 +410,26 @@ export default defineSchema({
     opaqueRef: v.string(),
     processorRef: v.optional(v.string()),
     userId: v.id('users'),
-    tierId: v.id('tiers'),
+    // Optional: a donation-only order (kind 'donation') carries no tier.
+    tierId: v.optional(v.id('tiers')),
     durationDays: v.number(),
     amountCents: v.number(),
+    // The donation portion of amountCents (0/absent for a pure membership order).
+    // On a membership+donation order amountCents = price + donationCents; on a
+    // donation-only order amountCents === donationCents. Recorded on the order so
+    // the grant path + admin billing log can report how much was donated.
+    donationCents: v.optional(v.number()),
     currency: v.string(),
     status: billingOrderStatus,
     paidAt: v.optional(v.number()),
     // Gift purchases: a 'gift' order mints `quantity` shareable codes (bound to
     // the buyer via redemptionCodes.purchasedByOrderId) instead of extending the
-    // buyer's own membership. Absent ⇒ legacy self-upgrade. `giftReveal` is the
-    // TRANSIENT plaintext buffer returned to the buyer ONCE on the return poll,
-    // then cleared on ack (or by the gift-reveal sweep) — the codes live
-    // hash-only in redemptionCodes; durable storage is never plaintext.
-    kind: v.optional(v.union(v.literal('self'), v.literal('gift'))),
+    // buyer's own membership. Absent ⇒ legacy self-upgrade. A 'donation' order
+    // grants nothing (records the donation + funds the free-bandwidth pool).
+    // `giftReveal` is the TRANSIENT plaintext buffer returned to the buyer ONCE on
+    // the return poll, then cleared on ack (or by the gift-reveal sweep) — the
+    // codes live hash-only in redemptionCodes; durable storage is never plaintext.
+    kind: v.optional(v.union(v.literal('self'), v.literal('gift'), v.literal('donation'))),
     quantity: v.optional(v.number()),
     giftReveal: v.optional(v.array(v.string())),
     giftRevealAck: v.optional(v.boolean()),

@@ -126,6 +126,29 @@ export const PublicConfig = z.object({
     /** Minimum term (months) the BTCPay rail accepts (default 1; Lightning has
      * no per-coin floor — this is an operator-tunable hygiene knob). */
     btcpayMinMonths: z.number().int().default(1),
+    /**
+     * Optional donations. Public so the picker can render preset amounts and the
+     * "adds ~N GB to every free user" copy. `currentBonusGb` is the bonus live on
+     * every free user's monthly cap right now (this calendar month's pool).
+     * Defaulted so a newer SPA still parses an older backend's config.
+     */
+    donation: z
+      .object({
+        enabled: z.boolean(),
+        suggestedAmountsCents: z.array(z.number().int()),
+        minAmountCents: z.number().int(),
+        bonusGbPerUsd: z.number(),
+        monthlyBonusCapGb: z.number(),
+        currentBonusGb: z.number(),
+      })
+      .default({
+        enabled: false,
+        suggestedAmountsCents: [],
+        minAmountCents: 0,
+        bonusGbPerUsd: 0,
+        monthlyBonusCapGb: 0,
+        currentBonusGb: 0,
+      }),
   }),
   /** Whether the opt-in "trouble connecting? try a mirror" affordance is available
    *  (≥1 active mirror provider). The SPA hides it entirely when false. */

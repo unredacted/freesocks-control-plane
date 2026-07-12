@@ -635,6 +635,27 @@ export async function remnawaveUpdateUser(
 }
 
 /**
+ * Bulk-set `trafficLimitBytes` on many users in ONE call — Remnawave
+ * `POST /api/users/bulk/update` (`{ uuids, fields }`, uuids capped at 500 by the
+ * panel). Used by the donation free-bandwidth bonus to re-cap the whole free
+ * fleet efficiently instead of a PATCH per user. The caller chunks to ≤500 and
+ * passes only Remnawave user uuids.
+ */
+export async function remnawaveBulkUpdateTrafficLimit(
+  cfg: RemnawaveConfig,
+  backendUserIds: string[],
+  trafficLimitBytes: number,
+): Promise<void> {
+  if (backendUserIds.length === 0) return;
+  await call(cfg, {
+    method: 'POST',
+    path: '/api/users/bulk/update',
+    body: { uuids: backendUserIds, fields: { trafficLimitBytes } },
+    schema: z.unknown(),
+  });
+}
+
+/**
  * Enable / disable a user via Remnawave's dedicated action endpoints
  * (`POST /api/users/{uuid}/actions/{enable|disable}`) rather than folding status
  * into the field-update PATCH. More faithful to the API and decoupled from the

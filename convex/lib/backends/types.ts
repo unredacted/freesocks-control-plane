@@ -23,6 +23,23 @@ export function gbToBytes(gb: number): number {
 }
 
 /**
+ * The per-user backend `trafficLimitBytes`: null (unlimited) when the tier has no
+ * monthly cap (paid membership → `monthlyTrafficGb === 0`), else the tier's monthly
+ * GB. For the default-free tier a shared donation bonus (GB) is folded in on top for
+ * the current month (see lib/donationBonus.ts); the bonus never applies to a capped
+ * non-free tier. Central so issuance / regenerate / switch / the event-driven tier
+ * push all compute the free limit identically (pass `bonusGb: 0` for no bonus).
+ */
+export function resolveTrafficLimitBytes(
+  tier: { monthlyTrafficGb: number; isDefaultFree: boolean },
+  bonusGb: number,
+): number | null {
+  if (tier.monthlyTrafficGb <= 0) return null;
+  const gb = tier.monthlyTrafficGb + (tier.isDefaultFree ? Math.max(0, bonusGb) : 0);
+  return gbToBytes(gb);
+}
+
+/**
  * The backend `expireAt` (ISO) for a user: a paid member's purchased term
  * (`membershipExpiresAt`), else the free-account window (now + `freeExpiryDays`).
  * Remnawave REQUIRES a date — FCP's lifecycle is still the source of truth for

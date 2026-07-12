@@ -1126,3 +1126,164 @@ describe('billing gift codes', () => {
     expect(list[0].redeemedAt).not.toBeNull();
   });
 });
+
+describe('billing donations', () => {
+  beforeEach(() => {
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-key');
+    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api.nowpayments.example');
+    vi.stubEnv('PUBLIC_BASE_URL', 'https://beta.freesocks.example');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  const invoiceMock = () =>
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ id: 'inv_d', invoice_url: 'https://pay.example/d' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+
+  test('membership checkout carries an optional donation on the same charge', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await enableBilling(t);
+    vi.stubGlobal('fetch', invoiceMock());
+
+    const res = await t.action(internal.billing.createCheckout, {
+      userId,
+      processor: 'nowpayments',
+      months: 3,
+      donationCents: 500,
+    });
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', res.orderRef))
+        .unique();
+      expect(order?.amountCents).toBe(1400 + 500); // membership + donation, one charge
+      expect(order?.donationCents).toBe(500);
+      expect(order?.tierId).toBe(memberTierId);
+      expect(order?.kind ?? 'self').toBe('self');
+    });
+  });
+
+  test('standalone donation checkout creates a tier-less donation order', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTiersAndUser(t);
+    await enableBilling(t);
+    vi.stubGlobal('fetch', invoiceMock());
+
+    const res = await t.action(internal.billing.createCheckout, {
+      userId,
+      processor: 'nowpayments',
+      kind: 'donation',
+      donationCents: 1000,
+    });
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', res.orderRef))
+        .unique();
+      expect(order?.kind).toBe('donation');
+      expect(order?.tierId).toBeUndefined();
+      expect(order?.amountCents).toBe(1000);
+      expect(order?.donationCents).toBe(1000);
+      expect(order?.durationDays).toBe(0);
+    });
+  });
+
+  test('rejects a donation below the configured minimum', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTiersAndUser(t);
+    await enableBilling(t); // donation.minAmountCents defaults to 200
+    await expect(
+      t.action(internal.billing.createCheckout, {
+        userId,
+        processor: 'nowpayments',
+        kind: 'donation',
+        donationCents: 50,
+      }),
+    ).rejects.toThrow();
+  });
+
+  test('a settled membership+donation grants membership, funds the pool, stamps the donor badge', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'nowpayments',
+        opaqueRef: 'ref-don-self',
+        userId,
+        tierId: memberTierId,
+        durationDays: 91,
+        amountCents: 1900,
+        donationCents: 500,
+        currency: 'USD',
+        status: 'pending',
+        kind: 'self',
+        updatedAt: Date.now(),
+      }),
+    );
+    const r = await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-don-self',
+      status: 'paid',
+      processorRef: 'inv',
+    });
+    expect(r).toEqual({ applied: true, granted: true });
+    await t.run(async (ctx) => {
+      const u = await ctx.db.get(userId);
+      expect(u?.tierId).toBe(memberTierId); // membership granted
+      expect(u?.firstDonatedAt != null && u.firstDonatedAt > 0).toBe(true); // donor badge marker
+      const st = await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
+        .unique();
+      expect(JSON.parse(st!.value).donatedCents).toBe(500); // pool funded
+      const audit = (await ctx.db.query('auditLog').collect()).find(
+        (a) => a.action === 'billing.order.paid',
+      );
+      expect(JSON.stringify(audit!.payload ?? {})).toContain('500'); // donationCents audited
+    });
+  });
+
+  test('a settled donation-only order funds the pool without granting membership', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, freeTierId } = await seedTiersAndUser(t);
+    await t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'nowpayments',
+        opaqueRef: 'ref-don-only',
+        userId,
+        durationDays: 0,
+        amountCents: 1000,
+        donationCents: 1000,
+        currency: 'USD',
+        status: 'pending',
+        kind: 'donation',
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-don-only',
+      status: 'paid',
+      processorRef: 'inv',
+    });
+    await t.run(async (ctx) => {
+      const u = await ctx.db.get(userId);
+      expect(u?.tierId).toBe(freeTierId); // NO membership change
+      expect(u?.membershipExpiresAt ?? null).toBeNull();
+      expect(u?.firstDonatedAt != null && u.firstDonatedAt > 0).toBe(true);
+      const st = await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
+        .unique();
+      expect(JSON.parse(st!.value).donatedCents).toBe(1000);
+    });
+  });
+});

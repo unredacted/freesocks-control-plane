@@ -201,6 +201,32 @@ export const setUserStatus = internalAction({
   },
 });
 
+// Bulk-set trafficLimitBytes on many users of ONE instance in a single call
+// (Remnawave bulk/update). Resolves the instance by its id (the caller — the
+// donation free-bandwidth apply — already grouped user ids by server). A backend
+// with no bulk primitive (Outline) is a silent no-op; the caller can fall back to
+// per-user updateUser. Caller chunks ids to the panel's ≤500 limit.
+export const bulkUpdateTrafficLimit = internalAction({
+  args: {
+    backendServerId: v.id('backendServers'),
+    backendUserIds: v.array(v.string()),
+    trafficLimitBytes: v.number(),
+  },
+  handler: async (ctx, { backendServerId, backendUserIds, trafficLimitBytes }): Promise<null> => {
+    if (mockBackendEnabled() || backendUserIds.length === 0) return null;
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) return null;
+    const provider = PROVIDERS[server.backend];
+    if (!provider.bulkUpdateTrafficLimit) return null; // no bulk primitive (Outline)
+    await provider.bulkUpdateTrafficLimit(
+      server.config as BackendConfig,
+      backendUserIds,
+      trafficLimitBytes,
+    );
+    return null;
+  },
+});
+
 // Aggregate member usage series (read-only). Best-effort: degrades to null when
 // unsupported (Outline / older panel) or unreachable, so the account page never
 // breaks on it. Read live, never persisted.

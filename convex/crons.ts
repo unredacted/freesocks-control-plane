@@ -23,6 +23,12 @@ crons.interval('tombstone-sweep', { minutes: 10 }, internal.lifecycle.sweepTombs
 // (feeds pool selection). Per-type health lives in the provider registry.
 crons.interval('backend-healthcheck', { minutes: 10 }, internal.backendServers.healthcheck, {});
 
+// Reconcile the free-fleet donation bandwidth bonus: re-cap every free key to
+// base+bonus when the shared monthly pool changed, and reset to base when the
+// calendar month rolls over. Idempotent + cheap when nothing changed (the
+// donation grant also schedules this immediately; the cron is the backstop).
+crons.interval('donation-bonus-reconcile', { hours: 1 }, internal.donations.applyFreeBonus, {});
+
 // Deactivate + RETAIN idle free users (reclaim the key, keep the row on the free
 // tier, reactivatable on return); never deletes — manual purgeInactiveFree removes.
 crons.daily(

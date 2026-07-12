@@ -44,6 +44,10 @@ export const AccountResponse = z.object({
      *  resolved catalog default when unset. A plain string (data-driven catalog).
      *  Optional for rolling-deploy compat. */
     connectionModeId: z.string().optional(),
+    /** ISO timestamp of the member's first settled donation, or null if they've
+     *  never donated. Drives the persistent account donor badge. Optional for
+     *  rolling-deploy compat. */
+    donorSince: z.string().datetime().nullable().optional(),
     createdAt: z.string().datetime(),
   }),
   subscription: z

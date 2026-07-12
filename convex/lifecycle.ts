@@ -16,7 +16,12 @@ import { heartbeatFromAction } from './cronHeartbeat';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { deleteSubscriptionEverywhere } from './lib/issuance';
-import { computeExpireAtIso, gbToBytes, resolveHwidLimit } from './lib/backends/types';
+import {
+  computeExpireAtIso,
+  resolveHwidLimit,
+  resolveTrafficLimitBytes,
+} from './lib/backends/types';
+import { resolveCurrentBonusGb } from './lib/donationBonus';
 import { SETTINGS_DEFAULTS } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import { applyCountsDelta } from './lib/statusCounters';
@@ -218,13 +223,17 @@ export const activeSubAndTier = internalQuery({
         /* keep the default */
       }
     }
+    // Fold the current shared donation bonus into the free-tier limit so an
+    // event-driven tier push (login, renewal, downgrade) re-sends base+bonus for a
+    // free key — keeping it consistent with the donation fleet apply.
+    const bonusGb = await resolveCurrentBonusGb(ctx.db, Date.now());
     return {
       backend: sub.backend,
       backendUserId: sub.backendUserId,
       // The user's local status, so the push can re-enable a key the grace sweep
       // disabled (updateUser never touches enable/disable state). (Review #2.)
       userStatus: user.status,
-      trafficLimitBytes: tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null,
+      trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
       trafficLimitStrategy: tier.trafficStrategy,
       hwidDeviceLimit: resolveHwidLimit(enforcementEnabled, tier),
       placement,

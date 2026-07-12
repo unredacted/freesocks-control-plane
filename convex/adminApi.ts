@@ -1390,6 +1390,7 @@ function mapBillingOrder(o: Doc<'billingOrders'>) {
     userId: o.userId as string,
     status: o.status,
     amountCents: o.amountCents,
+    donationCents: o.donationCents ?? 0,
     currency: o.currency,
     durationDays: o.durationDays,
     processorRef: o.processorRef ?? null,
@@ -1424,10 +1425,18 @@ export const billingOverview = internalQuery({
     // paginate()'s compound (_creationTime,_id) cursor avoids the ms-collision skip
     // the hand-rolled _creationTime keyset had at a page boundary. (Review P2.)
     const res = await qry.paginate({ cursor: cursor ?? null, numItems: pageSize });
+    // Enrich each row with the buyer's non-secret support id ("who donated"),
+    // resolved per page (≤200 rows) — never the account number.
+    const orders = await Promise.all(
+      res.page.map(async (o) => {
+        const u = await ctx.db.get(o.userId);
+        return { ...mapBillingOrder(o), userHandle: u?.supportId ?? null };
+      }),
+    );
     return {
       config,
       secretStatus,
-      orders: res.page.map(mapBillingOrder),
+      orders,
       nextCursor: res.isDone ? null : res.continueCursor,
     };
   },

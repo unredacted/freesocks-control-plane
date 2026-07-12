@@ -8,6 +8,7 @@
  */
 import { query } from './_generated/server';
 import { resolveBillingConfig } from './lib/billingConfig';
+import { readDonationState, effectiveBonusGb } from './lib/donationBonus';
 import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
 import { resolveSiteConfig } from './lib/siteConfig';
@@ -71,6 +72,11 @@ export const get = query({
     // the tier slug the membership maps to. No secrets (API keys/IPN secrets are
     // env-only). The SPA gates the upgrade UI on `billing.enabled` + `rails.*`.
     const billing = await resolveBillingConfig(ctx.db);
+    // Live shared donation bonus (GB) on every free user's monthly cap this month.
+    const donationState = await readDonationState(ctx.db);
+    const currentBonusGb = billing.donation.enabled
+      ? effectiveBonusGb(donationState, billing.donation, Date.now())
+      : 0;
 
     // Is the opt-in "trouble connecting? try a mirror" affordance available? Only
     // a boolean (≥1 active mirror provider) — no provider details/secrets. Lets the
@@ -111,6 +117,14 @@ export const get = query({
         durations: billing.durations,
         cryptoMinMonths: billing.cryptoMinMonths,
         btcpayMinMonths: billing.btcpayMinMonths,
+        donation: {
+          enabled: billing.donation.enabled,
+          suggestedAmountsCents: billing.donation.suggestedAmountsCents,
+          minAmountCents: billing.donation.minAmountCents,
+          bonusGbPerUsd: billing.donation.bonusGbPerUsd,
+          monthlyBonusCapGb: billing.donation.monthlyBonusCapGb,
+          currentBonusGb,
+        },
       },
       mirrorsEnabled,
       // Device-limit enforcement master switch (non-secret). When false the SPA

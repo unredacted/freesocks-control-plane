@@ -1185,6 +1185,7 @@ http.route({
       months?: number;
       kind?: string;
       quantity?: number;
+      donationCents?: number;
     }>(req);
     if (
       body.processor !== 'nowpayments' &&
@@ -1198,10 +1199,14 @@ http.route({
         400,
       );
     }
-    if (typeof body.months !== 'number' || !Number.isInteger(body.months) || body.months < 1) {
+    const kind = body.kind === 'gift' ? 'gift' : body.kind === 'donation' ? 'donation' : 'self';
+    // A membership (self/gift) needs a term; a standalone donation does not.
+    if (
+      kind !== 'donation' &&
+      (typeof body.months !== 'number' || !Number.isInteger(body.months) || body.months < 1)
+    ) {
       return errorJson('validation', 'months must be a positive integer', 400);
     }
-    const kind = body.kind === 'gift' ? 'gift' : 'self';
     if (
       kind === 'gift' &&
       (typeof body.quantity !== 'number' ||
@@ -1211,13 +1216,35 @@ http.route({
     ) {
       return errorJson('validation', 'quantity must be an integer between 1 and 50', 400);
     }
+    // Donation amount (cents): optional add-on, or the whole charge for a donation.
+    // Bounded to guard a crafted request; the config min is enforced server-side.
+    let donationCents: number | undefined;
+    if (body.donationCents !== undefined) {
+      if (
+        typeof body.donationCents !== 'number' ||
+        !Number.isInteger(body.donationCents) ||
+        body.donationCents < 0 ||
+        body.donationCents > 1_000_000
+      ) {
+        return errorJson(
+          'validation',
+          'donationCents must be an integer between 0 and 1000000',
+          400,
+        );
+      }
+      donationCents = body.donationCents;
+    }
+    if (kind === 'donation' && (donationCents === undefined || donationCents < 1)) {
+      return errorJson('validation', 'a donation requires a positive donationCents', 400);
+    }
     try {
       const result = await ctx.runAction(internal.billing.createCheckout, {
         userId: member.userId,
         processor: body.processor,
-        months: body.months,
+        months: kind === 'donation' ? undefined : body.months,
         kind,
         quantity: kind === 'gift' ? body.quantity : 1,
+        donationCents,
       });
       return json(result);
     } catch (err) {

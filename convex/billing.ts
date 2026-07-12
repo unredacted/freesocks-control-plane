@@ -15,6 +15,7 @@
  * to break Convex's inference cycle (same convention as lifecycle.ts).
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import type { MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
@@ -22,6 +23,7 @@ import { randomHex, sha256Hex } from './lib/crypto';
 import { generateMembershipCode, membershipCodePrefix } from './lib/membershipCode';
 import { applyMembership } from './lifecycle';
 import { writeAuditLog } from './lib/audit';
+import { recordDonation } from './lib/donationBonus';
 import {
   findDuration,
   minMonthsForProcessor,
@@ -48,7 +50,7 @@ const monthsToDays = (months: number): number => Math.round(months * AVG_DAYS_PE
 // Gift purchases: how many shareable codes one order may mint.
 const MAX_GIFT_QUANTITY = 50;
 
-const orderKindValidator = v.union(v.literal('self'), v.literal('gift'));
+const orderKindValidator = v.union(v.literal('self'), v.literal('gift'), v.literal('donation'));
 
 const processorValidator = v.union(
   v.literal('nowpayments'),
@@ -183,9 +185,12 @@ export const insertOrder = internalMutation({
     opaqueRef: v.string(),
     processorRef: v.string(),
     userId: v.id('users'),
-    tierId: v.id('tiers'),
+    // Absent for a donation-only order (no membership tier).
+    tierId: v.optional(v.id('tiers')),
     durationDays: v.number(),
     amountCents: v.number(),
+    // The donation portion of amountCents (0 for a pure membership order).
+    donationCents: v.optional(v.number()),
     currency: v.string(),
     months: v.number(),
     kind: orderKindValidator,
@@ -201,6 +206,7 @@ export const insertOrder = internalMutation({
       tierId: a.tierId,
       durationDays: a.durationDays,
       amountCents: a.amountCents,
+      donationCents: a.donationCents,
       currency: a.currency,
       status: 'pending',
       kind: a.kind,
@@ -213,7 +219,13 @@ export const insertOrder = internalMutation({
       action: 'billing.checkout.created',
       targetType: 'billing_order',
       targetId: orderId,
-      payload: { processor: a.processor, months: a.months, kind: a.kind, quantity: a.quantity },
+      payload: {
+        processor: a.processor,
+        months: a.months,
+        kind: a.kind,
+        quantity: a.quantity,
+        donationCents: a.donationCents ?? 0,
+      },
     });
     return orderId;
   },
@@ -230,11 +242,15 @@ export const createCheckout = internalAction({
   args: {
     userId: v.id('users'),
     processor: processorValidator,
-    months: v.number(),
-    // 'gift' mints `quantity` shareable codes for the buyer instead of extending
-    // their own membership. Absent ⇒ self-upgrade, quantity 1.
+    // Required for a membership (self/gift); omitted for a standalone donation.
+    months: v.optional(v.number()),
+    // 'gift' mints `quantity` shareable codes; 'donation' is a standalone donation
+    // (no membership); absent ⇒ self-upgrade. quantity applies to 'gift' only.
     kind: v.optional(orderKindValidator),
     quantity: v.optional(v.number()),
+    // Optional donation in cents — added on top of a membership, or the whole
+    // charge for kind:'donation'.
+    donationCents: v.optional(v.number()),
   },
   handler: async (ctx, a): Promise<{ redirectUrl: string; orderRef: string }> => {
     const { config, tierId } = await ctx.runQuery(internal.billing.checkoutContext, {});
@@ -250,55 +266,97 @@ export const createCheckout = internalAction({
         message: 'That payment method is not available',
       });
     }
-    const duration = findDuration(config, a.months);
-    if (!duration) {
-      throw new ConvexError({
-        code: 'billing.invalid_duration',
-        message: 'Unknown membership duration',
-      });
-    }
-    // Crypto carries a per-coin minimum (XMR's is high) and the payer picks the
-    // coin on the hosted page, so we floor the term here. The SPA hides these,
-    // but a crafted request must still be refused.
-    if (a.months < minMonthsForProcessor(config, a.processor)) {
-      throw new ConvexError({
-        code: 'billing.duration_unavailable',
-        message: 'That term is not available for this payment method.',
-      });
-    }
-    if (!tierId) {
-      throw new ConvexError({
-        code: 'billing.tier_missing',
-        message: 'Membership tier is not configured',
-      });
+
+    const kind = a.kind ?? 'self';
+    const donationCents = Math.max(0, Math.floor(a.donationCents ?? 0));
+
+    // Resolve the charge amount, tier/duration, and label per kind. A donation-only
+    // order carries no tier/duration; a membership may ride an optional donation.
+    let amountCents: number;
+    let orderTierId: Id<'tiers'> | undefined;
+    let durationDays = 0;
+    let months = 0;
+    let quantity = 1;
+    let description: string;
+
+    if (kind === 'donation') {
+      if (!config.donation.enabled) {
+        throw new ConvexError({ code: 'billing.disabled', message: 'Donations are not available' });
+      }
+      if (donationCents < config.donation.minAmountCents) {
+        throw new ConvexError({
+          code: 'billing.invalid_amount',
+          message: 'Donation is below the minimum.',
+        });
+      }
+      amountCents = donationCents;
+      description = 'FreeSocks donation';
+    } else {
+      if (!a.months) {
+        throw new ConvexError({
+          code: 'billing.invalid_duration',
+          message: 'Unknown membership duration',
+        });
+      }
+      const duration = findDuration(config, a.months);
+      if (!duration) {
+        throw new ConvexError({
+          code: 'billing.invalid_duration',
+          message: 'Unknown membership duration',
+        });
+      }
+      // Crypto carries a per-coin minimum (XMR's is high) and the payer picks the
+      // coin on the hosted page, so we floor the term here. The SPA hides these,
+      // but a crafted request must still be refused.
+      if (a.months < minMonthsForProcessor(config, a.processor)) {
+        throw new ConvexError({
+          code: 'billing.duration_unavailable',
+          message: 'That term is not available for this payment method.',
+        });
+      }
+      if (!tierId) {
+        throw new ConvexError({
+          code: 'billing.tier_missing',
+          message: 'Membership tier is not configured',
+        });
+      }
+      // Gift: buy N shareable codes (each granting `months`); amount scales by N.
+      quantity = kind === 'gift' ? Math.floor(a.quantity ?? 1) : 1;
+      if (
+        kind === 'gift' &&
+        (!Number.isFinite(quantity) || quantity < 1 || quantity > MAX_GIFT_QUANTITY)
+      ) {
+        throw new ConvexError({
+          code: 'billing.invalid_quantity',
+          message: `Number of codes must be between 1 and ${MAX_GIFT_QUANTITY}`,
+        });
+      }
+      // An optional donation rides on the same charge (ignored if donations are off).
+      const donationAdd = config.donation.enabled ? donationCents : 0;
+      amountCents = duration.amountCents * quantity + donationAdd;
+      orderTierId = tierId;
+      durationDays = monthsToDays(a.months);
+      months = a.months;
+      const monthLabel = `${a.months} month${a.months === 1 ? '' : 's'}`;
+      const suffix = donationAdd > 0 ? ' + donation' : '';
+      description =
+        kind === 'gift'
+          ? `FreeSocks Membership gift — ${quantity} × ${monthLabel}${suffix}`
+          : `FreeSocks Membership — ${monthLabel}${suffix}`;
     }
 
-    // Gift: buy N shareable codes (each granting `months`); amount scales by N.
-    const kind = a.kind ?? 'self';
-    const quantity = kind === 'gift' ? Math.floor(a.quantity ?? 1) : 1;
-    if (
-      kind === 'gift' &&
-      (!Number.isFinite(quantity) || quantity < 1 || quantity > MAX_GIFT_QUANTITY)
-    ) {
-      throw new ConvexError({
-        code: 'billing.invalid_quantity',
-        message: `Number of codes must be between 1 and ${MAX_GIFT_QUANTITY}`,
-      });
-    }
-    const amountCents = duration.amountCents * quantity;
+    // The donation portion actually recorded on the order (0 when donations are off).
+    const orderDonationCents =
+      kind === 'donation' ? donationCents : config.donation.enabled ? donationCents : 0;
 
     const secrets = await ctx.runQuery(internal.billing.resolveSecrets, {});
     const base = publicBaseUrl(secrets);
     const opaqueRef = randomHex(16);
-    const monthLabel = `${a.months} month${a.months === 1 ? '' : 's'}`;
     const params: CheckoutParams = {
       orderRef: opaqueRef,
       amountCents,
       currency: config.currency,
-      description:
-        kind === 'gift'
-          ? `FreeSocks Membership gift — ${quantity} × ${monthLabel}`
-          : `FreeSocks Membership — ${monthLabel}`,
+      description,
       ipnUrl: `${base}/api/webhooks/${a.processor}`,
       successUrl: `${base}/account?order=${opaqueRef}`,
       cancelUrl: `${base}/account?order=${opaqueRef}&cancel=1`,
@@ -326,11 +384,12 @@ export const createCheckout = internalAction({
       opaqueRef,
       processorRef: result.processorRef,
       userId: a.userId,
-      tierId,
-      durationDays: monthsToDays(a.months),
+      tierId: orderTierId,
+      durationDays,
       amountCents,
+      donationCents: orderDonationCents,
       currency: config.currency,
-      months: a.months,
+      months,
       kind,
       quantity,
     });
@@ -353,6 +412,27 @@ const STATUS_RANK: Record<OrderStatus, number> = {
   expired: 2,
   paid: 3,
 };
+
+/**
+ * A settled order carried a donation: add it to the shared monthly pool, stamp the
+ * buyer's durable donor marker (set-once — backs the account badge), and schedule
+ * the free-fleet bandwidth re-cap. No-op when the order carried no donation.
+ */
+async function fundDonation(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  donationCents: number | undefined,
+  now: number,
+): Promise<void> {
+  const cents = donationCents ?? 0;
+  if (cents <= 0) return;
+  await recordDonation(ctx, cents, now);
+  const u = await ctx.db.get(userId);
+  if (u && u.firstDonatedAt == null) {
+    await ctx.db.patch(userId, { firstDonatedAt: now, updatedAt: now });
+  }
+  await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
+}
 
 /**
  * Serializable order-status apply + single grant. Looks the order up by our
@@ -387,7 +467,37 @@ export const applyEvent = internalMutation({
 
     const now = Date.now();
     if (a.status === 'paid') {
-      const tier = await ctx.db.get(order.tierId);
+      // Standalone donation order: record the donation + fund the free-bandwidth
+      // pool + stamp the donor badge; NO tier/membership grant. (Modeled on the
+      // gift branch — "paid, but don't extend the buyer's own membership".)
+      if (order.kind === 'donation') {
+        await ctx.db.patch(order._id, {
+          status: 'paid',
+          paidAt: now,
+          processorRef: a.processorRef || order.processorRef,
+          updatedAt: now,
+        });
+        await fundDonation(ctx, order.userId, order.donationCents ?? order.amountCents, now);
+        await writeAuditLog(ctx, {
+          actorType: 'webhook',
+          actorId: order.userId,
+          action: 'billing.order.paid',
+          targetType: 'billing_order',
+          targetId: order._id,
+          payload: {
+            processor: a.processor,
+            amountCents: order.amountCents,
+            kind: 'donation',
+            donationCents: order.donationCents ?? order.amountCents,
+          },
+        });
+        return { applied: true, granted: true };
+      }
+
+      // Membership orders (self/gift) always carry a tier.
+      const tierId = order.tierId;
+      if (!tierId) return { applied: false, granted: false };
+      const tier = await ctx.db.get(tierId);
 
       // Gift order: mint `quantity` shareable codes bound to the buyer (hash-only)
       // instead of extending the buyer's own membership. The plaintext lives only
@@ -406,7 +516,7 @@ export const applyEvent = internalMutation({
           await ctx.db.insert('redemptionCodes', {
             codeHash: c.hash,
             codePrefix: c.prefix,
-            tierId: order.tierId,
+            tierId,
             durationDays: order.durationDays,
             status: 'active',
             purchasedByUserId: order.userId,
@@ -414,6 +524,8 @@ export const applyEvent = internalMutation({
             updatedAt: now,
           });
         }
+        // A donation may ride a gift purchase too.
+        await fundDonation(ctx, order.userId, order.donationCents, now);
         await writeAuditLog(ctx, {
           actorType: 'webhook',
           actorId: order.userId,
@@ -427,6 +539,7 @@ export const applyEvent = internalMutation({
             amountCents: order.amountCents,
             kind: 'gift',
             quantity: codes.length,
+            donationCents: order.donationCents ?? 0,
           },
         });
         return { applied: true, granted: true };
@@ -444,11 +557,13 @@ export const applyEvent = internalMutation({
         Math.max(now, user.membershipExpiresAt ?? 0) + order.durationDays * DAY_MS;
       await applyMembership(ctx, {
         userId: order.userId,
-        tierId: order.tierId,
+        tierId,
         expiresAtMs,
         reason: `billing.${a.processor}`,
         triggeredBy: 'webhook',
       });
+      // Apply any optional donation that rode on the membership charge.
+      await fundDonation(ctx, order.userId, order.donationCents, now);
       await writeAuditLog(ctx, {
         actorType: 'webhook',
         actorId: order.userId,
@@ -460,6 +575,7 @@ export const applyEvent = internalMutation({
           tierSlug: tier?.slug,
           durationDays: order.durationDays,
           amountCents: order.amountCents,
+          donationCents: order.donationCents ?? 0,
         },
       });
       return { applied: true, granted: true };
@@ -484,7 +600,11 @@ export const orderMintPlan = internalQuery({
   handler: async (
     ctx,
     { orderRef },
-  ): Promise<{ kind: 'self' | 'gift'; quantity: number; alreadyPaid: boolean } | null> => {
+  ): Promise<{
+    kind: 'self' | 'gift' | 'donation';
+    quantity: number;
+    alreadyPaid: boolean;
+  } | null> => {
     const order = await ctx.db
       .query('billingOrders')
       .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', orderRef))
@@ -589,7 +709,7 @@ export const getOrderStatus = internalQuery({
   ): Promise<{
     status: OrderStatus;
     membershipExpiresAt: string | null;
-    kind: 'self' | 'gift';
+    kind: 'self' | 'gift' | 'donation';
     // The freshly-minted gift codes, revealed ONCE on the return poll: present
     // only for a paid, not-yet-acknowledged gift order (cleared on ack/sweep).
     giftCodes: string[];

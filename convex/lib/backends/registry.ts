@@ -28,6 +28,7 @@ import {
   remnawaveFetchSubscription,
   remnawaveFleetStats,
   remnawaveGetNodeStats,
+  remnawaveBulkUpdateTrafficLimit,
   remnawaveGetUser,
   remnawaveGetUserUsage,
   remnawaveHardenLogging,
@@ -87,6 +88,14 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // Optional: enable/disable a user via the backend's dedicated status action
   // (Remnawave: /actions/{enable|disable}). Absent for backends without it.
   setStatus?(config: C, backendUserId: string, active: boolean): Promise<void>;
+  // Optional: bulk-set trafficLimitBytes on many users in one call (Remnawave
+  // bulk/update) — the free-bandwidth bonus re-caps the free fleet with this.
+  // Absent for backends with no bulk primitive (Outline → per-user fallback).
+  bulkUpdateTrafficLimit?(
+    config: C,
+    backendUserIds: string[],
+    trafficLimitBytes: number,
+  ): Promise<void>;
   // Optional: aggregate traffic-usage series for the member usage trend (read-only;
   // Remnawave bandwidth-stats). Absent for backends without per-user usage history.
   getUserUsage?(config: C, backendUserId: string, days: number): Promise<UsageSeries>;
@@ -123,6 +132,7 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   remove: (c, id) => remnawaveDeleteUser(c, id),
   removeDevice: (c, id, hwid) => remnawaveDeleteDevice(c, id, hwid),
   setStatus: (c, id, active) => remnawaveSetStatus(c, id, active),
+  bulkUpdateTrafficLimit: (c, ids, limit) => remnawaveBulkUpdateTrafficLimit(c, ids, limit),
   getUserUsage: (c, id, days) => remnawaveGetUserUsage(c, id, days),
   getFleetStats: (c) => remnawaveFleetStats(c),
   getNodeStats: (c) => remnawaveGetNodeStats(c),
