@@ -19,7 +19,9 @@
 
   const donation = $derived(config.data?.billing?.donation);
   const history = $derived(donation?.history ?? []);
-  const showImpact = $derived(!!donation?.enabled && history.length > 0);
+  // Stats render whenever donations are live (a zero month is honest data —
+  // the empty note below explains it); only the chart needs real history.
+  const showImpact = $derived(!!config.data?.billing?.enabled && !!donation?.enabled);
   const user = $derived(account.data?.user);
   const isDonor = $derived(!!user?.donorSince && (user?.donatedCentsTotal ?? 0) > 0);
   // Personal display framing: the member's lifetime giving converted at the
@@ -79,6 +81,8 @@
           ariaLabel={t('impact.chartAria', { n: history.length })}
         />
       </div>
+    {:else if (donation?.currentBonusGb ?? 0) === 0}
+      <p class="text-xs text-muted-foreground">{t('impact.empty')}</p>
     {/if}
 
     {#if isDonor && user}

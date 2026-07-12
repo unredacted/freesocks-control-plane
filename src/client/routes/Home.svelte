@@ -438,9 +438,10 @@
 
   <!-- DONATION IMPACT: what donors' giving is doing for free users right now
        (live bonus + reach + the per-month history as a dithered chart). Renders
-       only when donations are enabled AND there is real impact data — never an
-       empty graph. All numbers are GB / user counts (no dollar figures). -->
-  {#if billingEnabled && donation?.enabled && donationHistory.length > 0}
+       whenever donations are live; before the first donation the chart slot
+       carries the "first one starts the counter" note instead of an empty
+       graph. All numbers are GB / user counts (no dollar figures). -->
+  {#if billingEnabled && donation?.enabled}
     <section class="rounded-2xl border border-border bg-card p-6 md:p-10">
       <div class="grid gap-8 md:grid-cols-2 md:items-center">
         <div class="max-w-xl space-y-3">
@@ -470,14 +471,23 @@
             </Button>
           </div>
         </div>
-        <div class="donation-sheen rounded-xl border border-amber-500/30 bg-background/60 p-4">
-          <DitherChart
-            values={donationHistory.map((h) => h.bonusGb)}
-            labels={donationHistory.map((h) => h.month)}
-            variant="bars"
-            height={120}
-            ariaLabel={t('home.impact.chartAria')}
-          />
+        <div
+          class="donation-sheen rounded-xl border border-amber-500/30 bg-background/60 p-4 {donationHistory.length ===
+          0
+            ? 'flex items-center justify-center min-h-32'
+            : ''}"
+        >
+          {#if donationHistory.length > 0}
+            <DitherChart
+              values={donationHistory.map((h) => h.bonusGb)}
+              labels={donationHistory.map((h) => h.month)}
+              variant="bars"
+              height={120}
+              ariaLabel={t('home.impact.chartAria')}
+            />
+          {:else}
+            <p class="text-sm text-muted-foreground text-center max-w-xs">{t('impact.empty')}</p>
+          {/if}
         </div>
       </div>
     </section>
