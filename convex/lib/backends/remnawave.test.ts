@@ -212,6 +212,27 @@ describe('remnawaveGetUser', () => {
     expect(state.devices).toEqual([]);
     expect(state.status).toBe('active');
   });
+
+  // Regression: Remnawave 2.x moved used traffic into a nested `userTraffic`
+  // object on GET (no top-level `usedTrafficBytes`). The old top-level read was
+  // silently coerced to 0 by `.nullish()`, freezing the account counter at "0 B".
+  test('reads used traffic from the nested userTraffic (2.x GET shape)', async () => {
+    const u = userObj({ trafficLimitBytes: 500 });
+    delete u.usedTrafficBytes; // 2.x GET carries no top-level field
+    u.userTraffic = { usedTrafficBytes: 4096, lifetimeUsedTrafficBytes: 9000, onlineAt: null };
+    routeUserAndDevices(u);
+    const state = await remnawaveGetUser(cfg, UUID);
+    expect(state.usedTrafficBytes).toBe(4096); // not 0
+    expect(state.trafficLimitBytes).toBe(500);
+  });
+
+  test('prefers nested userTraffic over a stale flat usedTrafficBytes', async () => {
+    routeUserAndDevices(
+      userObj({ usedTrafficBytes: 250, userTraffic: { usedTrafficBytes: 4096 } }),
+    );
+    const state = await remnawaveGetUser(cfg, UUID);
+    expect(state.usedTrafficBytes).toBe(4096);
+  });
 });
 
 describe('remnawaveUpdateUser (Bug 14: squad clear vs set vs absent)', () => {

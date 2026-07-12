@@ -37,14 +37,22 @@ const RemnawaveUser = z.object({
   // string; nullish on NO_RESET tiers / older panels (kept lenient like the
   // device dates so a format change can't fail-parse the whole user).
   lastTrafficResetAt: z.string().nullish(),
-  // Remnawave omits this on the CREATE response (a brand-new user has used
-  // nothing); default to 0 so issuance parses. On GET it's present and kept.
+  // LEGACY / CREATE-response fallback. Remnawave omits used traffic on the CREATE
+  // response (a brand-new user has used nothing) → default to 0 so issuance parses.
+  // Older panels also carried it here on GET. Newer panels moved it under
+  // `userTraffic` (below); toState prefers that and only falls back to this.
   usedTrafficBytes: z
     .number()
     .int()
     .nonnegative()
     .nullish()
     .transform((v) => v ?? 0),
+  // Remnawave 2.x nests per-user used traffic here on GET /api/users/{uuid}
+  // (the flat top-level `usedTrafficBytes` no longer exists on GET). Kept lenient
+  // like the device dates — a panel shape change must never fail-parse the whole
+  // user (that silent-0 masking is exactly what broke the account traffic counter).
+  // Extra siblings (lifetimeUsedTrafficBytes/onlineAt/…) are stripped by z.object.
+  userTraffic: z.object({ usedTrafficBytes: z.number().int().nonnegative().nullish() }).nullish(),
   expireAt: z.string().datetime().nullable(),
   hwidDeviceLimit: z.number().int().nonnegative().nullable(),
   subscriptionUrl: z.string().url(),
@@ -286,7 +294,10 @@ function toState(user: RemnawaveUser, devices: BackendDevice[]): UserState {
             : 'unknown';
   return {
     trafficLimitBytes: user.trafficLimitBytes,
-    usedTrafficBytes: user.usedTrafficBytes,
+    // Prefer the nested (2.x) location; fall back to the flat legacy field (a real
+    // value on older panels, 0 on the CREATE response). Fixes the counter that sat
+    // at "0 B" once the panel moved this under `userTraffic`.
+    usedTrafficBytes: user.userTraffic?.usedTrafficBytes ?? user.usedTrafficBytes,
     trafficLimitStrategy: user.trafficLimitStrategy,
     lastTrafficResetAt: user.lastTrafficResetAt ?? undefined,
     expireAt: user.expireAt,
