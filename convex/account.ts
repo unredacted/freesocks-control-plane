@@ -144,6 +144,10 @@ interface AccountView {
     connectionModeId: string;
     /** ISO of the member's first settled donation (null = not a donor). */
     donorSince: string | null;
+    /** Lifetime settled donation total (cents) — the member's own impact figure. */
+    donatedCentsTotal: number;
+    /** Number of settled orders that carried a donation. */
+    donationCount: number;
     createdAt: string;
   };
   subscription: {
@@ -202,6 +206,11 @@ export const getAccountView = internalAction({
     // outage (backend unreachable) still shows the raised cap, not the base.
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const trafficLimitFromTier = resolveTrafficLimitBytes(tier, bonusGb);
+    // The member's own settled donation totals (impact panel).
+    const donationTotals: { donatedCentsTotal: number; donationCount: number } = await ctx.runQuery(
+      internal.donations.donationTotals,
+      { userId },
+    );
     let subscription: AccountView['subscription'] = null;
     if (sub) {
       // Best-effort live state; degrade to local data if the backend is down.
@@ -290,6 +299,8 @@ export const getAccountView = internalAction({
           : null,
         connectionModeId,
         donorSince: user.firstDonatedAt ? new Date(user.firstDonatedAt).toISOString() : null,
+        donatedCentsTotal: donationTotals.donatedCentsTotal,
+        donationCount: donationTotals.donationCount,
         createdAt: new Date(user._creationTime).toISOString(),
       },
       subscription,

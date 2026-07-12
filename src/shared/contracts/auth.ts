@@ -140,6 +140,11 @@ export const PublicConfig = z.object({
         bonusGbPerUsd: z.number(),
         monthlyBonusCapGb: z.number(),
         currentBonusGb: z.number(),
+        /** Active free users the shared bonus reaches (daily-reconciled count). */
+        freeUsersHelped: z.number().default(0),
+        /** Per-month bonus-GB ledger (last 12) for the impact graphs. GB only —
+         *  dollar amounts are never projected publicly. */
+        history: z.array(z.object({ month: z.string(), bonusGb: z.number() })).default([]),
       })
       .default({
         enabled: false,
@@ -148,6 +153,8 @@ export const PublicConfig = z.object({
         bonusGbPerUsd: 0,
         monthlyBonusCapGb: 0,
         currentBonusGb: 0,
+        freeUsersHelped: 0,
+        history: [],
       }),
   }),
   /** Whether the opt-in "trouble connecting? try a mirror" affordance is available

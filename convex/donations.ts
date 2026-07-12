@@ -40,6 +40,31 @@ export const currentBonusGb = internalQuery({
   },
 });
 
+/** A member's own settled donation totals (impact panel). Bounded: one user's
+ *  orders via by_user, filtered to paid rows carrying a donation. */
+export const donationTotals = internalQuery({
+  args: { userId: v.id('users') },
+  handler: async (
+    ctx,
+    { userId },
+  ): Promise<{ donatedCentsTotal: number; donationCount: number }> => {
+    const orders = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    let donatedCentsTotal = 0;
+    let donationCount = 0;
+    for (const o of orders) {
+      if (o.status !== 'paid') continue;
+      const cents = o.donationCents ?? 0;
+      if (cents <= 0) continue;
+      donatedCentsTotal += cents;
+      donationCount += 1;
+    }
+    return { donatedCentsTotal, donationCount };
+  },
+});
+
 /** Everything applyFreeBonus needs in one read: the effective vs last-pushed bonus
  *  and the free tiers (id + base GB) whose keys must be re-capped. */
 export const applyContext = internalQuery({

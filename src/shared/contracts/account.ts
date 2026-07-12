@@ -48,6 +48,11 @@ export const AccountResponse = z.object({
      *  never donated. Drives the persistent account donor badge. Optional for
      *  rolling-deploy compat. */
     donorSince: z.string().datetime().nullable().optional(),
+    /** Lifetime settled donation total (cents) + how many settled orders carried
+     *  one — the member's own impact figures. Optional/defaulted for
+     *  rolling-deploy compat. */
+    donatedCentsTotal: z.number().optional().default(0),
+    donationCount: z.number().int().optional().default(0),
     createdAt: z.string().datetime(),
   }),
   subscription: z

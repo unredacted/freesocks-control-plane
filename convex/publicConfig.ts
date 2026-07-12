@@ -8,7 +8,13 @@
  */
 import { query } from './_generated/server';
 import { resolveBillingConfig } from './lib/billingConfig';
-import { readDonationState, effectiveBonusGb } from './lib/donationBonus';
+import {
+  readDonationState,
+  readDonationHistory,
+  effectiveBonusGb,
+  currentMonthKey,
+} from './lib/donationBonus';
+import { readUserCounts } from './lib/statusCounters';
 import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
 import { resolveSiteConfig } from './lib/siteConfig';
@@ -77,6 +83,26 @@ export const get = query({
     const currentBonusGb = billing.donation.enabled
       ? effectiveBonusGb(donationState, billing.donation, Date.now())
       : 0;
+    // Public impact projection: monthly GB-added ledger + the free-user count —
+    // GB and user counts ONLY, never dollar amounts (revenue stays private).
+    // The current month is synthesized from the live accumulator so the graph is
+    // fresh even before the next donation upserts the stored ledger entry.
+    let donationHistory: { month: string; bonusGb: number }[] = [];
+    if (billing.donation.enabled) {
+      const mk = currentMonthKey(Date.now());
+      const stored = (await readDonationHistory(ctx.db))
+        .filter((h) => h.monthKey !== mk)
+        .map((h) => ({ month: h.monthKey, bonusGb: h.bonusGb }));
+      // Skip the synthesized entry on a deployment with no impact yet (empty
+      // ledger + nothing this month) so the SPA's non-empty gate stays honest.
+      const hasCurrent =
+        currentBonusGb > 0 || (donationState.monthKey === mk && donationState.donatedCents > 0);
+      donationHistory =
+        stored.length > 0 || hasCurrent
+          ? [...stored, { month: mk, bonusGb: currentBonusGb }].slice(-12)
+          : [];
+    }
+    const userCounts = await readUserCounts(ctx.db);
 
     // Is the opt-in "trouble connecting? try a mirror" affordance available? Only
     // a boolean (≥1 active mirror provider) — no provider details/secrets. Lets the
@@ -124,6 +150,10 @@ export const get = query({
           bonusGbPerUsd: billing.donation.bonusGbPerUsd,
           monthlyBonusCapGb: billing.donation.monthlyBonusCapGb,
           currentBonusGb,
+          // Active free users the shared bonus reaches (daily-reconciled counter).
+          freeUsersHelped: userCounts.freeActive,
+          // Per-month bonus-GB ledger (last 12; GB only — no dollar amounts).
+          history: donationHistory,
         },
       },
       mirrorsEnabled,

@@ -1,7 +1,7 @@
 import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
-import { internal } from './_generated/api';
+import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { gbToBytes } from './lib/backends/types';
 
@@ -165,5 +165,116 @@ describe('donations.applyFreeBonus', () => {
         .unique();
       expect(JSON.parse(st!.value).appliedBonusGb).toBe(0);
     });
+  });
+});
+
+describe('donations.donationTotals', () => {
+  test('sums only settled orders that carried a donation', async () => {
+    const { t, freeTierId } = await setup();
+    const { userId, otherId } = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId: freeTierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const otherId = await ctx.db.insert('users', {
+        tierId: freeTierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const order = (over: Record<string, unknown>) =>
+        ctx.db.insert('billingOrders', {
+          processor: 'nowpayments',
+          opaqueRef: `ref-${Math.random().toString(36).slice(2)}`,
+          userId,
+          durationDays: 0,
+          amountCents: 1000,
+          currency: 'USD',
+          status: 'paid',
+          kind: 'donation',
+          updatedAt: Date.now(),
+          ...over,
+        });
+      await order({ donationCents: 500 }); // counts
+      await order({ donationCents: 300, kind: 'self', durationDays: 91 }); // ride-along counts
+      await order({ donationCents: 700, status: 'pending' }); // unsettled — excluded
+      await order({ donationCents: 0, kind: 'self', durationDays: 91 }); // no donation — excluded
+      await order({ donationCents: 900, userId: otherId }); // other user — excluded
+      return { userId, otherId };
+    });
+    expect(await t.query(internal.donations.donationTotals, { userId })).toEqual({
+      donatedCentsTotal: 800,
+      donationCount: 2,
+    });
+    expect(await t.query(internal.donations.donationTotals, { userId: otherId })).toEqual({
+      donatedCentsTotal: 900,
+      donationCount: 1,
+    });
+  });
+
+  test('zeros for a user with no orders', async () => {
+    const { t, freeTierId } = await setup();
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', { tierId: freeTierId, status: 'active', updatedAt: Date.now() }),
+    );
+    expect(await t.query(internal.donations.donationTotals, { userId })).toEqual({
+      donatedCentsTotal: 0,
+      donationCount: 0,
+    });
+  });
+});
+
+describe('publicConfig donation impact projection', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  test('ships GB-only history (no dollar amounts) + the free-user count', async () => {
+    const { t } = await setup();
+    await t.run(async (ctx) => {
+      const put = (key: string, value: unknown) =>
+        ctx.db.insert('appState', {
+          key,
+          value: JSON.stringify(value),
+          updatedAt: Date.now(),
+        });
+      // Two closed months in the ledger + a live current-month accumulator.
+      await put('donation:history', [
+        { monthKey: '2026-05', donatedCents: 2000, bonusGb: 20 },
+        { monthKey: '2026-06', donatedCents: 4000, bonusGb: 40 },
+      ]);
+      await put('donation:freeBonus', {
+        monthKey: thisMonth(),
+        donatedCents: 1500,
+        appliedBonusGb: 15,
+      });
+      await put('stats:userCounts', {
+        active: 7,
+        grace: 0,
+        disabled: 0,
+        deleted: 0,
+        inactive: 0,
+        backendDrift: 0,
+        freeActive: 5,
+      });
+    });
+    const cfg = await t.query(api.publicConfig.get, {});
+    expect(cfg.billing.donation.freeUsersHelped).toBe(5);
+    // Current month synthesized from the live accumulator ($15 × 1 GB/USD).
+    expect(cfg.billing.donation.history).toEqual([
+      { month: '2026-05', bonusGb: 20 },
+      { month: '2026-06', bonusGb: 40 },
+      { month: thisMonth(), bonusGb: 15 },
+    ]);
+    // GB only — the ledger's donatedCents never reaches the public projection.
+    expect(JSON.stringify(cfg.billing.donation.history)).not.toContain('donatedCents');
+  });
+
+  test('empty history on a deployment with no impact yet', async () => {
+    const { t } = await setup();
+    const cfg = await t.query(api.publicConfig.get, {});
+    expect(cfg.billing.donation.history).toEqual([]);
+    expect(cfg.billing.donation.freeUsersHelped).toBe(0);
   });
 });
