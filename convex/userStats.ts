@@ -6,6 +6,7 @@
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { heartbeatFromAction } from './cronHeartbeat';
 import { writeUserCounts, type UserCounts } from './lib/statusCounters';
@@ -17,13 +18,21 @@ const COUNTS_VALIDATOR = v.object({
   deleted: v.number(),
   inactive: v.number(),
   backendDrift: v.number(),
+  freeActive: v.number(),
 });
 
-/** Tally one page of users (bounded read) → partial counts + the paginate cursor. */
+/** Tally one page of users (bounded read) → partial counts + the paginate cursor.
+ *  `freeTierIds` = the default-free tier set; active users on one count toward
+ *  `freeActive` (the "free users helped" impact stat). */
 export const tallyUserCountsPage = internalQuery({
-  args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
-  handler: async (ctx, { cursor, numItems }) => {
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+    freeTierIds: v.array(v.id('tiers')),
+  },
+  handler: async (ctx, { cursor, numItems, freeTierIds }) => {
     const res = await ctx.db.query('users').paginate({ cursor, numItems });
+    const freeIdSet = new Set<string>(freeTierIds);
     const counts: UserCounts = {
       active: 0,
       grace: 0,
@@ -31,10 +40,12 @@ export const tallyUserCountsPage = internalQuery({
       deleted: 0,
       inactive: 0,
       backendDrift: 0,
+      freeActive: 0,
     };
     for (const u of res.page) {
       counts[u.status] += 1;
       if (u.backendPushFailedAt != null) counts.backendDrift += 1;
+      if (u.status === 'active' && freeIdSet.has(u.tierId)) counts.freeActive += 1;
     }
     return { counts, isDone: res.isDone, continueCursor: res.continueCursor };
   },
@@ -53,6 +64,7 @@ export const reconcileUserCounts = internalAction({
   args: {},
   handler: async (ctx): Promise<UserCounts> => {
     await heartbeatFromAction(ctx, 'user-counts-reconcile');
+    const freeTierIds: Id<'tiers'>[] = await ctx.runQuery(internal.tiers.defaultFreeTierIds, {});
     const total: UserCounts = {
       active: 0,
       grace: 0,
@@ -60,12 +72,17 @@ export const reconcileUserCounts = internalAction({
       deleted: 0,
       inactive: 0,
       backendDrift: 0,
+      freeActive: 0,
     };
     let cursor: string | null = null;
     for (let i = 0; i < 100_000; i++) {
       // Annotated to break the same-module self-referential inference.
       const res: { counts: UserCounts; isDone: boolean; continueCursor: string } =
-        await ctx.runQuery(internal.userStats.tallyUserCountsPage, { cursor, numItems: 500 });
+        await ctx.runQuery(internal.userStats.tallyUserCountsPage, {
+          cursor,
+          numItems: 500,
+          freeTierIds,
+        });
       for (const k of Object.keys(total) as (keyof UserCounts)[]) total[k] += res.counts[k];
       if (res.isDone) break;
       cursor = res.continueCursor;

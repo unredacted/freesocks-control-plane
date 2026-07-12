@@ -21,6 +21,10 @@ export interface UserCounts {
   inactive: number;
   /** Users whose last backend push failed and hasn't recovered (entitlement drift). */
   backendDrift: number;
+  /** Active users on a default-free tier — the "free users helped" impact stat.
+   *  Maintained by the daily reconcile ONLY (a status delta doesn't know tier
+   *  membership); per-transition bumps preserve it via read-full/write-full. */
+  freeActive: number;
 }
 
 const ZERO: UserCounts = {
@@ -30,6 +34,7 @@ const ZERO: UserCounts = {
   deleted: 0,
   inactive: 0,
   backendDrift: 0,
+  freeActive: 0,
 };
 
 export async function readUserCounts(db: DatabaseReader): Promise<UserCounts> {

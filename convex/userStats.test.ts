@@ -64,6 +64,7 @@ describe('userStats counters (WS3)', () => {
       deleted: 0,
       inactive: 1,
       backendDrift: 1,
+      freeActive: 2, // both active users sit on the default-free tier
     });
     expect(await counts(t)).toEqual(c1);
     // Idempotent: a second reconcile yields the same exact result.
@@ -99,6 +100,40 @@ describe('userStats counters (WS3)', () => {
     expect(await counts(t)).toMatchObject({ active: 0, inactive: 1 });
     await t.mutation(internal.lifecycle.refreshFreeWindow, { userId });
     expect(await counts(t)).toMatchObject({ active: 1, inactive: 0 });
+  });
+
+  test('freeActive tallies only active users on default-free tiers, and survives status bumps', async () => {
+    const t = convexTest(schema, modules);
+    const freeTierId = await seedFreeTier(t);
+    const paidTierId = await t.run((ctx) =>
+      ctx.db.insert('tiers', {
+        slug: 'member',
+        name: 'Member',
+        backend: 'remnawave',
+        monthlyTrafficGb: 0,
+        deviceLimit: 3,
+        hwidLimit: 3,
+        hwidEnabled: false,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: false,
+        isActive: true,
+        priority: 10,
+        expirationDaysAfterMembershipLapse: 30,
+        updatedAt: Date.now(),
+      }),
+    );
+    const graceFreeId = await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert('users', { tierId: freeTierId, status: 'active', updatedAt: now });
+      await ctx.db.insert('users', { tierId: paidTierId, status: 'active', updatedAt: now }); // paid active — excluded
+      await ctx.db.insert('users', { tierId: freeTierId, status: 'inactive', updatedAt: now }); // free but idle — excluded
+      return ctx.db.insert('users', { tierId: freeTierId, status: 'active', updatedAt: now });
+    });
+    const c = await t.action(internal.userStats.reconcileUserCounts, {});
+    expect(c).toMatchObject({ active: 3, freeActive: 2 });
+    // A status transition bump (read-full/write-full) must not clobber freeActive.
+    await t.mutation(internal.lifecycle.applyGraceTransition, { userId: graceFreeId });
+    expect(await counts(t)).toMatchObject({ active: 2, grace: 1, freeActive: 2 });
   });
 
   test('backend drift bumps exactly once (no double-count across setters)', async () => {

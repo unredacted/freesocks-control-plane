@@ -49,6 +49,16 @@ export const getDefaultFree = internalQuery({
   handler: (ctx, { backend }) => resolveDefaultFreeTier(ctx.db, backend),
 });
 
+/** Ids of every default-free tier (any backend, active or not) — the tier-membership
+ *  set the user-counts reconcile tallies `freeActive` against. */
+export const defaultFreeTierIds = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const tiers = await ctx.db.query('tiers').collect();
+    return tiers.filter((t) => t.isDefaultFree).map((t) => t._id);
+  },
+});
+
 /**
  * Resolve a tier's cross-backend peer for a backend switch (D-1). Returns the
  * equivalent ACTIVE tier on `targetBackend`, or null if none is linked:
