@@ -987,9 +987,12 @@
                     : t('account.refreshMembership')}
                 </button>
               </p>
-              <MemberImpact />
             {/if}
           {/if}
+
+          <!-- Donation impact + nonprofit framing (every membership state; shows
+               the collective bonus stats/graph + the member's own contribution). -->
+          <MemberImpact />
 
           <!-- Standalone donation (available in every membership state; self-gates
                on billing + donations being enabled). -->

@@ -396,7 +396,29 @@
   },
   "impact": {
     "title": "Donations support Unredacted",
-    "body": "Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site."
+    "body": "Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site.",
+    "collectiveTitle": "Donation impact",
+    "collectiveBody": "Donations raise every free user's monthly bandwidth for the month they're given. This is what the community's donations are doing right now.",
+    "bonusThisMonth": "GB added this month",
+    "bonusThisMonthDetail": "on top of every free account's monthly allowance",
+    "usersHelped": "free accounts reached",
+    "usersHelpedDetail": "active free users whose allowance the bonus raises",
+    "historyTitle": "Bandwidth added per month",
+    "chartAria": "Bandwidth added to every free user by donations, month by month over the last {n} months",
+    "yourContribution": "Your contribution",
+    "yourGiven": "You've given {amount}",
+    "yourGb": "That's about {gb} GB of extra bandwidth for free users",
+    "yourCount": [
+      {
+        "declarations": ["input count", "local countPlural = count: plural"],
+        "selectors": ["countPlural"],
+        "match": {
+          "countPlural=one": "across 1 donation",
+          "countPlural=other": "across {count} donations"
+        }
+      }
+    ],
+    "empty": "No donations yet this month — the first one starts the counter."
   },
   "donate": {
     "addTitle": "Add a donation",
@@ -626,6 +648,12 @@
     "switchFailedTitle": "Could not switch focus"
   },
   "home": {
+    "impact": {
+      "title": "Donations at work",
+      "body": "Every donation raises the monthly bandwidth of every free account for that month. This is what donors have added so far — you could add to it too.",
+      "cta": "Make a donation",
+      "chartAria": "Bandwidth added to every free user by donations, month by month"
+    },
     "hero": {
       "eyebrow": "Operated by Unredacted, a US 501(c)(3) nonprofit",
       "title": "A free VPN for users in heavily-censored regions.",
