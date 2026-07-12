@@ -172,15 +172,10 @@ members to carry). On a fresh backend:
    ```sh
    bunx convex run seed:seedCutover '{}'
    ```
-   `seedCutover` seeds the default-free + member tiers, app settings, the primary
-   Remnawave instance (from `REMNAWAVE_*` env, if set), and the recommended-client
-   catalog. Then reconcile the paid tier to the unlimited membership + set the
-   device-limit default (both idempotent no-ops on a re-run):
-   ```sh
-   bunx convex run seed:reconfigureMembershipTier '{}'
-   bunx convex run seed:migrateDeviceEnforcementDefault '{}'
-   ```
-   (The beta compose `deployer` service runs all three automatically.) Adjust the
+   `seedCutover` seeds the default-free + member tiers, app settings (including the
+   device-limit enforcement default, OFF), the primary Remnawave instance (from
+   `REMNAWAVE_*` env, if set), and the recommended-client catalog.
+   (The beta compose `deployer` service runs it automatically.) Adjust the
    tier limits afterward in the admin CMS (Tiers) or edit `convex/seed.ts`.
 4. **Register Outline servers** (only if using the Outline backend): admin CMS →
    **Backend servers** (the `apiUrl` secret is stored server-side, never echoed back).

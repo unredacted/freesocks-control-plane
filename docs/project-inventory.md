@@ -27,11 +27,10 @@ a live key. Remnawave specifics moved behind a namespaced admin surface — **Ad
 (`PATCH /api/v1/admin/remnawave/mode-placements` [`admin:servers:write`],
 `GET /api/v1/admin/remnawave/node-stats` [`admin:servers:read`]) — while the generic mode
 catalog (labels/description/default) stays at `PATCH /api/v1/admin/connection-modes`
-(`admin:settings:write`). A one-time `seed:migrateConnectionModes` cutover migration copied
-live subs/users/settings onto the new fields, after which the old fields
-(`subscriptions.remnawaveSquadUuid`, `users.connectionProfileId`, `tiers.remnawaveSquadUuid`, the
-`remnawaveSquadStats` table) + the migration itself were **removed** (Phase 5b). See
-`docs/backends.md` § "Node placement".
+(`admin:settings:write`). A one-time cutover migration copied live subs/users/settings onto
+the new fields, after which the old fields (`subscriptions.remnawaveSquadUuid`,
+`users.connectionProfileId`, `tiers.remnawaveSquadUuid`, the `remnawaveSquadStats` table) + the
+migration itself were **removed** (Phase 5b). See `docs/backends.md` § "Node placement".
 
 Earlier the pre-launch polish pass added: **connection-mode descriptions** — admin-editable
 label + description that override the member picker's translated copy per-mode when set; per-
@@ -331,7 +330,7 @@ Convex runs these natively (no Workers triggers, no node-cron):
 - `epoch-key-rotate` (10 min) / `epoch-key-sweep` (daily): CDN-blinding HPKE epoch keys.
 - `admin-invite-sweep` (daily): drop expired admin-invite tokens (multi-admin onboarding).
 - `retention-audit` / `retention-webhooks` / `retention-tier-history` /
-  `retention-free-grants` / `retention-subscriptions` / `retention-billing-orders` /
+  `retention-subscriptions` / `retention-billing-orders` /
   `retention-webauthn-auth` / `retention-webauthn-reg` (daily): bounded deletes of the
   append-only tables past their retention window (P2; the WebAuthn challenge sweeps close
   the last unswept-table gap).

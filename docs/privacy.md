@@ -25,18 +25,14 @@ accidentally regress it).
   throws rather than using the plaintext IP), and `IP_HASH_SALT` is a
   per-deployment random so even the transient hashes aren't correlatable across
   deployments. The free-account cap IS that ephemeral counter (`freetier.create`);
-  there is **no durable per-IP ledger** (the old `freeGrants.ipHash` store was
-  removed — see the migration note).
+  there is **no durable per-IP ledger** — the old `freeGrants` table was purged
+  live and then dropped from the schema entirely.
 - **The audit log stores no IP, hashed or otherwise.** Free-account creation
   records only a coarse, non-identifying `ipCountry` (never the IP, no hash, no raw
   User-Agent), and every audit payload is projected through a fail-closed allowlist
-  (`convex/lib/audit.ts`) that drops any unregistered key. (The legacy optional
-  `auditLog.ipHash` field is no longer written; `seed:purgeStoredIps` clears it on
-  existing rows and it is schema-dropped in a follow-up deploy.)
-- **Migration note:** `seed:purgeStoredIps` (run every deploy from
-  `deploy-entrypoint.sh`) empties the legacy `freeGrants` per-IP ledger and clears
-  every `auditLog.ipHash`. The `freeGrants` table + the `auditLog.ipHash` field are
-  removed from the schema in the follow-up deploy, once those rows are gone.
+  (`convex/lib/audit.ts`) that drops any unregistered key. The legacy
+  `auditLog.ipHash` field was cleared live and then dropped from the schema — the
+  shape can no longer carry an IP-derived value at all.
 - **`sessions` / `billingOrders` store no IP** (billing orders store no payer PII
   at all).
 - **No `console.*` in `convex/` logs an IP, header, or raw request.**

@@ -6,12 +6,12 @@
  * (`convex/rateLimits.ts`) — a bucket keyed by a one-way HMAC of the IP that
  * auto-expires (24h window) and is cron-swept. Nothing durable ever records the
  * IP: the hash exists only for the life of that rate-limit window, and no
- * `freeGrants`/audit row carries it.
+ * durable ledger/audit row carries it.
  *
  * Why the cap stays race-free (closes deferred bug H1): the rate-limit `enforce`
  * runs as a serializable mutation that conflicts on the bucket row, so two
  * concurrent creates can never both observe `< max` — the same OCC guarantee the
- * old `freeGrants` slot-claim had, minus any stored IP. The slot is reserved
+ * old durable slot-claim ledger had, minus any stored IP. The slot is reserved
  * (increment) BEFORE any side effect and RELEASED (decrement) if the mint/session
  * step fails, so a transient error never burns the IP's daily allowance.
  *
@@ -52,8 +52,7 @@ type CreateAccountResult =
 /**
  * Insert the bare free-tier user. The per-(IP,day) cap is enforced UPSTREAM by
  * the `freetier.create` rate limit in `createFreeAccount`; this mutation records
- * NO IP (no `freeGrants` row) — issuance is captured by `tierHistory` + the audit
- * log instead.
+ * NO IP — issuance is captured by `tierHistory` + the audit log instead.
  */
 export const createFreeUser = internalMutation({
   args: { tierId: v.id('tiers') },

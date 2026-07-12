@@ -28,7 +28,6 @@ export interface AuditEntry {
   targetId?: string;
   payload?: unknown;
   requestId?: string;
-  ipHash?: string;
 }
 
 /**

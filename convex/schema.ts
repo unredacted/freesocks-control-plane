@@ -224,22 +224,6 @@ export default defineSchema({
     triggeredBy: v.string(),
   }).index('by_user', ['userId']),
 
-  freeGrants: defineTable({
-    userId: v.id('users'),
-    ipHash: v.string(),
-    ipCountry: v.optional(v.string()),
-    asn: v.optional(v.number()),
-    tlsFingerprint: v.optional(v.string()),
-    userAgentHash: v.optional(v.string()),
-    grantedAt: v.number(),
-    grantedDayBucket: v.number(),
-    // NOTE: the old `slot` column + composite UNIQUE index are intentionally
-    // gone. The free-tier cap is now enforced by a serializable mutation
-    // (read count over by_ip_day, then insert); see migration plan §2.
-  })
-    .index('by_ip_day', ['ipHash', 'grantedDayBucket'])
-    .index('by_granted_at', ['grantedAt']),
-
   auditLog: defineTable({
     actorType,
     actorId: v.optional(v.string()),
@@ -248,7 +232,6 @@ export default defineSchema({
     targetId: v.optional(v.string()),
     payload: v.optional(v.any()),
     requestId: v.optional(v.string()),
-    ipHash: v.optional(v.string()),
   })
     .index('by_target', ['targetType', 'targetId'])
     .index('by_actor', ['actorType', 'actorId'])
@@ -570,8 +553,7 @@ export default defineSchema({
     schemeId: v.optional(v.string()), // an appLinks builder id; absent = manual / QR only
     hwid: v.boolean(), // supports Remnawave device-id (so the device limit is honored)
     // Open-source signal: OSS apps get a badge + rank ahead of proprietary ones.
-    // Optional so existing rows validate; `undefined` until the backfill migration
-    // (seed:migrateClientCatalogMeta) or an admin edit sets it.
+    // Optional so an admin-created row without the metadata still validates.
     openSource: v.optional(v.boolean()),
     license: v.optional(v.string()), // short label: 'GPL-3.0', 'Apache-2.0', 'Proprietary'
     sourceUrl: v.optional(v.string()), // public source repo (OSS only)

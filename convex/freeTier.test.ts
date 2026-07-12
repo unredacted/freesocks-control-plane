@@ -58,8 +58,6 @@ describe('freeTier.createFreeUser / deleteFreeUser', () => {
       const user = await ctx.db.get(userId);
       expect(user?.status).toBe('active');
       expect(user?.tierId).toBe(tierId);
-      // The account-creation flow records NO freeGrants row (no stored IP).
-      expect(await ctx.db.query('freeGrants').collect()).toHaveLength(0);
     });
   });
 
@@ -91,7 +89,7 @@ describe('freeTier.createFreeAccount', () => {
   // A failure after the slot reservation must leave NO orphan — in particular no
   // member session pointing at the user the compensation deletes (the session is
   // created last, after cookie signing). Force mint to throw via an empty pepper.
-  test('a failure after the slot claim leaves no orphan user/session/grant', async () => {
+  test('a failure after the slot claim leaves no orphan user/session', async () => {
     const t = convexTest(schema, modules);
     await seedFreeTier(t);
     vi.stubEnv('ACCOUNT_ID_PEPPER', ''); // mintForUser throws → catch → deleteFreeUser + release
@@ -103,7 +101,6 @@ describe('freeTier.createFreeAccount', () => {
     await t.run(async (ctx) => {
       expect(await ctx.db.query('users').collect()).toHaveLength(0);
       expect(await ctx.db.query('sessions').collect()).toHaveLength(0);
-      expect(await ctx.db.query('freeGrants').collect()).toHaveLength(0);
     });
   });
 
@@ -155,7 +152,7 @@ describe('freeTier.createFreeAccount', () => {
     });
   });
 
-  test('stores NO IP: freeGrants stays empty and the audit row carries no ipHash', async () => {
+  test('stores NO IP: the audit row carries only the coarse country', async () => {
     const t = convexTest(schema, modules);
     await seedFreeTier(t);
     const res = await t.action(internal.freeTier.createFreeAccount, {
@@ -165,15 +162,15 @@ describe('freeTier.createFreeAccount', () => {
     });
     expect(res.ok).toBe(true);
     await t.run(async (ctx) => {
-      // No durable per-IP ledger row is written at all.
-      expect(await ctx.db.query('freeGrants').collect()).toHaveLength(0);
       const audits = await ctx.db
         .query('auditLog')
         .filter((q) => q.eq(q.field('action'), 'user.create.free'))
         .collect();
       expect(audits.length).toBeGreaterThanOrEqual(1);
-      for (const a of audits) expect(a.ipHash).toBeUndefined();
-      // The coarse, non-identifying country is still allowed (never the IP).
+      // No per-row IP-derived value exists anywhere on the audit shape (the
+      // ipHash field is schema-dropped); the coarse, non-identifying country
+      // is still allowed (never the IP).
+      for (const a of audits) expect('ipHash' in a).toBe(false);
       expect(audits[0]!.payload?.ipCountry).toBe('IR');
     });
   });

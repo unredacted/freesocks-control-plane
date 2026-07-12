@@ -87,12 +87,6 @@ crons.daily(
   {},
 );
 crons.daily(
-  'retention-free-grants',
-  { hourUTC: 4, minuteUTC: 15 },
-  internal.retention.sweepFreeGrants,
-  {},
-);
-crons.daily(
   'retention-subscriptions',
   { hourUTC: 4, minuteUTC: 20 },
   internal.retention.sweepDeletedSubscriptions,

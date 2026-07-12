@@ -109,41 +109,8 @@ fi
 echo "[deploy] seeding tiers + settings (+ Remnawave instance if REMNAWAVE_* is set)"
 bunx convex run seed:seedCutover '{}'
 
-# One-time migration of the paid 'member' tier to the unlimited FreeSocks
-# Membership (the billing flow's target). Guarded: a no-op once the row is
-# already unlimited, so it's safe on every deploy and won't clobber admin edits.
-echo "[deploy] reconfiguring the membership tier (no-op if already unlimited)"
-bunx convex run seed:reconfigureMembershipTier '{}'
-
-# One-time device-limit-enforcement default: keep prior behavior for an EXISTING
-# deployment (users present + a device-limited tier) by seeding the toggle ON;
-# a fresh install stays OFF (unlimited-by-default). No-op once the key is set.
-echo "[deploy] setting the device-limit enforcement default (no-op if already set)"
-bunx convex run seed:migrateDeviceEnforcementDefault '{}'
-
-# One-time backfill of the client-catalog open-source metadata (openSource /
-# license / sourceUrl) onto client rows that predate those fields, plus insertion
-# of the new open-source client apps. Idempotent (only patches rows still missing
-# the metadata, so it never clobbers admin edits).
-echo "[deploy] backfilling client-catalog open-source metadata (idempotent)"
-bunx convex run seed:migrateClientCatalogMeta '{}'
-
-# One-time purge of durable stored IPs (even hashed): empty the legacy freeGrants
-# per-(IP,day) cap ledger + clear auditLog.ipHash. The free-account cap is now the
-# ephemeral freetier.create rate limit (no durable IP stored). Idempotent.
-echo "[deploy] purging durable stored IPs (freeGrants + audit ipHash)"
-bunx convex run seed:purgeStoredIps '{}'
-
-# Seed the free-tier idle marker (freeKeyExpiresAt) on any free users that lack it,
-# so the deactivate-idle-free sweep can find aged-out free keys. Idempotent (skips
-# users that already have it). NOTE: reclassifying historical status:'deleted' free
-# rows → 'inactive' (so cleaned accounts can return) is an operator choice, run on
-# demand: bunx convex run seed:reclassifyDeletedFreeToInactive '{}'
-echo "[deploy] backfilling the free-tier idle marker (idempotent)"
-bunx convex run seed:backfillFreeKeyExpiresAt '{}'
-
-# Recompute the user-status counter (feeds /admin/status) so it starts consistent
-# after the migrations above. Idempotent; also self-healed by a daily cron.
+# Recompute the user-status counter (feeds /admin/status) so it starts consistent.
+# Idempotent; also self-healed by a daily cron.
 echo "[deploy] reconciling the user-status counter"
 bunx convex run userStats:reconcileUserCounts '{}'
 

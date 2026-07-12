@@ -159,47 +159,6 @@ describe('retention sweeps (P2)', () => {
     });
   });
 
-  test('sweepFreeGrants deletes grants past the window, keeps recent ones', async () => {
-    const t = convexTest(schema, modules);
-    const now = Date.now();
-    await t.run(async (ctx) => {
-      const tierId = await ctx.db.insert('tiers', {
-        slug: 'free',
-        name: 'Free',
-        backend: 'remnawave',
-        monthlyTrafficGb: 50,
-        deviceLimit: 1,
-        hwidLimit: 1,
-        hwidEnabled: true,
-        trafficStrategy: 'MONTH',
-        isDefaultFree: true,
-        isActive: true,
-        priority: 0,
-        expirationDaysAfterMembershipLapse: 0,
-        updatedAt: now,
-      });
-      const userId = await ctx.db.insert('users', { tierId, status: 'active', updatedAt: now });
-      // Old grant (100 days ago) + recent grant (1 day ago).
-      await ctx.db.insert('freeGrants', {
-        userId,
-        ipHash: 'old',
-        grantedAt: now - 100 * DAY,
-        grantedDayBucket: Math.floor((now - 100 * DAY) / DAY),
-      });
-      await ctx.db.insert('freeGrants', {
-        userId,
-        ipHash: 'recent',
-        grantedAt: now - DAY,
-        grantedDayBucket: Math.floor((now - DAY) / DAY),
-      });
-    });
-
-    const { removed } = await t.mutation(internal.retention.sweepFreeGrants, {});
-    expect(removed).toBe(1);
-    const remaining = await t.run((ctx) => ctx.db.query('freeGrants').collect());
-    expect(remaining.map((r) => r.ipHash)).toEqual(['recent']);
-  });
-
   test('sweepAuditLog deletes only entries older than the window', async () => {
     const t = convexTest(schema, modules);
     // Insert an "old" row, then advance the clock so it's beyond 180 days.

@@ -23,7 +23,6 @@ export const record = internalMutation({
     targetId: v.optional(v.string()),
     payload: v.optional(v.any()),
     requestId: v.optional(v.string()),
-    ipHash: v.optional(v.string()),
   },
   handler: async (ctx, entry) => {
     await writeAuditLog(ctx, entry);

@@ -32,7 +32,7 @@ export const RATE_LIMIT_DEFAULTS = {
   // account, so NO durable IP is stored — the hashed IP lives only in this
   // auto-expiring bucket. `max` = accounts per IP per `windowMs` (raised 1 -> 3 for
   // carrier-grade-NAT regions); the counter is serializable, so it closes the H1
-  // over-issuance race the old freeGrants slot-claim used to. `enabled:false` => no cap.
+  // over-issuance race the old durable slot-claim ledger used to. `enabled:false` => no cap.
   'freetier.create': { max: 3, windowMs: DAY, enabled: true },
   // Per-IP throttle on the account-create route, in front of the captcha verify.
   'account.create.ip': { max: 12, windowMs: HOUR, enabled: true },

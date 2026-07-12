@@ -1,6 +1,6 @@
 /**
  * P2: retention sweeps for the append-only tables that otherwise grow without
- * bound (auditLog, webhookEvents, tierHistory, freeGrants). Each is a daily,
+ * bound (auditLog, webhookEvents, tierHistory, …). Each is a daily,
  * paginated delete of rows older than a per-table window. Conservative windows;
  * tune via env if needed. Uses the system `by_creation_time` index (or the
  * table's own time index) so deletes are a bounded range scan, not a full table.
@@ -113,21 +113,6 @@ export const sweepDeletedSubscriptions = internalMutation({
     const rows = await ctx.db
       .query('subscriptions')
       .withIndex('by_state', (q) => q.eq('state', 'deleted').lt('deletedAt', cutoff))
-      .take(limit ?? PAGE);
-    for (const r of rows) await ctx.db.delete(r._id);
-    return { removed: rows.length };
-  },
-});
-
-/** Free-grant issuance ledger: keep ~30 days (the per-(IP,day) cap window + buffer). */
-export const sweepFreeGrants = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
-    await recordHeartbeat(ctx, 'retention-free-grants');
-    const cutoff = Date.now() - num('FREE_GRANT_RETENTION_DAYS', 30) * DAY;
-    const rows = await ctx.db
-      .query('freeGrants')
-      .withIndex('by_granted_at', (q) => q.lt('grantedAt', cutoff))
       .take(limit ?? PAGE);
     for (const r of rows) await ctx.db.delete(r._id);
     return { removed: rows.length };

@@ -89,11 +89,6 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
   { name: 'retention-webhooks', everyMs: DAY, description: 'Prune webhook dedupe records' },
   { name: 'retention-tier-history', everyMs: DAY, description: 'Prune tier-change history' },
   {
-    name: 'retention-free-grants',
-    everyMs: DAY,
-    description: 'Prune the free-grant issuance ledger',
-  },
-  {
     name: 'retention-subscriptions',
     everyMs: DAY,
     description: 'Prune long-deleted subscription rows',
