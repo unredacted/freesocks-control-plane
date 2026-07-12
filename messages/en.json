@@ -71,7 +71,9 @@
   "nav": {
     "getAccount": "Get a free account",
     "signIn": "Sign in",
-    "account": "My account"
+    "account": "My account",
+    "menu": "Menu",
+    "theme": "Theme"
   },
   "captcha": {
     "initial": "I'm human",
