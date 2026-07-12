@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest';
-import { currentMonthKey, effectiveBonusGb, type DonationState } from './lib/donationBonus';
+import {
+  currentMonthKey,
+  effectiveBonusGb,
+  upsertHistoryEntry,
+  type DonationHistoryEntry,
+  type DonationState,
+} from './lib/donationBonus';
 import { gbToBytes, resolveTrafficLimitBytes } from './lib/backends/types';
 import { sanitizeAmountsList, BILLING_DEFAULTS } from './lib/billingConfig';
 
@@ -61,6 +67,58 @@ describe('resolveTrafficLimitBytes', () => {
     expect(resolveTrafficLimitBytes({ monthlyTrafficGb: 50, isDefaultFree: true }, 0)).toBe(
       gbToBytes(50),
     );
+  });
+});
+
+describe('upsertHistoryEntry', () => {
+  const entry = (
+    monthKey: string,
+    over: Partial<DonationHistoryEntry> = {},
+  ): DonationHistoryEntry => ({
+    monthKey,
+    donatedCents: 1000,
+    bonusGb: 10,
+    ...over,
+  });
+
+  test('appends a new month, sorted ascending', () => {
+    const out = upsertHistoryEntry([entry('2026-07')], entry('2026-06'));
+    expect(out.map((e) => e.monthKey)).toEqual(['2026-06', '2026-07']);
+  });
+
+  test('replaces the same-month entry with the cumulative totals (no duplicate)', () => {
+    const out = upsertHistoryEntry(
+      [entry('2026-07', { donatedCents: 500, bonusGb: 5 })],
+      entry('2026-07', { donatedCents: 1500, bonusGb: 15 }),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ donatedCents: 1500, bonusGb: 15 });
+  });
+
+  test('a month roll preserves the prior month as its own entry', () => {
+    const july = upsertHistoryEntry([], entry('2026-07', { donatedCents: 5000, bonusGb: 50 }));
+    const august = upsertHistoryEntry(july, entry('2026-08', { donatedCents: 200, bonusGb: 2 }));
+    expect(august.map((e) => e.monthKey)).toEqual(['2026-07', '2026-08']);
+    expect(august[0]).toMatchObject({ donatedCents: 5000, bonusGb: 50 });
+  });
+
+  test('caps at 24 months, dropping the oldest', () => {
+    let entries: DonationHistoryEntry[] = [];
+    for (let i = 0; i < 30; i++) {
+      const mk = currentMonthKey(Date.UTC(2024, i, 1));
+      entries = upsertHistoryEntry(entries, entry(mk));
+    }
+    expect(entries).toHaveLength(24);
+    expect(entries[0].monthKey).toBe('2024-07'); // 2024-01..06 dropped
+    expect(entries[23].monthKey).toBe('2026-06');
+  });
+
+  test('preserves an existing freeUsers stamp when the update carries none', () => {
+    const stamped = upsertHistoryEntry([], entry('2026-07', { freeUsers: 1234 }));
+    const afterDonation = upsertHistoryEntry(stamped, entry('2026-07', { donatedCents: 9999 }));
+    expect(afterDonation[0].freeUsers).toBe(1234);
+    const restamped = upsertHistoryEntry(afterDonation, entry('2026-07', { freeUsers: 2000 }));
+    expect(restamped[0].freeUsers).toBe(2000);
   });
 });
 

@@ -1286,4 +1286,43 @@ describe('billing donations', () => {
       expect(JSON.parse(st!.value).donatedCents).toBe(1000);
     });
   });
+
+  test('a settled donation lands a per-month history ledger entry', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTiersAndUser(t);
+    await t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'nowpayments',
+        opaqueRef: 'ref-don-hist',
+        userId,
+        durationDays: 0,
+        amountCents: 1000,
+        donationCents: 1000,
+        currency: 'USD',
+        status: 'pending',
+        kind: 'donation',
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-don-hist',
+      status: 'paid',
+      processorRef: 'inv',
+    });
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'donation:history'))
+        .unique();
+      const entries = JSON.parse(row!.value) as {
+        monthKey: string;
+        donatedCents: number;
+        bonusGb: number;
+      }[];
+      expect(entries).toHaveLength(1);
+      const mk = new Date().toISOString().slice(0, 7);
+      expect(entries[0]).toMatchObject({ monthKey: mk, donatedCents: 1000, bonusGb: 10 }); // $10 × 1 GB/USD
+    });
+  });
 });
