@@ -3,6 +3,7 @@
   import { t } from '../lib/i18n/index.svelte';
   import { formatMoney } from '../lib/i18n/format';
   import { configQuery, accountQuery } from '../lib/queries';
+  import { impactChartSeries } from '../lib/impact';
   import DitherChart from './DitherChart.svelte';
 
   /**
@@ -19,9 +20,10 @@
 
   const donation = $derived(config.data?.billing?.donation);
   const history = $derived(donation?.history ?? []);
-  // Stats render whenever donations are live (a zero month is honest data —
-  // the empty note below explains it); only the chart needs real history.
+  // Renders whenever donations are live (a zero month is honest data — the
+  // empty note explains it); the chart falls back to a flat zero baseline.
   const showImpact = $derived(!!config.data?.billing?.enabled && !!donation?.enabled);
+  const chartSeries = $derived(impactChartSeries(history));
   const user = $derived(account.data?.user);
   const isDonor = $derived(!!user?.donorSince && (user?.donatedCentsTotal ?? 0) > 0);
   // Personal display framing: the member's lifetime giving converted at the
@@ -68,22 +70,21 @@
       </div>
     </div>
 
-    {#if history.length > 1}
-      <div>
-        <div class="text-xs font-medium text-muted-foreground mb-2">
-          {t('impact.historyTitle')}
-        </div>
-        <DitherChart
-          values={history.map((h) => h.bonusGb)}
-          labels={history.map((h) => h.month)}
-          variant="bars"
-          height={88}
-          ariaLabel={t('impact.chartAria', { n: history.length })}
-        />
+    <div>
+      <div class="text-xs font-medium text-muted-foreground mb-2">
+        {t('impact.historyTitle')}
       </div>
-    {:else if (donation?.currentBonusGb ?? 0) === 0}
-      <p class="text-xs text-muted-foreground">{t('impact.empty')}</p>
-    {/if}
+      <DitherChart
+        values={chartSeries.map((h) => h.bonusGb)}
+        labels={chartSeries.map((h) => h.month)}
+        variant="bars"
+        height={88}
+        ariaLabel={t('impact.chartAria', { n: chartSeries.length })}
+      />
+      {#if history.length === 0}
+        <p class="mt-2 text-xs text-muted-foreground">{t('impact.empty')}</p>
+      {/if}
+    </div>
 
     {#if isDonor && user}
       <div class="donation-sheen rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">

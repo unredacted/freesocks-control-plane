@@ -163,6 +163,12 @@
     --tier-sheen-angle: 360deg;
   }
 }
+/* The ring pseudo-element is absolutely positioned — the host MUST be its
+   containing block, or the ring anchors to the page and paints a giant
+   gradient box. Baked into the class so no call site can forget `relative`. */
+.tier-sheen {
+  position: relative;
+}
 @supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
   .tier-sheen::before {
     content: '';
@@ -205,6 +211,8 @@
 }
 .donation-sheen {
   --donation-gold: oklch(0.82 0.14 85);
+  /* Containing block for the absolutely-positioned ring (see .tier-sheen). */
+  position: relative;
 }
 @supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
   .donation-sheen::before {

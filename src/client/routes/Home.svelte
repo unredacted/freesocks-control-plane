@@ -34,6 +34,7 @@
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import DitherChart from '../components/DitherChart.svelte';
+  import { impactChartSeries } from '../lib/impact';
 
   const me = meQuery();
   const config = configQuery();
@@ -50,6 +51,9 @@
   // anon visitor creates a free account first.
   const donation = $derived(config.data?.billing?.donation);
   const donationHistory = $derived(donation?.history ?? []);
+  // The chart always renders: real history, or a flat zero baseline while
+  // there is none yet (the note under it explains).
+  const impactSeries = $derived(impactChartSeries(donationHistory));
   function goDonate() {
     router.navigate(me.data?.authenticated ? '/account?tab=membership' : '/get-account');
   }
@@ -394,6 +398,57 @@
     </section>
   {/if}
 
+  <!-- DONATION IMPACT: what donors' giving is doing for free users right now
+       (live bonus + reach + the per-month history as a dithered chart). Renders
+       whenever donations are live; before the first donation the chart shows a
+       flat zero baseline with the "first one starts the counter" note. All
+       numbers are GB / user counts (no dollar figures). -->
+  {#if billingEnabled && donation?.enabled}
+    <section class="rounded-2xl border border-border bg-card p-6 md:p-10">
+      <div class="grid gap-8 md:grid-cols-2 md:items-center">
+        <div class="max-w-xl space-y-3">
+          <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+            {t('home.impact.title')}
+          </h2>
+          <p class="text-muted-foreground leading-relaxed">{t('home.impact.body')}</p>
+          <div class="flex flex-wrap gap-x-6 gap-y-2 pt-1">
+            <div>
+              <span
+                class="text-xl font-display font-bold tabular-nums text-amber-600 dark:text-amber-300"
+                >+{donation.currentBonusGb}</span
+              >
+              <span class="text-sm text-muted-foreground"> {t('impact.bonusThisMonth')}</span>
+            </div>
+            <div>
+              <span class="text-xl font-display font-bold tabular-nums"
+                >{donation.freeUsersHelped.toLocaleString()}</span
+              >
+              <span class="text-sm text-muted-foreground"> {t('impact.usersHelped')}</span>
+            </div>
+          </div>
+          <div class="pt-2">
+            <Button onclick={goDonate}>
+              <Heart class="size-4" />
+              {t('home.impact.cta')}
+            </Button>
+          </div>
+        </div>
+        <div class="donation-sheen rounded-xl border border-amber-500/30 bg-background/60 p-4">
+          <DitherChart
+            values={impactSeries.map((h) => h.bonusGb)}
+            labels={impactSeries.map((h) => h.month)}
+            variant="bars"
+            height={120}
+            ariaLabel={t('home.impact.chartAria')}
+          />
+          {#if donationHistory.length === 0}
+            <p class="mt-2 text-xs text-muted-foreground text-center">{t('impact.empty')}</p>
+          {/if}
+        </div>
+      </div>
+    </section>
+  {/if}
+
   <!-- FAQ — single-open accordion, localized like the rest of the page. -->
   <section class="space-y-8">
     <div class="max-w-2xl space-y-2">
@@ -435,63 +490,6 @@
       {/each}
     </ul>
   </section>
-
-  <!-- DONATION IMPACT: what donors' giving is doing for free users right now
-       (live bonus + reach + the per-month history as a dithered chart). Renders
-       whenever donations are live; before the first donation the chart slot
-       carries the "first one starts the counter" note instead of an empty
-       graph. All numbers are GB / user counts (no dollar figures). -->
-  {#if billingEnabled && donation?.enabled}
-    <section class="rounded-2xl border border-border bg-card p-6 md:p-10">
-      <div class="grid gap-8 md:grid-cols-2 md:items-center">
-        <div class="max-w-xl space-y-3">
-          <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
-            {t('home.impact.title')}
-          </h2>
-          <p class="text-muted-foreground leading-relaxed">{t('home.impact.body')}</p>
-          <div class="flex flex-wrap gap-x-6 gap-y-2 pt-1">
-            <div>
-              <span
-                class="text-xl font-display font-bold tabular-nums text-amber-600 dark:text-amber-300"
-                >+{donation.currentBonusGb}</span
-              >
-              <span class="text-sm text-muted-foreground"> {t('impact.bonusThisMonth')}</span>
-            </div>
-            <div>
-              <span class="text-xl font-display font-bold tabular-nums"
-                >{donation.freeUsersHelped.toLocaleString()}</span
-              >
-              <span class="text-sm text-muted-foreground"> {t('impact.usersHelped')}</span>
-            </div>
-          </div>
-          <div class="pt-2">
-            <Button onclick={goDonate}>
-              <Heart class="size-4" />
-              {t('home.impact.cta')}
-            </Button>
-          </div>
-        </div>
-        <div
-          class="donation-sheen rounded-xl border border-amber-500/30 bg-background/60 p-4 {donationHistory.length ===
-          0
-            ? 'flex items-center justify-center min-h-32'
-            : ''}"
-        >
-          {#if donationHistory.length > 0}
-            <DitherChart
-              values={donationHistory.map((h) => h.bonusGb)}
-              labels={donationHistory.map((h) => h.month)}
-              variant="bars"
-              height={120}
-              ariaLabel={t('home.impact.chartAria')}
-            />
-          {:else}
-            <p class="text-sm text-muted-foreground text-center max-w-xs">{t('impact.empty')}</p>
-          {/if}
-        </div>
-      </div>
-    </section>
-  {/if}
 
   <!-- ABOUT: short, factual, no invented programs -->
   <section class="rounded-2xl border border-border bg-card p-6 md:p-10">
