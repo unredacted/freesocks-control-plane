@@ -373,11 +373,9 @@ http.route({
 
     const body = await readJson<{
       captchaToken?: string;
-      turnstileToken?: string;
       backend?: 'remnawave' | 'outline';
     }>(req);
-    // Accept the new `captchaToken` and the legacy `turnstileToken` (skew window).
-    const captchaToken = body.captchaToken ?? body.turnstileToken;
+    const captchaToken = body.captchaToken;
     if (!captchaToken) {
       return errorJson('validation', 'Captcha token required', 400);
     }
@@ -487,9 +485,8 @@ http.route({
     const body = await readJson<{
       accountId?: string;
       captchaToken?: string;
-      turnstileToken?: string;
     }>(req);
-    const captchaToken = body.captchaToken ?? body.turnstileToken;
+    const captchaToken = body.captchaToken;
     if (!body.accountId || !captchaToken) {
       return errorJson('validation', 'accountId and captchaToken are required', 400);
     }

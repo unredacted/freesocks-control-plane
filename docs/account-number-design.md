@@ -111,8 +111,7 @@ mounted alongside `/api/auth/*`).
 
 **Request**: `{ accountId: string, captchaToken: string }`. A captcha (self-hosted
 **Cap**; replaced Cloudflare Turnstile as of 2026-06-10) is required on every attempt,
-the same widget that gates free-tier issuance. Prevents headless brute-force. (The
-server still accepts the legacy `turnstileToken` field name during the rollout.)
+the same widget that gates free-tier issuance. Prevents headless brute-force.
 
 **Response 200**: `{ ok: true }`; sets the `fs_session` cookie identical to OIDC
 callback. SPA redirects to `/account`.

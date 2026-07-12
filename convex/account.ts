@@ -71,7 +71,8 @@ async function auditIfPlacementless(
 // lock (a blind delete previously could).
 const ISSUE_LOCK_TTL_MS = 120_000;
 
-/** Parse a lock row's value; tolerates the legacy plain-number (expiry-only) form. */
+/** Parse a lock row's value (the JSON `{exp, token}` form; anything else reads
+ *  as expired-with-no-owner, so a corrupt row can always be taken over). */
 function parseLock(value: string): { exp: number; token: string | null } {
   try {
     const o = JSON.parse(value) as { exp?: number; token?: string };
@@ -79,10 +80,9 @@ function parseLock(value: string): { exp: number; token: string | null } {
       return { exp: o.exp, token: typeof o.token === 'string' ? o.token : null };
     }
   } catch {
-    /* legacy format: a bare expiry number */
+    /* fall through */
   }
-  const n = Number(value);
-  return { exp: Number.isFinite(n) ? n : 0, token: null };
+  return { exp: 0, token: null };
 }
 
 export const acquireIssuanceLock = internalMutation({
@@ -116,8 +116,7 @@ export const releaseIssuanceLock = internalMutation({
     if (!row) return null;
     // Owner-checked: delete only when the caller's nonce matches the held one, so a
     // saga whose lock already expired + was re-acquired by another can't delete the
-    // NEW holder's lock. A missing token on either side (legacy row / legacy caller)
-    // falls back to an unconditional delete. (Review #7.)
+    // NEW holder's lock. (Review #7.)
     const held = parseLock(row.value).token;
     if (token && held && held !== token) return null;
     await ctx.db.delete(row._id);
