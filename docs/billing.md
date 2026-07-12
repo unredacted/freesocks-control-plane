@@ -134,6 +134,21 @@ shipped in `publicConfig`): `enabled`, `suggestedAmountsCents` (preset chips),
 `minAmountCents` (standalone floor), `bonusGbPerUsd` (rate), `monthlyBonusCapGb` (cap).
 All are placeholders until an operator sets real values — like the membership prices.
 
+**Impact surfaces.** `recordDonation` also upserts a bounded per-month ledger
+(`appState` key `donation:history`, capped at 24 months: cumulative `donatedCents` +
+the month's `bonusGb` frozen at write time), so a month roll no longer discards the
+prior month. The daily user-counts reconcile additionally tallies `freeActive`
+(active users on default-free tiers) into `stats:userCounts`. `publicConfig`
+`billing.donation` projects `freeUsersHelped` + a last-12-months `history` of
+`{month, bonusGb}` — **GB and user counts only; dollar amounts are never public**
+(the current month is synthesized live from the accumulator). `getAccountView`
+returns the member's own `donatedCentsTotal`/`donationCount` (summed from their paid
+orders). The SPA renders these as dithered charts (`DitherChart.svelte`, a
+dependency-free Bayer-ordered-dither canvas — no chart library, CSP-safe): the
+account Membership tab's impact panel (`MemberImpact.svelte`, every membership
+state, with a personal-contribution block for donors) and a home-page impact
+section, both gated on donations being enabled and non-empty history.
+
 ## NOWPayments setup (crypto rail — ship first)
 
 1. Create a NOWPayments account; generate an **API key** and an **IPN secret**.

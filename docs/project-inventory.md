@@ -251,6 +251,12 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `bulk/update` (`donations.applyFreeBonus`, scheduled on grant + the hourly
   `donation-bonus-reconcile` cron) and reset to base at the month boundary. Config in
   `billing.donation.*` (Admin → Billing → Donations); DORMANT until billing is enabled + amounts set.
+  **Impact dashboards:** a bounded per-month ledger (`appState donation:history`, 24 months,
+  upserted by `recordDonation`) + a `freeActive` tally in the daily user-counts reconcile feed
+  `publicConfig billing.donation.{freeUsersHelped,history}` (GB/user counts only — dollar totals
+  are never public) and the member's own `donatedCentsTotal`/`donationCount` on the account view;
+  rendered as dithered charts (`DitherChart.svelte`, hand-rolled Bayer-dither canvas, no chart
+  lib) in the account impact panel (`MemberImpact.svelte`) and a home-page impact section.
 - **Billing webhook seam** (legacy/ops): `POST /api/webhooks/billing` (`convex/webhooks.ts`),
   HMAC-SHA256-verified (`WEBHOOK_SIGNING_SECRET`) + deduped by `eventId` (`webhookEvents`
   table) → maps `{accountId, tierSlug, expiresAtMs?}` onto `lifecycle.setMembership`. Kept as
