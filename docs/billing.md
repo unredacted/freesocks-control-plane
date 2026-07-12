@@ -106,6 +106,34 @@ Gift codes are bearer credentials (anyone holding one can redeem it), so the
 reveal-once + sweep design keeps the plaintext out of long-term storage. The buyer
 manages their codes from the `GiftCodes` panel.
 
+## Donations
+
+A supporter can add a donation on top of a membership checkout, or give standalone
+(`kind: 'donation'`, no membership) — both on `/account` and `/get-account`, and a
+member can donate again anytime. The donation rides the SAME processor charge as a
+membership (one `amountCents = price + donation`), so no adapter changes are needed;
+a donation-only order carries no tier (`billingOrders.tierId` is optional) and grants
+nothing. The donated amount is stored on the order (`donationCents`), shown in the
+admin billing log, and included in the `billing.order.paid` audit payload. A member's
+first settled donation stamps `users.firstDonatedAt`, which drives a persistent donor
+badge on the account.
+
+**Donations fund a monthly free-user bandwidth bonus.** All donations in a calendar
+month accumulate into a shared pool (`appState` key `donation:freeBonus`); every free
+user's monthly cap becomes `base + min(monthlyBonusCapGb, monthDonatedUSD ×
+bonusGbPerUsd)` for that month, then resets to base next month. On a settled donation
+the grant path records it (`lib/donationBonus.recordDonation`) and schedules
+`donations.applyFreeBonus`, which re-caps the active free fleet via Remnawave
+`POST /api/users/bulk/update` (≤500 uuids/chunk); the hourly `donation-bonus-reconcile`
+cron is the backstop and performs the month-roll reset. The apply is idempotent (it
+only pushes when the effective bonus differs from what was last pushed). New/refreshed
+free keys pick up the current bonus at issuance via `resolveTrafficLimitBytes`.
+
+**Config** (`billing.donation.*`, admin-editable under Admin → Billing → Donations,
+shipped in `publicConfig`): `enabled`, `suggestedAmountsCents` (preset chips),
+`minAmountCents` (standalone floor), `bonusGbPerUsd` (rate), `monthlyBonusCapGb` (cap).
+All are placeholders until an operator sets real values — like the membership prices.
+
 ## NOWPayments setup (crypto rail — ship first)
 
 1. Create a NOWPayments account; generate an **API key** and an **IPN secret**.

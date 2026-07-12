@@ -240,6 +240,17 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   admin toggles) but DORMANT by default** — `billingConfig` ships every rail `enabled:false`
   with placeholder prices, so no billing is active until an admin sets keys/prices and enables a
   rail. The USD off-ramp is a documented ops runbook (NOWPayments → USDC → Coinbase/Kraken → ACH).
+- **Donations** (`convex/donations.ts`, `convex/lib/donationBonus.ts`; `docs/billing.md` §Donations):
+  an optional add-on at membership checkout **and** a standalone give (`kind:'donation'`, no tier),
+  on both `/account` and `/get-account` (`DonateCard` + `DonationAmountPicker`, shared amount UI).
+  The donation rides the same processor charge; `billingOrders.donationCents` + the
+  `billing.order.paid` audit + the admin billing log record how much. A first settled donation
+  stamps `users.firstDonatedAt` → a persistent donor badge. Donations in a calendar month
+  accumulate into a shared pool (`appState donation:freeBonus`) that raises **every free user's**
+  monthly cap by `min(cap, monthDonatedUSD × rate)`, applied fleet-wide via Remnawave
+  `bulk/update` (`donations.applyFreeBonus`, scheduled on grant + the hourly
+  `donation-bonus-reconcile` cron) and reset to base at the month boundary. Config in
+  `billing.donation.*` (Admin → Billing → Donations); DORMANT until billing is enabled + amounts set.
 - **Billing webhook seam** (legacy/ops): `POST /api/webhooks/billing` (`convex/webhooks.ts`),
   HMAC-SHA256-verified (`WEBHOOK_SIGNING_SECRET`) + deduped by `eventId` (`webhookEvents`
   table) → maps `{accountId, tierSlug, expiresAtMs?}` onto `lifecycle.setMembership`. Kept as
