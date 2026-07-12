@@ -357,6 +357,28 @@ export const setCurrentSubscription = internalMutation({
 });
 
 /**
+ * Re-point an EXISTING key to a new backend placement IN PLACE (a connection-mode
+ * switch that PATCHes the Remnawave user's squad rather than re-issuing). Updates
+ * `backendPlacement` and DROPS the per-UA content cache: the fronted
+ * `/api/v1/sub/<token>` keeps the SAME `subToken`, so a stale `subCache` would keep
+ * serving the OLD node's config for up to the cache TTL after the switch. Clearing
+ * it forces the next fetch to reflect the new placement. `null` clears the
+ * placement (mirrors insertSubscription's optional-field mapping). No state/token
+ * change, so the member's saved URL keeps working.
+ */
+export const setPlacementAndClearCache = internalMutation({
+  args: { subscriptionId: v.id('subscriptions'), placement: v.union(v.string(), v.null()) },
+  handler: async (ctx, { subscriptionId, placement }) => {
+    await ctx.db.patch(subscriptionId, {
+      backendPlacement: placement ?? undefined,
+      subCache: undefined,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/**
  * Soft-delete a subscription with a grace window: state→disabled,
  * deletedAt = now + graceMs; the backend user is left alive so the URL keeps
  * working until the tombstone sweep (P5d) hard-deletes it. Re-tombstoning a

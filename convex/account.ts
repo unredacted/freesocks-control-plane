@@ -536,10 +536,15 @@ type SwitchModeResult =
 
 /**
  * Switch the member's connection mode (transport) WITHIN the same backend.
- * Mirrors switchBackend's saga (issue new key → tombstone the old with 24h grace
- * → audit) but with no tier/backend change: it re-issues the key into the chosen
- * mode's least-loaded node and records the choice on the user. Degrades cleanly
- * when the mode has no placement pool bound yet (falls back to the tier squad).
+ * PREFERS an IN-PLACE update: a member who already holds a live Remnawave key just
+ * has that key's squad re-pointed (PATCH /api/users → activeInternalSquads), so the
+ * SAME subscription row/URL/token, traffic counter, and devices survive the switch
+ * — no user churn and no 24h "old key" window. Falls back to the re-issue saga
+ * (mint new key into the mode's least-loaded node → tombstone the old with 24h
+ * grace → audit) only when there's no in-place-updatable key: the first key, a
+ * cross-backend / non-Remnawave sub, or a PATCH that failed. A mode's
+ * `deliveryStyle` is a client-render concern keyed off the recorded mode, so no
+ * re-issue is needed to change how the key is delivered.
  */
 export const switchMode = internalAction({
   args: {
@@ -583,62 +588,129 @@ export const switchMode = internalAction({
     }
 
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
-    const nodePlacement =
-      tier.backend === 'remnawave'
-        ? await ctx.runQuery(internal.remnawaveNodes.resolvePlacement, { modeId: target })
-        : null;
     const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
-    const issued = await issueNewSubscription(ctx, {
-      userId,
-      backend: tier.backend,
-      spec: {
-        username: `freesocks-${tier.slug}-${randomHex(8)}`,
-        trafficLimitBytes: tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null,
-        trafficLimitStrategy: tier.trafficStrategy,
-        expireAt: computeExpireAtIso(
-          user.membershipExpiresAt,
-          Number(settings['freetier.expiryDays'] ?? 90),
-        ),
-        hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
-        tag: tier.slug,
-        placement: nodePlacement,
-      },
-    });
 
-    // Tombstone the OLD key before recording the choice (issueNew already
-    // repointed currentSubscriptionId), same 24h grace as regenerate/switch.
-    let oldDeletedAt: number | null = null;
-    if (oldSub) {
-      const tomb = await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, {
-        backendUserId: oldSub.backendUserId,
-        graceMs: 24 * 60 * 60 * 1000,
+    // Re-issue path (the historical behavior): mint a NEW key into the mode's
+    // placement and tombstone the old one with 24h grace. Used only when there is
+    // no in-place-updatable current key — the first key, a cross-backend /
+    // non-Remnawave sub, or an in-place PATCH that failed (e.g. the panel user was
+    // manually deleted).
+    const reissue = async (): Promise<SwitchModeResult> => {
+      const nodePlacement =
+        tier.backend === 'remnawave'
+          ? await ctx.runQuery(internal.remnawaveNodes.resolvePlacement, { modeId: target })
+          : null;
+      const issued = await issueNewSubscription(ctx, {
+        userId,
+        backend: tier.backend,
+        spec: {
+          username: `freesocks-${tier.slug}-${randomHex(8)}`,
+          trafficLimitBytes: tier.monthlyTrafficGb > 0 ? gbToBytes(tier.monthlyTrafficGb) : null,
+          trafficLimitStrategy: tier.trafficStrategy,
+          expireAt: computeExpireAtIso(
+            user.membershipExpiresAt,
+            Number(settings['freetier.expiryDays'] ?? 90),
+          ),
+          hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
+          tag: tier.slug,
+          placement: nodePlacement,
+        },
       });
-      oldDeletedAt = tomb?.deletedAt ?? null;
-    }
-    await ctx.runMutation(internal.users.setConnectionMode, { userId, modeId: target });
-    if (tier.isDefaultFree) {
-      await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
-    }
-    await ctx.runMutation(internal.audit.record, {
-      actorType: 'member',
-      actorId: userId,
-      action: 'subscription.switch_mode',
-      targetType: 'subscription',
-      targetId: issued.subscriptionId,
-      // Never a placement/squad uuid — only which mode.
-      payload: {
-        fromMode: user.connectionModeId ?? null,
-        toMode: target,
-      },
-      requestId,
-    });
-    return {
-      ok: true,
-      subscriptionUrl: issued.subscriptionUrl,
-      shortUuid: issued.backendShortId,
-      mode: { id: chosen.id, label: chosen.label },
-      oldSubscriptionDeletedAt: oldDeletedAt !== null ? new Date(oldDeletedAt).toISOString() : null,
+      // Tombstone the OLD key before recording the choice (issueNew already
+      // repointed currentSubscriptionId), same 24h grace as regenerate/switch.
+      let oldDeletedAt: number | null = null;
+      if (oldSub) {
+        const tomb = await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, {
+          backendUserId: oldSub.backendUserId,
+          graceMs: 24 * 60 * 60 * 1000,
+        });
+        oldDeletedAt = tomb?.deletedAt ?? null;
+      }
+      await auditIfPlacementless(ctx, {
+        backend: tier.backend,
+        placement: nodePlacement,
+        userId,
+        subscriptionId: issued.subscriptionId,
+        requestedMode: target,
+        requestId,
+      });
+      await ctx.runMutation(internal.users.setConnectionMode, { userId, modeId: target });
+      if (tier.isDefaultFree) {
+        await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
+      }
+      await ctx.runMutation(internal.audit.record, {
+        actorType: 'member',
+        actorId: userId,
+        action: 'subscription.switch_mode',
+        targetType: 'subscription',
+        targetId: issued.subscriptionId,
+        // Never a placement/squad uuid — only which mode.
+        payload: { fromMode: user.connectionModeId ?? null, toMode: target, inPlace: false },
+        requestId,
+      });
+      return {
+        ok: true,
+        subscriptionUrl: issued.subscriptionUrl,
+        shortUuid: issued.backendShortId,
+        mode: { id: chosen.id, label: chosen.label },
+        oldSubscriptionDeletedAt:
+          oldDeletedAt !== null ? new Date(oldDeletedAt).toISOString() : null,
+      };
     };
+
+    // In-place switch (the common case): a member who already has a live Remnawave
+    // key just moves it to the new mode's squad via PATCH /api/users. The SAME
+    // subscription row/URL/token, live traffic counter, and registered devices are
+    // all preserved — no user churn in the panel and no separate "old key" to keep
+    // alive for 24h. Only when the current key AND the tier are Remnawave.
+    if (oldSub && tier.backend === 'remnawave' && oldSub.backend === 'remnawave') {
+      const nodePlacement = await ctx.runQuery(internal.remnawaveNodes.resolvePlacement, {
+        modeId: target,
+      });
+      // null only on a deploy with NO pool bound anywhere; the re-issue path owns
+      // the squad-less-key audit, so fall through to it rather than PATCH a squad
+      // clear onto a live key. (The per-mode unbound case was rejected above.)
+      if (nodePlacement !== null) {
+        try {
+          await ctx.runAction(internal.backends.updateUser, {
+            backend: 'remnawave',
+            backendUserId: oldSub.backendUserId,
+            patch: { placement: nodePlacement },
+          });
+        } catch (e) {
+          console.warn('[switchMode] in-place placement update failed; re-issuing', e);
+          return reissue();
+        }
+        await ctx.runMutation(internal.subscriptions.setPlacementAndClearCache, {
+          subscriptionId: oldSub._id,
+          placement: nodePlacement,
+        });
+        await ctx.runMutation(internal.users.setConnectionMode, { userId, modeId: target });
+        if (tier.isDefaultFree) {
+          await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
+        }
+        await ctx.runMutation(internal.audit.record, {
+          actorType: 'member',
+          actorId: userId,
+          action: 'subscription.switch_mode',
+          targetType: 'subscription',
+          targetId: oldSub._id,
+          // Never a placement/squad uuid — only which mode + that it was in place.
+          payload: { fromMode: user.connectionModeId ?? null, toMode: target, inPlace: true },
+          requestId,
+        });
+        return {
+          ok: true,
+          // Same key: the member's saved fronted URL keeps working, now homed to
+          // the new node. No tombstone → nothing is deleted.
+          subscriptionUrl: oldSub.subscriptionUrl,
+          shortUuid: oldSub.backendShortId,
+          mode: { id: chosen.id, label: chosen.label },
+          oldSubscriptionDeletedAt: null,
+        };
+      }
+    }
+    return reissue();
   },
 });
 

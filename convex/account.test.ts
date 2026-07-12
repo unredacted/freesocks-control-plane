@@ -487,11 +487,10 @@ describe('account.switchMode saga', () => {
     expect(res).toMatchObject({ ok: false, code: 'validation', status: 400 });
   });
 
-  test('re-issues into the mode placement, tombstones the old key, records the choice, audits without the squad uuid', async () => {
+  test('switches IN PLACE: PATCHes the existing key’s squad, keeps the same sub row/URL/token, audits without the squad uuid', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const SQUAD = '11111111-2222-3333-4444-555555555555';
-    const NEW_UUID = '550e8400-e29b-41d4-a716-446655440077';
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t, { backend: 'remnawave' });
     const userId = await seedUser(t, tierId);
@@ -519,13 +518,114 @@ describe('account.switchMode saga', () => {
         backendShortId: 'oldshort',
         backendServerId: instanceId,
         subscriptionUrl: 'https://panel.test/sub/oldshort',
+        subToken: 'tok-abc',
+        // A stale cached body that MUST be dropped on switch (same token).
+        subCache: JSON.stringify([{ ua: 'x', content: 'stale', contentType: 't', at: Date.now() }]),
         subscriptionMirrors: [],
+        backendPlacement: 'old-squad',
         state: 'active',
         updatedAt: Date.now(),
       });
-      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+      // Currently on evade → switching to privacy is a real change.
+      await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'evade' });
     });
-    // The only HTTP the saga makes is the create (POST /api/users); the tombstone is DB-only.
+    // The only HTTP an in-place switch makes is the squad PATCH (PATCH /api/users).
+    const fetchMock = vi.fn(
+      async (_input: string | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            response: {
+              uuid: '550e8400-e29b-41d4-a716-446655440000',
+              shortUuid: 'oldshort',
+              username: 'u',
+              status: 'ACTIVE',
+              trafficLimitBytes: null,
+              trafficLimitStrategy: 'MONTH',
+              userTraffic: { usedTrafficBytes: 0 },
+              expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+              hwidDeviceLimit: null,
+              subscriptionUrl: 'https://panel.test/sub/oldshort',
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
+    // Same key returned; nothing tombstoned.
+    expect(res).toMatchObject({
+      ok: true,
+      mode: { id: 'privacy' },
+      subscriptionUrl: 'https://panel.test/sub/oldshort',
+      oldSubscriptionDeletedAt: null,
+    });
+
+    // The squad moved via PATCH /api/users (uuid in body) — NOT a create POST.
+    const patchCall = fetchMock.mock.calls.find(
+      ([input, init]) => String(input).includes('/api/users') && init?.method === 'PATCH',
+    );
+    expect(patchCall).toBeTruthy();
+    const body = JSON.parse(String(patchCall![1]!.body));
+    expect(body.uuid).toBe('old-key-uuid');
+    expect(body.activeInternalSquads).toEqual([SQUAD]);
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
+      ),
+    ).toBe(false);
+
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      expect(user!.connectionModeId).toBe('privacy');
+      // The SAME row survives: no tombstone, no new row.
+      const subs = await ctx.db.query('subscriptions').collect();
+      expect(subs).toHaveLength(1);
+      const only = subs[0]!;
+      expect(only.state).toBe('active');
+      expect(only.backendUserId).toBe('old-key-uuid'); // not a re-issue
+      expect(only.subToken).toBe('tok-abc'); // fronted URL unchanged
+      expect(only.backendPlacement).toBe(SQUAD); // re-pointed
+      expect(only.subCache).toBeUndefined(); // stale content cache dropped
+      expect(user!.currentSubscriptionId).toBe(only._id); // pointer unchanged
+
+      const audit = (await ctx.db.query('auditLog').collect()).find(
+        (r) => r.action === 'subscription.switch_mode',
+      );
+      expect(audit).toBeTruthy();
+      const payload = JSON.stringify(audit!.payload ?? {});
+      expect(payload).toContain('privacy'); // toMode recorded
+      expect(payload).toContain('inPlace'); // marked in-place
+      expect(payload).not.toContain(SQUAD); // the squad uuid is NEVER audited
+    });
+  });
+
+  test('falls back to re-issue (new key + tombstone) when there is no current key to update', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const SQUAD = '11111111-2222-3333-4444-555555555555';
+    const NEW_UUID = '550e8400-e29b-41d4-a716-446655440077';
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.privacy.squads',
+        value: JSON.stringify([SQUAD]),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'test',
+        slug: 'test',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+      // No subscription row → nothing to update in place → the re-issue path runs.
+    });
     const fetchMock = vi.fn(
       async (_input: string | URL, _init?: RequestInit) =>
         new Response(
@@ -548,39 +648,20 @@ describe('account.switchMode saga', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const before = Date.now();
     const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
     expect(res).toMatchObject({ ok: true, mode: { id: 'privacy' } });
-
-    // The new key was issued INTO the mode's placement (single-squad pool → that squad).
+    // A create POST happened (re-issue), homing into the mode's squad.
     const createCall = fetchMock.mock.calls.find(
       ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
     );
     expect(createCall).toBeTruthy();
-    const body = JSON.parse(String(createCall![1]!.body));
-    expect(body.activeInternalSquads).toEqual([SQUAD]);
-
+    expect(JSON.parse(String(createCall![1]!.body)).activeInternalSquads).toEqual([SQUAD]);
     await t.run(async (ctx) => {
-      const user = await ctx.db.get(userId);
-      expect(user!.connectionModeId).toBe('privacy');
-      const subs = await ctx.db.query('subscriptions').collect();
-      const old = subs.find((s) => s.state === 'disabled')!;
-      const fresh = subs.find((s) => s.state === 'active')!;
-      expect(old).toBeTruthy();
-      expect(fresh).toBeTruthy();
-      // 24h grace, mirroring regenerate / switch-backend.
-      expect(old.deletedAt!).toBeGreaterThanOrEqual(before + 24 * 3_600_000 - 5_000);
-      expect(user!.currentSubscriptionId).toBe(fresh._id);
-      // The key persists its placement so tier pushes never re-home it.
-      expect(fresh.backendPlacement).toBe(SQUAD);
-
-      const audit = (await ctx.db.query('auditLog').collect()).find(
-        (r) => r.action === 'subscription.switch_mode',
+      const fresh = (await ctx.db.query('subscriptions').collect()).find(
+        (s) => s.state === 'active',
       );
-      expect(audit).toBeTruthy();
-      const payload = JSON.stringify(audit!.payload ?? {});
-      expect(payload).toContain('privacy'); // toMode recorded
-      expect(payload).not.toContain(SQUAD); // the squad uuid is NEVER audited
+      expect(fresh!.backendPlacement).toBe(SQUAD);
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('privacy');
     });
   });
 

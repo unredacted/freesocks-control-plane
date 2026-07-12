@@ -40,8 +40,9 @@ export interface AuditEntry {
  */
 export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
   'subscription.switch_backend': ['fromBackend', 'toBackend', 'fromTier', 'toTier'],
-  // Member switches connection mode (transport) within a backend.
-  'subscription.switch_mode': ['fromMode', 'toMode'],
+  // Member switches connection mode (transport) within a backend. `inPlace` marks
+  // an in-place squad re-point (existing key kept) vs a re-issue fallback.
+  'subscription.switch_mode': ['fromMode', 'toMode', 'inPlace'],
   // Member revokes one HWID device (truncated identifier only, never the full hwid).
   'subscription.device_revoke': ['hwidPrefix'],
   // A key was issued with no placement (no Remnawave pool bound anywhere) — a

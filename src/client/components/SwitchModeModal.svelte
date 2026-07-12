@@ -5,10 +5,11 @@
 
   /**
    * Confirmation dialog for `/api/v1/account/switch-mode` (the connection-mode /
-   * transport choice). Mirrors SwitchBackendModal: switching a mode re-issues the
-   * member's key into a different node/placement and tombstones the old one with
-   * a 24h grace window, so it warrants the same explicit confirmation. Purely
-   * presentational — the mutation lives in Account.svelte.
+   * transport choice). Switching now moves the member's EXISTING key to the new
+   * mode's servers in place (same subscription URL/token), so it's a light,
+   * non-destructive confirm — not the re-issue-and-tombstone that regenerate /
+   * switch-backend warrant. Purely presentational — the mutation lives in the
+   * ConnectionModeSwitcher.
    */
   interface Props {
     open: boolean;
@@ -49,7 +50,7 @@
     </ul>
     <Dialog.Footer>
       <Button variant="ghost" onclick={onCancel} disabled={busy}>{t('common.cancel')}</Button>
-      <Button onclick={onConfirm} disabled={busy} variant="destructive">
+      <Button onclick={onConfirm} disabled={busy} variant="default">
         {busy ? t('delivery.working') : t('delivery.confirm')}
       </Button>
     </Dialog.Footer>
