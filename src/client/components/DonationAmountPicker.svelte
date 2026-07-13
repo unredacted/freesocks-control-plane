@@ -38,6 +38,12 @@
     const dollars = Number(v);
     cents = Number.isFinite(dollars) && dollars > 0 ? Math.round(dollars * 100) : 0;
   }
+  // Normalize the display ONLY when the user leaves the field. Reformatting on
+  // every keystroke hijacked the caret: typing "44" became "4.00" after the
+  // first key, and the next "4" landed as 4.04.
+  function onCustomBlur() {
+    if (customText !== '' && cents > 0) customText = (cents / 100).toFixed(2);
+  }
 
   function fmtGb(gb: number): string {
     const r = Math.round(gb * 10) / 10;
@@ -82,8 +88,9 @@
           step="0.01"
           class="min-h-9 w-24 {isCustom ? 'border-amber-500' : ''}"
           placeholder={t('donate.customPlaceholder')}
-          value={isCustom ? (cents / 100).toFixed(2) : customText}
+          value={customText}
           oninput={(e) => onCustom((e.currentTarget as HTMLInputElement).value)}
+          onblur={onCustomBlur}
           aria-label={t('donate.custom')}
         />
       </div>

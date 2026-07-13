@@ -99,7 +99,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     openSource: true,
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/NodePassProject/Anywhere',
-    easeOfUse: 'moderate',
+    easeOfUse: 'easy',
     enabled: true,
     priority: 25,
   },
