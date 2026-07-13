@@ -59,12 +59,23 @@
 
   // Built-in copy + icon for the shipped modes, keyed by id. A mode not listed
   // here (a future addition) relies on the admin-set catalog label/description.
-  const KNOWN: Record<string, { icon: Component; titleKey: MessageKey; bodyKey: MessageKey }> = {
-    evade: { icon: Zap, titleKey: 'delivery.evadeTitle', bodyKey: 'delivery.evadeBody' },
+  // `audienceKey` is the who-is-this-for chip; admin label/description overrides
+  // replace the title/body but not the chip (it names the audience, not the copy).
+  const KNOWN: Record<
+    string,
+    { icon: Component; titleKey: MessageKey; bodyKey: MessageKey; audienceKey: MessageKey }
+  > = {
+    evade: {
+      icon: Zap,
+      titleKey: 'delivery.evadeTitle',
+      bodyKey: 'delivery.evadeBody',
+      audienceKey: 'delivery.evadeAudience',
+    },
     privacy: {
       icon: ShieldCheck,
       titleKey: 'delivery.privacyTitle',
       bodyKey: 'delivery.privacyBody',
+      audienceKey: 'delivery.privacyAudience',
     },
   };
 
@@ -139,6 +150,13 @@
             <Check class="size-4 shrink-0 text-primary" />
           {/if}
         </div>
+        {#if KNOWN[m.id]}
+          <span
+            class="mt-1.5 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+          >
+            {t(KNOWN[m.id]!.audienceKey)}
+          </span>
+        {/if}
         <p class="mt-1 text-xs text-muted-foreground">{modeBody(m)}</p>
       </button>
     {/each}

@@ -228,7 +228,6 @@
     "downloaded": "已下载 {filename}",
     "traffic": "流量",
     "unlimited": "不限量",
-    "configBelowNote": "你的完整配置在下方 - 请手动添加服务器。为保护隐私，这里不显示可自动更新的订阅链接（你的应用会通过 CDN 获取它）。",
     "usedSoFar": "已使用 {amount}",
     "leftThisPeriod": "本周期剩余 {amount}。",
     "nearlyOut": "即将用尽--本周期仅剩 {amount}。",
@@ -462,10 +461,6 @@
   "delivery": {
     "title": "你最看重什么？",
     "subtitle": "选择一个侧重点 - 仅保存在本设备，可随时更改。",
-    "evadeTitle": "保持连接",
-    "evadeBody": "当你所在地区网站被封锁时最合适。我们会提供更难被封锁的备用链接。",
-    "privacyTitle": "最大化隐私",
-    "privacyBody": "追求最强保密性时最合适。我们会优先采用不让你的配置落到第三方服务器的方式。",
     "recommended": "推荐",
     "subtitleServer": "选择一个焦点。更改焦点后，系统会重新颁发匹配服务器的密钥；您当前的密钥将继续有效 24 小时。",
     "subtitleSignup": "选择一个焦点。它会保存到你的账户，你的第一个密钥将使用它--可随时更改。",
