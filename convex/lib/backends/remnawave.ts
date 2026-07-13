@@ -208,7 +208,13 @@ export function hardenXrayLoggingConfig(config: unknown): {
     val && typeof val === 'object' && !Array.isArray(val)
       ? { ...(val as Record<string, unknown>) }
       : {};
-  const logMatches = JSON.stringify(c.log ?? null) === JSON.stringify(PRIVACY_XRAY_LOG);
+  // Field-by-field, NOT JSON.stringify: Remnawave stores the config in a
+  // Postgres jsonb column, which rewrites object key order canonically — a
+  // stringify comparison of the read-back `log` block false-negatives forever
+  // (the check reported "logs IPs" right after a successful apply, and every
+  // apply re-wrote the profile + restarted its nodes for nothing).
+  const logBlock = obj(c.log);
+  const logMatches = Object.entries(PRIVACY_XRAY_LOG).every(([k, v]) => logBlock[k] === v);
   const policy = obj(c.policy);
   const levels = obj(policy.levels);
   const level0 = obj(levels['0']);

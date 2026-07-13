@@ -46,6 +46,29 @@ describe('hardenXrayLoggingConfig', () => {
     expect(hardenXrayLoggingConfig(once).changed).toBe(false);
   });
 
+  test('recognizes a hardened config after a jsonb round-trip (key order rewritten)', () => {
+    // Remnawave persists the config in a Postgres jsonb column, which reorders
+    // object keys canonically (by length, then bytewise). The posture check must
+    // be key-order-independent or every re-check reports "logs IPs" forever.
+    const once = hardenXrayLoggingConfig(baseConfig()).config;
+    const jsonbOrderedLog = Object.fromEntries(
+      Object.entries(once.log as Record<string, unknown>).sort(
+        ([a], [b]) => a.length - b.length || (a < b ? -1 : 1),
+      ),
+    );
+    expect(Object.keys(jsonbOrderedLog)).not.toEqual(Object.keys(once.log as object));
+    const roundTripped = { ...once, log: jsonbOrderedLog };
+    expect(hardenXrayLoggingConfig(roundTripped).changed).toBe(false);
+  });
+
+  test('an extra harmless log key does not force a rewrite; a wrong value does', () => {
+    const once = hardenXrayLoggingConfig(baseConfig()).config;
+    const withExtra = { ...once, log: { ...(once.log as object), somethingElse: true } };
+    expect(hardenXrayLoggingConfig(withExtra).changed).toBe(false);
+    const withAccessLog = { ...once, log: { ...(once.log as object), access: '/var/log/a.log' } };
+    expect(hardenXrayLoggingConfig(withAccessLog).changed).toBe(true);
+  });
+
   test('preserves other policy levels + keys while forcing level 0 statsUserOnline off', () => {
     const src = {
       ...baseConfig(),
