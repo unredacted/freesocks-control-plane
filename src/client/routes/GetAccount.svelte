@@ -19,7 +19,7 @@
   import RedeemCode from '../components/RedeemCode.svelte';
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
-  import { meQuery, configQuery, accountQuery, queryKeys } from '../lib/queries';
+  import { meQuery, configQuery, accountQuery, accountUsageQuery, queryKeys } from '../lib/queries';
   import { freeTier, deviceLimitsShown } from '../lib/tiers';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
@@ -65,6 +65,9 @@
   // 401 while the visitor is still anonymous on this page.
   const account = accountQuery(() => isAuthed);
   let subscription = $derived(account.data?.subscription ?? null);
+  // Usage trend for the Step-2 hero (same wiring as /account: 60s stale +
+  // refetch, enabled once a key exists; Outline degrades to null → no trend).
+  const usage = accountUsageQuery(() => isAuthed && !!subscription);
   // Connection-mode catalog + emphasis (client choice → country suggestion →
   // catalog default); orders the panels. `rawConfigFirst` is data-driven off the
   // selected mode's deliveryStyle (replaces the hardcoded `=== 'privacy'`).
@@ -191,6 +194,7 @@
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.account });
+      void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
       toast.success(t('get.createSubToastTitle'), {
         description: t('get.createSubToastBody'),
       });
@@ -405,29 +409,30 @@
        in which case the ready callout spans the full row. -->
   {#if isAuthed}
     <div class="grid gap-4 lg:grid-cols-2 items-stretch">
+      <!-- Same card chrome as RedeemCode beside it (h3 + muted description) so
+           the row reads as two equal cards; the primary tint lives only in the
+           check icon. -->
       <div
-        class="rounded-xl border border-primary/40 bg-primary/5 px-4 py-3 flex flex-col gap-2 text-sm {isCurrentMember
+        class="rounded-xl border border-border bg-card p-4 sm:p-5 flex flex-col {isCurrentMember
           ? 'lg:col-span-2 lg:max-w-xl lg:mx-auto lg:w-full'
           : ''}"
       >
-        <div class="flex items-start gap-2.5">
-          <CheckCircle class="size-4 text-primary shrink-0 mt-0.5" />
-          <span>
-            {t('get.accountReady')}
-            <!-- Recovery pointer on BOTH paths (just-created and reload): the
-                 reveal-once number is volatile, so if it wasn't saved the only
-                 recourse is rotating to a fresh (re-revealed) number on /account.
-                 The copy is conditional ("lost it before saving?"), so it reads as
-                 an offer, not an alarm. -->
-            <span class="block text-xs text-muted-foreground mt-0.5">
-              {t('get.lostNumberHint')}
-              <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
-            </span>
-          </span>
-        </div>
+        <h3 class="text-sm font-semibold flex items-center gap-2">
+          <CheckCircle class="size-4 text-primary shrink-0" />
+          {t('get.accountReady')}
+        </h3>
+        <!-- Recovery pointer on BOTH paths (just-created and reload): the
+             reveal-once number is volatile, so if it wasn't saved the only
+             recourse is rotating to a fresh (re-revealed) number on /account.
+             The copy is conditional ("lost it before saving?"), so it reads as
+             an offer, not an alarm. -->
+        <p class="mt-1 text-sm text-muted-foreground">
+          {t('get.lostNumberHint')}
+          <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
+        </p>
         {#if !subscription}
           <!-- The account alone connects nothing: point hard at Step 2. -->
-          <div class="mt-auto space-y-1.5">
+          <div class="mt-auto pt-3 space-y-1.5">
             <p class="text-xs text-muted-foreground">{t('get.nextStepHint')}</p>
             <Button size="sm" class="min-h-11 w-full sm:w-auto" onclick={scrollToStep2}>
               <ArrowDown class="size-4" />
@@ -503,9 +508,14 @@
           expiresAt={subscription.expiresAt}
           trafficLimitBytes={subscription.trafficLimitBytes}
           trafficUsedBytes={subscription.trafficUsedBytes}
+          status={subscription.status}
+          resetStrategy={subscription.resetStrategy}
+          lastResetAt={subscription.lastResetAt}
           tierName={account.data?.user.tier.name ?? accountTier?.name ?? ''}
           backend={subscription.backend}
           hideUrl={rawConfigFirst}
+          usagePoints={usage.data?.usage?.points}
+          usageTotal={usage.data?.usage?.total}
         />
         {#if rawConfigFirst}
           <!-- rawConfig mode: raw config is the deliverable; CDN link hidden; no mirrors. -->
