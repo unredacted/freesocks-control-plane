@@ -124,7 +124,7 @@
       <span
         class="inline-flex items-center gap-1.5 text-sm underline hover:text-foreground text-muted-foreground"
       >
-        unredacted.org
+        {t('impact.aboutUnredacted')}
       </span>
     </a>
   </div>
