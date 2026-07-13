@@ -124,7 +124,7 @@
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-5 text-sm">
-        {#each [{ id: 'evade', label: 'Stay connected (evade)' }, { id: 'privacy', label: 'Maximize privacy (privacy)' }] as m (m.id)}
+        {#each [{ id: 'evade', label: 'Beat censorship (evade)' }, { id: 'privacy', label: 'Maximum privacy (privacy)' }] as m (m.id)}
           <div
             class="space-y-2"
             class:border-t={m.id === 'privacy'}

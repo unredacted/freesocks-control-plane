@@ -686,7 +686,7 @@
         <CardHeader>
           <CardTitle class="text-base">Connection modes</CardTitle>
           <CardDescription>
-            The member-facing transport choice: "Stay connected" (evade) and "Maximize privacy"
+            The member-facing transport choice: "Beat censorship" (evade) and "Maximum privacy"
             (privacy). Set the default and, optionally, a custom label/description that replaces the
             member picker's translated copy verbatim in EVERY language (leave blank to keep the
             app's own translations). Which Remnawave nodes each mode issues into - the placement
@@ -703,7 +703,7 @@
                 checked={cpDraft.default === 'evade'}
                 onchange={() => (cpDraft = { ...cpDraft, default: 'evade' })}
               />
-              Stay connected (evade) <span class="text-xs text-muted-foreground">(default?)</span>
+              Beat censorship (evade) <span class="text-xs text-muted-foreground">(default?)</span>
             </label>
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-label"
@@ -711,7 +711,7 @@
               >
               <Input
                 id="cp-evade-label"
-                placeholder="Stay connected"
+                placeholder="Beat censorship"
                 value={cpDraft.evadeLabel}
                 oninput={(e) =>
                   (cpDraft = { ...cpDraft, evadeLabel: (e.target as HTMLInputElement).value })}
@@ -745,7 +745,7 @@
                 checked={cpDraft.default === 'privacy'}
                 onchange={() => (cpDraft = { ...cpDraft, default: 'privacy' })}
               />
-              Maximize privacy (privacy)
+              Maximum privacy (privacy)
               <span class="text-xs text-muted-foreground">(default?)</span>
             </label>
             <div>
@@ -754,7 +754,7 @@
               >
               <Input
                 id="cp-privacy-label"
-                placeholder="Maximize privacy"
+                placeholder="Maximum privacy"
                 value={cpDraft.privacyLabel}
                 oninput={(e) =>
                   (cpDraft = { ...cpDraft, privacyLabel: (e.target as HTMLInputElement).value })}
