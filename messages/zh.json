@@ -49,7 +49,6 @@
     "subtitle": "这个 32 位数字是再次登录的唯一方式。没有电子邮件或密码可用于找回。一旦丢失，你的账户将永久无法恢复。",
     "cannotRecover": "我们无法为你找回--客服也不行。",
     "saveHint": "把它保存到密码管理器，或写在安全私密的地方。",
-    "confirmCheckbox": "我已把账户号码保存在安全的地方",
     "done": "我已保存",
     "leaveWarning": "你的账户号码仍显示在屏幕上。如果现在未保存就离开，你将无法再次登录。",
     "downloadFilename": "freesocks-account-number.txt"

@@ -91,8 +91,15 @@
     "subtitle": "This 32-digit number is the ONLY way to sign in again. There is no email or password to recover it. If you lose it, your account is gone for good.",
     "cannotRecover": "We cannot recover it for you - not even support can.",
     "saveHint": "Save it in a password manager, or write it down somewhere safe and private.",
-    "confirmCheckbox": "I have saved my account number somewhere safe",
+    "downloadRequired": "Download your account number to continue. Keep the file somewhere safe.",
+    "continue": "Continue",
+    "verifyTitle": "Confirm you saved it",
+    "verifySubtitle": "Your account number is now hidden. Enter or paste it from the copy you just saved to confirm you can sign in later.",
+    "verifyPlaceholder": "Paste your 32-digit account number",
+    "verifyMismatch": "That doesn't match your account number. Check the copy you saved, or go back to see it again.",
+    "back": "Back",
     "done": "I've saved it",
+    "savedConfirmed": "Account number saved and verified",
     "downloadFilename": "freesocks-account-number.txt",
     "leaveWarning": "Your account number is still on screen. If you leave now without saving it, you will not be able to sign in again."
   },
@@ -370,6 +377,9 @@
     "freeAccountNote": "Free accounts are valid for {days} days and limited to {devices}. No email or password.",
     "freeAccountNoteNoDevices": "Free accounts are valid for {days} days. No email or password.",
     "accountReady": "Your account is ready.",
+    "nextStepHint": "One step left - your account can't connect to anything until you create your subscription.",
+    "nextStepCta": "Next: create your subscription",
+    "nextStepBadge": "Next step",
     "step2Title": "Create your subscription",
     "step2Intro": "Create a proxy subscription to get a URL you can paste into any compatible VPN client.",
     "manageHintPrefix": "Manage this subscription anytime from",
@@ -426,7 +436,8 @@
       }
     ],
     "empty": "No donations yet this month - the first one starts the counter.",
-    "externalNote": "This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here."
+    "externalNote": "This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here.",
+    "aboutUnredacted": "About Unredacted"
   },
   "donate": {
     "addTitle": "Add a donation",
@@ -575,6 +586,8 @@
     "install": "Install",
     "openSource": "Open source",
     "proprietary": "Proprietary",
+    "easeEasy": "Easy to use",
+    "easeAdvanced": "Advanced",
     "viewSource": "Source",
     "intro": "Copy your subscription link above, then add it to a compatible app:",
     "android": "Android",

@@ -30,6 +30,7 @@
   import SocksIcon from '../components/SocksIcon.svelte';
   import CheckCircle from '@lucide/svelte/icons/check-circle';
   import Plus from '@lucide/svelte/icons/plus';
+  import ArrowDown from '@lucide/svelte/icons/arrow-down';
 
   type CreateAccountPayload = z.infer<typeof CreateAccountResponse>;
 
@@ -203,6 +204,13 @@
     createSubscription.error instanceof ApiCallError &&
       createSubscription.error.payload.error.code === 'backend.unavailable',
   );
+
+  // "Next step" pointer from the account-ready callout down to Step 2 (same
+  // reduced-motion gate as Home's scrollToImpact).
+  function scrollToStep2() {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.getElementById('step-2')?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
+  }
 </script>
 
 <div class="max-w-4xl mx-auto py-8 md:py-12 space-y-6">
@@ -349,28 +357,11 @@
         {/if}
       </p>
     </div>
-  {:else}
-    <div
-      class="mx-auto max-w-xl rounded-xl border border-primary/40 bg-primary/5 px-4 py-3 flex items-center gap-2.5 text-sm"
-    >
-      <CheckCircle class="size-4 text-primary shrink-0" />
-      <span>
-        {t('get.accountReady')}
-        <!-- Recovery pointer on BOTH paths (just-created and reload): the
-             reveal-once number is volatile, so if it wasn't saved the only
-             recourse is rotating to a fresh (re-revealed) number on /account.
-             The copy is conditional ("lost it before saving?"), so it reads as
-             an offer, not an alarm. -->
-        <span class="block text-xs text-muted-foreground mt-0.5">
-          {t('get.lostNumberHint')}
-          <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
-        </span>
-      </span>
-    </div>
   {/if}
 
-  <!-- A2: one-time reveal of the freshly minted account number, in a blocking,
-       checkbox-gated modal with copy/download + a beforeunload guard. -->
+  <!-- A2: one-time reveal of the freshly minted account number, in a blocking
+       two-step modal (required download, then paste-back verification) with a
+       beforeunload guard. -->
   {#if revealedAccountId}
     <AccountNumberReveal
       bind:open={revealOpen}
@@ -386,7 +377,7 @@
         class="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-4 py-3 text-sm"
       >
         <CheckCircle class="size-4 text-primary" aria-hidden="true" />
-        <span>{t('reveal.confirmCheckbox')} ✓</span>
+        <span>{t('reveal.savedConfirmed')} ✓</span>
       </div>
     {/if}
   {/if}
@@ -407,12 +398,47 @@
     </div>
   {/if}
 
-  <!-- Got a gift code? Redeem during onboarding so the upgrade lands BEFORE the
-       subscription is created (the backend binds the tier at issuance), and the
-       new key is issued on the member tier. Hidden once they're already a member. -->
-  {#if isAuthed && !isCurrentMember}
-    <div class="mx-auto max-w-xl">
-      <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" />
+  <!-- Account-ready callout + "Got a gift code?" share one row on large screens
+       (stacked on mobile); they stay separate cards. The gift code is offered
+       during onboarding so the upgrade lands BEFORE the subscription is created
+       (the backend binds the tier at issuance); hidden once they're a member,
+       in which case the ready callout spans the full row. -->
+  {#if isAuthed}
+    <div class="grid gap-4 lg:grid-cols-2 items-stretch">
+      <div
+        class="rounded-xl border border-primary/40 bg-primary/5 px-4 py-3 flex flex-col gap-2 text-sm {isCurrentMember
+          ? 'lg:col-span-2 lg:max-w-xl lg:mx-auto lg:w-full'
+          : ''}"
+      >
+        <div class="flex items-start gap-2.5">
+          <CheckCircle class="size-4 text-primary shrink-0 mt-0.5" />
+          <span>
+            {t('get.accountReady')}
+            <!-- Recovery pointer on BOTH paths (just-created and reload): the
+                 reveal-once number is volatile, so if it wasn't saved the only
+                 recourse is rotating to a fresh (re-revealed) number on /account.
+                 The copy is conditional ("lost it before saving?"), so it reads as
+                 an offer, not an alarm. -->
+            <span class="block text-xs text-muted-foreground mt-0.5">
+              {t('get.lostNumberHint')}
+              <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
+            </span>
+          </span>
+        </div>
+        {#if !subscription}
+          <!-- The account alone connects nothing: point hard at Step 2. -->
+          <div class="mt-auto space-y-1.5">
+            <p class="text-xs text-muted-foreground">{t('get.nextStepHint')}</p>
+            <Button size="sm" class="min-h-11 w-full sm:w-auto" onclick={scrollToStep2}>
+              <ArrowDown class="size-4" />
+              {t('get.nextStepCta')}
+            </Button>
+          </div>
+        {/if}
+      </div>
+      {#if !isCurrentMember}
+        <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" />
+      {/if}
     </div>
   {/if}
 
@@ -424,20 +450,31 @@
     <UpgradeMembership mode="upgrade" collapsible />
   {/if}
 
-  <!-- Standalone donation (signed-in visitors; self-gates on billing + donations). -->
+  <!-- Standalone donation (signed-in visitors; self-gates on billing + donations).
+       Condensed to an accordion here (like the membership upsell) so the primary
+       flow - Step 2 - stays close. -->
   {#if isAuthed}
-    <DonateCard />
+    <DonateCard collapsible />
   {/if}
 
   <!-- STEP 2: create the proxy subscription (needs a proxy server). -->
   {#if isAuthed}
-    <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
+    <div
+      id="step-2"
+      class="scroll-mt-24 rounded-xl border border-border bg-card p-6 md:p-8 space-y-5"
+    >
       <div class="flex items-center gap-2.5">
         <span
           class="size-7 rounded-full bg-primary/10 text-primary font-display font-bold flex items-center justify-center text-sm tabular-nums"
           >2</span
         >
         <h2 class="text-lg font-display font-semibold">{t('get.step2Title')}</h2>
+        {#if !subscription}
+          <span
+            class="ms-auto rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
+            >{t('get.nextStepBadge')}</span
+          >
+        {/if}
       </div>
 
       <!-- Delivery focus FIRST - above the key (and the create button), so the

@@ -7,6 +7,7 @@
    * checkout. Renders only when billing + donations are enabled and a rail is live.
    */
   import { Button } from '@client/components/ui/button';
+  import * as Collapsible from '@client/components/ui/collapsible';
   import { configQuery } from '../lib/queries';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
@@ -16,7 +17,17 @@
   import { createMutation } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import Heart from '@lucide/svelte/icons/heart';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import DonationAmountPicker from './DonationAmountPicker.svelte';
+
+  interface Props {
+    /** Render as a collapsed accordion for a secondary placement (e.g. between
+     *  the upsell and the create-key step on /get-account); the trigger shows
+     *  the title + subtitle, expanding reveals the method/amount form. Default
+     *  (false) is the prominent, always-expanded card used on /account. */
+    collapsible?: boolean;
+  }
+  let { collapsible = false }: Props = $props();
 
   const config = configQuery();
   let billing = $derived(config.data?.billing);
@@ -32,6 +43,9 @@
 
   let minCents = $derived(donation?.minAmountCents ?? 0);
   let belowMin = $derived(cents < minCents);
+
+  // Accordion open state - collapsed by default so the ask stays condensed.
+  let open = $state(false);
 
   function railLabel(r: BillingProcessor): string {
     return r === 'nowpayments'
@@ -59,61 +73,97 @@
   }
 </script>
 
+{#snippet formBody()}
+  <fieldset>
+    <legend class="mb-2 text-xs font-medium text-muted-foreground">
+      {t('upgrade.methodLabel')}
+    </legend>
+    <div class="grid gap-2 sm:grid-cols-3">
+      {#each rails as r (r)}
+        <button
+          type="button"
+          onclick={() => (selectedProcessorRaw = r)}
+          aria-pressed={selectedProcessor === r}
+          class="rounded-lg border p-3 text-start text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {selectedProcessor ===
+          r
+            ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
+            : 'border-border hover:border-primary/40'}"
+        >
+          {railLabel(r)}
+        </button>
+      {/each}
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend class="mb-2 text-xs font-medium text-muted-foreground">
+      {t('donate.amountLabel')}
+    </legend>
+    <DonationAmountPicker bind:cents />
+    {#if minCents > 0}
+      <p class="mt-2 text-xs text-muted-foreground">
+        {t('donate.minNote', { amount: formatMoney(minCents, currency) })}
+      </p>
+    {/if}
+  </fieldset>
+
+  <div class="flex justify-end">
+    <Button
+      onclick={submit}
+      disabled={!selectedProcessor || cents <= 0 || belowMin || checkout.isPending}
+      class="min-h-11 w-full sm:w-auto"
+    >
+      {checkout.isPending
+        ? t('donate.giving')
+        : t('donate.give', { amount: formatMoney(cents > 0 ? cents : 0, currency) })}
+    </Button>
+  </div>
+{/snippet}
+
 {#if billing?.enabled && donation?.enabled && rails.length > 0}
-  <section
-    class="donation-sheen relative space-y-4 overflow-hidden rounded-xl border border-amber-500/40 bg-card p-4 ring-1 ring-amber-500/20 sm:p-5"
-  >
-    <div>
-      <h2 class="flex items-center gap-2 font-display text-base font-semibold">
-        <Heart class="size-4 shrink-0 text-amber-500" aria-hidden="true" />
-        {t('donate.standaloneTitle')}
-      </h2>
-      <p class="text-sm text-muted-foreground">{t('donate.standaloneSubtitle')}</p>
-    </div>
-
-    <fieldset>
-      <legend class="mb-2 text-xs font-medium text-muted-foreground">
-        {t('upgrade.methodLabel')}
-      </legend>
-      <div class="grid gap-2 sm:grid-cols-3">
-        {#each rails as r (r)}
-          <button
-            type="button"
-            onclick={() => (selectedProcessorRaw = r)}
-            aria-pressed={selectedProcessor === r}
-            class="rounded-lg border p-3 text-start text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {selectedProcessor ===
-            r
-              ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-              : 'border-border hover:border-primary/40'}"
-          >
-            {railLabel(r)}
-          </button>
-        {/each}
+  {#if collapsible}
+    <!-- Condensed accordion: the trigger keeps the amber donate framing; expanding
+         reveals the method/amount form. Same pattern as UpgradeMembership. -->
+    <section
+      class="donation-sheen relative overflow-hidden rounded-xl border border-amber-500/40 bg-card ring-1 ring-amber-500/20"
+    >
+      <Collapsible.Root bind:open>
+        <Collapsible.Trigger
+          class="group flex w-full items-center gap-3 p-4 text-start transition hover:bg-amber-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-5"
+        >
+          <Heart class="size-5 shrink-0 text-amber-500" aria-hidden="true" />
+          <div class="min-w-0 flex-1">
+            <div class="font-display text-base font-semibold">
+              {t('donate.standaloneTitle')}
+            </div>
+            <div class="text-sm text-muted-foreground">{t('donate.standaloneSubtitle')}</div>
+          </div>
+          <ChevronDown
+            class="size-5 shrink-0 text-muted-foreground transition-transform {open
+              ? 'rotate-180'
+              : ''}"
+            aria-hidden="true"
+          />
+        </Collapsible.Trigger>
+        <Collapsible.Content>
+          <div class="space-y-4 border-t border-border p-4 sm:p-5">
+            {@render formBody()}
+          </div>
+        </Collapsible.Content>
+      </Collapsible.Root>
+    </section>
+  {:else}
+    <section
+      class="donation-sheen relative space-y-4 overflow-hidden rounded-xl border border-amber-500/40 bg-card p-4 ring-1 ring-amber-500/20 sm:p-5"
+    >
+      <div>
+        <h2 class="flex items-center gap-2 font-display text-base font-semibold">
+          <Heart class="size-4 shrink-0 text-amber-500" aria-hidden="true" />
+          {t('donate.standaloneTitle')}
+        </h2>
+        <p class="text-sm text-muted-foreground">{t('donate.standaloneSubtitle')}</p>
       </div>
-    </fieldset>
-
-    <fieldset>
-      <legend class="mb-2 text-xs font-medium text-muted-foreground">
-        {t('donate.amountLabel')}
-      </legend>
-      <DonationAmountPicker bind:cents />
-      {#if minCents > 0}
-        <p class="mt-2 text-xs text-muted-foreground">
-          {t('donate.minNote', { amount: formatMoney(minCents, currency) })}
-        </p>
-      {/if}
-    </fieldset>
-
-    <div class="flex justify-end">
-      <Button
-        onclick={submit}
-        disabled={!selectedProcessor || cents <= 0 || belowMin || checkout.isPending}
-        class="min-h-11 w-full sm:w-auto"
-      >
-        {checkout.isPending
-          ? t('donate.giving')
-          : t('donate.give', { amount: formatMoney(cents > 0 ? cents : 0, currency) })}
-      </Button>
-    </div>
-  </section>
+      {@render formBody()}
+    </section>
+  {/if}
 {/if}
