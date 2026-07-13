@@ -12,6 +12,7 @@
   import QrCodeIcon from '@lucide/svelte/icons/qr-code';
   import Link2 from '@lucide/svelte/icons/link-2';
   import Shield from '@lucide/svelte/icons/shield';
+  import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import { formatBytes, daysUntil, copyText } from '../lib/utils';
   import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
@@ -110,6 +111,9 @@
   let copied = $state<'primary' | 'fallback' | null>(null);
   let qrOpen = $state(false);
   let qrFallbackOpen = $state(false);
+  // hideUrl escape hatch: the member can still reveal the (CDN-fetched) link
+  // behind an explicit click + warning, for apps that can't import a raw config.
+  let showHiddenUrl = $state(false);
 
   async function copy(value: string, key: 'primary' | 'fallback') {
     if (await copyText(value)) {
@@ -338,7 +342,48 @@
         </div>
       {/if}
     {:else}
-      <p class="text-sm text-muted-foreground">{t('hero.configBelowNote')}</p>
+      <div class="space-y-3">
+        <p class="text-sm text-muted-foreground">{t('hero.configBelowNote')}</p>
+        {#if !showHiddenUrl}
+          <button
+            type="button"
+            class="text-xs text-muted-foreground underline hover:text-foreground"
+            onclick={() => (showHiddenUrl = true)}
+          >
+            {t('hero.showUrlAnyway')}
+          </button>
+        {:else}
+          <!-- The disclaimer is not dismissible-separately-from-the-URL on
+               purpose: as long as the link is visible, so is the warning. -->
+          <div
+            class="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+            role="note"
+          >
+            <TriangleAlert class="size-4 shrink-0 mt-0.5" aria-hidden="true" />
+            <span>{t('hero.urlDangerBody')}</span>
+          </div>
+          <div class="flex gap-2">
+            <code
+              class="flex-1 select-all px-3 py-2 rounded-md bg-muted text-xs font-mono break-all min-w-0 text-muted-foreground"
+            >
+              {subscriptionUrl}
+            </code>
+            <Button
+              variant="outline"
+              size="sm"
+              class="min-h-11"
+              onclick={() => copy(subscriptionUrl, 'primary')}
+              aria-label={t('hero.copyUrl')}
+            >
+              {#if copied === 'primary'}
+                <Check class="size-3.5" />
+              {:else}
+                <Copy class="size-3.5" />
+              {/if}
+            </Button>
+          </div>
+        {/if}
+      </div>
     {/if}
 
     <!-- Live-status callout: explains a stopped connection (over quota / disabled /
