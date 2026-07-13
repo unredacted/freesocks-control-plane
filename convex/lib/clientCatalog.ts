@@ -15,6 +15,13 @@ import type { DatabaseReader } from '../_generated/server';
 
 export type ClientBackend = 'remnawave' | 'outline';
 
+/** Ease-of-use rating: sorts within each open-source group (easier first) and
+ *  drives an "Easy to use" / "Advanced" badge. Missing = treated as moderate. */
+export type ClientEase = 'easy' | 'moderate' | 'advanced';
+
+const EASE_RANK: Record<ClientEase, number> = { easy: 0, moderate: 1, advanced: 2 };
+const easeRank = (e: ClientEase | undefined): number => EASE_RANK[e ?? 'moderate'];
+
 /** A catalog row (internal shape). No secrets → the public shape drops only the
  *  CMS-only fields (enabled/priority). */
 export interface CatalogClient {
@@ -27,6 +34,7 @@ export interface CatalogClient {
   openSource?: boolean; // true → OSS badge + ranked ahead of proprietary apps
   license?: string; // short label, e.g. 'GPL-3.0', 'Apache-2.0', 'Proprietary'
   sourceUrl?: string; // public source repo (OSS only)
+  easeOfUse?: ClientEase; // easy/moderate/advanced; missing = moderate
   enabled: boolean;
   priority: number;
 }
@@ -42,6 +50,7 @@ export interface PublicClient {
   openSource: boolean;
   license?: string;
   sourceUrl?: string;
+  easeOfUse?: ClientEase;
 }
 
 /**
@@ -61,6 +70,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     openSource: true,
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/hiddify/hiddify-app',
+    easeOfUse: 'easy',
     enabled: true,
     priority: 10,
   },
@@ -74,6 +84,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     openSource: true,
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/KaringX/karing',
+    easeOfUse: 'moderate',
     enabled: true,
     priority: 20,
   },
@@ -82,12 +93,13 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     name: 'Anywhere',
     platforms: ['ios', 'android', 'desktop'],
     backends: ['remnawave'],
-    homepageUrl: 'https://github.com/NodePassProject/Anywhere',
+    homepageUrl: 'https://github.com/NodePassProject/Anywhere/releases/latest',
     schemeId: 'anywhere',
     hwid: false,
     openSource: true,
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/NodePassProject/Anywhere',
+    easeOfUse: 'moderate',
     enabled: true,
     priority: 25,
   },
@@ -95,12 +107,13 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     name: 'sing-box',
     platforms: ['android', 'ios', 'desktop'],
     backends: ['remnawave'],
-    homepageUrl: 'https://sing-box.sagernet.org',
+    homepageUrl: 'https://sing-box.sagernet.org/clients/',
     schemeId: 'sing-box',
     hwid: false,
     openSource: true,
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/SagerNet/sing-box',
+    easeOfUse: 'advanced',
     enabled: true,
     priority: 30,
   },
@@ -108,12 +121,15 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     name: 'v2rayNG',
     platforms: ['android'],
     backends: ['remnawave'],
-    homepageUrl: 'https://github.com/2dust/v2rayNG',
+    // No Play Store listing anymore (delisted) - the releases page is the
+    // canonical install source.
+    homepageUrl: 'https://github.com/2dust/v2rayNG/releases/latest',
     schemeId: 'v2rayng',
     hwid: false,
     openSource: true,
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/2dust/v2rayNG',
+    easeOfUse: 'moderate',
     enabled: true,
     priority: 40,
   },
@@ -123,12 +139,13 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     name: 'v2rayN',
     platforms: ['windows', 'desktop'],
     backends: ['remnawave'],
-    homepageUrl: 'https://github.com/2dust/v2rayN',
+    homepageUrl: 'https://github.com/2dust/v2rayN/releases/latest',
     schemeId: null,
     hwid: false,
     openSource: true,
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/2dust/v2rayN',
+    easeOfUse: 'advanced',
     enabled: true,
     priority: 45,
   },
@@ -136,12 +153,13 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     name: 'Clash',
     platforms: ['windows', 'desktop', 'android'],
     backends: ['remnawave'],
-    homepageUrl: 'https://github.com/clash-verge-rev/clash-verge-rev',
+    homepageUrl: 'https://github.com/clash-verge-rev/clash-verge-rev/releases/latest',
     schemeId: 'clash',
     hwid: false,
     openSource: true,
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/clash-verge-rev/clash-verge-rev',
+    easeOfUse: 'advanced',
     enabled: true,
     priority: 60,
   },
@@ -151,12 +169,13 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     name: 'FlClash',
     platforms: ['android', 'windows', 'desktop'],
     backends: ['remnawave'],
-    homepageUrl: 'https://github.com/chen08209/FlClash',
+    homepageUrl: 'https://github.com/chen08209/FlClash/releases/latest',
     schemeId: null,
     hwid: false,
     openSource: true,
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/chen08209/FlClash',
+    easeOfUse: 'moderate',
     enabled: true,
     priority: 62,
   },
@@ -165,12 +184,13 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     name: 'Mihomo Party',
     platforms: ['windows', 'desktop'],
     backends: ['remnawave'],
-    homepageUrl: 'https://github.com/mihomo-party-org/mihomo-party',
+    homepageUrl: 'https://github.com/mihomo-party-org/mihomo-party/releases/latest',
     schemeId: null,
     hwid: false,
     openSource: true,
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/mihomo-party-org/mihomo-party',
+    easeOfUse: 'moderate',
     enabled: true,
     priority: 64,
   },
@@ -178,12 +198,13 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     name: 'Throne',
     platforms: ['windows', 'desktop'],
     backends: ['remnawave'],
-    homepageUrl: 'https://github.com/throneproj/Throne',
+    homepageUrl: 'https://github.com/throneproj/Throne/releases/latest',
     schemeId: null,
     hwid: true,
     openSource: true,
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/throneproj/Throne',
+    easeOfUse: 'advanced',
     enabled: true,
     priority: 70,
   },
@@ -198,6 +219,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     hwid: false,
     openSource: false,
     license: 'Proprietary',
+    easeOfUse: 'easy',
     enabled: true,
     priority: 75,
   },
@@ -211,6 +233,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     openSource: true,
     license: 'Apache-2.0',
     sourceUrl: 'https://github.com/Jigsaw-Code/outline-apps',
+    easeOfUse: 'easy',
     enabled: true,
     priority: 80,
   },
@@ -233,19 +256,25 @@ export async function resolveClients(db: DatabaseReader): Promise<CatalogClient[
     openSource: r.openSource ?? false,
     license: r.license ?? undefined,
     sourceUrl: r.sourceUrl ?? undefined,
+    easeOfUse: r.easeOfUse ?? undefined,
     enabled: r.enabled,
     priority: r.priority,
   }));
 }
 
 /** Public-safe, enabled-only list for publicConfig.get. Open-source apps rank
- *  ahead of proprietary ones (more trustworthy for this audience), then by the
- *  admin-set priority. */
+ *  ahead of proprietary ones (more trustworthy for this audience), then easier
+ *  apps ahead of harder ones, then by the admin-set priority. */
 export function publicClients(clients: CatalogClient[]): PublicClient[] {
   return clients
     .filter((c) => c.enabled)
     .slice()
-    .sort((a, b) => Number(!!b.openSource) - Number(!!a.openSource) || a.priority - b.priority)
+    .sort(
+      (a, b) =>
+        Number(!!b.openSource) - Number(!!a.openSource) ||
+        easeRank(a.easeOfUse) - easeRank(b.easeOfUse) ||
+        a.priority - b.priority,
+    )
     .map((c) => ({
       name: c.name,
       platforms: c.platforms,
@@ -256,5 +285,6 @@ export function publicClients(clients: CatalogClient[]): PublicClient[] {
       openSource: c.openSource ?? false,
       license: c.license,
       sourceUrl: c.sourceUrl,
+      easeOfUse: c.easeOfUse,
     }));
 }

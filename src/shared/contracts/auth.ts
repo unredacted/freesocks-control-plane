@@ -236,6 +236,7 @@ export const PublicConfig = z.object({
         openSource: z.boolean().optional().default(false),
         license: z.string().optional(),
         sourceUrl: z.string().optional(),
+        easeOfUse: z.enum(['easy', 'moderate', 'advanced']).optional(),
       }),
     )
     .optional()

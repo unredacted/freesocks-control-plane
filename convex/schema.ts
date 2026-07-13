@@ -557,6 +557,9 @@ export default defineSchema({
     openSource: v.optional(v.boolean()),
     license: v.optional(v.string()), // short label: 'GPL-3.0', 'Apache-2.0', 'Proprietary'
     sourceUrl: v.optional(v.string()), // public source repo (OSS only)
+    // Ease-of-use rating: within each open-source group, easier apps rank first
+    // (missing = treated as 'moderate'). 'easy'/'advanced' also get a badge.
+    easeOfUse: v.optional(v.union(v.literal('easy'), v.literal('moderate'), v.literal('advanced'))),
     enabled: v.boolean(),
     priority: v.number(),
     updatedAt: v.number(),

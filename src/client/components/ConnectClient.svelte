@@ -148,6 +148,20 @@
                 {t('setup.proprietary')}
               </span>
             {/if}
+            <!-- Ease-of-use badge: only the poles ('moderate' would just be noise). -->
+            {#if c.easeOfUse === 'easy'}
+              <span
+                class="ms-2 inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400"
+              >
+                {t('setup.easeEasy')}
+              </span>
+            {:else if c.easeOfUse === 'advanced'}
+              <span
+                class="ms-2 inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+              >
+                {t('setup.easeAdvanced')}
+              </span>
+            {/if}
             {#if c.sourceUrl}
               <a
                 href={c.sourceUrl}

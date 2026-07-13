@@ -9,7 +9,12 @@ import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { DEFAULT_CLIENTS, resolveClients, publicClients } from './lib/clientCatalog';
+import {
+  DEFAULT_CLIENTS,
+  resolveClients,
+  publicClients,
+  type ClientBackend,
+} from './lib/clientCatalog';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -71,12 +76,51 @@ describe('clients CRUD', () => {
       homepageUrl: 'https://u.com',
       backends: ['remnawave'],
       platforms: ['android'],
+      easeOfUse: 'easy',
     });
     expect(a.created).toBe(true);
+    expect(a.easeOfUse).toBe('easy');
     const b = await t.mutation(internal.clients.upsertByName, { name: 'UpApp', priority: 5 });
     expect(b.created).toBe(false);
     expect(b.priority).toBe(5);
     expect(b.homepageUrl).toBe('https://u.com'); // preserved
+    expect(b.easeOfUse).toBe('easy'); // preserved
+    const c = await t.mutation(internal.clients.upsertByName, { name: 'UpApp', easeOfUse: null });
+    expect(c.easeOfUse).toBeNull(); // null clears the rating
+  });
+
+  test('refreshDefaultClients overwrites default-managed fields, keeps enabled + admin rows', async () => {
+    const t = convexTest(schema, modules);
+    // Seed the defaults, then simulate the pre-repoint state: a stale install
+    // URL + no rating, and an admin's enabled=false choice.
+    await t.mutation(internal.seed.seedClients, {});
+    const { clients } = await t.query(internal.clients.listForAdmin, {});
+    const hiddify = clients.find((c) => c.name === 'Hiddify')!;
+    await t.mutation(internal.clients.update, {
+      id: hiddify.id as Id<'clients'>,
+      homepageUrl: 'https://stale.example',
+      easeOfUse: null,
+      enabled: false,
+    });
+    // An admin-added client the refresh must not touch.
+    await t.mutation(internal.clients.create, {
+      name: 'AdminOnly',
+      platforms: ['android'],
+      backends: ['remnawave'],
+      homepageUrl: 'https://admin.example',
+    });
+
+    const res = await t.mutation(internal.seed.refreshDefaultClients, {});
+    expect(res.updated).toBe(DEFAULT_CLIENTS.length);
+    expect(res.inserted).toBe(0);
+
+    const after = (await t.query(internal.clients.listForAdmin, {})).clients;
+    const h = after.find((c) => c.name === 'Hiddify')!;
+    expect(h.homepageUrl).toBe('https://hiddify.com'); // default re-applied
+    expect(h.easeOfUse).toBe('easy'); // rating re-applied
+    expect(h.enabled).toBe(false); // admin's enabled choice preserved
+    const admin = after.find((c) => c.name === 'AdminOnly')!;
+    expect(admin.homepageUrl).toBe('https://admin.example'); // untouched
   });
 });
 
@@ -155,6 +199,15 @@ describe('clientCatalog resolve + project', () => {
     }
   });
 
+  test('DEFAULT_CLIENTS all carry an ease-of-use rating + install-page (non-repo-root) URLs', () => {
+    for (const c of DEFAULT_CLIENTS) {
+      expect(c.easeOfUse, c.name).toMatch(/^(easy|moderate|advanced)$/);
+      // The Install link must land on a page with downloads, not a bare source
+      // repo root (github.com/<org>/<repo> with no further path).
+      expect(c.homepageUrl, c.name).not.toMatch(/^https:\/\/github\.com\/[^/]+\/[^/]+$/);
+    }
+  });
+
   test('publicClients ranks open-source ahead of proprietary, then by priority', () => {
     const projected = publicClients([
       {
@@ -188,6 +241,31 @@ describe('clientCatalog resolve + project', () => {
     ]);
     expect(projected[0].openSource).toBe(true);
     expect(projected[0].sourceUrl).toBe('https://example.com/src');
+  });
+
+  test('publicClients ranks by ease within an OSS group; OSS still beats proprietary-easy', () => {
+    const base = {
+      platforms: [],
+      backends: ['remnawave'] satisfies ClientBackend[],
+      homepageUrl: 'x',
+      schemeId: null,
+      hwid: false,
+      enabled: true,
+    };
+    const projected = publicClients([
+      { ...base, name: 'oss-advanced', openSource: true, easeOfUse: 'advanced', priority: 1 },
+      { ...base, name: 'oss-easy', openSource: true, easeOfUse: 'easy', priority: 99 },
+      // unrated = moderate → between easy and advanced despite a better priority
+      { ...base, name: 'oss-unrated', openSource: true, priority: 1 },
+      { ...base, name: 'prop-easy', openSource: false, easeOfUse: 'easy', priority: 1 },
+    ]);
+    expect(projected.map((c) => c.name)).toEqual([
+      'oss-easy',
+      'oss-unrated',
+      'oss-advanced',
+      'prop-easy',
+    ]);
+    expect(projected[0].easeOfUse).toBe('easy'); // shipped in the projection
   });
 
   test('publicConfig.get ships the clients catalog (defaults when unseeded)', async () => {

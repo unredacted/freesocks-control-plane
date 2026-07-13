@@ -40,6 +40,7 @@
     openSource: c?.openSource ?? false,
     license: c?.license ?? '',
     sourceUrl: c?.sourceUrl ?? '',
+    easeOfUse: c?.easeOfUse ?? '',
     enabled: c?.enabled ?? true,
     priority: c?.priority ?? 0,
   }))(client);
@@ -53,6 +54,7 @@
   let openSource = $state(init.openSource);
   let license = $state(init.license);
   let sourceUrl = $state(init.sourceUrl);
+  let easeOfUse = $state(init.easeOfUse);
   let enabled = $state(init.enabled);
   let priority = $state(init.priority);
 
@@ -74,6 +76,7 @@
       openSource,
       license: license || null,
       sourceUrl: sourceUrl || null,
+      easeOfUse: easeOfUse || null,
       enabled,
       priority,
     };
@@ -166,6 +169,23 @@
         <p class="text-xs text-muted-foreground/80 mt-1">
           The one-tap import deep-link builder. Only code-defined schemes are listed; a new scheme
           needs a small code add.
+        </p>
+      </div>
+      <div>
+        <label class="text-xs text-muted-foreground mb-1 block" for="cl-ease">Ease of use</label>
+        <select
+          id="cl-ease"
+          bind:value={easeOfUse}
+          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        >
+          <option value="">Unrated (treated as moderate)</option>
+          <option value="easy">Easy</option>
+          <option value="moderate">Moderate</option>
+          <option value="advanced">Advanced</option>
+        </select>
+        <p class="text-xs text-muted-foreground/80 mt-1">
+          Within each open-source group, easier apps rank first in the member list. "Easy" and
+          "Advanced" also show a badge.
         </p>
       </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">

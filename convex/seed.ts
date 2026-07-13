@@ -173,6 +173,7 @@ export const seedClients = internalMutation({
         openSource: c.openSource ?? false,
         license: c.license ?? undefined,
         sourceUrl: c.sourceUrl ?? undefined,
+        easeOfUse: c.easeOfUse ?? undefined,
         enabled: c.enabled,
         priority: c.priority,
         updatedAt: Date.now(),
@@ -180,6 +181,52 @@ export const seedClients = internalMutation({
       inserted++;
     }
     return { inserted };
+  },
+});
+
+/**
+ * OPERATOR-RUN catalog refresh: upsert every DEFAULT_CLIENTS row by name,
+ * OVERWRITING the default-managed fields (homepageUrl, easeOfUse, openSource,
+ * license, sourceUrl, schemeId, hwid, platforms, backends, priority) on rows
+ * that already exist - unlike seedClients, which is insert-if-missing only.
+ * Use after a defaults change (e.g. the install-page URL repoints) to push it
+ * to a deployed instance: `bunx convex run seed:refreshDefaultClients '{}'`.
+ * Admin-added clients (names not in the defaults) and each row's `enabled`
+ * flag are left untouched. NOT part of the deploy entrypoint - it would
+ * clobber deliberate admin edits to default rows on every deploy.
+ */
+export const refreshDefaultClients = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ inserted: number; updated: number }> => {
+    let inserted = 0;
+    let updated = 0;
+    for (const c of DEFAULT_CLIENTS) {
+      const existing = await ctx.db
+        .query('clients')
+        .withIndex('by_name', (q) => q.eq('name', c.name))
+        .unique();
+      const fields = {
+        platforms: c.platforms,
+        backends: c.backends,
+        homepageUrl: c.homepageUrl,
+        schemeId: c.schemeId ?? undefined,
+        hwid: c.hwid,
+        openSource: c.openSource ?? false,
+        license: c.license ?? undefined,
+        sourceUrl: c.sourceUrl ?? undefined,
+        easeOfUse: c.easeOfUse ?? undefined,
+        priority: c.priority,
+        updatedAt: Date.now(),
+      };
+      if (existing) {
+        await ctx.db.patch(existing._id, fields);
+        updated++;
+      } else {
+        await ctx.db.insert('clients', { name: c.name, enabled: c.enabled, ...fields });
+        inserted++;
+      }
+    }
+    return { inserted, updated };
   },
 });
 

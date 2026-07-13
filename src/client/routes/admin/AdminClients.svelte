@@ -122,6 +122,7 @@
             <div class="text-muted-foreground">
               Device limit (HWID): <strong class="text-foreground">{c.hwid ? 'yes' : 'no'}</strong>
               · Priority: <strong class="text-foreground tabular-nums">{c.priority}</strong>
+              · Ease of use: <strong class="text-foreground">{c.easeOfUse ?? 'unrated'}</strong>
             </div>
             <div class="text-muted-foreground">
               License:

@@ -16,6 +16,8 @@ import { ConvexError, v } from 'convex/values';
 
 const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
 const PLATFORM_KEYS = ['android', 'ios', 'windows', 'desktop'];
+// Ease-of-use rating; null clears it (treated as 'moderate' downstream).
+const easeOfUse = v.union(v.literal('easy'), v.literal('moderate'), v.literal('advanced'));
 
 function mapClient(r: Doc<'clients'>) {
   return {
@@ -29,6 +31,7 @@ function mapClient(r: Doc<'clients'>) {
     openSource: r.openSource ?? false,
     license: r.license ?? null,
     sourceUrl: r.sourceUrl ?? null,
+    easeOfUse: r.easeOfUse ?? null,
     enabled: r.enabled,
     priority: r.priority,
     createdAt: new Date(r._creationTime).toISOString(),
@@ -67,6 +70,7 @@ export const create = internalMutation({
     openSource: v.optional(v.boolean()),
     license: v.optional(v.union(v.string(), v.null())),
     sourceUrl: v.optional(v.union(v.string(), v.null())),
+    easeOfUse: v.optional(v.union(easeOfUse, v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
   },
@@ -99,6 +103,7 @@ export const create = internalMutation({
       openSource: a.openSource ?? false,
       license: a.license?.trim() || undefined,
       sourceUrl: a.sourceUrl?.trim() || undefined,
+      easeOfUse: a.easeOfUse ?? undefined,
       enabled: a.enabled ?? true,
       priority: a.priority ?? 0,
       updatedAt: Date.now(),
@@ -120,6 +125,7 @@ export const update = internalMutation({
     openSource: v.optional(v.boolean()),
     license: v.optional(v.union(v.string(), v.null())),
     sourceUrl: v.optional(v.union(v.string(), v.null())),
+    easeOfUse: v.optional(v.union(easeOfUse, v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
   },
@@ -155,6 +161,7 @@ export const update = internalMutation({
     if (patch.openSource !== undefined) fields.openSource = patch.openSource;
     if (patch.license !== undefined) fields.license = patch.license?.trim() || undefined;
     if (patch.sourceUrl !== undefined) fields.sourceUrl = patch.sourceUrl?.trim() || undefined;
+    if (patch.easeOfUse !== undefined) fields.easeOfUse = patch.easeOfUse ?? undefined;
     if (patch.enabled !== undefined) fields.enabled = patch.enabled;
     if (patch.priority !== undefined) fields.priority = patch.priority;
     await ctx.db.patch(id, fields);
@@ -186,6 +193,7 @@ export const upsertByName = internalMutation({
     openSource: v.optional(v.boolean()),
     license: v.optional(v.union(v.string(), v.null())),
     sourceUrl: v.optional(v.union(v.string(), v.null())),
+    easeOfUse: v.optional(v.union(easeOfUse, v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
   },
@@ -213,6 +221,7 @@ export const upsertByName = internalMutation({
         openSource: a.openSource ?? false,
         license: a.license?.trim() || undefined,
         sourceUrl: a.sourceUrl?.trim() || undefined,
+        easeOfUse: a.easeOfUse ?? undefined,
         enabled: a.enabled ?? true,
         priority: a.priority ?? 0,
         updatedAt: Date.now(),
@@ -229,6 +238,7 @@ export const upsertByName = internalMutation({
     if (a.openSource !== undefined) fields.openSource = a.openSource;
     if (a.license !== undefined) fields.license = a.license?.trim() || undefined;
     if (a.sourceUrl !== undefined) fields.sourceUrl = a.sourceUrl?.trim() || undefined;
+    if (a.easeOfUse !== undefined) fields.easeOfUse = a.easeOfUse ?? undefined;
     if (a.enabled !== undefined) fields.enabled = a.enabled;
     if (a.priority !== undefined) fields.priority = a.priority;
     await ctx.db.patch(existing._id, fields);
