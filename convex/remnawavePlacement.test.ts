@@ -9,7 +9,7 @@ import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import type { Id } from './_generated/dataModel';
-import { pickByNodeLoad } from './lib/remnawavePlacement';
+import { pickByNodeLoad, resolveBoundModeCounts } from './lib/remnawavePlacement';
 import { remnawaveGetNodeStats } from './lib/backends/remnawave';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -175,5 +175,20 @@ describe('remnawaveGetNodeStats (provider aggregation)', () => {
     });
     const [a] = await remnawaveGetNodeStats(cfg);
     expect(a).toMatchObject({ usersOnline: 5, online: false, nodeCount: 1 });
+  });
+});
+
+describe('resolveBoundModeCounts', () => {
+  test('returns per-mode pool sizes (never UUIDs); unbound = 0', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.evade.squads',
+        value: JSON.stringify(['sq-1', 'sq-2', 'sq-3']),
+        updatedAt: Date.now(),
+      });
+    });
+    const counts = await t.run((ctx) => resolveBoundModeCounts(ctx.db));
+    expect(counts).toEqual({ evade: 3, privacy: 0 });
   });
 });

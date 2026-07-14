@@ -36,6 +36,16 @@
   });
 
   let draft = $state<{ evade: string; privacy: string }>({ evade: '', privacy: '' });
+  // Inline validation error (bad UUID lines) — a typo'd squad UUID used to save
+  // silently and only surface later as a dead/offline pool.
+  let draftError = $state<string | null>(null);
+
+  // Per-mode bound-pool SIZES from the node-stats endpoint (never the UUIDs).
+  let boundCounts = $derived(
+    Object.fromEntries(
+      (nodeStats.data?.placements ?? []).map((p) => [p.modeId, p.boundCount]),
+    ) as Record<string, number>,
+  );
 
   // One UUID per line (commas also accepted); trims + dedupes.
   function parseSquadList(text: string): string[] {
@@ -47,6 +57,8 @@
     return out;
   }
 
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
   const save = createMutation(() => ({
     mutationFn: async () => {
       const modes: Record<string, { squadUuids: string[] }> = {};
@@ -54,6 +66,10 @@
       // binding (keep-secret-on-blank). An explicit line clears/sets the pool.
       const evade = parseSquadList(draft.evade);
       const privacy = parseSquadList(draft.privacy);
+      const invalid = [...evade, ...privacy].filter((s) => !UUID_RE.test(s));
+      if (invalid.length > 0) {
+        throw new Error(`Not a squad UUID: ${invalid.join(', ')}`);
+      }
       if (draft.evade.trim()) modes.evade = { squadUuids: evade };
       if (draft.privacy.trim()) modes.privacy = { squadUuids: privacy };
       return apiClient.patch(
@@ -64,11 +80,13 @@
     },
     onSuccess: () => {
       draft = { evade: '', privacy: '' };
+      draftError = null;
       void qc.invalidateQueries({ queryKey: queryKeys.config }); // refresh `available`
-      void qc.invalidateQueries({ queryKey: queryKeys.adminNodeStats });
+      void qc.invalidateQueries({ queryKey: queryKeys.adminNodeStats }); // refresh bound counts
       toast.success('Node placement saved');
     },
     onError: (err) => {
+      draftError = apiErrorMessage(err);
       toast.error('Could not save node placement', { description: apiErrorMessage(err) });
     },
   }));
@@ -140,7 +158,13 @@
                   ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                   : 'bg-muted text-muted-foreground'}"
               >
-                {cpAvailable[m.id as 'evade' | 'privacy'] ? 'Pool bound' : 'Not set'}
+                {#if cpAvailable[m.id as 'evade' | 'privacy']}
+                  {boundCounts[m.id] != null
+                    ? `${boundCounts[m.id]} squad${boundCounts[m.id] === 1 ? '' : 's'} bound`
+                    : 'Pool bound'}
+                {:else}
+                  Not set
+                {/if}
               </span>
             </div>
             <textarea
@@ -155,6 +179,13 @@
             ></textarea>
           </div>
         {/each}
+        {#if draftError}
+          <p
+            class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
+            {draftError}
+          </p>
+        {/if}
         <div class="flex justify-end">
           <Button onclick={() => save.mutate()} disabled={save.isPending}>
             {save.isPending ? 'Saving…' : 'Save node placement'}
@@ -172,9 +203,9 @@
         </CardDescription>
       </CardHeader>
       <CardContent class="text-sm">
-        {#if nodeStats.data && nodeStats.data.length > 0}
+        {#if nodeStats.data && nodeStats.data.nodes.length > 0}
           <div class="space-y-1">
-            {#each nodeStats.data as sq (sq.placement)}
+            {#each nodeStats.data.nodes as sq (sq.placement)}
               <div class="flex items-center justify-between gap-2">
                 <span class="truncate">
                   <span class="font-medium">{sq.label ?? 'unnamed'}</span>
@@ -214,14 +245,19 @@
         <div class="flex flex-wrap gap-2">
           <Button
             variant="outline"
-            onclick={() => checkLogging.mutate()}
+            onclick={() => {
+              // A fresh check disarms a pending apply — the admin should re-arm
+              // against the NEW report, not fire on a stale one.
+              armApply = false;
+              checkLogging.mutate();
+            }}
             disabled={checkLogging.isPending || applyLogging.isPending}
           >
             {checkLogging.isPending ? 'Checking…' : 'Check current logging'}
           </Button>
           <Button
             variant={armApply ? 'destructive' : 'default'}
-            disabled={applyLogging.isPending}
+            disabled={applyLogging.isPending || checkLogging.isPending}
             onclick={() => {
               if (armApply) {
                 armApply = false;

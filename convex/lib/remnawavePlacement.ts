@@ -103,6 +103,18 @@ export async function resolveModePlacementStable(
   return (await resolvePlacementPool(db, modeId))[0] ?? null;
 }
 
+/** Per-mode bound-squad COUNTS (non-secret — pool sizes only, never the UUIDs).
+ *  Feeds the admin placement editor's "N squads bound" feedback so a typo'd or
+ *  half-pasted pool is visible immediately, not as a silently dead node. Raw
+ *  per-mode reads (no cross-mode fallback), like `resolveBoundModeIds`. */
+export async function resolveBoundModeCounts(db: DatabaseReader): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  for (const def of CONNECTION_MODES) {
+    counts[def.id] = sanitizePool(await readSetting(db, MODE_POOL_KEY(def.id))).length;
+  }
+  return counts;
+}
+
 /** The set of mode ids that have ≥1 squad bound — drives the public `available`
  *  flag. One range scan over the Remnawave placement namespace. */
 export async function resolveBoundModeIds(db: DatabaseReader): Promise<Set<string>> {

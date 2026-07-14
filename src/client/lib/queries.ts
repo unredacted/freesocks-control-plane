@@ -402,12 +402,17 @@ const NodeStatsResponse = z.object({
       lastStatsAt: z.number(),
     }),
   ),
+  /** Per-mode bound-squad counts (pool sizes only, never UUIDs) — the placement
+   *  editor's feedback badge. Defaulted for rolling-deploy compat. */
+  placements: z
+    .array(z.object({ modeId: z.string(), boundCount: z.number() }))
+    .optional()
+    .default([]),
 });
 export const adminNodeStatsQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.adminNodeStats,
-    queryFn: async () =>
-      (await apiClient.get('/api/v1/admin/remnawave/node-stats', NodeStatsResponse)).nodes,
+    queryFn: () => apiClient.get('/api/v1/admin/remnawave/node-stats', NodeStatsResponse),
     staleTime: 60_000,
   }));
 

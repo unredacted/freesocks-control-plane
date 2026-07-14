@@ -13,6 +13,7 @@ import {
   resolvePlacementPool,
   modePlacementWrites,
   resolveBoundModeIds,
+  resolveBoundModeCounts,
 } from './lib/remnawavePlacement';
 
 /**
@@ -102,6 +103,16 @@ export const markNodeStats = internalMutation({
       else await ctx.db.insert('remnawaveNodeStats', row);
     }
     return null;
+  },
+});
+
+/** Per-mode bound-squad counts for the admin placement editor's feedback badge
+ *  (pool SIZES only — never the UUIDs themselves). */
+export const listModePlacementCounts = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const counts = await resolveBoundModeCounts(ctx.db);
+    return Object.entries(counts).map(([modeId, boundCount]) => ({ modeId, boundCount }));
   },
 });
 
