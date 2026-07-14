@@ -11,6 +11,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { computeExpireAtIso, gbToBytes } from './lib/backends/types';
+import { remnawaveUpdateUser } from './lib/backends/remnawave';
 import { sha256Hex } from './lib/crypto';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -360,5 +361,118 @@ describe('provisionMirror (opt-in lazy mirror)', () => {
     const userId = await seedTierAndUser(t, true);
     const res = await t.action(internal.storage.provisionMirror, { userId, countryCode: null });
     expect(res.status).toBe('exhausted');
+  });
+});
+
+describe('remnawaveUpdateUser contract safety', () => {
+  // Direct provider-fn tests against a fetch stub (like the logging suite):
+  // the panel's UPDATE DTO takes .optional() NOT .nullable() for
+  // trafficLimitBytes/expireAt and refuses past expiry dates — a bad body
+  // 400s the WHOLE patch (re-enable + limits + placement lost).
+  const cfg = { baseUrl: 'https://panel.test.example', apiToken: 'tok' };
+  const okUser = {
+    uuid: '7b51b8a0-7a4c-4f0b-9e76-0d6a4c1f2a3b',
+    shortUuid: 'short-1',
+    username: 'freesocks-x',
+    status: 'ACTIVE',
+    trafficLimitBytes: 0,
+    trafficLimitStrategy: 'MONTH',
+    usedTrafficBytes: 0,
+    expireAt: null,
+    hwidDeviceLimit: null,
+    subscriptionUrl: 'https://sub.test.example/short-1',
+  };
+  const stub = (user: unknown = okUser) => {
+    const spy = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ response: user }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', spy);
+    return spy;
+  };
+  const sentBody = (spy: ReturnType<typeof vi.fn>) =>
+    JSON.parse(String((spy.mock.calls[0]?.[1] as RequestInit).body));
+
+  test('null trafficLimitBytes is coerced to 0 (the panel unlimited sentinel)', async () => {
+    const spy = stub();
+    await remnawaveUpdateUser(cfg, okUser.uuid, { trafficLimitBytes: null });
+    expect(sentBody(spy).trafficLimitBytes).toBe(0);
+  });
+
+  test('a past expireAt is clamped to a near-future date; null expireAt is omitted', async () => {
+    let spy = stub();
+    await remnawaveUpdateUser(cfg, okUser.uuid, { expireAt: '2020-01-01T00:00:00.000Z' });
+    const clamped = Date.parse(sentBody(spy).expireAt);
+    expect(clamped).toBeGreaterThan(Date.now());
+    expect(clamped).toBeLessThan(Date.now() + 10 * 60_000);
+
+    spy = stub();
+    await remnawaveUpdateUser(cfg, okUser.uuid, { expireAt: null, trafficLimitBytes: 5 });
+    expect('expireAt' in sentBody(spy)).toBe(false);
+
+    // A future date passes through untouched.
+    spy = stub();
+    const future = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    await remnawaveUpdateUser(cfg, okUser.uuid, { expireAt: future });
+    expect(sentBody(spy).expireAt).toBe(future);
+  });
+
+  test('tolerates additive panel values: unknown status/strategy still parse', async () => {
+    stub({ ...okUser, status: 'SOME_FUTURE_STATUS', trafficLimitStrategy: 'QUARTER' });
+    await expect(
+      remnawaveUpdateUser(cfg, okUser.uuid, { trafficLimitBytes: 1 }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('testBackendConnection stored-credential fallback', () => {
+  test('with id + blank secrets, the probe runs against the STORED config', async () => {
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t);
+    const spy = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) => new Response('nope', { status: 500 }),
+    );
+    vi.stubGlobal('fetch', spy);
+    // No baseUrl/apiToken supplied — they must come from the stored row.
+    const res = await t.action(internal.adminApi.testBackendConnection, {
+      backend: 'remnawave',
+      id: serverId,
+    });
+    expect(res.ok).toBe(false); // the stub 500s; reachability isn't the point
+    expect(spy).toHaveBeenCalled();
+    expect(String(spy.mock.calls[0]?.[0])).toContain('https://panel.test.example');
+    const headers = (spy.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer tkn');
+  });
+
+  test('a typed field overrides the stored one', async () => {
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t);
+    const spy = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) => new Response('nope', { status: 500 }),
+    );
+    vi.stubGlobal('fetch', spy);
+    await t.action(internal.adminApi.testBackendConnection, {
+      backend: 'remnawave',
+      id: serverId,
+      baseUrl: 'https://other.test.example',
+    });
+    expect(String(spy.mock.calls[0]?.[0])).toContain('https://other.test.example');
+  });
+
+  test('backend-type mismatch against the stored instance is a friendly error, no fetch', async () => {
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t); // stored row is remnawave
+    const spy = vi.fn();
+    vi.stubGlobal('fetch', spy);
+    const res = await t.action(internal.adminApi.testBackendConnection, {
+      backend: 'outline',
+      id: serverId,
+    });
+    expect(res).toEqual({ ok: false, error: 'Backend type does not match the stored instance' });
+    expect(spy).not.toHaveBeenCalled();
   });
 });

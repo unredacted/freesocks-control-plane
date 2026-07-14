@@ -23,8 +23,13 @@ export interface RemnawaveConfig {
   timeoutMs?: number;
 }
 
-const TrafficLimitStrategy = z.enum(['NO_RESET', 'DAY', 'WEEK', 'MONTH']);
-const RemnawaveUserStatus = z.enum(['ACTIVE', 'DISABLED', 'LIMITED', 'EXPIRED']);
+// Tolerant at the boundary: an additive panel value (a new status / reset
+// period in some future Remnawave release) must never fail-parse the whole
+// user — that would break issuance and the account view outright. Unknown
+// statuses map to 'unknown' in toState; an unknown strategy falls back to
+// NO_RESET (it only feeds the "resets in N days" hint).
+const TrafficLimitStrategy = z.enum(['NO_RESET', 'DAY', 'WEEK', 'MONTH']).catch('NO_RESET');
+const RemnawaveUserStatus = z.string();
 
 const RemnawaveUser = z.object({
   uuid: z.string().uuid(),
@@ -55,7 +60,9 @@ const RemnawaveUser = z.object({
   userTraffic: z.object({ usedTrafficBytes: z.number().int().nonnegative().nullish() }).nullish(),
   expireAt: z.string().datetime().nullable(),
   hwidDeviceLimit: z.number().int().nonnegative().nullable(),
-  subscriptionUrl: z.string().url(),
+  // Plain string, matching the panel contract (z.string(), not .url()) — a
+  // relative or scheme-odd subscription URL must not fail-parse the user.
+  subscriptionUrl: z.string(),
 });
 type RemnawaveUser = z.infer<typeof RemnawaveUser>;
 
@@ -621,10 +628,27 @@ export async function remnawaveUpdateUser(
   // Remnawave's update is `PATCH /api/users` with the target `uuid` IN THE BODY
   // (the route has no path param; the DTO requires uuid or username). Seed it here.
   const body: Record<string, unknown> = { uuid: backendUserId };
-  if (patch.trafficLimitBytes !== undefined) body.trafficLimitBytes = patch.trafficLimitBytes;
+  // The panel's UPDATE DTO takes `.optional()` NOT `.nullable()` here: a null
+  // 400s and the WHOLE PATCH is rejected (re-enable + expiry + placement +
+  // limits all lost). null means unlimited in FCP (resolveTrafficLimitBytes),
+  // and 0 is Remnawave's documented unlimited sentinel — coerce. (CREATE
+  // already omits via `?? undefined`.)
+  if (patch.trafficLimitBytes !== undefined) body.trafficLimitBytes = patch.trafficLimitBytes ?? 0;
   if (patch.trafficLimitStrategy !== undefined)
     body.trafficLimitStrategy = patch.trafficLimitStrategy;
-  if (patch.expireAt !== undefined) body.expireAt = patch.expireAt;
+  if (patch.expireAt != null) {
+    // Same DTO refuses null AND past dates ("cannot be in the past") — either
+    // rejects the whole PATCH. A past entitlement expiry (e.g. an admin
+    // re-tiering a lapsed member) is clamped to a near-future floor: FCP's
+    // grace sweep, not the panel's date, governs actual disablement. A null
+    // expireAt is simply omitted (Remnawave requires a date; there is no
+    // "clear" semantics on update).
+    const t = Date.parse(patch.expireAt);
+    body.expireAt =
+      Number.isFinite(t) && t <= Date.now()
+        ? new Date(Date.now() + 5 * 60_000).toISOString()
+        : patch.expireAt;
+  }
   if (patch.hwidDeviceLimit !== undefined) body.hwidDeviceLimit = patch.hwidDeviceLimit;
   if (patch.description !== undefined) body.description = patch.description;
   if (patch.tag !== undefined) body.tag = toRemnawaveTag(patch.tag);
