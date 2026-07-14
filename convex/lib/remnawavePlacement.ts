@@ -135,13 +135,42 @@ export async function resolveBoundModeIds(db: DatabaseReader): Promise<Set<strin
   return bound;
 }
 
+// Same UUID shape the admin placement editor enforces client-side
+// (AdminRemnawave.svelte UUID_RE) — the server-side guard covers headless
+// callers (the Ansible role) that have no UI validation.
+const SQUAD_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function requireStringList(raw: unknown, field: string): string[] {
+  if (!Array.isArray(raw) || raw.some((s) => typeof s !== 'string' || !s.trim())) {
+    throw new Error(`${field} must be an array of non-empty strings`);
+  }
+  return (raw as string[]).map((s) => s.trim());
+}
+
+function requireUuidList(raw: unknown, field: string): string[] {
+  const list = requireStringList(raw, field);
+  const bad = list.filter((s) => !SQUAD_UUID_RE.test(s));
+  if (bad.length) throw new Error(`not a squad UUID: ${bad.join(', ')}`);
+  return list;
+}
+
 /**
  * Admin PATCH → the per-mode squad-pool appSettings writes (Remnawave-specific).
- * Validates each mode id + that the pool is an array of non-empty strings; an
- * empty array clears the pool. Throws on a malformed patch. Returns the key/value
- * pairs the mutation persists.
+ * Per mode, three composable ops (applied replace → add → remove):
+ *   - `squadUuids`       full replace; `[]` clears the pool
+ *   - `addSquadUuids`    union into the stored pool (deduped)
+ *   - `removeSquadUuids` drop from the stored pool
+ * add/remove exist so a headless node deploy can append/detach ITSELF without
+ * knowing the rest of the pool (the UUIDs are write-only — there is no GET).
+ * Replace/add entries must be squad UUIDs (server-side guard for UI-less
+ * callers); remove accepts any non-empty string so a garbage entry that predates
+ * the validation can still be purged. Throws on a malformed patch. Returns the
+ * key/value pairs the mutation persists.
  */
-export function modePlacementWrites(patch: unknown): Array<{ key: string; value: string }> {
+export async function modePlacementWrites(
+  db: DatabaseReader,
+  patch: unknown,
+): Promise<Array<{ key: string; value: string }>> {
   if (!patch || typeof patch !== 'object') {
     throw new Error('mode-placement patch must be an object');
   }
@@ -151,12 +180,22 @@ export function modePlacementWrites(patch: unknown): Array<{ key: string; value:
     if (!isConnectionModeId(id)) continue;
     const entry = modes[id];
     if (!entry || typeof entry !== 'object') continue;
-    const squads = (entry as Record<string, unknown>).squadUuids;
-    if (squads === undefined) continue;
-    if (!Array.isArray(squads) || squads.some((s) => typeof s !== 'string' || !s.trim())) {
-      throw new Error('squadUuids must be an array of non-empty strings');
+    const { squadUuids, addSquadUuids, removeSquadUuids } = entry as Record<string, unknown>;
+    if (squadUuids === undefined && addSquadUuids === undefined && removeSquadUuids === undefined) {
+      continue;
     }
-    writes.push({ key: MODE_POOL_KEY(id), value: JSON.stringify(sanitizePool(squads)) });
+    let pool =
+      squadUuids !== undefined
+        ? requireUuidList(squadUuids, 'squadUuids')
+        : sanitizePool(await readSetting(db, MODE_POOL_KEY(id)));
+    if (addSquadUuids !== undefined) {
+      pool = pool.concat(requireUuidList(addSquadUuids, 'addSquadUuids'));
+    }
+    if (removeSquadUuids !== undefined) {
+      const drop = new Set(requireStringList(removeSquadUuids, 'removeSquadUuids'));
+      pool = pool.filter((s) => !drop.has(s));
+    }
+    writes.push({ key: MODE_POOL_KEY(id), value: JSON.stringify(sanitizePool(pool)) });
   }
   return writes;
 }

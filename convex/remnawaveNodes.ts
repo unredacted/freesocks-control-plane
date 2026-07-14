@@ -18,15 +18,18 @@ import {
 
 /**
  * Admin binds each mode's Remnawave placement pool (the squads a mode's keys are
- * issued across). Remnawave-namespaced: squad UUIDs are write-only + audited as a
- * `poolBound` boolean, never logged. Returns which modes now have a pool bound.
+ * issued across). Per mode the patch composes full-replace (`squadUuids`) with
+ * `addSquadUuids`/`removeSquadUuids`, so a headless node deploy can append or
+ * detach just itself. Remnawave-namespaced: squad UUIDs are write-only + audited
+ * as a `poolBound` boolean and a pool SIZE, never logged. Returns which modes now
+ * have a pool bound + the per-mode counts.
  */
 export const setModePlacements = internalMutation({
   args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { patch, actorAdminId }) => {
     let writes: Array<{ key: string; value: string }>;
     try {
-      writes = modePlacementWrites(patch);
+      writes = await modePlacementWrites(ctx.db, patch);
     } catch (e) {
       throw new ConvexError({
         code: 'validation',
@@ -38,16 +41,21 @@ export const setModePlacements = internalMutation({
     }
     for (const { key, value } of writes) {
       await upsertSettingRow(ctx, key, value, actorAdminId);
+      const size = (JSON.parse(value) as string[]).length;
       await writeAuditLog(ctx, {
         actorType: 'admin',
         actorId: actorAdminId ?? undefined,
         action: 'admin.remnawave.mode_placement.update',
         targetType: 'connection_mode',
         targetId: key,
-        payload: { key, poolBound: (JSON.parse(value) as string[]).length > 0 },
+        payload: { key, poolBound: size > 0, boundCount: size },
       });
     }
-    return { bound: [...(await resolveBoundModeIds(ctx.db))] };
+    const counts = await resolveBoundModeCounts(ctx.db);
+    return {
+      bound: [...(await resolveBoundModeIds(ctx.db))],
+      placements: Object.entries(counts).map(([modeId, boundCount]) => ({ modeId, boundCount })),
+    };
   },
 });
 

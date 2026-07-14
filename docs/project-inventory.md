@@ -249,8 +249,11 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   client-side id resolution. Backed by `convex/adminApi.ts` / `convex/mirrorProviders.ts`.
   Node placement is bound separately via **`PATCH …/remnawave/mode-placements`**
   (`admin:servers:write`): the role creates one squad per node and binds each connection mode's
-  pool there. (The by-slug tier upsert no longer carries a squad field — the old tier-level
-  `remnawaveSquadUuid` bind was removed in Phase 5b; node placement is per connection mode.)
+  pool there — per mode via full-replace `squadUuids` or the append/detach forms
+  `addSquadUuids`/`removeSquadUuids` (so a node deploy adds/removes just itself; UUIDs stay
+  write-only, server-side UUID-validated). (The by-slug tier upsert no longer carries a squad
+  field — the old tier-level `remnawaveSquadUuid` bind was removed in Phase 5b; node placement
+  is per connection mode.)
 
 ### 1.7 Integrations & runtime
 

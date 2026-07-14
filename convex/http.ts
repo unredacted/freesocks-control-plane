@@ -1834,10 +1834,10 @@ http.route({
   }),
 });
 
-// PUT /api/v1/admin/tiers/by-slug/{slug}: idempotent upsert (Ansible / IaC +
-// declarative squad↔tier binding). A distinct METHOD (PUT) from the by-id
-// PATCH/DELETE prefix routes above, so the two never collide; the slug comes
-// from the path (authoritative).
+// PUT /api/v1/admin/tiers/by-slug/{slug}: idempotent upsert (Ansible / IaC).
+// A distinct METHOD (PUT) from the by-id PATCH/DELETE prefix routes above, so
+// the two never collide; the slug comes from the path (authoritative). Node
+// placement is NOT bound here — that's /api/v1/admin/remnawave/mode-placements.
 http.route({
   pathPrefix: '/api/v1/admin/tiers/by-slug/',
   method: 'PUT',

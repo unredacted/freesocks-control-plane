@@ -197,21 +197,93 @@ describe('remnawave mode placement pools', () => {
     expect(bound).toEqual(['evade']);
   });
 
-  test('modePlacementWrites: maps pools (deduped), [] is a clear-write, bad shapes throw', () => {
-    const writes = modePlacementWrites({
-      modes: { evade: { squadUuids: ['sq-1', 'sq-2', 'sq-1'] }, privacy: { squadUuids: [] } },
-    });
+  // Real-shaped squad UUIDs — replace/add entries are UUID-validated server-side.
+  const SQ1 = '11111111-1111-4111-8111-111111111111';
+  const SQ2 = '22222222-2222-4222-8222-222222222222';
+  const SQ3 = '33333333-3333-4333-8333-333333333333';
+  const bindPool = (t: ReturnType<typeof convexTest>, id: string, squads: string[]) =>
+    t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: `remnawave.modePlacement.${id}.squads`,
+        value: JSON.stringify(squads),
+        updatedAt: Date.now(),
+      }),
+    );
+
+  test('modePlacementWrites: maps pools (deduped), [] is a clear-write, bad shapes throw', async () => {
+    const t = convexTest(schema, modules);
+    const writes = await t.run((ctx) =>
+      modePlacementWrites(ctx.db, {
+        modes: { evade: { squadUuids: [SQ1, SQ2, SQ1] }, privacy: { squadUuids: [] } },
+      }),
+    );
     const byKey = Object.fromEntries(writes.map((w) => [w.key, JSON.parse(w.value)]));
-    expect(byKey['remnawave.modePlacement.evade.squads']).toEqual(['sq-1', 'sq-2']);
+    expect(byKey['remnawave.modePlacement.evade.squads']).toEqual([SQ1, SQ2]);
     expect(byKey['remnawave.modePlacement.privacy.squads']).toEqual([]);
-    expect(() => modePlacementWrites({ modes: { evade: { squadUuids: 'nope' } } })).toThrow(
-      /squadUuids/,
-    );
-    expect(() => modePlacementWrites({ modes: { evade: { squadUuids: ['ok', ''] } } })).toThrow(
-      /squadUuids/,
-    );
+    await expect(
+      t.run((ctx) => modePlacementWrites(ctx.db, { modes: { evade: { squadUuids: 'nope' } } })),
+    ).rejects.toThrow(/squadUuids/);
+    await expect(
+      t.run((ctx) => modePlacementWrites(ctx.db, { modes: { evade: { squadUuids: [SQ1, ''] } } })),
+    ).rejects.toThrow(/squadUuids/);
+    // Non-UUID entries are rejected server-side (headless callers have no UI guard).
+    await expect(
+      t.run((ctx) =>
+        modePlacementWrites(ctx.db, { modes: { evade: { squadUuids: ['not-a-uuid'] } } }),
+      ),
+    ).rejects.toThrow(/not a squad UUID: not-a-uuid/);
     // Unknown mode ids ignored.
-    expect(modePlacementWrites({ modes: { bogus: { squadUuids: ['x'] } } })).toEqual([]);
+    expect(
+      await t.run((ctx) =>
+        modePlacementWrites(ctx.db, { modes: { bogus: { squadUuids: [SQ1] } } }),
+      ),
+    ).toEqual([]);
+  });
+
+  test('modePlacementWrites: addSquadUuids appends to the stored pool (deduped)', async () => {
+    const t = convexTest(schema, modules);
+    await bindPool(t, 'evade', [SQ1]);
+    const writes = await t.run((ctx) =>
+      modePlacementWrites(ctx.db, { modes: { evade: { addSquadUuids: [SQ2, SQ1] } } }),
+    );
+    expect(JSON.parse(writes[0]!.value)).toEqual([SQ1, SQ2]);
+    // add against an unbound mode starts a fresh pool.
+    const fresh = await t.run((ctx) =>
+      modePlacementWrites(ctx.db, { modes: { privacy: { addSquadUuids: [SQ3] } } }),
+    );
+    expect(JSON.parse(fresh[0]!.value)).toEqual([SQ3]);
+    // add entries are UUID-validated too.
+    await expect(
+      t.run((ctx) =>
+        modePlacementWrites(ctx.db, { modes: { evade: { addSquadUuids: ['garbage'] } } }),
+      ),
+    ).rejects.toThrow(/not a squad UUID/);
+  });
+
+  test('modePlacementWrites: removeSquadUuids drops from the stored pool (any string ok)', async () => {
+    const t = convexTest(schema, modules);
+    await bindPool(t, 'evade', [SQ1, SQ2, 'legacy-garbage']);
+    const writes = await t.run((ctx) =>
+      modePlacementWrites(ctx.db, {
+        modes: { evade: { removeSquadUuids: [SQ2, 'legacy-garbage', SQ3] } },
+      }),
+    );
+    // SQ3 wasn't in the pool — removing an absent entry is a no-op, and the
+    // non-UUID 'legacy-garbage' is removable (purge path for pre-validation rows).
+    expect(JSON.parse(writes[0]!.value)).toEqual([SQ1]);
+  });
+
+  test('modePlacementWrites: replace + add + remove compose in that order', async () => {
+    const t = convexTest(schema, modules);
+    await bindPool(t, 'evade', ['ignored-by-replace']);
+    const writes = await t.run((ctx) =>
+      modePlacementWrites(ctx.db, {
+        modes: {
+          evade: { squadUuids: [SQ1, SQ2], addSquadUuids: [SQ3], removeSquadUuids: [SQ1] },
+        },
+      }),
+    );
+    expect(JSON.parse(writes[0]!.value)).toEqual([SQ2, SQ3]);
   });
 });
 

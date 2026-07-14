@@ -293,8 +293,14 @@ How a placement is chosen (all Remnawave-local, under `convex/remnawaveNodes.ts`
   **Admin → Remnawave** (one UUID per line, per mode) or via
   `PATCH /api/v1/admin/remnawave/mode-placements` (scope `admin:servers:write`) —
   the Ansible panel-bootstrap PATCHes this after it creates the per-node squads.
-  Squad UUIDs are **write-only** (never echoed back; audited as a `poolBound`
-  boolean).
+  Per mode the patch composes three ops (applied replace → add → remove):
+  `squadUuids` (full replace; `[]` clears), `addSquadUuids` (union, deduped), and
+  `removeSquadUuids` — the add/remove forms exist so a node deploy can append or
+  detach just ITSELF without knowing the rest of the pool. Replace/add entries are
+  UUID-validated server-side; remove accepts any string so pre-validation garbage
+  can be purged. Squad UUIDs are **write-only** (never echoed back; audited as a
+  `poolBound` boolean + pool size; the response carries `bound` mode ids +
+  per-mode `placements[].boundCount`, sizes only).
 - At issuance FCP picks the **least-loaded node** of the mode's pool
   (`pickByNodeLoad`): per-squad node load — `usersOnline` (primary) + optional
   realtime bandwidth (secondary; weights `remnawave.nodePlacement.*_weight`, default

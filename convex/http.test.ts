@@ -293,7 +293,9 @@ describe('route-level scope enforcement', () => {
       scopes: ['admin:servers:read'],
       subjectType: 'service',
     });
-    const body = JSON.stringify({ modes: { evade: { squadUuids: ['sq-x'] } } });
+    const body = JSON.stringify({
+      modes: { evade: { squadUuids: ['e5c4de00-1111-4111-8111-cccccccccccc'] } },
+    });
 
     const bound = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
       method: 'PATCH',
