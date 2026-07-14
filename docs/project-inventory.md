@@ -1,6 +1,20 @@
 # Project inventory: features, open work, and code status
 
-**Updated 2026-07-08 (audit-fix pass, branch `v2`).** A full-pass audit + fixes landed:
+**Updated 2026-07-13 (doc reconcile, branch `v2`).** Landed since the 2026-07-08 note:
+**in-app donations** (membership add-on + standalone card funding a shared monthly
+free-user bandwidth bonus, with GB-only public impact surfaces — §1.7 / `docs/billing.md`);
+the **BTCPay** self-hosted Bitcoin rail (4th rail); **opt-in member passkeys** (§1.1);
+the **DB-driven client catalog** gained `easeOfUse` + open-source/license metadata and
+install-page links (refresh via operator-run `seed:refreshDefaultClients`); the
+**account-number reveal** became a forced download + paste-back verify (§1.9); the
+**Xray no-log hardening** admin card (§1.6 / `docs/backends.md`); the **site announcement
+banner** (`site.*` settings); **`freeGrants` + `auditLog.ipHash` schema-dropped** (the
+no-stored-IP work is complete — `docs/privacy.md`); the legacy `turnstileToken` fallback
+removed; **i18n native-review packets** (`bun run i18n:review` → `translation-review/*.md`);
+a WCAG pass (zero contrast failures; 44px mobile touch targets); and the Remnawave
+update-user contract-safety fixes (pinned in `docs/backends.md`).
+
+**Previous update 2026-07-08 (audit-fix pass, branch `v2`).** A full-pass audit + fixes landed:
 (WS1) issuance never mints a squad-less Remnawave key — an unbound connection mode now
 falls back across pools (mode → default → any bound) and `switchMode` rejects an unbound
 target instead of tombstoning a live key; (WS2) **idle free users are deactivated + RETAINED,
@@ -13,7 +27,8 @@ scan that 500-ed the /status health-gate; (WS4) the fronted `/api/v1/sub` route 
 `/api/v1/e2ee/keys` are per-IP rate-limited; (WS6) removed dead migration-era symbols
 (`tiers.list`/`listActive`, `BILLING_PROCESSORS`, `remnawaveNodes.stablePlacement`).
 
-**Last reconciled against the code: 2026-07-07** (branch `v2`, after the node-placement
+**Last reconciled against the code: 2026-07-13.** The note below is from the earlier
+node-placement reconcile and still holds. **2026-07-07** (branch `v2`, after the node-placement
 redesign — Phases 1–5a). That redesign replaced the earlier squad-pool "load balancing" (which
 balanced nothing in a real fleet: a Remnawave internal squad is a set of inbounds, not a node)
 with **issuance-time node placement**. The generic backend layer is now **squad-free** — it
@@ -95,7 +110,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 
 ## 1. Features
 
-### 1.1 Identity & authentication: three schemes, NO OIDC
+### 1.1 Identity & authentication: three schemes (+ opt-in member passkeys), NO OIDC
 
 - **Account number** (members): a random **32-digit** credential (~106 bits), minted once at
   account creation (reveal-once), stored only as a peppered keyed hash
@@ -116,6 +131,14 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   Deactivation is enforced everywhere: `resolveAdmin` re-checks the bound admin's `isActive` on
   **every request** (and the login verify path refuses), so a disabled admin loses access
   immediately rather than at session-TTL. `convex/webauthn.ts` (`"use node"`) + `convex/admins.ts`. **Live.**
+- **Member passkeys (opt-in)**: a member can additionally register WebAuthn passkeys as a
+  convenience login (`POST /api/v1/auth/passkey/authenticate/*` also mints the normal
+  `fs_session`); the account number remains the ONLY recovery credential, so losing every
+  passkey costs nothing. Separate member-scoped tables (`memberPasskeyCredentials` +
+  challenge tables with their own retention sweeps) keep the realms isolated from admin
+  WebAuthn; RP display name via `WEBAUTHN_RP_NAME_MEMBER`. `convex/memberWebauthn.ts`
+  (`"use node"`) + `convex/memberPasskeys.ts`; UI `PasskeyManager.svelte` (Account →
+  Security + sign-up). **Live.**
 - **`fsv1_` API tokens** (services): SHA-256-hashed, scoped (`SCOPE_GROUPS.member|admin` in
   `src/shared/contracts/scopes.ts`, incl. `admin:status:read`), optional expiry,
   `subjectType: service|user`, debounced last-used, soft-revoke. Minted in the CMS **or**
@@ -207,13 +230,20 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   - per-passkey revoke, §1.1); **API tokens** (create / reveal-once / revoke; scope **group**
     toggles); **Backend servers** (CRUD + test-connection; secret `config`/`apiUrl` stored
     server-side, only ever returned masked); **Remnawave** (per-mode node-placement squad pools —
-    write-only UUIDs — + a read-only per-placement node-load table; §Node placement in
-    `docs/backends.md`); **Billing** (per-rail config + a **readiness** check
+    write-only UUIDs, with per-mode bound counts — + a read-only per-placement node-load
+    table + the **Xray no-log hardening card**: dry-run `logging-status` / apply
+    `harden-logging` against every panel config profile; §"Xray logging privacy harden"
+    in `docs/backends.md`); **Billing** (per-rail config + a **readiness** check
     that flags enabled-but-misconfigured rails; §1.7); **Storage mirrors** (provider pool, §1.7);
     **Client apps** (the DB-driven recommended-client catalog — `convex/clients.ts`, `AdminClients.svelte`,
-    `/admin/clients`); **Theme** (preset gallery + hue slider + live preview; §1.7); **Rate-limit policies**
+    `/admin/clients`; per-client `easeOfUse` (easy/moderate/advanced) + `openSource`/`license`/
+    `sourceUrl` metadata and install-page `homepageUrl`s, sorted OSS-first-then-easiest; the
+    defaults are re-synced by operator-run `seed:refreshDefaultClients`, which preserves
+    `enabled` flags + admin-added rows); **Theme** (preset gallery + hue slider + live preview; §1.7); **Rate-limit policies**
     (W2); **Membership codes** (W4); App settings (incl. the **Verification** panel — `setVerification` /
-    `PATCH /api/v1/admin/verification`, surfaced in `E2eeVerifyModal`); **Audit log** (filter by action / actor / since).
+    `PATCH /api/v1/admin/verification`, surfaced in `E2eeVerifyModal` — and the **site
+    chrome** block: the announcement banner + footer source link, `site.*` namespace in
+    `convex/lib/siteConfig.ts`, `PATCH /api/v1/admin/site`, rendered by `SiteBanner.svelte`); **Audit log** (filter by action / actor / since).
 - **IaC-addressable mutations** (for the Ansible role): idempotent **`PUT …/backend-servers/by-slug/{slug}`** + **`DELETE …/by-slug/{slug}`**, **`PUT …/tiers/by-slug/{slug}`**, and **`PUT
 …/mirror-providers/by-name/{name}`**. Each is a single keep-secret-on-blank upsert; no
   client-side id resolution. Backed by `convex/adminApi.ts` / `convex/mirrorProviders.ts`.
@@ -296,8 +326,11 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   (`bun run i18n:keys` + `i18n:compile`); `t()` is a thin shim over the compiled `m` (the old
   hand-rolled TS catalogs are gone). Locales en/fa/ar/ru/zh, RTL via `<html dir>`, persisted
   language switcher, Persian/Arabic-Indic digit normalization; non-English locales auto-filled
-  (`bun run i18n:translate`). Critical journey strings done; native review is a follow-up.
-  **Live (English authoritative; other locales first-pass MT).**
+  (`bun run i18n:translate`). Critical journey strings done. `bun run i18n:review`
+  (`scripts/i18n-review-packet.ts`) generates the per-locale native-review packets in
+  `translation-review/*.md` (English-vs-current tables per namespace, missing keys flagged,
+  ICU plurals per variant, reviewer instructions); the human review pass is in progress.
+  **Live (English authoritative; other locales first-pass MT pending native review).**
 - **S3 subscription mirrors** (`convex/storage.ts` `"use node"` + `convex/mirrorProviders.ts`):
   the censorship-resistance hedge, **opt-in + lazy**. Providers are a DB pool (`mirrorProviders`,
   admin CMS → "Storage mirrors", country-tiered, no env flag — replaced `S3_MIRRORS_ENABLED`/
@@ -333,9 +366,12 @@ Convex runs these natively (no Workers triggers, no node-cron):
 - `admin-invite-sweep` (daily): drop expired admin-invite tokens (multi-admin onboarding).
 - `retention-audit` / `retention-webhooks` / `retention-tier-history` /
   `retention-subscriptions` / `retention-billing-orders` /
-  `retention-webauthn-auth` / `retention-webauthn-reg` (daily): bounded deletes of the
-  append-only tables past their retention window (P2; the WebAuthn challenge sweeps close
-  the last unswept-table gap).
+  `retention-webauthn-auth` / `retention-webauthn-reg` /
+  `retention-member-webauthn-auth` / `retention-member-webauthn-reg` (daily): bounded
+  deletes of the append-only tables past their retention window (P2; the WebAuthn
+  challenge sweeps — admin and member — close the last unswept-table gap).
+- `donation-bonus-reconcile` (hourly): re-cap the free fleet's traffic limits from the
+  shared donation bandwidth bonus (bulk update ≤500 uuids/chunk; handles the month roll).
 - `billing-pending-sweep` (15 min): expire abandoned membership checkouts (never grants).
 - `billing-gift-reveal-sweep` (hourly): clear the transient plaintext gift-code reveal from
   paid gift orders the buyer never acknowledged, so plaintext never lingers at rest (the
@@ -343,25 +379,31 @@ Convex runs these natively (no Workers triggers, no node-cron):
 - `mirror-refresh` (6h): re-fetch + re-upload active subscription mirrors (no-op unless S3
   mirroring is configured).
 
+Every sweep stamps a per-cron heartbeat (`convex/cronHeartbeat.ts`, `cronHeartbeats` table,
+stamped at start) surfaced as a freshness panel on the admin dashboard.
+
 ### 1.9 Frontend SPA (Svelte 5 runes): **Live**
 
 - Public: `Home`, `GetAccount` (Cap widget + backend chooser radiogroup when dual-backend on;
-  the reveal-once account number is a blocking, checkbox-gated `AccountNumberReveal` modal with
-  copy/download/`beforeunload`; per-platform `SetupGuidance` after issuance), `Account` (member
-  view + regenerate / switch-backend / rotate / **redeem code** / support-ID display),
-  `Login` (account-number sign-in: show/hide, password-manager autofill, digit normalization).
+  the reveal-once account number is a blocking two-step `AccountNumberReveal` modal — the
+  save step requires clicking **Download** before Continue, then a verify step hides the
+  number and requires pasting the 32 digits back before Done (plus copy + `beforeunload`);
+  the per-platform, catalog-driven `ConnectClient` section after issuance), `Account` (member
+  view + regenerate / switch-backend / switch-mode / rotate / **redeem code** / support-ID
+  display / opt-in passkeys), `Login` (account-number sign-in: show/hide, password-manager
+  autofill, digit normalization; passkey sign-in when one is registered).
   `Home` + `GetAccount` show loading **skeletons** (no config-gated/auth-state content flash);
   the `Account` page surfaces a calm account-number **recovery** hint (rotate if you didn't save
   it). Localized via `lib/i18n`; a `LanguageSwitcher` in the header.
 - **Admin CMS is deliberately English-only** (decision 2026-07-01): operators are
-  English-speaking, so the 26 admin `.svelte` files bypass the Paraglide catalog entirely.
+  English-speaking, so the 29 admin `.svelte` files bypass the Paraglide catalog entirely.
   This is an intentional inconsistency with the fully-translated member surface, not an
   oversight — don't file it as an i18n gap, and don't route admin strings through `t()`
   without revisiting the decision here.
 - Admin (lazy-loaded behind `AdminRouter`): `AdminEntry`/`AdminLogin`/`AdminBootstrap`/`AdminLayout`
-  - **Dashboard** / Tiers / Users / **Admins** / Tokens / BackendServers / **Billing** /
-    **Storage** mirrors / **RateLimits** / **MembershipCodes** / **Theme** / Settings / Audit
-    pages + editors/modals. Custom History-API router; all data via TanStack Query + the
+  - **Dashboard** / Tiers / Users / **Admins** / Tokens / BackendServers / **Remnawave** /
+    **Clients** / **Billing** / **Storage** mirrors / **RateLimits** / **MembershipCodes** /
+    **Theme** / Settings / Audit pages + editors/modals. Custom History-API router; all data via TanStack Query + the
     zod-validating `apiClient` (`lib/api.ts`, `lib/queries.ts`); errors localized via `lib/errors.ts`.
 
 ---
@@ -371,14 +413,14 @@ Convex runs these natively (no Workers triggers, no node-cron):
 There are **no `TODO`/`FIXME` markers in `convex/` or `src/`**; open work lives here and in
 the companion docs. Sizes: S/M/L.
 
-| Item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Size | Where it's tracked                                                         |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | -------------------------------------------------------------------------- |
-| **Self-service billing**: the crypto rails (NOWPayments, **BTCPay** — self-hosted Bitcoin/Lightning) are **Live**. **Stripe + PayPal** are **implemented, wired, and unit-tested** (adapters + dispatch + webhook routes + `convex/lib/processors/processors.test.ts`) but stay behind admin toggles **pending a sandbox dry-run** against real Stripe/PayPal test accounts (no adapter-building left). Plus the non-code launch checklist: NOWPayments US-nonprofit ToS confirmation + the USDC→Coinbase/Kraken→ACH off-ramp. Admin → Billing flags enabled-but-misconfigured rails (a client-side **readiness** check); a **live per-processor credential probe** (an actual API ping, beyond readiness) is a deferred follow-up.                                                                                     | M    | `docs/billing.md`, this file (§1.6/§1.7)                                   |
-| **Native-speaker translation review** + extracting remaining marketing copy into i18n keys (the non-English locales are a first-pass MT; the critical journey strings are done).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | M    | this file (§1.7), `.claude/plans/`                                         |
-| **`POP_REQUIRED` flip**: operational — flip in beta after the client soaks (boot-warm prerequisite is done), prod launches with it on. PoP `sid`-binding needs an httpOnly-compatible design (a public per-session token).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | S    | `.claude/plans/`, threat model                                             |
-| **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until tier linkage across backends is defined. Needs the portal's tier model.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | M    | `convex/account.ts`                                                        |
-| **Outline WSS `accessUrl` / `ssconf://` contract** (latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | M    | `docs/outline-setup.md`                                                    |
-| **Deferred P2 perf/scale** (from the 2026-07 pre-launch review — its P0/P1 bug fixes + P3 cleanups all landed): (a) retention sweeps drain a single 1000-row page/day — loop pages via an action wrapper (Convex per-mutation write limits rule out an in-mutation loop) once any table sustains >~1000 rows/day; (b) `appSettings.resolved` does a full-table `collect()` on hot paths, though it already filters to `SETTINGS_DEFAULTS` keys (so per-key indexed reads would be a drop-in) — low benefit on a ~dozens-of-rows table, worth it only if that table grows large; (c) `adminApi.statusSummary` is O(users)+O(active sessions) — migrate to a maintained `appState` counter (bumped on each status transition) before the user base nears Convex's per-query read limit. All three are fine at beta scale. | M    | this file, in-code NOTEs (`retention.ts`, `appSettings.ts`, `adminApi.ts`) |
+| Item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Size | Where it's tracked                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | -------------------------------------------------------------------------- |
+| **Self-service billing**: the crypto rails (NOWPayments, **BTCPay** — self-hosted Bitcoin/Lightning) are **Live**. **Stripe + PayPal** are **implemented, wired, and unit-tested** (adapters + dispatch + webhook routes + `convex/lib/processors/processors.test.ts`) but stay behind admin toggles **pending a sandbox dry-run** against real Stripe/PayPal test accounts (no adapter-building left). Plus the non-code launch checklist: NOWPayments US-nonprofit ToS confirmation + the USDC→Coinbase/Kraken→ACH off-ramp. Admin → Billing flags enabled-but-misconfigured rails (a client-side **readiness** check); a **live per-processor credential probe** (an actual API ping, beyond readiness) is a deferred follow-up. | M    | `docs/billing.md`, this file (§1.6/§1.7)                                   |
+| **Native-speaker translation review** + extracting remaining marketing copy into i18n keys (the non-English locales are a first-pass MT; the critical journey strings are done).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | M    | this file (§1.7), `.claude/plans/`                                         |
+| **`POP_REQUIRED` flip**: operational — flip in beta after the client soaks (boot-warm prerequisite is done), prod launches with it on. PoP `sid`-binding needs an httpOnly-compatible design (a public per-session token).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | S    | `.claude/plans/`, threat model                                             |
+| **Paid cross-backend switch**: `account.switchBackend` returns 409 for paid tiers until tier linkage across backends is defined. Needs the portal's tier model.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | M    | `convex/account.ts`                                                        |
+| **Outline WSS `accessUrl` / `ssconf://` contract** (latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | M    | `docs/outline-setup.md`                                                    |
+| **Deferred P2 perf/scale** (from the 2026-07 pre-launch review — its P0/P1 bug fixes + P3 cleanups all landed): (a) retention sweeps drain a single 1000-row page/day — loop pages via an action wrapper (Convex per-mutation write limits rule out an in-mutation loop) once any table sustains >~1000 rows/day; (b) `appSettings.resolved` does a full-table `collect()` on hot paths, though it already filters to `SETTINGS_DEFAULTS` keys (so per-key indexed reads would be a drop-in) — low benefit on a ~dozens-of-rows table, worth it only if that table grows large. (The third item — `statusSummary`'s O(users) scan — shipped in the 2026-07-08 WS3 counters and is no longer open.) Both are fine at beta scale.     | M    | this file, in-code NOTEs (`retention.ts`, `appSettings.ts`, `adminApi.ts`) |
 
 ---
 

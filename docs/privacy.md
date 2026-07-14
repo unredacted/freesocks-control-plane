@@ -88,10 +88,18 @@ guarantees no request lines).
 ## 5. Proxy data plane (Remnawave panel + Xray nodes)
 
 The nodes carry the actual user traffic, so this is where a client's source IP is
-most exposed. FCP does not configure the nodes — this posture is applied in the
-**Remnawave Config Profile** (panel UI / API, pushed fleet-wide) and enforced by
-the `ansible-role-freesocks` node provisioning. It is part of the privacy
-guarantee, not optional.
+most exposed. This posture lives in the **Remnawave Config Profile** (pushed
+fleet-wide) and the `ansible-role-freesocks` node provisioning. It is part of the
+privacy guarantee, not optional.
+
+FCP can now **enforce the config-profile half itself**: Admin → Remnawave has a
+no-log card that dry-runs a compliance check (`GET
+/api/v1/admin/remnawave/logging-status`) and applies exactly the `log` + `policy`
+settings below to every profile via the panel API (`POST
+/api/v1/admin/remnawave/harden-logging`; safe GET→merge→PATCH, refuses a profile
+with no inbounds, key-order-independent check). The node-container logging driver
+and the inbound/Reality settings remain Ansible-only. See `docs/backends.md`
+§"Xray logging privacy harden".
 
 - **Xray logging OFF.** The Xray access log records `from <client-ip> …` for every
   connection. In the Config Profile's Xray JSON set the `log` block so no client IP

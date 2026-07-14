@@ -29,13 +29,13 @@ Three homes for configuration:
 doesn't already have it (checked via `bunx convex env list`), then never
 regenerates. Leave them as `CHANGE_ME` in `.env.convex`.
 
-| Var                         | Purpose                                                                            | Rotation / blast radius                                                                                                                  |
-| --------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `SESSION_SIGNING_KEY`       | HMAC key for the member `fs_session` signed cookie                                 | Rotating invalidates **all member sessions** (everyone re-logs-in with their account number). Safe but disruptive.                       |
-| `ADMIN_SESSION_SIGNING_KEY` | HMAC key for the admin `fs_admin_session` cookie                                   | Rotating signs out **all admins** (re-login with a passkey).                                                                             |
-| `ADMIN_BOOTSTRAP_SECRET`    | Gates the first-admin passkey registration at `/admin`                             | Retrieve with `bunx convex env get ADMIN_BOOTSTRAP_SECRET`. Inert once any admin credential exists (bootstrap locks).                    |
-| `IP_HASH_SALT`              | HMAC salt for per-IP rate-limit buckets + free-tier keying (never stores a raw IP) | Rotating resets rate-limit buckets (harmless) — but do it **once**; it is not a credential users hold.                                   |
-| `ACCOUNT_ID_PEPPER`         | Peppered keyed hash of the 32-digit account number                                 | **SET ONCE.** Rotating **invalidates every account number** — every member is locked out permanently. Never rotate on a live deployment. |
+| Var                         | Purpose                                                                            | Rotation / blast radius                                                                                                                                                                 |
+| --------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SESSION_SIGNING_KEY`       | HMAC key for the member `fs_session` signed cookie                                 | Rotating invalidates **all member sessions** (everyone re-logs-in with their account number). Safe but disruptive.                                                                      |
+| `ADMIN_SESSION_SIGNING_KEY` | HMAC key for the admin `fs_admin_session` cookie                                   | Rotating signs out **all admins** (re-login with a passkey).                                                                                                                            |
+| `ADMIN_BOOTSTRAP_SECRET`    | Gates the first-admin passkey registration at `/admin`                             | Printed in the deployer log every deploy; also on the dashboard env screen (CLI: `docs/beta-deploy.md` §"One-off functions"). Inert once any admin credential exists (bootstrap locks). |
+| `IP_HASH_SALT`              | HMAC salt for per-IP rate-limit buckets + free-tier keying (never stores a raw IP) | Rotating resets rate-limit buckets (harmless) — but do it **once**; it is not a credential users hold.                                                                                  |
+| `ACCOUNT_ID_PEPPER`         | Peppered keyed hash of the 32-digit account number                                 | **SET ONCE.** Rotating **invalidates every account number** — every member is locked out permanently. Never rotate on a live deployment.                                                |
 
 ---
 

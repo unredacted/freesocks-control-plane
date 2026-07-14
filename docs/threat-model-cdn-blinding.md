@@ -106,8 +106,12 @@ See `src/shared/crypto/pop.ts`, `src/client/lib/{pop,pop-worker}.ts`, `convex/li
 
 #### Enabling `POP_REQUIRED` (the enforcement flip) — runbook
 
-`POP_REQUIRED` stays unset (soft) during rollout and is flipped to `true` once the client has
-soaked. The flip's **entire blast radius is cookie-only (unbound) sessions**: bound sessions are
+> **Status (2026-07-13): the flip has been applied on beta** (`POP_REQUIRED=true` is live in the
+> beta deployment env). The runbook below remains the procedure for any new deployment (and prod
+> at launch).
+
+`POP_REQUIRED` stays unset (soft) during initial rollout and is flipped to `true` once the client
+has soaked. The flip's **entire blast radius is cookie-only (unbound) sessions**: bound sessions are
 always enforced, and every new login already attempts to bind, so enabling the flag affects only
 sessions that predate PoP or that belong to a client which could not enroll a key.
 

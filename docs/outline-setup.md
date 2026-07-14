@@ -34,13 +34,15 @@ untrusted certificates. Stock Outline ships with a self-signed cert by default. 
   directly. The Outline Manager docs walk through this.
 
 The admin form's **Test connection** button is the fast-feedback check: it runs
-`internal.adminApi.testOutlineConnection` (a `GET /access-keys` against the URL you paste)
-and surfaces the TLS or auth error. Use it before saving.
+`internal.adminApi.testBackendConnection` (a `GET /access-keys` against the URL you
+paste — or, when editing an existing instance with the secret field left blank,
+against the **stored** credentials via the instance `id`, so re-testing never
+requires retyping the URL) and surfaces the TLS or auth error. Use it before saving.
 
 ## Registering a server
 
 1. Log in to the admin CMS and visit **Backend servers** in the sidebar (pick the Outline type).
-2. Click **Add server**.
+2. Click **Add instance**.
 3. Fill in:
    - **Name**: human-readable, e.g. `EU North`.
    - **Slug**: lowercase, alphanumeric + hyphens, e.g. `eu-north`. Used in audit logs;
@@ -63,7 +65,7 @@ and surfaces the TLS or auth error. Use it before saving.
    - **Active**: uncheck to mothball a server without deleting its row. Inactive servers
      never receive new keys but existing keys keep working as long as the server is reachable.
 4. Click **Test connection**. Confirm "Reachable. Current key count: N" appears.
-5. Click **Register server**.
+5. Click **Register instance**.
 
 The **backend-healthcheck** cron (every 10 minutes, `convex/crons.ts` →
 `internal.backendServers.healthcheck`) pings each active backend instance of every type,

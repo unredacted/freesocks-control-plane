@@ -19,9 +19,11 @@ It is built for hostile networks and privacy-hostile environments:
 - **No third-party anything at runtime.** Zero external scripts, fonts, or CDNs: the
   captcha WASM, fonts, and all assets are bundled and served same-origin under a pure
   `'self'` CSP.
-- **Payments without payer identity.** Optional memberships are payable with Bitcoin
-  (via a self-hosted BTCPay Server), other cryptocurrencies, card, or PayPal — all as
-  redirects to processor-hosted pages, with **zero payer PII stored**
+- **Payments without payer identity.** Optional memberships and donations are payable
+  with Bitcoin (via a self-hosted BTCPay Server), other cryptocurrencies, card, or
+  PayPal — all as redirects to processor-hosted pages, with **zero payer PII stored**.
+  Donations fund a shared monthly bandwidth bonus for every free user; the public
+  impact surfaces show only GB and user counts, never dollar amounts
   ([`docs/billing.md`](docs/billing.md)).
 - **Sealed channel + proof-of-possession sessions** to blind fronting CDNs
   ([`docs/threat-model-cdn-blinding.md`](docs/threat-model-cdn-blinding.md)).
@@ -47,10 +49,10 @@ router and native cron jobs. There is no separate web framework or edge worker.
 
 - **[Convex](https://docs.convex.dev) 1.40**: reactive document DB + serverless functions, run **self-hosted** (Docker; SQLite or Postgres). Schema and validators are TypeScript (`v.*`), so there is no SQL and no migration set.
 - **HTTP router** (`convex/http.ts`): every public route is an `httpAction`, served on the Convex HTTP-actions port (`:3211`). This is the surface the SPA and API consumers call.
-- **Native crons** (`convex/crons.ts`): grace/disable sweep, tombstone sweep, backend healthcheck, free-tier cleanup, session/rate-limit/replay-guard + admin-invite sweeps, HPKE epoch-key rotation, append-only-table retention sweeps, billing pending/gift-reveal sweeps, and S3 mirror refresh.
+- **Native crons** (`convex/crons.ts`): grace/disable sweep, tombstone sweep, backend healthcheck (+ node-load cache), idle-free-user deactivation (deactivate-and-retain, never delete), user-status counts reconcile, hourly donation-bonus reconcile, session/rate-limit/replay-guard + admin-invite sweeps, HPKE epoch-key rotation, append-only-table retention sweeps (incl. the admin + member WebAuthn challenge tables), billing pending/gift-reveal sweeps, and S3 mirror refresh. Each sweep stamps a heartbeat surfaced on the admin dashboard.
 - **Self-hosted [Cap](https://trycap.dev) captcha** (the `cap` + `valkey` services in the **beta** compose stack, `docker-compose.beta.yml`; the base dev `docker-compose.yml` is backend + dashboard only — local dev uses `CAP_DEV_BYPASS=true`) gates anonymous account creation + login; verified server-side in `convex/lib/captcha.ts`. The widget + its proof-of-work WASM are bundled and served same-origin — no third-party scripts.
 - **Proxy backends**: **Remnawave** and **Outline** behind a common action dispatch (`convex/backends.ts` + `convex/lib/backends/*`); per-tier backend selection plus optional end-user choice. See [`docs/backends.md`](docs/backends.md).
-- **`@simplewebauthn/server`** for admin passkey auth (a `"use node"` action module).
+- **`@simplewebauthn/server`** for passkey auth (`"use node"` action modules): admins are passkey-only; members can **opt in** to passkeys as a convenience login (the account number stays the only recovery credential).
 - **`@aws-sdk/client-s3`** for optional multi-provider subscription mirroring (a `"use node"` action module).
 - **TypeScript 6** strict throughout.
 
@@ -62,7 +64,7 @@ router and native cron jobs. There is no separate web framework or edge worker.
 - **shadcn-svelte** components copied as source into `src/client/components/ui/`, over **bits-ui** headless primitives.
 - **Tailwind CSS 4** via `@tailwindcss/vite`; Inter / Inter Tight / JetBrains Mono bundled and self-hosted via `@fontsource/*` (no third-party font CDN).
 - **`@simplewebauthn/browser`** for admin passkey ceremonies; **qrcode** for the subscription QR; **svelte-sonner** toasts; **mode-watcher** theming; **`@cap.js/widget`** (bundled) for the captcha.
-- **i18n** uses Paraglide/inlang (`messages/*.json` is the authoritative source, compiled to typed messages; `t()` in `src/client/lib/i18n/` shims over them): English + Farsi, Arabic, Russian, Simplified Chinese, with RTL driven off `<html dir>` and a persisted language switcher. The critical user-journey strings are translated; marketing copy + a native-speaker review pass are tracked follow-ups.
+- **i18n** uses Paraglide/inlang (`messages/*.json` is the authoritative source, compiled to typed messages; `t()` in `src/client/lib/i18n/` shims over them): English + Farsi, Arabic, Russian, Simplified Chinese, with RTL driven off `<html dir>` and a persisted language switcher. The critical user-journey strings are translated; `bun run i18n:review` generates per-locale native-review packets (`translation-review/*.md`) and the native-speaker review pass is in progress.
 
 ### Shared contracts (`src/shared/contracts/`)
 
@@ -91,20 +93,29 @@ convex/                            The backend (Convex functions)
 ├── supportId.ts                   non-secret FS-XXXX-XXXX support handle (mint/lookup)
 ├── membershipCodes.ts             admin-minted redemption codes; member redeem (single-use)
 ├── lifecycle.ts                   setMembership seam + grace/disable + cleanup sweeps
+├── billing.ts, donations.ts       self-service checkout/grant + donations & free-bandwidth bonus
 ├── backends.ts                    proxy-backend dispatch (action)
 ├── backendServers.ts              generic backend-instance pool (DB half) + healthcheck
+├── remnawaveNodes.ts              node-load telemetry + mode-placement pools (issuance placement)
+├── connectionModes.ts             member connection-mode read/switch (evade / privacy)
+├── clients.ts                     DB-driven recommended-client catalog (admin CRUD)
 ├── webauthn.ts                    admin passkey ceremonies + bootstrap ("use node")
+├── memberWebauthn.ts, memberPasskeys.ts   opt-in member passkeys ("use node" + data half)
 ├── apiTokens.ts                   fsv1_ token mint/resolve (scoped)
 ├── webhooks.ts                    generic billing webhook (HMAC + dedupe)
 ├── storage.ts                     S3 subscription mirrors ("use node")
 ├── retention.ts                   daily append-only-table retention sweeps
 ├── health.ts                      /readyz deep readiness (DB ping)
 ├── subscriptions.ts, tiers.ts, users.ts, admins.ts, appSettings.ts,
-│   publicConfig.ts, audit.ts, rateLimits.ts, sessions.ts, adminApi.ts
+│   publicConfig.ts, audit.ts, rateLimits.ts, sessions.ts, adminApi.ts,
+│   userStats.ts, cronHeartbeat.ts, keyEpochs.ts, keyRevocations.ts, replayGuard.ts
 └── lib/
     ├── http.ts                    error envelope, client-IP, resolveMember/Admin/Bearer (scoped)
     ├── cookies.ts, crypto.ts, accountId.ts, supportId.ts, captcha.ts,
-    │   membershipCode.ts, rateLimitPolicy.ts, issuance.ts
+    │   membershipCode.ts, rateLimitPolicy.ts, issuance.ts, connectionModes.ts,
+    │   remnawavePlacement.ts, clientCatalog.ts, donationBonus.ts, billingConfig.ts,
+    │   siteConfig.ts, statusCounters.ts
+    ├── processors/{nowpayments,btcpay,stripe,paypal}.ts   billing rails
     └── backends/{types,registry,remnawave,outline}.ts   pure HTTP backend fns
 
 src/
@@ -202,14 +213,18 @@ Highlights:
 
 - **Anonymous flow**: `POST /api/v1/account`, Cap-captcha-gated, no email. Account creation is
   **decoupled from proxy issuance** (so a backend outage can't block sign-up): it mints the
-  one-time **account number** (revealed via a blocking save-it modal) + a non-secret **support
-  ID** + a member session. The per-(IP, day) cap is a **serializable Convex mutation**
-  (`freeTier.claimFreeSlot`, cap from the admin-tunable `freetier.create` policy), so concurrent
-  bursts can't over-issue. The proxy key is created separately by the signed-in member.
-- **Member flow**: the account number is the only credential. `POST /api/v1/auth/account-login`
-  (Cap + strict per-IP/per-(prefix,IP) rate limits + constant-time) sets the signed
-  `fs_session` cookie; the member can **rotate** it (`/api/v1/account/account-id/rotate`),
-  **regenerate** or **switch backend** for their key, and **redeem a membership code**
+  one-time **account number** (revealed via a blocking two-step modal — download it, then paste
+  it back to verify before continuing) + a non-secret **support ID** + a member session. The
+  per-(IP, day) cap is a **serializable rate-limit reservation** inside
+  `freeTier.createFreeAccount` (the admin-tunable `freetier.create` policy, released on
+  failure; no durable IP record), so concurrent bursts can't over-issue. The proxy key is
+  created separately by the signed-in member.
+- **Member flow**: the account number is the only credential (an optional **passkey** can be
+  added as a convenience login; the number remains the sole recovery path).
+  `POST /api/v1/auth/account-login` (Cap + strict per-IP/per-(prefix,IP) rate limits +
+  constant-time) sets the signed `fs_session` cookie; the member can **rotate** it
+  (`/api/v1/account/account-id/rotate`), **regenerate**, **switch backend**, or **switch
+  connection mode** for their key, and **redeem a membership code**
   (`/api/v1/account/redeem-code`). There is no OIDC.
 - **Entitlements**: `tiers` drive limits; `lifecycle.setMembership` is the single seam that
   sets a user's tier + expiry. Driven by admin edits, **admin-minted redemption codes** a
@@ -221,10 +236,13 @@ Highlights:
   (CRUD + **duplicate**); users (search by support ID / prefix; disable / **re-enable** /
   reset-traffic / resync / **grant membership**; paginated); **admins** (invite links +
   deactivate/reactivate + per-passkey revoke, under a last-admin guard); API tokens (create /
-  reveal-once / revoke); backend servers (CRUD + test-connection); **billing** (per-rail config
-  - a readiness check); **storage** mirrors; **rate-limit policies**; **membership codes**; an
-    admin-configurable **theme**; settings; and a filterable **audit log**. The Ansible role drives
-    a subset over idempotent **by-slug / by-name** routes using an **automation token**.
+  reveal-once / revoke); backend servers (CRUD + test-connection, incl. against stored
+  credentials); **Remnawave** (connection-mode placement pools, node-load stats, and the
+  Xray no-log hardening card); **client apps** (the DB-driven recommended-client catalog);
+  **billing** (per-rail config + a readiness check); **storage** mirrors; **rate-limit
+  policies**; **membership codes**; an admin-configurable **theme** + site announcement
+  banner; settings; and a filterable **audit log**. The Ansible role drives a subset over
+  idempotent **by-slug / by-name** routes using an **automation token**.
 - **Subscription delivery**: the issuance saga (`convex/lib/issuance.ts`) creates the
   backend user, optionally mirrors the content to N S3 providers
   ([`@aws-sdk/client-s3`](https://www.npmjs.com/package/@aws-sdk/client-s3)), and persists
@@ -235,9 +253,12 @@ Highlights:
   Remnawave free tier alongside an Outline free tier, or expose backend choice to end users
   via `subscription.user_choice_enabled`. See [`docs/backends.md`](docs/backends.md) and
   [`docs/outline-setup.md`](docs/outline-setup.md).
-- **Runtime config**: the `appSettings` table backs admin-toggleable flags (backend
-  enable/disable, default backend, user-choice gate, backend labels, Outline scoring
-  weights). Defaults are compiled in (`convex/appSettings.ts`).
+- **Runtime config**: the `appSettings` table backs admin-toggleable config (backend
+  enable/disable, default backend, user-choice gate, backend labels, pool scoring
+  weights, the connection-mode catalog + placement pools, device-limit enforcement,
+  rate-limit policies (`ratelimit.*`), billing + donation config (`billing.*`), the
+  theme, and the site banner (`site.*`)). Defaults are compiled in
+  (`convex/appSettings.ts` and the per-namespace resolvers).
 
 ## API consumers (services, integrations)
 
@@ -245,28 +266,33 @@ Highlights:
 
 - **Public / member:** `GET /healthz` (liveness), `GET /readyz` (deep readiness),
   `GET /api/v1/config`, `GET /api/v1/e2ee/keys` (HPKE epoch keys + revocations),
-  `POST /api/v1/account` (create), `GET /api/v1/account`,
+  `POST /api/v1/account` (create), `GET /api/v1/account`, `GET /api/v1/account/usage`,
   `POST /api/v1/auth/account-login`, `POST /api/v1/auth/logout`, `GET /api/v1/me`,
-  `POST /api/v1/account/{regenerate,switch-backend,refresh-membership,redeem-code}`,
+  `POST /api/v1/account/{regenerate,switch-backend,switch-mode,refresh-membership,redeem-code}`,
+  `POST /api/v1/account/connection-mode` (persist the picked mode),
   `POST /api/v1/account/account-id/rotate`, `POST /api/v1/account/devices/revoke`,
+  the opt-in member-passkey routes (`GET /api/v1/account/passkeys`,
+  `POST /api/v1/account/passkey/*`, `POST /api/v1/auth/passkey/authenticate/*`),
+  `GET /api/v1/sub/<token>` (the FCP-fronted subscription URL),
   `GET /api/v1/subscription/content` (sealed raw-config reveal),
   `POST /api/v1/mirror/request` + `GET /api/v1/mirror` (opt-in S3 mirror),
-  `POST /api/v1/billing/checkout` + `GET /api/v1/billing/order/*` (self-service membership),
+  `POST /api/v1/billing/checkout` + `GET /api/v1/billing/order/*` (self-service
+  membership + donations),
   `POST /api/v1/account/gift-codes/ack` + `GET /api/v1/account/codes` (gift purchases).
-- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{status,tiers,users,admins,tokens,audit,settings,rate-limits,membership-codes,backend-servers,billing,mirror-providers,theme,verification}/*` — every route enforces a scope on token callers (several features share the broader `admin:settings:*` / `admin:users:*` scopes rather than one scope per feature); the Ansible role's idempotent `by-slug` / `by-name` upserts live under these.
+- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{status,tiers,users,admins,tokens,audit,settings,rate-limits,membership-codes,backend-servers,billing,mirror-providers,theme,site,verification,clients,connection-modes,client-ip,remnawave/{node-stats,mode-placements,logging-status,harden-logging}}/*` — every route enforces a scope on token callers (several features share the broader `admin:settings:*` / `admin:users:*` scopes rather than one scope per feature); the Ansible role's idempotent `by-slug` / `by-name` upserts live under these.
 - **Plumbing:** `GET|POST /api/admin/auth/*` (WebAuthn passkey ceremonies + bootstrap),
   `POST /api/webhooks/billing` (generic HMAC inbound), and the processor webhooks
-  `POST /api/webhooks/{nowpayments,stripe,paypal}`.
+  `POST /api/webhooks/{nowpayments,btcpay,stripe,paypal}`.
 
 ### Authentication paths
 
 Three accepted mechanisms; each `httpAction` resolves identity via `convex/lib/http.ts`:
 
-| Path          | Format                                | Used by                          |
-| ------------- | ------------------------------------- | -------------------------------- |
-| Member cookie | `Cookie: fs_session=…`                | Web SPA (account-number login)   |
-| Admin cookie  | `Cookie: fs_admin_session=…`          | Admin CMS (WebAuthn passkey)     |
-| Bearer token  | `Authorization: Bearer fsv1_<random>` | Services, automation, monitoring |
+| Path          | Format                                | Used by                                                     |
+| ------------- | ------------------------------------- | ----------------------------------------------------------- |
+| Member cookie | `Cookie: fs_session=…`                | Web SPA (account-number login, or an opt-in member passkey) |
+| Admin cookie  | `Cookie: fs_admin_session=…`          | Admin CMS (WebAuthn passkey)                                |
+| Bearer token  | `Authorization: Bearer fsv1_<random>` | Services, automation, monitoring                            |
 
 A `fsv1_` token can be a **service** token (acts with its own scopes) or a **user** token
 (`subjectType: user`, acts as a specific member). There is **no OIDC / JWT path**.

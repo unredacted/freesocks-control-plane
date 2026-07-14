@@ -32,9 +32,19 @@ is the **only** member credential.
 > - **Admin search**: `GET /api/v1/admin/users?q=` matches the W3 **support ID**
 >   (`FS-…`) or the stored 4-digit prefix (`convex/adminApi.ts`); full-number lookup
 >   is never permitted.
-> - **SPA**: a blocking, checkbox-gated reveal-once **modal** (`AccountNumberReveal`,
->   copy/download/`beforeunload`) on `/get-account` AND on rotate; account-number
->   sign-in on `/login` (show/hide + password-manager autofill + digit normalization).
+> - **SPA**: a blocking, two-step reveal-once **modal** (`AccountNumberReveal`)
+>   on `/get-account` AND on rotate: the save step requires clicking **Download**
+>   before Continue, then a verify step hides the number and requires **pasting
+>   the 32 digits back** before Done unlocks (plus copy + `beforeunload` guard).
+>   This superseded (2026-07-13) the checkbox-gated panel described in §4/S7
+>   below. Account-number sign-in on `/login` (show/hide + password-manager
+>   autofill + digit normalization).
+> - **Opt-in member passkeys (shipped 2026-07-08)**: members can additionally
+>   register WebAuthn passkeys as a convenience login (`convex/memberWebauthn.ts`
+>   - `convex/memberPasskeys.ts`, member-scoped credential/challenge tables,
+>     `PasskeyManager.svelte`). The account number remains the ONLY recovery
+>     credential — §7's "2FA / device association: future work" and the matching
+>     §9 out-of-scope entry predate this and are superseded.
 >
 > **NOT APPLICABLE: OIDC was removed.** The original design assumed an Authentik
 > OIDC / CiviCRM identity that an account number would _link_ to. That stack is

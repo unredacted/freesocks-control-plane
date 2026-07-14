@@ -55,8 +55,8 @@ value already set, so it is safe to re-run on testing/beta/prod):
 - The **five core app secrets** (`SESSION_SIGNING_KEY`, `ADMIN_SESSION_SIGNING_KEY`,
   `ADMIN_BOOTSTRAP_SECRET`, `IP_HASH_SALT`, `ACCOUNT_ID_PEPPER`) are auto-generated
   ONCE by the `deployer` itself — **leave them `CHANGE_ME`**. `ACCOUNT_ID_PEPPER`
-  is set once (changing it invalidates every account number); retrieve the
-  generated `ADMIN_BOOTSTRAP_SECRET` with `bunx convex env get ADMIN_BOOTSTRAP_SECRET`.
+  is set once (changing it invalidates every account number); the deployer prints
+  the generated `ADMIN_BOOTSTRAP_SECRET` at the end of every deploy (§3).
 
 **Fill by hand** — the EXTERNAL credentials that can't be generated: `.env.beta`
 `SITE_ADDRESS` + `ACME_EMAIL`; `.env.convex` `CAP_SITE_KEY` / `CAP_SECRET` (created
@@ -81,7 +81,8 @@ This builds the SPA + deployer images, then starts, in order:
 2. `keygen` (one-shot): derives the admin key into a shared volume;
 3. `deployer` (one-shot): `convex deploy` (functions + schema) -> `convex env set`
    for every line in `.env.convex` -> `seed:seedCutover` (tiers, settings, and the
-   Remnawave instance if `REMNAWAVE_*` is set);
+   Remnawave instance if `REMNAWAVE_*` is set) -> `userStats:reconcileUserCounts`
+   (refreshes the dashboard's user-status counters);
 4. `web` (Caddy) and `dashboard`.
 
 Confirm the deploy job succeeded:
@@ -105,8 +106,9 @@ passkey. Bootstrap **locks forever** once any credential exists.
 The `deployer` **prints the bootstrap secret at the end of every deploy** (look
 for the `ADMIN_BOOTSTRAP_SECRET = …` line in `docker compose ... logs deployer`),
 so you don't have to fish it out — it's auto-generated into the deployment env,
-not `.env.convex`. You can also read it any time with
-`bunx convex env get ADMIN_BOOTSTRAP_SECRET` or from the dashboard's env screen.
+not `.env.convex`. You can also read it any time from the dashboard's env screen,
+or via the deployer container (a bare `bunx convex env get` from the host shell
+fails with _"No CONVEX_DEPLOYMENT set"_ — see §"One-off functions" below).
 
 ## 4. Add a backend instance (the subscription step needs one)
 
@@ -176,6 +178,33 @@ Header-only Caddyfile tweaks need no rebuild:
 docker compose -f docker-compose.beta.yml --env-file .env.beta exec web \
   caddy reload --config /etc/caddy/Caddyfile
 ```
+
+## One-off functions (running `bunx convex …` against the stack)
+
+The host shell has no Convex CLI credentials, so a bare `bunx convex run` /
+`bunx convex env get` fails with _"No CONVEX_DEPLOYMENT set"_. Run one-offs
+through the **deployer container**, which has the backend URL and can read the
+admin key from the shared `/keys` volume:
+
+```sh
+docker compose -f docker-compose.beta.yml --env-file .env.beta \
+  run --rm --no-deps --entrypoint bash deployer -c '
+    export CONVEX_SELF_HOSTED_ADMIN_KEY="$(grep "|" /keys/admin_key | tail -n1 | tr -d "[:space:]")" \
+    && bunx convex run seed:refreshDefaultClients "{}"'
+```
+
+Swap the final command for whatever you need — the common ones:
+
+- `bunx convex run seed:refreshDefaultClients '{}'` — re-sync the recommended-client
+  catalog after a code update changes the defaults (preserves `enabled` flags and
+  admin-added clients).
+- `bunx convex run lifecycle:purgeInactiveFree '{}'` — the only path that actually
+  removes idle free accounts the `deactivate-idle-free` cron deactivated-and-retained.
+- `bunx convex env get ADMIN_BOOTSTRAP_SECRET` / `bunx convex env list` — read
+  deployment env (the deployer log also prints the bootstrap secret every deploy).
+
+Everything the deployer applies on `up` (deploy, env, seed) stays the normal path
+(§6) — this recipe is only for ad-hoc operator runs.
 
 ## 7. Turning on app-layer encryption later
 
