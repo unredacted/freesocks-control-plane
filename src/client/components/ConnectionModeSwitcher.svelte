@@ -102,6 +102,9 @@
       setConnectionModePref(result.mode.id);
       pendingModeId = null;
       void qc.invalidateQueries({ queryKey: queryKeys.account });
+      // A mode switch re-issues the key onto a new node — refresh the usage
+      // sparkline too (matches regenerate/switchBackend).
+      void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
       // Re-fetch the raw-config viewer (separate key). In rawConfig mode this
       // prominent block is the ONLY thing shown, so it must not stay stale.
       void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });

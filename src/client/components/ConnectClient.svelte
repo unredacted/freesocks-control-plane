@@ -243,6 +243,16 @@
       </ul>
     {/if}
 
+    <!-- A partially-populated catalog (or a platform with nothing for this
+         backend) should say so, not render a silent gap above the steps. -->
+    {#if currentClients.length === 0}
+      <p
+        class="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
+      >
+        {t('setup.noApps')}
+      </p>
+    {/if}
+
     <!-- The same three steps as before (install → import → connect). -->
     <ol class="mt-4 space-y-3 text-sm">
       <li class="flex gap-3">

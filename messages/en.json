@@ -73,7 +73,8 @@
     "signIn": "Sign in",
     "account": "My account",
     "menu": "Menu",
-    "theme": "Theme"
+    "theme": "Theme",
+    "home": "FreeSocks home"
   },
   "captcha": {
     "initial": "I'm human",
@@ -586,6 +587,7 @@
   "setup": {
     "title": "Set up your proxy app",
     "install": "Install",
+    "noApps": "No recommended apps for this platform yet - use any compatible client and add your subscription manually.",
     "openSource": "Open source",
     "proprietary": "Proprietary",
     "easeEasy": "Easy to use",

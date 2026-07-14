@@ -74,12 +74,13 @@
       toast.success(t('login.success'));
       router.navigate('/account');
     },
-    onError: (err) => {
+    onError: () => {
       // The verify consumed the token; drop it + remount for a fresh challenge so
-      // the next attempt isn't rejected with a stale-captcha error.
+      // the next attempt isn't rejected with a stale-captcha error. The failure
+      // renders inline below the form — one error surface per failure (no
+      // duplicate toast), matching GetAccount.
       token = null;
       capWidget?.reset();
-      toast.error(t('login.failed'), { description: apiErrorMessage(err) });
     },
   }));
 

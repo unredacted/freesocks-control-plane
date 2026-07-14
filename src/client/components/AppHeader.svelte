@@ -1,5 +1,6 @@
 <script lang="ts">
   import Link from './Link.svelte';
+  import { Skeleton } from '@client/components/ui/skeleton';
   import ThemeToggle from './ThemeToggle.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
   import E2eeBadge from './E2eeBadge.svelte';
@@ -35,7 +36,7 @@
     <Link
       href="/"
       class="group font-display text-xl font-bold tracking-tight flex items-center gap-2"
-      aria-label="FreeSocks home"
+      aria-label={t('nav.home')}
       onclick={closeMenu}
     >
       <span
@@ -50,7 +51,12 @@
     <!-- Desktop: the inline nav, unchanged. -->
     <nav class="hidden sm:flex items-center gap-2">
       <E2eeBadge />
-      {#if !me.isPending && me.data?.authenticated}
+      {#if me.isPending}
+        <!-- Neutral placeholder while the auth check resolves: rendering the
+             signed-out CTAs here flashed "Sign in" at authenticated users on
+             every hard load. -->
+        <Skeleton class="h-9 w-40 rounded-md" />
+      {:else if me.data?.authenticated}
         <!-- Signed in: a single account CTA. The account page itself leads with
              the membership upsell for free-tier members, so a separate
              "Membership" button here would just be a second link to /account. -->
@@ -107,7 +113,9 @@
       transition:slide={{ duration: 180 }}
     >
       <div class="container mx-auto px-4 py-3 flex flex-col gap-1.5">
-        {#if !me.isPending && me.data?.authenticated}
+        {#if me.isPending}
+          <Skeleton class="h-11 w-full rounded-md" />
+        {:else if me.data?.authenticated}
           <Link href="/account" onclick={closeMenu}>
             <Button variant="default" size="sm" class="w-full min-h-11 justify-start">
               <User class="size-4" />

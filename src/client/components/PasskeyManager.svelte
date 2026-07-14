@@ -11,6 +11,7 @@
   import { queryClient } from '../lib/query-client';
   import { passkeysQuery, queryKeys } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
+  import { formatDate } from '../lib/i18n/format';
   import { enrollPasskey, passkeysSupported, PasskeyCancelledError } from '../lib/memberPasskey';
 
   /**
@@ -58,7 +59,9 @@
       }),
   }));
 
-  const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString() : '');
+  // App-locale dates (not the browser locale) so the Security tab matches the
+  // rest of the UI and follows an in-app language switch.
+  const fmt = (iso: string | null) => (iso ? formatDate(iso) : '');
 </script>
 
 <div class="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-4">

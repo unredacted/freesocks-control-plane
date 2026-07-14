@@ -194,6 +194,29 @@
     void qc.invalidateQueries({ queryKey: queryKeys.accountCodes });
   }
 
+  // First-key create from the no-subscription empty state: persist the picked
+  // connection mode BEFORE issuing, so the first key lands in that mode's
+  // placement. Without a subscription the switcher above only sets a local
+  // pref (serverBacked=false) the server never sees — this closes that gap,
+  // mirroring GetAccount's createSubscription. Best-effort: a failure just
+  // means the first key issues into the default mode.
+  let persistingMode = $state(false);
+  async function createFirstSub() {
+    persistingMode = true;
+    try {
+      await apiClient.post(
+        '/api/v1/account/connection-mode',
+        { modeId: effectiveModeId },
+        z.object({ ok: z.boolean(), modeId: z.string() }),
+      );
+    } catch {
+      // Non-fatal: the first key just issues into the default mode.
+    } finally {
+      persistingMode = false;
+    }
+    regenerate.mutate();
+  }
+
   // Mutation: regenerate the subscription. Invalidates ['account'] on success
   // so the SubscriptionHero re-fetches with the new URL automatically.
   const regenerate = createMutation(() => ({
@@ -910,13 +933,15 @@
                 {t('account.noSubBody')}
               </p>
               <Button
-                onclick={() => regenerate.mutate()}
-                disabled={regenerate.isPending || actionsDisabled}
+                onclick={createFirstSub}
+                disabled={regenerate.isPending || persistingMode || actionsDisabled}
                 size="lg"
                 class="min-h-11"
               >
                 <Plus class="size-4" />
-                {regenerate.isPending ? t('account.creating') : t('account.createSub')}
+                {regenerate.isPending || persistingMode
+                  ? t('account.creating')
+                  : t('account.createSub')}
               </Button>
               {#if regenerate.error}
                 <InlineError
