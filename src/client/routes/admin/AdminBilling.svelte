@@ -641,7 +641,14 @@
       </div>
     </div>
 
-    {#if (billing.data?.orders ?? []).length === 0}
+    {#if billing.isPending}
+      <!-- Each status filter is its own query key; a cold filter switch has no
+           cached data yet — show a loading row, not a misleading "No orders". -->
+      <div class="space-y-2">
+        <Skeleton class="h-10 w-full rounded-lg" />
+        <Skeleton class="h-10 w-full rounded-lg" />
+      </div>
+    {:else if (billing.data?.orders ?? []).length === 0}
       <AdminListState emptyText="No orders yet." />
     {:else}
       <ul class="divide-y divide-border rounded-lg border border-border bg-card">

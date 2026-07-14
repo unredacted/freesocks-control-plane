@@ -49,8 +49,10 @@
       return { label: 'No check yet', tone: 'bg-destructive/15 text-destructive' };
     }
     const age = Date.now() - new Date(lastHealthOkAt).getTime();
-    if (age < 15 * 60_000) return { label: 'Healthy', tone: 'bg-emerald-500/15 text-emerald-600' };
-    if (age < 60 * 60_000) return { label: 'Stale', tone: 'bg-amber-500/15 text-amber-600' };
+    if (age < 15 * 60_000)
+      return { label: 'Healthy', tone: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' };
+    if (age < 60 * 60_000)
+      return { label: 'Stale', tone: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' };
     return { label: 'Unreachable', tone: 'bg-destructive/15 text-destructive' };
   }
 </script>

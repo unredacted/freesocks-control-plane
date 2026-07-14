@@ -61,7 +61,7 @@
       {/each}
     </div>
   {:else if tokens.isError}
-    <AdminListState error={tokens.error} />
+    <AdminListState error={tokens.error} onRetry={() => void tokens.refetch()} />
   {:else}
     <div class="space-y-3">
       {#if (tokens.data?.length ?? 0) === 0}

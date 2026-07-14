@@ -590,7 +590,15 @@
             />
           </div>
           <div class="flex justify-end">
-            <Button onclick={() => saveVerification.mutate()} disabled={saveVerification.isPending}>
+            {#if !vInit}
+              <span class="me-3 self-center text-xs text-muted-foreground"
+                >Loading current values…</span
+              >
+            {/if}
+            <Button
+              onclick={() => saveVerification.mutate()}
+              disabled={saveVerification.isPending || !vInit}
+            >
               {saveVerification.isPending ? 'Saving…' : 'Save verification'}
             </Button>
           </div>
@@ -675,7 +683,12 @@
             </p>
           </div>
           <div class="flex justify-end">
-            <Button onclick={() => saveSite.mutate()} disabled={saveSite.isPending}>
+            {#if !sInit}
+              <span class="me-3 self-center text-xs text-muted-foreground"
+                >Loading current values…</span
+              >
+            {/if}
+            <Button onclick={() => saveSite.mutate()} disabled={saveSite.isPending || !sInit}>
               {saveSite.isPending ? 'Saving…' : 'Save site settings'}
             </Button>
           </div>
@@ -703,7 +716,13 @@
                 checked={cpDraft.default === 'evade'}
                 onchange={() => (cpDraft = { ...cpDraft, default: 'evade' })}
               />
-              Beat censorship (evade) <span class="text-xs text-muted-foreground">(default?)</span>
+              Beat censorship (evade)
+              {#if cpDraft.default === 'evade'}
+                <span
+                  class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
+                  >default</span
+                >
+              {/if}
             </label>
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-label"
@@ -746,7 +765,12 @@
                 onchange={() => (cpDraft = { ...cpDraft, default: 'privacy' })}
               />
               Maximum privacy (privacy)
-              <span class="text-xs text-muted-foreground">(default?)</span>
+              {#if cpDraft.default === 'privacy'}
+                <span
+                  class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
+                  >default</span
+                >
+              {/if}
             </label>
             <div>
               <label class="text-xs text-muted-foreground mb-1 block" for="cp-privacy-label"
@@ -780,9 +804,14 @@
           </div>
 
           <div class="flex justify-end">
+            {#if !cpInit}
+              <span class="me-3 self-center text-xs text-muted-foreground"
+                >Loading current values…</span
+              >
+            {/if}
             <Button
               onclick={() => saveConnectionModes.mutate()}
-              disabled={saveConnectionModes.isPending}
+              disabled={saveConnectionModes.isPending || !cpInit}
             >
               {saveConnectionModes.isPending ? 'Saving…' : 'Save connection modes'}
             </Button>
