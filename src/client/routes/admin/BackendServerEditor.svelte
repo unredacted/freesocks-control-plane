@@ -84,9 +84,30 @@
   });
 
   function testBody(): Record<string, unknown> | { error: string } {
+    // On edit, blank fields fall back SERVER-SIDE to the stored config (the
+    // secrets deliberately never round-trip to the client) — so an existing
+    // instance is testable without retyping its token/apiUrl. Anything typed
+    // here still overrides the stored value for the test.
     if (backend === 'remnawave') {
+      if (isEdit) {
+        return {
+          backend,
+          id: server!.id,
+          ...(baseUrl ? { baseUrl } : {}),
+          ...(apiToken ? { apiToken } : {}),
+        };
+      }
       if (!baseUrl || !apiToken) return { error: 'Enter a base URL and an API token to test' };
       return { backend, baseUrl, apiToken };
+    }
+    if (isEdit) {
+      return {
+        backend,
+        id: server!.id,
+        ...(apiUrl ? { apiUrl } : {}),
+        websocketEnabled,
+        websocketDomain: websocketDomain || null,
+      };
     }
     if (!apiUrl) return { error: 'Enter an apiUrl to test' };
     return { backend, apiUrl, websocketEnabled, websocketDomain: websocketDomain || null };

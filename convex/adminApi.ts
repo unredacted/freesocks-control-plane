@@ -1345,10 +1345,16 @@ export const deleteBackendServerBySlug = internalMutation({
  * Best-effort connectivity check for the connection details the admin pasted
  * (before they save). Routes to the backend type's provider; the secret is a
  * credential (never echoed back, never put in the error: the providers scrub it).
+ *
+ * With `id` set (editing an EXISTING instance), blank fields fall back to the
+ * STORED config so an admin can verify a live instance without retyping its
+ * secret — the secret never round-trips to the client either way. Typed fields
+ * still override the stored ones.
  */
 export const testBackendConnection = internalAction({
   args: {
     backend: backendId,
+    id: v.optional(v.id('backendServers')),
     baseUrl: v.optional(v.string()),
     apiToken: v.optional(v.string()),
     apiUrl: v.optional(v.string()),
@@ -1356,21 +1362,35 @@ export const testBackendConnection = internalAction({
     websocketDomain: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (
-    _ctx,
+    ctx,
     a,
   ): Promise<{ ok: true; keyCount: number } | { ok: false; error: string }> => {
+    let stored: BackendConfig | null = null;
+    if (a.id) {
+      const row = await ctx.runQuery(internal.backendServers.getById, { id: a.id });
+      if (!row) return { ok: false, error: 'Instance not found' };
+      if (row.backend !== a.backend) {
+        return { ok: false, error: 'Backend type does not match the stored instance' };
+      }
+      stored = row.config as BackendConfig;
+    }
     let config: BackendConfig;
     if (a.backend === 'remnawave') {
-      if (!a.baseUrl || !a.apiToken)
+      const rw = stored?.type === 'remnawave' ? stored : null;
+      const baseUrl = a.baseUrl?.trim() || rw?.baseUrl;
+      const apiToken = a.apiToken?.trim() || rw?.apiToken;
+      if (!baseUrl || !apiToken)
         return { ok: false, error: 'A base URL and an API token are required' };
-      config = { type: 'remnawave', baseUrl: a.baseUrl, apiToken: a.apiToken };
+      config = { type: 'remnawave', baseUrl, apiToken };
     } else {
-      if (!a.apiUrl) return { ok: false, error: 'An apiUrl is required' };
+      const ol = stored?.type === 'outline' ? stored : null;
+      const apiUrl = a.apiUrl?.trim() || ol?.apiUrl;
+      if (!apiUrl) return { ok: false, error: 'An apiUrl is required' };
       config = {
         type: 'outline',
-        apiUrl: a.apiUrl,
-        websocketEnabled: a.websocketEnabled ?? false,
-        websocketDomain: a.websocketDomain ?? undefined,
+        apiUrl,
+        websocketEnabled: a.websocketEnabled ?? ol?.websocketEnabled ?? false,
+        websocketDomain: a.websocketDomain ?? ol?.websocketDomain ?? undefined,
       };
     }
     return PROVIDERS[a.backend].testConnection(config);

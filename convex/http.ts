@@ -2486,7 +2486,12 @@ http.route({
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
-    return json({ nodes: await ctx.runQuery(internal.remnawaveNodes.listNodeStats, {}) });
+    return json({
+      nodes: await ctx.runQuery(internal.remnawaveNodes.listNodeStats, {}),
+      // Pool SIZES per mode (never the UUIDs) — the placement editor's
+      // "N squads bound" feedback.
+      placements: await ctx.runQuery(internal.remnawaveNodes.listModePlacementCounts, {}),
+    });
   }),
 });
 
@@ -2600,6 +2605,9 @@ http.route({
     // {ok} verdict. Be liberal in what this read-only probe accepts.
     const result = await ctx.runAction(internal.adminApi.testBackendConnection, {
       backend: body.backend,
+      // Editing an existing instance: blank secret fields fall back to the
+      // STORED config server-side (secrets never round-trip to the client).
+      id: body.id,
       baseUrl: body.baseUrl,
       apiToken: body.apiToken,
       apiUrl: body.apiUrl,
