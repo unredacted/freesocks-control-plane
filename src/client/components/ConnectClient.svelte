@@ -113,7 +113,7 @@
           qrFor = null;
         }}
         onkeydown={tabKeydown}
-        class="min-h-9 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {active ===
+        class="min-h-11 sm:min-h-9 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {active ===
         p.key
           ? 'bg-primary text-primary-foreground'
           : 'bg-muted text-muted-foreground hover:text-foreground'}"
@@ -178,7 +178,7 @@
               href={c.homepageUrl}
               target="_blank"
               rel="noopener noreferrer"
-              class="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-border px-3 py-1 text-sm font-medium hover:bg-muted"
+              class="inline-flex min-h-11 sm:min-h-9 items-center gap-1.5 rounded-md border border-border px-3 py-1 text-sm font-medium hover:bg-muted"
             >
               <ExternalLink class="size-3.5" />
               {t('setup.install')}
@@ -186,7 +186,7 @@
             {#if link}
               <a
                 href={link}
-                class="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                class="inline-flex min-h-11 sm:min-h-9 items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               >
                 <Smartphone class="size-3.5" />
                 {t('hero.importOpen', { app: c.name })}
@@ -196,7 +196,7 @@
                 onclick={() => (qrFor = qrFor === c.name ? null : c.name)}
                 aria-expanded={qrFor === c.name}
                 aria-label={t('hero.importScan', { app: c.name })}
-                class="inline-flex min-h-9 items-center rounded-md border border-border px-2 py-1 hover:bg-muted"
+                class="inline-flex min-h-11 sm:min-h-9 items-center rounded-md border border-border px-2 py-1 hover:bg-muted"
               >
                 <QrCodeIcon class="size-4" />
               </button>

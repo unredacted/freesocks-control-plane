@@ -347,7 +347,7 @@
         onclick={() => createAccount.mutate()}
         disabled={createAccount.isPending || !token}
         size="lg"
-        class="w-full"
+        class="w-full min-h-11"
       >
         <SocksIcon class="size-4" />
         {createAccount.isPending ? t('common.working') : t('get.createAccount')}
@@ -568,7 +568,7 @@
           onclick={() => createSubscription.mutate()}
           disabled={createSubscription.isPending}
           size="lg"
-          class="w-full"
+          class="w-full min-h-11"
         >
           <Plus class="size-4" />
           {createSubscription.isPending ? t('account.creating') : t('account.createSub')}

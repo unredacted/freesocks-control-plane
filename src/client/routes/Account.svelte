@@ -722,18 +722,19 @@
     <!-- Tabbed sections (in-page strip, ?tab= synced). Page-global chrome - the
          header, pinned status band, and confirm modals - stays OUTSIDE the tabs. -->
     <Tabs.Root bind:value={activeTab} class="gap-6">
+      <!-- 44px-tall tabs on touch widths (WCAG target size); compact from sm up. -->
       <div class="overflow-x-auto -mx-1 px-1">
-        <Tabs.List class="w-full min-w-max sm:w-fit">
-          <Tabs.Trigger value="connection">
+        <Tabs.List class="w-full min-w-max sm:w-fit h-12 sm:h-9">
+          <Tabs.Trigger value="connection" class="h-11 sm:h-7">
             <KeyRound class="size-4" />{t('account.tab.connection')}
           </Tabs.Trigger>
-          <Tabs.Trigger value="membership">
+          <Tabs.Trigger value="membership" class="h-11 sm:h-7">
             <Sparkles class="size-4" />{t('account.tab.membership')}
           </Tabs.Trigger>
-          <Tabs.Trigger value="codes">
+          <Tabs.Trigger value="codes" class="h-11 sm:h-7">
             <Gift class="size-4" />{t('account.tab.codes')}
           </Tabs.Trigger>
-          <Tabs.Trigger value="security">
+          <Tabs.Trigger value="security" class="h-11 sm:h-7">
             <ShieldCheck class="size-4" />{t('account.tab.security')}
           </Tabs.Trigger>
         </Tabs.List>
