@@ -14,7 +14,10 @@
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { z } from 'zod';
   import { toast } from 'svelte-sonner';
-  import { RemnawaveLoggingReport } from '../../../shared/contracts/admin';
+  import {
+    RemnawaveLoggingReport,
+    RemnawavePlacementUpdateResponse,
+  } from '../../../shared/contracts/admin';
 
   /**
    * Remnawave-specific admin config (the namespaced /api/v1/admin/remnawave/*
@@ -75,7 +78,7 @@
       return apiClient.patch(
         '/api/v1/admin/remnawave/mode-placements',
         { modes },
-        z.object({ bound: z.array(z.string()) }),
+        RemnawavePlacementUpdateResponse,
       );
     },
     onSuccess: () => {

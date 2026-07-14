@@ -311,6 +311,43 @@ export const RemnawaveLoggingReport = z.object({
 });
 export type RemnawaveLoggingReport = z.infer<typeof RemnawaveLoggingReport>;
 
+// --- Remnawave: node placement (per-mode squad pools) ---
+
+/** Per-mode bound-pool size. Pool SIZES only — the squad UUIDs are write-only
+ *  and never round-trip to the client. */
+export const RemnawavePlacementCount = z.object({
+  modeId: z.string(),
+  boundCount: z.number().int().nonnegative(),
+});
+export type RemnawavePlacementCount = z.infer<typeof RemnawavePlacementCount>;
+
+/** Response of PATCH /api/v1/admin/remnawave/mode-placements: which modes now
+ *  have a pool bound + the per-mode sizes. `placements` is defaulted for
+ *  rolling-deploy compat (an older backend omits it). */
+export const RemnawavePlacementUpdateResponse = z.object({
+  bound: z.array(z.string()),
+  placements: z.array(RemnawavePlacementCount).optional().default([]),
+});
+export type RemnawavePlacementUpdateResponse = z.infer<typeof RemnawavePlacementUpdateResponse>;
+
+/** Response of GET /api/v1/admin/remnawave/node-stats: per-placement node-load
+ *  snapshots (the node-placement picker's input, cached by the healthcheck
+ *  cron) + the per-mode bound counts for the placement editor's badge. */
+export const RemnawaveNodeStatsResponse = z.object({
+  nodes: z.array(
+    z.object({
+      placement: z.string(),
+      label: z.string().nullable(),
+      usersOnline: z.number(),
+      online: z.boolean(),
+      nodeCount: z.number(),
+      lastStatsAt: z.number(),
+    }),
+  ),
+  placements: z.array(RemnawavePlacementCount).optional().default([]),
+});
+export type RemnawaveNodeStatsResponse = z.infer<typeof RemnawaveNodeStatsResponse>;
+
 // --- admin management (multi-admin onboarding via invite links) ---
 
 /** One row in the admins list (GET /api/v1/admin/admins). */

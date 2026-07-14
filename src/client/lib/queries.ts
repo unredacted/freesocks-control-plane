@@ -26,6 +26,7 @@ import {
   BackendServerAdmin,
   ClientAdmin,
   MirrorProviderAdmin,
+  RemnawaveNodeStatsResponse,
   TierAdmin,
   UserAdmin,
 } from '../../shared/contracts/admin';
@@ -390,29 +391,12 @@ export const adminBackendServersQuery = () =>
 
 /** Per-placement node-load snapshots (the node-placement picker's input), shown
  *  read-only in the admin CMS. Refreshed by the backend-healthcheck cron
- *  (~10 min), so a short staleTime is fine. */
-const NodeStatsResponse = z.object({
-  nodes: z.array(
-    z.object({
-      placement: z.string(),
-      label: z.string().nullable(),
-      usersOnline: z.number(),
-      online: z.boolean(),
-      nodeCount: z.number(),
-      lastStatsAt: z.number(),
-    }),
-  ),
-  /** Per-mode bound-squad counts (pool sizes only, never UUIDs) — the placement
-   *  editor's feedback badge. Defaulted for rolling-deploy compat. */
-  placements: z
-    .array(z.object({ modeId: z.string(), boundCount: z.number() }))
-    .optional()
-    .default([]),
-});
+ *  (~10 min), so a short staleTime is fine. Shape declared in
+ *  `shared/contracts/admin.ts` (RemnawaveNodeStatsResponse). */
 export const adminNodeStatsQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.adminNodeStats,
-    queryFn: () => apiClient.get('/api/v1/admin/remnawave/node-stats', NodeStatsResponse),
+    queryFn: () => apiClient.get('/api/v1/admin/remnawave/node-stats', RemnawaveNodeStatsResponse),
     staleTime: 60_000,
   }));
 
