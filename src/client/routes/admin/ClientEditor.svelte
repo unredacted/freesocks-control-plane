@@ -41,6 +41,7 @@
     license: c?.license ?? '',
     sourceUrl: c?.sourceUrl ?? '',
     easeOfUse: c?.easeOfUse ?? '',
+    description: c?.description ?? '',
     enabled: c?.enabled ?? true,
     priority: c?.priority ?? 0,
   }))(client);
@@ -55,6 +56,7 @@
   let license = $state(init.license);
   let sourceUrl = $state(init.sourceUrl);
   let easeOfUse = $state(init.easeOfUse);
+  let description = $state(init.description);
   let enabled = $state(init.enabled);
   let priority = $state(init.priority);
 
@@ -77,6 +79,7 @@
       license: license || null,
       sourceUrl: sourceUrl || null,
       easeOfUse: easeOfUse || null,
+      description: description.trim() || null,
       enabled,
       priority,
     };
@@ -186,6 +189,23 @@
         <p class="text-xs text-muted-foreground/80 mt-1">
           Within each open-source group, easier apps rank first in the member list. "Easy" and
           "Advanced" also show a badge.
+        </p>
+      </div>
+      <div>
+        <label class="text-xs text-muted-foreground mb-1 block" for="cl-description">
+          Description
+        </label>
+        <textarea
+          id="cl-description"
+          bind:value={description}
+          rows={2}
+          maxlength={280}
+          placeholder="Why choose this app? Shown to members under the app name."
+          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        ></textarea>
+        <p class="text-xs text-muted-foreground/80 mt-1">
+          Shown verbatim in every language. Leave blank to use the built-in translated description
+          for known default apps.
         </p>
       </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">

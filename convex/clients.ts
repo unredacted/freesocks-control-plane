@@ -19,6 +19,14 @@ const PLATFORM_KEYS = ['android', 'ios', 'windows', 'desktop'];
 // Ease-of-use rating; null clears it (treated as 'moderate' downstream).
 const easeOfUse = v.union(v.literal('easy'), v.literal('moderate'), v.literal('advanced'));
 
+// Member-facing blurb: trim + length-cap (same spirit as sanitizeBannerText);
+// empty/null clears it (the SPA then falls back to its built-in translated copy
+// for known default apps).
+const MAX_DESCRIPTION = 280;
+function normalizeDescription(raw: string | null | undefined): string | undefined {
+  return raw?.trim().slice(0, MAX_DESCRIPTION) || undefined;
+}
+
 function mapClient(r: Doc<'clients'>) {
   return {
     id: r._id as string,
@@ -32,6 +40,7 @@ function mapClient(r: Doc<'clients'>) {
     license: r.license ?? null,
     sourceUrl: r.sourceUrl ?? null,
     easeOfUse: r.easeOfUse ?? null,
+    description: r.description ?? null,
     enabled: r.enabled,
     priority: r.priority,
     createdAt: new Date(r._creationTime).toISOString(),
@@ -71,6 +80,7 @@ export const create = internalMutation({
     license: v.optional(v.union(v.string(), v.null())),
     sourceUrl: v.optional(v.union(v.string(), v.null())),
     easeOfUse: v.optional(v.union(easeOfUse, v.null())),
+    description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
   },
@@ -104,6 +114,7 @@ export const create = internalMutation({
       license: a.license?.trim() || undefined,
       sourceUrl: a.sourceUrl?.trim() || undefined,
       easeOfUse: a.easeOfUse ?? undefined,
+      description: normalizeDescription(a.description),
       enabled: a.enabled ?? true,
       priority: a.priority ?? 0,
       updatedAt: Date.now(),
@@ -126,6 +137,7 @@ export const update = internalMutation({
     license: v.optional(v.union(v.string(), v.null())),
     sourceUrl: v.optional(v.union(v.string(), v.null())),
     easeOfUse: v.optional(v.union(easeOfUse, v.null())),
+    description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
   },
@@ -162,6 +174,8 @@ export const update = internalMutation({
     if (patch.license !== undefined) fields.license = patch.license?.trim() || undefined;
     if (patch.sourceUrl !== undefined) fields.sourceUrl = patch.sourceUrl?.trim() || undefined;
     if (patch.easeOfUse !== undefined) fields.easeOfUse = patch.easeOfUse ?? undefined;
+    if (patch.description !== undefined)
+      fields.description = normalizeDescription(patch.description);
     if (patch.enabled !== undefined) fields.enabled = patch.enabled;
     if (patch.priority !== undefined) fields.priority = patch.priority;
     await ctx.db.patch(id, fields);
@@ -194,6 +208,7 @@ export const upsertByName = internalMutation({
     license: v.optional(v.union(v.string(), v.null())),
     sourceUrl: v.optional(v.union(v.string(), v.null())),
     easeOfUse: v.optional(v.union(easeOfUse, v.null())),
+    description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
   },
@@ -222,6 +237,7 @@ export const upsertByName = internalMutation({
         license: a.license?.trim() || undefined,
         sourceUrl: a.sourceUrl?.trim() || undefined,
         easeOfUse: a.easeOfUse ?? undefined,
+        description: normalizeDescription(a.description),
         enabled: a.enabled ?? true,
         priority: a.priority ?? 0,
         updatedAt: Date.now(),
@@ -239,6 +255,7 @@ export const upsertByName = internalMutation({
     if (a.license !== undefined) fields.license = a.license?.trim() || undefined;
     if (a.sourceUrl !== undefined) fields.sourceUrl = a.sourceUrl?.trim() || undefined;
     if (a.easeOfUse !== undefined) fields.easeOfUse = a.easeOfUse ?? undefined;
+    if (a.description !== undefined) fields.description = normalizeDescription(a.description);
     if (a.enabled !== undefined) fields.enabled = a.enabled;
     if (a.priority !== undefined) fields.priority = a.priority;
     await ctx.db.patch(existing._id, fields);

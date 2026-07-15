@@ -33,6 +33,7 @@
   import Heart from '@lucide/svelte/icons/heart';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import CodeXml from '@lucide/svelte/icons/code-xml';
   import DitherChart from '../components/DitherChart.svelte';
   import { impactChartSeries } from '../lib/impact';
 
@@ -42,6 +43,9 @@
   // The membership upgrade entry point: an authed member goes straight to their
   // account (the upgrade panel); an anon visitor creates a free account first.
   const billingEnabled = $derived(config.data?.billing?.enabled ?? false);
+  // Admin-configured site chrome; the ABOUT open-source callout renders only when
+  // the footer "View source" repo link is enabled (same toggle + URL).
+  const site = $derived(config.data?.site);
   function goUpgrade() {
     router.navigate(me.data?.authenticated ? '/account' : '/get-account');
   }
@@ -493,7 +497,7 @@
           <button
             type="button"
             id="faq-trigger-{i}"
-            class="flex w-full items-center justify-between gap-3 px-5 py-4 text-start text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            class="flex w-full items-center justify-between gap-3 px-5 py-4 text-start text-sm font-medium transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             aria-expanded={isOpen}
             aria-controls="faq-panel-{i}"
             onclick={() => (openFaq = isOpen ? -1 : i)}
@@ -537,6 +541,9 @@
           rel="noopener noreferrer">Unredacted</a
         >{t('home.about.bodySuffix')}
       </p>
+      {#if site?.repoEnabled && site.repoUrl}
+        <p class="text-muted-foreground leading-relaxed">{t('home.about.openSource')}</p>
+      {/if}
       <div class="flex flex-wrap gap-3 pt-2">
         <!--
           Donations fund free accounts (hosted on unredacted.org). When billing
@@ -552,6 +559,14 @@
         <a href="https://unredacted.org" target="_blank" rel="noopener noreferrer">
           <Button variant="outline">{t('home.about.siteLink')}</Button>
         </a>
+        {#if site?.repoEnabled && site.repoUrl}
+          <a href={site.repoUrl} target="_blank" rel="noopener noreferrer">
+            <Button variant="outline">
+              <CodeXml class="size-4" />
+              {t('home.about.viewSourceCta')}
+            </Button>
+          </a>
+        {/if}
         {#if billingEnabled}
           <Button variant="ghost" onclick={goUpgrade}>{t('home.cta.getMembership')}</Button>
         {/if}

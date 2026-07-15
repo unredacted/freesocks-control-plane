@@ -557,6 +557,10 @@ export default defineSchema({
     openSource: v.optional(v.boolean()),
     license: v.optional(v.string()), // short label: 'GPL-3.0', 'Apache-2.0', 'Proprietary'
     sourceUrl: v.optional(v.string()), // public source repo (OSS only)
+    // Admin-set member-facing blurb ("why choose this app"). Shown verbatim in
+    // every locale; absent = the SPA falls back to its built-in translated copy
+    // for known default apps (the connection-mode label/description pattern).
+    description: v.optional(v.string()),
     // Ease-of-use rating: within each open-source group, easier apps rank first
     // (missing = treated as 'moderate'). 'easy'/'advanced' also get a badge.
     easeOfUse: v.optional(v.union(v.literal('easy'), v.literal('moderate'), v.literal('advanced'))),

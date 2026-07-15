@@ -62,6 +62,27 @@ describe('resolveSiteConfig', () => {
     expect(cfg.repoUrl).toBe('https://github.com/org/repo');
   });
 
+  test('reads the transparency + social URLs; non-https values sanitize to empty', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const rows: Array<[string, string]> = [
+        ['site.transparencyUrl', 'https://example.org/transparency'],
+        ['site.socialXUrl', 'https://x.com/freesocks'],
+        ['site.socialMastodonUrl', 'http://mastodon.example/@freesocks'], // http → rejected
+        ['site.socialBlueskyUrl', 'javascript:alert(1)'], // unsafe scheme → rejected
+      ];
+      for (const [key, value] of rows) {
+        await ctx.db.insert('appSettings', { key, value: JSON.stringify(value), updatedAt: now });
+      }
+    });
+    const cfg = await t.run((ctx) => resolveSiteConfig(ctx.db));
+    expect(cfg.transparencyUrl).toBe('https://example.org/transparency');
+    expect(cfg.socialXUrl).toBe('https://x.com/freesocks');
+    expect(cfg.socialMastodonUrl).toBe(''); // the footer icon then hides
+    expect(cfg.socialBlueskyUrl).toBe('');
+  });
+
   test('fail-safe: non-https repo URL → empty; non-boolean toggle → default', async () => {
     const t = convexTest(schema, modules);
     await t.run(async (ctx) => {

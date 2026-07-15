@@ -262,6 +262,9 @@ export const ClientAdmin = z.object({
   /** Ease-of-use rating: sorts within each OSS group (easier first) + drives a
    *  badge. null = unrated (treated as 'moderate'). */
   easeOfUse: z.enum(['easy', 'moderate', 'advanced']).nullable().optional().default(null),
+  /** Admin-set member-facing blurb (verbatim in every locale); null = the SPA's
+   *  built-in translated copy for known default apps. */
+  description: z.string().nullable().optional().default(null),
   enabled: z.boolean(),
   priority: z.number().int(),
   createdAt: z.string().datetime(),
@@ -281,6 +284,7 @@ export const ClientUpsert = z.object({
   license: z.string().nullable().optional(),
   sourceUrl: z.string().nullable().optional(),
   easeOfUse: z.enum(['easy', 'moderate', 'advanced']).nullable().optional(),
+  description: z.string().max(280).nullable().optional(),
   enabled: z.boolean().default(true),
   priority: z.number().int().default(0),
 });

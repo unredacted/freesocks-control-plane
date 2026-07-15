@@ -478,7 +478,11 @@
     "operatedSuffix": ", a US 501(c)(3) nonprofit",
     "viewSource": "View source",
     "terms": "Terms of Service",
-    "privacy": "Privacy Policy"
+    "privacy": "Privacy Policy",
+    "transparency": "Transparency Report",
+    "socialX": "FreeSocks on X",
+    "socialMastodon": "FreeSocks on Mastodon",
+    "socialBluesky": "FreeSocks on Bluesky"
   },
   "renew": {
     "expiringTitle": "Your membership is expiring soon",
@@ -608,7 +612,28 @@
     "hwidNote": "On a device-limited plan, turn on \"device identification\" (HWID) in the app's settings so your device is recognized.",
     "deviceCompatibleTitle": "Works with your device limit",
     "deviceIncompatibleTitle": "Not recommended for your plan",
-    "deviceIncompatibleNote": "These apps don't identify your device, so each launch can use up a device slot - or fail to connect on a device-limited plan. Prefer an app above."
+    "deviceIncompatibleNote": "These apps don't identify your device, so each launch can use up a device slot - or fail to connect on a device-limited plan. Prefer an app above.",
+    "linkKind": {
+      "play": "Google Play",
+      "appStore": "App Store",
+      "github": "GitHub",
+      "apk": "APK",
+      "website": "Website"
+    },
+    "clientDesc": {
+      "hiddify": "The easiest all-round choice: one-tap import, a clean interface, and builds for every platform.",
+      "karing": "Feature-rich and honors your plan's device limit. Slightly busier than Hiddify, but works well everywhere.",
+      "anywhere": "A polished, easy client for Apple devices only: iPhone, iPad, Apple TV, and Mac. No Android, Windows, or Linux version.",
+      "singBox": "The reference app for the sing-box core. Powerful but minimal, so it's best if you are comfortable with technical settings.",
+      "v2rayng": "A long-standing, lightweight Android client with one-tap import. More utilitarian than Hiddify, but dependable.",
+      "v2rayn": "A powerful desktop app for advanced users. Import is manual, and links using encryption \"none\" can need a manual tweak. Prefer Hiddify if that sounds fiddly.",
+      "clash": "Clash Verge, a popular desktop app with strong routing rules. Some versions reject VLESS subscription links; if yours won't import, use Hiddify or v2rayN instead.",
+      "flclash": "A clean, cross-platform Clash-family app. Import by pasting your subscription link (no one-tap import).",
+      "mihomoParty": "A friendly desktop app for the Clash (mihomo) core. Paste your subscription link to import.",
+      "throne": "An advanced desktop client that honors your plan's device limit, with solid Linux support. Expect manual setup.",
+      "shadowrocket": "A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free.",
+      "outline": "The simplest experience there is: paste your access key and connect. Only works with Outline (Shadowsocks) access keys."
+    }
   },
   "mirror": {
     "disclosure": "Trouble connecting?",
@@ -754,7 +779,9 @@
       "title": "About",
       "bodyPrefix": "FreeSocks is operated by",
       "bodySuffix": ", a US 501(c)(3) nonprofit. Free accounts are funded by donations and paying members.",
-      "siteLink": "unredacted.org"
+      "siteLink": "unredacted.org",
+      "openSource": "FreeSocks is fully open source. The code that runs this service is published for anyone to inspect, audit, or run themselves.",
+      "viewSourceCta": "View the source"
     },
     "limits": {
       "unlimitedBoth": "unlimited bandwidth and devices",

@@ -1731,10 +1731,11 @@ export const setVerification = internalMutation({
 });
 
 /**
- * Set the site-chrome config: the announcement banner (on/off + text) and the
- * footer "View source" repo link (on/off + https URL). Sanitizes the text (trim +
- * cap) and the URL (https-only, else '') so a bad value stores harmlessly rather
- * than as a broken/unsafe link. Audited (banner text + repo URL are non-secret).
+ * Set the site-chrome config: the announcement banner (on/off + text), the
+ * footer "View source" repo link (on/off + https URL), and the footer ToS /
+ * Privacy / transparency-report / social-profile URLs. Sanitizes the text (trim +
+ * cap) and each URL (https-only, else '') so a bad value stores harmlessly rather
+ * than as a broken/unsafe link. Audited (everything here is non-secret).
  */
 export const setSiteConfig = internalMutation({
   args: {
@@ -1744,11 +1745,27 @@ export const setSiteConfig = internalMutation({
     repoUrl: v.string(),
     tosUrl: v.string(),
     privacyUrl: v.string(),
+    transparencyUrl: v.string(),
+    socialXUrl: v.string(),
+    socialMastodonUrl: v.string(),
+    socialBlueskyUrl: v.string(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (
     ctx,
-    { bannerEnabled, bannerText, repoEnabled, repoUrl, tosUrl, privacyUrl, actorAdminId },
+    {
+      bannerEnabled,
+      bannerText,
+      repoEnabled,
+      repoUrl,
+      tosUrl,
+      privacyUrl,
+      transparencyUrl,
+      socialXUrl,
+      socialMastodonUrl,
+      socialBlueskyUrl,
+      actorAdminId,
+    },
   ) => {
     const clean = {
       bannerEnabled,
@@ -1757,6 +1774,10 @@ export const setSiteConfig = internalMutation({
       repoUrl: sanitizeHttpsUrl(repoUrl),
       tosUrl: sanitizeHttpsUrl(tosUrl),
       privacyUrl: sanitizeHttpsUrl(privacyUrl),
+      transparencyUrl: sanitizeHttpsUrl(transparencyUrl),
+      socialXUrl: sanitizeHttpsUrl(socialXUrl),
+      socialMastodonUrl: sanitizeHttpsUrl(socialMastodonUrl),
+      socialBlueskyUrl: sanitizeHttpsUrl(socialBlueskyUrl),
     };
     await upsertSetting(
       ctx,
@@ -1769,6 +1790,25 @@ export const setSiteConfig = internalMutation({
     await upsertSetting(ctx, 'site.repoUrl', JSON.stringify(clean.repoUrl), actorAdminId);
     await upsertSetting(ctx, 'site.tosUrl', JSON.stringify(clean.tosUrl), actorAdminId);
     await upsertSetting(ctx, 'site.privacyUrl', JSON.stringify(clean.privacyUrl), actorAdminId);
+    await upsertSetting(
+      ctx,
+      'site.transparencyUrl',
+      JSON.stringify(clean.transparencyUrl),
+      actorAdminId,
+    );
+    await upsertSetting(ctx, 'site.socialXUrl', JSON.stringify(clean.socialXUrl), actorAdminId);
+    await upsertSetting(
+      ctx,
+      'site.socialMastodonUrl',
+      JSON.stringify(clean.socialMastodonUrl),
+      actorAdminId,
+    );
+    await upsertSetting(
+      ctx,
+      'site.socialBlueskyUrl',
+      JSON.stringify(clean.socialBlueskyUrl),
+      actorAdminId,
+    );
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,

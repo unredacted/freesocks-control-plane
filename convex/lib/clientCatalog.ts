@@ -35,6 +35,10 @@ export interface CatalogClient {
   license?: string; // short label, e.g. 'GPL-3.0', 'Apache-2.0', 'Proprietary'
   sourceUrl?: string; // public source repo (OSS only)
   easeOfUse?: ClientEase; // easy/moderate/advanced; missing = moderate
+  // Admin-set member-facing blurb, shown verbatim in every locale. The defaults
+  // deliberately DON'T set it: their copy lives in the SPA's i18n catalog
+  // (setup.clientDesc.*) so it translates; an admin value overrides that.
+  description?: string;
   enabled: boolean;
   priority: number;
 }
@@ -51,6 +55,7 @@ export interface PublicClient {
   license?: string;
   sourceUrl?: string;
   easeOfUse?: ClientEase;
+  description?: string;
 }
 
 /**
@@ -89,11 +94,14 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     priority: 20,
   },
   {
-    // One of the very few open-source Xray/VLESS clients on iOS (also Android).
+    // One of the very few open-source Xray/VLESS clients on iOS. Apple-only
+    // (iOS/iPadOS/tvOS; runs on Apple-silicon Macs as the iPad app) — NOT
+    // Android/Windows/Linux. Distributed via the App Store (the GitHub releases
+    // page has no installable assets).
     name: 'Anywhere',
-    platforms: ['ios', 'android', 'desktop'],
+    platforms: ['ios', 'desktop'],
     backends: ['remnawave'],
-    homepageUrl: 'https://github.com/NodePassProject/Anywhere/releases/latest',
+    homepageUrl: 'https://apps.apple.com/us/app/anywhere-vless-proxy/id6758235178',
     schemeId: 'anywhere',
     hwid: false,
     openSource: true,
@@ -257,6 +265,7 @@ export async function resolveClients(db: DatabaseReader): Promise<CatalogClient[
     license: r.license ?? undefined,
     sourceUrl: r.sourceUrl ?? undefined,
     easeOfUse: r.easeOfUse ?? undefined,
+    description: r.description ?? undefined,
     enabled: r.enabled,
     priority: r.priority,
   }));
@@ -286,5 +295,6 @@ export function publicClients(clients: CatalogClient[]): PublicClient[] {
       license: c.license,
       sourceUrl: c.sourceUrl,
       easeOfUse: c.easeOfUse,
+      description: c.description,
     }));
 }

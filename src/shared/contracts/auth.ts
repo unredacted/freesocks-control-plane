@@ -199,6 +199,12 @@ export const PublicConfig = z.object({
       repoUrl: z.string(),
       tosUrl: z.string(),
       privacyUrl: z.string(),
+      // Deploy-skew safety: default '' so a newer SPA parsing an older backend's
+      // /config (without these keys yet) doesn't fail the whole config parse.
+      transparencyUrl: z.string().optional().default(''),
+      socialXUrl: z.string().optional().default(''),
+      socialMastodonUrl: z.string().optional().default(''),
+      socialBlueskyUrl: z.string().optional().default(''),
     })
     .optional(),
   /** Member-facing connection-mode catalog (the transport chooser): id +
@@ -237,6 +243,9 @@ export const PublicConfig = z.object({
         license: z.string().optional(),
         sourceUrl: z.string().optional(),
         easeOfUse: z.enum(['easy', 'moderate', 'advanced']).optional(),
+        /** Admin-set blurb (verbatim in every locale); absent = the SPA's
+         *  built-in translated copy for known default apps. */
+        description: z.string().optional(),
       }),
     )
     .optional()

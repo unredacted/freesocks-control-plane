@@ -191,8 +191,11 @@ export const seedClients = internalMutation({
  * that already exist - unlike seedClients, which is insert-if-missing only.
  * Use after a defaults change (e.g. the install-page URL repoints) to push it
  * to a deployed instance: `bunx convex run seed:refreshDefaultClients '{}'`.
- * Admin-added clients (names not in the defaults) and each row's `enabled`
- * flag are left untouched. NOT part of the deploy entrypoint - it would
+ * Admin-added clients (names not in the defaults), each row's `enabled`
+ * flag, and any admin-set `description` are left untouched (`description` is
+ * deliberately NOT in the field list: the defaults don't carry one - their
+ * copy lives in the SPA's i18n catalog so it translates - so a refresh must
+ * not clear an admin override). NOT part of the deploy entrypoint - it would
  * clobber deliberate admin edits to default rows on every deploy.
  */
 export const refreshDefaultClients = internalMutation({

@@ -25,6 +25,14 @@ export interface SiteConfig {
   tosUrl: string;
   /** Public Privacy Policy URL shown in the footer (https-only); '' = unset (hidden). */
   privacyUrl: string;
+  /** Public transparency-report URL shown in the footer (https-only); '' = unset (hidden). */
+  transparencyUrl: string;
+  /** X (Twitter) profile URL shown as a footer icon (https-only); '' = unset (hidden). */
+  socialXUrl: string;
+  /** Mastodon profile URL shown as a footer icon (https-only); '' = unset (hidden). */
+  socialMastodonUrl: string;
+  /** Bluesky profile URL shown as a footer icon (https-only); '' = unset (hidden). */
+  socialBlueskyUrl: string;
 }
 
 export const SITE_DEFAULTS: SiteConfig = {
@@ -34,6 +42,10 @@ export const SITE_DEFAULTS: SiteConfig = {
   repoUrl: '',
   tosUrl: '',
   privacyUrl: '',
+  transparencyUrl: '',
+  socialXUrl: '',
+  socialMastodonUrl: '',
+  socialBlueskyUrl: '',
 };
 
 const MAX_BANNER = 280;
@@ -72,5 +84,9 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
     repoUrl: sanitizeHttpsUrl(await read('site.repoUrl')),
     tosUrl: sanitizeHttpsUrl(await read('site.tosUrl')),
     privacyUrl: sanitizeHttpsUrl(await read('site.privacyUrl')),
+    transparencyUrl: sanitizeHttpsUrl(await read('site.transparencyUrl')),
+    socialXUrl: sanitizeHttpsUrl(await read('site.socialXUrl')),
+    socialMastodonUrl: sanitizeHttpsUrl(await read('site.socialMastodonUrl')),
+    socialBlueskyUrl: sanitizeHttpsUrl(await read('site.socialBlueskyUrl')),
   };
 }

@@ -133,6 +133,10 @@
     repoUrl: string;
     tosUrl: string;
     privacyUrl: string;
+    transparencyUrl: string;
+    socialXUrl: string;
+    socialMastodonUrl: string;
+    socialBlueskyUrl: string;
   }>({
     bannerEnabled: false,
     bannerText: '',
@@ -140,6 +144,10 @@
     repoUrl: '',
     tosUrl: '',
     privacyUrl: '',
+    transparencyUrl: '',
+    socialXUrl: '',
+    socialMastodonUrl: '',
+    socialBlueskyUrl: '',
   });
   let sInit = $state(false);
   $effect(() => {
@@ -152,6 +160,10 @@
         repoUrl: s.repoUrl,
         tosUrl: s.tosUrl,
         privacyUrl: s.privacyUrl,
+        transparencyUrl: s.transparencyUrl,
+        socialXUrl: s.socialXUrl,
+        socialMastodonUrl: s.socialMastodonUrl,
+        socialBlueskyUrl: s.socialBlueskyUrl,
       };
       sInit = true;
     }
@@ -165,6 +177,10 @@
         repoUrl: z.string(),
         tosUrl: z.string(),
         privacyUrl: z.string(),
+        transparencyUrl: z.string(),
+        socialXUrl: z.string(),
+        socialMastodonUrl: z.string(),
+        socialBlueskyUrl: z.string(),
       });
       return apiClient.patch('/api/v1/admin/site', sDraft, Resp);
     },
@@ -608,12 +624,12 @@
       <!-- Site chrome: announcement banner + footer repo link (own namespace + own save) -->
       <Card>
         <CardHeader>
-          <CardTitle class="text-base">Site banner & footer link</CardTitle>
+          <CardTitle class="text-base">Site banner & footer links</CardTitle>
           <CardDescription>
             A site-wide announcement banner shown to members (e.g. planned maintenance), and footer
-            links: a "View source" repo link plus optional Terms of Service and Privacy Policy
-            links. All are optional and off/empty by default. Banner text is shown as-is in every
-            language (not translated).
+            links: a "View source" repo link plus optional Terms of Service, Privacy Policy,
+            Transparency Report, and social profile (X / Mastodon / Bluesky) links. All are optional
+            and off/empty by default. Banner text is shown as-is in every language (not translated).
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-3 text-sm">
@@ -678,8 +694,56 @@
               oninput={(e) =>
                 (sDraft = { ...sDraft, privacyUrl: (e.target as HTMLInputElement).value })}
             />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-transparency-url">
+              Transparency Report URL (https)
+            </label>
+            <Input
+              id="site-transparency-url"
+              placeholder="https://example.org/transparency"
+              value={sDraft.transparencyUrl}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, transparencyUrl: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-social-x-url">
+              X profile URL (https)
+            </label>
+            <Input
+              id="site-social-x-url"
+              placeholder="https://x.com/yourorg"
+              value={sDraft.socialXUrl}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, socialXUrl: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-social-mastodon-url">
+              Mastodon profile URL (https)
+            </label>
+            <Input
+              id="site-social-mastodon-url"
+              placeholder="https://mastodon.social/@yourorg"
+              value={sDraft.socialMastodonUrl}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, socialMastodonUrl: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-social-bluesky-url">
+              Bluesky profile URL (https)
+            </label>
+            <Input
+              id="site-social-bluesky-url"
+              placeholder="https://bsky.app/profile/yourorg.example"
+              value={sDraft.socialBlueskyUrl}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, socialBlueskyUrl: (e.target as HTMLInputElement).value })}
+            />
             <p class="text-xs text-muted-foreground mt-1">
-              Leave a URL blank to hide that footer link. Both must be https.
+              Leave a URL blank to hide that footer link. All URLs must be https.
             </p>
           </div>
           <div class="flex justify-end">

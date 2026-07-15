@@ -2209,6 +2209,10 @@ http.route({
       repoUrl?: string;
       tosUrl?: string;
       privacyUrl?: string;
+      transparencyUrl?: string;
+      socialXUrl?: string;
+      socialMastodonUrl?: string;
+      socialBlueskyUrl?: string;
     }>(req);
     try {
       return json(
@@ -2219,6 +2223,11 @@ http.route({
           repoUrl: typeof body.repoUrl === 'string' ? body.repoUrl : '',
           tosUrl: typeof body.tosUrl === 'string' ? body.tosUrl : '',
           privacyUrl: typeof body.privacyUrl === 'string' ? body.privacyUrl : '',
+          transparencyUrl: typeof body.transparencyUrl === 'string' ? body.transparencyUrl : '',
+          socialXUrl: typeof body.socialXUrl === 'string' ? body.socialXUrl : '',
+          socialMastodonUrl:
+            typeof body.socialMastodonUrl === 'string' ? body.socialMastodonUrl : '',
+          socialBlueskyUrl: typeof body.socialBlueskyUrl === 'string' ? body.socialBlueskyUrl : '',
           actorAdminId: admin.adminUserId,
         }),
       );

@@ -89,6 +89,30 @@ describe('clients CRUD', () => {
     expect(c.easeOfUse).toBeNull(); // null clears the rating
   });
 
+  test('description round-trips (trimmed + capped), null clears it', async () => {
+    const t = convexTest(schema, modules);
+    const created = await t.mutation(internal.clients.create, {
+      name: 'DescApp',
+      platforms: ['android'],
+      backends: ['remnawave'],
+      homepageUrl: 'https://d.example',
+      description: '  A fine app.  ',
+    });
+    expect(created.description).toBe('A fine app.'); // trimmed
+
+    const capped = await t.mutation(internal.clients.update, {
+      id: created.id as Id<'clients'>,
+      description: 'x'.repeat(400),
+    });
+    expect(capped.description?.length).toBe(280); // length-capped
+
+    const cleared = await t.mutation(internal.clients.update, {
+      id: created.id as Id<'clients'>,
+      description: null,
+    });
+    expect(cleared.description).toBeNull(); // null clears → SPA i18n fallback
+  });
+
   test('refreshDefaultClients overwrites default-managed fields, keeps enabled + admin rows', async () => {
     const t = convexTest(schema, modules);
     // Seed the defaults, then simulate the pre-repoint state: a stale install
@@ -101,6 +125,7 @@ describe('clients CRUD', () => {
       homepageUrl: 'https://stale.example',
       easeOfUse: null,
       enabled: false,
+      description: 'Admin blurb the refresh must keep.',
     });
     // An admin-added client the refresh must not touch.
     await t.mutation(internal.clients.create, {
@@ -119,6 +144,7 @@ describe('clients CRUD', () => {
     expect(h.homepageUrl).toBe('https://hiddify.com'); // default re-applied
     expect(h.easeOfUse).toBe('easy'); // rating re-applied
     expect(h.enabled).toBe(false); // admin's enabled choice preserved
+    expect(h.description).toBe('Admin blurb the refresh must keep.'); // admin blurb preserved
     const admin = after.find((c) => c.name === 'AdminOnly')!;
     expect(admin.homepageUrl).toBe('https://admin.example'); // untouched
   });
@@ -153,6 +179,7 @@ describe('clientCatalog resolve + project', () => {
         homepageUrl: 'x',
         schemeId: null,
         hwid: false,
+        description: 'An admin blurb that must reach members.',
         enabled: true,
         priority: 20,
       },
@@ -180,6 +207,19 @@ describe('clientCatalog resolve + project', () => {
     expect(projected.map((c) => c.name)).toEqual(['A', 'B']); // sorted; 'Off' filtered
     expect(projected[0]).not.toHaveProperty('enabled');
     expect(projected[0]).not.toHaveProperty('priority');
+    // The admin-set blurb travels to members (i18n-fallback happens client-side).
+    expect(projected.find((c) => c.name === 'B')?.description).toBe(
+      'An admin blurb that must reach members.',
+    );
+  });
+
+  test('Anywhere is Apple-only: no Android tab, App Store install link', () => {
+    const anywhere = DEFAULT_CLIENTS.find((c) => c.name === 'Anywhere')!;
+    // Verified upstream (iOS/iPadOS/tvOS, runs on Apple-silicon Macs): the app
+    // has NO Android build, and installs come from the App Store.
+    expect(anywhere.platforms).not.toContain('android');
+    expect(anywhere.platforms).toContain('ios');
+    expect(anywhere.homepageUrl).toMatch(/^https:\/\/apps\.apple\.com\//);
   });
 
   test('DEFAULT_CLIENTS carry open-source metadata (labels + source repos)', () => {

@@ -335,6 +335,10 @@ describe('route-level scope enforcement', () => {
       bannerText: '  Service maintenance 03:00 UTC  ',
       repoEnabled: true,
       repoUrl: 'http://insecure.example', // non-https → must sanitize to ''
+      transparencyUrl: 'https://example.org/transparency',
+      socialXUrl: 'https://x.com/freesocks',
+      socialMastodonUrl: 'javascript:alert(1)', // unsafe scheme → must sanitize to ''
+      socialBlueskyUrl: 'https://bsky.app/profile/freesocks.example',
     });
 
     const wrongScope = await t.fetch('/api/v1/admin/site', {
@@ -354,20 +358,40 @@ describe('route-level scope enforcement', () => {
       bannerText: string;
       repoUrl: string;
       bannerEnabled: boolean;
+      transparencyUrl: string;
+      socialXUrl: string;
+      socialMastodonUrl: string;
+      socialBlueskyUrl: string;
     };
     expect(clean.bannerText).toBe('Service maintenance 03:00 UTC'); // trimmed
     expect(clean.repoUrl).toBe(''); // unsafe scheme dropped
     expect(clean.bannerEnabled).toBe(true);
+    expect(clean.transparencyUrl).toBe('https://example.org/transparency');
+    expect(clean.socialXUrl).toBe('https://x.com/freesocks');
+    expect(clean.socialMastodonUrl).toBe(''); // unsafe scheme dropped
+    expect(clean.socialBlueskyUrl).toBe('https://bsky.app/profile/freesocks.example');
 
     // The saved config is surfaced (non-secret) through the one public route.
     const cfg = await t.fetch('/api/v1/config');
     expect(cfg.status).toBe(200);
     const pub = (await cfg.json()) as {
-      site?: { bannerEnabled: boolean; bannerText: string; repoUrl: string };
+      site?: {
+        bannerEnabled: boolean;
+        bannerText: string;
+        repoUrl: string;
+        transparencyUrl: string;
+        socialXUrl: string;
+        socialMastodonUrl: string;
+        socialBlueskyUrl: string;
+      };
     };
     expect(pub.site?.bannerEnabled).toBe(true);
     expect(pub.site?.bannerText).toBe('Service maintenance 03:00 UTC');
     expect(pub.site?.repoUrl).toBe('');
+    expect(pub.site?.transparencyUrl).toBe('https://example.org/transparency');
+    expect(pub.site?.socialXUrl).toBe('https://x.com/freesocks');
+    expect(pub.site?.socialMastodonUrl).toBe('');
+    expect(pub.site?.socialBlueskyUrl).toBe('https://bsky.app/profile/freesocks.example');
   });
 });
 

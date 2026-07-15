@@ -139,6 +139,11 @@
                 >
               {/if}
             </div>
+            {#if c.description}
+              <div class="text-muted-foreground">
+                Description: <span class="text-foreground">{c.description}</span>
+              </div>
+            {/if}
             <div class="flex flex-wrap gap-2 pt-2">
               <Button size="sm" variant="outline" onclick={() => (editing = c)}>Edit</Button>
               <Button size="sm" variant="destructive" onclick={() => (pendingDelete = c)}>

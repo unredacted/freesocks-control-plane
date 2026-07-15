@@ -21,6 +21,7 @@
   import QrCode from './QrCode.svelte';
   import { configQuery } from '../lib/queries';
   import { buildImportLink, IMPORT_PROFILE_NAME } from '../lib/appLinks';
+  import { installKind, type InstallKind } from '../lib/installKind';
 
   interface Props {
     backend?: 'remnawave' | 'outline';
@@ -75,6 +76,39 @@
 
   // Per-card QR toggle (one open at a time), keyed by client name.
   let qrFor = $state<string | null>(null);
+
+  // Where the Install button actually goes (Play Store / App Store / GitHub /
+  // direct APK / website) - derived from the URL, labeled on the button.
+  const KIND_KEYS: Record<InstallKind, MessageKey> = {
+    play: 'setup.linkKind.play',
+    appStore: 'setup.linkKind.appStore',
+    github: 'setup.linkKind.github',
+    apk: 'setup.linkKind.apk',
+    website: 'setup.linkKind.website',
+  };
+
+  // Per-client blurb ("why choose this app"): an admin-set catalog description
+  // overrides the translated copy verbatim (all locales); else the built-in i18n
+  // for known default apps, else nothing. Same pattern as connection-mode labels.
+  const DESC_KEYS: Partial<Record<string, MessageKey>> = {
+    Hiddify: 'setup.clientDesc.hiddify',
+    Karing: 'setup.clientDesc.karing',
+    Anywhere: 'setup.clientDesc.anywhere',
+    'sing-box': 'setup.clientDesc.singBox',
+    v2rayNG: 'setup.clientDesc.v2rayng',
+    v2rayN: 'setup.clientDesc.v2rayn',
+    Clash: 'setup.clientDesc.clash',
+    FlClash: 'setup.clientDesc.flclash',
+    'Mihomo Party': 'setup.clientDesc.mihomoParty',
+    Throne: 'setup.clientDesc.throne',
+    Shadowrocket: 'setup.clientDesc.shadowrocket',
+    Outline: 'setup.clientDesc.outline',
+  };
+  function clientDesc(c: { name: string; description?: string }): string | null {
+    if (c.description?.trim()) return c.description;
+    const key = DESC_KEYS[c.name];
+    return key ? t(key) : null;
+  }
 
   // WAI-ARIA tabs roving focus (same pattern as the old SetupGuidance).
   function tabKeydown(e: KeyboardEvent) {
@@ -131,6 +165,7 @@
   >
     {#snippet clientCard(c: (typeof currentClients)[number])}
       {@const link = importLink(c.schemeId)}
+      {@const desc = clientDesc(c)}
       <li class="rounded-lg border border-border bg-background/40 p-3">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="min-w-0">
@@ -178,10 +213,13 @@
               href={c.homepageUrl}
               target="_blank"
               rel="noopener noreferrer"
-              class="inline-flex min-h-11 sm:min-h-9 items-center gap-1.5 rounded-md border border-border px-3 py-1 text-sm font-medium hover:bg-muted"
+              class="inline-flex min-h-11 sm:min-h-9 items-center gap-1.5 rounded-md border border-border px-3 py-1 text-sm font-medium transition-colors hover:bg-muted"
             >
               <ExternalLink class="size-3.5" />
               {t('setup.install')}
+              <span class="text-xs font-normal text-muted-foreground">
+                · {t(KIND_KEYS[installKind(c.homepageUrl)])}
+              </span>
             </a>
             {#if link}
               <a
@@ -203,6 +241,9 @@
             {/if}
           </div>
         </div>
+        {#if desc}
+          <p class="mt-1.5 text-xs leading-relaxed text-muted-foreground">{desc}</p>
+        {/if}
         {#if link && qrFor === c.name}
           <div class="mt-3 flex flex-col items-center">
             <QrCode text={link} size={168} />
