@@ -623,6 +623,35 @@
       </Button>
     </div>
 
+    <!-- Failed webhook claims: a grant that threw and exhausted the sender's
+         redelivery = a paid-but-ungranted order. Loud, above the orders list. -->
+    {#if (billing.data?.failedWebhooks?.count ?? 0) > 0}
+      <div
+        class="mb-6 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm space-y-2"
+      >
+        <p class="font-medium text-destructive">
+          {billing.data!.failedWebhooks.count} failed webhook grant{billing.data!.failedWebhooks
+            .count === 1
+            ? ''
+            : 's'}
+        </p>
+        <p class="text-xs text-muted-foreground">
+          These events verified but the grant threw. The sender retries for a while; once its
+          retries run out the buyer has paid with nothing granted. Check the audit log
+          (billing.webhook.grant_failed) and grant manually via the user's page if needed.
+        </p>
+        <ul class="space-y-1">
+          {#each billing.data!.failedWebhooks.recent as w (w.eventId)}
+            <li class="flex flex-wrap items-center gap-x-3 text-xs">
+              <code class="font-mono text-muted-foreground">{w.eventId}</code>
+              <span class="text-muted-foreground">{w.source}</span>
+              <span class="tabular-nums text-muted-foreground">{formatDate(w.at)}</span>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+
     <!-- Orders -->
     <div class="mb-3 flex flex-wrap items-center gap-2">
       <h2 class="text-lg font-semibold">Orders</h2>

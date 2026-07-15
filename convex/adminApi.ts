@@ -1498,10 +1498,27 @@ export const billingOverview = internalQuery({
         return { ...mapBillingOrder(o), userHandle: u?.supportId ?? null };
       }),
     );
+    // Failed webhook claims = a paid-but-ungranted order once the sender's
+    // retries run out. Bounded (retention sweeps the table at 90d); newest 10
+    // listed, plus the total so ">10" is visible.
+    const failedRows = await ctx.db
+      .query('webhookEvents')
+      .withIndex('by_status', (q) => q.eq('status', 'failed'))
+      .order('desc')
+      .collect();
+    const failedWebhooks = {
+      count: failedRows.length,
+      recent: failedRows.slice(0, 10).map((w) => ({
+        eventId: w.eventId,
+        source: w.source,
+        at: iso(w._creationTime),
+      })),
+    };
     return {
       config,
       secretStatus,
       orders,
+      failedWebhooks,
       nextCursor: res.isDone ? null : res.continueCursor,
     };
   },

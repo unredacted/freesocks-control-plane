@@ -137,6 +137,46 @@ function customIdFromResource(resource: Record<string, unknown> | undefined): st
   return null;
 }
 
+/** The `{ currency_code, value }` money object off an order's purchase unit or a
+ *  capture resource, parsed to minor units. Null when absent/malformed. */
+function moneyFromResource(
+  resource: Record<string, unknown> | undefined,
+): { amountMinor: number; currency: string } | null {
+  if (!resource) return null;
+  let money: unknown = resource.amount;
+  const pu = resource.purchase_units;
+  if (!money && Array.isArray(pu) && pu[0] && typeof pu[0] === 'object') {
+    money = (pu[0] as Record<string, unknown>).amount;
+  }
+  if (!money || typeof money !== 'object') return null;
+  const m = money as Record<string, unknown>;
+  const value = typeof m.value === 'string' ? Number.parseFloat(m.value) : NaN;
+  if (!Number.isFinite(value) || typeof m.currency_code !== 'string') return null;
+  return { amountMinor: Math.round(value * 100), currency: m.currency_code.toUpperCase() };
+}
+
+/** The PayPal ORDER id (what checkout stored as processorRef) when the event
+ *  carries it: the resource itself on CHECKOUT.ORDER.*, else the capture's
+ *  supplementary related_ids. Null when unavailable. */
+function orderIdFromResource(
+  eventType: string,
+  resource: Record<string, unknown> | undefined,
+): string | null {
+  if (!resource) return null;
+  if (eventType.startsWith('CHECKOUT.ORDER.') && typeof resource.id === 'string') {
+    return resource.id;
+  }
+  const supp = resource.supplementary_data;
+  if (supp && typeof supp === 'object') {
+    const related = (supp as Record<string, unknown>).related_ids;
+    if (related && typeof related === 'object') {
+      const oid = (related as Record<string, unknown>).order_id;
+      if (typeof oid === 'string' && oid) return oid;
+    }
+  }
+  return null;
+}
+
 /**
  * Verify a PayPal webhook via the verify-signature API, then parse + (for an
  * approved order) capture. `headers` carries the inbound `paypal-*` headers.
@@ -204,15 +244,27 @@ export async function verifyAndParse(args: {
     status = 'paid';
   } else if (eventType === 'PAYMENT.CAPTURE.COMPLETED') {
     status = 'paid';
-  } else if (eventType === 'PAYMENT.CAPTURE.DENIED' || eventType === 'CHECKOUT.ORDER.DECLINED') {
+  } else if (
+    eventType === 'PAYMENT.CAPTURE.DENIED' ||
+    eventType === 'CHECKOUT.ORDER.DECLINED' ||
+    // Refund/reversal class: never grants; when the order is ALREADY paid the
+    // grant path audits it (billing.refund_seen) so the operator has a queue
+    // to act on instead of a silently-live chargeback membership.
+    eventType === 'PAYMENT.CAPTURE.REFUNDED' ||
+    eventType === 'PAYMENT.CAPTURE.REVERSED'
+  ) {
     status = 'failed';
   }
 
+  const money = moneyFromResource(resource);
   return {
     ok: true,
     orderRef,
     processorRef,
     status,
+    checkoutRef: orderIdFromResource(eventType, resource),
+    amountMinor: money?.amountMinor ?? null,
+    amountCurrency: money?.currency ?? null,
     dedupeId: `paypal:${event.id ?? processorRef}`,
     summary: { event_type: eventType, event_id: event.id ?? null, resource_id: processorRef },
   };

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import * as stripe from './stripe';
 import * as paypal from './paypal';
 import * as btcpay from './btcpay';
+import * as nowpayments from './nowpayments';
 import { hmacSha256Hex } from '../crypto';
 
 /**
@@ -568,5 +569,133 @@ describe('btcpay.createCheckout', () => {
       vi.fn(async () => res({ id: 'inv_x' })),
     ); // no checkoutLink
     await expect(btcpay.createCheckout(cfg, params)).rejects.toThrow(/schema mismatch/i);
+  });
+});
+
+describe('nowpayments.mapStatus', () => {
+  test('partially_paid stays non-terminal (confirming) and never grants', () => {
+    expect(nowpayments.mapStatus('partially_paid')).toBe('confirming');
+  });
+
+  test('the full status map: only finished pays; unknowns stay pending', () => {
+    expect(nowpayments.mapStatus('finished')).toBe('paid');
+    expect(nowpayments.mapStatus('waiting')).toBe('pending');
+    expect(nowpayments.mapStatus('confirming')).toBe('confirming');
+    expect(nowpayments.mapStatus('refunded')).toBe('failed');
+    expect(nowpayments.mapStatus('expired')).toBe('expired');
+    expect(nowpayments.mapStatus('some-new-status')).toBe('pending');
+  });
+});
+
+describe('parsed-event grant cross-check fields', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test('stripe: session events carry the session id + amount_total + currency', async () => {
+    const secret = 'whsec_test';
+    const body = JSON.stringify({
+      id: 'evt_1',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_test_1',
+          client_reference_id: 'order-1',
+          payment_status: 'paid',
+          amount_total: 1400,
+          currency: 'usd',
+        },
+      },
+    });
+    const t = Math.floor(Date.now() / 1000);
+    const sig = `t=${t},v1=${await hmacSha256Hex(secret, `${t}.${body}`)}`;
+    const out = await stripe.verifyAndParse({ rawBody: body, signature: sig, secret });
+    expect(out).toMatchObject({
+      ok: true,
+      status: 'paid',
+      checkoutRef: 'cs_test_1',
+      amountMinor: 1400,
+      amountCurrency: 'USD',
+    });
+  });
+
+  test('paypal: a capture-completed event maps amount + the related order id', async () => {
+    const event = {
+      id: 'WH-1',
+      event_type: 'PAYMENT.CAPTURE.COMPLETED',
+      resource: {
+        id: 'cap_1',
+        custom_id: 'order-1',
+        amount: { currency_code: 'USD', value: '14.00' },
+        supplementary_data: { related_ids: { order_id: 'pp_order_1' } },
+      },
+    };
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('/v1/oauth2/token')) return res({ access_token: 'tok' });
+      if (url.includes('/verify-webhook-signature')) return res({ verification_status: 'SUCCESS' });
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const out = await paypal.verifyAndParse({
+      rawBody: JSON.stringify(event),
+      headers: {},
+      cfg: {
+        clientId: 'id',
+        secret: 's',
+        apiBase: 'https://api.test',
+        webhookId: 'wh',
+      },
+    });
+    expect(out).toMatchObject({
+      ok: true,
+      status: 'paid',
+      orderRef: 'order-1',
+      checkoutRef: 'pp_order_1',
+      amountMinor: 1400,
+      amountCurrency: 'USD',
+    });
+  });
+
+  test('paypal: refund/reversal events map to failed (the refund_seen signal)', async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('/v1/oauth2/token')) return res({ access_token: 'tok' });
+      if (url.includes('/verify-webhook-signature')) return res({ verification_status: 'SUCCESS' });
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    for (const event_type of ['PAYMENT.CAPTURE.REFUNDED', 'PAYMENT.CAPTURE.REVERSED']) {
+      const out = await paypal.verifyAndParse({
+        rawBody: JSON.stringify({
+          id: 'WH-2',
+          event_type,
+          resource: { id: 'refund_1', custom_id: 'order-1' },
+        }),
+        headers: {},
+        cfg: { clientId: 'id', secret: 's', apiBase: 'https://api.test', webhookId: 'wh' },
+      });
+      expect(out).toMatchObject({ ok: true, status: 'failed', orderRef: 'order-1' });
+    }
+  });
+
+  test('btcpay: the settle event binds its own invoice id as checkoutRef', async () => {
+    const secret = 'btcpay-secret';
+    const body = JSON.stringify({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_1',
+      storeId: 'store_1',
+      metadata: { orderId: 'order-1' },
+    });
+    const sig = `sha256=${await hmacSha256Hex(secret, body)}`;
+    const out = await btcpay.verifyAndParse({
+      rawBody: body,
+      signature: sig,
+      webhookSecret: secret,
+    });
+    expect(out).toMatchObject({
+      ok: true,
+      status: 'paid',
+      orderRef: 'order-1',
+      checkoutRef: 'inv_1',
+    });
   });
 });

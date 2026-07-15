@@ -448,6 +448,12 @@ export const applyEvent = internalMutation({
     orderRef: v.optional(v.string()),
     status: orderStatusValidator,
     processorRef: v.string(),
+    // Grant cross-checks from the parsed event (see ParsedEvent in
+    // lib/processors/types.ts): the checkout-minted processor id and the
+    // reported paid amount, when the rail carries them.
+    checkoutRef: v.optional(v.union(v.string(), v.null())),
+    amountMinor: v.optional(v.union(v.number(), v.null())),
+    amountCurrency: v.optional(v.union(v.string(), v.null())),
     // For a 'gift' order being paid: the codes the caller pre-generated (CSPRNG
     // runs in the ingest action). Inserted hash-only into redemptionCodes here;
     // the plaintext is stashed in the order's transient giftReveal buffer.
@@ -462,11 +468,76 @@ export const applyEvent = internalMutation({
       .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', a.orderRef as string))
       .unique();
     if (!order) return { applied: false, granted: false };
-    // Single-grant guard: once paid, ignore everything (idempotent re-delivery).
-    if (order.status === 'paid') return { applied: false, granted: false };
+    // Single-grant guard: once paid, ignore everything (idempotent re-delivery)
+    // — EXCEPT that a refund/reversal-class event for a paid order is audited,
+    // so a chargeback doesn't leave a silently-live membership with no operator
+    // signal. Membership is deliberately NOT auto-revoked (a refund may be
+    // partial/mistaken); the audit row is the operator's action queue.
+    if (order.status === 'paid') {
+      if (a.status === 'failed') {
+        await writeAuditLog(ctx, {
+          actorType: 'webhook',
+          actorId: order.userId,
+          action: 'billing.refund_seen',
+          targetType: 'billing_order',
+          targetId: order._id,
+          payload: {
+            processor: a.processor,
+            amountCents: order.amountCents,
+            reportedMinor: a.amountMinor ?? null,
+          },
+        });
+      }
+      return { applied: false, granted: false };
+    }
 
     const now = Date.now();
     if (a.status === 'paid') {
+      // Defense-in-depth grant refusals (never advance the order, loudly
+      // audited): a paid event whose checkout id doesn't match the invoice/
+      // session/order FCP itself minted, or whose reported amount/currency
+      // undershoots the order, is a processor-side anomaly — e.g. a 1-cent
+      // invoice forged with a victim's orderRef on a shared store/account.
+      const refuse = async (
+        reason: 'ref_mismatch' | 'amount_mismatch',
+      ): Promise<{ applied: boolean; granted: boolean }> => {
+        console.warn(
+          `[billing] grant refused (${reason}) for order ${order.opaqueRef.slice(0, 8)}…`,
+        );
+        await writeAuditLog(ctx, {
+          actorType: 'webhook',
+          actorId: order.userId,
+          action: 'billing.grant_refused',
+          targetType: 'billing_order',
+          targetId: order._id,
+          payload: {
+            processor: a.processor,
+            reason,
+            expectedMinor: order.amountCents,
+            reportedMinor: a.amountMinor ?? null,
+            reportedCurrency: a.amountCurrency ?? null,
+            refMatched: !(
+              a.checkoutRef &&
+              order.processorRef &&
+              a.checkoutRef !== order.processorRef
+            ),
+          },
+        });
+        return { applied: false, granted: false };
+      };
+      if (a.checkoutRef && order.processorRef && a.checkoutRef !== order.processorRef) {
+        return refuse('ref_mismatch');
+      }
+      if (a.amountMinor != null) {
+        const currencyMismatch =
+          a.amountCurrency != null &&
+          a.amountCurrency.toUpperCase() !== order.currency.toUpperCase();
+        // 1-cent tolerance absorbs decimal-string round-tripping; anything more
+        // is a real underpayment/mismatch.
+        if (currencyMismatch || a.amountMinor < order.amountCents - 1) {
+          return refuse('amount_mismatch');
+        }
+      }
       // Standalone donation order: record the donation + fund the free-bandwidth
       // pool + stamp the donor badge; NO tier/membership grant. (Modeled on the
       // gift branch — "paid, but don't extend the buyer's own membership".)
@@ -681,6 +752,9 @@ export const ingestEvent = internalAction({
         orderRef: verified.orderRef ?? undefined,
         status: verified.status,
         processorRef: verified.processorRef,
+        checkoutRef: verified.checkoutRef ?? null,
+        amountMinor: verified.amountMinor ?? null,
+        amountCurrency: verified.amountCurrency ?? null,
         giftCodes,
       });
       await ctx.runMutation(internal.webhooks.markEventProcessed, {

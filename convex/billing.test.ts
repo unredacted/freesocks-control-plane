@@ -911,6 +911,180 @@ describe('billing.applyEvent single-grant guard', () => {
   });
 });
 
+describe('billing.applyEvent grant cross-checks', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test('an underpaid amount refuses the grant and audits it', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    const orderId = await insertPendingOrder(t, userId, memberTierId, 'ref-under');
+    const res = await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-under',
+      status: 'paid',
+      processorRef: 'p1',
+      amountMinor: 1, // 1 cent against a $14.00 order
+      amountCurrency: 'USD',
+    });
+    expect(res).toEqual({ applied: false, granted: false });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(orderId))!.status).toBe('pending'); // untouched
+      expect((await ctx.db.get(userId))!.membershipExpiresAt).toBeUndefined();
+      const audits = await ctx.db.query('auditLog').collect();
+      const refused = audits.find((a) => a.action === 'billing.grant_refused');
+      expect(refused).toBeTruthy();
+      expect(refused!.payload).toMatchObject({ reason: 'amount_mismatch', reportedMinor: 1 });
+    });
+  });
+
+  test('a wrong currency refuses; the exact amount (±1 cent) grants', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-cur');
+    const wrongCurrency = await t.mutation(internal.billing.applyEvent, {
+      processor: 'stripe',
+      orderRef: 'ref-cur',
+      status: 'paid',
+      processorRef: 'cs_1',
+      amountMinor: 1400,
+      amountCurrency: 'EUR',
+    });
+    expect(wrongCurrency).toEqual({ applied: false, granted: false });
+    const ok = await t.mutation(internal.billing.applyEvent, {
+      processor: 'stripe',
+      orderRef: 'ref-cur',
+      status: 'paid',
+      processorRef: 'cs_1',
+      amountMinor: 1399, // within the 1-cent decimal-round-trip tolerance
+      amountCurrency: 'USD',
+    });
+    expect(ok).toEqual({ applied: true, granted: true });
+  });
+
+  test('a checkoutRef that does not match the stored processorRef refuses (forged-invoice guard)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    const orderId = await insertPendingOrder(t, userId, memberTierId, 'ref-forged');
+    // The checkout stored the invoice FCP minted; the settle event names another.
+    await t.run((ctx) => ctx.db.patch(orderId, { processorRef: 'invoice-legit' }));
+    const forged = await t.mutation(internal.billing.applyEvent, {
+      processor: 'btcpay',
+      orderRef: 'ref-forged',
+      status: 'paid',
+      processorRef: 'invoice-attacker',
+      checkoutRef: 'invoice-attacker',
+    });
+    expect(forged).toEqual({ applied: false, granted: false });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(orderId))!.status).toBe('pending');
+      const audits = await ctx.db.query('auditLog').collect();
+      expect(audits.some((a) => a.action === 'billing.grant_refused')).toBe(true);
+    });
+    // The REAL invoice's settle event still grants.
+    const legit = await t.mutation(internal.billing.applyEvent, {
+      processor: 'btcpay',
+      orderRef: 'ref-forged',
+      status: 'paid',
+      processorRef: 'invoice-legit',
+      checkoutRef: 'invoice-legit',
+    });
+    expect(legit).toEqual({ applied: true, granted: true });
+  });
+
+  test('a refund-class event for an already-paid order audits billing.refund_seen', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-refund');
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'paypal',
+      orderRef: 'ref-refund',
+      status: 'paid',
+      processorRef: 'cap_1',
+    });
+    const res = await t.mutation(internal.billing.applyEvent, {
+      processor: 'paypal',
+      orderRef: 'ref-refund',
+      status: 'failed', // PAYMENT.CAPTURE.REFUNDED maps here
+      processorRef: 'refund_1',
+    });
+    expect(res).toEqual({ applied: false, granted: false });
+    await t.run(async (ctx) => {
+      const audits = await ctx.db.query('auditLog').collect();
+      expect(audits.some((a) => a.action === 'billing.refund_seen')).toBe(true);
+      // Membership stays live (operator decides) — refund is a signal, not a revoke.
+      expect((await ctx.db.get(userId))!.membershipExpiresAt).toBeTruthy();
+    });
+  });
+
+  test('a paid grant lifts an idle-deactivated (inactive) account back to active', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await t.run((ctx) => ctx.db.patch(userId, { status: 'inactive' }));
+    await insertPendingOrder(t, userId, memberTierId, 'ref-inactive');
+    const res = await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-inactive',
+      status: 'paid',
+      processorRef: 'p1',
+    });
+    expect(res).toEqual({ applied: true, granted: true });
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      expect(user!.status).toBe('active');
+      expect(user!.tierId).toBe(memberTierId);
+    });
+  });
+});
+
+describe('billing pending sweep ↔ late payment', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test('the sweep expires stale pending/confirming orders and NEVER grants', async () => {
+    // Sub-millisecond TTL (a literal 0 falls back to the 48h default) + a short
+    // sleep so the just-inserted rows age past the cutoff.
+    vi.stubEnv('BILLING_PENDING_TTL_HOURS', '0.000001');
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    const pendingId = await insertPendingOrder(t, userId, memberTierId, 'ref-stale');
+    const confirmingId = await insertPendingOrder(t, userId, memberTierId, 'ref-stale-2');
+    await t.run((ctx) => ctx.db.patch(confirmingId, { status: 'confirming' }));
+    await new Promise((r) => setTimeout(r, 15));
+
+    const { expired } = await t.mutation(internal.retention.expireStalePendingOrders, {});
+    expect(expired).toBe(2);
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(pendingId))!.status).toBe('expired');
+      expect((await ctx.db.get(confirmingId))!.status).toBe('expired');
+      expect((await ctx.db.get(userId))!.membershipExpiresAt).toBeUndefined();
+    });
+  });
+
+  test('a LATE paid webhook still grants after the sweep expired the order', async () => {
+    vi.stubEnv('BILLING_PENDING_TTL_HOURS', '0.000001');
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    const orderId = await insertPendingOrder(t, userId, memberTierId, 'ref-late');
+    await new Promise((r) => setTimeout(r, 15));
+    await t.mutation(internal.retention.expireStalePendingOrders, {});
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(orderId))!.status).toBe('expired');
+    });
+
+    // A slow crypto confirmation lands after expiry: money must not be lost.
+    const res = await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-late',
+      status: 'paid',
+      processorRef: 'p1',
+    });
+    expect(res).toEqual({ applied: true, granted: true });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(orderId))!.status).toBe('paid');
+      expect((await ctx.db.get(userId))!.membershipExpiresAt).toBeTruthy();
+    });
+  });
+});
+
 describe('billing.getOrderStatus scoping', () => {
   afterEach(() => vi.unstubAllEnvs());
 

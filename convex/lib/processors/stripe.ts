@@ -134,11 +134,19 @@ export async function verifyAndParse(args: {
       : null;
   const processorRef = typeof obj.id === 'string' ? obj.id : (event.id ?? '');
   const paymentStatus = typeof obj.payment_status === 'string' ? obj.payment_status : undefined;
+  // On checkout.session.* events the object IS the session minted at checkout,
+  // so its id cross-checks against the order's stored processorRef, and
+  // amount_total (minor units) against the order's cents.
+  const isSessionEvent = type.startsWith('checkout.session.');
   return {
     ok: true,
     orderRef,
     processorRef,
     status: mapEvent(type, paymentStatus),
+    checkoutRef: isSessionEvent && typeof obj.id === 'string' ? obj.id : null,
+    amountMinor: isSessionEvent && typeof obj.amount_total === 'number' ? obj.amount_total : null,
+    amountCurrency:
+      isSessionEvent && typeof obj.currency === 'string' ? obj.currency.toUpperCase() : null,
     // Stripe guarantees idempotency by event id, so dedupe on it.
     dedupeId: `stripe:${event.id ?? processorRef}`,
     summary: {

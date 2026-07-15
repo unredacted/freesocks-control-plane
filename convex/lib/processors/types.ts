@@ -50,6 +50,23 @@ export interface ParsedEvent {
   dedupeId: string;
   /** REDACTED summary safe to persist (no payer PII — no email/name/address). */
   summary: Record<string, unknown>;
+  /**
+   * Defense-in-depth grant cross-checks (applyEvent refuses + audits on
+   * mismatch, so a processor-side anomaly — e.g. an attacker-minted 1-cent
+   * invoice carrying a victim's orderRef on a shared store/account — fails
+   * safe instead of granting):
+   *  - `checkoutRef`: the processor id MINTED AT CHECKOUT (invoice / session /
+   *    order id) when this event carries one; compared against the order's
+   *    stored `processorRef`. Null/absent when the event only carries a
+   *    different id kind (e.g. a PayPal capture id).
+   *  - `amountMinor` + `amountCurrency`: the amount the event reports for a
+   *    PAID transition, in minor units + ISO currency. Null/absent when the
+   *    rail's settle event has no amount (BTCPay — its checkoutRef binding is
+   *    the guard there).
+   */
+  checkoutRef?: string | null;
+  amountMinor?: number | null;
+  amountCurrency?: string | null;
 }
 
 export interface VerifyFailure {

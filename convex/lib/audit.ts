@@ -90,6 +90,22 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'donationCents',
   ],
   'billing.config.update': ['key'],
+  // Grant refused by the defense-in-depth cross-checks (amount/ref mismatch) —
+  // amounts + verdicts only, never payer data.
+  'billing.grant_refused': [
+    'processor',
+    'reason',
+    'expectedMinor',
+    'reportedMinor',
+    'reportedCurrency',
+    'refMatched',
+  ],
+  // Refund/reversal-class event seen for an ALREADY-PAID order: the operator's
+  // chargeback action queue (membership is not auto-revoked).
+  'billing.refund_seen': ['processor', 'amountCents', 'reportedMinor'],
+  // A webhook claim whose grant threw (retryable only until the sender gives
+  // up) — surfaced on the admin billing page as money-at-risk.
+  'billing.webhook.grant_failed': ['source'],
   // Multi-admin onboarding: invite minted / redeemed (username is a non-secret
   // admin label, never the invite token).
   'admin.invite.created': ['username'],

@@ -155,6 +155,11 @@ export async function verifyAndParse(args: {
     orderRef,
     processorRef: invoiceId,
     status: mapEventType(type),
+    // The settle event carries no amount, so the invoice-id binding IS the
+    // grant guard: applyEvent refuses when it differs from the invoice id FCP
+    // itself minted at checkout — an attacker-created invoice on a shared
+    // store (different id, forged metadata.orderId) can never grant.
+    checkoutRef: invoiceId || null,
     // Distinct per (invoice, event type) — a redelivery of the same transition
     // dedupes; a later transition for the same invoice is a fresh event.
     dedupeId: `btcpay:${invoiceId || orderRef || 'unknown'}:${type || 'unknown'}`,

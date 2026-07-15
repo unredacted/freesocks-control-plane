@@ -52,12 +52,17 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
 
   if (user.tierId === a.tierId) {
     const expiryMoved = a.expiresAtMs !== (user.membershipExpiresAt ?? null);
-    const statusLifted = user.status === 'grace' || user.status === 'disabled';
+    const statusLifted =
+      user.status === 'grace' || user.status === 'disabled' || user.status === 'inactive';
     if (expiryMoved || statusLifted) {
       await ctx.db.patch(a.userId, {
         membershipExpiresAt: a.expiresAtMs ?? undefined,
-        // A renewed/extended membership re-activates a lapsed (grace/disabled) user
-        // and clears the lapse markers (mirrors the admin re-enable path).
+        // A renewed/extended membership re-activates a lapsed (grace/disabled)
+        // user and clears the lapse markers (mirrors the admin re-enable path).
+        // An idle-deactivated ('inactive') account is lifted too: a grant can
+        // land via the generic webhook / an fsv1_ token with no login to run
+        // refreshFreeWindow, and a paying member must never stay parked
+        // inactive (the grace sweep only scans status='active').
         ...(statusLifted
           ? { status: 'active' as const, disabledReason: undefined, suspendedAt: undefined }
           : {}),
@@ -74,15 +79,17 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
     return;
   }
 
+  const tierChangeLifts =
+    user.status === 'grace' || user.status === 'disabled' || user.status === 'inactive';
   await ctx.db.patch(a.userId, {
     tierId: a.tierId,
     membershipExpiresAt: a.expiresAtMs ?? undefined,
-    ...(user.status === 'grace' || user.status === 'disabled'
+    ...(tierChangeLifts
       ? { status: 'active' as const, disabledReason: undefined, suspendedAt: undefined }
       : {}),
     updatedAt: Date.now(),
   });
-  if (user.status === 'grace' || user.status === 'disabled') {
+  if (tierChangeLifts) {
     await applyCountsDelta(ctx, { statusFrom: user.status, statusTo: 'active' });
   }
   await ctx.db.insert('tierHistory', {

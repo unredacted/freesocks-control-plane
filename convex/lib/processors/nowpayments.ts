@@ -158,6 +158,13 @@ export async function verifyAndParse(args: {
     orderRef,
     processorRef,
     status: mapStatus(rawStatus),
+    // The invoice id minted at checkout (stored as the order's processorRef);
+    // the grant path cross-checks it. Distinct from payment_id above.
+    checkoutRef: p.invoice_id != null ? String(p.invoice_id) : null,
+    // price_amount is the FIAT price we set on the invoice (not the crypto
+    // amount), so it compares 1:1 against the order's cents.
+    amountMinor: typeof p.price_amount === 'number' ? Math.round(p.price_amount * 100) : null,
+    amountCurrency: typeof p.price_currency === 'string' ? p.price_currency.toUpperCase() : null,
     dedupeId: `nowpayments:${processorRef || orderRef || 'unknown'}:${rawStatus || 'unknown'}`,
     summary: {
       payment_status: rawStatus,

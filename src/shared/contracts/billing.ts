@@ -164,6 +164,15 @@ export const AdminBillingOverview = z.object({
   config: BillingConfigView,
   secretStatus: ProcessorSecretStatus,
   orders: z.array(AdminBillingOrder),
+  /** Webhook claims stuck 'failed' (grant threw; sender's retries exhausted =
+   *  a paid-but-ungranted order). Optional/defaulted for rolling-deploy compat. */
+  failedWebhooks: z
+    .object({
+      count: z.number().int(),
+      recent: z.array(z.object({ eventId: z.string(), source: z.string(), at: z.string() })),
+    })
+    .optional()
+    .default({ count: 0, recent: [] }),
   nextCursor: z.string().nullable(),
 });
 export type AdminBillingOverview = z.infer<typeof AdminBillingOverview>;

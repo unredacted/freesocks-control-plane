@@ -384,7 +384,10 @@ export default defineSchema({
     status: v.optional(v.union(v.literal('pending'), v.literal('processed'), v.literal('failed'))),
   })
     .index('by_event_id', ['eventId'])
-    .index('by_source', ['source']),
+    .index('by_source', ['source'])
+    // Failed-claim surface for the admin billing page (a stuck 'failed' claim
+    // past the sender's retry window = a paid-but-ungranted order).
+    .index('by_status', ['status']),
 
   // Self-service membership purchases: one row per checkout. The member's
   // `userId` is bound HERE, server-side — it is NEVER sent to the processor as

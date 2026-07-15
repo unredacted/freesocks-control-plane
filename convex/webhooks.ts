@@ -16,6 +16,7 @@ import { internal } from './_generated/api';
 import { ConvexError, v } from 'convex/values';
 import { hmacSha256Hex, timingSafeEqual } from './lib/crypto';
 import { hashAccountId, normalizeAccountId } from './lib/accountId';
+import { writeAuditLog } from './lib/audit';
 
 type IngestResult = { ok: true; duplicate?: boolean; applied: boolean; reason?: string };
 
@@ -149,6 +150,19 @@ export const markEventFailed = internalMutation({
       .query('webhookEvents')
       .withIndex('by_event_id', (q) => q.eq('eventId', eventId))
       .unique();
-    if (row) await ctx.db.patch(row._id, { status: 'failed' });
+    if (row) {
+      await ctx.db.patch(row._id, { status: 'failed' });
+      // A failed claim is retryable ONLY by the sender's redelivery, and senders
+      // give up (Stripe ~3 days, NOWPayments a handful of attempts) — after
+      // which a paid-but-ungranted order would be invisible. Audit it so the
+      // admin billing page + audit log surface the money-at-risk event.
+      await writeAuditLog(ctx, {
+        actorType: 'webhook',
+        action: 'billing.webhook.grant_failed',
+        targetType: 'webhook_event',
+        targetId: eventId,
+        payload: { source: row.source },
+      });
+    }
   },
 });
