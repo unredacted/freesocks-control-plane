@@ -329,7 +329,11 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   (`bun run i18n:keys` + `i18n:compile`); `t()` is a thin shim over the compiled `m` (the old
   hand-rolled TS catalogs are gone). Locales en/fa/ar/ru/zh, RTL via `<html dir>`, persisted
   language switcher, Persian/Arabic-Indic digit normalization; non-English locales auto-filled
-  (`bun run i18n:translate`). Critical journey strings done. `bun run i18n:review`
+  (`bun run i18n:translate` locally, or automatically: the `i18n-translate.yml` workflow runs
+  machine translate on every `v2` push that touches `messages/en.json` and commits the filled
+  catalogs back — needs the `INLANG_GOOGLE_TRANSLATE_API_KEY` repo secret; fills missing
+  messages only, never overwrites an existing translation). Critical journey strings done.
+  `bun run i18n:review`
   (`scripts/i18n-review-packet.ts`) generates the per-locale native-review packets in
   `translation-review/*.md` (English-vs-current tables per namespace, missing keys flagged,
   ICU plurals per variant, reviewer instructions); the human review pass is in progress.
