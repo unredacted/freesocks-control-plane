@@ -314,10 +314,27 @@ How a placement is chosen (all Remnawave-local, under `convex/remnawaveNodes.ts`
   that has none, deterministically) — so renewals/downgrades can't thrash a live
   key across nodes. Only **regenerate** / **switch-mode** / **switch-backend**
   re-pick.
-- Each squad in a pool must live on the **same panel** the tier's backend routes to
-  (FCP can't validate this). **Admin → Remnawave** shows a read-only per-placement
-  node-load panel (`GET /api/v1/admin/remnawave/node-stats`, scope
-  `admin:servers:read`).
+- **Multi-panel pairing (2026-07-16):** a mode's pool may span several panels, and
+  a squad UUID only exists on its own panel — so issuance resolves the
+  **(placement, panel) pair together** (`resolvePlacementTarget`): each pool squad
+  is attributed to its panel via its `remnawaveNodeStats` row and the pick pins
+  `issueUser` to that instance (`pinServerId`). A squad with no stats row yet
+  (bring-up) can't be attributed; the pick then falls back to the historical
+  global behavior. The in-place mode switch hard-pins to the key's OWN panel and
+  falls back to a re-issue when the target mode has no squad there. **Admin →
+  Remnawave** shows a read-only per-placement node-load panel
+  (`GET /api/v1/admin/remnawave/node-stats`, scope `admin:servers:read`).
+- **Locations (member-facing):** a backend-server row may carry a `location` code
+  - display label ("MCI" / "Kansas City, MO"; Admin → Servers or the by-slug
+    upsert). One panel manages one location's nodes by convention. Active located
+    Remnawave instances are projected publicly as `publicConfig.locations`
+    (code/label/online only); a member may pick one when creating/regenerating a
+    key (persisted as `users.preferredLocation`; 'auto' = least-loaded anywhere).
+    The filter is **fail-soft**: a stale/offline location never blocks issuance.
+- **Member node status:** `GET /api/v1/account/node-status` reports the online
+  bit of the squad behind the member's key (refreshed on demand, at most once per
+  instance per minute via a serializable stampede guard; instance-health fallback
+  for Outline/legacy keys). The SPA polls it (~30s) for the hero badge.
 
 Operator sizing: one squad per node, add them all to the mode's pool, and FCP fills
 the emptiest node at issuance. `maxKeys` on an instance is the generic hard cap for

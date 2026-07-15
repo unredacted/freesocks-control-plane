@@ -75,7 +75,38 @@ ids), enforced by an allowlist, and is covered by a test that asserts a
   `max(now, currentExpiry) + durationDays` (where `durationDays = round(months ×
 30.44)` → 1/3/6/12 mo = 30/91/183/365 d).
 - `failed`/`expired`: terminal, no grant. Abandoned `pending`/`confirming` orders
-  are swept to `expired` after `BILLING_PENDING_TTL_HOURS` (default 48).
+  are swept to `expired` after `BILLING_PENDING_TTL_HOURS` (default 48). A LATE
+  paid webhook (a slow crypto confirmation landing after the sweep) still grants —
+  `expired → paid` is deliberately allowed so money is never silently lost (tested).
+
+### Grant cross-checks (defense-in-depth, 2026-07-16)
+
+Beyond the signature layer, a `paid` webhook must match the order it grants —
+`applyEvent` refuses and audits (`billing.grant_refused`) when:
+
+- the event's **checkout id** (invoice / session / order id, per rail) differs
+  from the `processorRef` FCP itself stored at checkout. This closes the
+  shared-store forged-invoice path: an invoice someone else minted on the same
+  BTCPay store / Stripe account with a victim's `orderRef` in its metadata can
+  never grant, because its id isn't the one FCP created.
+- the event's **reported amount** undershoots the order (1-cent tolerance) or
+  its currency differs. NOWPayments reports the fiat `price_amount`; Stripe the
+  session `amount_total`; PayPal the capture/order money object. BTCPay's settle
+  event carries no amount — its checkout-id binding is the guard there.
+
+A refusal never advances the order (the REAL invoice's webhook can still grant).
+
+### Failure visibility
+
+- A webhook claim whose grant **threw** stays retryable via the sender's
+  redelivery — but senders give up (Stripe ~3 days). `markEventFailed` audits
+  (`billing.webhook.grant_failed`) and **Admin → Billing** shows a money-at-risk
+  warning (count + recent failed events): a claim stuck `failed` past the retry
+  window is a paid-but-ungranted order to grant manually.
+- A **refund/reversal-class** event for an already-paid order is audited
+  (`billing.refund_seen`; PayPal `PAYMENT.CAPTURE.REFUNDED`/`REVERSED`,
+  NOWPayments `refunded`). Membership is NOT auto-revoked — the operator decides
+  (see "Refunds").
 
 ## Gift purchases
 
