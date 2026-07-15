@@ -257,8 +257,17 @@
     class="relative grid gap-10 md:grid-cols-[1.2fr_1fr] md:gap-16 items-center pt-8 md:pt-16"
     in:fade={{ duration: 300 }}
   >
-    <!-- Ambient brand glow + dither dot grid behind the headline (pure CSS, static). -->
-    <div class="hero-glow absolute -inset-x-6 -top-8 bottom-0 -z-10" aria-hidden="true"></div>
+    <!-- Ambient brand glows + dither dot grid behind the hero (pure CSS, static).
+         The second, fainter pool sits behind the free-tier card (md+, where the
+         card is actually beside the headline). -->
+    <div
+      class="ambient-glow hero-glow absolute -inset-x-6 -top-8 bottom-0 -z-10"
+      aria-hidden="true"
+    ></div>
+    <div
+      class="ambient-glow hero-card-glow absolute -inset-x-6 -top-8 bottom-0 -z-10 hidden md:block"
+      aria-hidden="true"
+    ></div>
     <div
       class="dot-grid absolute -inset-x-6 -top-8 bottom-0 -z-10 opacity-40 dark:opacity-25"
       aria-hidden="true"
@@ -570,7 +579,11 @@
   <!-- MEMBERSHIP / pricing - only when billing is live (reuses the comparison
        card, which shows "from <price>/mo" + an Upgrade CTA). -->
   {#if billingEnabled}
-    <section class="space-y-6">
+    <section class="relative space-y-6">
+      <div
+        class="ambient-glow membership-glow absolute -inset-x-6 -inset-y-10 -z-10"
+        aria-hidden="true"
+      ></div>
       <div class="max-w-2xl space-y-2">
         {@render eyebrow('membership')}
         <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
@@ -698,7 +711,13 @@
   <!-- ABOUT: short, factual, no invented programs. Two columns: the story +
        CTAs on the left, fact rows on the right. The operator/nonprofit line
        appears once (the body); the fact rows carry what the body doesn't. -->
-  <section>
+  <section class="relative">
+    <!-- Bookend pool at the inline end (the card is opaque, so this reads as a
+         soft halo just past its edges). -->
+    <div
+      class="ambient-glow about-glow absolute -inset-x-6 -inset-y-10 -z-10"
+      aria-hidden="true"
+    ></div>
     <div class="rounded-2xl border border-border bg-card p-6 md:p-10">
       <div class="grid gap-8 md:grid-cols-[1.2fr_1fr] md:items-center">
         <div class="max-w-2xl space-y-3">
@@ -714,6 +733,9 @@
               target="_blank"
               rel="noopener noreferrer">Unredacted</a
             >{t('home.about.bodySuffix')}
+          </p>
+          <p class="text-muted-foreground leading-relaxed">
+            {t('home.about.body2')}
           </p>
           <div class="flex flex-wrap gap-3 pt-2">
             <!--

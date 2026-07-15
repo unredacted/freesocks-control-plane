@@ -855,6 +855,7 @@
       "title": "About FreeSocks",
       "bodyPrefix": "FreeSocks is operated by",
       "bodySuffix": ", a US 501(c)(3) nonprofit.",
+      "body2": "Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it.",
       "siteLink": "unredacted.org",
       "openSource": "The code that runs this service is published for anyone to inspect, audit, or run themselves.",
       "viewSourceCta": "View the source",

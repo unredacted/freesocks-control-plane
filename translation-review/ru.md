@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**184 of 646 strings are missing** (the app currently shows English for
+**185 of 647 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -690,7 +690,7 @@ review.
 | `delivery.switchSuccessBody` | Same subscription URL - your apps will pick up the new servers on their next refresh. | Повторно импортируйте новый URL-адрес подписки на каждом устройстве. |
 | `delivery.switchFailedTitle` | Could not switch focus | Не удалось переключить фокус. |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(36 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(37 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -763,6 +763,7 @@ review.
 | `home.about.title` | About FreeSocks | ⚠️ **MISSING** |
 | `home.about.bodyPrefix` | FreeSocks is operated by | FreeSocks управляется компанией |
 | `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ⚠️ **MISSING** |
+| `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | ⚠️ **MISSING** |
 | `home.about.siteLink` | unredacted.org | unredacted.org |
 | `home.about.openSource` | The code that runs this service is published for anyone to inspect, audit, or run themselves. | ⚠️ **MISSING** |
 | `home.about.viewSourceCta` | View the source | ⚠️ **MISSING** |

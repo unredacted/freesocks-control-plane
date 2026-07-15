@@ -266,45 +266,71 @@
     transparent 1.5px
   );
   background-size: 22px 22px;
-  mask-image: radial-gradient(ellipse 70% 60% at 30% 20%, black 0%, transparent 70%);
+  /* The mask must hit full transparency BEFORE every box edge (35/50 = 70% and
+     30/45 = 67% of the radius, both past the 65% stop), or the dots clip in a
+     hard straight line at the container boundary. */
+  mask-image: radial-gradient(ellipse 50% 45% at 35% 30%, black 0%, transparent 65%);
 }
 /* Mirror the fade toward the headline (which sits at the inline start) in RTL. */
 [dir='rtl'] .dot-grid {
-  mask-image: radial-gradient(ellipse 70% 60% at 70% 20%, black 0%, transparent 70%);
+  mask-image: radial-gradient(ellipse 50% 45% at 65% 30%, black 0%, transparent 65%);
 }
 
-/* Ambient hero glow: one soft pool of brand color washing the headline corner,
-   layered under the dot grid. Derives from --primary so it tracks both themes
-   and the admin brand hue; deliberately page-level ambience, not a per-card
-   halo. Slightly stronger in dark mode, where the wash reads dimmer. */
-.hero-glow {
+/* Ambient glows: soft pools of brand color placed per section. One base class
+   carries the gradient; the semantic classes only position and weight it.
+   Every pool's transparent stop (68% of the radius) is reached before the
+   nearest box edge, so no pool ever clips into a hard line. Derives from
+   --primary (tracks both themes + the admin brand hue); stronger in dark mode,
+   where the same wash reads dimmer. */
+.ambient-glow {
+  --glow-a: 13%;
+  --glow-size: 45% 40%;
+  --glow-at: 35% 30%;
   background: radial-gradient(
-    ellipse 60% 55% at 22% 12%,
-    color-mix(in oklch, var(--primary) 13%, transparent),
-    transparent 70%
+    ellipse var(--glow-size) at var(--glow-at),
+    color-mix(in oklch, var(--primary) var(--glow-a), transparent),
+    transparent 68%
   );
 }
-.dark .hero-glow {
-  background: radial-gradient(
-    ellipse 60% 55% at 22% 12%,
-    color-mix(in oklch, var(--primary) 20%, transparent),
-    transparent 70%
-  );
+.dark .ambient-glow {
+  --glow-a: 20%;
+}
+/* Hero: the main pool washes the headline corner; mirrored in RTL. */
+.hero-glow {
+  --glow-at: 32% 28%;
+  --glow-size: 42% 38%;
 }
 [dir='rtl'] .hero-glow {
-  background: radial-gradient(
-    ellipse 60% 55% at 78% 12%,
-    color-mix(in oklch, var(--primary) 13%, transparent),
-    transparent 70%
-  );
+  --glow-at: 68% 28%;
 }
-[dir='rtl'].dark .hero-glow,
-.dark [dir='rtl'] .hero-glow {
-  background: radial-gradient(
-    ellipse 60% 55% at 78% 12%,
-    color-mix(in oklch, var(--primary) 20%, transparent),
-    transparent 70%
-  );
+/* Hero, second pool: a fainter wash behind the free-tier card. */
+.hero-card-glow {
+  --glow-at: 78% 42%;
+  --glow-size: 28% 33%;
+  --glow-a: 8%;
+}
+.dark .hero-card-glow {
+  --glow-a: 12%;
+}
+[dir='rtl'] .hero-card-glow {
+  --glow-at: 22% 42%;
+}
+/* Membership: centered pool behind the tier-comparison cards. */
+.membership-glow {
+  --glow-at: 50% 35%;
+  --glow-size: 45% 40%;
+  --glow-a: 10%;
+}
+.dark .membership-glow {
+  --glow-a: 16%;
+}
+/* About: a bookend pool at the inline end, opposite the hero's. */
+.about-glow {
+  --glow-at: 70% 45%;
+  --glow-size: 38% 42%;
+}
+[dir='rtl'] .about-glow {
+  --glow-at: 30% 45%;
 }
 
 /* Scroll-triggered reveal (see src/client/lib/actions/reveal.ts): the action

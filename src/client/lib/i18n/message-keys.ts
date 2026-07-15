@@ -332,6 +332,7 @@ export type MessageKey =
   | "hero.urlLabelSubscription"
   | "hero.usedSoFar"
   | "hero.viaLine"
+  | "home.about.body2"
   | "home.about.bodyPrefix"
   | "home.about.bodySuffix"
   | "home.about.fact2Title"
