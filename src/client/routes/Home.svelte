@@ -185,8 +185,7 @@
   // lands on the threat tab directly.
   let faqTab = $state(window.location.hash === '#threat-model' ? 'threat' : 'general');
 
-  // Numbered section eyebrows ("01 / Features"): MEMBERSHIP and IMPACT are
-  // conditional, so numbering derives from the visible list (no gaps).
+  // Section kickers: a short accent bar + small label above each heading.
   const SECTION_LABELS = {
     features: 'home.sections.features',
     privacy: 'home.sections.privacy',
@@ -197,31 +196,17 @@
     about: 'home.sections.about',
   } as const satisfies Record<string, MessageKey>;
   type SectionId = keyof typeof SECTION_LABELS;
-  const sectionOrder = $derived<SectionId[]>([
-    'features',
-    'privacy',
-    'how',
-    ...(billingEnabled ? (['membership'] as const) : []),
-    ...(billingEnabled && donation?.enabled ? (['impact'] as const) : []),
-    'faq',
-    'about',
-  ]);
-  function sectionNo(id: SectionId): string {
-    return String(sectionOrder.indexOf(id) + 1).padStart(2, '0');
-  }
 
   // Count-up trigger: the impact stats animate once the section scrolls into view.
   let impactRevealed = $state(false);
 </script>
 
 {#snippet eyebrow(id: SectionId)}
-  <div class="flex items-center gap-3">
-    <p
-      class="font-mono text-[11px] font-medium uppercase tracking-[0.2em] text-primary tabular-nums whitespace-nowrap"
-    >
-      {sectionNo(id)} / {t(SECTION_LABELS[id])}
+  <div class="flex items-center gap-2.5">
+    <span class="h-0.5 w-6 rounded-full bg-primary" aria-hidden="true"></span>
+    <p class="text-xs font-semibold uppercase tracking-wide text-primary">
+      {t(SECTION_LABELS[id])}
     </p>
-    <span class="h-px flex-1 bg-border" aria-hidden="true"></span>
   </div>
 {/snippet}
 
@@ -272,7 +257,8 @@
     class="relative grid gap-10 md:grid-cols-[1.2fr_1fr] md:gap-16 items-center pt-8 md:pt-16"
     in:fade={{ duration: 300 }}
   >
-    <!-- Dither-flavored emerald dot grid behind the headline (pure CSS, static). -->
+    <!-- Ambient brand glow + dither dot grid behind the headline (pure CSS, static). -->
+    <div class="hero-glow absolute -inset-x-6 -top-8 bottom-0 -z-10" aria-hidden="true"></div>
     <div
       class="dot-grid absolute -inset-x-6 -top-8 bottom-0 -z-10 opacity-40 dark:opacity-25"
       aria-hidden="true"
@@ -646,7 +632,10 @@
             {t('impact.externalNote')}
           </p>
         </div>
-        <div class="donation-sheen rounded-xl border border-amber-500/30 bg-background/60 p-4">
+        <!-- Soft warm glow anchors the chart as the band's focal point. -->
+        <div
+          class="donation-sheen rounded-xl border border-amber-500/30 bg-background/60 p-4 shadow-[0_0_70px_-12px_rgba(245,158,11,0.45)]"
+        >
           <DitherChart
             values={impactSeries.map((h) => h.bonusGb)}
             labels={impactSeries.map((h) => h.month)}

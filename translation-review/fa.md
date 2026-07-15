@@ -720,7 +720,7 @@ review.
 | `home.impact.cta` | Make a donation | ⚠️ **MISSING** |
 | `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | ⚠️ **MISSING** |
 | `home.hero.title` | A free VPN for people in censored countries & around the world | ⚠️ **MISSING** |
-| `home.hero.subtitle` | FreeSocks exists to get people online where the internet is censored, and works as a privacy-friendly VPN anywhere. One human-check creates your account: no email, no password, nothing that identifies you. Paste your subscription URL into any modern VPN client. A FreeSocks membership unlocks {limits}. | ⚠️ **MISSING** |
+| `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | ⚠️ **MISSING** |
 | `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | ⚠️ **MISSING** |
 | `home.hero.impactLink` | See the impact | ⚠️ **MISSING** |
 | `home.cta.getMembership` | Get a membership | عضویت بگیرید |

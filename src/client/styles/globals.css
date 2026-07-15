@@ -273,6 +273,40 @@
   mask-image: radial-gradient(ellipse 70% 60% at 70% 20%, black 0%, transparent 70%);
 }
 
+/* Ambient hero glow: one soft pool of brand color washing the headline corner,
+   layered under the dot grid. Derives from --primary so it tracks both themes
+   and the admin brand hue; deliberately page-level ambience, not a per-card
+   halo. Slightly stronger in dark mode, where the wash reads dimmer. */
+.hero-glow {
+  background: radial-gradient(
+    ellipse 60% 55% at 22% 12%,
+    color-mix(in oklch, var(--primary) 13%, transparent),
+    transparent 70%
+  );
+}
+.dark .hero-glow {
+  background: radial-gradient(
+    ellipse 60% 55% at 22% 12%,
+    color-mix(in oklch, var(--primary) 20%, transparent),
+    transparent 70%
+  );
+}
+[dir='rtl'] .hero-glow {
+  background: radial-gradient(
+    ellipse 60% 55% at 78% 12%,
+    color-mix(in oklch, var(--primary) 13%, transparent),
+    transparent 70%
+  );
+}
+[dir='rtl'].dark .hero-glow,
+.dark [dir='rtl'] .hero-glow {
+  background: radial-gradient(
+    ellipse 60% 55% at 78% 12%,
+    color-mix(in oklch, var(--primary) 20%, transparent),
+    transparent 70%
+  );
+}
+
 /* Scroll-triggered reveal (see src/client/lib/actions/reveal.ts): the action
    sets data-reveal only when an observer will actually run, so content never
    ships hidden. Uses the standalone `translate` property - it composes with
