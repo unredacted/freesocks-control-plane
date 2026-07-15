@@ -2,7 +2,11 @@
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "faq": {
     "title": "Frequently asked questions",
-    "subtitle": "The basics, answered. Still stuck? Reach out with your Support ID.",
+    "subtitle": "The basics, answered.",
+    "tabGeneral": "General",
+    "tabThreat": "What we protect you from",
+    "contactPrefix": "Still stuck? Email",
+    "contactSuffix": "and include your Support ID.",
     "q1": {
       "question": "What is FreeSocks?",
       "answer": "A free proxy service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit."
@@ -41,7 +45,6 @@
     }
   },
   "threat": {
-    "title": "What FreeSocks protects you from",
     "subtitle": "An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are.",
     "q1": {
       "question": "What does FreeSocks protect me from?",
@@ -61,7 +64,7 @@
     },
     "q5": {
       "question": "Can my government or ISP tell that I am using FreeSocks?",
-      "answer": "Sometimes censors can detect that circumvention traffic is in use even when they cannot read it. Our transports are designed to look like ordinary encrypted web traffic, and the Beat censorship mode routes through infrastructure that is expensive to block. Still, whether use is detectable, and what the consequences are, varies by country. Weigh your local risk."
+      "answer": "Sometimes censors can detect that circumvention traffic is in use even when they cannot read it. Our transports are designed to look like ordinary encrypted web traffic, and Internet Freedom Mode routes through infrastructure that is expensive to block. Still, whether use is detectable, and what the consequences are, varies by country. Weigh your local risk."
     },
     "q6": {
       "question": "Why should I believe any of this?",
@@ -138,7 +141,9 @@
   },
   "support": {
     "label": "Support ID",
-    "hint": "Share this if you contact us. It is NOT your sign-in number and grants no access."
+    "hint": "Share this if you contact us. It is NOT your sign-in number and grants no access.",
+    "emailUs": "Email us:",
+    "getAccountLine": "Questions or problems? Email us at"
   },
   "login": {
     "title": "Sign in with your account number",
@@ -525,7 +530,8 @@
     "transparency": "Transparency Report",
     "socialX": "FreeSocks on X",
     "socialMastodon": "FreeSocks on Mastodon",
-    "socialBluesky": "FreeSocks on Bluesky"
+    "socialBluesky": "FreeSocks on Bluesky",
+    "support": "Support"
   },
   "renew": {
     "expiringTitle": "Your membership is expiring soon",
@@ -707,10 +713,10 @@
     "subtitle": "Pick a focus. It's saved on this device only, and you can change it anytime.",
     "subtitleServer": "Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same.",
     "subtitleSignup": "Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime.",
-    "evadeTitle": "Beat censorship",
+    "evadeTitle": "Internet Freedom Mode",
     "evadeAudience": "For censored countries",
     "evadeBody": "Pick this if websites, apps, or VPNs are blocked where you are. Built to keep working under censorship, with backup links that are harder to block.",
-    "privacyTitle": "Maximum privacy",
+    "privacyTitle": "Privacy Mode",
     "privacyAudience": "For open internet",
     "privacyBody": "Pick this if the internet is mostly open where you are. The strongest confidentiality - your configuration stays off third-party servers - but it is easier for censors to block.",
     "recommended": "Recommended",
@@ -743,6 +749,34 @@
     "switchFailedTitle": "Could not switch focus"
   },
   "home": {
+    "trust": {
+      "nonprofit": "Run by a US 501(c)(3) nonprofit",
+      "openSource": "Open source",
+      "noLogs": "No traffic logs"
+    },
+    "network": {
+      "title": "Network status",
+      "offline": "offline",
+      "srOnline": "online",
+      "srOffline": "offline",
+      "note": "Checked every 10 minutes"
+    },
+    "quicknav": {
+      "label": "Jump to a section",
+      "privacy": "What we store",
+      "threat": "Can it protect me?",
+      "faq": "FAQ",
+      "impact": "Donation impact"
+    },
+    "sections": {
+      "features": "The service",
+      "privacy": "Privacy",
+      "how": "Getting started",
+      "membership": "Membership",
+      "impact": "Impact",
+      "faq": "Answers",
+      "about": "Who runs this"
+    },
     "impact": {
       "title": "Donations at work",
       "body": "Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too.",
@@ -824,7 +858,12 @@
       "bodySuffix": ", a US 501(c)(3) nonprofit. Free accounts are funded by donations and paying members.",
       "siteLink": "unredacted.org",
       "openSource": "FreeSocks is fully open source. The code that runs this service is published for anyone to inspect, audit, or run themselves.",
-      "viewSourceCta": "View the source"
+      "viewSourceCta": "View the source",
+      "fact1Title": "US 501(c)(3) nonprofit",
+      "fact1Body": "Run by Unredacted, not a company selling your data.",
+      "fact2Title": "Fully open source",
+      "fact3Title": "Funded by people",
+      "fact3Body": "Donations and memberships pay for free access. No ads, no trackers, no data sales."
     },
     "limits": {
       "unlimitedBoth": "unlimited bandwidth and devices",

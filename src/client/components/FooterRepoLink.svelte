@@ -3,10 +3,11 @@
   import { t } from '../lib/i18n/index.svelte';
 
   /**
-   * Footer links - admin-configurable via publicConfig.site: a "View source" repo
-   * link (toggle + https URL) plus optional Terms of Service / Privacy Policy /
-   * Transparency Report links and X / Mastodon / Bluesky profile icons (https URL
-   * only - an empty URL hides the link). Its own component (not inline in
+   * Footer links - admin-configurable via publicConfig.site: a support mailto
+   * link (email; blank hides it), a "View source" repo link (toggle + https URL),
+   * plus optional Terms of Service / Privacy Policy / Transparency Report links
+   * and X / Mastodon / Bluesky profile icons (https URL only - an empty URL hides
+   * the link). Its own component (not inline in
    * App.svelte's footer) because App hosts the QueryClientProvider, so configQuery()
    * can only run from a child inside the provider tree. The server sanitizes each URL
    * to https-only, so '' (or an unsafe value) → hidden.
@@ -18,6 +19,11 @@
   const site = $derived(cfg.data?.site);
 </script>
 
+{#if site?.supportEmail}
+  <a class="hover:text-foreground" href="mailto:{site.supportEmail}">
+    {t('footer.support')}
+  </a>
+{/if}
 {#if site?.repoEnabled && site.repoUrl}
   <a class="hover:text-foreground" href={site.repoUrl} target="_blank" rel="noopener noreferrer">
     {t('footer.viewSource')}

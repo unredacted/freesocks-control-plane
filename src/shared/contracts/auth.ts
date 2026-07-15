@@ -205,6 +205,8 @@ export const PublicConfig = z.object({
       socialXUrl: z.string().optional().default(''),
       socialMastodonUrl: z.string().optional().default(''),
       socialBlueskyUrl: z.string().optional().default(''),
+      /** Support email for mailto: links; '' = unset (support links hidden). */
+      supportEmail: z.string().optional().default(''),
     })
     .optional(),
   /** Member-facing connection-mode catalog (the transport chooser): id +

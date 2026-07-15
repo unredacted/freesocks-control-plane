@@ -137,6 +137,7 @@
     socialXUrl: string;
     socialMastodonUrl: string;
     socialBlueskyUrl: string;
+    supportEmail: string;
   }>({
     bannerEnabled: false,
     bannerText: '',
@@ -148,6 +149,7 @@
     socialXUrl: '',
     socialMastodonUrl: '',
     socialBlueskyUrl: '',
+    supportEmail: '',
   });
   let sInit = $state(false);
   $effect(() => {
@@ -164,6 +166,7 @@
         socialXUrl: s.socialXUrl,
         socialMastodonUrl: s.socialMastodonUrl,
         socialBlueskyUrl: s.socialBlueskyUrl,
+        supportEmail: s.supportEmail,
       };
       sInit = true;
     }
@@ -181,6 +184,7 @@
         socialXUrl: z.string(),
         socialMastodonUrl: z.string(),
         socialBlueskyUrl: z.string(),
+        supportEmail: z.string(),
       });
       return apiClient.patch('/api/v1/admin/site', sDraft, Resp);
     },
@@ -746,6 +750,23 @@
               Leave a URL blank to hide that footer link. All URLs must be https.
             </p>
           </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-support-email">
+              Support email
+            </label>
+            <Input
+              id="site-support-email"
+              type="email"
+              placeholder="help@example.org"
+              value={sDraft.supportEmail}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, supportEmail: (e.target as HTMLInputElement).value })}
+            />
+            <p class="text-xs text-muted-foreground mt-1">
+              Shown as a mailto support link in the footer, the home-page FAQ, and the account
+              pages. Blank hides all support links.
+            </p>
+          </div>
           <div class="flex justify-end">
             {#if !sInit}
               <span class="me-3 self-center text-xs text-muted-foreground"
@@ -763,7 +784,7 @@
         <CardHeader>
           <CardTitle class="text-base">Connection modes</CardTitle>
           <CardDescription>
-            The member-facing transport choice: "Beat censorship" (evade) and "Maximum privacy"
+            The member-facing transport choice: "Internet Freedom Mode" (evade) and "Privacy Mode"
             (privacy). Set the default and, optionally, a custom label/description that replaces the
             member picker's translated copy verbatim in EVERY language (leave blank to keep the
             app's own translations). Which Remnawave nodes each mode issues into - the placement
@@ -780,7 +801,7 @@
                 checked={cpDraft.default === 'evade'}
                 onchange={() => (cpDraft = { ...cpDraft, default: 'evade' })}
               />
-              Beat censorship (evade)
+              Internet Freedom Mode (evade)
               {#if cpDraft.default === 'evade'}
                 <span
                   class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
@@ -794,7 +815,7 @@
               >
               <Input
                 id="cp-evade-label"
-                placeholder="Beat censorship"
+                placeholder="Internet Freedom Mode"
                 value={cpDraft.evadeLabel}
                 oninput={(e) =>
                   (cpDraft = { ...cpDraft, evadeLabel: (e.target as HTMLInputElement).value })}
@@ -828,7 +849,7 @@
                 checked={cpDraft.default === 'privacy'}
                 onchange={() => (cpDraft = { ...cpDraft, default: 'privacy' })}
               />
-              Maximum privacy (privacy)
+              Privacy Mode (privacy)
               {#if cpDraft.default === 'privacy'}
                 <span
                   class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
@@ -842,7 +863,7 @@
               >
               <Input
                 id="cp-privacy-label"
-                placeholder="Maximum privacy"
+                placeholder="Privacy Mode"
                 value={cpDraft.privacyLabel}
                 oninput={(e) =>
                   (cpDraft = { ...cpDraft, privacyLabel: (e.target as HTMLInputElement).value })}

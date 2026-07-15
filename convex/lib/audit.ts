@@ -68,6 +68,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'repoUrl',
     'tosUrl',
     'privacyUrl',
+    'supportEmail',
   ],
   // Member opt-in passkeys: enroll / revoke (device label is a non-secret display
   // string; the credential id / public key are never logged). Login is audited as

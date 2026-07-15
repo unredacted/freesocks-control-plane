@@ -16,16 +16,21 @@
   import Link from '../components/Link.svelte';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
+  import * as Tabs from '@client/components/ui/tabs';
   import TierComparison from '../components/TierComparison.svelte';
+  import NetworkStatus from '../components/NetworkStatus.svelte';
+  import CountUp from '../components/CountUp.svelte';
+  import { reveal } from '../lib/actions/reveal';
   import { meQuery, configQuery } from '../lib/queries';
   import { membershipTier, tierLimits, deviceLimitsShown, type TierLimits } from '../lib/tiers';
   import { baselinePerMonth } from '../lib/billing';
-  import { t } from '../lib/i18n/index.svelte';
+  import { t, type MessageKey } from '../lib/i18n/index.svelte';
   import { formatMoney } from '../lib/i18n/format';
   import { router } from '../stores/router.svelte';
   import { fly, fade, slide } from 'svelte/transition';
   import { quintOut } from 'svelte/easing';
   import SocksIcon from '../components/SocksIcon.svelte';
+  import Landmark from '@lucide/svelte/icons/landmark';
   import Lock from '@lucide/svelte/icons/lock';
   import Globe from '@lucide/svelte/icons/globe';
   import Smartphone from '@lucide/svelte/icons/smartphone';
@@ -61,11 +66,11 @@
   function goDonate() {
     router.navigate(me.data?.authenticated ? '/account?tab=membership' : '/get-account');
   }
-  // Hero callout → the impact section further down the page. Smooth only when
-  // the user hasn't asked for reduced motion (JS scrolls bypass the CSS clamp).
-  function scrollToImpact() {
+  // In-page anchors (hero callout + quick-nav chips). Smooth only when the user
+  // hasn't asked for reduced motion (JS scrolls bypass the CSS clamp).
+  function scrollToId(id: string) {
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    document.getElementById('impact')?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
+    document.getElementById(id)?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
   }
 
   // Compose a localized limits phrase from the structured (DB-driven) tier
@@ -175,14 +180,98 @@
     { q: 'threat.q7.question', a: 'threat.q7.answer' },
   ] as const;
   let openThreat = $state(-1);
+
+  // The two FAQ groups share one tabbed section; a #threat-model deep link
+  // lands on the threat tab directly.
+  let faqTab = $state(window.location.hash === '#threat-model' ? 'threat' : 'general');
+
+  // Numbered section eyebrows ("01 / The service"): MEMBERSHIP and IMPACT are
+  // conditional, so numbering derives from the visible list (no gaps).
+  const SECTION_LABELS = {
+    features: 'home.sections.features',
+    privacy: 'home.sections.privacy',
+    how: 'home.sections.how',
+    membership: 'home.sections.membership',
+    impact: 'home.sections.impact',
+    faq: 'home.sections.faq',
+    about: 'home.sections.about',
+  } as const satisfies Record<string, MessageKey>;
+  type SectionId = keyof typeof SECTION_LABELS;
+  const sectionOrder = $derived<SectionId[]>([
+    'features',
+    'privacy',
+    'how',
+    ...(billingEnabled ? (['membership'] as const) : []),
+    ...(billingEnabled && donation?.enabled ? (['impact'] as const) : []),
+    'faq',
+    'about',
+  ]);
+  function sectionNo(id: SectionId): string {
+    return String(sectionOrder.indexOf(id) + 1).padStart(2, '0');
+  }
+
+  // Count-up trigger: the impact stats animate once the section scrolls into view.
+  let impactRevealed = $state(false);
 </script>
+
+{#snippet eyebrow(id: SectionId)}
+  <p class="font-mono text-[11px] font-medium uppercase tracking-[0.2em] text-primary tabular-nums">
+    {sectionNo(id)} / {t(SECTION_LABELS[id])}
+  </p>
+{/snippet}
+
+{#snippet accordion(items: readonly { q: MessageKey; a: MessageKey }[], prefix: 'faq' | 'tm')}
+  <ul class="max-w-3xl divide-y divide-border rounded-xl border border-border bg-card">
+    {#each items as item, i (item.q)}
+      {@const isOpen = (prefix === 'faq' ? openFaq : openThreat) === i}
+      <li>
+        <button
+          type="button"
+          id="{prefix}-trigger-{i}"
+          class="flex w-full items-center justify-between gap-3 px-5 py-4 text-start text-sm font-medium transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          aria-expanded={isOpen}
+          aria-controls="{prefix}-panel-{i}"
+          onclick={() => {
+            const next = isOpen ? -1 : i;
+            if (prefix === 'faq') openFaq = next;
+            else openThreat = next;
+          }}
+        >
+          <span>{t(item.q)}</span>
+          <ChevronDown
+            class="size-4 shrink-0 text-muted-foreground transition-transform {isOpen
+              ? 'rotate-180'
+              : ''}"
+            aria-hidden="true"
+          />
+        </button>
+        {#if isOpen}
+          <div
+            id="{prefix}-panel-{i}"
+            role="region"
+            aria-labelledby="{prefix}-trigger-{i}"
+            class="px-5 pb-4 text-sm leading-relaxed text-muted-foreground"
+            transition:slide={{ duration: 180 }}
+          >
+            {t(item.a)}
+          </div>
+        {/if}
+      </li>
+    {/each}
+  </ul>
+{/snippet}
 
 <div class="space-y-20 md:space-y-28 pb-12">
   <!-- HERO -->
   <section
-    class="grid gap-10 md:grid-cols-[1.2fr_1fr] md:gap-16 items-center pt-8 md:pt-16"
+    class="relative grid gap-10 md:grid-cols-[1.2fr_1fr] md:gap-16 items-center pt-8 md:pt-16"
     in:fade={{ duration: 300 }}
   >
+    <!-- Dither-flavored emerald dot grid behind the headline (pure CSS, static). -->
+    <div
+      class="dot-grid absolute -inset-x-6 -top-8 bottom-0 -z-10 opacity-40 dark:opacity-25"
+      aria-hidden="true"
+    ></div>
     <div class="space-y-6 md:space-y-8" in:fly={{ y: 20, duration: 500, easing: quintOut }}>
       <div
         class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 text-primary px-3 py-1 text-xs font-medium"
@@ -214,7 +303,7 @@
           <button
             type="button"
             class="ms-1.5 rounded-sm font-medium underline text-amber-700 dark:text-amber-300 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onclick={scrollToImpact}
+            onclick={() => scrollToId('impact')}
           >
             {t('home.hero.impactLink')}
           </button>
@@ -248,6 +337,68 @@
           </Link>
         {/if}
       </div>
+
+      <!-- Trust row: the strongest verifiable facts at the decision point, not
+           buried at the bottom of the page. -->
+      <ul class="flex flex-wrap gap-x-5 gap-y-2 pt-1 text-xs text-muted-foreground">
+        <li class="inline-flex items-center gap-1.5">
+          <Landmark class="size-3.5 text-primary" aria-hidden="true" />
+          {t('home.trust.nonprofit')}
+        </li>
+        {#if site?.repoEnabled && site.repoUrl}
+          <li class="inline-flex items-center gap-1.5">
+            <CodeXml class="size-3.5 text-primary" aria-hidden="true" />
+            <a
+              class="underline hover:text-foreground"
+              href={site.repoUrl}
+              target="_blank"
+              rel="noopener noreferrer">{t('home.trust.openSource')}</a
+            >
+          </li>
+        {/if}
+        <li class="inline-flex items-center gap-1.5">
+          <ShieldCheck class="size-3.5 text-primary" aria-hidden="true" />
+          {t('home.trust.noLogs')}
+        </li>
+      </ul>
+
+      <!-- Quick-nav: the page is long and the content a cautious visitor needs
+           most (threat model, privacy) is many viewports down. -->
+      <nav class="flex flex-wrap gap-2" aria-label={t('home.quicknav.label')}>
+        <button
+          type="button"
+          class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onclick={() => scrollToId('privacy')}
+        >
+          {t('home.quicknav.privacy')}
+        </button>
+        <button
+          type="button"
+          class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onclick={() => {
+            faqTab = 'threat';
+            scrollToId('threat-model');
+          }}
+        >
+          {t('home.quicknav.threat')}
+        </button>
+        <button
+          type="button"
+          class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onclick={() => scrollToId('faq')}
+        >
+          {t('home.quicknav.faq')}
+        </button>
+        {#if billingEnabled && donation?.enabled}
+          <button
+            type="button"
+            class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onclick={() => scrollToId('impact')}
+          >
+            {t('home.quicknav.impact')}
+          </button>
+        {/if}
+      </nav>
     </div>
 
     <!--
@@ -343,9 +494,14 @@
     </div>
   </section>
 
+  <!-- LIVE NETWORK STATUS: transparent, verifiable, live data (hides when no
+       located instances exist). -->
+  <NetworkStatus />
+
   <!-- FEATURES -->
   <section class="space-y-8">
     <div class="max-w-2xl space-y-2">
+      {@render eyebrow('features')}
       <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
         {t('home.features.title')}
       </h2>
@@ -354,7 +510,8 @@
       {#each features as f, i (f.title)}
         <div
           class="rounded-xl border border-border bg-card p-5 space-y-2 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-md"
-          in:fly={{ y: 16, duration: 400, delay: i * 60, easing: quintOut }}
+          use:reveal
+          style="--reveal-delay: {i * 60}ms"
         >
           <div
             class="inline-flex items-center justify-center rounded-md bg-primary/10 text-primary p-2"
@@ -369,8 +526,9 @@
   </section>
 
   <!-- WHAT WE STORE: the privacy reassurance this audience needs, stated plainly. -->
-  <section class="space-y-8">
+  <section id="privacy" class="scroll-mt-24 space-y-8">
     <div class="max-w-2xl space-y-2">
+      {@render eyebrow('privacy')}
       <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
         {t('home.privacy.title')}
       </h2>
@@ -382,7 +540,8 @@
       {#each privacyPoints as point, i (point)}
         <li
           class="flex items-start gap-3 rounded-xl border border-border bg-card p-5 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-md"
-          in:fly={{ y: 16, duration: 400, delay: i * 60, easing: quintOut }}
+          use:reveal
+          style="--reveal-delay: {i * 60}ms"
         >
           <ShieldCheck class="size-5 text-primary mt-0.5 shrink-0" aria-hidden="true" />
           <p class="text-sm text-muted-foreground leading-relaxed">{t(point)}</p>
@@ -394,20 +553,26 @@
   <!-- HOW IT WORKS -->
   <section class="space-y-8">
     <div class="max-w-xl space-y-2">
+      {@render eyebrow('how')}
       <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
         {t('home.how.title')}
       </h2>
     </div>
     <div class="grid gap-6 md:grid-cols-3 max-w-4xl">
       {#each steps as step, i (step.n)}
-        <div
-          class="space-y-3 relative"
-          in:fly={{ y: 16, duration: 400, delay: i * 100, easing: quintOut }}
-        >
+        <div class="space-y-3 relative" use:reveal style="--reveal-delay: {i * 100}ms">
           <div
-            class="size-10 rounded-full bg-primary/10 text-primary font-display font-bold flex items-center justify-center tabular-nums"
+            class="size-10 rounded-full bg-primary/10 ring-1 ring-primary/25 text-primary font-display font-bold flex items-center justify-center tabular-nums"
           >
             {step.n}
+            {#if i < steps.length - 1}
+              <!-- Dashed connector to the next step, positioned against the step
+                   wrapper (relative); logical offsets mirror in RTL. -->
+              <div
+                class="hidden md:block absolute top-5 start-12 -end-3 border-t border-dashed border-border"
+                aria-hidden="true"
+              ></div>
+            {/if}
           </div>
           <h3 class="font-semibold">{t(step.title)}</h3>
           <p class="text-sm text-muted-foreground leading-relaxed">{t(step.body)}</p>
@@ -429,6 +594,7 @@
   {#if billingEnabled}
     <section class="space-y-6">
       <div class="max-w-2xl space-y-2">
+        {@render eyebrow('membership')}
         <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
           {t('home.membership.title')}
         </h2>
@@ -448,9 +614,16 @@
        flat zero baseline with the "first one starts the counter" note. All
        numbers are GB / user counts (no dollar figures). -->
   {#if billingEnabled && donation?.enabled}
-    <section id="impact" class="scroll-mt-24 rounded-2xl border border-border bg-card p-6 md:p-10">
+    <!-- Full-bleed warm band (breaks out of the container's px-4): the one
+         donor-facing gold interlude between the emerald service sections. -->
+    <section
+      id="impact"
+      class="scroll-mt-24 -mx-4 px-4 py-10 md:py-12 border-y border-amber-500/20 bg-gradient-to-b from-amber-500/[0.05] to-transparent"
+      use:reveal={{ onReveal: () => (impactRevealed = true) }}
+    >
       <div class="grid gap-8 md:grid-cols-2 md:items-center">
         <div class="max-w-xl space-y-3">
+          {@render eyebrow('impact')}
           <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
             {t('home.impact.title')}
           </h2>
@@ -459,13 +632,13 @@
             <div>
               <span
                 class="text-xl font-display font-bold tabular-nums text-amber-600 dark:text-amber-300"
-                >+{donation.currentBonusGb}</span
+                >+<CountUp value={donation.currentBonusGb} start={impactRevealed} /></span
               >
               <span class="text-sm text-muted-foreground"> {t('impact.bonusThisMonth')}</span>
             </div>
             <div>
               <span class="text-xl font-display font-bold tabular-nums"
-                >{donation.freeUsersHelped.toLocaleString()}</span
+                ><CountUp value={donation.freeUsersHelped} start={impactRevealed} /></span
               >
               <span class="text-sm text-muted-foreground"> {t('impact.usersHelped')}</span>
             </div>
@@ -497,141 +670,144 @@
     </section>
   {/if}
 
-  <!-- FAQ - single-open accordion, localized like the rest of the page. -->
-  <section class="space-y-8">
-    <div class="max-w-2xl space-y-2">
+  <!-- FAQ - one tabbed section: the general basics plus the threat model (what
+       this service can and cannot protect against; deliberately honest, since
+       overclaiming security gets people hurt). Both tabs are single-open
+       accordions with separate state + id prefix. A #threat-model deep link
+       (or the hero quick-nav chip) lands on the threat tab. -->
+  <section id="faq" class="scroll-mt-24 space-y-8">
+    <div id="threat-model" class="scroll-mt-24 max-w-2xl space-y-2">
+      {@render eyebrow('faq')}
       <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">{t('faq.title')}</h2>
       <p class="text-muted-foreground leading-relaxed">{t('faq.subtitle')}</p>
     </div>
-    <ul class="max-w-3xl divide-y divide-border rounded-xl border border-border bg-card">
-      {#each FAQ as item, i (item.q)}
-        {@const isOpen = openFaq === i}
-        <li>
-          <button
-            type="button"
-            id="faq-trigger-{i}"
-            class="flex w-full items-center justify-between gap-3 px-5 py-4 text-start text-sm font-medium transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            aria-expanded={isOpen}
-            aria-controls="faq-panel-{i}"
-            onclick={() => (openFaq = isOpen ? -1 : i)}
-          >
-            <span>{t(item.q)}</span>
-            <ChevronDown
-              class="size-4 shrink-0 text-muted-foreground transition-transform {isOpen
-                ? 'rotate-180'
-                : ''}"
-              aria-hidden="true"
-            />
-          </button>
-          {#if isOpen}
-            <div
-              id="faq-panel-{i}"
-              role="region"
-              aria-labelledby="faq-trigger-{i}"
-              class="px-5 pb-4 text-sm leading-relaxed text-muted-foreground"
-              transition:slide={{ duration: 180 }}
-            >
-              {t(item.a)}
-            </div>
-          {/if}
-        </li>
-      {/each}
-    </ul>
-  </section>
-
-  <!-- THREAT MODEL FAQ - what this service can and cannot protect against.
-       Deliberately honest (overclaiming security gets people hurt); same
-       single-open accordion as the FAQ above, separate state + id prefix. -->
-  <section id="threat-model" class="scroll-mt-24 space-y-8">
-    <div class="max-w-2xl space-y-2">
-      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
-        <span class="inline-flex items-center gap-2.5">
-          <ShieldCheck class="size-7 text-primary" aria-hidden="true" />
-          {t('threat.title')}
-        </span>
-      </h2>
-      <p class="text-muted-foreground leading-relaxed">{t('threat.subtitle')}</p>
-    </div>
-    <ul class="max-w-3xl divide-y divide-border rounded-xl border border-border bg-card">
-      {#each THREAT_FAQ as item, i (item.q)}
-        {@const isOpen = openThreat === i}
-        <li>
-          <button
-            type="button"
-            id="tm-trigger-{i}"
-            class="flex w-full items-center justify-between gap-3 px-5 py-4 text-start text-sm font-medium transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            aria-expanded={isOpen}
-            aria-controls="tm-panel-{i}"
-            onclick={() => (openThreat = isOpen ? -1 : i)}
-          >
-            <span>{t(item.q)}</span>
-            <ChevronDown
-              class="size-4 shrink-0 text-muted-foreground transition-transform {isOpen
-                ? 'rotate-180'
-                : ''}"
-              aria-hidden="true"
-            />
-          </button>
-          {#if isOpen}
-            <div
-              id="tm-panel-{i}"
-              role="region"
-              aria-labelledby="tm-trigger-{i}"
-              class="px-5 pb-4 text-sm leading-relaxed text-muted-foreground"
-              transition:slide={{ duration: 180 }}
-            >
-              {t(item.a)}
-            </div>
-          {/if}
-        </li>
-      {/each}
-    </ul>
-  </section>
-
-  <!-- ABOUT: short, factual, no invented programs -->
-  <section class="rounded-2xl border border-border bg-card p-6 md:p-10">
-    <div class="max-w-2xl space-y-3">
-      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
-        {t('home.about.title')}
-      </h2>
-      <p class="text-muted-foreground leading-relaxed">
-        {t('home.about.bodyPrefix')}{' '}
-        <a
-          href="https://unredacted.org"
-          class="underline hover:text-foreground"
-          target="_blank"
-          rel="noopener noreferrer">Unredacted</a
-        >{t('home.about.bodySuffix')}
+    <Tabs.Root bind:value={faqTab} class="gap-6">
+      <Tabs.List class="w-full min-w-max sm:w-fit h-12 sm:h-9">
+        <Tabs.Trigger value="general" class="h-11 sm:h-7">
+          {t('faq.tabGeneral')}
+        </Tabs.Trigger>
+        <Tabs.Trigger value="threat" class="h-11 sm:h-7">
+          <ShieldCheck class="size-4" aria-hidden="true" />
+          {t('faq.tabThreat')}
+        </Tabs.Trigger>
+      </Tabs.List>
+      <Tabs.Content value="general">
+        {@render accordion(FAQ, 'faq')}
+      </Tabs.Content>
+      <Tabs.Content value="threat">
+        <div class="space-y-4">
+          <p class="max-w-2xl text-sm text-muted-foreground leading-relaxed">
+            {t('threat.subtitle')}
+          </p>
+          {@render accordion(THREAT_FAQ, 'tm')}
+        </div>
+      </Tabs.Content>
+    </Tabs.Root>
+    {#if site?.supportEmail}
+      <p class="text-sm text-muted-foreground">
+        {t('faq.contactPrefix')}
+        <a class="text-primary underline" href="mailto:{site.supportEmail}">
+          {site.supportEmail}
+        </a>
+        {t('faq.contactSuffix')}
       </p>
-      {#if site?.repoEnabled && site.repoUrl}
-        <p class="text-muted-foreground leading-relaxed">{t('home.about.openSource')}</p>
-      {/if}
-      <div class="flex flex-wrap gap-3 pt-2">
-        <!--
-          Donations fund free accounts (hosted on unredacted.org). When billing
-          is live, the membership CTA routes to the in-app upgrade panel
-          (authed → /account, else create a free account first via /get-account).
-        -->
-        <a href="https://unredacted.org/donate" target="_blank" rel="noopener noreferrer">
-          <Button>
-            <Heart class="size-4" />
-            {t('renew.donate')}
-          </Button>
-        </a>
-        <a href="https://unredacted.org" target="_blank" rel="noopener noreferrer">
-          <Button variant="outline">{t('home.about.siteLink')}</Button>
-        </a>
-        {#if site?.repoEnabled && site.repoUrl}
-          <a href={site.repoUrl} target="_blank" rel="noopener noreferrer">
-            <Button variant="outline">
-              <CodeXml class="size-4" />
-              {t('home.about.viewSourceCta')}
-            </Button>
-          </a>
-        {/if}
-        {#if billingEnabled}
-          <Button variant="ghost" onclick={goUpgrade}>{t('home.cta.getMembership')}</Button>
-        {/if}
+    {/if}
+  </section>
+
+  <!-- ABOUT: short, factual, no invented programs. Two columns: the story +
+       CTAs on the left, three scannable fact rows on the right. -->
+  <section class="relative">
+    <div
+      class="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent rounded-2xl blur-3xl"
+      aria-hidden="true"
+    ></div>
+    <div class="relative rounded-2xl border border-border bg-card p-6 md:p-10">
+      <div class="grid gap-8 md:grid-cols-[1.2fr_1fr] md:items-center">
+        <div class="max-w-2xl space-y-3">
+          {@render eyebrow('about')}
+          <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+            {t('home.about.title')}
+          </h2>
+          <p class="text-muted-foreground leading-relaxed">
+            {t('home.about.bodyPrefix')}{' '}
+            <a
+              href="https://unredacted.org"
+              class="underline hover:text-foreground"
+              target="_blank"
+              rel="noopener noreferrer">Unredacted</a
+            >{t('home.about.bodySuffix')}
+          </p>
+          <div class="flex flex-wrap gap-3 pt-2">
+            <!--
+              Donations fund free accounts (hosted on unredacted.org). When billing
+              is live, the membership CTA routes to the in-app upgrade panel
+              (authed → /account, else create a free account first via /get-account).
+            -->
+            <a href="https://unredacted.org/donate" target="_blank" rel="noopener noreferrer">
+              <Button>
+                <Heart class="size-4" />
+                {t('renew.donate')}
+              </Button>
+            </a>
+            <a href="https://unredacted.org" target="_blank" rel="noopener noreferrer">
+              <Button variant="outline">{t('home.about.siteLink')}</Button>
+            </a>
+            {#if site?.repoEnabled && site.repoUrl}
+              <a href={site.repoUrl} target="_blank" rel="noopener noreferrer">
+                <Button variant="outline">
+                  <CodeXml class="size-4" />
+                  {t('home.about.viewSourceCta')}
+                </Button>
+              </a>
+            {/if}
+            {#if billingEnabled}
+              <Button variant="ghost" onclick={goUpgrade}>{t('home.cta.getMembership')}</Button>
+            {/if}
+          </div>
+        </div>
+        <ul class="space-y-5">
+          <li class="flex items-start gap-3">
+            <div
+              class="inline-flex items-center justify-center rounded-md bg-primary/10 text-primary p-2"
+            >
+              <Landmark class="size-5" aria-hidden="true" />
+            </div>
+            <div>
+              <p class="text-sm font-semibold">{t('home.about.fact1Title')}</p>
+              <p class="text-sm text-muted-foreground leading-relaxed">
+                {t('home.about.fact1Body')}
+              </p>
+            </div>
+          </li>
+          {#if site?.repoEnabled && site.repoUrl}
+            <li class="flex items-start gap-3">
+              <div
+                class="inline-flex items-center justify-center rounded-md bg-primary/10 text-primary p-2"
+              >
+                <CodeXml class="size-5" aria-hidden="true" />
+              </div>
+              <div>
+                <p class="text-sm font-semibold">{t('home.about.fact2Title')}</p>
+                <p class="text-sm text-muted-foreground leading-relaxed">
+                  {t('home.about.openSource')}
+                </p>
+              </div>
+            </li>
+          {/if}
+          <li class="flex items-start gap-3">
+            <div
+              class="inline-flex items-center justify-center rounded-md bg-primary/10 text-primary p-2"
+            >
+              <Heart class="size-5" aria-hidden="true" />
+            </div>
+            <div>
+              <p class="text-sm font-semibold">{t('home.about.fact3Title')}</p>
+              <p class="text-sm text-muted-foreground leading-relaxed">
+                {t('home.about.fact3Body')}
+              </p>
+            </div>
+          </li>
+        </ul>
       </div>
     </div>
   </section>

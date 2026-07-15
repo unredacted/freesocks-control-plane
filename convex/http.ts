@@ -2258,6 +2258,7 @@ http.route({
       socialXUrl?: string;
       socialMastodonUrl?: string;
       socialBlueskyUrl?: string;
+      supportEmail?: string;
     }>(req);
     try {
       return json(
@@ -2273,6 +2274,7 @@ http.route({
           socialMastodonUrl:
             typeof body.socialMastodonUrl === 'string' ? body.socialMastodonUrl : '',
           socialBlueskyUrl: typeof body.socialBlueskyUrl === 'string' ? body.socialBlueskyUrl : '',
+          supportEmail: typeof body.supportEmail === 'string' ? body.supportEmail : '',
           actorAdminId: admin.adminUserId,
         }),
       );

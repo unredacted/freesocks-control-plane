@@ -33,6 +33,9 @@ export interface SiteConfig {
   socialMastodonUrl: string;
   /** Bluesky profile URL shown as a footer icon (https-only); '' = unset (hidden). */
   socialBlueskyUrl: string;
+  /** Support email rendered as mailto: links (footer, FAQ, account pages);
+   *  '' = unset (every support-link surface hides). */
+  supportEmail: string;
 }
 
 export const SITE_DEFAULTS: SiteConfig = {
@@ -46,9 +49,28 @@ export const SITE_DEFAULTS: SiteConfig = {
   socialXUrl: '',
   socialMastodonUrl: '',
   socialBlueskyUrl: '',
+  supportEmail: '',
 };
 
 const MAX_BANNER = 280;
+const MAX_EMAIL = 254;
+
+// Conservative charset (standard simple email shape). Deliberately excludes
+// every character with meaning inside a mailto: href (?, &, :, /, #, %, commas,
+// angle brackets, whitespace) so the value interpolates safely with no escaping.
+const EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
+/**
+ * Validate an operator-typed support email. Anything that doesn't look like a
+ * plain single address (or exceeds the RFC length bound) collapses to '' so a
+ * bad value hides the support links instead of rendering a broken/unsafe one.
+ */
+export function sanitizeEmail(v: unknown): string {
+  if (typeof v !== 'string') return '';
+  const trimmed = v.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_EMAIL) return '';
+  return EMAIL_RE.test(trimmed) ? trimmed : '';
+}
 
 /**
  * Trim + length-cap the banner text (a one-liner). The SPA renders it as escaped
@@ -88,5 +110,6 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
     socialXUrl: sanitizeHttpsUrl(await read('site.socialXUrl')),
     socialMastodonUrl: sanitizeHttpsUrl(await read('site.socialMastodonUrl')),
     socialBlueskyUrl: sanitizeHttpsUrl(await read('site.socialBlueskyUrl')),
+    supportEmail: sanitizeEmail(await read('site.supportEmail')),
   };
 }

@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**128 of 593 strings are missing** (the app currently shows English for
+**184 of 649 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -23,12 +23,16 @@ review.
   ⚠️ MISSING have no translation yet.
 
 
-## `faq` — The landing-page FAQ (questions + answers).
+## `faq` — The landing-page FAQ (questions + answers). *(4 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `faq.title` | Frequently asked questions | Часто задаваемые вопросы |
-| `faq.subtitle` | The basics, answered. Still stuck? Reach out with your Support ID. | Основные вопросы решены. Остались вопросы? Свяжитесь со службой поддержки, указав свой идентификатор. |
+| `faq.subtitle` | The basics, answered. | Основные вопросы решены. Остались вопросы? Свяжитесь со службой поддержки, указав свой идентификатор. |
+| `faq.tabGeneral` | General | ⚠️ **MISSING** |
+| `faq.tabThreat` | What we protect you from | ⚠️ **MISSING** |
+| `faq.contactPrefix` | Still stuck? Email | ⚠️ **MISSING** |
+| `faq.contactSuffix` | and include your Support ID. | ⚠️ **MISSING** |
 | `faq.q1.question` | What is FreeSocks? | Что такое FreeSocks? |
 | `faq.q1.answer` | A free proxy service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | Бесплатный прокси-сервис, помогающий людям в регионах с жесткой цензурой получить доступ к открытому интернету. Он управляется некоммерческой организацией Unredacted, зарегистрированной в США как 501(c)(3). |
 | `faq.q2.question` | Is it really free? | Это действительно бесплатно? |
@@ -47,6 +51,26 @@ review.
 | `faq.q8.answer` | Yes - on your account page use "Buy codes to share" to purchase membership codes you can give to friends or family. Each one works on any account and doesn't affect yours. | Да - на странице вашего аккаунта используйте кнопку «Купить коды для распространения», чтобы приобрести коды членства, которые вы можете передать друзьям или родственникам. Каждый из них работает на любом аккаунте и не влияет на ваш. |
 | `faq.q9.question` | Can I pay anonymously? | Можно ли оплатить анонимно? |
 | `faq.q9.answer` | Yes. You can pay with cryptocurrency - Bitcoin, or Monero and Zcash for the most privacy - with no account, email, or card. Your membership activates automatically once the payment confirms. | Да. Вы можете оплатить криптовалютой - Bitcoin, или Monero и Zcash для максимальной конфиденциальности - без учетной записи, электронной почты или карты. Ваша подписка активируется автоматически после подтверждения платежа. |
+
+## `threat` — Miscellaneous strings. *(15 missing)*
+
+| Key | English | Russian (Русский) |
+| --- | --- | --- |
+| `threat.subtitle` | An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are. | ⚠️ **MISSING** |
+| `threat.q1.question` | What does FreeSocks protect me from? | ⚠️ **MISSING** |
+| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted proxy, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | ⚠️ **MISSING** |
+| `threat.q2.question` | What does FreeSocks NOT protect me from? | ⚠️ **MISSING** |
+| `threat.q2.answer` | It does not make you anonymous to sites you sign in to: if you log in to an account, that site knows who you are. It cannot protect a device that is already compromised (spyware, a managed work profile, someone with physical access). And a powerful adversary that can watch traffic at many points on the internet may still correlate patterns. If your safety depends on strong anonymity, use Tor and follow specialist guidance for your situation. | ⚠️ **MISSING** |
+| `threat.q3.question` | Can FreeSocks see my traffic? | ⚠️ **MISSING** |
+| `threat.q3.answer` | Your traffic exits through our servers, so treat us like any exit: sites you use over HTTPS (almost all of the modern web) stay encrypted end to end and we cannot read their contents. We configure our servers to keep no connection logs, no visited-site logs, and no source IPs, and the control plane never stores your IP address at all. | ⚠️ **MISSING** |
+| `threat.q4.question` | What happens if a FreeSocks server is seized or compromised? | ⚠️ **MISSING** |
+| `threat.q4.answer` | There is nothing identifying on it. Servers hold no names, emails, IPs, or traffic history, because we never collect those in the first place. Access keys can be revoked and reissued quickly, and we can rotate infrastructure without losing accounts. | ⚠️ **MISSING** |
+| `threat.q5.question` | Can my government or ISP tell that I am using FreeSocks? | ⚠️ **MISSING** |
+| `threat.q5.answer` | Sometimes censors can detect that circumvention traffic is in use even when they cannot read it. Our transports are designed to look like ordinary encrypted web traffic, and Internet Freedom Mode routes through infrastructure that is expensive to block. Still, whether use is detectable, and what the consequences are, varies by country. Weigh your local risk. | ⚠️ **MISSING** |
+| `threat.q6.question` | Why should I believe any of this? | ⚠️ **MISSING** |
+| `threat.q6.answer` | The control plane is open source, so anyone can read exactly what it stores and check that there is no place a name, email, or IP address could even go. Claims that depend on server configuration (like disabled logging) are documented and enforced by the same code. You still have to trust the operator for the parts you cannot see, as with every VPN; our approach is to minimize what there is to trust. | ⚠️ **MISSING** |
+| `threat.q7.question` | Do payments link my identity to my browsing? | ⚠️ **MISSING** |
+| `threat.q7.answer` | Membership is optional, and payment is handled by outside processors: we never store the payer's name, email, or address, and an order is tied to your account only through an opaque reference. Cryptocurrency options (including Monero) exist for people who do not want a card trail at all. | ⚠️ **MISSING** |
 
 ## `common` — Shared buttons/labels (copy, download, close, working…) used across every page.
 
@@ -111,12 +135,14 @@ review.
 | `reveal.downloadFilename` | freesocks-account-number.txt | freesocks-account-number.txt |
 | `reveal.leaveWarning` | Your account number is still on screen. If you leave now without saving it, you will not be able to sign in again. | Номер аккаунта всё ещё на экране. Если вы уйдёте сейчас, не сохранив его, вы не сможете снова войти. |
 
-## `support` — The support-ID line (a non-secret handle for contacting support).
+## `support` — The support-ID line (a non-secret handle for contacting support). *(2 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `support.label` | Support ID | ID для поддержки |
 | `support.hint` | Share this if you contact us. It is NOT your sign-in number and grants no access. | Сообщите его, если обращаетесь к нам. Это не номер для входа и не даёт доступа. |
+| `support.emailUs` | Email us: | ⚠️ **MISSING** |
+| `support.getAccountLine` | Questions or problems? Email us at | ⚠️ **MISSING** |
 
 ## `login` — The sign-in page (account number + optional passkey). *(1 missing)*
 
@@ -235,7 +261,7 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | Слот бесплатный. Это устройство потеряет доступ, пока не повторно не импортирует вашу подписку. |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | Не удалось отозвать устройство. |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(3 missing)*
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(8 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -276,11 +302,25 @@ review.
 | `hero.daysRemaining [countPlural=other]` | {count} days remaining | Осталось {count} дней |
 | `hero.expiredDaysAgo [countPlural=one]` | Expired 1 day ago | Истекла 1 день назад |
 | `hero.expiredDaysAgo [countPlural=other]` | Expired {count} days ago | Истекла {count} дней назад |
+| `hero.nodeOnline` | Node online | ⚠️ **MISSING** |
+| `hero.nodeOffline` | Node offline | ⚠️ **MISSING** |
+| `hero.nodeUnknown` | Node status unknown | ⚠️ **MISSING** |
+| `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | ⚠️ **MISSING** |
+| `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | ⚠️ **MISSING** |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | Вы использовали весь свой трафик за этот период. Он автоматически обнуляется, или вы можете приобрести более дорогой тарифный план. |
 | `hero.keyExpired` | This key has expired. Renew your membership or create a new key to reconnect. | Срок действия этого ключа истек. Продлите свою подписку или создайте новый ключ для повторного подключения. |
 | `hero.keyDisabled` | This key is currently disabled. If your membership lapsed, renew it; otherwise contact support with your support ID. | Этот ключ в настоящее время отключен. Если срок действия вашей подписки истек, продлите ее; в противном случае свяжитесь со службой поддержки, указав свой идентификатор службы поддержки. |
 | `hero.resetsInDays [countPlural=one]` | Resets in 1 day | Сброс через 1 день |
 | `hero.resetsInDays [countPlural=other]` | Resets in {count} days | Сбросы в {count} днях |
+
+## `location` — Miscellaneous strings. *(4 missing)*
+
+| Key | English | Russian (Русский) |
+| --- | --- | --- |
+| `location.pickerLabel` | Server location | ⚠️ **MISSING** |
+| `location.auto` | Automatic (least busy) | ⚠️ **MISSING** |
+| `location.offline` | offline | ⚠️ **MISSING** |
+| `location.pickerHint` | Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network. | ⚠️ **MISSING** |
 
 ## `usage` — The 30-day usage trend under the traffic stats.
 
@@ -430,7 +470,7 @@ review.
 | `app.adminLoadFailedTitle` | Couldn't load the admin console | Не удалось загрузить консоль администратора. |
 | `app.adminLoadFailedBody` | The network request for this section failed. Reload to retry. | Сетевой запрос к этому разделу не удался. Перезагрузите страницу, чтобы повторить попытку. |
 
-## `footer` — The site footer (nonprofit line, terms/privacy links). *(7 missing)*
+## `footer` — The site footer (nonprofit line, terms/privacy links). *(8 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -443,6 +483,7 @@ review.
 | `footer.socialX` | FreeSocks on X | ⚠️ **MISSING** |
 | `footer.socialMastodon` | FreeSocks on Mastodon | ⚠️ **MISSING** |
 | `footer.socialBluesky` | FreeSocks on Bluesky | ⚠️ **MISSING** |
+| `footer.support` | Support | ⚠️ **MISSING** |
 
 ## `renew` — Expiring/expired membership callouts and renewal prompts.
 
@@ -627,10 +668,10 @@ review.
 | `delivery.subtitle` | Pick a focus. It's saved on this device only, and you can change it anytime. | Выберите приоритет - сохраняется только на этом устройстве, изменить можно в любой момент. |
 | `delivery.subtitleServer` | Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same. | Выберите приоритет. Изменение приоритета приведет к повторной выдаче ключа для соответствующих серверов; ваш текущий ключ будет продолжать работать в течение 24 часов. |
 | `delivery.subtitleSignup` | Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime. | Выберите приоритет. Он сохраняется в вашем аккаунте, и ваш первый ключ будет его использовать - изменить можно в любой момент. |
-| `delivery.evadeTitle` | Beat censorship | ⚠️ **MISSING** |
+| `delivery.evadeTitle` | Internet Freedom Mode | ⚠️ **MISSING** |
 | `delivery.evadeAudience` | For censored countries | ⚠️ **MISSING** |
 | `delivery.evadeBody` | Pick this if websites, apps, or VPNs are blocked where you are. Built to keep working under censorship, with backup links that are harder to block. | ⚠️ **MISSING** |
-| `delivery.privacyTitle` | Maximum privacy | ⚠️ **MISSING** |
+| `delivery.privacyTitle` | Privacy Mode | ⚠️ **MISSING** |
 | `delivery.privacyAudience` | For open internet | ⚠️ **MISSING** |
 | `delivery.privacyBody` | Pick this if the internet is mostly open where you are. The strongest confidentiality - your configuration stays off third-party servers - but it is easier for censors to block. | ⚠️ **MISSING** |
 | `delivery.recommended` | Recommended | Рекомендуется |
@@ -649,10 +690,30 @@ review.
 | `delivery.switchSuccessBody` | Same subscription URL - your apps will pick up the new servers on their next refresh. | Повторно импортируйте новый URL-адрес подписки на каждом устройстве. |
 | `delivery.switchFailedTitle` | Could not switch focus | Не удалось переключить фокус. |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(11 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(36 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
+| `home.trust.nonprofit` | Run by a US 501(c)(3) nonprofit | ⚠️ **MISSING** |
+| `home.trust.openSource` | Open source | ⚠️ **MISSING** |
+| `home.trust.noLogs` | No traffic logs | ⚠️ **MISSING** |
+| `home.network.title` | Network status | ⚠️ **MISSING** |
+| `home.network.offline` | offline | ⚠️ **MISSING** |
+| `home.network.srOnline` | online | ⚠️ **MISSING** |
+| `home.network.srOffline` | offline | ⚠️ **MISSING** |
+| `home.network.note` | Checked every 10 minutes | ⚠️ **MISSING** |
+| `home.quicknav.label` | Jump to a section | ⚠️ **MISSING** |
+| `home.quicknav.privacy` | What we store | ⚠️ **MISSING** |
+| `home.quicknav.threat` | Can it protect me? | ⚠️ **MISSING** |
+| `home.quicknav.faq` | FAQ | ⚠️ **MISSING** |
+| `home.quicknav.impact` | Donation impact | ⚠️ **MISSING** |
+| `home.sections.features` | The service | ⚠️ **MISSING** |
+| `home.sections.privacy` | Privacy | ⚠️ **MISSING** |
+| `home.sections.how` | Getting started | ⚠️ **MISSING** |
+| `home.sections.membership` | Membership | ⚠️ **MISSING** |
+| `home.sections.impact` | Impact | ⚠️ **MISSING** |
+| `home.sections.faq` | Answers | ⚠️ **MISSING** |
+| `home.sections.about` | Who runs this | ⚠️ **MISSING** |
 | `home.impact.title` | Donations at work | ⚠️ **MISSING** |
 | `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | ⚠️ **MISSING** |
 | `home.impact.cta` | Make a donation | ⚠️ **MISSING** |
@@ -706,6 +767,11 @@ review.
 | `home.about.siteLink` | unredacted.org | unredacted.org |
 | `home.about.openSource` | FreeSocks is fully open source. The code that runs this service is published for anyone to inspect, audit, or run themselves. | ⚠️ **MISSING** |
 | `home.about.viewSourceCta` | View the source | ⚠️ **MISSING** |
+| `home.about.fact1Title` | US 501(c)(3) nonprofit | ⚠️ **MISSING** |
+| `home.about.fact1Body` | Run by Unredacted, not a company selling your data. | ⚠️ **MISSING** |
+| `home.about.fact2Title` | Fully open source | ⚠️ **MISSING** |
+| `home.about.fact3Title` | Funded by people | ⚠️ **MISSING** |
+| `home.about.fact3Body` | Donations and memberships pay for free access. No ads, no trackers, no data sales. | ⚠️ **MISSING** |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | неограниченная пропускная способность и устройства |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | неограниченная пропускная способность |
 | `home.limits.unlimitedDevices` | unlimited devices | неограниченное количество устройств |

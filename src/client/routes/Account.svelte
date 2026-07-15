@@ -1105,6 +1105,20 @@
                   >{data.user.supportId}</code
                 >
                 <p class="mt-1 text-xs text-muted-foreground">{t('support.hint')}</p>
+                {#if config.data?.site?.supportEmail}
+                  <!-- Subject prefills the (non-secret) support ID - never the account number. -->
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {t('support.emailUs')}
+                    <a
+                      class="text-primary underline"
+                      href="mailto:{config.data.site.supportEmail}?subject={encodeURIComponent(
+                        `FreeSocks support - ID ${data.user.supportId}`,
+                      )}"
+                    >
+                      {config.data.site.supportEmail}
+                    </a>
+                  </p>
+                {/if}
               </div>
             {/if}
             <div

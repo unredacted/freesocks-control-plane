@@ -616,4 +616,13 @@
       <Link href="/login" class="text-primary underline">{t('nav.signIn')}</Link>.
     </p>
   {/if}
+
+  {#if config.data?.site?.supportEmail}
+    <p class="text-xs text-muted-foreground text-center max-w-sm mx-auto">
+      {t('support.getAccountLine')}
+      <a class="text-primary underline" href="mailto:{config.data.site.supportEmail}">
+        {config.data.site.supportEmail}
+      </a>
+    </p>
+  {/if}
 </div>

@@ -2,7 +2,8 @@
 import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from '../schema';
-import { resolveSiteConfig, sanitizeBannerText, SITE_DEFAULTS } from './siteConfig';
+import { internal } from '../_generated/api';
+import { resolveSiteConfig, sanitizeBannerText, sanitizeEmail, SITE_DEFAULTS } from './siteConfig';
 
 const modules = import.meta.glob('../**/*.*s');
 
@@ -18,6 +19,32 @@ describe('sanitizeBannerText', () => {
   test('caps length (banners are one-liners)', () => {
     expect(sanitizeBannerText('a'.repeat(400)).length).toBe(280);
     expect(sanitizeBannerText('a'.repeat(400), 10)).toBe('aaaaaaaaaa');
+  });
+});
+
+describe('sanitizeEmail', () => {
+  test('accepts a plain single address (trimmed)', () => {
+    expect(sanitizeEmail('help@freesocks.org')).toBe('help@freesocks.org');
+    expect(sanitizeEmail('  help@freesocks.org  ')).toBe('help@freesocks.org');
+    expect(sanitizeEmail('support+tag@sub.example.co')).toBe('support+tag@sub.example.co');
+  });
+
+  test('rejects non-strings and empty', () => {
+    expect(sanitizeEmail(undefined)).toBe('');
+    expect(sanitizeEmail(null)).toBe('');
+    expect(sanitizeEmail(42)).toBe('');
+    expect(sanitizeEmail('')).toBe('');
+    expect(sanitizeEmail('   ')).toBe('');
+  });
+
+  test('rejects anything unsafe inside a mailto: href', () => {
+    expect(sanitizeEmail('not-an-email')).toBe('');
+    expect(sanitizeEmail('two words@example.org')).toBe('');
+    expect(sanitizeEmail('a@b@example.org')).toBe('');
+    expect(sanitizeEmail('a,b@example.org')).toBe('');
+    expect(sanitizeEmail('<script>@example.org')).toBe('');
+    expect(sanitizeEmail('help@localhost')).toBe(''); // no dotted domain
+    expect(sanitizeEmail(`${'a'.repeat(250)}@example.org`)).toBe(''); // overlong
   });
 });
 
@@ -71,6 +98,7 @@ describe('resolveSiteConfig', () => {
         ['site.socialXUrl', 'https://x.com/freesocks'],
         ['site.socialMastodonUrl', 'http://mastodon.example/@freesocks'], // http → rejected
         ['site.socialBlueskyUrl', 'javascript:alert(1)'], // unsafe scheme → rejected
+        ['site.supportEmail', 'help@freesocks.org'],
       ];
       for (const [key, value] of rows) {
         await ctx.db.insert('appSettings', { key, value: JSON.stringify(value), updatedAt: now });
@@ -81,6 +109,50 @@ describe('resolveSiteConfig', () => {
     expect(cfg.socialXUrl).toBe('https://x.com/freesocks');
     expect(cfg.socialMastodonUrl).toBe(''); // the footer icon then hides
     expect(cfg.socialBlueskyUrl).toBe('');
+    expect(cfg.supportEmail).toBe('help@freesocks.org');
+  });
+
+  test('setSiteConfig round-trips supportEmail through sanitize + storage', async () => {
+    const t = convexTest(schema, modules);
+    const blank = {
+      bannerEnabled: false,
+      bannerText: '',
+      repoEnabled: false,
+      repoUrl: '',
+      tosUrl: '',
+      privacyUrl: '',
+      transparencyUrl: '',
+      socialXUrl: '',
+      socialMastodonUrl: '',
+      socialBlueskyUrl: '',
+    };
+    const clean = await t.mutation(internal.adminApi.setSiteConfig, {
+      ...blank,
+      supportEmail: '  help@freesocks.org ',
+    });
+    expect(clean.supportEmail).toBe('help@freesocks.org');
+    const cfg = await t.run((ctx) => resolveSiteConfig(ctx.db));
+    expect(cfg.supportEmail).toBe('help@freesocks.org');
+
+    // A junk value stores as '' (links hide) rather than a broken mailto.
+    const cleared = await t.mutation(internal.adminApi.setSiteConfig, {
+      ...blank,
+      supportEmail: 'help@freesocks.org?bcc=evil@example.org',
+    });
+    expect(cleared.supportEmail).toBe('');
+  });
+
+  test('invalid stored support email resolves to empty (links hide)', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'site.supportEmail',
+        value: JSON.stringify('mailto:evil@example.org?bcc=x'),
+        updatedAt: Date.now(),
+      });
+    });
+    const cfg = await t.run((ctx) => resolveSiteConfig(ctx.db));
+    expect(cfg.supportEmail).toBe('');
   });
 
   test('fail-safe: non-https repo URL → empty; non-boolean toggle → default', async () => {

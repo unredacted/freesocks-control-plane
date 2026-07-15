@@ -33,7 +33,7 @@ import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
 import { connectionModeWrites, resolveConnectionModes } from './lib/connectionModes';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
-import { sanitizeBannerText } from './lib/siteConfig';
+import { sanitizeBannerText, sanitizeEmail } from './lib/siteConfig';
 import { normalizeSupportId } from './lib/supportId';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
@@ -1811,6 +1811,7 @@ export const setSiteConfig = internalMutation({
     socialXUrl: v.string(),
     socialMastodonUrl: v.string(),
     socialBlueskyUrl: v.string(),
+    supportEmail: v.string(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (
@@ -1826,6 +1827,7 @@ export const setSiteConfig = internalMutation({
       socialXUrl,
       socialMastodonUrl,
       socialBlueskyUrl,
+      supportEmail,
       actorAdminId,
     },
   ) => {
@@ -1840,6 +1842,7 @@ export const setSiteConfig = internalMutation({
       socialXUrl: sanitizeHttpsUrl(socialXUrl),
       socialMastodonUrl: sanitizeHttpsUrl(socialMastodonUrl),
       socialBlueskyUrl: sanitizeHttpsUrl(socialBlueskyUrl),
+      supportEmail: sanitizeEmail(supportEmail),
     };
     await upsertSetting(
       ctx,
@@ -1871,6 +1874,7 @@ export const setSiteConfig = internalMutation({
       JSON.stringify(clean.socialBlueskyUrl),
       actorAdminId,
     );
+    await upsertSetting(ctx, 'site.supportEmail', JSON.stringify(clean.supportEmail), actorAdminId);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
