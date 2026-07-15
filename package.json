@@ -36,7 +36,6 @@
     "typecheck": "bun run i18n:compile && tsc -b --noEmit && tsc -p convex/tsconfig.json --noEmit && svelte-check --workspace . --threshold error",
     "i18n:keys": "bun run scripts/i18n-keys.ts",
     "i18n:compile": "bun run i18n:keys && paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide",
-    "i18n:translate": "bunx @inlang/cli@3 machine translate --project ./project.inlang && bun run i18n:compile",
     "i18n:review": "bun run scripts/i18n-review-packet.ts",
     "verifier:pin": "bun scripts/gen-verifier-pin.mjs"
   },

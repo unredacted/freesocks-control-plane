@@ -328,8 +328,12 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `messages/en.json` is the authoritative source, compiled to typed messages
   (`bun run i18n:keys` + `i18n:compile`); `t()` is a thin shim over the compiled `m` (the old
   hand-rolled TS catalogs are gone). Locales en/fa/ar/ru/zh, RTL via `<html dir>`, persisted
-  language switcher, Persian/Arabic-Indic digit normalization; non-English locales auto-filled
-  (`bun run i18n:translate`). Critical journey strings done. `bun run i18n:review`
+  language switcher, Persian/Arabic-Indic digit normalization. **Translations are human-only
+  (policy, 2026-07-15):** the Google-backed `i18n:translate` machine-translate script was
+  removed — no third-party services in the translation pipeline (the existing first-pass
+  locale fills predate the policy and are being replaced by the native review). New strings
+  ship English-fallback in fa/ar/ru/zh until a native reviewer fills them via the review
+  packets. Critical journey strings done. `bun run i18n:review`
   (`scripts/i18n-review-packet.ts`) generates the per-locale native-review packets in
   `translation-review/*.md` (English-vs-current tables per namespace, missing keys flagged,
   ICU plurals per variant, reviewer instructions); the human review pass is in progress.
