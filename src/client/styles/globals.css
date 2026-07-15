@@ -300,7 +300,9 @@
    underneath. Centered, so it needs no RTL mirror. */
 .underglow {
   --glow-at: 50% 50%;
-  --glow-size: 70% 78%;
+  /* Radius kept under the no-clip bound (0.68 * size < 50% of the box) so the
+     pool always fades out before its box edge, whatever the box dimensions. */
+  --glow-size: 66% 66%;
 }
 /* Membership: centered pool behind the tier-comparison cards. */
 .membership-glow {

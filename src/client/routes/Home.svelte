@@ -266,10 +266,11 @@
     ></div>
     <div class="space-y-6 md:space-y-8" in:fly={{ y: 20, duration: 500, easing: quintOut }}>
       <div class="relative">
-        <!-- Glow straddling the headline's baseline: bright center at the text
-             bottom, blooming up behind it and down below = light from underneath. -->
+        <!-- Glow pooled behind the headline: box biased up and toward the inline
+             start (wider on the left, taller above) so the emerald reads as
+             rising from under the text, brightest in its upper-left. -->
         <div
-          class="ambient-glow underglow absolute inset-x-0 -bottom-16 -z-10 h-48"
+          class="ambient-glow underglow absolute -start-20 -end-4 -top-24 -z-10 h-72"
           aria-hidden="true"
         ></div>
         <h1 class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05]">
