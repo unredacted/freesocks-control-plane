@@ -34,9 +34,9 @@ review.
 | `faq.contactPrefix` | For anything else, email | ⚠️ **MISSING** |
 | `faq.contactSuffix` | and include your Support ID. | ⚠️ **MISSING** |
 | `faq.q1.question` | What is FreeSocks? | FreeSocks是什么？ |
-| `faq.q1.answer` | A free proxy service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | 这是一个免费代理服务，帮助身处网络审查严格地区的人们访问开放的互联网。它由美国非营利组织 Unredacted（501(c)(3)）运营。 |
+| `faq.q1.answer` | A free VPN service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | 这是一个免费代理服务，帮助身处网络审查严格地区的人们访问开放的互联网。它由美国非营利组织 Unredacted（501(c)(3)）运营。 |
 | `faq.q2.question` | Is it really free? | 真的免费吗？ |
-| `faq.q2.answer` | Yes. A free account gives you a working proxy. A paid FreeSocks membership lifts the limits and helps fund free access for others. | 是的。免费账户可以让你使用代理服务器。付费的 FreeSocks 会员服务可以解除限制，并帮助资助其他人免费使用。 |
+| `faq.q2.answer` | Yes. A free account gives you a working VPN. A paid FreeSocks membership lifts the limits and helps fund free access for others. | 是的。免费账户可以让你使用代理服务器。付费的 FreeSocks 会员服务可以解除限制，并帮助资助其他人免费使用。 |
 | `faq.q3.question` | Do I need to give an email or password? | 我需要提供邮箱地址或密码吗？ |
 | `faq.q3.answer` | No. You pass a one-time human check and we generate a 32-digit account number - that's your only credential. We never ask for an email, phone number, or name. | 不。您只需通过一次性人工审核，我们就会生成一个32位数的账号--这就是您唯一的凭证。我们绝不会索要您的邮箱地址、电话号码或姓名。 |
 | `faq.q4.question` | What if I lose my account number? | 如果我的账号丢失了怎么办？ |
@@ -58,7 +58,7 @@ review.
 | --- | --- | --- |
 | `threat.subtitle` | An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are. | ⚠️ **MISSING** |
 | `threat.q1.question` | What does FreeSocks protect me from? | ⚠️ **MISSING** |
-| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted proxy, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | ⚠️ **MISSING** |
+| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted VPN connection, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | ⚠️ **MISSING** |
 | `threat.q2.question` | What does FreeSocks NOT protect me from? | ⚠️ **MISSING** |
 | `threat.q2.answer` | It does not make you anonymous to sites you sign in to: if you log in to an account, that site knows who you are. It cannot protect a device that is already compromised (spyware, a managed work profile, someone with physical access). And a powerful adversary that can watch traffic at many points on the internet may still correlate patterns. If your safety depends on strong anonymity, use Tor and follow specialist guidance for your situation. | ⚠️ **MISSING** |
 | `threat.q3.question` | Can FreeSocks see my traffic? | ⚠️ **MISSING** |
@@ -112,7 +112,7 @@ review.
 | `captcha.failedTitle` | Couldn't complete the human check. | 无法完成真人验证。 |
 | `captcha.failedBody` | The check runs on your device and didn't finish. This is usually a network problem, not something you did wrong. | 该验证在你的设备上运行，但未能完成。这通常是网络问题，而不是你的错。 |
 | `captcha.failedTip1` | Wait a moment, then try again | 稍等片刻，然后重试 |
-| `captcha.failedTip2` | Try a different network - or a VPN/proxy if sites are blocked where you are | 换一个网络试试 - 如果你所在地区的网站被屏蔽，可使用 VPN/代理 |
+| `captcha.failedTip2` | Try a different network - or a VPN if sites are blocked where you are | 换一个网络试试 - 如果你所在地区的网站被屏蔽，可使用 VPN/代理 |
 | `captcha.failedTip3` | Still stuck? Try a private/incognito window or turn off browser extensions | 仍然无法通过？试试隐私/无痕窗口，或关闭浏览器扩展 |
 
 ## `reveal` — The save-your-account-number modal (the 32-digit sign-in number is shown ONCE; users must download it and paste it back to verify). The single most safety-critical copy in the product. *(8 missing)*
@@ -247,9 +247,9 @@ review.
 | `account.disabledTitle` | Your account is currently disabled | 你的账户当前已停用 |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | 此账户的新密钥与更改已暂停。请在下方兑换会员码以重新激活，或联系支持并提供你的支持 ID。 |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | 如果您的32位账号可能已泄露，请立即更换。旧账号将立即失效。 |
-| `account.keyActionsHint` | These change your proxy connection only - your 32-digit account number stays the same. | 这些更改只会改变您的代理连接--您的 32 位账号保持不变。 |
+| `account.keyActionsHint` | These change your VPN connection only - your 32-digit account number stays the same. | 这些更改只会改变您的代理连接--您的 32 位账号保持不变。 |
 | `account.section.connection.title` | Your connection | 您的连接 |
-| `account.section.connection.desc` | Your proxy key, setup help, and connected devices. | 您的代理密钥、设置帮助和已连接的设备。 |
+| `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | 您的代理密钥、设置帮助和已连接的设备。 |
 | `account.section.membership.title` | Membership | 会员资格 |
 | `account.section.membership.desc` | Your plan, and how to upgrade or extend it. | 您的计划，以及如何升级或扩展它。 |
 | `account.section.codes.title` | Codes & gifts | 代码和礼物 |
@@ -379,7 +379,7 @@ review.
 | `get.nextStepCta` | Next: create your subscription | ⚠️ **MISSING** |
 | `get.nextStepBadge` | Next step | ⚠️ **MISSING** |
 | `get.step2Title` | Create your subscription | 创建你的订阅 |
-| `get.step2Intro` | Create a proxy subscription to get a URL you can paste into any compatible VPN client. | 创建代理订阅，获得可粘贴到任何兼容 VPN 客户端的链接。 |
+| `get.step2Intro` | Create a subscription to get a URL you can paste into any compatible VPN client. | 创建代理订阅，获得可粘贴到任何兼容 VPN 客户端的链接。 |
 | `get.manageHintPrefix` | Manage this subscription anytime from | 随时管理此订阅，前往 |
 | `get.manageLinkLabel` | your account | 你的账户 |
 | `get.subErrorSafePrefix` | Your account is safe. You can create the subscription later from | 你的账户是安全的。稍后可以创建订阅，前往 |
@@ -567,7 +567,7 @@ review.
 | --- | --- | --- |
 | `error.offline` | You appear to be offline. Check your connection and try again. | 你似乎已离线。请检查网络连接后重试。 |
 | `error.rateLimited` | Too many attempts. Please wait a minute and try again. | 尝试次数过多。请等待一分钟后重试。 |
-| `error.backendUnavailable` | No proxy server is available right now. Your account is safe - try creating your key again in a few minutes. | 当前没有可用的代理服务器。你的账户是安全的--请几分钟后再创建密钥。 |
+| `error.backendUnavailable` | No VPN server is available right now. Your account is safe - try creating your key again in a few minutes. | 当前没有可用的代理服务器。你的账户是安全的--请几分钟后再创建密钥。 |
 | `error.generic` | Something went wrong. Please try again. | 出错了，请重试。 |
 | `error.captchaFailed` | The human check failed. Please complete it and try again. | 真人验证失败。请完成验证后重试。 |
 | `error.captchaUnconfigured` | The service is temporarily unavailable. Please try again in a few minutes. | 服务暂时不可用，请几分钟后重试。 |
@@ -590,7 +590,7 @@ review.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
-| `setup.title` | Set up your proxy app | 设置你的代理应用 |
+| `setup.title` | Set up your VPN app | 设置你的代理应用 |
 | `setup.install` | Install | 安装 |
 | `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | ⚠️ **MISSING** |
 | `setup.openSource` | Open source | ⚠️ **MISSING** |
@@ -657,8 +657,8 @@ review.
 | --- | --- | --- |
 | `rawconfig.disclosure` | Show raw configuration | 显示原始配置 |
 | `rawconfig.title` | Your configuration | 你的配置 |
-| `rawconfig.explainer` | Your full proxy configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | 你的完整代理配置，通过加密通道获取，因此不会以明文经过 CDN。可手动复制到你的应用中，而无需使用订阅链接。 |
-| `rawconfig.addHint` | Paste these server entries into your proxy app manually. | 将这些服务器条目手动粘贴到你的代理应用中。 |
+| `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | 你的完整代理配置，通过加密通道获取，因此不会以明文经过 CDN。可手动复制到你的应用中，而无需使用订阅链接。 |
+| `rawconfig.addHint` | Paste these server entries into your VPN app manually. | 将这些服务器条目手动粘贴到你的代理应用中。 |
 
 ## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(6 missing)*
 
@@ -746,8 +746,8 @@ review.
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | FreeSocks 的设计理念是尽可能少地了解你的信息。 |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | 我们只存储您账号的哈希版本，绝不会存储账号本身。 |
 | `home.privacy.point2` | No email, phone number, or name. We never ask for them. | 无需提供电子邮件地址、电话号码或姓名。我们从不索取这些信息。 |
-| `home.privacy.point3` | No logs of the sites you visit or the traffic you send - and we don't store your IP address, on our servers or the proxy nodes. | 不会记录您访问的网站或您发送的流量。 |
-| `home.privacy.point4` | We store no payment details - you pay on the provider's own page, and the provider never sees your account or proxy subscription. | 我们不会存储任何付款详情--您在服务提供商的页面上付款，服务提供商永远不会看到您的帐户或代理订阅信息。 |
+| `home.privacy.point3` | No logs of the sites you visit or the traffic you send - and we don't store your IP address, on our servers or the VPN nodes. | 不会记录您访问的网站或您发送的流量。 |
+| `home.privacy.point4` | We store no payment details - you pay on the provider's own page, and the provider never sees your account or VPN subscription. | 我们不会存储任何付款详情--您在服务提供商的页面上付款，服务提供商永远不会看到您的帐户或代理订阅信息。 |
 | `home.how.title` | How it works | 工作原理 |
 | `home.how.cta` | Try it now | 立即尝试 |
 | `home.how.s1.title` | Create a free account | 创建免费帐户 |
@@ -791,7 +791,7 @@ review.
 | `e2ee.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | 暂时不要输入您的账号 - 请先通过带外方式验证此连接。 |
 | `e2ee.verify` | Verify | 核实 |
 | `e2ee.verifyTitle` | Verify this connection | 验证此连接 |
-| `e2ee.verifyIntro` | FreeSocks seals your account number and proxy key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks 使用 HPKE 将您的账号和代理密钥与此服务器进行加密，因此即使 CDN 遭到入侵也无法读取它们。这些指纹可以识别您的浏览器正在使用的密钥--请将它们与带外发布的密钥值进行比较，以确保密钥未被替换。 |
+| `e2ee.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks 使用 HPKE 将您的账号和代理密钥与此服务器进行加密，因此即使 CDN 遭到入侵也无法读取它们。这些指纹可以识别您的浏览器正在使用的密钥--请将它们与带外发布的密钥值进行比较，以确保密钥未被替换。 |
 | `e2ee.protectHeading` | What this protects | 它保护的是什么 |
 | `e2ee.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | 您的账号和密钥已使用 HPKE 加密到此服务器，因此网络及其前面的任何 CDN 都无法读取它们。 |
 | `e2ee.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | FreeSocks 本身可以读取这些信息来设置您的帐户，因此这保护您免受中间网络的侵害，而不是免受服务器的侵害。 |

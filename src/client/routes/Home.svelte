@@ -257,25 +257,25 @@
     class="relative grid gap-10 md:grid-cols-[1.2fr_1fr] md:gap-16 items-center pt-8 md:pt-16"
     in:fade={{ duration: 300 }}
   >
-    <!-- Ambient brand glows + dither dot grid behind the hero (pure CSS, static).
-         The second, fainter pool sits behind the free-tier card (md+, where the
-         card is actually beside the headline). -->
-    <div
-      class="ambient-glow hero-glow absolute -inset-x-6 -top-8 bottom-0 -z-10"
-      aria-hidden="true"
-    ></div>
-    <div
-      class="ambient-glow hero-card-glow absolute -inset-x-6 -top-8 bottom-0 -z-10 hidden md:block"
-      aria-hidden="true"
-    ></div>
+    <!-- Dither dot grid behind the hero (pure CSS, static). The brand glows are
+         anchored to the headline + card themselves (below), so they read as
+         light rising from underneath each one on every breakpoint. -->
     <div
       class="dot-grid absolute -inset-x-6 -top-8 bottom-0 -z-10 opacity-40 dark:opacity-25"
       aria-hidden="true"
     ></div>
     <div class="space-y-6 md:space-y-8" in:fly={{ y: 20, duration: 500, easing: quintOut }}>
-      <h1 class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05]">
-        {t('home.hero.title')}
-      </h1>
+      <div class="relative">
+        <!-- Glow straddling the headline's baseline: bright center at the text
+             bottom, blooming up behind it and down below = light from underneath. -->
+        <div
+          class="ambient-glow underglow absolute inset-x-0 -bottom-16 -z-10 h-48"
+          aria-hidden="true"
+        ></div>
+        <h1 class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05]">
+          {t('home.hero.title')}
+        </h1>
+      </div>
 
       <p class="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
         {t('home.hero.subtitle', { limits: membershipLimits })}
@@ -407,6 +407,12 @@
          card is the at-a-glance "what you get" summary they'd otherwise miss. Not
          aria-hidden - the specifics (limits, no-email) are informative. -->
     <div class="relative" in:fly={{ x: 20, duration: 600, delay: 150, easing: quintOut }}>
+      <!-- Glow pooling under the free-tier card: the card is opaque, so this
+           reads as light rising from beneath it. -->
+      <div
+        class="ambient-glow underglow absolute inset-x-0 -bottom-20 -z-10 h-56"
+        aria-hidden="true"
+      ></div>
       <div class="rounded-2xl border border-border bg-card p-6 md:p-7 shadow-sm space-y-5">
         <div class="flex items-baseline justify-between">
           <h2 class="text-base font-display font-semibold tracking-tight">

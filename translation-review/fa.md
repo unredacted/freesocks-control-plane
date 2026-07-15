@@ -35,9 +35,9 @@ review.
 | `faq.contactPrefix` | For anything else, email | ⚠️ **MISSING** |
 | `faq.contactSuffix` | and include your Support ID. | ⚠️ **MISSING** |
 | `faq.q1.question` | What is FreeSocks? | فری‌ساکس چیست؟ |
-| `faq.q1.answer` | A free proxy service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | یک سرویس پروکسی رایگان که به مردم در مناطق به شدت سانسور شده کمک می‌کند تا به اینترنت آزاد دسترسی پیدا کنند. این سرویس توسط Unredacted، یک سازمان غیرانتفاعی 501(c)(3) ایالات متحده، اداره می‌شود. |
+| `faq.q1.answer` | A free VPN service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | یک سرویس پروکسی رایگان که به مردم در مناطق به شدت سانسور شده کمک می‌کند تا به اینترنت آزاد دسترسی پیدا کنند. این سرویس توسط Unredacted، یک سازمان غیرانتفاعی 501(c)(3) ایالات متحده، اداره می‌شود. |
 | `faq.q2.question` | Is it really free? | آیا واقعاً رایگان است؟ |
-| `faq.q2.answer` | Yes. A free account gives you a working proxy. A paid FreeSocks membership lifts the limits and helps fund free access for others. | بله. یک حساب کاربری رایگان به شما یک پروکسی فعال می‌دهد. عضویت پولی FreeSocks محدودیت‌ها را برمی‌دارد و به تأمین مالی دسترسی رایگان برای دیگران کمک می‌کند. |
+| `faq.q2.answer` | Yes. A free account gives you a working VPN. A paid FreeSocks membership lifts the limits and helps fund free access for others. | بله. یک حساب کاربری رایگان به شما یک پروکسی فعال می‌دهد. عضویت پولی FreeSocks محدودیت‌ها را برمی‌دارد و به تأمین مالی دسترسی رایگان برای دیگران کمک می‌کند. |
 | `faq.q3.question` | Do I need to give an email or password? | آیا باید ایمیل یا رمز عبور بدهم؟ |
 | `faq.q3.answer` | No. You pass a one-time human check and we generate a 32-digit account number - that's your only credential. We never ask for an email, phone number, or name. | خیر. شما یک بررسی انسانی یک‌باره را با موفقیت پشت سر می‌گذارید و ما یک شماره حساب ۳۲ رقمی تولید می‌کنیم - این تنها مدرک شناسایی شماست. ما هرگز ایمیل، شماره تلفن یا نام شما را درخواست نمی‌کنیم. |
 | `faq.q4.question` | What if I lose my account number? | اگر شماره حسابم را گم کنم چه می‌شود؟ |
@@ -59,7 +59,7 @@ review.
 | --- | --- | --- |
 | `threat.subtitle` | An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are. | ⚠️ **MISSING** |
 | `threat.q1.question` | What does FreeSocks protect me from? | ⚠️ **MISSING** |
-| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted proxy, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | ⚠️ **MISSING** |
+| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted VPN connection, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | ⚠️ **MISSING** |
 | `threat.q2.question` | What does FreeSocks NOT protect me from? | ⚠️ **MISSING** |
 | `threat.q2.answer` | It does not make you anonymous to sites you sign in to: if you log in to an account, that site knows who you are. It cannot protect a device that is already compromised (spyware, a managed work profile, someone with physical access). And a powerful adversary that can watch traffic at many points on the internet may still correlate patterns. If your safety depends on strong anonymity, use Tor and follow specialist guidance for your situation. | ⚠️ **MISSING** |
 | `threat.q3.question` | Can FreeSocks see my traffic? | ⚠️ **MISSING** |
@@ -113,7 +113,7 @@ review.
 | `captcha.failedTitle` | Couldn't complete the human check. | بررسی انسانی کامل نشد. |
 | `captcha.failedBody` | The check runs on your device and didn't finish. This is usually a network problem, not something you did wrong. | این بررسی روی دستگاه شما اجرا می‌شود و کامل نشد. معمولاً این یک مشکل شبکه است، نه اشتباه شما. |
 | `captcha.failedTip1` | Wait a moment, then try again | کمی صبر کنید و دوباره تلاش کنید |
-| `captcha.failedTip2` | Try a different network - or a VPN/proxy if sites are blocked where you are | شبکهٔ دیگری را امتحان کنید - یا اگر سایت‌ها در منطقهٔ شما مسدودند، از یک VPN/پراکسی استفاده کنید |
+| `captcha.failedTip2` | Try a different network - or a VPN if sites are blocked where you are | شبکهٔ دیگری را امتحان کنید - یا اگر سایت‌ها در منطقهٔ شما مسدودند، از یک VPN/پراکسی استفاده کنید |
 | `captcha.failedTip3` | Still stuck? Try a private/incognito window or turn off browser extensions | هنوز مشکل دارید؟ یک پنجرهٔ ناشناس باز کنید یا افزونه‌های مرورگر را غیرفعال کنید |
 
 ## `reveal` — The save-your-account-number modal (the 32-digit sign-in number is shown ONCE; users must download it and paste it back to verify). The single most safety-critical copy in the product. *(8 missing)*
@@ -248,9 +248,9 @@ review.
 | `account.disabledTitle` | Your account is currently disabled | حساب شما در حال حاضر غیرفعال است |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | ساخت کلید جدید و تغییرات در این حساب متوقف شده است. برای فعال‌سازی دوباره، کد عضویت را در پایین وارد کنید یا با پشتیبانی تماس بگیرید و شناسهٔ پشتیبانی خود را اعلام کنید. |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | اگر شماره حساب ۳۲ رقمی شما لو رفته باشد، آن را تغییر دهید. شماره قبلی فوراً از کار می‌افتد. |
-| `account.keyActionsHint` | These change your proxy connection only - your 32-digit account number stays the same. | این‌ها فقط اتصال پروکسی شما را تغییر می‌دهند - شماره حساب ۳۲ رقمی شما ثابت می‌ماند. |
+| `account.keyActionsHint` | These change your VPN connection only - your 32-digit account number stays the same. | این‌ها فقط اتصال پروکسی شما را تغییر می‌دهند - شماره حساب ۳۲ رقمی شما ثابت می‌ماند. |
 | `account.section.connection.title` | Your connection | ارتباط شما |
-| `account.section.connection.desc` | Your proxy key, setup help, and connected devices. | کلید پروکسی شما، راهنمای راه‌اندازی و دستگاه‌های متصل. |
+| `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | کلید پروکسی شما، راهنمای راه‌اندازی و دستگاه‌های متصل. |
 | `account.section.membership.title` | Membership | عضویت |
 | `account.section.membership.desc` | Your plan, and how to upgrade or extend it. | طرح شما و نحوه ارتقا یا تمدید آن. |
 | `account.section.codes.title` | Codes & gifts | کدها و هدایا |
@@ -380,7 +380,7 @@ review.
 | `get.nextStepCta` | Next: create your subscription | ⚠️ **MISSING** |
 | `get.nextStepBadge` | Next step | ⚠️ **MISSING** |
 | `get.step2Title` | Create your subscription | اشتراک خود را بسازید |
-| `get.step2Intro` | Create a proxy subscription to get a URL you can paste into any compatible VPN client. | یک اشتراک پروکسی بسازید تا لینکی دریافت کنید که می‌توانید در هر برنامهٔ VPN سازگار جای‌گذاری کنید. |
+| `get.step2Intro` | Create a subscription to get a URL you can paste into any compatible VPN client. | یک اشتراک پروکسی بسازید تا لینکی دریافت کنید که می‌توانید در هر برنامهٔ VPN سازگار جای‌گذاری کنید. |
 | `get.manageHintPrefix` | Manage this subscription anytime from | این اشتراک را هر زمان مدیریت کنید از |
 | `get.manageLinkLabel` | your account | حساب شما |
 | `get.subErrorSafePrefix` | Your account is safe. You can create the subscription later from | حساب شما امن است. بعداً می‌توانید اشتراک را بسازید از |
@@ -568,7 +568,7 @@ review.
 | --- | --- | --- |
 | `error.offline` | You appear to be offline. Check your connection and try again. | به نظر می‌رسد آفلاین هستید. اتصال خود را بررسی و دوباره تلاش کنید. |
 | `error.rateLimited` | Too many attempts. Please wait a minute and try again. | تلاش‌های زیاد. لطفاً یک دقیقه صبر کنید و دوباره تلاش کنید. |
-| `error.backendUnavailable` | No proxy server is available right now. Your account is safe - try creating your key again in a few minutes. | در حال حاضر هیچ سرور پروکسی در دسترس نیست. حساب شما امن است - چند دقیقه دیگر دوباره کلید بسازید. |
+| `error.backendUnavailable` | No VPN server is available right now. Your account is safe - try creating your key again in a few minutes. | در حال حاضر هیچ سرور پروکسی در دسترس نیست. حساب شما امن است - چند دقیقه دیگر دوباره کلید بسازید. |
 | `error.generic` | Something went wrong. Please try again. | مشکلی پیش آمد. لطفاً دوباره تلاش کنید. |
 | `error.captchaFailed` | The human check failed. Please complete it and try again. | بررسی انسانی ناموفق بود. لطفاً آن را کامل کنید و دوباره تلاش کنید. |
 | `error.captchaUnconfigured` | The service is temporarily unavailable. Please try again in a few minutes. | سرویس موقتاً در دسترس نیست. لطفاً چند دقیقه دیگر دوباره تلاش کنید. |
@@ -591,7 +591,7 @@ review.
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
-| `setup.title` | Set up your proxy app | برنامهٔ پروکسی خود را تنظیم کنید |
+| `setup.title` | Set up your VPN app | برنامهٔ پروکسی خود را تنظیم کنید |
 | `setup.install` | Install | نصب |
 | `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | ⚠️ **MISSING** |
 | `setup.openSource` | Open source | ⚠️ **MISSING** |
@@ -658,8 +658,8 @@ review.
 | --- | --- | --- |
 | `rawconfig.disclosure` | Show raw configuration | نمایش پیکربندی خام |
 | `rawconfig.title` | Your configuration | پیکربندی شما |
-| `rawconfig.explainer` | Your full proxy configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | پیکربندی کامل پروکسی شما، که از طریق یک کانال رمزگذاری‌شده دریافت می‌شود تا هرگز به‌صورت متن ساده از CDN عبور نکند. به‌جای استفاده از لینک اشتراک، آن را دستی در برنامه‌تان وارد کنید. |
-| `rawconfig.addHint` | Paste these server entries into your proxy app manually. | این ورودی‌های سرور را به‌صورت دستی در برنامهٔ پروکسی خود وارد کنید. |
+| `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | پیکربندی کامل پروکسی شما، که از طریق یک کانال رمزگذاری‌شده دریافت می‌شود تا هرگز به‌صورت متن ساده از CDN عبور نکند. به‌جای استفاده از لینک اشتراک، آن را دستی در برنامه‌تان وارد کنید. |
+| `rawconfig.addHint` | Paste these server entries into your VPN app manually. | این ورودی‌های سرور را به‌صورت دستی در برنامهٔ پروکسی خود وارد کنید. |
 
 ## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(6 missing)*
 
@@ -747,8 +747,8 @@ review.
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | FreeSocks طوری ساخته شده که تا حد امکان اطلاعات کمی در مورد شما داشته باشد. |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | ما فقط یک نسخه هش شده از شماره حساب شما را ذخیره می‌کنیم - هرگز خود شماره را ذخیره نمی‌کنیم. |
 | `home.privacy.point2` | No email, phone number, or name. We never ask for them. | نه ایمیلی، نه شماره تلفنی، نه اسمی. ما هرگز از آنها چیزی نمی‌پرسیم. |
-| `home.privacy.point3` | No logs of the sites you visit or the traffic you send - and we don't store your IP address, on our servers or the proxy nodes. | هیچ گزارشی از سایت‌هایی که بازدید می‌کنید یا ترافیکی که ارسال می‌کنید، ثبت نمی‌شود. |
-| `home.privacy.point4` | We store no payment details - you pay on the provider's own page, and the provider never sees your account or proxy subscription. | ما هیچ جزئیات پرداختی را ذخیره نمی‌کنیم - شما در صفحه خود ارائه‌دهنده پرداخت می‌کنید و ارائه‌دهنده هرگز حساب یا اشتراک پروکسی شما را نمی‌بیند. |
+| `home.privacy.point3` | No logs of the sites you visit or the traffic you send - and we don't store your IP address, on our servers or the VPN nodes. | هیچ گزارشی از سایت‌هایی که بازدید می‌کنید یا ترافیکی که ارسال می‌کنید، ثبت نمی‌شود. |
+| `home.privacy.point4` | We store no payment details - you pay on the provider's own page, and the provider never sees your account or VPN subscription. | ما هیچ جزئیات پرداختی را ذخیره نمی‌کنیم - شما در صفحه خود ارائه‌دهنده پرداخت می‌کنید و ارائه‌دهنده هرگز حساب یا اشتراک پروکسی شما را نمی‌بیند. |
 | `home.how.title` | How it works | چگونه کار می‌کند؟ |
 | `home.how.cta` | Try it now | همین حالا امتحان کنید |
 | `home.how.s1.title` | Create a free account | ایجاد حساب کاربری رایگان |
@@ -792,7 +792,7 @@ review.
 | `e2ee.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | هنوز شماره حساب خود را وارد نکنید - ابتدا این اتصال را خارج از باند تأیید کنید. |
 | `e2ee.verify` | Verify | تأیید |
 | `e2ee.verifyTitle` | Verify this connection | این ارتباط را تأیید کنید |
-| `e2ee.verifyIntro` | FreeSocks seals your account number and proxy key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks شماره حساب و کلید پروکسی شما را با HPKE به این سرور متصل می‌کند، بنابراین یک CDN آسیب‌پذیر نمی‌تواند آنها را بخواند. این اثر انگشت‌ها کلیدهایی را که مرورگر شما استفاده می‌کند شناسایی می‌کنند - آنها را با مقادیر منتشر شده خارج از باند مقایسه کنید تا مطمئن شوید که آنها جابجا نشده‌اند. |
+| `e2ee.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks شماره حساب و کلید پروکسی شما را با HPKE به این سرور متصل می‌کند، بنابراین یک CDN آسیب‌پذیر نمی‌تواند آنها را بخواند. این اثر انگشت‌ها کلیدهایی را که مرورگر شما استفاده می‌کند شناسایی می‌کنند - آنها را با مقادیر منتشر شده خارج از باند مقایسه کنید تا مطمئن شوید که آنها جابجا نشده‌اند. |
 | `e2ee.protectHeading` | What this protects | این از چه چیزی محافظت می‌کند؟ |
 | `e2ee.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | شماره حساب و کلید شما با HPKE برای این سرور رمزگذاری شده‌اند، بنابراین شبکه و هر CDN مقابل آن نمی‌تواند آنها را بخواند. |
 | `e2ee.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | خود FreeSocks می‌تواند آنها را بخواند تا حساب شما را تنظیم کند، بنابراین این شما را از شبکه بین آنها محافظت می‌کند، نه از سرور. |

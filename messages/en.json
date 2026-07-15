@@ -9,11 +9,11 @@
     "contactSuffix": "and include your Support ID.",
     "q1": {
       "question": "What is FreeSocks?",
-      "answer": "A free proxy service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit."
+      "answer": "A free VPN service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit."
     },
     "q2": {
       "question": "Is it really free?",
-      "answer": "Yes. A free account gives you a working proxy. A paid FreeSocks membership lifts the limits and helps fund free access for others."
+      "answer": "Yes. A free account gives you a working VPN. A paid FreeSocks membership lifts the limits and helps fund free access for others."
     },
     "q3": {
       "question": "Do I need to give an email or password?",
@@ -48,7 +48,7 @@
     "subtitle": "An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are.",
     "q1": {
       "question": "What does FreeSocks protect me from?",
-      "answer": "FreeSocks tunnels your traffic through an encrypted proxy, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do."
+      "answer": "FreeSocks tunnels your traffic through an encrypted VPN connection, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do."
     },
     "q2": {
       "question": "What does FreeSocks NOT protect me from?",
@@ -119,7 +119,7 @@
     "failedTitle": "Couldn't complete the human check.",
     "failedBody": "The check runs on your device and didn't finish. This is usually a network problem, not something you did wrong.",
     "failedTip1": "Wait a moment, then try again",
-    "failedTip2": "Try a different network - or a VPN/proxy if sites are blocked where you are",
+    "failedTip2": "Try a different network - or a VPN if sites are blocked where you are",
     "failedTip3": "Still stuck? Try a private/incognito window or turn off browser extensions"
   },
   "reveal": {
@@ -243,11 +243,11 @@
     "disabledTitle": "Your account is currently disabled",
     "disabledBody": "New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID.",
     "rotateHint": "Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately.",
-    "keyActionsHint": "These change your proxy connection only - your 32-digit account number stays the same.",
+    "keyActionsHint": "These change your VPN connection only - your 32-digit account number stays the same.",
     "section": {
       "connection": {
         "title": "Your connection",
-        "desc": "Your proxy key, setup help, and connected devices."
+        "desc": "Your VPN key, setup help, and connected devices."
       },
       "membership": {
         "title": "Membership",
@@ -432,7 +432,7 @@
     "nextStepCta": "Next: create your subscription",
     "nextStepBadge": "Next step",
     "step2Title": "Create your subscription",
-    "step2Intro": "Create a proxy subscription to get a URL you can paste into any compatible VPN client.",
+    "step2Intro": "Create a subscription to get a URL you can paste into any compatible VPN client.",
     "manageHintPrefix": "Manage this subscription anytime from",
     "manageLinkLabel": "your account",
     "subErrorSafePrefix": "Your account is safe. You can create the subscription later from",
@@ -618,7 +618,7 @@
   "error": {
     "offline": "You appear to be offline. Check your connection and try again.",
     "rateLimited": "Too many attempts. Please wait a minute and try again.",
-    "backendUnavailable": "No proxy server is available right now. Your account is safe - try creating your key again in a few minutes.",
+    "backendUnavailable": "No VPN server is available right now. Your account is safe - try creating your key again in a few minutes.",
     "generic": "Something went wrong. Please try again.",
     "captchaFailed": "The human check failed. Please complete it and try again.",
     "captchaUnconfigured": "The service is temporarily unavailable. Please try again in a few minutes.",
@@ -638,7 +638,7 @@
     "serverError": "The server had a problem handling this. Please try again in a few minutes."
   },
   "setup": {
-    "title": "Set up your proxy app",
+    "title": "Set up your VPN app",
     "install": "Install",
     "noApps": "No recommended apps for this platform yet - use any compatible client and add your subscription manually.",
     "openSource": "Open source",
@@ -705,8 +705,8 @@
   "rawconfig": {
     "disclosure": "Show raw configuration",
     "title": "Your configuration",
-    "explainer": "Your full proxy configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link.",
-    "addHint": "Paste these server entries into your proxy app manually."
+    "explainer": "Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link.",
+    "addHint": "Paste these server entries into your VPN app manually."
   },
   "delivery": {
     "title": "What matters most to you?",
@@ -826,8 +826,8 @@
       "subtitle": "FreeSocks is built to know as little about you as possible.",
       "point1": "We store only a hashed version of your account number - never the number itself.",
       "point2": "No email, phone number, or name. We never ask for them.",
-      "point3": "No logs of the sites you visit or the traffic you send - and we don't store your IP address, on our servers or the proxy nodes.",
-      "point4": "We store no payment details - you pay on the provider's own page, and the provider never sees your account or proxy subscription."
+      "point3": "No logs of the sites you visit or the traffic you send - and we don't store your IP address, on our servers or the VPN nodes.",
+      "point4": "We store no payment details - you pay on the provider's own page, and the provider never sees your account or VPN subscription."
     },
     "how": {
       "title": "How it works",
@@ -896,7 +896,7 @@
     "bannerWarnDetail": "Don't enter your account number yet - verify this connection out-of-band first.",
     "verify": "Verify",
     "verifyTitle": "Verify this connection",
-    "verifyIntro": "FreeSocks seals your account number and proxy key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped.",
+    "verifyIntro": "FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped.",
     "protectHeading": "What this protects",
     "protectScope": "Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them.",
     "protectServerReads": "FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server.",

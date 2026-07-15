@@ -34,9 +34,9 @@ review.
 | `faq.contactPrefix` | For anything else, email | ⚠️ **MISSING** |
 | `faq.contactSuffix` | and include your Support ID. | ⚠️ **MISSING** |
 | `faq.q1.question` | What is FreeSocks? | Что такое FreeSocks? |
-| `faq.q1.answer` | A free proxy service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | Бесплатный прокси-сервис, помогающий людям в регионах с жесткой цензурой получить доступ к открытому интернету. Он управляется некоммерческой организацией Unredacted, зарегистрированной в США как 501(c)(3). |
+| `faq.q1.answer` | A free VPN service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | Бесплатный прокси-сервис, помогающий людям в регионах с жесткой цензурой получить доступ к открытому интернету. Он управляется некоммерческой организацией Unredacted, зарегистрированной в США как 501(c)(3). |
 | `faq.q2.question` | Is it really free? | Это действительно бесплатно? |
-| `faq.q2.answer` | Yes. A free account gives you a working proxy. A paid FreeSocks membership lifts the limits and helps fund free access for others. | Да. Бесплатный аккаунт предоставляет вам работающий прокси. Платная подписка FreeSocks снимает ограничения и помогает финансировать бесплатный доступ для других пользователей. |
+| `faq.q2.answer` | Yes. A free account gives you a working VPN. A paid FreeSocks membership lifts the limits and helps fund free access for others. | Да. Бесплатный аккаунт предоставляет вам работающий прокси. Платная подписка FreeSocks снимает ограничения и помогает финансировать бесплатный доступ для других пользователей. |
 | `faq.q3.question` | Do I need to give an email or password? | Нужно ли указывать адрес электронной почты или пароль? |
 | `faq.q3.answer` | No. You pass a one-time human check and we generate a 32-digit account number - that's your only credential. We never ask for an email, phone number, or name. | Нет. Вы проходите одноразовую проверку человеком, и мы генерируем 32-значный номер счета - это ваши единственные учетные данные. Мы никогда не запрашиваем адрес электронной почты, номер телефона или имя. |
 | `faq.q4.question` | What if I lose my account number? | Что если я потеряю номер своего счета? |
@@ -58,7 +58,7 @@ review.
 | --- | --- | --- |
 | `threat.subtitle` | An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are. | ⚠️ **MISSING** |
 | `threat.q1.question` | What does FreeSocks protect me from? | ⚠️ **MISSING** |
-| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted proxy, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | ⚠️ **MISSING** |
+| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted VPN connection, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | ⚠️ **MISSING** |
 | `threat.q2.question` | What does FreeSocks NOT protect me from? | ⚠️ **MISSING** |
 | `threat.q2.answer` | It does not make you anonymous to sites you sign in to: if you log in to an account, that site knows who you are. It cannot protect a device that is already compromised (spyware, a managed work profile, someone with physical access). And a powerful adversary that can watch traffic at many points on the internet may still correlate patterns. If your safety depends on strong anonymity, use Tor and follow specialist guidance for your situation. | ⚠️ **MISSING** |
 | `threat.q3.question` | Can FreeSocks see my traffic? | ⚠️ **MISSING** |
@@ -112,7 +112,7 @@ review.
 | `captcha.failedTitle` | Couldn't complete the human check. | Не удалось пройти проверку. |
 | `captcha.failedBody` | The check runs on your device and didn't finish. This is usually a network problem, not something you did wrong. | Проверка выполняется на вашем устройстве и не завершилась. Обычно это проблема с сетью, а не ваша ошибка. |
 | `captcha.failedTip1` | Wait a moment, then try again | Подождите немного и попробуйте снова |
-| `captcha.failedTip2` | Try a different network - or a VPN/proxy if sites are blocked where you are | Попробуйте другую сеть - или VPN/прокси, если сайты заблокированы в вашем регионе |
+| `captcha.failedTip2` | Try a different network - or a VPN if sites are blocked where you are | Попробуйте другую сеть - или VPN/прокси, если сайты заблокированы в вашем регионе |
 | `captcha.failedTip3` | Still stuck? Try a private/incognito window or turn off browser extensions | Всё ещё не работает? Откройте приватное окно или отключите расширения браузера |
 
 ## `reveal` — The save-your-account-number modal (the 32-digit sign-in number is shown ONCE; users must download it and paste it back to verify). The single most safety-critical copy in the product. *(8 missing)*
@@ -247,9 +247,9 @@ review.
 | `account.disabledTitle` | Your account is currently disabled | Аккаунт сейчас отключён |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | Новые ключи и изменения для этого аккаунта приостановлены. Активируйте код членства ниже, чтобы вернуть доступ, или напишите в поддержку, указав свой ID для поддержки. |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | Замените свой 32-значный номер счета, если произошла утечка данных. Старый номер перестанет работать немедленно. |
-| `account.keyActionsHint` | These change your proxy connection only - your 32-digit account number stays the same. | Эти изменения касаются только подключения к прокси-серверу - ваш 32-значный номер счета остается неизменным. |
+| `account.keyActionsHint` | These change your VPN connection only - your 32-digit account number stays the same. | Эти изменения касаются только подключения к прокси-серверу - ваш 32-значный номер счета остается неизменным. |
 | `account.section.connection.title` | Your connection | Ваше соединение |
-| `account.section.connection.desc` | Your proxy key, setup help, and connected devices. | Ваш прокси-ключ, справка по настройке и подключенные устройства. |
+| `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | Ваш прокси-ключ, справка по настройке и подключенные устройства. |
 | `account.section.membership.title` | Membership | Членство |
 | `account.section.membership.desc` | Your plan, and how to upgrade or extend it. | Ваш план и способы его модернизации или расширения. |
 | `account.section.codes.title` | Codes & gifts | Коды и подарки |
@@ -379,7 +379,7 @@ review.
 | `get.nextStepCta` | Next: create your subscription | ⚠️ **MISSING** |
 | `get.nextStepBadge` | Next step | ⚠️ **MISSING** |
 | `get.step2Title` | Create your subscription | Создайте подписку |
-| `get.step2Intro` | Create a proxy subscription to get a URL you can paste into any compatible VPN client. | Создайте прокси-подписку, чтобы получить ссылку для любого совместимого VPN-клиента. |
+| `get.step2Intro` | Create a subscription to get a URL you can paste into any compatible VPN client. | Создайте прокси-подписку, чтобы получить ссылку для любого совместимого VPN-клиента. |
 | `get.manageHintPrefix` | Manage this subscription anytime from | Управляйте этой подпиской в любое время из |
 | `get.manageLinkLabel` | your account | вашего аккаунта |
 | `get.subErrorSafePrefix` | Your account is safe. You can create the subscription later from | Ваш аккаунт в безопасности. Подписку можно создать позже из |
@@ -567,7 +567,7 @@ review.
 | --- | --- | --- |
 | `error.offline` | You appear to be offline. Check your connection and try again. | Похоже, вы офлайн. Проверьте подключение и повторите попытку. |
 | `error.rateLimited` | Too many attempts. Please wait a minute and try again. | Слишком много попыток. Подождите минуту и повторите. |
-| `error.backendUnavailable` | No proxy server is available right now. Your account is safe - try creating your key again in a few minutes. | Сейчас нет доступного прокси-сервера. Ваш аккаунт в безопасности - попробуйте создать ключ через несколько минут. |
+| `error.backendUnavailable` | No VPN server is available right now. Your account is safe - try creating your key again in a few minutes. | Сейчас нет доступного прокси-сервера. Ваш аккаунт в безопасности - попробуйте создать ключ через несколько минут. |
 | `error.generic` | Something went wrong. Please try again. | Что-то пошло не так. Повторите попытку. |
 | `error.captchaFailed` | The human check failed. Please complete it and try again. | Проверка не пройдена. Завершите её и повторите попытку. |
 | `error.captchaUnconfigured` | The service is temporarily unavailable. Please try again in a few minutes. | Сервис временно недоступен. Пожалуйста, повторите попытку через несколько минут. |
@@ -590,7 +590,7 @@ review.
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
-| `setup.title` | Set up your proxy app | Настройте прокси-приложение |
+| `setup.title` | Set up your VPN app | Настройте прокси-приложение |
 | `setup.install` | Install | Установить |
 | `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | ⚠️ **MISSING** |
 | `setup.openSource` | Open source | ⚠️ **MISSING** |
@@ -657,8 +657,8 @@ review.
 | --- | --- | --- |
 | `rawconfig.disclosure` | Show raw configuration | Показать необработанную конфигурацию |
 | `rawconfig.title` | Your configuration | Ваша конфигурация |
-| `rawconfig.explainer` | Your full proxy configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | Полная конфигурация вашего прокси, полученная по зашифрованному каналу - она никогда не проходит через CDN в открытом виде. Вставьте её в приложение вручную вместо ссылки-подписки. |
-| `rawconfig.addHint` | Paste these server entries into your proxy app manually. | Вставьте эти серверные записи в ваше прокси-приложение вручную. |
+| `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | Полная конфигурация вашего прокси, полученная по зашифрованному каналу - она никогда не проходит через CDN в открытом виде. Вставьте её в приложение вручную вместо ссылки-подписки. |
+| `rawconfig.addHint` | Paste these server entries into your VPN app manually. | Вставьте эти серверные записи в ваше прокси-приложение вручную. |
 
 ## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(6 missing)*
 
@@ -746,8 +746,8 @@ review.
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | FreeSocks создан для того, чтобы знать о вас как можно меньше. |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | Мы храним только хешированную версию номера вашего счета - сам номер никогда не сохраняется. |
 | `home.privacy.point2` | No email, phone number, or name. We never ask for them. | Никакого адреса электронной почты, номера телефона или имени. Мы никогда их не запрашиваем. |
-| `home.privacy.point3` | No logs of the sites you visit or the traffic you send - and we don't store your IP address, on our servers or the proxy nodes. | Никакой информации о посещаемых вами сайтах или об объеме трафика, который вы на них отправляете. |
-| `home.privacy.point4` | We store no payment details - you pay on the provider's own page, and the provider never sees your account or proxy subscription. | Мы не храним никакие платежные данные - вы оплачиваете на странице самого провайдера, и провайдер никогда не видит вашу учетную запись или подписку на прокси. |
+| `home.privacy.point3` | No logs of the sites you visit or the traffic you send - and we don't store your IP address, on our servers or the VPN nodes. | Никакой информации о посещаемых вами сайтах или об объеме трафика, который вы на них отправляете. |
+| `home.privacy.point4` | We store no payment details - you pay on the provider's own page, and the provider never sees your account or VPN subscription. | Мы не храним никакие платежные данные - вы оплачиваете на странице самого провайдера, и провайдер никогда не видит вашу учетную запись или подписку на прокси. |
 | `home.how.title` | How it works | Как это работает |
 | `home.how.cta` | Try it now | Попробуйте прямо сейчас! |
 | `home.how.s1.title` | Create a free account | Создайте бесплатный аккаунт |
@@ -791,7 +791,7 @@ review.
 | `e2ee.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | Пока не вводите номер своего счета - сначала проверьте это соединение внеполосным способом. |
 | `e2ee.verify` | Verify | Проверять |
 | `e2ee.verifyTitle` | Verify this connection | Проверьте это соединение. |
-| `e2ee.verifyIntro` | FreeSocks seals your account number and proxy key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks защищает номер вашей учетной записи и ключ прокси-сервера с помощью HPKE, поэтому скомпрометированная CDN не сможет их прочитать. Эти «отпечатки» идентифицируют ключи, используемые вашим браузером - сравните их со значениями, опубликованными вне сети, чтобы убедиться, что они не были подменены. |
+| `e2ee.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | FreeSocks защищает номер вашей учетной записи и ключ прокси-сервера с помощью HPKE, поэтому скомпрометированная CDN не сможет их прочитать. Эти «отпечатки» идентифицируют ключи, используемые вашим браузером - сравните их со значениями, опубликованными вне сети, чтобы убедиться, что они не были подменены. |
 | `e2ee.protectHeading` | What this protects | Что это защищает |
 | `e2ee.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | Номер вашего счета и ключ зашифрованы на этом сервере с помощью HPKE, поэтому сеть и любая CDN-сеть перед ним не смогут их прочитать. |
 | `e2ee.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | FreeSocks сам может считывать их для настройки вашей учетной записи, поэтому это защищает вас от сетевой защиты, а не от защиты сервера. |

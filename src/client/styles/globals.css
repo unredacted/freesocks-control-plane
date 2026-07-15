@@ -295,25 +295,12 @@
 .dark .ambient-glow {
   --glow-a: 20%;
 }
-/* Hero: the main pool washes the headline corner; mirrored in RTL. */
-.hero-glow {
-  --glow-at: 32% 28%;
-  --glow-size: 42% 38%;
-}
-[dir='rtl'] .hero-glow {
-  --glow-at: 68% 28%;
-}
-/* Hero, second pool: a fainter wash behind the free-tier card. */
-.hero-card-glow {
-  --glow-at: 78% 42%;
-  --glow-size: 28% 33%;
-  --glow-a: 8%;
-}
-.dark .hero-card-glow {
-  --glow-a: 12%;
-}
-[dir='rtl'] .hero-card-glow {
-  --glow-at: 22% 42%;
+/* Under-glow: a centered pool anchored to an element's own box (its wrapper
+   straddles the element's bottom edge), so the light reads as rising from
+   underneath. Centered, so it needs no RTL mirror. */
+.underglow {
+  --glow-at: 50% 50%;
+  --glow-size: 70% 78%;
 }
 /* Membership: centered pool behind the tier-comparison cards. */
 .membership-glow {

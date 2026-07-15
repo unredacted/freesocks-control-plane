@@ -35,9 +35,9 @@ review.
 | `faq.contactPrefix` | For anything else, email | ⚠️ **MISSING** |
 | `faq.contactSuffix` | and include your Support ID. | ⚠️ **MISSING** |
 | `faq.q1.question` | What is FreeSocks? | ما هو FreeSocks؟ |
-| `faq.q1.answer` | A free proxy service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | خدمة بروكسي مجانية تساعد الأشخاص في المناطق الخاضعة لرقابة مشددة على الوصول إلى الإنترنت المفتوح. وتديرها منظمة "أنريداكتد"، وهي منظمة أمريكية غير ربحية مسجلة بموجب المادة 501(c)(3). |
+| `faq.q1.answer` | A free VPN service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | خدمة بروكسي مجانية تساعد الأشخاص في المناطق الخاضعة لرقابة مشددة على الوصول إلى الإنترنت المفتوح. وتديرها منظمة "أنريداكتد"، وهي منظمة أمريكية غير ربحية مسجلة بموجب المادة 501(c)(3). |
 | `faq.q2.question` | Is it really free? | هل هو مجاني حقاً؟ |
-| `faq.q2.answer` | Yes. A free account gives you a working proxy. A paid FreeSocks membership lifts the limits and helps fund free access for others. | نعم. يمنحك الحساب المجاني خادم وكيل فعال. أما عضوية FreeSocks المدفوعة فتزيل القيود وتساعد في تمويل الوصول المجاني للآخرين. |
+| `faq.q2.answer` | Yes. A free account gives you a working VPN. A paid FreeSocks membership lifts the limits and helps fund free access for others. | نعم. يمنحك الحساب المجاني خادم وكيل فعال. أما عضوية FreeSocks المدفوعة فتزيل القيود وتساعد في تمويل الوصول المجاني للآخرين. |
 | `faq.q3.question` | Do I need to give an email or password? | هل أحتاج إلى إدخال بريد إلكتروني أو كلمة مرور؟ |
 | `faq.q3.answer` | No. You pass a one-time human check and we generate a 32-digit account number - that's your only credential. We never ask for an email, phone number, or name. | لا. أنت تجتاز فحصًا بشريًا لمرة واحدة، ونقوم بإنشاء رقم حساب مكون من 32 رقمًا - وهذا هو بيانات اعتمادك الوحيدة. لا نطلب منك أبدًا بريدًا إلكترونيًا أو رقم هاتف أو اسمًا. |
 | `faq.q4.question` | What if I lose my account number? | ماذا لو فقدت رقم حسابي؟ |
@@ -59,7 +59,7 @@ review.
 | --- | --- | --- |
 | `threat.subtitle` | An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are. | ⚠️ **MISSING** |
 | `threat.q1.question` | What does FreeSocks protect me from? | ⚠️ **MISSING** |
-| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted proxy, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | ⚠️ **MISSING** |
+| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted VPN connection, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | ⚠️ **MISSING** |
 | `threat.q2.question` | What does FreeSocks NOT protect me from? | ⚠️ **MISSING** |
 | `threat.q2.answer` | It does not make you anonymous to sites you sign in to: if you log in to an account, that site knows who you are. It cannot protect a device that is already compromised (spyware, a managed work profile, someone with physical access). And a powerful adversary that can watch traffic at many points on the internet may still correlate patterns. If your safety depends on strong anonymity, use Tor and follow specialist guidance for your situation. | ⚠️ **MISSING** |
 | `threat.q3.question` | Can FreeSocks see my traffic? | ⚠️ **MISSING** |
@@ -113,7 +113,7 @@ review.
 | `captcha.failedTitle` | Couldn't complete the human check. | تعذّر إكمال التحقق البشري. |
 | `captcha.failedBody` | The check runs on your device and didn't finish. This is usually a network problem, not something you did wrong. | يجري هذا التحقق على جهازك ولم يكتمل. عادةً ما تكون هذه مشكلة في الشبكة، وليست خطأً منك. |
 | `captcha.failedTip1` | Wait a moment, then try again | انتظر لحظة ثم حاول مرة أخرى |
-| `captcha.failedTip2` | Try a different network - or a VPN/proxy if sites are blocked where you are | جرّب شبكة أخرى - أو استخدم VPN/بروكسي إذا كانت المواقع محجوبة في منطقتك |
+| `captcha.failedTip2` | Try a different network - or a VPN if sites are blocked where you are | جرّب شبكة أخرى - أو استخدم VPN/بروكسي إذا كانت المواقع محجوبة في منطقتك |
 | `captcha.failedTip3` | Still stuck? Try a private/incognito window or turn off browser extensions | ما زالت المشكلة قائمة؟ جرّب نافذة تصفح خاص أو عطّل إضافات المتصفح |
 
 ## `reveal` — The save-your-account-number modal (the 32-digit sign-in number is shown ONCE; users must download it and paste it back to verify). The single most safety-critical copy in the product. *(8 missing)*
@@ -248,9 +248,9 @@ review.
 | `account.disabledTitle` | Your account is currently disabled | حسابك معطّل حاليًا |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | المفاتيح الجديدة والتغييرات متوقفة على هذا الحساب. استخدم رمز عضوية بالأسفل لإعادة تفعيله، أو تواصل مع الدعم وشارك معرّف الدعم الخاص بك. |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | استبدل رقم حسابك المكون من 32 رقماً إذا كان قد تم تسريبه. سيتوقف الرقم القديم عن العمل فوراً. |
-| `account.keyActionsHint` | These change your proxy connection only - your 32-digit account number stays the same. | هذه التغييرات لا تُغير سوى اتصال البروكسي الخاص بك - سيبقى رقم حسابك المكون من 32 رقمًا كما هو. |
+| `account.keyActionsHint` | These change your VPN connection only - your 32-digit account number stays the same. | هذه التغييرات لا تُغير سوى اتصال البروكسي الخاص بك - سيبقى رقم حسابك المكون من 32 رقمًا كما هو. |
 | `account.section.connection.title` | Your connection | اتصالك |
-| `account.section.connection.desc` | Your proxy key, setup help, and connected devices. | مفتاح البروكسي الخاص بك، ومساعدة الإعداد، والأجهزة المتصلة. |
+| `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | مفتاح البروكسي الخاص بك، ومساعدة الإعداد، والأجهزة المتصلة. |
 | `account.section.membership.title` | Membership | عضوية |
 | `account.section.membership.desc` | Your plan, and how to upgrade or extend it. | خطتك، وكيفية ترقيتها أو توسيعها. |
 | `account.section.codes.title` | Codes & gifts | رموز وهدايا |
@@ -380,7 +380,7 @@ review.
 | `get.nextStepCta` | Next: create your subscription | ⚠️ **MISSING** |
 | `get.nextStepBadge` | Next step | ⚠️ **MISSING** |
 | `get.step2Title` | Create your subscription | أنشئ اشتراكك |
-| `get.step2Intro` | Create a proxy subscription to get a URL you can paste into any compatible VPN client. | أنشئ اشتراك وكيل للحصول على رابط يمكنك لصقه في أي تطبيق VPN متوافق. |
+| `get.step2Intro` | Create a subscription to get a URL you can paste into any compatible VPN client. | أنشئ اشتراك وكيل للحصول على رابط يمكنك لصقه في أي تطبيق VPN متوافق. |
 | `get.manageHintPrefix` | Manage this subscription anytime from | أدر هذا الاشتراك في أي وقت من |
 | `get.manageLinkLabel` | your account | حسابك |
 | `get.subErrorSafePrefix` | Your account is safe. You can create the subscription later from | حسابك آمن. يمكنك إنشاء الاشتراك لاحقًا من |
@@ -568,7 +568,7 @@ review.
 | --- | --- | --- |
 | `error.offline` | You appear to be offline. Check your connection and try again. | يبدو أنك غير متصل. تحقق من اتصالك وأعد المحاولة. |
 | `error.rateLimited` | Too many attempts. Please wait a minute and try again. | محاولات كثيرة جدًا. انتظر دقيقة وأعد المحاولة. |
-| `error.backendUnavailable` | No proxy server is available right now. Your account is safe - try creating your key again in a few minutes. | لا يوجد خادم وكيل متاح حاليًا. حسابك آمن - حاول إنشاء مفتاحك مرة أخرى بعد دقائق. |
+| `error.backendUnavailable` | No VPN server is available right now. Your account is safe - try creating your key again in a few minutes. | لا يوجد خادم وكيل متاح حاليًا. حسابك آمن - حاول إنشاء مفتاحك مرة أخرى بعد دقائق. |
 | `error.generic` | Something went wrong. Please try again. | حدث خطأ ما. يرجى المحاولة مرة أخرى. |
 | `error.captchaFailed` | The human check failed. Please complete it and try again. | فشل التحقق البشري. أكمله وأعد المحاولة. |
 | `error.captchaUnconfigured` | The service is temporarily unavailable. Please try again in a few minutes. | الخدمة غير متاحة مؤقتًا. يرجى المحاولة مرة أخرى بعد بضع دقائق. |
@@ -591,7 +591,7 @@ review.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
-| `setup.title` | Set up your proxy app | إعداد تطبيق الوكيل |
+| `setup.title` | Set up your VPN app | إعداد تطبيق الوكيل |
 | `setup.install` | Install | تثبيت |
 | `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | ⚠️ **MISSING** |
 | `setup.openSource` | Open source | ⚠️ **MISSING** |
@@ -658,8 +658,8 @@ review.
 | --- | --- | --- |
 | `rawconfig.disclosure` | Show raw configuration | إظهار الإعداد الخام |
 | `rawconfig.title` | Your configuration | إعدادك |
-| `rawconfig.explainer` | Your full proxy configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | إعداد الوكيل الكامل الخاص بك، يُجلب عبر قناة مشفّرة بحيث لا يمر أبدًا عبر شبكة CDN كنص عادي. انسخه يدويًا إلى تطبيقك بدلًا من استخدام رابط الاشتراك. |
-| `rawconfig.addHint` | Paste these server entries into your proxy app manually. | الصق إدخالات الخوادم هذه في تطبيق الوكيل يدويًا. |
+| `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | إعداد الوكيل الكامل الخاص بك، يُجلب عبر قناة مشفّرة بحيث لا يمر أبدًا عبر شبكة CDN كنص عادي. انسخه يدويًا إلى تطبيقك بدلًا من استخدام رابط الاشتراك. |
+| `rawconfig.addHint` | Paste these server entries into your VPN app manually. | الصق إدخالات الخوادم هذه في تطبيق الوكيل يدويًا. |
 
 ## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(6 missing)*
 
@@ -747,8 +747,8 @@ review.
 | `home.privacy.subtitle` | FreeSocks is built to know as little about you as possible. | تم تصميم FreeSocks بحيث لا يعرف عنك إلا أقل قدر ممكن. |
 | `home.privacy.point1` | We store only a hashed version of your account number - never the number itself. | نحن نخزن فقط نسخة مشفرة من رقم حسابك - وليس الرقم نفسه أبدًا. |
 | `home.privacy.point2` | No email, phone number, or name. We never ask for them. | لا نطلب البريد الإلكتروني أو رقم الهاتف أو الاسم. لا نطلبها مطلقاً. |
-| `home.privacy.point3` | No logs of the sites you visit or the traffic you send - and we don't store your IP address, on our servers or the proxy nodes. | لا يتم تسجيل المواقع التي تزورها أو حركة البيانات التي ترسلها. |
-| `home.privacy.point4` | We store no payment details - you pay on the provider's own page, and the provider never sees your account or proxy subscription. | لا نقوم بتخزين أي تفاصيل دفع - أنت تدفع على صفحة المزود الخاصة، ولا يرى المزود حسابك أو اشتراكك في خدمة البروكسي. |
+| `home.privacy.point3` | No logs of the sites you visit or the traffic you send - and we don't store your IP address, on our servers or the VPN nodes. | لا يتم تسجيل المواقع التي تزورها أو حركة البيانات التي ترسلها. |
+| `home.privacy.point4` | We store no payment details - you pay on the provider's own page, and the provider never sees your account or VPN subscription. | لا نقوم بتخزين أي تفاصيل دفع - أنت تدفع على صفحة المزود الخاصة، ولا يرى المزود حسابك أو اشتراكك في خدمة البروكسي. |
 | `home.how.title` | How it works | كيف يعمل؟ |
 | `home.how.cta` | Try it now | جربها الآن |
 | `home.how.s1.title` | Create a free account | أنشئ حسابًا مجانيًا |
@@ -792,7 +792,7 @@ review.
 | `e2ee.bannerWarnDetail` | Don't enter your account number yet - verify this connection out-of-band first. | لا تُدخل رقم حسابك الآن - تحقق من هذا الاتصال خارج النطاق أولاً. |
 | `e2ee.verify` | Verify | يؤكد |
 | `e2ee.verifyTitle` | Verify this connection | تحقق من هذا الاتصال |
-| `e2ee.verifyIntro` | FreeSocks seals your account number and proxy key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | يقوم FreeSocks بتشفير رقم حسابك ومفتاح الوكيل لهذا الخادم باستخدام HPKE، مما يمنع أي شبكة توصيل محتوى (CDN) مخترقة من قراءتهما. تُحدد هذه البصمات المفاتيح التي يستخدمها متصفحك - قارنها بالقيم المنشورة خارج النطاق للتأكد من عدم استبدالها. |
+| `e2ee.verifyIntro` | FreeSocks seals your account number and VPN key to this server with HPKE, so a compromised CDN can't read them. These fingerprints identify the keys your browser is using - compare them against the values published out-of-band to be sure they haven't been swapped. | يقوم FreeSocks بتشفير رقم حسابك ومفتاح الوكيل لهذا الخادم باستخدام HPKE، مما يمنع أي شبكة توصيل محتوى (CDN) مخترقة من قراءتهما. تُحدد هذه البصمات المفاتيح التي يستخدمها متصفحك - قارنها بالقيم المنشورة خارج النطاق للتأكد من عدم استبدالها. |
 | `e2ee.protectHeading` | What this protects | ما يحميه هذا |
 | `e2ee.protectScope` | Your account number and key are encrypted to this server with HPKE, so the network and any CDN in front of it can't read them. | يتم تشفير رقم حسابك ومفتاحك على هذا الخادم باستخدام HPKE، لذلك لا يمكن للشبكة وأي شبكة توصيل محتوى (CDN) أمامها قراءتهما. |
 | `e2ee.protectServerReads` | FreeSocks itself can read them to set up your account, so this protects you from the network in between, not from the server. | يمكن لبرنامج FreeSocks نفسه قراءة هذه البيانات لإعداد حسابك، لذا فإن هذا يحميك من الشبكة الوسيطة، وليس من الخادم. |
