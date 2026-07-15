@@ -185,7 +185,7 @@
   // lands on the threat tab directly.
   let faqTab = $state(window.location.hash === '#threat-model' ? 'threat' : 'general');
 
-  // Numbered section eyebrows ("01 / The service"): MEMBERSHIP and IMPACT are
+  // Numbered section eyebrows ("01 / Features"): MEMBERSHIP and IMPACT are
   // conditional, so numbering derives from the visible list (no gaps).
   const SECTION_LABELS = {
     features: 'home.sections.features',
@@ -215,9 +215,14 @@
 </script>
 
 {#snippet eyebrow(id: SectionId)}
-  <p class="font-mono text-[11px] font-medium uppercase tracking-[0.2em] text-primary tabular-nums">
-    {sectionNo(id)} / {t(SECTION_LABELS[id])}
-  </p>
+  <div class="flex items-center gap-3">
+    <p
+      class="font-mono text-[11px] font-medium uppercase tracking-[0.2em] text-primary tabular-nums whitespace-nowrap"
+    >
+      {sectionNo(id)} / {t(SECTION_LABELS[id])}
+    </p>
+    <span class="h-px flex-1 bg-border" aria-hidden="true"></span>
+  </div>
 {/snippet}
 
 {#snippet accordion(items: readonly { q: MessageKey; a: MessageKey }[], prefix: 'faq' | 'tm')}
@@ -273,15 +278,7 @@
       aria-hidden="true"
     ></div>
     <div class="space-y-6 md:space-y-8" in:fly={{ y: 20, duration: 500, easing: quintOut }}>
-      <div
-        class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 text-primary px-3 py-1 text-xs font-medium"
-      >
-        {t('home.hero.eyebrow')}
-      </div>
-
-      <h1
-        class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05] bg-gradient-to-br from-foreground to-foreground/70 bg-clip-text text-transparent"
-      >
+      <h1 class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05]">
         {t('home.hero.title')}
       </h1>
 
@@ -415,12 +412,7 @@
          card is the at-a-glance "what you get" summary they'd otherwise miss. Not
          aria-hidden - the specifics (limits, no-email) are informative. -->
     <div class="relative" in:fly={{ x: 20, duration: 600, delay: 150, easing: quintOut }}>
-      <div
-        class="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent rounded-2xl blur-3xl"
-      ></div>
-      <div
-        class="relative rounded-2xl border border-border bg-card/80 backdrop-blur p-6 md:p-7 shadow-2xl space-y-5"
-      >
+      <div class="rounded-2xl border border-border bg-card p-6 md:p-7 shadow-sm space-y-5">
         <div class="flex items-baseline justify-between">
           <h2 class="text-base font-display font-semibold tracking-tight">
             {t('home.freeCard.title')}
@@ -509,7 +501,7 @@
     <div class="grid gap-4 md:grid-cols-3">
       {#each features as f, i (f.title)}
         <div
-          class="rounded-xl border border-border bg-card p-5 space-y-2 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-md"
+          class="rounded-xl border border-border bg-card p-5 space-y-2 transition-colors hover:border-primary/40"
           use:reveal
           style="--reveal-delay: {i * 60}ms"
         >
@@ -539,7 +531,7 @@
     <ul class="grid gap-4 sm:grid-cols-2">
       {#each privacyPoints as point, i (point)}
         <li
-          class="flex items-start gap-3 rounded-xl border border-border bg-card p-5 transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-md"
+          class="flex items-start gap-3 rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
           use:reveal
           style="--reveal-delay: {i * 60}ms"
         >
@@ -715,13 +707,10 @@
   </section>
 
   <!-- ABOUT: short, factual, no invented programs. Two columns: the story +
-       CTAs on the left, three scannable fact rows on the right. -->
-  <section class="relative">
-    <div
-      class="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent rounded-2xl blur-3xl"
-      aria-hidden="true"
-    ></div>
-    <div class="relative rounded-2xl border border-border bg-card p-6 md:p-10">
+       CTAs on the left, fact rows on the right. The operator/nonprofit line
+       appears once (the body); the fact rows carry what the body doesn't. -->
+  <section>
+    <div class="rounded-2xl border border-border bg-card p-6 md:p-10">
       <div class="grid gap-8 md:grid-cols-[1.2fr_1fr] md:items-center">
         <div class="max-w-2xl space-y-3">
           {@render eyebrow('about')}
@@ -765,27 +754,10 @@
             {/if}
           </div>
         </div>
-        <ul class="space-y-5">
-          <li class="flex items-start gap-3">
-            <div
-              class="inline-flex items-center justify-center rounded-md bg-primary/10 text-primary p-2"
-            >
-              <Landmark class="size-5" aria-hidden="true" />
-            </div>
-            <div>
-              <p class="text-sm font-semibold">{t('home.about.fact1Title')}</p>
-              <p class="text-sm text-muted-foreground leading-relaxed">
-                {t('home.about.fact1Body')}
-              </p>
-            </div>
-          </li>
+        <ul class="space-y-5 md:border-s md:border-border md:ps-8">
           {#if site?.repoEnabled && site.repoUrl}
             <li class="flex items-start gap-3">
-              <div
-                class="inline-flex items-center justify-center rounded-md bg-primary/10 text-primary p-2"
-              >
-                <CodeXml class="size-5" aria-hidden="true" />
-              </div>
+              <CodeXml class="size-4 text-primary mt-0.5 shrink-0" aria-hidden="true" />
               <div>
                 <p class="text-sm font-semibold">{t('home.about.fact2Title')}</p>
                 <p class="text-sm text-muted-foreground leading-relaxed">
@@ -795,11 +767,7 @@
             </li>
           {/if}
           <li class="flex items-start gap-3">
-            <div
-              class="inline-flex items-center justify-center rounded-md bg-primary/10 text-primary p-2"
-            >
-              <Heart class="size-5" aria-hidden="true" />
-            </div>
+            <Heart class="size-4 text-primary mt-0.5 shrink-0" aria-hidden="true" />
             <div>
               <p class="text-sm font-semibold">{t('home.about.fact3Title')}</p>
               <p class="text-sm text-muted-foreground leading-relaxed">

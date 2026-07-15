@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**184 of 649 strings are missing** (the app currently shows English for
+**184 of 646 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -29,10 +29,10 @@ review.
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `faq.title` | Frequently asked questions | الأسئلة الشائعة |
-| `faq.subtitle` | The basics, answered. | تمت الإجابة على الأسئلة الأساسية. هل ما زلت تواجه مشكلة؟ تواصل معنا عبر رقم تعريف الدعم الخاص بك. |
+| `faq.subtitle` | Answers to common questions. | تمت الإجابة على الأسئلة الأساسية. هل ما زلت تواجه مشكلة؟ تواصل معنا عبر رقم تعريف الدعم الخاص بك. |
 | `faq.tabGeneral` | General | ⚠️ **MISSING** |
 | `faq.tabThreat` | What we protect you from | ⚠️ **MISSING** |
-| `faq.contactPrefix` | Still stuck? Email | ⚠️ **MISSING** |
+| `faq.contactPrefix` | For anything else, email | ⚠️ **MISSING** |
 | `faq.contactSuffix` | and include your Support ID. | ⚠️ **MISSING** |
 | `faq.q1.question` | What is FreeSocks? | ما هو FreeSocks؟ |
 | `faq.q1.answer` | A free proxy service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | خدمة بروكسي مجانية تساعد الأشخاص في المناطق الخاضعة لرقابة مشددة على الوصول إلى الإنترنت المفتوح. وتديرها منظمة "أنريداكتد"، وهي منظمة أمريكية غير ربحية مسجلة بموجب المادة 501(c)(3). |
@@ -705,21 +705,20 @@ review.
 | `home.network.note` | Checked every 10 minutes | ⚠️ **MISSING** |
 | `home.quicknav.label` | Jump to a section | ⚠️ **MISSING** |
 | `home.quicknav.privacy` | What we store | ⚠️ **MISSING** |
-| `home.quicknav.threat` | Can it protect me? | ⚠️ **MISSING** |
+| `home.quicknav.threat` | Threat model | ⚠️ **MISSING** |
 | `home.quicknav.faq` | FAQ | ⚠️ **MISSING** |
 | `home.quicknav.impact` | Donation impact | ⚠️ **MISSING** |
-| `home.sections.features` | The service | ⚠️ **MISSING** |
+| `home.sections.features` | Features | ⚠️ **MISSING** |
 | `home.sections.privacy` | Privacy | ⚠️ **MISSING** |
 | `home.sections.how` | Getting started | ⚠️ **MISSING** |
 | `home.sections.membership` | Membership | ⚠️ **MISSING** |
 | `home.sections.impact` | Impact | ⚠️ **MISSING** |
-| `home.sections.faq` | Answers | ⚠️ **MISSING** |
-| `home.sections.about` | Who runs this | ⚠️ **MISSING** |
+| `home.sections.faq` | FAQ | ⚠️ **MISSING** |
+| `home.sections.about` | About | ⚠️ **MISSING** |
 | `home.impact.title` | Donations at work | ⚠️ **MISSING** |
 | `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | ⚠️ **MISSING** |
 | `home.impact.cta` | Make a donation | ⚠️ **MISSING** |
 | `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | ⚠️ **MISSING** |
-| `home.hero.eyebrow` | Operated by Unredacted, a US 501(c)(3) nonprofit | تُدار من قبل منظمة Unredacted، وهي منظمة غير ربحية أمريكية مسجلة بموجب المادة 501(c)(3) |
 | `home.hero.title` | A free VPN for people in censored countries & around the world | ⚠️ **MISSING** |
 | `home.hero.subtitle` | FreeSocks exists to get people online where the internet is censored, and works as a privacy-friendly VPN anywhere. One human-check creates your account: no email, no password, nothing that identifies you. Paste your subscription URL into any modern VPN client. A FreeSocks membership unlocks {limits}. | ⚠️ **MISSING** |
 | `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | ⚠️ **MISSING** |
@@ -762,17 +761,15 @@ review.
 | `home.membership.lead` | Free covers the basics. | يغطي البرنامج المجاني الأساسيات. |
 | `home.membership.descriptionFallback` | A FreeSocks membership lifts every limit. | عضوية FreeSocks ترفع كل الحدود. |
 | `home.membership.payNote` | Pay privately with Bitcoin, Monero, or Zcash - or use a card or PayPal. | ادفع باستخدام العملات المشفرة (بيتكوين ومونيرو وغيرها)، أو البطاقة، أو باي بال. |
-| `home.about.title` | About | عن |
+| `home.about.title` | About FreeSocks | ⚠️ **MISSING** |
 | `home.about.bodyPrefix` | FreeSocks is operated by | يتم تشغيل FreeSocks بواسطة |
-| `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. Free accounts are funded by donations and paying members. | وهي منظمة غير ربحية أمريكية مسجلة بموجب المادة 501(c)(3). يتم تمويل الحسابات المجانية من خلال التبرعات والأعضاء المشتركين. |
+| `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ⚠️ **MISSING** |
 | `home.about.siteLink` | unredacted.org | unredacted.org |
-| `home.about.openSource` | FreeSocks is fully open source. The code that runs this service is published for anyone to inspect, audit, or run themselves. | ⚠️ **MISSING** |
+| `home.about.openSource` | The code that runs this service is published for anyone to inspect, audit, or run themselves. | ⚠️ **MISSING** |
 | `home.about.viewSourceCta` | View the source | ⚠️ **MISSING** |
-| `home.about.fact1Title` | US 501(c)(3) nonprofit | ⚠️ **MISSING** |
-| `home.about.fact1Body` | Run by Unredacted, not a company selling your data. | ⚠️ **MISSING** |
-| `home.about.fact2Title` | Fully open source | ⚠️ **MISSING** |
-| `home.about.fact3Title` | Funded by people | ⚠️ **MISSING** |
-| `home.about.fact3Body` | Donations and memberships pay for free access. No ads, no trackers, no data sales. | ⚠️ **MISSING** |
+| `home.about.fact2Title` | Open source | ⚠️ **MISSING** |
+| `home.about.fact3Title` | Donation funded | ⚠️ **MISSING** |
+| `home.about.fact3Body` | Free accounts are paid for by donations and memberships. There are no ads and nothing is sold. | ⚠️ **MISSING** |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | نطاق ترددي وأجهزة غير محدودة |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | نطاق ترددي غير محدود |
 | `home.limits.unlimitedDevices` | unlimited devices | أجهزة غير محدودة |

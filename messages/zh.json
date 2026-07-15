@@ -555,9 +555,6 @@
     }
   },
   "home": {
-    "hero": {
-      "eyebrow": "由美国501(c)(3)非营利组织Unredacted运营"
-    },
     "cta": {
       "getMembership": "加入会员"
     },
@@ -620,9 +617,7 @@
       "payNote": "可使用加密货币（比特币、门罗币等）、银行卡或PayPal支付。"
     },
     "about": {
-      "title": "关于",
       "bodyPrefix": "FreeSocks 由",
-      "bodySuffix": "是一家美国501(c)(3)非营利组织。免费账户的资金来源于捐款和付费会员。",
       "siteLink": "未编辑的.org"
     },
     "limits": {

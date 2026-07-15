@@ -2,10 +2,10 @@
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "faq": {
     "title": "Frequently asked questions",
-    "subtitle": "The basics, answered.",
+    "subtitle": "Answers to common questions.",
     "tabGeneral": "General",
     "tabThreat": "What we protect you from",
-    "contactPrefix": "Still stuck? Email",
+    "contactPrefix": "For anything else, email",
     "contactSuffix": "and include your Support ID.",
     "q1": {
       "question": "What is FreeSocks?",
@@ -764,18 +764,18 @@
     "quicknav": {
       "label": "Jump to a section",
       "privacy": "What we store",
-      "threat": "Can it protect me?",
+      "threat": "Threat model",
       "faq": "FAQ",
       "impact": "Donation impact"
     },
     "sections": {
-      "features": "The service",
+      "features": "Features",
       "privacy": "Privacy",
       "how": "Getting started",
       "membership": "Membership",
       "impact": "Impact",
-      "faq": "Answers",
-      "about": "Who runs this"
+      "faq": "FAQ",
+      "about": "About"
     },
     "impact": {
       "title": "Donations at work",
@@ -784,7 +784,6 @@
       "chartAria": "Bandwidth added to every free user by donations, month by month"
     },
     "hero": {
-      "eyebrow": "Operated by Unredacted, a US 501(c)(3) nonprofit",
       "title": "A free VPN for people in censored countries & around the world",
       "subtitle": "FreeSocks exists to get people online where the internet is censored, and works as a privacy-friendly VPN anywhere. One human-check creates your account: no email, no password, nothing that identifies you. Paste your subscription URL into any modern VPN client. A FreeSocks membership unlocks {limits}.",
       "impactNote": "Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month.",
@@ -853,17 +852,15 @@
       "payNote": "Pay privately with Bitcoin, Monero, or Zcash - or use a card or PayPal."
     },
     "about": {
-      "title": "About",
+      "title": "About FreeSocks",
       "bodyPrefix": "FreeSocks is operated by",
-      "bodySuffix": ", a US 501(c)(3) nonprofit. Free accounts are funded by donations and paying members.",
+      "bodySuffix": ", a US 501(c)(3) nonprofit.",
       "siteLink": "unredacted.org",
-      "openSource": "FreeSocks is fully open source. The code that runs this service is published for anyone to inspect, audit, or run themselves.",
+      "openSource": "The code that runs this service is published for anyone to inspect, audit, or run themselves.",
       "viewSourceCta": "View the source",
-      "fact1Title": "US 501(c)(3) nonprofit",
-      "fact1Body": "Run by Unredacted, not a company selling your data.",
-      "fact2Title": "Fully open source",
-      "fact3Title": "Funded by people",
-      "fact3Body": "Donations and memberships pay for free access. No ads, no trackers, no data sales."
+      "fact2Title": "Open source",
+      "fact3Title": "Donation funded",
+      "fact3Body": "Free accounts are paid for by donations and memberships. There are no ads and nothing is sold."
     },
     "limits": {
       "unlimitedBoth": "unlimited bandwidth and devices",
