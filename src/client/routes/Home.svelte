@@ -165,6 +165,7 @@
     { q: 'faq.q7.question', a: 'faq.q7.answer' },
     { q: 'faq.q8.question', a: 'faq.q8.answer' },
     { q: 'faq.q9.question', a: 'faq.q9.answer' },
+    { q: 'faq.q10.question', a: 'faq.q10.answer' },
   ] as const;
   let openFaq = $state(-1);
 
@@ -270,7 +271,7 @@
              start (wider on the left, taller above) so the emerald reads as
              rising from under the text, brightest in its upper-left. -->
         <div
-          class="ambient-glow underglow absolute -start-20 -end-4 -top-24 -z-10 h-72"
+          class="ambient-glow underglow absolute -start-20 -end-4 -top-16 -z-10 h-72"
           aria-hidden="true"
         ></div>
         <h1 class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05]">

@@ -208,6 +208,8 @@ export type MessageKey =
   | "faq.contactSuffix"
   | "faq.q1.answer"
   | "faq.q1.question"
+  | "faq.q10.answer"
+  | "faq.q10.question"
   | "faq.q2.answer"
   | "faq.q2.question"
   | "faq.q3.answer"

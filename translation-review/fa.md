@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**185 of 647 strings are missing** (the app currently shows English for
+**187 of 649 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -24,7 +24,7 @@ review.
   ⚠️ MISSING have no translation yet.
 
 
-## `faq` — The landing-page FAQ (questions + answers). *(4 missing)*
+## `faq` — The landing-page FAQ (questions + answers). *(6 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -52,6 +52,8 @@ review.
 | `faq.q8.answer` | Yes - on your account page use "Buy codes to share" to purchase membership codes you can give to friends or family. Each one works on any account and doesn't affect yours. | بله - در صفحه حساب کاربری خود از گزینه «خرید کد برای اشتراک‌گذاری» برای خرید کدهای عضویتی که می‌توانید به دوستان یا خانواده بدهید استفاده کنید. هر کدام از این کدها روی هر حسابی کار می‌کنند و روی حساب شما تأثیری ندارند. |
 | `faq.q9.question` | Can I pay anonymously? | آیا می‌توانم به صورت ناشناس پرداخت کنم؟ |
 | `faq.q9.answer` | Yes. You can pay with cryptocurrency - Bitcoin, or Monero and Zcash for the most privacy - with no account, email, or card. Your membership activates automatically once the payment confirms. | بله. شما می‌توانید با ارز دیجیتال - بیت‌کوین، یا مونرو و زی‌کش برای بیشترین حریم خصوصی - بدون نیاز به حساب، ایمیل یا کارت پرداخت کنید. عضویت شما پس از تأیید پرداخت، به‌طور خودکار فعال می‌شود. |
+| `faq.q10.question` | Do you own your servers, or rent them? | ⚠️ **MISSING** |
+| `faq.q10.answer` | We own our hardware and run it ourselves. Plenty of VPN companies rent theirs from datacenters or cloud hosts, which puts the machine your traffic passes through in someone else's hands - they can be pressured to hand it over, or just quietly copy what is on it. That is a line we are not willing to cross, so we buy and run our own equipment instead. It costs more and we grow slower because of it, but it is the only way the privacy promises on this page actually mean anything. | ⚠️ **MISSING** |
 
 ## `threat` — Miscellaneous strings. *(15 missing)*
 

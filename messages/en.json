@@ -42,6 +42,10 @@
     "q9": {
       "question": "Can I pay anonymously?",
       "answer": "Yes. You can pay with cryptocurrency - Bitcoin, or Monero and Zcash for the most privacy - with no account, email, or card. Your membership activates automatically once the payment confirms."
+    },
+    "q10": {
+      "question": "Do you own your servers, or rent them?",
+      "answer": "We own our hardware and run it ourselves. Plenty of VPN companies rent theirs from datacenters or cloud hosts, which puts the machine your traffic passes through in someone else's hands - they can be pressured to hand it over, or just quietly copy what is on it. That is a line we are not willing to cross, so we buy and run our own equipment instead. It costs more and we grow slower because of it, but it is the only way the privacy promises on this page actually mean anything."
     }
   },
   "threat": {
