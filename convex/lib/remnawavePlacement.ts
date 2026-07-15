@@ -230,6 +230,112 @@ async function placementWeights(
 }
 
 /**
+ * The (placement, server) pair a NEW Remnawave key issues into — the multi-panel
+ * generalization of `pickByNodeLoad`. A mode's squad pool may span several
+ * panels (one panel per location); the squad UUID sent at issuance MUST exist on
+ * the panel the user is created on, so the two are resolved TOGETHER: each pool
+ * squad is attributed to its panel via its `remnawaveNodeStats` row (stamped by
+ * the healthcheck cron), the pool is narrowed to squads on eligible panels, and
+ * the least-loaded survivor wins. `serverId` pins issuance to that panel.
+ *
+ * Eligibility filters, all FAIL-SOFT except `onlyServerId`:
+ *  - `location`: keep panels whose `location` code matches (the member's picked
+ *    location). No active panel matches / none of its squads are in the pool →
+ *    the filter is dropped (issue anywhere) rather than blocking issuance.
+ *  - capacity/health: at-capacity panels (maxKeys) are dropped the same way
+ *    `pickCandidatesForIssue` drops them; if that empties the pool the filter
+ *    is dropped (a degraded pool still issues — same posture as pickByNodeLoad).
+ *  - `onlyServerId` (the in-place mode-switch path): HARD — the key already
+ *    lives on that panel, so a placement on another panel is unusable. Returns
+ *    `{placement:null}` when the target mode has no squad there; the caller
+ *    falls back to a re-issue (which may move panels).
+ *
+ * A squad with no stats row yet (bring-up: the cron hasn't observed it) can't be
+ * attributed to a panel; when the constrained pool is empty we fall back to the
+ * whole pool with `serverId:null`, which reproduces the historical single-panel
+ * behavior (issueUser picks the instance independently).
+ */
+export async function resolvePlacementTarget(
+  db: DatabaseReader,
+  modeId: string | null | undefined,
+  opts: {
+    location?: string | null;
+    onlyServerId?: string | null;
+  } = {},
+): Promise<{ placement: string | null; serverId: string | null }> {
+  const pool = await resolvePlacementPool(db, modeId);
+  if (pool.length === 0) return { placement: null, serverId: null };
+
+  // Attribute each pool squad to its panel via the node-stats cache.
+  const statsByPlacement = new Map<string, { serverId: string }>();
+  for (const placement of pool) {
+    const row = await db
+      .query('remnawaveNodeStats')
+      .withIndex('by_placement', (q) => q.eq('placement', placement))
+      .unique();
+    if (row) statsByPlacement.set(placement, { serverId: row.backendServerId as string });
+  }
+
+  const servers = await db
+    .query('backendServers')
+    .withIndex('by_backend_active', (q) => q.eq('backend', 'remnawave').eq('isActive', true))
+    .collect();
+
+  if (opts.onlyServerId) {
+    // HARD pin: the in-place switch can only use squads on the key's own panel.
+    // Capacity (maxKeys) deliberately does NOT apply — no new key is minted, the
+    // existing one just moves squads on the same panel. A squad with NO stats
+    // row can't be proven foreign, so it stays eligible (single-panel deploys
+    // and bring-up have no attribution yet); if it does turn out to be another
+    // panel's squad, the PATCH fails and the caller falls back to a re-issue.
+    const ids = new Set(servers.map((s) => s._id as string));
+    if (!ids.has(opts.onlyServerId)) return { placement: null, serverId: null };
+    const constrained = pool.filter((p) => {
+      const attributed = statsByPlacement.get(p);
+      return !attributed || attributed.serverId === opts.onlyServerId;
+    });
+    if (constrained.length === 0) return { placement: null, serverId: null };
+    const placement = await pickByNodeLoad(db, constrained);
+    return { placement, serverId: placement ? opts.onlyServerId : null };
+  }
+
+  // Eligible panels for a NEW key: active instances, minus at-capacity ones.
+  let eligible = servers.filter((s) => s.maxKeys == null || s.keyCount < s.maxKeys);
+  if (eligible.length === 0) eligible = servers; // fail-soft: degraded > blocked
+
+  // Soft location narrowing: prefer the member's picked location, drop the
+  // filter whenever honoring it would block issuance.
+  let allowed = eligible;
+  if (opts.location) {
+    const atLocation = eligible.filter((s) => s.location === opts.location);
+    if (atLocation.length > 0) allowed = atLocation;
+  }
+  const allowedIds = new Set(allowed.map((s) => s._id as string));
+  let constrained = pool.filter((p) => {
+    const attributed = statsByPlacement.get(p);
+    return attributed != null && allowedIds.has(attributed.serverId);
+  });
+  if (constrained.length === 0 && allowed !== eligible) {
+    // The picked location has no bound squads — fall back to any eligible panel.
+    const eligibleIds = new Set(eligible.map((s) => s._id as string));
+    constrained = pool.filter((p) => {
+      const attributed = statsByPlacement.get(p);
+      return attributed != null && eligibleIds.has(attributed.serverId);
+    });
+  }
+  if (constrained.length === 0) {
+    // No squad is attributable yet (bring-up) — historical behavior: global
+    // pick, instance chosen independently by issueUser.
+    return { placement: await pickByNodeLoad(db, pool), serverId: null };
+  }
+  const placement = await pickByNodeLoad(db, constrained);
+  return {
+    placement,
+    serverId: placement ? (statsByPlacement.get(placement)?.serverId ?? null) : null,
+  };
+}
+
+/**
  * The least-loaded placement of a pool, by cached node load. Fresh+online
  * placements win over stale/offline/unroutable ones (lowest weighted load
  * first); among all-unknown the pool's declaration order decides,

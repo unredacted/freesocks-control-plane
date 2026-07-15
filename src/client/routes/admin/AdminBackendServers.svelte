@@ -102,6 +102,14 @@
                 <code class="text-xs text-muted-foreground font-mono ml-2">{s.slug}</code>
               </span>
               <span class="flex items-center gap-2">
+                {#if s.location}
+                  <span
+                    class="text-xs px-2 py-1 rounded bg-secondary text-secondary-foreground"
+                    title={s.locationLabel ?? s.location}
+                  >
+                    {s.locationLabel ?? s.location}
+                  </span>
+                {/if}
                 <span class="text-xs px-2 py-1 rounded bg-primary/10 text-primary font-medium">
                   {ADMIN_BACKEND_LABELS[s.backend]}
                 </span>

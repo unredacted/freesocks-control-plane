@@ -28,6 +28,20 @@ export const setConnectionMode = internalMutation({
   },
 });
 
+/** Set a member's preferred node location (a backendServers.location code),
+ *  validated against the live location list at the HTTP boundary. Null clears
+ *  it back to automatic. Applied at the NEXT issuance (regenerate / switch). */
+export const setPreferredLocation = internalMutation({
+  args: { userId: v.id('users'), location: v.union(v.string(), v.null()) },
+  handler: async (ctx, { userId, location }) => {
+    await ctx.db.patch(userId, {
+      preferredLocation: location ?? undefined,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
 /**
  * Account-number login lookup. The caller (a Node action) hashes the submitted
  * number and passes the hash; we match it against the unique index. Returns null

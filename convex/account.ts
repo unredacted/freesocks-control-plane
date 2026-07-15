@@ -58,6 +58,24 @@ async function auditIfPlacementless(
   });
 }
 
+/**
+ * Where a NEW key issues: for Remnawave, the (placement, panel) pair resolved
+ * TOGETHER (a squad UUID only exists on its own panel) for the member's mode +
+ * preferred location; null-everything for other backends. `serverId` pins
+ * issueUser to the squad's panel — without it the instance pick could land on a
+ * different panel than the squad (a dead key on any multi-panel deploy).
+ */
+async function resolveIssueTarget(
+  ctx: ActionCtx,
+  backend: Backend,
+  modeId: string | null,
+  location: string | null,
+): Promise<{ placement: string | null; serverId: Id<'backendServers'> | null }> {
+  if (backend !== 'remnawave') return { placement: null, serverId: null };
+  const t = await ctx.runQuery(internal.remnawaveNodes.resolveTarget, { modeId, location });
+  return { placement: t.placement, serverId: (t.serverId as Id<'backendServers'> | null) ?? null };
+}
+
 // P1-3: a serializable per-user issuance lock. regenerate / switch-backend /
 // switch-profile each mint a NEW backend key and tombstone the old one; two
 // concurrent runs would mint two keys but tombstone only one, orphaning a live key
@@ -165,6 +183,9 @@ interface AccountView {
     resetStrategy?: 'NO_RESET' | 'DAY' | 'WEEK' | 'MONTH';
     lastResetAt?: string;
     backend: Backend;
+    // Node location this key is served from (the hosting instance's location
+    // code + display label; null when the instance has none set).
+    location: { code: string; label: string } | null;
     devices: {
       hwid: string;
       platform?: string;
@@ -173,6 +194,8 @@ interface AccountView {
       lastSeenAt?: string;
     }[];
   } | null;
+  /** The member's stored location preference (a location code; null = automatic). */
+  preferredLocation: string | null;
 }
 
 export const getAccountView = internalAction({
@@ -247,6 +270,10 @@ export const getAccountView = internalAction({
       } catch {
         /* backend unreachable: serve local data with zeroed live fields */
       }
+      // The hosting instance's member-facing location (code + label; no secrets).
+      const server = sub.backendServerId
+        ? await ctx.runQuery(internal.backendServers.getById, { id: sub.backendServerId })
+        : null;
       subscription = {
         // The raw backend URL (fallback) + the opaque token; the SPA builds the
         // FCP-fronted URL from the token + its own origin, so there's no
@@ -267,6 +294,9 @@ export const getAccountView = internalAction({
         resetStrategy: live.resetStrategy,
         lastResetAt: live.lastResetAt,
         backend: sub.backend,
+        location: server?.location
+          ? { code: server.location, label: server.locationLabel ?? server.location }
+          : null,
         devices: live.devices.map((d) => ({
           hwid: d.hwid,
           platform: d.platform ?? undefined,
@@ -303,6 +333,7 @@ export const getAccountView = internalAction({
         createdAt: new Date(user._creationTime).toISOString(),
       },
       subscription,
+      preferredLocation: user.preferredLocation ?? null,
     };
   },
 });
@@ -328,16 +359,107 @@ export const getUsage = internalAction({
   },
 });
 
+interface NodeStatusView {
+  /** true/false when we have a signal; null = never observed (unknown). */
+  online: boolean | null;
+  /** Squad/node display name (Remnawave), when known. */
+  label: string | null;
+  location: { code: string; label: string } | null;
+  /** When the signal was last observed (ISO), null when never. */
+  checkedAt: string | null;
+}
+
+const NODE_STATUS_FRESH_MS = 60_000;
+
+/**
+ * Live-ish status of the node the member's config is homed to, so a member can
+ * tell "the node is up, my network is filtering me" from an actual outage. For
+ * a placed Remnawave key this is the squad's node snapshot (refreshed on demand
+ * at most once per instance per NODE_STATUS_FRESH_MS via the claimStatsRefresh
+ * stampede guard — the SPA polls this endpoint); otherwise it degrades to the
+ * instance-level healthcheck signal (10-min cron cadence).
+ */
+export const getNodeStatus = internalAction({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }): Promise<{ node: NodeStatusView | null }> => {
+    const sub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+    if (!sub) return { node: null };
+    const server = sub.backendServerId
+      ? await ctx.runQuery(internal.backendServers.getById, { id: sub.backendServerId })
+      : null;
+    const location = server?.location
+      ? { code: server.location, label: server.locationLabel ?? server.location }
+      : null;
+
+    if (sub.backend === 'remnawave' && sub.backendPlacement) {
+      let stats = await ctx.runQuery(internal.remnawaveNodes.getPlacementStats, {
+        placement: sub.backendPlacement,
+      });
+      if (server && (!stats || Date.now() - stats.lastStatsAt > NODE_STATUS_FRESH_MS)) {
+        const claimed = await ctx.runMutation(internal.remnawaveNodes.claimStatsRefresh, {
+          backendServerId: server._id,
+          freshMs: NODE_STATUS_FRESH_MS,
+        });
+        if (claimed) {
+          await ctx.runAction(internal.backendServers.refreshNodeStats, { id: server._id });
+          stats = await ctx.runQuery(internal.remnawaveNodes.getPlacementStats, {
+            placement: sub.backendPlacement,
+          });
+        }
+      }
+      if (stats) {
+        return {
+          node: {
+            online: stats.online && stats.nodeCount > 0,
+            label: stats.label ?? null,
+            location,
+            checkedAt: new Date(stats.lastStatsAt).toISOString(),
+          },
+        };
+      }
+    }
+
+    // Fallback: instance-level health (Outline, legacy rows, placement-less
+    // keys). `online:null` when the instance has never passed a healthcheck.
+    if (server) {
+      const okAt = server.lastHealthOkAt ?? null;
+      return {
+        node: {
+          online: okAt == null ? null : Date.now() - okAt < 30 * 60_000,
+          label: null,
+          location,
+          checkedAt: okAt != null ? new Date(okAt).toISOString() : null,
+        },
+      };
+    }
+    return { node: null };
+  },
+});
+
 export const regenerate = internalAction({
-  args: { userId: v.id('users'), requestId: v.optional(v.string()) },
+  args: {
+    userId: v.id('users'),
+    requestId: v.optional(v.string()),
+    // Member's location pick for THIS issuance (a backendServers.location code,
+    // validated at the HTTP layer): a string persists the preference, null
+    // clears it back to automatic, absent keeps the stored preference.
+    location: v.optional(v.union(v.string(), v.null())),
+  },
   handler: async (
     ctx,
-    { userId, requestId },
+    { userId, requestId, location },
   ): Promise<{ subscriptionUrl: string; shortUuid: string }> => {
     const user = await ctx.runQuery(internal.users.get, { id: userId });
     if (!user) throw new Error('user not found');
     const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
     if (!tier) throw new Error('tier not found');
+
+    // Record the location pick BEFORE issuing so the effective preference and
+    // the stored one can't diverge (and a failed issuance keeps the choice).
+    if (location !== undefined && location !== (user.preferredLocation ?? null)) {
+      await ctx.runMutation(internal.users.setPreferredLocation, { userId, location });
+    }
+    const effectiveLocation = location !== undefined ? location : (user.preferredLocation ?? null);
 
     // Capture the OLD subscription BEFORE issuing (issueNewSubscription repoints
     // currentSubscriptionId at the new row).
@@ -345,13 +467,14 @@ export const regenerate = internalAction({
 
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const freeExpiryDays = Number(settings['freetier.expiryDays'] ?? 90);
-    // Node placement from the member's chosen mode's pool (Remnawave only).
-    const nodePlacement =
-      tier.backend === 'remnawave'
-        ? await ctx.runQuery(internal.remnawaveNodes.resolvePlacement, {
-            modeId: user.connectionModeId ?? null,
-          })
-        : null;
+    // Node placement from the member's chosen mode's pool, narrowed to their
+    // preferred location (Remnawave only; fail-soft to any location).
+    const target = await resolveIssueTarget(
+      ctx,
+      tier.backend,
+      user.connectionModeId ?? null,
+      effectiveLocation,
+    );
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {
       userId,
@@ -364,8 +487,9 @@ export const regenerate = internalAction({
         expireAt: computeExpireAtIso(user.membershipExpiresAt, freeExpiryDays),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
         tag: tier.slug,
-        placement: nodePlacement,
+        placement: target.placement,
       },
+      pinServerId: target.serverId,
     });
 
     if (oldSub) {
@@ -376,7 +500,7 @@ export const regenerate = internalAction({
     }
     await auditIfPlacementless(ctx, {
       backend: tier.backend,
-      placement: nodePlacement,
+      placement: target.placement,
       userId,
       subscriptionId: issued.subscriptionId,
       requestedMode: user.connectionModeId ?? null,
@@ -458,13 +582,14 @@ export const switchBackend = internalAction({
     }
 
     const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
-    // Carry the member's chosen mode across the backend switch (Remnawave only).
-    const nodePlacement =
-      peerTier.backend === 'remnawave'
-        ? await ctx.runQuery(internal.remnawaveNodes.resolvePlacement, {
-            modeId: user.connectionModeId ?? null,
-          })
-        : null;
+    // Carry the member's chosen mode + preferred location across the backend
+    // switch (Remnawave only).
+    const issueTarget = await resolveIssueTarget(
+      ctx,
+      peerTier.backend,
+      user.connectionModeId ?? null,
+      user.preferredLocation ?? null,
+    );
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const issued = await issueNewSubscription(ctx, {
       userId,
@@ -480,8 +605,9 @@ export const switchBackend = internalAction({
         ),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], peerTier),
         tag: peerTier.slug,
-        placement: nodePlacement,
+        placement: issueTarget.placement,
       },
+      pinServerId: issueTarget.serverId,
     });
 
     // P1-6: tombstone the OLD subscription BEFORE flipping the tier. issueNew
@@ -500,7 +626,7 @@ export const switchBackend = internalAction({
 
     await auditIfPlacementless(ctx, {
       backend: peerTier.backend,
-      placement: nodePlacement,
+      placement: issueTarget.placement,
       userId,
       subscriptionId: issued.subscriptionId,
       requestedMode: user.connectionModeId ?? null,
@@ -612,10 +738,12 @@ export const switchMode = internalAction({
     // non-Remnawave sub, or an in-place PATCH that failed (e.g. the panel user was
     // manually deleted).
     const reissue = async (): Promise<SwitchModeResult> => {
-      const nodePlacement =
-        tier.backend === 'remnawave'
-          ? await ctx.runQuery(internal.remnawaveNodes.resolvePlacement, { modeId: target })
-          : null;
+      const issueTarget = await resolveIssueTarget(
+        ctx,
+        tier.backend,
+        target,
+        user.preferredLocation ?? null,
+      );
       const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
       const issued = await issueNewSubscription(ctx, {
         userId,
@@ -630,8 +758,9 @@ export const switchMode = internalAction({
           ),
           hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
           tag: tier.slug,
-          placement: nodePlacement,
+          placement: issueTarget.placement,
         },
+        pinServerId: issueTarget.serverId,
       });
       // Tombstone the OLD key before recording the choice (issueNew already
       // repointed currentSubscriptionId), same 24h grace as regenerate/switch.
@@ -645,7 +774,7 @@ export const switchMode = internalAction({
       }
       await auditIfPlacementless(ctx, {
         backend: tier.backend,
-        placement: nodePlacement,
+        placement: issueTarget.placement,
         userId,
         subscriptionId: issued.subscriptionId,
         requestedMode: target,
@@ -681,12 +810,21 @@ export const switchMode = internalAction({
     // all preserved — no user churn in the panel and no separate "old key" to keep
     // alive for 24h. Only when the current key AND the tier are Remnawave.
     if (oldSub && tier.backend === 'remnawave' && oldSub.backend === 'remnawave') {
-      const nodePlacement = await ctx.runQuery(internal.remnawaveNodes.resolvePlacement, {
-        modeId: target,
-      });
-      // null only on a deploy with NO pool bound anywhere; the re-issue path owns
-      // the squad-less-key audit, so fall through to it rather than PATCH a squad
-      // clear onto a live key. (The per-mode unbound case was rejected above.)
+      // The in-place PATCH lands on the key's OWN panel, so the new mode's
+      // placement must exist there — a hard `onlyServerId` pin. A legacy sub
+      // with no recorded instance resolves unpinned (single-panel deploys).
+      const { placement: nodePlacement } = await ctx.runQuery(
+        internal.remnawaveNodes.resolveTarget,
+        {
+          modeId: target,
+          onlyServerId: oldSub.backendServerId ?? null,
+        },
+      );
+      // null when no pool is bound anywhere OR the target mode has no squad on
+      // this key's panel; the re-issue path owns both (it may move panels and
+      // owns the squad-less-key audit), so fall through to it rather than PATCH
+      // a squad clear onto a live key. (The per-mode unbound case was rejected
+      // above.)
       if (nodePlacement !== null) {
         try {
           await ctx.runAction(internal.backends.updateUser, {

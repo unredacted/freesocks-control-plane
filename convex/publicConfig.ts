@@ -21,6 +21,7 @@ import { resolveSiteConfig } from './lib/siteConfig';
 import { resolveConnectionModes, publicProjection } from './lib/connectionModes';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { resolveClients, publicClients } from './lib/clientCatalog';
+import { resolveLocations } from './lib/locations';
 
 export const get = query({
   args: {},
@@ -180,6 +181,11 @@ export const get = query({
         await resolveConnectionModes(ctx.db),
         await resolveBoundModeIds(ctx.db),
       ),
+      // Member-facing node-location catalog (active Remnawave instances with a
+      // location set): code + display label + a coarse online bit. Never a URL
+      // or credential. Drives the location picker at issuance; the SPA hides
+      // the picker when fewer than two locations exist.
+      locations: await resolveLocations(ctx.db),
       // Member-facing recommended-client catalog (CMS-managed `clients` table, or
       // the compiled defaults when unseeded). Public-safe: names, platforms, install
       // links, hwid flag, and the import scheme id (the SPA maps it to a deep-link

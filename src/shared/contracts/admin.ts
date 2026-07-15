@@ -161,6 +161,11 @@ export const BackendServerAdmin = z.object({
   backend: BackendId,
   name: z.string().min(1).max(128),
   slug: z.string().min(1).max(64),
+  // Member-facing node location: a short code ("MCI") + display label
+  // ("Kansas City, MO"). null = not part of the member location picker.
+  // Optional/defaulted for forward-compat with older servers.
+  location: z.string().nullable().optional().default(null),
+  locationLabel: z.string().nullable().optional().default(null),
   isActive: z.boolean(),
   priority: z.number().int(),
   keyCount: z.number().int().nonnegative(),
@@ -184,6 +189,9 @@ export const BackendServerUpsert = z.object({
   backend: BackendId,
   name: z.string().min(1).max(128),
   slug: z.string().min(1).max(64),
+  // Node location code + label; null/blank clears, absent keeps the current.
+  location: z.string().max(16).nullable().optional(),
+  locationLabel: z.string().max(64).nullable().optional(),
   isActive: z.boolean().default(true),
   priority: z.number().int().default(0),
   // Capacity cap: positive integer; null clears, absent keeps the current cap.

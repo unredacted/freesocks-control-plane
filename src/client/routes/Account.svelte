@@ -45,11 +45,13 @@
   import { apiErrorMessage } from '../lib/errors';
   import { clearSessionKey } from '../lib/pop';
   import { deviceLimitsShown } from '../lib/tiers';
+  import LocationPicker from '../components/LocationPicker.svelte';
   import {
     accountQuery,
     accountUsageQuery,
     billingOrderQuery,
     configQuery,
+    nodeStatusQuery,
     queryKeys,
   } from '../lib/queries';
   import { router } from '../stores/router.svelte';
@@ -64,6 +66,23 @@
   // Usage trend: eager (fetched whenever there's a subscription) so it renders by
   // default under the traffic stats in the hero. Degrades to null (Outline/outage).
   const usage = accountUsageQuery(() => !!account.data?.subscription);
+
+  // Live node status: polled (30s) while a subscription exists so the badge in
+  // the hero stays current. Degrades silently to "unknown" on error.
+  const nodeStatus = nodeStatusQuery(() => !!account.data?.subscription);
+
+  // Node-location catalog + the member's pick for the NEXT issued key. Seeded
+  // from the stored server-side preference once the account view loads; 'auto'
+  // = let the server pick the least-loaded node anywhere.
+  let locations = $derived(config.data?.locations ?? []);
+  let pickedLocation = $state('auto');
+  let locationSeeded = false;
+  $effect(() => {
+    if (!locationSeeded && account.data) {
+      locationSeeded = true;
+      pickedLocation = account.data.preferredLocation ?? 'auto';
+    }
+  });
 
   // Convenience accessor: Svelte's narrowing reads better than account.data
   // sprinkled across the template.
@@ -218,12 +237,19 @@
   }
 
   // Mutation: regenerate the subscription. Invalidates ['account'] on success
-  // so the SubscriptionHero re-fetches with the new URL automatically.
+  // so the SubscriptionHero re-fetches with the new URL automatically. The
+  // location pick rides along when the deployment has a choice to make (≥2
+  // locations); 'auto' clears the stored preference server-side.
   const regenerate = createMutation(() => ({
     mutationFn: () =>
       apiClient.post(
         '/api/v1/account/regenerate',
-        { confirm: true },
+        {
+          confirm: true,
+          ...(locations.length >= 2
+            ? { location: pickedLocation === 'auto' ? null : pickedLocation }
+            : {}),
+        },
         z.object({ subscriptionUrl: z.string(), shortUuid: z.string() }),
       ),
     onSuccess: () => {
@@ -234,6 +260,8 @@
       // The raw-config viewer reads a SEPARATE query key; invalidate it too so it
       // re-fetches the newly-issued config instead of showing the previous one.
       void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
+      // The new key may live on a different node/location.
+      void qc.invalidateQueries({ queryKey: queryKeys.nodeStatus });
       liveMessage = t('account.regenSuccessTitle');
       toast.success(t('account.regenSuccessTitle'), {
         description: t('account.regenSuccessBody'),
@@ -284,6 +312,8 @@
       void qc.invalidateQueries({ queryKey: queryKeys.me });
       // Re-fetch the raw-config viewer (separate key) so it shows the new backend's config.
       void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
+      // The new key may live on a different node/location.
+      void qc.invalidateQueries({ queryKey: queryKeys.nodeStatus });
       liveMessage = t('account.switchSuccessTitle', { tier: result.tier.name });
       toast.success(t('account.switchSuccessTitle', { tier: result.tier.name }), {
         description: result.oldSubscriptionDeletedAt
@@ -810,6 +840,10 @@
               hideUrl={rawConfigFirst}
               usagePoints={usage.data?.usage?.points}
               usageTotal={usage.data?.usage?.total}
+              nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
+              nodeLocationLabel={nodeStatus.data?.node?.location?.label ??
+                data.subscription.location?.label ??
+                null}
             />
             {#if rawConfigFirst}
               <!-- rawConfig mode: the raw config IS the deliverable (the CDN-fetched link
@@ -933,6 +967,16 @@
               <p class="text-sm text-muted-foreground max-w-sm mx-auto">
                 {t('account.noSubBody')}
               </p>
+              {#if locations.length >= 2}
+                <div class="mx-auto max-w-sm text-start">
+                  <LocationPicker
+                    {locations}
+                    bind:value={pickedLocation}
+                    disabled={regenerate.isPending || persistingMode || actionsDisabled}
+                    id="first-sub-location"
+                  />
+                </div>
+              {/if}
               <Button
                 onclick={createFirstSub}
                 disabled={regenerate.isPending || persistingMode || actionsDisabled}
@@ -1094,6 +1138,8 @@
         subToken={data.subscription.subToken ?? null}
         shortUuid={data.subscription.shortUuid}
         deviceCount={data.subscription.devices.length}
+        {locations}
+        bind:location={pickedLocation}
         onCancel={() => (regenerateOpen = false)}
         onConfirm={() => regenerate.mutate()}
         busy={regenerate.isPending}

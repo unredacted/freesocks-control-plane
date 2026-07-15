@@ -171,6 +171,8 @@ function mapBackendServer(s: Doc<'backendServers'>) {
     backend: s.backend,
     name: s.name,
     slug: s.slug,
+    location: s.location ?? null,
+    locationLabel: s.locationLabel ?? null,
     isActive: s.isActive,
     priority: s.priority,
     keyCount: s.keyCount,
@@ -1094,6 +1096,31 @@ function checkMaxKeys(n: number | null | undefined): void {
 }
 
 /**
+ * Normalize the instance's member-facing location fields: a short code
+ * (e.g. "MCI") + a display label ("Kansas City, MO"). Null/blank clears; the
+ * code is what issuance filters on, so it's kept short and space-free.
+ */
+function checkLocation(a: { location?: string | null; locationLabel?: string | null }): {
+  location?: string;
+  locationLabel?: string;
+} {
+  const out: { location?: string; locationLabel?: string } = {};
+  if (a.location != null) {
+    const code = a.location.trim();
+    if (code && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$/.test(code)) {
+      throw new Error('location must be a short code (letters/digits/dashes, max 16 chars)');
+    }
+    if (code) out.location = code;
+  }
+  if (a.locationLabel != null) {
+    const label = a.locationLabel.trim();
+    if (label.length > 64) throw new Error('locationLabel must be at most 64 characters');
+    if (label) out.locationLabel = label;
+  }
+  return out;
+}
+
+/**
  * Build a fresh backend-server config from create/upsert args (validates the
  * required fields per backend). Shared by createBackendServer +
  * upsertBackendServerBySlug's create path. (Review P3: was inlined twice.)
@@ -1143,6 +1170,8 @@ export const createBackendServer = internalMutation({
     backend: backendId,
     name: v.string(),
     slug: v.string(),
+    location: v.optional(v.union(v.string(), v.null())),
+    locationLabel: v.optional(v.union(v.string(), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     maxKeys: v.optional(v.union(v.number(), v.null())),
@@ -1162,12 +1191,15 @@ export const createBackendServer = internalMutation({
       .unique();
     if (clash) throw new Error(`A backend server with slug "${a.slug}" already exists`);
     checkMaxKeys(a.maxKeys);
+    const loc = checkLocation(a);
 
     const config = buildBackendServerConfig(a);
     const id = await ctx.db.insert('backendServers', {
       backend: a.backend,
       name: a.name,
       slug: a.slug,
+      location: loc.location,
+      locationLabel: loc.locationLabel,
       config,
       isActive: a.isActive ?? true,
       priority: a.priority ?? 0,
@@ -1184,6 +1216,8 @@ export const updateBackendServer = internalMutation({
     id: v.id('backendServers'),
     name: v.optional(v.string()),
     slug: v.optional(v.string()),
+    location: v.optional(v.union(v.string(), v.null())),
+    locationLabel: v.optional(v.union(v.string(), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     maxKeys: v.optional(v.union(v.number(), v.null())),
@@ -1206,6 +1240,7 @@ export const updateBackendServer = internalMutation({
       if (clash) throw new Error(`A backend server with slug "${patch.slug}" already exists`);
     }
     checkMaxKeys(patch.maxKeys);
+    const loc = checkLocation(patch);
     const fields: Partial<Doc<'backendServers'>> = { updatedAt: Date.now() };
     if (patch.name !== undefined) fields.name = patch.name;
     if (patch.slug !== undefined) fields.slug = patch.slug;
@@ -1213,6 +1248,9 @@ export const updateBackendServer = internalMutation({
     if (patch.priority !== undefined) fields.priority = patch.priority;
     // null clears the cap (patch-to-undefined unsets the optional field).
     if (patch.maxKeys !== undefined) fields.maxKeys = patch.maxKeys ?? undefined;
+    // null/blank clears the location fields the same way.
+    if (patch.location !== undefined) fields.location = loc.location;
+    if (patch.locationLabel !== undefined) fields.locationLabel = loc.locationLabel;
 
     // The backend TYPE is immutable; a blank/absent secret keeps the stored one.
     fields.config = mergeBackendServerConfig(existing.config, patch);
@@ -1247,6 +1285,8 @@ export const upsertBackendServerBySlug = internalMutation({
     slug: v.string(),
     backend: backendId,
     name: v.optional(v.string()),
+    location: v.optional(v.union(v.string(), v.null())),
+    locationLabel: v.optional(v.union(v.string(), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     maxKeys: v.optional(v.union(v.number(), v.null())),
@@ -1265,6 +1305,7 @@ export const upsertBackendServerBySlug = internalMutation({
       .unique();
 
     checkMaxKeys(a.maxKeys);
+    const loc = checkLocation(a);
     if (!existing) {
       // CREATE path — shares the reshape with createBackendServer.
       const config = buildBackendServerConfig(a);
@@ -1272,6 +1313,8 @@ export const upsertBackendServerBySlug = internalMutation({
         backend: a.backend,
         name: a.name ?? a.slug,
         slug: a.slug,
+        location: loc.location,
+        locationLabel: loc.locationLabel,
         config,
         isActive: a.isActive ?? true,
         priority: a.priority ?? 0,
@@ -1301,6 +1344,8 @@ export const upsertBackendServerBySlug = internalMutation({
     if (a.isActive !== undefined) fields.isActive = a.isActive;
     if (a.priority !== undefined) fields.priority = a.priority;
     if (a.maxKeys !== undefined) fields.maxKeys = a.maxKeys ?? undefined;
+    if (a.location !== undefined) fields.location = loc.location;
+    if (a.locationLabel !== undefined) fields.locationLabel = loc.locationLabel;
     fields.config = mergeBackendServerConfig(existing.config, a);
     await ctx.db.patch(existing._id, fields);
     await writeAuditLog(ctx, {

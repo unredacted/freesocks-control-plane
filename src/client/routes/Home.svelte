@@ -162,6 +162,19 @@
     { q: 'faq.q9.question', a: 'faq.q9.answer' },
   ] as const;
   let openFaq = $state(-1);
+
+  // Threat-model FAQ - the honest what-we-can-and-cannot-do section. Same
+  // single-open accordion pattern as the general FAQ, separate open state.
+  const THREAT_FAQ = [
+    { q: 'threat.q1.question', a: 'threat.q1.answer' },
+    { q: 'threat.q2.question', a: 'threat.q2.answer' },
+    { q: 'threat.q3.question', a: 'threat.q3.answer' },
+    { q: 'threat.q4.question', a: 'threat.q4.answer' },
+    { q: 'threat.q5.question', a: 'threat.q5.answer' },
+    { q: 'threat.q6.question', a: 'threat.q6.answer' },
+    { q: 'threat.q7.question', a: 'threat.q7.answer' },
+  ] as const;
+  let openThreat = $state(-1);
 </script>
 
 <div class="space-y-20 md:space-y-28 pb-12">
@@ -515,6 +528,55 @@
               id="faq-panel-{i}"
               role="region"
               aria-labelledby="faq-trigger-{i}"
+              class="px-5 pb-4 text-sm leading-relaxed text-muted-foreground"
+              transition:slide={{ duration: 180 }}
+            >
+              {t(item.a)}
+            </div>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  </section>
+
+  <!-- THREAT MODEL FAQ - what this service can and cannot protect against.
+       Deliberately honest (overclaiming security gets people hurt); same
+       single-open accordion as the FAQ above, separate state + id prefix. -->
+  <section id="threat-model" class="scroll-mt-24 space-y-8">
+    <div class="max-w-2xl space-y-2">
+      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+        <span class="inline-flex items-center gap-2.5">
+          <ShieldCheck class="size-7 text-primary" aria-hidden="true" />
+          {t('threat.title')}
+        </span>
+      </h2>
+      <p class="text-muted-foreground leading-relaxed">{t('threat.subtitle')}</p>
+    </div>
+    <ul class="max-w-3xl divide-y divide-border rounded-xl border border-border bg-card">
+      {#each THREAT_FAQ as item, i (item.q)}
+        {@const isOpen = openThreat === i}
+        <li>
+          <button
+            type="button"
+            id="tm-trigger-{i}"
+            class="flex w-full items-center justify-between gap-3 px-5 py-4 text-start text-sm font-medium transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            aria-expanded={isOpen}
+            aria-controls="tm-panel-{i}"
+            onclick={() => (openThreat = isOpen ? -1 : i)}
+          >
+            <span>{t(item.q)}</span>
+            <ChevronDown
+              class="size-4 shrink-0 text-muted-foreground transition-transform {isOpen
+                ? 'rotate-180'
+                : ''}"
+              aria-hidden="true"
+            />
+          </button>
+          {#if isOpen}
+            <div
+              id="tm-panel-{i}"
+              role="region"
+              aria-labelledby="tm-trigger-{i}"
               class="px-5 pb-4 text-sm leading-relaxed text-muted-foreground"
               transition:slide={{ duration: 180 }}
             >

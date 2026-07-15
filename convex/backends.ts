@@ -22,7 +22,7 @@
 import { internalAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import type {
   IssueUserSpec,
@@ -78,23 +78,39 @@ async function resolveInstanceByKey(ctx: ActionCtx, backendUserId: string) {
 }
 
 export const issueUser = internalAction({
-  args: { backend: backendId, spec: issueSpec },
+  args: {
+    backend: backendId,
+    spec: issueSpec,
+    // Pin issuance to ONE instance (Remnawave node placement resolves the
+    // placement and its panel TOGETHER — a squad UUID only exists on its own
+    // panel, so the paired pick must not be re-rolled here). Unusable pin
+    // (gone/inactive/wrong type) → backend.unavailable, never a silent re-pick
+    // that would break the (placement, panel) pairing.
+    pinServerId: v.optional(v.id('backendServers')),
+  },
   handler: async (
     ctx,
-    { backend, spec },
+    { backend, spec, pinServerId },
   ): Promise<IssuedUser & { backendServerId?: Id<'backendServers'> }> => {
     if (mockBackendEnabled()) return mockIssueUser(spec as IssueUserSpec);
-    const candidates = await ctx.runQuery(internal.backendServers.pickCandidatesForIssue, {
-      backend,
-    });
-    if (candidates.length === 0)
-      // Typed so the HTTP layer maps it to an actionable 503 by CODE, not a brittle
-      // message regex (issuanceErrorResponse). (Review P3.)
-      throw new ConvexError({ code: 'backend.unavailable', backend });
-    // Random pick among the top candidates (CSPRNG, can't live in the query).
-    const idx = new Uint32Array(1);
-    crypto.getRandomValues(idx);
-    const server = candidates[idx[0]! % candidates.length]!;
+    let server: Doc<'backendServers'> | null;
+    if (pinServerId) {
+      const pinned = await ctx.runQuery(internal.backendServers.getById, { id: pinServerId });
+      server = pinned && pinned.isActive && pinned.backend === backend ? pinned : null;
+      if (!server) throw new ConvexError({ code: 'backend.unavailable', backend });
+    } else {
+      const candidates = await ctx.runQuery(internal.backendServers.pickCandidatesForIssue, {
+        backend,
+      });
+      if (candidates.length === 0)
+        // Typed so the HTTP layer maps it to an actionable 503 by CODE, not a brittle
+        // message regex (issuanceErrorResponse). (Review P3.)
+        throw new ConvexError({ code: 'backend.unavailable', backend });
+      // Random pick among the top candidates (CSPRNG, can't live in the query).
+      const idx = new Uint32Array(1);
+      crypto.getRandomValues(idx);
+      server = candidates[idx[0]! % candidates.length]!;
+    }
     const issued = await PROVIDERS[server.backend].issue(
       server.config as BackendConfig,
       spec as IssueUserSpec,

@@ -9,8 +9,7 @@ import { ConvexError, v } from 'convex/values';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import {
-  pickByNodeLoad,
-  resolvePlacementPool,
+  resolvePlacementTarget,
   modePlacementWrites,
   resolveBoundModeIds,
   resolveBoundModeCounts,
@@ -59,17 +58,26 @@ export const setModePlacements = internalMutation({
   },
 });
 
-/** The placement a NEW key issues into: the LEAST-LOADED node of the mode's
- *  placement pool (per-node load cached by the healthcheck cron; single-element
- *  pools short-circuit). Resolves through `resolvePlacementPool`, so an unbound
- *  mode falls back to the default mode's pool → any bound pool; null ONLY when no
+/** The (placement, server) pair a NEW key issues into: the LEAST-LOADED node of
+ *  the mode's placement pool, narrowed to the member's preferred `location`
+ *  (soft) or a single panel via `onlyServerId` (hard — the in-place mode-switch
+ *  path). Resolves through `resolvePlacementPool`, so an unbound mode falls back
+ *  to the default mode's pool → any bound pool; placement is null ONLY when no
  *  pool is bound anywhere on the deploy (the caller then issues squad-less +
- *  audits). The pick is persisted on the subscription row so later tier pushes
- *  re-send the SAME placement (no re-home). */
-export const resolvePlacement = internalQuery({
-  args: { modeId: v.union(v.string(), v.null()) },
-  handler: async (ctx, { modeId }) =>
-    pickByNodeLoad(ctx.db, await resolvePlacementPool(ctx.db, modeId)),
+ *  audits) or when a hard pin can't be satisfied (the caller re-issues). The pick
+ *  is persisted on the subscription row so later tier pushes re-send the SAME
+ *  placement (no re-home); `serverId` pins issueUser to the squad's own panel. */
+export const resolveTarget = internalQuery({
+  args: {
+    modeId: v.union(v.string(), v.null()),
+    location: v.optional(v.union(v.string(), v.null())),
+    onlyServerId: v.optional(v.union(v.id('backendServers'), v.null())),
+  },
+  handler: async (ctx, { modeId, location, onlyServerId }) =>
+    resolvePlacementTarget(ctx.db, modeId, {
+      location: location ?? null,
+      onlyServerId: (onlyServerId as string | null | undefined) ?? null,
+    }),
 });
 
 /** Cache the latest per-placement node-load snapshots (upsert by placement).
@@ -111,6 +119,45 @@ export const markNodeStats = internalMutation({
       else await ctx.db.insert('remnawaveNodeStats', row);
     }
     return null;
+  },
+});
+
+/** The cached load/online snapshot for ONE placement (the member node-status
+ *  read). Stats only — no secrets. */
+export const getPlacementStats = internalQuery({
+  args: { placement: v.string() },
+  handler: (ctx, { placement }) =>
+    ctx.db
+      .query('remnawaveNodeStats')
+      .withIndex('by_placement', (q) => q.eq('placement', placement))
+      .unique(),
+});
+
+/**
+ * Stampede guard for on-demand node-stats refreshes: a serializable
+ * check-and-stamp on a per-instance appState key. Only the FIRST caller inside
+ * a freshness window wins the claim (OCC conflicts collapse concurrent
+ * claimers); everyone else serves the cached snapshot. Bounds the member
+ * node-status endpoint to ≤1 panel sweep per instance per window regardless of
+ * how many members are polling.
+ */
+export const claimStatsRefresh = internalMutation({
+  args: { backendServerId: v.id('backendServers'), freshMs: v.number() },
+  handler: async (ctx, { backendServerId, freshMs }): Promise<boolean> => {
+    const key = `nodestats:refresh:${backendServerId}`;
+    const now = Date.now();
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', key))
+      .unique();
+    if (row) {
+      const last = Number(row.value);
+      if (Number.isFinite(last) && now - last < freshMs) return false;
+      await ctx.db.patch(row._id, { value: String(now), updatedAt: now });
+      return true;
+    }
+    await ctx.db.insert('appState', { key, value: String(now), updatedAt: now });
+    return true;
   },
 });
 

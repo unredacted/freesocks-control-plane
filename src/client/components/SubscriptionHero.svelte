@@ -13,6 +13,7 @@
   import Link2 from '@lucide/svelte/icons/link-2';
   import Shield from '@lucide/svelte/icons/shield';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+  import MapPin from '@lucide/svelte/icons/map-pin';
   import { formatBytes, daysUntil, copyText } from '../lib/utils';
   import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
@@ -73,6 +74,14 @@
      *  without usage history (Outline degrades to null → no trend). */
     usagePoints?: number[];
     usageTotal?: number;
+    /**
+     * Live node status (polled): true/false when observed, null = unknown,
+     * undefined = don't render the badge at all. Lets the member tell "the node
+     * is up but my network filters it" from an actual outage.
+     */
+    nodeOnline?: boolean | null;
+    /** Member-facing location of the node serving this key ("Kansas City, MO"). */
+    nodeLocationLabel?: string | null;
   }
   let {
     title,
@@ -93,6 +102,8 @@
     lastResetAt,
     usagePoints,
     usageTotal,
+    nodeOnline,
+    nodeLocationLabel,
   }: Props = $props();
 
   // Outline keys are bare `ss://` URLs that VPN clients import as a single
@@ -215,6 +226,40 @@
         <span class="font-medium text-foreground">{t('hero.tierLine', { tier: tierName })}</span>
         <span class="text-muted-foreground/60">·</span>
         <span>{t('hero.viaLine', { backend: resolvedBackendLabel })}</span>
+        {#if nodeLocationLabel}
+          <span class="text-muted-foreground/60">·</span>
+          <span class="inline-flex items-center gap-1">
+            <MapPin class="size-3.5" aria-hidden="true" />
+            {nodeLocationLabel}
+          </span>
+        {/if}
+        {#if nodeOnline !== undefined}
+          <span class="text-muted-foreground/60">·</span>
+          <span
+            class="inline-flex items-center gap-1.5"
+            title={nodeOnline === true ? t('hero.nodeOnlineHint') : undefined}
+            role="status"
+          >
+            <span class="relative flex size-2" aria-hidden="true">
+              {#if nodeOnline === true}
+                <span
+                  class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60 motion-reduce:hidden"
+                ></span>
+                <span class="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
+              {:else if nodeOnline === false}
+                <span class="relative inline-flex size-2 rounded-full bg-destructive"></span>
+              {:else}
+                <span class="relative inline-flex size-2 rounded-full bg-muted-foreground/50"
+                ></span>
+              {/if}
+            </span>
+            {nodeOnline === true
+              ? t('hero.nodeOnline')
+              : nodeOnline === false
+                ? t('hero.nodeOffline')
+                : t('hero.nodeUnknown')}
+          </span>
+        {/if}
       </p>
     </div>
 
@@ -383,6 +428,16 @@
             </Button>
           </div>
         {/if}
+      </div>
+    {/if}
+
+    <!-- Node-offline callout: the outage is on our side, not the member's network.
+         (The green/online state needs no callout - the badge + tooltip carry it.) -->
+    {#if nodeOnline === false}
+      <div
+        class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+      >
+        {t('hero.nodeOfflineBody')}
       </div>
     {/if}
 

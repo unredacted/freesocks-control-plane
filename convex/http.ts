@@ -827,13 +827,58 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    // Optional node-location pick for this issuance: a location code persists
+    // the preference, 'auto' (or null) clears it back to automatic, absent
+    // keeps the stored preference. Validated against the live catalog so a
+    // typo'd/unknown code is a 400, not a silently-ignored filter.
+    const body = await readJson<{ location?: string | null }>(req);
+    let location: string | null | undefined;
+    if (body.location !== undefined) {
+      if (body.location === null || body.location === 'auto') {
+        location = null;
+      } else if (typeof body.location === 'string') {
+        const locations = await ctx.runQuery(internal.backendServers.listLocations, {});
+        if (!locations.some((l) => l.code === body.location)) {
+          return errorJson('validation', 'unknown location', 400);
+        }
+        location = body.location;
+      } else {
+        return errorJson('validation', 'location must be a string or null', 400);
+      }
+    }
     return withIssuanceSaga(ctx, member.userId, 'account.regenerate', async (requestId) => {
       const result = await ctx.runAction(internal.account.regenerate, {
         userId: member.userId,
         requestId,
+        location,
       });
       return json(result);
     });
+  }),
+});
+
+// Live-ish status of the node the member's config is homed to — lets a member
+// tell "the node is up but my network filters it" from an actual outage. The
+// SPA polls this (~30s); the server refreshes the shared per-instance snapshot
+// at most once per minute (stampede-guarded), so polling cost is bounded by the
+// instance count, not the member count. Non-secret (an online bit + display
+// labels); unsealed (TLS + PoP), rate-limited per user.
+http.route({
+  path: '/api/v1/account/node-status',
+  method: 'GET',
+  handler: guard(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:read');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.node-status',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
+    return json(await ctx.runAction(internal.account.getNodeStatus, { userId: member.userId }));
   }),
 });
 

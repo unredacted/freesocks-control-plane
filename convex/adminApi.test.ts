@@ -539,6 +539,45 @@ describe('adminApi upsertBackendServerBySlug', () => {
     ).rejects.toThrow(/cannot change it to|exists as type/i);
   });
 
+  test('location code + label round-trip; blank/null clears; bad codes rejected', async () => {
+    const t = convexTest(schema, modules);
+    const created = await t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+      slug: 'node-loc',
+      backend: 'remnawave',
+      baseUrl: 'https://panel.example',
+      apiToken: 'tok',
+      location: ' MCI ',
+      locationLabel: 'Kansas City, MO',
+    });
+    // Trimmed on write, projected on read.
+    expect(created.location).toBe('MCI');
+    expect(created.locationLabel).toBe('Kansas City, MO');
+
+    // Absent keeps; explicit null clears.
+    const kept = await t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+      slug: 'node-loc',
+      backend: 'remnawave',
+    });
+    expect(kept.location).toBe('MCI');
+    const cleared = await t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+      slug: 'node-loc',
+      backend: 'remnawave',
+      location: null,
+      locationLabel: null,
+    });
+    expect(cleared.location).toBeNull();
+    expect(cleared.locationLabel).toBeNull();
+
+    // Not a short code → rejected (spaces / over-length).
+    await expect(
+      t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+        slug: 'node-loc',
+        backend: 'remnawave',
+        location: 'not a code!',
+      }),
+    ).rejects.toThrow(/short code/i);
+  });
+
   test('deleteBackendServerBySlug removes by slug; idempotent no-op when absent', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.adminApi.upsertBackendServerBySlug, {

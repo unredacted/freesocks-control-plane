@@ -925,3 +925,149 @@ describe('deleteSubscriptionEverywhere ordering (P1-5)', () => {
     });
   });
 });
+
+describe('account.regenerate location preference', () => {
+  test('a location arg persists as the preference; absent keeps it; null clears it', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+
+    await t.action(internal.account.regenerate, { userId, location: 'MCI' });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.preferredLocation).toBe('MCI');
+    });
+
+    // Absent = keep the stored preference.
+    await t.action(internal.account.regenerate, { userId });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.preferredLocation).toBe('MCI');
+    });
+
+    // Explicit null = back to automatic.
+    await t.action(internal.account.regenerate, { userId, location: null });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.preferredLocation).toBeUndefined();
+    });
+  });
+});
+
+describe('account.getNodeStatus', () => {
+  async function seedPlacedSub(
+    t: ReturnType<typeof convexTest>,
+    o: { placement?: string; online?: boolean; statsAgeMs?: number; serverHealthAgeMs?: number },
+  ) {
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    let serverId: Id<'backendServers'> | undefined;
+    await t.run(async (ctx) => {
+      serverId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'mci',
+        slug: 'mci',
+        location: 'MCI',
+        locationLabel: 'Kansas City, MO',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        lastHealthOkAt:
+          o.serverHealthAgeMs !== undefined ? Date.now() - o.serverHealthAgeMs : undefined,
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'key-uuid',
+        backendShortId: 'short',
+        backendServerId: serverId,
+        subscriptionUrl: 'https://panel.test/sub/short',
+        subscriptionMirrors: [],
+        backendPlacement: o.placement,
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+      if (o.placement) {
+        const at = Date.now() - (o.statsAgeMs ?? 0);
+        await ctx.db.insert('remnawaveNodeStats', {
+          backendServerId: serverId,
+          placement: o.placement,
+          label: 'Node A',
+          usersOnline: 3,
+          online: o.online ?? true,
+          nodeCount: 1,
+          lastStatsAt: at,
+          updatedAt: at,
+        });
+      }
+    });
+    return { userId, serverId: serverId! };
+  }
+
+  test('fresh placement stats: online + squad label + the panel location', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedPlacedSub(t, { placement: 'sq-a', online: true });
+    const res = await t.action(internal.account.getNodeStatus, { userId });
+    expect(res.node).toMatchObject({
+      online: true,
+      label: 'Node A',
+      location: { code: 'MCI', label: 'Kansas City, MO' },
+    });
+    expect(res.node!.checkedAt).toBeTruthy();
+  });
+
+  test('an offline placement reads offline', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedPlacedSub(t, { placement: 'sq-a', online: false });
+    const res = await t.action(internal.account.getNodeStatus, { userId });
+    expect(res.node).toMatchObject({ online: false });
+  });
+
+  test('placement-less key falls back to instance health (fresh probe = online)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedPlacedSub(t, { serverHealthAgeMs: 60_000 });
+    const res = await t.action(internal.account.getNodeStatus, { userId });
+    expect(res.node).toMatchObject({
+      online: true,
+      label: null,
+      location: { code: 'MCI', label: 'Kansas City, MO' },
+    });
+  });
+
+  test('never-probed instance + no placement = unknown (online: null)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedPlacedSub(t, {});
+    const res = await t.action(internal.account.getNodeStatus, { userId });
+    expect(res.node).toMatchObject({ online: null, checkedAt: null });
+  });
+
+  test('no subscription at all: node is null', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    const res = await t.action(internal.account.getNodeStatus, { userId });
+    expect(res.node).toBeNull();
+  });
+
+  test('stale stats trigger ONE stampede-guarded refresh; a failing panel keeps the cache', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedPlacedSub(t, {
+      placement: 'sq-a',
+      online: true,
+      statsAgeMs: 5 * 60_000, // stale (> 60s freshness window)
+    });
+    const fetchMock = vi.fn(async () => new Response('boom', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.getNodeStatus, { userId });
+    // Refresh attempted (claim won) but the panel failed → cached verdict kept.
+    expect(fetchMock).toHaveBeenCalled();
+    expect(res.node).toMatchObject({ online: true, label: 'Node A' });
+
+    // Second poll inside the freshness window: the claim is held → no new pull.
+    fetchMock.mockClear();
+    const again = await t.action(internal.account.getNodeStatus, { userId });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(again.node).toMatchObject({ online: true });
+  });
+});

@@ -48,6 +48,10 @@ export const RATE_LIMIT_DEFAULTS = {
   'account.rotate': { max: 5, windowMs: HOUR, enabled: true },
   // Member device (HWID) revocation: cheap backend call, but cap the churn.
   'account.device-revoke': { max: 10, windowMs: HOUR, enabled: true },
+  // Member node-status poll (per user): the SPA polls ~every 30s while the
+  // account page is open; the shared per-instance snapshot refresh behind it is
+  // stampede-guarded, so this is hygiene against a hot polling loop.
+  'account.node-status': { max: 20, windowMs: MINUTE, enabled: true },
   // Membership code redemption (W4): throttle hard against code guessing.
   'code.redeem': { max: 5, windowMs: HOUR, enabled: true },
   // Member passkey LOGIN options (per IP): each call writes an assertion challenge

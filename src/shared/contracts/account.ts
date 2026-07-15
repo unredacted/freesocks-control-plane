@@ -83,6 +83,14 @@ export const AccountResponse = z.object({
        * devices without immediate disruption.
        */
       backend: BackendId,
+      /** Node location this key is served from (the hosting instance's code +
+       *  display label). Null when the instance has no location set; optional/
+       *  defaulted for rolling-deploy compat. */
+      location: z
+        .object({ code: z.string(), label: z.string() })
+        .nullable()
+        .optional()
+        .default(null),
       devices: z.array(
         z.object({
           hwid: z.string(),
@@ -111,6 +119,9 @@ export const AccountResponse = z.object({
    * member's actual choice is client-side. A plain string (data-driven catalog).
    */
   suggestedModeId: z.string().nullable().optional(),
+  /** The member's stored node-location preference (a PublicConfig.locations
+   *  code; null = automatic). Optional for rolling-deploy compat. */
+  preferredLocation: z.string().nullable().optional().default(null),
 });
 export type AccountResponse = z.infer<typeof AccountResponse>;
 
@@ -133,8 +144,29 @@ export type AccountUsageResponse = z.infer<typeof AccountUsageResponse>;
 
 export const RegenerateRequest = z.object({
   confirm: z.literal(true),
+  /** Optional node-location pick for this issuance: a PublicConfig.locations
+   *  code persists the preference, 'auto'/null clears it back to automatic,
+   *  absent keeps the stored preference. */
+  location: z.string().nullable().optional(),
 });
 export type RegenerateRequest = z.infer<typeof RegenerateRequest>;
+
+/**
+ * Live-ish status of the node the member's config is homed to (the SPA polls
+ * this while the account page is open). `online: null` = never observed.
+ * Distinguishes "the node is up but your network filters it" from an outage.
+ */
+export const NodeStatusResponse = z.object({
+  node: z
+    .object({
+      online: z.boolean().nullable(),
+      label: z.string().nullable(),
+      location: z.object({ code: z.string(), label: z.string() }).nullable(),
+      checkedAt: z.string().nullable(),
+    })
+    .nullable(),
+});
+export type NodeStatusResponse = z.infer<typeof NodeStatusResponse>;
 
 /**
  * Raw subscription content (the actual proxy config — vless/ss links or a

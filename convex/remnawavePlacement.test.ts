@@ -9,7 +9,11 @@ import { convexTest } from 'convex-test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import type { Id } from './_generated/dataModel';
-import { pickByNodeLoad, resolveBoundModeCounts } from './lib/remnawavePlacement';
+import {
+  pickByNodeLoad,
+  resolveBoundModeCounts,
+  resolvePlacementTarget,
+} from './lib/remnawavePlacement';
 import { remnawaveGetNodeStats } from './lib/backends/remnawave';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -190,5 +194,153 @@ describe('resolveBoundModeCounts', () => {
     });
     const counts = await t.run((ctx) => resolveBoundModeCounts(ctx.db));
     expect(counts).toEqual({ evade: 3, privacy: 0 });
+  });
+});
+
+// --- resolvePlacementTarget (multi-panel: placement + panel picked together) --
+
+async function seedLocatedServer(
+  t: ReturnType<typeof convexTest>,
+  o: {
+    slug: string;
+    location?: string;
+    locationLabel?: string;
+    isActive?: boolean;
+    keyCount?: number;
+    maxKeys?: number;
+  },
+): Promise<Id<'backendServers'>> {
+  return t.run((ctx) =>
+    ctx.db.insert('backendServers', {
+      backend: 'remnawave',
+      name: o.slug,
+      slug: o.slug,
+      location: o.location,
+      locationLabel: o.locationLabel,
+      config: { type: 'remnawave', baseUrl: `https://${o.slug}.example`, apiToken: 'tok' },
+      isActive: o.isActive ?? true,
+      priority: 0,
+      keyCount: o.keyCount ?? 0,
+      maxKeys: o.maxKeys,
+      updatedAt: Date.now(),
+    }),
+  );
+}
+
+async function bindPool(t: ReturnType<typeof convexTest>, modeId: string, squads: string[]) {
+  await t.run((ctx) =>
+    ctx.db.insert('appSettings', {
+      key: `remnawave.modePlacement.${modeId}.squads`,
+      value: JSON.stringify(squads),
+      updatedAt: Date.now(),
+    }),
+  );
+}
+
+describe('resolvePlacementTarget', () => {
+  test('pairs the placement with its own panel (least-loaded across panels)', async () => {
+    const t = convexTest(schema, modules);
+    const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
+    const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
+    await bindPool(t, 'evade', ['sq-mci', 'sq-ams']);
+    await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 50 });
+    await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 1 });
+    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade'));
+    expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
+  });
+
+  test('a location pick narrows to that panel even when another is less loaded', async () => {
+    const t = convexTest(schema, modules);
+    const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
+    const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
+    await bindPool(t, 'evade', ['sq-mci', 'sq-ams']);
+    await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 50 });
+    await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 1 });
+    const target = await t.run((ctx) =>
+      resolvePlacementTarget(ctx.db, 'evade', { location: 'MCI' }),
+    );
+    expect(target).toEqual({ placement: 'sq-mci', serverId: mci });
+  });
+
+  test('an unknown/stale location code fails soft to any panel, never blocks issuance', async () => {
+    const t = convexTest(schema, modules);
+    const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
+    await bindPool(t, 'evade', ['sq-ams']);
+    await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 1 });
+    const target = await t.run((ctx) =>
+      resolvePlacementTarget(ctx.db, 'evade', { location: 'GONE' }),
+    );
+    expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
+  });
+
+  test('an at-capacity panel is excluded for NEW keys (location pick falls elsewhere)', async () => {
+    const t = convexTest(schema, modules);
+    const mci = await seedLocatedServer(t, {
+      slug: 'mci',
+      location: 'MCI',
+      keyCount: 10,
+      maxKeys: 10,
+    });
+    const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
+    await bindPool(t, 'evade', ['sq-mci', 'sq-ams']);
+    await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 1 });
+    await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 50 });
+    const target = await t.run((ctx) =>
+      resolvePlacementTarget(ctx.db, 'evade', { location: 'MCI' }),
+    );
+    expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
+  });
+
+  test('onlyServerId pins to that panel; a mode with no squad there resolves null', async () => {
+    const t = convexTest(schema, modules);
+    const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
+    const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
+    await bindPool(t, 'evade', ['sq-mci', 'sq-ams']);
+    await bindPool(t, 'privacy', ['sq-ams-priv']);
+    await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 5 });
+    await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 1 });
+    await seedNode(t, ams, { placement: 'sq-ams-priv', usersOnline: 1 });
+    // Pinned to MCI: the evade squad on MCI wins despite AMS being idler.
+    expect(
+      await t.run((ctx) =>
+        resolvePlacementTarget(ctx.db, 'evade', { onlyServerId: mci as string }),
+      ),
+    ).toEqual({ placement: 'sq-mci', serverId: mci });
+    // Privacy has no squad on MCI (its only squad is attributed to AMS) → null,
+    // the caller falls back to a re-issue that may move panels.
+    expect(
+      await t.run((ctx) =>
+        resolvePlacementTarget(ctx.db, 'privacy', { onlyServerId: mci as string }),
+      ),
+    ).toEqual({ placement: null, serverId: null });
+  });
+
+  test('onlyServerId keeps UNATTRIBUTED squads eligible (bring-up / single panel)', async () => {
+    const t = convexTest(schema, modules);
+    const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
+    await bindPool(t, 'privacy', ['sq-unobserved']);
+    // No stats row for sq-unobserved: can't be proven foreign → still usable.
+    expect(
+      await t.run((ctx) =>
+        resolvePlacementTarget(ctx.db, 'privacy', { onlyServerId: mci as string }),
+      ),
+    ).toEqual({ placement: 'sq-unobserved', serverId: mci });
+  });
+
+  test('bring-up (no stats rows at all): global pick, no panel pin', async () => {
+    const t = convexTest(schema, modules);
+    await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
+    await bindPool(t, 'evade', ['sq-a', 'sq-b']);
+    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade'));
+    expect(target).toEqual({ placement: 'sq-a', serverId: null });
+  });
+
+  test('no pool bound anywhere: null placement (caller audits the squad-less key)', async () => {
+    const t = convexTest(schema, modules);
+    await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
+    expect(await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade'))).toEqual({
+      placement: null,
+      serverId: null,
+    });
   });
 });

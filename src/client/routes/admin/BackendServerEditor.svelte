@@ -41,6 +41,8 @@
       backend: s?.backend ?? ('remnawave' as BackendId),
       name: s?.name ?? '',
       slug: s?.slug ?? '',
+      location: s?.location ?? '',
+      locationLabel: s?.locationLabel ?? '',
       isActive: s?.isActive ?? true,
       priority: s?.priority ?? 0,
       maxKeys: s?.maxKeys ?? null,
@@ -56,6 +58,8 @@
   let backend = $state<BackendId>(init.backend);
   let name = $state(init.name);
   let slug = $state(init.slug);
+  let location = $state(init.location);
+  let locationLabel = $state(init.locationLabel);
   let isActive = $state(init.isActive);
   let priority = $state(init.priority);
   // Free-text so the field can be blank (= no cap); parsed on save.
@@ -143,6 +147,9 @@
 
   function buildPayload(): Record<string, unknown> {
     const common: Record<string, unknown> = { name, slug, isActive, priority };
+    // Blank clears the location (the instance drops out of the member picker).
+    common.location = location.trim() || null;
+    common.locationLabel = locationLabel.trim() || null;
     // Blank = clear the cap (null); a positive integer sets it.
     const parsedMax = parseInt(maxKeysText.trim(), 10);
     common.maxKeys = Number.isInteger(parsedMax) && parsedMax >= 1 ? parsedMax : null;
@@ -247,6 +254,28 @@
         <p class="text-xs text-muted-foreground/80 mt-1">
           Used internally + in audit logs. Lowercase, alphanumeric, hyphens.
         </p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location"
+            >Location code</label
+          >
+          <Input id="srv-location" bind:value={location} placeholder="MCI" autocomplete="off" />
+          <p class="mt-1 text-[11px] text-muted-foreground">
+            Short code (e.g. an airport code). Members can pick their config's location by it. Blank
+            = not offered in the member location picker.
+          </p>
+        </div>
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location-label"
+            >Location label</label
+          >
+          <Input id="srv-location-label" bind:value={locationLabel} placeholder="Kansas City, MO" />
+          <p class="mt-1 text-[11px] text-muted-foreground">
+            What members see. Falls back to the code when blank.
+          </p>
+        </div>
       </div>
 
       {#if backend === 'remnawave'}

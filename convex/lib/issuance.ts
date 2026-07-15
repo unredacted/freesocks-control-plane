@@ -28,11 +28,19 @@ export interface IssueResult {
 
 export async function issueNewSubscription(
   ctx: ActionCtx,
-  input: { userId: Id<'users'>; backend: 'remnawave' | 'outline'; spec: IssueUserSpec },
+  input: {
+    userId: Id<'users'>;
+    backend: 'remnawave' | 'outline';
+    spec: IssueUserSpec;
+    // Pin to one instance — set when node placement resolved the (placement,
+    // panel) pair together (the squad only exists on that panel).
+    pinServerId?: Id<'backendServers'> | null;
+  },
 ): Promise<IssueResult> {
   const issued = await ctx.runAction(internal.backends.issueUser, {
     backend: input.backend,
     spec: input.spec,
+    pinServerId: input.pinServerId ?? undefined,
   });
   try {
     const subscriptionId = await ctx.runMutation(internal.subscriptions.insertSubscription, {

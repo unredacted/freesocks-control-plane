@@ -13,6 +13,7 @@ import { AuthMeResponse, PublicConfig } from '../../shared/contracts/auth';
 import {
   AccountResponse,
   AccountUsageResponse,
+  NodeStatusResponse,
   PasskeyListResponse,
   SubscriptionContentResponse,
 } from '../../shared/contracts/account';
@@ -64,6 +65,7 @@ export const queryKeys = {
   billingOrder: (ref: string) => ['billing', 'order', ref] as const,
   accountCodes: ['account', 'codes'] as const,
   accountUsage: ['account', 'usage'] as const,
+  nodeStatus: ['account', 'node-status'] as const,
   passkeys: ['account', 'passkeys'] as const,
 };
 
@@ -140,6 +142,24 @@ export const accountUsageQuery = (enabled: () => boolean) =>
     staleTime: 60_000,
     refetchInterval: 60_000,
     enabled: enabled(),
+  }));
+
+/**
+ * Live-ish online/offline status of the node the member's config is homed to.
+ * Polls while `enabled()` (a subscription exists and the page is mounted) so a
+ * member can tell "the node is up but my network filters it" from an outage.
+ * The 30s cadence is the LIVE surface; the server refreshes its shared snapshot
+ * at most once per minute per instance, so polling cost doesn't scale with
+ * members. Errors degrade silently (the badge just shows unknown).
+ */
+export const nodeStatusQuery = (enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.nodeStatus,
+    queryFn: () => apiClient.get('/api/v1/account/node-status', NodeStatusResponse),
+    staleTime: 25_000,
+    refetchInterval: 30_000,
+    enabled: enabled(),
+    retry: false,
   }));
 
 /**

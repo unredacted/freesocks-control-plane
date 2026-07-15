@@ -149,6 +149,12 @@ export default defineSchema({
     // issues into. A plain string validated against the mode catalog (see
     // lib/connectionModes.ts), unset → the catalog default. Additive/optional.
     connectionModeId: v.optional(v.string()),
+    // Member-chosen node location (a backendServers.location code, e.g. "MCI"),
+    // orthogonal to the connection mode: the mode picks the transport, this
+    // narrows WHICH instance's nodes the key issues onto. Unset = automatic
+    // (least-loaded across all locations). Fail-soft: a stale code that no
+    // longer matches an active instance never blocks issuance.
+    preferredLocation: v.optional(v.string()),
     // Free-tier idle marker: the issued key's backend `expireAt` (ms). Stamped at
     // free-account creation + re-stamped on every free key issuance / reactivation,
     // so it advances only when the member acts — the "still using the service"
@@ -458,6 +464,13 @@ export default defineSchema({
     name: v.string(),
     slug: v.string(),
     config: backendServerConfig,
+    // Physical location of the nodes this instance manages (one panel per
+    // location by convention): a short operator code (`location`, e.g. "MCI")
+    // plus a member-facing display label (`locationLabel`, e.g. "Kansas City,
+    // MO"). Both optional — an instance without one simply isn't part of the
+    // member location picker. Non-secret (projected publicly by code+label).
+    location: v.optional(v.string()),
+    locationLabel: v.optional(v.string()),
     isActive: v.boolean(),
     priority: v.number(),
     lastHealthOkAt: v.optional(v.number()),

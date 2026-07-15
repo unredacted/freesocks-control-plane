@@ -40,6 +40,38 @@
       "answer": "Yes. You can pay with cryptocurrency - Bitcoin, or Monero and Zcash for the most privacy - with no account, email, or card. Your membership activates automatically once the payment confirms."
     }
   },
+  "threat": {
+    "title": "What FreeSocks protects you from",
+    "subtitle": "An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are.",
+    "q1": {
+      "question": "What does FreeSocks protect me from?",
+      "answer": "FreeSocks tunnels your traffic through an encrypted proxy, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do."
+    },
+    "q2": {
+      "question": "What does FreeSocks NOT protect me from?",
+      "answer": "It does not make you anonymous to sites you sign in to: if you log in to an account, that site knows who you are. It cannot protect a device that is already compromised (spyware, a managed work profile, someone with physical access). And a powerful adversary that can watch traffic at many points on the internet may still correlate patterns. If your safety depends on strong anonymity, use Tor and follow specialist guidance for your situation."
+    },
+    "q3": {
+      "question": "Can FreeSocks see my traffic?",
+      "answer": "Your traffic exits through our servers, so treat us like any exit: sites you use over HTTPS (almost all of the modern web) stay encrypted end to end and we cannot read their contents. We configure our servers to keep no connection logs, no visited-site logs, and no source IPs, and the control plane never stores your IP address at all."
+    },
+    "q4": {
+      "question": "What happens if a FreeSocks server is seized or compromised?",
+      "answer": "There is nothing identifying on it. Servers hold no names, emails, IPs, or traffic history, because we never collect those in the first place. Access keys can be revoked and reissued quickly, and we can rotate infrastructure without losing accounts."
+    },
+    "q5": {
+      "question": "Can my government or ISP tell that I am using FreeSocks?",
+      "answer": "Sometimes censors can detect that circumvention traffic is in use even when they cannot read it. Our transports are designed to look like ordinary encrypted web traffic, and the Beat censorship mode routes through infrastructure that is expensive to block. Still, whether use is detectable, and what the consequences are, varies by country. Weigh your local risk."
+    },
+    "q6": {
+      "question": "Why should I believe any of this?",
+      "answer": "The control plane is open source, so anyone can read exactly what it stores and check that there is no place a name, email, or IP address could even go. Claims that depend on server configuration (like disabled logging) are documented and enforced by the same code. You still have to trust the operator for the parts you cannot see, as with every VPN; our approach is to minimize what there is to trust."
+    },
+    "q7": {
+      "question": "Do payments link my identity to my browsing?",
+      "answer": "Membership is optional, and payment is handled by outside processors: we never store the payer's name, email, or address, and an order is tied to your account only through an opaque reference. Cryptocurrency options (including Monero) exist for people who do not want a card trail at all."
+    }
+  },
   "common": {
     "copy": "Copy",
     "copied": "Copied to clipboard",
@@ -294,6 +326,11 @@
         }
       }
     ],
+    "nodeOnline": "Node online",
+    "nodeOffline": "Node offline",
+    "nodeUnknown": "Node status unknown",
+    "nodeOnlineHint": "The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location.",
+    "nodeOfflineBody": "The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location).",
     "keyLimited": "You've used all your data for this period. It resets automatically, or you can upgrade for more.",
     "keyExpired": "This key has expired. Renew your membership or create a new key to reconnect.",
     "keyDisabled": "This key is currently disabled. If your membership lapsed, renew it; otherwise contact support with your support ID.",
@@ -312,6 +349,12 @@
         }
       }
     ]
+  },
+  "location": {
+    "pickerLabel": "Server location",
+    "auto": "Automatic (least busy)",
+    "offline": "offline",
+    "pickerHint": "Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network."
   },
   "usage": {
     "show": "Show usage trend",

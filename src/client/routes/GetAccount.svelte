@@ -19,7 +19,15 @@
   import RedeemCode from '../components/RedeemCode.svelte';
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
-  import { meQuery, configQuery, accountQuery, accountUsageQuery, queryKeys } from '../lib/queries';
+  import LocationPicker from '../components/LocationPicker.svelte';
+  import {
+    meQuery,
+    configQuery,
+    accountQuery,
+    accountUsageQuery,
+    nodeStatusQuery,
+    queryKeys,
+  } from '../lib/queries';
   import { freeTier, deviceLimitsShown } from '../lib/tiers';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
@@ -68,6 +76,12 @@
   // Usage trend for the Step-2 hero (same wiring as /account: 60s stale +
   // refetch, enabled once a key exists; Outline degrades to null → no trend).
   const usage = accountUsageQuery(() => isAuthed && !!subscription);
+  // Live node status for the Step-2 hero badge (same wiring as /account).
+  const nodeStatus = nodeStatusQuery(() => isAuthed && !!subscription);
+  // Node-location catalog + the visitor's pick for the first key ('auto' = the
+  // server picks the least-loaded node anywhere). Picker renders only with ≥2.
+  let locations = $derived(config.data?.locations ?? []);
+  let pickedLocation = $state('auto');
   // Connection-mode catalog + emphasis (client choice → country suggestion →
   // catalog default); orders the panels. `rawConfigFirst` is data-driven off the
   // selected mode's deliveryStyle (replaces the hardcoded `=== 'privacy'`).
@@ -188,13 +202,19 @@
       }
       return apiClient.post(
         '/api/v1/account/regenerate',
-        { confirm: true },
+        {
+          confirm: true,
+          ...(locations.length >= 2
+            ? { location: pickedLocation === 'auto' ? null : pickedLocation }
+            : {}),
+        },
         z.object({ subscriptionUrl: z.string(), shortUuid: z.string() }),
       );
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.account });
       void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
+      void qc.invalidateQueries({ queryKey: queryKeys.nodeStatus });
       toast.success(t('get.createSubToastTitle'), {
         description: t('get.createSubToastBody'),
       });
@@ -516,6 +536,10 @@
           hideUrl={rawConfigFirst}
           usagePoints={usage.data?.usage?.points}
           usageTotal={usage.data?.usage?.total}
+          nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
+          nodeLocationLabel={nodeStatus.data?.node?.location?.label ??
+            subscription.location?.label ??
+            null}
         />
         {#if rawConfigFirst}
           <!-- rawConfig mode: raw config is the deliverable; CDN link hidden; no mirrors. -->
@@ -548,6 +572,15 @@
         <p class="text-sm text-muted-foreground">
           {t('get.step2Intro')}
         </p>
+
+        {#if locations.length >= 2}
+          <LocationPicker
+            {locations}
+            bind:value={pickedLocation}
+            disabled={createSubscription.isPending}
+            id="get-account-location"
+          />
+        {/if}
 
         {#if createSubscription.error}
           <div

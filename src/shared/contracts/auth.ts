@@ -227,6 +227,21 @@ export const PublicConfig = z.object({
     )
     .optional()
     .default([]),
+  /** Member-facing node-location catalog (active Remnawave instances with a
+   *  location set, deduped by code): the picker a member chooses their config's
+   *  location from. `online` = ≥1 healthy instance at that location. No URLs or
+   *  credentials. Optional/defaulted for forward-compat; the SPA hides the
+   *  picker with fewer than two entries. */
+  locations: z
+    .array(
+      z.object({
+        code: z.string(),
+        label: z.string(),
+        online: z.boolean(),
+      }),
+    )
+    .optional()
+    .default([]),
   /** CMS-managed recommended-client catalog for the single "set up your app"
    *  section. Public-safe (no secrets). `schemeId` maps to a client-side deep-link
    *  import builder (null = manual / QR only). Defaulted for forward-compat. */

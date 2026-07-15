@@ -14,6 +14,7 @@ import { v } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
 import type { BackendConfig } from './lib/backends/registry';
 import { PROVIDERS } from './lib/backends/registry';
+import { resolveLocations } from './lib/locations';
 
 // Keep in sync with BACKEND_IDS (src/shared/contracts/backends.ts).
 const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
@@ -129,6 +130,45 @@ export const listActiveWithSecret = internalQuery({
   args: {},
   handler: async (ctx) =>
     (await ctx.db.query('backendServers').collect()).filter((s) => s.isActive),
+});
+
+/**
+ * The member-facing node-location catalog (see lib/locations.ts). Non-secret
+ * (code + display label + online bit only) — projected via publicConfig and
+ * used to validate a member's location pick at the HTTP boundary.
+ */
+export const listLocations = internalQuery({
+  args: {},
+  handler: (ctx) => resolveLocations(ctx.db),
+});
+
+/**
+ * On-demand node-stats pull for ONE instance (the member node-status endpoint's
+ * freshness refresh — the same pull the healthcheck cron does every 10 min).
+ * Best-effort: false on any failure, keeping the last snapshot. Callers gate it
+ * behind `remnawaveNodes.claimStatsRefresh` so a burst of members polling can't
+ * stampede the panel.
+ */
+export const refreshNodeStats = internalAction({
+  args: { id: v.id('backendServers') },
+  handler: async (ctx, { id }): Promise<boolean> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id });
+    if (!server || !server.isActive) return false;
+    const provider = PROVIDERS[server.backend];
+    if (!provider.getNodeStats) return false;
+    try {
+      const nodes = await provider.getNodeStats(server.config as BackendConfig);
+      if (nodes.length > 0) {
+        await ctx.runMutation(internal.remnawaveNodes.markNodeStats, {
+          backendServerId: id,
+          nodes,
+        });
+      }
+      return true;
+    } catch {
+      return false; // panel unreachable: the cached snapshot stays authoritative
+    }
+  },
 });
 
 /**

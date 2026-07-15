@@ -12,3 +12,7 @@ src/lib/paraglide
 messages
 project.inlang
 src/client/lib/i18n/message-keys.ts
+
+# Generated native-translation review packets (bun run i18n:review): documents
+# for human reviewers, owned by the generator's formatting — not prettier's.
+translation-review

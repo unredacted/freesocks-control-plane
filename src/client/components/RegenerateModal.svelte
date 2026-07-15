@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '@client/components/ui/button';
   import * as Dialog from '@client/components/ui/dialog';
+  import LocationPicker from './LocationPicker.svelte';
   import { t } from '../lib/i18n/index.svelte';
 
   interface Props {
@@ -11,6 +12,10 @@
     /** Raw Remnawave short id - the fallback suffix when no fronted token exists. */
     shortUuid: string;
     deviceCount: number;
+    /** Node-location choices for the NEW key. The picker renders only with ≥2
+     *  entries (otherwise there is no choice); `location` is 'auto' or a code. */
+    locations?: { code: string; label: string; online: boolean }[];
+    location?: string;
     onCancel: () => void;
     onConfirm: () => void;
     busy: boolean;
@@ -21,6 +26,8 @@
     subToken,
     shortUuid,
     deviceCount,
+    locations = [],
+    location = $bindable('auto'),
     onCancel,
     onConfirm,
     busy,
@@ -55,6 +62,9 @@
         <li>{t('regen.pointDevices', { count: deviceCount })}</li>
       {/if}
     </ul>
+    {#if locations.length >= 2}
+      <LocationPicker {locations} bind:value={location} disabled={busy} id="regen-location" />
+    {/if}
     <Dialog.Footer>
       <Button variant="ghost" onclick={onCancel} disabled={busy}>{t('common.cancel')}</Button>
       <Button onclick={onConfirm} disabled={busy} variant="destructive">
