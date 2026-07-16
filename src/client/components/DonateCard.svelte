@@ -125,7 +125,7 @@
     <!-- Condensed accordion: the trigger keeps the amber donate framing; expanding
          reveals the method/amount form. Same pattern as UpgradeMembership. -->
     <section
-      class="donation-sheen relative overflow-hidden rounded-xl border border-amber-500/40 bg-card ring-1 ring-amber-500/20"
+      class="relative overflow-hidden rounded-xl border border-amber-500/40 bg-card ring-1 ring-amber-500/20"
     >
       <Collapsible.Root bind:open>
         <Collapsible.Trigger
@@ -154,7 +154,7 @@
     </section>
   {:else}
     <section
-      class="donation-sheen relative space-y-4 overflow-hidden rounded-xl border border-amber-500/40 bg-card p-4 ring-1 ring-amber-500/20 sm:p-5"
+      class="relative space-y-4 overflow-hidden rounded-xl border border-amber-500/40 bg-card p-4 ring-1 ring-amber-500/20 sm:p-5"
     >
       <div>
         <h2 class="flex items-center gap-2 font-display text-base font-semibold">

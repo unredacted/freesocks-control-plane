@@ -20,15 +20,14 @@
   import TierComparison from '../components/TierComparison.svelte';
   import NetworkStatus from '../components/NetworkStatus.svelte';
   import CountUp from '../components/CountUp.svelte';
-  import { reveal } from '../lib/actions/reveal';
+  import DitherField from '../components/DitherField.svelte';
   import { meQuery, configQuery } from '../lib/queries';
   import { membershipTier, tierLimits, deviceLimitsShown, type TierLimits } from '../lib/tiers';
   import { baselinePerMonth } from '../lib/billing';
   import { t, type MessageKey } from '../lib/i18n/index.svelte';
   import { formatMoney } from '../lib/i18n/format';
   import { router } from '../stores/router.svelte';
-  import { fly, fade, slide } from 'svelte/transition';
-  import { quintOut } from 'svelte/easing';
+  import { slide } from 'svelte/transition';
   import SocksIcon from '../components/SocksIcon.svelte';
   import Landmark from '@lucide/svelte/icons/landmark';
   import Lock from '@lucide/svelte/icons/lock';
@@ -186,7 +185,8 @@
   // lands on the threat tab directly.
   let faqTab = $state(window.location.hash === '#threat-model' ? 'threat' : 'general');
 
-  // Section kickers: a short accent bar + small label above each heading.
+  // Section kickers: a small quiet label above each heading (no accent bar -
+  // the accent color is reserved for actions and live data).
   const SECTION_LABELS = {
     features: 'home.sections.features',
     privacy: 'home.sections.privacy',
@@ -197,18 +197,12 @@
     about: 'home.sections.about',
   } as const satisfies Record<string, MessageKey>;
   type SectionId = keyof typeof SECTION_LABELS;
-
-  // Count-up trigger: the impact stats animate once the section scrolls into view.
-  let impactRevealed = $state(false);
 </script>
 
 {#snippet eyebrow(id: SectionId)}
-  <div class="flex items-center gap-2.5">
-    <span class="h-0.5 w-6 rounded-full bg-primary" aria-hidden="true"></span>
-    <p class="text-xs font-semibold uppercase tracking-wide text-primary">
-      {t(SECTION_LABELS[id])}
-    </p>
-  </div>
+  <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+    {t(SECTION_LABELS[id])}
+  </p>
 {/snippet}
 
 {#snippet accordion(items: readonly { q: MessageKey; a: MessageKey }[], prefix: 'faq' | 'tm')}
@@ -254,148 +248,133 @@
 
 <div class="space-y-20 md:space-y-28 pb-12">
   <!-- HERO -->
-  <section
-    class="relative grid gap-10 md:grid-cols-[1.2fr_1fr] md:gap-16 items-center pt-8 md:pt-16"
-    in:fade={{ duration: 300 }}
-  >
-    <!-- Dither dot grid behind the hero (pure CSS, static). The brand glows are
-         anchored to the headline + card themselves (below), so they read as
-         light rising from underneath each one on every breakpoint. -->
-    <div
-      class="dot-grid absolute -inset-x-6 -top-8 bottom-0 -z-10 opacity-40 dark:opacity-25"
-      aria-hidden="true"
-    ></div>
-    <div class="space-y-6 md:space-y-8" in:fly={{ y: 20, duration: 500, easing: quintOut }}>
-      <div class="relative">
-        <!-- Glow pooled behind the headline: box biased up and toward the inline
-             start (wider on the left, taller above) so the emerald reads as
-             rising from under the text, brightest in its upper-left. -->
-        <div
-          class="ambient-glow underglow absolute -start-20 -end-4 -top-16 -z-10 h-72"
-          aria-hidden="true"
-        ></div>
+  <section class="relative pt-8 md:pt-16 space-y-10 md:space-y-14">
+    <!-- Bayer-dithered field behind the hero: the brand's ONE signature
+         texture (a static canvas; dissolves toward the headline). -->
+    <DitherField class="absolute -inset-x-6 -top-8 bottom-0 -z-10" />
+    <div class="grid gap-10 md:grid-cols-[1.2fr_1fr] md:gap-16 items-center">
+      <div class="space-y-6 md:space-y-8">
         <h1 class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05]">
           {t('home.hero.title')}
         </h1>
-      </div>
 
-      <p class="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
-        {t('home.hero.subtitle', { limits: membershipLimits })}
-      </p>
+        <p class="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
+          {t('home.hero.subtitle', { limits: membershipLimits })}
+        </p>
 
-      <!-- Social-impact callout: what makes this VPN different - donations made
+        <!-- Social-impact callout: what makes this VPN different - donations made
            in-app buy bandwidth for every free user that month. Links down to the
            live impact section. Renders only while donations are live. -->
-      {#if billingEnabled && donation?.enabled}
-        <div
-          class="donation-sheen max-w-xl rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-sm leading-relaxed"
-        >
-          <Heart
-            class="inline size-3.5 -mt-0.5 me-1.5 text-amber-600 dark:text-amber-300"
-            aria-hidden="true"
-          />{t('home.hero.impactNote')}
-          <button
-            type="button"
-            class="ms-1.5 rounded-sm font-medium underline text-amber-700 dark:text-amber-300 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onclick={() => scrollToId('impact')}
-          >
-            {t('home.hero.impactLink')}
-          </button>
-        </div>
-      {/if}
-
-      <div class="flex flex-wrap gap-3">
-        {#if !me.isPending && me.data?.authenticated}
-          <Link href="/account">
-            <Button size="lg" class="text-base">
-              <SocksIcon class="size-4" />
-              {t('nav.account')}
-              <ArrowRight class="size-4" />
-            </Button>
-          </Link>
-          {#if billingEnabled}
-            <Button size="lg" variant="outline" class="text-base" onclick={goUpgrade}>
-              {t('home.cta.getMembership')}
-            </Button>
-          {/if}
-        {:else}
-          <Link href="/get-account">
-            <Button size="lg" class="text-base">
-              <SocksIcon class="size-4" />
-              {t('nav.getAccount')}
-              <ArrowRight class="size-4" />
-            </Button>
-          </Link>
-          <Link href="/login">
-            <Button size="lg" variant="outline" class="text-base">{t('nav.signIn')}</Button>
-          </Link>
-        {/if}
-      </div>
-
-      <!-- Trust row: the strongest verifiable facts at the decision point, not
-           buried at the bottom of the page. -->
-      <ul class="flex flex-wrap gap-x-5 gap-y-2 pt-1 text-xs text-muted-foreground">
-        <li class="inline-flex items-center gap-1.5">
-          <Landmark class="size-3.5 text-primary" aria-hidden="true" />
-          {t('home.trust.nonprofit')}
-        </li>
-        {#if site?.repoEnabled && site.repoUrl}
-          <li class="inline-flex items-center gap-1.5">
-            <CodeXml class="size-3.5 text-primary" aria-hidden="true" />
-            <a
-              class="underline hover:text-foreground"
-              href={site.repoUrl}
-              target="_blank"
-              rel="noopener noreferrer">{t('home.trust.openSource')}</a
-            >
-          </li>
-        {/if}
-        <li class="inline-flex items-center gap-1.5">
-          <ShieldCheck class="size-3.5 text-primary" aria-hidden="true" />
-          {t('home.trust.noLogs')}
-        </li>
-      </ul>
-
-      <!-- Quick-nav: the page is long and the content a cautious visitor needs
-           most (threat model, privacy) is many viewports down. -->
-      <nav class="flex flex-wrap gap-2" aria-label={t('home.quicknav.label')}>
-        <button
-          type="button"
-          class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onclick={() => scrollToId('privacy')}
-        >
-          {t('home.quicknav.privacy')}
-        </button>
-        <button
-          type="button"
-          class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onclick={() => {
-            faqTab = 'threat';
-            scrollToId('threat-model');
-          }}
-        >
-          {t('home.quicknav.threat')}
-        </button>
-        <button
-          type="button"
-          class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onclick={() => scrollToId('faq')}
-        >
-          {t('home.quicknav.faq')}
-        </button>
         {#if billingEnabled && donation?.enabled}
+          <div
+            class="max-w-xl rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-sm leading-relaxed"
+          >
+            <Heart
+              class="inline size-3.5 -mt-0.5 me-1.5 text-amber-600 dark:text-amber-300"
+              aria-hidden="true"
+            />{t('home.hero.impactNote')}
+            <button
+              type="button"
+              class="ms-1.5 rounded-sm font-medium underline text-amber-700 dark:text-amber-300 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onclick={() => scrollToId('impact')}
+            >
+              {t('home.hero.impactLink')}
+            </button>
+          </div>
+        {/if}
+
+        <div class="flex flex-wrap gap-3">
+          {#if !me.isPending && me.data?.authenticated}
+            <Link href="/account">
+              <Button size="lg" class="text-base">
+                <SocksIcon class="size-4" />
+                {t('nav.account')}
+                <ArrowRight class="size-4" />
+              </Button>
+            </Link>
+            {#if billingEnabled}
+              <Button size="lg" variant="outline" class="text-base" onclick={goUpgrade}>
+                {t('home.cta.getMembership')}
+              </Button>
+            {/if}
+          {:else}
+            <Link href="/get-account">
+              <Button size="lg" class="text-base">
+                <SocksIcon class="size-4" />
+                {t('nav.getAccount')}
+                <ArrowRight class="size-4" />
+              </Button>
+            </Link>
+            <Link href="/login">
+              <Button size="lg" variant="outline" class="text-base">{t('nav.signIn')}</Button>
+            </Link>
+          {/if}
+        </div>
+
+        <!-- Trust row: the strongest verifiable facts at the decision point, not
+           buried at the bottom of the page. -->
+        <ul class="flex flex-wrap gap-x-5 gap-y-2 pt-1 text-xs text-muted-foreground">
+          <li class="inline-flex items-center gap-1.5">
+            <Landmark class="size-3.5 text-muted-foreground" aria-hidden="true" />
+            {t('home.trust.nonprofit')}
+          </li>
+          {#if site?.repoEnabled && site.repoUrl}
+            <li class="inline-flex items-center gap-1.5">
+              <CodeXml class="size-3.5 text-muted-foreground" aria-hidden="true" />
+              <a
+                class="underline hover:text-foreground"
+                href={site.repoUrl}
+                target="_blank"
+                rel="noopener noreferrer">{t('home.trust.openSource')}</a
+              >
+            </li>
+          {/if}
+          <li class="inline-flex items-center gap-1.5">
+            <ShieldCheck class="size-3.5 text-muted-foreground" aria-hidden="true" />
+            {t('home.trust.noLogs')}
+          </li>
+        </ul>
+
+        <!-- Quick-nav: the page is long and the content a cautious visitor needs
+           most (threat model, privacy) is many viewports down. -->
+        <nav class="flex flex-wrap gap-2" aria-label={t('home.quicknav.label')}>
           <button
             type="button"
             class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onclick={() => scrollToId('impact')}
+            onclick={() => scrollToId('privacy')}
           >
-            {t('home.quicknav.impact')}
+            {t('home.quicknav.privacy')}
           </button>
-        {/if}
-      </nav>
-    </div>
+          <button
+            type="button"
+            class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onclick={() => {
+              faqTab = 'threat';
+              scrollToId('threat-model');
+            }}
+          >
+            {t('home.quicknav.threat')}
+          </button>
+          <button
+            type="button"
+            class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onclick={() => scrollToId('faq')}
+          >
+            {t('home.quicknav.faq')}
+          </button>
+          {#if billingEnabled && donation?.enabled}
+            <button
+              type="button"
+              class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onclick={() => scrollToId('impact')}
+            >
+              {t('home.quicknav.impact')}
+            </button>
+          {/if}
+        </nav>
+      </div>
 
-    <!--
+      <!--
       Hero card. Earlier versions of this card showed a fake "Subscription
       URL" with a placeholder vless:// string + a green "Subscription ready"
       pip, which was confusing: visitors landing here for the first time
@@ -405,93 +384,91 @@
       makes clear the numbers come from the seeded defaults (not a live
       account).
     -->
-    <!-- Shown on every viewport: mobile is the majority of our audience, and this
+      <!-- Shown on every viewport: mobile is the majority of our audience, and this
          card is the at-a-glance "what you get" summary they'd otherwise miss. Not
          aria-hidden - the specifics (limits, no-email) are informative. -->
-    <div class="relative" in:fly={{ x: 20, duration: 600, delay: 150, easing: quintOut }}>
-      <!-- Glow pooling under the free-tier card: the card is opaque, so this
-           reads as light rising from beneath it. -->
-      <div
-        class="ambient-glow underglow absolute inset-x-0 -bottom-20 -z-10 h-56"
-        aria-hidden="true"
-      ></div>
-      <div class="rounded-2xl border border-border bg-card p-6 md:p-7 shadow-sm space-y-5">
-        <div class="flex items-baseline justify-between">
-          <h2 class="text-base font-display font-semibold tracking-tight">
-            {t('home.freeCard.title')}
-          </h2>
-          <span
-            class="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold rounded bg-secondary px-1.5 py-0.5"
-          >
-            {t('home.freeCard.badge')}
-          </span>
-        </div>
-        <ul class="space-y-3">
-          <li class="flex items-start gap-3">
-            <Globe class="size-4 text-primary mt-0.5 shrink-0" />
-            <div>
-              <p class="text-sm font-medium">{t('home.freeCard.urlTitle')}</p>
-              <p class="text-xs text-muted-foreground leading-snug">
-                {t('home.freeCard.urlBody')}
-              </p>
-            </div>
-          </li>
-          <li class="flex items-start gap-3">
-            <Smartphone class="size-4 text-primary mt-0.5 shrink-0" />
-            <div>
-              <!-- DB-driven; empty until /api/v1/config resolves. A skeleton bar
-                   holds the line's place so it doesn't pop in from blank. -->
-              {#if freeTierLine}
-                <p class="text-sm font-medium tabular-nums">{freeTierLine}</p>
-              {:else}
-                <Skeleton class="h-5 w-32" />
-              {/if}
-              <p class="text-xs text-muted-foreground leading-snug">
-                {t('home.freeCard.membershipLine', { limits: membershipLimits })}
-              </p>
-            </div>
-          </li>
-          <li class="flex items-start gap-3">
-            <Lock class="size-4 text-primary mt-0.5 shrink-0" />
-            <div>
-              <p class="text-sm font-medium">{t('home.freeCard.noAuthTitle')}</p>
-              <p class="text-xs text-muted-foreground leading-snug">
-                {t('home.freeCard.noAuthBody')}
-              </p>
-            </div>
-          </li>
-        </ul>
-        <p class="text-[11px] text-muted-foreground leading-snug border-t border-border/60 pt-3">
-          {t('home.freeCard.footnote')}
-        </p>
-        {#if billingEnabled}
-          <!-- Upgrade nudge: the free summary stays primary; this footer offers the
-               paid tier with a DB-derived price + the existing goUpgrade entry point. -->
-          <div class="space-y-2 rounded-xl border border-primary/30 bg-primary/5 p-3">
-            <div class="flex items-baseline justify-between gap-2">
-              <p class="text-sm font-semibold">{t('home.freeCard.upsellTitle')}</p>
-              {#if membershipFromPrice}
-                <span class="text-xs font-semibold tabular-nums text-primary">
-                  {t('home.freeCard.fromPerMonth', { price: membershipFromPrice })}
-                </span>
-              {/if}
-            </div>
-            <p class="text-[11px] text-muted-foreground">{t('home.freeCard.cryptoNote')}</p>
-            <p class="text-xs text-muted-foreground leading-snug">
-              {t('home.freeCard.upsellBody', { limits: membershipLimits })}
-            </p>
-            <Button size="sm" class="w-full" onclick={goUpgrade}>
-              {t('home.cta.getMembership')}
-            </Button>
+      <div>
+        <div class="rounded-2xl border border-border bg-card p-6 md:p-7 space-y-5">
+          <div class="flex items-baseline justify-between">
+            <h2 class="text-base font-display font-semibold tracking-tight">
+              {t('home.freeCard.title')}
+            </h2>
+            <span
+              class="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold rounded bg-secondary px-1.5 py-0.5"
+            >
+              {t('home.freeCard.badge')}
+            </span>
           </div>
-        {/if}
+          <ul class="space-y-3">
+            <li class="flex items-start gap-3">
+              <Globe class="size-4 text-muted-foreground mt-0.5 shrink-0" />
+              <div>
+                <p class="text-sm font-medium">{t('home.freeCard.urlTitle')}</p>
+                <p class="text-xs text-muted-foreground leading-snug">
+                  {t('home.freeCard.urlBody')}
+                </p>
+              </div>
+            </li>
+            <li class="flex items-start gap-3">
+              <Smartphone class="size-4 text-muted-foreground mt-0.5 shrink-0" />
+              <div>
+                <!-- DB-driven; empty until /api/v1/config resolves. A skeleton bar
+                   holds the line's place so it doesn't pop in from blank. -->
+                {#if freeTierLine}
+                  <p class="text-sm font-medium tabular-nums">{freeTierLine}</p>
+                {:else}
+                  <Skeleton class="h-5 w-32" />
+                {/if}
+                <p class="text-xs text-muted-foreground leading-snug">
+                  {t('home.freeCard.membershipLine', { limits: membershipLimits })}
+                </p>
+              </div>
+            </li>
+            <li class="flex items-start gap-3">
+              <Lock class="size-4 text-muted-foreground mt-0.5 shrink-0" />
+              <div>
+                <p class="text-sm font-medium">{t('home.freeCard.noAuthTitle')}</p>
+                <p class="text-xs text-muted-foreground leading-snug">
+                  {t('home.freeCard.noAuthBody')}
+                </p>
+              </div>
+            </li>
+          </ul>
+          <p class="text-[11px] text-muted-foreground leading-snug border-t border-border/60 pt-3">
+            {t('home.freeCard.footnote')}
+          </p>
+          {#if billingEnabled}
+            <!-- Upgrade nudge: the free summary stays primary; this footer offers the
+               paid tier with a DB-derived price + the existing goUpgrade entry point. -->
+            <div class="space-y-2 rounded-xl border border-primary/30 bg-primary/5 p-3">
+              <div class="flex items-baseline justify-between gap-2">
+                <p class="text-sm font-semibold">{t('home.freeCard.upsellTitle')}</p>
+                {#if membershipFromPrice}
+                  <span class="text-xs font-semibold tabular-nums text-primary">
+                    {t('home.freeCard.fromPerMonth', { price: membershipFromPrice })}
+                  </span>
+                {/if}
+              </div>
+              <p class="text-[11px] text-muted-foreground">{t('home.freeCard.cryptoNote')}</p>
+              <p class="text-xs text-muted-foreground leading-snug">
+                {t('home.freeCard.upsellBody', { limits: membershipLimits })}
+              </p>
+              <Button size="sm" class="w-full" onclick={goUpgrade}>
+                {t('home.cta.getMembership')}
+              </Button>
+            </div>
+          {/if}
+        </div>
       </div>
     </div>
-  </section>
 
-  <!-- LIVE NETWORK STATUS: transparent, verifiable, live data (hides when no
-       located instances exist). -->
-  <NetworkStatus />
+    <!-- LIVE NETWORK STATUS at the hero's bottom edge: transparent, verifiable,
+         live data (hides when no located instances exist). The strongest trust
+         proof we have, so it sits at the decision point, not mid-page. -->
+    <div class="border-t border-border/60 pt-5">
+      <NetworkStatus />
+    </div>
+  </section>
 
   <!-- FEATURES -->
   <section class="space-y-8">
@@ -501,18 +478,10 @@
         {t('home.features.title')}
       </h2>
     </div>
-    <div class="grid gap-4 md:grid-cols-3">
-      {#each features as f, i (f.title)}
-        <div
-          class="rounded-xl border border-border bg-card p-5 space-y-2 transition-colors hover:border-primary/40"
-          use:reveal
-          style="--reveal-delay: {i * 60}ms"
-        >
-          <div
-            class="inline-flex items-center justify-center rounded-md bg-primary/10 text-primary p-2"
-          >
-            <f.icon class="size-5" />
-          </div>
+    <div class="grid gap-x-8 gap-y-6 md:grid-cols-3">
+      {#each features as f (f.title)}
+        <div class="space-y-2">
+          <f.icon class="size-5 text-muted-foreground" aria-hidden="true" />
           <h3 class="text-base font-semibold">{t(f.title)}</h3>
           <p class="text-sm text-muted-foreground leading-relaxed">{t(f.body)}</p>
         </div>
@@ -531,14 +500,10 @@
         {t('home.privacy.subtitle')}
       </p>
     </div>
-    <ul class="grid gap-4 sm:grid-cols-2">
-      {#each privacyPoints as point, i (point)}
-        <li
-          class="flex items-start gap-3 rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/40"
-          use:reveal
-          style="--reveal-delay: {i * 60}ms"
-        >
-          <ShieldCheck class="size-5 text-primary mt-0.5 shrink-0" aria-hidden="true" />
+    <ul class="grid gap-x-8 gap-y-5 sm:grid-cols-2">
+      {#each privacyPoints as point (point)}
+        <li class="flex items-start gap-3">
+          <ShieldCheck class="size-5 text-muted-foreground mt-0.5 shrink-0" aria-hidden="true" />
           <p class="text-sm text-muted-foreground leading-relaxed">{t(point)}</p>
         </li>
       {/each}
@@ -555,9 +520,9 @@
     </div>
     <div class="grid gap-6 md:grid-cols-3 max-w-4xl">
       {#each steps as step, i (step.n)}
-        <div class="space-y-3 relative" use:reveal style="--reveal-delay: {i * 100}ms">
+        <div class="space-y-3 relative">
           <div
-            class="size-10 rounded-full bg-primary/10 ring-1 ring-primary/25 text-primary font-display font-bold flex items-center justify-center tabular-nums"
+            class="size-10 rounded-full border border-border text-foreground font-display font-bold flex items-center justify-center tabular-nums"
           >
             {step.n}
             {#if i < steps.length - 1}
@@ -587,11 +552,7 @@
   <!-- MEMBERSHIP / pricing - only when billing is live (reuses the comparison
        card, which shows "from <price>/mo" + an Upgrade CTA). -->
   {#if billingEnabled}
-    <section class="relative space-y-6">
-      <div
-        class="ambient-glow membership-glow absolute -inset-x-6 -inset-y-10 -z-10"
-        aria-hidden="true"
-      ></div>
+    <section class="space-y-6">
       <div class="max-w-2xl space-y-2">
         {@render eyebrow('membership')}
         <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
@@ -613,12 +574,11 @@
        flat zero baseline with the "first one starts the counter" note. All
        numbers are GB / user counts (no dollar figures). -->
   {#if billingEnabled && donation?.enabled}
-    <!-- Full-bleed warm band (breaks out of the container's px-4): the one
-         donor-facing gold interlude between the emerald service sections. -->
+    <!-- Full-bleed warm band (breaks out of the container's px-4): a flat amber
+         tint marking the donor-facing interlude between the service sections. -->
     <section
       id="impact"
-      class="scroll-mt-24 -mx-4 px-4 py-10 md:py-12 border-y border-amber-500/20 bg-gradient-to-b from-amber-500/[0.05] to-transparent"
-      use:reveal={{ onReveal: () => (impactRevealed = true) }}
+      class="scroll-mt-24 -mx-4 px-4 py-10 md:py-12 border-y border-amber-500/20 bg-amber-500/[0.04]"
     >
       <div class="grid gap-8 md:grid-cols-2 md:items-center">
         <div class="max-w-xl space-y-3">
@@ -631,13 +591,13 @@
             <div>
               <span
                 class="text-xl font-display font-bold tabular-nums text-amber-600 dark:text-amber-300"
-                >+<CountUp value={donation.currentBonusGb} start={impactRevealed} /></span
+                >+<CountUp value={donation.currentBonusGb} start /></span
               >
               <span class="text-sm text-muted-foreground"> {t('impact.bonusThisMonth')}</span>
             </div>
             <div>
               <span class="text-xl font-display font-bold tabular-nums"
-                ><CountUp value={donation.freeUsersHelped} start={impactRevealed} /></span
+                ><CountUp value={donation.freeUsersHelped} start /></span
               >
               <span class="text-sm text-muted-foreground"> {t('impact.usersHelped')}</span>
             </div>
@@ -653,10 +613,7 @@
             {t('impact.externalNote')}
           </p>
         </div>
-        <!-- Soft warm glow anchors the chart as the band's focal point. -->
-        <div
-          class="donation-sheen rounded-xl border border-amber-500/30 bg-background/60 p-4 shadow-[0_0_70px_-12px_rgba(245,158,11,0.45)]"
-        >
+        <div class="rounded-xl border border-amber-500/30 bg-background/60 p-4">
           <DitherChart
             values={impactSeries.map((h) => h.bonusGb)}
             labels={impactSeries.map((h) => h.month)}
@@ -717,85 +674,93 @@
   </section>
 
   <!-- ABOUT: short, factual, no invented programs. Two columns: the story +
-       CTAs on the left, fact rows on the right. The operator/nonprofit line
-       appears once (the body); the fact rows carry what the body doesn't. -->
-  <section class="relative">
-    <!-- Bookend pool at the inline end (the card is opaque, so this reads as a
-         soft halo just past its edges). -->
-    <div
-      class="ambient-glow about-glow absolute -inset-x-6 -inset-y-10 -z-10"
-      aria-hidden="true"
-    ></div>
-    <div class="rounded-2xl border border-border bg-card p-6 md:p-10">
-      <div class="grid gap-8 md:grid-cols-[1.2fr_1fr] md:items-center">
-        <div class="max-w-2xl space-y-3">
-          {@render eyebrow('about')}
-          <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
-            {t('home.about.title')}
-          </h2>
-          <p class="text-muted-foreground leading-relaxed">
-            {t('home.about.bodyPrefix')}{' '}
-            <a
-              href="https://unredacted.org"
-              class="underline hover:text-foreground"
-              target="_blank"
-              rel="noopener noreferrer">Unredacted</a
-            >{t('home.about.bodySuffix')}
-          </p>
-          <p class="text-muted-foreground leading-relaxed">
-            {t('home.about.body2')}
-          </p>
-          <div class="flex flex-wrap gap-3 pt-2">
-            <!--
-              Donations fund free accounts (hosted on unredacted.org). When billing
-              is live, the membership CTA routes to the in-app upgrade panel
-              (authed → /account, else create a free account first via /get-account).
-            -->
-            <a href="https://unredacted.org/donate" target="_blank" rel="noopener noreferrer">
-              <Button>
-                <Heart class="size-4" />
-                {t('renew.donate')}
-              </Button>
-            </a>
-            <a href="https://unredacted.org" target="_blank" rel="noopener noreferrer">
-              <Button variant="outline">{t('home.about.siteLink')}</Button>
-            </a>
-            {#if site?.repoEnabled && site.repoUrl}
-              <a href={site.repoUrl} target="_blank" rel="noopener noreferrer">
-                <Button variant="outline">
-                  <CodeXml class="size-4" />
-                  {t('home.about.viewSourceCta')}
-                </Button>
-              </a>
-            {/if}
-            {#if billingEnabled}
-              <Button variant="ghost" onclick={goUpgrade}>{t('home.cta.getMembership')}</Button>
-            {/if}
-          </div>
-        </div>
-        <ul class="space-y-5 md:border-s md:border-border md:ps-8">
+       text links on the left, fact rows on the right. The operator/nonprofit
+       line appears once (the body); the fact rows carry what the body doesn't. -->
+  <section class="border-t border-border pt-10 md:pt-12">
+    <div class="grid gap-8 md:grid-cols-[1.2fr_1fr] md:items-center">
+      <div class="max-w-2xl space-y-3">
+        {@render eyebrow('about')}
+        <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+          {t('home.about.title')}
+        </h2>
+        <p class="text-muted-foreground leading-relaxed">
+          {t('home.about.bodyPrefix')}{' '}
+          <a
+            href="https://unredacted.org"
+            class="underline hover:text-foreground"
+            target="_blank"
+            rel="noopener noreferrer">Unredacted</a
+          >{t('home.about.bodySuffix')}
+        </p>
+        <p class="text-muted-foreground leading-relaxed">
+          {t('home.about.body2')}
+        </p>
+        <!-- Text links, not buttons: the page's two button CTAs (hero + how it
+             works) stay unchallenged. Donations fund free accounts (hosted on
+             unredacted.org); when billing is live the membership link routes to
+             the in-app upgrade panel (authed → /account, else /get-account). -->
+        <div class="flex flex-wrap gap-x-5 gap-y-2 pt-2 text-sm">
+          <a
+            href="https://unredacted.org/donate"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-1.5 font-medium text-primary underline-offset-4 hover:underline"
+          >
+            <Heart class="size-3.5" aria-hidden="true" />
+            {t('renew.donate')}
+          </a>
+          <a
+            href="https://unredacted.org"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            {t('home.about.siteLink')}
+          </a>
           {#if site?.repoEnabled && site.repoUrl}
-            <li class="flex items-start gap-3">
-              <CodeXml class="size-4 text-primary mt-0.5 shrink-0" aria-hidden="true" />
-              <div>
-                <p class="text-sm font-semibold">{t('home.about.fact2Title')}</p>
-                <p class="text-sm text-muted-foreground leading-relaxed">
-                  {t('home.about.openSource')}
-                </p>
-              </div>
-            </li>
+            <a
+              href={site.repoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              <CodeXml class="size-3.5" aria-hidden="true" />
+              {t('home.about.viewSourceCta')}
+            </a>
           {/if}
+          {#if billingEnabled}
+            <button
+              type="button"
+              onclick={goUpgrade}
+              class="rounded-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {t('home.cta.getMembership')}
+            </button>
+          {/if}
+        </div>
+      </div>
+      <ul class="space-y-5 md:border-s md:border-border md:ps-8">
+        {#if site?.repoEnabled && site.repoUrl}
           <li class="flex items-start gap-3">
-            <Heart class="size-4 text-primary mt-0.5 shrink-0" aria-hidden="true" />
+            <CodeXml class="size-4 text-muted-foreground mt-0.5 shrink-0" aria-hidden="true" />
             <div>
-              <p class="text-sm font-semibold">{t('home.about.fact3Title')}</p>
+              <p class="text-sm font-semibold">{t('home.about.fact2Title')}</p>
               <p class="text-sm text-muted-foreground leading-relaxed">
-                {t('home.about.fact3Body')}
+                {t('home.about.openSource')}
               </p>
             </div>
           </li>
-        </ul>
-      </div>
+        {/if}
+        <li class="flex items-start gap-3">
+          <Heart class="size-4 text-muted-foreground mt-0.5 shrink-0" aria-hidden="true" />
+          <div>
+            <p class="text-sm font-semibold">{t('home.about.fact3Title')}</p>
+            <p class="text-sm text-muted-foreground leading-relaxed">
+              {t('home.about.fact3Body')}
+            </p>
+          </div>
+        </li>
+      </ul>
     </div>
   </section>
 </div>

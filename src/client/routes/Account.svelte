@@ -5,6 +5,7 @@
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
+  import SectionHead from '../components/SectionHead.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
   import InlineError from '../components/InlineError.svelte';
@@ -18,7 +19,6 @@
   import RegenerateModal from '../components/RegenerateModal.svelte';
   import RevokeDeviceModal from '../components/RevokeDeviceModal.svelte';
   import SwitchBackendModal from '../components/SwitchBackendModal.svelte';
-  import TierComparison from '../components/TierComparison.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import MemberImpact from '../components/MemberImpact.svelte';
   import DonateCard from '../components/DonateCard.svelte';
@@ -26,11 +26,11 @@
   import AccountNumberReveal from '../components/AccountNumberReveal.svelte';
   import RotateAccountIdModal from '../components/RotateAccountIdModal.svelte';
   import ConnectClient from '../components/ConnectClient.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
   import RedeemCode from '../components/RedeemCode.svelte';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
-  import Plus from '@lucide/svelte/icons/plus';
   import LogOut from '@lucide/svelte/icons/log-out';
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
@@ -154,15 +154,20 @@
   let orderPaidHandled = false;
 
   // --- Tabbed sections (in-page strip, ?tab= synced) ----------------------
-  // The page groups into 4 tabs; the active one is reflected into the URL
+  // The page groups into 3 tabs; the active one is reflected into the URL
   // (?tab=) via replaceState - deep-linkable + reload-safe, WITHOUT a router
   // navigation (mirrors AdminUsers' filter URL-sync), so it never disturbs the
-  // billing `?order=` param or the router's scroll-restoration state.
-  type AccountTab = 'connection' | 'membership' | 'codes' | 'security';
-  const ACCOUNT_TABS: readonly string[] = ['connection', 'membership', 'codes', 'security'];
+  // billing `?order=` param or the router's scroll-restoration state. The old
+  // `codes` tab folded into Membership; its deep links redirect.
+  type AccountTab = 'connection' | 'membership' | 'security';
+  const ACCOUNT_TABS: readonly string[] = ['connection', 'membership', 'security'];
   const initialTab = router.searchParams.get('tab');
   let activeTab = $state<AccountTab>(
-    initialTab && ACCOUNT_TABS.includes(initialTab) ? (initialTab as AccountTab) : 'connection',
+    initialTab === 'codes'
+      ? 'membership'
+      : initialTab && ACCOUNT_TABS.includes(initialTab)
+        ? (initialTab as AccountTab)
+        : 'connection',
   );
   $effect(() => {
     const url = new URL(window.location.href);
@@ -507,19 +512,6 @@
   );
 </script>
 
-<!-- Consistent titled-section header (icon + title + one-line description),
-     mirroring the admin CMS's section style. Groups the page's framed blocks
-     under clear headings instead of one flat stack. -->
-{#snippet sectionHead(Icon: typeof KeyRound, title: string, description: string)}
-  <div class="space-y-1">
-    <h2 class="text-lg font-display font-semibold flex items-center gap-2">
-      <Icon class="size-4 text-muted-foreground" aria-hidden="true" />
-      {title}
-    </h2>
-    <p class="text-sm text-muted-foreground">{description}</p>
-  </div>
-{/snippet}
-
 {#if account.isError && !(account.error instanceof ApiCallError && account.error.status === 401)}
   <div class="max-w-4xl mx-auto py-8">
     <Card>
@@ -615,7 +607,7 @@
           {/if}
           {#if data.user.donorSince}
             <span
-              class="donation-sheen relative inline-flex items-center gap-1 overflow-hidden rounded-full border border-amber-500/40 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-500/20 dark:text-amber-300"
+              class="relative inline-flex items-center gap-1 overflow-hidden rounded-full border border-amber-500/40 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-500/20 dark:text-amber-300"
               title={t('donate.badgeTooltip')}
             >
               <Heart class="size-3" aria-hidden="true" />
@@ -761,51 +753,47 @@
           <Tabs.Trigger value="membership" class="h-11 sm:h-7">
             <Sparkles class="size-4" />{t('account.tab.membership')}
           </Tabs.Trigger>
-          <Tabs.Trigger value="codes" class="h-11 sm:h-7">
-            <Gift class="size-4" />{t('account.tab.codes')}
-          </Tabs.Trigger>
           <Tabs.Trigger value="security" class="h-11 sm:h-7">
             <ShieldCheck class="size-4" />{t('account.tab.security')}
           </Tabs.Trigger>
         </Tabs.List>
       </div>
 
-      <!-- TAB: Your connection - the proxy key is the main thing on this page.
-         Delivery focus first, then the key + setup panels, actions, and devices. -->
+      <!-- TAB: Your connection - the pass is the focal object. Delivery focus
+           first (it shapes presentation), then the pass WITH its key actions,
+           setup, trouble-connecting disclosures, and devices. -->
       <Tabs.Content value="connection">
-        <section class="space-y-4">
-          {@render sectionHead(
-            KeyRound,
-            t('account.section.connection.title'),
-            t('account.section.connection.desc'),
-          )}
+        <section class="space-y-6">
+          <SectionHead
+            icon={KeyRound}
+            title={t('account.section.connection.title')}
+            description={t('account.section.connection.desc')}
+          />
 
-          <!-- Free members: a glowing pointer to the Membership tab (same tier-sheen
-               sheen as the upgrade panel). Hidden once they have a membership. -->
+          <!-- Free members: a flat pointer to the Membership tab. Hidden once
+               they have a membership. -->
           {#if membershipState === 'no-membership'}
             <button
               type="button"
               onclick={() => (activeTab = 'membership')}
-              class="tier-sheen relative w-full overflow-hidden rounded-xl border border-primary/30 bg-card p-4 text-start transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-5"
+              class="w-full rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-start transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <div class="flex items-center gap-3">
-                <div
-                  class="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
-                >
-                  <Sparkles class="size-5" />
-                </div>
-                <div class="min-w-0 flex-1">
-                  <p class="text-sm font-semibold">{t('account.membershipNudge.title')}</p>
-                  <p class="text-sm text-muted-foreground">
+              <span class="flex items-center gap-3">
+                <Sparkles class="size-4 shrink-0 text-primary" aria-hidden="true" />
+                <span class="min-w-0 flex-1">
+                  <span class="block text-sm font-semibold"
+                    >{t('account.membershipNudge.title')}</span
+                  >
+                  <span class="block text-sm text-muted-foreground">
                     {deviceLimitsShown(config.data)
                       ? t('account.membershipNudge.body')
                       : t('account.membershipNudge.bodyNoDevices')}
-                  </p>
-                </div>
+                  </span>
+                </span>
                 <span class="shrink-0 text-sm font-medium text-primary"
                   >{t('account.membershipNudge.cta')}</span
                 >
-              </div>
+              </span>
             </button>
           {/if}
 
@@ -818,6 +806,7 @@
             serverBacked={profileServerBacked}
             deviceCount={data.subscription?.devices.length ?? 0}
             disabled={actionsDisabled}
+            flat
           />
 
           {#if data.subscription}
@@ -844,7 +833,44 @@
               nodeLocationLabel={nodeStatus.data?.node?.location?.label ??
                 data.subscription.location?.label ??
                 null}
-            />
+            >
+              {#snippet actions()}
+                <!-- Key actions live on the pass: regenerate, and switch backend
+                     when eligible. -->
+                <div class="flex flex-wrap items-center gap-2">
+                  <Button
+                    onclick={() => (regenerateOpen = true)}
+                    disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
+                    variant="outline"
+                    size="sm"
+                    class="min-h-11"
+                  >
+                    <RotateCcw class="size-4" />
+                    {regenerate.isPending ? t('common.working') : t('account.regenerate')}
+                  </Button>
+                  {#if canSwitchBackend && oppositeBackend && config.data}
+                    <Button
+                      onclick={() => {
+                        pendingSwitchTarget = oppositeBackend;
+                        switchBackendOpen = true;
+                      }}
+                      disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
+                      variant="outline"
+                      size="sm"
+                      class="min-h-11"
+                    >
+                      <ArrowLeftRight class="size-4" />
+                      {switchBackend.isPending
+                        ? t('switch.working')
+                        : t('account.switchTo', {
+                            label: config.data.backends.labels[oppositeBackend],
+                          })}
+                    </Button>
+                  {/if}
+                  <p class="w-full text-xs text-muted-foreground">{t('account.keyActionsHint')}</p>
+                </div>
+              {/snippet}
+            </SubscriptionHero>
             {#if rawConfigFirst}
               <!-- rawConfig mode: the raw config IS the deliverable (the CDN-fetched link
                is hidden above). No public mirrors - they'd expose the config to third parties. -->
@@ -871,44 +897,8 @@
               <RawConfig />
             {/if}
 
-            <!-- Usage trend now renders by default in the hero, under the traffic stats. -->
-
-            <!-- Key actions: regenerate, and switch backend when eligible. -->
-            <div class="flex flex-wrap gap-2">
-              <Button
-                onclick={() => (regenerateOpen = true)}
-                disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
-                variant="outline"
-                size="sm"
-                class="min-h-11"
-              >
-                <RotateCcw class="size-4" />
-                {regenerate.isPending ? t('common.working') : t('account.regenerate')}
-              </Button>
-              {#if canSwitchBackend && oppositeBackend && config.data}
-                <Button
-                  onclick={() => {
-                    pendingSwitchTarget = oppositeBackend;
-                    switchBackendOpen = true;
-                  }}
-                  disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
-                  variant="outline"
-                  size="sm"
-                  class="min-h-11"
-                >
-                  <ArrowLeftRight class="size-4" />
-                  {switchBackend.isPending
-                    ? t('switch.working')
-                    : t('account.switchTo', {
-                        label: config.data.backends.labels[oppositeBackend],
-                      })}
-                </Button>
-              {/if}
-            </div>
-            <p class="text-xs text-muted-foreground">{t('account.keyActionsHint')}</p>
-
             {#if deviceLimitsShown(config.data) && data.subscription.devices.length > 0}
-              <div class="space-y-3">
+              <div class="space-y-3 border-t border-border pt-6">
                 <div class="flex items-baseline justify-between">
                   <h3 class="text-sm font-semibold flex items-center gap-2">
                     <Smartphone class="size-4 text-muted-foreground" />
@@ -918,7 +908,7 @@
                     {t('common.deviceCount', { count: data.subscription.devices.length })}
                   </span>
                 </div>
-                <ul class="rounded-lg border border-border divide-y divide-border bg-card">
+                <ul class="rounded-lg border border-border divide-y divide-border">
                   {#each data.subscription.devices as d (d.hwid)}
                     {@const label = [d.platform, d.deviceModel].filter(Boolean).join(' · ')}
                     {@const hwidText = d.hwid.length > 24 ? `${d.hwid.slice(0, 24)}…` : d.hwid}
@@ -961,12 +951,9 @@
               </div>
             {/if}
           {:else}
-            <!-- Empty state when the user has no subscription yet -->
-            <div class="rounded-xl border border-dashed border-border p-8 text-center space-y-3">
-              <h3 class="text-lg font-semibold">{t('account.noSubTitle')}</h3>
-              <p class="text-sm text-muted-foreground max-w-sm mx-auto">
-                {t('account.noSubBody')}
-              </p>
+            <!-- Empty state when the user has no key yet (the dither disc is
+                 the brand-art variant of the empty state). -->
+            <EmptyState dither title={t('account.noSubTitle')} body={t('account.noSubBody')}>
               {#if locations.length >= 2}
                 <div class="mx-auto max-w-sm text-start">
                   <LocationPicker
@@ -983,7 +970,7 @@
                 size="lg"
                 class="min-h-11"
               >
-                <Plus class="size-4" />
+                <KeyRound class="size-4" />
                 {regenerate.isPending || persistingMode
                   ? t('account.creating')
                   : t('account.createSub')}
@@ -994,24 +981,24 @@
                   class="mx-auto max-w-sm text-start"
                 />
               {/if}
-            </div>
+            </EmptyState>
           {/if}
         </section>
       </Tabs.Content>
 
-      <!-- TAB: Membership - plan + upgrade/extend. ALWAYS present now; an active
-         member sees a compact status + refresh instead of the upsell. -->
+      <!-- TAB: Membership - plan + upgrade/extend + codes & gifts. An active
+           member sees a compact status + refresh instead of the upsell. -->
       <Tabs.Content value="membership">
-        <section class="space-y-4">
-          {@render sectionHead(
-            Sparkles,
-            t('account.section.membership.title'),
-            t('account.section.membership.desc'),
-          )}
+        <section class="space-y-6">
+          <SectionHead
+            icon={Sparkles}
+            title={t('account.section.membership.title')}
+            description={t('account.section.membership.desc')}
+          />
 
           {#if membershipState === 'active'}
             <!-- Active member: nothing to buy - just confirm the state + a refresh. -->
-            <div class="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-3">
+            <div class="space-y-1">
               <p class="text-sm font-medium">{t('account.memberActiveTitle')}</p>
               {#if data.user.membership?.expiresAt}
                 <p class="text-sm text-muted-foreground">
@@ -1034,13 +1021,13 @@
               </p>
             </div>
           {:else}
-            {#if membershipState === 'no-membership'}
-              <TierComparison currentTierSlug={data.user.tier.slug} />
-            {/if}
-
             <!-- Self-service purchase panel (self-gates on billing being enabled).
-             'upgrade' for free users, 'extend' for expiring/expired members. -->
-            <UpgradeMembership mode={membershipState === 'no-membership' ? 'upgrade' : 'extend'} />
+             'upgrade' for free users, 'extend' for expiring/expired members. The
+             panel carries the compact current-vs-membership limits comparison. -->
+            <UpgradeMembership
+              mode={membershipState === 'no-membership' ? 'upgrade' : 'extend'}
+              currentTierSlug={data.user.tier.slug}
+            />
 
             {#if membershipState === 'no-membership'}
               <!-- Already-paid recovery: re-read entitlement (e.g. a payment that
@@ -1062,42 +1049,40 @@
 
           <!-- Donation impact + nonprofit framing (every membership state; shows
                the collective bonus stats/graph + the member's own contribution). -->
-          <MemberImpact />
+          <div class="border-t border-border pt-6">
+            <MemberImpact />
+          </div>
 
           <!-- Standalone donation (available in every membership state; self-gates
                on billing + donations being enabled). -->
-          <DonateCard />
+          <div class="border-t border-border pt-6">
+            <DonateCard />
+          </div>
+
+          <!-- Codes & gifts (folded into this tab): redeem a membership code, or
+               buy codes to share. Redeem is always available; GiftCodes self-gates
+               on billing. -->
+          <div class="border-t border-border pt-6 space-y-4">
+            <SectionHead
+              icon={Gift}
+              title={t('account.section.codes.title')}
+              description={t('account.section.codes.desc')}
+            />
+            <RedeemCode flat />
+            <GiftCodes />
+          </div>
         </section>
       </Tabs.Content>
 
-      <!-- TAB: Codes & gifts - redeem a membership code, or buy codes to share.
-         Redeem is always available; GiftCodes self-gates on billing. -->
-      <Tabs.Content value="codes">
-        <section class="space-y-4">
-          {@render sectionHead(
-            Gift,
-            t('account.section.codes.title'),
-            t('account.section.codes.desc'),
-          )}
-
-          <!-- W4: redeem a membership code (extends/upgrades the tier). -->
-          <RedeemCode />
-
-          <!-- Buy membership codes to share with friends/family (distinct from the
-           self-upgrade; doesn't touch your own membership). Self-gates on billing. -->
-          <GiftCodes />
-        </section>
-      </Tabs.Content>
-
-      <!-- TAB: Account & security - support ID + account-number rotation. -->
+      <!-- TAB: Account & security - support ID + account-number rotation + passkeys. -->
       <Tabs.Content value="security">
-        <section class="space-y-4">
-          {@render sectionHead(
-            ShieldCheck,
-            t('account.section.security.title'),
-            t('account.section.security.desc'),
-          )}
-          <div class="rounded-xl border border-border bg-card p-4 sm:p-5 space-y-4">
+        <section class="space-y-6">
+          <SectionHead
+            icon={ShieldCheck}
+            title={t('account.section.security.title')}
+            description={t('account.section.security.desc')}
+          />
+          <div class="space-y-6">
             {#if data.user.supportId}
               <div>
                 <p class="text-sm font-medium">{t('support.label')}</p>
@@ -1124,7 +1109,7 @@
             <div
               class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between {data.user
                 .supportId
-                ? 'border-t border-border/60 pt-4'
+                ? 'border-t border-border pt-6'
                 : ''}"
             >
               <p class="text-xs text-muted-foreground sm:max-w-md">{t('account.rotateHint')}</p>
@@ -1140,7 +1125,9 @@
               </Button>
             </div>
           </div>
-          <PasskeyManager />
+          <div class="border-t border-border pt-6">
+            <PasskeyManager />
+          </div>
         </section>
       </Tabs.Content>
     </Tabs.Root>

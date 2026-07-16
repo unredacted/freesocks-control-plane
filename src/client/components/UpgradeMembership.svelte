@@ -32,14 +32,17 @@
   interface Props {
     /** 'upgrade' for free users, 'extend' for expiring/expired members (heading copy). */
     mode?: 'upgrade' | 'extend';
-    /** Render as a collapsed accordion for a secondary placement (e.g. below the
-     *  create-key step on /get-account): the trigger shows the per-month price + a
-     *  prompt to upgrade, and expanding reveals the full payment form. Default
-     *  (false) is the prominent, always-expanded card used on /account. Behavior
-     *  (methods, durations, checkout) is identical either way. */
+    /** Render as a collapsed accordion for a secondary placement: the trigger
+     *  shows the per-month price + a prompt to upgrade, and expanding reveals
+     *  the full payment form. Default (false) is the prominent, always-expanded
+     *  card used on /account. Behavior is identical either way. */
     collapsible?: boolean;
+    /** The member's current tier slug. In 'upgrade' mode this drives a compact
+     *  "current → membership" limits comparison at the top of the form, replacing
+     *  the old standalone tier-comparison cards. */
+    currentTierSlug?: string;
   }
-  let { mode = 'upgrade', collapsible = false }: Props = $props();
+  let { mode = 'upgrade', collapsible = false, currentTierSlug }: Props = $props();
 
   const config = configQuery();
   let billing = $derived(config.data?.billing);
@@ -68,6 +71,21 @@
   // Render rails in a stable, sensible order, filtered to the ones turned on.
   const RAIL_ORDER: BillingProcessor[] = ['nowpayments', 'btcpay', 'stripe', 'paypal'];
   let rails = $derived(RAIL_ORDER.filter((r) => billing?.rails?.[r]));
+
+  // The compact "current → membership" limits comparison (upgrade mode only):
+  // the concrete what-changes, DB-driven so Admin → Tiers edits propagate.
+  // 0 is the "unlimited" sentinel for both limits.
+  let currentTier = $derived(config.data?.tiers.find((tier) => tier.slug === currentTierSlug));
+  let memberTier = $derived(
+    config.data?.tiers.find((tier) => tier.slug === (billing?.tierSlug ?? 'member')),
+  );
+  let showComparison = $derived(
+    mode === 'upgrade' && !!currentTier && !!memberTier && currentTier.slug !== memberTier.slug,
+  );
+  const bandwidthLabel = (gb: number): string =>
+    gb === 0 ? t('hero.unlimited') : t('tiers.gbPerMonth', { gb });
+  const deviceLabel = (n: number): string =>
+    n === 0 ? t('hero.unlimited') : t('common.deviceCount', { count: n });
 
   // Selection: raw state overrides a derived default, so nothing needs an effect
   // and it stays reactive to config loading.
@@ -157,8 +175,41 @@
 </script>
 
 <!-- The payment form body, shared by the prominent card (/account) and the
-     collapsed accordion (/get-account) so the two placements never drift. -->
+     collapsed accordion so the two placements never drift. -->
 {#snippet formBody()}
+  <!-- What changes with a membership: current tier's limits → membership's,
+       compact and DB-driven (replaces the old stacked comparison cards). -->
+  {#if showComparison && currentTier && memberTier}
+    <div class="rounded-lg border border-border/60 divide-y divide-border/60 text-sm">
+      <div class="flex items-center justify-between gap-3 px-3 py-2">
+        <span class="text-muted-foreground">{t('upgrade.compareBandwidth')}</span>
+        <span class="tabular-nums text-right">
+          {bandwidthLabel(currentTier.monthlyTrafficGb)}
+          <span class="inline-block text-muted-foreground rtl:-scale-x-100" aria-hidden="true">
+            →
+          </span>
+          <strong class="font-semibold text-foreground">
+            {bandwidthLabel(memberTier.monthlyTrafficGb)}
+          </strong>
+        </span>
+      </div>
+      {#if showDevices}
+        <div class="flex items-center justify-between gap-3 px-3 py-2">
+          <span class="text-muted-foreground">{t('upgrade.compareDevices')}</span>
+          <span class="tabular-nums text-right">
+            {deviceLabel(currentTier.deviceLimit)}
+            <span class="inline-block text-muted-foreground rtl:-scale-x-100" aria-hidden="true">
+              →
+            </span>
+            <strong class="font-semibold text-foreground">
+              {deviceLabel(memberTier.deviceLimit)}
+            </strong>
+          </span>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   <!-- Method first: it gates which durations are available (crypto minimum). -->
   <fieldset>
     <legend class="mb-2 text-xs font-medium text-muted-foreground">
@@ -270,11 +321,10 @@
 {#if billing?.enabled && rails.length > 0 && durations.length > 0}
   {#if collapsible}
     <!-- Condensed accordion: the trigger shows the price/month + a prompt to
-         upgrade; expanding reveals the full payment form (roomy, full-width).
-         Carries the same tier-sheen glow ring as the prominent /account card. -->
+         upgrade; expanding reveals the full payment form (roomy, full-width). -->
     <section
       id="upgrade"
-      class="tier-sheen relative overflow-hidden rounded-xl border border-primary/30 bg-card"
+      class="relative overflow-hidden rounded-xl border border-primary/30 bg-card"
     >
       <Collapsible.Root bind:open>
         <Collapsible.Trigger
@@ -314,7 +364,7 @@
   {:else}
     <section
       id="upgrade"
-      class="tier-sheen relative space-y-4 overflow-hidden rounded-xl border border-primary/30 bg-card p-4 sm:p-5"
+      class="relative space-y-4 overflow-hidden rounded-xl border border-primary/30 bg-card p-4 sm:p-5"
     >
       <div>
         <h2 class="flex items-center gap-2 font-display text-base font-semibold">

@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { fly, fade } from 'svelte/transition';
-  import { quintOut } from 'svelte/easing';
+  import { fade } from 'svelte/transition';
   import { Button } from '@client/components/ui/button';
   import QrCode from './QrCode.svelte';
   import Sparkline from './Sparkline.svelte';
+  import StatBlock from './StatBlock.svelte';
   import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
   import Download from '@lucide/svelte/icons/download';
@@ -18,20 +18,24 @@
   import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
   import { toast } from 'svelte-sonner';
+  import type { Snippet } from 'svelte';
 
   /**
-   * Hero subscription block: the visual focal point of the page. Big URL,
-   * one-click copy, QR code for cross-device handoff, expiry/traffic as
-   * secondary metadata. Used on /get-account (anonymous result), /account
-   * (signed-in dashboard), and anywhere else we hand someone a key.
+   * The Access Pass: the product's signature object - a boarding-pass-style
+   * card that hands someone their key. Big URL, one-click copy as the primary
+   * action, QR on a perforated "stub" (dashed divider) for cross-device
+   * handoff, expiry/traffic as calm stat blocks. Used on /get-account (step 3)
+   * and /account (connection tab).
    *
    * Design decisions:
-   *  - URL is monospace, large, with a card border that visually separates
-   *    it from the metadata.
+   *  - One elevation level: border, no shadow (shadows are for overlays).
+   *  - The header is a document wordmark (eyebrow) + title + a plain-text
+   *    status line - no chips/badges; the live dot carries "is it up".
    *  - Primary action is Copy (full-width on mobile, inline on desktop).
-   *  - QR is on the right at desktop, below the URL on mobile.
+   *  - QR is on the stub side of a dashed "perforation" at desktop, behind a
+   *    toggle on mobile.
    *  - Animated copy-success uses Check icon swap with a 1.5s rollback.
-   *  - Traffic + expiry use tabular-nums so they don't jiggle on rerender.
+   *  - Traffic + expiry are StatBlocks with tabular-nums (no jiggle).
    */
   interface Props {
     title?: string;
@@ -82,6 +86,9 @@
     nodeOnline?: boolean | null;
     /** Member-facing location of the node serving this key ("Kansas City, MO"). */
     nodeLocationLabel?: string | null;
+    /** Optional key-management actions (regenerate / switch backend), rendered
+     *  in a hairline-separated footer of the pass - the pass owns its actions. */
+    actions?: Snippet;
   }
   let {
     title,
@@ -104,6 +111,7 @@
     usageTotal,
     nodeOnline,
     nodeLocationLabel,
+    actions,
   }: Props = $props();
 
   // Outline keys are bare `ss://` URLs that VPN clients import as a single
@@ -196,10 +204,7 @@
   );
 </script>
 
-<section
-  in:fly={{ y: 16, duration: 400, easing: quintOut }}
-  class="rounded-xl border border-border bg-card text-card-foreground shadow-sm overflow-hidden"
->
+<section class="rounded-xl border border-border bg-card text-card-foreground overflow-hidden">
   {#if banner}
     <div
       class="bg-amber-500/10 border-b border-amber-500/30 px-5 py-2.5 text-sm text-amber-700 dark:text-amber-300"
@@ -209,17 +214,17 @@
   {/if}
 
   <div class="p-6 md:p-8 space-y-6">
-    <!-- Eyebrow + title -->
+    <!-- Pass header: document wordmark + title + plain-text status line. -->
     <div class="space-y-1.5">
       {#if eyebrow}
         <p
-          class="text-xs uppercase tracking-wider font-semibold text-primary/80 flex items-center gap-1.5"
+          class="text-xs uppercase tracking-wider font-semibold text-muted-foreground flex items-center gap-1.5"
         >
           <Shield class="size-3.5" />
           {eyebrow}
         </p>
       {/if}
-      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+      <h2 class="text-xl md:text-2xl font-display font-bold tracking-tight">
         {resolvedTitle}
       </h2>
       <p class="text-sm text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -240,19 +245,14 @@
             title={nodeOnline === true ? t('hero.nodeOnlineHint') : undefined}
             role="status"
           >
-            <span class="relative flex size-2" aria-hidden="true">
-              {#if nodeOnline === true}
-                <span
-                  class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60 motion-reduce:hidden"
-                ></span>
-                <span class="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
-              {:else if nodeOnline === false}
-                <span class="relative inline-flex size-2 rounded-full bg-destructive"></span>
-              {:else}
-                <span class="relative inline-flex size-2 rounded-full bg-muted-foreground/50"
-                ></span>
-              {/if}
-            </span>
+            <span
+              class="inline-flex size-2 rounded-full {nodeOnline === true
+                ? 'bg-emerald-500'
+                : nodeOnline === false
+                  ? 'bg-destructive'
+                  : 'bg-muted-foreground/50'}"
+              aria-hidden="true"
+            ></span>
             {nodeOnline === true
               ? t('hero.nodeOnline')
               : nodeOnline === false
@@ -264,7 +264,7 @@
     </div>
 
     {#if !hideUrl}
-      <!-- URL + QR side-by-side on desktop, stacked on mobile -->
+      <!-- Main zone: URL + actions on the left, QR on the perforated stub. -->
       <div class="grid gap-6 md:grid-cols-[1fr_auto] md:items-start">
         <div class="space-y-3 min-w-0">
           <label
@@ -320,8 +320,8 @@
         </div>
 
         {#if showQr}
-          <!-- Desktop: always-visible QR. Mobile: collapsible. -->
-          <div class="hidden md:block">
+          <!-- The stub: QR on the far side of the dashed "perforation". -->
+          <div class="hidden md:block border-s border-dashed border-border ps-6 ms-2">
             <QrCode text={subscriptionUrl} size={144} />
             <p class="mt-2 text-xs text-muted-foreground text-center max-w-[144px]">
               {t('hero.scanPhone')}
@@ -336,9 +336,9 @@
         {/if}
       </div>
 
-      <!-- Fallback URL: secondary, equal billing as a peer alternative -->
+      <!-- Fallback URL: secondary, hairline-separated inside the pass. -->
       {#if fallbackUrl && fallbackUrl !== subscriptionUrl}
-        <div class="space-y-2 pt-2 border-t border-border/60">
+        <div class="space-y-2 pt-4 border-t border-border/60">
           <div
             class="flex items-center justify-between gap-2 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
           >
@@ -457,30 +457,13 @@
       </div>
     {/if}
 
-    <!-- Metadata strip: traffic + expiry -->
-    <div class="grid gap-4 sm:grid-cols-2 pt-2 border-t border-border/60">
-      <!-- Traffic -->
-      <div>
-        <div class="flex items-center justify-between mb-1.5">
-          <span
-            class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
-          >
-            <Gauge class="size-3.5" />
-            {t('hero.traffic')}
-          </span>
-          {#if trafficLimitBytes !== null}
-            <span class="text-sm tabular-nums">
-              {formatBytes(trafficUsedBytes)} / {formatBytes(trafficLimitBytes)}
-            </span>
-          {:else}
-            <span
-              class="rounded-full bg-primary/10 text-primary text-[11px] font-medium px-2 py-0.5"
-            >
-              {t('hero.unlimited')}
-            </span>
-          {/if}
-        </div>
+    <!-- Meta zone: traffic + expiry as stat blocks under a hairline. -->
+    <div class="grid gap-4 sm:grid-cols-2 pt-4 border-t border-border/60">
+      <StatBlock icon={Gauge} label={t('hero.traffic')}>
         {#if trafficLimitBytes !== null}
+          <p class="text-sm tabular-nums">
+            {formatBytes(trafficUsedBytes)} / {formatBytes(trafficLimitBytes)}
+          </p>
           <div class="h-1.5 rounded-full bg-muted overflow-hidden">
             <div
               class="h-full {usageColor} transition-all duration-500"
@@ -488,7 +471,7 @@
             ></div>
           </div>
           {#if usagePct >= 70}
-            <p class="text-[11px] text-muted-foreground mt-1.5 tabular-nums">
+            <p class="text-[11px] text-muted-foreground tabular-nums">
               {usagePct >= 90
                 ? t('hero.nearlyOut', {
                     amount: formatBytes(Math.max(0, trafficLimitBytes - trafficUsedBytes)),
@@ -499,11 +482,18 @@
             </p>
           {/if}
           {#if nextResetDays !== null && nextResetDays >= 0}
-            <p class="text-[11px] text-muted-foreground mt-1 tabular-nums">
+            <p class="text-[11px] text-muted-foreground tabular-nums">
               {t('hero.resetsInDays', { count: nextResetDays })}
             </p>
           {/if}
         {:else}
+          <p>
+            <span
+              class="rounded-full bg-primary/10 text-primary text-[11px] font-medium px-2 py-0.5"
+            >
+              {t('hero.unlimited')}
+            </span>
+          </p>
           <p class="text-[11px] text-muted-foreground tabular-nums">
             {t('hero.usedSoFar', { amount: formatBytes(trafficUsedBytes) })}
           </p>
@@ -512,7 +502,7 @@
         <!-- Usage trend, shown by default. A quiet/new key draws a flat baseline
              (not hidden). Absent only when there's no usage data at all. -->
         {#if usagePoints && usagePoints.length > 0}
-          <div class="mt-3 space-y-1">
+          <div class="pt-2 space-y-1">
             <div class="text-primary">
               <Sparkline points={usagePoints} class="w-full h-10" />
             </div>
@@ -523,25 +513,16 @@
             {/if}
           </div>
         {/if}
-      </div>
+      </StatBlock>
 
-      <!-- Expiry -->
-      <div>
-        <div class="flex items-center justify-between mb-1.5">
-          <span
-            class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground font-semibold"
-          >
-            <Calendar class="size-3.5" />
-            {t('hero.expires')}
-          </span>
-          {#if expiryDate}
-            <span class="text-sm tabular-nums {expiryUrgency}">
-              {formatDate(expiryDate)}
-            </span>
-          {:else}
-            <span class="text-sm text-muted-foreground">{t('hero.noExpiry')}</span>
-          {/if}
-        </div>
+      <StatBlock icon={Calendar} label={t('hero.expires')}>
+        {#if expiryDate}
+          <p class="text-sm tabular-nums {expiryUrgency}">
+            {formatDate(expiryDate)}
+          </p>
+        {:else}
+          <p class="text-sm text-muted-foreground">{t('hero.noExpiry')}</p>
+        {/if}
         {#if daysLeft !== null}
           <p class="text-[11px] tabular-nums {expiryUrgency}">
             {daysLeft < 0
@@ -551,7 +532,14 @@
                 : t('hero.daysRemaining', { count: daysLeft })}
           </p>
         {/if}
-      </div>
+      </StatBlock>
     </div>
+
+    <!-- Pass footer: the key-management actions live ON the pass. -->
+    {#if actions}
+      <div class="pt-4 border-t border-border/60">
+        {@render actions()}
+      </div>
+    {/if}
   </div>
 </section>

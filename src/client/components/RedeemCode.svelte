@@ -23,8 +23,16 @@
     descriptionKey?: MessageKey;
     /** Called after a successful redeem (e.g. to advance an onboarding step). */
     onRedeemed?: (result: { tierName: string; durationDays: number }) => void;
+    /** Chromeless mode: no card frame - the caller provides the surrounding
+     *  surface (avoids card-in-card nesting). */
+    flat?: boolean;
   }
-  let { titleKey = 'account.redeemTitle', descriptionKey, onRedeemed }: Props = $props();
+  let {
+    titleKey = 'account.redeemTitle',
+    descriptionKey,
+    onRedeemed,
+    flat = false,
+  }: Props = $props();
 
   const uid = $props.id();
   const qc = useQueryClient();
@@ -59,7 +67,7 @@
   }));
 </script>
 
-<div class="rounded-xl border border-border bg-card p-4 sm:p-5">
+<div class={flat ? '' : 'rounded-xl border border-border bg-card p-4 sm:p-5'}>
   <div class="sr-only" role="status" aria-live="polite">{liveMessage}</div>
   <h3 id="{uid}-title" class="text-sm font-semibold">{t(titleKey)}</h3>
   {#if descriptionKey}

@@ -206,10 +206,10 @@
     "switchTo": "Switch to {label}",
     "devicesTitle": "Connected devices",
     "lastSeen": "Last seen {date}",
-    "noSubTitle": "No subscription yet",
-    "noSubBody": "Create your first subscription to get a URL you can use in any compatible VPN client.",
-    "createSub": "Create subscription",
-    "creating": "Creating…",
+    "noSubTitle": "No key yet",
+    "noSubBody": "Create your key to get a link you can use in any compatible VPN app.",
+    "createSub": "Get my key",
+    "creating": "Creating your key…",
     "rotateTitle": "Change your account number?",
     "rotateBody": "A new 32-digit number is generated and shown once. Your current number stops working immediately. Anyone who has it loses access. Do this if your number may have leaked.",
     "rotateConfirm": "Yes, change it",
@@ -227,7 +227,6 @@
     "tab": {
       "connection": "Connection",
       "membership": "Membership",
-      "codes": "Codes & gifts",
       "security": "Security"
     },
     "refreshing": "Refreshing…",
@@ -272,13 +271,13 @@
     "deviceRevokeFailedTitle": "Couldn't revoke the device"
   },
   "hero": {
-    "titleDefault": "Your subscription",
-    "eyebrowAccessKey": "Your access key",
-    "urlLabelSubscription": "Subscription URL",
+    "titleDefault": "Your key",
+    "eyebrowAccessKey": "FreeSocks Access Pass",
+    "urlLabelSubscription": "Your link",
     "urlLabelAccessKey": "Access key",
     "tierLine": "Plan {tier}",
     "viaLine": "via {backend}",
-    "copyUrl": "Copy URL",
+    "copyUrl": "Copy link",
     "copiedShort": "Copied",
     "qrShow": "QR",
     "qrHide": "Hide",
@@ -290,9 +289,9 @@
     "importScan": "Scan to add to {app}",
     "importOpenHint": "Tap to import on this device, or scan the code from your phone.",
     "scanFallback": "Scan the fallback on another device",
-    "fallbackLabel": "Fallback URL",
-    "fallbackHint": "Use this if the main URL gets blocked",
-    "fallbackQrAria": "Show fallback URL QR code",
+    "fallbackLabel": "Fallback link",
+    "fallbackHint": "Use this if the main link gets blocked",
+    "fallbackQrAria": "Show fallback link QR code",
     "downloaded": "Downloaded {filename}",
     "traffic": "Traffic",
     "unlimited": "Unlimited",
@@ -422,7 +421,12 @@
   "get": {
     "badge": "Free account",
     "title": "Get a FreeSocks account",
-    "introTwoSteps": "Two quick steps: solve the human-check to create a free account, then create your subscription.",
+    "progressAria": "Sign-up progress",
+    "progress": {
+      "step1": "Create account",
+      "step2": "Save your number",
+      "step3": "Get connected"
+    },
     "step1Title": "Create your account",
     "chooseBackend": "Choose a connection type",
     "backendAria": "Connection type",
@@ -431,25 +435,20 @@
     "createAccount": "Create my account",
     "freeAccountNote": "Free accounts are valid for {days} days and limited to {devices}. No email or password.",
     "freeAccountNoteNoDevices": "Free accounts are valid for {days} days. No email or password.",
-    "accountReady": "Your account is ready",
-    "nextStepHint": "One step left - your account can't connect to anything until you create your subscription.",
-    "nextStepCta": "Next: create your subscription",
-    "nextStepBadge": "Next step",
-    "step2Title": "Create your subscription",
-    "step2Intro": "Create a subscription to get a URL you can paste into any compatible VPN client.",
-    "manageHintPrefix": "Manage this subscription anytime from",
+    "step3Title": "Get your key",
+    "step3Intro": "Your key is what connects your app to the VPN. Create it, then add it to your app.",
+    "manageHintPrefix": "Manage your key anytime from",
     "manageLinkLabel": "your account",
-    "subErrorSafePrefix": "Your account is safe. You can create the subscription later from",
+    "subErrorSafePrefix": "Your account is safe. You can create your key later from",
     "subErrorSafeSuffix": "once a server is available.",
-    "createSubToastTitle": "Subscription created",
-    "createSubToastBody": "Copy the URL into your VPN client, or scan the QR code.",
+    "createSubToastTitle": "Your key is ready",
+    "createSubToastBody": "Copy the link into your VPN app, or scan the QR code.",
     "createAccountFailedTitle": "Could not create account",
-    "createSubFailedTitle": "Could not create subscription",
+    "createSubFailedTitle": "Could not create your key",
     "haveAccountPrefix": "Already have an account?",
     "lostNumberHint": "Lost your account number before saving it? You can switch to a new one -",
     "lostNumberLinkLabel": "change it from your account page",
-    "upsellTitle": "Want unlimited?",
-    "upsellBody": "Upgrade to a FreeSocks membership any time for unlimited bandwidth and devices.",
+    "redeemPrompt": "Have a gift code? Redeem it before creating your key.",
     "redeemTitle": "Got a gift code?",
     "redeemBody": "Redeem it now to upgrade your new account instantly."
   },
@@ -551,6 +550,8 @@
     "extendTitle": "Extend your membership",
     "subtitle": "Unlimited bandwidth and devices. Choose a length and how to pay.",
     "subtitleNoDevices": "Unlimited bandwidth. Choose a length and how to pay.",
+    "compareBandwidth": "Bandwidth per month",
+    "compareDevices": "Devices",
     "durationLabel": "Membership length",
     "cryptoMinNote": "Crypto payments start at {months} months - shorter terms fall below the network minimum. Pick another method for shorter terms.",
     "months": [
@@ -645,7 +646,24 @@
     "title": "Set up your VPN app",
     "install": "Install",
     "noApps": "No recommended apps for this platform yet - use any compatible client and add your subscription manually.",
+    "moreApps": [
+      {
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
+        "match": {
+          "countPlural=one": "Show 1 more app",
+          "countPlural=other": "Show {count} more apps"
+        }
+      }
+    ],
+    "fewerApps": "Show fewer apps",
     "openSource": "Open source",
+    "recommended": "Recommended",
     "proprietary": "Proprietary",
     "easeEasy": "Easy to use",
     "easeAdvanced": "Advanced",

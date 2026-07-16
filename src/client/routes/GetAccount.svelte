@@ -14,8 +14,6 @@
   import { connectionModePref } from '../lib/connectionModePref.svelte';
   import { resolveEffectiveModeId } from '../lib/connectionMode';
   import ConnectClient from '../components/ConnectClient.svelte';
-  import UpgradeMembership from '../components/UpgradeMembership.svelte';
-  import DonateCard from '../components/DonateCard.svelte';
   import RedeemCode from '../components/RedeemCode.svelte';
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
@@ -36,9 +34,8 @@
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import SocksIcon from '../components/SocksIcon.svelte';
-  import CheckCircle from '@lucide/svelte/icons/check-circle';
-  import Plus from '@lucide/svelte/icons/plus';
-  import ArrowDown from '@lucide/svelte/icons/arrow-down';
+  import Check from '@lucide/svelte/icons/check';
+  import KeyRound from '@lucide/svelte/icons/key-round';
 
   type CreateAccountPayload = z.infer<typeof CreateAccountResponse>;
 
@@ -56,7 +53,7 @@
   let chosenBackend = $state<'remnawave' | 'outline' | null>(null);
 
   // Set once account creation succeeds. The reveal-once number stays visible in
-  // its panel while the user creates a subscription in card 2.
+  // its modal while the user saves it.
   let revealedAccountId = $state<string | null>(null);
   let revealOpen = $state(false);
   // Optional post-signup passkey step (shown after the account-number reveal).
@@ -64,19 +61,27 @@
   let showPasskeyPrompt = $state(false);
   let accountTier = $state<CreateAccountPayload['tier'] | null>(null);
   let created = $state(false);
+  // Inline gift-code expander in step 3 (pre-issuance, so the upgrade binds at issuance).
+  let redeemOpen = $state(false);
 
   // The visitor has an account either because they just made one (created) or
-  // they arrived already signed in. Card 2 + the account view key off this.
+  // they arrived already signed in. Step 3 + the account view key off this.
   let isAuthed = $derived(created || !!me.data?.authenticated);
+
+  // The guided flow position: 1 create account → 2 save your number → 3 get
+  // connected. Step 2 covers BOTH the blocking reveal modal and the skippable
+  // passkey offer that follows it; a signed-in arrival skips straight to 3.
+  let securing = $derived(created && (revealOpen || (showPasskeyPrompt && passkeySupported)));
+  let currentStep = $derived<1 | 2 | 3>(!isAuthed ? 1 : securing ? 2 : 3);
 
   // Subscription source of truth once signed in. Gated on auth so it does not
   // 401 while the visitor is still anonymous on this page.
   const account = accountQuery(() => isAuthed);
   let subscription = $derived(account.data?.subscription ?? null);
-  // Usage trend for the Step-2 hero (same wiring as /account: 60s stale +
+  // Usage trend for the step-3 pass (same wiring as /account: 60s stale +
   // refetch, enabled once a key exists; Outline degrades to null → no trend).
   const usage = accountUsageQuery(() => isAuthed && !!subscription);
-  // Live node status for the Step-2 hero badge (same wiring as /account).
+  // Live node status for the step-3 pass badge (same wiring as /account).
   const nodeStatus = nodeStatusQuery(() => isAuthed && !!subscription);
   // Node-location catalog + the visitor's pick for the first key ('auto' = the
   // server picks the least-loaded node anywhere). Picker renders only with ≥2.
@@ -107,7 +112,7 @@
   let rawConfigFirst = $derived(
     connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle === 'rawConfig',
   );
-  // Hide the upgrade prompts (redeem a gift code + buy) once they're a member.
+  // Hide the gift-code redeem once they're a member.
   let isCurrentMember = $derived(account.data?.user.membership?.isCurrent ?? false);
 
   // Self-hosted Cap captcha config from /api/v1/config (same-origin endpoint).
@@ -142,6 +147,31 @@
     }
   });
 
+  // Reduced-motion-aware scroll helper (same pattern as Home).
+  function scrollToId(id: string) {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.getElementById(id)?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
+  }
+
+  // Step transitions: bring the active panel into view. The 1→2 transition is
+  // the blocking reveal modal (no scroll needed); 2→3 reveals the key panel.
+  let lastStep = 0;
+  $effect(() => {
+    const s = currentStep;
+    if (lastStep === 2 && s === 3 && !subscription) scrollToId('step-3');
+    lastStep = s;
+  });
+
+  // After issuance, scroll the freshly-rendered pass into view once the account
+  // query lands and it mounts (the flag is set in the mutation's onSuccess).
+  let scrollToKeyPending = false;
+  $effect(() => {
+    if (scrollToKeyPending && subscription) {
+      scrollToKeyPending = false;
+      scrollToId('get-key');
+    }
+  });
+
   // WAI-ARIA radiogroup roving focus: arrows move + select between the two
   // options, then focus the newly-checked radio. Lives on the focusable radios.
   function chooserKeydown(e: KeyboardEvent) {
@@ -166,7 +196,7 @@
     },
     onSuccess: (data) => {
       revealedAccountId = data.accountId;
-      revealOpen = true; // A2: blocking, checkbox-gated reveal modal
+      revealOpen = true; // A2: blocking, verification-gated reveal modal
       accountTier = data.tier;
       created = true;
       showPasskeyPrompt = true; // offer a passkey once they've saved the number
@@ -183,7 +213,7 @@
     },
   }));
 
-  // Step 2: provision the proxy key. Separate request from step 1, so a backend
+  // Step 3: provision the proxy key. Separate request from step 1, so a backend
   // outage here leaves the account intact and is shown as a retryable notice.
   // Reuses the member regenerate endpoint (create-or-replace).
   const createSubscription = createMutation(() => ({
@@ -215,6 +245,7 @@
       void qc.invalidateQueries({ queryKey: queryKeys.account });
       void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
       void qc.invalidateQueries({ queryKey: queryKeys.nodeStatus });
+      scrollToKeyPending = true;
       toast.success(t('get.createSubToastTitle'), {
         description: t('get.createSubToastBody'),
       });
@@ -229,53 +260,78 @@
       createSubscription.error.payload.error.code === 'backend.unavailable',
   );
 
-  // "Next step" pointer from the account-ready callout down to Step 2 (same
-  // reduced-motion gate as Home's scrollToImpact).
-  function scrollToStep2() {
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    document.getElementById('step-2')?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
-  }
+  // The pass's display URL (empty until a key exists).
+  let subUrl = $derived(
+    subscription ? subscriptionDisplayUrl(subscription.subToken, subscription.url) : '',
+  );
+
+  const STEP_LABELS = $derived([
+    t('get.progress.step1'),
+    t('get.progress.step2'),
+    t('get.progress.step3'),
+  ]);
 </script>
 
-<div class="max-w-4xl mx-auto py-8 md:py-12 space-y-6">
-  <header class="text-center space-y-3">
-    <h1
-      class="text-3xl md:text-4xl font-display font-bold tracking-tight bg-gradient-to-br from-foreground to-foreground/70 bg-clip-text text-transparent"
-    >
+<div class="max-w-3xl mx-auto py-8 md:py-12 space-y-8">
+  <header class="text-center">
+    <h1 class="text-3xl md:text-4xl font-display font-bold tracking-tight">
       {t('get.title')}
     </h1>
-    <!-- Pre-creation guidance only. Once authed, the success callout below is
-         the single "account ready" message - no redundant restatement here.
-         Suppressed while the auth check is still pending (the skeleton below is
-         the sole loading affordance), so a signed-in visitor never sees the
-         anonymous intro flash. -->
-    {#if !me.isPending && !isAuthed}
-      <p class="text-sm text-muted-foreground max-w-md mx-auto">{t('get.introTwoSteps')}</p>
-    {/if}
   </header>
 
-  <!-- STEP 1: create account (no proxy server required). While the auth check
-       is still pending, a skeleton mirrors this card so a signed-in visitor
-       never sees the create-account form flash before their account view. -->
+  <!-- Guided-flow progress: ① Create account → ② Save your number → ③ Get
+       connected. Always visible - it IS the page's map. -->
+  <nav aria-label={t('get.progressAria')}>
+    <ol class="flex items-start justify-center">
+      {#each STEP_LABELS as label, i (label)}
+        {@const n = i + 1}
+        {@const done = currentStep > n}
+        {@const current = currentStep === n}
+        <li class="flex items-start" aria-current={current ? 'step' : undefined}>
+          <div class="flex w-20 sm:w-24 flex-col items-center gap-1.5 text-center">
+            <span
+              class="flex size-7 items-center justify-center rounded-full border text-xs font-semibold transition-colors {done
+                ? 'border-primary bg-primary text-primary-foreground'
+                : current
+                  ? 'border-primary text-primary'
+                  : 'border-border text-muted-foreground'}"
+            >
+              {#if done}<Check class="size-3.5" aria-hidden="true" />{:else}{n}{/if}
+            </span>
+            <span
+              class="text-xs leading-tight {current
+                ? 'font-medium text-foreground'
+                : 'text-muted-foreground'}"
+            >
+              {label}
+            </span>
+          </div>
+          {#if n < STEP_LABELS.length}
+            <span
+              class="mt-3.5 h-px w-8 sm:w-14 {done ? 'bg-primary' : 'bg-border'}"
+              aria-hidden="true"
+            ></span>
+          {/if}
+        </li>
+      {/each}
+    </ol>
+  </nav>
+
   {#if me.isPending && !created}
-    <div class="max-w-xl mx-auto rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
-      <div class="flex items-center gap-2.5">
-        <Skeleton class="size-7 rounded-full" />
-        <Skeleton class="h-6 w-40" />
-      </div>
+    <!-- Mirrors the step-1 panel so a signed-in visitor never sees the
+         create-account form flash before their key/setup view. -->
+    <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
+      <Skeleton class="h-6 w-40" />
       <Skeleton class="h-16 w-full rounded-lg" />
       <Skeleton class="h-11 w-full rounded-md" />
       <Skeleton class="mx-auto h-3 w-3/4" />
     </div>
-  {:else if !created && !me.data?.authenticated}
-    <div class="max-w-xl mx-auto rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
-      <div class="flex items-center gap-2.5">
-        <span
-          class="size-7 rounded-full bg-primary/10 text-primary font-display font-bold flex items-center justify-center text-sm tabular-nums"
-          >1</span
-        >
-        <h2 class="text-lg font-display font-semibold">{t('get.step1Title')}</h2>
-      </div>
+  {:else if currentStep === 1}
+    <!-- STEP 1: create account (no proxy server required). -->
+    <div
+      class="max-w-xl mx-auto w-full rounded-xl border border-border bg-card p-6 md:p-8 space-y-5"
+    >
+      <h2 class="text-lg font-display font-semibold">{t('get.step1Title')}</h2>
 
       {#if showChooser && config.data}
         <div class="space-y-2">
@@ -380,12 +436,182 @@
           {t('get.freeAccountNoteNoDevices', { days: freeDays })}
         {/if}
       </p>
+
+      <p class="text-xs text-muted-foreground text-center">
+        {t('get.haveAccountPrefix')}
+        <Link href="/login" class="text-primary underline">{t('nav.signIn')}</Link>.
+      </p>
+    </div>
+  {:else if currentStep === 2}
+    <!-- STEP 2: save the account number. The blocking reveal modal does the
+         work; once it closes, the (skippable) passkey offer completes the
+         "secure your account" step. -->
+    {#if showPasskeyPrompt && !revealOpen && passkeySupported}
+      <div class="max-w-xl mx-auto w-full space-y-2">
+        <PasskeyManager showList={false} onEnrolled={() => (showPasskeyPrompt = false)} />
+        <button
+          type="button"
+          class="mx-auto block text-xs text-muted-foreground underline hover:text-foreground"
+          onclick={() => (showPasskeyPrompt = false)}
+        >
+          {t('passkey.notNow')}
+        </button>
+      </div>
+    {/if}
+  {:else if account.isPending && !subscription}
+    <!-- STEP 3 loading: mirror the panel so the create-key UI doesn't flash
+         for a signed-in member whose key is still loading. -->
+    <div class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
+      <Skeleton class="h-6 w-40" />
+      <Skeleton class="h-24 w-full rounded-lg" />
+      <Skeleton class="h-11 w-full rounded-md" />
+    </div>
+  {:else if !subscription}
+    <!-- STEP 3 (pre-key): delivery focus, optional gift code, location, then
+         the one primary action. -->
+    <div
+      id="step-3"
+      class="scroll-mt-24 rounded-xl border border-border bg-card p-6 md:p-8 space-y-5"
+    >
+      <div class="space-y-1">
+        <h2 class="text-lg font-display font-semibold">{t('get.step3Title')}</h2>
+        <p class="text-sm text-muted-foreground">{t('get.step3Intro')}</p>
+        {#if created}
+          <!-- Recovery pointer for fresh sign-ups: the reveal-once number is
+               volatile, so if it wasn't saved the only recourse is rotating to
+               a fresh (re-revealed) number on /account. -->
+          <p class="text-xs text-muted-foreground">
+            {t('get.lostNumberHint')}
+            <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
+          </p>
+        {/if}
+      </div>
+
+      <!-- Delivery focus - flat (the step panel is the surface). Before the
+           first key it's a local pref that shapes issuance; once a key exists
+           it re-issues via the confirm modal, exactly like /account. -->
+      <ConnectionModeSwitcher
+        modes={connectionModes}
+        selected={effectiveModeId}
+        suggested={account.data?.suggestedModeId ?? null}
+        serverBacked={profileServerBacked}
+        deviceCount={0}
+        disabled={actionsDisabled}
+        signup
+        flat
+      />
+
+      {#if !isCurrentMember}
+        {#if !redeemOpen}
+          <p class="text-xs text-muted-foreground">
+            <button
+              type="button"
+              class="rounded-sm underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onclick={() => (redeemOpen = true)}
+            >
+              {t('get.redeemPrompt')}
+            </button>
+          </p>
+        {:else}
+          <div class="border-t border-border/60 pt-4">
+            <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" flat />
+          </div>
+        {/if}
+      {/if}
+
+      {#if locations.length >= 2}
+        <LocationPicker
+          {locations}
+          bind:value={pickedLocation}
+          disabled={createSubscription.isPending}
+          id="get-account-location"
+        />
+      {/if}
+
+      {#if createSubscription.error}
+        <div
+          class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive space-y-1"
+        >
+          <p>{apiErrorMessage(createSubscription.error)}</p>
+          {#if subErrorIsUnavailable}
+            <p class="text-xs text-muted-foreground">
+              {t('get.subErrorSafePrefix')}
+              <Link href="/account" class="underline">{t('get.manageLinkLabel')}</Link>
+              {t('get.subErrorSafeSuffix')}
+            </p>
+          {/if}
+        </div>
+      {/if}
+
+      <Button
+        onclick={() => createSubscription.mutate()}
+        disabled={createSubscription.isPending}
+        size="lg"
+        class="w-full min-h-11"
+      >
+        <KeyRound class="size-4" />
+        {createSubscription.isPending ? t('account.creating') : t('account.createSub')}
+      </Button>
+    </div>
+  {:else}
+    <!-- STEP 3 (key issued): the pass + setup. This is the flow's destination. -->
+    <div id="get-key" class="scroll-mt-24 space-y-6">
+      <SubscriptionHero
+        eyebrow={t('hero.eyebrowAccessKey')}
+        title={subscription.backend === 'outline'
+          ? t('hero.urlLabelAccessKey')
+          : t('hero.urlLabelSubscription')}
+        backendLabel={config.data?.backends.labels[subscription.backend]}
+        subscriptionUrl={subUrl}
+        expiresAt={subscription.expiresAt}
+        trafficLimitBytes={subscription.trafficLimitBytes}
+        trafficUsedBytes={subscription.trafficUsedBytes}
+        status={subscription.status}
+        resetStrategy={subscription.resetStrategy}
+        lastResetAt={subscription.lastResetAt}
+        tierName={account.data?.user.tier.name ?? accountTier?.name ?? ''}
+        backend={subscription.backend}
+        hideUrl={rawConfigFirst}
+        usagePoints={usage.data?.usage?.points}
+        usageTotal={usage.data?.usage?.total}
+        nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
+        nodeLocationLabel={nodeStatus.data?.node?.location?.label ??
+          subscription.location?.label ??
+          null}
+      />
+      {#if rawConfigFirst}
+        <!-- rawConfig mode: raw config is the deliverable; CDN link hidden; no mirrors. -->
+        <RawConfig prominent />
+        <ConnectClient
+          backend={subscription.backend}
+          rawConfigFirst
+          deviceLimited={account.data?.user.tier.deviceLimited ?? false}
+        />
+      {:else}
+        <ConnectClient
+          backend={subscription.backend}
+          subscriptionUrl={subUrl}
+          deviceLimited={account.data?.user.tier.deviceLimited ?? false}
+        />
+        {#if config.data?.mirrorsEnabled}
+          <MirrorHelp
+            mirrors={subscription.mirrors}
+            geoCountry={account.data?.geoCountry}
+            subscriptionUrl={subUrl}
+          />
+        {/if}
+        <RawConfig />
+      {/if}
+      <p class="text-xs text-muted-foreground text-center">
+        {t('get.manageHintPrefix')}
+        <Link href="/account" class="text-primary underline">{t('get.manageLinkLabel')}</Link>.
+      </p>
     </div>
   {/if}
 
   <!-- A2: one-time reveal of the freshly minted account number, in a blocking
        two-step modal (required download, then paste-back verification) with a
-       beforeunload guard. -->
+       beforeunload guard. Rendered outside the step panels (it overlays). -->
   {#if revealedAccountId}
     <AccountNumberReveal
       bind:open={revealOpen}
@@ -396,225 +622,6 @@
         revealedAccountId = null;
       }}
     />
-    {#if !revealOpen}
-      <div
-        class="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-4 py-3 text-sm"
-      >
-        <CheckCircle class="size-4 text-primary" aria-hidden="true" />
-        <span>{t('reveal.savedConfirmed')} ✓</span>
-      </div>
-    {/if}
-  {/if}
-
-  <!-- Optional post-signup step: offer a passkey so returning is one tap. Shown
-       once the account number has been revealed; the number stays the primary +
-       recovery credential, so this is fully skippable. -->
-  {#if showPasskeyPrompt && !revealOpen && passkeySupported}
-    <div class="mx-auto max-w-xl space-y-2">
-      <PasskeyManager showList={false} onEnrolled={() => (showPasskeyPrompt = false)} />
-      <button
-        type="button"
-        class="mx-auto block text-xs text-muted-foreground underline hover:text-foreground"
-        onclick={() => (showPasskeyPrompt = false)}
-      >
-        {t('passkey.notNow')}
-      </button>
-    </div>
-  {/if}
-
-  <!-- Account-ready callout + "Got a gift code?" share one row on large screens
-       (stacked on mobile); they stay separate cards. The gift code is offered
-       during onboarding so the upgrade lands BEFORE the subscription is created
-       (the backend binds the tier at issuance); hidden once they're a member,
-       in which case the ready callout spans the full row. -->
-  {#if isAuthed}
-    <div class="grid gap-4 lg:grid-cols-2 items-stretch">
-      <!-- Same card chrome as RedeemCode beside it (h3 + muted description) so
-           the row reads as two equal cards; the primary tint lives only in the
-           check icon. -->
-      <div
-        class="rounded-xl border border-border bg-card p-4 sm:p-5 flex flex-col {isCurrentMember
-          ? 'lg:col-span-2 lg:max-w-xl lg:mx-auto lg:w-full'
-          : ''}"
-      >
-        <h3 class="text-sm font-semibold flex items-center gap-2">
-          <CheckCircle class="size-4 text-primary shrink-0" />
-          {t('get.accountReady')}
-        </h3>
-        <!-- Recovery pointer on BOTH paths (just-created and reload): the
-             reveal-once number is volatile, so if it wasn't saved the only
-             recourse is rotating to a fresh (re-revealed) number on /account.
-             The copy is conditional ("lost it before saving?"), so it reads as
-             an offer, not an alarm. -->
-        <p class="mt-1 text-sm text-muted-foreground">
-          {t('get.lostNumberHint')}
-          <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
-        </p>
-        {#if !subscription}
-          <!-- The account alone connects nothing: point hard at Step 2. -->
-          <div class="mt-auto pt-3 space-y-1.5">
-            <p class="text-xs text-muted-foreground">{t('get.nextStepHint')}</p>
-            <Button size="sm" class="min-h-11 w-full sm:w-auto" onclick={scrollToStep2}>
-              <ArrowDown class="size-4" />
-              {t('get.nextStepCta')}
-            </Button>
-          </div>
-        {/if}
-      </div>
-      {#if !isCurrentMember}
-        <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" />
-      {/if}
-    </div>
-  {/if}
-
-  <!-- Upsell: grouped directly under the gift-code box (both above Step 2) so the
-       two paths to the member tier sit together. A collapsible accordion with the
-       tier-sheen flair - the trigger shows the price/month + a prompt to upgrade;
-       expanding reveals the payment options. Self-gates on billing being live. -->
-  {#if isAuthed && !isCurrentMember && config.data?.billing?.enabled}
-    <UpgradeMembership mode="upgrade" collapsible />
-  {/if}
-
-  <!-- Standalone donation (signed-in visitors; self-gates on billing + donations).
-       Condensed to an accordion here (like the membership upsell) so the primary
-       flow - Step 2 - stays close. -->
-  {#if isAuthed}
-    <DonateCard collapsible />
-  {/if}
-
-  <!-- STEP 2: create the proxy subscription (needs a proxy server). -->
-  {#if isAuthed}
-    <div
-      id="step-2"
-      class="scroll-mt-24 rounded-xl border border-border bg-card p-6 md:p-8 space-y-5"
-    >
-      <div class="flex items-center gap-2.5">
-        <span
-          class="size-7 rounded-full bg-primary/10 text-primary font-display font-bold flex items-center justify-center text-sm tabular-nums"
-          >2</span
-        >
-        <h2 class="text-lg font-display font-semibold">{t('get.step2Title')}</h2>
-        {#if !subscription}
-          <span
-            class="ms-auto rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
-            >{t('get.nextStepBadge')}</span
-          >
-        {/if}
-      </div>
-
-      <!-- Delivery focus FIRST - above the key (and the create button), so the
-           choice shapes how the subscription is presented. Before the first key
-           it's a local pref (shapes issuance at "Create subscription"); once a key
-           exists it re-issues via the confirm modal, exactly like /account. -->
-      <ConnectionModeSwitcher
-        modes={connectionModes}
-        selected={effectiveModeId}
-        suggested={account.data?.suggestedModeId ?? null}
-        serverBacked={profileServerBacked}
-        deviceCount={subscription?.devices.length ?? 0}
-        disabled={actionsDisabled}
-        signup={!subscription}
-      />
-
-      {#if subscription}
-        {@const subUrl = subscriptionDisplayUrl(subscription.subToken, subscription.url)}
-        <SubscriptionHero
-          eyebrow={t('hero.eyebrowAccessKey')}
-          title={subscription.backend === 'outline'
-            ? t('hero.urlLabelAccessKey')
-            : t('hero.urlLabelSubscription')}
-          backendLabel={config.data?.backends.labels[subscription.backend]}
-          subscriptionUrl={subUrl}
-          expiresAt={subscription.expiresAt}
-          trafficLimitBytes={subscription.trafficLimitBytes}
-          trafficUsedBytes={subscription.trafficUsedBytes}
-          status={subscription.status}
-          resetStrategy={subscription.resetStrategy}
-          lastResetAt={subscription.lastResetAt}
-          tierName={account.data?.user.tier.name ?? accountTier?.name ?? ''}
-          backend={subscription.backend}
-          hideUrl={rawConfigFirst}
-          usagePoints={usage.data?.usage?.points}
-          usageTotal={usage.data?.usage?.total}
-          nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
-          nodeLocationLabel={nodeStatus.data?.node?.location?.label ??
-            subscription.location?.label ??
-            null}
-        />
-        {#if rawConfigFirst}
-          <!-- rawConfig mode: raw config is the deliverable; CDN link hidden; no mirrors. -->
-          <RawConfig prominent />
-          <ConnectClient
-            backend={subscription.backend}
-            rawConfigFirst
-            deviceLimited={account.data?.user.tier.deviceLimited ?? false}
-          />
-        {:else}
-          <ConnectClient
-            backend={subscription.backend}
-            subscriptionUrl={subUrl}
-            deviceLimited={account.data?.user.tier.deviceLimited ?? false}
-          />
-          {#if config.data?.mirrorsEnabled}
-            <MirrorHelp
-              mirrors={subscription.mirrors}
-              geoCountry={account.data?.geoCountry}
-              subscriptionUrl={subUrl}
-            />
-          {/if}
-          <RawConfig />
-        {/if}
-        <p class="text-xs text-muted-foreground text-center">
-          {t('get.manageHintPrefix')}
-          <Link href="/account" class="text-primary underline">{t('get.manageLinkLabel')}</Link>.
-        </p>
-      {:else}
-        <p class="text-sm text-muted-foreground">
-          {t('get.step2Intro')}
-        </p>
-
-        {#if locations.length >= 2}
-          <LocationPicker
-            {locations}
-            bind:value={pickedLocation}
-            disabled={createSubscription.isPending}
-            id="get-account-location"
-          />
-        {/if}
-
-        {#if createSubscription.error}
-          <div
-            class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive space-y-1"
-          >
-            <p>{apiErrorMessage(createSubscription.error)}</p>
-            {#if subErrorIsUnavailable}
-              <p class="text-xs text-muted-foreground">
-                {t('get.subErrorSafePrefix')}
-                <Link href="/account" class="underline">{t('get.manageLinkLabel')}</Link>
-                {t('get.subErrorSafeSuffix')}
-              </p>
-            {/if}
-          </div>
-        {/if}
-
-        <Button
-          onclick={() => createSubscription.mutate()}
-          disabled={createSubscription.isPending}
-          size="lg"
-          class="w-full min-h-11"
-        >
-          <Plus class="size-4" />
-          {createSubscription.isPending ? t('account.creating') : t('account.createSub')}
-        </Button>
-      {/if}
-    </div>
-  {/if}
-
-  {#if !me.isPending && !isAuthed}
-    <p class="text-xs text-muted-foreground text-center max-w-sm mx-auto">
-      {t('get.haveAccountPrefix')}
-      <Link href="/login" class="text-primary underline">{t('nav.signIn')}</Link>.
-    </p>
   {/if}
 
   {#if config.data?.site?.supportEmail}

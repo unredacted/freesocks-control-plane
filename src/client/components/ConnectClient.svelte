@@ -22,6 +22,7 @@
   import { configQuery } from '../lib/queries';
   import { buildImportLink, IMPORT_PROFILE_NAME } from '../lib/appLinks';
   import { installKind, type InstallKind } from '../lib/installKind';
+  import { detectClientPlatform, type PlatformKey } from '../lib/platform';
 
   interface Props {
     backend?: 'remnawave' | 'outline';
@@ -46,14 +47,18 @@
 
   const config = configQuery();
 
-  type PlatformKey = 'android' | 'ios' | 'windows' | 'desktop';
   const PLATFORMS: { key: PlatformKey; labelKey: MessageKey }[] = [
     { key: 'android', labelKey: 'setup.android' },
     { key: 'ios', labelKey: 'setup.ios' },
     { key: 'windows', labelKey: 'setup.windows' },
     { key: 'desktop', labelKey: 'setup.desktop' },
   ];
-  let active = $state<PlatformKey>('android');
+  // Preselect the visitor's own platform (UA-detected) so nobody lands on the
+  // wrong instructions; tabs remain free to change.
+  let active = $state<PlatformKey>(detectClientPlatform());
+  // The "more apps" expander: the first catalog entry is presented as the
+  // recommendation; the rest sit behind this toggle (decision reduction).
+  let moreOpen = $state(false);
 
   // Catalog for this backend (already enabled + priority-sorted server-side).
   let clients = $derived((config.data?.clients ?? []).filter((c) => c.backends.includes(backend)));
@@ -120,13 +125,14 @@
     const next = (idx + (forward ? 1 : -1) + PLATFORMS.length) % PLATFORMS.length;
     active = PLATFORMS[next]!.key;
     qrFor = null;
+    moreOpen = false;
     (e.currentTarget as HTMLElement).parentElement
       ?.querySelector<HTMLElement>('[aria-selected="true"]')
       ?.focus();
   }
 </script>
 
-<section class="rounded-xl border border-border bg-card p-5 sm:p-6">
+<section>
   <h2 class="flex items-center gap-2 text-lg font-display font-semibold">
     <Smartphone class="size-4 text-muted-foreground" aria-hidden="true" />
     {t('setup.title')}
@@ -145,6 +151,7 @@
         onclick={() => {
           active = p.key;
           qrFor = null;
+          moreOpen = false;
         }}
         onkeydown={tabKeydown}
         class="min-h-11 sm:min-h-9 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {active ===
@@ -163,13 +170,20 @@
     aria-labelledby="connect-tab-{active}"
     class="mt-4"
   >
-    {#snippet clientCard(c: (typeof currentClients)[number])}
+    {#snippet clientCard(c: (typeof currentClients)[number], recommended = false)}
       {@const link = importLink(c.schemeId)}
       {@const desc = clientDesc(c)}
       <li class="rounded-lg border border-border bg-background/40 p-3">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div class="min-w-0">
             <span class="text-sm font-semibold">{c.name}</span>
+            {#if recommended}
+              <span
+                class="ms-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+              >
+                {t('setup.recommended')}
+              </span>
+            {/if}
             {#if c.openSource}
               <span
                 class="ms-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
@@ -277,11 +291,32 @@
         </ul>
       {/if}
     {:else}
-      <ul class="space-y-2">
-        {#each currentClients as c (c.name)}
-          {@render clientCard(c)}
-        {/each}
-      </ul>
+      <!-- One recommendation, then the rest behind an expander: the catalog is
+           already sorted OSS-first-then-easiest server-side, so the first entry
+           is the right answer for most people. -->
+      {#if currentClients.length > 0}
+        {@const [first, ...rest] = currentClients}
+        <ul class="space-y-2">
+          {@render clientCard(first!, true)}
+        </ul>
+        {#if rest.length > 0}
+          {#if moreOpen}
+            <ul class="mt-2 space-y-2">
+              {#each rest as c (c.name)}
+                {@render clientCard(c)}
+              {/each}
+            </ul>
+          {/if}
+          <button
+            type="button"
+            class="mt-2 rounded-sm text-xs text-muted-foreground underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-expanded={moreOpen}
+            onclick={() => (moreOpen = !moreOpen)}
+          >
+            {moreOpen ? t('setup.fewerApps') : t('setup.moreApps', { count: rest.length })}
+          </button>
+        {/if}
+      {/if}
     {/if}
 
     <!-- A partially-populated catalog (or a platform with nothing for this

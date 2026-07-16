@@ -94,8 +94,8 @@
   --radius-xl: calc(var(--radius) + 4px);
 
   /* Font families. Display is for h1/h2 (more confident, tighter); Sans for
-     body and UI; Mono for URLs and config snippets. System fallbacks in case
-     the Google Fonts CDN is blocked (which can happen for our audience). */
+     body and UI; Mono for URLs and config snippets. All three are self-hosted
+     via @fontsource (no third-party host can be reached from a censored region). */
   --font-sans:
     'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;
@@ -111,7 +111,9 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    /* 15px on phones (readability without density), the 16px standard from md
+       up. Elements setting an explicit text-* class are unaffected. */
+    @apply bg-background text-foreground font-sans antialiased text-[15px] md:text-base;
     /* Inter feature flags: cv11=single-storey 'a', ss01=alt forms, cv02=open
        4 (better for code), and the standard ligature/contextual-alt pair.
        Tabular nums applied per-element where it matters (counters, timers). */
@@ -146,102 +148,9 @@
   }
 }
 
-/* Membership tier card: a slow primary sheen orbits the border to draw the eye.
-   Pure CSS — the conic gradient is masked to a thin ring so only the border
-   lights up, and the angle is animated via a registered custom property (no
-   layout/paint thrash). Guarded by @supports: engines without mask-composite —
-   and users with prefers-reduced-motion (the clamp above neutralizes the
-   animation) — fall back to the card's own static `ring-1 ring-primary/30`, so
-   there's never a filled-gradient artifact or motion. */
-@property --tier-sheen-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-@keyframes tier-sheen-spin {
-  to {
-    --tier-sheen-angle: 360deg;
-  }
-}
-/* The ring pseudo-element is absolutely positioned — the host MUST be its
-   containing block, or the ring anchors to the page and paints a giant
-   gradient box. Baked into the class so no call site can forget `relative`. */
-.tier-sheen {
-  position: relative;
-}
-@supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
-  .tier-sheen::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    padding: 1.5px;
-    background: conic-gradient(
-      from var(--tier-sheen-angle),
-      transparent 0deg 170deg,
-      var(--primary) 250deg,
-      transparent 330deg 360deg
-    );
-    -webkit-mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-    mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    mask-composite: exclude;
-    animation: tier-sheen-spin 7s linear infinite;
-    pointer-events: none;
-  }
-}
-
-/* Donation flair: a warm-gold sheen (distinct from the primary tier-sheen) marking
-   a donation control + the persistent donor badge. Same masked-ring technique,
-   @supports + reduced-motion guarded — the fallback is the element's own static
-   gold ring (apply `ring-1 ring-amber-500/40` in markup). */
-@property --donation-sheen-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-@keyframes donation-sheen-spin {
-  to {
-    --donation-sheen-angle: 360deg;
-  }
-}
-.donation-sheen {
-  --donation-gold: oklch(0.82 0.14 85);
-  /* Containing block for the absolutely-positioned ring (see .tier-sheen). */
-  position: relative;
-}
-@supports ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
-  .donation-sheen::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    padding: 1.5px;
-    background: conic-gradient(
-      from var(--donation-sheen-angle),
-      transparent 0deg 170deg,
-      var(--donation-gold) 250deg,
-      transparent 330deg 360deg
-    );
-    -webkit-mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-    mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    mask-composite: exclude;
-    animation: donation-sheen-spin 7s linear infinite;
-    pointer-events: none;
-  }
-}
-
-/* Live network-status dot: a gentle opacity pulse (never scale - a scale ping
-   both moves and, under the reduced-motion clamp, can freeze transparent).
+/* Live status dot: a gentle opacity pulse (never scale - a scale ping both
+   moves and, under the reduced-motion clamp, can freeze transparent). Applied
+   only while a status poll is in flight; the steady state is a static dot.
    The clamp above neutralizes the animation, leaving a static solid dot. */
 @keyframes status-pulse {
   0%,
@@ -256,87 +165,8 @@
   animation: status-pulse 2.5s ease-in-out infinite;
 }
 
-/* Dither-flavored dot grid (hero backdrop): a faint emerald dot lattice echoing
-   the DitherChart texture, faded out radially so it sits behind the headline
-   without competing. Pure CSS, zero assets, static (no motion concerns). Derives
-   from --primary so it tracks both themes and the admin brand hue. */
-.dot-grid {
-  background-image: radial-gradient(
-    color-mix(in oklch, var(--primary) 55%, transparent) 1px,
-    transparent 1.5px
-  );
-  background-size: 22px 22px;
-  /* The mask must hit full transparency BEFORE every box edge (35/50 = 70% and
-     30/45 = 67% of the radius, both past the 65% stop), or the dots clip in a
-     hard straight line at the container boundary. */
-  mask-image: radial-gradient(ellipse 50% 45% at 35% 30%, black 0%, transparent 65%);
-}
-/* Mirror the fade toward the headline (which sits at the inline start) in RTL. */
-[dir='rtl'] .dot-grid {
-  mask-image: radial-gradient(ellipse 50% 45% at 65% 30%, black 0%, transparent 65%);
-}
-
-/* Ambient glows: soft pools of brand color placed per section. One base class
-   carries the gradient; the semantic classes only position and weight it.
-   Every pool's transparent stop (68% of the radius) is reached before the
-   nearest box edge, so no pool ever clips into a hard line. Derives from
-   --primary (tracks both themes + the admin brand hue); stronger in dark mode,
-   where the same wash reads dimmer. */
-.ambient-glow {
-  --glow-a: 13%;
-  --glow-size: 45% 40%;
-  --glow-at: 35% 30%;
-  background: radial-gradient(
-    ellipse var(--glow-size) at var(--glow-at),
-    color-mix(in oklch, var(--primary) var(--glow-a), transparent),
-    transparent 68%
-  );
-}
-.dark .ambient-glow {
-  --glow-a: 20%;
-}
-/* Under-glow: a centered pool anchored to an element's own box (its wrapper
-   straddles the element's bottom edge), so the light reads as rising from
-   underneath. Centered, so it needs no RTL mirror. */
-.underglow {
-  --glow-at: 50% 50%;
-  /* Radius kept under the no-clip bound (0.68 * size < 50% of the box) so the
-     pool always fades out before its box edge, whatever the box dimensions. */
-  --glow-size: 66% 66%;
-}
-/* Membership: centered pool behind the tier-comparison cards. */
-.membership-glow {
-  --glow-at: 50% 35%;
-  --glow-size: 45% 40%;
-  --glow-a: 10%;
-}
-.dark .membership-glow {
-  --glow-a: 16%;
-}
-/* About: a bookend pool at the inline end, opposite the hero's. */
-.about-glow {
-  --glow-at: 70% 45%;
-  --glow-size: 38% 42%;
-}
-[dir='rtl'] .about-glow {
-  --glow-at: 30% 45%;
-}
-
-/* Scroll-triggered reveal (see src/client/lib/actions/reveal.ts): the action
-   sets data-reveal only when an observer will actually run, so content never
-   ships hidden. Uses the standalone `translate` property - it composes with
-   Tailwind hover transforms (which use `transform`) instead of clobbering them.
-   The reduced-motion clamp zeroes the transition; the action also reveals
-   immediately in that case. */
-[data-reveal] {
-  opacity: 0;
-  translate: 0 12px;
-  transition:
-    opacity 0.5s ease,
-    translate 0.5s ease;
-  transition-delay: var(--reveal-delay, 0ms);
-}
-[data-reveal][data-revealed] {
-  opacity: 1;
-  translate: 0 0;
-}
+/* The brand's ONE signature texture is the Bayer-dithered field rendered by
+   DitherField.svelte on a low-res canvas (the Home hero backdrop + the
+   empty-state disc) - no CSS equivalent lives here; the canvas resolves the
+   --primary token to sRGB itself (older engines can't take oklch() in
+   fillStyle). */

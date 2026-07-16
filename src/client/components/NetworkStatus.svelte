@@ -15,10 +15,7 @@
 </script>
 
 {#if locations.length > 0}
-  <section
-    class="rounded-xl border border-border bg-card px-5 py-3 flex flex-wrap items-center gap-x-6 gap-y-2"
-    aria-label={t('home.network.title')}
-  >
+  <section class="flex flex-wrap items-center gap-x-6 gap-y-2" aria-label={t('home.network.title')}>
     <span
       class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground"
     >

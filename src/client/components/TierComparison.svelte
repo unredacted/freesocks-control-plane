@@ -70,7 +70,7 @@
           class="relative space-y-4 overflow-hidden rounded-xl border bg-card p-5 {isCurrent
             ? 'border-primary/30 ring-1 ring-primary/30'
             : isMembership && billingEnabled
-              ? 'tier-sheen border-primary/30 ring-1 ring-primary/30'
+              ? 'border-primary/30 ring-1 ring-primary/30'
               : 'border-border'}"
         >
           {#if isCurrent}

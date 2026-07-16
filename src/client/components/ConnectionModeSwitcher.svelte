@@ -48,6 +48,9 @@
     disabled?: boolean;
     /** Sign-up context (pre-first-key onboarding copy). Mutually exclusive with serverBacked. */
     signup?: boolean;
+    /** Chromeless mode: passed through to DeliveryPreference - the caller
+     *  provides the surrounding surface. */
+    flat?: boolean;
   }
   let {
     modes,
@@ -57,6 +60,7 @@
     deviceCount = 0,
     disabled = false,
     signup = false,
+    flat = false,
   }: Props = $props();
 
   const qc = useQueryClient();
@@ -152,6 +156,7 @@
   busy={switchMode.isPending}
   onChoose={chooseMode}
   signup={signup && !serverBacked}
+  {flat}
 />
 {#if pendingModeId}
   <SwitchModeModal

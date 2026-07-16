@@ -46,6 +46,9 @@
     /** Sign-up context: the pick persists to the account + shapes the first key
      *  (no re-issue yet), so show sign-up-specific copy. */
     signup?: boolean;
+    /** Chromeless mode: no card frame - the caller provides the surrounding
+     *  surface (avoids card-in-card nesting). */
+    flat?: boolean;
   }
   let {
     modes,
@@ -55,6 +58,7 @@
     busy = false,
     onChoose,
     signup = false,
+    flat = false,
   }: Props = $props();
 
   // Built-in copy + icon for the shipped modes, keyed by id. A mode not listed
@@ -107,7 +111,9 @@
   }
 </script>
 
-<section class="space-y-3 rounded-xl border border-border bg-card p-4 sm:p-5">
+<section
+  class={flat ? 'space-y-3' : 'space-y-3 rounded-xl border border-border bg-card p-4 sm:p-5'}
+>
   <div>
     <h2 class="font-display text-base font-semibold">{t('delivery.title')}</h2>
     <p class="text-sm text-muted-foreground">

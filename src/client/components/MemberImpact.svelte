@@ -36,9 +36,7 @@
 
 <section class="rounded-xl border border-border bg-card p-6 md:p-8 space-y-5">
   <div class="flex items-start gap-3">
-    <div class="rounded-full bg-primary/10 p-2 text-primary shrink-0" aria-hidden="true">
-      <Heart class="size-5" />
-    </div>
+    <Heart class="size-5 text-muted-foreground shrink-0 mt-0.5" aria-hidden="true" />
     <div>
       <h2 class="text-xl font-display font-bold tracking-tight">
         {showImpact ? t('impact.collectiveTitle') : t('impact.title')}
@@ -87,7 +85,7 @@
     </div>
 
     {#if isDonor && user}
-      <div class="donation-sheen rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">
+      <div class="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">
         <div class="text-xs font-medium text-amber-700 dark:text-amber-300">
           {t('impact.yourContribution')}
         </div>

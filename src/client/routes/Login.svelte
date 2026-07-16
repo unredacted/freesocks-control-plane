@@ -139,9 +139,7 @@
       <LogIn class="size-3.5" />
       {t('nav.signIn')}
     </div>
-    <h1
-      class="text-3xl md:text-4xl font-display font-bold tracking-tight bg-gradient-to-br from-foreground to-foreground/70 bg-clip-text text-transparent"
-    >
+    <h1 class="text-3xl md:text-4xl font-display font-bold tracking-tight">
       {t('login.title')}
     </h1>
     <p class="text-sm text-muted-foreground">
