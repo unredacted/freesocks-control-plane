@@ -17,6 +17,7 @@
   import { formatBytes, daysUntil, copyText } from '../lib/utils';
   import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
+  import Link from './Link.svelte';
   import { toast } from 'svelte-sonner';
   import type { Snippet } from 'svelte';
 
@@ -86,6 +87,12 @@
     nodeOnline?: boolean | null;
     /** Member-facing location of the node serving this key ("Kansas City, MO"). */
     nodeLocationLabel?: string | null;
+    /** The location's code ("MCI") — anchors the "Network status" deep link. */
+    nodeLocationCode?: string | null;
+    /** The node's own display name (e.g. "MCI-2"), when the backend has one. */
+    nodeLabel?: string | null;
+    /** The location's coarse public load band (quiet/busy/crowded). */
+    nodeLoad?: 'quiet' | 'busy' | 'crowded' | 'unknown' | null;
     /** Optional key-management actions (regenerate / switch backend), rendered
      *  in a hairline-separated footer of the pass - the pass owns its actions. */
     actions?: Snippet;
@@ -111,6 +118,9 @@
     usageTotal,
     nodeOnline,
     nodeLocationLabel,
+    nodeLocationCode,
+    nodeLabel,
+    nodeLoad,
     actions,
   }: Props = $props();
 
@@ -235,7 +245,17 @@
           <span class="text-muted-foreground/60">·</span>
           <span class="inline-flex items-center gap-1">
             <MapPin class="size-3.5" aria-hidden="true" />
-            {nodeLocationLabel}
+            {nodeLocationLabel}{#if nodeLabel}&nbsp;· {nodeLabel}{/if}
+          </span>
+        {/if}
+        {#if nodeLoad && nodeLoad !== 'unknown'}
+          <span class="text-muted-foreground/60">·</span>
+          <span>
+            {nodeLoad === 'quiet'
+              ? t('status.loadQuiet')
+              : nodeLoad === 'busy'
+                ? t('status.loadBusy')
+                : t('status.loadCrowded')}
           </span>
         {/if}
         {#if nodeOnline !== undefined}
@@ -259,6 +279,15 @@
                 ? t('hero.nodeOffline')
                 : t('hero.nodeUnknown')}
           </span>
+        {/if}
+        {#if nodeLocationCode}
+          <span class="text-muted-foreground/60">·</span>
+          <Link
+            href="/status#loc-{nodeLocationCode}"
+            class="inline-flex items-center gap-1 underline underline-offset-2 hover:text-foreground"
+          >
+            {t('hero.nodeStatusLink')} →
+          </Link>
         {/if}
       </p>
     </div>

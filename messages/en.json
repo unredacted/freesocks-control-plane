@@ -337,6 +337,7 @@
     "nodeOnline": "Node online",
     "nodeOffline": "Node offline",
     "nodeUnknown": "Node status unknown",
+    "nodeStatusLink": "Network status",
     "nodeOnlineHint": "The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location.",
     "nodeOfflineBody": "The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location).",
     "keyLimited": "You've used all your data for this period. It resets automatically, or you can upgrade for more.",
@@ -513,6 +514,20 @@
     "thanksTitle": "You're a FreeSocks donor",
     "thanksBody": "Thank you - your support helps keep FreeSocks free for everyone."
   },
+  "referral": {
+    "fieldLabel": "Referral code (optional)",
+    "fieldHint": "Have a code from a friend? You each get bonus membership days when you upgrade.",
+    "fieldPlaceholder": "FSR-XXXX-XXXX",
+    "applied": "Referral applied — bonus days are yours when you upgrade.",
+    "cardTitle": "Referrals",
+    "cardBody": "Share your link. When someone signs up with it and becomes a member, you each get bonus days — theirs right away, yours after {vestingDays} days.",
+    "copyLink": "Copy invite link",
+    "codeLabel": "Your code",
+    "statsInvited": "Signed up",
+    "statsConverted": "Became members",
+    "statsPending": "Not yet members",
+    "statsDays": "Bonus days earned"
+  },
   "qr": {
     "ariaLabel": "QR code for the subscription URL",
     "failed": "Couldn't generate the QR code."
@@ -646,22 +661,6 @@
     "title": "Set up your VPN app",
     "install": "Install",
     "noApps": "No recommended apps for this platform yet - use any compatible client and add your subscription manually.",
-    "moreApps": [
-      {
-        "declarations": [
-          "input count",
-          "local countPlural = count: plural"
-        ],
-        "selectors": [
-          "countPlural"
-        ],
-        "match": {
-          "countPlural=one": "Show 1 more app",
-          "countPlural=other": "Show {count} more apps"
-        }
-      }
-    ],
-    "fewerApps": "Show fewer apps",
     "openSource": "Open source",
     "recommended": "Recommended",
     "proprietary": "Proprietary",
@@ -781,7 +780,8 @@
       "offline": "offline",
       "srOnline": "online",
       "srOffline": "offline",
-      "note": "Checked every 10 minutes"
+      "note": "Checked every 10 minutes",
+      "link": "Live status"
     },
     "quicknav": {
       "label": "Jump to a section",
@@ -806,7 +806,7 @@
       "chartAria": "Bandwidth added to every free user by donations, month by month"
     },
     "hero": {
-      "title": "A free VPN for people in censored countries & around the world",
+      "title": "A VPN for people in censored countries & around the world",
       "subtitle": "FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}.",
       "impactNote": "Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month.",
       "impactLink": "See the impact"
@@ -958,5 +958,36 @@
     "body": "The device ending …{suffix} will be disconnected and its slot freed. It can reconnect later by re-importing your subscription URL.",
     "confirm": "Revoke device",
     "working": "Revoking…"
+  },
+  "status": {
+    "title": "Network status",
+    "updated": "Updated {time}",
+    "overallOk": "All locations are operating normally",
+    "overallPartial": "Some locations are having issues",
+    "overallMajor": "A major outage is in progress",
+    "locationsTitle": "Locations",
+    "nodesUp": "{online} of {total} nodes up",
+    "online": "Online",
+    "offline": "Offline",
+    "srOnline": "online",
+    "srOffline": "offline",
+    "loadQuiet": "Quiet",
+    "loadBusy": "Busy",
+    "loadCrowded": "Crowded",
+    "loadUnknown": "Load unknown",
+    "matrixTitle": "Availability in censored regions",
+    "matrixBody": "How well each connection mode works from specific countries, based on reports we receive. \"Partial\" means some networks or times of day block it.",
+    "matrixAvailable": "Available",
+    "matrixPartial": "Partial",
+    "matrixBlocked": "Blocked",
+    "matrixEmpty": "No country data published yet.",
+    "incidentsTitle": "Incidents",
+    "incidentsNone": "No incidents in the last 30 days.",
+    "incidentsOngoing": "Ongoing",
+    "incidentsResolved": "Resolved {time}",
+    "incidentsStarted": "Started {time}",
+    "incidentsGlobal": "All locations",
+    "incidentsPast": "Past incidents",
+    "report": "Report a problem"
   }
 }

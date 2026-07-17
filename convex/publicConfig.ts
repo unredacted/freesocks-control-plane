@@ -22,6 +22,7 @@ import { resolveConnectionModes, publicProjection } from './lib/connectionModes'
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { resolveClients, publicClients } from './lib/clientCatalog';
 import { resolveLocations } from './lib/locations';
+import { resolveReferralConfig } from './lib/referralConfig';
 
 export const get = query({
   args: {},
@@ -158,6 +159,17 @@ export const get = query({
         },
       },
       mirrorsEnabled,
+      // Referral-program knobs (enabled + the bonus-days numbers for the
+      // signup/account copy). Non-secret; drives the referral surfaces.
+      referrals: await (async () => {
+        const rc = await resolveReferralConfig(ctx.db);
+        return {
+          enabled: rc.enabled,
+          refereeBonusDays: rc.refereeBonusDays,
+          referrerBonusDays: rc.referrerBonusDays,
+          vestingDays: rc.vestingDays,
+        };
+      })(),
       // Device-limit enforcement master switch (non-secret). When false the SPA
       // hides device-limit UI + app-compatibility gating (unlimited-by-default).
       devices: {

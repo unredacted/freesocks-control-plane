@@ -365,6 +365,9 @@ interface NodeStatusView {
   /** Squad/node display name (Remnawave), when known. */
   label: string | null;
   location: { code: string; label: string } | null;
+  /** The location's coarse public load band (quiet/busy/crowded); null when the
+   *  key has no located instance. */
+  load: 'quiet' | 'busy' | 'crowded' | 'unknown' | null;
   /** When the signal was last observed (ISO), null when never. */
   checkedAt: string | null;
 }
@@ -390,6 +393,9 @@ export const getNodeStatus = internalAction({
     const location = server?.location
       ? { code: server.location, label: server.locationLabel ?? server.location }
       : null;
+    const load = location
+      ? await ctx.runQuery(internal.statusPage.locationLoad, { code: location.code })
+      : null;
 
     if (sub.backend === 'remnawave' && sub.backendPlacement) {
       let stats = await ctx.runQuery(internal.remnawaveNodes.getPlacementStats, {
@@ -413,6 +419,7 @@ export const getNodeStatus = internalAction({
             online: stats.online && stats.nodeCount > 0,
             label: stats.label ?? null,
             location,
+            load,
             checkedAt: new Date(stats.lastStatsAt).toISOString(),
           },
         };
@@ -428,6 +435,7 @@ export const getNodeStatus = internalAction({
           online: okAt == null ? null : Date.now() - okAt < 30 * 60_000,
           label: null,
           location,
+          load,
           checkedAt: okAt != null ? new Date(okAt).toISOString() : null,
         },
       };

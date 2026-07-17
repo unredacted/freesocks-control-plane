@@ -39,6 +39,8 @@ type CreateAccountResult =
       userId: Id<'users'>;
       /** Public per-session token, returned in the response body (only when PoP-bound). */
       popSessionToken?: string;
+      /** True when a valid referral code bound this account to its referrer. */
+      referralApplied: boolean;
       tier: {
         slug: string;
         name: string;
@@ -106,6 +108,9 @@ export const createFreeAccount = internalAction({
     popPublicKey: v.optional(v.string()),
     /** The PoP algorithm ('EdDSA' | 'ES256') for popPublicKey; stored on the session. */
     popAlg: v.optional(v.string()),
+    /** Optional referral code (`FSR-…`) binding this account to its referrer.
+     *  A bad code never blocks creation — it just doesn't bind. */
+    referralCode: v.optional(v.string()),
   },
   handler: async (ctx, a): Promise<CreateAccountResult> => {
     const salt = process.env.IP_HASH_SALT;
@@ -146,6 +151,16 @@ export const createFreeAccount = internalAction({
       // W3: assign the non-secret support handle at creation (lazy backfill in
       // getAccountView covers pre-W3 accounts).
       await ctx.runAction(internal.supportId.ensureForUser, { userId });
+      // The member's own referral code (shareable immediately), plus the bind
+      // to a referrer when a valid code came with the signup. Neither blocks
+      // creation on a bad code.
+      await ctx.runAction(internal.referrals.ensureForUser, { userId });
+      const { bound: referralApplied } = a.referralCode
+        ? await ctx.runMutation(internal.referrals.bindReferral, {
+            refereeUserId: userId,
+            code: a.referralCode,
+          })
+        : { bound: false };
       await ctx.runMutation(internal.freeTier.finalizeFreeIssuance, {
         userId,
         tierId: tier._id,
@@ -177,6 +192,7 @@ export const createFreeAccount = internalAction({
         maxAgeSec: MEMBER_TTL_MS / 1000,
         userId,
         popSessionToken,
+        referralApplied,
         tier: {
           slug: tier.slug,
           name: tier.name,

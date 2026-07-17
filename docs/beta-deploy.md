@@ -132,8 +132,9 @@ In a browser:
 
 - the home page loads over a valid TLS cert;
 - `/get-account` step 1 ("Create my account") reveals the account number (after the
-  Cap captcha) even with no backend instance; step 2 ("Create subscription") issues
-  a key after §4;
+  Cap captcha, in the blocking download-then-paste-back modal) even with no backend
+  instance; step 3 ("Get connected") issues a key after §4;
+- `/status` renders (empty locations/incidents until §4 + a first published incident);
 - signing in with that account number works;
 - `/admin` passkey login works;
 - the session cookie is `Secure` (DevTools), because `ENVIRONMENT=production`.

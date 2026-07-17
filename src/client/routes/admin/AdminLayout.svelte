@@ -23,6 +23,7 @@
   import Cloud from '@lucide/svelte/icons/cloud';
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import Waypoints from '@lucide/svelte/icons/waypoints';
+  import HeartPulse from '@lucide/svelte/icons/heart-pulse';
   import LogOut from '@lucide/svelte/icons/log-out';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import type { LucideIcon } from '@lucide/svelte';
@@ -68,6 +69,7 @@
       children: [
         { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
         { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
+        { to: '/admin/status', label: 'Status page', icon: HeartPulse },
       ],
     },
     { to: '/admin/storage', label: 'Storage mirrors', icon: Cloud },
@@ -84,7 +86,7 @@
 
   // The "Servers" group is a collapsible section. One group exists today; if you add
   // another, give it its own open-state (this single var backs the one group).
-  const SERVER_PATHS = ['/admin/backend-servers', '/admin/remnawave'];
+  const SERVER_PATHS = ['/admin/backend-servers', '/admin/remnawave', '/admin/status'];
   let serversOpen = $state(SERVER_PATHS.includes(router.pathname));
   // Keep it open whenever the active route is one of its children (initial deep-link
   // + later navigation in); stays user-toggleable the rest of the time.

@@ -40,6 +40,16 @@ accidentally regress it).
   IP **transiently** and returns it `no-store`; it is never persisted or audited.
 - The country used to suggest a delivery profile is read transiently from
   `CF-IPCountry` (only when `CF_FRONTED=true`) and **never stored**.
+- **Public fleet telemetry is deliberately coarse.** The public `/api/v1/status`
+  projection (the `/status` page) exposes per-location online bits and **load
+  bands** (`quiet/busy/crowded`) only — never raw online-user counts, per-node
+  numbers, or key counts (the same posture as the GB-only donation projection).
+  The exact numbers stay server-side.
+- **Referral links are a minimal social graph.** The `referrals` table records
+  which account invited which (two opaque user ids + reward state) — nothing
+  else: no contact details, no IPs, and referral codes are non-secret by design
+  (they credit the referrer, grant the holder nothing). Rewards vest only on a
+  real paid conversion, so the edge is created by money, not by signup volume.
 
 Client-IP _resolution_ (for those hash buckets) is fail-closed and topology-aware
 — see `resolveClientIp` in `convex/lib/http.ts` and the topology matrix in

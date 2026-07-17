@@ -1,5 +1,16 @@
 # Project inventory: features, open work, and code status
 
+**Updated 2026-07-16 (status page + referrals, branch `v2`).** Landed: the **public
+network-status page** (`/status` — per-location online + coarse load bands, an
+operator-curated country × connection-mode censorship-availability matrix, and
+operator-published incidents, all CMS-editable; §1.7/§1.9); the member **node
+surface** (the Access Pass shows the key's node label + location load band and
+deep-links to `/status#loc-<code>`; the location picker shows load hints);
+and the **referral program** (`FSR-…` share links, paid-conversion-gated
+rewards: instant referee bonus + vested referrer bonus + monthly cap; §1.7).
+Earlier: the 2026-07-16 locations + node-status + billing-hardening batch
+(§1.5/§1.9), and the 2026-07-13 doc reconcile below.
+
 **Updated 2026-07-13 (doc reconcile, branch `v2`).** Landed since the 2026-07-08 note:
 **in-app donations** (membership add-on + standalone card funding a shared monthly
 free-user bandwidth bonus, with GB-only public impact surfaces — §1.7 / `docs/billing.md`);
@@ -152,7 +163,9 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 ### 1.2 Free-tier account creation (`convex/freeTier.ts`): **Live**
 
 - Cap-captcha-gated anonymous account creation via `POST /api/v1/account`
-  (`createFreeAccount`): mint user + reveal-once account number + support ID + member session.
+  (`createFreeAccount`): mint user + reveal-once account number + support ID + the
+  member's own referral code + member session; an optional `referralCode` in the body
+  binds the account to its referrer (`referralApplied` in the response; §1.7 referrals).
   **Decoupled from proxy issuance**, so it never depends on a backend being available; the
   proxy key is created separately by the signed-in member (§1.4).
 - **Serializable per-(IP, day) cap — no stored IP**: the cap is the ephemeral, serializable
@@ -240,7 +253,10 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
     `sourceUrl` metadata and install-page `homepageUrl`s, sorted OSS-first-then-easiest; the
     defaults are re-synced by operator-run `seed:refreshDefaultClients`, which preserves
     `enabled` flags + admin-added rows); **Theme** (preset gallery + hue slider + live preview; §1.7); **Rate-limit policies**
-    (W2); **Membership codes** (W4); App settings (incl. the **Verification** panel — `setVerification` /
+    (W2); **Membership codes** (W4); **Status page** (`/admin/status` — publish/edit/
+    resolve/delete incidents, curate the country × connection-mode censorship matrix,
+    tune the load-band thresholds; scope `admin:servers:write`, routes
+    `/api/v1/admin/status/{page,incidents}`); App settings (incl. the **Verification** panel — `setVerification` /
     `PATCH /api/v1/admin/verification`, surfaced in `E2eeVerifyModal` — and the **site
     chrome** block: the announcement banner + footer source link, `site.*` namespace in
     `convex/lib/siteConfig.ts`, `PATCH /api/v1/admin/site`, rendered by `SiteBanner.svelte`); **Audit log** (filter by action / actor / since).
@@ -291,6 +307,35 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   are never public) and the member's own `donatedCentsTotal`/`donationCount` on the account view;
   rendered as dithered charts (`DitherChart.svelte`, hand-rolled Bayer-dither canvas, no chart
   lib) in the account impact panel (`MemberImpact.svelte`) and a home-page impact section.
+- **Public network-status page** (`/status` + `GET /api/v1/status`, `convex/statusPage.ts` +
+  `convex/lib/statusPage.ts` + `convex/lib/loadBands.ts`): per-location online bits +
+  **coarse load bands** (`quiet/busy/crowded` — never raw user counts, the same
+  privacy posture as GB-only donations), an operator-curated **censorship-availability
+  matrix** (country × connection-mode, `status.censorship` + load thresholds in the
+  `status.*` namespace), and **operator-published incidents** (`statusIncidents` table,
+  location-scoped, public for 30 days post-resolution). All data reuses the existing
+  healthcheck cron signals (`lastHealthOkAt`, `fleetStats`, `remnawaveNodeStats`,
+  `keyCount`/`maxKeys`); nothing new is probed. Public + per-IP rate-limited
+  (`status.fetch` policy). The member surfaces link in: the Home `NetworkStatus` strip
+  links to `/status`, and the Access Pass shows the key's **node label + load band** and
+  deep-links to `/status#loc-<code>` (`account.getNodeStatus` gained `load`); the
+  location picker shows per-location load hints (`LocationEntry.load` on
+  `publicConfig.locations`). **Live.**
+- **Referral program** (`convex/referrals.ts` + `convex/lib/{referralCode,referralConfig}.ts`):
+  word-of-mouth growth. Every member gets a shareable `FSR-XXXX-XXXX` code
+  (`users.referralCode`, lazily backfilled, non-secret); `?ref=` links captured into
+  localStorage bind at account creation (`POST /api/v1/account` takes an optional
+  `referralCode` — an invalid code never blocks signup; one referrer per referee).
+  Rewards fire ONLY on the referee's **first paid-tier grant** (any rail — billing,
+  gift/redemption code, admin grant — via the `applyMembership` hook; grants made BY
+  referral rewards deliberately don't cascade): the referee gets bonus days instantly,
+  the referrer's bonus **vests** after `referral.vestingDays` while the referee stays a
+  member, bounded per calendar month (`referral.maxRewardsPerMonth`). Config in the
+  `referral.*` namespace (Admin → Billing "Referral program" card,
+  `/api/v1/admin/referrals/config`; default ON — needs no external keys); public knobs
+  on `publicConfig.referrals`; member card on the Account page
+  (`GET /api/v1/account/referrals`, rate-limited `account.referrals`). Audits
+  `referral.{bound,converted,rewarded,void}`. **Live.**
 - **Billing webhook seam** (legacy/ops): `POST /api/webhooks/billing` (`convex/webhooks.ts`),
   HMAC-SHA256-verified (`WEBHOOK_SIGNING_SECRET`) + deduped by `eventId` (`webhookEvents`
   table) → maps `{accountId, tierSlug, expiresAtMs?}` onto `lifecycle.setMembership`. Kept as
@@ -397,8 +442,11 @@ stamped at start) surfaced as a freshness panel on the admin dashboard.
   number and requires pasting the 32 digits back before Done (plus copy + `beforeunload`);
   the per-platform, catalog-driven `ConnectClient` section after issuance), `Account` (member
   view + regenerate / switch-backend / switch-mode / rotate / **redeem code** / support-ID
-  display / opt-in passkeys), `Login` (account-number sign-in: show/hide, password-manager
-  autofill, digit normalization; passkey sign-in when one is registered).
+  display / opt-in passkeys / **referrals card**), `Login` (account-number sign-in: show/hide,
+  password-manager autofill, digit normalization; passkey sign-in when one is registered),
+  and **`Status`** (the public network-status page: location cards with online + load-band
+  badges, the censorship-availability matrix, and incidents — deep-linkable per location
+  as `/status#loc-<code>`).
   `Home` + `GetAccount` show loading **skeletons** (no config-gated/auth-state content flash);
   the `Account` page surfaces a calm account-number **recovery** hint (rotate if you didn't save
   it). Localized via `lib/i18n`; a `LanguageSwitcher` in the header.
@@ -427,6 +475,8 @@ the companion docs. Sizes: S/M/L.
 | ~~**`POP_REQUIRED` flip** + **PoP `sid`-binding**~~ — **both DONE**: the flip is live on beta (2026-07-13), and sid-binding shipped 2026-06-28 as the public per-session token (`sessions.popSessionToken`, folded into the canonical PoP message — see `convex/lib/pop.ts` + the threat model). Kept here one release as a tombstone since earlier notes listed them open.                                                                                                                                                                                                                                                                                                                                                     | —    | `docs/threat-model-cdn-blinding.md`                                 |
 | **Paid cross-backend switch — portal tier model**: the linkage MECHANISM shipped (`tiers.peerTierId` + `tiers.getPeerTier`; `account.switchBackend` 409s only when NO peer tier is linked, with an actionable message). What remains is the linked-tier model design once a billing portal exists, and actually linking paid peers in the CMS.                                                                                                                                                                                                                                                                                                                                                                                  | M    | `convex/account.ts`                                                 |
 | **Outline WSS `accessUrl` / `ssconf://` contract** (latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | M    | `docs/outline-setup.md`                                             |
+| **Status-page hardening follow-ups** (deferred by design): auto-derived incidents from healthcheck flapping (too noisy — incidents are operator-published only), public uptime %/SLA math (needs durable health history we deliberately don't keep), and automated censorship-matrix probing (needs in-country vantage points).                                                                                                                                                                                                                                                                                                                                                                                                 | M    | `convex/lib/statusPage.ts`                                          |
+| **Admin referral drill-down**: referral events are audit-visible today (`referral.*`); a per-user referral view in the CMS is a follow-up if operators want it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | S    | `convex/referrals.ts`                                               |
 | **Deferred P2 perf/scale** (from the 2026-07 pre-launch review — its P0/P1 bug fixes + P3 cleanups all landed): (a) retention sweeps drain a single 1000-row page/day — loop pages via an action wrapper (Convex per-mutation write limits rule out an in-mutation loop) once any table sustains >~1000 rows/day; (b) `appSettings.resolved` does a full-table `collect()` on hot paths, though it already filters to `SETTINGS_DEFAULTS` keys (so per-key indexed reads would be a drop-in) — low benefit on a ~dozens-of-rows table, worth it only if that table grows large. (The third item — `statusSummary`'s O(users) scan — shipped in the 2026-07-08 WS3 counters and is no longer open.) Both are fine at beta scale. | M    | this file (`retention.ts` PAGE constant, `appSettings.ts` resolved) |
 
 ---

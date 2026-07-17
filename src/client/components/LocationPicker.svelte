@@ -15,6 +15,14 @@
     code: string;
     label: string;
     online: boolean;
+    load?: 'quiet' | 'busy' | 'crowded' | 'unknown';
+  }
+
+  function loadText(load: LocationEntry['load']): string {
+    if (load === 'quiet') return t('status.loadQuiet');
+    if (load === 'busy') return t('status.loadBusy');
+    if (load === 'crowded') return t('status.loadCrowded');
+    return '';
   }
   interface Props {
     locations: LocationEntry[];
@@ -47,8 +55,9 @@
   >
     <option value="auto">{t('location.auto')}</option>
     {#each locations as loc (loc.code)}
+      {@const load = loadText(loc.load)}
       <option value={loc.code}>
-        {loc.label}{loc.online ? '' : ` (${t('location.offline')})`}
+        {loc.label}{load ? ` · ${load}` : ''}{loc.online ? '' : ` (${t('location.offline')})`}
       </option>
     {/each}
   </select>

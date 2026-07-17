@@ -75,6 +75,14 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
       // this branch returned without a push, so the common monthly re-up left the
       // Remnawave key DISABLED. (Review #2.)
       await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, { userId: a.userId });
+      // Referral hook (scheduled, async): a paid-tier grant may convert a
+      // referral. No-op for free tiers, referral-reward grants, or when the
+      // program is disabled.
+      await ctx.scheduler.runAfter(0, internal.referrals.maybeConvert, {
+        userId: a.userId,
+        toTierId: a.tierId,
+        reason: a.reason,
+      });
     }
     return;
   }
@@ -108,6 +116,13 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
   });
   // Durable, decoupled propagation of the new tier spec to the live backend.
   await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, { userId: a.userId });
+  // Referral hook (scheduled, async): a paid-tier grant may convert a referral.
+  // No-op for free tiers, referral-reward grants, or when the program is off.
+  await ctx.scheduler.runAfter(0, internal.referrals.maybeConvert, {
+    userId: a.userId,
+    toTierId: a.tierId,
+    reason: a.reason,
+  });
 }
 
 /**

@@ -300,8 +300,13 @@ chunk (+ a `dist/sri-manifest.json` for the OOB verifier) automatically (the Vit
 
 - `GET /healthz` → `{ok:true}` (liveness); `GET /readyz` → 200 with a real DB ping (503 if
   Postgres is down); `GET /api/v1/config` → tiers + the Cap `{apiEndpoint, siteKey}`.
+- `GET /api/v1/status` → `{generatedAt, locations, censorship, incidents}` (empty
+  locations/incidents on a fresh deploy); publish a test incident from **Admin → Status**
+  and confirm it appears.
 - Anonymous **get-account**: solve the Cap captcha → account created + account number revealed
   once (in the blocking save-it modal) + support ID; 2nd same-IP/day call is capped (429).
+  With referrals enabled (default), `GET /api/v1/account/referrals` as a member returns
+  a freshly-minted `FSR-…` code.
 - **Account login** with that number → `fs_session` set → `/account` renders; a wrong
   number → generic 401, constant-time.
 - **Rotate** → new number revealed once, old number dead.

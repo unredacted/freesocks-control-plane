@@ -30,6 +30,7 @@
   import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
   import RedeemCode from '../components/RedeemCode.svelte';
+  import ReferralsCard from '../components/ReferralsCard.svelte';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import LogOut from '@lucide/svelte/icons/log-out';
   import Smartphone from '@lucide/svelte/icons/smartphone';
@@ -39,6 +40,7 @@
   import Hash from '@lucide/svelte/icons/hash';
   import Sparkles from '@lucide/svelte/icons/sparkles';
   import Gift from '@lucide/svelte/icons/gift';
+  import Share2 from '@lucide/svelte/icons/share-2';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
   import { subscriptionDisplayUrl } from '../lib/utils';
   import { apiClient, ApiCallError } from '../lib/api';
@@ -833,6 +835,11 @@
               nodeLocationLabel={nodeStatus.data?.node?.location?.label ??
                 data.subscription.location?.label ??
                 null}
+              nodeLocationCode={nodeStatus.data?.node?.location?.code ??
+                data.subscription.location?.code ??
+                null}
+              nodeLabel={nodeStatus.data?.node?.label ?? null}
+              nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
             >
               {#snippet actions()}
                 <!-- Key actions live on the pass: regenerate, and switch backend
@@ -1070,6 +1077,13 @@
             />
             <RedeemCode flat />
             <GiftCodes />
+          </div>
+
+          <!-- Referrals (self-gates on the program being enabled): the member's
+               share link + invite stats. -->
+          <div class="border-t border-border pt-6 space-y-4">
+            <SectionHead icon={Share2} title={t('referral.cardTitle')} />
+            <ReferralsCard />
           </div>
         </section>
       </Tabs.Content>

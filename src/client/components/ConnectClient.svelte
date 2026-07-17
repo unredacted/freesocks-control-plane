@@ -56,9 +56,6 @@
   // Preselect the visitor's own platform (UA-detected) so nobody lands on the
   // wrong instructions; tabs remain free to change.
   let active = $state<PlatformKey>(detectClientPlatform());
-  // The "more apps" expander: the first catalog entry is presented as the
-  // recommendation; the rest sit behind this toggle (decision reduction).
-  let moreOpen = $state(false);
 
   // Catalog for this backend (already enabled + priority-sorted server-side).
   let clients = $derived((config.data?.clients ?? []).filter((c) => c.backends.includes(backend)));
@@ -125,7 +122,6 @@
     const next = (idx + (forward ? 1 : -1) + PLATFORMS.length) % PLATFORMS.length;
     active = PLATFORMS[next]!.key;
     qrFor = null;
-    moreOpen = false;
     (e.currentTarget as HTMLElement).parentElement
       ?.querySelector<HTMLElement>('[aria-selected="true"]')
       ?.focus();
@@ -151,7 +147,6 @@
         onclick={() => {
           active = p.key;
           qrFor = null;
-          moreOpen = false;
         }}
         onkeydown={tabKeydown}
         class="min-h-11 sm:min-h-9 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {active ===
@@ -291,32 +286,14 @@
         </ul>
       {/if}
     {:else}
-      <!-- One recommendation, then the rest behind an expander: the catalog is
-           already sorted OSS-first-then-easiest server-side, so the first entry
-           is the right answer for most people. -->
-      {#if currentClients.length > 0}
-        {@const [first, ...rest] = currentClients}
-        <ul class="space-y-2">
-          {@render clientCard(first!, true)}
-        </ul>
-        {#if rest.length > 0}
-          {#if moreOpen}
-            <ul class="mt-2 space-y-2">
-              {#each rest as c (c.name)}
-                {@render clientCard(c)}
-              {/each}
-            </ul>
-          {/if}
-          <button
-            type="button"
-            class="mt-2 rounded-sm text-xs text-muted-foreground underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-expanded={moreOpen}
-            onclick={() => (moreOpen = !moreOpen)}
-          >
-            {moreOpen ? t('setup.fewerApps') : t('setup.moreApps', { count: rest.length })}
-          </button>
-        {/if}
-      {/if}
+      <!-- The full catalog, all visible: the first entry (already sorted
+           OSS-first-then-easiest server-side) carries the Recommended badge,
+           so the choice is guided without hiding the alternatives. -->
+      <ul class="space-y-2">
+        {#each currentClients as c, i (c.name)}
+          {@render clientCard(c, i === 0)}
+        {/each}
+      </ul>
     {/if}
 
     <!-- A partially-populated catalog (or a platform with nothing for this

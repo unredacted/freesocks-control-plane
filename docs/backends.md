@@ -328,13 +328,22 @@ How a placement is chosen (all Remnawave-local, under `convex/remnawaveNodes.ts`
   - display label ("MCI" / "Kansas City, MO"; Admin → Servers or the by-slug
     upsert). One panel manages one location's nodes by convention. Active located
     Remnawave instances are projected publicly as `publicConfig.locations`
-    (code/label/online only); a member may pick one when creating/regenerating a
+    (code/label/online/load-band only); a member may pick one when creating/regenerating a
     key (persisted as `users.preferredLocation`; 'auto' = least-loaded anywhere).
     The filter is **fail-soft**: a stale/offline location never blocks issuance.
 - **Member node status:** `GET /api/v1/account/node-status` reports the online
   bit of the squad behind the member's key (refreshed on demand, at most once per
   instance per minute via a serializable stampede guard; instance-health fallback
-  for Outline/legacy keys). The SPA polls it (~30s) for the hero badge.
+  for Outline/legacy keys), plus the key's location and the location's coarse
+  **load band**. The SPA polls it (~30s) for the hero badge; the Access Pass
+  shows the node label + band and deep-links to the public `/status#loc-<code>`.
+- **Public status page:** the same healthcheck signals feed `GET /api/v1/status`
+  (the `/status` page) — per-location online + coarse load bands
+  (`convex/lib/loadBands.ts`: maxKeys utilization when every instance of a
+  location is capped, else users-per-online-node against admin-tunable
+  `status.loadBusyAt`/`status.loadCrowdedAt` thresholds), plus operator-published
+  incidents and the censorship-availability matrix (Admin → Status). Bands only,
+  never raw counts — see `docs/privacy.md`.
 
 Operator sizing: one squad per node, add them all to the mode's pool, and FCP fills
 the emptiest node at issuance. `maxKeys` on an instance is the generic hard cap for

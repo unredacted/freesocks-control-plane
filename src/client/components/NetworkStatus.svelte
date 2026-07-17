@@ -9,6 +9,7 @@
    */
   import { configQuery } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
+  import Link from './Link.svelte';
 
   const config = configQuery();
   const locations = $derived(config.data?.locations ?? []);
@@ -39,6 +40,11 @@
         {/if}
       </span>
     {/each}
-    <span class="ms-auto text-[11px] text-muted-foreground">{t('home.network.note')}</span>
+    <span class="ms-auto inline-flex items-center gap-3 text-[11px] text-muted-foreground">
+      <span>{t('home.network.note')}</span>
+      <Link href="/status" class="underline underline-offset-2 hover:text-foreground">
+        {t('home.network.link')} →
+      </Link>
+    </span>
   </section>
 {/if}

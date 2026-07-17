@@ -155,6 +155,8 @@ export type RegenerateRequest = z.infer<typeof RegenerateRequest>;
  * Live-ish status of the node the member's config is homed to (the SPA polls
  * this while the account page is open). `online: null` = never observed.
  * Distinguishes "the node is up but your network filters it" from an outage.
+ * `load` is the location's coarse public load band (quiet/busy/crowded),
+ * null when the location has no load data (or no located instances).
  */
 export const NodeStatusResponse = z.object({
   node: z
@@ -162,6 +164,7 @@ export const NodeStatusResponse = z.object({
       online: z.boolean().nullable(),
       label: z.string().nullable(),
       location: z.object({ code: z.string(), label: z.string() }).nullable(),
+      load: z.enum(['quiet', 'busy', 'crowded', 'unknown']).nullable(),
       checkedAt: z.string().nullable(),
     })
     .nullable(),
@@ -257,10 +260,13 @@ export type RevokeDeviceResponse = z.infer<typeof RevokeDeviceResponse>;
  * gates it (same widget as login). `backend` is an optional preference for which
  * default-free tier (and thus backend) the account lands on, honored only when
  * `subscription.user_choice_enabled` is set; no proxy server is provisioned here.
+ * `referralCode` optionally binds the new account to a referrer — an invalid
+ * code never blocks creation (see `referralApplied`).
  */
 export const CreateAccountRequest = z.object({
   captchaToken: z.string().min(1),
   backend: BackendId.optional(),
+  referralCode: z.string().max(32).optional(),
 });
 export type CreateAccountRequest = z.infer<typeof CreateAccountRequest>;
 
@@ -281,11 +287,33 @@ export const CreateAccountResponse = z.object({
     backend: BackendId,
   }),
   authenticated: z.literal(true),
+  /** True when a referral code bound this account to its referrer (absent on
+   *  older backends — treat as false). */
+  referralApplied: z.boolean().optional(),
   // PoP sid-binding: non-secret public per-session token the client persists +
   // signs into every request. Absent for clients without the signing worker.
   popSessionToken: z.string().optional(),
 });
 export type CreateAccountResponse = z.infer<typeof CreateAccountResponse>;
+
+/**
+ * The member's referral card (`GET /api/v1/account/referrals`): their share
+ * code + invite stats. `enabled: false` (program off) hides the whole surface;
+ * `code: null` shouldn't happen (the route lazily mints) but parses.
+ */
+export const AccountReferralsResponse = z.object({
+  enabled: z.boolean(),
+  code: z.string().nullable(),
+  stats: z
+    .object({
+      invited: z.number().int().nonnegative(),
+      converted: z.number().int().nonnegative(),
+      pending: z.number().int().nonnegative(),
+      bonusDaysEarned: z.number().int().nonnegative(),
+    })
+    .nullable(),
+});
+export type AccountReferralsResponse = z.infer<typeof AccountReferralsResponse>;
 
 /**
  * The member's enrolled passkeys (optional alternative login). Masked: only

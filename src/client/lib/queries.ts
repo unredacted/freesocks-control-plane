@@ -13,6 +13,7 @@ import { AuthMeResponse, PublicConfig } from '../../shared/contracts/auth';
 import {
   AccountResponse,
   AccountUsageResponse,
+  AccountReferralsResponse,
   NodeStatusResponse,
   PasskeyListResponse,
   SubscriptionContentResponse,
@@ -28,6 +29,7 @@ import {
   ClientAdmin,
   MirrorProviderAdmin,
   RemnawaveNodeStatsResponse,
+  AdminReferralConfig,
   TierAdmin,
   UserAdmin,
 } from '../../shared/contracts/admin';
@@ -36,6 +38,11 @@ import { AdminAuthStatus } from '../../shared/contracts/auth';
 import { RateLimitListResponse } from '../../shared/contracts/rateLimits';
 import { MembershipCodePage, PurchasedCodesResponse } from '../../shared/contracts/membershipCodes';
 import { AdminBillingOverview, OrderStatusResponse } from '../../shared/contracts/billing';
+import {
+  AdminStatusIncidentsResponse,
+  AdminStatusPageConfig,
+  PublicStatusResponse,
+} from '../../shared/contracts/status';
 
 // --- Cache keys --------------------------------------------------------------
 
@@ -67,6 +74,11 @@ export const queryKeys = {
   accountUsage: ['account', 'usage'] as const,
   nodeStatus: ['account', 'node-status'] as const,
   passkeys: ['account', 'passkeys'] as const,
+  networkStatus: ['network-status'] as const,
+  adminStatusPage: ['admin', 'status-page'] as const,
+  adminStatusIncidents: ['admin', 'status-incidents'] as const,
+  accountReferrals: ['account', 'referrals'] as const,
+  adminReferralConfig: ['admin', 'referral-config'] as const,
 };
 
 // --- Public surface ----------------------------------------------------------
@@ -104,6 +116,20 @@ export const configQuery = () =>
     queryKey: queryKeys.config,
     queryFn: () => apiClient.get('/api/v1/config', PublicConfig),
     staleTime: 5 * 60_000,
+  }));
+
+/**
+ * The public network-status page (/status): per-location online + load bands,
+ * the censorship matrix, and operator-published incidents. Anonymous-safe.
+ * Polled at 60s while open; the underlying stats are cron-quantized to 10 min,
+ * so faster polling would only re-read the same snapshot.
+ */
+export const networkStatusQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.networkStatus,
+    queryFn: () => apiClient.get('/api/v1/status', PublicStatusResponse),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   }));
 
 // --- Member surface ----------------------------------------------------------
@@ -186,6 +212,27 @@ export const passkeysQuery = (enabled: () => boolean) =>
     queryFn: () => apiClient.get('/api/v1/account/passkeys', PasskeyListResponse),
     enabled: enabled(),
     staleTime: 30_000,
+  }));
+
+/**
+ * The member's referral card (share code + invite stats). Fetched lazily by
+ * callers that render the card (the account page gates it on
+ * `config.referrals.enabled`).
+ */
+export const accountReferralsQuery = (enabled?: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.accountReferrals,
+    queryFn: () => apiClient.get('/api/v1/account/referrals', AccountReferralsResponse),
+    enabled: enabled ? enabled() : true,
+    staleTime: 60_000,
+  }));
+
+/** Admin referral-program config (the Admin → Billing "Referrals" card). */
+export const adminReferralConfigQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminReferralConfig,
+    queryFn: () => apiClient.get('/api/v1/admin/referrals/config', AdminReferralConfig),
+    staleTime: 60_000,
   }));
 
 /**
@@ -418,6 +465,22 @@ export const adminNodeStatsQuery = () =>
     queryKey: queryKeys.adminNodeStats,
     queryFn: () => apiClient.get('/api/v1/admin/remnawave/node-stats', RemnawaveNodeStatsResponse),
     staleTime: 60_000,
+  }));
+
+/** Admin Status page: the censorship matrix + load thresholds editor state. */
+export const adminStatusPageQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminStatusPage,
+    queryFn: () => apiClient.get('/api/v1/admin/status/page', AdminStatusPageConfig),
+    staleTime: 60_000,
+  }));
+
+/** Admin Status page: the incident list (newest-first, bounded). */
+export const adminStatusIncidentsQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminStatusIncidents,
+    queryFn: () => apiClient.get('/api/v1/admin/status/incidents', AdminStatusIncidentsResponse),
+    staleTime: 30_000,
   }));
 
 /** S3 mirror providers (subscription mirrors) for the AdminStorage CMS page. */

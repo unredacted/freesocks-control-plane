@@ -157,18 +157,28 @@ artificial floor on failures.
 Account creation is its own flow, decoupled from proxy-key issuance:
 `POST /api/v1/account` (`convex/http.ts` -> `convex/freeTier.ts:createFreeAccount`):
 
-1. Turnstile + fail-closed client IP are verified in the HTTP layer; the
-   per-(IP,day) cap is the serializable `claimFreeSlot` (which creates the bare
-   user + the grant ledger row).
-2. Generate a fresh 32-digit identifier (`convex/accountId.ts:mintForUser`,
-   CSPRNG over `Uint8Array(8)`, reduced mod-10 with rejection sampling to avoid
-   modulo bias). Persist only the peppered hash in `users.accountIdHash` plus the
-   4-digit `users.accountIdPrefix`; retry once on the vanishingly rare collision.
-3. Mint a member session + signed `fs_session` cookie (auto sign-in), then return
+1. The captcha (self-hosted Cap) + fail-closed client IP are verified in the HTTP
+   layer (a per-IP throttle runs BEFORE the outbound captcha verify); the
+   per-(IP,day) account cap is the ephemeral, serializable `freetier.create`
+   rate-limit reservation — the hashed IP lives only in that auto-expiring
+   counter, never in a durable store, and the slot is RELEASED if the mint
+   fails (no burned daily allowance on a transient error).
+2. Insert the bare free-tier user (`createFreeUser`), then generate a fresh
+   32-digit identifier (`convex/accountId.ts:mintForUser`, CSPRNG over
+   `Uint8Array(8)`, reduced mod-10 with rejection sampling to avoid modulo
+   bias). Persist only the peppered hash in `users.accountIdHash` plus the
+   4-digit `users.accountIdPrefix`; retry on the vanishingly rare collision.
+3. Mint the non-secret **support ID** (`FS-XXXX-XXXX`, `supportId.ensureForUser`)
+   and the member's own **referral code** (`FSR-XXXX-XXXX`,
+   `referrals.ensureForUser`); when the signup carried a valid referral code,
+   bind the account to its referrer in the same step (`referrals.bindReferral`
+   — an invalid code never blocks creation, and the response's
+   `referralApplied` reports whether it bound).
+4. Mint a member session + signed `fs_session` cookie (auto sign-in), then return
    `accountId` (plaintext, one-time) in `CreateAccountResponse`
    (`src/shared/contracts/account.ts`). NO proxy backend is touched, so account
    creation succeeds even with no server available.
-4. **Cap reached** (same-IP-same-day): return `freetier.cap_reached` (429). There
+5. **Cap reached** (same-IP-same-day): return `freetier.cap_reached` (429). There
    is no key to hand back (issuance is a separate flow), so the visitor signs in
    with their existing number instead.
 
@@ -176,11 +186,12 @@ The proxy subscription is created separately, once signed in, via
 `POST /api/v1/account/regenerate` (a missing or empty backend surfaces there as a
 retryable `backend.unavailable`, and never blocks the account).
 
-`SubscriptionHero` gains a prominent, dismissible "Save this account number"
-panel ABOVE the URL: large monospaced four-group display, copy button,
-downloadable `.txt` option, single-checkbox "I've saved it" gate before the
-panel collapses. The panel only appears on first reveal; refreshing the page
-does NOT reshow it (SPA holds it in volatile state only).
+The reveal-once number is shown in a blocking two-step `AccountNumberReveal`
+modal: the save step requires clicking **Download** before Continue, then a
+verify step hides the number and requires pasting the 32 digits back before
+Done (plus copy + a `beforeunload` guard). The modal appears only on first
+reveal; refreshing the page does NOT reshow it (the SPA holds it in volatile
+state only).
 
 **OIDC members at first login** _(NOT APPLICABLE: OIDC removed)_: this
 subsection assumed an Authentik callback that minted a number as a second login

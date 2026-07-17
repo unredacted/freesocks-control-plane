@@ -160,6 +160,20 @@ export const PublicConfig = z.object({
   /** Whether the opt-in "trouble connecting? try a mirror" affordance is available
    *  (≥1 active mirror provider). The SPA hides it entirely when false. */
   mirrorsEnabled: z.boolean().optional(),
+  /**
+   * The referral program's public knobs: whether the signup field + account
+   * card render, and the bonus-days numbers so the copy can state the real
+   * reward ("you each get N extra days"). No user data. Defaulted for
+   * forward-compat with an older backend.
+   */
+  referrals: z
+    .object({
+      enabled: z.boolean(),
+      refereeBonusDays: z.number().int(),
+      referrerBonusDays: z.number().int(),
+      vestingDays: z.number().int(),
+    })
+    .default({ enabled: false, refereeBonusDays: 0, referrerBonusDays: 0, vestingDays: 0 }),
   /** Device-limit (HWID) enforcement master switch. When false, device limits
    *  are off deployment-wide and the connect UI hides app-compatibility gating.
    *  Optional/defaulted for forward-compat. */
@@ -231,15 +245,17 @@ export const PublicConfig = z.object({
     .default([]),
   /** Member-facing node-location catalog (active Remnawave instances with a
    *  location set, deduped by code): the picker a member chooses their config's
-   *  location from. `online` = ≥1 healthy instance at that location. No URLs or
-   *  credentials. Optional/defaulted for forward-compat; the SPA hides the
-   *  picker with fewer than two entries. */
+   *  location from. `online` = ≥1 healthy instance at that location; `load` is
+   *  the coarse public load band (quiet/busy/crowded, 'unknown' when there's
+   *  no data). No URLs, credentials, or raw counts. Optional/defaulted for
+   *  forward-compat; the SPA hides the picker with fewer than two entries. */
   locations: z
     .array(
       z.object({
         code: z.string(),
         label: z.string(),
         online: z.boolean(),
+        load: z.enum(['quiet', 'busy', 'crowded', 'unknown']).optional(),
       }),
     )
     .optional()

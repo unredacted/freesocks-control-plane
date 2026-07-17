@@ -504,3 +504,14 @@ export const AdminStatusSummary = z.object({
   generatedAt: z.string().datetime(),
 });
 export type AdminStatusSummary = z.infer<typeof AdminStatusSummary>;
+
+/** Admin referral-program config (`/api/v1/admin/referrals/config`): the
+ *  reward economics shown on the Admin → Billing "Referrals" card. */
+export const AdminReferralConfig = z.object({
+  enabled: z.boolean(),
+  refereeBonusDays: z.number().int(),
+  referrerBonusDays: z.number().int(),
+  vestingDays: z.number().int(),
+  maxRewardsPerMonth: z.number().int(),
+});
+export type AdminReferralConfig = z.infer<typeof AdminReferralConfig>;

@@ -946,3 +946,108 @@ describe('test-connection tolerates an upsert-shaped body (strict-validator guar
     expect(body.ok).toBe(false); // unreachable origin → clean verdict, not a validation throw
   });
 });
+
+describe('/api/v1/status public route', () => {
+  test('per-IP rate limited past its policy; serves a public-safe shape', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.rateLimits.setPolicy, {
+      policyKey: 'status.fetch',
+      max: 1,
+      windowMs: 60_000,
+      enabled: true,
+    });
+    const headers = { 'x-forwarded-for': '203.0.113.90' };
+    const ok = await t.fetch('/api/v1/status', { headers });
+    expect(ok.status).toBe(200);
+    const body = (await ok.json()) as {
+      generatedAt: string;
+      locations: unknown[];
+      censorship: { modes: unknown[]; rows: unknown[] };
+      incidents: unknown[];
+    };
+    expect(body.generatedAt).toBeTruthy();
+    expect(Array.isArray(body.locations)).toBe(true);
+    expect(Array.isArray(body.incidents)).toBe(true);
+    expect((await t.fetch('/api/v1/status', { headers })).status).toBe(429);
+  });
+});
+
+describe('referral routes', () => {
+  test('account creation binds a valid referral code and reports referralApplied', async () => {
+    vi.stubEnv('CAP_API_ENDPOINT', 'http://cap:3000');
+    vi.stubEnv('CAP_SITE_KEY', 'sk');
+    vi.stubEnv('CAP_SECRET', 'secret');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ success: true }), { status: 200 })),
+    );
+    const t = convexTest(schema, modules);
+    const { tierId } = await seedTierAndUser(t);
+    const referrerId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        referralCode: 'FSR-AAAA-BBBB',
+        updatedAt: Date.now(),
+      }),
+    );
+    const res = await t.fetch('/api/v1/account', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.91' },
+      body: JSON.stringify({ captchaToken: 'tok', referralCode: 'fsr-aaaa-bbbb' }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { accountId: string; referralApplied?: boolean };
+    expect(body.referralApplied).toBe(true);
+    // The new account is bound to the referrer (pending until a paid conversion).
+    const rows = await t.run((ctx) => ctx.db.query('referrals').collect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.referrerUserId).toBe(referrerId);
+    expect(rows[0]!.status).toBe('pending');
+    // And the referrer's own code + the referee's code were both minted.
+    const referee = await t.run((ctx) => ctx.db.get(rows[0]!.refereeUserId));
+    expect(referee?.referralCode).toMatch(/^FSR-/);
+  });
+
+  test('a bad referral code never blocks creation (referralApplied false)', async () => {
+    vi.stubEnv('CAP_API_ENDPOINT', 'http://cap:3000');
+    vi.stubEnv('CAP_SITE_KEY', 'sk');
+    vi.stubEnv('CAP_SECRET', 'secret');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ success: true }), { status: 200 })),
+    );
+    const t = convexTest(schema, modules);
+    await seedTierAndUser(t);
+    const res = await t.fetch('/api/v1/account', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.92' },
+      body: JSON.stringify({ captchaToken: 'tok', referralCode: 'FSR-NOPE-0000' }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { referralApplied?: boolean };
+    expect(body.referralApplied).toBe(false);
+    expect(await t.run((ctx) => ctx.db.query('referrals').collect())).toHaveLength(0);
+  });
+
+  test('GET /api/v1/account/referrals: 401 anonymous; mints + stats for a member', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    expect((await t.fetch('/api/v1/account/referrals')).status).toBe(401);
+    const cookie = await memberCookie(t, userId);
+    const res = await t.fetch('/api/v1/account/referrals', { headers: { cookie } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      enabled: boolean;
+      code: string | null;
+      stats: { invited: number; converted: number; pending: number; bonusDaysEarned: number };
+    };
+    expect(body.enabled).toBe(true);
+    expect(body.code).toMatch(/^FSR-/);
+    expect(body.stats).toEqual({ invited: 0, converted: 0, pending: 0, bonusDaysEarned: 0 });
+    // Disabled program hides the surface.
+    await t.mutation(internal.referrals.setConfig, { enabled: false });
+    const off = await t.fetch('/api/v1/account/referrals', { headers: { cookie } });
+    expect(((await off.json()) as { enabled: boolean }).enabled).toBe(false);
+  });
+});

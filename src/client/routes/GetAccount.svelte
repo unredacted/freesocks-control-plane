@@ -18,6 +18,7 @@
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import LocationPicker from '../components/LocationPicker.svelte';
+  import { readStoredReferralCode, clearStoredReferralCode } from '../lib/referral';
   import {
     meQuery,
     configQuery,
@@ -63,6 +64,11 @@
   let created = $state(false);
   // Inline gift-code expander in step 3 (pre-issuance, so the upgrade binds at issuance).
   let redeemOpen = $state(false);
+
+  // Referral code: prefilled from the captured ?ref= link (localStorage),
+  // editable for a manually-quoted code. Hidden unless the program is enabled.
+  let referralsEnabled = $derived(config.data?.referrals?.enabled ?? false);
+  let referralInput = $state(readStoredReferralCode());
 
   // The visitor has an account either because they just made one (created) or
   // they arrived already signed in. Step 3 + the account view key off this.
@@ -188,10 +194,18 @@
   // session cookie (auto sign-in) and reveals the one-time account number.
   const createAccount = createMutation(() => ({
     mutationFn: async () => {
+      const referralCode = referralInput.trim();
       const body =
         showChooser && chosenBackend
-          ? CreateAccountRequest.parse({ captchaToken: token!, backend: chosenBackend })
-          : CreateAccountRequest.parse({ captchaToken: token! });
+          ? CreateAccountRequest.parse({
+              captchaToken: token!,
+              backend: chosenBackend,
+              ...(referralCode ? { referralCode } : {}),
+            })
+          : CreateAccountRequest.parse({
+              captchaToken: token!,
+              ...(referralCode ? { referralCode } : {}),
+            });
       return apiClient.post('/api/v1/account', body, CreateAccountResponse);
     },
     onSuccess: (data) => {
@@ -200,6 +214,10 @@
       accountTier = data.tier;
       created = true;
       showPasskeyPrompt = true; // offer a passkey once they've saved the number
+      if (data.referralApplied) {
+        clearStoredReferralCode();
+        toast.success(t('referral.applied'), { duration: 4000 });
+      }
       // Cookie is set; reflect the new authenticated identity everywhere.
       void qc.invalidateQueries({ queryKey: queryKeys.me });
     },
@@ -419,6 +437,27 @@
         <InlineError message={apiErrorMessage(createAccount.error)} />
       {/if}
 
+      {#if referralsEnabled}
+        <div class="space-y-1.5">
+          <label
+            for="referral-code"
+            class="text-xs text-muted-foreground flex items-center justify-between"
+          >
+            <span>{t('referral.fieldLabel')}</span>
+          </label>
+          <input
+            id="referral-code"
+            type="text"
+            bind:value={referralInput}
+            placeholder={t('referral.fieldPlaceholder')}
+            autocomplete="off"
+            spellcheck="false"
+            class="w-full min-h-11 rounded-md border border-border bg-background px-3 py-2 font-mono text-sm uppercase focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+          <p class="text-[11px] text-muted-foreground">{t('referral.fieldHint')}</p>
+        </div>
+      {/if}
+
       <Button
         onclick={() => createAccount.mutate()}
         disabled={createAccount.isPending || !token}
@@ -578,6 +617,11 @@
         nodeLocationLabel={nodeStatus.data?.node?.location?.label ??
           subscription.location?.label ??
           null}
+        nodeLocationCode={nodeStatus.data?.node?.location?.code ??
+          subscription.location?.code ??
+          null}
+        nodeLabel={nodeStatus.data?.node?.label ?? null}
+        nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
       />
       {#if rawConfigFirst}
         <!-- rawConfig mode: raw config is the deliverable; CDN link hidden; no mirrors. -->

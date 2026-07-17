@@ -20,7 +20,6 @@
   import TierComparison from '../components/TierComparison.svelte';
   import NetworkStatus from '../components/NetworkStatus.svelte';
   import CountUp from '../components/CountUp.svelte';
-  import DitherField from '../components/DitherField.svelte';
   import { meQuery, configQuery } from '../lib/queries';
   import { membershipTier, tierLimits, deviceLimitsShown, type TierLimits } from '../lib/tiers';
   import { baselinePerMonth } from '../lib/billing';
@@ -249,9 +248,6 @@
 <div class="space-y-20 md:space-y-28 pb-12">
   <!-- HERO -->
   <section class="relative pt-8 md:pt-16 space-y-10 md:space-y-14">
-    <!-- Bayer-dithered field behind the hero: the brand's ONE signature
-         texture (a static canvas; dissolves toward the headline). -->
-    <DitherField class="absolute -inset-x-6 -top-8 bottom-0 -z-10" />
     <div class="grid gap-10 md:grid-cols-[1.2fr_1fr] md:gap-16 items-center">
       <div class="space-y-6 md:space-y-8">
         <h1 class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05]">

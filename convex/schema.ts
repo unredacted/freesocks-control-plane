@@ -165,11 +165,18 @@ export default defineSchema({
     // donation (set once, never cleared). Backs the persistent account donor
     // badge so the read path needs no billing-order scan. Unset ⇒ not a donor.
     firstDonatedAt: v.optional(v.number()),
+    // The member's referral code (`FSR-XXXX-XXXX`, Crockford base32 like the
+    // support ID, distinct prefix): NON-SECRET, shareable freely — it credits
+    // the referrer, it grants nothing to the holder. Minted at account
+    // creation, lazily backfilled on first referral-stats read for older
+    // accounts. Unique (enforced in the mint mutation).
+    referralCode: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index('by_account_id_hash', ['accountIdHash'])
     .index('by_account_id_prefix', ['accountIdPrefix'])
     .index('by_support_id', ['supportId'])
+    .index('by_referral_code', ['referralCode'])
     .index('by_status_expires', ['status', 'membershipExpiresAt'])
     // Idle-free sweep: (tierId, status, freeKeyExpiresAt) — scan ONLY active free
     // users due for deactivation; `inactive` rows fall outside the range, so the
@@ -594,6 +601,21 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('by_key', ['key']),
 
+  // Operator-published network-status incidents (the public /status page).
+  // Deliberately NOT auto-derived from healthcheck flapping: a human writes and
+  // resolves each entry, so the page stays trustworthy. `locationCodes` scopes
+  // an incident to fleet locations (empty = global). Unresolved rows show at any
+  // age; resolved rows show for 30 days, then only in the admin list.
+  statusIncidents: defineTable({
+    title: v.string(),
+    body: v.optional(v.string()),
+    severity: v.union(v.literal('maintenance'), v.literal('degraded'), v.literal('outage')),
+    locationCodes: v.array(v.string()),
+    startedAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index('by_startedAt', ['startedAt']),
+
   // Membership redemption codes (W4): admin-minted bearer codes a member redeems
   // to grant/extend a paid tier — no billing portal required. Codes are SECRETS:
   // only the SHA-256 `codeHash` is stored (never plaintext), plus a short
@@ -622,6 +644,35 @@ export default defineSchema({
     .index('by_status', ['status'])
     .index('by_batch', ['batchId'])
     .index('by_purchaser', ['purchasedByUserId']),
+
+  // Referrals (word-of-mouth growth): ONE row per referee (uniqueness enforced
+  // in the bind mutation), linking the new account to the member whose
+  // referral code they used. Lifecycle: 'pending' (signed up) → 'converted'
+  // (referee's FIRST paid-tier grant — the referee's bonus days applied
+  // immediately, the referrer's reward vesting) → 'rewarded' (vested and
+  // granted) | 'void' (referee lapsed before vesting / referrer gone / monthly
+  // cap reached). Rewards only ever fire on a PAID conversion, so farming free
+  // accounts is worthless by construction.
+  referrals: defineTable({
+    referrerUserId: v.id('users'),
+    refereeUserId: v.id('users'),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('converted'),
+      v.literal('rewarded'),
+      v.literal('void'),
+    ),
+    voidReason: v.optional(v.string()),
+    refereeBonusDaysGranted: v.optional(v.number()),
+    referrerBonusDaysGranted: v.optional(v.number()),
+    convertedAt: v.optional(v.number()),
+    rewardedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index('by_referee', ['refereeUserId'])
+    .index('by_referrer', ['referrerUserId'])
+    // Monthly reward-cap counting: eq referrer + range rewardedAt >= month start.
+    .index('by_referrer_rewarded', ['referrerUserId', 'rewardedAt']),
 
   // --- new tables replacing the former KvStore namespaces ---
 

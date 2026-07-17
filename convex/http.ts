@@ -283,7 +283,7 @@ http.route({
 async function throttlePublicGet(
   ctx: ActionCtx,
   req: Request,
-  policyKey: 'config.fetch' | 'e2ee.keys.fetch',
+  policyKey: 'config.fetch' | 'e2ee.keys.fetch' | 'status.fetch',
 ): Promise<Response | null> {
   const ip = resolveClientIp(req);
   if (!ip) return null;
@@ -304,6 +304,23 @@ http.route({
     const limited = await throttlePublicGet(ctx, req, 'config.fetch');
     if (limited) return limited;
     return json(await ctx.runQuery(api.publicConfig.get, {}));
+  }),
+});
+
+// The public network-status page: per-location online + coarse load bands,
+// the censorship-availability matrix, and operator-published incidents. Public
+// + unauthenticated (the data is public-safe by construction — bands, never
+// raw counts); per-IP throttled like /config. Briefly cacheable: the
+// underlying stats are cron-quantized to 10 minutes anyway.
+http.route({
+  path: '/api/v1/status',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    const limited = await throttlePublicGet(ctx, req, 'status.fetch');
+    if (limited) return limited;
+    return json(await ctx.runQuery(internal.statusPage.getPublic, {}), 200, {
+      'cache-control': 'public, max-age=30',
+    });
   }),
 });
 
@@ -374,6 +391,7 @@ http.route({
     const body = await readJson<{
       captchaToken?: string;
       backend?: 'remnawave' | 'outline';
+      referralCode?: string;
     }>(req);
     const captchaToken = body.captchaToken;
     if (!captchaToken) {
@@ -433,6 +451,10 @@ http.route({
         backend,
         popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
         popAlg: typeof popAlgRaw === 'string' ? popAlgRaw : undefined,
+        referralCode:
+          typeof body.referralCode === 'string' && body.referralCode.trim()
+            ? body.referralCode.trim()
+            : undefined,
       });
     } catch (err) {
       // Account creation has no backend dependency, so a throw here is a config
@@ -466,6 +488,7 @@ http.route({
         accountId: result.accountId,
         tier: result.tier,
         authenticated: true,
+        referralApplied: result.referralApplied,
         // Public per-session token (PoP sid-binding): the client persists it and
         // signs it into every PoP message. Non-secret. Absent for unbound clients.
         popSessionToken: result.popSessionToken,
@@ -1359,6 +1382,32 @@ http.route({
       userId: member.userId,
     });
     return json({ codes });
+  }),
+});
+
+// The member's referral card: their share code (minted lazily on first read,
+// the supportId backfill pattern) + invite/conversion stats. Per-user
+// rate-limited (hygiene against a hot refresh loop).
+http.route({
+  path: '/api/v1/account/referrals',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:read');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.referrals',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
+    const enabled = await ctx.runQuery(internal.referrals.isEnabled, {});
+    if (!enabled) return json({ enabled: false, code: null, stats: null });
+    await ctx.runAction(internal.referrals.ensureForUser, { userId: member.userId });
+    const data = await ctx.runQuery(internal.referrals.getStats, { userId: member.userId });
+    return json({ enabled: true, code: data?.code ?? null, stats: data?.stats ?? null });
   }),
 });
 
@@ -2284,8 +2333,155 @@ http.route({
   }),
 });
 
-// --- admin: settings --------------------------------------------------------
+// --- admin: status page (incidents + censorship matrix + load thresholds) ---
 
+http.route({
+  path: '/api/v1/admin/status/page',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.statusPage.getPageConfig, {}));
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/status/page',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<{
+      rows?: unknown;
+      busyAt?: number;
+      crowdedAt?: number;
+    }>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.statusPage.setPageConfig, {
+          rows: body.rows,
+          busyAt: body.busyAt,
+          crowdedAt: body.crowdedAt,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/status/incidents',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
+    return json({ incidents: await ctx.runQuery(internal.statusPage.listIncidents, {}) });
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/status/incidents',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.statusPage.createIncident, {
+          input: body,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/status/incidents/',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const id = lastPathSegment(req) as Id<'statusIncidents'>;
+    const body = await readJson<Record<string, unknown>>(req);
+    const { resolve, ...input } = body;
+    try {
+      return json(
+        await ctx.runMutation(internal.statusPage.updateIncident, {
+          id,
+          input: Object.keys(input).length > 0 ? input : undefined,
+          resolve: typeof resolve === 'boolean' ? resolve : undefined,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/status/incidents/',
+  method: 'DELETE',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const id = lastPathSegment(req) as Id<'statusIncidents'>;
+    try {
+      return json(
+        await ctx.runMutation(internal.statusPage.deleteIncident, {
+          id,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// --- admin: referral program config (the Admin → Billing "Referrals" card) ---
+
+http.route({
+  path: '/api/v1/admin/referrals/config',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.referrals.getConfig, {}));
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/referrals/config',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.referrals.setConfig, {
+          enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+          refereeBonusDays:
+            typeof body.refereeBonusDays === 'number' ? body.refereeBonusDays : undefined,
+          referrerBonusDays:
+            typeof body.referrerBonusDays === 'number' ? body.referrerBonusDays : undefined,
+          vestingDays: typeof body.vestingDays === 'number' ? body.vestingDays : undefined,
+          maxRewardsPerMonth:
+            typeof body.maxRewardsPerMonth === 'number' ? body.maxRewardsPerMonth : undefined,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// --- admin: settings --------------------------------------------------------
 http.route({
   path: '/api/v1/admin/settings',
   method: 'GET',

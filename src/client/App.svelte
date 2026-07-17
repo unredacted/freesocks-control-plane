@@ -15,9 +15,11 @@
   import GetAccount from './routes/GetAccount.svelte';
   import Account from './routes/Account.svelte';
   import Login from './routes/Login.svelte';
+  import Status from './routes/Status.svelte';
   // The whole admin CMS is lazy-loaded (P1-18): public visitors never download it.
   const AdminRouter = () => import('./routes/admin/AdminRouter.svelte');
   import { router } from './stores/router.svelte';
+  import { captureReferralParam } from './lib/referral';
   import { QueryClientProvider } from '@tanstack/svelte-query';
   import { SvelteQueryDevtools } from '@tanstack/svelte-query-devtools';
   import { queryClient } from './lib/query-client';
@@ -26,6 +28,10 @@
   import { fade } from 'svelte/transition';
 
   let onAdminRoute = $derived(router.pathname.startsWith('/admin'));
+
+  // Referral-link capture (?ref=FSR-… on any route → localStorage, then strip
+  // the param). Runs once on mount; GetAccount submits it at account creation.
+  captureReferralParam();
 
   // Toasts originate from the leading edge: top-right for LTR, top-left for RTL.
   let dir = $derived(dirForLocale(getLocale()));
@@ -53,6 +59,7 @@
     if (path === '/get-account') title = `${t('nav.getAccount')} · FreeSocks`;
     else if (path === '/account') title = `${t('nav.account')} · FreeSocks`;
     else if (path === '/login') title = `${t('nav.signIn')} · FreeSocks`;
+    else if (path === '/status') title = `${t('status.title')} · FreeSocks`;
     else if (path.startsWith('/admin')) title = 'Admin · FreeSocks';
     else if (path !== '/') title = `${t('app.notFound')} · FreeSocks`;
     document.title = title;
@@ -133,6 +140,8 @@
               <Account />
             {:else if router.pathname === '/login'}
               <Login />
+            {:else if router.pathname === '/status'}
+              <Status />
             {:else if onAdminRoute}
               {#await AdminRouter() then mod}
                 {@const Admin = mod.default}

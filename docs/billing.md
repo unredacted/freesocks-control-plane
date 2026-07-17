@@ -137,6 +137,39 @@ Gift codes are bearer credentials (anyone holding one can redeem it), so the
 reveal-once + sweep design keeps the plaintext out of long-term storage. The buyer
 manages their codes from the `GiftCodes` panel.
 
+## Referral rewards
+
+The referral program (`convex/referrals.ts`) is billing-adjacent, not a rail: it
+never touches a processor. Every member has a shareable `FSR-XXXX-XXXX` code; a
+new account that signs up with it (`POST /api/v1/account` takes an optional
+`referralCode`, surfaced as `referralApplied`) binds to the referrer (one
+referrer per referee, stored in the `referrals` table).
+
+Rewards vest ONLY on the referee's **first paid-tier grant** — and the trigger is
+deliberately rail-agnostic: a settled order on ANY processor, a gift/redemption
+code redemption, or an admin grant all count, because they all flow through the
+single `applyMembership` entitlement seam (which schedules
+`referrals.maybeConvert`; grants made BY referral rewards — `reason
+'referral.*'` — deliberately do NOT cascade, so no multi-level reward chains
+appear without real money). On conversion:
+
+- the **referee** gets `referral.refereeBonusDays` added to the just-granted
+  membership, immediately;
+- the **referrer's** `referral.referrerBonusDays` **vests** after
+  `referral.vestingDays` — checked at vest time, the referee must still be a
+  live member (kills buy-and-vanish self-referrals) — bounded per calendar
+  month by `referral.maxRewardsPerMonth`. The reward tier is the deployment's
+  membership tier (`billing.membership.tierSlug`); if it can't be resolved the
+  reward voids with an audit, never a crash.
+
+Config lives in the `referral.*` appSettings namespace (Admin → Billing →
+"Referral program" card, `/api/v1/admin/referrals/config`; default ON — unlike
+the rails it needs no external keys/prices to function). The public knobs
+(`enabled` + the bonus-days numbers for honest copy) ride `publicConfig.referrals`;
+the member's share link + stats are on the Account page
+(`GET /api/v1/account/referrals`, rate-limited `account.referrals`). All
+transitions audit (`referral.bound/converted/rewarded/void`, with `voidReason`).
+
 ## Donations
 
 A supporter can add a donation on top of a membership checkout, or give standalone

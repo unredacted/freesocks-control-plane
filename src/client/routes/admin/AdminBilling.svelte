@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { z } from 'zod';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { Button } from '@client/components/ui/button';
   import { Checkbox } from '@client/components/ui/checkbox';
@@ -7,13 +8,14 @@
   import AdminListState from './AdminListState.svelte';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
-  import { adminBillingQuery, queryKeys } from '../../lib/queries';
+  import { adminBillingQuery, adminReferralConfigQuery, queryKeys } from '../../lib/queries';
   import {
     AdminBillingConfigResponse,
     type BillingConfigPatch,
     type BillingConfigView,
     type BillingProcessor,
   } from '../../../shared/contracts/billing';
+  import { AdminReferralConfig } from '../../../shared/contracts/admin';
   import { formatDate, formatMoney } from '../../lib/i18n/format';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -128,6 +130,40 @@
 
   // Render helper: a "set ✓ / not set" badge for a write-only credential.
   const setBadge = (isSet: boolean) => (isSet ? 'set ✓ - leave blank to keep' : 'not set');
+
+  // --- Referral program (own endpoint; the growth surface lives on this page) ---
+  const referralConfig = adminReferralConfigQuery();
+  let referralDraft = $state<z.infer<typeof AdminReferralConfig> | null>(null);
+  let referralSeeded = false;
+  $effect(() => {
+    if (!referralSeeded && referralConfig.data) {
+      referralDraft = { ...referralConfig.data };
+      referralSeeded = true;
+    }
+  });
+
+  const saveReferrals = createMutation(() => ({
+    mutationFn: (body: z.infer<typeof AdminReferralConfig>) =>
+      apiClient.patch('/api/v1/admin/referrals/config', body, AdminReferralConfig),
+    onSuccess: (res) => {
+      referralDraft = { ...res };
+      void qc.invalidateQueries({ queryKey: queryKeys.adminReferralConfig });
+      void qc.invalidateQueries({ queryKey: queryKeys.config });
+      toast.success('Referral settings saved');
+    },
+    onError: (err) => toast.error('Save failed', { description: apiErrorMessage(err) }),
+  }));
+
+  function referralNum(
+    field: 'refereeBonusDays' | 'referrerBonusDays' | 'vestingDays' | 'maxRewardsPerMonth',
+    e: Event,
+  ) {
+    if (!referralDraft) return;
+    referralDraft[field] = Math.max(
+      field === 'vestingDays' ? 0 : 1,
+      Math.round(Number((e.currentTarget as HTMLInputElement).value)),
+    );
+  }
 
   const STATUS_TONE: Record<string, string> = {
     paid: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
@@ -464,6 +500,107 @@
           </span>
         </label>
       </div>
+    </section>
+
+    <!-- Referral program: word-of-mouth growth. Rewards vest only on a
+         referee's first PAID conversion (any rail, gift/redemption codes
+         included) — farming free accounts is worthless by construction. -->
+    <section class="mb-8 space-y-5 rounded-xl border border-border bg-card p-5">
+      <div>
+        <h2 class="text-base font-semibold">Referral program</h2>
+        <p class="mt-1 text-sm text-muted-foreground">
+          Members share an invite link; a new account that signs up with it binds to them. On the
+          referee's first paid membership, the referee gets bonus days immediately and the
+          referrer's bonus vests after a holding period (anti self-referral). Rewards come from the
+          membership tier above.
+        </p>
+      </div>
+      {#if referralConfig.isPending || !referralDraft}
+        <Skeleton class="h-24 w-full" />
+      {:else}
+        <label class="flex items-center gap-2">
+          <Checkbox
+            checked={referralDraft.enabled}
+            onCheckedChange={(v) => referralDraft && (referralDraft.enabled = !!v)}
+          />
+          <span class="text-sm font-medium">Referrals enabled</span>
+        </label>
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <label class="block">
+            <span class="mb-1 block text-xs font-medium text-muted-foreground">
+              Referee bonus (days)
+            </span>
+            <Input
+              type="number"
+              min={1}
+              max={365}
+              class="min-h-9 w-24"
+              value={referralDraft.refereeBonusDays}
+              oninput={(e) => referralNum('refereeBonusDays', e)}
+            />
+            <span class="mt-1 block text-xs text-muted-foreground">
+              Added instantly to the referee's first paid membership.
+            </span>
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-xs font-medium text-muted-foreground">
+              Referrer bonus (days)
+            </span>
+            <Input
+              type="number"
+              min={1}
+              max={365}
+              class="min-h-9 w-24"
+              value={referralDraft.referrerBonusDays}
+              oninput={(e) => referralNum('referrerBonusDays', e)}
+            />
+            <span class="mt-1 block text-xs text-muted-foreground">
+              Granted to the referrer once the reward vests.
+            </span>
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-xs font-medium text-muted-foreground">
+              Vesting period (days)
+            </span>
+            <Input
+              type="number"
+              min={0}
+              max={365}
+              class="min-h-9 w-24"
+              value={referralDraft.vestingDays}
+              oninput={(e) => referralNum('vestingDays', e)}
+            />
+            <span class="mt-1 block text-xs text-muted-foreground">
+              The referee must still be a member when this elapses. 0 = instant.
+            </span>
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-xs font-medium text-muted-foreground">
+              Max rewards / month
+            </span>
+            <Input
+              type="number"
+              min={1}
+              max={1000}
+              class="min-h-9 w-24"
+              value={referralDraft.maxRewardsPerMonth}
+              oninput={(e) => referralNum('maxRewardsPerMonth', e)}
+            />
+            <span class="mt-1 block text-xs text-muted-foreground">
+              Per-referrer cap on rewards vesting per calendar month.
+            </span>
+          </label>
+        </div>
+        <div>
+          <Button
+            size="sm"
+            disabled={saveReferrals.isPending}
+            onclick={() => referralDraft && saveReferrals.mutate(referralDraft)}
+          >
+            Save referral settings
+          </Button>
+        </div>
+      {/if}
     </section>
 
     <!-- Processor credentials: DB-stored (an env var is the fallback). Secret

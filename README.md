@@ -217,7 +217,9 @@ Highlights:
   it back to verify before continuing) + a non-secret **support ID** + a member session. The
   per-(IP, day) cap is a **serializable rate-limit reservation** inside
   `freeTier.createFreeAccount` (the admin-tunable `freetier.create` policy, released on
-  failure; no durable IP record), so concurrent bursts can't over-issue. The proxy key is
+  failure; no durable IP record), so concurrent bursts can't over-issue. Sign-up also
+  mints the member's own **referral code** and, when the link carried one, binds the
+  account to its referrer (an invalid code never blocks sign-up). The proxy key is
   created separately by the signed-in member.
 - **Member flow**: the account number is the only credential (an optional **passkey** can be
   added as a convenience login; the number remains the sole recovery path).
@@ -226,6 +228,17 @@ Highlights:
   (`/api/v1/account/account-id/rotate`), **regenerate**, **switch backend**, or **switch
   connection mode** for their key, and **redeem a membership code**
   (`/api/v1/account/redeem-code`). There is no OIDC.
+- **Transparency surfaces**: a public **network-status page** (`/status` +
+  `GET /api/v1/status`) shows per-location online state and **coarse load bands**
+  (never raw user counts), an operator-curated **censorship-availability matrix**
+  (country × connection mode), and operator-published **incidents** — all edited in
+  the CMS (**Admin → Status**) with no redeploy. The member's Access Pass shows which
+  node its key is on and deep-links to that location's card.
+- **Referral program**: every member has a shareable `FSR-…` code; a sign-up through
+  it binds the new account. Rewards vest only on the referee's **first paid
+  membership** (any rail, gift codes included): the referee gets bonus days instantly,
+  the referrer's bonus vests after a holding period, capped monthly — configured from
+  Admin → Billing ([`docs/billing.md`](docs/billing.md)).
 - **Entitlements**: `tiers` drive limits; `lifecycle.setMembership` is the single seam that
   sets a user's tier + expiry. Driven by admin edits, **admin-minted redemption codes** a
   member redeems (the day-1 paid path), and the **billing webhook** (`POST /api/webhooks/billing`,
@@ -239,8 +252,10 @@ Highlights:
   reveal-once / revoke); backend servers (CRUD + test-connection, incl. against stored
   credentials); **Remnawave** (connection-mode placement pools, node-load stats, and the
   Xray no-log hardening card); **client apps** (the DB-driven recommended-client catalog);
-  **billing** (per-rail config + a readiness check); **storage** mirrors; **rate-limit
-  policies**; **membership codes**; an admin-configurable **theme** + site announcement
+  **billing** (per-rail config + a readiness check + the **referral program** knobs);
+  **storage** mirrors; **rate-limit
+  policies**; **membership codes**; the **status page** (incidents, censorship matrix,
+  load thresholds); an admin-configurable **theme** + site announcement
   banner; settings; and a filterable **audit log**. The Ansible role drives a subset over
   idempotent **by-slug / by-name** routes using an **automation token**.
 - **Subscription delivery**: the issuance saga (`convex/lib/issuance.ts`) creates the
@@ -266,7 +281,9 @@ Highlights:
 
 - **Public / member:** `GET /healthz` (liveness), `GET /readyz` (deep readiness),
   `GET /api/v1/config`, `GET /api/v1/e2ee/keys` (HPKE epoch keys + revocations),
+  `GET /api/v1/status` (public network status: locations, load bands, incidents),
   `POST /api/v1/account` (create), `GET /api/v1/account`, `GET /api/v1/account/usage`,
+  `GET /api/v1/account/referrals` (referral code + stats),
   `POST /api/v1/auth/account-login`, `POST /api/v1/auth/logout`, `GET /api/v1/me`,
   `POST /api/v1/account/{regenerate,switch-backend,switch-mode,refresh-membership,redeem-code}`,
   `POST /api/v1/account/connection-mode` (persist the picked mode),
@@ -279,7 +296,7 @@ Highlights:
   `POST /api/v1/billing/checkout` + `GET /api/v1/billing/order/*` (self-service
   membership + donations),
   `POST /api/v1/account/gift-codes/ack` + `GET /api/v1/account/codes` (gift purchases).
-- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{status,tiers,users,admins,tokens,audit,settings,rate-limits,membership-codes,backend-servers,billing,mirror-providers,theme,site,verification,clients,connection-modes,client-ip,remnawave/{node-stats,mode-placements,logging-status,harden-logging}}/*` — every route enforces a scope on token callers (several features share the broader `admin:settings:*` / `admin:users:*` scopes rather than one scope per feature); the Ansible role's idempotent `by-slug` / `by-name` upserts live under these.
+- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{status,tiers,users,admins,tokens,audit,settings,rate-limits,membership-codes,backend-servers,billing,mirror-providers,theme,site,verification,clients,connection-modes,client-ip,status/{page,incidents},referrals/config,remnawave/{node-stats,mode-placements,logging-status,harden-logging}}/*` — every route enforces a scope on token callers (several features share the broader `admin:settings:*` / `admin:users:*` scopes rather than one scope per feature); the Ansible role's idempotent `by-slug` / `by-name` upserts live under these.
 - **Plumbing:** `GET|POST /api/admin/auth/*` (WebAuthn passkey ceremonies + bootstrap),
   `POST /api/webhooks/billing` (generic HMAC inbound), and the processor webhooks
   `POST /api/webhooks/{nowpayments,btcpay,stripe,paypal}`.
