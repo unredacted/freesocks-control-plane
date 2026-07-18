@@ -30,8 +30,13 @@ export const CheckoutRequest = z.object({
 export type CheckoutRequest = z.infer<typeof CheckoutRequest>;
 
 export const CheckoutResponse = z.object({
-  /** The processor-hosted invoice/checkout page to full-page redirect to. */
-  redirectUrl: z.string().url(),
+  /** The processor-hosted invoice/checkout page to full-page redirect to.
+   *  https-only: it's built from admin-editable processor config, so the scheme
+   *  is pinned here rather than trusted (an http:/javascript: value fails parse). */
+  redirectUrl: z
+    .string()
+    .url()
+    .refine((u) => u.startsWith('https://'), { message: 'redirect URL must be https' }),
   /** Our opaque order ref; echoed back as ?order=<ref> on return for polling. */
   orderRef: z.string().min(1),
 });

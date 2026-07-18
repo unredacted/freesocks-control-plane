@@ -28,7 +28,7 @@
   let currency = $derived(billing?.currency ?? 'USD');
   let cryptoMin = $derived(billing?.cryptoMinMonths ?? 3);
 
-  const RAIL_ORDER: BillingProcessor[] = ['nowpayments', 'stripe', 'paypal'];
+  const RAIL_ORDER: BillingProcessor[] = ['nowpayments', 'btcpay', 'stripe', 'paypal'];
   let rails = $derived(RAIL_ORDER.filter((r) => billing?.rails?.[r]));
 
   let selectedProcessorRaw = $state<BillingProcessor | null>(null);

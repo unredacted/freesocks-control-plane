@@ -40,6 +40,17 @@ accidentally regress it).
   IP **transiently** and returns it `no-store`; it is never persisted or audited.
 - The country used to suggest a delivery profile is read transiently from
   `CF-IPCountry` (only when `CF_FRONTED=true`) and **never stored**.
+- **Device identification (HWID) is opt-in and panel-side.** When the admin
+  enables device-limit enforcement, a proxy app that sends `x-hwid` gets that
+  device id forwarded to the Remnawave panel, which keeps its own device rows;
+  members can see and revoke those devices from the account page. When
+  enforcement is off (the default), no HWID is requested or stored anywhere.
+- The FCP-fronted subscription route keeps a **short-lived per-user-agent
+  content cache** on the subscription row, so proxy apps with different app
+  signatures get the right config format without every app re-hitting the
+  panel. It stores the app's User-Agent string next to the cached body,
+  bounded to a few entries, and it is deleted with the subscription row — it
+  is never exported to the audit log or any other table.
 - **Public fleet telemetry is deliberately coarse.** The public `/api/v1/status`
   projection (the `/status` page) exposes per-location online bits and **load
   bands** (`quiet/busy/crowded`) only — never raw online-user counts, per-node

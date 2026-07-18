@@ -118,6 +118,10 @@ let worker: Worker | null = null;
 let unavailable = false;
 let seq = 0;
 const pending = new Map<number, (r: WorkerReply) => void>();
+// True once a session key was minted/confirmed in this page (or persisted token
+// exists — checked alongside). Lets signedHeaders skip the Worker entirely for
+// anonymous traffic.
+let _keyMayExist = false;
 
 interface WorkerReply {
   ok: boolean;
@@ -186,11 +190,14 @@ export async function ensureSessionKey(
   realm: Realm = 'member',
 ): Promise<{ pub: string; alg: string } | null> {
   const r = await call({ type: 'ensureKey', realm });
-  return r.ok && r.pubB64 && r.alg ? { pub: r.pubB64, alg: r.alg } : null;
+  const ok = r.ok && r.pubB64 && r.alg;
+  if (ok) _keyMayExist = true;
+  return ok ? { pub: r.pubB64!, alg: r.alg! } : null;
 }
 
 /** Delete the realm's session key + per-session token (logout); next login re-binds. */
 export async function clearSessionKey(realm: Realm = 'member'): Promise<void> {
+  _keyMayExist = false;
   setSessionToken(realm, null);
   await call({ type: 'clear', realm });
 }
@@ -286,19 +293,24 @@ export async function signedHeaders(
   respEph?: string,
 ): Promise<Record<string, string> | null> {
   if (!signEligible(path, method)) return null;
+  const realm = realmForPath(path);
+  // Anonymous fast path: with no session key anywhere (never logged in this
+  // browser, and no persisted per-session token), signing can only answer
+  // 'no-key' — skip the Worker boot + IndexedDB read entirely for public GETs.
+  if (!_keyMayExist && !readSessionToken(realm)) return null;
   const p = normalizePath(path);
   const qIdx = path.indexOf('?');
   const query = qIdx >= 0 ? path.slice(qIdx + 1) : undefined;
   const host = typeof location !== 'undefined' ? location.host : '';
   const r = await call({
     type: 'sign',
-    realm: realmForPath(path),
+    realm,
     method: method.toUpperCase(),
     path: p,
     query,
     host,
     respEph: respEph ?? '',
-    sessionToken: readSessionToken(realmForPath(path)),
+    sessionToken: readSessionToken(realm),
     body: wireBody ?? '',
     tsOffset: await serverTimeOffset(),
   });

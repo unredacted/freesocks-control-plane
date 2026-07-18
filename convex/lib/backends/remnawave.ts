@@ -545,9 +545,10 @@ const RealtimeNodesResponse = z
 
 /**
  * Per-placement (per-squad) load snapshot for node placement. Aggregates each
- * squad's node load from /api/nodes over the squad's accessible-nodes. N+1
- * accessible-nodes calls (one per squad) — fine at beta squad counts; the cron
- * runs it every 10 min best-effort.
+ * squad's node load from /api/nodes over the squad's accessible-nodes. The
+ * per-squad accessible-nodes calls fan out IN PARALLEL (was N+1 sequential 8s
+ * timeouts — slow at fleet squad counts); the cron runs it every 10 min
+ * best-effort.
  */
 export async function remnawaveGetNodeStats(cfg: RemnawaveConfig): Promise<NodeStats[]> {
   const squads = await call(cfg, {
@@ -575,48 +576,48 @@ export async function remnawaveGetNodeStats(cfg: RemnawaveConfig): Promise<NodeS
     /* realtime unavailable this cycle → usersOnline-only scoring */
   }
 
-  const out: NodeStats[] = [];
-  for (const squad of squads.internalSquads) {
-    let accessible: z.infer<typeof AccessibleNodesResponse>;
-    try {
-      accessible = await call(cfg, {
-        method: 'GET',
-        path: `/api/internal-squads/${encodeURIComponent(squad.uuid)}/accessible-nodes`,
-        schema: AccessibleNodesResponse,
-      });
-    } catch {
-      // A squad whose node membership can't be read is emitted as unroutable
-      // (nodeCount 0 → the picker deprioritizes/skips it), never dropped silently.
-      out.push({
+  const out = await Promise.all(
+    squads.internalSquads.map(async (squad): Promise<NodeStats> => {
+      let accessible: z.infer<typeof AccessibleNodesResponse>;
+      try {
+        accessible = await call(cfg, {
+          method: 'GET',
+          path: `/api/internal-squads/${encodeURIComponent(squad.uuid)}/accessible-nodes`,
+          schema: AccessibleNodesResponse,
+        });
+      } catch {
+        // A squad whose node membership can't be read is emitted as unroutable
+        // (nodeCount 0 → the picker deprioritizes/skips it), never dropped silently.
+        return {
+          placement: squad.uuid,
+          label: squad.name,
+          usersOnline: 0,
+          online: false,
+          nodeCount: 0,
+        };
+      }
+      let usersOnline = 0;
+      let realtime = 0;
+      let online = false;
+      let mapped = 0;
+      for (const { uuid } of accessible.accessibleNodes) {
+        const n = nodeById.get(uuid);
+        if (!n) continue; // node not in /api/nodes (deleted mid-cycle) — skip
+        mapped++;
+        usersOnline += n.usersOnline ?? 0;
+        realtime += realtimeById.get(uuid) ?? 0;
+        if (n.isConnected && !n.isDisabled) online = true;
+      }
+      return {
         placement: squad.uuid,
         label: squad.name,
-        usersOnline: 0,
-        online: false,
-        nodeCount: 0,
-      });
-      continue;
-    }
-    let usersOnline = 0;
-    let realtime = 0;
-    let online = false;
-    let mapped = 0;
-    for (const { uuid } of accessible.accessibleNodes) {
-      const n = nodeById.get(uuid);
-      if (!n) continue; // node not in /api/nodes (deleted mid-cycle) — skip
-      mapped++;
-      usersOnline += n.usersOnline ?? 0;
-      realtime += realtimeById.get(uuid) ?? 0;
-      if (n.isConnected && !n.isDisabled) online = true;
-    }
-    out.push({
-      placement: squad.uuid,
-      label: squad.name,
-      usersOnline,
-      ...(realtimeById.size > 0 ? { trafficBytesRealtime: realtime } : {}),
-      online,
-      nodeCount: mapped,
-    });
-  }
+        usersOnline,
+        ...(realtimeById.size > 0 ? { trafficBytesRealtime: realtime } : {}),
+        online,
+        nodeCount: mapped,
+      };
+    }),
+  );
   return out;
 }
 
