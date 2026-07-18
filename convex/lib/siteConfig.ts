@@ -36,6 +36,16 @@ export interface SiteConfig {
   /** Support email rendered as mailto: links (footer, FAQ, account pages);
    *  '' = unset (every support-link surface hides). */
   supportEmail: string;
+  /** Home hero title override (verbatim, all locales); '' = the built-in
+   *  translated title (i18n stays authoritative). */
+  heroTitle: string;
+  /** Home hero subtitle override (verbatim, all locales); '' = the built-in
+   *  translated subtitle (which interpolates the membership limits). */
+  heroSubtitle: string;
+  /** Rotating hero title variants (verbatim, all locales): 2+ animates the
+   *  home hero through them; 1 shows it statically; empty falls back to
+   *  heroTitle, then the built-in translated variant list. */
+  heroTitles: string[];
 }
 
 export const SITE_DEFAULTS: SiteConfig = {
@@ -50,10 +60,29 @@ export const SITE_DEFAULTS: SiteConfig = {
   socialMastodonUrl: '',
   socialBlueskyUrl: '',
   supportEmail: '',
+  heroTitle: '',
+  heroSubtitle: '',
+  heroTitles: [],
 };
 
 const MAX_BANNER = 280;
 const MAX_EMAIL = 254;
+const MAX_HERO_TITLE = 160;
+const MAX_HERO_SUBTITLE = 500;
+const MAX_HERO_TITLES = 8;
+
+/**
+ * Sanitize the rotating hero-title list: keep plain trimmed strings, drop
+ * empties and over-long entries, cap the list length. Always returns an array.
+ */
+export function sanitizeHeroTitles(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((s): s is string => typeof s === 'string')
+    .map((s) => s.trim().slice(0, MAX_HERO_TITLE))
+    .filter((s) => s.length > 0)
+    .slice(0, MAX_HERO_TITLES);
+}
 
 // Conservative charset (standard simple email shape). Deliberately excludes
 // every character with meaning inside a mailto: href (?, &, :, /, #, %, commas,
@@ -111,5 +140,8 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
     socialMastodonUrl: sanitizeHttpsUrl(await read('site.socialMastodonUrl')),
     socialBlueskyUrl: sanitizeHttpsUrl(await read('site.socialBlueskyUrl')),
     supportEmail: sanitizeEmail(await read('site.supportEmail')),
+    heroTitle: sanitizeBannerText(await read('site.heroTitle'), MAX_HERO_TITLE),
+    heroSubtitle: sanitizeBannerText(await read('site.heroSubtitle'), MAX_HERO_SUBTITLE),
+    heroTitles: sanitizeHeroTitles(await read('site.heroTitles')),
   };
 }

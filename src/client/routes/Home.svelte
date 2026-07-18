@@ -20,6 +20,7 @@
   import TierComparison from '../components/TierComparison.svelte';
   import NetworkStatus from '../components/NetworkStatus.svelte';
   import CountUp from '../components/CountUp.svelte';
+  import CobeGlobe from '../components/CobeGlobe.svelte';
   import { meQuery, configQuery } from '../lib/queries';
   import { membershipTier, tierLimits, deviceLimitsShown, type TierLimits } from '../lib/tiers';
   import { baselinePerMonth } from '../lib/billing';
@@ -39,6 +40,8 @@
   import CodeXml from '@lucide/svelte/icons/code-xml';
   import DitherChart from '../components/DitherChart.svelte';
   import { impactChartSeries } from '../lib/impact';
+  import { onMount } from 'svelte';
+  import { fly, fade } from 'svelte/transition';
 
   const me = meQuery();
   const config = configQuery();
@@ -52,6 +55,31 @@
   function goUpgrade() {
     router.navigate(me.data?.authenticated ? '/account' : '/get-account');
   }
+
+  // Animated hero title: the operator's DB list wins (verbatim, like heroTitle);
+  // a single heroTitle is a static override; else the built-in translated set.
+  // 2+ variants rotate on a 4s cadence (paused for reduced-motion users).
+  const heroVariants = $derived.by(() => {
+    const fromDb = (site?.heroTitles ?? []).map((s) => s.trim()).filter(Boolean);
+    if (fromDb.length > 0) return fromDb;
+    if (site?.heroTitle?.trim()) return [site.heroTitle.trim()];
+    return [
+      t('home.hero.variants.freedom'),
+      t('home.hero.variants.dissidents'),
+      t('home.hero.variants.privacy'),
+      t('home.hero.variants.world'),
+    ];
+  });
+  let heroIdx = $state(0);
+  let reducedMotion = $state(false);
+  onMount(() => {
+    reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reducedMotion) return;
+    const id = window.setInterval(() => {
+      if (!document.hidden) heroIdx = heroIdx + 1;
+    }, 4000);
+    return () => window.clearInterval(id);
+  });
 
   // Donation impact (GB + user counts only - no dollar figures on the public
   // page). The in-app donate controls live on the account Membership tab; an
@@ -194,6 +222,7 @@
     impact: 'home.sections.impact',
     faq: 'home.sections.faq',
     about: 'home.sections.about',
+    globe: 'home.sections.globe',
   } as const satisfies Record<string, MessageKey>;
   type SectionId = keyof typeof SECTION_LABELS;
 </script>
@@ -251,11 +280,32 @@
     <div class="grid gap-10 md:grid-cols-[1.2fr_1fr] md:gap-16 items-center">
       <div class="space-y-6 md:space-y-8">
         <h1 class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05]">
-          {t('home.hero.title')}
+          {#if heroVariants.length > 1 && !reducedMotion}
+            {@const shown = heroVariants[heroIdx % heroVariants.length]!}
+            <!-- Zero layout shift: invisible copies of EVERY variant stack in
+                 one grid cell, so the tallest one pins the h1's box constant
+                 while only the visible text transitions on top of it. -->
+            <span class="grid">
+              {#each heroVariants as v (v)}
+                <span class="invisible [grid-area:1/1]" aria-hidden="true">{v}</span>
+              {/each}
+              {#key shown}
+                <span
+                  class="[grid-area:1/1] self-start"
+                  in:fly={{ y: '0.35em', duration: 320 }}
+                  out:fade={{ duration: 120 }}
+                >
+                  {shown}
+                </span>
+              {/key}
+            </span>
+          {:else}
+            {heroVariants[heroIdx % heroVariants.length]}
+          {/if}
         </h1>
 
         <p class="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
-          {t('home.hero.subtitle', { limits: membershipLimits })}
+          {site?.heroSubtitle?.trim() || t('home.hero.subtitle', { limits: membershipLimits })}
         </p>
 
         <!-- Social-impact callout: what makes this VPN different - donations made
@@ -464,6 +514,19 @@
     <div class="border-t border-border/60 pt-5">
       <NetworkStatus />
     </div>
+  </section>
+
+  <!-- THE MAP: censored countries speaking out. Illustrative, not live data —
+       labels on censored regions carrying the voices. -->
+  <section class="grid gap-10 md:grid-cols-[1fr_auto] items-center">
+    <div class="space-y-4 max-w-xl">
+      {@render eyebrow('globe')}
+      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+        {t('home.globe.title')}
+      </h2>
+      <p class="text-muted-foreground leading-relaxed">{t('home.globe.body')}</p>
+    </div>
+    <CobeGlobe class="mx-auto md:mx-0" size={560} />
   </section>
 
   <!-- FEATURES -->

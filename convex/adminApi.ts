@@ -33,7 +33,7 @@ import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
 import { connectionModeWrites, resolveConnectionModes } from './lib/connectionModes';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
-import { sanitizeBannerText, sanitizeEmail } from './lib/siteConfig';
+import { sanitizeBannerText, sanitizeEmail, sanitizeHeroTitles } from './lib/siteConfig';
 import { normalizeSupportId } from './lib/supportId';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
@@ -1815,6 +1815,13 @@ export const setSiteConfig = internalMutation({
     socialMastodonUrl: v.string(),
     socialBlueskyUrl: v.string(),
     supportEmail: v.string(),
+    // Optional (older callers don't send them): the home hero title/subtitle
+    // overrides; absent = no change to the stored value.
+    heroTitle: v.optional(v.string()),
+    heroSubtitle: v.optional(v.string()),
+    // Optional: the rotating hero title variants (empty array = back to the
+    // static heroTitle / built-in translated title).
+    heroTitles: v.optional(v.array(v.string())),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (
@@ -1831,6 +1838,9 @@ export const setSiteConfig = internalMutation({
       socialMastodonUrl,
       socialBlueskyUrl,
       supportEmail,
+      heroTitle,
+      heroSubtitle,
+      heroTitles,
       actorAdminId,
     },
   ) => {
@@ -1846,6 +1856,9 @@ export const setSiteConfig = internalMutation({
       socialMastodonUrl: sanitizeHttpsUrl(socialMastodonUrl),
       socialBlueskyUrl: sanitizeHttpsUrl(socialBlueskyUrl),
       supportEmail: sanitizeEmail(supportEmail),
+      heroTitle: sanitizeBannerText(heroTitle ?? '', 160),
+      heroSubtitle: sanitizeBannerText(heroSubtitle ?? '', 500),
+      heroTitles: sanitizeHeroTitles(heroTitles ?? []),
     };
     await upsertSetting(
       ctx,
@@ -1878,6 +1891,21 @@ export const setSiteConfig = internalMutation({
       actorAdminId,
     );
     await upsertSetting(ctx, 'site.supportEmail', JSON.stringify(clean.supportEmail), actorAdminId);
+    // Hero overrides are write-only-when-sent (absent preserves the stored value).
+    if (heroTitle !== undefined) {
+      await upsertSetting(ctx, 'site.heroTitle', JSON.stringify(clean.heroTitle), actorAdminId);
+    }
+    if (heroSubtitle !== undefined) {
+      await upsertSetting(
+        ctx,
+        'site.heroSubtitle',
+        JSON.stringify(clean.heroSubtitle),
+        actorAdminId,
+      );
+    }
+    if (heroTitles !== undefined) {
+      await upsertSetting(ctx, 'site.heroTitles', JSON.stringify(clean.heroTitles), actorAdminId);
+    }
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,

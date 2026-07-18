@@ -138,6 +138,9 @@
     socialMastodonUrl: string;
     socialBlueskyUrl: string;
     supportEmail: string;
+    heroTitle: string;
+    heroSubtitle: string;
+    heroTitles: string;
   }>({
     bannerEnabled: false,
     bannerText: '',
@@ -150,6 +153,9 @@
     socialMastodonUrl: '',
     socialBlueskyUrl: '',
     supportEmail: '',
+    heroTitle: '',
+    heroSubtitle: '',
+    heroTitles: '',
   });
   let sInit = $state(false);
   $effect(() => {
@@ -167,6 +173,9 @@
         socialMastodonUrl: s.socialMastodonUrl,
         socialBlueskyUrl: s.socialBlueskyUrl,
         supportEmail: s.supportEmail,
+        heroTitle: s.heroTitle,
+        heroSubtitle: s.heroSubtitle,
+        heroTitles: (s.heroTitles ?? []).join('\n'),
       };
       sInit = true;
     }
@@ -185,11 +194,18 @@
         socialMastodonUrl: z.string(),
         socialBlueskyUrl: z.string(),
         supportEmail: z.string(),
+        heroTitle: z.string(),
+        heroSubtitle: z.string(),
+        heroTitles: z.array(z.string()),
       });
-      return apiClient.patch('/api/v1/admin/site', sDraft, Resp);
+      return apiClient.patch(
+        '/api/v1/admin/site',
+        { ...sDraft, heroTitles: sDraft.heroTitles.split('\n') },
+        Resp,
+      );
     },
     onSuccess: (updated) => {
-      sDraft = { ...updated };
+      sDraft = { ...updated, heroTitles: updated.heroTitles.join('\n') };
       void qc.invalidateQueries({ queryKey: queryKeys.config });
       toast.success('Site settings saved');
     },
@@ -765,6 +781,53 @@
             <p class="text-xs text-muted-foreground mt-1">
               Shown as a mailto support link in the footer, the home-page FAQ, and the account
               pages. Blank hides all support links.
+            </p>
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-hero-title">
+              Home hero title override
+            </label>
+            <Input
+              id="site-hero-title"
+              placeholder="A VPN for people in censored countries & around the world"
+              value={sDraft.heroTitle}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, heroTitle: (e.target as HTMLInputElement).value })}
+            />
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-hero-subtitle">
+              Home hero subtitle override
+            </label>
+            <Input
+              id="site-hero-subtitle"
+              placeholder="Leave blank to use the built-in translated subtitle"
+              value={sDraft.heroSubtitle}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, heroSubtitle: (e.target as HTMLInputElement).value })}
+            />
+            <p class="text-xs text-muted-foreground mt-1">
+              Both show as-is in every language (not translated), and blank falls back to the
+              built-in translated copy. The built-in subtitle also interpolates the membership
+              limits — a custom subtitle does not.
+            </p>
+          </div>
+          <div>
+            <label class="text-xs text-muted-foreground mb-1 block" for="site-hero-titles">
+              Rotating hero titles (one per line)
+            </label>
+            <textarea
+              id="site-hero-titles"
+              class="flex min-h-24 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              placeholder="A VPN for people in censored countries &amp; around the world&#10;A VPN for people who seek privacy&#10;A VPN for journalists&#10;A VPN for activists"
+              value={sDraft.heroTitles}
+              oninput={(e) =>
+                (sDraft = { ...sDraft, heroTitles: (e.target as HTMLTextAreaElement).value })}
+            ></textarea>
+            <p class="text-xs text-muted-foreground mt-1">
+              With 2+ lines, the home hero animates through them (every 4s); one line shows it
+              statically. Empty falls back to hero title override, then the built-in translated
+              rotation. Shown as-is in every language (not translated); max 8 lines.
             </p>
           </div>
           <div class="flex justify-end">

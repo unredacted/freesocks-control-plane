@@ -221,6 +221,14 @@ export const PublicConfig = z.object({
       socialBlueskyUrl: z.string().optional().default(''),
       /** Support email for mailto: links; '' = unset (support links hidden). */
       supportEmail: z.string().optional().default(''),
+      /** Home hero title/subtitle overrides (verbatim, all locales); '' = the
+       *  built-in translated copy (i18n stays authoritative). */
+      heroTitle: z.string().optional().default(''),
+      heroSubtitle: z.string().optional().default(''),
+      /** Rotating hero title variants (verbatim, all locales): 2+ animates the
+       *  home hero; 1 shows it statically; [] falls back to heroTitle, then the
+       *  built-in translated variant list. */
+      heroTitles: z.array(z.string()).optional().default([]),
     })
     .optional(),
   /** Member-facing connection-mode catalog (the transport chooser): id +

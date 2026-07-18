@@ -2336,6 +2336,9 @@ http.route({
       socialMastodonUrl?: string;
       socialBlueskyUrl?: string;
       supportEmail?: string;
+      heroTitle?: string;
+      heroSubtitle?: string;
+      heroTitles?: string[];
     }>(req);
     try {
       return json(
@@ -2352,6 +2355,9 @@ http.route({
             typeof body.socialMastodonUrl === 'string' ? body.socialMastodonUrl : '',
           socialBlueskyUrl: typeof body.socialBlueskyUrl === 'string' ? body.socialBlueskyUrl : '',
           supportEmail: typeof body.supportEmail === 'string' ? body.supportEmail : '',
+          heroTitle: typeof body.heroTitle === 'string' ? body.heroTitle : undefined,
+          heroSubtitle: typeof body.heroSubtitle === 'string' ? body.heroSubtitle : undefined,
+          heroTitles: Array.isArray(body.heroTitles) ? body.heroTitles : undefined,
           actorAdminId: admin.adminUserId,
         }),
       );
