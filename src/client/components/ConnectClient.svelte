@@ -128,7 +128,7 @@
   }
 </script>
 
-<section>
+<section class="rounded-xl border border-border bg-card p-5 sm:p-6">
   <h2 class="flex items-center gap-2 text-lg font-display font-semibold">
     <Smartphone class="size-4 text-muted-foreground" aria-hidden="true" />
     {t('setup.title')}

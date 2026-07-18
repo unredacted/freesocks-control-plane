@@ -146,6 +146,7 @@
   "support": {
     "label": "Support ID",
     "hint": "Share this if you contact us. It is NOT your sign-in number and grants no access.",
+    "copyAria": "Copy your support ID",
     "emailUs": "Email us:",
     "getAccountLine": "Questions or problems? Email us at"
   },
@@ -227,6 +228,7 @@
     "tab": {
       "connection": "Connection",
       "membership": "Membership",
+      "gifts": "Gifts & referrals",
       "security": "Security"
     },
     "refreshing": "Refreshing…",
@@ -255,6 +257,10 @@
       "membership": {
         "title": "Membership",
         "desc": "Your plan, and how to upgrade or extend it."
+      },
+      "gifts": {
+        "title": "Gifts & referrals",
+        "desc": "Redeem a code, buy codes to share, and invite people you trust."
       },
       "codes": {
         "title": "Codes & gifts",
@@ -798,7 +804,111 @@
       "membership": "Membership",
       "impact": "Impact",
       "faq": "FAQ",
-      "about": "About"
+      "about": "About",
+      "globe": "The map"
+    },
+    "globe": {
+      "title": "Voices from behind the firewall",
+      "body": "Every day, people behind national firewalls use FreeSocks to read, share, and publish - and to be heard.",
+      "aria": "A rotating globe: labels with voices from censored countries",
+      "voices": {
+        "ir": {
+          "place": "Tehran, Iran",
+          "l1": "They filter the internet; they can't filter the truth.",
+          "l2": "My report on the protests reached the world.",
+          "l3": "My students read what the state calls lies."
+        },
+        "cn": {
+          "place": "Beijing, China",
+          "l1": "History should not be a banned word.",
+          "l2": "I shared what happened in my city - and it stayed up.",
+          "l3": "I archived the deleted posts before they vanished."
+        },
+        "ru": {
+          "place": "Moscow, Russia",
+          "l1": "The truth should not need a permit.",
+          "l2": "Independent journalism is not a crime.",
+          "l3": "A blocked newspaper still gets read."
+        },
+        "tm": {
+          "place": "Ashgabat, Turkmenistan",
+          "l1": "A whole country, almost offline - and still heard.",
+          "l2": "They control the media, not my voice.",
+          "l3": "Silence is the law here; we whisper anyway."
+        },
+        "cu": {
+          "place": "Havana, Cuba",
+          "l1": "My voice travels farther than I ever will.",
+          "l2": "We document what the state denies.",
+          "l3": "Independent voices, hand to hand, screen to screen."
+        },
+        "by": {
+          "place": "Minsk, Belarus",
+          "l1": "When they shut us down, we still spoke.",
+          "l2": "Free elections are not extremism.",
+          "l3": "They banned our flag; not our voice."
+        },
+        "mm": {
+          "place": "Yangon, Myanmar",
+          "l1": "The blackout did not silence us.",
+          "l2": "Evidence of the crackdown got out.",
+          "l3": "When the towers fell silent, the story did not."
+        },
+        "ve": {
+          "place": "Caracas, Venezuela",
+          "l1": "We count the votes they won't.",
+          "l2": "Hunger is not a state secret.",
+          "l3": "The queue for food is long; the truth is longer."
+        },
+        "vn": {
+          "place": "Hanoi, Vietnam",
+          "l1": "Writing about corruption is not a crime.",
+          "l2": "My blog outlived the block.",
+          "l3": "One article they deleted reached thousands."
+        },
+        "pk": {
+          "place": "Karachi, Pakistan",
+          "l1": "During the shutdown, witnesses still spoke.",
+          "l2": "Silencing journalists won't hide the story.",
+          "l3": "The channel went dark; the reporting did not."
+        },
+        "eg": {
+          "place": "Cairo, Egypt",
+          "l1": "They jailed the bloggers, not the words.",
+          "l2": "The protest was documented anyway.",
+          "l3": "From a small screen, a big story."
+        },
+        "sa": {
+          "place": "Riyadh, Saudi Arabia",
+          "l1": "Speaking is not a crime.",
+          "l2": "Her voice reached beyond the wall.",
+          "l3": "She asked a question the kingdom bans."
+        },
+        "et": {
+          "place": "Addis Ababa, Ethiopia",
+          "l1": "The shutdown hid nothing.",
+          "l2": "Witnesses still found a way out.",
+          "l3": "The dead were counted, despite the blackout."
+        },
+        "tr": {
+          "place": "Istanbul, Turkey",
+          "l1": "Blocking the site won't block the story.",
+          "l2": "Journalism continues, court order or not.",
+          "l3": "An arrested anchor cannot sign off the news."
+        },
+        "az": {
+          "place": "Baku, Azerbaijan",
+          "l1": "They call reporting extremism.",
+          "l2": "The investigation was published anyway.",
+          "l3": "They froze our accounts, not our work."
+        },
+        "uz": {
+          "place": "Tashkent, Uzbekistan",
+          "l1": "A closed internet is not a quiet one.",
+          "l2": "The world still heard what happened here.",
+          "l3": "The squares are watched; the words still move."
+        }
+      }
     },
     "impact": {
       "title": "Donations at work",
@@ -807,7 +917,12 @@
       "chartAria": "Bandwidth added to every free user by donations, month by month"
     },
     "hero": {
-      "title": "A VPN for people in censored countries & around the world",
+      "variants": {
+        "freedom": "A VPN for Internet Freedom",
+        "dissidents": "A VPN for dissidents",
+        "privacy": "A VPN for privacy",
+        "world": "A VPN for the world"
+      },
       "subtitle": "FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}.",
       "impactNote": "Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month.",
       "impactLink": "See the impact"

@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**0 of 693 strings are missing** (the app currently shows English for
+**0 of 768 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -143,6 +143,7 @@ review.
 | --- | --- | --- |
 | `support.label` | Support ID | ID для поддержки |
 | `support.hint` | Share this if you contact us. It is NOT your sign-in number and grants no access. | Сообщите его, если обращаетесь к нам. Это не номер для входа и не даёт доступа. |
+| `support.copyAria` | Copy your support ID | Скопировать ID для поддержки |
 | `support.emailUs` | Email us: | Напишите нам: |
 | `support.getAccountLine` | Questions or problems? Email us at | Вопросы или проблемы? Напишите нам на |
 
@@ -230,6 +231,7 @@ review.
 | `account.membershipNudge.cta` | View membership | Открыть подписку |
 | `account.tab.connection` | Connection | Подключение |
 | `account.tab.membership` | Membership | Членство |
+| `account.tab.gifts` | Gifts & referrals | Подарки и приглашения |
 | `account.tab.security` | Security | Безопасность |
 | `account.refreshing` | Refreshing… | Обновление… |
 | `account.regenSuccessTitle` | New subscription URL generated | Создана новая ссылка подписки |
@@ -253,6 +255,8 @@ review.
 | `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | Ваш прокси-ключ, справка по настройке и подключенные устройства. |
 | `account.section.membership.title` | Membership | Членство |
 | `account.section.membership.desc` | Your plan, and how to upgrade or extend it. | Ваш план и способы его модернизации или расширения. |
+| `account.section.gifts.title` | Gifts & referrals | Подарки и приглашения |
+| `account.section.gifts.desc` | Redeem a code, buy codes to share, and invite people you trust. | Погасите код, купите коды в подарок и пригласите тех, кому доверяете. |
 | `account.section.codes.title` | Codes & gifts | Коды и подарки |
 | `account.section.codes.desc` | Redeem a membership code, or buy codes to share with others. | Активируйте промокод или купите коды, чтобы поделиться ими с другими. |
 | `account.section.security.title` | Account & security | Учетная запись и безопасность |
@@ -736,11 +740,82 @@ review.
 | `home.sections.impact` | Impact | Вклад |
 | `home.sections.faq` | FAQ | ЧаВо |
 | `home.sections.about` | About | О нас |
+| `home.sections.globe` | The map | Карта |
+| `home.globe.title` | Voices from behind the firewall | Голоса из-за файрвола |
+| `home.globe.body` | Every day, people behind national firewalls use FreeSocks to read, share, and publish - and to be heard. | Каждый день люди за государственными файрволами читают, делятся и публикуют через FreeSocks — и их слышат. |
+| `home.globe.aria` | A rotating globe: labels with voices from censored countries | Вращающийся глобус: подписи с голосами из стран с цензурой |
+| `home.globe.voices.ir.place` | Tehran, Iran | Тегеран, Иран |
+| `home.globe.voices.ir.l1` | They filter the internet; they can't filter the truth. | Они фильтруют интернет, но правду не отфильтруешь. |
+| `home.globe.voices.ir.l2` | My report on the protests reached the world. | Мой репортаж о протестах увидел весь мир. |
+| `home.globe.voices.ir.l3` | My students read what the state calls lies. | Мои студенты читают то, что государство называет ложью. |
+| `home.globe.voices.cn.place` | Beijing, China | Пекин, Китай |
+| `home.globe.voices.cn.l1` | History should not be a banned word. | История не должна быть запрещённым словом. |
+| `home.globe.voices.cn.l2` | I shared what happened in my city - and it stayed up. | Я рассказал, что случилось в моём городе, — и это осталось в сети. |
+| `home.globe.voices.cn.l3` | I archived the deleted posts before they vanished. | Я заархивировал удалённые посты до того, как они исчезли. |
+| `home.globe.voices.ru.place` | Moscow, Russia | Москва, Россия |
+| `home.globe.voices.ru.l1` | The truth should not need a permit. | Правда не должна требовать разрешения. |
+| `home.globe.voices.ru.l2` | Independent journalism is not a crime. | Независимая журналистика — не преступление. |
+| `home.globe.voices.ru.l3` | A blocked newspaper still gets read. | Заблокированную газету всё равно читают. |
+| `home.globe.voices.tm.place` | Ashgabat, Turkmenistan | Ашхабад, Туркменистан |
+| `home.globe.voices.tm.l1` | A whole country, almost offline - and still heard. | Целая страна почти офлайн — и всё равно услышанная. |
+| `home.globe.voices.tm.l2` | They control the media, not my voice. | Они контролируют СМИ, но не мой голос. |
+| `home.globe.voices.tm.l3` | Silence is the law here; we whisper anyway. | Молчание здесь — закон; но мы всё равно шепчемся. |
+| `home.globe.voices.cu.place` | Havana, Cuba | Гавана, Куба |
+| `home.globe.voices.cu.l1` | My voice travels farther than I ever will. | Мой голос улетает дальше, чем я когда-либо смогу. |
+| `home.globe.voices.cu.l2` | We document what the state denies. | Мы документируем то, что государство отрицает. |
+| `home.globe.voices.cu.l3` | Independent voices, hand to hand, screen to screen. | Независимые голоса — из рук в руки, с экрана на экран. |
+| `home.globe.voices.by.place` | Minsk, Belarus | Минск, Беларусь |
+| `home.globe.voices.by.l1` | When they shut us down, we still spoke. | Когда нас отключали, мы всё равно говорили. |
+| `home.globe.voices.by.l2` | Free elections are not extremism. | Свободные выборы — это не экстремизм. |
+| `home.globe.voices.by.l3` | They banned our flag; not our voice. | Они запретили наш флаг, но не наш голос. |
+| `home.globe.voices.mm.place` | Yangon, Myanmar | Янгон, Мьянма |
+| `home.globe.voices.mm.l1` | The blackout did not silence us. | Блэкаут не заставил нас замолчать. |
+| `home.globe.voices.mm.l2` | Evidence of the crackdown got out. | Доказательства репрессий вышли наружу. |
+| `home.globe.voices.mm.l3` | When the towers fell silent, the story did not. | Когда вышки замолчали, история не замолчала. |
+| `home.globe.voices.ve.place` | Caracas, Venezuela | Каракас, Венесуэла |
+| `home.globe.voices.ve.l1` | We count the votes they won't. | Мы считаем голоса, которые они не считают. |
+| `home.globe.voices.ve.l2` | Hunger is not a state secret. | Голод — не государственная тайна. |
+| `home.globe.voices.ve.l3` | The queue for food is long; the truth is longer. | Очередь за хлебом длинная; правда длиннее. |
+| `home.globe.voices.vn.place` | Hanoi, Vietnam | Ханой, Вьетнам |
+| `home.globe.voices.vn.l1` | Writing about corruption is not a crime. | Писать о коррупции — не преступление. |
+| `home.globe.voices.vn.l2` | My blog outlived the block. | Мой блог пережил блокировку. |
+| `home.globe.voices.vn.l3` | One article they deleted reached thousands. | Одна удалённая статья дошла до тысяч. |
+| `home.globe.voices.pk.place` | Karachi, Pakistan | Карачи, Пакистан |
+| `home.globe.voices.pk.l1` | During the shutdown, witnesses still spoke. | Во время отключения свидетели продолжали говорить. |
+| `home.globe.voices.pk.l2` | Silencing journalists won't hide the story. | Заткнув журналистов, историю не скроешь. |
+| `home.globe.voices.pk.l3` | The channel went dark; the reporting did not. | Канал погас; журналистика — нет. |
+| `home.globe.voices.eg.place` | Cairo, Egypt | Каир, Египет |
+| `home.globe.voices.eg.l1` | They jailed the bloggers, not the words. | Блогеров посадили, но не слова. |
+| `home.globe.voices.eg.l2` | The protest was documented anyway. | Протесты всё равно задокументировали. |
+| `home.globe.voices.eg.l3` | From a small screen, a big story. | С маленького экрана — большая история. |
+| `home.globe.voices.sa.place` | Riyadh, Saudi Arabia | Эр-Рияд, Саудовская Аравия |
+| `home.globe.voices.sa.l1` | Speaking is not a crime. | Говорить — не преступление. |
+| `home.globe.voices.sa.l2` | Her voice reached beyond the wall. | Её голос прорвался за стену. |
+| `home.globe.voices.sa.l3` | She asked a question the kingdom bans. | Она задала вопрос, запрещённый в королевстве. |
+| `home.globe.voices.et.place` | Addis Ababa, Ethiopia | Аддис-Абеба, Эфиопия |
+| `home.globe.voices.et.l1` | The shutdown hid nothing. | Отключение ничего не скрыло. |
+| `home.globe.voices.et.l2` | Witnesses still found a way out. | Свидетели всё равно нашли выход. |
+| `home.globe.voices.et.l3` | The dead were counted, despite the blackout. | Погибших посчитали, несмотря на блэкаут. |
+| `home.globe.voices.tr.place` | Istanbul, Turkey | Стамбул, Турция |
+| `home.globe.voices.tr.l1` | Blocking the site won't block the story. | Заблокировать сайт — не заблокировать историю. |
+| `home.globe.voices.tr.l2` | Journalism continues, court order or not. | Журналистика продолжается, с решением суда или без. |
+| `home.globe.voices.tr.l3` | An arrested anchor cannot sign off the news. | Арестованный ведущий не может закончить выпуск. |
+| `home.globe.voices.az.place` | Baku, Azerbaijan | Баку, Азербайджан |
+| `home.globe.voices.az.l1` | They call reporting extremism. | Они называют репортажи экстремизмом. |
+| `home.globe.voices.az.l2` | The investigation was published anyway. | Расследование всё равно вышло. |
+| `home.globe.voices.az.l3` | They froze our accounts, not our work. | Они заморозили наши счета, но не нашу работу. |
+| `home.globe.voices.uz.place` | Tashkent, Uzbekistan | Ташкент, Узбекистан |
+| `home.globe.voices.uz.l1` | A closed internet is not a quiet one. | Закрытый интернет — не тихий интернет. |
+| `home.globe.voices.uz.l2` | The world still heard what happened here. | Мир всё равно услышал, что здесь произошло. |
+| `home.globe.voices.uz.l3` | The squares are watched; the words still move. | Площади под наблюдением; слова всё равно движутся. |
 | `home.impact.title` | Donations at work | Пожертвования в деле |
 | `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | Каждое пожертвование через FreeSocks увеличивает месячный трафик каждого бесплатного аккаунта в том месяце. Вот что уже добавили доноры - и вы тоже можете внести вклад. |
 | `home.impact.cta` | Make a donation | Сделать пожертвование |
 | `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | Трафик, добавленный каждому бесплатному пользователю за счёт пожертвований, по месяцам |
-| `home.hero.title` | A VPN for people in censored countries & around the world | VPN для людей в странах с цензурой и по всему миру |
+| `home.hero.variants.freedom` | A VPN for Internet Freedom | VPN для свободного интернета |
+| `home.hero.variants.dissidents` | A VPN for dissidents | VPN для инакомыслящих |
+| `home.hero.variants.privacy` | A VPN for privacy | VPN для приватности |
+| `home.hero.variants.world` | A VPN for the world | VPN для всего мира |
 | `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | FreeSocks создан для людей, чей интернет подвергается цензуре, а в остальных местах работает как VPN, уважающий приватность. Регистрация - одна быстрая проверка на человека. Мы никогда не просим почту или пароль. Ваша ссылка подписки работает в большинстве современных VPN-приложений, а членство даёт вам {limits}. |
 | `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | Пожертвования через FreeSocks напрямую поддерживают бесплатных пользователей: каждое пожертвование покупает реальный трафик для людей в странах с цензурой уже в том же месяце. |
 | `home.hero.impactLink` | See the impact | Посмотреть вклад |

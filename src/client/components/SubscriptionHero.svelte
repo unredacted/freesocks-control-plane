@@ -241,55 +241,60 @@
         <span class="font-medium text-foreground">{t('hero.tierLine', { tier: tierName })}</span>
         <span class="text-muted-foreground/60">·</span>
         <span>{t('hero.viaLine', { backend: resolvedBackendLabel })}</span>
-        {#if nodeLocationLabel}
-          <span class="text-muted-foreground/60">·</span>
-          <span class="inline-flex items-center gap-1">
-            <MapPin class="size-3.5" aria-hidden="true" />
-            {nodeLocationLabel}{#if nodeLabel}&nbsp;· {nodeLabel}{/if}
-          </span>
-        {/if}
-        {#if nodeLoad && nodeLoad !== 'unknown'}
-          <span class="text-muted-foreground/60">·</span>
-          <span>
-            {nodeLoad === 'quiet'
-              ? t('status.loadQuiet')
-              : nodeLoad === 'busy'
-                ? t('status.loadBusy')
-                : t('status.loadCrowded')}
-          </span>
-        {/if}
-        {#if nodeOnline !== undefined}
-          <span class="text-muted-foreground/60">·</span>
-          <span
-            class="inline-flex items-center gap-1.5"
-            title={nodeOnline === true ? t('hero.nodeOnlineHint') : undefined}
-            role="status"
-          >
+      </p>
+      <!-- Node status, ONE compact line: the live dot (tooltip carries the node
+           label + load band + state) + location + the status deep link. Offline
+           is the only state spelled out (it's the actionable one). -->
+      {#if nodeLocationLabel || nodeOnline !== undefined || nodeLocationCode}
+        {@const nodeStateText =
+          nodeOnline === true
+            ? t('hero.nodeOnline')
+            : nodeOnline === false
+              ? t('hero.nodeOffline')
+              : t('hero.nodeUnknown')}
+        {@const loadText =
+          nodeLoad === 'quiet'
+            ? t('status.loadQuiet')
+            : nodeLoad === 'busy'
+              ? t('status.loadBusy')
+              : nodeLoad === 'crowded'
+                ? t('status.loadCrowded')
+                : null}
+        {@const dotLabel = [nodeLabel, nodeStateText, loadText].filter(Boolean).join(' · ')}
+        <p class="text-sm text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
+          {#if nodeOnline !== undefined}
             <span
-              class="inline-flex size-2 rounded-full {nodeOnline === true
+              class="inline-flex size-2 rounded-full shrink-0 {nodeOnline === true
                 ? 'bg-emerald-500'
                 : nodeOnline === false
                   ? 'bg-destructive'
                   : 'bg-muted-foreground/50'}"
-              aria-hidden="true"
+              role="status"
+              title={dotLabel}
+              aria-label={dotLabel}
             ></span>
-            {nodeOnline === true
-              ? t('hero.nodeOnline')
-              : nodeOnline === false
-                ? t('hero.nodeOffline')
-                : t('hero.nodeUnknown')}
-          </span>
-        {/if}
-        {#if nodeLocationCode}
-          <span class="text-muted-foreground/60">·</span>
-          <Link
-            href="/status#loc-{nodeLocationCode}"
-            class="inline-flex items-center gap-1 underline underline-offset-2 hover:text-foreground"
-          >
-            {t('hero.nodeStatusLink')} →
-          </Link>
-        {/if}
-      </p>
+          {/if}
+          {#if nodeOnline === false}
+            <span class="text-destructive">{t('hero.nodeOffline')}</span>
+            <span class="text-muted-foreground/60">·</span>
+          {/if}
+          {#if nodeLocationLabel}
+            <span class="inline-flex items-center gap-1">
+              <MapPin class="size-3.5" aria-hidden="true" />
+              {nodeLocationLabel}
+            </span>
+          {/if}
+          {#if nodeLocationCode}
+            <span class="text-muted-foreground/60">·</span>
+            <Link
+              href="/status#loc-{nodeLocationCode}"
+              class="inline-flex items-center gap-1 underline underline-offset-2 hover:text-foreground"
+            >
+              {t('hero.nodeStatusLink')} →
+            </Link>
+          {/if}
+        </p>
+      {/if}
     </div>
 
     {#if !hideUrl}

@@ -42,7 +42,9 @@
   import Gift from '@lucide/svelte/icons/gift';
   import Share2 from '@lucide/svelte/icons/share-2';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
-  import { subscriptionDisplayUrl } from '../lib/utils';
+  import Copy from '@lucide/svelte/icons/copy';
+  import Check from '@lucide/svelte/icons/check';
+  import { copyText, subscriptionDisplayUrl } from '../lib/utils';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { clearSessionKey } from '../lib/pop';
@@ -156,17 +158,17 @@
   let orderPaidHandled = false;
 
   // --- Tabbed sections (in-page strip, ?tab= synced) ----------------------
-  // The page groups into 3 tabs; the active one is reflected into the URL
+  // The page groups into 4 tabs; the active one is reflected into the URL
   // (?tab=) via replaceState - deep-linkable + reload-safe, WITHOUT a router
   // navigation (mirrors AdminUsers' filter URL-sync), so it never disturbs the
   // billing `?order=` param or the router's scroll-restoration state. The old
-  // `codes` tab folded into Membership; its deep links redirect.
-  type AccountTab = 'connection' | 'membership' | 'security';
-  const ACCOUNT_TABS: readonly string[] = ['connection', 'membership', 'security'];
+  // `codes` tab (folded into Membership, now Gifts & referrals) redirects.
+  type AccountTab = 'connection' | 'membership' | 'gifts' | 'security';
+  const ACCOUNT_TABS: readonly string[] = ['connection', 'membership', 'gifts', 'security'];
   const initialTab = router.searchParams.get('tab');
   let activeTab = $state<AccountTab>(
     initialTab === 'codes'
-      ? 'membership'
+      ? 'gifts'
       : initialTab && ACCOUNT_TABS.includes(initialTab)
         ? (initialTab as AccountTab)
         : 'connection',
@@ -412,6 +414,19 @@
   let revealedAccountId = $state<string | null>(null);
   let revealOpen = $state(false);
   let rotateConfirmOpen = $state(false);
+  // Support ID one-click copy (mirrors the Access Pass copy affordance).
+  let supportIdCopied = $state(false);
+  async function copySupportId(id: string) {
+    if (await copyText(id)) {
+      supportIdCopied = true;
+      toast.success(t('common.copied'), { duration: 1500 });
+      setTimeout(() => {
+        supportIdCopied = false;
+      }, 1500);
+    } else {
+      toast.error(t('common.copyFailed'));
+    }
+  }
   // a11y: the rotate→reveal two-modal chain leaves bits-ui's FocusScope unable to
   // restore focus (the rotate confirm button it captured has unmounted by the time
   // the reveal closes), so focus falls to <body>. Hold the trigger to refocus it.
@@ -758,6 +773,9 @@
           <Tabs.Trigger value="membership" class="h-11 sm:h-7">
             <Sparkles class="size-4" />{t('account.tab.membership')}
           </Tabs.Trigger>
+          <Tabs.Trigger value="gifts" class="h-11 sm:h-7">
+            <Gift class="size-4" />{t('account.tab.gifts')}
+          </Tabs.Trigger>
           <Tabs.Trigger value="security" class="h-11 sm:h-7">
             <ShieldCheck class="size-4" />{t('account.tab.security')}
           </Tabs.Trigger>
@@ -811,7 +829,6 @@
             serverBacked={profileServerBacked}
             deviceCount={data.subscription?.devices.length ?? 0}
             disabled={actionsDisabled}
-            flat
           />
 
           {#if data.subscription}
@@ -996,8 +1013,9 @@
         </section>
       </Tabs.Content>
 
-      <!-- TAB: Membership - plan + upgrade/extend + codes & gifts. An active
-           member sees a compact status + refresh instead of the upsell. -->
+      <!-- TAB: Membership - plan + upgrade/extend + donations. An active
+           member sees a compact status + refresh instead of the upsell. Codes,
+           gifts, and referrals live on their own tab now. -->
       <Tabs.Content value="membership">
         <section class="space-y-6">
           <SectionHead
@@ -1068,19 +1086,21 @@
           <div class="border-t border-border pt-6">
             <DonateCard />
           </div>
+        </section>
+      </Tabs.Content>
 
-          <!-- Codes & gifts (folded into this tab): redeem a membership code, or
-               buy codes to share. Redeem is always available; GiftCodes self-gates
-               on billing. -->
-          <div class="border-t border-border pt-6 space-y-4">
-            <SectionHead
-              icon={Gift}
-              title={t('account.section.codes.title')}
-              description={t('account.section.codes.desc')}
-            />
-            <RedeemCode flat />
-            <GiftCodes />
-          </div>
+      <!-- TAB: Gifts & referrals - redeem a code, buy codes to share, invite. -->
+      <Tabs.Content value="gifts">
+        <section class="space-y-6">
+          <SectionHead
+            icon={Gift}
+            title={t('account.section.gifts.title')}
+            description={t('account.section.gifts.desc')}
+          />
+
+          <!-- Redeem is always available; GiftCodes self-gates on billing. -->
+          <RedeemCode flat />
+          <GiftCodes />
 
           <!-- Referrals (self-gates on the program being enabled): the member's
                share link + invite stats. -->
@@ -1103,9 +1123,24 @@
             {#if data.user.supportId}
               <div>
                 <p class="text-sm font-medium">{t('support.label')}</p>
-                <code class="mt-1 block select-all font-mono text-sm text-foreground"
-                  >{data.user.supportId}</code
-                >
+                <div class="mt-1 flex items-center gap-1.5">
+                  <code class="select-all font-mono text-sm text-foreground"
+                    >{data.user.supportId}</code
+                  >
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="min-h-11 sm:min-h-8 px-2 text-muted-foreground"
+                    aria-label={t('support.copyAria')}
+                    onclick={() => copySupportId(data.user.supportId!)}
+                  >
+                    {#if supportIdCopied}
+                      <Check class="size-3.5 text-primary" />
+                    {:else}
+                      <Copy class="size-3.5" />
+                    {/if}
+                  </Button>
+                </div>
                 <p class="mt-1 text-xs text-muted-foreground">{t('support.hint')}</p>
                 {#if config.data?.site?.supportEmail}
                   <!-- Subject prefills the (non-secret) support ID - never the account number. -->

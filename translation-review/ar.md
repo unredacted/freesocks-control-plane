@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**0 of 693 strings are missing** (the app currently shows English for
+**0 of 768 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -144,6 +144,7 @@ review.
 | --- | --- | --- |
 | `support.label` | Support ID | معرّف الدعم |
 | `support.hint` | Share this if you contact us. It is NOT your sign-in number and grants no access. | شارك هذا إذا تواصلت معنا. إنه ليس رقم تسجيل دخولك ولا يمنح أي وصول. |
+| `support.copyAria` | Copy your support ID | انسخ معرّف الدعم |
 | `support.emailUs` | Email us: | راسلنا عبر البريد: |
 | `support.getAccountLine` | Questions or problems? Email us at | أسئلة أو مشكلات؟ راسلنا عبر البريد على |
 
@@ -231,6 +232,7 @@ review.
 | `account.membershipNudge.cta` | View membership | عرض العضوية |
 | `account.tab.connection` | Connection | الاتصال |
 | `account.tab.membership` | Membership | العضوية |
+| `account.tab.gifts` | Gifts & referrals | الهدايا والإحالات |
 | `account.tab.security` | Security | الأمان |
 | `account.refreshing` | Refreshing… | جارٍ التحديث… |
 | `account.regenSuccessTitle` | New subscription URL generated | تم إنشاء رابط اشتراك جديد |
@@ -254,6 +256,8 @@ review.
 | `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | مفتاح البروكسي الخاص بك، ومساعدة الإعداد، والأجهزة المتصلة. |
 | `account.section.membership.title` | Membership | عضوية |
 | `account.section.membership.desc` | Your plan, and how to upgrade or extend it. | خطتك، وكيفية ترقيتها أو توسيعها. |
+| `account.section.gifts.title` | Gifts & referrals | الهدايا والإحالات |
+| `account.section.gifts.desc` | Redeem a code, buy codes to share, and invite people you trust. | استبدل رمزًا، أو اشترِ رموزًا لتشاركها، وادعُ من تثق بهم. |
 | `account.section.codes.title` | Codes & gifts | رموز وهدايا |
 | `account.section.codes.desc` | Redeem a membership code, or buy codes to share with others. | استخدم رمز العضوية، أو اشترِ رموزًا لمشاركتها مع الآخرين. |
 | `account.section.security.title` | Account & security | الحساب والأمان |
@@ -737,11 +741,82 @@ review.
 | `home.sections.impact` | Impact | الأثر |
 | `home.sections.faq` | FAQ | الأسئلة الشائعة |
 | `home.sections.about` | About | حول |
+| `home.sections.globe` | The map | الخريطة |
+| `home.globe.title` | Voices from behind the firewall | أصوات من خلف الجدار الناري |
+| `home.globe.body` | Every day, people behind national firewalls use FreeSocks to read, share, and publish - and to be heard. | كل يوم، يستخدم الناس خلف الجدران النارية الوطنية FreeSocks للقراءة والمشاركة والنشر — وليُسمع صوتهم. |
+| `home.globe.aria` | A rotating globe: labels with voices from censored countries | كرة أرضية دوارة: ملصقات تحمل أصواتًا من دول خاضعة للرقابة |
+| `home.globe.voices.ir.place` | Tehran, Iran | طهران، إيران |
+| `home.globe.voices.ir.l1` | They filter the internet; they can't filter the truth. | يحجبون الإنترنت؛ لكنهم لا يستطيعون حجب الحقيقة. |
+| `home.globe.voices.ir.l2` | My report on the protests reached the world. | تقريري عن الاحتجاجات وصل إلى العالم. |
+| `home.globe.voices.ir.l3` | My students read what the state calls lies. | طلابي يقرأون ما تسميه الدولة أكاذيب. |
+| `home.globe.voices.cn.place` | Beijing, China | بكين، الصين |
+| `home.globe.voices.cn.l1` | History should not be a banned word. | لا ينبغي أن يكون التاريخ كلمة محظورة. |
+| `home.globe.voices.cn.l2` | I shared what happened in my city - and it stayed up. | شاركت ما حدث في مدينتي — وبقي منشورًا. |
+| `home.globe.voices.cn.l3` | I archived the deleted posts before they vanished. | أرشفت المنشورات المحذوفة قبل اختفائها. |
+| `home.globe.voices.ru.place` | Moscow, Russia | موسكو، روسيا |
+| `home.globe.voices.ru.l1` | The truth should not need a permit. | الحقيقة لا ينبغي أن تحتاج إلى تصريح. |
+| `home.globe.voices.ru.l2` | Independent journalism is not a crime. | الصحافة المستقلة ليست جريمة. |
+| `home.globe.voices.ru.l3` | A blocked newspaper still gets read. | الصحيفة المحجوبة ما زالت تُقرأ. |
+| `home.globe.voices.tm.place` | Ashgabat, Turkmenistan | عشق آباد، تركمانستان |
+| `home.globe.voices.tm.l1` | A whole country, almost offline - and still heard. | بلد كامل، شبه منقطع عن الإنترنت — ومع ذلك مسموع. |
+| `home.globe.voices.tm.l2` | They control the media, not my voice. | يتحكمون في الإعلام، لا في صوتي. |
+| `home.globe.voices.tm.l3` | Silence is the law here; we whisper anyway. | الصمت قانون هنا؛ ومع ذلك نتهامس. |
+| `home.globe.voices.cu.place` | Havana, Cuba | هافانا، كوبا |
+| `home.globe.voices.cu.l1` | My voice travels farther than I ever will. | صوتي يسافر أبعد مما سأصل إليه يومًا. |
+| `home.globe.voices.cu.l2` | We document what the state denies. | نوثق ما تنكره الدولة. |
+| `home.globe.voices.cu.l3` | Independent voices, hand to hand, screen to screen. | أصوات مستقلة، من يد إلى يد، ومن شاشة إلى شاشة. |
+| `home.globe.voices.by.place` | Minsk, Belarus | مينسك، بيلاروس |
+| `home.globe.voices.by.l1` | When they shut us down, we still spoke. | حين أوقفونا، واصلنا الكلام. |
+| `home.globe.voices.by.l2` | Free elections are not extremism. | الانتخابات الحرة ليست تطرفًا. |
+| `home.globe.voices.by.l3` | They banned our flag; not our voice. | حظروا علمنا؛ لا صوتنا. |
+| `home.globe.voices.mm.place` | Yangon, Myanmar | يانغون، ميانمار |
+| `home.globe.voices.mm.l1` | The blackout did not silence us. | انقطاع الإنترنت لم يُسكتنا. |
+| `home.globe.voices.mm.l2` | Evidence of the crackdown got out. | أدلة القمع خرجت إلى العلن. |
+| `home.globe.voices.mm.l3` | When the towers fell silent, the story did not. | حين صمتت الأبراج، لم تصمت الحكاية. |
+| `home.globe.voices.ve.place` | Caracas, Venezuela | كاراكاس، فنزويلا |
+| `home.globe.voices.ve.l1` | We count the votes they won't. | نحن نُحصي الأصوات التي لا يحصونها. |
+| `home.globe.voices.ve.l2` | Hunger is not a state secret. | الجوع ليس سرًّا من أسرار الدولة. |
+| `home.globe.voices.ve.l3` | The queue for food is long; the truth is longer. | طابور الخبز طويل؛ والحقيقة أطول. |
+| `home.globe.voices.vn.place` | Hanoi, Vietnam | هانوي، فيتنام |
+| `home.globe.voices.vn.l1` | Writing about corruption is not a crime. | الكتابة عن الفساد ليست جريمة. |
+| `home.globe.voices.vn.l2` | My blog outlived the block. | مدونتي نجت من الحجب. |
+| `home.globe.voices.vn.l3` | One article they deleted reached thousands. | مقال واحد حذفوه وصل إلى الآلاف. |
+| `home.globe.voices.pk.place` | Karachi, Pakistan | كراتشي، باكستان |
+| `home.globe.voices.pk.l1` | During the shutdown, witnesses still spoke. | أثناء القطيعة، ظل الشهود يتكلمون. |
+| `home.globe.voices.pk.l2` | Silencing journalists won't hide the story. | إسكات الصحفيين لن يخفي القصة. |
+| `home.globe.voices.pk.l3` | The channel went dark; the reporting did not. | القناة أظلمت؛ الصحافة لم تُظلم. |
+| `home.globe.voices.eg.place` | Cairo, Egypt | القاهرة، مصر |
+| `home.globe.voices.eg.l1` | They jailed the bloggers, not the words. | سجنوا المدونين، لا الكلمات. |
+| `home.globe.voices.eg.l2` | The protest was documented anyway. | وُثّقت الاحتجاجات رغم كل شيء. |
+| `home.globe.voices.eg.l3` | From a small screen, a big story. | من شاشة صغيرة، قصة كبيرة. |
+| `home.globe.voices.sa.place` | Riyadh, Saudi Arabia | الرياض، السعودية |
+| `home.globe.voices.sa.l1` | Speaking is not a crime. | الكلام ليس جريمة. |
+| `home.globe.voices.sa.l2` | Her voice reached beyond the wall. | صوتها وصل إلى ما وراء الجدار. |
+| `home.globe.voices.sa.l3` | She asked a question the kingdom bans. | سألت سؤالًا تحظره المملكة. |
+| `home.globe.voices.et.place` | Addis Ababa, Ethiopia | أديس أبابا، إثيوبيا |
+| `home.globe.voices.et.l1` | The shutdown hid nothing. | القطيعة لم تُخفِ شيئًا. |
+| `home.globe.voices.et.l2` | Witnesses still found a way out. | الشهود وجدوا طريقًا للخارج. |
+| `home.globe.voices.et.l3` | The dead were counted, despite the blackout. | أُحصي القتلى، رغم الانقطاع. |
+| `home.globe.voices.tr.place` | Istanbul, Turkey | إسطنبول، تركيا |
+| `home.globe.voices.tr.l1` | Blocking the site won't block the story. | حجب الموقع لن يحجب القصة. |
+| `home.globe.voices.tr.l2` | Journalism continues, court order or not. | الصحافة مستمرة، بأمر المحكمة أو بدونه. |
+| `home.globe.voices.tr.l3` | An arrested anchor cannot sign off the news. | مذيع معتقل لا يستطيع إنهاء النشرة. |
+| `home.globe.voices.az.place` | Baku, Azerbaijan | باكو، أذربيجان |
+| `home.globe.voices.az.l1` | They call reporting extremism. | يسمون الصحافة تطرفًا. |
+| `home.globe.voices.az.l2` | The investigation was published anyway. | نُشر التحقيق رغم كل شيء. |
+| `home.globe.voices.az.l3` | They froze our accounts, not our work. | جمّدوا حساباتنا، لا عملنا. |
+| `home.globe.voices.uz.place` | Tashkent, Uzbekistan | طشقند، أوزبكستان |
+| `home.globe.voices.uz.l1` | A closed internet is not a quiet one. | الإنترنت المغلق ليس إنترنت صامتًا. |
+| `home.globe.voices.uz.l2` | The world still heard what happened here. | وسمع العالم بما جرى هنا. |
+| `home.globe.voices.uz.l3` | The squares are watched; the words still move. | الساحات مراقبة؛ والكلمات تتحرك رغم ذلك. |
 | `home.impact.title` | Donations at work | التبرعات تُحدث فرقًا |
 | `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | كل تبرع عبر FreeSocks يرفع النطاق الترددي الشهري لكل حساب مجاني في ذلك الشهر. هذا ما أضافه المتبرعون حتى الآن - ويمكنك الإضافة إليه أيضًا. |
 | `home.impact.cta` | Make a donation | قدّم تبرعًا |
 | `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | النطاق الترددي الذي أضافته التبرعات لكل مستخدم مجاني، شهرًا بشهر |
-| `home.hero.title` | A VPN for people in censored countries & around the world | شبكة VPN للناس في البلدان الخاضعة للرقابة وحول العالم |
+| `home.hero.variants.freedom` | A VPN for Internet Freedom | شبكة VPN من أجل حرية الإنترنت |
+| `home.hero.variants.dissidents` | A VPN for dissidents | شبكة VPN للمعارضين |
+| `home.hero.variants.privacy` | A VPN for privacy | شبكة VPN للخصوصية |
+| `home.hero.variants.world` | A VPN for the world | شبكة VPN للعالم |
 | `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | صُمّم FreeSocks للأشخاص الذين يخضع إنترنتهم للرقابة، ويعمل كشبكة VPN تحترم الخصوصية في أي مكان آخر. إنشاء الحساب يتطلب تحققًا بشريًا سريعًا واحدًا. لا نطلب أبدًا بريدًا إلكترونيًا أو كلمة مرور. يعمل رابط اشتراكك في معظم تطبيقات VPN الحديثة، وتمنحك العضوية {limits}. |
 | `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | التبرعات عبر FreeSocks تدعم المستخدمين المجانيين مباشرة: كل تبرع يشتري نطاقًا تردديًا حقيقيًا للناس في البلدان الخاضعة للرقابة، في الشهر نفسه. |
 | `home.hero.impactLink` | See the impact | اطّلع على الأثر |

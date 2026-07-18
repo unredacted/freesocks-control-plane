@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**0 of 693 strings are missing** (the app currently shows English for
+**0 of 768 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -143,6 +143,7 @@ review.
 | --- | --- | --- |
 | `support.label` | Support ID | 支持 ID |
 | `support.hint` | Share this if you contact us. It is NOT your sign-in number and grants no access. | 联系我们时请提供它。它不是你的登录号码，也不授予任何访问权限。 |
+| `support.copyAria` | Copy your support ID | 复制你的支持 ID |
 | `support.emailUs` | Email us: | 发送邮件给我们： |
 | `support.getAccountLine` | Questions or problems? Email us at | 有疑问或遇到问题？请发送邮件至 |
 
@@ -230,6 +231,7 @@ review.
 | `account.membershipNudge.cta` | View membership | 查看会员 |
 | `account.tab.connection` | Connection | 连接 |
 | `account.tab.membership` | Membership | 会员 |
+| `account.tab.gifts` | Gifts & referrals | 礼品与推荐 |
 | `account.tab.security` | Security | 安全 |
 | `account.refreshing` | Refreshing… | 刷新中… |
 | `account.regenSuccessTitle` | New subscription URL generated | 已生成新的订阅链接 |
@@ -253,6 +255,8 @@ review.
 | `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | 您的代理密钥、设置帮助和已连接的设备。 |
 | `account.section.membership.title` | Membership | 会员资格 |
 | `account.section.membership.desc` | Your plan, and how to upgrade or extend it. | 您的计划，以及如何升级或扩展它。 |
+| `account.section.gifts.title` | Gifts & referrals | 礼品与推荐 |
+| `account.section.gifts.desc` | Redeem a code, buy codes to share, and invite people you trust. | 兑换礼品码、购买可分享的礼品码，并邀请你信任的人。 |
 | `account.section.codes.title` | Codes & gifts | 代码和礼物 |
 | `account.section.codes.desc` | Redeem a membership code, or buy codes to share with others. | 兑换会员码，或购买会员码与他人分享。 |
 | `account.section.security.title` | Account & security | 账户与安全 |
@@ -736,11 +740,82 @@ review.
 | `home.sections.impact` | Impact | 成效 |
 | `home.sections.faq` | FAQ | 常见问题 |
 | `home.sections.about` | About | 关于 |
+| `home.sections.globe` | The map | 地图 |
+| `home.globe.title` | Voices from behind the firewall | 来自防火墙后的声音 |
+| `home.globe.body` | Every day, people behind national firewalls use FreeSocks to read, share, and publish - and to be heard. | 每天，身处国家防火墙后的人们使用 FreeSocks 阅读、分享和发布内容——并让世界听见。 |
+| `home.globe.aria` | A rotating globe: labels with voices from censored countries | 旋转的地球仪：带有来自受审查国家声音的标签 |
+| `home.globe.voices.ir.place` | Tehran, Iran | 德黑兰，伊朗 |
+| `home.globe.voices.ir.l1` | They filter the internet; they can't filter the truth. | 他们过滤互联网，却过滤不了真相。 |
+| `home.globe.voices.ir.l2` | My report on the protests reached the world. | 我关于抗议的报道传到了全世界。 |
+| `home.globe.voices.ir.l3` | My students read what the state calls lies. | 我的学生读着被国家称为谎言的东西。 |
+| `home.globe.voices.cn.place` | Beijing, China | 北京，中国 |
+| `home.globe.voices.cn.l1` | History should not be a banned word. | 历史不该成为违禁词。 |
+| `home.globe.voices.cn.l2` | I shared what happened in my city - and it stayed up. | 我分享了家乡发生的事——它一直还在。 |
+| `home.globe.voices.cn.l3` | I archived the deleted posts before they vanished. | 被删的帖子，我在它们消失前就存了档。 |
+| `home.globe.voices.ru.place` | Moscow, Russia | 莫斯科，俄罗斯 |
+| `home.globe.voices.ru.l1` | The truth should not need a permit. | 真相不该需要许可证。 |
+| `home.globe.voices.ru.l2` | Independent journalism is not a crime. | 独立新闻不是犯罪。 |
+| `home.globe.voices.ru.l3` | A blocked newspaper still gets read. | 被封的报纸，依然有人读。 |
+| `home.globe.voices.tm.place` | Ashgabat, Turkmenistan | 阿什哈巴德，土库曼斯坦 |
+| `home.globe.voices.tm.l1` | A whole country, almost offline - and still heard. | 整个国家几乎断网——却依然被听见。 |
+| `home.globe.voices.tm.l2` | They control the media, not my voice. | 他们控制媒体，却控制不了我的声音。 |
+| `home.globe.voices.tm.l3` | Silence is the law here; we whisper anyway. | 沉默是这里的法律；我们依然低声细语。 |
+| `home.globe.voices.cu.place` | Havana, Cuba | 哈瓦那，古巴 |
+| `home.globe.voices.cu.l1` | My voice travels farther than I ever will. | 我的声音，比我走得更远。 |
+| `home.globe.voices.cu.l2` | We document what the state denies. | 我们记录国家否认的一切。 |
+| `home.globe.voices.cu.l3` | Independent voices, hand to hand, screen to screen. | 独立的声音，手手相传，屏屏相递。 |
+| `home.globe.voices.by.place` | Minsk, Belarus | 明斯克，白俄罗斯 |
+| `home.globe.voices.by.l1` | When they shut us down, we still spoke. | 他们断网时，我们仍在发声。 |
+| `home.globe.voices.by.l2` | Free elections are not extremism. | 自由选举不是极端主义。 |
+| `home.globe.voices.by.l3` | They banned our flag; not our voice. | 他们禁了我们的旗帜，却禁不了我们的声音。 |
+| `home.globe.voices.mm.place` | Yangon, Myanmar | 仰光，缅甸 |
+| `home.globe.voices.mm.l1` | The blackout did not silence us. | 断网没能让我们沉默。 |
+| `home.globe.voices.mm.l2` | Evidence of the crackdown got out. | 镇压的证据传了出去。 |
+| `home.globe.voices.mm.l3` | When the towers fell silent, the story did not. | 信号塔沉默了，故事却没有。 |
+| `home.globe.voices.ve.place` | Caracas, Venezuela | 加拉加斯，委内瑞拉 |
+| `home.globe.voices.ve.l1` | We count the votes they won't. | 我们清点他们不肯清点的选票。 |
+| `home.globe.voices.ve.l2` | Hunger is not a state secret. | 饥饿不是国家机密。 |
+| `home.globe.voices.ve.l3` | The queue for food is long; the truth is longer. | 买面包的队伍很长；真相更长。 |
+| `home.globe.voices.vn.place` | Hanoi, Vietnam | 河内，越南 |
+| `home.globe.voices.vn.l1` | Writing about corruption is not a crime. | 揭露腐败不是犯罪。 |
+| `home.globe.voices.vn.l2` | My blog outlived the block. | 我的博客，比封锁活得更久。 |
+| `home.globe.voices.vn.l3` | One article they deleted reached thousands. | 那篇被删的文章，传到了成千上万人手中。 |
+| `home.globe.voices.pk.place` | Karachi, Pakistan | 卡拉奇，巴基斯坦 |
+| `home.globe.voices.pk.l1` | During the shutdown, witnesses still spoke. | 断网期间，目击者仍在发声。 |
+| `home.globe.voices.pk.l2` | Silencing journalists won't hide the story. | 让记者沉默，掩盖不了真相。 |
+| `home.globe.voices.pk.l3` | The channel went dark; the reporting did not. | 频道黑了，报道没有停。 |
+| `home.globe.voices.eg.place` | Cairo, Egypt | 开罗，埃及 |
+| `home.globe.voices.eg.l1` | They jailed the bloggers, not the words. | 他们关押了博主，却关不住文字。 |
+| `home.globe.voices.eg.l2` | The protest was documented anyway. | 抗议依然被记录了下来。 |
+| `home.globe.voices.eg.l3` | From a small screen, a big story. | 小小的屏幕，大大的故事。 |
+| `home.globe.voices.sa.place` | Riyadh, Saudi Arabia | 利雅得，沙特阿拉伯 |
+| `home.globe.voices.sa.l1` | Speaking is not a crime. | 说话不是犯罪。 |
+| `home.globe.voices.sa.l2` | Her voice reached beyond the wall. | 她的声音传到了墙外。 |
+| `home.globe.voices.sa.l3` | She asked a question the kingdom bans. | 她问了一个王国禁止的问题。 |
+| `home.globe.voices.et.place` | Addis Ababa, Ethiopia | 亚的斯亚贝巴，埃塞俄比亚 |
+| `home.globe.voices.et.l1` | The shutdown hid nothing. | 断网掩盖不了一切。 |
+| `home.globe.voices.et.l2` | Witnesses still found a way out. | 目击者还是把消息传了出去。 |
+| `home.globe.voices.et.l3` | The dead were counted, despite the blackout. | 逝者被一一记录，尽管断网。 |
+| `home.globe.voices.tr.place` | Istanbul, Turkey | 伊斯坦布尔，土耳其 |
+| `home.globe.voices.tr.l1` | Blocking the site won't block the story. | 封了网站，封不住真相。 |
+| `home.globe.voices.tr.l2` | Journalism continues, court order or not. | 无论有没有法院禁令，新闻仍在继续。 |
+| `home.globe.voices.tr.l3` | An arrested anchor cannot sign off the news. | 被捕的主播，无法为新闻画上句号。 |
+| `home.globe.voices.az.place` | Baku, Azerbaijan | 巴库，阿塞拜疆 |
+| `home.globe.voices.az.l1` | They call reporting extremism. | 他们把报道称为极端主义。 |
+| `home.globe.voices.az.l2` | The investigation was published anyway. | 调查报道还是发表了。 |
+| `home.globe.voices.az.l3` | They froze our accounts, not our work. | 他们冻结了我们的账户，却冻不住我们的工作。 |
+| `home.globe.voices.uz.place` | Tashkent, Uzbekistan | 塔什干，乌兹别克斯坦 |
+| `home.globe.voices.uz.l1` | A closed internet is not a quiet one. | 封闭的互联网，并不等于沉默的互联网。 |
+| `home.globe.voices.uz.l2` | The world still heard what happened here. | 世界依然听到了这里发生的事。 |
+| `home.globe.voices.uz.l3` | The squares are watched; the words still move. | 广场有人监视；文字仍在流动。 |
 | `home.impact.title` | Donations at work | 捐款在行动 |
 | `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | 通过 FreeSocks 捐出的每一笔捐款，都会提升当月每个免费账户的每月带宽。以下是捐赠者迄今增加的带宽--你也可以添一份力。 |
 | `home.impact.cta` | Make a donation | 立即捐款 |
 | `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | 捐款为每位免费用户逐月增加的带宽 |
-| `home.hero.title` | A VPN for people in censored countries & around the world | 为受审查国家和世界各地的人们打造的 VPN |
+| `home.hero.variants.freedom` | A VPN for Internet Freedom | 为互联网自由打造的 VPN |
+| `home.hero.variants.dissidents` | A VPN for dissidents | 为异见人士打造的 VPN |
+| `home.hero.variants.privacy` | A VPN for privacy | 为隐私打造的 VPN |
+| `home.hero.variants.world` | A VPN for the world | 为世界打造的 VPN |
 | `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | FreeSocks 为网络受审查的人们打造，在其他地方也是一款尊重隐私的 VPN。注册只需一次快速的真人验证。我们从不要求邮箱或密码。你的订阅链接适用于大多数现代 VPN 应用，会员可享{limits}。 |
 | `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | 通过 FreeSocks 的捐款直接支持免费用户：每一笔捐款都会在当月为受审查国家的人们购买真实带宽。 |
 | `home.hero.impactLink` | See the impact | 查看成效 |
