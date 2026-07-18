@@ -208,12 +208,20 @@ describe('registerBootstrapVerify', () => {
 });
 
 describe('authenticateOptions (M4 anti-enumeration + throttle)', () => {
-  test('an unknown username yields well-formed options with no credentials', async () => {
+  test('an unknown username gets a deterministic fake credential (uniform shape, no oracle)', async () => {
     const t = convexTest(schema, modules);
     const res = await t.action(internal.webauthn.authenticateOptions, { username: 'ghost' });
     expect(typeof res.options.challenge).toBe('string');
     expect(typeof res.challengeId).toBe('string');
-    expect(res.options.allowCredentials ?? []).toHaveLength(0);
+    // One fake id, indistinguishable in shape from a real credential id…
+    const fake = res.options.allowCredentials?.map((c) => c.id) ?? [];
+    expect(fake).toHaveLength(1);
+    // …deterministic across probes (a real admin's ids are stable too)…
+    const again = await t.action(internal.webauthn.authenticateOptions, { username: 'ghost' });
+    expect(again.options.allowCredentials?.map((c) => c.id)).toEqual(fake);
+    // …but distinct per username (no cross-username correlation).
+    const other = await t.action(internal.webauthn.authenticateOptions, { username: 'phantom' });
+    expect(other.options.allowCredentials?.map((c) => c.id)).not.toEqual(fake);
     // The stored challenge is not tied to any admin (no existence leak).
     const row = await t.run(async (ctx) =>
       (await ctx.db.query('webauthnAuthChallenges').collect()).find(
@@ -253,19 +261,71 @@ describe('authenticateOptions (M4 anti-enumeration + throttle)', () => {
     expect(res.options.allowCredentials?.map((c) => c.id)).toContain('cred-1');
   });
 
-  test('throttles per IP once the window cap is reached', async () => {
+  test('throttles per IP once the policy window cap is reached', async () => {
     const t = convexTest(schema, modules);
     const ipHash = await hmacSha256Hex(IP_SALT, '203.0.113.9');
     await t.run((ctx) =>
       ctx.db.insert('rateLimits', {
-        bucket: `admin-auth:ip:${ipHash}`,
-        count: 20, // at the cap (max 20)
+        bucket: `admin.auth.ip:${ipHash}`,
+        count: 20, // at the cap (policy max 20)
         expiresAt: Date.now() + 3_600_000,
       }),
     );
     await expect(
       t.action(internal.webauthn.authenticateOptions, { username: 'admin', ip: '203.0.113.9' }),
     ).rejects.toThrow(/Too many sign-in attempts/);
+  });
+
+  test('the throttle is policy-driven (an admin override changes the cap)', async () => {
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'ratelimit.admin.auth.ip',
+        value: JSON.stringify({ max: 1, windowMs: 3_600_000, enabled: true }),
+        updatedAt: Date.now(),
+      }),
+    );
+    const ip = '203.0.113.10';
+    await t.action(internal.webauthn.authenticateOptions, { ip });
+    await expect(t.action(internal.webauthn.authenticateOptions, { ip })).rejects.toThrow(
+      /Too many sign-in attempts/,
+    );
+  });
+});
+
+describe('bootstrapInsertCredential (serializable TOCTOU claim)', () => {
+  test('the first insert wins; a concurrent second claim is refused', async () => {
+    const t = convexTest(schema, modules);
+    const adminId = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'op',
+        displayName: 'Op',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+    const cred = {
+      credentialId: 'cred-first',
+      publicKey: 'pk',
+      counter: 0,
+      deviceLabel: 'key',
+    };
+    await t.mutation(internal.admins.bootstrapInsertCredential, { adminUserId: adminId, ...cred });
+    // A second racing claim (same verify window) must lose, not mint a second admin.
+    await expect(
+      t.mutation(internal.admins.bootstrapInsertCredential, {
+        adminUserId: adminId,
+        ...cred,
+        credentialId: 'cred-second',
+      }),
+    ).rejects.toThrow(/already exists/i);
+    // The invite path (insertCredential) is unaffected — admins already exist there.
+    await t.mutation(internal.admins.insertCredential, {
+      adminUserId: adminId,
+      ...cred,
+      credentialId: 'cred-invite',
+    });
+    expect((await t.run((ctx) => ctx.db.query('passkeyCredentials').collect())).length).toBe(2);
   });
 });
 

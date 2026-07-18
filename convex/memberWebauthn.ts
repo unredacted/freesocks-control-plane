@@ -76,14 +76,15 @@ export const registerOptions = internalAction({
     ctx,
     { userId, ip },
   ): Promise<{ options: PublicKeyCredentialCreationOptionsJSON }> => {
-    if (ip) {
-      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-        policyKey: 'account.passkey-register',
-        subject: userId,
-      });
-      if (!rl.allowed) {
-        throw new ConvexError({ code: 'rate_limit.exceeded', message: 'Too many attempts' });
-      }
+    // Per-MEMBER throttle (the subject is the userId, so it must run even when
+    // the request IP is unresolvable — an `if (ip)` guard would silently
+    // disable enrollment limiting on a proxy misconfig).
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.passkey-register',
+      subject: userId,
+    });
+    if (!rl.allowed) {
+      throw new ConvexError({ code: 'rate_limit.exceeded', message: 'Too many attempts' });
     }
     const existing = await ctx.runQuery(internal.memberPasskeys.credentialIdsByUser, { userId });
     const { rpId, rpName } = memberWebauthnConfig();

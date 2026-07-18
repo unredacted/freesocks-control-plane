@@ -62,6 +62,10 @@ export const RATE_LIMIT_DEFAULTS = {
   // row, so bound challenge-flooding. The assertion itself is cryptographic (not
   // guessable), so no captcha gates it — this is the only throttle on that path.
   'passkey.authenticate': { max: 30, windowMs: HOUR, enabled: true },
+  // Admin passkey ceremonies (per IP): sign-in options + invite/bootstrap
+  // registration options.
+  'admin.auth.ip': { max: 20, windowMs: HOUR, enabled: true },
+  'admin.register.ip': { max: 30, windowMs: HOUR, enabled: true },
   // Member passkey ENROLLMENT options (per member): cap churn on the add-a-passkey
   // flow (already session-gated, so this is hygiene, not access control).
   'account.passkey-register': { max: 20, windowMs: HOUR, enabled: true },

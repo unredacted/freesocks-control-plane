@@ -129,15 +129,6 @@ describe('rateLimits.enforce (W2 policy-driven)', () => {
     }
   });
 
-  test('an unknown policy key fails open but is not a configured limit', async () => {
-    const t = convexTest(schema, modules);
-    const r = await t.mutation(internal.rateLimits.enforce, {
-      policyKey: 'nonexistent.key',
-      subject: 'x',
-    });
-    expect(r.allowed).toBe(true);
-  });
-
   test('a corrupt stored override falls back to the compiled default (fail-safe)', async () => {
     const t = convexTest(schema, modules);
     await t.run(async (ctx) => {
@@ -194,6 +185,15 @@ describe('rateLimits.enforce (W2 policy-driven)', () => {
     expect(redeem).toMatchObject({ max: 99, windowMs: 60_000, enabled: true, isDefault: false });
     const login = policies.find((p) => p.key === 'account-login.ip');
     expect(login?.isDefault).toBe(true);
+  });
+
+  test('enforce throws (fail closed) on an unknown policy key', async () => {
+    const t = convexTest(schema, modules);
+    // A call-site typo must be a loud failure in development, never a silently
+    // unthrottled route.
+    await expect(
+      t.mutation(internal.rateLimits.enforce, { policyKey: 'typo.key', subject: 'x' }),
+    ).rejects.toThrow(/unknown policy key/);
   });
 });
 

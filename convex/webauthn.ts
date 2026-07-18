@@ -128,7 +128,9 @@ export const registerBootstrapVerify = internalAction({
       throw new ConvexError({ code: 'validation', message: 'Verification failed' });
     }
     const cred = verification.registrationInfo.credential;
-    await ctx.runMutation(internal.admins.insertCredential, {
+    // The claim itself is serializable: two concurrent verifies can both pass
+    // the pre-check above, but only one wins this mutation (TOCTOU closed).
+    await ctx.runMutation(internal.admins.bootstrapInsertCredential, {
       adminUserId: adminId,
       credentialId: cred.id,
       publicKey: Buffer.from(cred.publicKey).toString('base64'),
@@ -153,15 +155,15 @@ export const authenticateOptions = internalAction({
     ctx,
     { username, ip },
   ): Promise<{ options: PublicKeyCredentialRequestOptionsJSON; challengeId: string }> => {
-    // Per-IP throttle to bound credential-stuffing / enumeration (strict counter).
+    // Per-IP throttle to bound credential-stuffing / enumeration (policy-driven,
+    // admin-tunable like every other limit).
     if (ip) {
       const salt = process.env.IP_HASH_SALT;
       if (!salt) throw new Error('IP_HASH_SALT must be set');
       const ipHash = await hmacSha256Hex(salt, ip);
-      const rl = await ctx.runMutation(internal.rateLimits.checkAndIncrement, {
-        bucket: `admin-auth:ip:${ipHash}`,
-        max: 20,
-        windowMs: 3_600_000,
+      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+        policyKey: 'admin.auth.ip',
+        subject: ipHash,
       });
       if (!rl.allowed) {
         throw new ConvexError({
@@ -174,9 +176,10 @@ export const authenticateOptions = internalAction({
     // Usernameless (the default): no allowCredentials, so the authenticator
     // offers every resident passkey for this RP and the user just picks one —
     // verify then identifies the admin from the chosen credential. With a
-    // username (fallback) we narrow to that admin's credentials, but do NOT
-    // reveal whether it exists: an unknown/inactive admin still gets well-formed
-    // options with no credentials (verify fails like any wrong passkey).
+    // username (fallback) we narrow to that admin's credentials. An unknown or
+    // inactive username gets a DETERMINISTIC FAKE id (HMAC-derived, stable
+    // across probes, indistinguishable from a real credential id), so the
+    // options shape is uniform and can't be used to enumerate admin usernames.
     let allowCredentialIds: string[] = [];
     let boundAdminId: Id<'adminUsers'> | undefined;
     if (username) {
@@ -187,6 +190,10 @@ export const authenticateOptions = internalAction({
         allowCredentialIds = await ctx.runQuery(internal.admins.credentialIdsByAdmin, {
           adminUserId: active._id,
         });
+      } else {
+        const salt = process.env.IP_HASH_SALT;
+        if (!salt) throw new Error('IP_HASH_SALT must be set');
+        allowCredentialIds = [(await hmacSha256Hex(salt, `wa-fake-cred:${username}`)).slice(0, 43)];
       }
     }
 
@@ -378,10 +385,9 @@ export const registerInviteOptions = internalAction({
       const salt = process.env.IP_HASH_SALT;
       if (!salt) throw new Error('IP_HASH_SALT must be set');
       const ipHash = await hmacSha256Hex(salt, ip);
-      const rl = await ctx.runMutation(internal.rateLimits.checkAndIncrement, {
-        bucket: `admin-register:ip:${ipHash}`,
-        max: 30,
-        windowMs: 3_600_000,
+      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+        policyKey: 'admin.register.ip',
+        subject: ipHash,
       });
       if (!rl.allowed) {
         throw new ConvexError({ code: 'rate_limit.exceeded', message: 'Too many attempts' });

@@ -68,16 +68,15 @@ export const checkAndIncrement = internalMutation({
 /**
  * Policy-driven limit. Resolves the admin-tunable policy for `policyKey`, and if
  * enabled runs the strict counter on `<policyKey>:<subject>`. A disabled policy
- * (or an unknown key, which should never happen) is allowed-through. Unknown
- * keys are logged: a typo at a call site should be visible, not silently
- * unlimited.
+ * is allowed-through (the operator's deliberate choice). An UNKNOWN key throws
+ * (fail closed): a call-site typo must be a loud 500 during development, never
+ * a silently unthrottled route.
  */
 export const enforce = internalMutation({
   args: { policyKey: v.string(), subject: v.string() },
   handler: async (ctx, { policyKey, subject }): Promise<RateLimitResult> => {
     if (!isRateLimitPolicyKey(policyKey)) {
-      console.error(`[rateLimits] enforce called with unknown policy key "${policyKey}"`);
-      return { allowed: true, remaining: -1, retryAfterMs: 0 };
+      throw new Error(`[rateLimits] enforce called with unknown policy key "${policyKey}"`);
     }
     const policy = await resolvePolicy(ctx.db, policyKey);
     if (!policy.enabled) return { allowed: true, remaining: -1, retryAfterMs: 0 };

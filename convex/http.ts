@@ -455,7 +455,9 @@ http.route({
     try {
       result = await ctx.runAction(internal.freeTier.createFreeAccount, {
         ip,
-        ipCountry: req.headers.get('cf-ipcountry') ?? undefined,
+        // The country is only trustworthy behind Cloudflare (resolveCountry is
+        // CF_FRONTED-gated); a client-spoofed header must never reach the audit.
+        ipCountry: resolveCountry(req) ?? undefined,
         requestId,
         backend,
         popPublicKey: typeof popRaw === 'string' ? popRaw : undefined,
@@ -882,7 +884,11 @@ http.route({
     // the preference, 'auto' (or null) clears it back to automatic, absent
     // keeps the stored preference. Validated against the live catalog so a
     // typo'd/unknown code is a 400, not a silently-ignored filter.
-    const body = await readJson<{ location?: string | null }>(req);
+    const body = await readJson<{ location?: string | null; confirm?: boolean }>(req);
+    // Re-issuing destroys the current key after a 24h grace — require the
+    // explicit confirm gate (the contract declares it; enforce it like
+    // /switch-backend and /switch-mode do).
+    if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
     let location: string | null | undefined;
     if (body.location !== undefined) {
       if (body.location === null || body.location === 'auto') {

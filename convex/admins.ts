@@ -137,6 +137,36 @@ export const insertCredential = internalMutation({
   },
 });
 
+/**
+ * Bootstrap-only credential insert: atomically re-checks that NO credential
+ * exists yet and inserts the first one. The registerBootstrapVerify action does
+ * the slow crypto verify FIRST (after its own pre-check), so two parties racing
+ * the ceremony can both pass the earlier query-time check — but only one wins
+ * this serializable claim; the loser gets auth.forbidden and must restart.
+ * (Invite registration uses insertCredential: an admin already exists there.)
+ */
+export const bootstrapInsertCredential = internalMutation({
+  args: {
+    adminUserId: v.id('adminUsers'),
+    credentialId: v.string(),
+    publicKey: v.string(),
+    counter: v.number(),
+    transports: v.optional(v.string()),
+    deviceLabel: v.optional(v.string()),
+    aaguid: v.optional(v.string()),
+  },
+  handler: async (ctx, a) => {
+    if ((await ctx.db.query('passkeyCredentials').take(1)).length > 0) {
+      throw new ConvexError({
+        code: 'auth.forbidden',
+        message: 'Bootstrap closed: an admin already exists',
+      });
+    }
+    await ctx.db.insert('passkeyCredentials', a);
+    return null;
+  },
+});
+
 export const credentialIdsByAdmin = internalQuery({
   args: { adminUserId: v.id('adminUsers') },
   handler: async (ctx, { adminUserId }) => {

@@ -96,6 +96,19 @@ describe('registerOptions (add a passkey)', () => {
     const res = await t.action(internal.memberWebauthn.registerOptions, { userId });
     expect(res.options.excludeCredentials?.map((c) => c.id)).toContain('existing-cred');
   });
+
+  test('per-member enroll limit holds even with NO request IP', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedMember(t);
+    // The bucket is keyed by userId (not IP), so the limit must apply even when
+    // the request IP is unresolvable (a previous `if (ip)` guard disabled it).
+    for (let i = 0; i < 20; i++) {
+      await t.action(internal.memberWebauthn.registerOptions, { userId });
+    }
+    await expect(t.action(internal.memberWebauthn.registerOptions, { userId })).rejects.toThrow(
+      /Too many attempts/,
+    );
+  });
 });
 
 describe('registerVerify', () => {
