@@ -75,7 +75,13 @@ describe('userStats counters (WS3)', () => {
     const t = convexTest(schema, modules);
     const tierId = await seedFreeTier(t);
     const userId = await t.run((ctx) =>
-      ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }),
+      // Lapsed expiry: the transition re-guards (M2) only flip a STILL-lapsed user.
+      ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        membershipExpiresAt: Date.now() - DAY,
+        updatedAt: Date.now(),
+      }),
     );
     await t.action(internal.userStats.reconcileUserCounts, {}); // baseline active:1
     await t.mutation(internal.lifecycle.applyGraceTransition, { userId });
@@ -127,7 +133,13 @@ describe('userStats counters (WS3)', () => {
       await ctx.db.insert('users', { tierId: freeTierId, status: 'active', updatedAt: now });
       await ctx.db.insert('users', { tierId: paidTierId, status: 'active', updatedAt: now }); // paid active — excluded
       await ctx.db.insert('users', { tierId: freeTierId, status: 'inactive', updatedAt: now }); // free but idle — excluded
-      return ctx.db.insert('users', { tierId: freeTierId, status: 'active', updatedAt: now });
+      return ctx.db.insert('users', {
+        tierId: freeTierId,
+        status: 'active',
+        // Lapsed expiry so the grace transition's re-guard (M2) admits the flip.
+        membershipExpiresAt: now - DAY,
+        updatedAt: now,
+      });
     });
     const c = await t.action(internal.userStats.reconcileUserCounts, {});
     expect(c).toMatchObject({ active: 3, freeActive: 2 });

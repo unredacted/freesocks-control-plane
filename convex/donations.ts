@@ -11,6 +11,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
+import { heartbeatFromAction } from './cronHeartbeat';
 import { resolveBillingConfig } from './lib/billingConfig';
 import { effectiveBonusGb, readDonationState, writeDonationState } from './lib/donationBonus';
 import { resolveTrafficLimitBytes } from './lib/backends/types';
@@ -156,6 +157,7 @@ const BULK_CHUNK = 500; // Remnawave bulk/update uuids cap
 export const applyFreeBonus = internalAction({
   args: {},
   handler: async (ctx): Promise<null> => {
+    await heartbeatFromAction(ctx, 'donation-bonus-reconcile');
     const { effective, applied, freeTiers } = await ctx.runQuery(
       internal.donations.applyContext,
       {},

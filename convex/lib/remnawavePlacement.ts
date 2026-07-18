@@ -336,16 +336,21 @@ export async function resolvePlacementTarget(
 }
 
 /**
- * The least-loaded placement of a pool, by cached node load. Fresh+online
- * placements win over stale/offline/unroutable ones (lowest weighted load
- * first); among all-unknown the pool's declaration order decides,
- * deterministically. A single-element (or empty) pool short-circuits. Between
- * cron refreshes the load can drift by a few issuances — bounded + self-correcting.
+ * A least-loaded placement of a pool, by cached node load. Fresh+online
+ * placements win over stale/offline/unroutable ones; among all-unknown the
+ * pool's declaration order decides, deterministically. A single-element (or
+ * empty) pool short-circuits. Between cron refreshes the load can drift by a
+ * few issuances — bounded + self-correcting.
  *
  * Load score = usersOnline_weight * usersOnline + bandwidth_weight * (realtime bytes).
  * A placement that is offline or maps to zero nodes is treated as unusable-load
  * (sorted after every usable one) but still selectable as a last resort, so a
  * bound-but-degraded pool still issues a key rather than falling through to null.
+ *
+ * Anti-herding (L5): with ≥2 usable candidates the pick is UNIFORM AT RANDOM
+ * over the top 3 by score — a deterministic top-1 makes every concurrent
+ * issuance between 10-minute stat refreshes pile onto the same node. Degraded
+ * pools stay deterministic (declaration order) for reproducibility.
  */
 export async function pickByNodeLoad(db: DatabaseReader, pool: string[]): Promise<string | null> {
   if (pool.length <= 1) return pool[0] ?? null;
@@ -370,5 +375,10 @@ export async function pickByNodeLoad(db: DatabaseReader, pool: string[]): Promis
   scored.sort(
     (a, b) => Number(b.usable) - Number(a.usable) || a.score - b.score || a.order - b.order,
   );
+  const usable = scored.filter((s) => s.usable);
+  if (usable.length >= 2) {
+    const top = usable.slice(0, 3);
+    return top[Math.floor(Math.random() * top.length)]!.placement;
+  }
   return scored[0]!.placement;
 }

@@ -116,6 +116,38 @@ export const anyActive = internalQuery({
   },
 });
 
+// The mirror-refresh sweep's pagination cursor, persisted between runs: the
+// sweep scans the by_state='active' index in stable creation order, so a
+// per-run `cursor = null` re-scans the SAME oldest window every tick and
+// mirrored subs beyond it NEVER refresh (M3). Persisting the cursor rotates
+// the window through the whole fleet over successive ticks (null = restart).
+const REFRESH_CURSOR_KEY = 'mirror-refresh:cursor';
+
+export const getRefreshCursor = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<string | null> => {
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', REFRESH_CURSOR_KEY))
+      .unique();
+    return row?.value && row.value !== 'null' ? row.value : null;
+  },
+});
+
+export const setRefreshCursor = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }): Promise<null> => {
+    const value = cursor ?? 'null';
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', REFRESH_CURSOR_KEY))
+      .unique();
+    if (row) await ctx.db.patch(row._id, { value, updatedAt: Date.now() });
+    else await ctx.db.insert('appState', { key: REFRESH_CURSOR_KEY, value, updatedAt: Date.now() });
+    return null;
+  },
+});
+
 /**
  * Pick the next mirror provider to hand a member, given their (transient,
  * never-stored) country and the providers they've already tried. Ordering:

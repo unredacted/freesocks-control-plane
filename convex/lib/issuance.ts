@@ -17,6 +17,8 @@ import type { Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
 import type { BackendId, IssueUserSpec } from './backends/types';
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export interface IssueResult {
   subscriptionId: Id<'subscriptions'>;
   backend: BackendId;
@@ -42,8 +44,9 @@ export async function issueNewSubscription(
     spec: input.spec,
     pinServerId: input.pinServerId ?? undefined,
   });
+  let subscriptionId: Id<'subscriptions'> | null = null;
   try {
-    const subscriptionId = await ctx.runMutation(internal.subscriptions.insertSubscription, {
+    subscriptionId = await ctx.runMutation(internal.subscriptions.insertSubscription, {
       userId: input.userId,
       backend: input.backend,
       backendUserId: issued.backendUserId,
@@ -70,16 +73,61 @@ export async function issueNewSubscription(
       mirrors: [],
     };
   } catch (err) {
-    // The backend user exists but we couldn't finish, so delete it: a transient
-    // failure doesn't leak a backend account with no local row.
-    try {
-      await ctx.runAction(internal.backends.deleteUser, {
-        backend: input.backend,
-        backendUserId: issued.backendUserId,
-        backendServerId: issued.backendServerId,
-      });
-    } catch {
-      /* best-effort compensation */
+    // The backend user exists but we couldn't finish. Compensate in full:
+    //   1. delete the backend user (bounded retry — one transient blip must not
+    //      leak a proxy account with no local row),
+    //   2. delete the LOCAL row too (an `active` row pointing at a deleted
+    //      backend user would otherwise be served as the member's key forever —
+    //      no sweep reclaims stray active rows),
+    //   3. return the instance keyCount the issue bumped (+1), so pool scoring /
+    //      the maxKeys cap don't drift upward on every failed issuance.
+    // A delete that still fails is audited loudly (operator cleanup queue).
+    let backendDeleted = false;
+    for (let attempt = 0; attempt < 3 && !backendDeleted; attempt++) {
+      try {
+        if (attempt > 0) await sleep(250 * 2 ** attempt);
+        await ctx.runAction(internal.backends.deleteUser, {
+          backend: input.backend,
+          backendUserId: issued.backendUserId,
+          backendServerId: issued.backendServerId,
+        });
+        backendDeleted = true;
+      } catch {
+        /* retried below / audited after the loop */
+      }
+    }
+    if (subscriptionId) {
+      try {
+        await ctx.runMutation(internal.subscriptions.markSubscriptionDeleted, { subscriptionId });
+      } catch {
+        /* the row points at a gone backend user; retention deletes it eventually */
+      }
+    }
+    if (issued.backendServerId) {
+      try {
+        await ctx.runMutation(internal.backendServers.bumpKeyCount, {
+          id: issued.backendServerId,
+          delta: -1,
+        });
+      } catch {
+        /* instance pool scoring self-corrects at the next healthcheck */
+      }
+    }
+    if (!backendDeleted) {
+      console.warn(
+        `[issuance] compensation delete failed for ${input.backend} user — orphan backend account`,
+      );
+      try {
+        await ctx.runMutation(internal.audit.record, {
+          actorType: 'system',
+          action: 'subscription.compensation_failed',
+          targetType: 'subscription',
+          targetId: subscriptionId ?? undefined,
+          payload: { backend: input.backend, backendUserId: issued.backendUserId },
+        });
+      } catch {
+        /* the saga's original error takes precedence */
+      }
     }
     throw err;
   }

@@ -121,6 +121,13 @@ describe('donations.applyFreeBonus', () => {
         .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
         .unique();
       expect(JSON.parse(st!.value).appliedBonusGb).toBe(30);
+      // The cron stamps its heartbeat so the admin dashboard can alarm on a
+      // stale/pending job (previously the only unstamped cron).
+      const hb = await ctx.db
+        .query('cronHeartbeats')
+        .withIndex('by_name', (q) => q.eq('name', 'donation-bonus-reconcile'))
+        .unique();
+      expect(hb?.lastRunAt).toBeGreaterThan(0);
     });
   });
 

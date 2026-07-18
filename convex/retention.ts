@@ -6,12 +6,21 @@
  * table's own time index) so deletes are a bounded range scan, not a full table.
  */
 import { internalMutation } from './_generated/server';
+import { internal } from './_generated/api';
 import { v } from 'convex/values';
 import { recordHeartbeat } from './cronHeartbeat';
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const PAGE = 1000;
+
+/**
+ * A sweep that deletes a FULL page has more to drain: re-run immediately (each
+ * run is its own transaction) instead of waiting a day for the next cron tick —
+ * one page/day can never catch up once a table accrues faster than that (L4).
+ * Bounded so a pathological table can't chain forever; a warn names the straggler.
+ */
+const MAX_DRAIN_ROUNDS = 50;
 
 const num = (envKey: string, fallbackDays: number): number => {
   const raw = Number(process.env[envKey]);
@@ -20,30 +29,45 @@ const num = (envKey: string, fallbackDays: number): number => {
 
 /** Audit log: keep ~180 days by default (AUDIT_RETENTION_DAYS). */
 export const sweepAuditLog = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'retention-audit');
     const cutoff = Date.now() - num('AUDIT_RETENTION_DAYS', 180) * DAY;
+    const page = limit ?? PAGE;
     const rows = await ctx.db
       .query('auditLog')
       .withIndex('by_creation_time', (q) => q.lt('_creationTime', cutoff))
-      .take(limit ?? PAGE);
+      .take(page);
     for (const r of rows) await ctx.db.delete(r._id);
+    if (rows.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-audit] drain cap hit; remainder next run');
+      else await ctx.scheduler.runAfter(0, internal.retention.sweepAuditLog, { rounds: n + 1 });
+    }
     return { removed: rows.length };
   },
 });
 
 /** Webhook dedupe records: keep ~90 days (far beyond any replay window). */
 export const sweepWebhookEvents = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'retention-webhooks');
     const cutoff = Date.now() - num('WEBHOOK_RETENTION_DAYS', 90) * DAY;
+    const page = limit ?? PAGE;
     const rows = await ctx.db
       .query('webhookEvents')
       .withIndex('by_creation_time', (q) => q.lt('_creationTime', cutoff))
-      .take(limit ?? PAGE);
+      .take(page);
     for (const r of rows) await ctx.db.delete(r._id);
+    if (rows.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-webhooks] drain cap hit; remainder next run');
+      else
+        await ctx.scheduler.runAfter(0, internal.retention.sweepWebhookEvents, { rounds: n + 1 });
+    }
     return { removed: rows.length };
   },
 });
@@ -54,45 +78,72 @@ export const sweepWebhookEvents = internalMutation({
  * least a day ago — consumed or not — via the by_expires index.
  */
 export const sweepWebauthnAuthChallenges = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'retention-webauthn-auth');
     const cutoff = Date.now() - num('WEBAUTHN_CHALLENGE_RETENTION_DAYS', 1) * DAY;
+    const page = limit ?? PAGE;
     const rows = await ctx.db
       .query('webauthnAuthChallenges')
       .withIndex('by_expires', (q) => q.lt('expiresAt', cutoff))
-      .take(limit ?? PAGE);
+      .take(page);
     for (const r of rows) await ctx.db.delete(r._id);
+    if (rows.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-webauthn-auth] drain cap hit; remainder next run');
+      else
+        await ctx.scheduler.runAfter(0, internal.retention.sweepWebauthnAuthChallenges, {
+          rounds: n + 1,
+        });
+    }
     return { removed: rows.length };
   },
 });
 
 /** Passkey registration challenges: same shape as the assertion sweep above. */
 export const sweepWebauthnRegistrationChallenges = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'retention-webauthn-reg');
     const cutoff = Date.now() - num('WEBAUTHN_CHALLENGE_RETENTION_DAYS', 1) * DAY;
+    const page = limit ?? PAGE;
     const rows = await ctx.db
       .query('webauthnRegistrationChallenges')
       .withIndex('by_expires', (q) => q.lt('expiresAt', cutoff))
-      .take(limit ?? PAGE);
+      .take(page);
     for (const r of rows) await ctx.db.delete(r._id);
+    if (rows.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-webauthn-reg] drain cap hit; remainder next run');
+      else
+        await ctx.scheduler.runAfter(0, internal.retention.sweepWebauthnRegistrationChallenges, {
+          rounds: n + 1,
+        });
+    }
     return { removed: rows.length };
   },
 });
 
 /** Tier-change history: keep ~365 days. */
 export const sweepTierHistory = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'retention-tier-history');
     const cutoff = Date.now() - num('TIER_HISTORY_RETENTION_DAYS', 365) * DAY;
+    const page = limit ?? PAGE;
     const rows = await ctx.db
       .query('tierHistory')
       .withIndex('by_creation_time', (q) => q.lt('_creationTime', cutoff))
-      .take(limit ?? PAGE);
+      .take(page);
     for (const r of rows) await ctx.db.delete(r._id);
+    if (rows.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-tier-history] drain cap hit; remainder next run');
+      else await ctx.scheduler.runAfter(0, internal.retention.sweepTierHistory, { rounds: n + 1 });
+    }
     return { removed: rows.length };
   },
 });
@@ -106,15 +157,25 @@ export const sweepTierHistory = internalMutation({
  * rows are NOT touched: the tombstone sweep owns those.
  */
 export const sweepDeletedSubscriptions = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'retention-subscriptions');
     const cutoff = Date.now() - num('SUBSCRIPTION_RETENTION_DAYS', 90) * DAY;
+    const page = limit ?? PAGE;
     const rows = await ctx.db
       .query('subscriptions')
       .withIndex('by_state', (q) => q.eq('state', 'deleted').lt('deletedAt', cutoff))
-      .take(limit ?? PAGE);
+      .take(page);
     for (const r of rows) await ctx.db.delete(r._id);
+    if (rows.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-subscriptions] drain cap hit; remainder next run');
+      else
+        await ctx.scheduler.runAfter(0, internal.retention.sweepDeletedSubscriptions, {
+          rounds: n + 1,
+        });
+    }
     return { removed: rows.length };
   },
 });
@@ -222,12 +283,13 @@ export const backfillGiftRevealPending = internalMutation({
 
 /** Terminal billing orders (paid/failed/expired): keep ~365 days for accounting. */
 export const sweepBillingOrders = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'retention-billing-orders');
     const cutoff = Date.now() - num('BILLING_ORDER_RETENTION_DAYS', 365) * DAY;
     const page = limit ?? PAGE;
     let removed = 0;
+    let full = false;
     for (const status of ['paid', 'failed', 'expired'] as const) {
       const rows = await ctx.db
         .query('billingOrders')
@@ -235,6 +297,14 @@ export const sweepBillingOrders = internalMutation({
         .take(page);
       for (const r of rows) await ctx.db.delete(r._id);
       removed += rows.length;
+      if (rows.length === page) full = true;
+    }
+    if (full) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-billing-orders] drain cap hit; remainder next run');
+      else
+        await ctx.scheduler.runAfter(0, internal.retention.sweepBillingOrders, { rounds: n + 1 });
     }
     return { removed };
   },

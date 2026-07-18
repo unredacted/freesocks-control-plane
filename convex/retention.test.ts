@@ -283,4 +283,61 @@ describe('retention.sweepDeletedSubscriptions (pass 2)', () => {
       expect(await ctx.db.get(tombstoneId)).not.toBeNull();
     });
   });
+
+  test('a full page re-queues the sweep (drains same-day); a short page stops', async () => {
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: now,
+      });
+      const userId = await ctx.db.insert('users', { tierId, status: 'active', updatedAt: now });
+      for (let i = 0; i < 3; i++) {
+        await ctx.db.insert('subscriptions', {
+          userId,
+          backend: 'remnawave',
+          backendUserId: `drain-${i}`,
+          backendShortId: 's',
+          subscriptionUrl: 'https://sub.example/s',
+          subscriptionMirrors: [],
+          state: 'deleted',
+          deletedAt: now - 100 * DAY,
+          updatedAt: now,
+        });
+      }
+    });
+    const scheduled = () =>
+      t.run(async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).filter((f) =>
+          f.name.includes('sweepDeletedSubscriptions'),
+        ),
+      );
+    // limit=2: the first call deletes a FULL page → re-queues a continuation…
+    const first = await t.mutation(internal.retention.sweepDeletedSubscriptions, { limit: 2 });
+    expect(first.removed).toBe(2);
+    expect((await scheduled()).length).toBe(1);
+    // …the continuation (invoked with rounds+1) deletes the short remainder and
+    // does NOT queue another — the chain stops on a short page.
+    const second = await t.mutation(internal.retention.sweepDeletedSubscriptions, {
+      limit: 2,
+      rounds: 1,
+    });
+    expect(second.removed).toBe(1);
+    expect((await scheduled()).length).toBe(1); // unchanged: no new continuation
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query('subscriptions').collect()).toHaveLength(0);
+    });
+  });
 });

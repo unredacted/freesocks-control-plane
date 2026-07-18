@@ -47,6 +47,14 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // A key was issued with no placement (no Remnawave pool bound anywhere) — a
   // bring-up misconfiguration signal. `requestedMode` is a non-secret mode id.
   'subscription.issued_without_placement': ['requestedMode'],
+  // Issuance-saga compensation couldn't delete the freshly-minted backend user
+  // (bounded retries exhausted): an ORPHAN proxy account exists panel-side with
+  // no local row. The operator's manual cleanup queue. backendUserId is the
+  // panel-side account id (non-secret; needed to find + delete the orphan).
+  'subscription.compensation_failed': ['backend', 'backendUserId'],
+  // The post-issuance tombstone of a superseded key failed past the bounded
+  // retry — TWO live keys exist until an operator deletes the old one.
+  'subscription.tombstone_failed': ['backendUserId'],
   'membership.tier_change': ['fromTierId', 'toTierId', 'reason'],
   'user.create.free': ['ipCountry', 'asn'],
   // W2: admin retunes a rate-limit policy.

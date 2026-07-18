@@ -2,9 +2,10 @@
 // live proxy key (subscriptionUrl), so nothing in this module may be callable
 // on the raw Convex channel. The old public `get` / `activeForUser` queries
 // were dead code and were deleted outright.
-import { internalMutation, internalQuery } from './_generated/server';
+import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { DatabaseReader } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { v } from 'convex/values';
 import { randomHex } from './lib/crypto';
 
@@ -397,5 +398,43 @@ export const tombstoneWithGrace = internalMutation({
     const deletedAt = Date.now() + graceMs;
     await ctx.db.patch(sub._id, { state: 'disabled', deletedAt, updatedAt: Date.now() });
     return { deletedAt };
+  },
+});
+
+// Post-issuance tombstone retry (L1): regenerate/switch mint a NEW key, then
+// tombstone the old one — if that mutation fails transiently the old key would
+// stay live FOREVER alongside the new one (no sweep re-tombstones an active
+// row). The saga schedules this action on failure; it retries with bounded
+// backoff and audits loudly at the end so two-live-keys never goes silent.
+const TOMBSTONE_RETRY_BACKOFF_MS = [30_000, 120_000, 480_000, 1_800_000];
+
+export const tombstoneWithGraceAction = internalAction({
+  args: { backendUserId: v.string(), graceMs: v.number(), attempt: v.optional(v.number()) },
+  handler: async (ctx, { backendUserId, graceMs, attempt }): Promise<null> => {
+    const n = attempt ?? 0;
+    try {
+      await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, { backendUserId, graceMs });
+      return null;
+    } catch (err) {
+      if (n >= TOMBSTONE_RETRY_BACKOFF_MS.length) {
+        console.warn(
+          `[subscription] tombstone retry exhausted for ${backendUserId.slice(0, 8)}…: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+        await ctx.runMutation(internal.audit.record, {
+          actorType: 'system',
+          action: 'subscription.tombstone_failed',
+          targetType: 'subscription',
+          payload: { backendUserId },
+        });
+        return null;
+      }
+      await ctx.scheduler.runAfter(
+        TOMBSTONE_RETRY_BACKOFF_MS[n]!,
+        internal.subscriptions.tombstoneWithGraceAction,
+        { backendUserId, graceMs, attempt: n + 1 },
+      );
+      return null;
+    }
   },
 });

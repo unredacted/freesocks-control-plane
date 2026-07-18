@@ -286,8 +286,10 @@ export const testProviderConnection = internalAction({
   },
 });
 
-// Bounded per run: drain up to MAX_PAGES × PAGE active subs. Beta/early-prod fits
-// in one run; a larger set catches up over subsequent ticks.
+// Bounded per run: drain up to MAX_PAGES × PAGE active subs, continuing from the
+// cursor persisted at the END of the last run so the window rotates through the
+// whole fleet over successive ticks (a per-run cold start re-scans the same
+// oldest window forever and starves every mirrored sub beyond it — M3).
 const REFRESH_MAX_PAGES = 50;
 const REFRESH_PAGE = 50;
 
@@ -307,15 +309,28 @@ export const refreshActiveMirrors = internalAction({
       return { refreshed: 0, scanned: 0 };
     }
     const byName = new Map(providers.map((p) => [p.name, p]));
-    let cursor: string | null = null;
+    let cursor: string | null = await ctx.runQuery(internal.mirrorProviders.getRefreshCursor, {});
     let refreshed = 0;
     let scanned = 0;
     for (let page = 0; page < REFRESH_MAX_PAGES; page++) {
       // Annotated (not inferred) to break the internal-API self-reference cycle.
-      const res: ActiveMirrorPage = await ctx.runQuery(internal.subscriptions.pageActiveForMirror, {
-        cursor,
-        numItems: REFRESH_PAGE,
-      });
+      let res: ActiveMirrorPage;
+      try {
+        res = await ctx.runQuery(internal.subscriptions.pageActiveForMirror, {
+          cursor,
+          numItems: REFRESH_PAGE,
+        });
+      } catch (err) {
+        // A stale/invalid cursor (e.g. after an index change) must not wedge the
+        // sweep: reset to the start and continue from there next run.
+        if (cursor === null) throw err;
+        console.warn('[mirror-refresh] cursor rejected; restarting from the beginning');
+        cursor = null;
+        res = await ctx.runQuery(internal.subscriptions.pageActiveForMirror, {
+          cursor,
+          numItems: REFRESH_PAGE,
+        });
+      }
       for (const sub of res.items) {
         scanned++;
         // Re-upload only to THIS sub's providers that are still active.
@@ -352,9 +367,16 @@ export const refreshActiveMirrors = internalAction({
           /* best-effort per sub: one backend/S3 hiccup must not stall the sweep */
         }
       }
-      if (res.isDone) break;
+      if (res.isDone) {
+        // Full pass complete: restart from the beginning next tick.
+        await ctx.runMutation(internal.mirrorProviders.setRefreshCursor, { cursor: null });
+        return { refreshed, scanned };
+      }
       cursor = res.continueCursor;
     }
+    // Hit the per-run page cap: persist where we stopped so the NEXT tick
+    // continues forward instead of re-scanning the same window (M3).
+    await ctx.runMutation(internal.mirrorProviders.setRefreshCursor, { cursor });
     return { refreshed, scanned };
   },
 });
