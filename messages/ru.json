@@ -278,7 +278,6 @@
   },
   "hero": {
     "titleDefault": "Ваша подписка",
-    "eyebrowAccessKey": "Ваш ключ доступа",
     "urlLabelSubscription": "Ссылка подписки",
     "urlLabelAccessKey": "Ключ доступа",
     "tierLine": "Тариф {tier}",

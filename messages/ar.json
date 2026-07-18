@@ -279,7 +279,6 @@
   },
   "hero": {
     "titleDefault": "اشتراكك",
-    "eyebrowAccessKey": "مفتاح الوصول الخاص بك",
     "urlLabelSubscription": "رابط الاشتراك",
     "urlLabelAccessKey": "مفتاح الوصول",
     "tierLine": "الفئة {tier}",

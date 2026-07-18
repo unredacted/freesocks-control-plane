@@ -11,7 +11,6 @@
   import Gauge from '@lucide/svelte/icons/gauge';
   import QrCodeIcon from '@lucide/svelte/icons/qr-code';
   import Link2 from '@lucide/svelte/icons/link-2';
-  import Shield from '@lucide/svelte/icons/shield';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import MapPin from '@lucide/svelte/icons/map-pin';
   import { formatBytes, daysUntil, copyText } from '../lib/utils';
@@ -22,25 +21,24 @@
   import type { Snippet } from 'svelte';
 
   /**
-   * The Access Pass: the product's signature object - a boarding-pass-style
+   * The key pass: the product's signature object - a boarding-pass-style
    * card that hands someone their key. Big URL, one-click copy as the primary
    * action, QR on a perforated "stub" (dashed divider) for cross-device
    * handoff, expiry/traffic as calm stat blocks. Used on /get-account (step 3)
-   * and /account (connection tab).
+   * and /account (connection tab), identically headed "Your key" on both.
    *
    * Design decisions:
-   *  - One elevation level: border, no shadow (shadows are for overlays).
-   *  - The header is a document wordmark (eyebrow) + title + a plain-text
-   *    status line - no chips/badges; the live dot carries "is it up".
-   *  - Primary action is Copy (full-width on mobile, inline on desktop).
-   *  - QR is on the stub side of a dashed "perforation" at desktop, behind a
-   *    toggle on mobile.
-   *  - Animated copy-success uses Check icon swap with a 1.5s rollback.
-   *  - Traffic + expiry are StatBlocks with tabular-nums (no jiggle).
+   * - One elevation level: border, no shadow (shadows are for overlays).
+   * - The header is the title + a plain-text status line - no chips/badges;
+   *   the live dot carries "is it up".
+   * - Primary action is Copy (full-width on mobile, inline on desktop).
+   * - QR is on the stub side of a dashed "perforation" at desktop, behind a
+   *   toggle on mobile.
+   * - Animated copy-success uses Check icon swap with a 1.5s rollback.
+   * - Traffic + expiry are StatBlocks with tabular-nums (no jiggle).
    */
   interface Props {
     title?: string;
-    eyebrow?: string;
     /** Display name for the backend (from config.backends.labels). Falls back
      *  to the built-in names so existing callers keep working. */
     backendLabel?: string;
@@ -99,7 +97,6 @@
   }
   let {
     title,
-    eyebrow,
     backendLabel,
     subscriptionUrl,
     fallbackUrl,
@@ -224,16 +221,8 @@
   {/if}
 
   <div class="p-6 md:p-8 space-y-6">
-    <!-- Pass header: document wordmark + title + plain-text status line. -->
+    <!-- Pass header: title + plain-text status line. -->
     <div class="space-y-1.5">
-      {#if eyebrow}
-        <p
-          class="text-xs uppercase tracking-wider font-semibold text-muted-foreground flex items-center gap-1.5"
-        >
-          <Shield class="size-3.5" />
-          {eyebrow}
-        </p>
-      {/if}
       <h2 class="text-xl md:text-2xl font-display font-bold tracking-tight">
         {resolvedTitle}
       </h2>

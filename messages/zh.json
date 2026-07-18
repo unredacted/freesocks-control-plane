@@ -279,7 +279,6 @@
   },
   "hero": {
     "titleDefault": "你的订阅",
-    "eyebrowAccessKey": "你的访问密钥",
     "urlLabelSubscription": "订阅链接",
     "urlLabelAccessKey": "访问密钥",
     "tierLine": "套餐 {tier}",

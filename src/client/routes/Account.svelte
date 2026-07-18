@@ -845,7 +845,6 @@
               data.subscription.url,
             )}
             <SubscriptionHero
-              eyebrow={t('hero.eyebrowAccessKey')}
               backendLabel={config.data?.backends.labels[data.subscription.backend]}
               subscriptionUrl={subUrl}
               expiresAt={data.subscription.expiresAt}
@@ -922,13 +921,15 @@
                 subscriptionUrl={subUrl}
                 deviceLimited={data.user.tier.deviceLimited ?? false}
               />
-              {#if config.data?.mirrorsEnabled}
-                <MirrorHelp
-                  mirrors={data.subscription.mirrors}
-                  geoCountry={data.geoCountry}
-                  subscriptionUrl={subUrl}
-                />
-              {/if}
+              <!-- Always rendered: mirror AVAILABILITY is member-visible state
+                   (the component shows a "not available here" note when the
+                   deployment has no mirror provider). -->
+              <MirrorHelp
+                mirrors={data.subscription.mirrors}
+                geoCountry={data.geoCountry}
+                subscriptionUrl={subUrl}
+                available={config.data?.mirrorsEnabled ?? false}
+              />
               <RawConfig />
             {/if}
 
@@ -1083,6 +1084,12 @@
             {/if}
           {/if}
 
+          <!-- "Have a membership code?" — the day-1 upgrade path, always
+               available in every membership state. -->
+          <div class="border-t border-border pt-6">
+            <RedeemCode flat />
+          </div>
+
           <!-- Donation impact + nonprofit framing (every membership state; shows
                the collective bonus stats/graph + the member's own contribution). -->
           <div class="border-t border-border pt-6">
@@ -1097,7 +1104,7 @@
         </section>
       </Tabs.Content>
 
-      <!-- TAB: Gifts & referrals - redeem a code, buy codes to share, invite. -->
+      <!-- TAB: Gifts & referrals - buy codes to share, invite. -->
       <Tabs.Content value="gifts">
         <section class="space-y-6">
           <SectionHead
@@ -1106,8 +1113,8 @@
             description={t('account.section.gifts.desc')}
           />
 
-          <!-- Redeem is always available; GiftCodes self-gates on billing. -->
-          <RedeemCode flat />
+          <!-- GiftCodes self-gates on billing. (Redeem lives on the Membership
+               tab — that's where a member looks for their upgrade path.) -->
           <GiftCodes />
 
           <!-- Referrals (self-gates on the program being enabled): the member's

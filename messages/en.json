@@ -257,11 +257,11 @@
       },
       "membership": {
         "title": "Membership",
-        "desc": "Your plan, and how to upgrade or extend it."
+        "desc": "Your plan - upgrade, extend, or redeem a membership code."
       },
       "gifts": {
         "title": "Gifts & referrals",
-        "desc": "Redeem a code, buy codes to share, and invite people you trust."
+        "desc": "Buy codes to share, and invite people you trust."
       },
       "codes": {
         "title": "Codes & gifts",
@@ -279,7 +279,6 @@
   },
   "hero": {
     "titleDefault": "Your key",
-    "eyebrowAccessKey": "FreeSocks Access Pass",
     "urlLabelSubscription": "Your link",
     "urlLabelAccessKey": "Access key",
     "tierLine": "Plan {tier}",
@@ -716,6 +715,7 @@
   "mirror": {
     "disclosure": "Trouble connecting?",
     "explainer": "If your normal subscription link won't connect where you are, add a mirror link below. It serves the same key from a different host that may not be blocked.",
+    "unavailable": "Mirrors aren't available on this deployment right now - there are no mirror links to add.",
     "addedLabel": "Your mirror links",
     "addToAppHint": "Add each one as an extra subscription in your app, then try connecting.",
     "regionLabel": "Your region",

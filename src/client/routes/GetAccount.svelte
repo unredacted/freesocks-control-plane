@@ -601,10 +601,6 @@
     <!-- STEP 3 (key issued): the pass + setup. This is the flow's destination. -->
     <div id="get-key" class="scroll-mt-24 space-y-6">
       <SubscriptionHero
-        eyebrow={t('hero.eyebrowAccessKey')}
-        title={subscription.backend === 'outline'
-          ? t('hero.urlLabelAccessKey')
-          : t('hero.urlLabelSubscription')}
         backendLabel={config.data?.backends.labels[subscription.backend]}
         subscriptionUrl={subUrl}
         expiresAt={subscription.expiresAt}
@@ -642,13 +638,12 @@
           subscriptionUrl={subUrl}
           deviceLimited={account.data?.user.tier.deviceLimited ?? false}
         />
-        {#if config.data?.mirrorsEnabled}
-          <MirrorHelp
-            mirrors={subscription.mirrors}
-            geoCountry={account.data?.geoCountry}
-            subscriptionUrl={subUrl}
-          />
-        {/if}
+        <MirrorHelp
+          mirrors={subscription.mirrors}
+          geoCountry={account.data?.geoCountry}
+          subscriptionUrl={subUrl}
+          available={config.data?.mirrorsEnabled ?? false}
+        />
         <RawConfig />
       {/if}
       <p class="text-xs text-muted-foreground text-center">

@@ -22,13 +22,20 @@
    * country-tiered mirror at a time (capped server-side); each is an extra
    * subscription URL they add in their app. The country picker is prefilled from
    * the CDN geo (transient, NEVER stored) and is overridable.
+   *
+   * Renders in ALL deployments (the availability is member-visible state, not a
+   * reason to hide): `available=false` (no active mirror provider configured)
+   * shows a quiet "not available here" note instead of the picker.
    */
   interface Props {
     mirrors: { provider: string; publicUrl: string }[];
     geoCountry?: string | null;
     subscriptionUrl: string;
+    /** Whether the deployment has any active mirror provider (publicConfig
+     *  mirrorsEnabled). */
+    available?: boolean;
   }
-  let { mirrors, geoCountry = null, subscriptionUrl }: Props = $props();
+  let { mirrors, geoCountry = null, subscriptionUrl, available = true }: Props = $props();
 
   const qc = useQueryClient();
   const locale = getLocale();
@@ -139,87 +146,93 @@
     <div class="space-y-4 px-4 pb-4 text-sm" transition:slide={{ duration: 180 }}>
       <p class="text-muted-foreground">{t('mirror.explainer')}</p>
 
-      {#if added.length > 0}
-        <div class="space-y-2">
-          <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            {t('mirror.addedLabel')}
+      {#if !available}
+        <!-- Availability is member-visible: no mirror provider is configured on
+             this deployment, so the fallback simply doesn't exist here. -->
+        <p class="text-muted-foreground/80 text-xs">{t('mirror.unavailable')}</p>
+      {:else}
+        {#if added.length > 0}
+          <div class="space-y-2">
+            <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {t('mirror.addedLabel')}
+            </p>
+            {#each added as m (m.publicUrl)}
+              <div class="flex gap-2">
+                <code
+                  class="min-w-0 flex-1 select-all break-all rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground"
+                >
+                  {m.publicUrl}
+                </code>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="min-h-11"
+                  onclick={() => copy(m.publicUrl)}
+                >
+                  {#if copiedUrl === m.publicUrl}
+                    <Check class="size-3.5" />
+                  {:else}
+                    <Copy class="size-3.5" />
+                  {/if}
+                </Button>
+              </div>
+            {/each}
+            <p class="text-xs text-muted-foreground/80">{t('mirror.addToAppHint')}</p>
+          </div>
+        {/if}
+
+        {#if !exhausted}
+          <div class="space-y-2">
+            <label class="block text-xs text-muted-foreground" for="mirror-region">
+              {t('mirror.regionLabel')}
+            </label>
+            <Select.Root type="single" value={selected} onValueChange={(v) => (selected = v ?? '')}>
+              <Select.Trigger id="mirror-region" class="w-full sm:w-72"
+                >{selectedLabel}</Select.Trigger
+              >
+              <Select.Content class="max-h-72 overflow-y-auto">
+                <Select.Item value="">{t('mirror.regionGlobal')}</Select.Item>
+                {#each regions as r (r.code)}
+                  <Select.Item value={r.code}>{r.name}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <p class="text-xs text-muted-foreground/80">{t('mirror.regionNotStored')}</p>
+          </div>
+
+          <Button onclick={() => request.mutate()} disabled={request.isPending} class="min-h-11">
+            {request.isPending
+              ? t('mirror.working')
+              : added.length === 0
+                ? t('mirror.getButton')
+                : t('mirror.tryAnother')}
+          </Button>
+        {/if}
+
+        {#if status === 'capped'}
+          <p class="text-xs text-amber-600" transition:fade={{ duration: 150 }}>
+            {t('mirror.capped')}
           </p>
-          {#each added as m (m.publicUrl)}
-            <div class="flex gap-2">
-              <code
-                class="min-w-0 flex-1 select-all break-all rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground"
-              >
-                {m.publicUrl}
-              </code>
-              <Button
-                variant="outline"
-                size="sm"
-                class="min-h-11"
-                onclick={() => copy(m.publicUrl)}
-              >
-                {#if copiedUrl === m.publicUrl}
-                  <Check class="size-3.5" />
-                {:else}
-                  <Copy class="size-3.5" />
-                {/if}
-              </Button>
-            </div>
-          {/each}
-          <p class="text-xs text-muted-foreground/80">{t('mirror.addToAppHint')}</p>
-        </div>
-      {/if}
+        {:else if status === 'exhausted'}
+          <p class="text-xs text-amber-600" transition:fade={{ duration: 150 }}>
+            {t('mirror.exhausted')}
+          </p>
+        {:else if status === 'no_subscription'}
+          <p class="text-xs text-muted-foreground" transition:fade={{ duration: 150 }}>
+            {t('mirror.noSubscription')}
+          </p>
+        {/if}
 
-      {#if !exhausted}
-        <div class="space-y-2">
-          <label class="block text-xs text-muted-foreground" for="mirror-region">
-            {t('mirror.regionLabel')}
-          </label>
-          <Select.Root type="single" value={selected} onValueChange={(v) => (selected = v ?? '')}>
-            <Select.Trigger id="mirror-region" class="w-full sm:w-72"
-              >{selectedLabel}</Select.Trigger
-            >
-            <Select.Content class="max-h-72 overflow-y-auto">
-              <Select.Item value="">{t('mirror.regionGlobal')}</Select.Item>
-              {#each regions as r (r.code)}
-                <Select.Item value={r.code}>{r.name}</Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
-          <p class="text-xs text-muted-foreground/80">{t('mirror.regionNotStored')}</p>
-        </div>
-
-        <Button onclick={() => request.mutate()} disabled={request.isPending} class="min-h-11">
-          {request.isPending
-            ? t('mirror.working')
-            : added.length === 0
-              ? t('mirror.getButton')
-              : t('mirror.tryAnother')}
-        </Button>
-      {/if}
-
-      {#if status === 'capped'}
-        <p class="text-xs text-amber-600" transition:fade={{ duration: 150 }}>
-          {t('mirror.capped')}
-        </p>
-      {:else if status === 'exhausted'}
-        <p class="text-xs text-amber-600" transition:fade={{ duration: 150 }}>
-          {t('mirror.exhausted')}
-        </p>
-      {:else if status === 'no_subscription'}
-        <p class="text-xs text-muted-foreground" transition:fade={{ duration: 150 }}>
-          {t('mirror.noSubscription')}
-        </p>
-      {/if}
-
-      {#if added.length > 0}
-        <button
-          type="button"
-          class="rounded-sm text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onclick={() => clear.mutate()}
-          disabled={clear.isPending}
-        >
-          {clear.isPending ? t('mirror.working') : t('mirror.removeAll')}
-        </button>
+        {#if added.length > 0}
+          <button
+            type="button"
+            class="rounded-sm text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onclick={() => clear.mutate()}
+            disabled={clear.isPending}
+          >
+            {clear.isPending ? t('mirror.working') : t('mirror.removeAll')}
+          </button>
+        {/if}
       {/if}
     </div>
   {/if}
