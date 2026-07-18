@@ -150,6 +150,47 @@ describe('remnawaveIssueUser', () => {
       remnawaveIssueUser(cfg, { username: 'u', trafficLimitBytes: null, expireAt: null, tag: 't' }),
     ).rejects.toThrow(/schema mismatch/i);
   });
+
+  test('a schema-mismatch create attempts orphan cleanup by username, then throws', async () => {
+    // The panel CREATED the user but the response can't be parsed (version
+    // drift): we lost the uuid, so the only handle is the unique username.
+    mockFetch((path, method) => {
+      if (path === '/api/users' && method === 'POST') return jsonRes({ uuid: 'not-a-uuid' });
+      if (path === '/api/users/by-username/u' && method === 'GET') return jsonRes({ uuid: UUID });
+      if (path === `/api/users/${UUID}` && method === 'DELETE') return jsonRes({});
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    await expect(
+      remnawaveIssueUser(cfg, { username: 'u', trafficLimitBytes: null, expireAt: null, tag: 't' }),
+    ).rejects.toThrow(/schema mismatch/i);
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      'POST /api/users',
+      'GET /api/users/by-username/u',
+      `DELETE /api/users/${UUID}`,
+    ]);
+  });
+
+  test('a definitive 4xx create rejection does NOT attempt cleanup', async () => {
+    mockFetch((path, method) => {
+      if (path === '/api/users' && method === 'POST') return jsonRes({ message: 'bad' }, 422);
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    await expect(
+      remnawaveIssueUser(cfg, { username: 'u', trafficLimitBytes: null, expireAt: null, tag: 't' }),
+    ).rejects.toThrow(/422/);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('a cleanup lookup that finds nothing still surfaces the original error', async () => {
+    mockFetch((path, method) => {
+      if (path === '/api/users' && method === 'POST') return jsonRes({ uuid: 'not-a-uuid' });
+      if (path.startsWith('/api/users/by-username/')) return jsonRes({ message: 'nf' }, 404);
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    await expect(
+      remnawaveIssueUser(cfg, { username: 'u', trafficLimitBytes: null, expireAt: null, tag: 't' }),
+    ).rejects.toThrow(/schema mismatch/i);
+  });
 });
 
 describe('remnawaveGetUser', () => {

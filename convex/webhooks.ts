@@ -71,6 +71,21 @@ export const ingest = internalAction({
     if (!claim.proceed) return { ok: true, duplicate: true, applied: false };
 
     try {
+      // Validate/coerce expiresAtMs INSIDE the claim, before any side effect:
+      // a permanently-malformed value (non-number) is ACKed processed (no retry
+      // churn on an event that can never succeed), and a seconds-unit sender is
+      // auto-corrected (a raw seconds value would otherwise store a 1970 expiry
+      // — an instantly-lapsed member). Only an EXCEPTION stays retryable.
+      let expiryMs: number | null = null;
+      if (expiresAtMs != null) {
+        if (typeof expiresAtMs !== 'number' || !Number.isFinite(expiresAtMs) || expiresAtMs <= 0) {
+          await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId });
+          return { ok: true, applied: false, reason: 'invalid_expiresAtMs' };
+        }
+        // < 1e12 is before Sep 2001 in ms — the sender meant seconds.
+        expiryMs = expiresAtMs < 1e12 ? Math.round(expiresAtMs * 1000) : Math.round(expiresAtMs);
+      }
+
       // Map account number → user (status-blind so a lapsed account can renew).
       const accountHash = await hashAccountId(accountId);
       const user = await ctx.runQuery(internal.users.byAccountIdHashInternal, {
@@ -92,7 +107,7 @@ export const ingest = internalAction({
       await ctx.runMutation(internal.lifecycle.setMembership, {
         userId: user._id,
         tierId: tier._id,
-        expiresAtMs: expiresAtMs ?? null,
+        expiresAtMs: expiryMs,
         reason: 'billing.webhook',
         triggeredBy: 'webhook',
       });

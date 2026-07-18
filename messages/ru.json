@@ -1088,7 +1088,6 @@
     "overallPartial": "В некоторых локациях есть проблемы",
     "overallMajor": "Идёт крупный сбой",
     "locationsTitle": "Локации",
-    "nodesUp": "{online} из {total} узлов в сети",
     "online": "В сети",
     "offline": "Не в сети",
     "srOnline": "в сети",

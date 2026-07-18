@@ -48,6 +48,7 @@ const CODE_MESSAGES: Record<string, () => string> = {
   'billing.error': () => t('error.billing'),
   'content.unavailable': () => t('error.backendUnavailable'),
   'mode.unavailable': () => t('error.modeUnavailable'),
+  'backend.placement_unresolved': () => t('error.backendUnavailable'),
   config: () => t('error.captchaUnconfigured'),
   not_found: () => t('error.generic'),
 };

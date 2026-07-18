@@ -33,8 +33,6 @@ export interface StatusLocation {
   code: string;
   label: string;
   online: boolean;
-  nodesOnline: number | null;
-  nodesTotal: number | null;
   load: LoadBand;
 }
 
@@ -191,23 +189,14 @@ export async function resolveStatusLocations(db: DatabaseReader): Promise<Status
     const online = instances.some(
       (s) => s.lastHealthOkAt != null && now - s.lastHealthOkAt < HEALTH_FRESH_MS,
     );
-    // Node counts from the freshest fleetStats among the code's instances.
-    let nodesOnline: number | null = null;
-    let nodesTotal: number | null = null;
-    let freshest = -1;
-    for (const s of instances) {
-      if (!s.fleetStats || s.fleetStatsAt == null || s.fleetStatsAt <= freshest) continue;
-      freshest = s.fleetStatsAt;
-      nodesOnline = s.fleetStats.nodesOnline;
-      nodesTotal = s.fleetStats.nodesTotal;
-    }
     const label = instances.find((s) => s.locationLabel)?.locationLabel ?? code;
     out.push({
       code,
       label,
       online,
-      nodesOnline,
-      nodesTotal,
+      // Load is a coarse BAND only — exact per-location node counts
+      // (fleetStats.nodesOnline/Total) stay internal, same privacy posture as
+      // the raw user counts.
       load: computeLocationLoad(
         instances,
         statsRows,

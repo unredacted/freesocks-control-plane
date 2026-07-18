@@ -15,6 +15,7 @@
  */
 import { internalMutation, internalQuery } from './_generated/server';
 import type { MutationCtx } from './_generated/server';
+import { internal } from './_generated/api';
 import { recordHeartbeat } from './cronHeartbeat';
 import { ConvexError, v } from 'convex/values';
 import {
@@ -32,6 +33,9 @@ export interface RateLimitResult {
   remaining: number;
   retryAfterMs: number;
 }
+
+/** Matches retention.ts: bound the immediate re-run chain (see sweepExpired). */
+const MAX_DRAIN_ROUNDS = 50;
 
 /** The strict fixed-window counter, shared by checkAndIncrement + enforce. */
 async function incrementBucket(
@@ -247,17 +251,25 @@ export const resetPolicy = internalMutation({
   },
 });
 
-/** Cron: delete a page of elapsed rate-limit windows. */
+/** Cron: delete a page of elapsed rate-limit windows. A FULL page re-runs
+ *  immediately (drain-chain, same pattern as retention.ts). */
 export const sweepExpired = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'rate-limit-sweep');
     const now = Date.now();
+    const page = limit ?? 500;
     const expired = await ctx.db
       .query('rateLimits')
       .withIndex('by_expires', (q) => q.lt('expiresAt', now))
-      .take(limit ?? 500);
+      .take(page);
     for (const row of expired) await ctx.db.delete(row._id);
+    if (expired.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[rate-limit-sweep] drain cap hit; remainder next run');
+      else await ctx.scheduler.runAfter(0, internal.rateLimits.sweepExpired, { rounds: n + 1 });
+    }
     return { removed: expired.length };
   },
 });

@@ -8,8 +8,8 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
-import { heartbeatFromAction } from './cronHeartbeat';
-import { writeUserCounts, type UserCounts } from './lib/statusCounters';
+import { runWithCronOutcome } from './cronHeartbeat';
+import { readUserCounts, writeUserCounts, type UserCounts } from './lib/statusCounters';
 
 const COUNTS_VALIDATOR = v.object({
   active: v.number(),
@@ -51,10 +51,31 @@ export const tallyUserCountsPage = internalQuery({
   },
 });
 
-export const setUserCounts = internalMutation({
-  args: { counts: COUNTS_VALIDATOR },
-  handler: async (ctx, { counts }) => {
-    await writeUserCounts(ctx, counts);
+/** The counter row as it currently stands (the reconcile baseline). */
+export const getUserCounts = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<UserCounts> => readUserCounts(ctx.db),
+});
+
+/**
+ * Apply the reconcile result as a DELTA against the live row, not an absolute
+ * write: status transitions landing mid-scan bump the live counter via
+ * applyCountsDelta, and an absolute overwrite would silently discard those
+ * bumps (up to 24h of drift from the daily "self-heal" itself). next =
+ * live + (scanned − baseline); when nothing changed mid-scan this equals the
+ * exact scanned total, and the residual error is bounded to transitions that
+ * raced the scan rather than compounding them. Clamped ≥ 0 (a transition can
+ * legitimately race both the scan AND this write).
+ */
+export const applyReconcileDelta = internalMutation({
+  args: { baseline: COUNTS_VALIDATOR, scanned: COUNTS_VALIDATOR },
+  handler: async (ctx, { baseline, scanned }) => {
+    const live = await readUserCounts(ctx.db);
+    const next = { ...live };
+    for (const k of Object.keys(scanned) as (keyof UserCounts)[]) {
+      next[k] = Math.max(0, live[k] + (scanned[k] - baseline[k]));
+    }
+    await writeUserCounts(ctx, next);
     return null;
   },
 });
@@ -62,32 +83,38 @@ export const setUserCounts = internalMutation({
 /** Recompute the counter row from scratch (idempotent, self-healing). */
 export const reconcileUserCounts = internalAction({
   args: {},
-  handler: async (ctx): Promise<UserCounts> => {
-    await heartbeatFromAction(ctx, 'user-counts-reconcile');
-    const freeTierIds: Id<'tiers'>[] = await ctx.runQuery(internal.tiers.defaultFreeTierIds, {});
-    const total: UserCounts = {
-      active: 0,
-      grace: 0,
-      disabled: 0,
-      deleted: 0,
-      inactive: 0,
-      backendDrift: 0,
-      freeActive: 0,
-    };
-    let cursor: string | null = null;
-    for (let i = 0; i < 100_000; i++) {
-      // Annotated to break the same-module self-referential inference.
-      const res: { counts: UserCounts; isDone: boolean; continueCursor: string } =
-        await ctx.runQuery(internal.userStats.tallyUserCountsPage, {
-          cursor,
-          numItems: 500,
-          freeTierIds,
-        });
-      for (const k of Object.keys(total) as (keyof UserCounts)[]) total[k] += res.counts[k];
-      if (res.isDone) break;
-      cursor = res.continueCursor;
-    }
-    await ctx.runMutation(internal.userStats.setUserCounts, { counts: total });
-    return total;
-  },
+  handler: async (ctx): Promise<UserCounts> =>
+    runWithCronOutcome(ctx, 'user-counts-reconcile', async () => {
+      const freeTierIds: Id<'tiers'>[] = await ctx.runQuery(internal.tiers.defaultFreeTierIds, {});
+      // Baseline BEFORE the scan: transitions after this point bump the live row
+      // and are preserved by the delta write (see applyReconcileDelta).
+      const baseline = await ctx.runQuery(internal.userStats.getUserCounts, {});
+      const total: UserCounts = {
+        active: 0,
+        grace: 0,
+        disabled: 0,
+        deleted: 0,
+        inactive: 0,
+        backendDrift: 0,
+        freeActive: 0,
+      };
+      let cursor: string | null = null;
+      for (let i = 0; i < 100_000; i++) {
+        // Annotated to break the same-module self-referential inference.
+        const res: { counts: UserCounts; isDone: boolean; continueCursor: string } =
+          await ctx.runQuery(internal.userStats.tallyUserCountsPage, {
+            cursor,
+            numItems: 500,
+            freeTierIds,
+          });
+        for (const k of Object.keys(total) as (keyof UserCounts)[]) total[k] += res.counts[k];
+        if (res.isDone) break;
+        cursor = res.continueCursor;
+      }
+      await ctx.runMutation(internal.userStats.applyReconcileDelta, {
+        baseline,
+        scanned: total,
+      });
+      return total;
+    }),
 });

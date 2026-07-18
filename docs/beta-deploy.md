@@ -368,7 +368,25 @@ X25519 recipient; keep the private half offline) so dumps are encrypted
 client-side before upload: a dump carries `accountIdHash` + live subscription
 tokens, so an unencrypted bucket compromise yields the readable datastore.
 Also back up the **secret set** (the `bunx convex env` values, especially
-`ACCOUNT_ID_PEPPER` — losing it invalidates every account number).
+`ACCOUNT_ID_PEPPER` — losing it invalidates every account number). Export it
+alongside each dump, encrypted with the same age recipient:
+
+```
+bunx convex env list | age -r "$BACKUP_AGE_PUBLIC_KEY" -o "convex-env-$(date -u +%Y%m%d).txt.age"
+```
+
+Backup coverage notes:
+
+- The dumps cover **Postgres** (every table). The backend's **`data` volume**
+  holds the self-hosted Convex instance's local state (instance metadata, file
+  storage for any S3-less blobs); its loss is NOT covered by the dumps — treat
+  it as rebuildable-from-scratch except for any locally-stored file blobs, and
+  snapshot it at the host level if you use local file storage.
+- `backup.sh` runs a **pre-dump sanity check** (`tiers` must exist and be
+  non-empty) so a `POSTGRES_DB`/`INSTANCE_NAME` mismatch fails the heartbeat
+  instead of green-dumping the wrong (empty) database. `POSTGRES_DB` is an
+  `.env.beta` var shared by the postgres env, its healthcheck, and the backup
+  sidecar — set it there, never by editing the compose file.
 
 **Pre-launch check:** `docker compose -f docker-compose.beta.yml logs backup |
 grep uploading` must show offsite uploads (not the LOCAL ONLY warning), and the
@@ -384,8 +402,10 @@ gunzip -c freesocks-freesocks_beta-<ts>.sql.gz \
       psql -U convex -d freesocks_beta
 ```
 
-Run a **restore drill** before launch (restore into a scratch DB and diff row
-counts) and periodically after.
+Run a **restore drill** before launch and periodically after:
+`sh docker/restore-verify.sh` restores the latest dump into a scratch DB,
+asserts core-table row counts, and drops it (set `AGE_KEY_FILE` for encrypted
+dumps). A backup that has never been restored is not a backup.
 
 ### Rollback (A4)
 

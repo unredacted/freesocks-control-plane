@@ -8,7 +8,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
-import { readUserCounts } from './lib/statusCounters';
+import { readUserCounts, applyCountsDelta } from './lib/statusCounters';
 import type { Id } from './_generated/dataModel';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -69,6 +69,36 @@ describe('userStats counters (WS3)', () => {
     expect(await counts(t)).toEqual(c1);
     // Idempotent: a second reconcile yields the same exact result.
     expect(await t.action(internal.userStats.reconcileUserCounts, {})).toEqual(c1);
+  });
+
+  test('the delta write preserves transitions that landed mid-scan', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedFreeTier(t);
+    await t.run((ctx) =>
+      ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }),
+    );
+    await t.action(internal.userStats.reconcileUserCounts, {});
+    const live = await counts(t);
+    expect(live.active).toBe(1);
+
+    // Simulate a mid-scan race: the baseline was taken at live=1, the scan's
+    // exact total also reads 1 (it raced BEFORE the transitioning row), but a
+    // transition bumped the live row to 2 meanwhile. next = live + (scan − base)
+    // = 2 + (1 − 1) = 2 — the bump survives; an absolute write would lose it.
+    await t.run((ctx) => applyCountsDelta(ctx, { statusTo: 'active' }));
+    expect((await counts(t)).active).toBe(2);
+    await t.mutation(internal.userStats.applyReconcileDelta, {
+      baseline: { ...live },
+      scanned: { ...live },
+    });
+    expect((await counts(t)).active).toBe(2);
+
+    // And the ≥0 clamp holds when a decrement races BOTH the scan and the write.
+    await t.mutation(internal.userStats.applyReconcileDelta, {
+      baseline: { ...live, active: 50 },
+      scanned: { ...live, active: 0 },
+    });
+    expect((await counts(t)).active).toBeGreaterThanOrEqual(0);
   });
 
   test('grace/disable transitions move the buckets', async () => {

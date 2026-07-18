@@ -1039,13 +1039,15 @@ describe('account.getNodeStatus', () => {
     return { userId, serverId: serverId! };
   }
 
-  test('fresh placement stats: online + squad label + the panel location', async () => {
+  test('fresh placement stats: online + the NEUTRAL location label (never the squad name)', async () => {
     const t = convexTest(schema, modules);
     const { userId } = await seedPlacedSub(t, { placement: 'sq-a', online: true });
     const res = await t.action(internal.account.getNodeStatus, { userId });
     expect(res.node).toMatchObject({
       online: true,
-      label: 'Node A',
+      // The panel's squad/node name ('Node A') often encodes infra detail —
+      // the member sees the curated location label instead.
+      label: 'Kansas City, MO',
       location: { code: 'MCI', label: 'Kansas City, MO' },
     });
     expect(res.node!.checkedAt).toBeTruthy();
@@ -1097,7 +1099,7 @@ describe('account.getNodeStatus', () => {
     const res = await t.action(internal.account.getNodeStatus, { userId });
     // Refresh attempted (claim won) but the panel failed → cached verdict kept.
     expect(fetchMock).toHaveBeenCalled();
-    expect(res.node).toMatchObject({ online: true, label: 'Node A' });
+    expect(res.node).toMatchObject({ online: true, label: 'Kansas City, MO' });
 
     // Second poll inside the freshness window: the claim is held → no new pull.
     fetchMock.mockClear();

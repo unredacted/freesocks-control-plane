@@ -23,7 +23,8 @@
   let donation = $derived(config.data?.billing?.donation);
   let currency = $derived(config.data?.billing?.currency ?? 'USD');
   let suggested = $derived(donation?.suggestedAmountsCents ?? []);
-  let rate = $derived(donation?.bonusGbPerUsd ?? 0);
+  // Per-preset GB bonus, precomputed server-side (the raw rate isn't public).
+  let suggestedGb = $derived(new Map((donation?.suggested ?? []).map((s) => [s.cents, s.bonusGb])));
 
   let customText = $state('');
   // A positive value that isn't one of the presets is a custom amount.
@@ -49,7 +50,9 @@
     const r = Math.round(gb * 10) / 10;
     return Number.isInteger(r) ? String(r) : r.toFixed(1);
   }
-  let impactGb = $derived(cents > 0 && rate > 0 ? (cents / 100) * rate : 0);
+  // GB hint for the picked preset; custom amounts show none (the exact rate
+  // stays server-side — see the publicConfig donation projection).
+  let impactGb = $derived(suggestedGb.get(cents) ?? 0);
 
   const chipBase =
     'rounded-lg border px-3 py-1.5 text-sm font-medium tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';

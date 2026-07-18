@@ -114,16 +114,26 @@ export async function createCheckout(
 }
 
 /**
- * Fetch the invoice's billed amount for the settle cross-check (BTCPay's
- * settle event carries none). The grant path compares it against the order's
- * cents, so a store configured with a settle-tolerance (e.g. "settled at 90%
- * paid") can't grant full membership on a partial payment. Best-effort: any
- * failure leaves the amount null (the invoice-id binding remains the guard).
+ * Fetch the invoice's billed amount AND settle state for the grant cross-check
+ * (BTCPay's settle event carries neither). `additionalStatus === 'PaidPartial'`
+ * is the settle-tolerance case: a store configured to settle at e.g. 90% paid
+ * fires `InvoiceSettled` on a PARTIAL payment — the billed `amount` alone
+ * can't see this (it equals the order's cents by construction), so the settle
+ * state must. Best-effort: any failure leaves the detail null (the invoice-id
+ * binding remains the guard).
  */
-async function invoiceAmount(
+const InvoiceDetail = z
+  .object({
+    amount: z.string(),
+    currency: z.string(),
+    additionalStatus: z.string().optional(),
+  })
+  .passthrough();
+
+async function invoiceDetail(
   cfg: BtcpayConfig,
   invoiceId: string,
-): Promise<{ amountMinor: number; currency: string } | null> {
+): Promise<{ amountMinor: number; currency: string; paidPartial: boolean } | null> {
   const base = cfg.apiUrl.replace(/\/$/, '');
   const path = `/api/v1/stores/${encodeURIComponent(cfg.storeId)}/invoices/${encodeURIComponent(invoiceId)}`;
   const controller = new AbortController();
@@ -134,10 +144,15 @@ async function invoiceAmount(
       signal: controller.signal,
     });
     if (!res.ok) return null;
-    const json = (await res.json()) as { amount?: string; currency?: string };
-    const value = typeof json.amount === 'string' ? Number.parseFloat(json.amount) : NaN;
-    if (!Number.isFinite(value) || typeof json.currency !== 'string') return null;
-    return { amountMinor: Math.round(value * 100), currency: json.currency.toUpperCase() };
+    const parsed = InvoiceDetail.safeParse(await res.json().catch(() => null));
+    if (!parsed.success) return null;
+    const value = Number.parseFloat(parsed.data.amount);
+    if (!Number.isFinite(value)) return null;
+    return {
+      amountMinor: Math.round(value * 100),
+      currency: parsed.data.currency.toUpperCase(),
+      paidPartial: parsed.data.additionalStatus === 'PaidPartial',
+    };
   } catch {
     return null;
   } finally {
@@ -185,24 +200,29 @@ export async function verifyAndParse(args: {
   const metadata = (p.metadata ?? {}) as Record<string, unknown>;
   const orderRef =
     typeof metadata.orderId === 'string' && metadata.orderId ? metadata.orderId : null;
-  // The settle event carries no amount — fetch it for the grant cross-check
-  // (one API read, only on the granting transition, only when configured).
-  const amount =
+  // The settle event carries no amount/settle state — fetch them for the grant
+  // cross-check (one API read, only on the granting transition, only when
+  // configured). A Settled-at-partial invoice (store settle-tolerance) is NOT a
+  // grant: downgrade to confirming + flag the underpayment for audit.
+  const detail =
     type === 'InvoiceSettled' && invoiceId && args.cfg
-      ? await invoiceAmount(args.cfg, invoiceId)
+      ? await invoiceDetail(args.cfg, invoiceId)
       : null;
+  const underpaid = detail?.paidPartial === true;
+  const status = underpaid ? 'confirming' : mapEventType(type);
   return {
     ok: true,
     orderRef,
     processorRef: invoiceId,
-    status: mapEventType(type),
+    status,
+    ...(underpaid ? { underpaid: true } : {}),
     // The settle event carries no amount, so the invoice-id binding IS the
     // grant guard: applyEvent refuses when it differs from the invoice id FCP
     // itself minted at checkout — an attacker-created invoice on a shared
     // store (different id, forged metadata.orderId) can never grant.
     checkoutRef: invoiceId || null,
-    amountMinor: amount?.amountMinor ?? null,
-    amountCurrency: amount?.currency ?? null,
+    amountMinor: detail?.amountMinor ?? null,
+    amountCurrency: detail?.currency ?? null,
     // Distinct per (invoice, event type) — a redelivery of the same transition
     // dedupes; a later transition for the same invoice is a fresh event.
     dedupeId: `btcpay:${invoiceId || orderRef || 'unknown'}:${type || 'unknown'}`,

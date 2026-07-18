@@ -59,6 +59,21 @@ backup_once() {
   base="$OUT_DIR/freesocks-${PGDB}-${ts}.sql.gz"
   file="$base"
   if [ -n "${BACKUP_AGE_PUBLIC_KEY:-}" ]; then file="${base}.age"; fi
+
+  # Pre-dump sanity: a mis-pointed PGDB (e.g. INSTANCE_NAME changed without a
+  # matching POSTGRES_DB) dumps an EMPTY or WRONG database with an otherwise
+  # green heartbeat. `tiers` is seeded by every deploy cutover, so a missing
+  # table or a zero-row count means this is not the live datastore — fail the
+  # cycle (heartbeat not touched → healthcheck trips).
+  tier_count="$(psql -h "$PGHOST" -U "$PGUSER" -d "$PGDB" -tAc 'SELECT count(*) FROM tiers' 2>/dev/null || true)"
+  case "$tier_count" in
+    ''|*[!0-9]*|0)
+      echo "[backup] ERROR: sanity check failed — '${PGDB}.tiers' is missing or empty (count='${tier_count}')." >&2
+      echo "[backup]        Is POSTGRES_DB in sync with INSTANCE_NAME? Refusing to dump the wrong DB." >&2
+      return 1
+      ;;
+  esac
+
   echo "[backup] dumping ${PGDB} -> ${file}"
   if [ -n "${BACKUP_AGE_PUBLIC_KEY:-}" ]; then
     if ! pg_dump -h "$PGHOST" -U "$PGUSER" -d "$PGDB" | gzip -c | age -r "$BACKUP_AGE_PUBLIC_KEY" -o "$file"; then

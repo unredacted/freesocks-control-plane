@@ -127,12 +127,15 @@ export async function outlineIssue(
     schema: OutlineAccessKey,
   });
   if (spec.trafficLimitBytes !== null && spec.trafficLimitBytes > 0) {
-    // A failed limit must NOT issue an unlimited key: throw so the issuance
-    // saga compensates (deletes the just-created key) instead of leaving a
-    // free key running without its cap — no cron reconciles this.
+    // A failed limit must NOT issue an unlimited key. The issuance saga never
+    // sees the key id while `issue` is in flight, so it CANNOT compensate —
+    // self-delete the just-created key here, then throw.
     try {
       await setDataLimit(cfg, key.id, spec.trafficLimitBytes);
     } catch (err) {
+      await outlineDelete(cfg, key.id).catch(() => {
+        console.warn('[outline] self-delete failed after setDataLimit failure — orphan key');
+      });
       throw new OutlineApiError(
         `Outline setDataLimit failed after key creation: ${err instanceof Error ? err.message : 'unknown'}`,
         { path: '/access-keys/:id/data-limit' },
@@ -142,7 +145,11 @@ export async function outlineIssue(
   if (!key.accessUrl) {
     // WSS / dynamic-config (ssconf://) keys carry no inline ss:// accessUrl;
     // deriving the URL from the fork's WSS response isn't implemented yet
-    // (Bug 15). Fail clearly rather than issuing a key with an empty URL.
+    // (Bug 15). Fail clearly rather than issuing a key with an empty URL —
+    // self-deleting first (same saga-blindness as above).
+    await outlineDelete(cfg, key.id).catch(() => {
+      console.warn('[outline] self-delete failed after missing-accessUrl rejection — orphan key');
+    });
     throw new OutlineApiError(
       'Outline key has no accessUrl; WSS/dynamic-config issuance is not supported yet',
       { path: '/access-keys' },

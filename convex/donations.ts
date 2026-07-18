@@ -11,7 +11,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
-import { heartbeatFromAction } from './cronHeartbeat';
+import { runWithCronOutcome } from './cronHeartbeat';
 import { resolveBillingConfig } from './lib/billingConfig';
 import { effectiveBonusGb, readDonationState, writeDonationState } from './lib/donationBonus';
 import { resolveTrafficLimitBytes } from './lib/backends/types';
@@ -42,13 +42,15 @@ export const currentBonusGb = internalQuery({
 });
 
 /** A member's own settled donation totals (impact panel). Bounded: one user's
- *  orders via by_user, filtered to paid rows carrying a donation. */
+ *  orders via by_user, filtered to paid rows carrying a donation. Also returns
+ *  the GB equivalent at the CURRENT rate (the raw rate itself stays server-side
+ *  — see the publicConfig projection), so the client never needs it. */
 export const donationTotals = internalQuery({
   args: { userId: v.id('users') },
   handler: async (
     ctx,
     { userId },
-  ): Promise<{ donatedCentsTotal: number; donationCount: number }> => {
+  ): Promise<{ donatedCentsTotal: number; donationCount: number; donatedGbTotal: number }> => {
     const orders = await ctx.db
       .query('billingOrders')
       .withIndex('by_user', (q) => q.eq('userId', userId))
@@ -62,7 +64,9 @@ export const donationTotals = internalQuery({
       donatedCentsTotal += cents;
       donationCount += 1;
     }
-    return { donatedCentsTotal, donationCount };
+    const cfg = await resolveBillingConfig(ctx.db);
+    const donatedGbTotal = (donatedCentsTotal / 100) * cfg.donation.bonusGbPerUsd;
+    return { donatedCentsTotal, donationCount, donatedGbTotal };
   },
 });
 
@@ -151,64 +155,113 @@ const BULK_CHUNK = 500; // Remnawave bulk/update uuids cap
  * monthly bonus moves. Idempotent: a no-op when the effective bonus already equals
  * what was last pushed (so the hourly cron is cheap, and the month-roll reset — when
  * effective drops to 0 — pushes base back exactly once). Groups each page's
- * Remnawave keys by hosting instance and bulk-updates in ≤500-uuid chunks; records
- * the applied marker only after a full drain so a partial run re-attempts.
+ * Remnawave keys by hosting instance and bulk-updates in ≤500-uuid chunks.
+ *
+ * Failure semantics: each chunk is isolated (one down panel must not abort the
+ * whole run — the start-of-run heartbeat would otherwise make a wedged job look
+ * healthy), and the applied marker is set ONLY after a full, zero-failure drain:
+ * a partial run leaves the marker unset so the next hourly tick re-pushes
+ * (idempotent — the same values), and a loud audit names the stragglers.
  */
 export const applyFreeBonus = internalAction({
   args: {},
-  handler: async (ctx): Promise<null> => {
-    await heartbeatFromAction(ctx, 'donation-bonus-reconcile');
-    const { effective, applied, freeTiers } = await ctx.runQuery(
-      internal.donations.applyContext,
-      {},
-    );
-    if (effective === applied) return null; // nothing changed → no fleet push
-    for (const tier of freeTiers) {
-      const limitBytes = resolveTrafficLimitBytes(
-        { monthlyTrafficGb: tier.monthlyTrafficGb, isDefaultFree: true },
-        effective,
+  handler: async (ctx): Promise<null> =>
+    runWithCronOutcome(ctx, 'donation-bonus-reconcile', async () => {
+      const { effective, applied, freeTiers } = await ctx.runQuery(
+        internal.donations.applyContext,
+        {},
       );
-      if (limitBytes === null) continue; // an unlimited free tier — nothing to cap
-      let cursor: string | null = null;
-      for (let page = 0; page < APPLY_MAX_PAGES; page++) {
-        const res: ActiveFreeSubsPage = await ctx.runQuery(internal.donations.findActiveFreeSubs, {
-          tierId: tier.id,
-          cursor,
-          numItems: APPLY_PAGE_SIZE,
-        });
-        // Group this page's Remnawave keys by hosting instance, then bulk-update.
-        const byServer = new Map<Id<'backendServers'>, string[]>();
-        for (const s of res.subs) {
-          if (s.backend !== 'remnawave' || !s.backendServerId) continue;
-          const arr = byServer.get(s.backendServerId) ?? [];
-          arr.push(s.backendUserId);
-          byServer.set(s.backendServerId, arr);
-        }
-        for (const [serverId, ids] of byServer) {
-          for (let i = 0; i < ids.length; i += BULK_CHUNK) {
-            await ctx.runAction(internal.backends.bulkUpdateTrafficLimit, {
-              backendServerId: serverId,
-              backendUserIds: ids.slice(i, i + BULK_CHUNK),
-              trafficLimitBytes: limitBytes,
-            });
+      if (effective === applied) return null; // nothing changed → no fleet push
+      let failedChunks = 0;
+      let exhausted = false;
+      for (const tier of freeTiers) {
+        const limitBytes = resolveTrafficLimitBytes(
+          { monthlyTrafficGb: tier.monthlyTrafficGb, isDefaultFree: true },
+          effective,
+        );
+        if (limitBytes === null) continue; // an unlimited free tier — nothing to cap
+        let cursor: string | null = null;
+        let tierDone = false;
+        for (let page = 0; page < APPLY_MAX_PAGES; page++) {
+          const res: ActiveFreeSubsPage = await ctx.runQuery(
+            internal.donations.findActiveFreeSubs,
+            {
+              tierId: tier.id,
+              cursor,
+              numItems: APPLY_PAGE_SIZE,
+            },
+          );
+          // Group this page's Remnawave keys by hosting instance, then bulk-update.
+          const byServer = new Map<Id<'backendServers'>, string[]>();
+          for (const s of res.subs) {
+            if (s.backend !== 'remnawave' || !s.backendServerId) continue;
+            const arr = byServer.get(s.backendServerId) ?? [];
+            arr.push(s.backendUserId);
+            byServer.set(s.backendServerId, arr);
           }
+          for (const [serverId, ids] of byServer) {
+            for (let i = 0; i < ids.length; i += BULK_CHUNK) {
+              try {
+                await ctx.runAction(internal.backends.bulkUpdateTrafficLimit, {
+                  backendServerId: serverId,
+                  backendUserIds: ids.slice(i, i + BULK_CHUNK),
+                  trafficLimitBytes: limitBytes,
+                });
+              } catch (err) {
+                failedChunks++;
+                console.warn(
+                  `[donations] bulk re-cap chunk failed (server ${serverId}): ${
+                    err instanceof Error ? err.message : 'unknown'
+                  }`,
+                );
+              }
+            }
+          }
+          // Outline keys (no bulk endpoint): per-user data-limit updates, with the
+          // same per-key isolation (a throw leaves the applied marker unset so the
+          // next run retries, but must not abort the rest of the fleet).
+          for (const s of res.subs) {
+            if (s.backend !== 'outline') continue;
+            try {
+              await ctx.runAction(internal.backends.updateUser, {
+                backend: 'outline',
+                backendUserId: s.backendUserId,
+                patch: { trafficLimitBytes: limitBytes },
+              });
+            } catch (err) {
+              failedChunks++;
+              console.warn(
+                `[donations] outline re-cap failed for a key: ${
+                  err instanceof Error ? err.message : 'unknown'
+                }`,
+              );
+            }
+          }
+          if (res.isDone) {
+            tierDone = true;
+            break;
+          }
+          cursor = res.continueCursor;
         }
-        // Outline keys (no bulk endpoint): per-user data-limit updates. A throw
-        // leaves the applied marker unset so the next run retries (same as the
-        // Remnawave path).
-        for (const s of res.subs) {
-          if (s.backend !== 'outline') continue;
-          await ctx.runAction(internal.backends.updateUser, {
-            backend: 'outline',
-            backendUserId: s.backendUserId,
-            patch: { trafficLimitBytes: limitBytes },
-          });
-        }
-        if (res.isDone) break;
-        cursor = res.continueCursor;
+        if (!tierDone) exhausted = true; // hit APPLY_MAX_PAGES without draining
       }
-    }
-    await ctx.runMutation(internal.donations.setAppliedBonusGb, { appliedBonusGb: effective });
-    return null;
-  },
+      if (failedChunks > 0 || exhausted) {
+        console.warn(
+          `[donations] bonus re-cap incomplete: ${failedChunks} failed chunk(s), exhausted=${exhausted} — applied marker NOT set; next run retries`,
+        );
+        try {
+          await ctx.runMutation(internal.audit.record, {
+            actorType: 'system',
+            action: 'donation.bonus_partial',
+            targetType: 'donation',
+            payload: { effective, failedChunks, exhausted },
+          });
+        } catch {
+          /* the retry on the next tick is the remediation */
+        }
+        return null;
+      }
+      await ctx.runMutation(internal.donations.setAppliedBonusGb, { appliedBonusGb: effective });
+      return null;
+    }),
 });

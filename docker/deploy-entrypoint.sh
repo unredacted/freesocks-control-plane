@@ -52,9 +52,10 @@ if [ "${DEPLOY_SKIP_TYPECHECK:-false}" != "true" ]; then
   bunx tsc -p convex/tsconfig.json --noEmit
 fi
 
-echo "[deploy] pushing functions to ${CONVEX_SELF_HOSTED_URL}"
-bunx convex deploy -y
-
+# Apply the deployment env BEFORE `convex deploy`: freshly-pushed functions read
+# their env from the first request, so a deploy-first order left a window where
+# new code requiring a NEW env var errors until the env pass below ran. `convex
+# env set` needs no functions deployed, so this order is strictly safer.
 if [ -f "${CONVEX_ENV_FILE}" ]; then
   echo "[deploy] applying deployment env from ${CONVEX_ENV_FILE}"
   while IFS= read -r line || [ -n "${line}" ]; do
@@ -105,6 +106,9 @@ if existing_env="$(bunx convex env list 2>/dev/null)"; then
 else
   echo "[deploy] WARNING: could not list deployment env; skipping secret auto-generation" >&2
 fi
+
+echo "[deploy] pushing functions to ${CONVEX_SELF_HOSTED_URL}"
+bunx convex deploy -y
 
 echo "[deploy] seeding tiers + settings (+ Remnawave instance if REMNAWAVE_* is set)"
 bunx convex run seed:seedCutover '{}'

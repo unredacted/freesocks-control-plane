@@ -113,30 +113,47 @@ async function serverContext(): Promise<{ priv: CryptoKey; kid: string }> {
 export const rotateEpochKey = internalAction({
   args: {},
   handler: async (ctx): Promise<{ kid: string; notAfter: number } | { skipped: true }> => {
-    // No manifest key -> E2EE is not configured on this deployment; skip cleanly
-    // (the cron would otherwise error every tick). Clients fall back to static.
-    if (!process.env.FS_MANIFEST_SK) return { skipped: true };
-    const seed = crypto.getRandomValues(new Uint8Array(32));
-    const kp = await serverKeyPairFromSeed(seed);
-    const pkBytes = await serializePublicKey(kp.publicKey);
-    const publicKey = bytesToB64Url(pkBytes);
-    const kid = await kidFromPublicKey(pkBytes);
-    const notBefore = Date.now();
-    const notAfter = notBefore + EPOCH_VALIDITY_MS;
-    const { sig, sigPq } = signManifestHybrid(
-      epochStatement({ kid, publicKeyB64: publicKey, notAfter }),
-    );
-    await ctx.runMutation(internal.keyEpochs.insert, {
-      kid,
-      publicKey,
-      seed: bytesToB64Url(seed),
-      manifestSig: sig,
-      ...(sigPq ? { manifestSigPq: sigPq } : {}),
-      notBefore,
-      notAfter,
-    });
-    await ctx.runMutation(internal.keyEpochs.sweepExpired, {});
-    return { kid, notAfter };
+    // Outcome stamp (the start-stamp lives in keyEpochs.maybeRotate): a throw
+    // here (e.g. a bad FS_MANIFEST_SK in signManifestHybrid) would otherwise be
+    // invisible next to a fresh heartbeat — the rotation would silently stop
+    // and clients would fall back to the static key at epoch exhaustion.
+    try {
+      // No manifest key -> E2EE is not configured on this deployment; skip cleanly
+      // (the cron would otherwise error every tick). Clients fall back to static.
+      if (!process.env.FS_MANIFEST_SK) return { skipped: true };
+      const seed = crypto.getRandomValues(new Uint8Array(32));
+      const kp = await serverKeyPairFromSeed(seed);
+      const pkBytes = await serializePublicKey(kp.publicKey);
+      const publicKey = bytesToB64Url(pkBytes);
+      const kid = await kidFromPublicKey(pkBytes);
+      const notBefore = Date.now();
+      const notAfter = notBefore + EPOCH_VALIDITY_MS;
+      const { sig, sigPq } = signManifestHybrid(
+        epochStatement({ kid, publicKeyB64: publicKey, notAfter }),
+      );
+      await ctx.runMutation(internal.keyEpochs.insert, {
+        kid,
+        publicKey,
+        seed: bytesToB64Url(seed),
+        manifestSig: sig,
+        ...(sigPq ? { manifestSigPq: sigPq } : {}),
+        notBefore,
+        notAfter,
+      });
+      await ctx.runMutation(internal.keyEpochs.sweepExpired, {});
+      await ctx
+        .runMutation(internal.cronHeartbeat.stampOutcome, { name: 'epoch-key-rotate', error: null })
+        .catch(() => {});
+      return { kid, notAfter };
+    } catch (err) {
+      await ctx
+        .runMutation(internal.cronHeartbeat.stampOutcome, {
+          name: 'epoch-key-rotate',
+          error: err instanceof Error ? err.message : String(err),
+        })
+        .catch(() => {});
+      throw err;
+    }
   },
 });
 

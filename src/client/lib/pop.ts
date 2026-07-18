@@ -180,6 +180,18 @@ function call(msg: Record<string, unknown>): Promise<WorkerReply> {
   });
 }
 
+/**
+ * True when this browser CANNOT produce PoP signatures (no Worker support, or a
+ * hard worker error) while a bound session exists — under POP_REQUIRED every
+ * authenticated call then 401s. Surfaces a distinct "browser can't secure this
+ * session" message instead of the misleading session-expired bounce loop.
+ */
+export function popUnavailable(): boolean {
+  return (
+    unavailable && (!!readSessionToken('member') || !!readSessionToken('admin') || _keyMayExist)
+  );
+}
+
 // --- public API ---------------------------------------------------------------
 
 /**

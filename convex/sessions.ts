@@ -8,10 +8,14 @@
  * sweep), so a stale-but-unswept cookie never authenticates.
  */
 import { internalMutation, internalQuery } from './_generated/server';
+import { internal } from './_generated/api';
 import { recordHeartbeat } from './cronHeartbeat';
 import { v } from 'convex/values';
 import { b64UrlToBytes } from '../src/shared/crypto/envelope';
 import { POP_ALG, POP_ALG_ED } from '../src/shared/crypto/pop';
+
+/** Matches retention.ts: bound the immediate re-run chain (see sweepExpired). */
+const MAX_DRAIN_ROUNDS = 50;
 
 /** True when the base64url raw public key decodes to the byte length its PoP
  *  algorithm requires (Ed25519 = 32, P-256 uncompressed point = 65). */
@@ -88,17 +92,25 @@ export const deleteBySid = internalMutation({
   },
 });
 
-/** Cron: delete a page of expired sessions; returns how many to drive re-runs. */
+/** Cron: delete a page of expired sessions. A FULL page re-runs immediately
+ *  (drain-chain, same pattern as retention.ts) — one 500-row page/day can't
+ *  keep up once more than that expires daily. */
 export const sweepExpired = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'session-sweep');
     const now = Date.now();
+    const page = limit ?? 500;
     const expired = await ctx.db
       .query('sessions')
       .withIndex('by_expires', (q) => q.lt('expiresAt', now))
-      .take(limit ?? 500);
+      .take(page);
     for (const row of expired) await ctx.db.delete(row._id);
+    if (expired.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS) console.warn('[session-sweep] drain cap hit; remainder next run');
+      else await ctx.scheduler.runAfter(0, internal.sessions.sweepExpired, { rounds: n + 1 });
+    }
     return { removed: expired.length };
   },
 });

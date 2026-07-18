@@ -258,7 +258,10 @@ export const billingOrderQuery = (refGetter: () => string | null) =>
           `/api/v1/billing/order/${encodeURIComponent(ref as string)}`,
           OrderStatusResponse,
         ),
-      refetchInterval: (query: { state: { data?: { status?: string } } }) => {
+      refetchInterval: (query: { state: { data?: { status?: string }; status?: string } }) => {
+        // Stop on terminal statuses AND on error: a stale/forged ref otherwise
+        // polls the sealed member endpoint every 4s forever.
+        if (query.state.status === 'error') return false;
         const s = query.state.data?.status;
         return s === 'paid' || s === 'failed' || s === 'expired' ? false : 4000;
       },

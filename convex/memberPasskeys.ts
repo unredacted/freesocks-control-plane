@@ -17,6 +17,7 @@
  * replay/TOCTOU guarantees as the admin path. All functions are internal.
  */
 import { internalMutation, internalQuery } from './_generated/server';
+import { internal } from './_generated/api';
 import { recordHeartbeat } from './cronHeartbeat';
 import { v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
@@ -193,28 +194,53 @@ export const revokeCredential = internalMutation({
 
 // --- retention crons ---------------------------------------------------------
 
+/** Matches retention.ts: bound the immediate re-run chain (sweeps below). */
+const MAX_DRAIN_ROUNDS = 50;
+
 export const sweepExpiredRegistrationChallenges = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'retention-member-webauthn-reg');
+    const page = limit ?? 500;
     const expired = await ctx.db
       .query('memberWebauthnRegistrationChallenges')
       .withIndex('by_expires', (q) => q.lt('expiresAt', Date.now()))
-      .take(limit ?? 500);
+      .take(page);
     for (const row of expired) await ctx.db.delete(row._id);
+    if (expired.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-member-webauthn-reg] drain cap hit; remainder next run');
+      else
+        await ctx.scheduler.runAfter(
+          0,
+          internal.memberPasskeys.sweepExpiredRegistrationChallenges,
+          { rounds: n + 1 },
+        );
+    }
     return { removed: expired.length };
   },
 });
 
 export const sweepExpiredAuthChallenges = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'retention-member-webauthn-auth');
+    const page = limit ?? 500;
     const expired = await ctx.db
       .query('memberWebauthnAuthChallenges')
       .withIndex('by_expires', (q) => q.lt('expiresAt', Date.now()))
-      .take(limit ?? 500);
+      .take(page);
     for (const row of expired) await ctx.db.delete(row._id);
+    if (expired.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-member-webauthn-auth] drain cap hit; remainder next run');
+      else
+        await ctx.scheduler.runAfter(0, internal.memberPasskeys.sweepExpiredAuthChallenges, {
+          rounds: n + 1,
+        });
+    }
     return { removed: expired.length };
   },
 });

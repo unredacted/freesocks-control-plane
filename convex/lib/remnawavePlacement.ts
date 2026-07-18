@@ -262,7 +262,11 @@ export async function resolvePlacementTarget(
     location?: string | null;
     onlyServerId?: string | null;
   } = {},
-): Promise<{ placement: string | null; serverId: string | null }> {
+): Promise<{
+  placement: string | null;
+  serverId: string | null;
+  unattributedMultiPanel?: boolean;
+}> {
   const pool = await resolvePlacementPool(db, modeId);
   if (pool.length === 0) return { placement: null, serverId: null };
 
@@ -324,8 +328,15 @@ export async function resolvePlacementTarget(
     });
   }
   if (constrained.length === 0) {
-    // No squad is attributable yet (bring-up) — historical behavior: global
-    // pick, instance chosen independently by issueUser.
+    // No squad is attributable yet (the stats cron hasn't observed a node behind
+    // any pool squad — bring-up or a freshly-added panel). On a MULTI-panel
+    // deploy the historical fail-soft is a dead-key factory: an unpinned pick
+    // lets issueUser choose the instance independently, and the squad UUID only
+    // exists on ITS panel — a (squad, wrong-panel) pair mints a key that can't
+    // route. Signal the caller to FAIL LOUDLY instead (503, retryable); a
+    // single-panel deploy keeps the fail-soft (the pair can't mismatch).
+    if (servers.length > 1)
+      return { placement: null, serverId: null, unattributedMultiPanel: true };
     return { placement: await pickByNodeLoad(db, pool), serverId: null };
   }
   const placement = await pickByNodeLoad(db, constrained);

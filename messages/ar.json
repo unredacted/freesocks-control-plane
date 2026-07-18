@@ -1088,7 +1088,6 @@
     "overallPartial": "بعض المواقع تواجه مشكلات",
     "overallMajor": "هناك انقطاع كبير جارٍ",
     "locationsTitle": "المواقع",
-    "nodesUp": "{online} من {total} عقدة متصلة",
     "online": "متصل",
     "offline": "غير متصل",
     "srOnline": "متصل",

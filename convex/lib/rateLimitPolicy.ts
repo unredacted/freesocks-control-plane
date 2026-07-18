@@ -56,6 +56,13 @@ export const RATE_LIMIT_DEFAULTS = {
   // open tabs × polling would otherwise scale panel QPS linearly. Generous —
   // the SPA polls ~1/min + on window focus.
   'account.read': { max: 30, windowMs: MINUTE, enabled: true },
+  // Member usage trend (per user): every call is a LIVE backend bandwidth-stats
+  // fetch with no cache, so a hot loop scales panel QPS linearly. The SPA calls
+  // it only when the usage panel opens.
+  'account.usage': { max: 20, windowMs: MINUTE, enabled: true },
+  // Member raw-config copy (per user): every call is a LIVE backend content
+  // fetch with no cache (unlike the token-fronted /sub/ route, which caches).
+  'subscription.content': { max: 10, windowMs: MINUTE, enabled: true },
   // Membership code redemption (W4): throttle hard against code guessing.
   'code.redeem': { max: 5, windowMs: HOUR, enabled: true },
   // Member passkey LOGIN options (per IP): each call writes an assertion challenge
@@ -98,6 +105,10 @@ export const RATE_LIMIT_DEFAULTS = {
   // The public network-status page (per IP): the SPA polls it ~every 60s while
   // open, and the payload is cron-quantized — DoS hygiene, not access control.
   'status.fetch': { max: 120, windowMs: MINUTE, enabled: true },
+  // Deep readiness probe (per IP): each call costs a real datastore round-trip,
+  // so an unthrottled /readyz is a direct DB-load lever. Generous — uptime
+  // monitors poll from a few fixed IPs.
+  'readyz.fetch': { max: 120, windowMs: MINUTE, enabled: true },
   // Member referral-stats read (per user): the account-page card fetches once
   // per view; hygiene against a hot refresh loop.
   'account.referrals': { max: 20, windowMs: MINUTE, enabled: true },

@@ -150,9 +150,6 @@
             <p class="mt-2 font-medium">{loc.label}</p>
             <p class="mt-0.5 text-sm text-muted-foreground">
               {loc.online ? t('status.online') : t('status.offline')}
-              {#if loc.nodesOnline !== null && loc.nodesTotal !== null}
-                · {t('status.nodesUp', { online: loc.nodesOnline, total: loc.nodesTotal })}
-              {/if}
             </p>
           </div>
         {/each}

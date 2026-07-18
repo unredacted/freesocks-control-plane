@@ -98,6 +98,50 @@ describe('webhooks.ingest', () => {
     expect(second).toEqual({ ok: true, duplicate: true, applied: false });
   });
 
+  test('a non-number expiresAtMs is ACKed processed (no retry churn, no grant)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, accountId, freeTierId } = await seedUserAndTiers(t);
+    const body = JSON.stringify({
+      eventId: 'evt-badexpiry',
+      accountId,
+      tierSlug: 'member',
+      expiresAtMs: 'next-month', // permanently malformed
+    });
+    const signature = await hmacSha256Hex(SECRET, body);
+    const res = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
+    expect(res).toEqual({ ok: true, applied: false, reason: 'invalid_expiresAtMs' });
+    await t.run(async (ctx) => {
+      // No grant…
+      expect((await ctx.db.get(userId))?.tierId).toBe(freeTierId);
+      // …and the claim is TERMINAL (a redelivery dedupes instead of retrying).
+      const evt = await ctx.db
+        .query('webhookEvents')
+        .withIndex('by_event_id', (q) => q.eq('eventId', 'evt-badexpiry'))
+        .unique();
+      expect(evt?.status).toBe('processed');
+    });
+  });
+
+  test('a seconds-unit expiresAtMs is auto-corrected to ms', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, accountId, memberTierId } = await seedUserAndTiers(t);
+    const seconds = Math.floor((Date.now() + 30 * 86_400_000) / 1000);
+    const body = JSON.stringify({
+      eventId: 'evt-seconds',
+      accountId,
+      tierSlug: 'member',
+      expiresAtMs: seconds, // a sender bug (seconds, not ms) — coerced, not a 1970 lapse
+    });
+    const signature = await hmacSha256Hex(SECRET, body);
+    const res = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
+    expect(res.applied).toBe(true);
+    await t.run(async (ctx) => {
+      const user = await ctx.db.get(userId);
+      expect(user?.tierId).toBe(memberTierId);
+      expect(user?.membershipExpiresAt).toBeGreaterThan(Date.now() + 29 * 86_400_000);
+    });
+  });
+
   test('a bad signature throws', async () => {
     const t = convexTest(schema, modules);
     const { accountId } = await seedUserAndTiers(t);

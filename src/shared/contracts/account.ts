@@ -53,6 +53,9 @@ export const AccountResponse = z.object({
      *  rolling-deploy compat. */
     donatedCentsTotal: z.number().optional().default(0),
     donationCount: z.number().int().optional().default(0),
+    /** GB equivalent of the member's giving, computed server-side (the raw
+     *  GB-per-dollar rate is never shipped to the client). Additive. */
+    donatedGbTotal: z.number().optional().default(0),
     createdAt: z.string().datetime(),
   }),
   subscription: z
@@ -60,7 +63,9 @@ export const AccountResponse = z.object({
       // The RAW backend subscription URL (fallback). The SPA prefers the
       // FCP-fronted URL it builds from `subToken` + its own origin (see
       // subscriptionDisplayUrl); `url` is only used for legacy subs with no token.
-      url: z.string().url(),
+      // Plain string, NOT .url(): an Outline sub stores its ss:// accessUrl
+      // (not a URL in zod's sense), and a stricter parse 500s the whole view.
+      url: z.string(),
       // Opaque per-subscription capability for the FCP-fronted URL
       // (`<origin>/api/v1/sub/<subToken>`). Sealed in this reveal-leg response like
       // the rest of the subscription. Nullish for legacy subs / rolling deploys.
@@ -152,6 +157,32 @@ export const RegenerateRequest = z.object({
 export type RegenerateRequest = z.infer<typeof RegenerateRequest>;
 
 /**
+ * Response of `POST /api/v1/account/regenerate` (and the same shape for the
+ * first-key create): the freshly-issued key. `subscriptionUrl` is the raw
+ * backend URL — plain string, NOT .url() (an Outline sub is an ss:// link and
+ * the server passes the backend's value through verbatim).
+ */
+export const RegenerateResponse = z.object({
+  subscriptionUrl: z.string(),
+  shortUuid: z.string(),
+});
+export type RegenerateResponse = z.infer<typeof RegenerateResponse>;
+
+/** `POST /api/v1/account/connection-mode`: persist the picked mode. */
+export const ConnectionModeResponse = z.object({ ok: z.boolean(), modeId: z.string() });
+export type ConnectionModeResponse = z.infer<typeof ConnectionModeResponse>;
+
+/** `POST /api/v1/account/refresh-membership`: the member's current entitlement
+ *  snapshot after a refresh (post-payment return poll). */
+export const RefreshMembershipResponse = z.object({
+  tierSlug: z.string(),
+  tierName: z.string(),
+  membershipExpiresAt: z.string().nullable(),
+  isCurrent: z.boolean(),
+});
+export type RefreshMembershipResponse = z.infer<typeof RefreshMembershipResponse>;
+
+/**
  * Live-ish status of the node the member's config is homed to (the SPA polls
  * this while the account page is open). `online: null` = never observed.
  * Distinguishes "the node is up but your network filters it" from an outage.
@@ -200,7 +231,7 @@ export const SwitchBackendRequest = z.object({
 export type SwitchBackendRequest = z.infer<typeof SwitchBackendRequest>;
 
 export const SwitchBackendResponse = z.object({
-  subscriptionUrl: z.string().url(),
+  subscriptionUrl: z.string(),
   shortUuid: z.string(),
   backend: BackendId,
   tier: z.object({
@@ -231,7 +262,7 @@ export const SwitchModeRequest = z.object({
 export type SwitchModeRequest = z.infer<typeof SwitchModeRequest>;
 
 export const SwitchModeResponse = z.object({
-  subscriptionUrl: z.string().url(),
+  subscriptionUrl: z.string(),
   shortUuid: z.string(),
   mode: z.object({ id: z.string(), label: z.string().nullable() }),
   /** ISO timestamp the previous key stops working (24h grace); null when there

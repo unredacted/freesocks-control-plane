@@ -148,8 +148,14 @@ export const get = query({
         donation: {
           enabled: billing.donation.enabled,
           suggestedAmountsCents: billing.donation.suggestedAmountsCents,
+          // Per-amount GB bonus, precomputed (the raw GB-per-dollar rate stays
+          // server-side: with it AND currentBonusGb both public, the month's
+          // donation revenue was exactly derivable — GB-only posture).
+          suggested: billing.donation.suggestedAmountsCents.map((cents: number) => ({
+            cents,
+            bonusGb: (cents / 100) * billing.donation.bonusGbPerUsd,
+          })),
           minAmountCents: billing.donation.minAmountCents,
-          bonusGbPerUsd: billing.donation.bonusGbPerUsd,
           monthlyBonusCapGb: billing.donation.monthlyBonusCapGb,
           currentBonusGb,
           // Active free users the shared bonus reaches (daily-reconciled counter).

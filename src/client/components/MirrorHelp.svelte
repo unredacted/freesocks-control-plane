@@ -48,6 +48,21 @@
   let status = $state<MirrorRequestResponse['status'] | 'idle'>('idle');
   let copiedUrl = $state<string | null>(null);
 
+  // A NEW key (regenerate/switch) retires every mirror minted against the old
+  // one: re-sync from props when the subscription URL changes, or the panel
+  // would keep offering the dead key's 404 URLs until remount. (Intentionally
+  // keyed off subscriptionUrl only — a provision's local `added` entry must
+  // survive the parent's subsequent refetch of the SAME key.)
+  // svelte-ignore state_referenced_locally -- intentionally a "last seen" tracker,
+  // compared against the live prop in the $effect below.
+  let lastSubUrl = $state(subscriptionUrl);
+  $effect(() => {
+    if (subscriptionUrl !== lastSubUrl) {
+      lastSubUrl = subscriptionUrl;
+      added = mirrors.filter((x) => x.publicUrl && x.publicUrl !== subscriptionUrl);
+    }
+  });
+
   // Region options: localized names (Intl.DisplayNames), sorted; "Global" first.
   const regions = COUNTRY_CODES.map((c) => ({ code: c, name: countryName(c, locale) })).sort(
     (a, b) => a.name.localeCompare(b.name, locale),

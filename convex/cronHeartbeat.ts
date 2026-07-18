@@ -158,3 +158,72 @@ export const stamp = internalMutation({
     await recordHeartbeat(ctx, name);
   },
 });
+
+/** Core outcome upsert (see the schema note): error=null stamps a success,
+ *  error=string records the latest failure message. Never throws. */
+export async function recordHeartbeatOutcome(
+  ctx: MutationCtx,
+  name: string,
+  error: string | null,
+): Promise<void> {
+  const existing = await ctx.db
+    .query('cronHeartbeats')
+    .withIndex('by_name', (q) => q.eq('name', name))
+    .first();
+  if (!existing) {
+    await ctx.db.insert('cronHeartbeats', {
+      name,
+      lastRunAt: Date.now(),
+      runCount: 0,
+      ...(error === null ? { lastOkAt: Date.now() } : { lastError: error.slice(0, 200) }),
+    });
+    return;
+  }
+  if (error === null) {
+    await ctx.db.patch(existing._id, { lastOkAt: Date.now(), lastError: undefined });
+  } else {
+    await ctx.db.patch(existing._id, { lastError: error.slice(0, 200) });
+  }
+}
+
+/** The mutation `heartbeatOkFromAction` calls. */
+export const stampOutcome = internalMutation({
+  args: { name: v.string(), error: v.union(v.string(), v.null()) },
+  handler: async (ctx, { name, error }) => {
+    await recordHeartbeatOutcome(ctx, name, error);
+  },
+});
+
+/**
+ * Run an action-context cron job with BOTH stamps: the start-stamp (scheduler
+ * liveness, committed independently) AND the outcome stamp (success or the
+ * failure message). A job whose body throws every run still shows a fresh
+ * lastRunAt from the start-stamp — without the outcome stamp the dashboard
+ * can't tell it apart from a healthy job.
+ */
+export async function runWithCronOutcome<T>(
+  ctx: ActionCtx,
+  name: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  await heartbeatFromAction(ctx, name);
+  try {
+    const out = await fn();
+    try {
+      await ctx.runMutation(internal.cronHeartbeat.stampOutcome, { name, error: null });
+    } catch {
+      /* observability must not affect the job it observes */
+    }
+    return out;
+  } catch (err) {
+    try {
+      await ctx.runMutation(internal.cronHeartbeat.stampOutcome, {
+        name,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } catch {
+      /* same */
+    }
+    throw err;
+  }
+}

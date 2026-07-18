@@ -163,6 +163,7 @@
     "failed": "Sign-in failed",
     "success": "Signed in",
     "sessionExpired": "Please sign in again - your session may have ended.",
+    "popBroken": "Your browser can't secure this session because Web Workers are blocked or unavailable. Enable them (check your browser's privacy settings) or try a different browser, then sign in again.",
     "digitProgress": "{count} of {total} digits entered",
     "or": "or"
   },
@@ -1082,7 +1083,6 @@
     "overallPartial": "Some locations are having issues",
     "overallMajor": "A major outage is in progress",
     "locationsTitle": "Locations",
-    "nodesUp": "{online} of {total} nodes up",
     "online": "Online",
     "offline": "Offline",
     "srOnline": "online",

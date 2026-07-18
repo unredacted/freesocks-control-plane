@@ -18,6 +18,7 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
+import { writeAuditLog } from './lib/audit';
 
 /**
  * One active provider with its full credentials, shaped exactly like
@@ -202,6 +203,7 @@ export const create = internalMutation({
     countryCodes: v.optional(v.array(v.string())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const name = a.name.trim();
@@ -236,6 +238,14 @@ export const create = internalMutation({
       priority: a.priority ?? 0,
       updatedAt: Date.now(),
     });
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'admin.mirror_provider.create',
+      targetType: 'mirror_provider',
+      targetId: id,
+      payload: { name },
+    });
     return mapProviderAdmin((await ctx.db.get(id))!);
   },
 });
@@ -244,9 +254,8 @@ export const create = internalMutation({
  * Idempotent provider upsert addressed by name (IaC / declarative config).
  * Mirrors upsertBackendServerBySlug / upsertTierBySlug: MISSING → create (all
  * credentials required); EXISTING → patch (reuses update()'s keep-secret-on-blank
- * merge, so a converge that omits the secret never wipes it). Like its
- * create/update siblings, the mirror domain is not audited and the secret is
- * never returned or logged.
+ * merge, so a converge that omits the secret never wipes it). The secret is
+ * never returned, logged, or audited.
  */
 export const upsertByName = internalMutation({
   args: {
@@ -260,6 +269,7 @@ export const upsertByName = internalMutation({
     countryCodes: v.optional(v.array(v.string())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const name = a.name.trim();
@@ -292,6 +302,14 @@ export const upsertByName = internalMutation({
         priority: a.priority ?? 0,
         updatedAt: Date.now(),
       });
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: a.actorAdminId ?? undefined,
+        action: 'admin.mirror_provider.upsert',
+        targetType: 'mirror_provider',
+        targetId: id,
+        payload: { name, created: true },
+      });
       return { ...mapProviderAdmin((await ctx.db.get(id))!), created: true };
     }
 
@@ -308,6 +326,14 @@ export const upsertByName = internalMutation({
     if (a.isActive !== undefined) fields.isActive = a.isActive;
     if (a.priority !== undefined) fields.priority = a.priority;
     await ctx.db.patch(existing._id, fields);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'admin.mirror_provider.upsert',
+      targetType: 'mirror_provider',
+      targetId: existing._id,
+      payload: { name, created: false },
+    });
     return { ...mapProviderAdmin((await ctx.db.get(existing._id))!), created: false };
   },
 });
@@ -327,8 +353,9 @@ export const update = internalMutation({
     countryCodes: v.optional(v.array(v.string())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { id, ...patch }) => {
+  handler: async (ctx, { id, actorAdminId, ...patch }) => {
     const existing = await ctx.db.get(id);
     if (!existing)
       throw new ConvexError({ code: 'not_found', message: 'Mirror provider not found' });
@@ -371,14 +398,31 @@ export const update = internalMutation({
     if (patch.priority !== undefined) fields.priority = patch.priority;
 
     await ctx.db.patch(id, fields);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.mirror_provider.update',
+      targetType: 'mirror_provider',
+      targetId: id,
+      payload: { name: (fields.name as string | undefined) ?? existing.name },
+    });
     return mapProviderAdmin((await ctx.db.get(id))!);
   },
 });
 
 export const remove = internalMutation({
-  args: { id: v.id('mirrorProviders') },
-  handler: async (ctx, { id }) => {
+  args: { id: v.id('mirrorProviders'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { id, actorAdminId }) => {
+    const row = await ctx.db.get(id);
     await ctx.db.delete(id);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.mirror_provider.delete',
+      targetType: 'mirror_provider',
+      targetId: id,
+      payload: { name: row?.name ?? null },
+    });
     return { ok: true as const };
   },
 });

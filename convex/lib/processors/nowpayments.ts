@@ -179,20 +179,26 @@ export async function verifyAndParse(args: {
   let status = mapStatus(rawStatus);
   // Settle-tolerance guard: with partial-payment acceptance enabled on the
   // merchant account, NOWPayments can report `finished` for an invoice paid
-  // only within a custom tolerance. When the IPN carries the received-vs-
-  // expected crypto amounts and the received is short, downgrade to
-  // `confirming` (never a grant): the order visibly stalls for the operator
-  // instead of granting a full membership on a partial payment.
-  const actuallyPaid = typeof p.actually_paid === 'number' ? p.actually_paid : null;
-  const payAmount = typeof p.pay_amount === 'number' ? p.pay_amount : null;
-  if (status === 'paid' && actuallyPaid != null && payAmount != null && actuallyPaid < payAmount) {
-    status = 'confirming';
-  }
+  // only within a custom tolerance. Downgrade to `confirming` (never a grant)
+  // and flag the underpayment for audit when the received amount is short —
+  // OR when the amounts are absent/unparseable entirely (a `finished` we can't
+  // verify fails safe, not open). Amounts may arrive as JSON strings on some
+  // account configs, so coerce.
+  const toAmount = (x: unknown): number | null => {
+    const n = typeof x === 'number' ? x : typeof x === 'string' ? Number(x) : NaN;
+    return Number.isFinite(n) ? n : null;
+  };
+  const actuallyPaid = toAmount(p.actually_paid);
+  const payAmount = toAmount(p.pay_amount);
+  const underpaid =
+    status === 'paid' && (actuallyPaid == null || payAmount == null || actuallyPaid < payAmount);
+  if (underpaid) status = 'confirming';
   return {
     ok: true,
     orderRef,
     processorRef,
     status,
+    ...(underpaid ? { underpaid: true } : {}),
     // The invoice id minted at checkout (stored as the order's processorRef);
     // the grant path cross-checks it. Distinct from payment_id above.
     checkoutRef: p.invoice_id != null ? String(p.invoice_id) : null,

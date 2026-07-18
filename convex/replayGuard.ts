@@ -14,8 +14,13 @@
  * is the PoP freshness window plus a margin; a daily cron sweeps `expiresAt`.
  */
 import { internalMutation } from './_generated/server';
+import { internal } from './_generated/api';
 import { recordHeartbeat } from './cronHeartbeat';
 import { v } from 'convex/values';
+
+/** Matches retention.ts: bound the immediate re-run chain so a pathological
+ *  table can't chain forever; the next daily tick picks up the remainder. */
+const MAX_DRAIN_ROUNDS = 50;
 
 export const consumeNonce = internalMutation({
   args: { sid: v.string(), nonceHash: v.string(), ttlMs: v.number() },
@@ -33,17 +38,29 @@ export const consumeNonce = internalMutation({
   },
 });
 
-/** Cron: delete a page of elapsed nonce rows. */
+/**
+ * Cron: delete a page of elapsed nonce rows. A FULL page means more to drain:
+ * re-run immediately (each run is its own transaction) — one 500-row page/day
+ * can never keep up with a table that accrues a row per PoP-signed request
+ * (same drain-chain pattern as retention.ts, bounded by MAX_DRAIN_ROUNDS).
+ */
 export const sweepExpired = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'replay-guard-sweep');
     const now = Date.now();
+    const page = limit ?? 500;
     const expired = await ctx.db
       .query('replayGuard')
       .withIndex('by_expires', (q) => q.lt('expiresAt', now))
-      .take(limit ?? 500);
+      .take(page);
     for (const row of expired) await ctx.db.delete(row._id);
+    if (expired.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[replay-guard-sweep] drain cap hit; remainder next run');
+      else await ctx.scheduler.runAfter(0, internal.replayGuard.sweepExpired, { rounds: n + 1 });
+    }
     return { removed: expired.length };
   },
 });

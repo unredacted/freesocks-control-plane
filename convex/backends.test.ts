@@ -448,6 +448,19 @@ describe('remnawaveUpdateUser contract safety', () => {
     expect(sentBody(spy).expireAt).toBe(future);
   });
 
+  test('null hwidDeviceLimit is omitted (the update DTO refuses null); a number is sent', async () => {
+    // Enforcement toggled off → resolveHwidLimit yields null → every tier push
+    // would 400 the whole PATCH if null were sent (same class as the
+    // trafficLimitBytes/expireAt refusal). Omit instead.
+    let spy = stub();
+    await remnawaveUpdateUser(cfg, okUser.uuid, { hwidDeviceLimit: null });
+    expect('hwidDeviceLimit' in sentBody(spy)).toBe(false);
+
+    spy = stub();
+    await remnawaveUpdateUser(cfg, okUser.uuid, { hwidDeviceLimit: 3 });
+    expect(sentBody(spy).hwidDeviceLimit).toBe(3);
+  });
+
   test('tolerates additive panel values: unknown status/strategy still parse', async () => {
     stub({ ...okUser, status: 'SOME_FUTURE_STATUS', trafficLimitStrategy: 'QUARTER' });
     await expect(

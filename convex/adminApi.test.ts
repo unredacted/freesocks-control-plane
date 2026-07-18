@@ -279,6 +279,50 @@ describe('adminApi usersSearch', () => {
     expect(new Set(res.users.map((u) => u.id))).toEqual(new Set(drifted));
   });
 
+  test('following the cursor pages the WHOLE table (no boundary-ms skips, no dups)', async () => {
+    const t = convexTest(schema, modules);
+    const ids = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const out = [];
+      // Tight inserts share creation-ms — the collision class the old strict-.lt
+      // keyset silently skipped at page boundaries.
+      for (let i = 0; i < 7; i++) {
+        out.push(await ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }));
+      }
+      return out;
+    });
+
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const res: { users: { id: string }[]; nextCursor: string | null } = await t.query(
+        internal.adminApi.usersSearch,
+        { limit: 2, ...(cursor ? { cursor } : {}) },
+      );
+      for (const u of res.users) {
+        expect(seen.has(u.id), `duplicate row ${u.id} across pages`).toBe(false);
+        seen.add(u.id);
+      }
+      if (!res.nextCursor) break;
+      cursor = res.nextCursor;
+    }
+    expect(seen).toEqual(new Set(ids as string[]));
+  });
+
   test('drift filter + statusSummary count track the backend push-drift flag', async () => {
     const t = convexTest(schema, modules);
     const drifted = await t.run(async (ctx) => {
@@ -1078,5 +1122,127 @@ describe('adminApi default-free auto-clear (pass 2)', () => {
     const { tiers } = await t.query(internal.adminApi.tiersList, {});
     expect(tiers.find((x) => x.id === rw.id)!.isDefaultFree).toBe(true);
     expect(tiers.find((x) => x.id === ol.id)!.isDefaultFree).toBe(false);
+  });
+});
+
+/**
+ * Audit coverage for the previously-silent admin mutations (pre-launch review):
+ * tier CRUD, token revoke, settings PATCH, backend-server by-id CRUD, and
+ * mirror-provider CRUD must each write exactly one curated audit row.
+ */
+describe('admin mutation audit coverage', () => {
+  const actions = async (t: ReturnType<typeof convexTest>) =>
+    (await t.run((ctx) => ctx.db.query('auditLog').collect())).map((a) => ({
+      action: a.action,
+      targetId: a.targetId,
+      payload: a.payload as Record<string, unknown> | undefined,
+    }));
+
+  test('tier create/update/delete each audit (slug only, no secret fields)', async () => {
+    const t = convexTest(schema, modules);
+    const created = await t.mutation(internal.adminApi.createTier, tierUpsert({ slug: 'aud' }));
+    await t.mutation(internal.adminApi.updateTier, { id: created.id as never, name: 'Aud 2' });
+    await t.mutation(internal.adminApi.deleteTier, { id: created.id as never });
+
+    const rows = (await actions(t)).filter((a) => a.action.startsWith('admin.tier.'));
+    expect(rows.map((r) => r.action)).toEqual([
+      'admin.tier.create',
+      'admin.tier.update',
+      'admin.tier.delete',
+    ]);
+    expect(rows.every((r) => r.payload && Object.keys(r.payload).length <= 2)).toBe(true);
+  });
+
+  test('revokeToken audits the token name', async () => {
+    const t = convexTest(schema, modules);
+    const adminId = await t.run((ctx) =>
+      ctx.db.insert('adminUsers', {
+        username: 'op',
+        displayName: 'Op',
+        isActive: true,
+        updatedAt: Date.now(),
+      }),
+    );
+    const minted = await t.action(internal.apiTokens.createToken, {
+      name: 'svc-revoke',
+      scopes: ['admin:tiers:read'],
+      subjectType: 'service',
+      createdByAdminId: adminId,
+    });
+    await t.mutation(internal.adminApi.revokeToken, { id: minted.id, actorAdminId: adminId });
+
+    const rows = await actions(t);
+    const revoke = rows.find((a) => a.action === 'admin.token.revoke');
+    expect(revoke?.payload).toMatchObject({ name: 'svc-revoke' });
+  });
+
+  test('appSettings.setMany audits each key by name, never the value', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.appSettings.setMany, {
+      entries: [
+        { key: 'devices.enforcementEnabled', value: JSON.stringify(true) },
+        { key: 'freetier.expiryDays', value: JSON.stringify(45) },
+      ],
+    });
+    const rows = (await actions(t)).filter((a) => a.action === 'admin.settings.change');
+    expect(rows.map((r) => r.targetId).sort()).toEqual([
+      'devices.enforcementEnabled',
+      'freetier.expiryDays',
+    ]);
+    expect(JSON.stringify(rows)).not.toContain('45');
+    expect(JSON.stringify(rows)).not.toContain('true');
+  });
+
+  test('backend-server by-id create/update/delete audit (slug/backend only)', async () => {
+    const t = convexTest(schema, modules);
+    const created = await t.mutation(internal.adminApi.createBackendServer, {
+      backend: 'remnawave',
+      name: 'RW Aud',
+      slug: 'rw-aud',
+      baseUrl: 'https://panel.example',
+      apiToken: 'SECRET-NEVER-AUDIT',
+    });
+    await t.mutation(internal.adminApi.updateBackendServer, {
+      id: created.id as never,
+      name: 'RW Aud 2',
+    });
+    await t.mutation(internal.adminApi.deleteBackendServer, { id: created.id as never });
+
+    const rows = (await actions(t)).filter((a) => a.action.startsWith('admin.backend_server.'));
+    expect(rows.map((r) => r.action)).toEqual([
+      'admin.backend_server.create',
+      'admin.backend_server.update',
+      'admin.backend_server.delete',
+    ]);
+    expect(JSON.stringify(rows)).not.toContain('SECRET-NEVER-AUDIT');
+    expect(JSON.stringify(rows)).not.toContain('panel.example');
+  });
+
+  test('mirror-provider create/update/upsert/remove audit (name only, never the secret)', async () => {
+    const t = convexTest(schema, modules);
+    const base = {
+      name: 'r2-aud',
+      endpoint: 'https://r2.example.com',
+      bucket: 'subs',
+      publicUrl: 'https://cdn.example.com',
+      accessKeyId: 'AKIA',
+      secretAccessKey: 'MIRROR-SECRET-NEVER-AUDIT',
+    };
+    const created = await t.mutation(internal.mirrorProviders.create, base);
+    await t.mutation(internal.mirrorProviders.update, {
+      id: created.id as never,
+      publicUrl: 'https://cdn2.example.com',
+    });
+    await t.mutation(internal.mirrorProviders.upsertByName, { name: 'r2-aud', priority: 3 });
+    await t.mutation(internal.mirrorProviders.remove, { id: created.id as never });
+
+    const rows = (await actions(t)).filter((a) => a.action.startsWith('admin.mirror_provider.'));
+    expect(rows.map((r) => r.action)).toEqual([
+      'admin.mirror_provider.create',
+      'admin.mirror_provider.update',
+      'admin.mirror_provider.upsert',
+      'admin.mirror_provider.delete',
+    ]);
+    expect(JSON.stringify(rows)).not.toContain('MIRROR-SECRET-NEVER-AUDIT');
   });
 });

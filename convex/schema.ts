@@ -222,6 +222,12 @@ export default defineSchema({
     state: subscriptionState,
     updatedAt: v.number(),
     deletedAt: v.optional(v.number()),
+    // Tombstone-sweep retry state: a row whose backend delete keeps failing
+    // (dead panel) is deferred by an exponential backoff so it can't occupy the
+    // sweep page forever and starve newer tombstones (head-of-line blocking).
+    // After TOMBSTONE_MAX_ATTEMPTS the row is abandoned (marked deleted + audit).
+    tombstoneRetryAfter: v.optional(v.number()),
+    tombstoneAttempts: v.optional(v.number()),
   })
     .index('by_user', ['userId'])
     // (userId, state): the active-subscription resolvers hit this directly
@@ -232,6 +238,10 @@ export default defineSchema({
     // (state, deletedAt): the tombstone sweep prefix-queries state; the
     // deleted-row retention sweep range-queries deletedAt under it.
     .index('by_state', ['state', 'deletedAt'])
+    // (state, tombstoneRetryAfter): the tombstone sweep's due-row selection —
+    // undefined sorts below numbers, so never-retried rows are picked first
+    // and backoff-deferred rows (retryAfter >= now) fall outside the range.
+    .index('by_state_tombstone_retry', ['state', 'tombstoneRetryAfter', 'deletedAt'])
     .index('by_backend_user_id', ['backendUserId'])
     .index('by_backend_short_id', ['backendShortId'])
     // The FCP-fronted subscription route resolves the sub by its opaque token.
@@ -383,6 +393,13 @@ export default defineSchema({
     name: v.string(),
     lastRunAt: v.number(),
     runCount: v.number(),
+    // Outcome tracking (separate from the start-stamp): an action-context cron
+    // commits its start-stamp independently, so a job that THROWS every run
+    // still shows a fresh lastRunAt. `lastOkAt` stamps successful completion
+    // and `lastError` the latest failure message, so the dashboard can tell a
+    // firing-but-wedged job apart from a healthy one.
+    lastOkAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
   }).index('by_name', ['name']),
 
   webhookEvents: defineTable({
@@ -721,7 +738,10 @@ export default defineSchema({
     popSessionToken: v.optional(v.string()),
   })
     .index('by_sid', ['sid'])
-    .index('by_expires', ['expiresAt']),
+    .index('by_expires', ['expiresAt'])
+    // Hard-delete cascades (lifecycle.deleteInactiveUser) drop a user's sessions
+    // by userId; the daily expiry sweep can't key off identity.
+    .index('by_user', ['userId']),
 
   // Short-lived HPKE epoch KEM keys (CDN-blinding Phase 3). The login request
   // seals to the CURRENT epoch key instead of the multi-day static key, so the

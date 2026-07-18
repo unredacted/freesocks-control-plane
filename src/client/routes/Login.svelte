@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { z } from 'zod';
   import { Button } from '@client/components/ui/button';
   import CapWidget from '../components/CapWidget.svelte';
   import InlineError from '../components/InlineError.svelte';
@@ -7,6 +6,8 @@
   import { configQuery } from '../lib/queries';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
+  import { popUnavailable } from '../lib/pop';
+  import { AccountLoginResponse } from '../../shared/contracts/auth';
   import { t, normalizeDigits } from '../lib/i18n/index.svelte';
   import { queryClient } from '../lib/query-client';
   import { queryKeys } from '../lib/queries';
@@ -45,18 +46,12 @@
   const ACCOUNT_ID_LEN = 32;
   const digitsOnly = $derived(accountId.replace(/\D/g, '').slice(0, ACCOUNT_ID_LEN));
 
-  const LoginResult = z.object({
-    ok: z.boolean(),
-    popSessionToken: z.string().optional(),
-    lapsedDowngrade: z.boolean().optional(),
-  });
-
   const login = createMutation(() => ({
     mutationFn: () =>
       apiClient.post(
         '/api/v1/auth/account-login',
         { accountId: digitsOnly, captchaToken: token! },
-        LoginResult,
+        AccountLoginResponse,
       ),
     onSuccess: async (res) => {
       // Server auto-downgraded a lapsed membership → stash a one-time flag so
@@ -99,6 +94,13 @@
   // Account.svelte bounces a 401'd member here with ?expired=1; surface a calm
   // explanation rather than dropping them on a bare form with no context.
   let sessionExpired = $derived(router.searchParams.get('expired') === '1');
+  // A bound session + a PoP-incapable browser (Workers blocked) 401-loops here
+  // under POP_REQUIRED — a distinct, actionable message (also checked on mount
+  // so a direct visit after the bounce sees it).
+  let popBroken = $state(false);
+  $effect(() => {
+    popBroken = sessionExpired && popUnavailable();
+  });
 
   // Optional passkey sign-in (usernameless/discoverable). Independent of the
   // account-number form above; the account number stays the primary + recovery.
@@ -153,6 +155,16 @@
       role="status"
     >
       {t('login.sessionExpired')}
+    </div>
+  {/if}
+  {#if popBroken}
+    <!-- A PoP-broken browser (Workers blocked) 401-loops into this page under
+         POP_REQUIRED; say WHY instead of a misleading session-expired bounce. -->
+    <div
+      class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-foreground"
+      role="alert"
+    >
+      {t('login.popBroken')}
     </div>
   {/if}
 

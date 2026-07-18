@@ -76,7 +76,12 @@ services:
 
   # Postgres 18: the production datastore (exercised on beta before prod). The
   # backend connects to a database named after INSTANCE_NAME with hyphens
-  # replaced by underscores, so POSTGRES_DB below MUST match (keep them in sync).
+  # replaced by underscores, so POSTGRES_DB below MUST match it (keep them in
+  # sync). It defaults to freesocks_beta and can be overridden via POSTGRES_DB
+  # in .env.beta — set that instead of editing this file so the postgres env,
+  # the pg_isready healthcheck, and the backup sidecar can't drift apart (an
+  # INSTANCE_NAME-only change used to leave pg_dump successfully backing up the
+  # EMPTY old DB with a green heartbeat).
   postgres:
     # Pinned by digest like every other image (re-pin on upgrade:
     # docker buildx imagetools inspect postgres:18).
@@ -90,14 +95,14 @@ services:
     environment:
       - POSTGRES_USER=convex
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.beta}
-      - POSTGRES_DB=freesocks_beta
+      - POSTGRES_DB=${POSTGRES_DB:-freesocks_beta}
     volumes:
       # PG18 moved the image VOLUME to /var/lib/postgresql (PGDATA defaults to
       # /var/lib/postgresql/18/docker inside it). Do NOT mount the pre-18
       # /var/lib/postgresql/data path or the container refuses to start.
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U convex -d freesocks_beta']
+      test: ['CMD-SHELL', 'pg_isready -U convex -d $${POSTGRES_DB}']
       interval: 10s
       start_period: 20s
       retries: 5
@@ -119,7 +124,7 @@ services:
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_USER=convex
-      - POSTGRES_DB=freesocks_beta
+      - POSTGRES_DB=${POSTGRES_DB:-freesocks_beta}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.beta}
       - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
       - BACKUP_RETENTION=${BACKUP_RETENTION:-7}
@@ -282,6 +287,13 @@ services:
       # references them when those blocks are uncommented.
       - CONVEX_DASHBOARD_ADDRESS=${CONVEX_DASHBOARD_ADDRESS:-}
       - CONVEX_API_ADDRESS=${CONVEX_API_ADDRESS:-}
+    healthcheck:
+      # The public edge: a wedged Caddy is otherwise only caught by the external
+      # /readyz monitor. wget ships in the alpine image (busybox).
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost/healthz || exit 1']
+      interval: 30s
+      start_period: 15s
+      retries: 3
     depends_on:
       backend:
         condition: service_healthy
@@ -298,6 +310,7 @@ services:
     cpus: 0.5
     pids_limit: 128
     restart: 'no'
+    logging: *log
     entrypoint: ['/bin/bash', '-c']
     command: ["./generate_admin_key.sh | grep '|' | tail -n1 > /keys/admin_key"]
     environment:
@@ -323,6 +336,7 @@ services:
     cpus: 1.0
     pids_limit: 256
     restart: 'no'
+    logging: *log
     environment:
       - CONVEX_SELF_HOSTED_URL=http://backend:3210
     volumes:

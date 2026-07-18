@@ -17,6 +17,19 @@ export const LoginRedirectQuery = z.object({
 });
 export type LoginRedirectQuery = z.infer<typeof LoginRedirectQuery>;
 
+/**
+ * `POST /api/v1/auth/account-login` success: `popSessionToken` is the public
+ * per-session PoP-binding token (absent on legacy/unbound responses);
+ * `lapsedDowngrade` flags a member whose membership lapsed while they were away
+ * (the SPA shows the re-welcome state).
+ */
+export const AccountLoginResponse = z.object({
+  ok: z.boolean(),
+  popSessionToken: z.string().optional(),
+  lapsedDowngrade: z.boolean().optional(),
+});
+export type AccountLoginResponse = z.infer<typeof AccountLoginResponse>;
+
 export const AdminAuthStatus = z.object({
   hasAdmins: z.boolean(),
   bootstrapAvailable: z.boolean(),
@@ -136,8 +149,13 @@ export const PublicConfig = z.object({
       .object({
         enabled: z.boolean(),
         suggestedAmountsCents: z.array(z.number().int()),
+        /** Per-amount GB bonus, PRECOMPUTED server-side (bonusGb for donating
+         *  `cents`): the picker's "~N GB" line for the presets without exposing
+         *  the raw GB-per-dollar rate — with the rate AND currentBonusGb both
+         *  public, monthly donation revenue was exactly derivable (GB-only
+         *  posture). Custom (non-preset) amounts show no GB hint. */
+        suggested: z.array(z.object({ cents: z.number().int(), bonusGb: z.number() })).default([]),
         minAmountCents: z.number().int(),
-        bonusGbPerUsd: z.number(),
         monthlyBonusCapGb: z.number(),
         currentBonusGb: z.number(),
         /** Active free users the shared bonus reaches (daily-reconciled count). */
@@ -149,8 +167,8 @@ export const PublicConfig = z.object({
       .default({
         enabled: false,
         suggestedAmountsCents: [],
+        suggested: [],
         minAmountCents: 0,
-        bonusGbPerUsd: 0,
         monthlyBonusCapGb: 0,
         currentBonusGb: 0,
         freeUsersHelped: 0,

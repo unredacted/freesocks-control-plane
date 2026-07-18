@@ -617,6 +617,41 @@ describe('btcpay.verifyAndParse', () => {
     }
   });
 
+  test('a Settled-at-partial invoice downgrades to confirming + underpaid (settle tolerance)', async () => {
+    // A store configured to settle at e.g. 90% paid fires InvoiceSettled on a
+    // PARTIAL payment; the billed amount equals the order's cents by
+    // construction, so only additionalStatus sees it.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        res({
+          id: 'inv_pp',
+          amount: '15.00',
+          currency: 'USD',
+          status: 'Settled',
+          additionalStatus: 'PaidPartial',
+        }),
+      ),
+    );
+    const { body, signature } = await signed({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_pp',
+      metadata: { orderId: 'o-pp' },
+    });
+    const r = await btcpay.verifyAndParse({
+      rawBody: body,
+      signature,
+      webhookSecret: SECRET,
+      cfg: { apiUrl: 'https://btcpay.test', storeId: 'store_1', apiKey: 'k' },
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('confirming'); // never a grant
+      expect(r.underpaid).toBe(true);
+      expect(r.amountMinor).toBe(1500); // billed amount still reported for audit
+    }
+  });
+
   test('settle still grants when the amount fetch is unavailable (invoice-id binding is the guard)', async () => {
     vi.stubGlobal(
       'fetch',
@@ -890,15 +925,17 @@ describe('nowpayments.verifyAndParse signature canonicalization', () => {
   // '—' and '×'). Keys are already in sorted order, so JSON.stringify of the
   // parsed body reproduces both candidate canonical forms exactly.
   const bodyObj = {
+    actually_paid: 0.01,
     note: 'FreeSocks — 1×',
     order_id: 'o1',
     path: 'a/b',
+    pay_amount: 0.01,
     payment_status: 'finished',
   };
   const rawBody = JSON.stringify(bodyObj);
   const plainCanonical = rawBody; // JSON.stringify(sortKeysDeep(body))
   const phpCanonical =
-    '{"note":"FreeSocks \\u2014 1\\u00d7","order_id":"o1","path":"a\\/b","payment_status":"finished"}';
+    '{"actually_paid":0.01,"note":"FreeSocks \\u2014 1\\u00d7","order_id":"o1","path":"a\\/b","pay_amount":0.01,"payment_status":"finished"}';
 
   test('accepts a signature over the plain JSON.stringify canonical form', async () => {
     const sig = await hmacSha512Hex(SECRET, plainCanonical);
@@ -980,9 +1017,28 @@ describe('nowpayments partial-settle guard', () => {
     expect(r.ok && r.status).toBe('paid');
   });
 
-  test('a `finished` IPN without the amount fields is unaffected (legacy IPNs)', async () => {
+  test('a `finished` IPN without the amount fields fails safe (confirming + underpaid)', async () => {
+    // A `finished` whose received-vs-expected amounts can't be verified is NOT
+    // treated as paid (a settle-tolerance `finished` looks exactly like this).
     const { body, signature } = await signedIpn({});
     const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('confirming');
+      expect(r.underpaid).toBe(true);
+    }
+  });
+
+  test('string-typed amounts are coerced (a fully-paid `finished` still pays)', async () => {
+    const { body, signature } = await signedIpn({ actually_paid: '0.01', pay_amount: '0.01' });
+    const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
     expect(r.ok && r.status).toBe('paid');
+  });
+
+  test('a short `finished` also flags underpaid for the audit trail', async () => {
+    const { body, signature } = await signedIpn({ actually_paid: 0.008, pay_amount: 0.01 });
+    const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.underpaid).toBe(true);
   });
 });

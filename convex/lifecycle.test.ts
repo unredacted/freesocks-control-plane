@@ -232,6 +232,117 @@ describe('lifecycle grace/disable transitions', () => {
     expect(res[0]!.backendUserId).toBe('bu-due');
     expect(dueId).toBeDefined();
   });
+
+  test('a failing tombstone backs off instead of head-of-line blocking newer ones', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t);
+    const now = Date.now();
+    const { failId, okId } = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        updatedAt: now,
+      });
+      const serverId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'RW',
+        slug: 'rw',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test.example', apiToken: 'tkn' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: now,
+      });
+      const mk = (buid: string, backendServerId?: Id<'backendServers'>) =>
+        ctx.db.insert('subscriptions', {
+          userId,
+          backend: 'remnawave',
+          backendUserId: buid,
+          backendShortId: `${buid}-s`,
+          ...(backendServerId ? { backendServerId } : {}),
+          subscriptionUrl: 'https://x/sub',
+          subscriptionMirrors: [],
+          state: 'disabled' as const,
+          deletedAt: now - 1000, // grace elapsed → due
+          updatedAt: now,
+        });
+      // Oldest row fails (its panel 500s); the newer one must still delete.
+      const failId = await mk('bu-fail', serverId);
+      const okId = await mk('bu-ok');
+      return { failId, okId };
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('boom', { status: 500 })),
+    );
+
+    const { removed } = await t.action(internal.lifecycle.sweepTombstones, {});
+    expect(removed).toBe(1);
+
+    await t.run(async (ctx) => {
+      const fail = await ctx.db.get(failId);
+      expect(fail?.state).toBe('disabled'); // kept, but deferred
+      expect(fail?.tombstoneAttempts).toBe(1);
+      expect(fail?.tombstoneRetryAfter).toBeGreaterThan(Date.now());
+      expect((await ctx.db.get(okId))?.state).toBe('deleted');
+    });
+    // The deferred row falls out of the due set until its backoff elapses.
+    const due = await t.query(internal.lifecycle.findTombstonedDue, {
+      now: Date.now(),
+      limit: 100,
+    });
+    expect(due.map((d) => d.backendUserId)).not.toContain('bu-fail');
+  });
+
+  test('a tombstone that exhausts its attempts is abandoned: marked deleted + audited', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t);
+    const now = Date.now();
+    const subId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        updatedAt: now,
+      });
+      const serverId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'RW',
+        slug: 'rw',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test.example', apiToken: 'tkn' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: now,
+      });
+      return ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'bu-doomed',
+        backendShortId: 'bu-doomed-s',
+        backendServerId: serverId,
+        subscriptionUrl: 'https://x/sub',
+        subscriptionMirrors: [],
+        state: 'disabled',
+        deletedAt: now - 1000,
+        tombstoneAttempts: 13, // one short of TOMBSTONE_MAX_ATTEMPTS (14)
+        tombstoneRetryAfter: now - 1, // backoff elapsed → due again
+        updatedAt: now,
+      });
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('boom', { status: 500 })),
+    );
+
+    const { removed } = await t.action(internal.lifecycle.sweepTombstones, {});
+    expect(removed).toBe(0);
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subId))?.state).toBe('deleted');
+      const audits = await ctx.db.query('auditLog').withIndex('by_creation_time').collect();
+      const abandon = audits.find((a) => a.action === 'subscription.tombstone_abandoned');
+      expect(abandon?.targetId).toBe(subId);
+    });
+  });
 });
 
 describe('lifecycle.setMembership', () => {
@@ -519,6 +630,81 @@ describe('lifecycle idle-free deactivate + retain (WS2)', () => {
     await t.run(async (ctx) => {
       expect(await ctx.db.get(oldId)).toBeNull(); // purged
       expect(await ctx.db.get(recentId)).not.toBeNull(); // kept
+    });
+  });
+
+  test('deleteInactiveUser cascades every referencing table (no dangling rows)', async () => {
+    const t = convexTest(schema, modules);
+    const { freeTierId, memberTierId } = await seedTiers(t);
+    const now = Date.now();
+    const userId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId: freeTierId,
+        status: 'inactive',
+        freeKeyExpiresAt: now - 200 * DAY,
+        updatedAt: now,
+      });
+      await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'bu-1',
+        backendShortId: 's-1',
+        subscriptionUrl: 'https://x/sub',
+        subscriptionMirrors: [],
+        state: 'deleted',
+        updatedAt: now,
+      });
+      await ctx.db.insert('tierHistory', {
+        userId,
+        toTierId: memberTierId,
+        reason: 'billing.order.paid',
+        triggeredBy: 'webhook',
+      });
+      await ctx.db.insert('referrals', {
+        referrerUserId: userId,
+        refereeUserId: userId, // both sides reference the purged user
+        status: 'pending',
+        updatedAt: now,
+      });
+      await ctx.db.insert('billingOrders', {
+        processor: 'nowpayments',
+        opaqueRef: 'ref-cascade',
+        userId,
+        tierId: memberTierId,
+        durationDays: 91,
+        amountCents: 1400,
+        currency: 'USD',
+        status: 'paid',
+        updatedAt: now,
+      });
+      await ctx.db.insert('memberPasskeyCredentials', {
+        userId,
+        credentialId: 'cred-1',
+        publicKey: 'pk',
+        counter: 0,
+      });
+      await ctx.db.insert('sessions', {
+        sid: 'sid-cascade',
+        kind: 'member',
+        userId,
+        expiresAt: now + 3_600_000,
+      });
+      return userId;
+    });
+
+    await t.mutation(internal.lifecycle.deleteInactiveUser, { userId });
+    await t.run(async (ctx) => {
+      for (const table of [
+        'users',
+        'subscriptions',
+        'tierHistory',
+        'referrals',
+        'billingOrders',
+        'memberPasskeyCredentials',
+        'sessions',
+      ] as const) {
+        expect(await ctx.db.query(table).collect(), `rows left in ${table}`).toHaveLength(0);
+      }
     });
   });
 });

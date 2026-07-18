@@ -10,6 +10,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { base64UrlEncode, sha256Hex } from './lib/crypto';
+import { writeAuditLog } from './lib/audit';
 
 export const TOKEN_PREFIX = 'fsv1_';
 const TOKEN_RANDOM_BYTES = 32;
@@ -119,7 +120,19 @@ export const insertToken = internalMutation({
     subjectUserId: v.optional(v.id('users')),
     expiresAt: v.optional(v.number()),
   },
-  handler: (ctx, a) => ctx.db.insert('apiTokens', { ...a, updatedAt: Date.now() }),
+  handler: async (ctx, a) => {
+    const id = await ctx.db.insert('apiTokens', { ...a, updatedAt: Date.now() });
+    // Credential mints are security-relevant: audit (never the token/hash).
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.createdByAdminId,
+      action: 'admin.token.mint',
+      targetType: 'api_token',
+      targetId: id,
+      payload: { name: a.name, scopeCount: a.scopes.length, subjectType: a.subjectType },
+    });
+    return id;
+  },
 });
 
 // `list` and `revoke` (public query/mutation) were deleted in pass 2: dead code

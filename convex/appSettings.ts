@@ -2,6 +2,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { MutationCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
+import { writeAuditLog } from './lib/audit';
 
 /**
  * Compiled-in defaults so an install with no rows still behaves. Mirrors
@@ -98,6 +99,10 @@ export const set = internalMutation({
  * Atomic multi-key upsert (one transaction), so the admin settings PATCH applies a
  * whole patch or none — a mid-loop failure can't leave it half-applied with no
  * indication which half landed. (Review P3.)
+ *
+ * Every key is audited by NAME (never the value — some values are
+ * secret-adjacent): these keys flip security-relevant behavior
+ * (devices.enforcementEnabled, outline.enabled, freetier.expiryDays, …).
  */
 export const setMany = internalMutation({
   args: {
@@ -107,6 +112,14 @@ export const setMany = internalMutation({
   handler: async (ctx, { entries, updatedByAdminId }) => {
     for (const { key, value } of entries) {
       await upsertSettingRow(ctx, key, value, updatedByAdminId);
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: updatedByAdminId ?? undefined,
+        action: 'admin.settings.change',
+        targetType: 'app_setting',
+        targetId: key,
+        payload: { key },
+      });
     }
     return null;
   },

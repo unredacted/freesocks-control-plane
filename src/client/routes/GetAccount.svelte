@@ -31,7 +31,12 @@
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { subscriptionDisplayUrl } from '../lib/utils';
-  import { CreateAccountRequest, CreateAccountResponse } from '../../shared/contracts/account';
+  import {
+    ConnectionModeResponse,
+    CreateAccountRequest,
+    CreateAccountResponse,
+    RegenerateResponse,
+  } from '../../shared/contracts/account';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import SocksIcon from '../components/SocksIcon.svelte';
@@ -243,7 +248,7 @@
         await apiClient.post(
           '/api/v1/account/connection-mode',
           { modeId: effectiveModeId },
-          z.object({ ok: z.boolean(), modeId: z.string() }),
+          ConnectionModeResponse,
         );
       } catch {
         // Non-fatal: the first key just issues into the default mode.
@@ -256,7 +261,7 @@
             ? { location: pickedLocation === 'auto' ? null : pickedLocation }
             : {}),
         },
-        z.object({ subscriptionUrl: z.string(), shortUuid: z.string() }),
+        RegenerateResponse,
       );
     },
     onSuccess: () => {

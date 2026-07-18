@@ -706,7 +706,15 @@ describe('nowpayments webhook route', () => {
         updatedAt: Date.now(),
       }),
     );
-    const payload = { payment_status: 'finished', payment_id: 1, order_id: 'route-ref' };
+    const payload = {
+      payment_status: 'finished',
+      payment_id: 1,
+      order_id: 'route-ref',
+      // Real finished IPNs carry the amounts; the settle-tolerance guard
+      // downgrades a finished that lacks them (fail-safe).
+      actually_paid: 1,
+      pay_amount: 1,
+    };
     const res = await t.fetch('/api/webhooks/nowpayments', {
       method: 'POST',
       headers: { 'x-nowpayments-sig': await signIpn(payload, 'ipn') },
@@ -1110,5 +1118,80 @@ describe('referral routes', () => {
     await t.mutation(internal.referrals.setConfig, { enabled: false });
     const off = await t.fetch('/api/v1/account/referrals', { headers: { cookie } });
     expect(((await off.json()) as { enabled: boolean }).enabled).toBe(false);
+  });
+});
+
+describe('rate-limit coverage (pre-launch review)', () => {
+  test('unauthenticated passkey options routes fail closed (503) when the client IP is unresolvable', async () => {
+    // TRUSTED_PROXY is set but no x-forwarded-for arrives (proxy misconfig) →
+    // resolveClientIp is null; the throttles must not fail OPEN.
+    const t = convexTest(schema, modules);
+    for (const path of [
+      '/api/v1/auth/passkey/authenticate/options',
+      '/api/admin/auth/authenticate/options',
+      '/api/admin/auth/register/options',
+      '/api/admin/auth/register-bootstrap/options',
+    ]) {
+      const res = await t.fetch(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ invite: 'x', username: 'x' }),
+      });
+      expect(res.status, path).toBe(503);
+      expect(((await res.json()) as { error: { code: string } }).error.code, path).toBe(
+        'auth.ip_unresolved',
+      );
+    }
+  });
+
+  test('the bootstrap options route is per-IP throttled (no unlimited secret-oracle guesses)', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.rateLimits.setPolicy, {
+      policyKey: 'admin.register.ip',
+      max: 2,
+      windowMs: 60_000,
+      enabled: true,
+      actorAdminId: undefined,
+    });
+    const call = () =>
+      t.fetch('/api/admin/auth/register-bootstrap/options', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.95' },
+        body: JSON.stringify({ username: 'x' }),
+      });
+    await call();
+    await call();
+    const third = await call();
+    expect(third.status).toBe(429);
+  });
+
+  test('/readyz is per-IP throttled', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.rateLimits.setPolicy, {
+      policyKey: 'readyz.fetch',
+      max: 1,
+      windowMs: 60_000,
+      enabled: true,
+      actorAdminId: undefined,
+    });
+    const headers = { 'x-forwarded-for': '203.0.113.96' };
+    expect((await t.fetch('/readyz', { headers })).status).toBe(200);
+    expect((await t.fetch('/readyz', { headers })).status).toBe(429);
+  });
+
+  test('GET /account/usage is per-user throttled', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    await t.mutation(internal.rateLimits.setPolicy, {
+      policyKey: 'account.usage',
+      max: 1,
+      windowMs: 60_000,
+      enabled: true,
+      actorAdminId: undefined,
+    });
+    // First call passes the throttle (usage itself degrades to null — no sub).
+    expect((await t.fetch('/api/v1/account/usage', { headers: { cookie } })).status).toBe(200);
+    expect((await t.fetch('/api/v1/account/usage', { headers: { cookie } })).status).toBe(429);
   });
 });

@@ -249,6 +249,64 @@ describe('donations.applyFreeBonus', () => {
       expect(JSON.parse(st!.value).appliedBonusGb).toBe(0);
     });
   });
+
+  test('a failing chunk does not abort the run, sets NO marker, and audits donation.bonus_partial', async () => {
+    const { t, freeTierId, instanceId } = await setup();
+    // A second instance whose panel is down; one key on each.
+    const deadInstanceId = await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'dead',
+        slug: 'dead',
+        config: { type: 'remnawave', baseUrl: 'https://dead.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedFreeKey(t, freeTierId, instanceId, 'u-live');
+    await seedFreeKey(t, freeTierId, deadInstanceId, 'u-dead');
+    await t.run((ctx) =>
+      ctx.db.insert('appState', {
+        key: 'donation:freeBonus',
+        value: JSON.stringify({ monthKey: thisMonth(), donatedCents: 3000, appliedBonusGb: 0 }),
+        updatedAt: Date.now(),
+      }),
+    );
+    const bulk: BulkBody[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes('dead.test')) return new Response('down', { status: 500 });
+        if (url.includes('/api/users/bulk/update')) {
+          bulk.push(JSON.parse(init!.body as string) as BulkBody);
+        }
+        return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+      }),
+    );
+
+    await t.action(internal.donations.applyFreeBonus, {});
+
+    // The healthy instance's chunk still ran (no whole-run abort)…
+    expect(bulk.length).toBe(1);
+    expect(bulk[0]!.uuids).toEqual(['u-live']);
+    await t.run(async (ctx) => {
+      // …but the applied marker was NOT set (next hourly run re-pushes)…
+      const st = await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
+        .unique();
+      expect(JSON.parse(st!.value).appliedBonusGb).toBe(0);
+      // …and the failure is surfaced (the start-of-run heartbeat alone would
+      // have made the job look healthy).
+      const audits = await ctx.db.query('auditLog').collect();
+      const partial = audits.find((a) => a.action === 'donation.bonus_partial');
+      expect(partial).toBeDefined();
+      expect((partial!.payload as { failedChunks: number }).failedChunks).toBeGreaterThan(0);
+    });
+  });
 });
 
 describe('donations.donationTotals', () => {
@@ -288,10 +346,12 @@ describe('donations.donationTotals', () => {
     expect(await t.query(internal.donations.donationTotals, { userId })).toEqual({
       donatedCentsTotal: 800,
       donationCount: 2,
+      donatedGbTotal: 8, // 800 cents at the 1 GB/$ configured rate (computed server-side)
     });
     expect(await t.query(internal.donations.donationTotals, { userId: otherId })).toEqual({
       donatedCentsTotal: 900,
       donationCount: 1,
+      donatedGbTotal: 9,
     });
   });
 
@@ -303,6 +363,7 @@ describe('donations.donationTotals', () => {
     expect(await t.query(internal.donations.donationTotals, { userId })).toEqual({
       donatedCentsTotal: 0,
       donationCount: 0,
+      donatedGbTotal: 0,
     });
   });
 });
@@ -352,6 +413,15 @@ describe('publicConfig donation impact projection', () => {
     ]);
     // GB only — the ledger's donatedCents never reaches the public projection.
     expect(JSON.stringify(cfg.billing.donation.history)).not.toContain('donatedCents');
+    // The raw GB-per-dollar RATE never ships either (currentBonusGb ÷ rate was
+    // exact monthly revenue); only precomputed per-amount GB bonuses.
+    expect('bonusGbPerUsd' in cfg.billing.donation).toBe(false);
+    expect(cfg.billing.donation.suggested).toEqual([
+      { cents: 300, bonusGb: 3 }, // the compiled defaults at 1 GB/USD
+      { cents: 500, bonusGb: 5 },
+      { cents: 1000, bonusGb: 10 },
+      { cents: 2500, bonusGb: 25 },
+    ]);
   });
 
   test('empty history on a deployment with no impact yet', async () => {

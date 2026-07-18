@@ -55,6 +55,15 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // The post-issuance tombstone of a superseded key failed past the bounded
   // retry — TWO live keys exist until an operator deletes the old one.
   'subscription.tombstone_failed': ['backendUserId'],
+  // A tombstoned sub exhausted its sweep backoff (permanently-dead backend):
+  // the local row was marked deleted so the sweep moves on, but the backend
+  // key may still exist — the operator's manual cleanup queue.
+  'subscription.tombstone_abandoned': ['backend', 'backendUserId', 'attempts'],
+  // The donation fleet re-cap finished INCOMPLETE (a panel was down mid-run or
+  // the page cap hit): the applied marker was deliberately NOT set, so the next
+  // hourly run re-pushes. Surfaced because the start-of-run heartbeat alone
+  // would make the cron look healthy.
+  'donation.bonus_partial': ['effective', 'failedChunks', 'exhausted'],
   'membership.tier_change': ['fromTierId', 'toTierId', 'reason'],
   'user.create.free': ['ipCountry', 'asn'],
   // W2: admin retunes a rate-limit policy.
@@ -118,6 +127,10 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // A second paid event with a different payment id for an already-paid order:
   // the buyer paid twice on one invoice. The operator's refund-review queue.
   'billing.overpayment_seen': ['processor', 'amountCents', 'reportedMinor'],
+  // A paid-class webhook for an INCOMPLETELY-paid invoice (merchant settle-
+  // tolerance): the grant was refused by downgrade, so this is the operator's
+  // follow-up queue (refund or request a top-up).
+  'billing.underpayment_seen': ['processor', 'expectedMinor', 'reportedMinor'],
   // A webhook claim whose grant threw (retryable only until the sender gives
   // up) — surfaced on the admin billing page as money-at-risk.
   'billing.webhook.grant_failed': ['source'],
@@ -127,6 +140,26 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.invite.redeemed': ['username'],
   // Automation-token mint (bootstrap via `convex run`); never the token/secret.
   'admin.automation_token.mint': ['name', 'scopeCount'],
+  // Human-admin API-token mint / revoke from the CMS; never the token/secret.
+  'admin.token.mint': ['name', 'scopeCount', 'subjectType'],
+  'admin.token.revoke': ['name'],
+  // Admin tier lifecycle from the CMS (the by-slug IaC path audits separately).
+  'admin.tier.create': ['slug', 'backend'],
+  'admin.tier.update': ['slug'],
+  'admin.tier.delete': ['slug'],
+  // PATCH /admin/settings flipped a key (e.g. devices.enforcementEnabled) —
+  // the key NAME only, never the value (some values are secret-adjacent).
+  'admin.settings.change': ['key'],
+  // By-id backend-server CRUD from the CMS (the by-slug IaC path audits
+  // separately); never the config secret / apiUrl.
+  'admin.backend_server.create': ['slug', 'backend'],
+  'admin.backend_server.update': ['slug'],
+  // Mirror-provider CRUD (repointing endpoint/bucket/publicUrl silently
+  // redirects member subscription mirrors — must be traceable). Name only.
+  'admin.mirror_provider.create': ['name'],
+  'admin.mirror_provider.update': ['name'],
+  'admin.mirror_provider.delete': ['name'],
+  'admin.mirror_provider.upsert': ['name', 'created'],
   // Idempotent backend-server upsert by slug (Ansible / IaC); never the config secret.
   'admin.backend_server.upsert': ['slug', 'backend', 'created'],
   // Slug-addressed backend-server delete (migrate / IaC).

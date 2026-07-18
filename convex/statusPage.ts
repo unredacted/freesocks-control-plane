@@ -47,7 +47,8 @@ export const getPageConfig = internalQuery({
 /**
  * Admin sets the censorship matrix + load thresholds. `rows` replaces the full
  * matrix (the editor always submits the whole grid); thresholds validate to
- * positive ints with crowdedAt >= busyAt enforced downstream.
+ * positive ints with the EFFECTIVE pair required to satisfy crowdedAt > busyAt
+ * (equality would make the busy band unreachable — crowded matches first).
  */
 export const setPageConfig = internalMutation({
   args: {
@@ -59,6 +60,20 @@ export const setPageConfig = internalMutation({
   handler: async (ctx, { rows, busyAt, crowdedAt, actorAdminId }) => {
     if (rows === undefined && busyAt === undefined && crowdedAt === undefined) {
       throw new ConvexError({ code: 'validation', message: 'no recognized status-page fields' });
+    }
+    if (busyAt !== undefined || crowdedAt !== undefined) {
+      // Validate the EFFECTIVE pair (new value over the stored one), so an
+      // equal-or-inverted combination can never be persisted.
+      const current = await resolveStatusConfig(ctx.db);
+      const nextBusy = busyAt ?? current.busyAt;
+      const nextCrowded = crowdedAt ?? current.crowdedAt;
+      if (nextCrowded <= nextBusy) {
+        throw new ConvexError({
+          code: 'validation',
+          message:
+            'crowdedAt must be greater than busyAt (equality makes the busy band unreachable)',
+        });
+      }
     }
     if (rows !== undefined) {
       const clean = sanitizeCensorshipRows({ rows });

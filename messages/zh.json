@@ -1081,7 +1081,6 @@
     "overallPartial": "部分位置出现问题",
     "overallMajor": "正在发生重大故障",
     "locationsTitle": "位置",
-    "nodesUp": "{total} 个节点中 {online} 个在线",
     "online": "在线",
     "offline": "离线",
     "srOnline": "在线",

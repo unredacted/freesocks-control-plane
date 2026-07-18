@@ -67,6 +67,15 @@ export interface ParsedEvent {
   checkoutRef?: string | null;
   amountMinor?: number | null;
   amountCurrency?: string | null;
+  /**
+   * Settle-tolerance signal: the rail reports a paid-class transition for an
+   * invoice that was NOT fully paid (e.g. NOWPayments `finished` within a
+   * merchant tolerance, BTCPay Settled/PaidPartial). The adapter ALSO
+   * downgrades `status` to `confirming` (never a grant); this flag lets
+   * applyEvent write `billing.underpayment_seen` so the underpayment is a
+   * visible operator signal instead of a silently-stalled order.
+   */
+  underpaid?: boolean;
 }
 
 export interface VerifyFailure {

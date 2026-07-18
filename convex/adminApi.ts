@@ -225,7 +225,7 @@ async function clearOtherDefaultFree(
 }
 
 export const createTier = internalMutation({
-  args: tierUpsertFields,
+  args: { ...tierUpsertFields, actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, a) => {
     // Slug uniqueness (no UNIQUE constraint in Convex): read-check the index.
     const clash = await ctx.db
@@ -251,6 +251,14 @@ export const createTier = internalMutation({
       updatedAt: Date.now(),
     });
     if (a.isDefaultFree) await clearOtherDefaultFree(ctx, a.backend, id);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'admin.tier.create',
+      targetType: 'tier',
+      targetId: id,
+      payload: { slug: a.slug, backend: a.backend },
+    });
     const created = await ctx.db.get(id);
     return mapTier(created!);
   },
@@ -294,8 +302,9 @@ export const updateTier = internalMutation({
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     expirationDaysAfterMembershipLapse: v.optional(v.number()),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { id, ...patch }) => {
+  handler: async (ctx, { id, actorAdminId, ...patch }) => {
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error('tier not found');
     if (patch.slug !== undefined && patch.slug !== existing.slug) {
@@ -314,14 +323,22 @@ export const updateTier = internalMutation({
     const effectiveDefaultFree = patch.isDefaultFree ?? existing.isDefaultFree;
     const effectiveBackend = patch.backend ?? existing.backend;
     if (effectiveDefaultFree) await clearOtherDefaultFree(ctx, effectiveBackend, id);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.tier.update',
+      targetType: 'tier',
+      targetId: id,
+      payload: { slug: existing.slug },
+    });
     const updated = await ctx.db.get(id);
     return mapTier(updated!);
   },
 });
 
 export const deleteTier = internalMutation({
-  args: { id: v.id('tiers') },
-  handler: async (ctx, { id }) => {
+  args: { id: v.id('tiers'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { id, actorAdminId }) => {
     // P2: refuse to delete a tier that would orphan accounts or break sign-up.
     // Convex has no FK enforcement, so check by hand.
     const tier = await ctx.db.get(id);
@@ -343,6 +360,14 @@ export const deleteTier = internalMutation({
       });
     }
     await ctx.db.delete(id);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.tier.delete',
+      targetType: 'tier',
+      targetId: id,
+      payload: { slug: tier.slug },
+    });
     return { ok: true as const };
   },
 });
@@ -550,61 +575,31 @@ export const usersSearch = internalQuery({
       return { users, nextCursor: null };
     }
 
-    // Unfiltered/paginated browse: keyset over _creationTime desc. The
-    // status/tier/drift post-filters have no supporting index, so we scan windows
-    // and filter in JS — but keep ADVANCING the keyset until the page fills or the
-    // table is exhausted. The old single over-fetch (pageSize*4+1) returned a short
-    // page with nextCursor:null once a sparse filter (e.g. `drift` over many users)
-    // had few matches in that one window, hiding thousands of unscanned rows. (Review #4.)
-    const matchFilter = (u: Doc<'users'>) =>
-      (status ? u.status === status : true) &&
-      (tier ? u.tierId === tierIdBySlug.get(tier) : true) &&
-      (drift ? u.backendPushFailedAt != null : true);
-
-    const WINDOW = pageSize * 4;
-    const MAX_ITERS = 50; // backstop: bounded windows/request (each a by_creation_time seek)
-    const page: Doc<'users'>[] = [];
-    let before = cursor && Number.isFinite(Number(cursor)) ? Number(cursor) : null;
-    let exhausted = false;
-    let iters = 0;
-    while (page.length < pageSize && !exhausted && iters < MAX_ITERS) {
-      iters++;
-      // Seek via the by_creation_time index range, NOT a .filter() over the full
-      // desc scan — a filter re-reads from the newest row every window (discarded
-      // rows still count against the read limit), making the loop quadratic. The
-      // index bound makes each window O(WINDOW). (Re-review follow-up.)
-      const b = before;
-      const window = await ctx.db
-        .query('users')
-        .withIndex('by_creation_time', (q) => (b != null ? q.lt('_creationTime', b) : q))
-        .order('desc')
-        .take(WINDOW);
-      exhausted = window.length < WINDOW;
-      for (const u of window) {
-        if (matchFilter(u)) {
-          page.push(u);
-          if (page.length >= pageSize) break;
-        }
-      }
-      // Resume from the last RETURNED row when the page filled (so no match is
-      // skipped), else from the last RAW row scanned.
-      if (page.length >= pageSize) {
-        before = page[page.length - 1]!._creationTime;
-      } else if (window.length > 0) {
-        before = window[window.length - 1]!._creationTime;
-      }
-    }
-    if (iters >= MAX_ITERS && page.length < pageSize && !exhausted) {
-      console.warn('[usersSearch] filtered browse hit the per-request scan cap; more rows remain');
-    }
-    // Emit a cursor whenever we returned a full page (keyset continues from the
-    // last returned row); the client pages until it gets a short/empty page. Never
-    // a short page with a null cursor while matches remain. Over-emitting at most
-    // costs one trailing empty request.
-    const last = page[page.length - 1];
-    const nextCursor = page.length === pageSize && last ? String(last._creationTime) : null;
-    const users = await Promise.all(page.map((u) => mapUser(ctx, u, tierSlugById)));
-    return { users, nextCursor };
+    // Unfiltered/paginated browse: paginate() over the newest-first stream with
+    // the optional filters applied INSIDE it. This replaces the hand-rolled
+    // keyset windows: paginate's compound (_creationTime,_id) cursor can't skip
+    // rows sharing a boundary ms (the old strict-.lt cursor did), and its
+    // internal scan budget returns a partial page + a valid cursor when a sparse
+    // filter needs more reads (the old 50×800 loop could blow the per-query
+    // read cap and 500 the whole admin Users page on a `drift` filter).
+    const tierIdFilter = tier ? (tierIdBySlug.get(tier) ?? null) : null;
+    // An unknown tier slug matches NOTHING (mirrors the old JS-filter
+    // semantics), not everything.
+    if (tier && !tierIdFilter) return { users: [], nextCursor: null };
+    const res = await ctx.db
+      .query('users')
+      .order('desc')
+      .filter((f) => {
+        const conds = [];
+        if (status) conds.push(f.eq(f.field('status'), status));
+        if (tierIdFilter) conds.push(f.eq(f.field('tierId'), tierIdFilter));
+        if (drift) conds.push(f.neq(f.field('backendPushFailedAt'), undefined));
+        // No filters: an always-true predicate (paginate needs a cursor start).
+        return conds.length > 0 ? f.and(...conds) : f.gt(f.field('_creationTime'), 0);
+      })
+      .paginate({ cursor: cursor ?? null, numItems: pageSize });
+    const users = await Promise.all(res.page.map((u) => mapUser(ctx, u, tierSlugById)));
+    return { users, nextCursor: res.isDone ? null : res.continueCursor };
   },
 });
 
@@ -1004,9 +999,19 @@ export const tokenById = internalQuery({
 });
 
 export const revokeToken = internalMutation({
-  args: { id: v.id('apiTokens') },
-  handler: async (ctx, { id }) => {
+  args: { id: v.id('apiTokens'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { id, actorAdminId }) => {
+    const row = await ctx.db.get(id);
     await ctx.db.patch(id, { revokedAt: Date.now(), updatedAt: Date.now() });
+    // Credential revokes are security-relevant: audit (name only, never the token).
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.token.revoke',
+      targetType: 'api_token',
+      targetId: id,
+      payload: { name: row?.name ?? null },
+    });
     return { ok: true as const };
   },
 });
@@ -1033,30 +1038,41 @@ export const auditList = internalQuery({
   handler: async (ctx, { cursor, limit, action, actorType, since }) => {
     const pageSize = Math.min(Math.max(limit ?? 50, 1), 200);
 
-    // Pick the most selective index for the primary filter (action > actorType).
-    // Every Convex index appends _creationTime, so newest-first ordering + the
-    // `since` lower bound + paginate's keyset compose on whichever index we choose.
-    const ordered = action
+    // paginate()'s compound (_creationTime,_id) cursor replaces the hand-rolled
+    // keyset — bulk-written audit rows share a creation-ms, exactly the collision
+    // the old strict-lt cursor could skip at a page boundary. `since` is an
+    // INDEX RANGE wherever the chosen index allows (the by_action + bare
+    // branches — _creationTime is the contiguous next field), so a forensic
+    // window never scans the whole table; only the by_actor branch keeps a JS
+    // filter (actorId sits between, so no contiguous range exists). (Review P2.)
+    const res = await (action
       ? ctx.db
           .query('auditLog')
-          .withIndex('by_action', (ix) => ix.eq('action', action))
+          .withIndex('by_action', (ix) =>
+            since != null
+              ? ix.eq('action', action).gte('_creationTime', since)
+              : ix.eq('action', action),
+          )
           .order('desc')
+          .paginate({ cursor: cursor ?? null, numItems: pageSize })
       : actorType && (AUDIT_ACTOR_TYPES as readonly string[]).includes(actorType)
         ? ctx.db
             .query('auditLog')
             .withIndex('by_actor', (ix) => ix.eq('actorType', actorType as AuditActorType))
             .order('desc')
-        : ctx.db.query('auditLog').order('desc');
-
-    // paginate()'s compound (_creationTime,_id) cursor replaces the hand-rolled
-    // keyset — bulk-written audit rows share a creation-ms, exactly the collision
-    // the old strict-lt cursor could skip at a page boundary. `since` stays a
-    // lower-bound filter (unset ⇒ an always-true sentinel). (Review P2.)
-    const res = await ordered
-      .filter((f) =>
-        since != null ? f.gte(f.field('_creationTime'), since) : f.gt(f.field('_creationTime'), 0),
-      )
-      .paginate({ cursor: cursor ?? null, numItems: pageSize });
+            .filter((f) =>
+              since != null
+                ? f.gte(f.field('_creationTime'), since)
+                : f.gt(f.field('_creationTime'), 0),
+            )
+            .paginate({ cursor: cursor ?? null, numItems: pageSize })
+        : ctx.db
+            .query('auditLog')
+            .withIndex('by_creation_time', (ix) =>
+              since != null ? ix.gte('_creationTime', since) : ix,
+            )
+            .order('desc')
+            .paginate({ cursor: cursor ?? null, numItems: pageSize }));
     return {
       entries: res.page.map(mapAudit),
       nextCursor: res.isDone ? null : res.continueCursor,
@@ -1186,6 +1202,7 @@ export const createBackendServer = internalMutation({
     websocketEnabled: v.optional(v.boolean()),
     websocketDomain: v.optional(v.union(v.string(), v.null())),
     prometheusUrl: v.optional(v.union(v.string(), v.null())),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const clash = await ctx.db
@@ -1210,6 +1227,14 @@ export const createBackendServer = internalMutation({
       maxKeys: a.maxKeys ?? undefined,
       updatedAt: Date.now(),
     });
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'admin.backend_server.create',
+      targetType: 'backend_server',
+      targetId: id,
+      payload: { slug: a.slug, backend: a.backend },
+    });
     return mapBackendServer((await ctx.db.get(id))!);
   },
 });
@@ -1231,8 +1256,9 @@ export const updateBackendServer = internalMutation({
     websocketEnabled: v.optional(v.boolean()),
     websocketDomain: v.optional(v.union(v.string(), v.null())),
     prometheusUrl: v.optional(v.union(v.string(), v.null())),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { id, ...patch }) => {
+  handler: async (ctx, { id, actorAdminId, ...patch }) => {
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error('Backend server not found');
     if (patch.slug !== undefined && patch.slug !== existing.slug) {
@@ -1258,14 +1284,31 @@ export const updateBackendServer = internalMutation({
     // The backend TYPE is immutable; a blank/absent secret keeps the stored one.
     fields.config = mergeBackendServerConfig(existing.config, patch);
     await ctx.db.patch(id, fields);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.backend_server.update',
+      targetType: 'backend_server',
+      targetId: id,
+      payload: { slug: existing.slug },
+    });
     return mapBackendServer((await ctx.db.get(id))!);
   },
 });
 
 export const deleteBackendServer = internalMutation({
-  args: { id: v.id('backendServers') },
-  handler: async (ctx, { id }) => {
+  args: { id: v.id('backendServers'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { id, actorAdminId }) => {
+    const row = await ctx.db.get(id);
     await ctx.db.delete(id);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.backend_server.delete',
+      targetType: 'backend_server',
+      targetId: id,
+      payload: { slug: row?.slug ?? null },
+    });
     return { ok: true as const };
   },
 });
@@ -1502,13 +1545,13 @@ export const billingOverview = internalQuery({
       }),
     );
     // Failed webhook claims = a paid-but-ungranted order once the sender's
-    // retries run out. Bounded (retention sweeps the table at 90d); newest 10
-    // listed, plus the total so ">10" is visible.
+    // retries run out. Newest 10 listed; the count is capped at 11 (read
+    // "10+" — a full collect() here 500'd the page on a broken-webhook pile).
     const failedRows = await ctx.db
       .query('webhookEvents')
       .withIndex('by_status', (q) => q.eq('status', 'failed'))
       .order('desc')
-      .collect();
+      .take(11);
     const failedWebhooks = {
       count: failedRows.length,
       recent: failedRows.slice(0, 10).map((w) => ({
@@ -1641,6 +1684,13 @@ export const statusSummary = internalQuery({
         lastRunAt: lastRunAt != null ? iso(lastRunAt) : null,
         ageSeconds: ageMs != null ? Math.max(0, Math.round(ageMs / 1000)) : null,
         runCount: hb?.runCount ?? 0,
+        // Outcome tracking (action crons): the start-stamp alone can't tell a
+        // firing-but-throwing job from a healthy one. `lastError` is cleared on
+        // the next success; a stale `lastOkAt` behind a fresh `lastRunAt` means
+        // "the cron fires but the work fails every run".
+        lastOkAt: hb?.lastOkAt != null ? iso(hb.lastOkAt) : null,
+        lastError: hb?.lastError ?? null,
+        failing: hb?.lastError != null,
       };
     });
     const cronsStale = crons.filter((c) => c.state === 'stale').length;

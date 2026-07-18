@@ -474,6 +474,12 @@ export const AdminStatusSummary = z.object({
         lastRunAt: z.string().datetime().nullable(),
         ageSeconds: z.number().int().nonnegative().nullable(),
         runCount: z.number().int().nonnegative(),
+        // Outcome tracking (additive — pre-deploy backends omit it): the last
+        // successful completion, the latest failure message, and a rolled-up
+        // "firing but failing" flag.
+        lastOkAt: z.string().datetime().nullable().default(null),
+        lastError: z.string().nullable().default(null),
+        failing: z.boolean().default(false),
       }),
     )
     .default([]),

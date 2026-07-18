@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from 'convex-test';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 
@@ -62,5 +62,33 @@ describe('replayGuard.sweepExpired', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]?.nonceHash).toBe('fresh');
     });
+  });
+
+  test('a full page drain-chains until the table is empty (no >page/day growth)', async () => {
+    vi.useFakeTimers();
+    try {
+      const t = convexTest(schema, modules);
+      // 1 200 expired rows vs a 500-row default page: previously the daily sweep
+      // deleted only 500 and the table grew without bound.
+      await t.run(async (ctx) => {
+        for (let i = 0; i < 1_200; i++) {
+          await ctx.db.insert('replayGuard', {
+            sid: 's',
+            nonceHash: `stale-${i}`,
+            expiresAt: Date.now() - 1,
+          });
+        }
+      });
+
+      await t.mutation(internal.replayGuard.sweepExpired, {});
+      await vi.runAllTimersAsync();
+      await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+      await t.run(async (ctx) => {
+        expect(await ctx.db.query('replayGuard').collect()).toHaveLength(0);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

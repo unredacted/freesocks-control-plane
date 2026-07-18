@@ -111,11 +111,42 @@ export const issueUser = internalAction({
       crypto.getRandomValues(idx);
       server = candidates[idx[0]! % candidates.length]!;
     }
-    const issued = await PROVIDERS[server.backend].issue(
-      server.config as BackendConfig,
-      spec as IssueUserSpec,
-    );
-    await ctx.runMutation(internal.backendServers.bumpKeyCount, { id: server._id });
+    // Anything that throws AFTER the provider create succeeds must not leak the
+    // key: the issuance saga only compensates failures after `issueUser`
+    // RETURNS (it needs the issued identity), so a post-create throw here is
+    // compensated locally before rethrowing.
+    let issued: IssuedUser | null = null;
+    try {
+      issued = await PROVIDERS[server.backend].issue(
+        server.config as BackendConfig,
+        spec as IssueUserSpec,
+      );
+      await ctx.runMutation(internal.backendServers.bumpKeyCount, { id: server._id });
+    } catch (err) {
+      if (issued) {
+        try {
+          await PROVIDERS[server.backend].remove(
+            server.config as BackendConfig,
+            issued.backendUserId,
+          );
+        } catch {
+          console.warn(
+            `[backends] post-create compensation delete failed for ${server.backend} user — orphan backend account`,
+          );
+          try {
+            await ctx.runMutation(internal.audit.record, {
+              actorType: 'system',
+              action: 'subscription.compensation_failed',
+              targetType: 'subscription',
+              payload: { backend: server.backend, backendUserId: issued.backendUserId },
+            });
+          } catch {
+            /* the original error takes precedence */
+          }
+        }
+      }
+      throw err;
+    }
     return { ...issued, backendServerId: server._id };
   },
 });

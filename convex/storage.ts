@@ -19,7 +19,7 @@
  */
 import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
-import { heartbeatFromAction } from './cronHeartbeat';
+import { runWithCronOutcome } from './cronHeartbeat';
 import { v } from 'convex/values';
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomHex, sha256Hex } from './lib/crypto';
@@ -302,81 +302,83 @@ const REFRESH_PAGE = 50;
  */
 export const refreshActiveMirrors = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ refreshed: number; scanned: number }> => {
-    await heartbeatFromAction(ctx, 'mirror-refresh');
-    const providers = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
-    if (providers.length === 0) {
-      return { refreshed: 0, scanned: 0 };
-    }
-    const byName = new Map(providers.map((p) => [p.name, p]));
-    let cursor: string | null = await ctx.runQuery(internal.mirrorProviders.getRefreshCursor, {});
-    let refreshed = 0;
-    let scanned = 0;
-    for (let page = 0; page < REFRESH_MAX_PAGES; page++) {
-      // Annotated (not inferred) to break the internal-API self-reference cycle.
-      let res: ActiveMirrorPage;
-      try {
-        res = await ctx.runQuery(internal.subscriptions.pageActiveForMirror, {
-          cursor,
-          numItems: REFRESH_PAGE,
-        });
-      } catch (err) {
-        // A stale/invalid cursor (e.g. after an index change) must not wedge the
-        // sweep: reset to the start and continue from there next run.
-        if (cursor === null) throw err;
-        console.warn('[mirror-refresh] cursor rejected; restarting from the beginning');
-        cursor = null;
-        res = await ctx.runQuery(internal.subscriptions.pageActiveForMirror, {
-          cursor,
-          numItems: REFRESH_PAGE,
-        });
+  handler: async (ctx): Promise<{ refreshed: number; scanned: number }> =>
+    runWithCronOutcome(ctx, 'mirror-refresh', async () => {
+      const providers = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
+      if (providers.length === 0) {
+        return { refreshed: 0, scanned: 0 };
       }
-      for (const sub of res.items) {
-        scanned++;
-        // Re-upload only to THIS sub's providers that are still active.
-        const targets = sub.providers.map((n) => byName.get(n)).filter((p): p is S3Provider => !!p);
-        if (targets.length === 0 || !sub.objectPath) continue;
+      const byName = new Map(providers.map((p) => [p.name, p]));
+      let cursor: string | null = await ctx.runQuery(internal.mirrorProviders.getRefreshCursor, {});
+      let refreshed = 0;
+      let scanned = 0;
+      for (let page = 0; page < REFRESH_MAX_PAGES; page++) {
+        // Annotated (not inferred) to break the internal-API self-reference cycle.
+        let res: ActiveMirrorPage;
         try {
-          const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
-            backend: sub.backend,
-            backendServerId: sub.backendServerId ?? undefined,
-            backendShortId: sub.backendShortId,
-            subscriptionUrl: sub.subscriptionUrl,
+          res = await ctx.runQuery(internal.subscriptions.pageActiveForMirror, {
+            cursor,
+            numItems: REFRESH_PAGE,
           });
-          const hash = await sha256Hex(fetched.content);
-          if (hash === sub.rawContentHash) continue; // unchanged → no re-upload
-          const mirrors = await uploadToProviders(targets, {
-            objectPath: sub.objectPath,
-            content: fetched.content,
-            contentType: fetched.contentType,
+        } catch (err) {
+          // A stale/invalid cursor (e.g. after an index change) must not wedge the
+          // sweep: reset to the start and continue from there next run.
+          if (cursor === null) throw err;
+          console.warn('[mirror-refresh] cursor rejected; restarting from the beginning');
+          cursor = null;
+          res = await ctx.runQuery(internal.subscriptions.pageActiveForMirror, {
+            cursor,
+            numItems: REFRESH_PAGE,
           });
-          // Providers we attempted but that didn't come back a success this round →
-          // updateMirrors keeps their existing entry marked failed (Review #2),
-          // rather than dropping it. (uploadToProviders throws only if ALL fail,
-          // caught above → the sub is skipped, entries untouched.)
-          const succeeded = new Set(mirrors.map((m) => m.provider));
-          const failedProviders = targets.map((t) => t.name).filter((n) => !succeeded.has(n));
-          await ctx.runMutation(internal.subscriptions.updateMirrors, {
-            subscriptionId: sub.id,
-            successes: mirrors,
-            failedProviders,
-            rawContentHash: hash,
-          });
-          refreshed++;
-        } catch {
-          /* best-effort per sub: one backend/S3 hiccup must not stall the sweep */
         }
+        for (const sub of res.items) {
+          scanned++;
+          // Re-upload only to THIS sub's providers that are still active.
+          const targets = sub.providers
+            .map((n) => byName.get(n))
+            .filter((p): p is S3Provider => !!p);
+          if (targets.length === 0 || !sub.objectPath) continue;
+          try {
+            const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
+              backend: sub.backend,
+              backendServerId: sub.backendServerId ?? undefined,
+              backendShortId: sub.backendShortId,
+              subscriptionUrl: sub.subscriptionUrl,
+            });
+            const hash = await sha256Hex(fetched.content);
+            if (hash === sub.rawContentHash) continue; // unchanged → no re-upload
+            const mirrors = await uploadToProviders(targets, {
+              objectPath: sub.objectPath,
+              content: fetched.content,
+              contentType: fetched.contentType,
+            });
+            // Providers we attempted but that didn't come back a success this round →
+            // updateMirrors keeps their existing entry marked failed (Review #2),
+            // rather than dropping it. (uploadToProviders throws only if ALL fail,
+            // caught above → the sub is skipped, entries untouched.)
+            const succeeded = new Set(mirrors.map((m) => m.provider));
+            const failedProviders = targets.map((t) => t.name).filter((n) => !succeeded.has(n));
+            await ctx.runMutation(internal.subscriptions.updateMirrors, {
+              subscriptionId: sub.id,
+              successes: mirrors,
+              failedProviders,
+              rawContentHash: hash,
+            });
+            refreshed++;
+          } catch {
+            /* best-effort per sub: one backend/S3 hiccup must not stall the sweep */
+          }
+        }
+        if (res.isDone) {
+          // Full pass complete: restart from the beginning next tick.
+          await ctx.runMutation(internal.mirrorProviders.setRefreshCursor, { cursor: null });
+          return { refreshed, scanned };
+        }
+        cursor = res.continueCursor;
       }
-      if (res.isDone) {
-        // Full pass complete: restart from the beginning next tick.
-        await ctx.runMutation(internal.mirrorProviders.setRefreshCursor, { cursor: null });
-        return { refreshed, scanned };
-      }
-      cursor = res.continueCursor;
-    }
-    // Hit the per-run page cap: persist where we stopped so the NEXT tick
-    // continues forward instead of re-scanning the same window (M3).
-    await ctx.runMutation(internal.mirrorProviders.setRefreshCursor, { cursor });
-    return { refreshed, scanned };
-  },
+      // Hit the per-run page cap: persist where we stopped so the NEXT tick
+      // continues forward instead of re-scanning the same window (M3).
+      await ctx.runMutation(internal.mirrorProviders.setRefreshCursor, { cursor });
+      return { refreshed, scanned };
+    }),
 });

@@ -345,28 +345,62 @@ function toRemnawaveTag(tag: string | undefined): string | undefined {
   return t.length > 0 ? t : undefined;
 }
 
+/**
+ * Best-effort cleanup of a just-created panel user after an AMBIGUOUS create
+ * failure (schema mismatch / timeout / 5xx): the panel may have persisted the
+ * user while we lost the response, and the issuance saga never learns the uuid.
+ * Issuance usernames are unique per attempt (`freesocks-<slug>-<16hex>`), so a
+ * username match can only be the user this attempt created. A definitive 4xx
+ * (validation/auth/conflict) means nothing was created by us — no cleanup.
+ */
+async function cleanupAmbiguousCreate(cfg: RemnawaveConfig, username: string): Promise<void> {
+  try {
+    const found = await call(cfg, {
+      method: 'GET',
+      path: `/api/users/by-username/${encodeURIComponent(username)}`,
+      schema: z.object({ uuid: z.string().uuid() }),
+    });
+    await remnawaveDeleteUser(cfg, found.uuid);
+    console.warn(`[remnawave] cleaned up user after ambiguous create failure (${username})`);
+  } catch (cleanupErr) {
+    console.warn(
+      `[remnawave] orphan-cleanup failed after ambiguous create failure (${username}): ${
+        cleanupErr instanceof Error ? cleanupErr.message : 'unknown'
+      }`,
+    );
+  }
+}
+
 export async function remnawaveIssueUser(
   cfg: RemnawaveConfig,
   spec: IssueUserSpec,
 ): Promise<IssuedUser> {
-  const user = await call(cfg, {
-    method: 'POST',
-    path: '/api/users',
-    body: {
-      username: spec.username,
-      trafficLimitBytes: spec.trafficLimitBytes ?? undefined,
-      trafficLimitStrategy: spec.trafficLimitStrategy ?? 'MONTH',
-      // Required by Remnawave; null spec => far-future sentinel (FCP owns expiry).
-      expireAt: expiryOrFarFuture(spec.expireAt),
-      hwidDeviceLimit: spec.hwidDeviceLimit ?? undefined,
-      // Remnawave restricts tags to [A-Z0-9_]; coerce our lowercase slug.
-      tag: toRemnawaveTag(spec.tag),
-      description: spec.description,
-      // The opaque placement handle IS the internal-squad UUID for Remnawave.
-      activeInternalSquads: spec.placement ? [spec.placement] : undefined,
-    },
-    schema: RemnawaveUser,
-  });
+  let user: RemnawaveUser;
+  try {
+    user = await call(cfg, {
+      method: 'POST',
+      path: '/api/users',
+      body: {
+        username: spec.username,
+        trafficLimitBytes: spec.trafficLimitBytes ?? undefined,
+        trafficLimitStrategy: spec.trafficLimitStrategy ?? 'MONTH',
+        // Required by Remnawave; null spec => far-future sentinel (FCP owns expiry).
+        expireAt: expiryOrFarFuture(spec.expireAt),
+        hwidDeviceLimit: spec.hwidDeviceLimit ?? undefined,
+        // Remnawave restricts tags to [A-Z0-9_]; coerce our lowercase slug.
+        tag: toRemnawaveTag(spec.tag),
+        description: spec.description,
+        // The opaque placement handle IS the internal-squad UUID for Remnawave.
+        activeInternalSquads: spec.placement ? [spec.placement] : undefined,
+      },
+      schema: RemnawaveUser,
+    });
+  } catch (err) {
+    const status = err instanceof RemnawaveApiError ? err.meta?.status : undefined;
+    if (typeof status !== 'number' || status >= 500)
+      await cleanupAmbiguousCreate(cfg, spec.username);
+    throw err;
+  }
   return {
     backendUserId: user.uuid,
     backendShortId: user.shortUuid,
@@ -650,7 +684,13 @@ export async function remnawaveUpdateUser(
         ? new Date(Date.now() + 5 * 60_000).toISOString()
         : patch.expireAt;
   }
-  if (patch.hwidDeviceLimit !== undefined) body.hwidDeviceLimit = patch.hwidDeviceLimit;
+  // The DTO is `.optional()` NOT `.nullable()` here too: a null 400s the WHOLE
+  // PATCH (the same failure class as trafficLimitBytes/expireAt above). There
+  // is no documented clear sentinel, so a null (FCP enforcement toggled off)
+  // OMITS the field — pushes simply stop managing it rather than 400ing every
+  // tier push on the fleet.
+  if (patch.hwidDeviceLimit !== undefined && patch.hwidDeviceLimit !== null)
+    body.hwidDeviceLimit = patch.hwidDeviceLimit;
   if (patch.description !== undefined) body.description = patch.description;
   if (patch.tag !== undefined) body.tag = toRemnawaveTag(patch.tag);
   if (patch.placement !== undefined) {

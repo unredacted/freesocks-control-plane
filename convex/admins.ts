@@ -7,10 +7,14 @@
  * Hono+D1 code relied on transactions for.
  */
 import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
+import { internal } from './_generated/api';
 import { recordHeartbeat } from './cronHeartbeat';
 import type { Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+
+/** Matches retention.ts: bound the immediate re-run chain (see sweepExpiredInvites). */
+const MAX_DRAIN_ROUNDS = 50;
 
 // --- bootstrap status (drives the SPA's bootstrap-vs-login decision, served
 //     via GET /api/admin/auth/status; internal so the raw channel can't read it) ---
@@ -439,16 +443,25 @@ export const consumeInvite = internalMutation({
   },
 });
 
-/** Cron: delete a page of expired invite rows (consumed ones age out by expiry too). */
+/** Cron: delete a page of expired invite rows (consumed ones age out by expiry
+ *  too). A FULL page re-runs immediately (drain-chain, same pattern as
+ *  retention.ts). */
 export const sweepExpiredInvites = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'admin-invite-sweep');
+    const page = limit ?? 500;
     const expired = await ctx.db
       .query('adminInvites')
       .withIndex('by_expires', (q) => q.lt('expiresAt', Date.now()))
-      .take(limit ?? 500);
+      .take(page);
     for (const row of expired) await ctx.db.delete(row._id);
+    if (expired.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[admin-invite-sweep] drain cap hit; remainder next run');
+      else await ctx.scheduler.runAfter(0, internal.admins.sweepExpiredInvites, { rounds: n + 1 });
+    }
     return { removed: expired.length };
   },
 });

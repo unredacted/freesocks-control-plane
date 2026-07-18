@@ -49,6 +49,31 @@ describe('createToken', () => {
     expect(row!.tokenPrefix).toBe(minted.prefix);
     expect(row!.scopes).toEqual(['admin:tiers:read']);
   });
+
+  test('a mint writes an admin.token.mint audit row (never the token)', async () => {
+    const t = convexTest(schema, modules);
+    const createdByAdminId = await seedAdmin(t);
+
+    const minted = await t.action(internal.apiTokens.createToken, {
+      name: 'svc-audit',
+      scopes: ['admin:tiers:read', 'admin:tiers:write'],
+      subjectType: 'service',
+      createdByAdminId,
+    });
+
+    await t.run(async (ctx) => {
+      const audits = await ctx.db.query('auditLog').collect();
+      const mint = audits.find((a) => a.action === 'admin.token.mint');
+      expect(mint).toBeDefined();
+      expect(mint!.actorId).toBe(createdByAdminId);
+      expect(mint!.targetId).toBe(minted.id);
+      const payload = mint!.payload as Record<string, unknown>;
+      expect(payload).toMatchObject({ name: 'svc-audit', scopeCount: 2, subjectType: 'service' });
+      // Never the token or its hash anywhere in the audit row.
+      expect(JSON.stringify(mint)).not.toContain(minted.plaintext);
+      expect(JSON.stringify(mint)).not.toContain(await sha256Hex(minted.plaintext));
+    });
+  });
 });
 
 describe('resolveToken', () => {

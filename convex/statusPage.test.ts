@@ -8,6 +8,7 @@
 import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from './schema';
+import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import {
   resolvePublicStatusPage,
@@ -119,12 +120,13 @@ describe('resolveStatusLocations', () => {
     expect(locations.map((l) => l.code)).toEqual(['AMS', 'MCI']);
     const mci = locations.find((l) => l.code === 'MCI')!;
     expect(mci.online).toBe(true);
-    expect(mci.nodesOnline).toBe(2);
-    expect(mci.nodesTotal).toBe(3);
     expect(mci.label).toBe('MCI'); // no label anywhere → code
     const ams = locations.find((l) => l.code === 'AMS')!;
     expect(ams.label).toBe('Amsterdam');
-    expect(ams.nodesOnline).toBeNull();
+    // Exact node counts never ship publicly (bands-only posture): the shape
+    // carries no count fields at all.
+    expect('nodesOnline' in mci).toBe(false);
+    expect('nodesTotal' in mci).toBe(false);
   });
 
   test('load: key-capacity utilization wins when every instance is capped', async () => {
@@ -164,6 +166,32 @@ describe('resolveStatusLocations', () => {
     );
     const locations = await t.run((ctx) => resolveStatusLocations(ctx.db));
     expect(locations[0]!.load).toBe('quiet'); // 60 < 100 with the raised bar
+  });
+});
+
+describe('setPageConfig threshold validation', () => {
+  test('rejects crowdedAt <= busyAt against the EFFECTIVE pair', async () => {
+    const t = convexTest(schema, modules);
+    // Defaults are 50/150; a write that collapses the gap is refused.
+    await expect(t.mutation(internal.statusPage.setPageConfig, { busyAt: 200 })).rejects.toThrow(
+      /crowdedAt must be greater than busyAt/,
+    );
+    await expect(
+      t.mutation(internal.statusPage.setPageConfig, { busyAt: 150, crowdedAt: 150 }),
+    ).rejects.toThrow(/crowdedAt must be greater than busyAt/);
+    // A valid pair persists (and audits).
+    const out = await t.mutation(internal.statusPage.setPageConfig, {
+      busyAt: 80,
+      crowdedAt: 200,
+    });
+    expect(out.busyAt).toBe(80);
+    expect(out.crowdedAt).toBe(200);
+    // And a single-sided write validates against the STORED other side.
+    await expect(t.mutation(internal.statusPage.setPageConfig, { crowdedAt: 80 })).rejects.toThrow(
+      /crowdedAt must be greater than busyAt/,
+    );
+    const out2 = await t.mutation(internal.statusPage.setPageConfig, { crowdedAt: 120 });
+    expect(out2.crowdedAt).toBe(120);
   });
 });
 

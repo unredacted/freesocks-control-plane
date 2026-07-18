@@ -47,7 +47,7 @@
   import { copyText, subscriptionDisplayUrl } from '../lib/utils';
   import { apiClient, ApiCallError } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
-  import { clearSessionKey } from '../lib/pop';
+  import { clearSessionKey, popUnavailable } from '../lib/pop';
   import { deviceLimitsShown } from '../lib/tiers';
   import LocationPicker from '../components/LocationPicker.svelte';
   import {
@@ -62,6 +62,11 @@
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import { AccountIdRevealResponse } from '../../shared/contracts/subscription';
+  import {
+    ConnectionModeResponse,
+    RefreshMembershipResponse,
+    RegenerateResponse,
+  } from '../../shared/contracts/account';
 
   const account = accountQuery();
   const config = configQuery();
@@ -137,11 +142,19 @@
 
   // 401 from /api/v1/account means the cookie session is missing or expired;
   // bounce to the account-number sign-in form (no OIDC anymore). The once-flag
-  // keeps refetch-error churn from re-firing the navigation.
+  // keeps refetch-error churn from re-firing the navigation. EXCEPTION: a
+  // PoP-broken browser (Workers blocked) fails every signed request under
+  // POP_REQUIRED — bouncing to login would loop (login also fails there), so
+  // render the distinct browser-support error instead.
+  let popBroken = $state(false);
   let redirectedToLogin = false;
   $effect(() => {
     const err = account.error;
     if (!redirectedToLogin && err instanceof ApiCallError && err.status === 401) {
+      if (popUnavailable()) {
+        popBroken = true;
+        return;
+      }
       redirectedToLogin = true;
       // Signal WHY they landed on the sign-in form (session gone/expired) so it
       // isn't a silent, anxiety-inducing bounce for a surveillance-wary user.
@@ -235,7 +248,7 @@
       await apiClient.post(
         '/api/v1/account/connection-mode',
         { modeId: effectiveModeId },
-        z.object({ ok: z.boolean(), modeId: z.string() }),
+        ConnectionModeResponse,
       );
     } catch {
       // Non-fatal: the first key just issues into the default mode.
@@ -259,7 +272,7 @@
             ? { location: pickedLocation === 'auto' ? null : pickedLocation }
             : {}),
         },
-        z.object({ subscriptionUrl: z.string(), shortUuid: z.string() }),
+        RegenerateResponse,
       ),
     onSuccess: () => {
       regenerateOpen = false;
@@ -368,16 +381,7 @@
 
   const refreshMembership = createMutation(() => ({
     mutationFn: () =>
-      apiClient.post(
-        '/api/v1/account/refresh-membership',
-        {},
-        z.object({
-          tierSlug: z.string(),
-          tierName: z.string(),
-          membershipExpiresAt: z.string().nullable(),
-          isCurrent: z.boolean(),
-        }),
-      ),
+      apiClient.post('/api/v1/account/refresh-membership', {}, RefreshMembershipResponse),
     onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: queryKeys.account });
       void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
@@ -529,7 +533,7 @@
   );
 </script>
 
-{#if account.isError && !(account.error instanceof ApiCallError && account.error.status === 401)}
+{#if account.isError && (!(account.error instanceof ApiCallError && account.error.status === 401) || popBroken)}
   <div class="max-w-4xl mx-auto py-8">
     <Card>
       <CardHeader>
@@ -537,7 +541,11 @@
       </CardHeader>
       <CardContent>
         <div class="space-y-2">
-          <InlineError message={apiErrorMessage(account.error)} />
+          {#if popBroken}
+            <InlineError message={t('login.popBroken')} />
+          {:else}
+            <InlineError message={apiErrorMessage(account.error)} />
+          {/if}
           <Button variant="outline" size="sm" onclick={() => account.refetch()}>
             {t('common.retry')}
           </Button>

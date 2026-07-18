@@ -16,11 +16,22 @@ afterEach(() => vi.unstubAllGlobals());
 // Bug 15: a WSS / dynamic-config key may come back without an inline ss:// URL.
 // The schema must not reject it at parse time, and issuance must fail with a
 // clear message rather than handing back an empty subscription URL.
-test('a key without accessUrl fails issuance with a clear WSS error', async () => {
-  stubCreateKey({ id: 'k1' }); // no accessUrl
+test('a key without accessUrl self-deletes, then fails issuance with a clear WSS error', async () => {
+  const calls: Array<{ u: string; m: string }> = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+      const u = String(input);
+      const m = (init.method ?? 'GET').toUpperCase();
+      calls.push({ u, m });
+      if (m === 'DELETE') return new Response('{}', { status: 200 });
+      return new Response(JSON.stringify({ id: 'k1' }), { status: 200 }); // no accessUrl
+    }),
+  );
   await expect(outlineIssue(cfg, { username: 'u', trafficLimitBytes: null })).rejects.toThrow(
     /accessUrl|WSS/i,
   );
+  expect(calls.some((c) => c.m === 'DELETE' && c.u.includes('/access-keys/k1'))).toBe(true);
 });
 
 test('a normal key with accessUrl issues fine', async () => {
@@ -30,11 +41,15 @@ test('a normal key with accessUrl issues fine', async () => {
   expect(issued.backendUserId).toBe('k2');
 });
 
-test('a failed data-limit THROWS (no silent unlimited key; the saga compensates)', async () => {
+test('a failed data-limit self-deletes the key, then throws (no silent unlimited key)', async () => {
+  const calls: Array<{ u: string; m: string }> = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (input: string | URL) => {
+    vi.fn(async (input: string | URL, init: RequestInit = {}) => {
       const u = String(input);
+      const m = (init.method ?? 'GET').toUpperCase();
+      calls.push({ u, m });
+      if (m === 'DELETE') return new Response('{}', { status: 200 });
       if (u.includes('/data-limit')) return new Response('boom', { status: 500 });
       return new Response(JSON.stringify({ id: 'k3', accessUrl: 'ss://aa@h:1' }), { status: 200 });
     }),
@@ -42,6 +57,9 @@ test('a failed data-limit THROWS (no silent unlimited key; the saga compensates)
   await expect(
     outlineIssue(cfg, { username: 'u', trafficLimitBytes: 50 * 1024 ** 3 }),
   ).rejects.toThrow(/data-limit|setDataLimit/i);
+  // The saga never sees the key id while issue is in flight — the provider must
+  // delete its own just-created key on a post-create failure.
+  expect(calls.some((c) => c.m === 'DELETE' && c.u.includes('/access-keys/k3'))).toBe(true);
 });
 
 test('a successful data-limit applies (PUT to the key endpoint)', async () => {

@@ -102,6 +102,13 @@ async function signIpn(payload: Record<string, unknown>): Promise<string> {
   return hmacSha512Hex(IPN_SECRET, sorted);
 }
 
+/**
+ * Real `finished` IPNs carry the received-vs-expected crypto amounts; the
+ * settle-tolerance guard downgrades a `finished` that lacks them (fail-safe),
+ * so paid-grant fixtures must include a fully-paid pair.
+ */
+const FULL_AMOUNTS = { actually_paid: 1, pay_amount: 1 };
+
 describe('hmacSha512Hex', () => {
   test('matches the canonical HMAC-SHA512 test vector', async () => {
     // key="key", msg="The quick brown fox jumps over the lazy dog"
@@ -305,6 +312,7 @@ describe('billing.ingestEvent (NOWPayments)', () => {
       order_id: 'ref-finish',
       price_amount: 14,
       price_currency: 'usd',
+      ...FULL_AMOUNTS,
     };
     const signature = await signIpn(payload);
     const res = await t.action(internal.billing.ingestEvent, {
@@ -350,6 +358,86 @@ describe('billing.ingestEvent (NOWPayments)', () => {
     });
   });
 
+  test('a finished IPN paid only within tolerance is downgraded, audited, and never grants', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, freeTierId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-under');
+    const payload = {
+      payment_status: 'finished',
+      payment_id: 201,
+      order_id: 'ref-under',
+      actually_paid: 0.9, // merchant settle-tolerance: 90% paid, still "finished"
+      pay_amount: 1,
+    };
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'nowpayments',
+      rawBody: JSON.stringify(payload),
+      signature: await signIpn(payload),
+    });
+    expect(res.applied).toBe(true); // confirming applies; nothing granted
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-under'))
+        .unique();
+      expect(order?.status).toBe('confirming');
+      expect((await ctx.db.get(userId))?.tierId).toBe(freeTierId);
+      const audits = await ctx.db.query('auditLog').collect();
+      const under = audits.find((a) => a.action === 'billing.underpayment_seen');
+      expect(under).toBeDefined();
+      expect(under!.targetId).toBe(order!._id);
+    });
+  });
+
+  test('a finished IPN with MISSING amounts fails safe (confirming + audit, no grant)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, freeTierId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-noamount');
+    const payload = { payment_status: 'finished', payment_id: 202, order_id: 'ref-noamount' };
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'nowpayments',
+      rawBody: JSON.stringify(payload),
+      signature: await signIpn(payload),
+    });
+    expect(res.applied).toBe(true);
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-noamount'))
+        .unique();
+      expect(order?.status).toBe('confirming');
+      expect((await ctx.db.get(userId))?.tierId).toBe(freeTierId);
+      const audits = await ctx.db.query('auditLog').collect();
+      expect(audits.some((a) => a.action === 'billing.underpayment_seen')).toBe(true);
+    });
+  });
+
+  test('a finished IPN with string-typed amounts still grants when fully paid', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-stramt');
+    const payload = {
+      payment_status: 'finished',
+      payment_id: 203,
+      order_id: 'ref-stramt',
+      actually_paid: '1.0', // some account configs serialize amounts as strings
+      pay_amount: '1',
+    };
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'nowpayments',
+      rawBody: JSON.stringify(payload),
+      signature: await signIpn(payload),
+    });
+    expect(res.applied).toBe(true);
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-stramt'))
+        .unique();
+      expect(order?.status).toBe('paid');
+    });
+  });
+
   // Review #8: webhooks can arrive out of order (NOWPayments dedupe is
   // per-(payment,status), so a late DISTINCT status is not a duplicate). A non-paid
   // update must advance the order forward only — never regress.
@@ -388,7 +476,12 @@ describe('billing.ingestEvent (NOWPayments)', () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
     await insertPendingOrder(t, userId, memberTierId, 'ref-dup');
-    const payload = { payment_status: 'finished', payment_id: 7, order_id: 'ref-dup' };
+    const payload = {
+      payment_status: 'finished',
+      payment_id: 7,
+      order_id: 'ref-dup',
+      ...FULL_AMOUNTS,
+    };
     const signature = await signIpn(payload);
     const first = await t.action(internal.billing.ingestEvent, {
       processor: 'nowpayments',
@@ -428,7 +521,12 @@ describe('billing.ingestEvent (NOWPayments)', () => {
     // Force the grant to throw mid-mutation: applyMembership rejects a missing tier.
     await t.run((ctx) => ctx.db.delete(memberTierId));
 
-    const payload = { payment_status: 'finished', payment_id: 77, order_id: 'ref-retry' };
+    const payload = {
+      payment_status: 'finished',
+      payment_id: 77,
+      order_id: 'ref-retry',
+      ...FULL_AMOUNTS,
+    };
     const signature = await signIpn(payload);
     await expect(
       t.action(internal.billing.ingestEvent, {
@@ -537,6 +635,7 @@ describe('billing.ingestEvent (NOWPayments)', () => {
       payment_id: 3,
       order_id: 'ref-redact',
       customer_email: 'secret@example.com',
+      ...FULL_AMOUNTS,
     };
     await t.action(internal.billing.ingestEvent, {
       processor: 'nowpayments',
@@ -686,6 +785,54 @@ describe('billing.ingestEvent (BTCPay)', () => {
       expect(order?.status).toBe('confirming');
       const user = await ctx.db.get(userId);
       expect(user?.tierId).toBe(freeTierId); // NOT granted
+    });
+  });
+
+  test('a Settled-at-partial invoice (store settle tolerance) never grants and is audited', async () => {
+    // The store API is configured, so the settle path fetches the invoice
+    // detail: additionalStatus=PaidPartial → confirming + underpayment audit.
+    vi.stubEnv('BTCPAY_API_URL', 'https://btcpay.test');
+    vi.stubEnv('BTCPAY_STORE_ID', 'store_1');
+    vi.stubEnv('BTCPAY_API_KEY', 'k');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              id: 'inv_p',
+              amount: '14.00',
+              currency: 'USD',
+              status: 'Settled',
+              additionalStatus: 'PaidPartial',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    );
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId, freeTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-btcpay-partial');
+    const rawBody = JSON.stringify({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_p',
+      metadata: { orderId: 'ref-btcpay-partial' },
+    });
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'btcpay',
+      rawBody,
+      signature: await signBtcpay(rawBody),
+    });
+    expect(res).toEqual({ ok: true, applied: true });
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-btcpay-partial'))
+        .unique();
+      expect(order?.status).toBe('confirming'); // NOT paid
+      expect((await ctx.db.get(userId))?.tierId).toBe(freeTierId);
+      const audits = await ctx.db.query('auditLog').collect();
+      expect(audits.some((a) => a.action === 'billing.underpayment_seen')).toBe(true);
     });
   });
 
@@ -868,7 +1015,12 @@ describe('processor secrets resolve from the DB (env fallback)', () => {
         updatedAt: Date.now(),
       }),
     );
-    const payload = { payment_status: 'finished', payment_id: 55, order_id: 'ref-dbsecret' };
+    const payload = {
+      payment_status: 'finished',
+      payment_id: 55,
+      order_id: 'ref-dbsecret',
+      ...FULL_AMOUNTS,
+    };
     const sorted = JSON.stringify(payload, Object.keys(payload).sort());
     const signature = await hmacSha512Hex(DB_SECRET, sorted); // signed with the DB secret
     const res = await t.action(internal.billing.ingestEvent, {
@@ -1221,7 +1373,12 @@ describe('billing gift codes', () => {
     const t = convexTest(schema, modules);
     const { userId, freeTierId, memberTierId } = await seedTiersAndUser(t);
     await insertGiftOrder(t, userId, memberTierId, 'ref-gift', 2);
-    const payload = { payment_status: 'finished', payment_id: 100, order_id: 'ref-gift' };
+    const payload = {
+      payment_status: 'finished',
+      payment_id: 100,
+      order_id: 'ref-gift',
+      ...FULL_AMOUNTS,
+    };
     const res = await t.action(internal.billing.ingestEvent, {
       processor: 'nowpayments',
       rawBody: JSON.stringify(payload),
@@ -1258,7 +1415,12 @@ describe('billing gift codes', () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
     await insertGiftOrder(t, userId, memberTierId, 'ref-gift2', 1);
-    const payload = { payment_status: 'finished', payment_id: 101, order_id: 'ref-gift2' };
+    const payload = {
+      payment_status: 'finished',
+      payment_id: 101,
+      order_id: 'ref-gift2',
+      ...FULL_AMOUNTS,
+    };
     await t.action(internal.billing.ingestEvent, {
       processor: 'nowpayments',
       rawBody: JSON.stringify(payload),
@@ -1282,7 +1444,12 @@ describe('billing gift codes', () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
     await insertGiftOrder(t, userId, memberTierId, 'ref-gift3', 3);
-    const payload = { payment_status: 'finished', payment_id: 102, order_id: 'ref-gift3' };
+    const payload = {
+      payment_status: 'finished',
+      payment_id: 102,
+      order_id: 'ref-gift3',
+      ...FULL_AMOUNTS,
+    };
     const sig = await signIpn(payload);
     await t.action(internal.billing.ingestEvent, {
       processor: 'nowpayments',
@@ -1310,7 +1477,12 @@ describe('billing gift codes', () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
     await insertGiftOrder(t, userId, memberTierId, 'ref-gift4', 1);
-    const payload = { payment_status: 'finished', payment_id: 103, order_id: 'ref-gift4' };
+    const payload = {
+      payment_status: 'finished',
+      payment_id: 103,
+      order_id: 'ref-gift4',
+      ...FULL_AMOUNTS,
+    };
     await t.action(internal.billing.ingestEvent, {
       processor: 'nowpayments',
       rawBody: JSON.stringify(payload),

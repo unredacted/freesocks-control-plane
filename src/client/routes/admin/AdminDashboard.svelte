@@ -52,9 +52,15 @@
     return `${Math.round(seconds / 86400)}d ago`;
   }
 
-  /** Sort attention-first: stale, then pending, then ok (stable within a group). */
-  function cronsSorted<T extends { state: CronState }>(crons: readonly T[]): T[] {
-    return [...crons].sort((a, b) => cronOrder[a.state] - cronOrder[b.state]);
+  /** Sort attention-first: failing, then stale, then pending, then ok (stable). */
+  function cronsSorted<T extends { state: CronState; failing?: boolean }>(
+    crons: readonly T[],
+  ): T[] {
+    return [...crons].sort(
+      (a, b) =>
+        Number(b.failing ?? false) - Number(a.failing ?? false) ||
+        cronOrder[a.state] - cronOrder[b.state],
+    );
   }
 </script>
 
@@ -244,9 +250,17 @@
             {#each cronsSorted(s.crons) as c (c.name)}
               {@const t = cronTone(c.state)}
               <li class="flex items-start gap-2 py-0.5">
-                <span class="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium {t.tone}"
-                  >{t.label}</span
-                >
+                {#if c.failing}
+                  <span
+                    class="mt-0.5 shrink-0 rounded bg-destructive/15 px-1.5 py-0.5 text-[11px] font-medium text-destructive"
+                    >Failing</span
+                  >
+                {:else}
+                  <span
+                    class="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium {t.tone}"
+                    >{t.label}</span
+                  >
+                {/if}
                 <div class="min-w-0">
                   <div>
                     <code class="font-mono text-xs text-foreground">{c.name}</code>
@@ -259,6 +273,11 @@
                       ? 'not yet observed'
                       : `ran ${ago(c.ageSeconds)}`}
                   </div>
+                  {#if c.failing && c.lastError}
+                    <div class="mt-0.5 truncate text-xs text-destructive" title={c.lastError}>
+                      {c.lastError}
+                    </div>
+                  {/if}
                 </div>
               </li>
             {/each}

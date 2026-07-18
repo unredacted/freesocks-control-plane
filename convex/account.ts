@@ -103,6 +103,16 @@ async function resolveIssueTarget(
 ): Promise<{ placement: string | null; serverId: Id<'backendServers'> | null }> {
   if (backend !== 'remnawave') return { placement: null, serverId: null };
   const t = await ctx.runQuery(internal.remnawaveNodes.resolveTarget, { modeId, location });
+  // Multi-panel + zero attributable squads: an unpinned issue would mint a
+  // (squad, wrong-panel) dead key — fail loudly (503, retryable once the stats
+  // cron attributes the pool) instead. Single-panel deploys never see this.
+  if (t.unattributedMultiPanel) {
+    throw new ConvexError({
+      code: 'backend.placement_unresolved',
+      message:
+        'Node placement is still resolving on this deployment. Please try again in a few minutes.',
+    });
+  }
   return { placement: t.placement, serverId: (t.serverId as Id<'backendServers'> | null) ?? null };
 }
 
@@ -219,6 +229,9 @@ interface AccountView {
     donatedCentsTotal: number;
     /** Number of settled orders that carried a donation. */
     donationCount: number;
+    /** GB equivalent of the member's giving at the current rate, computed
+     *  server-side so the raw GB-per-dollar rate never ships to the client. */
+    donatedGbTotal: number;
     createdAt: string;
   };
   subscription: {
@@ -282,11 +295,13 @@ export const getAccountView = internalAction({
     // outage (backend unreachable) still shows the raised cap, not the base.
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
     const trafficLimitFromTier = resolveTrafficLimitBytes(tier, bonusGb);
-    // The member's own settled donation totals (impact panel).
-    const donationTotals: { donatedCentsTotal: number; donationCount: number } = await ctx.runQuery(
-      internal.donations.donationTotals,
-      { userId },
-    );
+    // The member's own settled donation totals (impact panel). The GB figure is
+    // computed server-side at the current rate so the raw rate never ships.
+    const donationTotals: {
+      donatedCentsTotal: number;
+      donationCount: number;
+      donatedGbTotal: number;
+    } = await ctx.runQuery(internal.donations.donationTotals, { userId });
     let subscription: AccountView['subscription'] = null;
     if (sub) {
       // Best-effort live state; degrade to local data if the backend is down.
@@ -384,6 +399,7 @@ export const getAccountView = internalAction({
         donorSince: user.firstDonatedAt ? new Date(user.firstDonatedAt).toISOString() : null,
         donatedCentsTotal: donationTotals.donatedCentsTotal,
         donationCount: donationTotals.donationCount,
+        donatedGbTotal: donationTotals.donatedGbTotal,
         createdAt: new Date(user._creationTime).toISOString(),
       },
       subscription,
@@ -471,7 +487,10 @@ export const getNodeStatus = internalAction({
         return {
           node: {
             online: stats.online && stats.nodeCount > 0,
-            label: stats.label ?? null,
+            // Neutral label: the panel's squad/node name (stats.label) often
+            // encodes provider/host infra detail — the member sees the curated
+            // location label instead ("Kansas City, MO").
+            label: location?.label ?? null,
             location,
             load,
             checkedAt: new Date(stats.lastStatsAt).toISOString(),

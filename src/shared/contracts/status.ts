@@ -13,8 +13,8 @@ export const StatusLocation = z.object({
   code: z.string(),
   label: z.string(),
   online: z.boolean(),
-  nodesOnline: z.number().int().nonnegative().nullable(),
-  nodesTotal: z.number().int().nonnegative().nullable(),
+  // Coarse load band only — exact per-location node counts are internal
+  // (the bands-only posture; never raw fleet-size figures).
   load: LoadBand,
 });
 export type StatusLocation = z.infer<typeof StatusLocation>;

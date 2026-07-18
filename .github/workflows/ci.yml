@@ -54,13 +54,23 @@ jobs:
   # Validate the Caddyfile adapts + parses (catches the servers/trusted_proxies
   # block + the {$CADDY_TRUSTED_PROXIES} placeholder syntax). All active env
   # placeholders carry defaults, so no env is needed. Pinned to the SAME digest as
-  # docker/web.Dockerfile so CI validates against the exact deployed Caddy.
+  # docker/web.Dockerfile so CI validates against the exact deployed Caddy — the
+  # drift guard below enforces the match (they drifted once and CI validated a
+  # different Caddy than deployed for weeks).
   caddyfile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Guard against digest drift vs docker/web.Dockerfile
+        run: |
+          ci_digest="$(grep -oP 'caddy:2-alpine@sha256:\K[0-9a-f]{64}' .github/workflows/ci.yml | head -1)"
+          web_digest="$(grep -oP 'caddy:2-alpine@sha256:\K[0-9a-f]{64}' docker/web.Dockerfile | head -1)"
+          if [ -z "$ci_digest" ] || [ "$ci_digest" != "$web_digest" ]; then
+            echo "::error::Caddy digest drift: ci.yml=$ci_digest web.Dockerfile=$web_digest"
+            exit 1
+          fi
       - name: Validate Caddyfile
         run: |
           docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
-            caddy:2-alpine@sha256:77c07d5ebfa5be9fd6c820d2094ae662c9e7eeb9bf98346b7f639900263ee2a2 \
+            caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648 \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

@@ -19,6 +19,9 @@ import { v } from 'convex/values';
  *  just-retired key still decrypt, then destroy its secret. */
 export const EPOCH_SWEEP_GRACE_MS = 10 * 60_000;
 
+/** Matches retention.ts: bound the immediate re-run chain (see sweepExpired). */
+const MAX_DRAIN_ROUNDS = 50;
+
 /**
  * Cron entry point for epoch rotation. Gates in the ISOLATE runtime: while
  * E2EE ships dark (FS_MANIFEST_SK unset) the 10-min cron used to cold-start a
@@ -88,17 +91,26 @@ export const byKid = internalQuery({
   },
 });
 
-/** Cron: destroy epochs whose validity + grace has elapsed (forward secrecy). */
+/** Cron: destroy epochs whose validity + grace has elapsed (forward secrecy).
+ *  A FULL page re-runs immediately (drain-chain, same pattern as retention.ts)
+ *  — 144 epochs mint/day vs a 100-row page means one page/day falls behind. */
 export const sweepExpired = internalMutation({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'epoch-key-sweep');
     const cutoff = Date.now() - EPOCH_SWEEP_GRACE_MS;
+    const page = limit ?? 100;
     const expired = await ctx.db
       .query('keyEpochs')
       .withIndex('by_expires', (q) => q.lt('notAfter', cutoff))
-      .take(limit ?? 100);
+      .take(page);
     for (const row of expired) await ctx.db.delete(row._id);
+    if (expired.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[epoch-key-sweep] drain cap hit; remainder next run');
+      else await ctx.scheduler.runAfter(0, internal.keyEpochs.sweepExpired, { rounds: n + 1 });
+    }
     return { removed: expired.length };
   },
 });

@@ -468,6 +468,11 @@ export const applyEvent = internalMutation({
     checkoutRef: v.optional(v.union(v.string(), v.null())),
     amountMinor: v.optional(v.union(v.number(), v.null())),
     amountCurrency: v.optional(v.union(v.string(), v.null())),
+    // Settle-tolerance signal from the adapter (see ParsedEvent.underpaid): a
+    // paid-class transition for an incompletely-paid invoice was downgraded to
+    // confirming — audit it so the underpayment is a visible operator signal
+    // instead of a silently-stalled order.
+    underpaid: v.optional(v.boolean()),
     // For a 'gift' order being paid: the codes the caller pre-generated (CSPRNG
     // runs in the ingest action). Inserted hash-only into redemptionCodes here;
     // the plaintext is stashed in the order's transient giftReveal buffer.
@@ -520,6 +525,25 @@ export const applyEvent = internalMutation({
         });
       }
       return { applied: false, granted: false };
+    }
+
+    // An underpaid settle (merchant settle-tolerance) never grants, but must
+    // not be invisible: audit once per event so the operator can follow up
+    // (refund / ask for a top-up). Deduped by the webhook claim id, so a
+    // redelivery of the same underpaid transition doesn't re-audit.
+    if (a.underpaid) {
+      await writeAuditLog(ctx, {
+        actorType: 'webhook',
+        actorId: order.userId,
+        action: 'billing.underpayment_seen',
+        targetType: 'billing_order',
+        targetId: order._id,
+        payload: {
+          processor: a.processor,
+          expectedMinor: order.amountCents,
+          reportedMinor: a.amountMinor ?? null,
+        },
+      });
     }
 
     const now = Date.now();
@@ -786,6 +810,7 @@ export const ingestEvent = internalAction({
         checkoutRef: verified.checkoutRef ?? null,
         amountMinor: verified.amountMinor ?? null,
         amountCurrency: verified.amountCurrency ?? null,
+        underpaid: verified.underpaid === true,
         giftCodes,
       });
       await ctx.runMutation(internal.webhooks.markEventProcessed, {

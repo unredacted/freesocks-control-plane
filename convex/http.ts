@@ -70,6 +70,25 @@ function convexError(err: unknown): Response {
 }
 
 /**
+ * convexError for the PUBLIC unauthenticated auth routes (passkey ceremonies,
+ * bootstrap, invite registration): only whitelisted, curated codes echo their
+ * message — any other error (a future internal action throwing a detailed
+ * message, or a non-ConvexError) becomes a generic 400 + a server-side log,
+ * never a pre-auth leak of internals.
+ */
+const PUBLIC_AUTH_CODES = new Set(['auth.forbidden', 'rate_limit.exceeded', 'validation']);
+function publicAuthError(err: unknown): Response {
+  if (err instanceof ConvexError) {
+    const data = err.data as { code?: string; message?: string };
+    if (typeof data.code === 'string' && PUBLIC_AUTH_CODES.has(data.code)) {
+      return errorJson(data.code, data.message ?? 'Request failed', statusFromCode(data.code));
+    }
+  }
+  console.error(`[auth] public-route error: ${err instanceof Error ? err.message : String(err)}`);
+  return errorJson('auth.error', 'The request could not be completed.', 400);
+}
+
+/**
  * Map a subscription-issuance failure (account.regenerate / switch-backend) to a
  * clean envelope. A missing/empty proxy backend ("No active <backend> instances")
  * becomes a 503 the user can act on; anything else is logged server-side (the
@@ -90,6 +109,16 @@ function issuanceErrorResponse(err: unknown, requestId: string): Response {
     return errorJson(
       'backend.unavailable',
       'No proxy server is available right now. Please try again later or contact support.',
+      503,
+    );
+  }
+  // Multi-panel deploy whose pool squads aren't attributable to a panel yet:
+  // issuing would mint a (squad, wrong-panel) dead key, so issuance refuses
+  // loudly (retryable — the stats cron attributes within minutes).
+  if (code === 'backend.placement_unresolved') {
+    return errorJson(
+      'backend.placement_unresolved',
+      'Node placement is still resolving. Please try again in a few minutes.',
       503,
     );
   }
@@ -254,8 +283,10 @@ function userIdAndOp(req: Request): { id: string; op: string } {
 /** Turn an admin-resource handler error into a 400 envelope (uniqueness, etc.). */
 function adminError(err: unknown): Response {
   if (err instanceof ConvexError) return convexError(err);
-  const msg = err instanceof Error ? err.message : String(err);
-  return errorJson('admin.error', msg, 400);
+  // Never echo raw internal error text (Convex internals, backend error bodies,
+  // zod detail) to API-token callers; log it server-side instead.
+  console.error(`[admin] unhandled error: ${err instanceof Error ? err.message : String(err)}`);
+  return errorJson('admin.error', 'The request could not be completed.', 400);
 }
 
 // --- operational ------------------------------------------------------------
@@ -271,11 +302,15 @@ http.route({
 
 // A3: readiness — a real datastore round-trip, so an uptime monitor can tell a
 // wedged Postgres / exhausted pool apart from a merely-live process. 503 on
-// failure so the monitor pages. Point external monitoring at /readyz.
+// failure so the monitor pages. Point external monitoring at /readyz. Per-IP
+// throttled: each call costs a DB round-trip, so unthrottled it is a direct
+// DB-load lever (generous — monitors poll from a few fixed IPs).
 http.route({
   path: '/readyz',
   method: 'GET',
-  handler: httpAction(async (ctx) => {
+  handler: httpAction(async (ctx, req) => {
+    const limited = await throttlePublicGet(ctx, req, 'readyz.fetch');
+    if (limited) return limited;
     try {
       await ctx.runQuery(internal.health.dbPing, {});
       return json({ ok: true, db: 'ok', timestamp: new Date().toISOString() });
@@ -292,7 +327,7 @@ http.route({
 async function throttlePublicGet(
   ctx: ActionCtx,
   req: Request,
-  policyKey: 'config.fetch' | 'e2ee.keys.fetch' | 'status.fetch',
+  policyKey: 'config.fetch' | 'e2ee.keys.fetch' | 'status.fetch' | 'readyz.fetch',
 ): Promise<Response | null> {
   const ip = resolveClientIp(req);
   if (!ip) return null;
@@ -617,13 +652,22 @@ http.route({
   path: '/api/v1/auth/passkey/authenticate/options',
   method: 'POST',
   handler: guard(async (ctx, req) => {
+    // Fail closed (mirrors account-login): with no trustworthy client IP the
+    // per-IP throttle can't run and this unauthenticated route would write
+    // challenge rows unthrottled.
+    const ip = resolveClientIp(req);
+    if (!ip) {
+      return errorJson(
+        'auth.ip_unresolved',
+        'Unable to establish your network address. Try again later or contact support.',
+        503,
+      );
+    }
     try {
-      const out = await ctx.runAction(internal.memberWebauthn.authenticateOptions, {
-        ip: resolveClientIp(req) ?? undefined,
-      });
+      const out = await ctx.runAction(internal.memberWebauthn.authenticateOptions, { ip });
       return json(out);
     } catch (err) {
-      return convexError(err);
+      return publicAuthError(err);
     }
   }),
 });
@@ -659,7 +703,7 @@ http.route({
         { 'set-cookie': cookie },
       );
     } catch (err) {
-      return convexError(err);
+      return publicAuthError(err);
     }
   }),
 });
@@ -735,6 +779,17 @@ http.route({
   handler: guard(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    // Per-user throttle: every call is a live backend bandwidth-stats fetch with
+    // no cache, so an unthrottled member hot-loop scales panel QPS linearly.
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.usage',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
     const { usage } = await ctx.runAction(internal.account.getUsage, { userId: member.userId });
     return json({ usage });
   }),
@@ -751,6 +806,17 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    // Per-user throttle: a live backend content fetch per request, no cache
+    // (unlike the token-fronted /sub/ route) — an unthrottled amplification vector.
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'subscription.content',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
     const sub = await ctx.runQuery(internal.subscriptions.mirrorContextForUser, {
       userId: member.userId,
     });
@@ -798,12 +864,21 @@ http.route({
       if (!rl.allowed) {
         return new Response('Too Many Requests', {
           status: 429,
-          headers: { 'retry-after': String(Math.ceil((rl.retryAfterMs ?? 1000) / 1000)) },
+          headers: {
+            'retry-after': String(Math.ceil((rl.retryAfterMs ?? 1000) / 1000)),
+            // Never let a shared cache serve this to a different client/token.
+            'cache-control': 'private, no-store',
+            vary: 'user-agent',
+          },
         });
       }
     }
     const sub = await ctx.runQuery(internal.subscriptions.bySubToken, { subToken: token });
-    if (!sub) return errorJson('not_found', 'Not found', 404);
+    if (!sub)
+      return json({ error: { code: 'not_found', message: 'Not found' } }, 404, {
+        'cache-control': 'private, no-store',
+        vary: 'user-agent',
+      });
 
     const now = Date.now();
     const ua = req.headers.get('user-agent') ?? '';
@@ -860,7 +935,9 @@ http.route({
       ) {
         return new Response(
           'Device limit reached, or your app must send a device identifier (HWID).',
-          { status: 404 },
+          // Heuristically cacheable to a shared cache — pin it private/no-store
+          // so a later legitimate device poll isn't served a cached rejection.
+          { status: 404, headers: { 'cache-control': 'private, no-store', vary: 'user-agent' } },
         );
       }
       // Backend blip: serve the last-known content FOR THIS UA rather than break
@@ -869,7 +946,10 @@ http.route({
       console.error(
         `[subscription] fronted fetch failed: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return new Response('Subscription temporarily unavailable', { status: 502 });
+      return new Response('Subscription temporarily unavailable', {
+        status: 502,
+        headers: { 'cache-control': 'private, no-store', vary: 'user-agent' },
+      });
     }
   }),
 });
@@ -1358,7 +1438,9 @@ http.route({
               : 400;
         return errorJson(code, data.message ?? 'Checkout could not be started', status);
       }
-      console.error('[billing] checkout error', err);
+      console.error(
+        `[billing] checkout error: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return errorJson('billing.error', 'Checkout could not be started', 500);
     }
   }),
@@ -1454,7 +1536,9 @@ http.route({
     // Cookie-only probe (no PoP): this is signed-in *detection* that drives a
     // redirect, not a privileged action, and the admin auth surface is unsigned.
     // Gating it on a PoP signature re-prompted already-signed-in admins. See
-    // adminSessionProbe.
+    // adminSessionProbe. Per-IP throttled: unauthenticated + two queries per call.
+    const limited = await throttlePublicGet(ctx, req, 'status.fetch');
+    if (limited) return limited;
     const adminUserId = await adminSessionProbe(ctx, req);
     const status = await ctx.runQuery(internal.admins.bootstrapStatus, {});
     return json({ ...status, signedIn: adminUserId !== null });
@@ -1467,6 +1551,26 @@ http.route({
   handler: guard(async (ctx, req) => {
     const body = await readJson<{ username?: string; displayName?: string }>(req);
     if (!body.username) return errorJson('validation', 'username required', 400);
+    // Per-IP throttle: this endpoint is an ONLINE ORACLE for the bootstrap
+    // secret (unlimited guesses otherwise) until the first credential exists.
+    // Fail closed like the other auth surfaces.
+    const ip = resolveClientIp(req);
+    if (!ip) {
+      return errorJson(
+        'auth.ip_unresolved',
+        'Unable to establish your network address. Try again later or contact support.',
+        503,
+      );
+    }
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'admin.register.ip',
+      subject: await ipHashSubject(ip),
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
     try {
       const out = await ctx.runAction(internal.webauthn.registerBootstrapOptions, {
         bootstrapSecret: req.headers.get('x-admin-bootstrap-token') ?? '',
@@ -1475,7 +1579,7 @@ http.route({
       });
       return json(out);
     } catch (err) {
-      return convexError(err);
+      return publicAuthError(err);
     }
   }),
 });
@@ -1497,7 +1601,7 @@ http.route({
       });
       return json(out);
     } catch (err) {
-      return convexError(err);
+      return publicAuthError(err);
     }
   }),
 });
@@ -1511,14 +1615,23 @@ http.route({
     // it doesn't get treated as a (never-matching) username lookup.
     const body = await readJson<{ username?: string }>(req);
     const username = body.username?.trim() || undefined;
+    // Fail closed (mirrors account-login): no trustworthy IP → no throttle.
+    const ip = resolveClientIp(req);
+    if (!ip) {
+      return errorJson(
+        'auth.ip_unresolved',
+        'Unable to establish your network address. Try again later or contact support.',
+        503,
+      );
+    }
     try {
       const out = await ctx.runAction(internal.webauthn.authenticateOptions, {
         username,
-        ip: resolveClientIp(req) ?? undefined,
+        ip,
       });
       return json(out);
     } catch (err) {
-      return convexError(err);
+      return publicAuthError(err);
     }
   }),
 });
@@ -1550,7 +1663,7 @@ http.route({
         'set-cookie': cookie,
       });
     } catch (err) {
-      return convexError(err);
+      return publicAuthError(err);
     }
   }),
 });
@@ -1585,14 +1698,23 @@ http.route({
   handler: guard(async (ctx, req) => {
     const body = await readJson<{ invite?: string }>(req);
     if (!body.invite) return errorJson('validation', 'invite required', 400);
+    // Fail closed (mirrors account-login): no trustworthy IP → no throttle.
+    const ip = resolveClientIp(req);
+    if (!ip) {
+      return errorJson(
+        'auth.ip_unresolved',
+        'Unable to establish your network address. Try again later or contact support.',
+        503,
+      );
+    }
     try {
       const out = await ctx.runAction(internal.webauthn.registerInviteOptions, {
         invite: body.invite,
-        ip: resolveClientIp(req) ?? undefined,
+        ip,
       });
       return json(out);
     } catch (err) {
-      return convexError(err);
+      return publicAuthError(err);
     }
   }),
 });
@@ -1614,7 +1736,7 @@ http.route({
       });
       return json({ ok: true, username: out.username });
     } catch (err) {
-      return convexError(err);
+      return publicAuthError(err);
     }
   }),
 });
@@ -1923,10 +2045,16 @@ http.route({
   path: '/api/v1/admin/tiers',
   method: 'POST',
   handler: guard(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:tiers:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:tiers:write');
+    if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, never>>(req);
     try {
-      return json(await ctx.runMutation(internal.adminApi.createTier, body as never));
+      return json(
+        await ctx.runMutation(internal.adminApi.createTier, {
+          ...body,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -1937,11 +2065,18 @@ http.route({
   pathPrefix: '/api/v1/admin/tiers/',
   method: 'PATCH',
   handler: guard(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:tiers:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:tiers:write');
+    if (!admin) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'tiers'>;
     const body = await readJson<Record<string, unknown>>(req);
     try {
-      return json(await ctx.runMutation(internal.adminApi.updateTier, { id, ...body } as never));
+      return json(
+        await ctx.runMutation(internal.adminApi.updateTier, {
+          id,
+          ...body,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -1952,10 +2087,16 @@ http.route({
   pathPrefix: '/api/v1/admin/tiers/',
   method: 'DELETE',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:tiers:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:tiers:write');
+    if (!admin) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'tiers'>;
     try {
-      return json(await ctx.runMutation(internal.adminApi.deleteTier, { id }));
+      return json(
+        await ctx.runMutation(internal.adminApi.deleteTier, {
+          id,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -2209,10 +2350,16 @@ http.route({
   pathPrefix: '/api/v1/admin/tokens/',
   method: 'DELETE',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:tokens:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:tokens:write');
+    if (!admin) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'apiTokens'>;
     try {
-      return json(await ctx.runMutation(internal.adminApi.revokeToken, { id }));
+      return json(
+        await ctx.runMutation(internal.adminApi.revokeToken, {
+          id,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -2866,13 +3013,19 @@ http.route({
   path: '/api/v1/admin/backend-servers',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:servers:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     if (body.backend !== 'remnawave' && body.backend !== 'outline') {
       return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
     }
     try {
-      return json(await ctx.runMutation(internal.adminApi.createBackendServer, body as never));
+      return json(
+        await ctx.runMutation(internal.adminApi.createBackendServer, {
+          ...body,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -2964,12 +3117,17 @@ http.route({
   pathPrefix: '/api/v1/admin/backend-servers/',
   method: 'PATCH',
   handler: sealed(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:servers:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'backendServers'>;
     const body = await readJson<Record<string, unknown>>(req);
     try {
       return json(
-        await ctx.runMutation(internal.adminApi.updateBackendServer, { id, ...body } as never),
+        await ctx.runMutation(internal.adminApi.updateBackendServer, {
+          id,
+          ...body,
+          actorAdminId: admin.adminUserId,
+        } as never),
       );
     } catch (err) {
       return adminError(err);
@@ -2981,10 +3139,16 @@ http.route({
   pathPrefix: '/api/v1/admin/backend-servers/',
   method: 'DELETE',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:servers:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'backendServers'>;
     try {
-      return json(await ctx.runMutation(internal.adminApi.deleteBackendServer, { id }));
+      return json(
+        await ctx.runMutation(internal.adminApi.deleteBackendServer, {
+          id,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -3008,10 +3172,16 @@ http.route({
   path: '/api/v1/admin/mirror-providers',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     try {
-      return json(await ctx.runMutation(internal.mirrorProviders.create, body as never));
+      return json(
+        await ctx.runMutation(internal.mirrorProviders.create, {
+          ...body,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -3043,11 +3213,18 @@ http.route({
   pathPrefix: '/api/v1/admin/mirror-providers/',
   method: 'PATCH',
   handler: sealed(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'mirrorProviders'>;
     const body = await readJson<Record<string, unknown>>(req);
     try {
-      return json(await ctx.runMutation(internal.mirrorProviders.update, { id, ...body } as never));
+      return json(
+        await ctx.runMutation(internal.mirrorProviders.update, {
+          id,
+          ...body,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -3058,10 +3235,16 @@ http.route({
   pathPrefix: '/api/v1/admin/mirror-providers/',
   method: 'DELETE',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'mirrorProviders'>;
     try {
-      return json(await ctx.runMutation(internal.mirrorProviders.remove, { id }));
+      return json(
+        await ctx.runMutation(internal.mirrorProviders.remove, {
+          id,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -3074,12 +3257,17 @@ http.route({
   pathPrefix: '/api/v1/admin/mirror-providers/by-name/',
   method: 'PUT',
   handler: sealed(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
     const name = decodeURIComponent(lastPathSegment(req));
     const body = await readJson<Record<string, unknown>>(req);
     try {
       return json(
-        await ctx.runMutation(internal.mirrorProviders.upsertByName, { ...body, name } as never),
+        await ctx.runMutation(internal.mirrorProviders.upsertByName, {
+          ...body,
+          name,
+          actorAdminId: admin.adminUserId,
+        } as never),
       );
     } catch (err) {
       return adminError(err);

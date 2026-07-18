@@ -9,7 +9,7 @@
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
-import { heartbeatFromAction } from './cronHeartbeat';
+import { runWithCronOutcome } from './cronHeartbeat';
 import { v } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
 import type { BackendConfig } from './lib/backends/registry';
@@ -235,51 +235,55 @@ export const markFleetStats = internalMutation({
  */
 export const healthcheck = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ checked: number; healthy: number }> => {
-    await heartbeatFromAction(ctx, 'backend-healthcheck');
-    const servers = await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
-    let healthy = 0;
-    for (const s of servers) {
-      try {
-        const provider = PROVIDERS[s.backend];
-        const { keyCount, rttMs } = await provider.health(s.config as BackendConfig);
-        await ctx.runMutation(internal.backendServers.markHealthy, { id: s._id, keyCount, rttMs });
-        healthy++;
-        // Best-effort fleet observability (read-only) — a failure here must NOT
-        // mark the instance unhealthy, so it's caught on its own and just skips.
-        if (provider.getFleetStats) {
-          try {
-            const fleetStats = await provider.getFleetStats(s.config as BackendConfig);
-            await ctx.runMutation(internal.backendServers.markFleetStats, {
-              id: s._id,
-              fleetStats,
-            });
-          } catch {
-            /* fleet stats unavailable this cycle; last stamped values are kept */
-          }
-        }
-        // Best-effort per-node load for issuance-time node placement — same
-        // isolation as fleet stats: a failure keeps the last snapshot and
-        // must NOT mark the instance unhealthy.
-        if (provider.getNodeStats) {
-          try {
-            const nodes = await provider.getNodeStats(s.config as BackendConfig);
-            if (nodes.length > 0) {
-              await ctx.runMutation(internal.remnawaveNodes.markNodeStats, {
-                backendServerId: s._id,
-                nodes,
+  handler: async (ctx): Promise<{ checked: number; healthy: number }> =>
+    runWithCronOutcome(ctx, 'backend-healthcheck', async () => {
+      const servers = await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
+      let healthy = 0;
+      for (const s of servers) {
+        try {
+          const provider = PROVIDERS[s.backend];
+          const { keyCount, rttMs } = await provider.health(s.config as BackendConfig);
+          await ctx.runMutation(internal.backendServers.markHealthy, {
+            id: s._id,
+            keyCount,
+            rttMs,
+          });
+          healthy++;
+          // Best-effort fleet observability (read-only) — a failure here must NOT
+          // mark the instance unhealthy, so it's caught on its own and just skips.
+          if (provider.getFleetStats) {
+            try {
+              const fleetStats = await provider.getFleetStats(s.config as BackendConfig);
+              await ctx.runMutation(internal.backendServers.markFleetStats, {
+                id: s._id,
+                fleetStats,
               });
+            } catch {
+              /* fleet stats unavailable this cycle; last stamped values are kept */
             }
-          } catch {
-            /* node stats unavailable this cycle; picker falls back gracefully */
           }
+          // Best-effort per-node load for issuance-time node placement — same
+          // isolation as fleet stats: a failure keeps the last snapshot and
+          // must NOT mark the instance unhealthy.
+          if (provider.getNodeStats) {
+            try {
+              const nodes = await provider.getNodeStats(s.config as BackendConfig);
+              if (nodes.length > 0) {
+                await ctx.runMutation(internal.remnawaveNodes.markNodeStats, {
+                  backendServerId: s._id,
+                  nodes,
+                });
+              }
+            } catch {
+              /* node stats unavailable this cycle; picker falls back gracefully */
+            }
+          }
+        } catch {
+          /* unhealthy: ages out of the fresh window; secret config never logged */
         }
-      } catch {
-        /* unhealthy: ages out of the fresh window; secret config never logged */
       }
-    }
-    return { checked: servers.length, healthy };
-  },
+      return { checked: servers.length, healthy };
+    }),
 });
 
 /**

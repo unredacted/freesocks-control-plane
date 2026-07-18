@@ -12,7 +12,7 @@
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import type { MutationCtx, DatabaseReader } from './_generated/server';
 import { internal } from './_generated/api';
-import { heartbeatFromAction } from './cronHeartbeat';
+import { runWithCronOutcome } from './cronHeartbeat';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { deleteSubscriptionEverywhere } from './lib/issuance';
@@ -583,119 +583,183 @@ export const isDisableDue = internalQuery({
 /** Cron: active→grace for lapsed members, grace→disabled past the grace window. */
 export const runGraceSweep = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ toGrace: number; toDisabled: number }> => {
-    await heartbeatFromAction(ctx, 'grace-sweep');
-    const now = Date.now();
+  handler: async (ctx): Promise<{ toGrace: number; toDisabled: number }> =>
+    runWithCronOutcome(ctx, 'grace-sweep', async () => {
+      const now = Date.now();
 
-    // active → grace: drain the exact-range page repeatedly. Each applied user
-    // leaves the active index, so re-querying advances through the whole set.
-    let toGrace = 0;
-    for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
-      const due = await ctx.runQuery(internal.lifecycle.findGraceTransitions, { now });
-      if (due.length === 0) break;
-      for (const userId of due) {
-        await ctx.runMutation(internal.lifecycle.applyGraceTransition, { userId });
-      }
-      toGrace += due.length;
-      if (due.length < SWEEP_PAGE) break;
-      if (page === SWEEP_MAX_PAGES - 1) {
-        console.warn('[grace-sweep] grace transitions hit the per-run cap; remainder next run');
-      }
-    }
-
-    // grace → disabled: paginate the grace set read-only (keyset on expiry),
-    // collecting due ids, then apply. Backend-disable FIRST so a backend failure
-    // leaves the user in `grace` for the next sweep to retry (not silently
-    // disabled-locally with the key still routing).
-    const disableIds: Id<'users'>[] = [];
-    let afterExpiry = 0;
-    for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
-      const res = await ctx.runQuery(internal.lifecycle.findDisableTransitions, {
-        now,
-        afterExpiry,
-      });
-      disableIds.push(...res.due);
-      if (!res.hasMore || res.lastExpiry <= afterExpiry) break;
-      afterExpiry = res.lastExpiry;
-      if (page === SWEEP_MAX_PAGES - 1) {
-        console.warn('[grace-sweep] disable scan hit the per-run cap; remainder next run');
-      }
-    }
-    let toDisabled = 0;
-    for (const userId of disableIds) {
-      // Re-check due-ness right before acting (M2): the ids were collected
-      // read-only across pages, so a renewal may have landed since — disabling
-      // a paying member's key at the panel would be entitlement loss caused by
-      // the control plane itself.
-      if (!(await ctx.runQuery(internal.lifecycle.isDisableDue, { userId, now }))) continue;
-      const st = await ctx.runQuery(internal.lifecycle.activeSubAndTier, { userId });
-      if (st) {
-        try {
-          await ctx.runAction(internal.backends.setUserStatus, {
-            backend: st.backend,
-            backendUserId: st.backendUserId,
-            active: false,
-          });
-        } catch {
-          // Backend unreachable: leave the user in `grace` so the next sweep
-          // retries; disabling locally now would strand a still-routing key. Flag
-          // the drift so the still-routing key is observable meanwhile.
-          await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: true });
-          continue;
+      // active → grace: drain the exact-range page repeatedly. Each applied user
+      // leaves the active index, so re-querying advances through the whole set.
+      let toGrace = 0;
+      for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
+        const due = await ctx.runQuery(internal.lifecycle.findGraceTransitions, { now });
+        if (due.length === 0) break;
+        for (const userId of due) {
+          await ctx.runMutation(internal.lifecycle.applyGraceTransition, { userId });
+        }
+        toGrace += due.length;
+        if (due.length < SWEEP_PAGE) break;
+        if (page === SWEEP_MAX_PAGES - 1) {
+          console.warn('[grace-sweep] grace transitions hit the per-run cap; remainder next run');
         }
       }
-      await ctx.runMutation(internal.lifecycle.applyDisableTransition, { userId });
-      await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: false });
-      toDisabled++;
-    }
-    return { toGrace, toDisabled };
-  },
+
+      // grace → disabled: paginate the grace set read-only (keyset on expiry),
+      // collecting due ids, then apply. Backend-disable FIRST so a backend failure
+      // leaves the user in `grace` for the next sweep to retry (not silently
+      // disabled-locally with the key still routing).
+      const disableIds: Id<'users'>[] = [];
+      let afterExpiry = 0;
+      for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
+        const res = await ctx.runQuery(internal.lifecycle.findDisableTransitions, {
+          now,
+          afterExpiry,
+        });
+        disableIds.push(...res.due);
+        if (!res.hasMore || res.lastExpiry <= afterExpiry) break;
+        afterExpiry = res.lastExpiry;
+        if (page === SWEEP_MAX_PAGES - 1) {
+          console.warn('[grace-sweep] disable scan hit the per-run cap; remainder next run');
+        }
+      }
+      let toDisabled = 0;
+      for (const userId of disableIds) {
+        // Re-check due-ness right before acting (M2): the ids were collected
+        // read-only across pages, so a renewal may have landed since — disabling
+        // a paying member's key at the panel would be entitlement loss caused by
+        // the control plane itself.
+        if (!(await ctx.runQuery(internal.lifecycle.isDisableDue, { userId, now }))) continue;
+        const st = await ctx.runQuery(internal.lifecycle.activeSubAndTier, { userId });
+        if (st) {
+          try {
+            await ctx.runAction(internal.backends.setUserStatus, {
+              backend: st.backend,
+              backendUserId: st.backendUserId,
+              active: false,
+            });
+          } catch {
+            // Backend unreachable: leave the user in `grace` so the next sweep
+            // retries; disabling locally now would strand a still-routing key. Flag
+            // the drift so the still-routing key is observable meanwhile.
+            await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: true });
+            continue;
+          }
+        }
+        await ctx.runMutation(internal.lifecycle.applyDisableTransition, { userId });
+        await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: false });
+        toDisabled++;
+      }
+      return { toGrace, toDisabled };
+    }),
 });
 
 // --- tombstone sweep -------------------------------------------------------
 
-/** Disabled subscriptions whose grace window (deletedAt) has elapsed. */
+/**
+ * A tombstone whose backend delete keeps failing (dead panel) used to occupy
+ * the oldest-100 page forever, starving every NEWER tombstone (head-of-line
+ * blocking). Failures now back off exponentially (10 min → 24 h cap) and the
+ * due-row selection skips rows still inside their backoff; after
+ * TOMBSTONE_MAX_ATTEMPTS the row is abandoned (marked deleted + audited) so a
+ * permanently-dead backend can't wedge the sweep.
+ */
+const TOMBSTONE_RETRY_BASE_MS = 10 * 60_000;
+const TOMBSTONE_RETRY_CAP_MS = 24 * 3_600_000;
+const TOMBSTONE_MAX_ATTEMPTS = 14; // ~2 weeks at the capped backoff.
+
+/** Disabled subscriptions whose grace window (deletedAt) has elapsed and whose
+ *  retry backoff (if any) has too. */
 export const findTombstonedDue = internalQuery({
   args: { now: v.number(), limit: v.number() },
   handler: async (ctx, { now, limit }) => {
-    // Exact index range on by_state = ['state','deletedAt'] (mirrors
-    // findGraceTransitions / retention.sweepDeletedSubscriptions), not a
-    // take(500)+JS-filter that could leave due rows beyond the 500-window
-    // unprocessed for extra sweeps. gt(...,0) excludes rows with no deletedAt
-    // (undefined sorts below numbers), preserving the old null-guard. (Review #6.)
-    const due = await ctx.db
+    // by_state_tombstone_retry = ['state','tombstoneRetryAfter','deletedAt']:
+    // undefined retryAfter sorts below numbers, so never-retried rows are
+    // picked first and backoff-deferred rows (retryAfter >= now) fall outside
+    // the range. The deletedAt range can't ride the same index, so it's the
+    // JS filter below (deletedAt > 0 also excludes rows with no deletedAt).
+    const rows = await ctx.db
       .query('subscriptions')
-      .withIndex('by_state', (q) =>
-        q.eq('state', 'disabled').gt('deletedAt', 0).lt('deletedAt', now),
+      .withIndex('by_state_tombstone_retry', (q) =>
+        q.eq('state', 'disabled').lt('tombstoneRetryAfter', now),
       )
       .take(limit);
-    return due.map((s) => ({ backend: s.backend, backendUserId: s.backendUserId }));
+    return rows
+      .filter((s) => s.deletedAt !== undefined && s.deletedAt > 0 && s.deletedAt < now)
+      .map((s) => ({
+        subscriptionId: s._id,
+        backend: s.backend,
+        backendUserId: s.backendUserId,
+        attempts: s.tombstoneAttempts ?? 0,
+      }));
+  },
+});
+
+/** Stamp a failed tombstone delete with its next backoff (serializable read of
+ *  the current attempt count). */
+export const deferTombstone = internalMutation({
+  args: { subscriptionId: v.id('subscriptions'), retryAfter: v.number() },
+  handler: async (ctx, { subscriptionId, retryAfter }) => {
+    const row = await ctx.db.get(subscriptionId);
+    if (!row || row.state !== 'disabled') return null;
+    await ctx.db.patch(subscriptionId, {
+      tombstoneAttempts: (row.tombstoneAttempts ?? 0) + 1,
+      tombstoneRetryAfter: retryAfter,
+      updatedAt: Date.now(),
+    });
+    return null;
   },
 });
 
 /** Cron: hard-delete subscriptions whose 24h regenerate/switch grace has passed. */
 export const sweepTombstones = internalAction({
   args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }): Promise<{ removed: number }> => {
-    await heartbeatFromAction(ctx, 'tombstone-sweep');
-    const due = await ctx.runQuery(internal.lifecycle.findTombstonedDue, {
-      now: Date.now(),
-      limit: limit ?? 100,
-    });
-    let removed = 0;
-    for (const d of due) {
-      try {
-        await deleteSubscriptionEverywhere(ctx, {
-          backend: d.backend,
-          backendUserId: d.backendUserId,
-        });
-        removed++;
-      } catch {
-        /* best-effort; retried next sweep */
+  handler: async (ctx, { limit }): Promise<{ removed: number }> =>
+    runWithCronOutcome(ctx, 'tombstone-sweep', async () => {
+      const due = await ctx.runQuery(internal.lifecycle.findTombstonedDue, {
+        now: Date.now(),
+        limit: limit ?? 100,
+      });
+      let removed = 0;
+      for (const d of due) {
+        try {
+          await deleteSubscriptionEverywhere(ctx, {
+            backend: d.backend,
+            backendUserId: d.backendUserId,
+          });
+          removed++;
+        } catch {
+          const attempts = d.attempts + 1;
+          if (attempts >= TOMBSTONE_MAX_ATTEMPTS) {
+            // Give up: the row leaves the disabled set so the sweep (and the
+            // deleted-row retention sweep) move on; the backend key may still
+            // exist — loud audit for the operator cleanup queue.
+            try {
+              await ctx.runMutation(internal.subscriptions.markSubscriptionDeleted, {
+                subscriptionId: d.subscriptionId,
+              });
+              await ctx.runMutation(internal.audit.record, {
+                actorType: 'system',
+                action: 'subscription.tombstone_abandoned',
+                targetType: 'subscription',
+                targetId: d.subscriptionId,
+                payload: { backend: d.backend, backendUserId: d.backendUserId, attempts },
+              });
+            } catch {
+              /* the next sweep re-attempts the abandon path */
+            }
+          } else {
+            const backoff = Math.min(
+              TOMBSTONE_RETRY_BASE_MS * 2 ** d.attempts,
+              TOMBSTONE_RETRY_CAP_MS,
+            );
+            await ctx.runMutation(internal.lifecycle.deferTombstone, {
+              subscriptionId: d.subscriptionId,
+              retryAfter: Date.now() + backoff,
+            });
+          }
+        }
       }
-    }
-    return { removed };
-  },
+      return { removed };
+    }),
 });
 
 // --- free-tier cleanup -----------------------------------------------------
@@ -842,61 +906,61 @@ export const refreshFreeWindow = internalMutation({
  *  removes long-inactive rows on operator demand. */
 export const deactivateIdleFree = internalAction({
   args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }): Promise<{ deactivated: number }> => {
-    await heartbeatFromAction(ctx, 'deactivate-idle-free');
-    const now = Date.now();
-    const pageSize = limit ?? 100;
-    const tierIds = await ctx.runQuery(internal.lifecycle.defaultFreeTierIds, {});
-    let deactivated = 0;
-    for (const tierId of tierIds) {
-      // Collect the due set read-only across pages (cursor stable — no mutation
-      // between pages), then apply.
-      const due: {
-        userId: Id<'users'>;
-        backend: 'remnawave' | 'outline' | null;
-        backendUserId: string | null;
-      }[] = [];
-      let cursor: string | null = null;
-      for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
-        // Annotate to break the same-module self-referential inference.
-        const res: {
-          idle: {
-            userId: Id<'users'>;
-            backend: 'remnawave' | 'outline' | null;
-            backendUserId: string | null;
-          }[];
-          isDone: boolean;
-          continueCursor: string;
-        } = await ctx.runQuery(internal.lifecycle.findIdleFree, {
-          tierId,
-          now,
-          cursor,
-          numItems: pageSize,
-        });
-        due.push(...res.idle);
-        if (res.isDone) break;
-        cursor = res.continueCursor;
-        if (page === SWEEP_MAX_PAGES - 1) {
-          console.warn('[deactivate-free] hit the per-run page cap; remainder next run');
-        }
-      }
-      for (const e of due) {
-        try {
-          if (e.backendUserId && e.backend) {
-            await deleteSubscriptionEverywhere(ctx, {
-              backend: e.backend,
-              backendUserId: e.backendUserId,
-            });
+  handler: async (ctx, { limit }): Promise<{ deactivated: number }> =>
+    runWithCronOutcome(ctx, 'deactivate-idle-free', async () => {
+      const now = Date.now();
+      const pageSize = limit ?? 100;
+      const tierIds = await ctx.runQuery(internal.lifecycle.defaultFreeTierIds, {});
+      let deactivated = 0;
+      for (const tierId of tierIds) {
+        // Collect the due set read-only across pages (cursor stable — no mutation
+        // between pages), then apply.
+        const due: {
+          userId: Id<'users'>;
+          backend: 'remnawave' | 'outline' | null;
+          backendUserId: string | null;
+        }[] = [];
+        let cursor: string | null = null;
+        for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
+          // Annotate to break the same-module self-referential inference.
+          const res: {
+            idle: {
+              userId: Id<'users'>;
+              backend: 'remnawave' | 'outline' | null;
+              backendUserId: string | null;
+            }[];
+            isDone: boolean;
+            continueCursor: string;
+          } = await ctx.runQuery(internal.lifecycle.findIdleFree, {
+            tierId,
+            now,
+            cursor,
+            numItems: pageSize,
+          });
+          due.push(...res.idle);
+          if (res.isDone) break;
+          cursor = res.continueCursor;
+          if (page === SWEEP_MAX_PAGES - 1) {
+            console.warn('[deactivate-free] hit the per-run page cap; remainder next run');
           }
-          await ctx.runMutation(internal.lifecycle.markUserInactive, { userId: e.userId });
-          deactivated++;
-        } catch {
-          /* best-effort; teardown failure leaves the user active for the next run */
+        }
+        for (const e of due) {
+          try {
+            if (e.backendUserId && e.backend) {
+              await deleteSubscriptionEverywhere(ctx, {
+                backend: e.backend,
+                backendUserId: e.backendUserId,
+              });
+            }
+            await ctx.runMutation(internal.lifecycle.markUserInactive, { userId: e.userId });
+            deactivated++;
+          } catch {
+            /* best-effort; teardown failure leaves the user active for the next run */
+          }
         }
       }
-    }
-    return { deactivated };
-  },
+      return { deactivated };
+    }),
 });
 
 /** One page of long-`inactive` free users past the purge threshold. Delete-and-
@@ -918,19 +982,45 @@ export const findPurgeableInactive = internalQuery({
   },
 });
 
-/** Hard-delete a long-inactive free user's row + its subscription rows. Guarded
- *  to the `inactive` state so a user who returned between the query and now is
+/** Hard-delete a long-inactive free user's row + every row that references it
+ *  (Convex has no FK cascades): subscriptions, tier history, referrals on BOTH
+ *  sides, billing orders, passkey credentials, sessions. Guarded to the
+ *  `inactive` state so a user who returned between the query and now is
  *  spared. Only reached via the operator-run purge. */
 export const deleteInactiveUser = internalMutation({
   args: { userId: v.id('users') },
   handler: async (ctx, { userId }) => {
     const u = await ctx.db.get(userId);
     if (!u || u.status !== 'inactive') return null;
-    const subs = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect();
-    for (const s of subs) await ctx.db.delete(s._id);
+    const deleteByUser = async (
+      table:
+        | 'subscriptions'
+        | 'tierHistory'
+        | 'billingOrders'
+        | 'memberPasskeyCredentials'
+        | 'sessions',
+    ) => {
+      const rows = await ctx.db
+        .query(table)
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect();
+      for (const r of rows) await ctx.db.delete(r._id);
+    };
+    await deleteByUser('subscriptions');
+    await deleteByUser('tierHistory');
+    await deleteByUser('billingOrders');
+    await deleteByUser('memberPasskeyCredentials');
+    await deleteByUser('sessions');
+    // Referrals reference the user on BOTH sides (referee + referrer).
+    for (const index of ['by_referee', 'by_referrer'] as const) {
+      const rows = await ctx.db
+        .query('referrals')
+        .withIndex(index, (q) =>
+          q.eq(index === 'by_referee' ? 'refereeUserId' : 'referrerUserId', userId),
+        )
+        .collect();
+      for (const r of rows) await ctx.db.delete(r._id);
+    }
     await applyCountsDelta(ctx, {
       statusFrom: 'inactive',
       driftDelta: u.backendPushFailedAt != null ? -1 : 0,

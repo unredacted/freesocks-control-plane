@@ -26,11 +26,9 @@
   const chartSeries = $derived(impactChartSeries(history));
   const user = $derived(account.data?.user);
   const isDonor = $derived(!!user?.donorSince && (user?.donatedCentsTotal ?? 0) > 0);
-  // Personal display framing: the member's lifetime giving converted at the
-  // current rate - an approximation for copy, not an accounting figure.
-  const personalGb = $derived(
-    Math.round(((user?.donatedCentsTotal ?? 0) / 100) * (donation?.bonusGbPerUsd ?? 0) * 10) / 10,
-  );
+  // Personal display framing: the member's lifetime giving in GB, computed
+  // server-side at the current rate (the raw rate is never shipped publicly).
+  const personalGb = $derived(Math.round((user?.donatedGbTotal ?? 0) * 10) / 10);
   const fmtGb = (gb: number) => (Number.isInteger(gb) ? String(gb) : gb.toFixed(1));
 </script>
 

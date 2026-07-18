@@ -364,6 +364,28 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-a', serverId: null });
   });
 
+  test('MULTI-panel with zero attributable squads signals fail-loud (no dead keys)', async () => {
+    const t = convexTest(schema, modules);
+    await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
+    await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
+    await bindPool(t, 'evade', ['sq-a', 'sq-b']);
+    // No stats rows: the (squad, panel) pair can't be resolved, and an unpinned
+    // pick could mint a squad onto the wrong panel — a dead key. The caller
+    // (account.resolveIssueTarget) turns this flag into a 503 instead.
+    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade'));
+    expect(target).toEqual({ placement: null, serverId: null, unattributedMultiPanel: true });
+  });
+
+  test('multi-panel WITH attribution still pairs normally', async () => {
+    const t = convexTest(schema, modules);
+    const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
+    await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
+    await bindPool(t, 'evade', ['sq-a']);
+    await seedNode(t, mci, { placement: 'sq-a', usersOnline: 3 });
+    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade'));
+    expect(target).toEqual({ placement: 'sq-a', serverId: mci });
+  });
+
   test('no pool bound anywhere: null placement (caller audits the squad-less key)', async () => {
     const t = convexTest(schema, modules);
     await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
