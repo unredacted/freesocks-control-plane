@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**187 of 649 strings are missing** (the app currently shows English for
+**0 of 693 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -23,16 +23,16 @@ review.
   ⚠️ MISSING have no translation yet.
 
 
-## `faq` — The landing-page FAQ (questions + answers). *(6 missing)*
+## `faq` — The landing-page FAQ (questions + answers).
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `faq.title` | Frequently asked questions | 常见问题解答 |
 | `faq.subtitle` | Answers to common questions. | 基本问题已解答。还有疑问？请使用您的支持 ID 联系我们。 |
-| `faq.tabGeneral` | General | ⚠️ **MISSING** |
-| `faq.tabThreat` | What we protect you from | ⚠️ **MISSING** |
-| `faq.contactPrefix` | For anything else, email | ⚠️ **MISSING** |
-| `faq.contactSuffix` | and include your Support ID. | ⚠️ **MISSING** |
+| `faq.tabGeneral` | General | 常规 |
+| `faq.tabThreat` | What we protect you from | 我们为你防范什么 |
+| `faq.contactPrefix` | For anything else, email | 如有其他问题，请发送邮件至 |
+| `faq.contactSuffix` | and include your Support ID. | ，并附上你的支持 ID。 |
 | `faq.q1.question` | What is FreeSocks? | FreeSocks是什么？ |
 | `faq.q1.answer` | A free VPN service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | 这是一个免费代理服务，帮助身处网络审查严格地区的人们访问开放的互联网。它由美国非营利组织 Unredacted（501(c)(3)）运营。 |
 | `faq.q2.question` | Is it really free? | 真的免费吗？ |
@@ -51,28 +51,28 @@ review.
 | `faq.q8.answer` | Yes - on your account page use "Buy codes to share" to purchase membership codes you can give to friends or family. Each one works on any account and doesn't affect yours. | 是的--在您的账户页面，使用“购买分享码”功能购买会员码，您可以将这些会员码赠送给朋友或家人。每个会员码都适用于任何账户，不会影响您的账户。 |
 | `faq.q9.question` | Can I pay anonymously? | 我可以匿名支付吗？ |
 | `faq.q9.answer` | Yes. You can pay with cryptocurrency - Bitcoin, or Monero and Zcash for the most privacy - with no account, email, or card. Your membership activates automatically once the payment confirms. | 是的。您可以使用加密货币支付--比特币，或使用门罗币 (Monero) 或 Zcash 以最大程度保护您的隐私--无需注册账户、邮箱或银行卡。付款确认后，您的会员资格将自动激活。 |
-| `faq.q10.question` | Do you own your servers, or rent them? | ⚠️ **MISSING** |
-| `faq.q10.answer` | We own our hardware and run it ourselves. Plenty of VPN companies rent theirs from datacenters or cloud hosts, which puts the machine your traffic passes through in someone else's hands - they can be pressured to hand it over, or just quietly copy what is on it. That is a line we are not willing to cross, so we buy and run our own equipment instead. It costs more and we grow slower because of it, but it is the only way the privacy promises on this page actually mean anything. | ⚠️ **MISSING** |
+| `faq.q10.question` | Do you own your servers, or rent them? | 你们的服务器是自有的还是租用的？ |
+| `faq.q10.answer` | We own our hardware and run it ourselves. Plenty of VPN companies rent theirs from datacenters or cloud hosts, which puts the machine your traffic passes through in someone else's hands - they can be pressured to hand it over, or just quietly copy what is on it. That is a line we are not willing to cross, so we buy and run our own equipment instead. It costs more and we grow slower because of it, but it is the only way the privacy promises on this page actually mean anything. | 我们的硬件为自有并自行运营。许多 VPN 公司从数据中心或云服务商租用服务器，这意味着你流量经过的机器掌握在他人手中--他们可能被迫交出机器，或悄悄复制上面的内容。这是我们不愿跨越的底线，所以我们自己购买并运营设备。这成本更高、发展更慢，但只有这样，本页上的隐私承诺才有真正的意义。 |
 
-## `threat` — Miscellaneous strings. *(15 missing)*
+## `threat` — Miscellaneous strings.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
-| `threat.subtitle` | An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are. | ⚠️ **MISSING** |
-| `threat.q1.question` | What does FreeSocks protect me from? | ⚠️ **MISSING** |
-| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted VPN connection, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | ⚠️ **MISSING** |
-| `threat.q2.question` | What does FreeSocks NOT protect me from? | ⚠️ **MISSING** |
-| `threat.q2.answer` | It does not make you anonymous to sites you sign in to: if you log in to an account, that site knows who you are. It cannot protect a device that is already compromised (spyware, a managed work profile, someone with physical access). And a powerful adversary that can watch traffic at many points on the internet may still correlate patterns. If your safety depends on strong anonymity, use Tor and follow specialist guidance for your situation. | ⚠️ **MISSING** |
-| `threat.q3.question` | Can FreeSocks see my traffic? | ⚠️ **MISSING** |
-| `threat.q3.answer` | Your traffic exits through our servers, so treat us like any exit: sites you use over HTTPS (almost all of the modern web) stay encrypted end to end and we cannot read their contents. We configure our servers to keep no connection logs, no visited-site logs, and no source IPs, and the control plane never stores your IP address at all. | ⚠️ **MISSING** |
-| `threat.q4.question` | What happens if a FreeSocks server is seized or compromised? | ⚠️ **MISSING** |
-| `threat.q4.answer` | There is nothing identifying on it. Servers hold no names, emails, IPs, or traffic history, because we never collect those in the first place. Access keys can be revoked and reissued quickly, and we can rotate infrastructure without losing accounts. | ⚠️ **MISSING** |
-| `threat.q5.question` | Can my government or ISP tell that I am using FreeSocks? | ⚠️ **MISSING** |
-| `threat.q5.answer` | Sometimes censors can detect that circumvention traffic is in use even when they cannot read it. Our transports are designed to look like ordinary encrypted web traffic, and Internet Freedom Mode routes through infrastructure that is expensive to block. Still, whether use is detectable, and what the consequences are, varies by country. Weigh your local risk. | ⚠️ **MISSING** |
-| `threat.q6.question` | Why should I believe any of this? | ⚠️ **MISSING** |
-| `threat.q6.answer` | The control plane is open source, so anyone can read exactly what it stores and check that there is no place a name, email, or IP address could even go. Claims that depend on server configuration (like disabled logging) are documented and enforced by the same code. You still have to trust the operator for the parts you cannot see, as with every VPN; our approach is to minimize what there is to trust. | ⚠️ **MISSING** |
-| `threat.q7.question` | Do payments link my identity to my browsing? | ⚠️ **MISSING** |
-| `threat.q7.answer` | Membership is optional, and payment is handled by outside processors: we never store the payer's name, email, or address, and an order is tied to your account only through an opaque reference. Cryptocurrency options (including Monero) exist for people who do not want a card trail at all. | ⚠️ **MISSING** |
+| `threat.subtitle` | An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are. | 诚实地说明这项服务能做什么、不能做什么。夸大承诺的安全工具会害人，所以这里把界限一一讲清楚。 |
+| `threat.q1.question` | What does FreeSocks protect me from? | FreeSocks 能保护我免受什么？ |
+| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted VPN connection, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | FreeSocks 通过加密的 VPN 连接传输你的流量，因此你的网络运营商、移动运营商、学校或公司网络无法看到你访问了哪些网站，也无法封锁它们。它的用途是绕过审查，并防止你所在的网络监视你的行为。 |
+| `threat.q2.question` | What does FreeSocks NOT protect me from? | FreeSocks 不能保护我免受什么？ |
+| `threat.q2.answer` | It does not make you anonymous to sites you sign in to: if you log in to an account, that site knows who you are. It cannot protect a device that is already compromised (spyware, a managed work profile, someone with physical access). And a powerful adversary that can watch traffic at many points on the internet may still correlate patterns. If your safety depends on strong anonymity, use Tor and follow specialist guidance for your situation. | 它无法让你对已登录的网站匿名：只要你登录了某个账户，该网站就知道你是谁。它也无法保护已经被入侵的设备（间谍软件、受管理的工作配置、能物理接触你设备的人）。此外，能在互联网多个节点观察流量的强大对手，仍可能通过流量模式进行关联分析。如果你的安全依赖强匿名，请使用 Tor，并遵循针对你情况的专业指导。 |
+| `threat.q3.question` | Can FreeSocks see my traffic? | FreeSocks 能看到我的流量吗？ |
+| `threat.q3.answer` | Your traffic exits through our servers, so treat us like any exit: sites you use over HTTPS (almost all of the modern web) stay encrypted end to end and we cannot read their contents. We configure our servers to keep no connection logs, no visited-site logs, and no source IPs, and the control plane never stores your IP address at all. | 你的流量从我们的服务器出口，所以请把我们当作任何出口节点看待：你通过 HTTPS 访问的网站（几乎是现代网络的全部）全程端到端加密，我们无法读取其内容。我们的服务器配置为不保留连接日志、不保留访问网站日志、不记录源 IP，控制面也从不存储你的 IP 地址。 |
+| `threat.q4.question` | What happens if a FreeSocks server is seized or compromised? | 如果 FreeSocks 服务器被查扣或入侵，会发生什么？ |
+| `threat.q4.answer` | There is nothing identifying on it. Servers hold no names, emails, IPs, or traffic history, because we never collect those in the first place. Access keys can be revoked and reissued quickly, and we can rotate infrastructure without losing accounts. | 上面没有任何能识别你身份的信息。服务器不保存姓名、邮箱、IP 或流量历史，因为我们从一开始就不收集这些。访问密钥可以被快速吊销并重新签发，我们也可以更换基础设施而不丢失账户。 |
+| `threat.q5.question` | Can my government or ISP tell that I am using FreeSocks? | 我的政府或运营商能知道我在用 FreeSocks 吗？ |
+| `threat.q5.answer` | Sometimes censors can detect that circumvention traffic is in use even when they cannot read it. Our transports are designed to look like ordinary encrypted web traffic, and Internet Freedom Mode routes through infrastructure that is expensive to block. Still, whether use is detectable, and what the consequences are, varies by country. Weigh your local risk. | 有时审查者即使读不到内容，也能检测出翻墙流量的存在。我们的传输协议在设计上模仿普通的加密网页流量，互联网自由模式还会经过封锁代价高昂的基础设施。不过，使用是否可被检测、以及后果如何，因国家而异。请权衡你当地的风险。 |
+| `threat.q6.question` | Why should I believe any of this? | 我为什么应该相信这些说法？ |
+| `threat.q6.answer` | The control plane is open source, so anyone can read exactly what it stores and check that there is no place a name, email, or IP address could even go. Claims that depend on server configuration (like disabled logging) are documented and enforced by the same code. You still have to trust the operator for the parts you cannot see, as with every VPN; our approach is to minimize what there is to trust. | 控制面是开源的，任何人都可以查看它到底存储了什么，并确认其中根本没有能存放姓名、邮箱或 IP 地址的地方。依赖服务器配置的声明（比如禁用日志）都有文档记录，并由同一份代码强制执行。对于你看不到的部分，你仍然需要信任运营者--所有 VPN 都是如此；我们的做法是把需要信任的东西减到最少。 |
+| `threat.q7.question` | Do payments link my identity to my browsing? | 付款会把我的身份和浏览记录关联起来吗？ |
+| `threat.q7.answer` | Membership is optional, and payment is handled by outside processors: we never store the payer's name, email, or address, and an order is tied to your account only through an opaque reference. Cryptocurrency options (including Monero) exist for people who do not want a card trail at all. | 会员是可选项，支付由外部支付处理商经手：我们从不存储付款人的姓名、邮箱或地址，订单与你的账户之间只通过一个无含义的引用关联。加密货币选项（包括门罗币）适合不想留下任何银行卡痕迹的人。 |
 
 ## `common` — Shared buttons/labels (copy, download, close, working…) used across every page.
 
@@ -92,16 +92,16 @@ review.
 | `common.deviceCount [countPlural=one]` | 1 device | 1 台设备 |
 | `common.deviceCount [countPlural=other]` | {count} devices | {count} 台设备 |
 
-## `nav` — The site header: navigation buttons, menu, language/theme controls. *(3 missing)*
+## `nav` — The site header: navigation buttons, menu, language/theme controls.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `nav.getAccount` | Get a free account | 获取免费账户 |
 | `nav.signIn` | Sign in | 登录 |
 | `nav.account` | My account | 我的账户 |
-| `nav.menu` | Menu | ⚠️ **MISSING** |
-| `nav.theme` | Theme | ⚠️ **MISSING** |
-| `nav.home` | FreeSocks home | ⚠️ **MISSING** |
+| `nav.menu` | Menu | 菜单 |
+| `nav.theme` | Theme | 主题 |
+| `nav.home` | FreeSocks home | FreeSocks 首页 |
 
 ## `captcha` — The proof-of-work human check widget states.
 
@@ -117,7 +117,7 @@ review.
 | `captcha.failedTip2` | Try a different network - or a VPN if sites are blocked where you are | 换一个网络试试 - 如果你所在地区的网站被屏蔽，可使用 VPN/代理 |
 | `captcha.failedTip3` | Still stuck? Try a private/incognito window or turn off browser extensions | 仍然无法通过？试试隐私/无痕窗口，或关闭浏览器扩展 |
 
-## `reveal` — The save-your-account-number modal (the 32-digit sign-in number is shown ONCE; users must download it and paste it back to verify). The single most safety-critical copy in the product. *(8 missing)*
+## `reveal` — The save-your-account-number modal (the 32-digit sign-in number is shown ONCE; users must download it and paste it back to verify). The single most safety-critical copy in the product.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -125,28 +125,28 @@ review.
 | `reveal.subtitle` | This 32-digit number is the ONLY way to sign in again. There is no email or password to recover it. If you lose it, your account is gone for good. | 这个 32 位数字是再次登录的唯一方式。没有电子邮件或密码可用于找回。一旦丢失，你的账户将永久无法恢复。 |
 | `reveal.cannotRecover` | We cannot recover it for you - not even support can. | 我们无法为你找回--客服也不行。 |
 | `reveal.saveHint` | Save it in a password manager, or write it down somewhere safe and private. | 把它保存到密码管理器，或写在安全私密的地方。 |
-| `reveal.downloadRequired` | Download your account number to continue. Keep the file somewhere safe. | ⚠️ **MISSING** |
-| `reveal.continue` | Continue | ⚠️ **MISSING** |
-| `reveal.verifyTitle` | Confirm you saved it | ⚠️ **MISSING** |
-| `reveal.verifySubtitle` | Your account number is now hidden. Enter or paste it from the copy you just saved to confirm you can sign in later. | ⚠️ **MISSING** |
-| `reveal.verifyPlaceholder` | Paste your 32-digit account number | ⚠️ **MISSING** |
-| `reveal.verifyMismatch` | That doesn't match your account number. Check the copy you saved, or go back to see it again. | ⚠️ **MISSING** |
-| `reveal.back` | Back | ⚠️ **MISSING** |
+| `reveal.downloadRequired` | Download your account number to continue. Keep the file somewhere safe. | 请先下载你的账户号码才能继续。请将文件保存在安全的地方。 |
+| `reveal.continue` | Continue | 继续 |
+| `reveal.verifyTitle` | Confirm you saved it | 确认你已保存 |
+| `reveal.verifySubtitle` | Your account number is now hidden. Enter or paste it from the copy you just saved to confirm you can sign in later. | 你的账户号码现已隐藏。请从你刚保存的副本中输入或粘贴它，以确认你之后能够登录。 |
+| `reveal.verifyPlaceholder` | Paste your 32-digit account number | 粘贴你的 32 位账户号码 |
+| `reveal.verifyMismatch` | That doesn't match your account number. Check the copy you saved, or go back to see it again. | 与你的账户号码不符。请检查你保存的副本，或返回再次查看。 |
+| `reveal.back` | Back | 返回 |
 | `reveal.done` | I've saved it | 我已保存 |
-| `reveal.savedConfirmed` | Account number saved and verified | ⚠️ **MISSING** |
+| `reveal.savedConfirmed` | Account number saved and verified | 账户号码已保存并验证 |
 | `reveal.downloadFilename` | freesocks-account-number.txt | freesocks-account-number.txt |
 | `reveal.leaveWarning` | Your account number is still on screen. If you leave now without saving it, you will not be able to sign in again. | 你的账户号码仍显示在屏幕上。如果现在未保存就离开，你将无法再次登录。 |
 
-## `support` — The support-ID line (a non-secret handle for contacting support). *(2 missing)*
+## `support` — The support-ID line (a non-secret handle for contacting support).
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `support.label` | Support ID | 支持 ID |
 | `support.hint` | Share this if you contact us. It is NOT your sign-in number and grants no access. | 联系我们时请提供它。它不是你的登录号码，也不授予任何访问权限。 |
-| `support.emailUs` | Email us: | ⚠️ **MISSING** |
-| `support.getAccountLine` | Questions or problems? Email us at | ⚠️ **MISSING** |
+| `support.emailUs` | Email us: | 发送邮件给我们： |
+| `support.getAccountLine` | Questions or problems? Email us at | 有疑问或遇到问题？请发送邮件至 |
 
-## `login` — The sign-in page (account number + optional passkey). *(1 missing)*
+## `login` — The sign-in page (account number + optional passkey).
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -163,34 +163,34 @@ review.
 | `login.success` | Signed in | 已登录 |
 | `login.sessionExpired` | Please sign in again - your session may have ended. | 请重新登录 - 你的会话可能已结束。 |
 | `login.digitProgress` | {count} of {total} digits entered | {count}位数，共{total}位数字 |
-| `login.or` | or | ⚠️ **MISSING** |
+| `login.or` | or | 或 |
 
-## `passkey` — Optional passkey (Face ID / fingerprint) sign-in management. *(20 missing)*
+## `passkey` — Optional passkey (Face ID / fingerprint) sign-in management.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
-| `passkey.title` | Passkeys | ⚠️ **MISSING** |
-| `passkey.desc` | Sign in with Face ID, Touch ID, a security key, or your password manager - no account number to type. | ⚠️ **MISSING** |
-| `passkey.warning` | Heads-up: a passkey saved on your phone or in your browser may sync to your Apple or Google account, which can link this anonymous account to that identity. Use a hardware security key, or skip passkeys, if that matters to you. | ⚠️ **MISSING** |
-| `passkey.unsupported` | This device or browser doesn't support passkeys. | ⚠️ **MISSING** |
-| `passkey.none` | No passkeys yet. Your account number still signs you in. | ⚠️ **MISSING** |
-| `passkey.add` | Add a passkey | ⚠️ **MISSING** |
-| `passkey.adding` | Adding… | ⚠️ **MISSING** |
-| `passkey.added` | Passkey added | ⚠️ **MISSING** |
-| `passkey.addFailed` | Couldn't add the passkey | ⚠️ **MISSING** |
-| `passkey.remove` | Remove | ⚠️ **MISSING** |
-| `passkey.removed` | Passkey removed | ⚠️ **MISSING** |
-| `passkey.removeFailed` | Couldn't remove the passkey | ⚠️ **MISSING** |
-| `passkey.deviceLabelLabel` | Device name (optional) | ⚠️ **MISSING** |
-| `passkey.deviceLabelPlaceholder` | e.g. My phone | ⚠️ **MISSING** |
-| `passkey.addedOn` | Added {date} | ⚠️ **MISSING** |
-| `passkey.lastUsed` | last used {date} | ⚠️ **MISSING** |
-| `passkey.signIn` | Sign in with a passkey | ⚠️ **MISSING** |
-| `passkey.signingIn` | Authenticating… | ⚠️ **MISSING** |
-| `passkey.signInFailed` | Passkey sign-in failed | ⚠️ **MISSING** |
-| `passkey.notNow` | Not now | ⚠️ **MISSING** |
+| `passkey.title` | Passkeys | 通行密钥 |
+| `passkey.desc` | Sign in with Face ID, Touch ID, a security key, or your password manager - no account number to type. | 使用 Face ID、Touch ID、安全密钥或密码管理器登录--无需输入账户号码。 |
+| `passkey.warning` | Heads-up: a passkey saved on your phone or in your browser may sync to your Apple or Google account, which can link this anonymous account to that identity. Use a hardware security key, or skip passkeys, if that matters to you. | 请注意：保存在手机或浏览器中的通行密钥可能会同步到你的 Apple 或 Google 账户，从而把这个匿名账户与该身份关联起来。如果你在意这一点，请使用硬件安全密钥，或不使用通行密钥。 |
+| `passkey.unsupported` | This device or browser doesn't support passkeys. | 此设备或浏览器不支持通行密钥。 |
+| `passkey.none` | No passkeys yet. Your account number still signs you in. | 还没有通行密钥。你的账户号码仍可用于登录。 |
+| `passkey.add` | Add a passkey | 添加通行密钥 |
+| `passkey.adding` | Adding… | 添加中… |
+| `passkey.added` | Passkey added | 通行密钥已添加 |
+| `passkey.addFailed` | Couldn't add the passkey | 无法添加通行密钥 |
+| `passkey.remove` | Remove | 移除 |
+| `passkey.removed` | Passkey removed | 通行密钥已移除 |
+| `passkey.removeFailed` | Couldn't remove the passkey | 无法移除通行密钥 |
+| `passkey.deviceLabelLabel` | Device name (optional) | 设备名称（可选） |
+| `passkey.deviceLabelPlaceholder` | e.g. My phone | 例如：我的手机 |
+| `passkey.addedOn` | Added {date} | 添加于 {date} |
+| `passkey.lastUsed` | last used {date} | 最近使用 {date} |
+| `passkey.signIn` | Sign in with a passkey | 使用通行密钥登录 |
+| `passkey.signingIn` | Authenticating… | 验证中… |
+| `passkey.signInFailed` | Passkey sign-in failed | 通行密钥登录失败 |
+| `passkey.notNow` | Not now | 暂不 |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(1 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -212,10 +212,10 @@ review.
 | `account.switchTo` | Switch to {label} | 切换到 {label} |
 | `account.devicesTitle` | Connected devices | 已连接设备 |
 | `account.lastSeen` | Last seen {date} | 最近活跃 {date} |
-| `account.noSubTitle` | No subscription yet | 还没有订阅 |
-| `account.noSubBody` | Create your first subscription to get a URL you can use in any compatible VPN client. | 创建你的第一个订阅，获得可在任何兼容 VPN 客户端中使用的链接。 |
-| `account.createSub` | Create subscription | 创建订阅 |
-| `account.creating` | Creating… | 创建中… |
+| `account.noSubTitle` | No key yet | 还没有订阅 |
+| `account.noSubBody` | Create your key to get a link you can use in any compatible VPN app. | 创建你的第一个订阅，获得可在任何兼容 VPN 客户端中使用的链接。 |
+| `account.createSub` | Get my key | 创建订阅 |
+| `account.creating` | Creating your key… | 创建中… |
 | `account.rotateTitle` | Change your account number? | 更换账户号码？ |
 | `account.rotateBody` | A new 32-digit number is generated and shown once. Your current number stops working immediately. Anyone who has it loses access. Do this if your number may have leaked. | 将生成一个新的 32 位号码，并且只显示一次。当前号码立即失效，持有它的任何人都会失去访问权限。如果你的号码可能已泄露，请执行此操作。 |
 | `account.rotateConfirm` | Yes, change it | 是，更换 |
@@ -226,11 +226,10 @@ review.
 | `account.memberActiveExpiry` | Active until {date} | 有效期至 {date} |
 | `account.membershipNudge.title` | Go unlimited with a membership | 升级会员，畅享无限 |
 | `account.membershipNudge.body` | Unlimited bandwidth and devices. | 无限流量与设备。 |
-| `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | ⚠️ **MISSING** |
+| `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | 无限带宽。 |
 | `account.membershipNudge.cta` | View membership | 查看会员 |
 | `account.tab.connection` | Connection | 连接 |
 | `account.tab.membership` | Membership | 会员 |
-| `account.tab.codes` | Codes & gifts | 兑换码与礼物 |
 | `account.tab.security` | Security | 安全 |
 | `account.refreshing` | Refreshing… | 刷新中… |
 | `account.regenSuccessTitle` | New subscription URL generated | 已生成新的订阅链接 |
@@ -263,17 +262,17 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | 该插槽空闲。该设备将失去访问权限，直到重新导入您的订阅。 |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | 无法撤销该设备 |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(8 missing)*
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
-| `hero.titleDefault` | Your subscription | 你的订阅 |
-| `hero.eyebrowAccessKey` | Your access key | 你的访问密钥 |
-| `hero.urlLabelSubscription` | Subscription URL | 订阅链接 |
+| `hero.titleDefault` | Your key | 你的订阅 |
+| `hero.eyebrowAccessKey` | FreeSocks Access Pass | 你的访问密钥 |
+| `hero.urlLabelSubscription` | Your link | 订阅链接 |
 | `hero.urlLabelAccessKey` | Access key | 访问密钥 |
 | `hero.tierLine` | Plan {tier} | 套餐 {tier} |
 | `hero.viaLine` | via {backend} | 通过 {backend} |
-| `hero.copyUrl` | Copy URL | 复制链接 |
+| `hero.copyUrl` | Copy link | 复制链接 |
 | `hero.copiedShort` | Copied | 已复制 |
 | `hero.qrShow` | QR | 二维码 |
 | `hero.qrHide` | Hide | 隐藏 |
@@ -285,15 +284,15 @@ review.
 | `hero.importScan` | Scan to add to {app} | 扫描以添加到 {app} |
 | `hero.importOpenHint` | Tap to import on this device, or scan the code from your phone. | 点按可在本设备导入，或用手机扫描二维码。 |
 | `hero.scanFallback` | Scan the fallback on another device | 用另一台设备扫描备用链接 |
-| `hero.fallbackLabel` | Fallback URL | 备用链接 |
-| `hero.fallbackHint` | Use this if the main URL gets blocked | 主链接被封锁时使用 |
-| `hero.fallbackQrAria` | Show fallback URL QR code | 显示备用链接二维码 |
+| `hero.fallbackLabel` | Fallback link | 备用链接 |
+| `hero.fallbackHint` | Use this if the main link gets blocked | 主链接被封锁时使用 |
+| `hero.fallbackQrAria` | Show fallback link QR code | 显示备用链接二维码 |
 | `hero.downloaded` | Downloaded {filename} | 已下载 {filename} |
 | `hero.traffic` | Traffic | 流量 |
 | `hero.unlimited` | Unlimited | 不限量 |
-| `hero.configBelowNote` | Your full configuration is below - add the servers by hand. For privacy, the auto-updating subscription link isn't shown by default (your app would fetch it through a CDN). | ⚠️ **MISSING** |
-| `hero.showUrlAnyway` | Show the subscription link anyway | ⚠️ **MISSING** |
-| `hero.urlDangerBody` | This link works in any app, but the app then downloads your configuration through a third-party CDN in plain text - the CDN operator can see your server details and that you use FreeSocks. That is exactly what this focus avoids. Use it only if your app cannot import the configuration below. | ⚠️ **MISSING** |
+| `hero.configBelowNote` | Your full configuration is below - add the servers by hand. For privacy, the auto-updating subscription link isn't shown by default (your app would fetch it through a CDN). | 你的完整配置在下方--请手动添加服务器。出于隐私考虑，默认不显示自动更新的订阅链接（你的应用会经过 CDN 获取它）。 |
+| `hero.showUrlAnyway` | Show the subscription link anyway | 仍要显示订阅链接 |
+| `hero.urlDangerBody` | This link works in any app, but the app then downloads your configuration through a third-party CDN in plain text - the CDN operator can see your server details and that you use FreeSocks. That is exactly what this focus avoids. Use it only if your app cannot import the configuration below. | 此链接在任何应用中都可用，但应用随后会通过第三方 CDN 以明文下载你的配置--CDN 运营者能看到你的服务器详情，以及你在使用 FreeSocks。这正是此模式要避免的。只有当你的应用无法导入下方配置时才使用它。 |
 | `hero.usedSoFar` | {amount} used so far | 已使用 {amount} |
 | `hero.leftThisPeriod` | {amount} left this period. | 本周期剩余 {amount}。 |
 | `hero.nearlyOut` | Nearly out, only {amount} left this period. | 即将用尽--本周期仅剩 {amount}。 |
@@ -304,25 +303,26 @@ review.
 | `hero.daysRemaining [countPlural=other]` | {count} days remaining | 剩余 {count} 天 |
 | `hero.expiredDaysAgo [countPlural=one]` | Expired 1 day ago | 已过期 1 天 |
 | `hero.expiredDaysAgo [countPlural=other]` | Expired {count} days ago | 已过期 {count} 天 |
-| `hero.nodeOnline` | Node online | ⚠️ **MISSING** |
-| `hero.nodeOffline` | Node offline | ⚠️ **MISSING** |
-| `hero.nodeUnknown` | Node status unknown | ⚠️ **MISSING** |
-| `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | ⚠️ **MISSING** |
-| `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | ⚠️ **MISSING** |
+| `hero.nodeOnline` | Node online | 节点在线 |
+| `hero.nodeOffline` | Node offline | 节点离线 |
+| `hero.nodeUnknown` | Node status unknown | 节点状态未知 |
+| `hero.nodeStatusLink` | Network status | 网络状态 |
+| `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | 你配置背后的服务器运行正常。如果仍无法连接，很可能是你的网络或运营商在拦截--试试其他连接模式或位置。 |
+| `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | 你配置背后的服务器当前离线。这是我们这边的问题，不是你的网络。请几分钟后重试，或创建一个新配置（可选择其他位置）。 |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | 您本周期的数据流量已用完。流量将自动重置，或者您可以升级以获得更多流量。 |
 | `hero.keyExpired` | This key has expired. Renew your membership or create a new key to reconnect. | 此密钥已过期。请续订会员资格或创建新密钥以重新连接。 |
 | `hero.keyDisabled` | This key is currently disabled. If your membership lapsed, renew it; otherwise contact support with your support ID. | 此密钥目前已禁用。如果您的会员资格已过期，请续订；否则，请使用您的支持 ID 联系支持团队。 |
 | `hero.resetsInDays [countPlural=one]` | Resets in 1 day | 1天内重置 |
 | `hero.resetsInDays [countPlural=other]` | Resets in {count} days | 重置时间为{count}天 |
 
-## `location` — Miscellaneous strings. *(4 missing)*
+## `location` — Miscellaneous strings.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
-| `location.pickerLabel` | Server location | ⚠️ **MISSING** |
-| `location.auto` | Automatic (least busy) | ⚠️ **MISSING** |
-| `location.offline` | offline | ⚠️ **MISSING** |
-| `location.pickerHint` | Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network. | ⚠️ **MISSING** |
+| `location.pickerLabel` | Server location | 服务器位置 |
+| `location.auto` | Automatic (least busy) | 自动（最不繁忙） |
+| `location.offline` | offline | 离线 |
+| `location.pickerHint` | Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network. | 你的配置所在的服务器位置。“自动”会选择最不繁忙的位置；如果某个位置在你的网络上效果更好，也可以自行选择。 |
 
 ## `usage` — The 30-day usage trend under the traffic stats.
 
@@ -361,13 +361,16 @@ review.
 | `switch.confirm` | Switch to {to} | 切换到 {to} |
 | `switch.working` | Switching… | 切换中… |
 
-## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2). *(4 missing)*
+## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2).
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `get.badge` | Free account | 免费账户 |
 | `get.title` | Get a FreeSocks account | 获取 FreeSocks 账户 |
-| `get.introTwoSteps` | Two quick steps: solve the human-check to create a free account, then create your subscription. | 两个快速步骤：完成真人验证以创建免费账户，然后创建订阅。 |
+| `get.progressAria` | Sign-up progress | 注册进度 |
+| `get.progress.step1` | Create account | 创建账户 |
+| `get.progress.step2` | Save your number | 保存你的号码 |
+| `get.progress.step3` | Get connected | 完成连接 |
 | `get.step1Title` | Create your account | 创建你的账户 |
 | `get.chooseBackend` | Choose a connection type | 选择服务器类型 |
 | `get.backendAria` | Connection type | 服务器类型 |
@@ -375,26 +378,21 @@ review.
 | `get.backendShadowsocks` | Shadowsocks via Outline | 通过 Outline 的 Shadowsocks |
 | `get.createAccount` | Create my account | 创建我的账户 |
 | `get.freeAccountNote` | Free accounts are valid for {days} days and limited to {devices}. No email or password. | 免费账户有效期 {days} 天，限 {devices}。无需电子邮件或密码。 |
-| `get.freeAccountNoteNoDevices` | Free accounts are valid for {days} days. No email or password. | ⚠️ **MISSING** |
-| `get.accountReady` | Your account is ready | 你的账户已就绪。 |
-| `get.nextStepHint` | One step left - your account can't connect to anything until you create your subscription. | ⚠️ **MISSING** |
-| `get.nextStepCta` | Next: create your subscription | ⚠️ **MISSING** |
-| `get.nextStepBadge` | Next step | ⚠️ **MISSING** |
-| `get.step2Title` | Create your subscription | 创建你的订阅 |
-| `get.step2Intro` | Create a subscription to get a URL you can paste into any compatible VPN client. | 创建代理订阅，获得可粘贴到任何兼容 VPN 客户端的链接。 |
-| `get.manageHintPrefix` | Manage this subscription anytime from | 随时管理此订阅，前往 |
+| `get.freeAccountNoteNoDevices` | Free accounts are valid for {days} days. No email or password. | 免费账户有效期 {days} 天。无需电子邮件或密码。 |
+| `get.step3Title` | Get your key | 获取你的密钥 |
+| `get.step3Intro` | Your key is what connects your app to the VPN. Create it, then add it to your app. | 密钥是让你的应用连接到 VPN 的凭证。创建它，然后添加到你的应用中。 |
+| `get.manageHintPrefix` | Manage your key anytime from | 随时管理此订阅，前往 |
 | `get.manageLinkLabel` | your account | 你的账户 |
-| `get.subErrorSafePrefix` | Your account is safe. You can create the subscription later from | 你的账户是安全的。稍后可以创建订阅，前往 |
+| `get.subErrorSafePrefix` | Your account is safe. You can create your key later from | 你的账户是安全的。稍后可以创建订阅，前往 |
 | `get.subErrorSafeSuffix` | once a server is available. | 等服务器可用时。 |
-| `get.createSubToastTitle` | Subscription created | 订阅已创建 |
-| `get.createSubToastBody` | Copy the URL into your VPN client, or scan the QR code. | 将链接复制到你的 VPN 客户端，或扫描二维码。 |
+| `get.createSubToastTitle` | Your key is ready | 订阅已创建 |
+| `get.createSubToastBody` | Copy the link into your VPN app, or scan the QR code. | 将链接复制到你的 VPN 客户端，或扫描二维码。 |
 | `get.createAccountFailedTitle` | Could not create account | 无法创建账户 |
-| `get.createSubFailedTitle` | Could not create subscription | 无法创建订阅 |
+| `get.createSubFailedTitle` | Could not create your key | 无法创建订阅 |
 | `get.haveAccountPrefix` | Already have an account? | 已有账户？ |
 | `get.lostNumberHint` | Lost your account number before saving it? You can switch to a new one - | 保存前丢失了账户号码？可以换一个新号码-- |
 | `get.lostNumberLinkLabel` | change it from your account page | 在账户页面更换 |
-| `get.upsellTitle` | Want unlimited? | 想要无限制？ |
-| `get.upsellBody` | Upgrade to a FreeSocks membership any time for unlimited bandwidth and devices. | 随时可升级到 FreeSocks 会员，享受无限流量与设备。 |
+| `get.redeemPrompt` | Have a gift code? Redeem it before creating your key. | 有礼品码？请在创建密钥前先兑换。 |
 | `get.redeemTitle` | Got a gift code? | 你有礼品码吗？ |
 | `get.redeemBody` | Redeem it now to upgrade your new account instantly. | 立即兑换，即可立即升级您的新账户。 |
 
@@ -409,51 +407,68 @@ review.
 | `tiers.mirrors` | Mirror URLs | 镜像链接 |
 | `tiers.upgradeCta` | Upgrade | 升级 |
 
-## `impact` — The donation-impact panel: bandwidth donated, free users helped, charts. *(16 missing)*
+## `impact` — The donation-impact panel: bandwidth donated, free users helped, charts.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `impact.title` | Donations support Unredacted | 捐款支持 Unredacted |
 | `impact.body` | Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site. | Unredacted 是美国 501(c)(3) 非营利组织，FreeSocks 是其运营的项目之一。捐款支持这项工作。详情请见 Unredacted 网站。 |
-| `impact.collectiveTitle` | Donation impact | ⚠️ **MISSING** |
-| `impact.collectiveBody` | Donations made through FreeSocks raise every free user's monthly bandwidth for the month they're given. This is what the community's donations are doing right now. | ⚠️ **MISSING** |
-| `impact.bonusThisMonth` | GB added this month | ⚠️ **MISSING** |
-| `impact.bonusThisMonthDetail` | on top of every free account's monthly allowance | ⚠️ **MISSING** |
-| `impact.usersHelped` | free accounts reached | ⚠️ **MISSING** |
-| `impact.usersHelpedDetail` | active free users whose allowance the bonus raises | ⚠️ **MISSING** |
-| `impact.historyTitle` | Bandwidth added per month | ⚠️ **MISSING** |
-| `impact.chartAria` | Bandwidth added to every free user by donations, month by month over the last {n} months | ⚠️ **MISSING** |
-| `impact.yourContribution` | Your contribution | ⚠️ **MISSING** |
-| `impact.yourGiven` | You've given {amount} | ⚠️ **MISSING** |
-| `impact.yourGb` | That's about {gb} GB of extra bandwidth for free users | ⚠️ **MISSING** |
-| `impact.yourCount [countPlural=one]` | across 1 donation | ⚠️ **MISSING** |
-| `impact.yourCount [countPlural=other]` | across {count} donations | ⚠️ **MISSING** |
-| `impact.empty` | No donations yet this month - the first one starts the counter. | ⚠️ **MISSING** |
-| `impact.externalNote` | This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here. | ⚠️ **MISSING** |
-| `impact.aboutUnredacted` | About Unredacted | ⚠️ **MISSING** |
+| `impact.collectiveTitle` | Donation impact | 捐款成效 |
+| `impact.collectiveBody` | Donations made through FreeSocks raise every free user's monthly bandwidth for the month they're given. This is what the community's donations are doing right now. | 通过 FreeSocks 捐出的每一笔捐款，都会在其捐出的当月提升每位免费用户的每月带宽。以下是社区捐款当下正在产生的效果。 |
+| `impact.bonusThisMonth` | GB added this month | 本月增加的 GB |
+| `impact.bonusThisMonthDetail` | on top of every free account's monthly allowance | 在每个免费账户每月额度之上额外增加 |
+| `impact.usersHelped` | free accounts reached | 惠及的免费账户 |
+| `impact.usersHelpedDetail` | active free users whose allowance the bonus raises | 额度被此奖励提升的活跃免费用户 |
+| `impact.historyTitle` | Bandwidth added per month | 每月增加的带宽 |
+| `impact.chartAria` | Bandwidth added to every free user by donations, month by month over the last {n} months | 过去 {n} 个月中，捐款为每位免费用户逐月增加的带宽 |
+| `impact.yourContribution` | Your contribution | 你的贡献 |
+| `impact.yourGiven` | You've given {amount} | 你已捐出 {amount} |
+| `impact.yourGb` | That's about {gb} GB of extra bandwidth for free users | 约为免费用户增加了 {gb} GB 带宽 |
+| `impact.yourCount [countPlural=one]` | across 1 donation | 共 1 笔捐款 |
+| `impact.yourCount [countPlural=other]` | across {count} donations | 共 {count} 笔捐款 |
+| `impact.empty` | No donations yet this month - the first one starts the counter. | 本月还没有捐款--第一笔将启动计数。 |
+| `impact.externalNote` | This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here. | 此计数器仅统计通过 FreeSocks 进行的捐款。直接在 unredacted.org/donate 的捐赠支持 Unredacted 更广泛的工作，但不会增加这里的带宽。 |
+| `impact.aboutUnredacted` | About Unredacted | 关于 Unredacted |
 
-## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(18 missing)*
+## `donate` — The donation card + amount picker (donations add bandwidth for all free users).
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
-| `donate.addTitle` | Add a donation | ⚠️ **MISSING** |
-| `donate.addSubtitle` | Chip in to help keep FreeSocks free for everyone. | ⚠️ **MISSING** |
-| `donate.standaloneTitle` | Donate to FreeSocks | ⚠️ **MISSING** |
-| `donate.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises this month's bandwidth for every free user. | ⚠️ **MISSING** |
-| `donate.amountLabel` | Amount | ⚠️ **MISSING** |
-| `donate.none` | No thanks | ⚠️ **MISSING** |
-| `donate.custom` | Custom | ⚠️ **MISSING** |
-| `donate.customPlaceholder` | Other amount | ⚠️ **MISSING** |
-| `donate.impact` | Adds about {gb} GB to every free user this month | ⚠️ **MISSING** |
-| `donate.bonusActive` | Donations this month have added {gb} GB to every free user's monthly allowance. | ⚠️ **MISSING** |
-| `donate.minNote` | Minimum {amount} | ⚠️ **MISSING** |
-| `donate.give` | Donate {amount} | ⚠️ **MISSING** |
-| `donate.giving` | Starting… | ⚠️ **MISSING** |
-| `donate.startFailed` | Couldn't start the donation | ⚠️ **MISSING** |
-| `donate.badge` | Donor | ⚠️ **MISSING** |
-| `donate.badgeTooltip` | Thank you for supporting FreeSocks | ⚠️ **MISSING** |
-| `donate.thanksTitle` | You're a FreeSocks donor | ⚠️ **MISSING** |
-| `donate.thanksBody` | Thank you - your support helps keep FreeSocks free for everyone. | ⚠️ **MISSING** |
+| `donate.addTitle` | Add a donation | 添加一笔捐款 |
+| `donate.addSubtitle` | Chip in to help keep FreeSocks free for everyone. | 出一份力，让 FreeSocks 一直对所有人免费。 |
+| `donate.standaloneTitle` | Donate to FreeSocks | 捐款支持 FreeSocks |
+| `donate.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises this month's bandwidth for every free user. | FreeSocks 对所有人免费，由捐款资助。捐出任意金额帮助它持续运行--捐款还会为当月每位免费用户提升带宽。 |
+| `donate.amountLabel` | Amount | 金额 |
+| `donate.none` | No thanks | 不用了 |
+| `donate.custom` | Custom | 自定义 |
+| `donate.customPlaceholder` | Other amount | 其他金额 |
+| `donate.impact` | Adds about {gb} GB to every free user this month | 本月为每位免费用户增加约 {gb} GB |
+| `donate.bonusActive` | Donations this month have added {gb} GB to every free user's monthly allowance. | 本月捐款已为每位免费用户的每月额度增加 {gb} GB。 |
+| `donate.minNote` | Minimum {amount} | 最低 {amount} |
+| `donate.give` | Donate {amount} | 捐赠 {amount} |
+| `donate.giving` | Starting… | 正在开始… |
+| `donate.startFailed` | Couldn't start the donation | 无法发起捐款 |
+| `donate.badge` | Donor | 捐赠者 |
+| `donate.badgeTooltip` | Thank you for supporting FreeSocks | 感谢你支持 FreeSocks |
+| `donate.thanksTitle` | You're a FreeSocks donor | 你已是 FreeSocks 捐赠者 |
+| `donate.thanksBody` | Thank you - your support helps keep FreeSocks free for everyone. | 谢谢--你的支持让 FreeSocks 一直对所有人免费。 |
+
+## `referral` — Miscellaneous strings.
+
+| Key | English | Chinese (中文) |
+| --- | --- | --- |
+| `referral.fieldLabel` | Referral code (optional) | 推荐码（可选） |
+| `referral.fieldHint` | Have a code from a friend? You each get bonus membership days when you upgrade. | 有朋友给的推荐码？你升级时，你们各自都会获得额外的会员天数。 |
+| `referral.fieldPlaceholder` | FSR-XXXX-XXXX | FSR-XXXX-XXXX |
+| `referral.applied` | Referral applied — bonus days are yours when you upgrade. | 推荐码已应用--升级时你将获得额外天数。 |
+| `referral.cardTitle` | Referrals | 推荐好友 |
+| `referral.cardBody` | Share your link. When someone signs up with it and becomes a member, you each get bonus days — theirs right away, yours after {vestingDays} days. | 分享你的链接。当有人通过它注册并成为会员时，你们各自都会获得额外天数--对方立即到账，你的在 {vestingDays} 天后到账。 |
+| `referral.copyLink` | Copy invite link | 复制邀请链接 |
+| `referral.codeLabel` | Your code | 你的推荐码 |
+| `referral.statsInvited` | Signed up | 已注册 |
+| `referral.statsConverted` | Became members | 已成为会员 |
+| `referral.statsPending` | Not yet members | 尚未成为会员 |
+| `referral.statsDays` | Bonus days earned | 已获得的额外天数 |
 
 ## `qr` — QR-code helper labels.
 
@@ -472,20 +487,20 @@ review.
 | `app.adminLoadFailedTitle` | Couldn't load the admin console | 无法加载管理控制台 |
 | `app.adminLoadFailedBody` | The network request for this section failed. Reload to retry. | 此部分的联网请求失败。请重新加载以重试。 |
 
-## `footer` — The site footer (nonprofit line, terms/privacy links). *(8 missing)*
+## `footer` — The site footer (nonprofit line, terms/privacy links).
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `footer.operatedPrefix` | Operated by | 运营方： |
 | `footer.operatedSuffix` | , a US 501(c)(3) nonprofit | （美国 501(c)(3) 非营利组织） |
-| `footer.viewSource` | View source | ⚠️ **MISSING** |
-| `footer.terms` | Terms of Service | ⚠️ **MISSING** |
-| `footer.privacy` | Privacy Policy | ⚠️ **MISSING** |
-| `footer.transparency` | Transparency Report | ⚠️ **MISSING** |
-| `footer.socialX` | FreeSocks on X | ⚠️ **MISSING** |
-| `footer.socialMastodon` | FreeSocks on Mastodon | ⚠️ **MISSING** |
-| `footer.socialBluesky` | FreeSocks on Bluesky | ⚠️ **MISSING** |
-| `footer.support` | Support | ⚠️ **MISSING** |
+| `footer.viewSource` | View source | 查看源码 |
+| `footer.terms` | Terms of Service | 服务条款 |
+| `footer.privacy` | Privacy Policy | 隐私政策 |
+| `footer.transparency` | Transparency Report | 透明度报告 |
+| `footer.socialX` | FreeSocks on X | X 上的 FreeSocks |
+| `footer.socialMastodon` | FreeSocks on Mastodon | Mastodon 上的 FreeSocks |
+| `footer.socialBluesky` | FreeSocks on Bluesky | Bluesky 上的 FreeSocks |
+| `footer.support` | Support | 支持 |
 
 ## `renew` — Expiring/expired membership callouts and renewal prompts.
 
@@ -499,22 +514,24 @@ review.
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | 您当前使用的是免费套餐。在下方续订以恢复您的会员资格。 |
 | `renew.renewCta` | Renew membership | 续订会员 |
 
-## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(4 missing)*
+## `upgrade` — The paid-membership purchase panel (payment method, duration, totals).
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `upgrade.title` | Upgrade to a FreeSocks membership | 升级到 FreeSocks 会员 |
 | `upgrade.extendTitle` | Extend your membership | 续订你的会员 |
 | `upgrade.subtitle` | Unlimited bandwidth and devices. Choose a length and how to pay. | 无限流量与设备。选择时长和支付方式。 |
-| `upgrade.subtitleNoDevices` | Unlimited bandwidth. Choose a length and how to pay. | ⚠️ **MISSING** |
+| `upgrade.subtitleNoDevices` | Unlimited bandwidth. Choose a length and how to pay. | 无限带宽。选择时长和支付方式。 |
+| `upgrade.compareBandwidth` | Bandwidth per month | 每月带宽 |
+| `upgrade.compareDevices` | Devices | 设备 |
 | `upgrade.durationLabel` | Membership length | 会员时长 |
 | `upgrade.cryptoMinNote` | Crypto payments start at {months} months - shorter terms fall below the network minimum. Pick another method for shorter terms. | 加密支付最少 {months} 个月，更短周期低于网络最低限额。如需更短周期请改用其他方式。 |
 | `upgrade.months [countPlural=one]` | 1 month | 1 个月 |
 | `upgrade.months [countPlural=other]` | {count} months | {count} 个月 |
 | `upgrade.perMonth` | {price}/mo | {price}/月 |
-| `upgrade.fromPerMonth` | From {price}/month | ⚠️ **MISSING** |
-| `upgrade.benefitsShort` | Unlimited bandwidth and devices | ⚠️ **MISSING** |
-| `upgrade.benefitsShortNoDevices` | Unlimited bandwidth | ⚠️ **MISSING** |
+| `upgrade.fromPerMonth` | From {price}/month | {price}/月起 |
+| `upgrade.benefitsShort` | Unlimited bandwidth and devices | 无限带宽与设备 |
+| `upgrade.benefitsShortNoDevices` | Unlimited bandwidth | 无限带宽 |
 | `upgrade.save` | save {pct}% | 省 {pct}% |
 | `upgrade.methodLabel` | Payment method | 支付方式 |
 | `upgrade.payNowpayments` | Cryptocurrency | 加密货币 |
@@ -587,19 +604,21 @@ review.
 | `error.deviceUnsupported` | Your current server type doesn't support removing individual devices. | 您当前的服务器类型不支持移除单个设备。 |
 | `error.billing` | The payment service couldn't process this. Please try again later. | 支付服务无法处理此笔交易。请稍后再试。 |
 | `error.serverError` | The server had a problem handling this. Please try again in a few minutes. | 服务器处理此请求时出现问题，请稍后再试。 |
+| `error.modeUnavailable` | Your current connection mode is no longer available. Switch to another mode first, then try again. | 你当前的连接模式已不可用。请先切换到其他模式，然后重试。 |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(26 missing)*
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `setup.title` | Set up your VPN app | 设置你的代理应用 |
 | `setup.install` | Install | 安装 |
-| `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | ⚠️ **MISSING** |
-| `setup.openSource` | Open source | ⚠️ **MISSING** |
-| `setup.proprietary` | Proprietary | ⚠️ **MISSING** |
-| `setup.easeEasy` | Easy to use | ⚠️ **MISSING** |
-| `setup.easeAdvanced` | Advanced | ⚠️ **MISSING** |
-| `setup.viewSource` | Source | ⚠️ **MISSING** |
+| `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | 此平台暂无推荐应用--可使用任何兼容客户端，手动添加你的订阅。 |
+| `setup.openSource` | Open source | 开源 |
+| `setup.recommended` | Recommended | 推荐 |
+| `setup.proprietary` | Proprietary | 专有软件 |
+| `setup.easeEasy` | Easy to use | 简单易用 |
+| `setup.easeAdvanced` | Advanced | 进阶 |
+| `setup.viewSource` | Source | 源码 |
 | `setup.intro` | Copy your subscription link above, then add it to a compatible app: | 复制上方的订阅链接，然后添加到兼容的应用中： |
 | `setup.android` | Android | 安卓 |
 | `setup.ios` | iPhone / iPad | iPhone / iPad |
@@ -611,26 +630,26 @@ review.
 | `setup.step.connect` | Select a server and connect | 选择一个服务器并连接 |
 | `setup.noDeviceLimit` | no device limit | 无设备限制 |
 | `setup.hwidNote` | On a device-limited plan, turn on "device identification" (HWID) in the app's settings so your device is recognized. | 如果套餐包含有限数量的设备，请在应用程序的设置中启用“设备识别”（HWID），以便识别您的设备。 |
-| `setup.deviceCompatibleTitle` | Works with your device limit | ⚠️ **MISSING** |
-| `setup.deviceIncompatibleTitle` | Not recommended for your plan | ⚠️ **MISSING** |
-| `setup.deviceIncompatibleNote` | These apps don't identify your device, so each launch can use up a device slot - or fail to connect on a device-limited plan. Prefer an app above. | ⚠️ **MISSING** |
-| `setup.linkKind.play` | Google Play | ⚠️ **MISSING** |
-| `setup.linkKind.appStore` | App Store | ⚠️ **MISSING** |
-| `setup.linkKind.github` | GitHub | ⚠️ **MISSING** |
-| `setup.linkKind.apk` | APK | ⚠️ **MISSING** |
-| `setup.linkKind.website` | Website | ⚠️ **MISSING** |
-| `setup.clientDesc.hiddify` | The easiest all-round choice: one-tap import, a clean interface, and builds for every platform. | ⚠️ **MISSING** |
-| `setup.clientDesc.karing` | Feature-rich and honors your plan's device limit. Slightly busier than Hiddify, but works well everywhere. | ⚠️ **MISSING** |
-| `setup.clientDesc.anywhere` | A polished, easy client for Apple devices only: iPhone, iPad, Apple TV, and Mac. No Android, Windows, or Linux version. | ⚠️ **MISSING** |
-| `setup.clientDesc.singBox` | The reference app for the sing-box core. Powerful but minimal, so it's best if you are comfortable with technical settings. | ⚠️ **MISSING** |
-| `setup.clientDesc.v2rayng` | A long-standing, lightweight Android client with one-tap import. More utilitarian than Hiddify, but dependable. | ⚠️ **MISSING** |
-| `setup.clientDesc.v2rayn` | A powerful desktop app for advanced users. Import is manual, and links using encryption "none" can need a manual tweak. Prefer Hiddify if that sounds fiddly. | ⚠️ **MISSING** |
-| `setup.clientDesc.clash` | Clash Verge, a popular desktop app with strong routing rules. Some versions reject VLESS subscription links; if yours won't import, use Hiddify or v2rayN instead. | ⚠️ **MISSING** |
-| `setup.clientDesc.flclash` | A clean, cross-platform Clash-family app. Import by pasting your subscription link (no one-tap import). | ⚠️ **MISSING** |
-| `setup.clientDesc.mihomoParty` | A friendly desktop app for the Clash (mihomo) core. Paste your subscription link to import. | ⚠️ **MISSING** |
-| `setup.clientDesc.throne` | An advanced desktop client that honors your plan's device limit, with solid Linux support. Expect manual setup. | ⚠️ **MISSING** |
-| `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | ⚠️ **MISSING** |
-| `setup.clientDesc.outline` | The simplest experience there is: paste your access key and connect. Only works with Outline (Shadowsocks) access keys. | ⚠️ **MISSING** |
+| `setup.deviceCompatibleTitle` | Works with your device limit | 兼容你的设备限制 |
+| `setup.deviceIncompatibleTitle` | Not recommended for your plan | 不推荐你的套餐使用 |
+| `setup.deviceIncompatibleNote` | These apps don't identify your device, so each launch can use up a device slot - or fail to connect on a device-limited plan. Prefer an app above. | 这些应用不会标识你的设备，因此每次启动都可能占用一个设备名额--在限制设备数量的套餐上甚至可能无法连接。请优先选择上面的应用。 |
+| `setup.linkKind.play` | Google Play | Google Play |
+| `setup.linkKind.appStore` | App Store | App Store |
+| `setup.linkKind.github` | GitHub | GitHub |
+| `setup.linkKind.apk` | APK | APK |
+| `setup.linkKind.website` | Website | 官网 |
+| `setup.clientDesc.hiddify` | The easiest all-round choice: one-tap import, a clean interface, and builds for every platform. | 最省心的全能选择：一键导入、界面简洁，全平台都有版本。 |
+| `setup.clientDesc.karing` | Feature-rich and honors your plan's device limit. Slightly busier than Hiddify, but works well everywhere. | 功能丰富，并能遵守你套餐的设备限制。界面比 Hiddify 略复杂，但在各平台都表现不错。 |
+| `setup.clientDesc.anywhere` | A polished, easy client for Apple devices only: iPhone, iPad, Apple TV, and Mac. No Android, Windows, or Linux version. | 仅适用于苹果设备的精致易用客户端：iPhone、iPad、Apple TV 和 Mac。没有 Android、Windows 或 Linux 版本。 |
+| `setup.clientDesc.singBox` | The reference app for the sing-box core. Powerful but minimal, so it's best if you are comfortable with technical settings. | sing-box 内核的官方参考应用。功能强大但界面极简，适合熟悉技术设置的用户。 |
+| `setup.clientDesc.v2rayng` | A long-standing, lightweight Android client with one-tap import. More utilitarian than Hiddify, but dependable. | 老牌轻量的 Android 客户端，支持一键导入。比 Hiddify 更朴素，但稳定可靠。 |
+| `setup.clientDesc.v2rayn` | A powerful desktop app for advanced users. Import is manual, and links using encryption "none" can need a manual tweak. Prefer Hiddify if that sounds fiddly. | 面向进阶用户的强大桌面应用。导入需要手动操作，使用“none”加密的链接可能还需手动调整。如果觉得麻烦，建议用 Hiddify。 |
+| `setup.clientDesc.clash` | Clash Verge, a popular desktop app with strong routing rules. Some versions reject VLESS subscription links; if yours won't import, use Hiddify or v2rayN instead. | Clash Verge 是一款流行的桌面应用，路由规则强大。部分版本不支持 VLESS 订阅链接；如果无法导入，请改用 Hiddify 或 v2rayN。 |
+| `setup.clientDesc.flclash` | A clean, cross-platform Clash-family app. Import by pasting your subscription link (no one-tap import). | 简洁的跨平台 Clash 系应用。通过粘贴订阅链接导入（无一键导入）。 |
+| `setup.clientDesc.mihomoParty` | A friendly desktop app for the Clash (mihomo) core. Paste your subscription link to import. | 界面友好的 Clash（mihomo）内核桌面应用。粘贴订阅链接即可导入。 |
+| `setup.clientDesc.throne` | An advanced desktop client that honors your plan's device limit, with solid Linux support. Expect manual setup. | 进阶桌面客户端，能遵守你套餐的设备限制，Linux 支持良好。需要手动设置。 |
+| `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | 一款付费、闭源的 iOS 应用，流行且可靠。如果你已购买，值得使用；上面的开源应用可以免费完成同样的工作。 |
+| `setup.clientDesc.outline` | The simplest experience there is: paste your access key and connect. Only works with Outline (Shadowsocks) access keys. | 体验最简单：粘贴访问密钥即可连接。仅适用于 Outline（Shadowsocks）访问密钥。 |
 
 ## `mirror` — The "trouble connecting? try a mirror" fallback flow.
 
@@ -662,7 +681,7 @@ review.
 | `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | 你的完整代理配置，通过加密通道获取，因此不会以明文经过 CDN。可手动复制到你的应用中，而无需使用订阅链接。 |
 | `rawconfig.addHint` | Paste these server entries into your VPN app manually. | 将这些服务器条目手动粘贴到你的代理应用中。 |
 
-## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(6 missing)*
+## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -670,12 +689,12 @@ review.
 | `delivery.subtitle` | Pick a focus. It's saved on this device only, and you can change it anytime. | 选择一个侧重点 - 仅保存在本设备，可随时更改。 |
 | `delivery.subtitleServer` | Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same. | 选择一个焦点。更改焦点后，系统会重新颁发匹配服务器的密钥；您当前的密钥将继续有效 24 小时。 |
 | `delivery.subtitleSignup` | Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime. | 选择一个焦点。它会保存到你的账户，你的第一个密钥将使用它--可随时更改。 |
-| `delivery.evadeTitle` | Internet Freedom Mode | ⚠️ **MISSING** |
-| `delivery.evadeAudience` | For censored countries | ⚠️ **MISSING** |
-| `delivery.evadeBody` | Pick this if websites, apps, or VPNs are blocked where you are. Built to keep working under censorship, with backup links that are harder to block. | ⚠️ **MISSING** |
-| `delivery.privacyTitle` | Privacy Mode | ⚠️ **MISSING** |
-| `delivery.privacyAudience` | For open internet | ⚠️ **MISSING** |
-| `delivery.privacyBody` | Pick this if the internet is mostly open where you are. The strongest confidentiality - your configuration stays off third-party servers - but it is easier for censors to block. | ⚠️ **MISSING** |
+| `delivery.evadeTitle` | Internet Freedom Mode | 互联网自由模式 |
+| `delivery.evadeAudience` | For censored countries | 适合受审查国家 |
+| `delivery.evadeBody` | Pick this if websites, apps, or VPNs are blocked where you are. Built to keep working under censorship, with backup links that are harder to block. | 如果你所在的地方网站、应用或 VPN 被封锁，请选择此项。专为在审查下持续可用而设计，并配有更难封锁的备用链接。 |
+| `delivery.privacyTitle` | Privacy Mode | 隐私模式 |
+| `delivery.privacyAudience` | For open internet | 适合开放网络 |
+| `delivery.privacyBody` | Pick this if the internet is mostly open where you are. The strongest confidentiality - your configuration stays off third-party servers - but it is easier for censors to block. | 如果你所在的地方网络基本开放，请选择此项。机密性最强--你的配置不经过第三方服务器--但也更容易被审查者封锁。 |
 | `delivery.recommended` | Recommended | 推荐 |
 | `delivery.unavailable` | Not available yet | 暂无 |
 | `delivery.confirmTitle` | Switch to "{label}"? | 切换到“ {label} "？ |
@@ -692,38 +711,39 @@ review.
 | `delivery.switchSuccessBody` | Same subscription URL - your apps will pick up the new servers on their next refresh. | 在每台设备上重新导入新的订阅网址。 |
 | `delivery.switchFailedTitle` | Could not switch focus | 无法切换焦点 |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(37 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros.
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
-| `home.trust.nonprofit` | Run by a US 501(c)(3) nonprofit | ⚠️ **MISSING** |
-| `home.trust.openSource` | Open source | ⚠️ **MISSING** |
-| `home.trust.noLogs` | No traffic logs | ⚠️ **MISSING** |
-| `home.network.title` | Network status | ⚠️ **MISSING** |
-| `home.network.offline` | offline | ⚠️ **MISSING** |
-| `home.network.srOnline` | online | ⚠️ **MISSING** |
-| `home.network.srOffline` | offline | ⚠️ **MISSING** |
-| `home.network.note` | Checked every 10 minutes | ⚠️ **MISSING** |
-| `home.quicknav.label` | Jump to a section | ⚠️ **MISSING** |
-| `home.quicknav.privacy` | What we store | ⚠️ **MISSING** |
-| `home.quicknav.threat` | Threat model | ⚠️ **MISSING** |
-| `home.quicknav.faq` | FAQ | ⚠️ **MISSING** |
-| `home.quicknav.impact` | Donation impact | ⚠️ **MISSING** |
-| `home.sections.features` | Features | ⚠️ **MISSING** |
-| `home.sections.privacy` | Privacy | ⚠️ **MISSING** |
-| `home.sections.how` | Getting started | ⚠️ **MISSING** |
-| `home.sections.membership` | Membership | ⚠️ **MISSING** |
-| `home.sections.impact` | Impact | ⚠️ **MISSING** |
-| `home.sections.faq` | FAQ | ⚠️ **MISSING** |
-| `home.sections.about` | About | ⚠️ **MISSING** |
-| `home.impact.title` | Donations at work | ⚠️ **MISSING** |
-| `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | ⚠️ **MISSING** |
-| `home.impact.cta` | Make a donation | ⚠️ **MISSING** |
-| `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | ⚠️ **MISSING** |
-| `home.hero.title` | A free VPN for people in censored countries & around the world | ⚠️ **MISSING** |
-| `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | ⚠️ **MISSING** |
-| `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | ⚠️ **MISSING** |
-| `home.hero.impactLink` | See the impact | ⚠️ **MISSING** |
+| `home.trust.nonprofit` | Run by a US 501(c)(3) nonprofit | 由美国 501(c)(3) 非营利组织运营 |
+| `home.trust.openSource` | Open source | 开源 |
+| `home.trust.noLogs` | No traffic logs | 不记录流量日志 |
+| `home.network.title` | Network status | 网络状态 |
+| `home.network.offline` | offline | 离线 |
+| `home.network.srOnline` | online | 在线 |
+| `home.network.srOffline` | offline | 离线 |
+| `home.network.note` | Checked every 10 minutes | 每 10 分钟检查一次 |
+| `home.network.link` | Live status | 实时状态 |
+| `home.quicknav.label` | Jump to a section | 跳转到某一节 |
+| `home.quicknav.privacy` | What we store | 我们存储什么 |
+| `home.quicknav.threat` | Threat model | 威胁模型 |
+| `home.quicknav.faq` | FAQ | 常见问题 |
+| `home.quicknav.impact` | Donation impact | 捐款成效 |
+| `home.sections.features` | Features | 功能 |
+| `home.sections.privacy` | Privacy | 隐私 |
+| `home.sections.how` | Getting started | 快速上手 |
+| `home.sections.membership` | Membership | 会员 |
+| `home.sections.impact` | Impact | 成效 |
+| `home.sections.faq` | FAQ | 常见问题 |
+| `home.sections.about` | About | 关于 |
+| `home.impact.title` | Donations at work | 捐款在行动 |
+| `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | 通过 FreeSocks 捐出的每一笔捐款，都会提升当月每个免费账户的每月带宽。以下是捐赠者迄今增加的带宽--你也可以添一份力。 |
+| `home.impact.cta` | Make a donation | 立即捐款 |
+| `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | 捐款为每位免费用户逐月增加的带宽 |
+| `home.hero.title` | A VPN for people in censored countries & around the world | 为受审查国家和世界各地的人们打造的 VPN |
+| `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | FreeSocks 为网络受审查的人们打造，在其他地方也是一款尊重隐私的 VPN。注册只需一次快速的真人验证。我们从不要求邮箱或密码。你的订阅链接适用于大多数现代 VPN 应用，会员可享{limits}。 |
+| `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | 通过 FreeSocks 的捐款直接支持免费用户：每一笔捐款都会在当月为受审查国家的人们购买真实带宽。 |
+| `home.hero.impactLink` | See the impact | 查看成效 |
 | `home.cta.getMembership` | Get a membership | 加入会员 |
 | `home.freeCard.title` | Free tier | 免费套餐 |
 | `home.freeCard.badge` | What you get | 你将获得什么 |
@@ -736,7 +756,7 @@ review.
 | `home.freeCard.upsellTitle` | Want unlimited? | 想要无限量供应？ |
 | `home.freeCard.upsellBody` | Get {limits} - and help keep FreeSocks free for others. | 获取{limits} - 并帮助 FreeSocks 继续免费供他人使用。 |
 | `home.freeCard.fromPerMonth` | from {price}/mo | 来自{price} /月 |
-| `home.freeCard.cryptoNote` | Crypto accepted - Bitcoin, Monero, Zcash and more | ⚠️ **MISSING** |
+| `home.freeCard.cryptoNote` | Crypto accepted - Bitcoin, Monero, Zcash and more | 支持加密货币--比特币、门罗币、Zcash 等 |
 | `home.features.title` | What FreeSocks is | FreeSocks是什么 |
 | `home.features.noAuth.title` | No email or password | 无需电子邮件或密码 |
 | `home.features.noAuth.body` | One human-check and you are in. We mint a 32-digit account number you save to sign back in. No email collected. | 只需一次人工验证即可登录。我们会生成一个32位数的账号，您可以保存该账号以便下次登录。我们不会收集您的邮箱地址。 |
@@ -762,16 +782,16 @@ review.
 | `home.membership.lead` | Free covers the basics. | 免费版涵盖基本内容。 |
 | `home.membership.descriptionFallback` | A FreeSocks membership lifts every limit. | FreeSocks 会员资格可解除所有限制。 |
 | `home.membership.payNote` | Pay privately with Bitcoin, Monero, or Zcash - or use a card or PayPal. | 可使用加密货币（比特币、门罗币等）、银行卡或PayPal支付。 |
-| `home.about.title` | About FreeSocks | ⚠️ **MISSING** |
+| `home.about.title` | About FreeSocks | 关于 FreeSocks |
 | `home.about.bodyPrefix` | FreeSocks is operated by | FreeSocks 由 |
-| `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ⚠️ **MISSING** |
-| `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | ⚠️ **MISSING** |
+| `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ，一家美国 501(c)(3) 非营利组织。 |
+| `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | 大多数 VPN 默认你能付费订阅、并能放心交出邮箱地址。但在世界上许多地方，这两点都不成立，所以 FreeSocks 两者都不要求。任何人都能在一分钟左右拿到可用的密钥，并一直使用下去。 |
 | `home.about.siteLink` | unredacted.org | 未编辑的.org |
-| `home.about.openSource` | The code that runs this service is published for anyone to inspect, audit, or run themselves. | ⚠️ **MISSING** |
-| `home.about.viewSourceCta` | View the source | ⚠️ **MISSING** |
-| `home.about.fact2Title` | Open source | ⚠️ **MISSING** |
-| `home.about.fact3Title` | Donation funded | ⚠️ **MISSING** |
-| `home.about.fact3Body` | Free accounts are paid for by donations and memberships. There are no ads and nothing is sold. | ⚠️ **MISSING** |
+| `home.about.openSource` | The code that runs this service is published for anyone to inspect, audit, or run themselves. | 运行此服务的代码已公开，任何人都可以检查、审计或自行部署。 |
+| `home.about.viewSourceCta` | View the source | 查看源码 |
+| `home.about.fact2Title` | Open source | 开源 |
+| `home.about.fact3Title` | Donation funded | 捐款资助 |
+| `home.about.fact3Body` | Free accounts are paid for by donations and memberships. There are no ads and nothing is sold. | 免费账户由捐款和会员付费支持。没有广告，也不出售任何东西。 |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | 无限带宽和设备 |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | 无限带宽 |
 | `home.limits.unlimitedDevices` | unlimited devices | 无限设备 |
@@ -836,3 +856,37 @@ review.
 | `deviceRevoke.body` | The device ending …{suffix} will be disconnected and its slot freed. It can reconnect later by re-importing your subscription URL. | 设备名称以… {suffix}结尾，该设备将被断开连接并释放其插槽。稍后可通过重新导入订阅 URL 来重新连接。 |
 | `deviceRevoke.confirm` | Revoke device | 撤销装置 |
 | `deviceRevoke.working` | Revoking… | 撤销…… |
+
+## `status` — Miscellaneous strings.
+
+| Key | English | Chinese (中文) |
+| --- | --- | --- |
+| `status.title` | Network status | 网络状态 |
+| `status.updated` | Updated {time} | 更新于 {time} |
+| `status.overallOk` | All locations are operating normally | 所有位置运行正常 |
+| `status.overallPartial` | Some locations are having issues | 部分位置出现问题 |
+| `status.overallMajor` | A major outage is in progress | 正在发生重大故障 |
+| `status.locationsTitle` | Locations | 位置 |
+| `status.nodesUp` | {online} of {total} nodes up | {total} 个节点中 {online} 个在线 |
+| `status.online` | Online | 在线 |
+| `status.offline` | Offline | 离线 |
+| `status.srOnline` | online | 在线 |
+| `status.srOffline` | offline | 离线 |
+| `status.loadQuiet` | Quiet | 空闲 |
+| `status.loadBusy` | Busy | 繁忙 |
+| `status.loadCrowded` | Crowded | 拥挤 |
+| `status.loadUnknown` | Load unknown | 负载未知 |
+| `status.matrixTitle` | Availability in censored regions | 受审查地区的可用性 |
+| `status.matrixBody` | How well each connection mode works from specific countries, based on reports we receive. "Partial" means some networks or times of day block it. | 根据我们收到的报告，各连接模式在特定国家的可用情况。“部分可用”表示某些网络或某些时段会封锁它。 |
+| `status.matrixAvailable` | Available | 可用 |
+| `status.matrixPartial` | Partial | 部分可用 |
+| `status.matrixBlocked` | Blocked | 被封锁 |
+| `status.matrixEmpty` | No country data published yet. | 尚未发布国家数据。 |
+| `status.incidentsTitle` | Incidents | 故障事件 |
+| `status.incidentsNone` | No incidents in the last 30 days. | 过去 30 天无故障。 |
+| `status.incidentsOngoing` | Ongoing | 进行中 |
+| `status.incidentsResolved` | Resolved {time} | 已于 {time} 解决 |
+| `status.incidentsStarted` | Started {time} | 开始于 {time} |
+| `status.incidentsGlobal` | All locations | 所有位置 |
+| `status.incidentsPast` | Past incidents | 历史故障 |
+| `status.report` | Report a problem | 报告问题 |

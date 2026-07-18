@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**187 of 649 strings are missing** (the app currently shows English for
+**0 of 693 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -24,16 +24,16 @@ review.
   ⚠️ MISSING have no translation yet.
 
 
-## `faq` — The landing-page FAQ (questions + answers). *(6 missing)*
+## `faq` — The landing-page FAQ (questions + answers).
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `faq.title` | Frequently asked questions | الأسئلة الشائعة |
 | `faq.subtitle` | Answers to common questions. | تمت الإجابة على الأسئلة الأساسية. هل ما زلت تواجه مشكلة؟ تواصل معنا عبر رقم تعريف الدعم الخاص بك. |
-| `faq.tabGeneral` | General | ⚠️ **MISSING** |
-| `faq.tabThreat` | What we protect you from | ⚠️ **MISSING** |
-| `faq.contactPrefix` | For anything else, email | ⚠️ **MISSING** |
-| `faq.contactSuffix` | and include your Support ID. | ⚠️ **MISSING** |
+| `faq.tabGeneral` | General | عام |
+| `faq.tabThreat` | What we protect you from | ممَّ نحميك |
+| `faq.contactPrefix` | For anything else, email | لأي استفسار آخر، راسلنا على |
+| `faq.contactSuffix` | and include your Support ID. | واذكر معرّف الدعم الخاص بك. |
 | `faq.q1.question` | What is FreeSocks? | ما هو FreeSocks؟ |
 | `faq.q1.answer` | A free VPN service that helps people in heavily-censored regions reach the open internet. It's operated by Unredacted, a US 501(c)(3) nonprofit. | خدمة بروكسي مجانية تساعد الأشخاص في المناطق الخاضعة لرقابة مشددة على الوصول إلى الإنترنت المفتوح. وتديرها منظمة "أنريداكتد"، وهي منظمة أمريكية غير ربحية مسجلة بموجب المادة 501(c)(3). |
 | `faq.q2.question` | Is it really free? | هل هو مجاني حقاً؟ |
@@ -52,28 +52,28 @@ review.
 | `faq.q8.answer` | Yes - on your account page use "Buy codes to share" to purchase membership codes you can give to friends or family. Each one works on any account and doesn't affect yours. | نعم، يمكنك استخدام خيار "شراء رموز للمشاركة" في صفحة حسابك لشراء رموز عضوية يمكنك إهداؤها لأصدقائك أو عائلتك. كل رمز منها يعمل على أي حساب ولا يؤثر على حسابك. |
 | `faq.q9.question` | Can I pay anonymously? | هل يمكنني الدفع بشكل مجهول؟ |
 | `faq.q9.answer` | Yes. You can pay with cryptocurrency - Bitcoin, or Monero and Zcash for the most privacy - with no account, email, or card. Your membership activates automatically once the payment confirms. | نعم. يمكنك الدفع بالعملات الرقمية - بيتكوين، أو مونيرو وزيكاش لأقصى درجات الخصوصية - دون الحاجة إلى حساب أو بريد إلكتروني أو بطاقة. يتم تفعيل عضويتك تلقائيًا بمجرد تأكيد الدفع. |
-| `faq.q10.question` | Do you own your servers, or rent them? | ⚠️ **MISSING** |
-| `faq.q10.answer` | We own our hardware and run it ourselves. Plenty of VPN companies rent theirs from datacenters or cloud hosts, which puts the machine your traffic passes through in someone else's hands - they can be pressured to hand it over, or just quietly copy what is on it. That is a line we are not willing to cross, so we buy and run our own equipment instead. It costs more and we grow slower because of it, but it is the only way the privacy promises on this page actually mean anything. | ⚠️ **MISSING** |
+| `faq.q10.question` | Do you own your servers, or rent them? | هل تملكون خوادمكم أم تستأجرونها؟ |
+| `faq.q10.answer` | We own our hardware and run it ourselves. Plenty of VPN companies rent theirs from datacenters or cloud hosts, which puts the machine your traffic passes through in someone else's hands - they can be pressured to hand it over, or just quietly copy what is on it. That is a line we are not willing to cross, so we buy and run our own equipment instead. It costs more and we grow slower because of it, but it is the only way the privacy promises on this page actually mean anything. | نملك أجهزتنا ونشغّلها بأنفسنا. كثير من شركات VPN تستأجر خوادمها من مراكز بيانات أو مزوّدي استضافة سحابية، فيصبح الجهاز الذي تمرّ عبره بياناتك في يد طرف آخر - يمكن الضغط عليه لتسليمه، أو نسخ ما عليه بصمت. هذا خطّ لا نقبل تجاوزه، لذلك نشتري معداتنا ونشغّلها بأنفسنا. يكلّفنا ذلك أكثر وينمو عملنا ببطء بسببه، لكنه الطريقة الوحيدة التي تجعل وعود الخصوصية في هذه الصفحة تعني شيئًا حقًا. |
 
-## `threat` — Miscellaneous strings. *(15 missing)*
+## `threat` — Miscellaneous strings.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
-| `threat.subtitle` | An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are. | ⚠️ **MISSING** |
-| `threat.q1.question` | What does FreeSocks protect me from? | ⚠️ **MISSING** |
-| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted VPN connection, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | ⚠️ **MISSING** |
-| `threat.q2.question` | What does FreeSocks NOT protect me from? | ⚠️ **MISSING** |
-| `threat.q2.answer` | It does not make you anonymous to sites you sign in to: if you log in to an account, that site knows who you are. It cannot protect a device that is already compromised (spyware, a managed work profile, someone with physical access). And a powerful adversary that can watch traffic at many points on the internet may still correlate patterns. If your safety depends on strong anonymity, use Tor and follow specialist guidance for your situation. | ⚠️ **MISSING** |
-| `threat.q3.question` | Can FreeSocks see my traffic? | ⚠️ **MISSING** |
-| `threat.q3.answer` | Your traffic exits through our servers, so treat us like any exit: sites you use over HTTPS (almost all of the modern web) stay encrypted end to end and we cannot read their contents. We configure our servers to keep no connection logs, no visited-site logs, and no source IPs, and the control plane never stores your IP address at all. | ⚠️ **MISSING** |
-| `threat.q4.question` | What happens if a FreeSocks server is seized or compromised? | ⚠️ **MISSING** |
-| `threat.q4.answer` | There is nothing identifying on it. Servers hold no names, emails, IPs, or traffic history, because we never collect those in the first place. Access keys can be revoked and reissued quickly, and we can rotate infrastructure without losing accounts. | ⚠️ **MISSING** |
-| `threat.q5.question` | Can my government or ISP tell that I am using FreeSocks? | ⚠️ **MISSING** |
-| `threat.q5.answer` | Sometimes censors can detect that circumvention traffic is in use even when they cannot read it. Our transports are designed to look like ordinary encrypted web traffic, and Internet Freedom Mode routes through infrastructure that is expensive to block. Still, whether use is detectable, and what the consequences are, varies by country. Weigh your local risk. | ⚠️ **MISSING** |
-| `threat.q6.question` | Why should I believe any of this? | ⚠️ **MISSING** |
-| `threat.q6.answer` | The control plane is open source, so anyone can read exactly what it stores and check that there is no place a name, email, or IP address could even go. Claims that depend on server configuration (like disabled logging) are documented and enforced by the same code. You still have to trust the operator for the parts you cannot see, as with every VPN; our approach is to minimize what there is to trust. | ⚠️ **MISSING** |
-| `threat.q7.question` | Do payments link my identity to my browsing? | ⚠️ **MISSING** |
-| `threat.q7.answer` | Membership is optional, and payment is handled by outside processors: we never store the payer's name, email, or address, and an order is tied to your account only through an opaque reference. Cryptocurrency options (including Monero) exist for people who do not want a card trail at all. | ⚠️ **MISSING** |
+| `threat.subtitle` | An honest look at what this service can and cannot do. Security tools that overpromise get people hurt, so here is exactly where the lines are. | نظرة صادقة على ما تستطيع هذه الخدمة فعله وما لا تستطيع. أدوات الأمان التي تَعِد بأكثر مما تقدّمه تُلحق الضرر بالناس، لذلك نحدد هنا موضع الخطوط بدقة. |
+| `threat.q1.question` | What does FreeSocks protect me from? | ممَّ يحميني FreeSocks؟ |
+| `threat.q1.answer` | FreeSocks tunnels your traffic through an encrypted VPN connection, so your ISP, mobile carrier, school, or workplace network cannot see which sites you visit or block them. It is built for getting past censorship and for keeping the network you are on from watching what you do. | يمرّر FreeSocks بياناتك عبر اتصال VPN مشفّر، فلا يستطيع مزوّد خدمة الإنترنت أو مشغّل الهاتف المحمول أو شبكة المدرسة أو العمل رؤية المواقع التي تزورها أو حجبها. صُمّم لتجاوز الرقابة ولمنع الشبكة التي تتصل منها من مراقبة ما تفعله. |
+| `threat.q2.question` | What does FreeSocks NOT protect me from? | ممَّ لا يحميني FreeSocks؟ |
+| `threat.q2.answer` | It does not make you anonymous to sites you sign in to: if you log in to an account, that site knows who you are. It cannot protect a device that is already compromised (spyware, a managed work profile, someone with physical access). And a powerful adversary that can watch traffic at many points on the internet may still correlate patterns. If your safety depends on strong anonymity, use Tor and follow specialist guidance for your situation. | لا يجعلك مجهولًا لدى المواقع التي تسجّل الدخول إليها: إذا سجّلت الدخول إلى حساب، فذلك الموقع يعرف من أنت. ولا يمكنه حماية جهاز مخترق أصلًا (برمجيات تجسس، أو ملف عمل مُدار، أو شخص لديه وصول فعلي إلى جهازك). كما أن خصمًا قويًا يراقب حركة المرور في نقاط كثيرة من الإنترنت قد يظل قادرًا على ربط الأنماط ببعضها. إذا كانت سلامتك تعتمد على إخفاء هوية قوي، فاستخدم Tor واتبع إرشادات المتخصصين المناسبة لحالتك. |
+| `threat.q3.question` | Can FreeSocks see my traffic? | هل يستطيع FreeSocks رؤية بياناتي؟ |
+| `threat.q3.answer` | Your traffic exits through our servers, so treat us like any exit: sites you use over HTTPS (almost all of the modern web) stay encrypted end to end and we cannot read their contents. We configure our servers to keep no connection logs, no visited-site logs, and no source IPs, and the control plane never stores your IP address at all. | تخرج بياناتك عبر خوادمنا، لذا تعامل معنا كأي نقطة خروج: المواقع التي تستخدمها عبر HTTPS (وهي غالبية الويب الحديث) تبقى مشفّرة من الطرف إلى الطرف ولا نستطيع قراءة محتواها. نضبط خوادمنا بحيث لا تحتفظ بأي سجلات اتصال ولا سجلات للمواقع المُزارة ولا عناوين IP المصدر، ولا تخزّن منظومة التحكم عنوان IP الخاص بك إطلاقًا. |
+| `threat.q4.question` | What happens if a FreeSocks server is seized or compromised? | ماذا يحدث إذا صودر أحد خوادم FreeSocks أو اختُرق؟ |
+| `threat.q4.answer` | There is nothing identifying on it. Servers hold no names, emails, IPs, or traffic history, because we never collect those in the first place. Access keys can be revoked and reissued quickly, and we can rotate infrastructure without losing accounts. | لا يوجد عليه ما يكشف هوية أحد. لا تحتفظ الخوادم بأسماء أو بريد إلكتروني أو عناوين IP أو سجل تصفح، لأننا لا نجمعها أصلًا. ويمكن إلغاء مفاتيح الوصول وإعادة إصدارها بسرعة، كما يمكننا تدوير البنية التحتية دون فقدان الحسابات. |
+| `threat.q5.question` | Can my government or ISP tell that I am using FreeSocks? | هل تستطيع حكومتي أو مزوّد الإنترنت معرفة أنني أستخدم FreeSocks؟ |
+| `threat.q5.answer` | Sometimes censors can detect that circumvention traffic is in use even when they cannot read it. Our transports are designed to look like ordinary encrypted web traffic, and Internet Freedom Mode routes through infrastructure that is expensive to block. Still, whether use is detectable, and what the consequences are, varies by country. Weigh your local risk. | يمكن للرقيب أحيانًا اكتشاف استخدام حركة مرور لتجاوز الحجب حتى دون قراءتها. صُمّمت بروتوكولات النقل لدينا لتبدو كحركة ويب مشفّرة عادية، ويوجّه وضع حرية الإنترنت الاتصال عبر بنية تحتية يكلّف حجبها الكثير. ومع ذلك، فإن إمكانية اكتشاف الاستخدام وعواقبه تختلف من بلد إلى آخر. قدِّر المخاطر في بلدك بنفسك. |
+| `threat.q6.question` | Why should I believe any of this? | لماذا أصدّق أيًّا من هذا؟ |
+| `threat.q6.answer` | The control plane is open source, so anyone can read exactly what it stores and check that there is no place a name, email, or IP address could even go. Claims that depend on server configuration (like disabled logging) are documented and enforced by the same code. You still have to trust the operator for the parts you cannot see, as with every VPN; our approach is to minimize what there is to trust. | منظومة التحكم مفتوحة المصدر، فيستطيع أي شخص الاطلاع على ما تخزّنه بالضبط والتأكد من عدم وجود أي مكان يمكن أن يذهب إليه اسم أو بريد إلكتروني أو عنوان IP. أما الادعاءات التي تعتمد على إعداد الخوادم (مثل تعطيل السجلات) فهي موثّقة ويفرضها الكود نفسه. ويظل عليك أن تثق بالمشغّل في الأجزاء التي لا يمكنك رؤيتها، كما هو الحال مع كل خدمة VPN؛ ونهجنا هو تقليل ما يتطلب الثقة إلى أدنى حد. |
+| `threat.q7.question` | Do payments link my identity to my browsing? | هل تربط المدفوعات هويتي بتصفحي؟ |
+| `threat.q7.answer` | Membership is optional, and payment is handled by outside processors: we never store the payer's name, email, or address, and an order is tied to your account only through an opaque reference. Cryptocurrency options (including Monero) exist for people who do not want a card trail at all. | العضوية اختيارية، وتعالج المدفوعات جهات دفع خارجية: لا نخزّن أبدًا اسم الدافع أو بريده الإلكتروني أو عنوانه، ولا يرتبط الطلب بحسابك إلا عبر مرجع مبهَم. وتتوفر خيارات العملات المشفّرة (بما فيها مونيرو) لمن لا يريد أي أثر لبطاقة على الإطلاق. |
 
 ## `common` — Shared buttons/labels (copy, download, close, working…) used across every page.
 
@@ -93,16 +93,16 @@ review.
 | `common.deviceCount [countPlural=one]` | 1 device | جهاز واحد |
 | `common.deviceCount [countPlural=other]` | {count} devices | {count} أجهزة |
 
-## `nav` — The site header: navigation buttons, menu, language/theme controls. *(3 missing)*
+## `nav` — The site header: navigation buttons, menu, language/theme controls.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `nav.getAccount` | Get a free account | احصل على حساب مجاني |
 | `nav.signIn` | Sign in | تسجيل الدخول |
 | `nav.account` | My account | حسابي |
-| `nav.menu` | Menu | ⚠️ **MISSING** |
-| `nav.theme` | Theme | ⚠️ **MISSING** |
-| `nav.home` | FreeSocks home | ⚠️ **MISSING** |
+| `nav.menu` | Menu | القائمة |
+| `nav.theme` | Theme | المظهر |
+| `nav.home` | FreeSocks home | الصفحة الرئيسية لـ FreeSocks |
 
 ## `captcha` — The proof-of-work human check widget states.
 
@@ -118,7 +118,7 @@ review.
 | `captcha.failedTip2` | Try a different network - or a VPN if sites are blocked where you are | جرّب شبكة أخرى - أو استخدم VPN/بروكسي إذا كانت المواقع محجوبة في منطقتك |
 | `captcha.failedTip3` | Still stuck? Try a private/incognito window or turn off browser extensions | ما زالت المشكلة قائمة؟ جرّب نافذة تصفح خاص أو عطّل إضافات المتصفح |
 
-## `reveal` — The save-your-account-number modal (the 32-digit sign-in number is shown ONCE; users must download it and paste it back to verify). The single most safety-critical copy in the product. *(8 missing)*
+## `reveal` — The save-your-account-number modal (the 32-digit sign-in number is shown ONCE; users must download it and paste it back to verify). The single most safety-critical copy in the product.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -126,28 +126,28 @@ review.
 | `reveal.subtitle` | This 32-digit number is the ONLY way to sign in again. There is no email or password to recover it. If you lose it, your account is gone for good. | هذا الرقم المكوّن من 32 خانة هو الطريقة الوحيدة لتسجيل الدخول مرة أخرى. لا يوجد بريد إلكتروني أو كلمة مرور لاستعادته. إذا فقدته، فسيضيع حسابك نهائيًا. |
 | `reveal.cannotRecover` | We cannot recover it for you - not even support can. | لا يمكننا استعادته لك - ولا حتى الدعم الفني. |
 | `reveal.saveHint` | Save it in a password manager, or write it down somewhere safe and private. | احفظه في مدير كلمات المرور، أو اكتبه في مكان آمن وخاص. |
-| `reveal.downloadRequired` | Download your account number to continue. Keep the file somewhere safe. | ⚠️ **MISSING** |
-| `reveal.continue` | Continue | ⚠️ **MISSING** |
-| `reveal.verifyTitle` | Confirm you saved it | ⚠️ **MISSING** |
-| `reveal.verifySubtitle` | Your account number is now hidden. Enter or paste it from the copy you just saved to confirm you can sign in later. | ⚠️ **MISSING** |
-| `reveal.verifyPlaceholder` | Paste your 32-digit account number | ⚠️ **MISSING** |
-| `reveal.verifyMismatch` | That doesn't match your account number. Check the copy you saved, or go back to see it again. | ⚠️ **MISSING** |
-| `reveal.back` | Back | ⚠️ **MISSING** |
+| `reveal.downloadRequired` | Download your account number to continue. Keep the file somewhere safe. | نزّل رقم حسابك للمتابعة. احتفظ بالملف في مكان آمن. |
+| `reveal.continue` | Continue | متابعة |
+| `reveal.verifyTitle` | Confirm you saved it | أكّد أنك حفظته |
+| `reveal.verifySubtitle` | Your account number is now hidden. Enter or paste it from the copy you just saved to confirm you can sign in later. | رقم حسابك مخفي الآن. أدخله أو الصقه من النسخة التي حفظتها للتو للتأكد من أنك تستطيع تسجيل الدخول لاحقًا. |
+| `reveal.verifyPlaceholder` | Paste your 32-digit account number | الصق رقم حسابك المكوّن من 32 خانة |
+| `reveal.verifyMismatch` | That doesn't match your account number. Check the copy you saved, or go back to see it again. | هذا لا يطابق رقم حسابك. تحقق من النسخة التي حفظتها، أو عُد لرؤيته مرة أخرى. |
+| `reveal.back` | Back | رجوع |
 | `reveal.done` | I've saved it | لقد حفظته |
-| `reveal.savedConfirmed` | Account number saved and verified | ⚠️ **MISSING** |
+| `reveal.savedConfirmed` | Account number saved and verified | تم حفظ رقم الحساب والتحقق منه |
 | `reveal.downloadFilename` | freesocks-account-number.txt | freesocks-account-number.txt |
 | `reveal.leaveWarning` | Your account number is still on screen. If you leave now without saving it, you will not be able to sign in again. | رقم حسابك ما زال على الشاشة. إذا غادرت الآن دون حفظه، فلن تتمكن من تسجيل الدخول مرة أخرى. |
 
-## `support` — The support-ID line (a non-secret handle for contacting support). *(2 missing)*
+## `support` — The support-ID line (a non-secret handle for contacting support).
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `support.label` | Support ID | معرّف الدعم |
 | `support.hint` | Share this if you contact us. It is NOT your sign-in number and grants no access. | شارك هذا إذا تواصلت معنا. إنه ليس رقم تسجيل دخولك ولا يمنح أي وصول. |
-| `support.emailUs` | Email us: | ⚠️ **MISSING** |
-| `support.getAccountLine` | Questions or problems? Email us at | ⚠️ **MISSING** |
+| `support.emailUs` | Email us: | راسلنا عبر البريد: |
+| `support.getAccountLine` | Questions or problems? Email us at | أسئلة أو مشكلات؟ راسلنا عبر البريد على |
 
-## `login` — The sign-in page (account number + optional passkey). *(1 missing)*
+## `login` — The sign-in page (account number + optional passkey).
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -164,34 +164,34 @@ review.
 | `login.success` | Signed in | تم تسجيل الدخول |
 | `login.sessionExpired` | Please sign in again - your session may have ended. | يرجى تسجيل الدخول مرة أخرى - ربما انتهت جلستك. |
 | `login.digitProgress` | {count} of {total} digits entered | {count} من {total} رقمًا تم إدخالها |
-| `login.or` | or | ⚠️ **MISSING** |
+| `login.or` | or | أو |
 
-## `passkey` — Optional passkey (Face ID / fingerprint) sign-in management. *(20 missing)*
+## `passkey` — Optional passkey (Face ID / fingerprint) sign-in management.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
-| `passkey.title` | Passkeys | ⚠️ **MISSING** |
-| `passkey.desc` | Sign in with Face ID, Touch ID, a security key, or your password manager - no account number to type. | ⚠️ **MISSING** |
-| `passkey.warning` | Heads-up: a passkey saved on your phone or in your browser may sync to your Apple or Google account, which can link this anonymous account to that identity. Use a hardware security key, or skip passkeys, if that matters to you. | ⚠️ **MISSING** |
-| `passkey.unsupported` | This device or browser doesn't support passkeys. | ⚠️ **MISSING** |
-| `passkey.none` | No passkeys yet. Your account number still signs you in. | ⚠️ **MISSING** |
-| `passkey.add` | Add a passkey | ⚠️ **MISSING** |
-| `passkey.adding` | Adding… | ⚠️ **MISSING** |
-| `passkey.added` | Passkey added | ⚠️ **MISSING** |
-| `passkey.addFailed` | Couldn't add the passkey | ⚠️ **MISSING** |
-| `passkey.remove` | Remove | ⚠️ **MISSING** |
-| `passkey.removed` | Passkey removed | ⚠️ **MISSING** |
-| `passkey.removeFailed` | Couldn't remove the passkey | ⚠️ **MISSING** |
-| `passkey.deviceLabelLabel` | Device name (optional) | ⚠️ **MISSING** |
-| `passkey.deviceLabelPlaceholder` | e.g. My phone | ⚠️ **MISSING** |
-| `passkey.addedOn` | Added {date} | ⚠️ **MISSING** |
-| `passkey.lastUsed` | last used {date} | ⚠️ **MISSING** |
-| `passkey.signIn` | Sign in with a passkey | ⚠️ **MISSING** |
-| `passkey.signingIn` | Authenticating… | ⚠️ **MISSING** |
-| `passkey.signInFailed` | Passkey sign-in failed | ⚠️ **MISSING** |
-| `passkey.notNow` | Not now | ⚠️ **MISSING** |
+| `passkey.title` | Passkeys | مفاتيح المرور |
+| `passkey.desc` | Sign in with Face ID, Touch ID, a security key, or your password manager - no account number to type. | سجّل الدخول عبر Face ID أو Touch ID أو مفتاح أمان أو مدير كلمات المرور - دون كتابة رقم الحساب. |
+| `passkey.warning` | Heads-up: a passkey saved on your phone or in your browser may sync to your Apple or Google account, which can link this anonymous account to that identity. Use a hardware security key, or skip passkeys, if that matters to you. | تنبيه: مفتاح المرور المحفوظ على هاتفك أو في متصفحك قد يُزامَن مع حساب Apple أو Google لديك، مما قد يربط هذا الحساب المجهول بتلك الهوية. استخدم مفتاح أمان فعليًا، أو تجاوز مفاتيح المرور، إذا كان ذلك يهمّك. |
+| `passkey.unsupported` | This device or browser doesn't support passkeys. | هذا الجهاز أو المتصفح لا يدعم مفاتيح المرور. |
+| `passkey.none` | No passkeys yet. Your account number still signs you in. | لا مفاتيح مرور بعد. ما زال بإمكانك تسجيل الدخول برقم حسابك. |
+| `passkey.add` | Add a passkey | إضافة مفتاح مرور |
+| `passkey.adding` | Adding… | جارٍ الإضافة… |
+| `passkey.added` | Passkey added | تمت إضافة مفتاح المرور |
+| `passkey.addFailed` | Couldn't add the passkey | تعذّرت إضافة مفتاح المرور |
+| `passkey.remove` | Remove | إزالة |
+| `passkey.removed` | Passkey removed | تمت إزالة مفتاح المرور |
+| `passkey.removeFailed` | Couldn't remove the passkey | تعذّرت إزالة مفتاح المرور |
+| `passkey.deviceLabelLabel` | Device name (optional) | اسم الجهاز (اختياري) |
+| `passkey.deviceLabelPlaceholder` | e.g. My phone | مثال: هاتفي |
+| `passkey.addedOn` | Added {date} | أُضيف {date} |
+| `passkey.lastUsed` | last used {date} | آخر استخدام {date} |
+| `passkey.signIn` | Sign in with a passkey | تسجيل الدخول بمفتاح مرور |
+| `passkey.signingIn` | Authenticating… | جارٍ التحقق… |
+| `passkey.signInFailed` | Passkey sign-in failed | فشل تسجيل الدخول بمفتاح المرور |
+| `passkey.notNow` | Not now | ليس الآن |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(1 missing)*
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -213,10 +213,10 @@ review.
 | `account.switchTo` | Switch to {label} | التبديل إلى {label} |
 | `account.devicesTitle` | Connected devices | الأجهزة المتصلة |
 | `account.lastSeen` | Last seen {date} | آخر اتصال {date} |
-| `account.noSubTitle` | No subscription yet | لا يوجد اشتراك بعد |
-| `account.noSubBody` | Create your first subscription to get a URL you can use in any compatible VPN client. | أنشئ اشتراكك الأول للحصول على رابط يمكنك استخدامه في أي تطبيق VPN متوافق. |
-| `account.createSub` | Create subscription | إنشاء اشتراك |
-| `account.creating` | Creating… | جارٍ الإنشاء… |
+| `account.noSubTitle` | No key yet | لا يوجد اشتراك بعد |
+| `account.noSubBody` | Create your key to get a link you can use in any compatible VPN app. | أنشئ اشتراكك الأول للحصول على رابط يمكنك استخدامه في أي تطبيق VPN متوافق. |
+| `account.createSub` | Get my key | إنشاء اشتراك |
+| `account.creating` | Creating your key… | جارٍ الإنشاء… |
 | `account.rotateTitle` | Change your account number? | تغيير رقم الحساب؟ |
 | `account.rotateBody` | A new 32-digit number is generated and shown once. Your current number stops working immediately. Anyone who has it loses access. Do this if your number may have leaked. | سيتم إنشاء رقم جديد من 32 خانة وعرضه مرة واحدة فقط. يتوقف رقمك الحالي عن العمل فورًا، ويفقد أي شخص يملكه إمكانية الوصول. افعل هذا إذا كان رقمك قد تسرّب. |
 | `account.rotateConfirm` | Yes, change it | نعم، غيّره |
@@ -227,11 +227,10 @@ review.
 | `account.memberActiveExpiry` | Active until {date} | نشطة حتى {date} |
 | `account.membershipNudge.title` | Go unlimited with a membership | احصل على اشتراك غير محدود |
 | `account.membershipNudge.body` | Unlimited bandwidth and devices. | نطاق ترددي وأجهزة غير محدودة. |
-| `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | ⚠️ **MISSING** |
+| `account.membershipNudge.bodyNoDevices` | Unlimited bandwidth. | نطاق ترددي غير محدود. |
 | `account.membershipNudge.cta` | View membership | عرض العضوية |
 | `account.tab.connection` | Connection | الاتصال |
 | `account.tab.membership` | Membership | العضوية |
-| `account.tab.codes` | Codes & gifts | الرموز والهدايا |
 | `account.tab.security` | Security | الأمان |
 | `account.refreshing` | Refreshing… | جارٍ التحديث… |
 | `account.regenSuccessTitle` | New subscription URL generated | تم إنشاء رابط اشتراك جديد |
@@ -264,17 +263,17 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | الفتحة مجانية. سيفقد هذا الجهاز إمكانية الوصول حتى يعيد استيراد اشتراكك. |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | تعذر إلغاء الجهاز |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(8 missing)*
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
-| `hero.titleDefault` | Your subscription | اشتراكك |
-| `hero.eyebrowAccessKey` | Your access key | مفتاح الوصول الخاص بك |
-| `hero.urlLabelSubscription` | Subscription URL | رابط الاشتراك |
+| `hero.titleDefault` | Your key | اشتراكك |
+| `hero.eyebrowAccessKey` | FreeSocks Access Pass | مفتاح الوصول الخاص بك |
+| `hero.urlLabelSubscription` | Your link | رابط الاشتراك |
 | `hero.urlLabelAccessKey` | Access key | مفتاح الوصول |
 | `hero.tierLine` | Plan {tier} | الفئة {tier} |
 | `hero.viaLine` | via {backend} | عبر {backend} |
-| `hero.copyUrl` | Copy URL | نسخ الرابط |
+| `hero.copyUrl` | Copy link | نسخ الرابط |
 | `hero.copiedShort` | Copied | تم النسخ |
 | `hero.qrShow` | QR | QR |
 | `hero.qrHide` | Hide | إخفاء |
@@ -286,15 +285,15 @@ review.
 | `hero.importScan` | Scan to add to {app} | امسح للإضافة إلى {app} |
 | `hero.importOpenHint` | Tap to import on this device, or scan the code from your phone. | اضغط للاستيراد على هذا الجهاز، أو امسح الرمز من هاتفك. |
 | `hero.scanFallback` | Scan the fallback on another device | امسح الرابط الاحتياطي بجهاز آخر |
-| `hero.fallbackLabel` | Fallback URL | رابط احتياطي |
-| `hero.fallbackHint` | Use this if the main URL gets blocked | استخدم هذا إذا حُجب الرابط الرئيسي |
-| `hero.fallbackQrAria` | Show fallback URL QR code | عرض رمز QR للرابط الاحتياطي |
+| `hero.fallbackLabel` | Fallback link | رابط احتياطي |
+| `hero.fallbackHint` | Use this if the main link gets blocked | استخدم هذا إذا حُجب الرابط الرئيسي |
+| `hero.fallbackQrAria` | Show fallback link QR code | عرض رمز QR للرابط الاحتياطي |
 | `hero.downloaded` | Downloaded {filename} | تم تنزيل {filename} |
 | `hero.traffic` | Traffic | البيانات |
 | `hero.unlimited` | Unlimited | غير محدود |
-| `hero.configBelowNote` | Your full configuration is below - add the servers by hand. For privacy, the auto-updating subscription link isn't shown by default (your app would fetch it through a CDN). | ⚠️ **MISSING** |
-| `hero.showUrlAnyway` | Show the subscription link anyway | ⚠️ **MISSING** |
-| `hero.urlDangerBody` | This link works in any app, but the app then downloads your configuration through a third-party CDN in plain text - the CDN operator can see your server details and that you use FreeSocks. That is exactly what this focus avoids. Use it only if your app cannot import the configuration below. | ⚠️ **MISSING** |
+| `hero.configBelowNote` | Your full configuration is below - add the servers by hand. For privacy, the auto-updating subscription link isn't shown by default (your app would fetch it through a CDN). | إعدادك الكامل بالأسفل - أضف الخوادم يدويًا. حفاظًا على الخصوصية، لا يُعرض رابط الاشتراك المتجدد تلقائيًا افتراضيًا (لأن تطبيقك سيجلبه عبر شبكة CDN). |
+| `hero.showUrlAnyway` | Show the subscription link anyway | أظهر رابط الاشتراك رغم ذلك |
+| `hero.urlDangerBody` | This link works in any app, but the app then downloads your configuration through a third-party CDN in plain text - the CDN operator can see your server details and that you use FreeSocks. That is exactly what this focus avoids. Use it only if your app cannot import the configuration below. | يعمل هذا الرابط في أي تطبيق، لكن التطبيق ينزّل إعدادك بعدها عبر شبكة CDN خارجية كنصّ صريح - فيستطيع مشغّل الشبكة رؤية تفاصيل خادمك ومعرفة أنك تستخدم FreeSocks. وهذا بالضبط ما يتجنبه هذا التركيز. استخدمه فقط إذا كان تطبيقك لا يستطيع استيراد الإعداد بالأسفل. |
 | `hero.usedSoFar` | {amount} used so far | {amount} مستخدمة حتى الآن |
 | `hero.leftThisPeriod` | {amount} left this period. | {amount} متبقية لهذه الفترة. |
 | `hero.nearlyOut` | Nearly out, only {amount} left this period. | أوشكت على النفاد - تبقّى {amount} فقط لهذه الفترة. |
@@ -305,25 +304,26 @@ review.
 | `hero.daysRemaining [countPlural=other]` | {count} days remaining | {count} أيام متبقية |
 | `hero.expiredDaysAgo [countPlural=one]` | Expired 1 day ago | انتهى منذ يوم واحد |
 | `hero.expiredDaysAgo [countPlural=other]` | Expired {count} days ago | انتهى منذ {count} أيام |
-| `hero.nodeOnline` | Node online | ⚠️ **MISSING** |
-| `hero.nodeOffline` | Node offline | ⚠️ **MISSING** |
-| `hero.nodeUnknown` | Node status unknown | ⚠️ **MISSING** |
-| `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | ⚠️ **MISSING** |
-| `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | ⚠️ **MISSING** |
+| `hero.nodeOnline` | Node online | العقدة متصلة |
+| `hero.nodeOffline` | Node offline | العقدة غير متصلة |
+| `hero.nodeUnknown` | Node status unknown | حالة العقدة غير معروفة |
+| `hero.nodeStatusLink` | Network status | حالة الشبكة |
+| `hero.nodeOnlineHint` | The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location. | الخادم الذي يقف خلف إعدادك يعمل ويستجيب. إذا كنت ما زلت غير قادر على الاتصال، فمن المرجح أن شبكتك أو مزوّد الإنترنت يحجبه - جرّب وضع اتصال أو موقعًا آخر. |
+| `hero.nodeOfflineBody` | The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location). | الخادم الذي يقف خلف إعدادك متوقف حاليًا. المشكلة من جهتنا، وليست من شبكتك. أعد المحاولة بعد بضع دقائق، أو أنشئ إعدادًا جديدًا (ويمكنك اختيار موقع مختلف). |
 | `hero.keyLimited` | You've used all your data for this period. It resets automatically, or you can upgrade for more. | لقد استنفدت جميع بياناتك لهذه الفترة. ستتم إعادة ضبطها تلقائيًا، أو يمكنك الترقية للحصول على المزيد. |
 | `hero.keyExpired` | This key has expired. Renew your membership or create a new key to reconnect. | انتهت صلاحية هذا المفتاح. جدد عضويتك أو أنشئ مفتاحًا جديدًا لإعادة الاتصال. |
 | `hero.keyDisabled` | This key is currently disabled. If your membership lapsed, renew it; otherwise contact support with your support ID. | هذا المفتاح معطل حاليًا. إذا انتهت صلاحية عضويتك، فقم بتجديدها؛ وإلا فاتصل بالدعم الفني باستخدام رقم تعريف الدعم الخاص بك. |
 | `hero.resetsInDays [countPlural=one]` | Resets in 1 day | تتم إعادة التعيين في يوم واحد |
 | `hero.resetsInDays [countPlural=other]` | Resets in {count} days | يُعاد ضبطه في {count} يومًا |
 
-## `location` — Miscellaneous strings. *(4 missing)*
+## `location` — Miscellaneous strings.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
-| `location.pickerLabel` | Server location | ⚠️ **MISSING** |
-| `location.auto` | Automatic (least busy) | ⚠️ **MISSING** |
-| `location.offline` | offline | ⚠️ **MISSING** |
-| `location.pickerHint` | Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network. | ⚠️ **MISSING** |
+| `location.pickerLabel` | Server location | موقع الخادم |
+| `location.auto` | Automatic (least busy) | تلقائي (الأقل ازدحامًا) |
+| `location.offline` | offline | غير متصل |
+| `location.pickerHint` | Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network. | أين يقع خادم إعدادك. الخيار التلقائي يختار الموقع الأقل ازدحامًا؛ واختر بنفسك موقعًا يعمل بشكل أفضل على شبكتك. |
 
 ## `usage` — The 30-day usage trend under the traffic stats.
 
@@ -362,13 +362,16 @@ review.
 | `switch.confirm` | Switch to {to} | التبديل إلى {to} |
 | `switch.working` | Switching… | جارٍ التبديل… |
 
-## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2). *(4 missing)*
+## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2).
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `get.badge` | Free account | حساب مجاني |
 | `get.title` | Get a FreeSocks account | احصل على حساب FreeSocks |
-| `get.introTwoSteps` | Two quick steps: solve the human-check to create a free account, then create your subscription. | خطوتان سريعتان: أكمل التحقق البشري لإنشاء حساب مجاني، ثم أنشئ اشتراكك. |
+| `get.progressAria` | Sign-up progress | تقدّم إنشاء الحساب |
+| `get.progress.step1` | Create account | إنشاء الحساب |
+| `get.progress.step2` | Save your number | حفظ رقمك |
+| `get.progress.step3` | Get connected | الاتصال |
 | `get.step1Title` | Create your account | أنشئ حسابك |
 | `get.chooseBackend` | Choose a connection type | اختر نوع الخادم |
 | `get.backendAria` | Connection type | نوع الخادم |
@@ -376,26 +379,21 @@ review.
 | `get.backendShadowsocks` | Shadowsocks via Outline | Shadowsocks عبر Outline |
 | `get.createAccount` | Create my account | إنشاء حسابي |
 | `get.freeAccountNote` | Free accounts are valid for {days} days and limited to {devices}. No email or password. | الحسابات المجانية صالحة لمدة {days} يومًا ومحدودة بـ {devices}. بلا بريد إلكتروني أو كلمة مرور. |
-| `get.freeAccountNoteNoDevices` | Free accounts are valid for {days} days. No email or password. | ⚠️ **MISSING** |
-| `get.accountReady` | Your account is ready | حسابك جاهز. |
-| `get.nextStepHint` | One step left - your account can't connect to anything until you create your subscription. | ⚠️ **MISSING** |
-| `get.nextStepCta` | Next: create your subscription | ⚠️ **MISSING** |
-| `get.nextStepBadge` | Next step | ⚠️ **MISSING** |
-| `get.step2Title` | Create your subscription | أنشئ اشتراكك |
-| `get.step2Intro` | Create a subscription to get a URL you can paste into any compatible VPN client. | أنشئ اشتراك وكيل للحصول على رابط يمكنك لصقه في أي تطبيق VPN متوافق. |
-| `get.manageHintPrefix` | Manage this subscription anytime from | أدر هذا الاشتراك في أي وقت من |
+| `get.freeAccountNoteNoDevices` | Free accounts are valid for {days} days. No email or password. | الحسابات المجانية صالحة لمدة {days} يومًا. بلا بريد إلكتروني أو كلمة مرور. |
+| `get.step3Title` | Get your key | احصل على مفتاحك |
+| `get.step3Intro` | Your key is what connects your app to the VPN. Create it, then add it to your app. | مفتاحك هو ما يربط تطبيقك بشبكة VPN. أنشئه، ثم أضفه إلى تطبيقك. |
+| `get.manageHintPrefix` | Manage your key anytime from | أدر هذا الاشتراك في أي وقت من |
 | `get.manageLinkLabel` | your account | حسابك |
-| `get.subErrorSafePrefix` | Your account is safe. You can create the subscription later from | حسابك آمن. يمكنك إنشاء الاشتراك لاحقًا من |
+| `get.subErrorSafePrefix` | Your account is safe. You can create your key later from | حسابك آمن. يمكنك إنشاء الاشتراك لاحقًا من |
 | `get.subErrorSafeSuffix` | once a server is available. | عندما يتوفر خادم. |
-| `get.createSubToastTitle` | Subscription created | تم إنشاء الاشتراك |
-| `get.createSubToastBody` | Copy the URL into your VPN client, or scan the QR code. | انسخ الرابط في تطبيق VPN لديك، أو امسح رمز QR. |
+| `get.createSubToastTitle` | Your key is ready | تم إنشاء الاشتراك |
+| `get.createSubToastBody` | Copy the link into your VPN app, or scan the QR code. | انسخ الرابط في تطبيق VPN لديك، أو امسح رمز QR. |
 | `get.createAccountFailedTitle` | Could not create account | تعذّر إنشاء الحساب |
-| `get.createSubFailedTitle` | Could not create subscription | تعذّر إنشاء الاشتراك |
+| `get.createSubFailedTitle` | Could not create your key | تعذّر إنشاء الاشتراك |
 | `get.haveAccountPrefix` | Already have an account? | لديك حساب بالفعل؟ |
 | `get.lostNumberHint` | Lost your account number before saving it? You can switch to a new one - | فقدت رقم حسابك قبل حفظه؟ يمكنك التبديل إلى رقم جديد - |
 | `get.lostNumberLinkLabel` | change it from your account page | غيّره من صفحة حسابك |
-| `get.upsellTitle` | Want unlimited? | تريد بلا حدود؟ |
-| `get.upsellBody` | Upgrade to a FreeSocks membership any time for unlimited bandwidth and devices. | يمكنك الترقية إلى عضوية FreeSocks في أي وقت للحصول على نطاق ترددي وأجهزة غير محدودة. |
+| `get.redeemPrompt` | Have a gift code? Redeem it before creating your key. | لديك رمز هدية؟ استخدمه قبل إنشاء مفتاحك. |
 | `get.redeemTitle` | Got a gift code? | هل لديك رمز هدية؟ |
 | `get.redeemBody` | Redeem it now to upgrade your new account instantly. | استردها الآن لترقية حسابك الجديد فوراً. |
 
@@ -410,51 +408,68 @@ review.
 | `tiers.mirrors` | Mirror URLs | روابط بديلة |
 | `tiers.upgradeCta` | Upgrade | ترقية |
 
-## `impact` — The donation-impact panel: bandwidth donated, free users helped, charts. *(16 missing)*
+## `impact` — The donation-impact panel: bandwidth donated, free users helped, charts.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `impact.title` | Donations support Unredacted | التبرعات تدعم Unredacted |
 | `impact.body` | Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site. | Unredacted منظمة أمريكية غير ربحية 501(c)(3). وFreeSocks أحد مشاريعها. التبرعات تموّل هذا العمل. اطّلع على تفاصيله في موقع Unredacted. |
-| `impact.collectiveTitle` | Donation impact | ⚠️ **MISSING** |
-| `impact.collectiveBody` | Donations made through FreeSocks raise every free user's monthly bandwidth for the month they're given. This is what the community's donations are doing right now. | ⚠️ **MISSING** |
-| `impact.bonusThisMonth` | GB added this month | ⚠️ **MISSING** |
-| `impact.bonusThisMonthDetail` | on top of every free account's monthly allowance | ⚠️ **MISSING** |
-| `impact.usersHelped` | free accounts reached | ⚠️ **MISSING** |
-| `impact.usersHelpedDetail` | active free users whose allowance the bonus raises | ⚠️ **MISSING** |
-| `impact.historyTitle` | Bandwidth added per month | ⚠️ **MISSING** |
-| `impact.chartAria` | Bandwidth added to every free user by donations, month by month over the last {n} months | ⚠️ **MISSING** |
-| `impact.yourContribution` | Your contribution | ⚠️ **MISSING** |
-| `impact.yourGiven` | You've given {amount} | ⚠️ **MISSING** |
-| `impact.yourGb` | That's about {gb} GB of extra bandwidth for free users | ⚠️ **MISSING** |
-| `impact.yourCount [countPlural=one]` | across 1 donation | ⚠️ **MISSING** |
-| `impact.yourCount [countPlural=other]` | across {count} donations | ⚠️ **MISSING** |
-| `impact.empty` | No donations yet this month - the first one starts the counter. | ⚠️ **MISSING** |
-| `impact.externalNote` | This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here. | ⚠️ **MISSING** |
-| `impact.aboutUnredacted` | About Unredacted | ⚠️ **MISSING** |
+| `impact.collectiveTitle` | Donation impact | أثر التبرعات |
+| `impact.collectiveBody` | Donations made through FreeSocks raise every free user's monthly bandwidth for the month they're given. This is what the community's donations are doing right now. | التبرعات عبر FreeSocks ترفع النطاق الترددي الشهري لكل مستخدم مجاني في الشهر الذي تُقدَّم فيه. هذا ما تحققه تبرعات المجتمع الآن. |
+| `impact.bonusThisMonth` | GB added this month | غيغابايت مضافة هذا الشهر |
+| `impact.bonusThisMonthDetail` | on top of every free account's monthly allowance | فوق الحصة الشهرية لكل حساب مجاني |
+| `impact.usersHelped` | free accounts reached | حسابات مجانية مستفيدة |
+| `impact.usersHelpedDetail` | active free users whose allowance the bonus raises | مستخدمو الباقة المجانية النشطون الذين ترفع الإضافة حصتهم |
+| `impact.historyTitle` | Bandwidth added per month | النطاق الترددي المُضاف شهريًا |
+| `impact.chartAria` | Bandwidth added to every free user by donations, month by month over the last {n} months | النطاق الترددي الذي أضافته التبرعات لكل مستخدم مجاني، شهرًا بشهر خلال آخر {n} أشهر |
+| `impact.yourContribution` | Your contribution | مساهمتك |
+| `impact.yourGiven` | You've given {amount} | لقد تبرعت بـ {amount} |
+| `impact.yourGb` | That's about {gb} GB of extra bandwidth for free users | أي نحو {gb} غيغابايت من النطاق الترددي الإضافي للمستخدمين المجانيين |
+| `impact.yourCount [countPlural=one]` | across 1 donation | عبر تبرع واحد |
+| `impact.yourCount [countPlural=other]` | across {count} donations | عبر {count} تبرعات |
+| `impact.empty` | No donations yet this month - the first one starts the counter. | لا تبرعات بعد هذا الشهر - أول تبرع يشغّل العدّاد. |
+| `impact.externalNote` | This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here. | يتتبع هذا العدّاد التبرعات المقدَّمة عبر FreeSocks فقط. التبرعات المباشرة على unredacted.org/donate تدعم عمل Unredacted الأوسع، لكنها لا تضيف نطاقًا تردديًا هنا. |
+| `impact.aboutUnredacted` | About Unredacted | عن Unredacted |
 
-## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(18 missing)*
+## `donate` — The donation card + amount picker (donations add bandwidth for all free users).
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
-| `donate.addTitle` | Add a donation | ⚠️ **MISSING** |
-| `donate.addSubtitle` | Chip in to help keep FreeSocks free for everyone. | ⚠️ **MISSING** |
-| `donate.standaloneTitle` | Donate to FreeSocks | ⚠️ **MISSING** |
-| `donate.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises this month's bandwidth for every free user. | ⚠️ **MISSING** |
-| `donate.amountLabel` | Amount | ⚠️ **MISSING** |
-| `donate.none` | No thanks | ⚠️ **MISSING** |
-| `donate.custom` | Custom | ⚠️ **MISSING** |
-| `donate.customPlaceholder` | Other amount | ⚠️ **MISSING** |
-| `donate.impact` | Adds about {gb} GB to every free user this month | ⚠️ **MISSING** |
-| `donate.bonusActive` | Donations this month have added {gb} GB to every free user's monthly allowance. | ⚠️ **MISSING** |
-| `donate.minNote` | Minimum {amount} | ⚠️ **MISSING** |
-| `donate.give` | Donate {amount} | ⚠️ **MISSING** |
-| `donate.giving` | Starting… | ⚠️ **MISSING** |
-| `donate.startFailed` | Couldn't start the donation | ⚠️ **MISSING** |
-| `donate.badge` | Donor | ⚠️ **MISSING** |
-| `donate.badgeTooltip` | Thank you for supporting FreeSocks | ⚠️ **MISSING** |
-| `donate.thanksTitle` | You're a FreeSocks donor | ⚠️ **MISSING** |
-| `donate.thanksBody` | Thank you - your support helps keep FreeSocks free for everyone. | ⚠️ **MISSING** |
+| `donate.addTitle` | Add a donation | أضف تبرعًا |
+| `donate.addSubtitle` | Chip in to help keep FreeSocks free for everyone. | ساهم للمساعدة في إبقاء FreeSocks مجانيًا للجميع. |
+| `donate.standaloneTitle` | Donate to FreeSocks | تبرّع لـ FreeSocks |
+| `donate.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises this month's bandwidth for every free user. | FreeSocks مجاني للجميع وتموله التبرعات. تبرّع بأي مبلغ للمساعدة في استمراره - كما يرفع التبرع النطاق الترددي لهذا الشهر لكل مستخدم مجاني. |
+| `donate.amountLabel` | Amount | المبلغ |
+| `donate.none` | No thanks | لا شكرًا |
+| `donate.custom` | Custom | مخصص |
+| `donate.customPlaceholder` | Other amount | مبلغ آخر |
+| `donate.impact` | Adds about {gb} GB to every free user this month | يضيف نحو {gb} غيغابايت لكل مستخدم مجاني هذا الشهر |
+| `donate.bonusActive` | Donations this month have added {gb} GB to every free user's monthly allowance. | أضافت تبرعات هذا الشهر {gb} غيغابايت إلى الحصة الشهرية لكل مستخدم مجاني. |
+| `donate.minNote` | Minimum {amount} | الحد الأدنى {amount} |
+| `donate.give` | Donate {amount} | تبرّع بـ {amount} |
+| `donate.giving` | Starting… | جارٍ البدء… |
+| `donate.startFailed` | Couldn't start the donation | تعذّر بدء التبرع |
+| `donate.badge` | Donor | متبرع |
+| `donate.badgeTooltip` | Thank you for supporting FreeSocks | شكرًا لدعمك FreeSocks |
+| `donate.thanksTitle` | You're a FreeSocks donor | أنت الآن من متبرعي FreeSocks |
+| `donate.thanksBody` | Thank you - your support helps keep FreeSocks free for everyone. | شكرًا لك - دعمك يساعد في إبقاء FreeSocks مجانيًا للجميع. |
+
+## `referral` — Miscellaneous strings.
+
+| Key | English | Arabic (العربية) |
+| --- | --- | --- |
+| `referral.fieldLabel` | Referral code (optional) | رمز الإحالة (اختياري) |
+| `referral.fieldHint` | Have a code from a friend? You each get bonus membership days when you upgrade. | لديك رمز من صديق؟ يحصل كلٌّ منكما على أيام عضوية إضافية عند الترقية. |
+| `referral.fieldPlaceholder` | FSR-XXXX-XXXX | FSR-XXXX-XXXX |
+| `referral.applied` | Referral applied — bonus days are yours when you upgrade. | تم تطبيق الإحالة - أيامك الإضافية بانتظارك عند الترقية. |
+| `referral.cardTitle` | Referrals | الإحالات |
+| `referral.cardBody` | Share your link. When someone signs up with it and becomes a member, you each get bonus days — theirs right away, yours after {vestingDays} days. | شارك رابطك. عندما يسجّل شخص عبره ويصبح عضوًا، يحصل كلٌّ منكما على أيام إضافية - أيامه فورًا، وأيامك بعد {vestingDays} يومًا. |
+| `referral.copyLink` | Copy invite link | نسخ رابط الدعوة |
+| `referral.codeLabel` | Your code | رمزك |
+| `referral.statsInvited` | Signed up | سجّلوا |
+| `referral.statsConverted` | Became members | أصبحوا أعضاء |
+| `referral.statsPending` | Not yet members | ليسوا أعضاء بعد |
+| `referral.statsDays` | Bonus days earned | الأيام الإضافية المكتسبة |
 
 ## `qr` — QR-code helper labels.
 
@@ -473,20 +488,20 @@ review.
 | `app.adminLoadFailedTitle` | Couldn't load the admin console | تعذر تحميل لوحة تحكم المسؤول |
 | `app.adminLoadFailedBody` | The network request for this section failed. Reload to retry. | فشل طلب الشبكة لهذا القسم. أعد تحميل الصفحة للمحاولة مرة أخرى. |
 
-## `footer` — The site footer (nonprofit line, terms/privacy links). *(8 missing)*
+## `footer` — The site footer (nonprofit line, terms/privacy links).
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `footer.operatedPrefix` | Operated by | يديره |
 | `footer.operatedSuffix` | , a US 501(c)(3) nonprofit | ، منظمة أمريكية غير ربحية 501(c)(3) |
-| `footer.viewSource` | View source | ⚠️ **MISSING** |
-| `footer.terms` | Terms of Service | ⚠️ **MISSING** |
-| `footer.privacy` | Privacy Policy | ⚠️ **MISSING** |
-| `footer.transparency` | Transparency Report | ⚠️ **MISSING** |
-| `footer.socialX` | FreeSocks on X | ⚠️ **MISSING** |
-| `footer.socialMastodon` | FreeSocks on Mastodon | ⚠️ **MISSING** |
-| `footer.socialBluesky` | FreeSocks on Bluesky | ⚠️ **MISSING** |
-| `footer.support` | Support | ⚠️ **MISSING** |
+| `footer.viewSource` | View source | عرض المصدر |
+| `footer.terms` | Terms of Service | شروط الخدمة |
+| `footer.privacy` | Privacy Policy | سياسة الخصوصية |
+| `footer.transparency` | Transparency Report | تقرير الشفافية |
+| `footer.socialX` | FreeSocks on X | FreeSocks على X |
+| `footer.socialMastodon` | FreeSocks on Mastodon | FreeSocks على Mastodon |
+| `footer.socialBluesky` | FreeSocks on Bluesky | FreeSocks على Bluesky |
+| `footer.support` | Support | الدعم |
 
 ## `renew` — Expiring/expired membership callouts and renewal prompts.
 
@@ -500,22 +515,24 @@ review.
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | أنت الآن على الباقة المجانية. جدِّد من الأسفل لاستعادة عضويتك. |
 | `renew.renewCta` | Renew membership | تجديد العضوية |
 
-## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(4 missing)*
+## `upgrade` — The paid-membership purchase panel (payment method, duration, totals).
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `upgrade.title` | Upgrade to a FreeSocks membership | الترقية إلى عضوية FreeSocks |
 | `upgrade.extendTitle` | Extend your membership | مدّد عضويتك |
 | `upgrade.subtitle` | Unlimited bandwidth and devices. Choose a length and how to pay. | نطاق ترددي وأجهزة غير محدودة. اختر المدة وطريقة الدفع. |
-| `upgrade.subtitleNoDevices` | Unlimited bandwidth. Choose a length and how to pay. | ⚠️ **MISSING** |
+| `upgrade.subtitleNoDevices` | Unlimited bandwidth. Choose a length and how to pay. | نطاق ترددي غير محدود. اختر المدة وطريقة الدفع. |
+| `upgrade.compareBandwidth` | Bandwidth per month | النطاق الترددي شهريًا |
+| `upgrade.compareDevices` | Devices | الأجهزة |
 | `upgrade.durationLabel` | Membership length | مدة العضوية |
 | `upgrade.cryptoMinNote` | Crypto payments start at {months} months - shorter terms fall below the network minimum. Pick another method for shorter terms. | تبدأ مدفوعات العملات المشفّرة من {months} أشهر - المدد الأقصر أقل من الحد الأدنى للشبكة. اختر طريقة أخرى للمدد الأقصر. |
 | `upgrade.months [countPlural=one]` | 1 month | 1 شهر |
 | `upgrade.months [countPlural=other]` | {count} months | {count} شهر |
 | `upgrade.perMonth` | {price}/mo | {price}/شهر |
-| `upgrade.fromPerMonth` | From {price}/month | ⚠️ **MISSING** |
-| `upgrade.benefitsShort` | Unlimited bandwidth and devices | ⚠️ **MISSING** |
-| `upgrade.benefitsShortNoDevices` | Unlimited bandwidth | ⚠️ **MISSING** |
+| `upgrade.fromPerMonth` | From {price}/month | ابتداءً من {price}/شهر |
+| `upgrade.benefitsShort` | Unlimited bandwidth and devices | نطاق ترددي وأجهزة غير محدودة |
+| `upgrade.benefitsShortNoDevices` | Unlimited bandwidth | نطاق ترددي غير محدود |
 | `upgrade.save` | save {pct}% | وفّر {pct}٪ |
 | `upgrade.methodLabel` | Payment method | طريقة الدفع |
 | `upgrade.payNowpayments` | Cryptocurrency | العملات المشفرة |
@@ -588,19 +605,21 @@ review.
 | `error.deviceUnsupported` | Your current server type doesn't support removing individual devices. | نوع الخادم الحالي لديك لا يدعم إزالة الأجهزة الفردية. |
 | `error.billing` | The payment service couldn't process this. Please try again later. | لم تتمكن خدمة الدفع من معالجة هذه العملية. يرجى المحاولة مرة أخرى لاحقاً. |
 | `error.serverError` | The server had a problem handling this. Please try again in a few minutes. | واجه الخادم مشكلة في معالجة هذا الطلب. يرجى المحاولة مرة أخرى بعد بضع دقائق. |
+| `error.modeUnavailable` | Your current connection mode is no longer available. Switch to another mode first, then try again. | وضع الاتصال الحالي لم يعد متاحًا. بدّل إلى وضع آخر أولًا، ثم أعد المحاولة. |
 
-## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps. *(26 missing)*
+## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `setup.title` | Set up your VPN app | إعداد تطبيق الوكيل |
 | `setup.install` | Install | تثبيت |
-| `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | ⚠️ **MISSING** |
-| `setup.openSource` | Open source | ⚠️ **MISSING** |
-| `setup.proprietary` | Proprietary | ⚠️ **MISSING** |
-| `setup.easeEasy` | Easy to use | ⚠️ **MISSING** |
-| `setup.easeAdvanced` | Advanced | ⚠️ **MISSING** |
-| `setup.viewSource` | Source | ⚠️ **MISSING** |
+| `setup.noApps` | No recommended apps for this platform yet - use any compatible client and add your subscription manually. | لا توجد تطبيقات موصى بها لهذه المنصة بعد - استخدم أي عميل متوافق وأضف اشتراكك يدويًا. |
+| `setup.openSource` | Open source | مفتوح المصدر |
+| `setup.recommended` | Recommended | موصى به |
+| `setup.proprietary` | Proprietary | مغلق المصدر |
+| `setup.easeEasy` | Easy to use | سهل الاستخدام |
+| `setup.easeAdvanced` | Advanced | متقدم |
+| `setup.viewSource` | Source | المصدر |
 | `setup.intro` | Copy your subscription link above, then add it to a compatible app: | انسخ رابط الاشتراك بالأعلى، ثم أضفه إلى تطبيق متوافق: |
 | `setup.android` | Android | أندرويد |
 | `setup.ios` | iPhone / iPad | آيفون / آيباد |
@@ -612,26 +631,26 @@ review.
 | `setup.step.connect` | Select a server and connect | اختر خادمًا واتصل |
 | `setup.noDeviceLimit` | no device limit | لا يوجد حد للأجهزة |
 | `setup.hwidNote` | On a device-limited plan, turn on "device identification" (HWID) in the app's settings so your device is recognized. | في حال الاشتراك في باقة محدودة الأجهزة، قم بتشغيل "تحديد الجهاز" (HWID) في إعدادات التطبيق حتى يتم التعرف على جهازك. |
-| `setup.deviceCompatibleTitle` | Works with your device limit | ⚠️ **MISSING** |
-| `setup.deviceIncompatibleTitle` | Not recommended for your plan | ⚠️ **MISSING** |
-| `setup.deviceIncompatibleNote` | These apps don't identify your device, so each launch can use up a device slot - or fail to connect on a device-limited plan. Prefer an app above. | ⚠️ **MISSING** |
-| `setup.linkKind.play` | Google Play | ⚠️ **MISSING** |
-| `setup.linkKind.appStore` | App Store | ⚠️ **MISSING** |
-| `setup.linkKind.github` | GitHub | ⚠️ **MISSING** |
-| `setup.linkKind.apk` | APK | ⚠️ **MISSING** |
-| `setup.linkKind.website` | Website | ⚠️ **MISSING** |
-| `setup.clientDesc.hiddify` | The easiest all-round choice: one-tap import, a clean interface, and builds for every platform. | ⚠️ **MISSING** |
-| `setup.clientDesc.karing` | Feature-rich and honors your plan's device limit. Slightly busier than Hiddify, but works well everywhere. | ⚠️ **MISSING** |
-| `setup.clientDesc.anywhere` | A polished, easy client for Apple devices only: iPhone, iPad, Apple TV, and Mac. No Android, Windows, or Linux version. | ⚠️ **MISSING** |
-| `setup.clientDesc.singBox` | The reference app for the sing-box core. Powerful but minimal, so it's best if you are comfortable with technical settings. | ⚠️ **MISSING** |
-| `setup.clientDesc.v2rayng` | A long-standing, lightweight Android client with one-tap import. More utilitarian than Hiddify, but dependable. | ⚠️ **MISSING** |
-| `setup.clientDesc.v2rayn` | A powerful desktop app for advanced users. Import is manual, and links using encryption "none" can need a manual tweak. Prefer Hiddify if that sounds fiddly. | ⚠️ **MISSING** |
-| `setup.clientDesc.clash` | Clash Verge, a popular desktop app with strong routing rules. Some versions reject VLESS subscription links; if yours won't import, use Hiddify or v2rayN instead. | ⚠️ **MISSING** |
-| `setup.clientDesc.flclash` | A clean, cross-platform Clash-family app. Import by pasting your subscription link (no one-tap import). | ⚠️ **MISSING** |
-| `setup.clientDesc.mihomoParty` | A friendly desktop app for the Clash (mihomo) core. Paste your subscription link to import. | ⚠️ **MISSING** |
-| `setup.clientDesc.throne` | An advanced desktop client that honors your plan's device limit, with solid Linux support. Expect manual setup. | ⚠️ **MISSING** |
-| `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | ⚠️ **MISSING** |
-| `setup.clientDesc.outline` | The simplest experience there is: paste your access key and connect. Only works with Outline (Shadowsocks) access keys. | ⚠️ **MISSING** |
+| `setup.deviceCompatibleTitle` | Works with your device limit | متوافق مع حد الأجهزة في خطتك |
+| `setup.deviceIncompatibleTitle` | Not recommended for your plan | غير موصى به لخطتك |
+| `setup.deviceIncompatibleNote` | These apps don't identify your device, so each launch can use up a device slot - or fail to connect on a device-limited plan. Prefer an app above. | هذه التطبيقات لا تُعرّف جهازك، لذا قد يستهلك كل تشغيل خانة جهاز - أو يفشل الاتصال في باقة محدودة الأجهزة. فضّل تطبيقًا من الأعلى. |
+| `setup.linkKind.play` | Google Play | Google Play |
+| `setup.linkKind.appStore` | App Store | App Store |
+| `setup.linkKind.github` | GitHub | GitHub |
+| `setup.linkKind.apk` | APK | APK |
+| `setup.linkKind.website` | Website | الموقع الإلكتروني |
+| `setup.clientDesc.hiddify` | The easiest all-round choice: one-tap import, a clean interface, and builds for every platform. | الخيار الأسهل عمومًا: استيراد بلمسة واحدة، وواجهة نظيفة، وإصدارات لكل منصة. |
+| `setup.clientDesc.karing` | Feature-rich and honors your plan's device limit. Slightly busier than Hiddify, but works well everywhere. | غني بالميزات ويحترم حد الأجهزة في خطتك. أكثر ازدحامًا قليلًا من Hiddify، لكنه يعمل جيدًا في كل مكان. |
+| `setup.clientDesc.anywhere` | A polished, easy client for Apple devices only: iPhone, iPad, Apple TV, and Mac. No Android, Windows, or Linux version. | عميل أنيق وسهل لأجهزة Apple فقط: آيفون وآيباد وApple TV وماك. لا توجد نسخة لأندرويد أو ويندوز أو لينكس. |
+| `setup.clientDesc.singBox` | The reference app for the sing-box core. Powerful but minimal, so it's best if you are comfortable with technical settings. | التطبيق المرجعي لنواة sing-box. قوي لكنه بسيط، لذا يناسبك إن كنت مرتاحًا للإعدادات التقنية. |
+| `setup.clientDesc.v2rayng` | A long-standing, lightweight Android client with one-tap import. More utilitarian than Hiddify, but dependable. | عميل أندرويد عريق وخفيف مع استيراد بلمسة واحدة. أكثر عمليةً وأقل أناقة من Hiddify، لكنه يعتمد عليه. |
+| `setup.clientDesc.v2rayn` | A powerful desktop app for advanced users. Import is manual, and links using encryption "none" can need a manual tweak. Prefer Hiddify if that sounds fiddly. | تطبيق سطح مكتب قوي للمستخدمين المتقدمين. الاستيراد يدوي، والروابط التي تستخدم تشفير "none" قد تحتاج إلى تعديل يدوي. فضّل Hiddify إذا بدا ذلك معقدًا. |
+| `setup.clientDesc.clash` | Clash Verge, a popular desktop app with strong routing rules. Some versions reject VLESS subscription links; if yours won't import, use Hiddify or v2rayN instead. | Clash Verge تطبيق سطح مكتب شائع بقواعد توجيه قوية. بعض الإصدارات ترفض روابط اشتراك VLESS؛ إذا لم يستورد رابطك، استخدم Hiddify أو v2rayN بدلًا منه. |
+| `setup.clientDesc.flclash` | A clean, cross-platform Clash-family app. Import by pasting your subscription link (no one-tap import). | تطبيق نظيف من عائلة Clash يعمل عبر المنصات. الاستيراد بلصق رابط اشتراكك (لا يوجد استيراد بلمسة واحدة). |
+| `setup.clientDesc.mihomoParty` | A friendly desktop app for the Clash (mihomo) core. Paste your subscription link to import. | تطبيق سطح مكتب ودود لنواة Clash (mihomo). الصق رابط اشتراكك للاستيراد. |
+| `setup.clientDesc.throne` | An advanced desktop client that honors your plan's device limit, with solid Linux support. Expect manual setup. | عميل سطح مكتب متقدم يحترم حد الأجهزة في خطتك، مع دعم جيد للينكس. توقّع إعدادًا يدويًا. |
+| `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | تطبيق iOS مدفوع ومغلق المصدر، شائع وموثوق. يستحق الاستخدام إن كنت تملكه أصلًا؛ وتطبيقات المصدر المفتوح بالأعلى تؤدي المهمة نفسها مجانًا. |
+| `setup.clientDesc.outline` | The simplest experience there is: paste your access key and connect. Only works with Outline (Shadowsocks) access keys. | أبسط تجربة ممكنة: الصق مفتاح الوصول واتصل. يعمل فقط مع مفاتيح وصول Outline (Shadowsocks). |
 
 ## `mirror` — The "trouble connecting? try a mirror" fallback flow.
 
@@ -663,7 +682,7 @@ review.
 | `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | إعداد الوكيل الكامل الخاص بك، يُجلب عبر قناة مشفّرة بحيث لا يمر أبدًا عبر شبكة CDN كنص عادي. انسخه يدويًا إلى تطبيقك بدلًا من استخدام رابط الاشتراك. |
 | `rawconfig.addHint` | Paste these server entries into your VPN app manually. | الصق إدخالات الخوادم هذه في تطبيق الوكيل يدويًا. |
 
-## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(6 missing)*
+## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -671,12 +690,12 @@ review.
 | `delivery.subtitle` | Pick a focus. It's saved on this device only, and you can change it anytime. | اختر أولوية - تُحفظ على هذا الجهاز فقط، ويمكنك تغييرها في أي وقت. |
 | `delivery.subtitleServer` | Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same. | اختر مجال تركيز. سيؤدي تغييره إلى إعادة إصدار مفتاحك للخوادم المطابقة؛ وسيظل مفتاحك الحالي يعمل لمدة 24 ساعة. |
 | `delivery.subtitleSignup` | Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime. | اختر مجال تركيز. يُحفظ في حسابك، ويستخدمه مفتاحك الأول - ويمكنك تغييره في أي وقت. |
-| `delivery.evadeTitle` | Internet Freedom Mode | ⚠️ **MISSING** |
-| `delivery.evadeAudience` | For censored countries | ⚠️ **MISSING** |
-| `delivery.evadeBody` | Pick this if websites, apps, or VPNs are blocked where you are. Built to keep working under censorship, with backup links that are harder to block. | ⚠️ **MISSING** |
-| `delivery.privacyTitle` | Privacy Mode | ⚠️ **MISSING** |
-| `delivery.privacyAudience` | For open internet | ⚠️ **MISSING** |
-| `delivery.privacyBody` | Pick this if the internet is mostly open where you are. The strongest confidentiality - your configuration stays off third-party servers - but it is easier for censors to block. | ⚠️ **MISSING** |
+| `delivery.evadeTitle` | Internet Freedom Mode | وضع حرية الإنترنت |
+| `delivery.evadeAudience` | For censored countries | للبلدان الخاضعة للرقابة |
+| `delivery.evadeBody` | Pick this if websites, apps, or VPNs are blocked where you are. Built to keep working under censorship, with backup links that are harder to block. | اختر هذا إذا كانت المواقع أو التطبيقات أو خدمات VPN محجوبة في مكانك. مصمم ليظل يعمل تحت الرقابة، مع روابط احتياطية يصعب حجبها. |
+| `delivery.privacyTitle` | Privacy Mode | وضع الخصوصية |
+| `delivery.privacyAudience` | For open internet | للإنترنت المفتوح |
+| `delivery.privacyBody` | Pick this if the internet is mostly open where you are. The strongest confidentiality - your configuration stays off third-party servers - but it is easier for censors to block. | اختر هذا إذا كان الإنترنت مفتوحًا في الغالب في مكانك. أقوى سرّية - إذ يبقى إعدادك بعيدًا عن خوادم الأطراف الثالثة - لكنه أسهل على الرقيب في الحجب. |
 | `delivery.recommended` | Recommended | موصى به |
 | `delivery.unavailable` | Not available yet | غير متوفر بعد |
 | `delivery.confirmTitle` | Switch to "{label}"? | التبديل إلى " {label} "? |
@@ -693,38 +712,39 @@ review.
 | `delivery.switchSuccessBody` | Same subscription URL - your apps will pick up the new servers on their next refresh. | أعد استيراد رابط الاشتراك الجديد على كل جهاز. |
 | `delivery.switchFailedTitle` | Could not switch focus | تعذر تغيير التركيز |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(37 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros.
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
-| `home.trust.nonprofit` | Run by a US 501(c)(3) nonprofit | ⚠️ **MISSING** |
-| `home.trust.openSource` | Open source | ⚠️ **MISSING** |
-| `home.trust.noLogs` | No traffic logs | ⚠️ **MISSING** |
-| `home.network.title` | Network status | ⚠️ **MISSING** |
-| `home.network.offline` | offline | ⚠️ **MISSING** |
-| `home.network.srOnline` | online | ⚠️ **MISSING** |
-| `home.network.srOffline` | offline | ⚠️ **MISSING** |
-| `home.network.note` | Checked every 10 minutes | ⚠️ **MISSING** |
-| `home.quicknav.label` | Jump to a section | ⚠️ **MISSING** |
-| `home.quicknav.privacy` | What we store | ⚠️ **MISSING** |
-| `home.quicknav.threat` | Threat model | ⚠️ **MISSING** |
-| `home.quicknav.faq` | FAQ | ⚠️ **MISSING** |
-| `home.quicknav.impact` | Donation impact | ⚠️ **MISSING** |
-| `home.sections.features` | Features | ⚠️ **MISSING** |
-| `home.sections.privacy` | Privacy | ⚠️ **MISSING** |
-| `home.sections.how` | Getting started | ⚠️ **MISSING** |
-| `home.sections.membership` | Membership | ⚠️ **MISSING** |
-| `home.sections.impact` | Impact | ⚠️ **MISSING** |
-| `home.sections.faq` | FAQ | ⚠️ **MISSING** |
-| `home.sections.about` | About | ⚠️ **MISSING** |
-| `home.impact.title` | Donations at work | ⚠️ **MISSING** |
-| `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | ⚠️ **MISSING** |
-| `home.impact.cta` | Make a donation | ⚠️ **MISSING** |
-| `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | ⚠️ **MISSING** |
-| `home.hero.title` | A free VPN for people in censored countries & around the world | ⚠️ **MISSING** |
-| `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | ⚠️ **MISSING** |
-| `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | ⚠️ **MISSING** |
-| `home.hero.impactLink` | See the impact | ⚠️ **MISSING** |
+| `home.trust.nonprofit` | Run by a US 501(c)(3) nonprofit | تديره منظمة أمريكية غير ربحية 501(c)(3) |
+| `home.trust.openSource` | Open source | مفتوح المصدر |
+| `home.trust.noLogs` | No traffic logs | لا سجلات لحركة المرور |
+| `home.network.title` | Network status | حالة الشبكة |
+| `home.network.offline` | offline | غير متصل |
+| `home.network.srOnline` | online | متصل |
+| `home.network.srOffline` | offline | غير متصل |
+| `home.network.note` | Checked every 10 minutes | يُفحص كل 10 دقائق |
+| `home.network.link` | Live status | الحالة المباشرة |
+| `home.quicknav.label` | Jump to a section | انتقل إلى قسم |
+| `home.quicknav.privacy` | What we store | ما نخزنه |
+| `home.quicknav.threat` | Threat model | نموذج التهديدات |
+| `home.quicknav.faq` | FAQ | الأسئلة الشائعة |
+| `home.quicknav.impact` | Donation impact | أثر التبرعات |
+| `home.sections.features` | Features | الميزات |
+| `home.sections.privacy` | Privacy | الخصوصية |
+| `home.sections.how` | Getting started | البداية |
+| `home.sections.membership` | Membership | العضوية |
+| `home.sections.impact` | Impact | الأثر |
+| `home.sections.faq` | FAQ | الأسئلة الشائعة |
+| `home.sections.about` | About | حول |
+| `home.impact.title` | Donations at work | التبرعات تُحدث فرقًا |
+| `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | كل تبرع عبر FreeSocks يرفع النطاق الترددي الشهري لكل حساب مجاني في ذلك الشهر. هذا ما أضافه المتبرعون حتى الآن - ويمكنك الإضافة إليه أيضًا. |
+| `home.impact.cta` | Make a donation | قدّم تبرعًا |
+| `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | النطاق الترددي الذي أضافته التبرعات لكل مستخدم مجاني، شهرًا بشهر |
+| `home.hero.title` | A VPN for people in censored countries & around the world | شبكة VPN للناس في البلدان الخاضعة للرقابة وحول العالم |
+| `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | صُمّم FreeSocks للأشخاص الذين يخضع إنترنتهم للرقابة، ويعمل كشبكة VPN تحترم الخصوصية في أي مكان آخر. إنشاء الحساب يتطلب تحققًا بشريًا سريعًا واحدًا. لا نطلب أبدًا بريدًا إلكترونيًا أو كلمة مرور. يعمل رابط اشتراكك في معظم تطبيقات VPN الحديثة، وتمنحك العضوية {limits}. |
+| `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | التبرعات عبر FreeSocks تدعم المستخدمين المجانيين مباشرة: كل تبرع يشتري نطاقًا تردديًا حقيقيًا للناس في البلدان الخاضعة للرقابة، في الشهر نفسه. |
+| `home.hero.impactLink` | See the impact | اطّلع على الأثر |
 | `home.cta.getMembership` | Get a membership | احصل على عضوية |
 | `home.freeCard.title` | Free tier | المستوى المجاني |
 | `home.freeCard.badge` | What you get | ما ستحصل عليه |
@@ -737,7 +757,7 @@ review.
 | `home.freeCard.upsellTitle` | Want unlimited? | هل تريد اشتراكاً غير محدود؟ |
 | `home.freeCard.upsellBody` | Get {limits} - and help keep FreeSocks free for others. | احصل على {limits} - وساعد في إبقاء FreeSocks مجانيًا للآخرين. |
 | `home.freeCard.fromPerMonth` | from {price}/mo | من {price} /شهرياً |
-| `home.freeCard.cryptoNote` | Crypto accepted - Bitcoin, Monero, Zcash and more | ⚠️ **MISSING** |
+| `home.freeCard.cryptoNote` | Crypto accepted - Bitcoin, Monero, Zcash and more | نقبل العملات المشفّرة - بيتكوين ومونيرو وزيكاش والمزيد |
 | `home.features.title` | What FreeSocks is | ما هو FreeSocks؟ |
 | `home.features.noAuth.title` | No email or password | لا حاجة إلى بريد إلكتروني أو كلمة مرور |
 | `home.features.noAuth.body` | One human-check and you are in. We mint a 32-digit account number you save to sign back in. No email collected. | بمجرد التحقق البشري، ستتمكن من الدخول. سنقوم بإنشاء رقم حساب مكون من 32 رقمًا يمكنك حفظه لتسجيل الدخول مرة أخرى. لا يتم جمع أي بريد إلكتروني. |
@@ -763,16 +783,16 @@ review.
 | `home.membership.lead` | Free covers the basics. | يغطي البرنامج المجاني الأساسيات. |
 | `home.membership.descriptionFallback` | A FreeSocks membership lifts every limit. | عضوية FreeSocks ترفع كل الحدود. |
 | `home.membership.payNote` | Pay privately with Bitcoin, Monero, or Zcash - or use a card or PayPal. | ادفع باستخدام العملات المشفرة (بيتكوين ومونيرو وغيرها)، أو البطاقة، أو باي بال. |
-| `home.about.title` | About FreeSocks | ⚠️ **MISSING** |
+| `home.about.title` | About FreeSocks | حول FreeSocks |
 | `home.about.bodyPrefix` | FreeSocks is operated by | يتم تشغيل FreeSocks بواسطة |
-| `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ⚠️ **MISSING** |
-| `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | ⚠️ **MISSING** |
+| `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ، منظمة أمريكية غير ربحية 501(c)(3). |
+| `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | معظم خدمات VPN تفترض أنك تستطيع الدفع مقابل اشتراك وتسليم بريدك الإلكتروني بأمان. في معظم أنحاء العالم لا يصحّ أيٌّ منهما، لذلك لا يطلب FreeSocks أيًّا منهما. يمكن لأي شخص الحصول على مفتاح يعمل في نحو دقيقة والاحتفاظ به ما دام يستخدمه. |
 | `home.about.siteLink` | unredacted.org | unredacted.org |
-| `home.about.openSource` | The code that runs this service is published for anyone to inspect, audit, or run themselves. | ⚠️ **MISSING** |
-| `home.about.viewSourceCta` | View the source | ⚠️ **MISSING** |
-| `home.about.fact2Title` | Open source | ⚠️ **MISSING** |
-| `home.about.fact3Title` | Donation funded | ⚠️ **MISSING** |
-| `home.about.fact3Body` | Free accounts are paid for by donations and memberships. There are no ads and nothing is sold. | ⚠️ **MISSING** |
+| `home.about.openSource` | The code that runs this service is published for anyone to inspect, audit, or run themselves. | الكود الذي يشغّل هذه الخدمة منشور ليطّلع عليه أي شخص أو يدقّقه أو يشغّله بنفسه. |
+| `home.about.viewSourceCta` | View the source | اطّلع على المصدر |
+| `home.about.fact2Title` | Open source | مفتوح المصدر |
+| `home.about.fact3Title` | Donation funded | ممول بالتبرعات |
+| `home.about.fact3Body` | Free accounts are paid for by donations and memberships. There are no ads and nothing is sold. | تموَّل الحسابات المجانية من التبرعات والعضويات. لا إعلانات ولا شيء يُباع. |
 | `home.limits.unlimitedBoth` | unlimited bandwidth and devices | نطاق ترددي وأجهزة غير محدودة |
 | `home.limits.unlimitedBandwidth` | unlimited bandwidth | نطاق ترددي غير محدود |
 | `home.limits.unlimitedDevices` | unlimited devices | أجهزة غير محدودة |
@@ -837,3 +857,37 @@ review.
 | `deviceRevoke.body` | The device ending …{suffix} will be disconnected and its slot freed. It can reconnect later by re-importing your subscription URL. | سيتم فصل الجهاز الذي ينتهي بـ ... {suffix} وسيتم تحرير خانته. ويمكن إعادة الاتصال به لاحقًا عن طريق إعادة استيراد رابط اشتراكك. |
 | `deviceRevoke.confirm` | Revoke device | إلغاء الجهاز |
 | `deviceRevoke.working` | Revoking… | إلغاء… |
+
+## `status` — Miscellaneous strings.
+
+| Key | English | Arabic (العربية) |
+| --- | --- | --- |
+| `status.title` | Network status | حالة الشبكة |
+| `status.updated` | Updated {time} | آخر تحديث {time} |
+| `status.overallOk` | All locations are operating normally | جميع المواقع تعمل بشكل طبيعي |
+| `status.overallPartial` | Some locations are having issues | بعض المواقع تواجه مشكلات |
+| `status.overallMajor` | A major outage is in progress | هناك انقطاع كبير جارٍ |
+| `status.locationsTitle` | Locations | المواقع |
+| `status.nodesUp` | {online} of {total} nodes up | {online} من {total} عقدة متصلة |
+| `status.online` | Online | متصل |
+| `status.offline` | Offline | غير متصل |
+| `status.srOnline` | online | متصل |
+| `status.srOffline` | offline | غير متصل |
+| `status.loadQuiet` | Quiet | هادئ |
+| `status.loadBusy` | Busy | مزدحم |
+| `status.loadCrowded` | Crowded | مزدحم جدًا |
+| `status.loadUnknown` | Load unknown | الازدحام غير معروف |
+| `status.matrixTitle` | Availability in censored regions | التوفر في المناطق الخاضعة للرقابة |
+| `status.matrixBody` | How well each connection mode works from specific countries, based on reports we receive. "Partial" means some networks or times of day block it. | مدى جودة عمل كل وضع اتصال من بلدان محددة، استنادًا إلى البلاغات التي تصلنا. "جزئي" يعني أن بعض الشبكات أو أوقات اليوم تحجبه. |
+| `status.matrixAvailable` | Available | متاح |
+| `status.matrixPartial` | Partial | جزئي |
+| `status.matrixBlocked` | Blocked | محجوب |
+| `status.matrixEmpty` | No country data published yet. | لا توجد بيانات بلدان منشورة بعد. |
+| `status.incidentsTitle` | Incidents | الحوادث |
+| `status.incidentsNone` | No incidents in the last 30 days. | لا حوادث في آخر 30 يومًا. |
+| `status.incidentsOngoing` | Ongoing | جارٍ |
+| `status.incidentsResolved` | Resolved {time} | حُلّ {time} |
+| `status.incidentsStarted` | Started {time} | بدأ {time} |
+| `status.incidentsGlobal` | All locations | جميع المواقع |
+| `status.incidentsPast` | Past incidents | الحوادث السابقة |
+| `status.report` | Report a problem | الإبلاغ عن مشكلة |

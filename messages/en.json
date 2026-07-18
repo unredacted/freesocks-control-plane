@@ -655,7 +655,8 @@
     "deviceNotFound": "That device is no longer on your account.",
     "deviceUnsupported": "Your current server type doesn't support removing individual devices.",
     "billing": "The payment service couldn't process this. Please try again later.",
-    "serverError": "The server had a problem handling this. Please try again in a few minutes."
+    "serverError": "The server had a problem handling this. Please try again in a few minutes.",
+    "modeUnavailable": "Your current connection mode is no longer available. Switch to another mode first, then try again."
   },
   "setup": {
     "title": "Set up your VPN app",

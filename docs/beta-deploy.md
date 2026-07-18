@@ -360,11 +360,15 @@ copies. **Offsite storage is enforced**: with `BACKUP_S3_*` unset the container
 exits fatally and **crash-loops on first deploy** (visible in `docker compose
 ps`) unless `BACKUP_ALLOW_LOCAL_ONLY=true` explicitly accepts the risk — accounts
 are anonymous, so a lost datastore is unrecoverable. This is intentional; if a
-first deploy shows the backup container restarting, that's why. The sidecar also
-has a **liveness healthcheck** (a `/backups/.heartbeat` file touched each cycle),
-so a wedged loop shows `unhealthy` rather than a silent stall. Also back up the
-**secret set** (the `bunx convex env` values, especially `ACCOUNT_ID_PEPPER` —
-losing it invalidates every account number).
+first deploy shows the backup container restarting, that's why. The sidecar
+has a **success healthcheck** (`/backups/.heartbeat` is touched only when the
+dump AND the offsite upload succeeded), so a wedged loop — or a silently
+failing S3 destination — shows `unhealthy`. Set `BACKUP_AGE_PUBLIC_KEY` (an age
+X25519 recipient; keep the private half offline) so dumps are encrypted
+client-side before upload: a dump carries `accountIdHash` + live subscription
+tokens, so an unencrypted bucket compromise yields the readable datastore.
+Also back up the **secret set** (the `bunx convex env` values, especially
+`ACCOUNT_ID_PEPPER` — losing it invalidates every account number).
 
 **Pre-launch check:** `docker compose -f docker-compose.beta.yml logs backup |
 grep uploading` must show offsite uploads (not the LOCAL ONLY warning), and the
@@ -373,7 +377,8 @@ restore drill below must have been run at least once.
 Restore a dump:
 
 ```
-# copy the chosen dump to the host, then:
+# copy the chosen dump to the host, then (for an age-encrypted dump, decrypt first):
+#   age -d -i backup-key.txt freesocks-freesocks_beta-<ts>.sql.gz.age > dump.sql.gz
 gunzip -c freesocks-freesocks_beta-<ts>.sql.gz \
   | docker compose -f docker-compose.beta.yml exec -T postgres \
       psql -U convex -d freesocks_beta

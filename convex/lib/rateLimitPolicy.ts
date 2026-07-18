@@ -52,6 +52,10 @@ export const RATE_LIMIT_DEFAULTS = {
   // account page is open; the shared per-instance snapshot refresh behind it is
   // stampede-guarded, so this is hygiene against a hot polling loop.
   'account.node-status': { max: 20, windowMs: MINUTE, enabled: true },
+  // Member account read (per user): each fetch does a LIVE backend getUser, so
+  // open tabs × polling would otherwise scale panel QPS linearly. Generous —
+  // the SPA polls ~1/min + on window focus.
+  'account.read': { max: 30, windowMs: MINUTE, enabled: true },
   // Membership code redemption (W4): throttle hard against code guessing.
   'code.redeem': { max: 5, windowMs: HOUR, enabled: true },
   // Member passkey LOGIN options (per IP): each call writes an assertion challenge

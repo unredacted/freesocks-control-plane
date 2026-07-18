@@ -132,13 +132,18 @@ services:
       # Explicit risk-acceptance opt-out: without BACKUP_S3_*, the sidecar
       # exits fatally unless this is 'true' (see docker/backup.sh).
       - BACKUP_ALLOW_LOCAL_ONLY=${BACKUP_ALLOW_LOCAL_ONLY:-}
+      # age recipient for client-side dump encryption (recommended); the warning
+      # is silenced with BACKUP_ALLOW_UNENCRYPTED=true.
+      - BACKUP_AGE_PUBLIC_KEY=${BACKUP_AGE_PUBLIC_KEY:-}
+      - BACKUP_ALLOW_UNENCRYPTED=${BACKUP_ALLOW_UNENCRYPTED:-}
     volumes:
       - backups:/backups
     healthcheck:
-      # Liveness = the loop ticked within the last interval (+1h slack). backup.sh
-      # touches /backups/.heartbeat at the top of every cycle; a stale/missing
-      # file means the loop wedged (a crashed sidecar is already caught by the
-      # fail-fast gate + restart policy). The postgres:18 base has GNU stat.
+      # Liveness = the last SUCCESSFUL cycle finished within the last interval
+      # (+1h slack): backup.sh touches /backups/.heartbeat only when the dump AND
+      # the offsite upload (when enabled) succeeded, so a failing S3 destination
+      # reads unhealthy instead of silently missing offsite copies. (A crashed
+      # sidecar is caught by the fail-fast gate + restart policy.)
       test:
         [
           'CMD-SHELL',

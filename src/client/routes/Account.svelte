@@ -572,6 +572,9 @@
         rotated
         onClose={() => {
           revealedAccountId = null;
+          // Drop the plaintext from the mutation cache too (its data holds the
+          // accountId for up to gcTime after the modal closes).
+          rotateAccountId.reset();
           rotateTriggerEl?.focus();
         }}
       />

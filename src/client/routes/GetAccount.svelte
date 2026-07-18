@@ -662,8 +662,10 @@
       accountId={revealedAccountId}
       onClose={() => {
         // Once acknowledged, drop the plaintext from component state so it does
-        // not linger in memory after the moment has passed.
+        // not linger in memory after the moment has passed — and from the
+        // mutation cache (its data holds the accountId for up to gcTime).
         revealedAccountId = null;
+        createAccount.reset();
       }}
     />
   {/if}

@@ -95,6 +95,12 @@ function readSessionToken(realm: Realm): string {
  * After a MEMBER session-establish response (login / account creation), persist
  * the returned public per-session token. Called from the apiClient once the
  * (sealed) response is opened. No-op for any other route.
+ *
+ * A successful establish that OMITS the token CLEARS the stored one: under
+ * deploy skew (a backend that stops returning popSessionToken) the previous
+ * session's token would otherwise keep being signed into every request, the
+ * server would reject every signature, and the member would be stuck in a
+ * 401→login loop until storage is manually cleared.
  */
 export function captureSessionToken(path: string, method: string, body: unknown): void {
   if (!isMemberSessionEstablish(normalizePath(path), method)) return;
@@ -103,6 +109,7 @@ export function captureSessionToken(path: string, method: string, body: unknown)
       ? (body as Record<string, unknown>).popSessionToken
       : undefined;
   if (typeof token === 'string') setSessionToken('member', token);
+  else setSessionToken('member', null);
 }
 
 // --- worker RPC ---------------------------------------------------------------

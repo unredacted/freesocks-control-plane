@@ -1,19 +1,25 @@
 #!/usr/bin/env sh
 # A3: automated, offsite Postgres backups. Runs as a long-lived sidecar that
-# pg_dumps the Convex datastore on an interval and uploads the (optionally
-# age-encrypted) dump to S3-compatible object storage, then prunes old local
-# copies. A host-disk loss otherwise means losing every account-number hash with
-# NO recovery (accounts are anonymous by design).
+# pg_dumps the Convex datastore on an interval and uploads the dump to
+# S3-compatible object storage, then prunes old local copies. A host-disk loss
+# otherwise means losing every account-number hash with NO recovery (accounts
+# are anonymous by design).
 #
-# Restore (documented in docs/beta-deploy.md): fetch a dump, then
-#   gunzip -c <dump>.sql.gz | docker compose -f docker-compose.beta.yml exec -T postgres \
-#     psql -U convex -d freesocks_beta
+# Encryption: set BACKUP_AGE_PUBLIC_KEY (an age X25519 recipient, age1...) and
+# every dump is encrypted client-side before upload — the S3 bucket then holds
+# ciphertext only (the dump contains accountIdHash + live subscription tokens,
+# so a bucket compromise must not yield a readable datastore). Keep the age
+# PRIVATE key OFF the host (password manager / offline). Restore an encrypted
+# dump with `age -d -i key.txt <dump>.sql.gz.age | gunzip -c | psql ...`;
+# an unencrypted one with `gunzip -c <dump>.sql.gz | psql ...` (docs/beta-deploy.md).
 # A restore drill should be run before launch and periodically after.
 #
 # Env (set in .env.beta):
 #   POSTGRES_HOST (default postgres), POSTGRES_USER (convex), POSTGRES_DB,
 #   POSTGRES_PASSWORD, BACKUP_INTERVAL_SECONDS (default 86400),
 #   BACKUP_RETENTION (local copies to keep, default 7),
+#   BACKUP_AGE_PUBLIC_KEY (age recipient; encrypts dumps before upload),
+#   BACKUP_ALLOW_UNENCRYPTED=true (silence the no-encryption warning),
 #   and for offsite upload (all required to enable it):
 #     S3_ENDPOINT, S3_BUCKET, S3_PREFIX (default db-backups),
 #     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
@@ -33,6 +39,11 @@ if [ -z "${S3_BUCKET:-}" ] || [ -z "${S3_ENDPOINT:-}" ]; then
   fi
   echo "[backup] WARNING: BACKUP_ALLOW_LOCAL_ONLY=true — offsite backups DISABLED" >&2
 fi
+if [ -z "${BACKUP_AGE_PUBLIC_KEY:-}" ] && [ "${BACKUP_ALLOW_UNENCRYPTED:-}" != "true" ]; then
+  echo "[backup] WARNING: BACKUP_AGE_PUBLIC_KEY unset — dumps are uploaded UNENCRYPTED" >&2
+  echo "[backup]          (they contain accountIdHash + live sub tokens). Set an age" >&2
+  echo "[backup]          recipient, or BACKUP_ALLOW_UNENCRYPTED=true to accept this." >&2
+fi
 
 PGHOST="${POSTGRES_HOST:-postgres}"
 PGUSER="${POSTGRES_USER:-convex}"
@@ -45,39 +56,56 @@ mkdir -p "$OUT_DIR"
 
 backup_once() {
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
-  file="$OUT_DIR/freesocks-${PGDB}-${ts}.sql.gz"
+  base="$OUT_DIR/freesocks-${PGDB}-${ts}.sql.gz"
+  file="$base"
+  if [ -n "${BACKUP_AGE_PUBLIC_KEY:-}" ]; then file="${base}.age"; fi
   echo "[backup] dumping ${PGDB} -> ${file}"
-  if ! pg_dump -h "$PGHOST" -U "$PGUSER" -d "$PGDB" | gzip -c >"$file"; then
-    echo "[backup] ERROR: pg_dump failed" >&2
-    rm -f "$file"
-    return 1
+  if [ -n "${BACKUP_AGE_PUBLIC_KEY:-}" ]; then
+    if ! pg_dump -h "$PGHOST" -U "$PGUSER" -d "$PGDB" | gzip -c | age -r "$BACKUP_AGE_PUBLIC_KEY" -o "$file"; then
+      echo "[backup] ERROR: pg_dump/encrypt failed" >&2
+      rm -f "$file"
+      return 1
+    fi
+  else
+    if ! pg_dump -h "$PGHOST" -U "$PGUSER" -d "$PGDB" | gzip -c >"$base"; then
+      echo "[backup] ERROR: pg_dump failed" >&2
+      rm -f "$base"
+      return 1
+    fi
   fi
 
   if [ -n "${S3_BUCKET:-}" ] && [ -n "${S3_ENDPOINT:-}" ]; then
     key="${S3_PREFIX:-db-backups}/$(basename "$file")"
     echo "[backup] uploading -> s3://${S3_BUCKET}/${key}"
     if ! aws --endpoint-url "$S3_ENDPOINT" s3 cp "$file" "s3://${S3_BUCKET}/${key}"; then
+      # A failed OFFSITE copy is a failed backup (the local copy is kept): return
+      # non-zero so the heartbeat stops and the container reads unhealthy.
       echo "[backup] ERROR: offsite upload failed (local copy kept)" >&2
+      return 1
     fi
   else
     echo "[backup] WARNING: S3_* not set; backup is LOCAL ONLY (no offsite copy)" >&2
   fi
 
-  # Prune old local dumps beyond the retention count.
-  ls -1t "$OUT_DIR"/freesocks-*.sql.gz 2>/dev/null | tail -n +"$((RETENTION + 1))" | while read -r old; do
+  # Prune old local dumps beyond the retention count (both plaintext + .age).
+  ls -1t "$OUT_DIR"/freesocks-*.sql.gz* 2>/dev/null | tail -n +"$((RETENTION + 1))" | while read -r old; do
     echo "[backup] pruning ${old}"
     rm -f "$old"
   done
 }
 
-# Liveness heartbeat: touched at the top of every cycle so the compose
-# healthcheck can tell a running loop from a wedged one (a crash-loop is already
-# caught by the fail-fast gate + restart policy; this catches a hung dump/upload).
+# Liveness heartbeat: touched only on a SUCCESSFUL cycle (dump + offsite upload
+# when enabled) so the compose healthcheck doubles as the backup-failure alarm —
+# a wedged OR silently-failing upload both read unhealthy. (A crash-loop is
+# caught by the fail-fast gate + restart policy.)
 HEARTBEAT="${OUT_DIR}/.heartbeat"
 
 echo "[backup] sidecar up; interval=${INTERVAL}s retention=${RETENTION}"
 while true; do
-  touch "$HEARTBEAT"
-  backup_once || echo "[backup] cycle failed; will retry next interval" >&2
+  if backup_once; then
+    touch "$HEARTBEAT"
+  else
+    echo "[backup] cycle failed; heartbeat NOT touched (healthcheck will trip)" >&2
+  fi
   sleep "$INTERVAL"
 done

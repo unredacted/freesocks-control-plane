@@ -13,6 +13,7 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
+import { sanitizeHttpsUrl } from './lib/verificationConfig';
 
 const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
 const PLATFORM_KEYS = ['android', 'ios', 'windows', 'desktop'];
@@ -25,6 +26,31 @@ const easeOfUse = v.union(v.literal('easy'), v.literal('moderate'), v.literal('a
 const MAX_DESCRIPTION = 280;
 function normalizeDescription(raw: string | null | undefined): string | undefined {
   return raw?.trim().slice(0, MAX_DESCRIPTION) || undefined;
+}
+
+/**
+ * Member-facing catalog URLs render as raw `<a href>` on /account + /get-account:
+ * an `admin:settings:write` token (or CMS typo) must not persist an `http://`
+ * link (a malware/phishing channel for exactly this audience) or a
+ * `javascript:`/`data:` scheme (one CSP relaxation away from stored XSS).
+ * https-only — the same sanitizer as the site.* footer/social URLs.
+ */
+function requireHttpsUrl(raw: string, field: string): string {
+  const url = sanitizeHttpsUrl(raw);
+  if (!url) {
+    throw new ConvexError({
+      code: 'validation',
+      message: `${field} must be a valid https:// URL`,
+    });
+  }
+  return url;
+}
+
+/** Optional URL field: null/empty clears; a non-empty value must be https. */
+function optionalHttpsUrl(raw: string | null | undefined, field: string): string | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  return requireHttpsUrl(trimmed, field);
 }
 
 function mapClient(r: Doc<'clients'>) {
@@ -107,12 +133,12 @@ export const create = internalMutation({
       name,
       platforms: normalizePlatforms(a.platforms),
       backends: a.backends,
-      homepageUrl: a.homepageUrl.trim(),
+      homepageUrl: requireHttpsUrl(a.homepageUrl, 'The homepage / install URL'),
       schemeId: a.schemeId?.trim() || undefined,
       hwid: a.hwid ?? false,
       openSource: a.openSource ?? false,
       license: a.license?.trim() || undefined,
-      sourceUrl: a.sourceUrl?.trim() || undefined,
+      sourceUrl: optionalHttpsUrl(a.sourceUrl, 'The source URL'),
       easeOfUse: a.easeOfUse ?? undefined,
       description: normalizeDescription(a.description),
       enabled: a.enabled ?? true,
@@ -166,13 +192,14 @@ export const update = internalMutation({
     if (patch.platforms !== undefined) fields.platforms = normalizePlatforms(patch.platforms);
     if (patch.backends !== undefined) fields.backends = patch.backends;
     if (patch.homepageUrl !== undefined && patch.homepageUrl.trim() !== '') {
-      fields.homepageUrl = patch.homepageUrl.trim();
+      fields.homepageUrl = requireHttpsUrl(patch.homepageUrl, 'The homepage / install URL');
     }
     if (patch.schemeId !== undefined) fields.schemeId = patch.schemeId?.trim() || undefined;
     if (patch.hwid !== undefined) fields.hwid = patch.hwid;
     if (patch.openSource !== undefined) fields.openSource = patch.openSource;
     if (patch.license !== undefined) fields.license = patch.license?.trim() || undefined;
-    if (patch.sourceUrl !== undefined) fields.sourceUrl = patch.sourceUrl?.trim() || undefined;
+    if (patch.sourceUrl !== undefined)
+      fields.sourceUrl = optionalHttpsUrl(patch.sourceUrl, 'The source URL');
     if (patch.easeOfUse !== undefined) fields.easeOfUse = patch.easeOfUse ?? undefined;
     if (patch.description !== undefined)
       fields.description = normalizeDescription(patch.description);
@@ -230,12 +257,12 @@ export const upsertByName = internalMutation({
         name,
         platforms: normalizePlatforms(a.platforms),
         backends: a.backends ?? ['remnawave'],
-        homepageUrl: a.homepageUrl.trim(),
+        homepageUrl: requireHttpsUrl(a.homepageUrl, 'The homepage / install URL'),
         schemeId: a.schemeId?.trim() || undefined,
         hwid: a.hwid ?? false,
         openSource: a.openSource ?? false,
         license: a.license?.trim() || undefined,
-        sourceUrl: a.sourceUrl?.trim() || undefined,
+        sourceUrl: optionalHttpsUrl(a.sourceUrl, 'The source URL'),
         easeOfUse: a.easeOfUse ?? undefined,
         description: normalizeDescription(a.description),
         enabled: a.enabled ?? true,
@@ -248,12 +275,13 @@ export const upsertByName = internalMutation({
     if (a.platforms !== undefined) fields.platforms = normalizePlatforms(a.platforms);
     if (a.backends !== undefined) fields.backends = a.backends;
     if (a.homepageUrl !== undefined && a.homepageUrl.trim() !== '')
-      fields.homepageUrl = a.homepageUrl.trim();
+      fields.homepageUrl = requireHttpsUrl(a.homepageUrl, 'The homepage / install URL');
     if (a.schemeId !== undefined) fields.schemeId = a.schemeId?.trim() || undefined;
     if (a.hwid !== undefined) fields.hwid = a.hwid;
     if (a.openSource !== undefined) fields.openSource = a.openSource;
     if (a.license !== undefined) fields.license = a.license?.trim() || undefined;
-    if (a.sourceUrl !== undefined) fields.sourceUrl = a.sourceUrl?.trim() || undefined;
+    if (a.sourceUrl !== undefined)
+      fields.sourceUrl = optionalHttpsUrl(a.sourceUrl, 'The source URL');
     if (a.easeOfUse !== undefined) fields.easeOfUse = a.easeOfUse ?? undefined;
     if (a.description !== undefined) fields.description = normalizeDescription(a.description);
     if (a.enabled !== undefined) fields.enabled = a.enabled;

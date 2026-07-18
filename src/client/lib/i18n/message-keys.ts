@@ -194,6 +194,7 @@ export type MessageKey =
   | "error.deviceUnsupported"
   | "error.generic"
   | "error.invalidAccountId"
+  | "error.modeUnavailable"
   | "error.noPeerTier"
   | "error.offline"
   | "error.rateLimited"

@@ -19,6 +19,53 @@ import {
 const modules = import.meta.glob('./**/*.*s');
 
 describe('clients CRUD', () => {
+  test('create/update reject non-https catalog URLs (member-facing <a href> safety)', async () => {
+    const t = convexTest(schema, modules);
+    // An http:// install page is a malware channel for this audience; a
+    // javascript:/data: scheme is one CSP relaxation away from stored XSS.
+    for (const bad of ['http://evil.example/app.apk', 'javascript:alert(1)', 'data:text/html,x']) {
+      await expect(
+        t.mutation(internal.clients.create, {
+          name: `Bad-${bad.length}`,
+          platforms: ['android'],
+          backends: ['remnawave'],
+          homepageUrl: bad,
+        }),
+      ).rejects.toThrow(/https/i);
+    }
+    // sourceUrl is validated too (empty/null still clears it).
+    await expect(
+      t.mutation(internal.clients.create, {
+        name: 'BadSource',
+        platforms: [],
+        backends: ['remnawave'],
+        homepageUrl: 'https://ok.example',
+        sourceUrl: 'http://insecure.example',
+      }),
+    ).rejects.toThrow(/https/i);
+
+    const ok = await t.mutation(internal.clients.create, {
+      name: 'Good',
+      platforms: [],
+      backends: ['remnawave'],
+      homepageUrl: 'https://ok.example',
+      sourceUrl: 'https://github.com/org/repo',
+    });
+    expect(ok.sourceUrl).toBe('https://github.com/org/repo');
+    await expect(
+      t.mutation(internal.clients.update, {
+        id: ok.id as Id<'clients'>,
+        homepageUrl: 'http://evil.example',
+      }),
+    ).rejects.toThrow(/https/i);
+    // Clearing sourceUrl with null still works.
+    const cleared = await t.mutation(internal.clients.update, {
+      id: ok.id as Id<'clients'>,
+      sourceUrl: null,
+    });
+    expect(cleared.sourceUrl).toBeNull();
+  });
+
   test('create normalizes platforms + rejects a duplicate name', async () => {
     const t = convexTest(schema, modules);
     const created = await t.mutation(internal.clients.create, {

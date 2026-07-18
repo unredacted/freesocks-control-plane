@@ -31,7 +31,10 @@
   "nav": {
     "getAccount": "获取免费账户",
     "signIn": "登录",
-    "account": "我的账户"
+    "account": "我的账户",
+    "menu": "菜单",
+    "theme": "主题",
+    "home": "FreeSocks 首页"
   },
   "captcha": {
     "initial": "我是真人",
@@ -49,13 +52,23 @@
     "subtitle": "这个 32 位数字是再次登录的唯一方式。没有电子邮件或密码可用于找回。一旦丢失，你的账户将永久无法恢复。",
     "cannotRecover": "我们无法为你找回--客服也不行。",
     "saveHint": "把它保存到密码管理器，或写在安全私密的地方。",
+    "downloadRequired": "请先下载你的账户号码才能继续。请将文件保存在安全的地方。",
+    "continue": "继续",
+    "verifyTitle": "确认你已保存",
+    "verifySubtitle": "你的账户号码现已隐藏。请从你刚保存的副本中输入或粘贴它，以确认你之后能够登录。",
+    "verifyPlaceholder": "粘贴你的 32 位账户号码",
+    "verifyMismatch": "与你的账户号码不符。请检查你保存的副本，或返回再次查看。",
+    "back": "返回",
     "done": "我已保存",
+    "savedConfirmed": "账户号码已保存并验证",
     "leaveWarning": "你的账户号码仍显示在屏幕上。如果现在未保存就离开，你将无法再次登录。",
     "downloadFilename": "freesocks-account-number.txt"
   },
   "support": {
     "label": "支持 ID",
-    "hint": "联系我们时请提供它。它不是你的登录号码，也不授予任何访问权限。"
+    "hint": "联系我们时请提供它。它不是你的登录号码，也不授予任何访问权限。",
+    "emailUs": "发送邮件给我们：",
+    "getAccountLine": "有疑问或遇到问题？请发送邮件至"
   },
   "login": {
     "title": "使用账户号码登录",
@@ -70,7 +83,30 @@
     "failed": "登录失败",
     "success": "已登录",
     "sessionExpired": "请重新登录 - 你的会话可能已结束。",
-    "digitProgress": "{count}位数，共{total}位数字"
+    "digitProgress": "{count}位数，共{total}位数字",
+    "or": "或"
+  },
+  "passkey": {
+    "title": "通行密钥",
+    "desc": "使用 Face ID、Touch ID、安全密钥或密码管理器登录--无需输入账户号码。",
+    "warning": "请注意：保存在手机或浏览器中的通行密钥可能会同步到你的 Apple 或 Google 账户，从而把这个匿名账户与该身份关联起来。如果你在意这一点，请使用硬件安全密钥，或不使用通行密钥。",
+    "unsupported": "此设备或浏览器不支持通行密钥。",
+    "none": "还没有通行密钥。你的账户号码仍可用于登录。",
+    "add": "添加通行密钥",
+    "adding": "添加中…",
+    "added": "通行密钥已添加",
+    "addFailed": "无法添加通行密钥",
+    "remove": "移除",
+    "removed": "通行密钥已移除",
+    "removeFailed": "无法移除通行密钥",
+    "deviceLabelLabel": "设备名称（可选）",
+    "deviceLabelPlaceholder": "例如：我的手机",
+    "addedOn": "添加于 {date}",
+    "lastUsed": "最近使用 {date}",
+    "signIn": "使用通行密钥登录",
+    "signingIn": "验证中…",
+    "signInFailed": "通行密钥登录失败",
+    "notNow": "暂不"
   },
   "account": {
     "title": "你的账户",
@@ -105,6 +141,7 @@
     "membershipNudge": {
       "title": "升级会员，畅享无限",
       "body": "无限流量与设备。",
+      "bodyNoDevices": "无限带宽。",
       "cta": "查看会员"
     },
     "tab": {
@@ -184,11 +221,19 @@
     "deviceNotFound": "该设备已不在您的帐户中。",
     "deviceUnsupported": "您当前的服务器类型不支持移除单个设备。",
     "billing": "支付服务无法处理此笔交易。请稍后再试。",
-    "serverError": "服务器处理此请求时出现问题，请稍后再试。"
+    "serverError": "服务器处理此请求时出现问题，请稍后再试。",
+    "modeUnavailable": "你当前的连接模式已不可用。请先切换到其他模式，然后重试。"
   },
   "setup": {
     "title": "设置你的代理应用",
     "install": "安装",
+    "noApps": "此平台暂无推荐应用--可使用任何兼容客户端，手动添加你的订阅。",
+    "openSource": "开源",
+    "recommended": "推荐",
+    "proprietary": "专有软件",
+    "easeEasy": "简单易用",
+    "easeAdvanced": "进阶",
+    "viewSource": "源码",
     "intro": "复制上方的订阅链接，然后添加到兼容的应用中：",
     "android": "安卓",
     "ios": "iPhone / iPad",
@@ -201,7 +246,31 @@
       "importConfig": "打开它，选择手动添加服务器，然后输入如下所示的配置。"
     },
     "noDeviceLimit": "无设备限制",
-    "hwidNote": "如果套餐包含有限数量的设备，请在应用程序的设置中启用“设备识别”（HWID），以便识别您的设备。"
+    "hwidNote": "如果套餐包含有限数量的设备，请在应用程序的设置中启用“设备识别”（HWID），以便识别您的设备。",
+    "deviceCompatibleTitle": "兼容你的设备限制",
+    "deviceIncompatibleTitle": "不推荐你的套餐使用",
+    "deviceIncompatibleNote": "这些应用不会标识你的设备，因此每次启动都可能占用一个设备名额--在限制设备数量的套餐上甚至可能无法连接。请优先选择上面的应用。",
+    "linkKind": {
+      "play": "Google Play",
+      "appStore": "App Store",
+      "github": "GitHub",
+      "apk": "APK",
+      "website": "官网"
+    },
+    "clientDesc": {
+      "hiddify": "最省心的全能选择：一键导入、界面简洁，全平台都有版本。",
+      "karing": "功能丰富，并能遵守你套餐的设备限制。界面比 Hiddify 略复杂，但在各平台都表现不错。",
+      "anywhere": "仅适用于苹果设备的精致易用客户端：iPhone、iPad、Apple TV 和 Mac。没有 Android、Windows 或 Linux 版本。",
+      "singBox": "sing-box 内核的官方参考应用。功能强大但界面极简，适合熟悉技术设置的用户。",
+      "v2rayng": "老牌轻量的 Android 客户端，支持一键导入。比 Hiddify 更朴素，但稳定可靠。",
+      "v2rayn": "面向进阶用户的强大桌面应用。导入需要手动操作，使用“none”加密的链接可能还需手动调整。如果觉得麻烦，建议用 Hiddify。",
+      "clash": "Clash Verge 是一款流行的桌面应用，路由规则强大。部分版本不支持 VLESS 订阅链接；如果无法导入，请改用 Hiddify 或 v2rayN。",
+      "flclash": "简洁的跨平台 Clash 系应用。通过粘贴订阅链接导入（无一键导入）。",
+      "mihomoParty": "界面友好的 Clash（mihomo）内核桌面应用。粘贴订阅链接即可导入。",
+      "throne": "进阶桌面客户端，能遵守你套餐的设备限制，Linux 支持良好。需要手动设置。",
+      "shadowrocket": "一款付费、闭源的 iOS 应用，流行且可靠。如果你已购买，值得使用；上面的开源应用可以免费完成同样的工作。",
+      "outline": "体验最简单：粘贴访问密钥即可连接。仅适用于 Outline（Shadowsocks）访问密钥。"
+    }
   },
   "hero": {
     "titleDefault": "你的订阅",
@@ -228,6 +297,9 @@
     "downloaded": "已下载 {filename}",
     "traffic": "流量",
     "unlimited": "不限量",
+    "configBelowNote": "你的完整配置在下方--请手动添加服务器。出于隐私考虑，默认不显示自动更新的订阅链接（你的应用会经过 CDN 获取它）。",
+    "showUrlAnyway": "仍要显示订阅链接",
+    "urlDangerBody": "此链接在任何应用中都可用，但应用随后会通过第三方 CDN 以明文下载你的配置--CDN 运营者能看到你的服务器详情，以及你在使用 FreeSocks。这正是此模式要避免的。只有当你的应用无法导入下方配置时才使用它。",
     "usedSoFar": "已使用 {amount}",
     "leftThisPeriod": "本周期剩余 {amount}。",
     "nearlyOut": "即将用尽--本周期仅剩 {amount}。",
@@ -264,6 +336,12 @@
         }
       }
     ],
+    "nodeOnline": "节点在线",
+    "nodeOffline": "节点离线",
+    "nodeUnknown": "节点状态未知",
+    "nodeStatusLink": "网络状态",
+    "nodeOnlineHint": "你配置背后的服务器运行正常。如果仍无法连接，很可能是你的网络或运营商在拦截--试试其他连接模式或位置。",
+    "nodeOfflineBody": "你配置背后的服务器当前离线。这是我们这边的问题，不是你的网络。请几分钟后重试，或创建一个新配置（可选择其他位置）。",
     "keyLimited": "您本周期的数据流量已用完。流量将自动重置，或者您可以升级以获得更多流量。",
     "keyExpired": "此密钥已过期。请续订会员资格或创建新密钥以重新连接。",
     "keyDisabled": "此密钥目前已禁用。如果您的会员资格已过期，请续订；否则，请使用您的支持 ID 联系支持团队。",
@@ -282,6 +360,12 @@
         }
       }
     ]
+  },
+  "location": {
+    "pickerLabel": "服务器位置",
+    "auto": "自动（最不繁忙）",
+    "offline": "离线",
+    "pickerHint": "你的配置所在的服务器位置。“自动”会选择最不繁忙的位置；如果某个位置在你的网络上效果更好，也可以自行选择。"
   },
   "regen": {
     "title": "重新生成订阅？",
@@ -333,6 +417,12 @@
   "get": {
     "badge": "免费账户",
     "title": "获取 FreeSocks 账户",
+    "progressAria": "注册进度",
+    "progress": {
+      "step1": "创建账户",
+      "step2": "保存你的号码",
+      "step3": "完成连接"
+    },
     "introTwoSteps": "两个快速步骤：完成真人验证以创建免费账户，然后创建订阅。",
     "step1Title": "创建你的账户",
     "chooseBackend": "选择服务器类型",
@@ -341,6 +431,9 @@
     "backendShadowsocks": "通过 Outline 的 Shadowsocks",
     "createAccount": "创建我的账户",
     "freeAccountNote": "免费账户有效期 {days} 天，限 {devices}。无需电子邮件或密码。",
+    "freeAccountNoteNoDevices": "免费账户有效期 {days} 天。无需电子邮件或密码。",
+    "step3Title": "获取你的密钥",
+    "step3Intro": "密钥是让你的应用连接到 VPN 的凭证。创建它，然后添加到你的应用中。",
     "accountReady": "你的账户已就绪。",
     "step2Title": "创建你的订阅",
     "step2Intro": "创建代理订阅，获得可粘贴到任何兼容 VPN 客户端的链接。",
@@ -355,6 +448,7 @@
     "haveAccountPrefix": "已有账户？",
     "lostNumberHint": "保存前丢失了账户号码？可以换一个新号码--",
     "lostNumberLinkLabel": "在账户页面更换",
+    "redeemPrompt": "有礼品码？请在创建密钥前先兑换。",
     "upsellTitle": "想要无限制？",
     "upsellBody": "随时可升级到 FreeSocks 会员，享受无限流量与设备。",
     "redeemTitle": "你有礼品码吗？",
@@ -370,7 +464,70 @@
   },
   "impact": {
     "title": "捐款支持 Unredacted",
-    "body": "Unredacted 是美国 501(c)(3) 非营利组织，FreeSocks 是其运营的项目之一。捐款支持这项工作。详情请见 Unredacted 网站。"
+    "body": "Unredacted 是美国 501(c)(3) 非营利组织，FreeSocks 是其运营的项目之一。捐款支持这项工作。详情请见 Unredacted 网站。",
+    "collectiveTitle": "捐款成效",
+    "collectiveBody": "通过 FreeSocks 捐出的每一笔捐款，都会在其捐出的当月提升每位免费用户的每月带宽。以下是社区捐款当下正在产生的效果。",
+    "bonusThisMonth": "本月增加的 GB",
+    "bonusThisMonthDetail": "在每个免费账户每月额度之上额外增加",
+    "usersHelped": "惠及的免费账户",
+    "usersHelpedDetail": "额度被此奖励提升的活跃免费用户",
+    "historyTitle": "每月增加的带宽",
+    "chartAria": "过去 {n} 个月中，捐款为每位免费用户逐月增加的带宽",
+    "yourContribution": "你的贡献",
+    "yourGiven": "你已捐出 {amount}",
+    "yourGb": "约为免费用户增加了 {gb} GB 带宽",
+    "yourCount": [
+      {
+        "declarations": [
+          "input count",
+          "local countPlural = count: plural"
+        ],
+        "selectors": [
+          "countPlural"
+        ],
+        "match": {
+          "countPlural=one": "共 1 笔捐款",
+          "countPlural=other": "共 {count} 笔捐款"
+        }
+      }
+    ],
+    "empty": "本月还没有捐款--第一笔将启动计数。",
+    "externalNote": "此计数器仅统计通过 FreeSocks 进行的捐款。直接在 unredacted.org/donate 的捐赠支持 Unredacted 更广泛的工作，但不会增加这里的带宽。",
+    "aboutUnredacted": "关于 Unredacted"
+  },
+  "donate": {
+    "addTitle": "添加一笔捐款",
+    "addSubtitle": "出一份力，让 FreeSocks 一直对所有人免费。",
+    "standaloneTitle": "捐款支持 FreeSocks",
+    "standaloneSubtitle": "FreeSocks 对所有人免费，由捐款资助。捐出任意金额帮助它持续运行--捐款还会为当月每位免费用户提升带宽。",
+    "amountLabel": "金额",
+    "none": "不用了",
+    "custom": "自定义",
+    "customPlaceholder": "其他金额",
+    "impact": "本月为每位免费用户增加约 {gb} GB",
+    "bonusActive": "本月捐款已为每位免费用户的每月额度增加 {gb} GB。",
+    "minNote": "最低 {amount}",
+    "give": "捐赠 {amount}",
+    "giving": "正在开始…",
+    "startFailed": "无法发起捐款",
+    "badge": "捐赠者",
+    "badgeTooltip": "感谢你支持 FreeSocks",
+    "thanksTitle": "你已是 FreeSocks 捐赠者",
+    "thanksBody": "谢谢--你的支持让 FreeSocks 一直对所有人免费。"
+  },
+  "referral": {
+    "fieldLabel": "推荐码（可选）",
+    "fieldHint": "有朋友给的推荐码？你升级时，你们各自都会获得额外的会员天数。",
+    "fieldPlaceholder": "FSR-XXXX-XXXX",
+    "applied": "推荐码已应用--升级时你将获得额外天数。",
+    "cardTitle": "推荐好友",
+    "cardBody": "分享你的链接。当有人通过它注册并成为会员时，你们各自都会获得额外天数--对方立即到账，你的在 {vestingDays} 天后到账。",
+    "copyLink": "复制邀请链接",
+    "codeLabel": "你的推荐码",
+    "statsInvited": "已注册",
+    "statsConverted": "已成为会员",
+    "statsPending": "尚未成为会员",
+    "statsDays": "已获得的额外天数"
   },
   "qr": {
     "ariaLabel": "订阅链接二维码",
@@ -385,12 +542,23 @@
   },
   "footer": {
     "operatedPrefix": "运营方：",
-    "operatedSuffix": "（美国 501(c)(3) 非营利组织）"
+    "operatedSuffix": "（美国 501(c)(3) 非营利组织）",
+    "viewSource": "查看源码",
+    "terms": "服务条款",
+    "privacy": "隐私政策",
+    "transparency": "透明度报告",
+    "socialX": "X 上的 FreeSocks",
+    "socialMastodon": "Mastodon 上的 FreeSocks",
+    "socialBluesky": "Bluesky 上的 FreeSocks",
+    "support": "支持"
   },
   "upgrade": {
     "title": "升级到 FreeSocks 会员",
     "extendTitle": "续订你的会员",
     "subtitle": "无限流量与设备。选择时长和支付方式。",
+    "subtitleNoDevices": "无限带宽。选择时长和支付方式。",
+    "compareBandwidth": "每月带宽",
+    "compareDevices": "设备",
     "durationLabel": "会员时长",
     "cryptoMinNote": "加密支付最少 {months} 个月，更短周期低于网络最低限额。如需更短周期请改用其他方式。",
     "months": [
@@ -409,6 +577,9 @@
       }
     ],
     "perMonth": "{price}/月",
+    "fromPerMonth": "{price}/月起",
+    "benefitsShort": "无限带宽与设备",
+    "benefitsShortNoDevices": "无限带宽",
     "save": "省 {pct}%",
     "methodLabel": "支付方式",
     "payNowpayments": "加密货币",
@@ -464,6 +635,12 @@
     "recommended": "推荐",
     "subtitleServer": "选择一个焦点。更改焦点后，系统会重新颁发匹配服务器的密钥；您当前的密钥将继续有效 24 小时。",
     "subtitleSignup": "选择一个焦点。它会保存到你的账户，你的第一个密钥将使用它--可随时更改。",
+    "evadeTitle": "互联网自由模式",
+    "evadeAudience": "适合受审查国家",
+    "evadeBody": "如果你所在的地方网站、应用或 VPN 被封锁，请选择此项。专为在审查下持续可用而设计，并配有更难封锁的备用链接。",
+    "privacyTitle": "隐私模式",
+    "privacyAudience": "适合开放网络",
+    "privacyBody": "如果你所在的地方网络基本开放，请选择此项。机密性最强--你的配置不经过第三方服务器--但也更容易被审查者封锁。",
     "unavailable": "暂无",
     "confirmTitle": "切换到“ {label} \"？",
     "confirmBody": "这将重新颁发您用于{label}服务器的代理密钥。您当前的密钥将继续有效 24 小时，因此您可以先在所有设备上重新导入。",
@@ -495,6 +672,10 @@
   "faq": {
     "title": "常见问题解答",
     "subtitle": "基本问题已解答。还有疑问？请使用您的支持 ID 联系我们。",
+    "tabGeneral": "常规",
+    "tabThreat": "我们为你防范什么",
+    "contactPrefix": "如有其他问题，请发送邮件至",
+    "contactSuffix": "，并附上你的支持 ID。",
     "q1": {
       "question": "FreeSocks是什么？",
       "answer": "这是一个免费代理服务，帮助身处网络审查严格地区的人们访问开放的互联网。它由美国非营利组织 Unredacted（501(c)(3)）运营。"
@@ -530,6 +711,41 @@
     "q9": {
       "question": "我可以匿名支付吗？",
       "answer": "是的。您可以使用加密货币支付--比特币，或使用门罗币 (Monero) 或 Zcash 以最大程度保护您的隐私--无需注册账户、邮箱或银行卡。付款确认后，您的会员资格将自动激活。"
+    },
+    "q10": {
+      "question": "你们的服务器是自有的还是租用的？",
+      "answer": "我们的硬件为自有并自行运营。许多 VPN 公司从数据中心或云服务商租用服务器，这意味着你流量经过的机器掌握在他人手中--他们可能被迫交出机器，或悄悄复制上面的内容。这是我们不愿跨越的底线，所以我们自己购买并运营设备。这成本更高、发展更慢，但只有这样，本页上的隐私承诺才有真正的意义。"
+    }
+  },
+  "threat": {
+    "subtitle": "诚实地说明这项服务能做什么、不能做什么。夸大承诺的安全工具会害人，所以这里把界限一一讲清楚。",
+    "q1": {
+      "question": "FreeSocks 能保护我免受什么？",
+      "answer": "FreeSocks 通过加密的 VPN 连接传输你的流量，因此你的网络运营商、移动运营商、学校或公司网络无法看到你访问了哪些网站，也无法封锁它们。它的用途是绕过审查，并防止你所在的网络监视你的行为。"
+    },
+    "q2": {
+      "question": "FreeSocks 不能保护我免受什么？",
+      "answer": "它无法让你对已登录的网站匿名：只要你登录了某个账户，该网站就知道你是谁。它也无法保护已经被入侵的设备（间谍软件、受管理的工作配置、能物理接触你设备的人）。此外，能在互联网多个节点观察流量的强大对手，仍可能通过流量模式进行关联分析。如果你的安全依赖强匿名，请使用 Tor，并遵循针对你情况的专业指导。"
+    },
+    "q3": {
+      "question": "FreeSocks 能看到我的流量吗？",
+      "answer": "你的流量从我们的服务器出口，所以请把我们当作任何出口节点看待：你通过 HTTPS 访问的网站（几乎是现代网络的全部）全程端到端加密，我们无法读取其内容。我们的服务器配置为不保留连接日志、不保留访问网站日志、不记录源 IP，控制面也从不存储你的 IP 地址。"
+    },
+    "q4": {
+      "question": "如果 FreeSocks 服务器被查扣或入侵，会发生什么？",
+      "answer": "上面没有任何能识别你身份的信息。服务器不保存姓名、邮箱、IP 或流量历史，因为我们从一开始就不收集这些。访问密钥可以被快速吊销并重新签发，我们也可以更换基础设施而不丢失账户。"
+    },
+    "q5": {
+      "question": "我的政府或运营商能知道我在用 FreeSocks 吗？",
+      "answer": "有时审查者即使读不到内容，也能检测出翻墙流量的存在。我们的传输协议在设计上模仿普通的加密网页流量，互联网自由模式还会经过封锁代价高昂的基础设施。不过，使用是否可被检测、以及后果如何，因国家而异。请权衡你当地的风险。"
+    },
+    "q6": {
+      "question": "我为什么应该相信这些说法？",
+      "answer": "控制面是开源的，任何人都可以查看它到底存储了什么，并确认其中根本没有能存放姓名、邮箱或 IP 地址的地方。依赖服务器配置的声明（比如禁用日志）都有文档记录，并由同一份代码强制执行。对于你看不到的部分，你仍然需要信任运营者--所有 VPN 都是如此；我们的做法是把需要信任的东西减到最少。"
+    },
+    "q7": {
+      "question": "付款会把我的身份和浏览记录关联起来吗？",
+      "answer": "会员是可选项，支付由外部支付处理商经手：我们从不存储付款人的姓名、邮箱或地址，订单与你的账户之间只通过一个无含义的引用关联。加密货币选项（包括门罗币）适合不想留下任何银行卡痕迹的人。"
     }
   },
   "gift": {
@@ -555,6 +771,47 @@
     }
   },
   "home": {
+    "trust": {
+      "nonprofit": "由美国 501(c)(3) 非营利组织运营",
+      "openSource": "开源",
+      "noLogs": "不记录流量日志"
+    },
+    "network": {
+      "title": "网络状态",
+      "offline": "离线",
+      "srOnline": "在线",
+      "srOffline": "离线",
+      "note": "每 10 分钟检查一次",
+      "link": "实时状态"
+    },
+    "quicknav": {
+      "label": "跳转到某一节",
+      "privacy": "我们存储什么",
+      "threat": "威胁模型",
+      "faq": "常见问题",
+      "impact": "捐款成效"
+    },
+    "sections": {
+      "features": "功能",
+      "privacy": "隐私",
+      "how": "快速上手",
+      "membership": "会员",
+      "impact": "成效",
+      "faq": "常见问题",
+      "about": "关于"
+    },
+    "impact": {
+      "title": "捐款在行动",
+      "body": "通过 FreeSocks 捐出的每一笔捐款，都会提升当月每个免费账户的每月带宽。以下是捐赠者迄今增加的带宽--你也可以添一份力。",
+      "cta": "立即捐款",
+      "chartAria": "捐款为每位免费用户逐月增加的带宽"
+    },
+    "hero": {
+      "title": "为受审查国家和世界各地的人们打造的 VPN",
+      "subtitle": "FreeSocks 为网络受审查的人们打造，在其他地方也是一款尊重隐私的 VPN。注册只需一次快速的真人验证。我们从不要求邮箱或密码。你的订阅链接适用于大多数现代 VPN 应用，会员可享{limits}。",
+      "impactNote": "通过 FreeSocks 的捐款直接支持免费用户：每一笔捐款都会在当月为受审查国家的人们购买真实带宽。",
+      "impactLink": "查看成效"
+    },
     "cta": {
       "getMembership": "加入会员"
     },
@@ -569,7 +826,8 @@
       "footnote": "此处显示的数字反映的是当前免费套餐的配置。完成验证即可获取您的套餐配置。",
       "upsellTitle": "想要无限量供应？",
       "upsellBody": "获取{limits} - 并帮助 FreeSocks 继续免费供他人使用。",
-      "fromPerMonth": "来自{price} /月"
+      "fromPerMonth": "来自{price} /月",
+      "cryptoNote": "支持加密货币--比特币、门罗币、Zcash 等"
     },
     "features": {
       "title": "FreeSocks是什么",
@@ -617,8 +875,16 @@
       "payNote": "可使用加密货币（比特币、门罗币等）、银行卡或PayPal支付。"
     },
     "about": {
+      "title": "关于 FreeSocks",
       "bodyPrefix": "FreeSocks 由",
-      "siteLink": "未编辑的.org"
+      "bodySuffix": "，一家美国 501(c)(3) 非营利组织。",
+      "body2": "大多数 VPN 默认你能付费订阅、并能放心交出邮箱地址。但在世界上许多地方，这两点都不成立，所以 FreeSocks 两者都不要求。任何人都能在一分钟左右拿到可用的密钥，并一直使用下去。",
+      "siteLink": "未编辑的.org",
+      "openSource": "运行此服务的代码已公开，任何人都可以检查、审计或自行部署。",
+      "viewSourceCta": "查看源码",
+      "fact2Title": "开源",
+      "fact3Title": "捐款资助",
+      "fact3Body": "免费账户由捐款和会员付费支持。没有广告，也不出售任何东西。"
     },
     "limits": {
       "unlimitedBoth": "无限带宽和设备",
@@ -693,6 +959,37 @@
     "body": "设备名称以… {suffix}结尾，该设备将被断开连接并释放其插槽。稍后可通过重新导入订阅 URL 来重新连接。",
     "confirm": "撤销装置",
     "working": "撤销……"
+  },
+  "status": {
+    "title": "网络状态",
+    "updated": "更新于 {time}",
+    "overallOk": "所有位置运行正常",
+    "overallPartial": "部分位置出现问题",
+    "overallMajor": "正在发生重大故障",
+    "locationsTitle": "位置",
+    "nodesUp": "{total} 个节点中 {online} 个在线",
+    "online": "在线",
+    "offline": "离线",
+    "srOnline": "在线",
+    "srOffline": "离线",
+    "loadQuiet": "空闲",
+    "loadBusy": "繁忙",
+    "loadCrowded": "拥挤",
+    "loadUnknown": "负载未知",
+    "matrixTitle": "受审查地区的可用性",
+    "matrixBody": "根据我们收到的报告，各连接模式在特定国家的可用情况。“部分可用”表示某些网络或某些时段会封锁它。",
+    "matrixAvailable": "可用",
+    "matrixPartial": "部分可用",
+    "matrixBlocked": "被封锁",
+    "matrixEmpty": "尚未发布国家数据。",
+    "incidentsTitle": "故障事件",
+    "incidentsNone": "过去 30 天无故障。",
+    "incidentsOngoing": "进行中",
+    "incidentsResolved": "已于 {time} 解决",
+    "incidentsStarted": "开始于 {time}",
+    "incidentsGlobal": "所有位置",
+    "incidentsPast": "历史故障",
+    "report": "报告问题"
   },
   "usage": {
     "show": "显示使用趋势",
