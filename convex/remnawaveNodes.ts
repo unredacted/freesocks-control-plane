@@ -13,6 +13,7 @@ import {
   modePlacementWrites,
   resolveBoundModeIds,
   resolveBoundModeCounts,
+  resolveModeSquadPool,
 } from './lib/remnawavePlacement';
 
 /**
@@ -78,6 +79,27 @@ export const resolveTarget = internalQuery({
       location: location ?? null,
       onlyServerId: (onlyServerId as string | null | undefined) ?? null,
     }),
+});
+
+/**
+ * Re-issue gate for the member's EFFECTIVE mode (regenerate / switch-backend).
+ * WS1's cross-mode placement fallback keeps a key from going squad-less, but
+ * applied blindly it silently DOWNGRADES a member whose stored mode's pool was
+ * unbound by an admin (e.g. a 'privacy' key re-issued into the CDN-fronted
+ * 'evade' pool while the UI still says privacy). `blocked` is true exactly
+ * when the effective mode's own pool is empty AND some other mode has a pool —
+ * the caller then refuses with an actionable error (the member picks another
+ * mode first, mirroring the /connection-mode + switchMode guards). When NO
+ * mode is bound anywhere (bring-up), blocked is false and issuance proceeds
+ * squad-less + audited (the WS1 safety net stays).
+ */
+export const effectivePlacementGate = internalQuery({
+  args: { modeId: v.union(v.string(), v.null()) },
+  handler: async (ctx, { modeId }) => {
+    const own = await resolveModeSquadPool(ctx.db, modeId);
+    if (own.length > 0) return { blocked: false };
+    return { blocked: (await resolveBoundModeIds(ctx.db)).size > 0 };
+  },
 });
 
 /** Cache the latest per-placement node-load snapshots (upsert by placement).

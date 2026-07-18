@@ -326,12 +326,20 @@ export interface MemberAuth {
  * call resolves to null (unauthenticated). Cookie sessions are the full-privilege
  * member and bypass the scope gate by design. Routes that don't pass a scope
  * accept any valid user token (used for minimal identity reads like /me).
+ *
+ * Member W3-8a: the resolved member's STATUS is re-checked on every request
+ * (the same admission set as users.byAccountIdHash), so an admin disable or a
+ * delete stops authorizing immediately instead of waiting out the 30-day
+ * session TTL — and a pre-existing session can't be used to mint a fresh key
+ * past an admin ban. LAPSED (membership_lapsed) and INACTIVE members KEEP
+ * access: their renewal / reactivation flows run through these endpoints.
  */
 export async function resolveMember(
   ctx: ActionCtx,
   req: Request,
   required?: string,
 ): Promise<MemberAuth | null> {
+  let member: MemberAuth | null = null;
   const raw = parseCookies(req.headers.get('cookie'))[MEMBER_COOKIE];
   const key = process.env.SESSION_SIGNING_KEY;
   if (raw && key) {
@@ -342,22 +350,28 @@ export async function resolveMember(
         if (
           await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken, sess.popAlg)
         ) {
-          return { userId: sess.userId, source: 'cookie' };
+          member = { userId: sess.userId, source: 'cookie' };
         }
         // Bound session without a valid PoP signature: fall through (no bearer
         // present -> unauthenticated, which forces re-auth per the re-bind rule).
       }
     }
   }
-  const bearer = bearerToken(req);
-  if (bearer) {
-    const tok = await ctx.runAction(internal.apiTokens.resolveToken, { plaintext: bearer });
-    if (tok && tok.subjectType === 'user' && tok.subjectUserId) {
-      if (required && !hasScope(tok.scopes, required)) return null;
-      return { userId: tok.subjectUserId, source: 'token', scopes: tok.scopes };
+  if (!member) {
+    const bearer = bearerToken(req);
+    if (bearer) {
+      const tok = await ctx.runAction(internal.apiTokens.resolveToken, { plaintext: bearer });
+      if (tok && tok.subjectType === 'user' && tok.subjectUserId) {
+        if (required && !hasScope(tok.scopes, required)) return null;
+        member = { userId: tok.subjectUserId, source: 'token', scopes: tok.scopes };
+      }
     }
   }
-  return null;
+  if (!member) return null;
+  const user = await ctx.runQuery(internal.users.get, { id: member.userId });
+  if (!user || user.status === 'deleted') return null;
+  if (user.status === 'disabled' && user.disabledReason !== 'membership_lapsed') return null;
+  return member;
 }
 
 /** fsv1_ bearer resolution (service or user token). */

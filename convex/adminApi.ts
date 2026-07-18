@@ -875,6 +875,9 @@ export const grantMembership = internalMutation({
       expiresAtMs,
       reason: 'admin_grant',
       triggeredBy: 'admin',
+      // An explicit admin grant IS the un-ban path: it may lift an admin
+      // disable (a payment/code redemption never does).
+      liftAdminBan: true,
     });
 
     await writeAuditLog(ctx, {

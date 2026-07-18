@@ -219,6 +219,23 @@ describe('account-login throttle runs BEFORE the captcha verify', () => {
     const json = (await blocked.json()) as { error: { code: string } };
     expect(json.error.code).toBe('rate_limit.exceeded');
   });
+
+  test('login fails closed (503) when no trustworthy client IP exists', async () => {
+    // No proxy trust configured → the per-IP throttle can't run and the
+    // per-(prefix,IP) backstop would degrade to a deployment-wide bucket, so
+    // the route answers 503 rather than weaken login throttling (mirrors
+    // account-create's freetier.ip_unresolved).
+    vi.stubEnv('TRUSTED_PROXY', '');
+    const t = convexTest(schema, modules);
+    const res = await t.fetch('/api/v1/auth/account-login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accountId: '1'.repeat(32), captchaToken: 'tok' }),
+    });
+    expect(res.status).toBe(503);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('auth.ip_unresolved');
+  });
 });
 
 describe('route-level scope enforcement', () => {
@@ -274,6 +291,50 @@ describe('route-level scope enforcement', () => {
     const view = (await ok.json()) as { user: { status: string }; subscription: unknown };
     expect(view.user.status).toBe('active');
     expect(view.subscription).toBeNull();
+  });
+
+  test('an admin-disabled member loses API access immediately (cookie AND token)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    const token = await insertToken(t, {
+      scopes: ['account:read'],
+      subjectType: 'user',
+      subjectUserId: userId,
+    });
+
+    // Sanity: both authenticate while the account is active.
+    expect((await t.fetch('/api/v1/account', { headers: { cookie } })).status).toBe(200);
+    expect(
+      (await t.fetch('/api/v1/account', { headers: { authorization: `Bearer ${token}` } })).status,
+    ).toBe(200);
+
+    // The ban takes effect on the NEXT request — not after the 30-day TTL.
+    await t.run((ctx) =>
+      ctx.db.patch(userId, { status: 'disabled', disabledReason: 'admin_action' }),
+    );
+    expect((await t.fetch('/api/v1/account', { headers: { cookie } })).status).toBe(401);
+    expect(
+      (await t.fetch('/api/v1/account', { headers: { authorization: `Bearer ${token}` } })).status,
+    ).toBe(401);
+  });
+
+  test('deleted loses access; lapsed + inactive members KEEP it (renewal/reactivation flows)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    const get = () => t.fetch('/api/v1/account', { headers: { cookie } });
+
+    await t.run((ctx) =>
+      ctx.db.patch(userId, { status: 'disabled', disabledReason: 'membership_lapsed' }),
+    );
+    expect((await get()).status).toBe(200);
+
+    await t.run((ctx) => ctx.db.patch(userId, { status: 'inactive', disabledReason: undefined }));
+    expect((await get()).status).toBe(200);
+
+    await t.run((ctx) => ctx.db.patch(userId, { status: 'deleted' }));
+    expect((await get()).status).toBe(401);
   });
 
   test('remnawave placement routes enforce the servers scope (moved off settings:write)', async () => {

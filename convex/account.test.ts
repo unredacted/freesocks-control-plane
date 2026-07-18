@@ -454,6 +454,32 @@ describe('account.switchBackend guards', () => {
       expect(subs.filter((s) => s.state === 'active')).toHaveLength(1);
     });
   });
+
+  test('a switch INTO remnawave is refused when the stored mode lost its pool (no silent downgrade)', async () => {
+    const t = convexTest(schema, modules);
+    const fromTier = await seedTier(t, { slug: 'free-outline', backend: 'outline' });
+    await seedTier(t, { slug: 'free', backend: 'remnawave' }); // default-free peer
+    const userId = await seedUser(t, fromTier);
+    await t.run(async (ctx) => {
+      // The member chose privacy (unbound); only evade has a pool bound.
+      await ctx.db.patch(userId, { connectionModeId: 'privacy' });
+      await ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.evade.squads',
+        value: JSON.stringify(['sq-evade']),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const res = await t.action(internal.account.switchBackend, { userId, target: 'remnawave' });
+    expect(res).toMatchObject({ ok: false, code: 'mode.unavailable', status: 400 });
+    await t.run(async (ctx) => {
+      // Tier + mode untouched, and no key was minted into the wrong pool.
+      const user = await ctx.db.get(userId);
+      expect(user!.tierId).toBe(fromTier);
+      expect(user!.connectionModeId).toBe('privacy');
+      expect(await ctx.db.query('subscriptions').collect()).toHaveLength(0);
+    });
+  });
 });
 
 /**
@@ -713,7 +739,7 @@ describe('account.switchMode saga', () => {
     });
   });
 
-  test('regenerate into an UNBOUND mode falls back to a bound pool (never squad-less) (WS1)', async () => {
+  test('regenerate into an UNBOUND mode is refused (no silent cross-mode downgrade)', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
@@ -760,13 +786,22 @@ describe('account.switchMode saga', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    await t.action(internal.account.regenerate, { userId });
-    const createCall = fetchMock.mock.calls.find(
-      ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
+    // Refused: falling back to the bound evade pool would silently re-home a
+    // 'privacy' member into the CDN-fronted pool while the UI still says privacy.
+    await expect(t.action(internal.account.regenerate, { userId })).rejects.toThrow(
+      /mode\.unavailable/,
     );
-    expect(createCall).toBeTruthy();
-    // Unbound privacy fell back to the bound evade pool — NOT a squad-less key.
-    expect(JSON.parse(String(createCall![1]!.body)).activeInternalSquads).toEqual(['sq-evade']);
+    // No key was minted…
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
+      ),
+    ).toBe(false);
+    await t.run(async (ctx) => {
+      // …and the member's mode + subs are untouched (nothing to tombstone).
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('privacy');
+      expect(await ctx.db.query('subscriptions').collect()).toHaveLength(0);
+    });
   });
 
   test('regenerate with NO pool bound anywhere issues squad-less + audits (WS1 bring-up)', async () => {

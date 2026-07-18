@@ -17,9 +17,12 @@ const DAY_MS = 86_400_000;
  * Tier "GB" → bytes using BINARY GiB (1 GiB = 2^30), so the admin's number
  * matches what Remnawave shows: it renders limits in GiB, so a tier of `50`
  * displays as "50 GiB" (not "46.57 GiB", which `50 × 10^9` decimal produced).
+ * Rounded to a whole byte: the donation bonus can yield a fractional GB (e.g.
+ * 2.01), and the Remnawave contract is INTEGER bytes — a float is rejected,
+ * which previously wedged the fleet re-cap cron in a fail-retry loop.
  */
 export function gbToBytes(gb: number): number {
-  return gb * 1024 ** 3;
+  return Math.round(gb * 1024 ** 3);
 }
 
 /**

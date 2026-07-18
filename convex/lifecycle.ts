@@ -36,6 +36,28 @@ export interface SetMembershipArgs {
   expiresAtMs: number | null;
   reason: string;
   triggeredBy?: string;
+  /**
+   * Permit lifting an ADMIN disable ('admin_action'). Default false: a payment
+   * or code redemption must never un-ban an account (a ban is only reversible
+   * by an admin). Only the admin grant flow (adminApi.grantMembership) sets
+   * this — an explicit admin decision to restore the account.
+   */
+  liftAdminBan?: boolean;
+}
+
+/**
+ * The statuses a grant lifts back to active. An admin disable ('admin_action')
+ * is NEVER lifted by a payment/grant — a ban is only reversible by an admin
+ * (`liftAdminBan`); the grant still records the new tier/expiry (so a later
+ * un-ban honors the purchase) but the account and its backend key stay disabled.
+ */
+function isLiftableStatus(
+  user: { status: string; disabledReason?: string },
+  liftAdminBan: boolean,
+): boolean {
+  if (user.status === 'grace' || user.status === 'inactive') return true;
+  if (user.status !== 'disabled') return false;
+  return user.disabledReason === 'membership_lapsed' || liftAdminBan;
 }
 
 /**
@@ -50,13 +72,24 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
   const toTier = await ctx.db.get(a.tierId);
   if (!toTier) throw new Error('tier not found');
 
+  // Track the PAID-through date separately from the effective expiry: grants
+  // that carry real value (billing, code redemption, admin grant — anything
+  // that isn't a referral reward) advance `membershipPaidThroughAt`; referral
+  // bonuses extend only `membershipExpiresAt`. The referral vest check reads
+  // the paid-through date so a self-referral bonus can't satisfy its own
+  // holding period (M4).
+  const paidThrough =
+    a.expiresAtMs != null && !a.reason.startsWith('referral.')
+      ? Math.max(user.membershipPaidThroughAt ?? 0, a.expiresAtMs)
+      : undefined;
+
   if (user.tierId === a.tierId) {
     const expiryMoved = a.expiresAtMs !== (user.membershipExpiresAt ?? null);
-    const statusLifted =
-      user.status === 'grace' || user.status === 'disabled' || user.status === 'inactive';
+    const statusLifted = isLiftableStatus(user, a.liftAdminBan === true);
     if (expiryMoved || statusLifted) {
       await ctx.db.patch(a.userId, {
         membershipExpiresAt: a.expiresAtMs ?? undefined,
+        ...(paidThrough !== undefined ? { membershipPaidThroughAt: paidThrough } : {}),
         // A renewed/extended membership re-activates a lapsed (grace/disabled)
         // user and clears the lapse markers (mirrors the admin re-enable path).
         // An idle-deactivated ('inactive') account is lifted too: a grant can
@@ -73,8 +106,13 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
       // Re-push so a same-tier renewal re-enables the backend key (the grace sweep
       // disabled it via setUserStatus(false)) and extends its expiry. Previously
       // this branch returned without a push, so the common monthly re-up left the
-      // Remnawave key DISABLED. (Review #2.)
-      await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, { userId: a.userId });
+      // Remnawave key DISABLED. (Review #2.) Skipped for an admin-disabled user:
+      // the key must stay off until an admin lifts the ban.
+      if (statusLifted || user.status === 'active') {
+        await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, {
+          userId: a.userId,
+        });
+      }
       // Referral hook (scheduled, async): a paid-tier grant may convert a
       // referral. No-op for free tiers, referral-reward grants, or when the
       // program is disabled.
@@ -87,11 +125,11 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
     return;
   }
 
-  const tierChangeLifts =
-    user.status === 'grace' || user.status === 'disabled' || user.status === 'inactive';
+  const tierChangeLifts = isLiftableStatus(user, a.liftAdminBan === true);
   await ctx.db.patch(a.userId, {
     tierId: a.tierId,
     membershipExpiresAt: a.expiresAtMs ?? undefined,
+    ...(paidThrough !== undefined ? { membershipPaidThroughAt: paidThrough } : {}),
     ...(tierChangeLifts
       ? { status: 'active' as const, disabledReason: undefined, suspendedAt: undefined }
       : {}),
@@ -115,7 +153,11 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
     payload: { fromTierId: user.tierId, toTierId: a.tierId, reason: a.reason },
   });
   // Durable, decoupled propagation of the new tier spec to the live backend.
-  await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, { userId: a.userId });
+  // Skipped for an admin-disabled user: their key stays off until an admin lifts
+  // the ban (the grant is still recorded above, so the un-ban honors it).
+  if (tierChangeLifts || user.status === 'active') {
+    await ctx.scheduler.runAfter(0, internal.lifecycle.pushTierToBackend, { userId: a.userId });
+  }
   // Referral hook (scheduled, async): a paid-tier grant may convert a referral.
   // No-op for free tiers, referral-reward grants, or when the program is off.
   await ctx.scheduler.runAfter(0, internal.referrals.maybeConvert, {
@@ -437,6 +479,16 @@ export const applyGraceTransition = internalMutation({
   handler: async (ctx, { userId }) => {
     const u = await ctx.db.get(userId);
     if (!u) return null;
+    // Re-guard the read→apply race (M2): a renewal landing between the sweep's
+    // page read and this apply must not be flipped back to grace — only a
+    // STILL-active, STILL-lapsed user transitions.
+    if (
+      u.status !== 'active' ||
+      u.membershipExpiresAt == null ||
+      u.membershipExpiresAt >= Date.now()
+    ) {
+      return null;
+    }
     await ctx.db.patch(userId, { status: 'grace', updatedAt: Date.now() });
     await applyCountsDelta(ctx, { statusFrom: u.status, statusTo: 'grace' });
     await writeAuditLog(ctx, {
@@ -454,6 +506,14 @@ export const applyDisableTransition = internalMutation({
   handler: async (ctx, { userId }) => {
     const u = await ctx.db.get(userId);
     if (!u) return null;
+    // Re-guard the read→apply race (M2): the disable ids are collected read-only
+    // across up to SWEEP_MAX_PAGES pages, so a renewal can land minutes before
+    // the apply. Recompute due-ness against the tier's grace window — a renewed
+    // member must never be disabled as 'membership_lapsed'.
+    if (u.status !== 'grace' || u.membershipExpiresAt == null) return null;
+    const tier = await ctx.db.get(u.tierId);
+    const windowMs = (tier?.expirationDaysAfterMembershipLapse ?? 7) * 86_400_000;
+    if (u.membershipExpiresAt + windowMs >= Date.now()) return null;
     await ctx.db.patch(userId, {
       status: 'disabled',
       disabledReason: 'membership_lapsed',
@@ -468,6 +528,25 @@ export const applyDisableTransition = internalMutation({
       targetId: userId,
     });
     return null;
+  },
+});
+
+/**
+ * Single-user due-ness re-check for the disable loop (M2): the sweep collects
+ * ids read-only across pages, so before the BACKEND disable (which can't be
+ * transactionally paired with the local flip) we re-read the user and confirm
+ * they're still grace + past their tier's window. A renewal that lands after
+ * this check is still covered: the renewal's scheduled tier push re-enables
+ * the key, and applyDisableTransition's own re-guard skips the local flip.
+ */
+export const isDisableDue = internalQuery({
+  args: { userId: v.id('users'), now: v.number() },
+  handler: async (ctx, { userId, now }) => {
+    const u = await ctx.db.get(userId);
+    if (!u || u.status !== 'grace' || u.membershipExpiresAt == null) return false;
+    const tier = await ctx.db.get(u.tierId);
+    const windowMs = (tier?.expirationDaysAfterMembershipLapse ?? 7) * 86_400_000;
+    return u.membershipExpiresAt + windowMs < now;
   },
 });
 
@@ -514,6 +593,11 @@ export const runGraceSweep = internalAction({
     }
     let toDisabled = 0;
     for (const userId of disableIds) {
+      // Re-check due-ness right before acting (M2): the ids were collected
+      // read-only across pages, so a renewal may have landed since — disabling
+      // a paying member's key at the panel would be entitlement loss caused by
+      // the control plane itself.
+      if (!(await ctx.runQuery(internal.lifecycle.isDisableDue, { userId, now }))) continue;
       const st = await ctx.runQuery(internal.lifecycle.activeSubAndTier, { userId });
       if (st) {
         try {

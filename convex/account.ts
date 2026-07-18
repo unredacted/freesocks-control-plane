@@ -14,7 +14,7 @@
 import { internalAction, internalMutation, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { randomHex } from './lib/crypto';
 import { issueNewSubscription } from './lib/issuance';
 import {
@@ -56,6 +56,36 @@ async function auditIfPlacementless(
     payload: { requestedMode: args.requestedMode },
     requestId: args.requestId,
   });
+}
+
+const TOMBSTONE_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Tombstone the superseded key (24h grace), with a bounded-retry backstop: a
+ * transient failure here must not leave TWO live keys (the just-minted one +
+ * this one), and no sweep re-tombstones an active row. On failure the retry
+ * action is scheduled (it audits at exhaustion) and the saga continues.
+ */
+async function tombstoneOldSub(
+  ctx: ActionCtx,
+  backendUserId: string,
+): Promise<{ deletedAt: number } | null> {
+  try {
+    return await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, {
+      backendUserId,
+      graceMs: TOMBSTONE_GRACE_MS,
+    });
+  } catch (err) {
+    console.warn(
+      `[subscription] tombstone failed; scheduling retry: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    await ctx.scheduler.runAfter(0, internal.subscriptions.tombstoneWithGraceAction, {
+      backendUserId,
+      graceMs: TOMBSTONE_GRACE_MS,
+      attempt: 0,
+    });
+    return null;
+  }
 }
 
 /**
@@ -141,6 +171,30 @@ export const releaseIssuanceLock = internalMutation({
     return null;
   },
 });
+
+/**
+ * Gate a (re-)issue on the member's EFFECTIVE connection mode (see
+ * remnawaveNodes.effectivePlacementGate): WS1's cross-mode placement fallback,
+ * applied blindly, would silently re-home the key into a DIFFERENT mode's pool
+ * — e.g. a 'privacy' member re-issued into the CDN-fronted 'evade' pool while
+ * the UI still says privacy, degrading the exact property they selected. When
+ * the effective mode's pool is unbound but another mode's is bound, the member
+ * must pick a new mode first (the /connection-mode + switchMode guards are the
+ * same shape). An all-unbound (bring-up) deploy is NOT blocked: issuance
+ * proceeds squad-less + audited.
+ */
+const MODE_UNAVAILABLE_MESSAGE =
+  'Your current connection mode is no longer available. Switch to another connection mode first.';
+
+async function isEffectiveModeBlocked(
+  ctx: ActionCtx,
+  backend: Backend,
+  modeId: string | null,
+): Promise<boolean> {
+  if (backend !== 'remnawave') return false;
+  const gate = await ctx.runQuery(internal.remnawaveNodes.effectivePlacementGate, { modeId });
+  return gate.blocked;
+}
 
 interface AccountView {
   user: {
@@ -475,6 +529,11 @@ export const regenerate = internalAction({
 
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const freeExpiryDays = Number(settings['freetier.expiryDays'] ?? 90);
+    // Refuse a re-issue that would silently downgrade the member's mode (an
+    // admin unbound its pool) — they must pick an available mode first.
+    if (await isEffectiveModeBlocked(ctx, tier.backend, user.connectionModeId ?? null)) {
+      throw new ConvexError({ code: 'mode.unavailable', message: MODE_UNAVAILABLE_MESSAGE });
+    }
     // Node placement from the member's chosen mode's pool, narrowed to their
     // preferred location (Remnawave only; fail-soft to any location).
     const target = await resolveIssueTarget(
@@ -501,10 +560,7 @@ export const regenerate = internalAction({
     });
 
     if (oldSub) {
-      await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, {
-        backendUserId: oldSub.backendUserId,
-        graceMs: 24 * 60 * 60 * 1000,
-      });
+      await tombstoneOldSub(ctx, oldSub.backendUserId);
     }
     await auditIfPlacementless(ctx, {
       backend: tier.backend,
@@ -590,6 +646,16 @@ export const switchBackend = internalAction({
     }
 
     const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+    // Refuse a switch that would silently land the new key in a DIFFERENT mode's
+    // pool than the member's stored mode (its pool was unbound by an admin).
+    if (await isEffectiveModeBlocked(ctx, peerTier.backend, user.connectionModeId ?? null)) {
+      return {
+        ok: false,
+        code: 'mode.unavailable',
+        message: MODE_UNAVAILABLE_MESSAGE,
+        status: 400,
+      };
+    }
     // Carry the member's chosen mode + preferred location across the backend
     // switch (Remnawave only).
     const issueTarget = await resolveIssueTarget(
@@ -625,10 +691,7 @@ export const switchBackend = internalAction({
     // never two indefinitely-live keys.
     let oldDeletedAt: number | null = null;
     if (oldSub) {
-      const tomb = await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, {
-        backendUserId: oldSub.backendUserId,
-        graceMs: 24 * 60 * 60 * 1000,
-      });
+      const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId);
       oldDeletedAt = tomb?.deletedAt ?? null;
     }
 
@@ -774,10 +837,7 @@ export const switchMode = internalAction({
       // repointed currentSubscriptionId), same 24h grace as regenerate/switch.
       let oldDeletedAt: number | null = null;
       if (oldSub) {
-        const tomb = await ctx.runMutation(internal.subscriptions.tombstoneWithGrace, {
-          backendUserId: oldSub.backendUserId,
-          graceMs: 24 * 60 * 60 * 1000,
-        });
+        const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId);
         oldDeletedAt = tomb?.deletedAt ?? null;
       }
       await auditIfPlacementless(ctx, {

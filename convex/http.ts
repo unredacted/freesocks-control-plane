@@ -93,6 +93,15 @@ function issuanceErrorResponse(err: unknown, requestId: string): Response {
       503,
     );
   }
+  // The member's stored connection mode lost its placement pool (admin unbound
+  // it) — an actionable 400, not an issuance failure: pick another mode first.
+  if (code === 'mode.unavailable') {
+    const message =
+      err instanceof ConvexError && typeof (err.data as { message?: unknown })?.message === 'string'
+        ? (err.data as { message: string }).message
+        : 'Your current connection mode is no longer available.';
+    return errorJson('mode.unavailable', message, 400);
+  }
   console.error(`[subscription] issuance failed (req ${requestId}): ${msg}`);
   return errorJson(
     'issuance.failed',
@@ -513,27 +522,35 @@ http.route({
     if (!body.accountId || !captchaToken) {
       return errorJson('validation', 'accountId and captchaToken are required', 400);
     }
-    const ip = resolveClientIp(req) ?? undefined;
+    const ip = resolveClientIp(req);
+    // Fail closed (mirrors account-create): with no trustworthy client IP the
+    // per-IP throttle can't run and the per-(prefix,IP) backstop would degrade
+    // to a deployment-wide per-prefix bucket — one shared brute-force window
+    // AND a cross-user lockout lever. A proxy misconfig must answer 503, never
+    // silently weaken login throttling.
+    if (!ip) {
+      return errorJson(
+        'auth.ip_unresolved',
+        'Unable to establish your network address. Try again later or contact support.',
+        503,
+      );
+    }
     // Per-IP throttle BEFORE the outbound captcha verify (mirrors account-create,
     // P1-2): without it, a login flood drives one Cap siteverify call per request.
     // Same policy key + subject the action used before, so counters carry over.
     // Not an oracle — the 429 depends only on the requester's own IP, never on
     // account validity (those failures stay folded into the generic 'invalid').
-    // Unresolvable IP -> skip (matches the webhook route; a proxy misconfig must
-    // not take login down, and the per-(prefix,IP) backstop still applies).
-    if (ip) {
-      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-        policyKey: 'account-login.ip',
-        subject: await ipHashSubject(ip),
-      });
-      if (!rl.allowed) {
-        return errorJson(
-          'rate_limit.exceeded',
-          'Too many attempts from your network. Please wait a bit and try again.',
-          429,
-          { retryAfterMs: rl.retryAfterMs },
-        );
-      }
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account-login.ip',
+      subject: await ipHashSubject(ip),
+    });
+    if (!rl.allowed) {
+      return errorJson(
+        'rate_limit.exceeded',
+        'Too many attempts from your network. Please wait a bit and try again.',
+        429,
+        { retryAfterMs: rl.retryAfterMs },
+      );
     }
     // PoP (Phase 2): the client folds its session public key into the (sealed)
     // login body to bind the session to it.
@@ -671,6 +688,17 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:read');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    // Per-user throttle: getAccountView makes a LIVE backend getUser, so open
+    // tabs × polling would otherwise scale panel QPS linearly.
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.read',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
     const view = await ctx.runAction(internal.account.getAccountView, { userId: member.userId });
     if (!view) return errorJson('not_found', 'user not found', 404);
     // geoCountry (transient, from the CDN header) prefills the "try a mirror"

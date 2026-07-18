@@ -10,7 +10,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { computeExpireAtIso, gbToBytes } from './lib/backends/types';
+import { computeExpireAtIso, gbToBytes, resolveTrafficLimitBytes } from './lib/backends/types';
 import { remnawaveUpdateUser } from './lib/backends/remnawave';
 import { sha256Hex } from './lib/crypto';
 
@@ -20,6 +20,15 @@ describe('issuance spec helpers', () => {
   test('gbToBytes uses binary GiB so a tier of 50 shows as "50 GiB" in Remnawave', () => {
     expect(gbToBytes(50)).toBe(50 * 1024 ** 3);
     expect(gbToBytes(0)).toBe(0);
+  });
+
+  test('gbToBytes rounds a fractional GB (donation bonus) to whole bytes', () => {
+    // 2.01 GB from a 201-cent month at 1 GB/$ — the panel rejects float bytes,
+    // which previously wedged the fleet re-cap cron in a fail-retry loop.
+    const b = gbToBytes(50 + 2.01);
+    expect(Number.isInteger(b)).toBe(true);
+    expect(b).toBe(Math.round(52.01 * 1024 ** 3));
+    expect(resolveTrafficLimitBytes({ monthlyTrafficGb: 50, isDefaultFree: true }, 2.01)).toBe(b);
   });
 
   test('computeExpireAtIso: a member term wins; free falls to now + window', () => {
@@ -286,6 +295,25 @@ describe('refreshActiveMirrors (S3 mirror-refresh cron)', () => {
     const res = await t.action(internal.storage.refreshActiveMirrors, {});
     expect(res.scanned).toBe(1);
     expect(res.refreshed).toBe(0);
+  });
+
+  test('the refresh cursor persists between runs (rotation) and a stale one self-heals', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', 'true');
+    vi.stubEnv('ENVIRONMENT', 'development');
+    const t = convexTest(schema, modules);
+    await seedProvider(t);
+    await seedActiveSub(t, await sha256Hex(MOCK_CONTENT), MIRROR_ON_P1);
+
+    // Roundtrip: a stored cursor is read back; null resets.
+    await t.mutation(internal.mirrorProviders.setRefreshCursor, { cursor: 'cursor-x' });
+    expect(await t.query(internal.mirrorProviders.getRefreshCursor, {})).toBe('cursor-x');
+
+    // A STALE/bogus cursor must not wedge the sweep: it restarts from the
+    // beginning, completes the pass, and clears the cursor for the next tick.
+    await t.mutation(internal.mirrorProviders.setRefreshCursor, { cursor: 'bogus-cursor' });
+    const res = await t.action(internal.storage.refreshActiveMirrors, {});
+    expect(res.scanned).toBe(1);
+    expect(await t.query(internal.mirrorProviders.getRefreshCursor, {})).toBeNull();
   });
 });
 

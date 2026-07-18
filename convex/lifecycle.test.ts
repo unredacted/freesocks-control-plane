@@ -153,6 +153,51 @@ describe('lifecycle grace/disable transitions', () => {
     });
   });
 
+  test('re-guards (M2): a renewal landing mid-sweep is never flipped', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t); // member window = 7 days
+
+    // Grace leg: the user RENEWED between the page read and the apply (expiry
+    // back in the future) — applyGraceTransition must no-op.
+    const renewedActive = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        membershipExpiresAt: Date.now() + 30 * DAY,
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.lifecycle.applyGraceTransition, { userId: renewedActive });
+    expect((await t.run((ctx) => ctx.db.get(renewedActive)))?.status).toBe('active');
+
+    // Disable leg: a grace user whose renewal landed mid-sweep (expiry+window
+    // back in the future) — applyDisableTransition must no-op…
+    const renewedGrace = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'grace',
+        membershipExpiresAt: Date.now() + 30 * DAY,
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.lifecycle.applyDisableTransition, { userId: renewedGrace });
+    expect((await t.run((ctx) => ctx.db.get(renewedGrace)))?.status).toBe('grace');
+
+    // …and the action's pre-backend-disable re-check agrees on both directions.
+    const now = Date.now();
+    expect(await t.query(internal.lifecycle.isDisableDue, { userId: renewedGrace, now })).toBe(
+      false,
+    );
+    await t.run((ctx) => ctx.db.patch(renewedGrace, { membershipExpiresAt: now - 30 * DAY }));
+    expect(await t.query(internal.lifecycle.isDisableDue, { userId: renewedGrace, now })).toBe(
+      true,
+    );
+    // A non-grace user is never due (an active user can't skip the grace leg).
+    expect(await t.query(internal.lifecycle.isDisableDue, { userId: renewedActive, now })).toBe(
+      false,
+    );
+  });
+
   test('findTombstonedDue returns only disabled subs past their deletedAt (Review #6)', async () => {
     const t = convexTest(schema, modules);
     const { memberTierId } = await seedTiers(t);
@@ -249,6 +294,7 @@ describe('lifecycle.setMembership', () => {
       ctx.db.insert('users', {
         tierId: memberTierId,
         status: 'disabled',
+        disabledReason: 'membership_lapsed',
         membershipExpiresAt: Date.now() - DAY,
         updatedAt: Date.now(),
       }),
@@ -260,6 +306,53 @@ describe('lifecycle.setMembership', () => {
       reason: 'test.renew',
     });
     expect((await t.run((ctx) => ctx.db.get(userId)))?.status).toBe('active');
+  });
+
+  test('paid-through advances on billing/admin grants, never on referral rewards (M4)', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', { tierId: memberTierId, status: 'active', updatedAt: Date.now() }),
+    );
+    const exp1 = Date.now() + 30 * DAY;
+    await t.mutation(internal.lifecycle.setMembership, {
+      userId,
+      tierId: memberTierId,
+      expiresAtMs: exp1,
+      reason: 'billing.nowpayments',
+    });
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.membershipPaidThroughAt).toBe(exp1);
+
+    // A referral reward extends the effective expiry but NOT the paid-through.
+    const exp2 = exp1 + 14 * DAY;
+    await t.mutation(internal.lifecycle.setMembership, {
+      userId,
+      tierId: memberTierId,
+      expiresAtMs: exp2,
+      reason: 'referral.referrer_bonus',
+    });
+    const afterBonus = await t.run((ctx) => ctx.db.get(userId));
+    expect(afterBonus?.membershipExpiresAt).toBe(exp2);
+    expect(afterBonus?.membershipPaidThroughAt).toBe(exp1);
+
+    // An admin grant counts as paid value…
+    const exp3 = exp2 + 10 * DAY;
+    await t.mutation(internal.lifecycle.setMembership, {
+      userId,
+      tierId: memberTierId,
+      expiresAtMs: exp3,
+      reason: 'admin_grant',
+    });
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.membershipPaidThroughAt).toBe(exp3);
+
+    // …and paid-through never moves BACKWARD on a shorter grant.
+    await t.mutation(internal.lifecycle.setMembership, {
+      userId,
+      tierId: memberTierId,
+      expiresAtMs: exp1,
+      reason: 'billing.stripe',
+    });
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.membershipPaidThroughAt).toBe(exp3);
   });
 });
 
@@ -676,6 +769,76 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     // test above.)
     const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
     expect(scheduled.some((f) => f.name.includes('pushTierToBackend'))).toBe(true);
+  });
+
+  test('a grant does NOT lift an admin disable (payment is not an un-ban)', async () => {
+    const t = convexTest(schema, modules);
+    const { memberTierId } = await seedTiers(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'disabled',
+        disabledReason: 'admin_action',
+        suspendedAt: Date.now(),
+        membershipExpiresAt: Date.now() - DAY,
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedActiveSub(t, userId, 'bu-banned');
+
+    // Same-tier renewal arrives (webhook/code) for a banned account.
+    await t.mutation(internal.lifecycle.setMembership, {
+      userId,
+      tierId: memberTierId,
+      expiresAtMs: Date.now() + 30 * DAY,
+      reason: 'test.renew',
+    });
+    const after = await t.run((ctx) => ctx.db.get(userId));
+    // The purchase is RECORDED (honored when an admin later lifts the ban)…
+    expect(after?.membershipExpiresAt).toBeGreaterThan(Date.now());
+    // …but the ban stands, and NO backend push is scheduled (the key stays off).
+    expect(after?.status).toBe('disabled');
+    expect(after?.disabledReason).toBe('admin_action');
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(scheduled.some((f) => f.name.includes('pushTierToBackend'))).toBe(false);
+  });
+
+  test('a tier-change grant on an admin-disabled user records the tier, stays disabled, no push', async () => {
+    const t = convexTest(schema, modules);
+    const { freeTierId, memberTierId } = await seedTiers(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: freeTierId,
+        status: 'disabled',
+        disabledReason: 'admin_action',
+        suspendedAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedActiveSub(t, userId, 'bu-banned-free');
+
+    await t.mutation(internal.lifecycle.setMembership, {
+      userId,
+      tierId: memberTierId,
+      expiresAtMs: Date.now() + 30 * DAY,
+      reason: 'test.upgrade',
+    });
+    const after = await t.run((ctx) => ctx.db.get(userId));
+    // Tier + expiry recorded (history kept)…
+    expect(after?.tierId).toBe(memberTierId);
+    expect(after?.membershipExpiresAt).toBeGreaterThan(Date.now());
+    // …but the ban stands and the backend key is NOT re-enabled.
+    expect(after?.status).toBe('disabled');
+    expect(after?.disabledReason).toBe('admin_action');
+    const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+    expect(scheduled.some((f) => f.name.includes('pushTierToBackend'))).toBe(false);
+    const history = await t.run((ctx) =>
+      ctx.db
+        .query('tierHistory')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect(),
+    );
+    expect(history).toHaveLength(1);
   });
 
   test('downgradeLapsedToFree moves a lapsed member to the free tier', async () => {
