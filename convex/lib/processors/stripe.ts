@@ -41,6 +41,10 @@ export async function createCheckout(
     success_url: params.successUrl,
     cancel_url: params.cancelUrl,
     client_reference_id: params.orderRef,
+    // Echo our ref on the PaymentIntent too: refund/dispute events carry the
+    // CHARGE (no client_reference_id), so the verify path recovers the ref from
+    // the PI's metadata (one API read, only for those event types).
+    'payment_intent_data[metadata][fcp_ref]': params.orderRef,
     'line_items[0][quantity]': '1',
     'line_items[0][price_data][currency]': params.currency.toLowerCase(),
     'line_items[0][price_data][unit_amount]': String(params.amountCents),
@@ -91,8 +95,41 @@ function mapEvent(type: string, paymentStatus: string | undefined): OrderStatus 
       return 'failed';
     case 'checkout.session.expired':
       return 'expired';
+    // Refund/chargeback class: never grants; when the order is ALREADY paid the
+    // grant path audits it (billing.refund_seen) so the operator has a queue to
+    // act on instead of a silently-live chargeback membership.
+    case 'charge.refunded':
+    case 'charge.dispute.created':
+      return 'failed';
     default:
       return 'pending'; // an event we don't act on (acked, no grant)
+  }
+}
+
+/** Recover our order ref from the PaymentIntent's metadata (set at checkout as
+ *  `payment_intent_data[metadata][fcp_ref]`). Only called for refund/dispute
+ *  events, whose charge object has no client_reference_id. Best-effort: any
+ *  failure leaves the ref null (the event acks without applying, as before). */
+async function orderRefFromPaymentIntent(
+  apiKey: string,
+  apiBase: string | undefined,
+  paymentIntentId: string,
+): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(
+      `${apiBase ?? DEFAULT_BASE}/v1/payment_intents/${encodeURIComponent(paymentIntentId)}`,
+      { headers: { authorization: `Bearer ${apiKey}` }, signal: controller.signal },
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as { metadata?: Record<string, unknown> };
+    const ref = json.metadata?.fcp_ref;
+    return typeof ref === 'string' && ref ? ref : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -100,12 +137,17 @@ function mapEvent(type: string, paymentStatus: string | undefined): OrderStatus 
  * Verify a Stripe webhook (`Stripe-Signature`) and parse it. The signed payload
  * is `${t}.${rawBody}`; we recompute HMAC-SHA256 and timing-safe compare against
  * the header's v1 scheme(s), plus a 5-minute timestamp tolerance (replay guard).
- * The order is looked up by `client_reference_id` (our opaque ref).
+ * The order is looked up by `client_reference_id` (our opaque ref); refund/
+ * dispute events carry the charge instead, so their ref is recovered from the
+ * PaymentIntent's `fcp_ref` metadata (needs `apiKey`; sessions created before
+ * that metadata existed still ack unmapped).
  */
 export async function verifyAndParse(args: {
   rawBody: string;
   signature: string | null;
   secret: string;
+  apiKey?: string;
+  apiBase?: string;
   nowSec?: number;
 }): Promise<VerifyResult> {
   if (!args.signature) return { ok: false, reason: 'missing Stripe-Signature' };
@@ -128,25 +170,49 @@ export async function verifyAndParse(args: {
   }
   const obj = event.data?.object ?? {};
   const type = typeof event.type === 'string' ? event.type : '';
-  const orderRef =
+  let orderRef =
     typeof obj.client_reference_id === 'string' && obj.client_reference_id
       ? obj.client_reference_id
       : null;
+  // Refund/dispute events carry the charge: try its own metadata first, then
+  // the PaymentIntent's (one API read, only when an apiKey is configured).
+  if (!orderRef) {
+    const md = obj.metadata;
+    if (md && typeof md === 'object') {
+      const ref = (md as Record<string, unknown>).fcp_ref;
+      if (typeof ref === 'string' && ref) orderRef = ref;
+    }
+  }
+  if (!orderRef && args.apiKey && typeof obj.payment_intent === 'string' && obj.payment_intent) {
+    orderRef = await orderRefFromPaymentIntent(args.apiKey, args.apiBase, obj.payment_intent);
+  }
   const processorRef = typeof obj.id === 'string' ? obj.id : (event.id ?? '');
   const paymentStatus = typeof obj.payment_status === 'string' ? obj.payment_status : undefined;
   // On checkout.session.* events the object IS the session minted at checkout,
   // so its id cross-checks against the order's stored processorRef, and
-  // amount_total (minor units) against the order's cents.
+  // amount_total (minor units) against the order's cents. Charge-class events
+  // carry `amount` (gross) instead — reported for the refund audit trail only,
+  // never a grant cross-check (these events never grant).
   const isSessionEvent = type.startsWith('checkout.session.');
+  const isChargeEvent = type.startsWith('charge.');
   return {
     ok: true,
     orderRef,
     processorRef,
     status: mapEvent(type, paymentStatus),
     checkoutRef: isSessionEvent && typeof obj.id === 'string' ? obj.id : null,
-    amountMinor: isSessionEvent && typeof obj.amount_total === 'number' ? obj.amount_total : null,
+    amountMinor:
+      isSessionEvent && typeof obj.amount_total === 'number'
+        ? obj.amount_total
+        : isChargeEvent && typeof obj.amount === 'number'
+          ? obj.amount
+          : null,
     amountCurrency:
-      isSessionEvent && typeof obj.currency === 'string' ? obj.currency.toUpperCase() : null,
+      isSessionEvent && typeof obj.currency === 'string'
+        ? obj.currency.toUpperCase()
+        : isChargeEvent && typeof obj.currency === 'string'
+          ? obj.currency.toUpperCase()
+          : null,
     // Stripe guarantees idempotency by event id, so dedupe on it.
     dedupeId: `stripe:${event.id ?? processorRef}`,
     summary: {

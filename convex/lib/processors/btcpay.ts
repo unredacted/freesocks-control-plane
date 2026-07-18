@@ -114,16 +114,51 @@ export async function createCheckout(
 }
 
 /**
+ * Fetch the invoice's billed amount for the settle cross-check (BTCPay's
+ * settle event carries none). The grant path compares it against the order's
+ * cents, so a store configured with a settle-tolerance (e.g. "settled at 90%
+ * paid") can't grant full membership on a partial payment. Best-effort: any
+ * failure leaves the amount null (the invoice-id binding remains the guard).
+ */
+async function invoiceAmount(
+  cfg: BtcpayConfig,
+  invoiceId: string,
+): Promise<{ amountMinor: number; currency: string } | null> {
+  const base = cfg.apiUrl.replace(/\/$/, '');
+  const path = `/api/v1/stores/${encodeURIComponent(cfg.storeId)}/invoices/${encodeURIComponent(invoiceId)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
+  try {
+    const res = await fetch(`${base}${path}`, {
+      headers: { authorization: `token ${cfg.apiKey}`, accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { amount?: string; currency?: string };
+    const value = typeof json.amount === 'string' ? Number.parseFloat(json.amount) : NaN;
+    if (!Number.isFinite(value) || typeof json.currency !== 'string') return null;
+    return { amountMinor: Math.round(value * 100), currency: json.currency.toUpperCase() };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Verify a store webhook's authenticity and parse it. The `BTCPay-Sig` header is
  * `sha256=<hex HMAC-SHA256 of the raw body>` with the store webhook's secret.
  * The order is looked up by `metadata.orderId` (our opaque ref, set at invoice
  * creation and included on every invoice event). The persisted summary is
  * REDACTED (invoice events carry no payer PII, but we allowlist defensively).
+ * When `cfg` is supplied, an `InvoiceSettled` event additionally fetches the
+ * invoice amount so applyEvent can cross-check it (settle-tolerance guard).
  */
 export async function verifyAndParse(args: {
   rawBody: string;
   signature: string | null;
   webhookSecret: string;
+  cfg?: BtcpayConfig;
 }): Promise<VerifyResult> {
   if (!args.signature) return { ok: false, reason: 'missing BTCPay-Sig' };
   const sig = args.signature.trim();
@@ -150,6 +185,12 @@ export async function verifyAndParse(args: {
   const metadata = (p.metadata ?? {}) as Record<string, unknown>;
   const orderRef =
     typeof metadata.orderId === 'string' && metadata.orderId ? metadata.orderId : null;
+  // The settle event carries no amount — fetch it for the grant cross-check
+  // (one API read, only on the granting transition, only when configured).
+  const amount =
+    type === 'InvoiceSettled' && invoiceId && args.cfg
+      ? await invoiceAmount(args.cfg, invoiceId)
+      : null;
   return {
     ok: true,
     orderRef,
@@ -160,6 +201,8 @@ export async function verifyAndParse(args: {
     // itself minted at checkout — an attacker-created invoice on a shared
     // store (different id, forged metadata.orderId) can never grant.
     checkoutRef: invoiceId || null,
+    amountMinor: amount?.amountMinor ?? null,
+    amountCurrency: amount?.currency ?? null,
     // Distinct per (invoice, event type) — a redelivery of the same transition
     // dedupes; a later transition for the same invoice is a fresh event.
     dedupeId: `btcpay:${invoiceId || orderRef || 'unknown'}:${type || 'unknown'}`,

@@ -136,15 +136,29 @@ async function verifyForProcessor(
     }
     case 'btcpay': {
       if (!secrets.btcpay.webhookSecret) throw notConfigured('BTCPay');
+      const bp = secrets.btcpay;
       return btcpay.verifyAndParse({
         rawBody,
         signature,
-        webhookSecret: secrets.btcpay.webhookSecret,
+        webhookSecret: bp.webhookSecret,
+        // Optional: fetches the invoice amount on settle so the grant path
+        // cross-checks it (a store settle-tolerance can't grant a partial).
+        cfg:
+          bp.apiUrl && bp.storeId && bp.apiKey
+            ? { apiUrl: bp.apiUrl, storeId: bp.storeId, apiKey: bp.apiKey }
+            : undefined,
       });
     }
     case 'stripe': {
       if (!secrets.stripe.webhookSecret) throw notConfigured('Stripe');
-      return stripe.verifyAndParse({ rawBody, signature, secret: secrets.stripe.webhookSecret });
+      return stripe.verifyAndParse({
+        rawBody,
+        signature,
+        secret: secrets.stripe.webhookSecret,
+        // Optional: lets refund/dispute events recover the order ref from the
+        // PaymentIntent's metadata (one API read). Without it they ack unmapped.
+        apiKey: secrets.stripe.apiKey || undefined,
+      });
     }
     case 'paypal': {
       const pp = secrets.paypal;

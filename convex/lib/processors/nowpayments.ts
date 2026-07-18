@@ -122,11 +122,28 @@ export async function createCheckout(
 }
 
 /**
+ * PHP `json_encode` escaping applied on top of JSON.stringify: NOWPayments
+ * signs its IPN from PHP, whose default flags escape `/` → `\/` and every
+ * non-ASCII code unit → `\uXXXX`. JSON.stringify does neither, so an IPN
+ * carrying non-ASCII (e.g. an em-dash in our own invoice description) or a
+ * slash can produce a VALID signature over the PHP-canonical form that plain
+ * JSON.stringify would reject. Both canonical forms of the SAME parsed payload
+ * are accepted — dual-accept is safe: an attacker still needs a valid HMAC
+ * over one deterministic canonicalization of the exact body.
+ */
+function phpEscapeJson(json: string): string {
+  return json
+    .replace(/\//g, '\\/')
+    .replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+/**
  * Verify an IPN's authenticity and parse it. The signature is HMAC-SHA512 of the
  * key-sorted JSON body (the EXACT bytes we received, re-serialized in sorted-key
- * order) using the IPN secret. On success, the order is looked up by `order_id`
- * (our opaque ref). The persisted summary is REDACTED (NOWPayments IPNs carry no
- * payer PII, but we allowlist fields defensively).
+ * order) using the IPN secret — checked against BOTH the JSON.stringify and the
+ * PHP-escaped canonical forms (see phpEscapeJson). On success, the order is
+ * looked up by `order_id` (our opaque ref). The persisted summary is REDACTED
+ * (NOWPayments IPNs carry no payer PII, but we allowlist fields defensively).
  */
 export async function verifyAndParse(args: {
   rawBody: string;
@@ -143,8 +160,14 @@ export async function verifyAndParse(args: {
   if (!payload || typeof payload !== 'object') {
     return { ok: false, reason: 'IPN payload is not an object' };
   }
-  const expected = await hmacSha512Hex(args.ipnSecret, JSON.stringify(sortKeysDeep(payload)));
-  if (!timingSafeEqual(expected, args.signature.trim())) {
+  const canonical = JSON.stringify(sortKeysDeep(payload));
+  const expected = await hmacSha512Hex(args.ipnSecret, canonical);
+  const expectedPhp =
+    canonical === phpEscapeJson(canonical)
+      ? expected
+      : await hmacSha512Hex(args.ipnSecret, phpEscapeJson(canonical));
+  const sig = args.signature.trim();
+  if (!timingSafeEqual(expected, sig) && !timingSafeEqual(expectedPhp, sig)) {
     return { ok: false, reason: 'IPN signature mismatch' };
   }
 
@@ -153,11 +176,23 @@ export async function verifyAndParse(args: {
   const orderRef = typeof p.order_id === 'string' && p.order_id ? p.order_id : null;
   const processorRef =
     p.payment_id != null ? String(p.payment_id) : p.invoice_id != null ? String(p.invoice_id) : '';
+  let status = mapStatus(rawStatus);
+  // Settle-tolerance guard: with partial-payment acceptance enabled on the
+  // merchant account, NOWPayments can report `finished` for an invoice paid
+  // only within a custom tolerance. When the IPN carries the received-vs-
+  // expected crypto amounts and the received is short, downgrade to
+  // `confirming` (never a grant): the order visibly stalls for the operator
+  // instead of granting a full membership on a partial payment.
+  const actuallyPaid = typeof p.actually_paid === 'number' ? p.actually_paid : null;
+  const payAmount = typeof p.pay_amount === 'number' ? p.pay_amount : null;
+  if (status === 'paid' && actuallyPaid != null && payAmount != null && actuallyPaid < payAmount) {
+    status = 'confirming';
+  }
   return {
     ok: true,
     orderRef,
     processorRef,
-    status: mapStatus(rawStatus),
+    status,
     // The invoice id minted at checkout (stored as the order's processorRef);
     // the grant path cross-checks it. Distinct from payment_id above.
     checkoutRef: p.invoice_id != null ? String(p.invoice_id) : null,

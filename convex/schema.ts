@@ -127,6 +127,14 @@ export default defineSchema({
     status: userStatus,
     disabledReason: v.optional(v.string()),
     membershipExpiresAt: v.optional(v.number()),
+    // The membership expiry counting only PAID-VALUE grants (billing, code
+    // redemption, admin grant) — never referral-reward extensions. The referral
+    // vest check keys off this so a self-referral can't satisfy the holding
+    // period with its own instant referee bonus (the M4 farming hole): the
+    // referrer's reward vests only while the referee is a PAYING member.
+    // Unset on pre-existing rows → the vest check falls back to
+    // membershipExpiresAt.
+    membershipPaidThroughAt: v.optional(v.number()),
     suspendedAt: v.optional(v.number()),
     // Account-number auth: store only a peppered keyed hash
     // (HMAC-SHA256(ACCOUNT_ID_PEPPER, number)) + a 4-digit plaintext prefix
@@ -665,6 +673,10 @@ export default defineSchema({
     voidReason: v.optional(v.string()),
     refereeBonusDaysGranted: v.optional(v.number()),
     referrerBonusDaysGranted: v.optional(v.number()),
+    // The referrer bonus PINNED at conversion: vesting grants exactly what was
+    // promised at conversion time, even if the admin edits referral.* mid-vest.
+    // Absent on pre-pin rows → the vest path falls back to live config.
+    referrerBonusDaysPlanned: v.optional(v.number()),
     convertedAt: v.optional(v.number()),
     rewardedAt: v.optional(v.number()),
     updatedAt: v.number(),

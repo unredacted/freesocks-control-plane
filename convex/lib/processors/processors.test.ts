@@ -3,7 +3,7 @@ import * as stripe from './stripe';
 import * as paypal from './paypal';
 import * as btcpay from './btcpay';
 import * as nowpayments from './nowpayments';
-import { hmacSha256Hex } from '../crypto';
+import { hmacSha256Hex, hmacSha512Hex } from '../crypto';
 
 /**
  * Adapter-level coverage for the Stripe + PayPal + BTCPay payment rails
@@ -147,6 +147,71 @@ describe('stripe.verifyAndParse', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/json/i);
   });
+
+  test('charge.refunded maps to failed; the ref is recovered from the PaymentIntent metadata', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        expect(String(url)).toMatch(/\/v1\/payment_intents\/pi_9$/);
+        return res({ id: 'pi_9', metadata: { fcp_ref: 'order-refunded' } });
+      }),
+    );
+    const { body, signature } = await signed({
+      id: 'evt_rf',
+      type: 'charge.refunded',
+      data: {
+        object: { id: 'ch_1', payment_intent: 'pi_9', amount: 1500, currency: 'usd' },
+      },
+    });
+    const r = await stripe.verifyAndParse({
+      rawBody: body,
+      signature,
+      secret: SECRET,
+      apiKey: 'sk_test',
+      nowSec: T,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('failed');
+      expect(r.orderRef).toBe('order-refunded');
+      expect(r.amountMinor).toBe(1500);
+      expect(r.amountCurrency).toBe('USD');
+      expect(r.dedupeId).toBe('stripe:evt_rf');
+    }
+  });
+
+  test('charge.dispute.created maps to failed; no apiKey → acks unmapped (null ref)', async () => {
+    const { body, signature } = await signed({
+      id: 'evt_dp',
+      type: 'charge.dispute.created',
+      data: { object: { id: 'dp_1', payment_intent: 'pi_9', amount: 1500, currency: 'usd' } },
+    });
+    const r = await stripe.verifyAndParse({ rawBody: body, signature, secret: SECRET, nowSec: T });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('failed');
+      expect(r.orderRef).toBeNull(); // no API read without a key — as before
+    }
+  });
+
+  test('a charge-embedded fcp_ref metadata wins without any API call', async () => {
+    const fetchMock = vi.fn(async () => res({}));
+    vi.stubGlobal('fetch', fetchMock);
+    const { body, signature } = await signed({
+      id: 'evt_md',
+      type: 'charge.refunded',
+      data: { object: { id: 'ch_2', metadata: { fcp_ref: 'order-direct' } } },
+    });
+    const r = await stripe.verifyAndParse({
+      rawBody: body,
+      signature,
+      secret: SECRET,
+      apiKey: 'sk_test',
+      nowSec: T,
+    });
+    expect(r.ok && r.orderRef).toBe('order-direct');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('stripe.createCheckout', () => {
@@ -180,6 +245,8 @@ describe('stripe.createCheckout', () => {
     expect(form.get('success_url')).toBe(params.successUrl);
     expect(form.get('line_items[0][price_data][currency]')).toBe('usd'); // lowercased
     expect(form.get('line_items[0][price_data][unit_amount]')).toBe('1500'); // minor units
+    // Our ref rides the PaymentIntent too (refund/dispute events carry the charge).
+    expect(form.get('payment_intent_data[metadata][fcp_ref]')).toBe('order-1');
   });
 
   test('throws when Stripe returns a non-OK status', async () => {
@@ -340,6 +407,66 @@ describe('paypal.verifyAndParse', () => {
     });
     expect(r.ok && r.status).toBe('failed');
   });
+
+  test('a refund (no custom_id on the resource) recovers the ref from the linked order', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u.includes('/v1/oauth2/token')) return res({ access_token: 'tok' });
+        if (u.includes('/verify-webhook-signature')) return res({ verification_status: 'SUCCESS' });
+        if (u.includes('/v2/checkout/orders/PP-9'))
+          return res({ id: 'PP-9', purchase_units: [{ custom_id: 'order-refunded' }] });
+        return res({});
+      }),
+    );
+    const r = await paypal.verifyAndParse({
+      rawBody: JSON.stringify({
+        id: 'evt_rf',
+        event_type: 'PAYMENT.CAPTURE.REFUNDED',
+        resource: {
+          id: 'REF-1',
+          supplementary_data: { related_ids: { order_id: 'PP-9' } },
+          amount: { value: '15.00', currency_code: 'USD' },
+        },
+      }),
+      headers: PP_HEADERS,
+      cfg: PP_CFG,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('failed');
+      expect(r.orderRef).toBe('order-refunded'); // via the order fetch, not the resource
+      expect(r.amountMinor).toBe(1500);
+    }
+  });
+
+  test('a refund whose order lookup fails acks unmapped (null ref, no throw)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u.includes('/v1/oauth2/token')) return res({ access_token: 'tok' });
+        if (u.includes('/verify-webhook-signature')) return res({ verification_status: 'SUCCESS' });
+        if (u.includes('/v2/checkout/orders/')) return res({}, { ok: false, status: 404 });
+        return res({});
+      }),
+    );
+    const r = await paypal.verifyAndParse({
+      rawBody: JSON.stringify({
+        id: 'evt_rf2',
+        event_type: 'PAYMENT.CAPTURE.REVERSED',
+        resource: { id: 'REV-1', supplementary_data: { related_ids: { order_id: 'PP-X' } } },
+      }),
+      headers: PP_HEADERS,
+      cfg: PP_CFG,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('failed');
+      expect(r.orderRef).toBeNull();
+    }
+  });
 });
 
 describe('paypal.createCheckout', () => {
@@ -461,6 +588,59 @@ describe('btcpay.verifyAndParse', () => {
     const ra = await btcpay.verifyAndParse({ ...a, rawBody: a.body, webhookSecret: SECRET });
     const rb = await btcpay.verifyAndParse({ ...b, rawBody: b.body, webhookSecret: SECRET });
     expect(ra.ok && rb.ok && ra.dedupeId === rb.dedupeId).toBe(true);
+  });
+
+  test('a settled invoice carries its billed amount for the grant cross-check', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        expect(String(url)).toMatch(/\/api\/v1\/stores\/store_1\/invoices\/inv_amt$/);
+        return res({ id: 'inv_amt', amount: '15.00', currency: 'usd' });
+      }),
+    );
+    const { body, signature } = await signed({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_amt',
+      metadata: { orderId: 'o-amt' },
+    });
+    const r = await btcpay.verifyAndParse({
+      rawBody: body,
+      signature,
+      webhookSecret: SECRET,
+      cfg: { apiUrl: 'https://btcpay.test', storeId: 'store_1', apiKey: 'k' },
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('paid');
+      expect(r.amountMinor).toBe(1500);
+      expect(r.amountCurrency).toBe('USD');
+    }
+  });
+
+  test('settle still grants when the amount fetch is unavailable (invoice-id binding is the guard)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => res({}, { ok: false, status: 500 })),
+    );
+    const { body, signature } = await signed({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_x',
+      metadata: { orderId: 'o-x' },
+    });
+    const withCfg = await btcpay.verifyAndParse({
+      rawBody: body,
+      signature,
+      webhookSecret: SECRET,
+      cfg: { apiUrl: 'https://btcpay.test', storeId: 'store_1', apiKey: 'k' },
+    });
+    expect(withCfg.ok).toBe(true);
+    if (withCfg.ok) {
+      expect(withCfg.status).toBe('paid');
+      expect(withCfg.amountMinor).toBeNull();
+    }
+    // And without cfg no fetch happens at all (legacy behavior).
+    const noCfg = await btcpay.verifyAndParse({ rawBody: body, signature, webhookSecret: SECRET });
+    expect(noCfg.ok && noCfg.status).toBe('paid');
   });
 
   test('invoice event types map correctly', async () => {
@@ -697,5 +877,112 @@ describe('parsed-event grant cross-check fields', () => {
       orderRef: 'order-1',
       checkoutRef: 'inv_1',
     });
+  });
+});
+
+// ===========================================================================
+// NOWPayments IPN canonicalization
+// ===========================================================================
+
+describe('nowpayments.verifyAndParse signature canonicalization', () => {
+  const SECRET = 'ipn-secret';
+  // An IPN carrying non-ASCII + a slash (our own invoice descriptions contain
+  // '—' and '×'). Keys are already in sorted order, so JSON.stringify of the
+  // parsed body reproduces both candidate canonical forms exactly.
+  const bodyObj = {
+    note: 'FreeSocks — 1×',
+    order_id: 'o1',
+    path: 'a/b',
+    payment_status: 'finished',
+  };
+  const rawBody = JSON.stringify(bodyObj);
+  const plainCanonical = rawBody; // JSON.stringify(sortKeysDeep(body))
+  const phpCanonical =
+    '{"note":"FreeSocks \\u2014 1\\u00d7","order_id":"o1","path":"a\\/b","payment_status":"finished"}';
+
+  test('accepts a signature over the plain JSON.stringify canonical form', async () => {
+    const sig = await hmacSha512Hex(SECRET, plainCanonical);
+    const r = await nowpayments.verifyAndParse({
+      rawBody,
+      signature: sig,
+      ipnSecret: SECRET,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.status).toBe('paid');
+  });
+
+  test('accepts a signature over the PHP json_encode canonical form (non-ASCII + slashes)', async () => {
+    // NOWPayments signs from PHP, whose json_encode escapes non-ASCII → \uXXXX
+    // and '/' → '\/'; a plain-JSON-stringify verifier would reject this IPN.
+    const sig = await hmacSha512Hex(SECRET, phpCanonical);
+    const r = await nowpayments.verifyAndParse({
+      rawBody,
+      signature: sig,
+      ipnSecret: SECRET,
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.status).toBe('paid');
+      expect(r.orderRef).toBe('o1');
+    }
+  });
+
+  test('still rejects a signature over neither canonical form', async () => {
+    const sig = await hmacSha512Hex(SECRET, '{"note":"tampered"}');
+    const r = await nowpayments.verifyAndParse({
+      rawBody,
+      signature: sig,
+      ipnSecret: SECRET,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/mismatch/i);
+  });
+});
+
+describe('nowpayments partial-settle guard', () => {
+  const SECRET = 'ipn-secret';
+
+  // Mirror of the adapter's canonicalization so the test signs the same bytes.
+  const sortKeysDeep = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sortKeysDeep);
+    if (v && typeof v === 'object') {
+      const src = v as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(src).sort()) out[k] = sortKeysDeep(src[k]);
+      return out;
+    }
+    return v;
+  };
+
+  async function signedIpn(extra: Record<string, unknown>) {
+    const bodyObj = {
+      order_id: 'o1',
+      payment_id: 12345,
+      payment_status: 'finished',
+      price_amount: 15,
+      price_currency: 'usd',
+      ...extra,
+    };
+    const body = JSON.stringify(sortKeysDeep(bodyObj));
+    return { body, signature: await hmacSha512Hex(SECRET, body) };
+  }
+
+  test('a `finished` IPN short on actually_paid downgrades to confirming (never grants)', async () => {
+    const { body, signature } = await signedIpn({ actually_paid: 0.008, pay_amount: 0.01 });
+    const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.status).toBe('confirming');
+  });
+
+  test('a fully-paid `finished` IPN stays paid', async () => {
+    const { body, signature } = await signedIpn({ actually_paid: 0.01, pay_amount: 0.01 });
+    const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
+    expect(r.ok && r.status).toBe('paid');
+  });
+
+  test('a `finished` IPN without the amount fields is unaffected (legacy IPNs)', async () => {
+    const { body, signature } = await signedIpn({});
+    const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
+    expect(r.ok && r.status).toBe('paid');
   });
 });

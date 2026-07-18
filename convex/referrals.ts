@@ -8,10 +8,11 @@
  *                  └────────→ void
  *
  * The referee's bonus lands at conversion; the referrer's vests after the
- * configured holding period while the referee is still a live member, and is
- * bounded per calendar month. Grants made BY referral rewards
- * (reason 'referral.*') deliberately do NOT cascade conversions — no multi-level
- * reward chains without real money.
+ * configured holding period while the referee is still a PAYING member (their
+ * paid-through date — referral bonuses don't count, so a self-referral can't
+ * farm leverage off its own instant bonus), and is bounded per calendar month.
+ * Grants made BY referral rewards (reason 'referral.*') deliberately do NOT
+ * cascade conversions — no multi-level reward chains without real money.
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
@@ -143,6 +144,10 @@ export const maybeConvert = internalMutation({
       status: 'converted',
       convertedAt: now,
       refereeBonusDaysGranted: cfg.refereeBonusDays,
+      // Pin the referrer reward promised at conversion — a mid-vest config edit
+      // must not retroactively change it (vest falls back to live config only
+      // for rows converted before this field existed).
+      referrerBonusDaysPlanned: cfg.referrerBonusDays,
       updatedAt: now,
     });
 
@@ -179,8 +184,10 @@ export const maybeConvert = internalMutation({
 
 /**
  * Vest + grant the referrer's reward. Voids (with reason, audited) when the
- * referee lapsed before vesting, the referrer is gone/deleted, the paid tier
- * can't be resolved, or the referrer hit the monthly reward cap.
+ * program has been disabled since conversion, the referee lapsed before
+ * vesting, the referrer is gone/deleted, the paid tier can't be resolved, or
+ * the referrer hit the monthly reward cap. The granted days are the ones PINNED
+ * at conversion (referrerBonusDaysPlanned), not the live config.
  */
 export const vestReferrerReward = internalMutation({
   args: { referralId: v.id('referrals') },
@@ -202,12 +209,24 @@ export const vestReferrerReward = internalMutation({
       return null;
     };
 
-    // The referee must still be a live member (kills buy-and-vanish self-referrals).
+    // Disabling the program stops pending vests too (mirrors maybeConvert's gate)
+    // — the off switch is the abuse-response lever and must actually bite.
+    if (!cfg.enabled) return voidIt('program_disabled');
+
+    // The referee must still be a PAYING member: the check keys off
+    // `membershipPaidThroughAt` (real-value grants only), NOT the effective
+    // expiry — otherwise a self-referral satisfies the holding period with its
+    // own instant referee bonus and farms ~2.4× the purchased days (M4). With
+    // the bonus excluded, a buy-and-vanish self-referral voids at vest; only a
+    // referee who RENEWS past the window pays out. Pre-paidThrough rows fall
+    // back to the effective expiry.
     const referee = await ctx.db.get(referral.refereeUserId);
+    const refereePaidThrough =
+      referee?.membershipPaidThroughAt ?? referee?.membershipExpiresAt ?? 0;
     const refereeLive =
       referee &&
       (referee.status === 'active' || referee.status === 'grace') &&
-      (referee.membershipExpiresAt ?? 0) > now;
+      refereePaidThrough > now;
     if (!refereeLive) return voidIt('referee_lapsed');
 
     const referrer = await ctx.db.get(referral.referrerUserId);
@@ -233,18 +252,20 @@ export const vestReferrerReward = internalMutation({
       .unique();
     if (!paidTier) return voidIt('tier_unavailable');
 
+    // Grant what conversion PROMISED, not today's config (pre-pin rows fall back).
+    const bonusDays = referral.referrerBonusDaysPlanned ?? cfg.referrerBonusDays;
     const base = Math.max(now, referrer.membershipExpiresAt ?? 0);
     await applyMembership(ctx, {
       userId: referral.referrerUserId,
       tierId: paidTier._id,
-      expiresAtMs: base + cfg.referrerBonusDays * DAY,
+      expiresAtMs: base + bonusDays * DAY,
       reason: 'referral.referrer_bonus',
       triggeredBy: 'referral',
     });
     await ctx.db.patch(referralId, {
       status: 'rewarded',
       rewardedAt: now,
-      referrerBonusDaysGranted: cfg.referrerBonusDays,
+      referrerBonusDaysGranted: bonusDays,
       updatedAt: now,
     });
     await writeAuditLog(ctx, {
@@ -255,7 +276,7 @@ export const vestReferrerReward = internalMutation({
       payload: {
         referrerUserId: referral.referrerUserId,
         refereeUserId: referral.refereeUserId,
-        referrerBonusDays: cfg.referrerBonusDays,
+        referrerBonusDays: bonusDays,
       },
     });
     return null;

@@ -288,6 +288,47 @@ describe('vestReferrerReward', () => {
     );
   });
 
+  test('grants the days PINNED at conversion, not a mid-vest config edit', async () => {
+    const t = convexTest(schema, modules);
+    const { member, referrer, referralId } = await converted(t);
+    // The conversion pinned the default 30d; the admin then cuts the bonus to 5d.
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: REFERRAL_KEYS.referrerBonusDays,
+        value: '5',
+        updatedAt: Date.now(),
+      }),
+    );
+    const before = Date.now();
+    await t.mutation(internal.referrals.vestReferrerReward, { referralId });
+    expect((await getUser(t, referrer))?.tierId).toBe(member);
+    expect((await getUser(t, referrer))?.membershipExpiresAt).toBeGreaterThanOrEqual(
+      before + REFERRAL_DEFAULTS.referrerBonusDays * DAY, // 30d, not 5d
+    );
+    const row = await t.run((ctx) => ctx.db.get(referralId));
+    expect(row?.referrerBonusDaysGranted).toBe(REFERRAL_DEFAULTS.referrerBonusDays);
+  });
+
+  test('voids when the program is disabled mid-vest', async () => {
+    const t = convexTest(schema, modules);
+    const { free, referrer, referralId } = await converted(t);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: REFERRAL_KEYS.enabled,
+        value: 'false',
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.referrals.vestReferrerReward, { referralId });
+    const row = await t.run((ctx) => ctx.db.get(referralId));
+    expect(row?.status).toBe('void');
+    expect(row?.voidReason).toBe('program_disabled');
+    // No reward: the referrer is still on the free tier with no expiry.
+    const after = await getUser(t, referrer);
+    expect(after?.tierId).toBe(free);
+    expect(after?.membershipExpiresAt).toBeUndefined();
+  });
+
   test('voids when the referee lapsed before vesting', async () => {
     const t = convexTest(schema, modules);
     const { referee, referralId } = await converted(t);
@@ -297,6 +338,41 @@ describe('vestReferrerReward', () => {
     const row = await t.run((ctx) => ctx.db.get(referralId));
     expect(row?.status).toBe('void');
     expect(row?.voidReason).toBe('referee_lapsed');
+  });
+
+  test('voids when only the referee BONUS keeps them alive (self-referral farm, M4)', async () => {
+    const t = convexTest(schema, modules);
+    const { referee, referralId } = await converted(t);
+    // The farming shape: the effective expiry (30d purchase + 14d instant bonus)
+    // is still in the future, but the PAID-through date has passed — the referee
+    // never renewed. The bonus must not satisfy its own holding period.
+    await t.run((ctx) =>
+      ctx.db.patch(referee, {
+        status: 'active',
+        membershipExpiresAt: Date.now() + 14 * DAY, // bonus tail
+        membershipPaidThroughAt: Date.now() - DAY, // the actual purchase lapsed
+      }),
+    );
+    await t.mutation(internal.referrals.vestReferrerReward, { referralId });
+    const row = await t.run((ctx) => ctx.db.get(referralId));
+    expect(row?.status).toBe('void');
+    expect(row?.voidReason).toBe('referee_lapsed');
+  });
+
+  test('a referee who RENEWED past the vest (paid-through live) still pays out', async () => {
+    const t = convexTest(schema, modules);
+    const { member, referrer, referee, referralId } = await converted(t);
+    await t.run((ctx) =>
+      ctx.db.patch(referee, {
+        status: 'active',
+        membershipExpiresAt: Date.now() + 44 * DAY,
+        membershipPaidThroughAt: Date.now() + 30 * DAY, // renewed: paid value lives
+      }),
+    );
+    await t.mutation(internal.referrals.vestReferrerReward, { referralId });
+    const row = await t.run((ctx) => ctx.db.get(referralId));
+    expect(row?.status).toBe('rewarded');
+    expect((await getUser(t, referrer))?.tierId).toBe(member);
   });
 
   test('voids past the monthly cap', async () => {

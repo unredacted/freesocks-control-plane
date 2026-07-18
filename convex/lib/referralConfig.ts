@@ -6,8 +6,10 @@
  * Reward economics: bonuses vest ONLY on the referee's first paid-tier grant,
  * so farming free accounts is worthless by construction. The referee's bonus
  * lands immediately; the referrer's vests after `vestingDays` while the
- * referee is still a live member (kills buy-and-vanish self-referrals), and is
- * bounded per calendar month by `maxRewardsPerMonth`.
+ * referee is still a PAYING member (paid-through date, excluding referral
+ * bonuses — so a self-referral's own instant bonus can't satisfy the holding
+ * period; only a genuine renewal pays out), and is bounded per calendar month
+ * by `maxRewardsPerMonth`.
  */
 import type { DatabaseReader } from '../_generated/server';
 

@@ -177,6 +177,30 @@ function orderIdFromResource(
   return null;
 }
 
+/** Recover our order ref (custom_id) from the ORDER resource — refund/reversal
+ *  events carry only the refund resource (no custom_id), so the ref is read off
+ *  the linked order (one API read, only for those event types). Best-effort. */
+async function customIdFromOrder(
+  cfg: PayPalConfig,
+  token: string,
+  orderId: string,
+): Promise<string | null> {
+  const { signal, done } = timed(cfg.timeoutMs);
+  try {
+    const res = await fetch(`${cfg.apiBase}/v2/checkout/orders/${encodeURIComponent(orderId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal,
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as Record<string, unknown>;
+    return customIdFromResource(json);
+  } catch {
+    return null;
+  } finally {
+    done();
+  }
+}
+
 /**
  * Verify a PayPal webhook via the verify-signature API, then parse + (for an
  * approved order) capture. `headers` carries the inbound `paypal-*` headers.
@@ -222,7 +246,7 @@ export async function verifyAndParse(args: {
 
   const eventType = typeof event.event_type === 'string' ? event.event_type : '';
   const resource = event.resource;
-  const orderRef = customIdFromResource(resource);
+  let orderRef = customIdFromResource(resource);
   const processorRef = typeof resource?.id === 'string' ? resource.id : (event.id ?? '');
 
   let status: OrderStatus = 'pending';
@@ -254,6 +278,14 @@ export async function verifyAndParse(args: {
     eventType === 'PAYMENT.CAPTURE.REVERSED'
   ) {
     status = 'failed';
+  }
+
+  // Refund/reversal-class resources don't carry custom_id — recover our ref
+  // from the linked order (one API read) so the grant path can audit the refund
+  // against the PAID order instead of no-op'ing on a null ref.
+  if (!orderRef && status === 'failed') {
+    const oid = orderIdFromResource(eventType, resource);
+    if (oid) orderRef = await customIdFromOrder(args.cfg, token, oid);
   }
 
   const money = moneyFromResource(resource);
