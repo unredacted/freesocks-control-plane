@@ -193,6 +193,17 @@ export const applyFreeBonus = internalAction({
             });
           }
         }
+        // Outline keys (no bulk endpoint): per-user data-limit updates. A throw
+        // leaves the applied marker unset so the next run retries (same as the
+        // Remnawave path).
+        for (const s of res.subs) {
+          if (s.backend !== 'outline') continue;
+          await ctx.runAction(internal.backends.updateUser, {
+            backend: 'outline',
+            backendUserId: s.backendUserId,
+            patch: { trafficLimitBytes: limitBytes },
+          });
+        }
         if (res.isDone) break;
         cursor = res.continueCursor;
       }

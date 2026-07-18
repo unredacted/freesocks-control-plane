@@ -115,6 +115,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Refund/reversal-class event seen for an ALREADY-PAID order: the operator's
   // chargeback action queue (membership is not auto-revoked).
   'billing.refund_seen': ['processor', 'amountCents', 'reportedMinor'],
+  // A second paid event with a different payment id for an already-paid order:
+  // the buyer paid twice on one invoice. The operator's refund-review queue.
+  'billing.overpayment_seen': ['processor', 'amountCents', 'reportedMinor'],
   // A webhook claim whose grant threw (retryable only until the sender gives
   // up) — surfaced on the admin billing page as money-at-risk.
   'billing.webhook.grant_failed': ['source'],

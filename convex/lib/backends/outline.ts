@@ -127,12 +127,16 @@ export async function outlineIssue(
     schema: OutlineAccessKey,
   });
   if (spec.trafficLimitBytes !== null && spec.trafficLimitBytes > 0) {
-    // A failed limit doesn't void a usable key; leave it. Tier propagation / the
-    // healthcheck cron will reconcile. (We swallow here, matching the original.)
+    // A failed limit must NOT issue an unlimited key: throw so the issuance
+    // saga compensates (deletes the just-created key) instead of leaving a
+    // free key running without its cap — no cron reconciles this.
     try {
       await setDataLimit(cfg, key.id, spec.trafficLimitBytes);
-    } catch {
-      /* noop: key is still usable */
+    } catch (err) {
+      throw new OutlineApiError(
+        `Outline setDataLimit failed after key creation: ${err instanceof Error ? err.message : 'unknown'}`,
+        { path: '/access-keys/:id/data-limit' },
+      );
     }
   }
   if (!key.accessUrl) {

@@ -25,7 +25,7 @@ import { resolveCurrentBonusGb } from './lib/donationBonus';
 import { SETTINGS_DEFAULTS } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import { applyCountsDelta } from './lib/statusCounters';
-import { resolveModePlacementStable } from './lib/remnawavePlacement';
+import { resolvePlacementTarget } from './lib/remnawavePlacement';
 import { resolveDefaultFreeTier } from './tiers';
 
 // --- entitlement seam ------------------------------------------------------
@@ -250,6 +250,32 @@ export const downgradeLapsedToFree = internalMutation({
   },
 });
 
+/**
+ * Placement for a legacy sub row with no persisted `backendPlacement` (see
+ * activeSubAndTier): pinned to the row's recorded panel when it has one;
+ * resolved normally when the deploy is single-panel (any pool squad is on the
+ * only panel); undefined — the push OMITS placement, preserving the key's
+ * current squad — when the panel can't be proven (multi-panel deploy).
+ */
+async function legacyPushPlacement(
+  db: DatabaseReader,
+  modeId: string | null,
+  serverId: Id<'backendServers'> | undefined,
+): Promise<string | undefined> {
+  if (serverId) {
+    return (
+      (await resolvePlacementTarget(db, modeId, { onlyServerId: serverId as string })).placement ??
+      undefined
+    );
+  }
+  const instances = await db
+    .query('backendServers')
+    .withIndex('by_backend_active', (q) => q.eq('backend', 'remnawave').eq('isActive', true))
+    .collect();
+  if (instances.length > 1) return undefined;
+  return (await resolvePlacementTarget(db, modeId, {})).placement ?? undefined;
+}
+
 /** The user's active subscription + their tier's backend spec (for push/disable). */
 export const activeSubAndTier = internalQuery({
   args: { userId: v.id('users') },
@@ -267,11 +293,15 @@ export const activeSubAndTier = internalQuery({
     // The placement this key was issued into, PRESERVED: a tier push must re-send
     // the key's own placement, never re-pick (that would thrash live keys across
     // nodes on every renewal, discarding the member's mode choice). (Review #3 +
-    // node placement.) Rows with no persisted placement fall back to a stable
-    // mode-first resolution.
+    // node placement.) Legacy rows with no persisted placement resolve PINNED to
+    // the key's own panel when one is recorded (onlyServerId); with no panel
+    // recorded, they resolve normally only on a SINGLE-panel deploy (any pool
+    // squad is on it), and the push OMITS placement (undefined — never null,
+    // which would clear the squad panel-side) on multi-panel deploys where the
+    // panel can't be proven.
     const placement =
       sub.backendPlacement ??
-      (await resolveModePlacementStable(ctx.db, user.connectionModeId ?? null));
+      (await legacyPushPlacement(ctx.db, user.connectionModeId ?? null, sub.backendServerId));
     // Read the device-limit master toggle (fail-safe to the compiled default) so
     // the tier push honors it exactly like the issuance path — flipping it off
     // clears hwidDeviceLimit on the next push.

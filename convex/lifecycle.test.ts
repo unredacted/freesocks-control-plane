@@ -557,6 +557,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     userId: Id<'users'>,
     backendUserId: string,
     placement?: string,
+    serverId?: Id<'backendServers'>,
   ): Promise<void> {
     await t.run(async (ctx) => {
       await ctx.db.insert('subscriptions', {
@@ -564,6 +565,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
         backend: 'remnawave',
         backendUserId,
         backendShortId: `${backendUserId}-s`,
+        ...(serverId ? { backendServerId: serverId } : {}),
         subscriptionUrl: 'https://x/sub',
         subscriptionMirrors: [],
         ...(placement ? { backendPlacement: placement } : {}),
@@ -611,10 +613,11 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     );
     await seedActiveSub(t, userId, 'bu-fallback');
 
-    // No mode pool + no persisted placement → null (Remnawave then leaves
-    // activeInternalSquads unset; there is no longer a tier-squad fallback).
+    // No mode pool + no persisted placement + no recorded panel → undefined
+    // (the push OMITS placement; it never sends null, which would clear the
+    // squad panel-side).
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
-    expect(st?.placement).toBeNull();
+    expect(st?.placement).toBeUndefined();
   });
 
   test('device-limit toggle: OFF (default) forces hwidDeviceLimit null; ON uses the tier limit', async () => {
@@ -702,8 +705,10 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
     expect(st?.placement).toBe('SQUAD_A'); // pinned, NOT re-picked to SQUAD_B
 
-    // A pre-pool row (no persisted placement) falls back to the pool's first
-    // squad deterministically (stablePlacement, not least-loaded) — stable across pushes.
+    // A pre-pool row (no persisted placement) WITH a recorded panel resolves
+    // pinned to a squad ON THAT PANEL (never pool[0] of a foreign panel — that
+    // would 400 the whole tier-push PATCH on a multi-panel deploy). random → 0
+    // pins the least-loaded of the panel's squads (SQUAD_B).
     const legacyUserId = await t.run((ctx) =>
       ctx.db.insert('users', {
         tierId: memberTierId,
@@ -713,9 +718,53 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
         updatedAt: Date.now(),
       }),
     );
-    await seedActiveSub(t, legacyUserId, 'bu-legacy');
-    const stLegacy = await t.query(internal.lifecycle.activeSubAndTier, { userId: legacyUserId });
-    expect(stLegacy?.placement).toBe('SQUAD_A'); // pool[0], not least-loaded
+    const serverId = await t.run((ctx) =>
+      ctx.db
+        .query('backendServers')
+        .withIndex('by_slug', (q) => q.eq('slug', 'rw-squads'))
+        .unique()
+        .then((s) => s!._id),
+    );
+    await seedActiveSub(t, legacyUserId, 'bu-legacy', undefined, serverId);
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      const stLegacy = await t.query(internal.lifecycle.activeSubAndTier, {
+        userId: legacyUserId,
+      });
+      expect(stLegacy?.placement).toBe('SQUAD_B'); // pinned to the key's own panel
+    } finally {
+      randomSpy.mockRestore();
+    }
+
+    // A legacy row with NO recorded panel on a MULTI-panel deploy gets
+    // undefined (the push OMITS placement — never sends null, which would
+    // clear the squad panel-side; the panel can't be proven).
+    await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'rw-2',
+        slug: 'rw-second-panel',
+        config: { type: 'remnawave', baseUrl: 'https://rw2.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    const orphanUserId = await t.run((ctx) =>
+      ctx.db.insert('users', {
+        tierId: memberTierId,
+        status: 'active',
+        connectionModeId: 'privacy',
+        membershipExpiresAt: Date.now() + 30 * DAY,
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedActiveSub(t, orphanUserId, 'bu-legacy-3');
+    const stOrphan = await t.query(internal.lifecycle.activeSubAndTier, {
+      userId: orphanUserId,
+    });
+    expect(stOrphan?.placement).toBeUndefined();
   });
 
   test('pushTierToBackend runs cleanly for an active user and clears drift (mock backend)', async () => {

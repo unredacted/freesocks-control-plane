@@ -483,11 +483,28 @@ export const applyEvent = internalMutation({
       .unique();
     if (!order) return { applied: false, granted: false };
     // Single-grant guard: once paid, ignore everything (idempotent re-delivery)
-    // — EXCEPT that a refund/reversal-class event for a paid order is audited,
-    // so a chargeback doesn't leave a silently-live membership with no operator
-    // signal. Membership is deliberately NOT auto-revoked (a refund may be
-    // partial/mistaken); the audit row is the operator's action queue.
+    // — EXCEPT two operator-signal cases: a refund/reversal-class event for a
+    // paid order is audited (billing.refund_seen), and a SECOND paid event with
+    // a DIFFERENT payment id is audited (billing.overpayment_seen: the buyer
+    // paid twice on one invoice, e.g. a NOWPayments underpayment topped up by a
+    // second transaction — the first already granted). Membership is
+    // deliberately NOT auto-revoked (a refund may be partial/mistaken); the
+    // audit rows are the operator's action queue.
     if (order.status === 'paid') {
+      if (a.status === 'paid' && order.processorRef && a.processorRef !== order.processorRef) {
+        await writeAuditLog(ctx, {
+          actorType: 'webhook',
+          actorId: order.userId,
+          action: 'billing.overpayment_seen',
+          targetType: 'billing_order',
+          targetId: order._id,
+          payload: {
+            processor: a.processor,
+            amountCents: order.amountCents,
+            reportedMinor: a.amountMinor ?? null,
+          },
+        });
+      }
       if (a.status === 'failed') {
         await writeAuditLog(ctx, {
           actorType: 'webhook',

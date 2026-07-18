@@ -1016,6 +1016,45 @@ describe('billing.applyEvent grant cross-checks', () => {
     });
   });
 
+  test('a second paid event with a DIFFERENT payment id audits billing.overpayment_seen (no double grant)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-overpay');
+    // First payment settles the invoice and grants.
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-overpay',
+      status: 'paid',
+      processorRef: 'pay-1',
+    });
+    const expiryAfterFirst = (await t.run((ctx) => ctx.db.get(userId)))!.membershipExpiresAt;
+    // A second transaction finishes on the SAME invoice (a top-up after an
+    // underpayment) — never grants again, and it's audited for refund review.
+    const res = await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-overpay',
+      status: 'paid',
+      processorRef: 'pay-2',
+    });
+    expect(res).toEqual({ applied: false, granted: false });
+    await t.run(async (ctx) => {
+      const audits = await ctx.db.query('auditLog').collect();
+      expect(audits.some((a) => a.action === 'billing.overpayment_seen')).toBe(true);
+      expect((await ctx.db.get(userId))!.membershipExpiresAt).toBe(expiryAfterFirst);
+    });
+    // A re-delivery of the SAME payment id does NOT audit (plain idempotency).
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-overpay',
+      status: 'paid',
+      processorRef: 'pay-1',
+    });
+    await t.run(async (ctx) => {
+      const audits = await ctx.db.query('auditLog').collect();
+      expect(audits.filter((a) => a.action === 'billing.overpayment_seen')).toHaveLength(1);
+    });
+  });
+
   test('a paid grant lifts an idle-deactivated (inactive) account back to active', async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);

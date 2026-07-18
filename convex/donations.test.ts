@@ -131,6 +131,82 @@ describe('donations.applyFreeBonus', () => {
     });
   });
 
+  test('re-caps OUTLINE free keys too (per-user data-limit update)', async () => {
+    const { t } = await setup();
+    // An outline free tier + instance + one key.
+    await t.run(async (ctx) => {
+      const outlineTierId = await ctx.db.insert('tiers', {
+        slug: 'free-outline',
+        name: 'Free Outline',
+        backend: 'outline',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 0,
+        hwidEnabled: false,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const outlineInstanceId = await ctx.db.insert('backendServers', {
+        backend: 'outline',
+        name: 'ol',
+        slug: 'ol',
+        config: {
+          type: 'outline',
+          apiUrl: 'https://outline.test/secret/',
+          websocketEnabled: false,
+        },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId: outlineTierId,
+        status: 'active',
+        freeKeyExpiresAt: Date.now() + 86_400_000,
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'outline',
+        backendUserId: 'ol-key-1',
+        backendShortId: 'ol-key-1',
+        backendServerId: outlineInstanceId,
+        subscriptionUrl: 'ss://x',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+    });
+    // $30 donated → +30 GB on top of the 50 GB base.
+    await t.run((ctx) =>
+      ctx.db.insert('appState', {
+        key: 'donation:freeBonus',
+        value: JSON.stringify({ monthKey: thisMonth(), donatedCents: 3000, appliedBonusGb: 0 }),
+        updatedAt: Date.now(),
+      }),
+    );
+    const limitCalls: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        if (String(input).includes('/data-limit')) {
+          limitCalls.push(JSON.parse(init!.body as string));
+        }
+        return new Response('{}', { status: 200 });
+      }),
+    );
+
+    await t.action(internal.donations.applyFreeBonus, {});
+
+    expect(limitCalls).toEqual([{ limit: { bytes: gbToBytes(50 + 30) } }]);
+  });
+
   test('no-op when the effective bonus already equals the applied bonus', async () => {
     const { t, freeTierId, instanceId } = await setup();
     await seedFreeKey(t, freeTierId, instanceId, 'u-1');

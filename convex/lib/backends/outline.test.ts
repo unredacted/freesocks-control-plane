@@ -29,3 +29,33 @@ test('a normal key with accessUrl issues fine', async () => {
   expect(issued.subscriptionUrl).toBe('ss://deadbeef@host:443');
   expect(issued.backendUserId).toBe('k2');
 });
+
+test('a failed data-limit THROWS (no silent unlimited key; the saga compensates)', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string | URL) => {
+      const u = String(input);
+      if (u.includes('/data-limit')) return new Response('boom', { status: 500 });
+      return new Response(JSON.stringify({ id: 'k3', accessUrl: 'ss://aa@h:1' }), { status: 200 });
+    }),
+  );
+  await expect(
+    outlineIssue(cfg, { username: 'u', trafficLimitBytes: 50 * 1024 ** 3 }),
+  ).rejects.toThrow(/data-limit|setDataLimit/i);
+});
+
+test('a successful data-limit applies (PUT to the key endpoint)', async () => {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string | URL) => {
+      const u = String(input);
+      calls.push(u);
+      if (u.includes('/data-limit')) return new Response('{}', { status: 200 });
+      return new Response(JSON.stringify({ id: 'k4', accessUrl: 'ss://aa@h:1' }), { status: 200 });
+    }),
+  );
+  const issued = await outlineIssue(cfg, { username: 'u', trafficLimitBytes: 12345 });
+  expect(issued.backendUserId).toBe('k4');
+  expect(calls.some((u) => u.includes('/access-keys/k4/data-limit'))).toBe(true);
+});
