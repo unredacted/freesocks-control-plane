@@ -141,6 +141,11 @@ export default defineSchema({
     // (admin search). Uniqueness of the hash is enforced in mutations.
     accountIdHash: v.optional(v.string()),
     accountIdPrefix: v.optional(v.string()),
+    // Legacy fields kept (optional) so pre-removal documents still pass
+    // deploy-time schema validation (dropped as dead in bcc663e; can be
+    // dropped permanently once no document carries them).
+    accountIdCreatedAt: v.optional(v.number()),
+    accountIdRotatedAt: v.optional(v.number()),
     // W3: a non-secret `FS-XXXX-XXXX` support handle (NOT a credential). Minted
     // at account creation, lazily backfilled for pre-W3 users. Unique (enforced
     // in the mutation). See convex/lib/supportId.ts.
@@ -672,6 +677,9 @@ export default defineSchema({
     // `by_purchaser` drives the buyer's "codes I bought" list.
     mintedByAdminId: v.optional(v.id('adminUsers')),
     purchasedByUserId: v.optional(v.id('users')),
+    // Legacy field kept (optional) so pre-removal documents still pass
+    // deploy-time schema validation (dropped as dead in bcc663e).
+    purchasedByOrderId: v.optional(v.id('billingOrders')),
     redeemedByUserId: v.optional(v.id('users')),
     redeemedAt: v.optional(v.number()),
     updatedAt: v.number(),
