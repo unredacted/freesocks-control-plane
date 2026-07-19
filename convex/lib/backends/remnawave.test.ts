@@ -344,6 +344,43 @@ describe('remnawaveSetStatus (dedicated enable/disable action)', () => {
     await remnawaveSetStatus(cfg, UUID, false);
     expect(calls[1]!.path).toBe(`/api/users/${UUID}/actions/disable`);
   });
+
+  // The panel's actions endpoints are NOT idempotent: enable on an ACTIVE user
+  // 400s (A030), disable on a disabled user 400s (A029). FCP treats "already in
+  // the requested state" as success — the tier push unconditionally re-enables
+  // before every update, so without this every free→member upgrade of a live
+  // (enabled) key failed before the traffic/expiry PATCH ever ran.
+  test('swallows 400 A030 "User already enabled" on enable', async () => {
+    mockFetch(() =>
+      jsonRes(
+        { timestamp: 'now', path: '/x', message: 'User already enabled', errorCode: 'A030' },
+        400,
+      ),
+    );
+    await expect(remnawaveSetStatus(cfg, UUID, true)).resolves.toBeUndefined();
+  });
+
+  test('swallows 400 A029 "User already disabled" on disable', async () => {
+    mockFetch(() =>
+      jsonRes(
+        { timestamp: 'now', path: '/x', message: 'User already disabled', errorCode: 'A029' },
+        400,
+      ),
+    );
+    await expect(remnawaveSetStatus(cfg, UUID, false)).resolves.toBeUndefined();
+  });
+
+  test('a mismatched-direction "already" rejection still throws', async () => {
+    // enable answered with "already disabled" is a real contract surprise, not
+    // the benign no-op — it must surface.
+    mockFetch(() => jsonRes({ message: 'User already disabled', errorCode: 'A029' }, 400));
+    await expect(remnawaveSetStatus(cfg, UUID, true)).rejects.toThrow(/400/);
+  });
+
+  test('any other 400 still throws', async () => {
+    mockFetch(() => jsonRes({ message: 'Validation failed', errorCode: 'A001' }, 400));
+    await expect(remnawaveSetStatus(cfg, UUID, true)).rejects.toThrow(/400/);
+  });
 });
 
 describe('remnawaveResetTraffic / remnawaveDeleteUser', () => {

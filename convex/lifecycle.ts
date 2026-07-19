@@ -357,8 +357,9 @@ export const pushTierToBackend = internalAction({
     try {
       // Re-enable a key the grace sweep disabled: updateUser/remnawaveUpdateUser
       // never touches enable/disable state, so a renewal or lapsed→free downgrade
-      // must flip the backend user active again. Idempotent (enabling an already-
-      // enabled key is a no-op), so it's safe on every active push. (Review #2.)
+      // must flip the backend user active again. Safe on every active push:
+      // Remnawave's enable action itself 400s on an already-enabled key (A030),
+      // but the provider swallows that no-op rejection — set-semantics. (Review #2.)
       if (st.userStatus === 'active') {
         await ctx.runAction(internal.backends.setUserStatus, {
           backend: st.backend,

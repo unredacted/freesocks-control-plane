@@ -765,22 +765,46 @@ export async function remnawaveBulkUpdateTrafficLimit(
 }
 
 /**
+ * True when the panel rejected a status action because the user is ALREADY in
+ * the requested state: the enable/disable actions are NOT idempotent panel-side
+ * — enable on an ACTIVE user 400s with `A030 "User already enabled"` (disable
+ * on a disabled user: `A029 "User already disabled"`). FCP wants set-semantics
+ * ("make it active"), so the caller treats the no-op transition as success —
+ * without this, EVERY tier push to an enabled key (e.g. a free→member upgrade)
+ * threw on its unconditional re-enable and the membership never reached the
+ * panel.
+ */
+function isAlreadyInRequestedStatus(err: unknown, active: boolean): boolean {
+  if (!(err instanceof RemnawaveApiError) || err.meta?.status !== 400) return false;
+  const body = typeof err.meta?.body === 'string' ? err.meta.body.toLowerCase() : '';
+  return active
+    ? body.includes('a030') || body.includes('already enabled')
+    : body.includes('a029') || body.includes('already disabled');
+}
+
+/**
  * Enable / disable a user via Remnawave's dedicated action endpoints
  * (`POST /api/users/{uuid}/actions/{enable|disable}`) rather than folding status
  * into the field-update PATCH. More faithful to the API and decoupled from the
  * (heavier) update call. Remnawave rejects setting LIMITED/EXPIRED here (it owns
- * those), which matches our two-state active|disabled model.
+ * those), which matches our two-state active|disabled model. A400 "already
+ * enabled/disabled" is swallowed: the user is in the requested state.
  */
 export async function remnawaveSetStatus(
   cfg: RemnawaveConfig,
   backendUserId: string,
   active: boolean,
 ): Promise<void> {
-  await call(cfg, {
-    method: 'POST',
-    path: `/api/users/${backendUserId}/actions/${active ? 'enable' : 'disable'}`,
-    schema: z.unknown(),
-  });
+  try {
+    await call(cfg, {
+      method: 'POST',
+      path: `/api/users/${backendUserId}/actions/${active ? 'enable' : 'disable'}`,
+      schema: z.unknown(),
+    });
+  } catch (err) {
+    if (isAlreadyInRequestedStatus(err, active)) return;
+    throw err;
+  }
 }
 
 export async function remnawaveResetTraffic(
