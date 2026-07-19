@@ -741,6 +741,10 @@ export default defineSchema({
     expiresAt: v.number(),
     popPublicKey: v.optional(v.string()),
     popAlg: v.optional(v.string()),
+    // Legacy field kept (optional) so pre-removal session documents still pass
+    // deploy-time schema validation; they age out via expiresAt and can be
+    // dropped permanently once the fleet is clean (removed in bcc663e).
+    popBoundAt: v.optional(v.number()),
     // The public per-session token (PoP sid-binding). A non-secret value minted at
     // login, returned in the login response body, and signed into every PoP
     // message so a signature is bound to exactly ONE session — it cannot be lifted
