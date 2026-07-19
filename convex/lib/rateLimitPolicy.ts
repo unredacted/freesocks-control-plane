@@ -43,6 +43,12 @@ export const RATE_LIMIT_DEFAULTS = {
   'account.regenerate': { max: 10, windowMs: HOUR, enabled: true },
   'account.switch-backend': { max: 10, windowMs: HOUR, enabled: true },
   'account.switch-mode': { max: 10, windowMs: HOUR, enabled: true },
+  // Shared bucket across ALL THREE issuance routes: every re-issue mints a
+  // fresh backend traffic counter, so per-route buckets alone let a member
+  // triple their effective quota rate by rotating routes. 12/hour ≈ every 5
+  // minutes sustained — generous for real use (apps re-adding configs), tight
+  // for scripted churn. (Review D-M3.)
+  'account.reissue': { max: 12, windowMs: HOUR, enabled: true },
   'account.refresh-membership': { max: 1, windowMs: 30_000, enabled: true },
   // Account-number rotation mints a fresh credential; throttle hard vs. churn.
   'account.rotate': { max: 5, windowMs: HOUR, enabled: true },
@@ -97,6 +103,11 @@ export const RATE_LIMIT_DEFAULTS = {
   // and the short-TTL cache absorbs bursts, so this is generous — it's DoS
   // hygiene, not access control (the token is a 128-bit unguessable capability).
   'subscription.fetch': { max: 120, windowMs: MINUTE, enabled: true },
+  // Per-TOKEN bucket on the same route (Review B-F1): the per-IP bucket alone
+  // lets a token holder rotate source IPs (or UAs, bypassing the cache) to
+  // multiply live panel fetches, and HWID device-stuffing is per-token. 60/min
+  // is generous for a member's own devices (each polls every few minutes).
+  'subscription.fetch.token': { max: 60, windowMs: MINUTE, enabled: true },
   // Unauthenticated public GETs (per IP) — DoS-amplification hygiene, not access
   // control. Generous: the SPA polls /config on load and /e2ee/keys before a
   // sealed login, and both are briefly cacheable.
@@ -105,6 +116,10 @@ export const RATE_LIMIT_DEFAULTS = {
   // The public network-status page (per IP): the SPA polls it ~every 60s while
   // open, and the payload is cron-quantized — DoS hygiene, not access control.
   'status.fetch': { max: 120, windowMs: MINUTE, enabled: true },
+  // The admin signed-in probe gets its OWN bucket (Review B-F5): sharing
+  // status.fetch meant an IP hot-looping the public /status page also 429'd
+  // the admin landing page's auth detection from that IP.
+  'admin.auth-status.fetch': { max: 60, windowMs: MINUTE, enabled: true },
   // Deep readiness probe (per IP): each call costs a real datastore round-trip,
   // so an unthrottled /readyz is a direct DB-load lever. Generous — uptime
   // monitors poll from a few fixed IPs.

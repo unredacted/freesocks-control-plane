@@ -60,7 +60,12 @@ export function sealed(handler: RawHandler) {
       if (e instanceof PayloadTooLargeError) {
         return errorJson('request.too_large', 'Request body too large', 413);
       }
-      throw e;
+      // Mirror guard(): an uncaught handler error must not surface runtime 500
+      // text (internal detail) — generic envelope + server-side log.
+      console.error(
+        `[http] unhandled sealed-route error: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return errorJson('server.error', 'Something went wrong. Please try again later.', 500);
     }
   });
 }
@@ -71,6 +76,24 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
   const method = req.method.toUpperCase();
   const policy = routePolicy(path, method);
   if (!policy) return handler(ctx, req);
+
+  // H1 (CDN-blinding posture): with FS_E2EE_REQUIRED=true the dual-mode rollout
+  // ends for MEMBER routes — an unsealed login body (or a reveal request with no
+  // response ephemeral) is REJECTED instead of passed through in plaintext, so
+  // the account number can never transit TLS-terminating infrastructure in the
+  // clear. Member routes only: admin SEAL_REQ routes must keep accepting
+  // plaintext from `fsv1_` token / Ansible callers, which cannot seal.
+  // Flip this on ONLY once the deployed SPA was built with the HPKE keys baked
+  // (VITE_FS_SERVER_HPKE_PK/KID) — a dark client cannot seal and will be
+  // refused. The e2ee.sealed_required code makes the posture debuggable.
+  const e2eeRequired =
+    process.env.FS_E2EE_REQUIRED === 'true' && !path.startsWith('/api/v1/admin/');
+  const sealedRequired = (): Response =>
+    errorJson(
+      'e2ee.sealed_required',
+      'This deployment requires an end-to-end encrypted client. Please update your app or use the official web client.',
+      400,
+    );
 
   let handlerReq = req;
   let respEphPubB64: string | undefined;
@@ -95,6 +118,9 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
       // the handler sees the stripped body.
       handlerReq = proxyReq(req, bodyObj, raw);
     }
+    // The account number (account create/rotate) rides the RESPONSE on these
+    // routes; with no response ephemeral it would go out in plaintext.
+    if (e2eeRequired && !respEphPubB64) return sealedRequired();
   } else if (policy.request === 'seal') {
     const raw = await readBodyTextCapped(req);
     let parsed: unknown;
@@ -111,6 +137,8 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
       });
       handlerReq = proxyReq(req, opened.plaintext ?? {}, raw);
     } else {
+      // The account number rides the REQUEST on the login route.
+      if (e2eeRequired) return sealedRequired();
       handlerReq = proxyReq(req, parsed ?? {}, raw);
     }
   }

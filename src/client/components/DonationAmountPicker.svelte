@@ -1,10 +1,12 @@
 <script lang="ts">
   /**
    * Shared donation-amount picker: preset chips (from the admin-configured
-   * suggested amounts) + a custom input, with a live "adds ~N GB to every free
-   * user" impact line. Used both as the optional add-on inside UpgradeMembership
-   * and standalone in DonateCard. Reads the public donation config; renders
-   * nothing when donations are disabled. `cents` is bindable (0 = none).
+   * suggested amounts) + a custom input. Used both as the optional add-on
+   * inside UpgradeMembership and standalone in DonateCard. Reads the public
+   * donation config; renders nothing when donations are disabled. `cents` is
+   * bindable (0 = none). No per-amount GB hint: a per-amount bonus map would
+   * disclose the GB-per-dollar rate (with currentBonusGb public, the month's
+   * donation revenue was derivable — GB-only posture).
    */
   import { Input } from '@client/components/ui/input';
   import { configQuery } from '../lib/queries';
@@ -23,8 +25,6 @@
   let donation = $derived(config.data?.billing?.donation);
   let currency = $derived(config.data?.billing?.currency ?? 'USD');
   let suggested = $derived(donation?.suggestedAmountsCents ?? []);
-  // Per-preset GB bonus, precomputed server-side (the raw rate isn't public).
-  let suggestedGb = $derived(new Map((donation?.suggested ?? []).map((s) => [s.cents, s.bonusGb])));
 
   let customText = $state('');
   // A positive value that isn't one of the presets is a custom amount.
@@ -45,14 +45,6 @@
   function onCustomBlur() {
     if (customText !== '' && cents > 0) customText = (cents / 100).toFixed(2);
   }
-
-  function fmtGb(gb: number): string {
-    const r = Math.round(gb * 10) / 10;
-    return Number.isInteger(r) ? String(r) : r.toFixed(1);
-  }
-  // GB hint for the picked preset; custom amounts show none (the exact rate
-  // stays server-side — see the publicConfig donation projection).
-  let impactGb = $derived(suggestedGb.get(cents) ?? 0);
 
   const chipBase =
     'rounded-lg border px-3 py-1.5 text-sm font-medium tabular-nums transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
@@ -98,10 +90,5 @@
         />
       </div>
     </div>
-    {#if impactGb > 0}
-      <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">
-        {t('donate.impact', { gb: fmtGb(impactGb) })}
-      </p>
-    {/if}
   </div>
 {/if}

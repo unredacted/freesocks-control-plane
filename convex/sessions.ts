@@ -10,6 +10,7 @@
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { recordHeartbeat } from './cronHeartbeat';
+import { ConvexError } from 'convex/values';
 import { v } from 'convex/values';
 import { b64UrlToBytes } from '../src/shared/crypto/envelope';
 import { POP_ALG, POP_ALG_ED } from '../src/shared/crypto/pop';
@@ -50,12 +51,27 @@ export const create = internalMutation({
     { sid, kind, userId, adminUserId, ttlMs, popPublicKey, popAlg, popSessionToken },
   ) => {
     // PoP binding (CDN-blinding Phase 2). Normalize the client-reported algorithm
-    // to the allowlist (unknown → ES256, the P-256 fallback) and bind only if the
-    // public key actually decodes to that scheme's length. An inconsistent pair
-    // would only break the caller's OWN session, so we fail safe to an unbound
-    // session (re-auth under POP_REQUIRED) rather than throw.
+    // to the allowlist (unknown → ES256, the P-256 fallback). A supplied key that
+    // does not decode to its scheme's length is a client bug or a mangled proxy:
+    // fail LOUDLY (the login attempt errors and the client re-binds) rather than
+    // silently mint an unbound session that 401s every request under POP_REQUIRED
+    // — or worse, a cookie-only session when POP_REQUIRED is off.
     const boundAlg = popAlg === POP_ALG_ED ? POP_ALG_ED : POP_ALG;
-    const bound = popPublicKey !== undefined && popKeyMatchesAlg(popPublicKey, boundAlg);
+    if (popPublicKey !== undefined && !popKeyMatchesAlg(popPublicKey, boundAlg)) {
+      throw new ConvexError({
+        code: 'session.pop_bind_invalid',
+        message: 'The session key could not be bound; please try signing in again.',
+      });
+    }
+    const bound = popPublicKey !== undefined;
+    // Uniqueness read-check on the sid (the codebase convention): a 256-bit
+    // CSPRNG collision is unreachable, but the `by_sid` `.unique()` readers
+    // throw on any dup, so fail the insert instead of poisoning sessions.
+    const clash = await ctx.db
+      .query('sessions')
+      .withIndex('by_sid', (q) => q.eq('sid', sid))
+      .unique();
+    if (clash) throw new Error('session sid collision');
     await ctx.db.insert('sessions', {
       sid,
       kind,
@@ -89,6 +105,30 @@ export const deleteBySid = internalMutation({
       .unique();
     if (row) await ctx.db.delete(row._id);
     return null;
+  },
+});
+
+/**
+ * Revoke every member session for a user EXCEPT `keepSid` (the caller's current
+ * session, when cookie-authenticated). Used by account-number rotation: the old
+ * credential dies at rotation, so every session minted from it must die too —
+ * otherwise an attacker holding a session keeps access for up to the 30-day TTL
+ * even after the victim rotates (the advertised compromise remediation).
+ */
+export const deleteAllForUserExcept = internalMutation({
+  args: { userId: v.id('users'), keepSid: v.optional(v.string()) },
+  handler: async (ctx, { userId, keepSid }) => {
+    const rows = await ctx.db
+      .query('sessions')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    let removed = 0;
+    for (const row of rows) {
+      if (keepSid !== undefined && row.sid === keepSid) continue;
+      await ctx.db.delete(row._id);
+      removed++;
+    }
+    return { removed };
   },
 });
 

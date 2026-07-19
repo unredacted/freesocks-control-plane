@@ -191,6 +191,7 @@
       <div class="relative">
         <input
           id="account-number"
+          dir="ltr"
           type={reveal ? 'text' : 'password'}
           inputmode="numeric"
           autocomplete="current-password"

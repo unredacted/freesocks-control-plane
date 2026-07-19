@@ -241,3 +241,59 @@ describe('auth.accountLogin', () => {
     expect(elapsed).toBeGreaterThanOrEqual(250);
   });
 });
+
+describe('auth.rotateAccountId', () => {
+  beforeEach(() => {
+    vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  // M1: rotation must evict sessions minted from the DEAD credential — else a
+  // captured session keeps working for its full 30-day TTL after the victim
+  // rotates (the advertised compromise remediation).
+  test('rotation revokes every session EXCEPT the caller’s keepSid', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, accountId } = await seedUserWithAccount(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('sessions', {
+        sid: 's-current',
+        kind: 'member',
+        userId,
+        expiresAt: Date.now() + 86_400_000,
+      });
+      await ctx.db.insert('sessions', {
+        sid: 's-attacker',
+        kind: 'member',
+        userId,
+        expiresAt: Date.now() + 86_400_000,
+      });
+    });
+    const res = await t.action(internal.auth.rotateAccountId, {
+      userId,
+      keepSid: 's-current',
+    });
+    expect(res.accountId).toMatch(/^\d{32}$/);
+    expect(res.accountId).not.toBe(accountId);
+    await t.run(async (ctx) => {
+      const sids = (await ctx.db.query('sessions').collect()).map((s) => s.sid);
+      expect(sids).toEqual(['s-current']);
+    });
+  });
+
+  test('rotation with no keepSid revokes ALL sessions (token-authenticated caller)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId } = await seedUserWithAccount(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('sessions', {
+        sid: 's-1',
+        kind: 'member',
+        userId,
+        expiresAt: Date.now() + 86_400_000,
+      });
+    });
+    await t.action(internal.auth.rotateAccountId, { userId });
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query('sessions').collect()).toHaveLength(0);
+    });
+  });
+});

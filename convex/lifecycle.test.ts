@@ -716,13 +716,12 @@ describe('account issuance lock (P1-3)', () => {
     const userId = await t.run((ctx) =>
       ctx.db.insert('users', { tierId: freeTierId, status: 'active', updatedAt: Date.now() }),
     );
-    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
-      true,
-    );
+    const first = await t.mutation(internal.account.acquireIssuanceLock, { userId });
+    expect(first.acquired).toBe(true);
     expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
       false,
     );
-    await t.mutation(internal.account.releaseIssuanceLock, { userId });
+    await t.mutation(internal.account.releaseIssuanceLock, { userId, token: first.token! });
     expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
       true,
     );

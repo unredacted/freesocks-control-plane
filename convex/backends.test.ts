@@ -10,7 +10,12 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { computeExpireAtIso, gbToBytes, resolveTrafficLimitBytes } from './lib/backends/types';
+import {
+  applyUsageCarryover,
+  computeExpireAtIso,
+  gbToBytes,
+  resolveTrafficLimitBytes,
+} from './lib/backends/types';
 import { remnawaveUpdateUser } from './lib/backends/remnawave';
 import { sha256Hex } from './lib/crypto';
 
@@ -38,6 +43,26 @@ describe('issuance spec helpers', () => {
     const freeMs = Date.parse(computeExpireAtIso(null, 90));
     expect(freeMs).toBeGreaterThan(Date.now() + 89 * 86_400_000);
     expect(freeMs).toBeLessThan(Date.now() + 91 * 86_400_000);
+  });
+
+  test('computeExpireAtIso clamps a PAST membership expiry to a near-future grace (Review D-#7)', () => {
+    // A lapsed member's stored expiry is in the past; Remnawave's create DTO
+    // rejects past dates, which made regenerate permanently fail for them.
+    const past = Date.now() - 86_400_000;
+    const clamped = Date.parse(computeExpireAtIso(past, 90));
+    expect(clamped).toBeGreaterThan(Date.now());
+    expect(clamped).toBeLessThanOrEqual(Date.now() + 6 * 60_000);
+  });
+
+  test('applyUsageCarryover preserves the period quota; 0 is never emitted (Review D-M3)', () => {
+    const GB = 1024 ** 3;
+    expect(applyUsageCarryover(50 * GB, 10 * GB)).toBe(40 * GB);
+    // A fully-spent quota carries as 1 byte, NEVER 0 (0 = unlimited on
+    // Remnawave, blocked on Outline — 1 byte is "spent" on both).
+    expect(applyUsageCarryover(50 * GB, 50 * GB)).toBe(1);
+    expect(applyUsageCarryover(50 * GB, 999 * GB)).toBe(1);
+    // Garbage/negative usage can't inflate the limit.
+    expect(applyUsageCarryover(50 * GB, -5)).toBe(50 * GB);
   });
 });
 

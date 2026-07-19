@@ -138,12 +138,67 @@ function phpEscapeJson(json: string): string {
 }
 
 /**
+ * PHP-faithful serializer for the (key-sorted) IPN structure. Beyond the slash/
+ * unicode escaping above, PHP's json_encode renders float-typed WHOLE numbers
+ * as `N.0` where JSON.stringify renders `N` — and JSON.parse erases which leaf
+ * was which type. `floatLeaves` holds the DFS indices of integer-valued number
+ * leaves to render as floats (see candidatePayloads). (Review C-F4.)
+ */
+function phpSerialize(value: unknown, floatLeaves: Set<number>, counter: { i: number }): string {
+  if (value === null) return 'null';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') {
+    if (Number.isInteger(value)) {
+      const idx = counter.i++;
+      return floatLeaves.has(idx) ? `${value}.0` : String(value);
+    }
+    return String(value);
+  }
+  if (typeof value === 'string') return phpEscapeJson(JSON.stringify(value));
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => phpSerialize(v, floatLeaves, counter)).join(',')}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>).map(
+    ([k, v]) => `${phpEscapeJson(JSON.stringify(k))}:${phpSerialize(v, floatLeaves, counter)}`,
+  );
+  return `{${entries.join(',')}}`;
+}
+
+/**
+ * Every canonical form the IPN HMAC is checked against: the JSON.stringify
+ * form, the PHP-escaped form, and — when the payload has ≤8 integer-valued
+ * number leaves — every PHP-escaped `.0`-suffix combination over those leaves
+ * (PHP emits floats as `N.0`; JSON.parse erases the type, so all combos are
+ * tried). Multi-accept stays safe: an attacker still needs a valid HMAC over
+ * one deterministic canonicalization of the exact received body.
+ */
+function candidatePayloads(sorted: unknown): string[] {
+  const canonical = JSON.stringify(sorted);
+  const out = new Set<string>([canonical, phpEscapeJson(canonical)]);
+  let leaves = 0;
+  (function count(v: unknown) {
+    if (typeof v === 'number' && Number.isInteger(v)) leaves++;
+    else if (Array.isArray(v)) v.forEach(count);
+    else if (v !== null && typeof v === 'object') Object.values(v).forEach(count);
+  })(sorted);
+  if (leaves > 0 && leaves <= 8) {
+    for (let mask = 1; mask < 1 << leaves; mask++) {
+      const floatLeaves = new Set<number>();
+      for (let b = 0; b < leaves; b++) if (mask & (1 << b)) floatLeaves.add(b);
+      out.add(phpSerialize(sorted, floatLeaves, { i: 0 }));
+    }
+  }
+  return [...out];
+}
+
+/**
  * Verify an IPN's authenticity and parse it. The signature is HMAC-SHA512 of the
  * key-sorted JSON body (the EXACT bytes we received, re-serialized in sorted-key
- * order) using the IPN secret — checked against BOTH the JSON.stringify and the
- * PHP-escaped canonical forms (see phpEscapeJson). On success, the order is
- * looked up by `order_id` (our opaque ref). The persisted summary is REDACTED
- * (NOWPayments IPNs carry no payer PII, but we allowlist fields defensively).
+ * order) using the IPN secret — checked against every PHP-canonical candidate
+ * (see candidatePayloads: slash/unicode escaping + whole-number float forms).
+ * On success, the order is looked up by `order_id` (our opaque ref). The
+ * persisted summary is REDACTED (NOWPayments IPNs carry no payer PII, but we
+ * allowlist fields defensively).
  */
 export async function verifyAndParse(args: {
   rawBody: string;
@@ -160,16 +215,15 @@ export async function verifyAndParse(args: {
   if (!payload || typeof payload !== 'object') {
     return { ok: false, reason: 'IPN payload is not an object' };
   }
-  const canonical = JSON.stringify(sortKeysDeep(payload));
-  const expected = await hmacSha512Hex(args.ipnSecret, canonical);
-  const expectedPhp =
-    canonical === phpEscapeJson(canonical)
-      ? expected
-      : await hmacSha512Hex(args.ipnSecret, phpEscapeJson(canonical));
   const sig = args.signature.trim();
-  if (!timingSafeEqual(expected, sig) && !timingSafeEqual(expectedPhp, sig)) {
-    return { ok: false, reason: 'IPN signature mismatch' };
+  let matched = false;
+  for (const candidate of candidatePayloads(sortKeysDeep(payload))) {
+    if (timingSafeEqual(await hmacSha512Hex(args.ipnSecret, candidate), sig)) {
+      matched = true;
+      break;
+    }
   }
+  if (!matched) return { ok: false, reason: 'IPN signature mismatch' };
 
   const p = payload as Record<string, unknown>;
   const rawStatus = typeof p.payment_status === 'string' ? p.payment_status : '';
@@ -203,8 +257,15 @@ export async function verifyAndParse(args: {
     // the grant path cross-checks it. Distinct from payment_id above.
     checkoutRef: p.invoice_id != null ? String(p.invoice_id) : null,
     // price_amount is the FIAT price we set on the invoice (not the crypto
-    // amount), so it compares 1:1 against the order's cents.
-    amountMinor: typeof p.price_amount === 'number' ? Math.round(p.price_amount * 100) : null,
+    // amount), so it compares 1:1 against the order's cents. Coerced with the
+    // same toAmount helper as the crypto amounts: on account configs that
+    // serialize amounts as JSON strings, a strict typeof check would null this
+    // out and silently disable the grant-time amount_mismatch cross-check.
+    // (Review C-F3.)
+    amountMinor: (() => {
+      const n = toAmount(p.price_amount);
+      return n != null ? Math.round(n * 100) : null;
+    })(),
     amountCurrency: typeof p.price_currency === 'string' ? p.price_currency.toUpperCase() : null,
     dedupeId: `nowpayments:${processorRef || orderRef || 'unknown'}:${rawStatus || 'unknown'}`,
     summary: {

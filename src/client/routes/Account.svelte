@@ -1139,7 +1139,7 @@
               <div>
                 <p class="text-sm font-medium">{t('support.label')}</p>
                 <div class="mt-1 flex items-center gap-1.5">
-                  <code class="select-all font-mono text-sm text-foreground"
+                  <code dir="ltr" class="select-all font-mono text-sm text-foreground"
                     >{data.user.supportId}</code
                   >
                   <Button

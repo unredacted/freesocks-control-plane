@@ -230,6 +230,26 @@
             </span>
           </div>
         {/if}
+        <!-- CDN-blinding E2EE posture: PoP binds the session, but the account
+             number itself only stays sealed once FS_E2EE_REQUIRED rejects
+             unsealed member requests. Warn while that's off. -->
+        {#if s.e2ee.required}
+          <p class="text-muted-foreground">
+            E2EE sealing is enforced for member requests (FS_E2EE_REQUIRED is on) - the account
+            number never transits in plaintext.
+          </p>
+        {:else}
+          <div
+            class="flex items-center gap-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-300"
+          >
+            <TriangleAlert class="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>
+              E2EE is in dual-mode: the account number still crosses the CDN in plaintext on login.
+              Once the deployed SPA is built with the HPKE pins, set
+              <code class="font-mono">FS_E2EE_REQUIRED=true</code> to reject unsealed member requests.
+            </span>
+          </div>
+        {/if}
       </CardContent>
     </Card>
 

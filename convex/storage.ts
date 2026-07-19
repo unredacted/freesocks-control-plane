@@ -197,11 +197,16 @@ export const provisionMirror = internalAction({
     }
     if (!entry) return { status: 'error', remaining: Math.max(0, cap - used) };
 
-    await ctx.runMutation(internal.subscriptions.appendMirror, {
+    const appended = await ctx.runMutation(internal.subscriptions.appendMirror, {
       subscriptionId: context.subscriptionId,
       mirror: entry,
       rawContentHash: hash,
+      cap,
     });
+    // Lost the cap race with a concurrent provision (Review D-#8): the object
+    // was uploaded but the row didn't change — harmless residue, reported as
+    // capped (the next request picks the same provider and re-appends).
+    if (!appended.appended) return { status: 'capped', remaining: 0 };
     return {
       status: 'ok',
       publicUrl: entry.publicUrl,

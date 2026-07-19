@@ -65,6 +65,7 @@ import type * as lib_statusCounters from "../lib/statusCounters.js";
 import type * as lib_statusPage from "../lib/statusPage.js";
 import type * as lib_supportId from "../lib/supportId.js";
 import type * as lib_themeConfig from "../lib/themeConfig.js";
+import type * as lib_urlSafety from "../lib/urlSafety.js";
 import type * as lib_verificationConfig from "../lib/verificationConfig.js";
 import type * as lifecycle from "../lifecycle.js";
 import type * as memberPasskeys from "../memberPasskeys.js";
@@ -153,6 +154,7 @@ declare const fullApi: ApiFromModules<{
   "lib/statusPage": typeof lib_statusPage;
   "lib/supportId": typeof lib_supportId;
   "lib/themeConfig": typeof lib_themeConfig;
+  "lib/urlSafety": typeof lib_urlSafety;
   "lib/verificationConfig": typeof lib_verificationConfig;
   lifecycle: typeof lifecycle;
   memberPasskeys: typeof memberPasskeys;

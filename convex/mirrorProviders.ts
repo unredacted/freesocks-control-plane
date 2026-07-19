@@ -19,6 +19,19 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+import { checkInfraUrl } from './lib/urlSafety';
+
+/**
+ * Validate a provider's endpoint + public URL (shape + the SSRF denylist):
+ * FCP fetches the endpoint on every mirror upload, so a registered provider is
+ * an outbound-request primitive like a backend server row. (Review D-M4.)
+ */
+function checkProviderUrls(endpoint: string, publicUrl: string): void {
+  const ep = checkInfraUrl(endpoint);
+  if (!ep.ok) throw new ConvexError({ code: 'validation', message: `The endpoint ${ep.reason}` });
+  const pu = checkInfraUrl(publicUrl);
+  if (!pu.ok) throw new ConvexError({ code: 'validation', message: `The public URL ${pu.reason}` });
+}
 
 /**
  * One active provider with its full credentials, shaped exactly like
@@ -225,6 +238,7 @@ export const create = internalMutation({
         message: 'endpoint, bucket, public URL, access key ID and secret are all required',
       });
     }
+    checkProviderUrls(a.endpoint, a.publicUrl);
     const id = await ctx.db.insert('mirrorProviders', {
       name,
       endpoint: a.endpoint,
@@ -289,6 +303,7 @@ export const upsertByName = internalMutation({
             'A new mirror provider needs endpoint, bucket, public URL, access key ID and secret',
         });
       }
+      checkProviderUrls(a.endpoint, a.publicUrl);
       const id = await ctx.db.insert('mirrorProviders', {
         name,
         endpoint: a.endpoint,
@@ -318,6 +333,10 @@ export const upsertByName = internalMutation({
     if (a.endpoint !== undefined && a.endpoint !== '') fields.endpoint = a.endpoint;
     if (a.bucket !== undefined && a.bucket !== '') fields.bucket = a.bucket;
     if (a.publicUrl !== undefined && a.publicUrl !== '') fields.publicUrl = a.publicUrl;
+    checkProviderUrls(
+      (fields.endpoint as string | undefined) ?? existing.endpoint,
+      (fields.publicUrl as string | undefined) ?? existing.publicUrl,
+    );
     if (a.region !== undefined && a.region.trim() !== '') fields.region = a.region.trim();
     if (a.accessKeyId !== undefined && a.accessKeyId !== '') fields.accessKeyId = a.accessKeyId;
     if (a.secretAccessKey !== undefined && a.secretAccessKey !== '')
@@ -382,6 +401,10 @@ export const update = internalMutation({
     if (patch.endpoint !== undefined && patch.endpoint !== '') fields.endpoint = patch.endpoint;
     if (patch.bucket !== undefined && patch.bucket !== '') fields.bucket = patch.bucket;
     if (patch.publicUrl !== undefined && patch.publicUrl !== '') fields.publicUrl = patch.publicUrl;
+    checkProviderUrls(
+      (fields.endpoint as string | undefined) ?? existing.endpoint,
+      (fields.publicUrl as string | undefined) ?? existing.publicUrl,
+    );
     if (patch.region !== undefined && patch.region.trim() !== '')
       fields.region = patch.region.trim();
     if (patch.accessKeyId !== undefined && patch.accessKeyId !== '') {

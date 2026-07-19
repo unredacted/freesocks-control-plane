@@ -364,14 +364,21 @@ When enforced, a subscription fetched **without** a valid `x-hwid` header is
 rejected by the panel with **404**; a fetch **with** `x-hwid` registers/refreshes
 that device and counts it against the limit.
 
-**The FCP front forwards HWID headers.** Members fetch their config from
-`GET /api/v1/sub/<token>` (the FCP origin), and FCP fetches the panel
-server-side. It forwards the client's `x-hwid` / `x-device-os` / `x-ver-os` /
-`x-device-model`, and **bypasses the UA cache when `x-hwid` is present** (each
-device must reach the panel to register + be counted). A panel 404 is passed
-through as 404 (authoritative — not a 502, and never a stale body). Without this
-forwarding, enforcement _and_ device registration would be dead through the front
-(the device list would always be empty) — this was a latent gap.
+**The FCP front forwards HWID headers — only while enforcement is on.** Members
+fetch their config from `GET /api/v1/sub/<token>` (the FCP origin), and FCP
+fetches the panel server-side. It forwards the client's `x-hwid` /
+`x-device-os` / `x-ver-os` / `x-device-model`, and **bypasses the UA cache when
+`x-hwid` is present** (each device must reach the panel to register + be
+counted). A panel 404 is passed through as 404 (authoritative — not a 502, and
+never a stale body). Without this forwarding, enforcement _and_ device
+registration would be dead through the front (the device list would always be
+empty) — this was a latent gap. **Gate:** forwarding happens only when
+`devices.enforcementEnabled` is on — with the toggle off FCP never sends a
+panel-side `hwidDeviceLimit`, so forwarding would only register arbitrary
+devices with zero enforcement benefit (the headers are then dropped and the
+normal UA-cache path applies). The route is also per-token rate-limited
+(`subscription.fetch.token`, default 60/min) against UA-rotating cache-bypass
+amplification and device-slot stuffing with a leaked/shared token.
 
 **Not every app sends HWID.** Only apps that implement Remnawave device
 identification (today **Karing** and **Throne**; tracked per-app as

@@ -405,13 +405,17 @@ export const pushTierToBackend = internalAction({
 /** Audit a tier-push that exhausted its retries (no secrets; backend errors are pre-scrubbed). */
 export const recordPushFailure = internalMutation({
   args: { userId: v.id('users'), detail: v.string() },
-  handler: async (ctx, { userId }) => {
+  handler: async (ctx, { userId, detail }) => {
     await writeAuditLog(ctx, {
       actorType: 'system',
       action: 'membership.push_failed',
       targetType: 'user',
       targetId: userId,
     });
+    // The audit entry carries no reason (audit payloads are allowlisted), so the
+    // scrubbed detail goes to the server log — otherwise an exhausted push is
+    // undiagnosable from anywhere. (Review D-#13.)
+    console.warn(`[lifecycle] tier push exhausted retries for user ${userId}: ${detail}`);
     // Flag the drift so an admin can see the backend never got this user's tier.
     const u = await ctx.db.get(userId);
     await ctx.db.patch(userId, { backendPushFailedAt: Date.now() });
@@ -1033,6 +1037,13 @@ export const deleteInactiveUser = internalMutation({
     await deleteByUser('billingOrders');
     await deleteByUser('memberPasskeyCredentials');
     await deleteByUser('sessions');
+    // User-scoped fsv1_ tokens (subjectUserId): they resolve to null once the
+    // user is gone (fail-closed), but don't leave the residue behind.
+    const tokens = await ctx.db
+      .query('apiTokens')
+      .withIndex('by_subject_user', (q) => q.eq('subjectUserId', userId))
+      .collect();
+    for (const tok of tokens) await ctx.db.delete(tok._id);
     // Referrals reference the user on BOTH sides (referee + referrer).
     for (const index of ['by_referee', 'by_referrer'] as const) {
       const rows = await ctx.db

@@ -1,5 +1,15 @@
 import { z } from 'zod';
 
+/**
+ * CMS-sourced URL fields that flow to href: https-only or '' (unset). The
+ * server sanitizes these namespaces at write; this is the client-side
+ * defense-in-depth so a `javascript:` value can never reach an href even if a
+ * future write path skips the sanitizer (mirrors CheckoutResponse.redirectUrl).
+ */
+const httpsOrEmpty = z.string().refine((u) => u === '' || u.startsWith('https://'), {
+  message: 'must be https or empty',
+});
+
 export const AuthMeResponse = z.object({
   authenticated: z.boolean(),
   member: z
@@ -149,16 +159,11 @@ export const PublicConfig = z.object({
       .object({
         enabled: z.boolean(),
         suggestedAmountsCents: z.array(z.number().int()),
-        /** Per-amount GB bonus, PRECOMPUTED server-side (bonusGb for donating
-         *  `cents`): the picker's "~N GB" line for the presets without exposing
-         *  the raw GB-per-dollar rate — with the rate AND currentBonusGb both
-         *  public, monthly donation revenue was exactly derivable (GB-only
-         *  posture). Custom (non-preset) amounts show no GB hint. */
-        suggested: z.array(z.object({ cents: z.number().int(), bonusGb: z.number() })).default([]),
         minAmountCents: z.number().int(),
         monthlyBonusCapGb: z.number(),
         currentBonusGb: z.number(),
-        /** Active free users the shared bonus reaches (daily-reconciled count). */
+        /** Active free users the shared bonus reaches (daily-reconciled count,
+         *  rounded DOWN to the nearest 10 — never an exact fleet-size signal). */
         freeUsersHelped: z.number().default(0),
         /** Per-month bonus-GB ledger (last 12) for the impact graphs. GB only —
          *  dollar amounts are never projected publicly. */
@@ -167,7 +172,6 @@ export const PublicConfig = z.object({
       .default({
         enabled: false,
         suggestedAmountsCents: [],
-        suggested: [],
         minAmountCents: 0,
         monthlyBonusCapGb: 0,
         currentBonusGb: 0,
@@ -213,10 +217,10 @@ export const PublicConfig = z.object({
   verification: z
     .object({
       showPanel: z.boolean(),
-      releaseUrl: z.string(),
+      releaseUrl: httpsOrEmpty,
       onionAddress: z.string(),
-      sourceUrl: z.string(),
-      extensionUrl: z.string(),
+      sourceUrl: httpsOrEmpty,
+      extensionUrl: httpsOrEmpty,
     })
     .optional(),
   /** Admin-configured site chrome (non-secret): the announcement banner (a
@@ -228,15 +232,15 @@ export const PublicConfig = z.object({
       bannerEnabled: z.boolean(),
       bannerText: z.string(),
       repoEnabled: z.boolean(),
-      repoUrl: z.string(),
-      tosUrl: z.string(),
-      privacyUrl: z.string(),
+      repoUrl: httpsOrEmpty,
+      tosUrl: httpsOrEmpty,
+      privacyUrl: httpsOrEmpty,
       // Deploy-skew safety: default '' so a newer SPA parsing an older backend's
       // /config (without these keys yet) doesn't fail the whole config parse.
-      transparencyUrl: z.string().optional().default(''),
-      socialXUrl: z.string().optional().default(''),
-      socialMastodonUrl: z.string().optional().default(''),
-      socialBlueskyUrl: z.string().optional().default(''),
+      transparencyUrl: httpsOrEmpty.optional().default(''),
+      socialXUrl: httpsOrEmpty.optional().default(''),
+      socialMastodonUrl: httpsOrEmpty.optional().default(''),
+      socialBlueskyUrl: httpsOrEmpty.optional().default(''),
       /** Support email for mailto: links; '' = unset (support links hidden). */
       supportEmail: z.string().optional().default(''),
       /** Home hero title/subtitle overrides (verbatim, all locales); '' = the
@@ -295,12 +299,14 @@ export const PublicConfig = z.object({
         name: z.string(),
         platforms: z.array(z.string()),
         backends: z.array(z.enum(['remnawave', 'outline'])),
-        homepageUrl: z.string(),
+        homepageUrl: z
+          .string()
+          .refine((u) => u.startsWith('https://'), { message: 'must be https' }),
         schemeId: z.string().nullable(),
         hwid: z.boolean(),
         openSource: z.boolean().optional().default(false),
         license: z.string().optional(),
-        sourceUrl: z.string().optional(),
+        sourceUrl: httpsOrEmpty.optional(),
         easeOfUse: z.enum(['easy', 'moderate', 'advanced']).optional(),
         /** Admin-set blurb (verbatim in every locale); absent = the SPA's
          *  built-in translated copy for known default apps. */

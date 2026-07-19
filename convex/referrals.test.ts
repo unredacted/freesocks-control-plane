@@ -413,6 +413,33 @@ describe('vestReferrerReward', () => {
     expect(row?.status).toBe('void');
     expect(row?.voidReason).toBe('tier_unavailable');
   });
+
+  // Review C-F6: an admin-BANNED referrer must not quietly bank reward days
+  // (applyMembership keeps the ban but would still record tier + expiry).
+  test('voids for an admin-banned referrer (no banked days); still pays a merely-lapsed one', async () => {
+    const t = convexTest(schema, modules);
+    const { member, referrer, referralId } = await converted(t);
+    await t.run((ctx) =>
+      ctx.db.patch(referrer, { status: 'disabled', disabledReason: 'admin_action' }),
+    );
+    await t.mutation(internal.referrals.vestReferrerReward, { referralId });
+    const row = await t.run((ctx) => ctx.db.get(referralId));
+    expect(row?.status).toBe('void');
+    expect(row?.voidReason).toBe('referrer_gone');
+    expect((await getUser(t, referrer))?.membershipExpiresAt).toBeUndefined();
+
+    // A merely-LAPSED referrer (not banned) still vests — the reward
+    // re-activates them like any grant.
+    const t2 = convexTest(schema, modules);
+    const c2 = await converted(t2);
+    await t2.run((ctx) =>
+      ctx.db.patch(c2.referrer, { status: 'disabled', disabledReason: 'membership_lapsed' }),
+    );
+    await t2.mutation(internal.referrals.vestReferrerReward, { referralId: c2.referralId });
+    const row2 = await t2.run((ctx) => ctx.db.get(c2.referralId));
+    expect(row2?.status).toBe('rewarded');
+    expect((await getUser(t2, c2.referrer))?.tierId).toBe(member);
+  });
 });
 
 describe('the applyMembership hook', () => {

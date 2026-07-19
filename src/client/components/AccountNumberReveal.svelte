@@ -139,6 +139,7 @@
            shoulder-surf/shared-device hazard. The dialog title gives SR users context;
            the number stays plain focusable, select-all text. -->
       <p
+        dir="ltr"
         class="block select-all rounded-md border border-border bg-muted px-3 py-4 text-center font-mono text-lg tracking-wider break-words"
         data-testid="account-number"
       >

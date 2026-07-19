@@ -30,14 +30,21 @@ export const byBackendUserId = internalQuery({
  * Resolve a subscription by its opaque FCP-fronted token (the capability in
  * GET /api/v1/sub/<subToken>). Returns the full row (incl. the `subCache` blob)
  * or null. Internal — the row carries the live proxy key.
+ *
+ * A `deleted` row resolves as NOT FOUND (Review D-#12): its backend user is
+ * gone, so the route would otherwise fetch → panel 404 → answer a misleading
+ * "device limit reached" body that also confirms the token exists. Tombstoned
+ * rows (24h grace) still resolve — the grace URL must keep working.
  */
 export const bySubToken = internalQuery({
   args: { subToken: v.string() },
-  handler: (ctx, { subToken }) =>
-    ctx.db
+  handler: async (ctx, { subToken }) => {
+    const row = await ctx.db
       .query('subscriptions')
       .withIndex('by_sub_token', (q) => q.eq('subToken', subToken))
-      .unique(),
+      .unique();
+    return row && row.state !== 'deleted' ? row : null;
+  },
 });
 
 /**
@@ -259,19 +266,29 @@ export const mirrorContextForUser = internalQuery({
   },
 });
 
-/** Append one freshly-provisioned mirror (opt-in flow), idempotent per provider. */
+/** Append one freshly-provisioned mirror (opt-in flow), idempotent per provider.
+ *  The cap is RE-CHECKED inside this serializable mutation (Review D-#8): the
+ *  action's earlier read-then-act check raced two concurrent provisions, both
+ *  passing `used < cap` before either appended. */
 export const appendMirror = internalMutation({
-  args: { subscriptionId: v.id('subscriptions'), mirror, rawContentHash: v.string() },
-  handler: async (ctx, { subscriptionId, mirror: entry, rawContentHash }) => {
+  args: {
+    subscriptionId: v.id('subscriptions'),
+    mirror,
+    rawContentHash: v.string(),
+    cap: v.number(),
+  },
+  handler: async (ctx, { subscriptionId, mirror: entry, rawContentHash, cap }) => {
     const row = await ctx.db.get(subscriptionId);
-    if (!row || row.state !== 'active') return null;
+    if (!row || row.state !== 'active') return { appended: false as const };
+    const existing = row.subscriptionMirrors.some((m) => m.provider === entry.provider);
+    if (!existing && row.subscriptionMirrors.length >= cap) return { appended: false as const };
     const others = row.subscriptionMirrors.filter((m) => m.provider !== entry.provider);
     await ctx.db.patch(subscriptionId, {
       subscriptionMirrors: [...others, entry],
       rawContentHash,
       updatedAt: Date.now(),
     });
-    return null;
+    return { appended: true as const };
   },
 });
 

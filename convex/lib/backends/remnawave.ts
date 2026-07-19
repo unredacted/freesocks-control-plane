@@ -121,6 +121,17 @@ function unwrap(json: unknown): unknown {
   return json;
 }
 
+/**
+ * Join an API path onto the instance baseUrl WITHOUT dropping a base path
+ * prefix: `new URL('/api/x', 'https://host/panel/')` yields `https://host/api/x`
+ * (the leading slash replaces the whole path), silently breaking panels hosted
+ * under a subpath. (Review D-#11.)
+ */
+function joinUrl(baseUrl: string, path: string): string {
+  const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+  return new URL(path.replace(/^\/+/, ''), base).toString();
+}
+
 async function call<T>(
   cfg: RemnawaveConfig,
   args: {
@@ -130,7 +141,7 @@ async function call<T>(
     schema: z.ZodType<T>;
   },
 ): Promise<T> {
-  const url = new URL(args.path, cfg.baseUrl).toString();
+  const url = joinUrl(cfg.baseUrl, args.path);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 8000);
   try {
@@ -266,7 +277,16 @@ export async function remnawaveHardenLogging(
   const report: RemnawaveLoggingReport = { profiles: [] };
   for (const p of rows) {
     try {
-      const merged = hardenXrayLoggingConfig(p.config);
+      // Read the FULL config per profile before writing: the PATCH replaces
+      // the config WHOLESALE, so writing from a possibly-partial LIST row
+      // would wipe any keys the list omits (a future panel version). Never
+      // PATCH from the list representation. (Review D-#14.)
+      const full = await call(cfg, {
+        method: 'GET',
+        path: `/api/config-profiles/${p.uuid}`,
+        schema: ConfigProfileRow,
+      });
+      const merged = hardenXrayLoggingConfig(full.config);
       if (merged.changed && !opts.dryRun) {
         await call(cfg, {
           method: 'PATCH',
@@ -371,6 +391,24 @@ async function cleanupAmbiguousCreate(cfg: RemnawaveConfig, username: string): P
   }
 }
 
+/**
+ * The panel-reported `subscriptionUrl` is trusted ONLY on the panel's own
+ * origin. FCP later fetches it (unauthenticated) and re-serves the body
+ * publicly at /api/v1/sub/<token> + uploads it to S3 mirrors — an off-origin
+ * URL would, after a panel-token compromise, make the control plane fetch and
+ * republish an attacker-chosen internal address (confused deputy, Review
+ * D-#4). Off-origin or malformed → the conventional /api/sub/<shortUuid> on
+ * the panel origin.
+ */
+function pinnedSubscriptionUrl(cfg: RemnawaveConfig, url: string, shortUuid: string): string {
+  try {
+    if (new URL(url).origin === new URL(cfg.baseUrl).origin) return url;
+  } catch {
+    /* malformed — fall through */
+  }
+  return joinUrl(cfg.baseUrl, `/api/sub/${shortUuid}`);
+}
+
 export async function remnawaveIssueUser(
   cfg: RemnawaveConfig,
   spec: IssueUserSpec,
@@ -404,7 +442,7 @@ export async function remnawaveIssueUser(
   return {
     backendUserId: user.uuid,
     backendShortId: user.shortUuid,
-    subscriptionUrl: user.subscriptionUrl,
+    subscriptionUrl: pinnedSubscriptionUrl(cfg, user.subscriptionUrl, user.shortUuid),
     raw: user,
   };
 }
@@ -787,8 +825,11 @@ export async function remnawaveFetchSubscription(
   // doesn't exist and 404s. Fetch that URL with NO admin Bearer (it's public).
   // Fall back to the conventional `/api/sub/<shortUuid>` only if we weren't
   // handed a URL (legacy callers); no UA → Remnawave serves the default base64
-  // subscription rather than an HTML landing page.
-  const url = subscriptionUrl ?? new URL(`/api/sub/${backendShortId}`, cfg.baseUrl).toString();
+  // subscription rather than an HTML landing page. A stored URL is re-pinned
+  // to the panel origin (rows stored before the pinning fix, Review D-#4).
+  const url = subscriptionUrl
+    ? pinnedSubscriptionUrl(cfg, subscriptionUrl, backendShortId)
+    : joinUrl(cfg.baseUrl, `/api/sub/${backendShortId}`);
   const headers: Record<string, string> = {};
   if (userAgent) headers['user-agent'] = userAgent;
   // Forward the client's HWID identification headers so the panel registers the
@@ -839,7 +880,7 @@ const HEALTH_PROBE_UUID = '00000000-0000-4000-8000-000000000000';
 export async function remnawaveHealth(
   cfg: RemnawaveConfig,
 ): Promise<{ keyCount: number | null; rttMs: number }> {
-  const url = new URL(`/api/users/${HEALTH_PROBE_UUID}`, cfg.baseUrl).toString();
+  const url = joinUrl(cfg.baseUrl, `/api/users/${HEALTH_PROBE_UUID}`);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 8000);
   const started = Date.now();

@@ -360,7 +360,7 @@ describe('publicConfig donation impact projection', () => {
     vi.unstubAllGlobals();
   });
 
-  test('ships GB-only history (no dollar amounts) + the free-user count', async () => {
+  test('ships GB-only history (no dollar amounts) + the banded free-user count', async () => {
     const { t } = await setup();
     await t.run(async (ctx) => {
       const put = (key: string, value: unknown) =>
@@ -390,7 +390,9 @@ describe('publicConfig donation impact projection', () => {
       });
     });
     const cfg = await t.query(api.publicConfig.get, {});
-    expect(cfg.billing.donation.freeUsersHelped).toBe(5);
+    // Banded: the exact count (5) rounds DOWN to the nearest 10 — never an
+    // exact live fleet-size signal in the public bootstrap config.
+    expect(cfg.billing.donation.freeUsersHelped).toBe(0);
     // Current month synthesized from the live accumulator ($15 × 1 GB/USD).
     expect(cfg.billing.donation.history).toEqual([
       { month: '2026-05', bonusGb: 20 },
@@ -399,15 +401,13 @@ describe('publicConfig donation impact projection', () => {
     ]);
     // GB only — the ledger's donatedCents never reaches the public projection.
     expect(JSON.stringify(cfg.billing.donation.history)).not.toContain('donatedCents');
-    // The raw GB-per-dollar RATE never ships either (currentBonusGb ÷ rate was
-    // exact monthly revenue); only precomputed per-amount GB bonuses.
+    // The raw GB-per-dollar RATE never ships either — and neither does the
+    // per-amount bonus map (bonusGb = cents × rate disclosed it, and with
+    // currentBonusGb public the month's donation revenue was derivable).
+    // Amounts only. (Review B-F3.)
     expect('bonusGbPerUsd' in cfg.billing.donation).toBe(false);
-    expect(cfg.billing.donation.suggested).toEqual([
-      { cents: 300, bonusGb: 3 }, // the compiled defaults at 1 GB/USD
-      { cents: 500, bonusGb: 5 },
-      { cents: 1000, bonusGb: 10 },
-      { cents: 2500, bonusGb: 25 },
-    ]);
+    expect('suggested' in cfg.billing.donation).toBe(false);
+    expect(cfg.billing.donation.suggestedAmountsCents).toEqual([300, 500, 1000, 2500]);
   });
 
   test('empty history on a deployment with no impact yet', async () => {

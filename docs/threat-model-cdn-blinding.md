@@ -162,7 +162,14 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   import-map `integrity` section + a `dist/sri-manifest.json`); COOP/CORP/Permissions-Policy + Trusted
   Types report-only in the reverse proxy. **COEP `require-corp` is now ENFORCED** — replacing Cloudflare
   Turnstile with the bundled, same-origin Cap captcha (W1, 2026-06-10) removed the last cross-origin
-  subresource that blocked it, and the CSP is now pure `'self'`. `Integrity-Policy` enforcement stays
+  subresource that blocked it. The CSP is pure `'self'` origins plus `'wasm-unsafe-eval'` (Cap's PoW
+  WASM), with ONE deliberate relaxation: Cap's instrumentation runs inside a sandboxed srcdoc iframe
+  that inherits the member-origin policy and needs `eval`/`new Function`, so the member scope also
+  carries `'unsafe-eval'` — any code that achieves execution in the origin gets live string-to-code
+  sinks (see the Caddyfile comment). The per-request CSP nonce is templated into the DOM
+  (`<meta name="csp-nonce">` + `window.CAP_SCRIPT_NONCE`) so Cap can stamp its srcdoc script; it is
+  readable by any same-origin script, i.e. a speed bump against injected markup, not a wall once an
+  injection primitive exists. `Integrity-Policy` enforcement stays
   staged — NOT for lack of chunk SRI (now closed), but because a module-worker realm does not inherit
   the document import map, so enforcing it would block the PoP signing worker's imports (auth break)
   until that is handled + browser-verified. See `vite.config.ts` + the Caddyfile in
@@ -175,6 +182,22 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   convenience layer over this OOB trust root, never a substitute for it. See `docs/oob-verification.md`.
 
 ## Documented residual limits
+
+- **Dual-mode acceptance ends at the operator's option (`FS_E2EE_REQUIRED`).** The rollout default is
+  dual-mode: the backend accepts BOTH sealed and plaintext bodies on the seal/reveal routes, so until
+  the deployed SPA is built with the HPKE public pins (`VITE_FS_SERVER_HPKE_PK`/`KID`) the account
+  number still transits TLS-terminating infrastructure in plaintext on every login — PoP binds only the
+  resulting session, not the permanent credential. Setting `FS_E2EE_REQUIRED=true` REJECTS unsealed
+  member requests on those routes (`e2ee.sealed_required`), closing the leg; flip it only after the
+  keyed SPA build is live (a dark client cannot seal and would be refused). Admin `fsv1_`/Ansible
+  callers are unaffected (only member routes are gated). The admin status card surfaces
+  `e2ee.required`.
+- **A captured cookie can force a logout.** The logout routes are deliberately unsigned (a member who
+  lost their PoP key — e.g. a wiped browser profile — must still be able to kill the session), so a
+  passive CDN holding a captured cookie can replay it to `/api/v1/auth/logout`, deleting the victim's
+  session (availability/UX attack only; re-login restores, and the cookie still authorizes nothing
+  else without the PoP key). Accepted trade-off; best-effort PoP on logout would defeat the lost-key
+  escape hatch.
 
 - **Recipient-key compromise is a retroactive (classical) oracle within the key epoch** for the
   request direction. Now bounded to the epoch validity + sweep grace (tens of minutes) by the Phase 3

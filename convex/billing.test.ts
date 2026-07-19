@@ -1287,6 +1287,127 @@ describe('billing.applyEvent grant cross-checks', () => {
     });
   });
 
+  test('a SECOND refund event does NOT re-unwind the donation; the donor badge unwinds once (Review C-F2/F5)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'billing.donation.enabled',
+        value: 'true',
+        updatedAt: 0,
+      }),
+    );
+    await t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'stripe',
+        opaqueRef: 'ref-refund3',
+        userId,
+        tierId: memberTierId,
+        durationDays: 91,
+        amountCents: 1400,
+        donationCents: 500,
+        currency: 'USD',
+        status: 'pending',
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'stripe',
+      orderRef: 'ref-refund3',
+      status: 'paid',
+      processorRef: 'ch_1',
+    });
+    // Simulate a LATER $10 donation landing in the same pool, so a double
+    // unwind is observable (500 → 500 vs the buggy 500 → 0).
+    await t.run(async (ctx) => {
+      const pool = await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
+        .unique();
+      const state = JSON.parse(pool!.value) as Record<string, unknown>;
+      await ctx.db.patch(pool!._id, {
+        value: JSON.stringify({ ...state, donatedCents: 1500 }),
+      });
+    });
+    // Stripe emits one charge.refunded per (partial) refund — distinct ids.
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'stripe',
+      orderRef: 'ref-refund3',
+      status: 'failed',
+      processorRef: 're_1',
+    });
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'stripe',
+      orderRef: 'ref-refund3',
+      status: 'failed',
+      processorRef: 're_2',
+    });
+    await t.run(async (ctx) => {
+      const pool = await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
+        .unique();
+      // 1500 − 500 ONCE (not twice): the second refund event is an audit-only no-op.
+      expect(JSON.parse(pool!.value).donatedCents).toBe(1000);
+      const u = await ctx.db.get(userId);
+      // Donor aggregates + badge unwound (and clamped — never negative).
+      expect(u!.donatedCentsTotal).toBe(0);
+      expect(u!.donationCount).toBe(0);
+      expect(u!.firstDonatedAt).toBeUndefined();
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-refund3'))
+        .unique();
+      expect(order!.donationUnwoundAt).toBeTypeOf('number');
+      // Both refund events still audited (the operator's queue keeps both).
+      const refunds = (await ctx.db.query('auditLog').collect()).filter(
+        (a) => a.action === 'billing.refund_seen',
+      );
+      expect(refunds).toHaveLength(2);
+    });
+  });
+
+  test("PayPal's normal two-event flow does NOT false-positive overpayment (Review C-F1)", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-pp');
+    // Event 1: CHECKOUT.ORDER.APPROVED → captured server-side → paid, storing
+    // the ORDER id as the order's processorRef.
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'paypal',
+      orderRef: 'ref-pp',
+      status: 'paid',
+      processorRef: 'PP-ORDER-1',
+      checkoutRef: 'PP-ORDER-1',
+    });
+    // Event 2: PAYMENT.CAPTURE.COMPLETED — distinct resource (capture id) but
+    // the SAME payment (checkoutRef = the linked order id). Not an overpayment.
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'paypal',
+      orderRef: 'ref-pp',
+      status: 'paid',
+      processorRef: 'CAPTURE-9',
+      checkoutRef: 'PP-ORDER-1',
+    });
+    await t.run(async (ctx) => {
+      const audits = await ctx.db.query('auditLog').collect();
+      expect(audits.some((a) => a.action === 'billing.overpayment_seen')).toBe(false);
+    });
+    // Control: a genuinely DIFFERENT payment (checkoutRef matches neither id)
+    // still audits.
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'paypal',
+      orderRef: 'ref-pp',
+      status: 'paid',
+      processorRef: 'CAPTURE-X',
+      checkoutRef: 'PP-ORDER-OTHER',
+    });
+    await t.run(async (ctx) => {
+      const audits = await ctx.db.query('auditLog').collect();
+      expect(audits.filter((a) => a.action === 'billing.overpayment_seen')).toHaveLength(1);
+    });
+  });
+
   test('a paid grant lifts an idle-deactivated (inactive) account back to active', async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);

@@ -152,18 +152,19 @@ export const get = query({
         donation: {
           enabled: billing.donation.enabled,
           suggestedAmountsCents: billing.donation.suggestedAmountsCents,
-          // Per-amount GB bonus, precomputed (the raw GB-per-dollar rate stays
-          // server-side: with it AND currentBonusGb both public, the month's
-          // donation revenue was exactly derivable — GB-only posture).
-          suggested: billing.donation.suggestedAmountsCents.map((cents: number) => ({
-            cents,
-            bonusGb: (cents / 100) * billing.donation.bonusGbPerUsd,
-          })),
+          // NO per-amount GB map: bonusGb = cents × bonusGbPerUsd, so shipping it
+          // disclosed the raw rate — and with currentBonusGb + history also
+          // public, the month's donation REVENUE became exactly derivable
+          // (defeating the GB-only posture). Amounts only; the rate stays
+          // server-side. (Review B-F3.)
           minAmountCents: billing.donation.minAmountCents,
           monthlyBonusCapGb: billing.donation.monthlyBonusCapGb,
           currentBonusGb,
-          // Active free users the shared bonus reaches (daily-reconciled counter).
-          freeUsersHelped: userCounts.freeActive,
+          // Active free users the shared bonus reaches (daily-reconciled
+          // counter) — rounded DOWN to the nearest 10 so the public bootstrap
+          // doesn't carry an exact live fleet-size signal (the /status page
+          // bands load for the same reason).
+          freeUsersHelped: Math.floor(userCounts.freeActive / 10) * 10,
           // Per-month bonus-GB ledger (last 12; GB only — no dollar amounts).
           history: donationHistory,
         },

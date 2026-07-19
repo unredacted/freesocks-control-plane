@@ -507,6 +507,9 @@ export const AdminStatusSummary = z.object({
       unboundAdmin: 0,
       readyToEnable: false,
     }),
+  // CDN-blinding E2EE posture: FS_E2EE_REQUIRED rejects unsealed member
+  // requests on seal/reveal routes. Additive default for a pre-deploy backend.
+  e2ee: z.object({ required: z.boolean() }).default({ required: false }),
   generatedAt: z.string().datetime(),
 });
 export type AdminStatusSummary = z.infer<typeof AdminStatusSummary>;

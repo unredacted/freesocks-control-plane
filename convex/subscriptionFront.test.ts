@@ -89,6 +89,18 @@ function stubFrontFetch(): void {
   );
 }
 
+// HWID forwarding is gated on the device-enforcement master toggle (Review
+// B-F1) — turn it on for the device-specific tests.
+async function enableDeviceEnforcement(t: ReturnType<typeof convexTest>): Promise<void> {
+  await t.run(async (ctx) => {
+    await ctx.db.insert('appSettings', {
+      key: 'devices.enforcementEnabled',
+      value: 'true',
+      updatedAt: Date.now(),
+    });
+  });
+}
+
 describe('subscription token minting + resolution', () => {
   test('insertSubscription mints a 32-hex token; bySubToken resolves it', async () => {
     const t = convexTest(schema, modules);
@@ -153,6 +165,7 @@ describe('GET /api/v1/sub/<token>', () => {
   test('an x-hwid (device-specific) request is private/no-store and never shared-cached (WS4)', async () => {
     const t = convexTest(schema, modules);
     await seedSub(t);
+    await enableDeviceEnforcement(t);
     const res = await t.fetch('/api/v1/sub/tok_abc', {
       headers: { 'user-agent': 'Karing/1', 'x-hwid': 'device-aaa' },
     });
@@ -211,6 +224,7 @@ describe('GET /api/v1/sub/<token>', () => {
   test('forwards the client HWID headers to the panel fetch', async () => {
     const t = convexTest(schema, modules);
     await seedSub(t);
+    await enableDeviceEnforcement(t);
     await t.fetch('/api/v1/sub/tok_abc', {
       headers: {
         'user-agent': 'Karing/1',
@@ -230,6 +244,7 @@ describe('GET /api/v1/sub/<token>', () => {
   test('an hwid request BYPASSES the cache (each device reaches the panel to register)', async () => {
     const t = convexTest(schema, modules);
     await seedSub(t);
+    await enableDeviceEnforcement(t);
     // Two devices, same UA, different hwid → two panel fetches (no cache collision).
     await t.fetch('/api/v1/sub/tok_abc', {
       headers: { 'user-agent': 'Karing/1', 'x-hwid': 'device-A' },
@@ -249,6 +264,7 @@ describe('GET /api/v1/sub/<token>', () => {
   test('panel 404 (HWID rejection) passes through as 404, not a 502 or a stale body', async () => {
     const t = convexTest(schema, modules);
     await seedSub(t);
+    await enableDeviceEnforcement(t);
     // Prime a cached body for this UA (no hwid) so we can prove 404 doesn't serve it.
     await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Karing/1' } });
     expect(fetchCalls).toBe(1);
@@ -265,6 +281,61 @@ describe('GET /api/v1/sub/<token>', () => {
 
   // Review #11: on a backend outage the stale fallback must match the requester's
   // UA — never serve another client's format. A UA with nothing cached gets 502.
+  test('with device enforcement OFF, x-hwid is NOT forwarded (and the request uses the cache path)', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t); // no enableDeviceEnforcement — the toggle defaults off
+    // Review B-F1: an x-hwid on an enforcement-off deploy has zero panel effect
+    // (FCP never sends a hwidDeviceLimit), so forwarding would only REGISTER
+    // arbitrary devices (the stuffing vector). It must be dropped.
+    const res = await t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'Karing/1', 'x-hwid': 'device-aaa' },
+    });
+    expect(res.status).toBe(200);
+    expect(lastReqHeaders['x-hwid']).toBeUndefined();
+    // Not device-specific → the public cache path applies (Vary + shared TTL).
+    expect(res.headers.get('vary')).toBe('User-Agent');
+    // A second "different device" poll hits the SAME cache entry (no bypass).
+    await t.fetch('/api/v1/sub/tok_abc', {
+      headers: { 'user-agent': 'Karing/1', 'x-hwid': 'device-bbb' },
+    });
+    expect(fetchCalls).toBe(1);
+  });
+
+  test('the per-token rate limit 429s a UA-rotating burst past the cap (Review B-F1)', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    // 60/min per token; rotate the UA so every request is a live panel fetch.
+    let last: Response | null = null;
+    for (let i = 0; i < 61; i++) {
+      last = await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': `Rot/${i}` } });
+    }
+    expect(last!.status).toBe(429);
+    // The cap is per TOKEN, not per IP: an unknown token is a plain 404 (no bucket).
+    const res = await t.fetch('/api/v1/sub/does-not-exist');
+    expect(res.status).toBe(404);
+  });
+
+  test('a deleted subscription resolves as not found (Review D-#12)', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t, { state: 'deleted' });
+    const res = await t.fetch('/api/v1/sub/tok_abc');
+    expect(res.status).toBe(404);
+    expect(fetchCalls).toBe(0);
+    // A tombstoned (grace) row still resolves — the 24h grace URL must work.
+    const t2 = convexTest(schema, modules);
+    await seedSub(t2, { state: 'disabled' });
+    const res2 = await t2.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Clash/1' } });
+    expect(res2.status).toBe(200);
+  });
+
+  test('the panel landing page is sandboxed + nosniff (same-origin XSS guard)', async () => {
+    const t = convexTest(schema, modules);
+    await seedSub(t);
+    const res = await t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': 'Mozilla/5' } });
+    expect(res.headers.get('content-security-policy')).toContain('sandbox');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
   test('backend-down stale fallback never serves another UA’s format', async () => {
     const t = convexTest(schema, modules);
     await seedSub(t);

@@ -469,6 +469,12 @@ export default defineSchema({
     // never the whole paid-orders table — which starved it once paid self-orders
     // outnumbered the page window. (Review #5.)
     giftRevealPending: v.optional(v.boolean()),
+    // Set when a refund-class event unwound this order's donation from the
+    // shared pool (+ the donor aggregates). Guards the unwind to ONCE per order:
+    // Stripe emits one charge.refunded per (partial) refund — each a distinct
+    // dedupe id — so without the flag every event re-subtracted the FULL
+    // donation, over-correcting the pool by an arbitrary multiple. (Review C-F2.)
+    donationUnwoundAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_opaque_ref', ['opaqueRef'])
@@ -491,7 +497,9 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_token_hash', ['tokenHash'])
-    .index('by_creator', ['createdByAdminId']),
+    .index('by_creator', ['createdByAdminId'])
+    // Purge cascade (lifecycle.deleteInactiveUser) drops a user's subject tokens.
+    .index('by_subject_user', ['subjectUserId']),
 
   // Backend instances: one row per deployed proxy server of any backend type
   // (Remnawave, Outline, ...). Generalizes the former `outlineServers` table so
@@ -671,7 +679,10 @@ export default defineSchema({
     .index('by_code_hash', ['codeHash'])
     .index('by_status', ['status'])
     .index('by_batch', ['batchId'])
-    .index('by_purchaser', ['purchasedByUserId']),
+    .index('by_purchaser', ['purchasedByUserId'])
+    // Tier-delete reference check (adminApi.deleteTier) — an O(table) collect in
+    // a mutation trips the read limit as code history grows.
+    .index('by_tier', ['tierId']),
 
   // Referrals (word-of-mouth growth): ONE row per referee (uniqueness enforced
   // in the bind mutation), linking the new account to the member whose

@@ -146,6 +146,12 @@ function issuanceErrorResponse(err: unknown, requestId: string): Response {
  * Centralizes three near-identical copies and removes the risk of a route
  * forgetting the `finally` release (a lock leak). The caller's `run` performs the
  * action call and shapes the success Response. (Review P3.)
+ *
+ * TWO rate limits apply: the per-route policy (caller's policyKey) AND a shared
+ * cross-route bucket ('account.reissue'). The per-route buckets alone let a
+ * member triple their issuance rate by rotating across the three routes; every
+ * re-issue mints a fresh traffic counter, so issuance rate IS quota rate.
+ * (Review D-M3.)
  */
 async function withIssuanceSaga(
   ctx: ActionCtx,
@@ -153,6 +159,15 @@ async function withIssuanceSaga(
   policyKey: string,
   run: (requestId: string) => Promise<Response>,
 ): Promise<Response> {
+  const sharedRl = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey: 'account.reissue',
+    subject: userId,
+  });
+  if (!sharedRl.allowed) {
+    return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
+      retryAfterMs: sharedRl.retryAfterMs,
+    });
+  }
   const rl = await ctx.runMutation(internal.rateLimits.enforce, { policyKey, subject: userId });
   if (!rl.allowed) {
     return errorJson('rate_limit.exceeded', 'Too many changes. Please wait and try again.', 429, {
@@ -169,7 +184,7 @@ async function withIssuanceSaga(
   } catch (err) {
     return issuanceErrorResponse(err, requestId);
   } finally {
-    await ctx.runMutation(internal.account.releaseIssuanceLock, { userId, token: lock.token });
+    await ctx.runMutation(internal.account.releaseIssuanceLock, { userId, token: lock.token! });
   }
 }
 
@@ -246,6 +261,12 @@ function subscriptionResponse(
   const headers: Record<string, string> = {
     'content-type': entry.contentType || 'text/plain',
     ...(entry.headers ?? {}),
+    // The panel legitimately returns an HTML landing page for browser UAs, and
+    // this route serves it SAME-ORIGIN with the SPA + admin CMS. Sandbox it so
+    // panel-injected markup can never execute scripts on the FCP origin
+    // (supply-chain XSS channel), and stop content-type sniffing. (Review B-F2.)
+    'content-security-policy': "sandbox; default-src 'none'",
+    'x-content-type-options': 'nosniff',
   };
   if (opts?.hwid) {
     headers['cache-control'] = 'private, no-store';
@@ -309,7 +330,7 @@ http.route({
   path: '/readyz',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
-    const limited = await throttlePublicGet(ctx, req, 'readyz.fetch');
+    const limited = await throttlePublicGet(ctx, req, 'readyz.fetch', { unknownSubject: true });
     if (limited) return limited;
     try {
       await ctx.runQuery(internal.health.dbPing, {});
@@ -323,17 +344,26 @@ http.route({
 /** Best-effort per-IP throttle for an unauthenticated public GET (origin-DoS
  *  hygiene, not access control). Skips silently when the client IP can't be
  *  resolved (no trusted proxy configured) so a misconfigured proxy never bricks a
- *  public read. Returns a 429 Response when limited, else null. */
+ *  public read — EXCEPT when `unknownSubject` is set, which falls back to one
+ *  shared "unknown" bucket (Review B-F4: /readyz costs a real DB round-trip, so
+ *  a proxy misconfig shouldn't ALSO remove its DoS hygiene). Returns a 429
+ *  Response when limited, else null. */
 async function throttlePublicGet(
   ctx: ActionCtx,
   req: Request,
-  policyKey: 'config.fetch' | 'e2ee.keys.fetch' | 'status.fetch' | 'readyz.fetch',
+  policyKey:
+    | 'config.fetch'
+    | 'e2ee.keys.fetch'
+    | 'status.fetch'
+    | 'readyz.fetch'
+    | 'admin.auth-status.fetch',
+  opts?: { unknownSubject?: boolean },
 ): Promise<Response | null> {
   const ip = resolveClientIp(req);
-  if (!ip) return null;
+  if (!ip && !opts?.unknownSubject) return null;
   const rl = await ctx.runMutation(internal.rateLimits.enforce, {
     policyKey,
-    subject: await ipHashSubject(ip),
+    subject: ip ? await ipHashSubject(ip) : 'unknown-ip',
   });
   if (rl.allowed) return null;
   return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
@@ -879,18 +909,45 @@ http.route({
         'cache-control': 'private, no-store',
         vary: 'user-agent',
       });
+    // Per-TOKEN bucket (Review B-F1): bounds UA-rotating cache-bypass
+    // amplification and HWID device-stuffing per leaked/shared token — the
+    // per-IP bucket above can't (the holder rotates IPs). Enforced only for a
+    // VALID token (after the lookup) so garbage tokens neither fill buckets
+    // nor get a validity-revealing 429. The subject is a short token PREFIX
+    // (ephemeral rate-limit row, swept daily) — never the full capability.
+    const tokenRl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'subscription.fetch.token',
+      subject: `sub:${token.slice(0, 8)}`,
+    });
+    if (!tokenRl.allowed) {
+      return new Response('Too Many Requests', {
+        status: 429,
+        headers: {
+          'retry-after': String(Math.ceil((tokenRl.retryAfterMs ?? 1000) / 1000)),
+          'cache-control': 'private, no-store',
+          vary: 'user-agent',
+        },
+      });
+    }
 
     const now = Date.now();
-    const ua = req.headers.get('user-agent') ?? '';
-    // Forward the client's HWID identification headers so the panel registers
-    // the device + enforces the limit (device-limited tiers). When present we
-    // BYPASS the UA cache: registration is per-device and two devices can share
-    // a UA, so a cached body would both hide the second device from the panel
-    // and mask an over-limit rejection.
+    // Truncate the UA: it's the cache key, so an unbounded UA is an unbounded
+    // cache-bypass amplification vector (each distinct UA = a live panel
+    // fetch). 256 chars covers every real proxy-app UA. (Review B-F1.)
+    const ua = (req.headers.get('user-agent') ?? '').slice(0, 256);
+    // HWID headers are forwarded ONLY when device-limit enforcement is on
+    // (Review B-F1): with the master toggle off FCP never sends a panel-side
+    // hwidDeviceLimit, so forwarding would only REGISTER arbitrary devices
+    // panel-side (the stuffing vector) with zero enforcement benefit. Values
+    // are length-capped like the member device-revoke route.
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
+    const hwidEnabled = settings['devices.enforcementEnabled'] === true;
     const hwidHeaders: Record<string, string> = {};
-    for (const h of ['x-hwid', 'x-device-os', 'x-ver-os', 'x-device-model']) {
-      const val = req.headers.get(h);
-      if (val) hwidHeaders[h] = val;
+    if (hwidEnabled) {
+      for (const h of ['x-hwid', 'x-device-os', 'x-ver-os', 'x-device-model']) {
+        const val = req.headers.get(h);
+        if (val && val.length <= 256) hwidHeaders[h] = val;
+      }
     }
     const hasHwid = 'x-hwid' in hwidHeaders;
     const cached = hasHwid ? [] : parseSubCache(sub.subCache);
@@ -1121,6 +1178,7 @@ http.route({
     const result = await ctx.runAction(internal.auth.rotateAccountId, {
       userId: member.userId,
       requestId: newRequestId(),
+      keepSid: member.sid,
     });
     return json(result);
   }),
@@ -1537,7 +1595,8 @@ http.route({
     // redirect, not a privileged action, and the admin auth surface is unsigned.
     // Gating it on a PoP signature re-prompted already-signed-in admins. See
     // adminSessionProbe. Per-IP throttled: unauthenticated + two queries per call.
-    const limited = await throttlePublicGet(ctx, req, 'status.fetch');
+    // Distinct bucket from the PUBLIC /status page (they previously shared one).
+    const limited = await throttlePublicGet(ctx, req, 'admin.auth-status.fetch');
     if (limited) return limited;
     const adminUserId = await adminSessionProbe(ctx, req);
     const status = await ctx.runQuery(internal.admins.bootstrapStatus, {});
@@ -3243,7 +3302,10 @@ http.route({
   path: '/api/v1/admin/mirror-providers/test-connection',
   method: 'POST',
   handler: sealed(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    // settings:WRITE, not read (Review D-M4): testProviderConnection performs a
+    // state-changing PutObject probe against an operator-supplied endpoint, so
+    // a read-scoped token must not be able to drive it.
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     // Same strict-validator hygiene as backend-servers/test-connection: forward
     // only the fields testProviderConnection declares, so a caller that reuses a

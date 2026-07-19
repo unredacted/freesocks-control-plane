@@ -230,7 +230,16 @@ export const vestReferrerReward = internalMutation({
     if (!refereeLive) return voidIt('referee_lapsed');
 
     const referrer = await ctx.db.get(referral.referrerUserId);
+    // A deleted OR admin-banned referrer does not accrue reward days: for a
+    // banned account applyMembership correctly keeps the ban, but the grant
+    // would still record the tier + extend membershipExpiresAt, quietly banking
+    // days the account keeps if ever un-banned. A merely LAPSED referrer
+    // (membership ran out) is fine — the reward re-activates them, the same as
+    // any grant. (Review C-F6.)
     if (!referrer || referrer.status === 'deleted') return voidIt('referrer_gone');
+    if (referrer.status === 'disabled' && referrer.disabledReason === 'admin_action') {
+      return voidIt('referrer_gone');
+    }
 
     // Monthly cap: rewards VESTED to this referrer since the 1st (UTC).
     const monthStart = new Date(now);

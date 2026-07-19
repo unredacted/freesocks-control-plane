@@ -114,9 +114,10 @@ describe('webhooks.ingest', () => {
       // No grant…
       expect((await ctx.db.get(userId))?.tierId).toBe(freeTierId);
       // …and the claim is TERMINAL (a redelivery dedupes instead of retrying).
+      // The dedupe id is namespaced `generic:` (Review: cross-rail keyspace).
       const evt = await ctx.db
         .query('webhookEvents')
-        .withIndex('by_event_id', (q) => q.eq('eventId', 'evt-badexpiry'))
+        .withIndex('by_event_id', (q) => q.eq('eventId', 'generic:evt-badexpiry'))
         .unique();
       expect(evt?.status).toBe('processed');
     });
@@ -173,7 +174,7 @@ describe('webhooks.ingest', () => {
     await t.run(async (ctx) => {
       const ev = await ctx.db
         .query('webhookEvents')
-        .withIndex('by_event_id', (q) => q.eq('eventId', 'evt-redact'))
+        .withIndex('by_event_id', (q) => q.eq('eventId', 'generic:evt-redact'))
         .unique();
       expect(ev).not.toBeNull();
       expect(ev!.payload).not.toContain(accountId); // full plaintext never stored
@@ -213,7 +214,7 @@ describe('webhooks.ingest', () => {
     await t.run(async (ctx) => {
       const ev = await ctx.db
         .query('webhookEvents')
-        .withIndex('by_event_id', (q) => q.eq('eventId', 'evt-retry'))
+        .withIndex('by_event_id', (q) => q.eq('eventId', 'generic:evt-retry'))
         .unique();
       expect(ev?.status).toBe('failed');
       expect(ev?.processedAt).toBeUndefined();
@@ -227,7 +228,7 @@ describe('webhooks.ingest', () => {
     const expiryAfterRetry = await t.run(async (ctx) => {
       const ev = await ctx.db
         .query('webhookEvents')
-        .withIndex('by_event_id', (q) => q.eq('eventId', 'evt-retry'))
+        .withIndex('by_event_id', (q) => q.eq('eventId', 'generic:evt-retry'))
         .unique();
       expect(ev?.status).toBe('processed');
       expect(ev?.processedAt).toBeGreaterThan(0);
@@ -246,13 +247,15 @@ describe('webhooks.ingest', () => {
   });
 
   // Legacy rows written before the status field existed have status:undefined
-  // (+ processedAt). They must be treated as terminal, never re-granted.
+  // (+ processedAt). They must be treated as terminal, never re-granted. (The
+  // `generic:` dedupe namespace predates this test's row; the "legacy" aspect
+  // under test is the missing STATUS, not the prefix.)
   test('a legacy status-less event row is a terminal duplicate', async () => {
     const t = convexTest(schema, modules);
     const { userId, accountId, freeTierId } = await seedUserAndTiers(t);
     await t.run(async (ctx) => {
       await ctx.db.insert('webhookEvents', {
-        eventId: 'evt-legacy',
+        eventId: 'generic:evt-legacy',
         source: 'billing',
         payload: '{}',
         processedAt: Date.now(),
@@ -281,9 +284,76 @@ describe('webhooks.ingest', () => {
     await t.run(async (ctx) => {
       const ev = await ctx.db
         .query('webhookEvents')
-        .withIndex('by_event_id', (q) => q.eq('eventId', 'evt-ack-processed'))
+        .withIndex('by_event_id', (q) => q.eq('eventId', 'generic:evt-ack-processed'))
         .unique();
       expect(ev?.status).toBe('processed');
+    });
+  });
+
+  // Review E-M2: the dedupe claim only covers the webhookEvents retention
+  // window. A captured, validly-signed body replayed AFTER the sweep re-claims
+  // — and without the stale guard it would re-apply the ORIGINAL expiry,
+  // regressing (even lapsing) a since-renewed member on every replay.
+  describe('stale-replay guard (Review E-M2)', () => {
+    test('a replayed event with an EARLIER expiry than the member’s current one is refused', async () => {
+      const t = convexTest(schema, modules);
+      const { userId, accountId, memberTierId } = await seedUserAndTiers(t);
+      // The member's current expiry: ~60 days out.
+      const currentExpiry = Date.now() + 60 * 86_400_000;
+      await t.run(async (ctx) => {
+        await ctx.db.patch(userId, {
+          tierId: memberTierId,
+          membershipExpiresAt: currentExpiry,
+          updatedAt: Date.now(),
+        });
+      });
+      // Replay an OLD event (fresh eventId, as a post-retention replay would
+      // be) whose original grant ended ~30 days out — EARLIER than current.
+      const body = JSON.stringify({
+        eventId: 'evt-stale',
+        accountId,
+        tierSlug: 'member',
+        expiresAtMs: Date.now() + 30 * 86_400_000,
+      });
+      const signature = await hmacSha256Hex(SECRET, body);
+      const res = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
+      expect(res).toEqual({ ok: true, applied: false, reason: 'stale_replay' });
+      await t.run(async (ctx) => {
+        // The member's expiry did NOT regress…
+        expect((await ctx.db.get(userId))?.membershipExpiresAt).toBe(currentExpiry);
+        // …and the event is terminally processed (no retry churn).
+        const ev = await ctx.db
+          .query('webhookEvents')
+          .withIndex('by_event_id', (q) => q.eq('eventId', 'generic:evt-stale'))
+          .unique();
+        expect(ev?.status).toBe('processed');
+      });
+    });
+
+    test('a NEW event with a LATER expiry still applies (the guard only blocks regression)', async () => {
+      const t = convexTest(schema, modules);
+      const { userId, accountId, memberTierId } = await seedUserAndTiers(t);
+      const currentExpiry = Date.now() + 10 * 86_400_000;
+      await t.run(async (ctx) => {
+        await ctx.db.patch(userId, {
+          tierId: memberTierId,
+          membershipExpiresAt: currentExpiry,
+          updatedAt: Date.now(),
+        });
+      });
+      const laterExpiry = Date.now() + 40 * 86_400_000;
+      const body = JSON.stringify({
+        eventId: 'evt-renew',
+        accountId,
+        tierSlug: 'member',
+        expiresAtMs: laterExpiry,
+      });
+      const signature = await hmacSha256Hex(SECRET, body);
+      const res = await t.action(internal.webhooks.ingest, { rawBody: body, signature });
+      expect(res).toEqual({ ok: true, applied: true });
+      await t.run(async (ctx) => {
+        expect((await ctx.db.get(userId))?.membershipExpiresAt).toBe(laterExpiry);
+      });
     });
   });
 });

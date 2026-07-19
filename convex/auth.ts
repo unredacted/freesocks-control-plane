@@ -105,15 +105,16 @@ export const accountLogin = internalAction({
     //    P2: the prefix limit is scoped per-IP (not global-per-prefix), so it
     //    can't be abused as a cross-user lockout lever — one attacker can no
     //    longer exhaust the daily budget for everyone sharing a 4-digit prefix.
-    let ipHash: string | null = null;
-    if (ip) {
-      const salt = process.env.IP_HASH_SALT;
-      if (!salt) throw new Error('IP_HASH_SALT must be set');
-      ipHash = await hmacSha256Hex(salt, ip);
-    }
+    //    The IP is REQUIRED (Review B-F7): the HTTP layer fails closed when it
+    //    can't resolve one; if a future caller ever passes none we must throw
+    //    rather than silently degrade to the global-per-prefix bucket P2 killed.
+    if (!ip) throw new Error('accountLogin requires a resolved client IP');
+    const salt = process.env.IP_HASH_SALT;
+    if (!salt) throw new Error('IP_HASH_SALT must be set');
+    const ipHash = await hmacSha256Hex(salt, ip);
     const prefixRl = await ctx.runMutation(internal.rateLimits.enforce, {
       policyKey: 'account-login.prefix',
-      subject: ipHash ? `${prefix}:${ipHash}` : prefix,
+      subject: `${prefix}:${ipHash}`,
     });
 
     if (!validFormat || !prefixRl.allowed) return failInvalid();
@@ -180,9 +181,19 @@ export const accountLogin = internalAction({
  * userId. The old number stops working immediately. Audited (never the number).
  */
 export const rotateAccountId = internalAction({
-  args: { userId: v.id('users'), requestId: v.optional(v.string()) },
-  handler: async (ctx, { userId, requestId }): Promise<{ accountId: string }> => {
+  args: {
+    userId: v.id('users'),
+    requestId: v.optional(v.string()),
+    /** The caller's current session sid (cookie auth): kept alive; every OTHER
+     *  session is revoked, since the credential that minted them is now dead. */
+    keepSid: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, requestId, keepSid }): Promise<{ accountId: string }> => {
     const minted = await ctx.runAction(internal.accountId.mintForUser, { userId, rotate: true });
+    // The old number stops working immediately — and so must every session it
+    // minted. Revoking only the credential would leave a captured-session holder
+    // authenticated for up to the 30-day TTL, defeating the rotation.
+    await ctx.runMutation(internal.sessions.deleteAllForUserExcept, { userId, keepSid });
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',
       actorId: userId,

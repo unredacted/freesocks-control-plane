@@ -146,13 +146,13 @@ describe('account issuance lock (P1-3)', () => {
     const userId = await seedUser(t, tierId);
 
     // acquire now also returns an owner nonce (Review #7).
-    expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
-      true,
-    );
+    const first = await t.mutation(internal.account.acquireIssuanceLock, { userId });
+    expect(first.acquired).toBe(true);
     expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
       false,
     );
-    await t.mutation(internal.account.releaseIssuanceLock, { userId }); // legacy tokenless release
+    // Release REQUIRES the holder's token (Review D-#9 — no tokenless escape hatch).
+    await t.mutation(internal.account.releaseIssuanceLock, { userId, token: first.token! });
     expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
       true,
     );
@@ -189,7 +189,7 @@ describe('account issuance lock (P1-3)', () => {
       false,
     );
     // …but the real holder's token does.
-    await t.mutation(internal.account.releaseIssuanceLock, { userId, token: held.token });
+    await t.mutation(internal.account.releaseIssuanceLock, { userId, token: held.token! });
     expect((await t.mutation(internal.account.acquireIssuanceLock, { userId })).acquired).toBe(
       true,
     );

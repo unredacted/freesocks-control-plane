@@ -67,7 +67,7 @@
 
     <ul class="max-h-60 space-y-1 overflow-auto rounded-md border border-border bg-muted p-3">
       {#each codes as code (code)}
-        <li class="select-all font-mono text-sm tracking-wider break-all">{code}</li>
+        <li dir="ltr" class="select-all font-mono text-sm tracking-wider break-all">{code}</li>
       {/each}
     </ul>
 

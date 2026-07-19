@@ -84,9 +84,10 @@ export const registerBootstrapOptions = internalAction({
       attestationType: 'none',
       // residentKey:'required' makes the passkey DISCOVERABLE, which is what lets
       // the admin sign in later with no username (the authenticator can surface
-      // it without an allowCredentials hint). userVerification stays 'preferred'
-      // so an authenticator without a biometric/PIN isn't rejected outright.
-      authenticatorSelection: { residentKey: 'required', userVerification: 'preferred' },
+      // it without an allowCredentials hint). userVerification is 'required' for
+      // the ADMIN realm: a stolen PIN-less authenticator must not yield full
+      // admin — possession alone is not enough (Review A#4).
+      authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
     });
     await ctx.runMutation(internal.admins.insertRegistrationChallenge, {
       adminUserId: adminId,
@@ -200,7 +201,9 @@ export const authenticateOptions = internalAction({
     const { rpId } = webauthnConfig();
     const options = await generateAuthenticationOptions({
       rpID: rpId,
-      userVerification: 'preferred',
+      // Admin realm: demand user verification (PIN/biometric) on every
+      // assertion — possession of the authenticator alone is not enough.
+      userVerification: 'required',
       // Omit (not []) when usernameless so the browser does discoverable-credential
       // selection rather than restricting to a (empty) list.
       allowCredentials: allowCredentialIds.length

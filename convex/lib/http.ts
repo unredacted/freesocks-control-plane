@@ -117,8 +117,11 @@ export async function readJson<T = Record<string, unknown>>(
 
 /**
  * Plaintext-route wrapper that converts a PayloadTooLargeError (thrown by
- * readJson/readBodyTextCapped) into the 413 envelope. Sealed routes get the
- * same mapping inside lib/e2ee.sealed(), which reads the wire body itself.
+ * readJson/readBodyTextCapped) into the 413 envelope, and any UNCAUGHT handler
+ * error into a generic 500 envelope (Review B-F9: routes without a handler-level
+ * catch otherwise surface runtime 500 text — internal detail, if not secrets).
+ * Sealed routes get the same mapping inside lib/e2ee.sealed(), which reads the
+ * wire body itself.
  */
 export function guard(handler: (ctx: ActionCtx, req: Request) => Promise<Response>) {
   return httpAction(async (ctx, req) => {
@@ -128,7 +131,8 @@ export function guard(handler: (ctx: ActionCtx, req: Request) => Promise<Respons
       if (e instanceof PayloadTooLargeError) {
         return errorJson('request.too_large', 'Request body too large', 413);
       }
-      throw e;
+      console.error(`[http] unhandled route error: ${e instanceof Error ? e.message : String(e)}`);
+      return errorJson('server.error', 'Something went wrong. Please try again later.', 500);
     }
   });
 }
@@ -325,6 +329,9 @@ export interface MemberAuth {
   userId: Id<'users'>;
   source: 'cookie' | 'token';
   scopes?: string[];
+  /** The cookie session's sid (cookie source only) — lets privileged flows
+   *  (e.g. account-id rotation) revoke all OTHER sessions but keep the caller's. */
+  sid?: string;
 }
 
 /**
@@ -358,7 +365,7 @@ export async function resolveMember(
         if (
           await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken, sess.popAlg)
         ) {
-          member = { userId: sess.userId, source: 'cookie' };
+          member = { userId: sess.userId, source: 'cookie', sid };
         }
         // Bound session without a valid PoP signature: fall through (no bearer
         // present -> unauthenticated, which forces re-auth per the re-bind rule).

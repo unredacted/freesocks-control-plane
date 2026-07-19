@@ -138,6 +138,20 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // A referral's pending/converted reward was voided (refund, referee lapse,
   // program disabled, cap, referrer gone).
   'referral.void': ['reason', 'referrerUserId'],
+  // Referral lifecycle: code bound at account creation, first paid grant
+  // converted, referrer bonus vested. Non-secret ids/day counts only.
+  'referral.bound': ['referrerUserId'],
+  'referral.converted': ['referrerUserId', 'refereeBonusDays'],
+  'referral.rewarded': ['referrerUserId', 'refereeUserId', 'referrerBonusDays'],
+  // Referral-program config from the admin billing card — the payload is the
+  // written key→value map; all five values are validated booleans/integers.
+  'referral.config.update': [
+    'referral.enabled',
+    'referral.refereeBonusDays',
+    'referral.referrerBonusDays',
+    'referral.vestingDays',
+    'referral.maxRewardsPerMonth',
+  ],
   // A webhook claim whose grant threw (retryable only until the sender gives
   // up) — surfaced on the admin billing page as money-at-risk.
   'billing.webhook.grant_failed': ['source'],
@@ -184,9 +198,10 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.tier.upsert': ['slug', 'backend', 'created'],
   // Admin/IaC edits a connection-mode label/description/default (generic).
   'admin.connection_mode.update': ['key'],
-  // Admin/IaC binds a mode's Remnawave placement pool. `poolBound` is a boolean —
-  // the squad UUIDs are NEVER logged (only which mode's pool + whether it's set).
-  'admin.remnawave.mode_placement.update': ['key', 'poolBound'],
+  // Admin/IaC binds a mode's Remnawave placement pool. `poolBound`/`boundCount`
+  // are booleans/counts — the squad UUIDs are NEVER logged (only which mode's
+  // pool + whether/how many it's bound to).
+  'admin.remnawave.mode_placement.update': ['key', 'poolBound', 'boundCount'],
   // Admin enforced the no-client-IP-logging posture on the Remnawave config
   // profiles (Xray log/policy). Counts only — no config content is logged.
   'admin.remnawave.logging_hardened': ['instances', 'profilesChanged', 'profilesTotal'],

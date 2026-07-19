@@ -503,7 +503,17 @@ export const applyEvent = internalMutation({
     // deliberately NOT auto-revoked (a refund may be partial/mistaken); the
     // audit rows are the operator's action queue.
     if (order.status === 'paid') {
-      if (a.status === 'paid' && order.processorRef && a.processorRef !== order.processorRef) {
+      // PayPal's NORMAL two-event flow would otherwise false-positive here:
+      // CHECKOUT.ORDER.APPROVED (resource id = order id) and
+      // PAYMENT.CAPTURE.COMPLETED (resource id = capture id) arrive with
+      // distinct payment ids for ONE payment. The capture event's checkoutRef
+      // (the linked ORDER id) matches the stored processorRef, so it's the same
+      // payment — only a paid event that matches NEITHER id is a real second
+      // payment. (Review C-F1: every PayPal order poisoned this audit queue.)
+      const isSamePayment =
+        a.processorRef === order.processorRef ||
+        (a.checkoutRef != null && a.checkoutRef === order.processorRef);
+      if (a.status === 'paid' && order.processorRef && !isSamePayment) {
         await writeAuditLog(ctx, {
           actorType: 'webhook',
           actorId: order.userId,
@@ -534,11 +544,28 @@ export const applyEvent = internalMutation({
         // — a refund may be partial/mistaken; billing.refund_seen is the
         // operator's action queue):
         // 1. The order's donation leaves the shared free-bandwidth pool (it was
-        //    funded by money that no longer exists).
+        //    funded by money that no longer exists) — ONCE per order. Stripe
+        //    emits one charge.refunded per (partial) refund, each a distinct
+        //    dedupe id; without donationUnwoundAt every event re-subtracted the
+        //    FULL donation, so two $1 chargebacks wiped a $100 pool contribution.
+        //    (Review C-F2.) The donor's lifetime aggregates + badge unwind with
+        //    it (C-F5: they previously survived a full chargeback).
         const donated = order.donationCents ?? (order.kind === 'donation' ? order.amountCents : 0);
-        if (donated > 0) {
-          await subtractDonation(ctx, donated, Date.now());
+        if (donated > 0 && order.donationUnwoundAt == null) {
+          const refundNow = Date.now();
+          await ctx.db.patch(order._id, { donationUnwoundAt: refundNow, updatedAt: refundNow });
+          await subtractDonation(ctx, donated, refundNow);
           await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
+          const donor = await ctx.db.get(order.userId);
+          if (donor) {
+            const count = Math.max(0, (donor.donationCount ?? 0) - 1);
+            await ctx.db.patch(order.userId, {
+              donatedCentsTotal: Math.max(0, (donor.donatedCentsTotal ?? 0) - donated),
+              donationCount: count,
+              ...(count === 0 ? { firstDonatedAt: undefined } : {}),
+              updatedAt: refundNow,
+            });
+          }
         }
         // 2. Referral rewards the refunded purchase triggered never vest (only
         //    pending/converted rows — an already-rewarded row stays, same

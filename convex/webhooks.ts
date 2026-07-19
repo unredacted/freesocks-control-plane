@@ -57,6 +57,9 @@ export const ingest = internalAction({
     // grant that threw isn't silently dropped by the sender's retry. Persist a
     // REDACTED payload: the raw body carries the account-number plaintext,
     // which must never be stored; keep only the 4-digit prefix for tracing.
+    // The dedupe id is namespaced (`generic:`) so a generic-seam eventId can
+    // never pre-claim a processor rail's id (their adapters prefix their own).
+    const dedupeId = `generic:${eventId}`;
     const safePayload = JSON.stringify({
       eventId,
       accountIdPrefix: normalizeAccountId(accountId).slice(0, 4),
@@ -64,7 +67,7 @@ export const ingest = internalAction({
       expiresAtMs: expiresAtMs ?? null,
     });
     const claim = await ctx.runMutation(internal.webhooks.claimEvent, {
-      eventId,
+      eventId: dedupeId,
       source: 'billing',
       payload: safePayload,
     });
@@ -79,7 +82,7 @@ export const ingest = internalAction({
       let expiryMs: number | null = null;
       if (expiresAtMs != null) {
         if (typeof expiresAtMs !== 'number' || !Number.isFinite(expiresAtMs) || expiresAtMs <= 0) {
-          await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId });
+          await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: dedupeId });
           return { ok: true, applied: false, reason: 'invalid_expiresAtMs' };
         }
         // < 1e12 is before Sep 2001 in ms — the sender meant seconds.
@@ -94,14 +97,30 @@ export const ingest = internalAction({
       // Unknown user/tier is a permanent ACK (the sender must stop retrying),
       // so mark processed — only an exception below leaves the claim retryable.
       if (!user) {
-        await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId });
+        await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: dedupeId });
         return { ok: true, applied: false, reason: 'unknown_user' };
       }
 
       const tier = await ctx.runQuery(internal.tiers.getBySlug, { slug: tierSlug });
       if (!tier) {
-        await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId });
+        await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: dedupeId });
         return { ok: true, applied: false, reason: 'unknown_tier' };
+      }
+
+      // Stale-replay guard (Review E-M2): the dedupe claim only covers the
+      // webhookEvents retention window (90d), and this generic seam has no
+      // order-level paid guard (unlike the processor rails) — so a captured,
+      // validly-signed body replayed AFTER the sweep would re-claim and
+      // re-apply the ORIGINAL expiry, regressing (even lapsing) a since-renewed
+      // member on every replay. Refuse any grant whose expiry is BELOW the
+      // member's current one: such an event carries no new information.
+      if (
+        expiryMs !== null &&
+        user.membershipExpiresAt != null &&
+        expiryMs < user.membershipExpiresAt
+      ) {
+        await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: dedupeId });
+        return { ok: true, applied: false, reason: 'stale_replay' };
       }
 
       await ctx.runMutation(internal.lifecycle.setMembership, {
@@ -111,10 +130,10 @@ export const ingest = internalAction({
         reason: 'billing.webhook',
         triggeredBy: 'webhook',
       });
-      await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId });
+      await ctx.runMutation(internal.webhooks.markEventProcessed, { eventId: dedupeId });
       return { ok: true, applied: true };
     } catch (err) {
-      await ctx.runMutation(internal.webhooks.markEventFailed, { eventId });
+      await ctx.runMutation(internal.webhooks.markEventFailed, { eventId: dedupeId });
       throw err;
     }
   },

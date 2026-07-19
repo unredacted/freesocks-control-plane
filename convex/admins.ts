@@ -220,6 +220,14 @@ export const insertAuthChallenge = internalMutation({
     ttlMs: v.number(),
   },
   handler: async (ctx, { challengeId, challenge, adminUserId, ttlMs }) => {
+    // Uniqueness read-check (the codebase convention): cryptographically
+    // unreachable, but the `.unique()` reader throws on any dup, so fail the
+    // insert instead of poisoning the lookup.
+    const clash = await ctx.db
+      .query('webauthnAuthChallenges')
+      .withIndex('by_challenge_id', (q) => q.eq('challengeId', challengeId))
+      .unique();
+    if (clash) throw new Error('webauthn challenge id collision');
     await ctx.db.insert('webauthnAuthChallenges', {
       challengeId,
       challenge,
@@ -410,6 +418,13 @@ export const insertInvite = internalMutation({
     ttlMs: v.number(),
   },
   handler: async (ctx, { adminUserId, tokenHash, tokenPrefix, createdByAdminId, ttlMs }) => {
+    // Uniqueness read-check (the codebase convention): cryptographically
+    // unreachable, but the `.unique()` reader throws on any dup.
+    const clash = await ctx.db
+      .query('adminInvites')
+      .withIndex('by_token_hash', (q) => q.eq('tokenHash', tokenHash))
+      .unique();
+    if (clash) throw new Error('admin invite token collision');
     await ctx.db.insert('adminInvites', {
       adminUserId,
       tokenHash,

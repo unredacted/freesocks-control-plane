@@ -18,6 +18,7 @@ import { ConvexError, v } from 'convex/values';
 import { randomHex } from './lib/crypto';
 import { issueNewSubscription } from './lib/issuance';
 import {
+  applyUsageCarryover,
   computeExpireAtIso,
   resolveHwidLimit,
   resolveTrafficLimitBytes,
@@ -59,6 +60,37 @@ async function auditIfPlacementless(
 }
 
 const TOMBSTONE_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Quota carryover (Review D-M3): a re-issue mints a FRESH backend traffic
+ * counter while the superseded key keeps routing for the 24h tombstone grace,
+ * so every regenerate/switch used to multiply the member's effective quota
+ * (scripted churn compounded it by orders of magnitude). Read the old key's
+ * live usedTrafficBytes and shrink the new key's limit by it, so the member's
+ * period quota is preserved across the re-issue instead of reset.
+ *
+ * Best-effort: a panel blip (or an already-gone old key) must not block
+ * re-issue — there is usually nothing to carry then. A fully-spent quota
+ * carries as 1 byte, NOT 0: 0 means UNLIMITED to Remnawave (and 'blocked' to
+ * Outline), so 1 byte is the only value that reads as "spent" on both.
+ */
+async function carriedTrafficLimit(
+  ctx: ActionCtx,
+  oldSub: { backend: Backend; backendUserId: string } | null,
+  limitBytes: number | null,
+): Promise<number | null> {
+  if (limitBytes === null || !oldSub) return limitBytes;
+  try {
+    const state = await ctx.runAction(internal.backends.getUser, {
+      backend: oldSub.backend,
+      backendUserId: oldSub.backendUserId,
+    });
+    return applyUsageCarryover(limitBytes, state.usedTrafficBytes ?? 0);
+  } catch {
+    console.warn('[account] usage-carryover read failed; issuing at the full tier limit');
+    return limitBytes;
+  }
+}
 
 /**
  * Tombstone the superseded key (24h grace), with a bounded-retry backstop: a
@@ -173,7 +205,10 @@ export const acquireIssuanceLock = internalMutation({
 });
 
 export const releaseIssuanceLock = internalMutation({
-  args: { userId: v.id('users'), token: v.optional(v.string()) },
+  // The token is REQUIRED (Review D-#9): a tokenless call deleted ANY holder's
+  // lock, silently defeating the owner-check (Review #7) for every future call
+  // site that forgot to pass it.
+  args: { userId: v.id('users'), token: v.string() },
   handler: async (ctx, { userId, token }): Promise<null> => {
     const row = await ctx.db
       .query('appState')
@@ -184,7 +219,7 @@ export const releaseIssuanceLock = internalMutation({
     // saga whose lock already expired + was re-acquired by another can't delete the
     // NEW holder's lock. (Review #7.)
     const held = parseLock(row.value).token;
-    if (token && held && held !== token) return null;
+    if (held && held !== token) return null;
     await ctx.db.delete(row._id);
     return null;
   },
@@ -575,7 +610,11 @@ export const regenerate = internalAction({
       backend: tier.backend,
       spec: {
         username: `freesocks-${tier.slug}-${randomHex(8)}`,
-        trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
+        trafficLimitBytes: await carriedTrafficLimit(
+          ctx,
+          oldSub,
+          resolveTrafficLimitBytes(tier, bonusGb),
+        ),
         trafficLimitStrategy: tier.trafficStrategy,
         // Member term, else the free window — Remnawave requires a real date.
         expireAt: computeExpireAtIso(user.membershipExpiresAt, freeExpiryDays),
@@ -697,7 +736,11 @@ export const switchBackend = internalAction({
       backend: peerTier.backend,
       spec: {
         username: `freesocks-${peerTier.slug}-${randomHex(8)}`,
-        trafficLimitBytes: resolveTrafficLimitBytes(peerTier, bonusGb),
+        trafficLimitBytes: await carriedTrafficLimit(
+          ctx,
+          oldSub,
+          resolveTrafficLimitBytes(peerTier, bonusGb),
+        ),
         trafficLimitStrategy: peerTier.trafficStrategy,
         // Entitlement unchanged by a backend switch: keep the member's term / free window.
         expireAt: computeExpireAtIso(
@@ -848,7 +891,11 @@ export const switchMode = internalAction({
         backend: tier.backend,
         spec: {
           username: `freesocks-${tier.slug}-${randomHex(8)}`,
-          trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
+          trafficLimitBytes: await carriedTrafficLimit(
+            ctx,
+            oldSub,
+            resolveTrafficLimitBytes(tier, bonusGb),
+          ),
           trafficLimitStrategy: tier.trafficStrategy,
           expireAt: computeExpireAtIso(
             user.membershipExpiresAt,
@@ -921,6 +968,17 @@ export const switchMode = internalAction({
       // a squad clear onto a live key. (The per-mode unbound case was rejected
       // above.)
       if (nodePlacement !== null) {
+        // Persist BEFORE the panel PATCH (Review D-#6): a concurrent
+        // pushTierToBackend reads the PERSISTED placement — with DB-first, a
+        // push landing mid-switch re-sends the NEW placement (exactly what the
+        // PATCH is about to do), so panel and DB stay convergent. The old
+        // order (PATCH → persist) let such a push silently revert the squad
+        // move while the DB recorded it. On PATCH failure we restore the old
+        // persisted placement so the DB never claims a move that didn't happen.
+        await ctx.runMutation(internal.subscriptions.setPlacementAndClearCache, {
+          subscriptionId: oldSub._id,
+          placement: nodePlacement,
+        });
         try {
           await ctx.runAction(internal.backends.updateUser, {
             backend: 'remnawave',
@@ -929,12 +987,12 @@ export const switchMode = internalAction({
           });
         } catch (e) {
           console.warn('[switchMode] in-place placement update failed; re-issuing', e);
+          await ctx.runMutation(internal.subscriptions.setPlacementAndClearCache, {
+            subscriptionId: oldSub._id,
+            placement: oldSub.backendPlacement ?? null,
+          });
           return reissue();
         }
-        await ctx.runMutation(internal.subscriptions.setPlacementAndClearCache, {
-          subscriptionId: oldSub._id,
-          placement: nodePlacement,
-        });
         await ctx.runMutation(internal.users.setConnectionMode, { userId, modeId: target });
         if (tier.isDefaultFree) {
           await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
@@ -997,11 +1055,25 @@ export const revokeDevice = internalAction({
       };
     }
 
+    // Backend failures (a RemnawaveApiError carries a panel-body slice) must be
+    // mapped to a generic result HERE — otherwise they escape the route and
+    // surface as a runtime 500 with panel text attached (every other member
+    // route maps backend errors to a clean 502). (Review D-#5.)
+    let state;
+    try {
+      state = await ctx.runAction(internal.backends.getUser, {
+        backend: sub.backend,
+        backendUserId: sub.backendUserId,
+      });
+    } catch {
+      return {
+        ok: false,
+        code: 'devices.unavailable',
+        message: 'Device service is unavailable right now. Please try again later.',
+        status: 502,
+      };
+    }
     // Ownership check: the hwid must be on the member's own key right now.
-    const state = await ctx.runAction(internal.backends.getUser, {
-      backend: sub.backend,
-      backendUserId: sub.backendUserId,
-    });
     if (!state.devices.some((d) => d.hwid === hwid)) {
       return {
         ok: false,
@@ -1011,11 +1083,20 @@ export const revokeDevice = internalAction({
       };
     }
 
-    await ctx.runAction(internal.backends.revokeDevice, {
-      backend: sub.backend,
-      backendUserId: sub.backendUserId,
-      hwid,
-    });
+    try {
+      await ctx.runAction(internal.backends.revokeDevice, {
+        backend: sub.backend,
+        backendUserId: sub.backendUserId,
+        hwid,
+      });
+    } catch {
+      return {
+        ok: false,
+        code: 'devices.unavailable',
+        message: 'Device service is unavailable right now. Please try again later.',
+        status: 502,
+      };
+    }
     await ctx.runMutation(internal.audit.record, {
       actorType: 'member',
       actorId: userId,

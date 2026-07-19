@@ -43,6 +43,19 @@ export function resolveTrafficLimitBytes(
 }
 
 /**
+ * The new key's traffic limit after carrying the superseded key's used bytes
+ * forward (Review D-M3): a re-issue mints a FRESH backend counter while the old
+ * key routes for the 24h tombstone grace, so without the carryover every
+ * regenerate/switch multiplied the member's effective quota. 0 is NEVER
+ * returned: it means UNLIMITED to Remnawave (and 'blocked' to Outline), so a
+ * fully-spent quota carries as 1 byte — the only value that reads as "spent"
+ * on both backends.
+ */
+export function applyUsageCarryover(limitBytes: number, usedBytes: number): number {
+  return Math.max(1, limitBytes - Math.max(0, Math.floor(usedBytes)));
+}
+
+/**
  * The backend `expireAt` (ISO) for a user: a paid member's purchased term
  * (`membershipExpiresAt`), else the free-account window (now + `freeExpiryDays`).
  * Remnawave REQUIRES a date — FCP's lifecycle is still the source of truth for
@@ -53,7 +66,14 @@ export function computeExpireAtIso(
   membershipExpiresAtMs: number | null | undefined,
   freeExpiryDays: number,
 ): string {
-  const ms = membershipExpiresAtMs ?? Date.now() + freeExpiryDays * DAY_MS;
+  const now = Date.now();
+  let ms = membershipExpiresAtMs ?? now + freeExpiryDays * DAY_MS;
+  // A LAPSED member's stored expiry is in the past — and Remnawave's create
+  // DTO rejects past dates, which made self-serve regenerate fail permanently
+  // for exactly the members most likely to need it. Clamp to a near-future
+  // grace (the grace sweep owns actual disablement), mirroring the update
+  // path's past-date clamp. (Review D-#7.)
+  if (ms <= now) ms = now + 5 * 60_000;
   return new Date(ms).toISOString();
 }
 

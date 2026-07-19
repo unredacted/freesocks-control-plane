@@ -47,16 +47,24 @@ export async function verifyCaptcha(token: string): Promise<CaptchaResult> {
   if (!token) return { success: false, configured: true, errorCodes: ['missing-token'] };
 
   const url = `${endpoint.replace(/\/$/, '')}/${siteKey}/siteverify`;
+  // Bound the outbound wait (Review B-F6): a wedged Cap container otherwise
+  // hangs every login/create attempt until the platform action timeout instead
+  // of fast-failing closed.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ secret, response: token }),
+      signal: controller.signal,
     });
     if (!res.ok) return { success: false, configured: true, errorCodes: [`http-${res.status}`] };
     const json = (await res.json()) as { success?: boolean };
     return { success: Boolean(json.success), configured: true };
   } catch {
     return { success: false, configured: true, errorCodes: ['exception'] };
+  } finally {
+    clearTimeout(timer);
   }
 }

@@ -35,6 +35,7 @@ import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { sanitizeBannerText, sanitizeEmail, sanitizeHeroTitles } from './lib/siteConfig';
 import { normalizeSupportId } from './lib/supportId';
+import { checkInfraUrl } from './lib/urlSafety';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import {
@@ -398,9 +399,14 @@ export const deleteTier = internalMutation({
       });
     }
     // Membership codes minted against this tier brick on delete (redeem looks
-    // the tier up) — refuse while any exist, active or spent.
-    const codes = await ctx.db.query('redemptionCodes').collect();
-    if (codes.some((c) => c.tierId === id)) {
+    // the tier up) — refuse while any exist, active or spent. Indexed lookup:
+    // a full-table collect inside a mutation trips the read limit as code
+    // history grows. (Review E.)
+    const codeRef = await ctx.db
+      .query('redemptionCodes')
+      .withIndex('by_tier', (q) => q.eq('tierId', id))
+      .first();
+    if (codeRef) {
       throw new ConvexError({
         code: 'tier.in_use',
         message: 'Cannot delete a tier that still has membership codes. Revoke them first.',
@@ -452,6 +458,10 @@ export const upsertTierBySlug = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
+    // Same runtime bounds as createTier/updateTier (Review E): the by-slug IaC
+    // path is reachable with an fsv1_ token holding only admin:tiers:write and
+    // previously persisted values the CMS could never send (negative limits).
+    checkTierBounds(a);
     const existing = await ctx.db
       .query('tiers')
       .withIndex('by_slug', (q) => q.eq('slug', a.slug))
@@ -836,11 +846,12 @@ export const runUserOp = internalAction({
       const sub = await ctx.runQuery(internal.adminApi.activeSubForUser, { userId });
       if (sub) {
         try {
-          await ctx.runAction(internal.backends.setUserStatus, {
-            backend: sub.backend,
-            backendUserId: sub.backendUserId,
-            active: true,
-          });
+          // A bare setUserStatus(true) must NOT be used here: on Outline,
+          // "enable" DELETES the data limit, leaving the key uncapped until the
+          // next tier push (possibly never). pushTierToBackend re-enables AND
+          // re-sends the full tier spec (traffic limit included), the same path
+          // a renewal takes. (Review D-M6.)
+          await ctx.runAction(internal.lifecycle.pushTierToBackend, { userId });
           await ctx.runMutation(internal.lifecycle.setBackendDrift, { userId, failed: false });
         } catch {
           // Local state is authoritative, but the key may still be disabled on
@@ -1192,15 +1203,12 @@ function checkLocation(a: { location?: string | null; locationLabel?: string | n
  * upsertBackendServerBySlug's create path. (Review P3: was inlined twice.)
  */
 function buildBackendServerConfig(a: BackendServerConfigArgs): BackendServerConfig {
-  // URL shape check (the zod contract requires .url(); v.string() accepts
-  // anything — a malformed URL only fails later, at healthcheck time).
+  // URL shape + SSRF denylist check (the zod contract requires .url(); v.string()
+  // accepts anything — and a registered baseUrl/apiUrl is a durable outbound-
+  // request primitive, see lib/urlSafety.ts).
   const checkUrl = (raw: string, label: string): void => {
-    try {
-      const u = new URL(raw);
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error();
-    } catch {
-      throw new ConvexError({ code: 'validation', message: `${label} must be an http(s) URL` });
-    }
+    const res = checkInfraUrl(raw);
+    if (!res.ok) throw new ConvexError({ code: 'validation', message: `${label} ${res.reason}` });
   };
   if (a.backend === 'remnawave') {
     if (!a.baseUrl || !a.apiToken)
@@ -1229,14 +1237,26 @@ function mergeBackendServerConfig(
   existing: BackendServerConfig,
   patch: Omit<BackendServerConfigArgs, 'backend'>,
 ): BackendServerConfig {
+  // Replaced URLs get the SAME validation as create (Review D-#10): the merge
+  // path previously accepted any string, bypassing the shape + SSRF checks.
+  const checkUrl = (raw: string, label: string): void => {
+    const res = checkInfraUrl(raw);
+    if (!res.ok) throw new ConvexError({ code: 'validation', message: `${label} ${res.reason}` });
+  };
   if (existing.type === 'remnawave') {
     const cfg = { ...existing };
-    if (patch.baseUrl !== undefined && patch.baseUrl !== '') cfg.baseUrl = patch.baseUrl;
+    if (patch.baseUrl !== undefined && patch.baseUrl !== '') {
+      checkUrl(patch.baseUrl, 'The base URL');
+      cfg.baseUrl = patch.baseUrl;
+    }
     if (patch.apiToken !== undefined && patch.apiToken !== '') cfg.apiToken = patch.apiToken;
     return cfg;
   }
   const cfg = { ...existing };
-  if (patch.apiUrl !== undefined && patch.apiUrl !== '') cfg.apiUrl = patch.apiUrl;
+  if (patch.apiUrl !== undefined && patch.apiUrl !== '') {
+    checkUrl(patch.apiUrl, 'The apiUrl');
+    cfg.apiUrl = patch.apiUrl;
+  }
   if (patch.websocketEnabled !== undefined) cfg.websocketEnabled = patch.websocketEnabled;
   if (patch.websocketDomain !== undefined) cfg.websocketDomain = patch.websocketDomain ?? undefined;
   if (patch.prometheusUrl !== undefined) cfg.prometheusUrl = patch.prometheusUrl ?? undefined;
@@ -1805,6 +1825,13 @@ export const statusSummary = internalQuery({
       // Nothing relies on cookie-only auth → enabling POP_REQUIRED logs no one out.
       readyToEnable: unboundMember + unboundAdmin === 0,
     };
+    // CDN-blinding E2EE posture (H1): FS_E2EE_REQUIRED rejects unsealed member
+    // requests on seal/reveal routes. `required` is the server flag; the SPA
+    // must ALSO have been built with the HPKE keys (VITE_FS_SERVER_HPKE_PK/KID)
+    // or member clients will be refused — the pairing to check before flipping.
+    const e2ee = {
+      required: process.env.FS_E2EE_REQUIRED === 'true',
+    };
 
     return {
       users: usersByStatus,
@@ -1824,6 +1851,7 @@ export const statusSummary = internalQuery({
       crons,
       cronsStale,
       pop,
+      e2ee,
       generatedAt: iso(now),
     };
   },

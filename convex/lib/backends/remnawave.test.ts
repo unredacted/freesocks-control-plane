@@ -78,7 +78,13 @@ describe('remnawaveIssueUser', () => {
   test('POSTs /api/users with a bearer token and maps the response', async () => {
     mockFetch((path, method) => {
       if (path === '/api/users' && method === 'POST')
-        return jsonRes(userObj({ uuid: UUID, shortUuid: 'sc', subscriptionUrl: 'https://x/sub' }));
+        return jsonRes(
+          userObj({
+            uuid: UUID,
+            shortUuid: 'sc',
+            subscriptionUrl: 'https://panel.internal/sub/sc',
+          }),
+        );
       throw new Error(`unexpected ${method} ${path}`);
     });
     const issued = await remnawaveIssueUser(cfg, {
@@ -90,7 +96,7 @@ describe('remnawaveIssueUser', () => {
     expect(issued).toMatchObject({
       backendUserId: UUID,
       backendShortId: 'sc',
-      subscriptionUrl: 'https://x/sub',
+      subscriptionUrl: 'https://panel.internal/sub/sc',
     });
     expect(calls[0]!.method).toBe('POST');
     expect(calls[0]!.headers.authorization).toBe('Bearer SECRET_TOKEN_DO_NOT_LEAK');
@@ -103,10 +109,38 @@ describe('remnawaveIssueUser', () => {
     expect(calls[0]!.body!.activeInternalSquads).toBeUndefined();
   });
 
+  test('pins an OFF-ORIGIN panel-reported subscriptionUrl to the panel fallback (Review D-#4)', async () => {
+    // A compromised panel returning an attacker-chosen URL must not make FCP
+    // fetch + publicly re-serve it: anything off the instance's own origin is
+    // replaced by the conventional /api/sub/<shortUuid> on the panel origin.
+    mockFetch((path, method) => {
+      if (path === '/api/users' && method === 'POST')
+        return jsonRes(
+          userObj({
+            uuid: UUID,
+            shortUuid: 'sc',
+            subscriptionUrl: 'http://169.254.169.254/latest/meta-data',
+          }),
+        );
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    const issued = await remnawaveIssueUser(cfg, {
+      username: 'fs_user',
+      trafficLimitBytes: null,
+      expireAt: null,
+      tag: 'free',
+    });
+    expect(issued.subscriptionUrl).toBe('https://panel.internal/api/sub/sc');
+  });
+
   test('tolerates a create response that omits usedTrafficBytes (new user)', async () => {
     mockFetch((path, method) => {
       if (path === '/api/users' && method === 'POST') {
-        const u = userObj({ uuid: UUID, shortUuid: 'sc', subscriptionUrl: 'https://x/sub' });
+        const u = userObj({
+          uuid: UUID,
+          shortUuid: 'sc',
+          subscriptionUrl: 'https://panel.internal/sub/sc',
+        });
         delete u.usedTrafficBytes; // Remnawave omits it for a brand-new user.
         return jsonRes(u);
       }
@@ -338,7 +372,7 @@ describe('remnawaveFetchSubscription', () => {
       cfg,
       'short123',
       'Clash/1.0',
-      'https://sub.internal/happ/short123',
+      'https://panel.internal/happ/short123',
     );
     expect(out).toEqual({ content: 'vmess://node\n', contentType: 'text/yaml', headers: {} });
     expect(calls[0]!.path).toBe('/happ/short123'); // the provided URL, not the admin API
@@ -364,7 +398,7 @@ describe('remnawaveFetchSubscription', () => {
       cfg,
       'short123',
       'Clash/1.0',
-      'https://sub.internal/s/x',
+      'https://panel.internal/s/x',
     );
     expect(out.headers).toEqual({
       'subscription-userinfo': 'upload=0; download=10; total=100; expire=0',
@@ -377,6 +411,24 @@ describe('remnawaveFetchSubscription', () => {
     await remnawaveFetchSubscription(cfg, 'short123');
     expect(calls[0]!.path).toBe('/api/sub/short123');
     expect(calls[0]!.headers.authorization).toBeUndefined();
+  });
+
+  test('a stored OFF-ORIGIN subscription URL is re-pinned, never fetched (Review D-#4)', async () => {
+    mockFetch(() => new Response('payload', { status: 200 }));
+    await remnawaveFetchSubscription(
+      cfg,
+      'short123',
+      undefined,
+      'http://169.254.169.254/latest/meta-data',
+    );
+    expect(calls[0]!.path).toBe('/api/sub/short123'); // the panel-origin fallback
+  });
+
+  test('a baseUrl path prefix is preserved on every API call (Review D-#11)', async () => {
+    const subpathCfg: RemnawaveConfig = { ...cfg, baseUrl: 'https://panel.internal/panel/' };
+    mockFetch(() => jsonRes(userObj()));
+    await remnawaveGetUser(subpathCfg, UUID);
+    expect(calls[0]!.path).toBe(`/panel/api/users/${UUID}`);
   });
 
   test('defaults content-type to text/plain when the response omits the header', async () => {

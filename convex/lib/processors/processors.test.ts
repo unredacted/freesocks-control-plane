@@ -974,6 +974,38 @@ describe('nowpayments.verifyAndParse signature canonicalization', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/mismatch/i);
   });
+
+  // Review C-F4: PHP json_encode renders float-typed WHOLE numbers as `N.0`
+  // where JSON.stringify renders `N` — a whole-number float in the signed body
+  // (account-config dependent) HMACs correctly over the PHP form and used to be
+  // rejected by both candidates (fail-closed, but the grant was lost).
+  test('accepts a signature over the PHP whole-number-float form (12.0 vs 12)', async () => {
+    const ipn = {
+      actually_paid: 0.15,
+      order_id: 'o1',
+      pay_amount: 0.15,
+      payment_id: 98765,
+      payment_status: 'finished',
+      price_amount: 15,
+      price_currency: 'usd',
+    };
+    const raw = JSON.stringify(ipn); // JS canonical: price_amount → 15
+    // The PHP form NOWPayments actually signed: floats keep their .0.
+    const phpFloatCanonical =
+      '{"actually_paid":0.15,"order_id":"o1","pay_amount":0.15,"payment_id":98765,"payment_status":"finished","price_amount":15.0,"price_currency":"usd"}';
+    const sig = await hmacSha512Hex(SECRET, phpFloatCanonical);
+    const r = await nowpayments.verifyAndParse({ rawBody: raw, signature: sig, ipnSecret: SECRET });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.status).toBe('paid');
+  });
+
+  test('the float-combo search stays fail-closed for a WRONG signature', async () => {
+    const ipn = { order_id: 'o1', payment_status: 'finished', price_amount: 15 };
+    const raw = JSON.stringify(ipn);
+    const sig = await hmacSha512Hex(SECRET, '{"order_id":"o2"}');
+    const r = await nowpayments.verifyAndParse({ rawBody: raw, signature: sig, ipnSecret: SECRET });
+    expect(r.ok).toBe(false);
+  });
 });
 
 describe('nowpayments partial-settle guard', () => {
@@ -1033,6 +1065,20 @@ describe('nowpayments partial-settle guard', () => {
     const { body, signature } = await signedIpn({ actually_paid: '0.01', pay_amount: '0.01' });
     const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
     expect(r.ok && r.status).toBe('paid');
+  });
+
+  test('a STRING price_amount still feeds the grant cross-check (Review C-F3)', async () => {
+    // On account configs that serialize amounts as JSON strings, the strict
+    // typeof check nulled amountMinor — silently disabling the amount_mismatch
+    // grant refusal. It must coerce like the crypto amounts.
+    const { body, signature } = await signedIpn({
+      actually_paid: 0.01,
+      pay_amount: 0.01,
+      price_amount: '15',
+    });
+    const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.amountMinor).toBe(1500);
   });
 
   test('a short `finished` also flags underpaid for the audit trail', async () => {
