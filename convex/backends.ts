@@ -33,6 +33,7 @@ import type {
   UserState,
 } from './lib/backends/types';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
+import { pinSubscriptionToNode } from './lib/nodePinning';
 import {
   mockBackendEnabled,
   mockFetchContent,
@@ -329,13 +330,22 @@ export const fetchSubscriptionContent = internalAction({
     const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
     if (!server) throw new Error('Backend instance not found for subscription content fetch');
     try {
-      return await PROVIDERS[server.backend].fetchContent(
+      const fetched = await PROVIDERS[server.backend].fetchContent(
         server.config as BackendConfig,
         backendShortId,
         userAgent,
         subscriptionUrl,
         hwidHeaders,
       );
+      // Pin each key to ONE node's endpoints: the panel serves every Host of
+      // the shared squad, which would expose the whole fleet in every
+      // subscription. Filter down to the pinned node's lines (deterministic
+      // rendezvous pick on the panel user id — stable per key, moves only when
+      // the pinned node disappears, e.g. rotation/teardown).
+      if (server.backend === 'remnawave' && typeof fetched.content === 'string') {
+        return { ...fetched, content: pinSubscriptionToNode(fetched.content, backendShortId) };
+      }
+      return fetched;
     } catch (err) {
       // A panel 404 on a HWID-gated fetch (no/invalid x-hwid) is AUTHORITATIVE,
       // not an outage — surface it as a typed error so the fronted route passes
