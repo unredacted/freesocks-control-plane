@@ -308,6 +308,19 @@ describe('remnawaveGetUser', () => {
     const state = await remnawaveGetUser(cfg, UUID);
     expect(state.usedTrafficBytes).toBe(4096);
   });
+
+  // 0 is the panel's UNLIMITED sentinel (the update path sends null → 0); the
+  // read path must map it back to null or the member hero renders "… / 0 B"
+  // instead of the Unlimited badge.
+  test.each([
+    [0, null],
+    [null, null],
+    [500, 500],
+  ])('maps trafficLimitBytes %s -> %s (0 = unlimited sentinel)', async (panelValue, expected) => {
+    routeUserAndDevices(userObj({ trafficLimitBytes: panelValue }));
+    const state = await remnawaveGetUser(cfg, UUID);
+    expect(state.trafficLimitBytes).toBe(expected);
+  });
 });
 
 describe('remnawaveUpdateUser (Bug 14: squad clear vs set vs absent)', () => {

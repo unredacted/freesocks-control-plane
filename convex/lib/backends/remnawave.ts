@@ -326,7 +326,10 @@ function toState(user: RemnawaveUser, devices: BackendDevice[]): UserState {
             ? 'expired'
             : 'unknown';
   return {
-    trafficLimitBytes: user.trafficLimitBytes,
+    // 0 is the panel's UNLIMITED sentinel (the update path coerces FCP's null →
+    // 0 on send); map it back to null on read so member/admin surfaces render
+    // "Unlimited" instead of "… / 0 B".
+    trafficLimitBytes: user.trafficLimitBytes || null,
     // Prefer the nested (2.x) location; fall back to the flat legacy field (a real
     // value on older panels, 0 on the CREATE response). Fixes the counter that sat
     // at "0 B" once the panel moved this under `userTraffic`.
