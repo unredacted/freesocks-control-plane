@@ -50,7 +50,14 @@
 	}
 }
 
-{$SITE_ADDRESS:beta.freesocks.org} {
+# Site scheme: default https (Caddy manages a public LE cert via ACME — the
+# "Caddy is the public edge" topology). Set CADDY_SCHEME=http to serve plain
+# HTTP on :80 with ACME disabled — the mode to use when the app is fronted by
+# an authenticating edge (Cloudflare -> your reverse proxy over Tailscale),
+# where TLS terminates at that edge and the proxy->host hop is already
+# encrypted (WireGuard), so no public origin cert is needed (and no ACME
+# rate-limit/challenge pain).
+{$CADDY_SCHEME:https}://{$SITE_ADDRESS:beta.freesocks.org} {
 	encode zstd gzip
 
 	# Per-site ACCESS log discard (the privacy intent — see the header comment).
