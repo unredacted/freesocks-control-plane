@@ -227,6 +227,13 @@ export default defineSchema({
     // thrash live keys across nodes on every renewal. Absent on non-Remnawave
     // subs; the push then falls back to the mode's placement resolution.
     backendPlacement: v.optional(v.string()),
+    // The node this key's subscription content is currently pinned to
+    // (Remnawave node pinning), recorded at serve time.
+    pinnedNode: v.optional(v.string()),
+    // The node this key was pinned to BEFORE issuance (copied from the old
+    // subscription at regenerate) — excluded from the pin pick when others
+    // exist, so a regenerated key lands on a different node.
+    excludeNode: v.optional(v.string()),
     state: subscriptionState,
     updatedAt: v.number(),
     deletedAt: v.optional(v.number()),

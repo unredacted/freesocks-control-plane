@@ -857,7 +857,14 @@ http.route({
         backendServerId: sub.backendServerId ?? undefined,
         backendShortId: sub.backendShortId,
         subscriptionUrl: sub.subscriptionUrl,
+        excludeNode: sub.excludeNode ?? undefined,
       });
+      if (fetched.pinnedNode) {
+        await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
+          subscriptionId: sub.subscriptionId,
+          node: fetched.pinnedNode,
+        });
+      }
       return json({ content: fetched.content, contentType: fetched.contentType ?? 'text/plain' });
     } catch (err) {
       console.error(
@@ -963,8 +970,15 @@ http.route({
         backendShortId: sub.backendShortId,
         subscriptionUrl: sub.subscriptionUrl,
         userAgent: ua || undefined,
+        excludeNode: sub.excludeNode,
         ...(hasHwid ? { hwidHeaders } : {}),
       });
+      if (fetched.pinnedNode) {
+        await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
+          subscriptionId: sub._id,
+          node: fetched.pinnedNode,
+        });
+      }
       const entry: SubCacheEntry = {
         content: fetched.content,
         contentType: fetched.contentType ?? 'text/plain',

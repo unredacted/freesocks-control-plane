@@ -44,6 +44,12 @@ describe('pickNode', () => {
     const picks = new Set(Array.from({ length: 40 }, (_, i) => pickNode(`key-${i}`, nodes)));
     expect(picks.size).toBeGreaterThan(1);
   });
+  test('excludeNode is avoided when others exist, ignored when it would empty the pool', () => {
+    const nodes = [NODE_A, NODE_B];
+    expect(pickNode('k1', nodes, NODE_A)).toBe(NODE_B);
+    expect(pickNode('k1', nodes, NODE_B)).toBe(NODE_A);
+    expect(pickNode('k1', [NODE_A], NODE_A)).toBe(NODE_A);
+  });
 });
 
 describe('pinSubscriptionToNode', () => {
@@ -51,14 +57,12 @@ describe('pinSubscriptionToNode', () => {
     const body = LINES.join('\n');
     const first = pinSubscriptionToNode(body, 'short-id-1');
     const second = pinSubscriptionToNode(body, 'short-id-1');
-    expect(first).toBe(second);
-    const keptNodes = [NODE_A, NODE_B, NODE_C].filter((n) => first.includes(`#${n}-`));
-    expect(keptNodes).toHaveLength(1);
-    // the kept node contributes BOTH of its edges
-    const kept = keptNodes[0];
-    const keptLines = first.trim().split('\n');
+    expect(first.content).toBe(second.content);
+    expect(first.node).not.toBeNull();
+    expect(first.node).toBe(second.node);
+    const keptLines = first.content.trim().split('\n');
     expect(keptLines).toHaveLength(2);
-    expect(keptLines.every((l) => l.includes(`#${kept}-`))).toBe(true);
+    expect(keptLines.every((l) => l.includes(`#${first.node}-`))).toBe(true);
   });
 
   test('only users of a removed node move (rendezvous stability)', () => {
@@ -75,31 +79,47 @@ describe('pinSubscriptionToNode', () => {
       }),
     );
     for (const k of keys) {
-      const wasB = before.get(k)!.includes(`#${NODE_B}-`);
-      if (!wasB) expect(afterRemoval.get(k)).toBe(before.get(k));
-      expect(afterRemoval.get(k)).not.toContain(`#${NODE_B}-`);
+      const wasB = before.get(k)!.node === NODE_B;
+      if (!wasB) expect(afterRemoval.get(k)!.content).toBe(before.get(k)!.content);
+      expect(afterRemoval.get(k)!.node).not.toBe(NODE_B);
     }
+  });
+
+  test('excludeNode steers a regenerated key to a DIFFERENT node', () => {
+    const body = LINES.join('\n');
+    const before = pinSubscriptionToNode(body, 'new-short-id');
+    const after = pinSubscriptionToNode(body, 'new-short-id', before.node!);
+    expect(before.node).not.toBeNull();
+    expect(after.node).not.toBe(before.node);
+    expect([NODE_A, NODE_B, NODE_C]).toContain(after.node);
+  });
+
+  test('exclusion never empties the pool (single live node still serves)', () => {
+    const body = LINES.filter((l) => l.includes(`#${NODE_A}-`)).join('\n');
+    expect(pinSubscriptionToNode(body, 'k', NODE_A).content).toBe(body);
   });
 
   test('round-trips base64-encoded bodies', () => {
     const encoded = btoa(LINES.join('\n'));
     const out = pinSubscriptionToNode(encoded, 'short-id-1');
-    expect(out).not.toContain('\n');
-    const decoded = atob(out);
+    expect(out.content).not.toContain('\n');
+    const decoded = atob(out.content);
     const keptNodes = [NODE_A, NODE_B, NODE_C].filter((n) => decoded.includes(`#${n}-`));
     expect(keptNodes).toHaveLength(1);
   });
 
   test('single-node content passes through verbatim', () => {
     const body = [wsLink(NODE_A, 'a1.example.org'), wsLink(NODE_A, 'a2.example.org')].join('\n');
-    expect(pinSubscriptionToNode(body, 'k')).toBe(body);
+    const res = pinSubscriptionToNode(body, 'k');
+    expect(res.content).toBe(body);
+    expect(res.node).toBeNull();
   });
 
   test('unknown formats pass through verbatim', () => {
-    expect(pinSubscriptionToNode('{"outbounds": []}', 'k')).toBe('{"outbounds": []}');
-    expect(pinSubscriptionToNode('proxies: []', 'k')).toBe('proxies: []');
-    expect(pinSubscriptionToNode('<html></html>', 'k')).toBe('<html></html>');
-    expect(pinSubscriptionToNode('', 'k')).toBe('');
+    expect(pinSubscriptionToNode('{"outbounds": []}', 'k').content).toBe('{"outbounds": []}');
+    expect(pinSubscriptionToNode('proxies: []', 'k').content).toBe('proxies: []');
+    expect(pinSubscriptionToNode('<html></html>', 'k').content).toBe('<html></html>');
+    expect(pinSubscriptionToNode('', 'k').content).toBe('');
   });
 
   test('unparseable lines are kept alongside the pinned node', () => {
@@ -107,6 +127,6 @@ describe('pinSubscriptionToNode', () => {
       '\n',
     );
     const out = pinSubscriptionToNode(body, 'k');
-    expect(out).toContain('legacy.example.org');
+    expect(out.content).toContain('legacy.example.org');
   });
 });

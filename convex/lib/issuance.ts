@@ -37,6 +37,9 @@ export async function issueNewSubscription(
     // Pin to one instance — set when node placement resolved the (placement,
     // panel) pair together (the squad only exists on that panel).
     pinServerId?: Id<'backendServers'> | null;
+    // The node the PREVIOUS key was pinned to (regenerate) — stored on the new
+    // row and avoided on the next fetch's pin pick (different node guaranteed).
+    excludeNode?: string;
   },
 ): Promise<IssueResult> {
   const issued = await ctx.runAction(internal.backends.issueUser, {
@@ -58,6 +61,7 @@ export async function issueNewSubscription(
       // Persist the opaque placement the key was issued into, so tier pushes
       // re-send the SAME placement instead of re-picking (Remnawave only).
       placement: input.backend === 'remnawave' ? (input.spec.placement ?? undefined) : undefined,
+      excludeNode: input.excludeNode,
     });
     await ctx.runMutation(internal.subscriptions.setCurrentSubscription, {
       userId: input.userId,

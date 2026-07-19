@@ -623,6 +623,10 @@ export const regenerate = internalAction({
         placement: target.placement,
       },
       pinServerId: target.serverId,
+      // The node the OLD key was pinned to — avoided on the new key's first
+      // fetch, so regenerate moves the member to a different node when one
+      // exists (Remnawave node pinning).
+      excludeNode: oldSub?.pinnedNode ?? undefined,
     });
 
     if (oldSub) {

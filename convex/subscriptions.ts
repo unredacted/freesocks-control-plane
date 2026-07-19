@@ -100,6 +100,9 @@ export const insertSubscription = internalMutation({
     // the chosen squad) — read back by lifecycle.activeSubAndTier so tier pushes
     // never re-home a live key.
     placement: v.optional(v.string()),
+    // The node the PREVIOUS key was pinned to (regenerate) — avoided on the
+    // next fetch's pin pick so the new key lands on a different node.
+    excludeNode: v.optional(v.string()),
   },
   handler: async (ctx, a) => {
     // Mint the opaque per-subscription token for the FCP-fronted URL. 128-bit;
@@ -178,6 +181,18 @@ export const writeContentCache = internalMutation({
   },
 });
 
+// Record the node a subscription's content is currently pinned to (Remnawave
+// node pinning) so a future issuance (regenerate) can exclude it. Written by
+// the serve paths when the pin changes — never rewrites the content cache.
+export const recordPinnedNode = internalMutation({
+  args: { subscriptionId: v.id('subscriptions'), node: v.string() },
+  handler: async (ctx, { subscriptionId, node }) => {
+    const sub = await ctx.db.get(subscriptionId);
+    if (!sub || sub.pinnedNode === node) return;
+    await ctx.db.patch(subscriptionId, { pinnedNode: node });
+  },
+});
+
 /**
  * Page active subscriptions for the S3 mirror-refresh cron. Mirrors are OPT-IN +
  * LAZY now, so the refresh only keeps EXISTING mirrors fresh — it pages only subs
@@ -243,6 +258,8 @@ export interface MirrorContext {
   backendShortId: string;
   /** The panel-provided public subscription URL — where the raw content actually lives. */
   subscriptionUrl: string;
+  /** The node the previous key was pinned to (regenerate exclusion hint). */
+  excludeNode: string | null;
   triedProviders: string[];
   objectPath: string | null;
 }
@@ -260,6 +277,7 @@ export const mirrorContextForUser = internalQuery({
       backendServerId: sub.backendServerId ?? null,
       backendShortId: sub.backendShortId,
       subscriptionUrl: sub.subscriptionUrl,
+      excludeNode: sub.excludeNode ?? null,
       triedProviders: sub.subscriptionMirrors.map((m) => m.provider),
       objectPath: sub.subscriptionMirrors[0]?.objectPath ?? null,
     };

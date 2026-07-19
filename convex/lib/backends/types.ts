@@ -158,6 +158,10 @@ export interface SubscriptionContent {
   // client update hints the proxy app displays. Undefined for backends that don't
   // emit them (Outline). Never carries a secret.
   headers?: Record<string, string>;
+  // The node this content was pinned to (Remnawave node pinning only) — the
+  // serve paths persist it on the subscription row so the NEXT issuance can
+  // exclude it (regenerate → a different node).
+  pinnedNode?: string;
 }
 
 /**

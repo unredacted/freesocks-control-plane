@@ -58,10 +58,16 @@ function fnv1a(s: string): number {
 }
 
 /** The node a pin key maps to (highest rendezvous score wins). */
-export function pickNode(pinKey: string, nodes: string[]): string | null {
+export function pickNode(pinKey: string, nodes: string[], excludeNode?: string): string | null {
+  let pool = nodes;
+  if (excludeNode) {
+    const filtered = nodes.filter((n) => n !== excludeNode);
+    // Exclusion never empties the pool (a single-node fleet still serves).
+    if (filtered.length > 0) pool = filtered;
+  }
   let best: string | null = null;
   let bestScore = -1;
-  for (const node of nodes) {
+  for (const node of pool) {
     const score = fnv1a(`${pinKey}${node}`);
     if (score > bestScore) {
       bestScore = score;
@@ -73,18 +79,25 @@ export function pickNode(pinKey: string, nodes: string[]): string | null {
 
 /**
  * Filter squad-wide subscription content down to the lines of the single node
- * `pinKey` maps to. Returns the content unchanged when there is nothing to
- * pin (0/1 nodes, unknown format) or on any parse error.
+ * `pinKey` maps to. `excludeNode` (the node the key was PREVIOUSLY pinned to,
+ * e.g. before a regenerate) is avoided when others exist, so a regenerated
+ * key lands on a different node. Returns the (possibly re-encoded) content
+ * unchanged when there is nothing to pin (0/1 nodes, unknown format) or on
+ * any parse error, plus the node that was picked (null when not filtered).
  */
-export function pinSubscriptionToNode(content: string, pinKey: string): string {
+export function pinSubscriptionToNode(
+  content: string,
+  pinKey: string,
+  excludeNode?: string,
+): { content: string; node: string | null } {
   try {
     const trimmed = content.trim();
-    if (!trimmed || !pinKey) return content;
+    if (!trimmed || !pinKey) return { content, node: null };
 
     // Pass through non-line-list formats (Clash YAML, sing-box JSON, HTML
     // landing pages) untouched — pinning is only defined for link lists.
     if (trimmed.startsWith('{') || trimmed.startsWith('<') || trimmed.startsWith('proxies:')) {
-      return content;
+      return { content, node: null };
     }
 
     // Subscription bodies are commonly base64-encoded line lists; decode when
@@ -121,14 +134,14 @@ export function pinSubscriptionToNode(content: string, pinKey: string): string {
     }
 
     // Nothing to pin (empty fleet or a single node) — serve verbatim.
-    if (byNode.size <= 1) return content;
+    if (byNode.size <= 1) return { content, node: null };
 
-    const chosen = pickNode(pinKey, [...byNode.keys()]);
-    if (!chosen) return content;
+    const chosen = pickNode(pinKey, [...byNode.keys()], excludeNode);
+    if (!chosen) return { content, node: null };
 
     const out = [...passthrough, ...(byNode.get(chosen) ?? [])].join('\n');
-    return encoded ? btoa(out) : out;
+    return { content: encoded ? btoa(out) : out, node: chosen };
   } catch {
-    return content;
+    return { content, node: null };
   }
 }

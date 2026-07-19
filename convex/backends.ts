@@ -320,10 +320,14 @@ export const fetchSubscriptionContent = internalAction({
     // HWID identification headers forwarded from the member's proxy app (the
     // FCP-fronted /api/v1/sub/ route), so panel device registration + limits work.
     hwidHeaders: v.optional(v.record(v.string(), v.string())),
+    // The node this key was PREVIOUSLY pinned to (set at issuance from the old
+    // subscription's pinnedNode) — excluded from the pin pick when others
+    // exist, so a regenerated key lands on a different node.
+    excludeNode: v.optional(v.string()),
   },
   handler: async (
     ctx,
-    { backendServerId, backendShortId, userAgent, subscriptionUrl, hwidHeaders },
+    { backendServerId, backendShortId, userAgent, subscriptionUrl, hwidHeaders, excludeNode },
   ): Promise<SubscriptionContent> => {
     if (mockBackendEnabled()) return mockFetchContent();
     if (!backendServerId) throw new Error('backendServerId required to fetch subscription content');
@@ -343,7 +347,8 @@ export const fetchSubscriptionContent = internalAction({
       // rendezvous pick on the panel user id — stable per key, moves only when
       // the pinned node disappears, e.g. rotation/teardown).
       if (server.backend === 'remnawave' && typeof fetched.content === 'string') {
-        return { ...fetched, content: pinSubscriptionToNode(fetched.content, backendShortId) };
+        const pinned = pinSubscriptionToNode(fetched.content, backendShortId, excludeNode);
+        return { ...fetched, content: pinned.content, pinnedNode: pinned.node ?? undefined };
       }
       return fetched;
     } catch (err) {
