@@ -289,8 +289,13 @@ services:
       - CONVEX_API_ADDRESS=${CONVEX_API_ADDRESS:-}
     healthcheck:
       # The public edge: a wedged Caddy is otherwise only caught by the external
-      # /readyz monitor. wget ships in the alpine image (busybox).
-      test: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost/healthz || exit 1']
+      # /readyz monitor. Check the backend's health endpoint over the compose
+      # network — NOT http://localhost/healthz: Caddy's http→https redirect
+      # forces a TLS handshake with SNI "localhost", which Caddy has no cert
+      # for (it alerts with a server-side internal error, so the old check
+      # could never pass even with a valid site cert). wget ships in the
+      # alpine image (busybox).
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://backend:3211/healthz || exit 1']
       interval: 30s
       start_period: 15s
       retries: 3
