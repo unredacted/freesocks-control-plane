@@ -329,6 +329,10 @@ export const activeSubAndTier = internalQuery({
       userStatus: user.status,
       trafficLimitBytes: resolveTrafficLimitBytes(tier, bonusGb),
       trafficLimitStrategy: tier.trafficStrategy,
+      // The CURRENT tier's slug, so the push re-tags the backend key on a tier
+      // change (issuance stamps the slug — e.g. FREE — and nothing else ever
+      // updated it, so an upgraded member's key stayed tagged FREE panel-side).
+      tag: tier.slug,
       hwidDeviceLimit: resolveHwidLimit(enforcementEnabled, tier),
       placement,
       // Raw ms (this is a query — the ISO is computed in the action, which can
@@ -375,6 +379,8 @@ export const pushTierToBackend = internalAction({
           trafficLimitStrategy: st.trafficLimitStrategy,
           hwidDeviceLimit: st.hwidDeviceLimit,
           placement: st.placement,
+          // Keep the panel-side tag in step with the tier (member ⇄ free).
+          tag: st.tag,
           // Push the entitlement expiry too, so a renewal extends the backend key.
           expireAt: computeExpireAtIso(st.membershipExpiresAt, freeExpiryDays),
         },

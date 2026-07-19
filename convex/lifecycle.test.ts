@@ -782,6 +782,10 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     const st = await t.query(internal.lifecycle.activeSubAndTier, { userId });
     expect(st?.placement).toBe('PRIVACY_SQUAD');
     expect(st?.userStatus).toBe('active');
+    // The CURRENT tier's slug rides along so the push re-tags the backend key on
+    // a tier change (issuance stamps it once — e.g. FREE — and without this an
+    // upgraded member's key stayed tagged FREE panel-side forever).
+    expect(st?.tag).toBe('member');
   });
 
   test('activeSubAndTier placement is null when the mode has no pool bound', async () => {
