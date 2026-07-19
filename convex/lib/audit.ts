@@ -64,6 +64,10 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // hourly run re-pushes. Surfaced because the start-of-run heartbeat alone
   // would make the cron look healthy.
   'donation.bonus_partial': ['effective', 'failedChunks', 'exhausted'],
+  // Epoch rotation gap: epochs exist but none is currently valid while
+  // FS_MANIFEST_SK is set (≥3 consecutive failed rotates) — clients are
+  // silently falling back to the static key.
+  'e2ee.epoch_gap': ['lastNotAfter'],
   'membership.tier_change': ['fromTierId', 'toTierId', 'reason'],
   'user.create.free': ['ipCountry', 'asn'],
   // W2: admin retunes a rate-limit policy.
@@ -131,6 +135,9 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // tolerance): the grant was refused by downgrade, so this is the operator's
   // follow-up queue (refund or request a top-up).
   'billing.underpayment_seen': ['processor', 'expectedMinor', 'reportedMinor'],
+  // A referral's pending/converted reward was voided (refund, referee lapse,
+  // program disabled, cap, referrer gone).
+  'referral.void': ['reason', 'referrerUserId'],
   // A webhook claim whose grant threw (retryable only until the sender gives
   // up) — surfaced on the admin billing page as money-at-risk.
   'billing.webhook.grant_failed': ['source'],
@@ -160,6 +167,12 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.mirror_provider.update': ['name'],
   'admin.mirror_provider.delete': ['name'],
   'admin.mirror_provider.upsert': ['name', 'created'],
+  // Clients-catalog edits (the member-facing app list — a malicious/broken
+  // entry silently changes what members download). Name only.
+  'admin.client.create': ['name'],
+  'admin.client.update': ['name'],
+  'admin.client.delete': ['name'],
+  'admin.client.upsert': ['name', 'created'],
   // Idempotent backend-server upsert by slug (Ansible / IaC); never the config secret.
   'admin.backend_server.upsert': ['slug', 'backend', 'created'],
   // Slug-addressed backend-server delete (migrate / IaC).

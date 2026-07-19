@@ -75,13 +75,8 @@ describe('pickByNodeLoad', () => {
     await seedNode(t, server, { placement: 'busy', usersOnline: 50 });
     await seedNode(t, server, { placement: 'idle', usersOnline: 3 });
     // With ≥2 usable candidates the pick is uniform over the top-3 (anti-herding);
-    // random → 0 pins the least-loaded slot.
-    const spy = vi.spyOn(Math, 'random').mockReturnValue(0);
-    try {
-      expect(await t.run((ctx) => pickByNodeLoad(ctx.db, ['busy', 'idle']))).toBe('idle');
-    } finally {
-      spy.mockRestore();
-    }
+    // injected rand → 0 pins the least-loaded slot.
+    expect(await t.run((ctx) => pickByNodeLoad(ctx.db, ['busy', 'idle'], () => 0))).toBe('idle');
   });
 
   test('anti-herding (L5): the pick spreads across the top-3 usable, not always top-1', async () => {
@@ -91,13 +86,13 @@ describe('pickByNodeLoad', () => {
     await seedNode(t, server, { placement: 'n2', usersOnline: 2 });
     await seedNode(t, server, { placement: 'n3', usersOnline: 3 });
     await seedNode(t, server, { placement: 'n4', usersOnline: 4 }); // outside the top-3
-    // random → top-end picks the LAST of the top-3 (n3); n4 is never eligible.
-    const spy = vi.spyOn(Math, 'random').mockReturnValue(0.999);
-    try {
-      expect(await t.run((ctx) => pickByNodeLoad(ctx.db, ['n1', 'n2', 'n3', 'n4']))).toBe('n3');
-    } finally {
-      spy.mockRestore();
-    }
+    // Injected rand (queries can't use Math.random deterministically) →
+    // top-end picks the LAST of the top-3 (n3); n4 is never eligible.
+    expect(
+      await t.run((ctx) => pickByNodeLoad(ctx.db, ['n1', 'n2', 'n3', 'n4'], () => 0.999)),
+    ).toBe('n3');
+    // No rand → deterministic top-1 (the tier-push / degraded path).
+    expect(await t.run((ctx) => pickByNodeLoad(ctx.db, ['n1', 'n2', 'n3', 'n4']))).toBe('n1');
   });
 
   test('stale / offline / unroutable / never-observed nodes lose to a fresh+online one', async () => {
@@ -268,14 +263,9 @@ describe('resolvePlacementTarget', () => {
     await bindPool(t, 'evade', ['sq-mci', 'sq-ams']);
     await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 50 });
     await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 1 });
-    // random → 0 pins the least-loaded of the top-3 (anti-herding spread).
-    const spy = vi.spyOn(Math, 'random').mockReturnValue(0);
-    try {
-      const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade'));
-      expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
-    } finally {
-      spy.mockRestore();
-    }
+    // rand → 0 pins the least-loaded of the top-3 (anti-herding spread).
+    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade', { rand: () => 0 }));
+    expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
   });
 
   test('a location pick narrows to that panel even when another is less loaded', async () => {

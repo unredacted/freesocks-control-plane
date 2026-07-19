@@ -93,7 +93,13 @@ export const queryClient = new QueryClient({
     queries: {
       staleTime: 30_000,
       gcTime: 5 * 60_000,
-      retry: 1,
+      // One retry, only where it can help: offline blips + 5xx. Never retry
+      // 4xx (401/429 are deterministic — retrying just doubles the load and
+      // ignores the server's Retry-After).
+      retry: (failureCount, error) =>
+        error instanceof ApiCallError
+          ? (error.status === 0 || error.status >= 500) && failureCount < 1
+          : failureCount < 1,
       refetchOnWindowFocus: true,
     },
     mutations: {

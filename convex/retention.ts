@@ -49,16 +49,21 @@ export const sweepAuditLog = internalMutation({
   },
 });
 
-/** Webhook dedupe records: keep ~90 days (far beyond any replay window). */
+/** Webhook dedupe records: keep ~90 days of TERMINAL (`processed`) rows (far
+ *  beyond any replay window). `pending`/`failed` claims are exempt from the
+ *  sweep — they're documented as retryable, and deleting one would let a
+ *  processor redelivery past the window re-ingest (double-grant). A wedged
+ *  pending claim therefore stays until it resolves, which is intentional. */
 export const sweepWebhookEvents = internalMutation({
   args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
   handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'retention-webhooks');
     const cutoff = Date.now() - num('WEBHOOK_RETENTION_DAYS', 90) * DAY;
     const page = limit ?? PAGE;
+    // by_status = ['status', _creationTime]: an exact range over terminal rows.
     const rows = await ctx.db
       .query('webhookEvents')
-      .withIndex('by_creation_time', (q) => q.lt('_creationTime', cutoff))
+      .withIndex('by_status', (q) => q.eq('status', 'processed').lt('_creationTime', cutoff))
       .take(page);
     for (const r of rows) await ctx.db.delete(r._id);
     if (rows.length === page) {

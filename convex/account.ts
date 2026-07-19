@@ -102,7 +102,15 @@ async function resolveIssueTarget(
   location: string | null,
 ): Promise<{ placement: string | null; serverId: Id<'backendServers'> | null }> {
   if (backend !== 'remnawave') return { placement: null, serverId: null };
-  const t = await ctx.runQuery(internal.remnawaveNodes.resolveTarget, { modeId, location });
+  // Mint the anti-herding randomness HERE (actions may use the CSPRNG; queries
+  // must stay deterministic) and thread it through the resolution.
+  const randBuf = new Uint32Array(1);
+  crypto.getRandomValues(randBuf);
+  const t = await ctx.runQuery(internal.remnawaveNodes.resolveTarget, {
+    modeId,
+    location,
+    rand: randBuf[0]! / 2 ** 32,
+  });
   // Multi-panel + zero attributable squads: an unpinned issue would mint a
   // (squad, wrong-panel) dead key — fail loudly (503, retryable once the stats
   // cron attributes the pool) instead. Single-panel deploys never see this.

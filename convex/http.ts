@@ -2143,10 +2143,16 @@ http.route({
   path: '/api/v1/admin/clients',
   method: 'POST',
   handler: guard(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     try {
-      return json(await ctx.runMutation(internal.clients.create, body as never));
+      return json(
+        await ctx.runMutation(internal.clients.create, {
+          ...body,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -2157,11 +2163,18 @@ http.route({
   pathPrefix: '/api/v1/admin/clients/by-name/',
   method: 'PUT',
   handler: guard(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
     const name = decodeURIComponent(lastPathSegment(req));
     const body = await readJson<Record<string, unknown>>(req);
     try {
-      return json(await ctx.runMutation(internal.clients.upsertByName, { ...body, name } as never));
+      return json(
+        await ctx.runMutation(internal.clients.upsertByName, {
+          ...body,
+          name,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -2172,11 +2185,18 @@ http.route({
   pathPrefix: '/api/v1/admin/clients/',
   method: 'PATCH',
   handler: guard(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'clients'>;
     const body = await readJson<Record<string, unknown>>(req);
     try {
-      return json(await ctx.runMutation(internal.clients.update, { id, ...body } as never));
+      return json(
+        await ctx.runMutation(internal.clients.update, {
+          id,
+          ...body,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -2187,10 +2207,13 @@ http.route({
   pathPrefix: '/api/v1/admin/clients/',
   method: 'DELETE',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:settings:write'))) return ADMIN_UNAUTH();
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
     const id = lastPathSegment(req) as Id<'clients'>;
     try {
-      return json(await ctx.runMutation(internal.clients.remove, { id }));
+      return json(
+        await ctx.runMutation(internal.clients.remove, { id, actorAdminId: admin.adminUserId }),
+      );
     } catch (err) {
       return adminError(err);
     }
@@ -2770,7 +2793,8 @@ http.route({
   path: '/api/v1/admin/billing',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
-    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    // Orders carry userId + support handles → user-data scope, not settings.
+    if (!(await resolveAdmin(ctx, req, 'admin:users:read'))) return ADMIN_UNAUTH();
     const u = new URL(req.url);
     const limitRaw = u.searchParams.get('limit');
     const limit = limitRaw ? Number(limitRaw) : undefined;
@@ -2838,10 +2862,13 @@ http.route({
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:users:read'))) return ADMIN_UNAUTH();
     const sp = new URL(req.url).searchParams;
+    const limitRaw = sp.get('limit');
+    const limit = limitRaw ? Number(limitRaw) : undefined;
     return json(
       await ctx.runQuery(internal.membershipCodes.listCodes, {
         status: sp.get('status') ?? undefined,
         cursor: sp.get('cursor') ?? undefined,
+        limit: Number.isFinite(limit) ? limit : undefined,
       }),
     );
   }),

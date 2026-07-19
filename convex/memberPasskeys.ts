@@ -71,6 +71,13 @@ export const insertCredential = internalMutation({
     aaguid: v.optional(v.string()),
   },
   handler: async (ctx, a) => {
+    // Uniqueness read-check (no UNIQUE constraint in Convex): a credentialId
+    // dup would silently break the sign-in lookup's .unique().
+    const clash = await ctx.db
+      .query('memberPasskeyCredentials')
+      .withIndex('by_credential_id', (q) => q.eq('credentialId', a.credentialId))
+      .unique();
+    if (clash) throw new Error('credential id collision');
     await ctx.db.insert('memberPasskeyCredentials', a);
     return null;
   },

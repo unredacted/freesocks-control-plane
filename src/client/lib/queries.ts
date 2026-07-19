@@ -8,7 +8,7 @@
  */
 import { createQuery, createInfiniteQuery } from '@tanstack/svelte-query';
 import { z } from 'zod';
-import { apiClient, ApiCallError } from './api';
+import { apiClient } from './api';
 import { AuthMeResponse, PublicConfig } from '../../shared/contracts/auth';
 import {
   AccountResponse,
@@ -91,20 +91,13 @@ export const queryKeys = {
 export const meQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.me,
-    queryFn: async () => {
+    queryFn: () =>
       // Endpoint always succeeds and returns `{authenticated: false}` for
-      // anonymous callers, so we don't need to swallow auth errors here. Only a
-      // NETWORK failure (offline) maps to unauthenticated — a 5xx/429 must
-      // propagate to the query error state, not flash "signed out" at a member.
-      try {
-        return await apiClient.get('/api/v1/me', AuthMeResponse);
-      } catch (err) {
-        if (err instanceof ApiCallError && err.status === 0) {
-          return { authenticated: false } satisfies z.infer<typeof AuthMeResponse>;
-        }
-        throw err;
-      }
-    },
+      // anonymous callers, so no swallowing here — and a NETWORK failure must
+      // THROW (error state with the last-known identity kept), never map to
+      // unauthenticated: that flashed "Sign in" at a signed-in member offline
+      // (and skipped the PoP prewarm).
+      apiClient.get('/api/v1/me', AuthMeResponse),
     staleTime: 60_000,
   }));
 

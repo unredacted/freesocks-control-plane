@@ -90,22 +90,31 @@ export const createToken = internalAction({
     createdByAdminId: v.id('adminUsers'),
   },
   handler: async (ctx, a): Promise<{ id: Id<'apiTokens'>; plaintext: string; prefix: string }> => {
-    const random = new Uint8Array(TOKEN_RANDOM_BYTES);
-    crypto.getRandomValues(random);
-    const plaintext = `${TOKEN_PREFIX}${base64UrlEncode(random)}`;
-    const tokenHash = await sha256Hex(plaintext);
-    const tokenPrefix = plaintext.slice(0, 12); // "fsv1_" + 7 chars
-    const id = await ctx.runMutation(internal.apiTokens.insertToken, {
-      name: a.name,
-      tokenHash,
-      tokenPrefix,
-      createdByAdminId: a.createdByAdminId,
-      scopes: a.scopes,
-      subjectType: a.subjectType,
-      subjectUserId: a.subjectUserId,
-      expiresAt: a.expiresInDays ? Date.now() + a.expiresInDays * 86_400_000 : undefined,
-    });
-    return { id, plaintext, prefix: tokenPrefix };
+    // Retry on the (astronomically unlikely) tokenHash collision flagged by the
+    // insert's uniqueness read-check.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const random = new Uint8Array(TOKEN_RANDOM_BYTES);
+      crypto.getRandomValues(random);
+      const plaintext = `${TOKEN_PREFIX}${base64UrlEncode(random)}`;
+      const tokenHash = await sha256Hex(plaintext);
+      const tokenPrefix = plaintext.slice(0, 12); // "fsv1_" + 7 chars
+      try {
+        const id = await ctx.runMutation(internal.apiTokens.insertToken, {
+          name: a.name,
+          tokenHash,
+          tokenPrefix,
+          createdByAdminId: a.createdByAdminId,
+          scopes: a.scopes,
+          subjectType: a.subjectType,
+          subjectUserId: a.subjectUserId,
+          expiresAt: a.expiresInDays ? Date.now() + a.expiresInDays * 86_400_000 : undefined,
+        });
+        return { id, plaintext, prefix: tokenPrefix };
+      } catch (err) {
+        if (attempt === 2) throw err;
+      }
+    }
+    throw new Error('unreachable');
   },
 });
 
@@ -121,6 +130,14 @@ export const insertToken = internalMutation({
     expiresAt: v.optional(v.number()),
   },
   handler: async (ctx, a) => {
+    // Uniqueness read-check (no UNIQUE constraint in Convex): a tokenHash dup
+    // would silently break resolveToken's .unique() lookup. A collision throws
+    // so the mint action retries with fresh randomness.
+    const clash = await ctx.db
+      .query('apiTokens')
+      .withIndex('by_token_hash', (q) => q.eq('tokenHash', a.tokenHash))
+      .unique();
+    if (clash) throw new Error('token hash collision');
     const id = await ctx.db.insert('apiTokens', { ...a, updatedAt: Date.now() });
     // Credential mints are security-relevant: audit (never the token/hash).
     await writeAuditLog(ctx, {

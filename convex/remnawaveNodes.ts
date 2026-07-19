@@ -73,11 +73,15 @@ export const resolveTarget = internalQuery({
     modeId: v.union(v.string(), v.null()),
     location: v.optional(v.union(v.string(), v.null())),
     onlyServerId: v.optional(v.union(v.id('backendServers'), v.null())),
+    // A [0,1) float minted by the calling ACTION (CSPRNG): the anti-herding
+    // pick needs randomness, but a query must stay deterministic for OCC.
+    rand: v.optional(v.number()),
   },
-  handler: async (ctx, { modeId, location, onlyServerId }) =>
+  handler: async (ctx, { modeId, location, onlyServerId, rand }) =>
     resolvePlacementTarget(ctx.db, modeId, {
       location: location ?? null,
       onlyServerId: (onlyServerId as string | null | undefined) ?? null,
+      rand: typeof rand === 'number' ? () => rand : undefined,
     }),
 });
 

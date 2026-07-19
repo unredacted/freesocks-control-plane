@@ -173,6 +173,33 @@ export async function recordDonation(
   });
 }
 
+/**
+ * Reverse a donation (refund/chargeback unwind): subtract from THIS month's
+ * pool (clamped ≥ 0 — a refund of a past month's gift only bites while its
+ * bonus is still live, which is the case that matters) and rewrite the ledger
+ * entry. The fleet re-cap picks the reduced pool up on its next reconcile.
+ */
+export async function subtractDonation(
+  ctx: MutationCtx,
+  donationCents: number,
+  now: number,
+): Promise<void> {
+  if (!Number.isFinite(donationCents) || donationCents <= 0) return;
+  const state = await readDonationState(ctx.db);
+  if (state.monthKey !== currentMonthKey(now)) return; // stale month: nothing live to unwind
+  const next: DonationState = {
+    ...state,
+    donatedCents: Math.max(0, state.donatedCents - donationCents),
+  };
+  await writeDonationState(ctx, next);
+  const cfg = await resolveBillingConfig(ctx.db);
+  await upsertHistoryForMonth(ctx, {
+    monthKey: state.monthKey,
+    donatedCents: next.donatedCents,
+    bonusGb: effectiveBonusGb(next, cfg.donation, now),
+  });
+}
+
 /** Live effective bonus GB (accumulator + config), for issuance + publicConfig.
  *  0 when donations are disabled. */
 export async function resolveCurrentBonusGb(db: DatabaseReader, now: number): Promise<number> {

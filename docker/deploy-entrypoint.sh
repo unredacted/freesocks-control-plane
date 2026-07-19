@@ -119,22 +119,25 @@ echo "[deploy] reconciling the user-status counter"
 bunx convex run userStats:reconcileUserCounts '{}'
 
 echo "[deploy] OK"
-# First-run reminder (printed EVERY deploy, not only when the secret is freshly
-# generated): the first admin registers a passkey at /admin using this secret.
-# It never lands in .env.convex (it's a deployment env var), so surface how to
-# read it. Harmless to re-print — retrieving it doesn't change or expose more
-# than an operator with deploy access already has.
-# Print it right here while we already hold the admin key + URL — the operator
-# doesn't have to figure out how to read a deployment env var afterwards.
-bootstrap_secret="$(bunx convex env get ADMIN_BOOTSTRAP_SECRET 2>/dev/null | tr -d '[:space:]' || true)"
-echo "[deploy] ---------------------------------------------------------------"
-echo "[deploy] First admin passkey: open https://<your-site>/admin and enter the"
-echo "[deploy] bootstrap secret below. It locks forever once a passkey exists."
-if [ -n "${bootstrap_secret}" ]; then
-  echo "[deploy]   ADMIN_BOOTSTRAP_SECRET = ${bootstrap_secret}"
+# First-run reminder: the first admin registers a passkey at /admin using the
+# bootstrap secret. Only printed while NO admin credential exists yet — after
+# bootstrap the secret is inert (the ceremony is locked), and printing it into
+# the deploy log on every deploy just leaves it sitting in retained logs.
+has_admins="$(bunx convex run admins:bootstrapStatus '{}' 2>/dev/null | bun -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).hasAdmins===true)}catch{console.log("unknown")}})' || echo unknown)"
+if [ "${has_admins}" = "false" ]; then
+  bootstrap_secret="$(bunx convex env get ADMIN_BOOTSTRAP_SECRET 2>/dev/null | tr -d '[:space:]' || true)"
+  echo "[deploy] ---------------------------------------------------------------"
+  echo "[deploy] First admin passkey: open https://<your-site>/admin and enter the"
+  echo "[deploy] bootstrap secret below. It locks forever once a passkey exists."
+  if [ -n "${bootstrap_secret}" ]; then
+    echo "[deploy]   ADMIN_BOOTSTRAP_SECRET = ${bootstrap_secret}"
+  else
+    echo "[deploy]   (couldn't read it here — retrieve from the Convex dashboard's"
+    echo "[deploy]    Settings → Environment Variables, or on-host: bunx convex env get"
+    echo "[deploy]    ADMIN_BOOTSTRAP_SECRET)"
+  fi
+  echo "[deploy] ---------------------------------------------------------------"
 else
-  echo "[deploy]   (couldn't read it here — retrieve from the Convex dashboard's"
-  echo "[deploy]    Settings → Environment Variables, or on-host: bunx convex env get"
-  echo "[deploy]    ADMIN_BOOTSTRAP_SECRET)"
+  echo "[deploy] an admin passkey already exists (or status unreadable) — not"
+  echo "[deploy] printing the bootstrap secret. Nothing else to do."
 fi
-echo "[deploy] ---------------------------------------------------------------"

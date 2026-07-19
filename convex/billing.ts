@@ -23,7 +23,7 @@ import { randomHex, sha256Hex } from './lib/crypto';
 import { generateMembershipCode, membershipCodePrefix } from './lib/membershipCode';
 import { applyMembership } from './lifecycle';
 import { writeAuditLog } from './lib/audit';
-import { recordDonation } from './lib/donationBonus';
+import { recordDonation, subtractDonation } from './lib/donationBonus';
 import {
   findDuration,
   minMonthsForProcessor,
@@ -442,8 +442,15 @@ async function fundDonation(
   if (cents <= 0) return;
   await recordDonation(ctx, cents, now);
   const u = await ctx.db.get(userId);
-  if (u && u.firstDonatedAt == null) {
-    await ctx.db.patch(userId, { firstDonatedAt: now, updatedAt: now });
+  if (u) {
+    // Lifetime aggregates on the user row (billing-order retention pruning must
+    // never shrink the donor's displayed totals), plus the first-donor badge.
+    await ctx.db.patch(userId, {
+      donatedCentsTotal: (u.donatedCentsTotal ?? 0) + cents,
+      donationCount: (u.donationCount ?? 0) + 1,
+      ...(u.firstDonatedAt == null ? { firstDonatedAt: now } : {}),
+      updatedAt: now,
+    });
   }
   await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
 }
@@ -523,6 +530,38 @@ export const applyEvent = internalMutation({
             reportedMinor: a.amountMinor ?? null,
           },
         });
+        // Refund unwind (the membership itself is deliberately NOT auto-revoked
+        // — a refund may be partial/mistaken; billing.refund_seen is the
+        // operator's action queue):
+        // 1. The order's donation leaves the shared free-bandwidth pool (it was
+        //    funded by money that no longer exists).
+        const donated = order.donationCents ?? (order.kind === 'donation' ? order.amountCents : 0);
+        if (donated > 0) {
+          await subtractDonation(ctx, donated, Date.now());
+          await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
+        }
+        // 2. Referral rewards the refunded purchase triggered never vest (only
+        //    pending/converted rows — an already-rewarded row stays, same
+        //    not-auto-revoked posture as the membership).
+        const refs = await ctx.db
+          .query('referrals')
+          .withIndex('by_referee', (q) => q.eq('refereeUserId', order.userId))
+          .collect();
+        for (const r of refs) {
+          if (r.status !== 'pending' && r.status !== 'converted') continue;
+          await ctx.db.patch(r._id, {
+            status: 'void',
+            voidReason: 'refund',
+            updatedAt: Date.now(),
+          });
+          await writeAuditLog(ctx, {
+            actorType: 'system',
+            action: 'referral.void',
+            targetType: 'referral',
+            targetId: r._id,
+            payload: { reason: 'refund', referrerUserId: r.referrerUserId },
+          });
+        }
       }
       return { applied: false, granted: false };
     }
@@ -639,6 +678,15 @@ export const applyEvent = internalMutation({
           updatedAt: now,
         });
         for (const c of codes) {
+          // Uniqueness read-check (no UNIQUE constraint in Convex): a codeHash
+          // dup would break redeem's .unique() lookup. A collision throws, the
+          // claim marks failed, and the processor's retry re-mints fresh codes
+          // (the paid-order guard keeps it exactly-once).
+          const clash = await ctx.db
+            .query('redemptionCodes')
+            .withIndex('by_code_hash', (q) => q.eq('codeHash', c.hash))
+            .unique();
+          if (clash) throw new Error('code hash collision');
           await ctx.db.insert('redemptionCodes', {
             codeHash: c.hash,
             codePrefix: c.prefix,
@@ -646,7 +694,6 @@ export const applyEvent = internalMutation({
             durationDays: order.durationDays,
             status: 'active',
             purchasedByUserId: order.userId,
-            purchasedByOrderId: order._id,
             updatedAt: now,
           });
         }

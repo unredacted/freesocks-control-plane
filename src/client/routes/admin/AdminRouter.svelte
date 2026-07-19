@@ -25,7 +25,7 @@
   import AdminRateLimits from './AdminRateLimits.svelte';
   import AdminTheme from './AdminTheme.svelte';
   import Link from '../../components/Link.svelte';
-  import { adminAuthStatusQuery } from '../../lib/queries';
+  import { adminAuthStatusQuery, adminStatusQuery } from '../../lib/queries';
 
   // Routes that don't require an admin session: /admin (the smart entry point,
   // which shows login/bootstrap itself) and /admin/register (the invite landing,
@@ -42,6 +42,13 @@
   let needsAuth = $derived(!PUBLIC_ADMIN_PATHS.has(router.pathname));
 
   const authStatus = adminAuthStatusQuery();
+  // PoP-signed probe: the auth-status check is cookie-only, so a signed-in-
+  // but-PoP-broken session (Workers blocked, POP_REQUIRED on) would otherwise
+  // flash the full CMS chrome + fire authed queries until the 401 backstop.
+  // Hold until the signed read resolves; a 401 here bounces via the global
+  // admin handler in query-client.ts (same backstop, no flash).
+  const popProbe = adminStatusQuery();
+  let holdForPop = $derived(needsAuth && !!authStatus.data?.signedIn && popProbe.isPending);
 
   // Bounce signed-out deep-links to /admin (which renders the login/bootstrap
   // flow). `replace: true` so the back button doesn't re-enter the guarded path.
@@ -52,7 +59,7 @@
   });
 </script>
 
-{#if needsAuth && (authStatus.isPending || !authStatus.data)}
+{#if needsAuth && (authStatus.isPending || !authStatus.data || holdForPop)}
   <!--
     Hold a neutral loading state until the auth-status probe resolves, so a
     signed-out deep-link never flashes the authed chrome before bouncing.

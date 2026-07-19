@@ -46,12 +46,10 @@ export const setAccountId = internalMutation({
       .withIndex('by_account_id_hash', (q) => q.eq('accountIdHash', hash))
       .unique();
     if (existing && existing._id !== userId) throw new Error('account-id hash collision');
-    const now = Date.now();
     await ctx.db.patch(userId, {
       accountIdHash: hash,
       accountIdPrefix: prefix,
-      ...(rotate ? { accountIdRotatedAt: now } : { accountIdCreatedAt: now }),
-      updatedAt: now,
+      updatedAt: Date.now(),
     });
     return null;
   },

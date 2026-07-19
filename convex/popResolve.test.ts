@@ -84,7 +84,7 @@ async function seedSession(
       kind: 'member',
       userId,
       expiresAt: Date.now() + 3_600_000,
-      ...(popPublicKey ? { popPublicKey, popAlg, popBoundAt: Date.now(), popSessionToken } : {}),
+      ...(popPublicKey ? { popPublicKey, popAlg, popSessionToken } : {}),
     });
   });
   return sid;

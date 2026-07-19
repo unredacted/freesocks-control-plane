@@ -37,6 +37,23 @@ jobs:
       # Build the SPA (the only build artifact now; the backend is convex/).
       - run: bun run build
 
+  # The deploy artifacts themselves: all three Dockerfiles must build, and the
+  # shell entrypoints must pass shellcheck (a broken entrypoint otherwise merges
+  # green and only fails on the beta host at deploy time).
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: shellcheck the docker scripts
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -S error docker/*.sh
+      - name: Build docker images (no cache)
+        run: |
+          docker build -f docker/web.Dockerfile .
+          docker build -f docker/backup.Dockerfile .
+          docker build -f docker/deploy.Dockerfile .
+
   # Reproducible build (CDN-blinding Phase 3f): build twice from a clean checkout
   # and assert byte-for-byte identical output. The printed dist-sha256 is the hash
   # we publish out of band and an independent rebuilder reproduces (see

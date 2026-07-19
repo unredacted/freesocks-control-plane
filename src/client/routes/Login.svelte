@@ -125,7 +125,7 @@
       router.navigate('/account');
     } catch (err) {
       if (err instanceof PasskeyCancelledError) return;
-      passkeyError = err instanceof Error ? err.message : String(err);
+      passkeyError = apiErrorMessage(err);
       toast.error(t('passkey.signInFailed'), { description: passkeyError });
     } finally {
       passkeyBusy = false;

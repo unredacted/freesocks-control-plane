@@ -800,8 +800,10 @@ export async function freeWindowExpiryMs(db: DatabaseReader): Promise<number> {
  * Paginated over `by_tier_status_freekey` (compound `(_creationTime,_id)` cursor —
  * no same-ms skip), tier- + status-scoped so `inactive` rows are never re-scanned
  * (no accretion) and paid users never appear. Read-only; the action applies.
- * Legacy free users with an unset `freeKeyExpiresAt` are skipped by `gt(0)` until
- * the backfill migration seeds them.
+ * Legacy free users with an UNSET `freeKeyExpiresAt` (pre-WS2 accounts that never
+ * returned) are INCLUDED — undefined sorts below numbers, and treating them as
+ * due is how they get swept now that the one-time backfill migration is retired
+ * (they reactivate on login, so this only reclaims their key).
  */
 export const findIdleFree = internalQuery({
   args: {
@@ -814,11 +816,7 @@ export const findIdleFree = internalQuery({
     const res = await ctx.db
       .query('users')
       .withIndex('by_tier_status_freekey', (q) =>
-        q
-          .eq('tierId', tierId)
-          .eq('status', 'active')
-          .gt('freeKeyExpiresAt', 0)
-          .lt('freeKeyExpiresAt', now),
+        q.eq('tierId', tierId).eq('status', 'active').lt('freeKeyExpiresAt', now),
       )
       .paginate({ cursor, numItems });
     const idle: {
@@ -842,6 +840,19 @@ export const findIdleFree = internalQuery({
   },
 });
 
+/** Point-in-time idle-due check (the deactivate sweep's pre-reclaim re-guard):
+ *  true exactly when the user is active AND their free window has elapsed.
+ *  A legacy `freeKeyExpiresAt: null` counts as DUE (pre-WS2 accounts that never
+ *  returned; they reactivate on login — treating them as due is how they get
+ *  swept at all, since the one-time backfill migration was retired). */
+export const isIdleFreeDue = internalQuery({
+  args: { userId: v.id('users'), now: v.number() },
+  handler: async (ctx, { userId, now }) => {
+    const u = await ctx.db.get(userId);
+    return !!u && u.status === 'active' && (u.freeKeyExpiresAt ?? 0) < now;
+  },
+});
+
 /** Deactivate one idle free user: RETAIN the row (status→inactive), keep the free
  *  tier, reclaim the key. Re-reads + guards the read-then-act race: a regenerate/
  *  reactivation between the sweep's read and now moves `freeKeyExpiresAt` to the
@@ -851,7 +862,8 @@ export const markUserInactive = internalMutation({
   handler: async (ctx, { userId }) => {
     const u = await ctx.db.get(userId);
     if (!u || u.status !== 'active') return null;
-    if (u.freeKeyExpiresAt == null || u.freeKeyExpiresAt >= Date.now()) return null;
+    // null = legacy, never returned (due); a future stamp = refreshed (spare).
+    if (u.freeKeyExpiresAt != null && u.freeKeyExpiresAt >= Date.now()) return null;
     await ctx.db.patch(userId, {
       status: 'inactive',
       suspendedAt: Date.now(),
@@ -946,6 +958,16 @@ export const deactivateIdleFree = internalAction({
         }
         for (const e of due) {
           try {
+            // Re-guard BEFORE reclaiming the key: a login/regenerate landing
+            // since the read re-stamped freeKeyExpiresAt (or reactivated the
+            // user) must spare them — deleting the key first and letting
+            // markUserInactive's guard skip would leave an ACTIVE user whose
+            // key was just deleted (no auto-reissue).
+            const stillDue = await ctx.runQuery(internal.lifecycle.isIdleFreeDue, {
+              userId: e.userId,
+              now,
+            });
+            if (!stillDue) continue;
             if (e.backendUserId && e.backend) {
               await deleteSubscriptionEverywhere(ctx, {
                 backend: e.backend,

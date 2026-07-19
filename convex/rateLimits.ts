@@ -92,8 +92,11 @@ export const enforce = internalMutation({
  * Compensating decrement: hand one unit back on a bucket (floored at 0). Used
  * only by flows that RESERVE a slot (increment) before a fallible side effect —
  * e.g. free-account creation — so a transient failure doesn't burn the subject's
- * daily allowance. No-op if the bucket is missing/empty (policy disabled, or the
- * window already reset). Never fails open (it only ever LOWERS a counter).
+ * daily allowance. No-op if the bucket is missing/empty (policy disabled), OR IF
+ * THE WINDOW ALREADY ROLLED: decrementing a fresh window on behalf of the
+ * previous one would steal its first slot (the reserve and the compensating
+ * release straddled a window boundary). Never fails open (it only ever LOWERS a
+ * counter).
  */
 export const release = internalMutation({
   args: { policyKey: v.string(), subject: v.string() },
@@ -103,7 +106,9 @@ export const release = internalMutation({
       .query('rateLimits')
       .withIndex('by_bucket', (q) => q.eq('bucket', `${policyKey}:${subject}`))
       .unique();
-    if (row && row.count > 0) await ctx.db.patch(row._id, { count: row.count - 1 });
+    if (row && row.count > 0 && row.expiresAt > Date.now()) {
+      await ctx.db.patch(row._id, { count: row.count - 1 });
+    }
     return null;
   },
 });

@@ -310,37 +310,23 @@ describe('donations.applyFreeBonus', () => {
 });
 
 describe('donations.donationTotals', () => {
-  test('sums only settled orders that carried a donation', async () => {
+  test('reads the maintained user-row aggregates (retention-proof), GB computed at the current rate', async () => {
     const { t, freeTierId } = await setup();
     const { userId, otherId } = await t.run(async (ctx) => {
       const userId = await ctx.db.insert('users', {
         tierId: freeTierId,
         status: 'active',
+        donatedCentsTotal: 800,
+        donationCount: 2,
         updatedAt: Date.now(),
       });
       const otherId = await ctx.db.insert('users', {
         tierId: freeTierId,
         status: 'active',
+        donatedCentsTotal: 900,
+        donationCount: 1,
         updatedAt: Date.now(),
       });
-      const order = (over: Record<string, unknown>) =>
-        ctx.db.insert('billingOrders', {
-          processor: 'nowpayments',
-          opaqueRef: `ref-${Math.random().toString(36).slice(2)}`,
-          userId,
-          durationDays: 0,
-          amountCents: 1000,
-          currency: 'USD',
-          status: 'paid',
-          kind: 'donation',
-          updatedAt: Date.now(),
-          ...over,
-        });
-      await order({ donationCents: 500 }); // counts
-      await order({ donationCents: 300, kind: 'self', durationDays: 91 }); // ride-along counts
-      await order({ donationCents: 700, status: 'pending' }); // unsettled — excluded
-      await order({ donationCents: 0, kind: 'self', durationDays: 91 }); // no donation — excluded
-      await order({ donationCents: 900, userId: otherId }); // other user — excluded
       return { userId, otherId };
     });
     expect(await t.query(internal.donations.donationTotals, { userId })).toEqual({
@@ -355,7 +341,7 @@ describe('donations.donationTotals', () => {
     });
   });
 
-  test('zeros for a user with no orders', async () => {
+  test('zeros for a user with no aggregates', async () => {
     const { t, freeTierId } = await setup();
     const userId = await t.run((ctx) =>
       ctx.db.insert('users', { tierId: freeTierId, status: 'active', updatedAt: Date.now() }),

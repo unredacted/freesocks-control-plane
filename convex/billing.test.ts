@@ -1168,6 +1168,86 @@ describe('billing.applyEvent grant cross-checks', () => {
     });
   });
 
+  test('a refund unwinds the donation pool + voids pending/converted referrals (membership kept)', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    // Donation config + a referral row for the buyer (converted = mid-vest).
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'billing.donation.enabled',
+        value: 'true',
+        updatedAt: 0,
+      }),
+    );
+    const referrerId = await t.run((ctx) =>
+      ctx.db.insert('users', { tierId: memberTierId, status: 'active', updatedAt: Date.now() }),
+    );
+    const referralId = await t.run((ctx) =>
+      ctx.db.insert('referrals', {
+        referrerUserId: referrerId,
+        refereeUserId: userId,
+        status: 'converted',
+        updatedAt: Date.now(),
+      }),
+    );
+    // A paid membership order that carried a $5 donation.
+    await t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'nowpayments',
+        opaqueRef: 'ref-refund2',
+        userId,
+        tierId: memberTierId,
+        durationDays: 91,
+        amountCents: 1400,
+        donationCents: 500,
+        currency: 'USD',
+        status: 'pending',
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-refund2',
+      status: 'paid',
+      processorRef: 'pay-r2',
+    });
+    // The pool got the $5 and the user aggregates bumped.
+    await t.run(async (ctx) => {
+      const pool = await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
+        .unique();
+      expect(JSON.parse(pool!.value).donatedCents).toBe(500);
+      const u = await ctx.db.get(userId);
+      expect(u!.donatedCentsTotal).toBe(500);
+      expect(u!.donationCount).toBe(1);
+      expect(u!.firstDonatedAt).toBeTypeOf('number');
+    });
+
+    // Refund lands: the pool drains back, the referral voids, membership stays.
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-refund2',
+      status: 'failed',
+      processorRef: 'refund_r2',
+    });
+    await t.run(async (ctx) => {
+      const pool = await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
+        .unique();
+      expect(JSON.parse(pool!.value).donatedCents).toBe(0);
+      const ref = await ctx.db.get(referralId);
+      expect(ref!.status).toBe('void');
+      expect(ref!.voidReason).toBe('refund');
+      expect((await ctx.db.get(userId))!.membershipExpiresAt).toBeTruthy();
+      const audits = await ctx.db.query('auditLog').collect();
+      expect(audits.some((a) => a.action === 'referral.void' && a.targetId === referralId)).toBe(
+        true,
+      );
+    });
+  });
+
   test('a second paid event with a DIFFERENT payment id audits billing.overpayment_seen (no double grant)', async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);
@@ -1397,14 +1477,9 @@ describe('billing gift codes', () => {
         .withIndex('by_purchaser', (q) => q.eq('purchasedByUserId', userId))
         .collect();
       expect(codes).toHaveLength(2);
-      expect(
-        codes.every(
-          (c) =>
-            c.status === 'active' &&
-            c.purchasedByOrderId === order!._id &&
-            c.mintedByAdminId === undefined,
-        ),
-      ).toBe(true);
+      expect(codes.every((c) => c.status === 'active' && c.mintedByAdminId === undefined)).toBe(
+        true,
+      );
       const user = await ctx.db.get(userId);
       expect(user?.tierId).toBe(freeTierId); // membership NOT extended
       expect(user?.membershipExpiresAt).toBeUndefined();

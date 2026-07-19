@@ -79,11 +79,18 @@ This builds the SPA + deployer images, then starts, in order:
 
 1. `postgres` (the datastore) and `backend` (waits for Postgres healthy);
 2. `keygen` (one-shot): derives the admin key into a shared volume;
-3. `deployer` (one-shot): `convex deploy` (functions + schema) -> `convex env set`
-   for every line in `.env.convex` -> `seed:seedCutover` (tiers, settings, and the
-   Remnawave instance if `REMNAWAVE_*` is set) -> `userStats:reconcileUserCounts`
-   (refreshes the dashboard's user-status counters);
+3. `deployer` (one-shot): `convex env set` for every line in `.env.convex`
+   -> `convex deploy` (functions + schema) -> `seed:seedCutover` (tiers, settings,
+   and the Remnawave instance if `REMNAWAVE_*` is set) ->
+   `userStats:reconcileUserCounts` (refreshes the dashboard's user-status
+   counters);
 4. `web` (Caddy) and `dashboard`.
+
+**First-up race:** `web` does not wait on the `deployer`, so on the FIRST `up`
+the SPA is reachable while `/api` still 404s until the deploy finishes (usually
+under a minute — `logs -f deployer` ends with `[deploy] OK`). Harmless on a
+fresh host (nobody has a link yet); on a redeploy the old functions keep
+serving, so there is no gap at all.
 
 Confirm the deploy job succeeded:
 
@@ -103,12 +110,14 @@ Open `https://beta.freesocks.org/admin` in a browser. While no passkey exists, t
 bootstrap wizard appears: paste the `ADMIN_BOOTSTRAP_SECRET`, then register a
 passkey. Bootstrap **locks forever** once any credential exists.
 
-The `deployer` **prints the bootstrap secret at the end of every deploy** (look
-for the `ADMIN_BOOTSTRAP_SECRET = …` line in `docker compose ... logs deployer`),
-so you don't have to fish it out — it's auto-generated into the deployment env,
-not `.env.convex`. You can also read it any time from the dashboard's env screen,
-or via the deployer container (a bare `bunx convex env get` from the host shell
-fails with _"No CONVEX_DEPLOYMENT set"_ — see §"One-off functions" below).
+The `deployer` **prints the bootstrap secret at the end of a deploy only while
+no admin credential exists yet** (look for the `ADMIN_BOOTSTRAP_SECRET = …`
+line in `docker compose ... logs deployer`) — once a passkey exists it isn't
+printed again, so it doesn't linger in retained deploy logs. It's auto-generated
+into the deployment env, not `.env.convex`. You can also read it any time from
+the dashboard's env screen, or via the deployer container (a bare `bunx convex
+env get` from the host shell fails with _"No CONVEX_DEPLOYMENT set"_ — see
+§"One-off functions" below).
 
 ## 4. Add a backend instance (the subscription step needs one)
 
@@ -309,6 +318,13 @@ deployment expectation is an **authenticating edge in front of this host
 (Pangolin + CrowdSec)** with the admin paths behind its auth; `CAP_ADMIN_KEY`
 gates the dashboard regardless.
 
+> Hardening note (accepted for beta, fix before a large fleet): the Cap admin
+> dashboard shares the member origin under `/cap` with the relaxed CSP, so a
+> stored XSS in the pinned Cap app would execute in the site origin. The
+> medium-term fix is to serve the dashboard on its own host/port and proxy only
+> the widget API paths (`/cap/{sitekey,challenge,redeem}`) through Caddy. Until
+> then the edge auth + `ADMIN_KEY` + the digest pin are the mitigations.
+
 Open `https://<host>/cap` in a browser, log in with `CAP_ADMIN_KEY`, create a
 site key, and put the **site key** + **secret** into `.env.convex` as
 `CAP_SITE_KEY` / `CAP_SECRET` (the backend reads them;
@@ -382,6 +398,9 @@ Backup coverage notes:
   storage for any S3-less blobs); its loss is NOT covered by the dumps — treat
   it as rebuildable-from-scratch except for any locally-stored file blobs, and
   snapshot it at the host level if you use local file storage.
+- The sidecar prunes **local** copies only — offsite bucket objects grow
+  forever. Set an S3 lifecycle rule on the bucket (e.g. expire
+  `db-backups/*` after 30 days) to match the local `BACKUP_RETENTION` intent.
 - `backup.sh` runs a **pre-dump sanity check** (`tiers` must exist and be
   non-empty) so a `POSTGRES_DB`/`INSTANCE_NAME` mismatch fails the heartbeat
   instead of green-dumping the wrong (empty) database. `POSTGRES_DB` is an

@@ -52,6 +52,11 @@ export const mintCodes = internalAction({
     if (!Number.isInteger(a.durationDays) || a.durationDays < 1 || a.durationDays > 3650) {
       throw new Error('durationDays must be an integer in [1, 3650]');
     }
+    // The contract's MintCodesRequest.note is z.string().max(500); v.string()
+    // accepts anything — enforce the same cap here.
+    if (a.note !== undefined && a.note.length > 500) {
+      throw new Error('note must be at most 500 characters');
+    }
     const batchId = randomHex(8);
     const codes: string[] = [];
     for (let i = 0; i < count; i++) {

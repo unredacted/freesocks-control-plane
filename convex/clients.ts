@@ -14,6 +14,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { sanitizeHttpsUrl } from './lib/verificationConfig';
+import { writeAuditLog } from './lib/audit';
 
 const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
 const PLATFORM_KEYS = ['android', 'ios', 'windows', 'desktop'];
@@ -109,6 +110,7 @@ export const create = internalMutation({
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const name = a.name.trim();
@@ -145,6 +147,14 @@ export const create = internalMutation({
       priority: a.priority ?? 0,
       updatedAt: Date.now(),
     });
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'admin.client.create',
+      targetType: 'client',
+      targetId: id,
+      payload: { name },
+    });
     return mapClient((await ctx.db.get(id))!);
   },
 });
@@ -166,8 +176,9 @@ export const update = internalMutation({
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { id, ...patch }) => {
+  handler: async (ctx, { id, actorAdminId, ...patch }) => {
     const existing = await ctx.db.get(id);
     if (!existing) throw new ConvexError({ code: 'not_found', message: 'Client not found' });
     const fields: Partial<Doc<'clients'>> = { updatedAt: Date.now() };
@@ -206,14 +217,31 @@ export const update = internalMutation({
     if (patch.enabled !== undefined) fields.enabled = patch.enabled;
     if (patch.priority !== undefined) fields.priority = patch.priority;
     await ctx.db.patch(id, fields);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.client.update',
+      targetType: 'client',
+      targetId: id,
+      payload: { name: (fields.name as string | undefined) ?? existing.name },
+    });
     return mapClient((await ctx.db.get(id))!);
   },
 });
 
 export const remove = internalMutation({
-  args: { id: v.id('clients') },
-  handler: async (ctx, { id }) => {
+  args: { id: v.id('clients'), actorAdminId: v.optional(v.id('adminUsers')) },
+  handler: async (ctx, { id, actorAdminId }) => {
+    const row = await ctx.db.get(id);
     await ctx.db.delete(id);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.client.delete',
+      targetType: 'client',
+      targetId: id,
+      payload: { name: row?.name ?? null },
+    });
     return { ok: true as const };
   },
 });
@@ -238,6 +266,7 @@ export const upsertByName = internalMutation({
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const name = a.name.trim();
@@ -269,6 +298,14 @@ export const upsertByName = internalMutation({
         priority: a.priority ?? 0,
         updatedAt: Date.now(),
       });
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: a.actorAdminId ?? undefined,
+        action: 'admin.client.upsert',
+        targetType: 'client',
+        targetId: id,
+        payload: { name, created: true },
+      });
       return { ...mapClient((await ctx.db.get(id))!), created: true };
     }
     const fields: Partial<Doc<'clients'>> = { updatedAt: Date.now() };
@@ -287,6 +324,14 @@ export const upsertByName = internalMutation({
     if (a.enabled !== undefined) fields.enabled = a.enabled;
     if (a.priority !== undefined) fields.priority = a.priority;
     await ctx.db.patch(existing._id, fields);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'admin.client.upsert',
+      targetType: 'client',
+      targetId: existing._id,
+      payload: { name, created: false },
+    });
     return { ...mapClient((await ctx.db.get(existing._id))!), created: false };
   },
 });

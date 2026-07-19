@@ -14,6 +14,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { recordHeartbeat } from './cronHeartbeat';
 import { v } from 'convex/values';
+import { writeAuditLog } from './lib/audit';
 
 /** Keep an expired epoch openable for this long so in-flight requests sealed to a
  *  just-retired key still decrypt, then destroy its secret. */
@@ -35,6 +36,28 @@ export const maybeRotate = internalMutation({
   handler: async (ctx) => {
     await recordHeartbeat(ctx, 'epoch-key-rotate');
     if (!process.env.FS_MANIFEST_SK) return null;
+    // Rotation-gap alarm: epochs EXIST but none is currently valid — at least
+    // 3 consecutive rotates failed (10-min cadence, 30-min validity), and
+    // clients are silently falling back to the static key. (First-ever run,
+    // zero rows, is fine: the rotate below mints the first epoch.)
+    const now = Date.now();
+    const latest = await ctx.db
+      .query('keyEpochs')
+      .withIndex('by_not_before', (q) => q.lte('notBefore', now))
+      .order('desc')
+      .first();
+    if (latest && latest.notAfter <= now) {
+      console.warn(
+        `[keyEpochs] no currently-valid epoch while FS_MANIFEST_SK is set — ` +
+          `rotation appears wedged; clients fall back to the static key`,
+      );
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'e2ee.epoch_gap',
+        targetType: 'key_epoch',
+        payload: { lastNotAfter: latest.notAfter },
+      });
+    }
     await ctx.scheduler.runAfter(0, internal.lib.e2eeCrypto.rotateEpochKey, {});
     return null;
   },

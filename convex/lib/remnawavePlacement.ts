@@ -261,6 +261,9 @@ export async function resolvePlacementTarget(
   opts: {
     location?: string | null;
     onlyServerId?: string | null;
+    // Injected PRNG for the anti-herding pick (queries must stay deterministic —
+    // callers on the issuance path mint this in the ACTION and thread it down).
+    rand?: () => number;
   } = {},
 ): Promise<{
   placement: string | null;
@@ -299,7 +302,7 @@ export async function resolvePlacementTarget(
       return !attributed || attributed.serverId === opts.onlyServerId;
     });
     if (constrained.length === 0) return { placement: null, serverId: null };
-    const placement = await pickByNodeLoad(db, constrained);
+    const placement = await pickByNodeLoad(db, constrained, opts.rand);
     return { placement, serverId: placement ? opts.onlyServerId : null };
   }
 
@@ -337,9 +340,9 @@ export async function resolvePlacementTarget(
     // single-panel deploy keeps the fail-soft (the pair can't mismatch).
     if (servers.length > 1)
       return { placement: null, serverId: null, unattributedMultiPanel: true };
-    return { placement: await pickByNodeLoad(db, pool), serverId: null };
+    return { placement: await pickByNodeLoad(db, pool, opts.rand), serverId: null };
   }
-  const placement = await pickByNodeLoad(db, constrained);
+  const placement = await pickByNodeLoad(db, constrained, opts.rand);
   return {
     placement,
     serverId: placement ? (statsByPlacement.get(placement)?.serverId ?? null) : null,
@@ -360,10 +363,17 @@ export async function resolvePlacementTarget(
  *
  * Anti-herding (L5): with ≥2 usable candidates the pick is UNIFORM AT RANDOM
  * over the top 3 by score — a deterministic top-1 makes every concurrent
- * issuance between 10-minute stat refreshes pile onto the same node. Degraded
- * pools stay deterministic (declaration order) for reproducibility.
+ * issuance between 10-minute stat refreshes pile onto the same node. The
+ * randomness is INJECTED (`rand`): Convex queries/mutations must be
+ * deterministic (the runtime may pin the PRNG, which would degenerate the
+ * top-3 pick to a constant), so callers on the issuance path pass a float
+ * minted in the ACTION. No rand → deterministic top-1 (tier pushes, tests).
  */
-export async function pickByNodeLoad(db: DatabaseReader, pool: string[]): Promise<string | null> {
+export async function pickByNodeLoad(
+  db: DatabaseReader,
+  pool: string[],
+  rand?: () => number,
+): Promise<string | null> {
   if (pool.length <= 1) return pool[0] ?? null;
   const now = Date.now();
   const w = await placementWeights(db);
@@ -387,9 +397,9 @@ export async function pickByNodeLoad(db: DatabaseReader, pool: string[]): Promis
     (a, b) => Number(b.usable) - Number(a.usable) || a.score - b.score || a.order - b.order,
   );
   const usable = scored.filter((s) => s.usable);
-  if (usable.length >= 2) {
+  if (usable.length >= 2 && rand) {
     const top = usable.slice(0, 3);
-    return top[Math.floor(Math.random() * top.length)]!.placement;
+    return top[Math.floor(rand() * top.length)]!.placement;
   }
   return scored[0]!.placement;
 }

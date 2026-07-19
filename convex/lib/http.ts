@@ -38,7 +38,15 @@ export function json(data: unknown, status = 200, headers: Record<string, string
   // wins — e.g. /api/v1/e2ee/keys sets 'cache-control: public, max-age=60').
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers },
+    // nosniff everywhere (the shipped Caddyfile sets hardening headers at the
+    // edge, but a generic reverse-proxy deploy per docs serves API responses
+    // without them — the invariant belongs to the origin, not the edge).
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      ...headers,
+    },
   });
 }
 

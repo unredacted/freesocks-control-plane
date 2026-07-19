@@ -127,7 +127,11 @@ export const get = query({
         apiEndpoint: process.env.CAP_PUBLIC_ENDPOINT || '/cap',
         siteKey: process.env.CAP_SITE_KEY ?? '',
       },
-      environment,
+      // The deployment environment string is masked to 'production' outside
+      // development (nothing in the SPA consumes it at runtime, and the raw
+      // value is minor deployment-tier fingerprinting). Kept required in the
+      // contract for older clients; genuinely 'development' only when set.
+      environment: environment === 'development' ? environment : 'production',
       tiers,
       freeTierDays: settings['freetier.expiryDays'] as number,
       backends: {

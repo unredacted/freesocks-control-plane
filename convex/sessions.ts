@@ -62,7 +62,7 @@ export const create = internalMutation({
       userId,
       adminUserId,
       expiresAt: Date.now() + ttlMs,
-      ...(bound ? { popPublicKey, popAlg: boundAlg, popBoundAt: Date.now(), popSessionToken } : {}),
+      ...(bound ? { popPublicKey, popAlg: boundAlg, popSessionToken } : {}),
     });
     return null;
   },

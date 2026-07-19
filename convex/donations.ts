@@ -13,7 +13,14 @@ import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { resolveBillingConfig } from './lib/billingConfig';
-import { effectiveBonusGb, readDonationState, writeDonationState } from './lib/donationBonus';
+import {
+  currentMonthKey,
+  effectiveBonusGb,
+  readDonationState,
+  upsertHistoryForMonth,
+  writeDonationState,
+} from './lib/donationBonus';
+import { readUserCounts } from './lib/statusCounters';
 import { resolveTrafficLimitBytes } from './lib/backends/types';
 
 /** One page of active free users' active subs (shared by the query + the action,
@@ -41,29 +48,20 @@ export const currentBonusGb = internalQuery({
   },
 });
 
-/** A member's own settled donation totals (impact panel). Bounded: one user's
- *  orders via by_user, filtered to paid rows carrying a donation. Also returns
- *  the GB equivalent at the CURRENT rate (the raw rate itself stays server-side
- *  — see the publicConfig projection), so the client never needs it. */
+/** A member's own settled donation totals (impact panel). Read from the
+ *  MAINTAINED aggregates on the user row (fundDonation bumps them at grant
+ *  time) — billing-order retention pruning (365d) must never shrink the
+ *  displayed lifetime totals. donatedGbTotal is computed at the current rate
+ *  server-side (the raw rate itself never ships). */
 export const donationTotals = internalQuery({
   args: { userId: v.id('users') },
   handler: async (
     ctx,
     { userId },
   ): Promise<{ donatedCentsTotal: number; donationCount: number; donatedGbTotal: number }> => {
-    const orders = await ctx.db
-      .query('billingOrders')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect();
-    let donatedCentsTotal = 0;
-    let donationCount = 0;
-    for (const o of orders) {
-      if (o.status !== 'paid') continue;
-      const cents = o.donationCents ?? 0;
-      if (cents <= 0) continue;
-      donatedCentsTotal += cents;
-      donationCount += 1;
-    }
+    const user = await ctx.db.get(userId);
+    const donatedCentsTotal = user?.donatedCentsTotal ?? 0;
+    const donationCount = user?.donationCount ?? 0;
     const cfg = await resolveBillingConfig(ctx.db);
     const donatedGbTotal = (donatedCentsTotal / 100) * cfg.donation.bonusGbPerUsd;
     return { donatedCentsTotal, donationCount, donatedGbTotal };
@@ -100,6 +98,28 @@ export const setAppliedBonusGb = internalMutation({
   handler: async (ctx, { appliedBonusGb }) => {
     const state = await readDonationState(ctx.db);
     await writeDonationState(ctx, { ...state, appliedBonusGb });
+    return null;
+  },
+});
+
+/**
+ * After a CLEAN full-drain, upsert the month's impact-ledger entry with the
+ * fleet size the bonus actually reached (`freeUsers`) — the donation path
+ * writes the money/bonus side but can't know the fleet size; the reconcile is
+ * the only writer that does. GB + headcount only, never dollars (the public
+ * projection ships the GB side).
+ */
+export const stampBonusHistory = internalMutation({
+  args: { effective: v.number() },
+  handler: async (ctx, { effective }) => {
+    const state = await readDonationState(ctx.db);
+    const counts = await readUserCounts(ctx.db);
+    await upsertHistoryForMonth(ctx, {
+      monthKey: state.monthKey || currentMonthKey(Date.now()),
+      donatedCents: state.donatedCents,
+      bonusGb: effective,
+      freeUsers: counts.freeActive,
+    });
     return null;
   },
 });
@@ -262,6 +282,8 @@ export const applyFreeBonus = internalAction({
         return null;
       }
       await ctx.runMutation(internal.donations.setAppliedBonusGb, { appliedBonusGb: effective });
+      // Clean full drain: stamp the month's ledger with the fleet size reached.
+      await ctx.runMutation(internal.donations.stampBonusHistory, { effective });
       return null;
     }),
 });

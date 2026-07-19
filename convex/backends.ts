@@ -207,9 +207,21 @@ export const deleteUser = internalAction({
   },
   handler: async (ctx, { backendUserId, backendServerId }) => {
     if (mockBackendEnabled()) return null;
-    const server = backendServerId
-      ? await ctx.runQuery(internal.backendServers.getById, { id: backendServerId })
-      : await resolveInstanceByKey(ctx, backendUserId);
+    if (backendServerId) {
+      // An explicit hint that fails to resolve (the instance row was deleted
+      // out from under a live key) must NOT silently succeed — the saga would
+      // record a clean teardown and orphan the backend account. Throw so the
+      // caller's retry/audit path engages.
+      const hinted = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+      if (!hinted) {
+        throw new Error(
+          `Backend instance ${backendServerId} not found for key teardown (possible orphan)`,
+        );
+      }
+      await PROVIDERS[hinted.backend].remove(hinted.config as BackendConfig, backendUserId);
+      return null;
+    }
+    const server = await resolveInstanceByKey(ctx, backendUserId);
     if (!server) return null; // already gone / no instance recorded
     await PROVIDERS[server.backend].remove(server.config as BackendConfig, backendUserId);
     return null;

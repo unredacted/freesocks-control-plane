@@ -80,6 +80,42 @@ const tierUpsertFields = {
   expirationDaysAfterMembershipLapse: v.number(),
 };
 
+/**
+ * Runtime bounds the Convex validators can't express (v.number() accepts any
+ * double; the zod contract requires int/nonnegative + length caps). Enforced on
+ * BOTH create and update so a bad fsv1_-token payload can't persist a value the
+ * CMS couldn't have sent.
+ */
+function checkTierBounds(patch: Record<string, unknown>): void {
+  if (
+    ('slug' in patch &&
+      (typeof patch.slug !== 'string' || patch.slug.length < 1 || patch.slug.length > 64)) ||
+    ('name' in patch &&
+      (typeof patch.name !== 'string' || patch.name.length < 1 || patch.name.length > 128))
+  ) {
+    throw new ConvexError({ code: 'validation', message: 'slug must be 1-64 chars, name 1-128' });
+  }
+  for (const key of [
+    'monthlyTrafficGb',
+    'deviceLimit',
+    'hwidLimit',
+    'expirationDaysAfterMembershipLapse',
+  ] as const) {
+    if (key in patch) {
+      const val = patch[key];
+      if (typeof val !== 'number' || !Number.isInteger(val) || val < 0) {
+        throw new ConvexError({ code: 'validation', message: `${key} must be an integer ≥ 0` });
+      }
+    }
+  }
+  if ('priority' in patch) {
+    const val = patch.priority;
+    if (typeof val !== 'number' || !Number.isInteger(val)) {
+      throw new ConvexError({ code: 'validation', message: 'priority must be an integer' });
+    }
+  }
+}
+
 // --- mappers (Doc -> contract shape) ----------------------------------------
 
 function iso(ms: number): string {
@@ -227,6 +263,7 @@ async function clearOtherDefaultFree(
 export const createTier = internalMutation({
   args: { ...tierUpsertFields, actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, a) => {
+    checkTierBounds(a);
     // Slug uniqueness (no UNIQUE constraint in Convex): read-check the index.
     const clash = await ctx.db
       .query('tiers')
@@ -305,6 +342,7 @@ export const updateTier = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { id, actorAdminId, ...patch }) => {
+    checkTierBounds(patch);
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error('tier not found');
     if (patch.slug !== undefined && patch.slug !== existing.slug) {
@@ -357,6 +395,15 @@ export const deleteTier = internalMutation({
       throw new ConvexError({
         code: 'tier.in_use',
         message: 'Cannot delete a tier that still has users. Move them off it first.',
+      });
+    }
+    // Membership codes minted against this tier brick on delete (redeem looks
+    // the tier up) — refuse while any exist, active or spent.
+    const codes = await ctx.db.query('redemptionCodes').collect();
+    if (codes.some((c) => c.tierId === id)) {
+      throw new ConvexError({
+        code: 'tier.in_use',
+        message: 'Cannot delete a tier that still has membership codes. Revoke them first.',
       });
     }
     await ctx.db.delete(id);
@@ -1145,12 +1192,24 @@ function checkLocation(a: { location?: string | null; locationLabel?: string | n
  * upsertBackendServerBySlug's create path. (Review P3: was inlined twice.)
  */
 function buildBackendServerConfig(a: BackendServerConfigArgs): BackendServerConfig {
+  // URL shape check (the zod contract requires .url(); v.string() accepts
+  // anything — a malformed URL only fails later, at healthcheck time).
+  const checkUrl = (raw: string, label: string): void => {
+    try {
+      const u = new URL(raw);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error();
+    } catch {
+      throw new ConvexError({ code: 'validation', message: `${label} must be an http(s) URL` });
+    }
+  };
   if (a.backend === 'remnawave') {
     if (!a.baseUrl || !a.apiToken)
       throw new Error('A Remnawave instance needs a base URL and an API token');
+    checkUrl(a.baseUrl, 'The base URL');
     return { type: 'remnawave', baseUrl: a.baseUrl, apiToken: a.apiToken };
   }
   if (!a.apiUrl) throw new Error('An Outline instance needs an apiUrl');
+  checkUrl(a.apiUrl, 'The apiUrl');
   return {
     type: 'outline',
     apiUrl: a.apiUrl,
@@ -1300,7 +1359,28 @@ export const deleteBackendServer = internalMutation({
   args: { id: v.id('backendServers'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
     const row = await ctx.db.get(id);
+    // Refuse while live keys point at the instance (they'd be unresolvable
+    // orphans for reads/updates/teardowns). Convex has no FK enforcement.
+    // Tombstoned/deleted rows don't count (the retention sweep reclaims them).
+    const referencing = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_backend_server', (q) => q.eq('backendServerId', id))
+      .collect();
+    if (referencing.some((s) => s.state !== 'deleted')) {
+      throw new ConvexError({
+        code: 'server.in_use',
+        message:
+          'Cannot delete an instance that still has keys on it. Migrate or tombstone them first.',
+      });
+    }
     await ctx.db.delete(id);
+    // Its node-stats cache rows dangle otherwise (the picker would keep
+    // attributing squads to a gone panel).
+    const stats = await ctx.db
+      .query('remnawaveNodeStats')
+      .withIndex('by_server', (q) => q.eq('backendServerId', id))
+      .collect();
+    for (const s of stats) await ctx.db.delete(s._id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,

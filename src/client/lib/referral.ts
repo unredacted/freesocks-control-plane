@@ -5,6 +5,8 @@
  * signup, stripped from the URL, and cleared once consumed. Non-secret (the
  * code only credits the referrer), so localStorage is fine.
  */
+import { router } from '../stores/router.svelte';
+
 const KEY = 'fs_referral_code';
 const MAX_LEN = 32;
 
@@ -28,9 +30,11 @@ export function captureReferralParam(): void {
       /* storage unavailable — the field stays manual */
     }
   }
-  // Strip the param either way (clean share URLs; no ref= leakage into history).
+  // Strip the param either way (clean share URLs; no ref= leakage into
+  // history) — THROUGH the router so its reactive search state drops it too
+  // (a raw replaceState left `?ref=` visible to components until the next nav).
   url.searchParams.delete('ref');
-  window.history.replaceState(window.history.state, '', url);
+  router.navigate(url.pathname + url.search + url.hash, { replace: true });
 }
 
 /** The stored code, normalized for display (uppercase). '' when none. */

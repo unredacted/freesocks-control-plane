@@ -13,7 +13,7 @@
  */
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
 import { z } from 'zod';
-import { apiClient } from './api';
+import { apiClient, ApiCallError } from './api';
 import { ensureSessionKey, setSessionToken } from './pop';
 import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../../shared/crypto/pop';
 
@@ -76,8 +76,18 @@ export async function signInWithPasskey(): Promise<{ lapsedDowngrade: boolean }>
     body: '{}',
   });
   if (!optsRes.ok) {
-    const body = (await optsRes.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new Error(body.error?.message ?? `Could not start sign-in (${optsRes.status})`);
+    // Throw the server's structured error (ApiCallError) so the caller's
+    // apiErrorMessage maps the CODE to a translated message — never raw
+    // English server text.
+    const body = (await optsRes.json().catch(() => ({}))) as {
+      error?: { code?: string; message?: string };
+    };
+    throw new ApiCallError(optsRes.status, {
+      error: {
+        code: body.error?.code ?? `http.${optsRes.status}`,
+        message: body.error?.message ?? 'Could not start sign-in',
+      },
+    });
   }
   const optsBody = (await optsRes.json()) as {
     options: Parameters<typeof startAuthentication>[0]['optionsJSON'];
@@ -106,8 +116,15 @@ export async function signInWithPasskey(): Promise<{ lapsedDowngrade: boolean }>
     }),
   });
   if (!verifyRes.ok) {
-    const body = (await verifyRes.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new Error(body.error?.message ?? 'Sign-in failed');
+    const body = (await verifyRes.json().catch(() => ({}))) as {
+      error?: { code?: string; message?: string };
+    };
+    throw new ApiCallError(verifyRes.status, {
+      error: {
+        code: body.error?.code ?? `http.${verifyRes.status}`,
+        message: body.error?.message ?? 'Sign-in failed',
+      },
+    });
   }
   const okBody = (await verifyRes.json().catch(() => ({}))) as {
     popSessionToken?: string;

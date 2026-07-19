@@ -141,8 +141,6 @@ export default defineSchema({
     // (admin search). Uniqueness of the hash is enforced in mutations.
     accountIdHash: v.optional(v.string()),
     accountIdPrefix: v.optional(v.string()),
-    accountIdCreatedAt: v.optional(v.number()),
-    accountIdRotatedAt: v.optional(v.number()),
     // W3: a non-secret `FS-XXXX-XXXX` support handle (NOT a credential). Minted
     // at account creation, lazily backfilled for pre-W3 users. Unique (enforced
     // in the mutation). See convex/lib/supportId.ts.
@@ -179,6 +177,11 @@ export default defineSchema({
     // creation, lazily backfilled on first referral-stats read for older
     // accounts. Unique (enforced in the mint mutation).
     referralCode: v.optional(v.string()),
+    // Lifetime settled-donation aggregates (the impact panel). Maintained at
+    // grant time (billing.fundDonation) so billing-order retention pruning
+    // (365d) never shrinks a donor's totals.
+    donatedCentsTotal: v.optional(v.number()),
+    donationCount: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_account_id_hash', ['accountIdHash'])
@@ -244,6 +247,9 @@ export default defineSchema({
     .index('by_state_tombstone_retry', ['state', 'tombstoneRetryAfter', 'deletedAt'])
     .index('by_backend_user_id', ['backendUserId'])
     .index('by_backend_short_id', ['backendShortId'])
+    // Instance→subs reference check before a backend-server delete (refuse
+    // while keys still point at it).
+    .index('by_backend_server', ['backendServerId'])
     // The FCP-fronted subscription route resolves the sub by its opaque token.
     .index('by_sub_token', ['subToken']),
 
@@ -485,8 +491,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_token_hash', ['tokenHash'])
-    .index('by_creator', ['createdByAdminId'])
-    .index('by_active', ['revokedAt', 'expiresAt']),
+    .index('by_creator', ['createdByAdminId']),
 
   // Backend instances: one row per deployed proxy server of any backend type
   // (Remnawave, Outline, ...). Generalizes the former `outlineServers` table so
@@ -655,12 +660,10 @@ export default defineSchema({
     note: v.optional(v.string()),
     batchId: v.optional(v.string()),
     // Origin is EITHER an admin mint (mintedByAdminId) OR a member purchase
-    // (purchasedByUserId + purchasedByOrderId). Both optional so a purchased code
-    // carries no admin. `by_purchaser` drives the buyer's "codes I bought" list;
-    // `purchasedByOrderId` makes gift-minting idempotent against a replayed webhook.
+    // (purchasedByUserId). Both optional so a purchased code carries no admin.
+    // `by_purchaser` drives the buyer's "codes I bought" list.
     mintedByAdminId: v.optional(v.id('adminUsers')),
     purchasedByUserId: v.optional(v.id('users')),
-    purchasedByOrderId: v.optional(v.id('billingOrders')),
     redeemedByUserId: v.optional(v.id('users')),
     redeemedAt: v.optional(v.number()),
     updatedAt: v.number(),
@@ -727,7 +730,6 @@ export default defineSchema({
     expiresAt: v.number(),
     popPublicKey: v.optional(v.string()),
     popAlg: v.optional(v.string()),
-    popBoundAt: v.optional(v.number()),
     // The public per-session token (PoP sid-binding). A non-secret value minted at
     // login, returned in the login response body, and signed into every PoP
     // message so a signature is bound to exactly ONE session — it cannot be lifted
