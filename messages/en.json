@@ -569,6 +569,7 @@
   "upgrade": {
     "title": "Upgrade to a FreeSocks membership",
     "extendTitle": "Extend your membership",
+    "extendStacks": "Time you add stacks on top of your current end date.",
     "subtitle": "Unlimited bandwidth and devices. Choose a length and how to pay.",
     "subtitleNoDevices": "Unlimited bandwidth. Choose a length and how to pay.",
     "compareBandwidth": "Bandwidth per month",

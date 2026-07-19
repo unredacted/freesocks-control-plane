@@ -1034,7 +1034,9 @@
           />
 
           {#if membershipState === 'active'}
-            <!-- Active member: nothing to buy - just confirm the state + a refresh. -->
+            <!-- Active member: confirm the state + a refresh, with a collapsed
+                 top-up panel below (added time stacks on the current end date,
+                 so buying early never wastes days). -->
             <div class="space-y-1">
               <p class="text-sm font-medium">{t('account.memberActiveTitle')}</p>
               {#if data.user.membership?.expiresAt}
@@ -1057,6 +1059,8 @@
                 </button>
               </p>
             </div>
+
+            <UpgradeMembership mode="extend" collapsible currentTierSlug={data.user.tier.slug} />
           {:else}
             <!-- Self-service purchase panel (self-gates on billing being enabled).
              'upgrade' for free users, 'extend' for expiring/expired members. The

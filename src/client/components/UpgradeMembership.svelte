@@ -177,6 +177,13 @@
 <!-- The payment form body, shared by the prominent card (/account) and the
      collapsed accordion so the two placements never drift. -->
 {#snippet formBody()}
+  <!-- Extend mode: reassure that a top-up stacks (extends from the current end
+       date, never restarts the clock) — the grant computes
+       max(now, current expiry) + term server-side. -->
+  {#if mode === 'extend'}
+    <p class="text-xs text-muted-foreground">{t('upgrade.extendStacks')}</p>
+  {/if}
+
   <!-- What changes with a membership: current tier's limits → membership's,
        compact and DB-driven (replaces the old stacked comparison cards). -->
   {#if showComparison && currentTier && memberTier}
