@@ -1245,6 +1245,11 @@ describe('billing.applyEvent grant cross-checks', () => {
       expect(audits.some((a) => a.action === 'referral.void' && a.targetId === referralId)).toBe(
         true,
       );
+      // The refund schedules an IMMEDIATE fleet re-cap (symmetric with the
+      // grant-side fundDonation) — the refunded bonus must not linger on the
+      // fleet until the next hourly reconcile.
+      const scheduled = await ctx.db.system.query('_scheduled_functions').collect();
+      expect(scheduled.some((f) => f.name.includes('applyFreeBonus'))).toBe(true);
     });
   });
 

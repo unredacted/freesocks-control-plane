@@ -555,6 +555,9 @@ export const applyEvent = internalMutation({
           const refundNow = Date.now();
           await ctx.db.patch(order._id, { donationUnwoundAt: refundNow, updatedAt: refundNow });
           await subtractDonation(ctx, donated, refundNow);
+          // Re-cap the fleet NOW (symmetric with fundDonation): without this the
+          // refunded bonus bandwidth lingered until the next hourly reconcile.
+          await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
           await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
           const donor = await ctx.db.get(order.userId);
           if (donor) {

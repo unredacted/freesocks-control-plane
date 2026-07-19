@@ -114,9 +114,16 @@ export const stampBonusHistory = internalMutation({
   handler: async (ctx, { effective }) => {
     const state = await readDonationState(ctx.db);
     const counts = await readUserCounts(ctx.db);
+    // Stamp the CURRENT month, never the accumulator's stored month: the
+    // month-roll revert runs while state still carries the finished month's
+    // key + cents, and stamping THAT entry with the now-0 effective bonus
+    // wiped the finished month's recorded impact (bonusGb) from the ledger.
+    // After a roll the new month starts a fresh zeroed entry instead.
+    const mk = currentMonthKey(Date.now());
+    const rolled = state.monthKey !== mk;
     await upsertHistoryForMonth(ctx, {
-      monthKey: state.monthKey || currentMonthKey(Date.now()),
-      donatedCents: state.donatedCents,
+      monthKey: mk,
+      donatedCents: rolled ? 0 : state.donatedCents,
       bonusGb: effective,
       freeUsers: counts.freeActive,
     });
@@ -194,6 +201,7 @@ export const applyFreeBonus = internalAction({
       if (effective === applied) return null; // nothing changed → no fleet push
       let failedChunks = 0;
       let exhausted = false;
+      let unroutable = 0; // Remnawave subs with no recorded hosting instance (can't re-cap)
       for (const tier of freeTiers) {
         const limitBytes = resolveTrafficLimitBytes(
           { monthlyTrafficGb: tier.monthlyTrafficGb, isDefaultFree: true },
@@ -214,7 +222,14 @@ export const applyFreeBonus = internalAction({
           // Group this page's Remnawave keys by hosting instance, then bulk-update.
           const byServer = new Map<Id<'backendServers'>, string[]>();
           for (const s of res.subs) {
-            if (s.backend !== 'remnawave' || !s.backendServerId) continue;
+            if (s.backend !== 'remnawave') continue;
+            // No recorded hosting instance → can't route the bulk call. Tally it
+            // (no silent coverage gaps) — issuance always records the instance,
+            // so anything here is a legacy/abnormal row worth surfacing.
+            if (!s.backendServerId) {
+              unroutable++;
+              continue;
+            }
             const arr = byServer.get(s.backendServerId) ?? [];
             arr.push(s.backendUserId);
             byServer.set(s.backendServerId, arr);
@@ -264,6 +279,13 @@ export const applyFreeBonus = internalAction({
           cursor = res.continueCursor;
         }
         if (!tierDone) exhausted = true; // hit APPLY_MAX_PAGES without draining
+      }
+      if (unroutable > 0) {
+        // Not a retryable failure (a retry can't route them either), so it must
+        // not block the applied marker — but it must be visible.
+        console.warn(
+          `[donations] bonus re-cap skipped ${unroutable} key(s) with no recorded hosting instance`,
+        );
       }
       if (failedChunks > 0 || exhausted) {
         console.warn(

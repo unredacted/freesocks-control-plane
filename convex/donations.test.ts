@@ -228,13 +228,19 @@ describe('donations.applyFreeBonus', () => {
     const { t, freeTierId, instanceId } = await setup();
     await seedFreeKey(t, freeTierId, instanceId, 'u-1');
     // Last month's pool with a bonus still applied → this month must push base back.
-    await t.run((ctx) =>
-      ctx.db.insert('appState', {
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appState', {
         key: 'donation:freeBonus',
         value: JSON.stringify({ monthKey: '2000-01', donatedCents: 3000, appliedBonusGb: 30 }),
         updatedAt: Date.now(),
-      }),
-    );
+      });
+      // Last month's frozen impact-ledger entry — the roll must NOT rewrite it.
+      await ctx.db.insert('appState', {
+        key: 'donation:history',
+        value: JSON.stringify([{ monthKey: '2000-01', donatedCents: 3000, bonusGb: 30 }]),
+        updatedAt: Date.now(),
+      });
+    });
     const bulk: BulkBody[] = [];
     vi.stubGlobal('fetch', captureBulk(bulk));
 
@@ -247,6 +253,24 @@ describe('donations.applyFreeBonus', () => {
         .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
         .unique();
       expect(JSON.parse(st!.value).appliedBonusGb).toBe(0);
+      // The finished month's ledger entry keeps its recorded impact (the roll
+      // previously stamped bonusGb: 0 onto it, wiping the month's history); the
+      // new month gets its own zeroed entry.
+      const hist = await ctx.db
+        .query('appState')
+        .withIndex('by_key', (q) => q.eq('key', 'donation:history'))
+        .unique();
+      const entries = JSON.parse(hist!.value) as {
+        monthKey: string;
+        donatedCents: number;
+        bonusGb: number;
+      }[];
+      const old = entries.find((e) => e.monthKey === '2000-01');
+      expect(old?.bonusGb).toBe(30);
+      expect(old?.donatedCents).toBe(3000);
+      const fresh = entries.find((e) => e.monthKey === thisMonth());
+      expect(fresh?.bonusGb).toBe(0);
+      expect(fresh?.donatedCents).toBe(0);
     });
   });
 
