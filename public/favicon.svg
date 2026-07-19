@@ -1,9 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img" aria-label="FreeSocks">
   <rect x="1" y="1" width="30" height="30" rx="7" fill="#18181b" stroke="#3f3f46" stroke-width="1" />
-  <!-- Sock = FreeSocks: a bent leg + foot with a rounded toe/heel and a cuff cut.
-       Reuses the app's SocksIcon path, filled + centered. Monochrome zinc theme. -->
-  <g transform="translate(16 16) scale(1.2) translate(-14.2 -12.3)">
-    <path d="M8 4h6v7q0 2.8 3 2.8a3.4 3.4 0 0 1 0 6.8h-7a2.9 2.9 0 0 1-2-2.9V4Z" fill="#fafafa" />
-    <path d="M8 7.2h6" stroke="#18181b" stroke-width="1.6" stroke-linecap="round" fill="none" />
+  <!-- Eight-pointed star = FreeSocks: alternating long cardinal + short diagonal
+       points. Filled + centered. Monochrome zinc theme. -->
+  <g transform="translate(16 16) scale(1.15) translate(-12 -12)">
+    <path
+      d="M12 2l1.53 6.3 5.54-3.37-3.37 5.54L22 12l-6.3 1.53 3.37 5.54-5.54-3.37L12 22l-1.53-6.3-5.54 3.37 3.37-5.54L2 12l6.3-1.53L4.93 4.93l5.54 3.37L12 2Z"
+      fill="#fafafa"
+    />
   </g>
 </svg>

@@ -9,7 +9,7 @@
   import { t } from '../lib/i18n/index.svelte';
   import { router } from '../stores/router.svelte';
   import { slide } from 'svelte/transition';
-  import SocksIcon from './SocksIcon.svelte';
+  import StarIcon from './StarIcon.svelte';
   import User from '@lucide/svelte/icons/user-round';
   import LogIn from '@lucide/svelte/icons/log-in';
   import Menu from '@lucide/svelte/icons/menu';
@@ -43,7 +43,7 @@
         class="inline-flex items-center justify-center size-7 rounded-md bg-primary text-primary-foreground transition-transform group-hover:scale-105"
         aria-hidden="true"
       >
-        <SocksIcon class="size-4" />
+        <StarIcon class="size-4" />
       </span>
       FreeSocks
     </Link>
@@ -69,7 +69,7 @@
       {:else}
         <Link href="/get-account">
           <Button variant="ghost" size="sm" aria-label={t('nav.getAccount')}>
-            <SocksIcon class="size-4" />
+            <StarIcon class="size-4" />
             {t('nav.getAccount')}
           </Button>
         </Link>
@@ -125,7 +125,7 @@
         {:else}
           <Link href="/get-account" onclick={closeMenu}>
             <Button variant="ghost" size="sm" class="w-full min-h-11 justify-start">
-              <SocksIcon class="size-4" />
+              <StarIcon class="size-4" />
               {t('nav.getAccount')}
             </Button>
           </Link>

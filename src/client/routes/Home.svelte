@@ -28,7 +28,7 @@
   import { formatMoney } from '../lib/i18n/format';
   import { router } from '../stores/router.svelte';
   import { slide } from 'svelte/transition';
-  import SocksIcon from '../components/SocksIcon.svelte';
+  import StarIcon from '../components/StarIcon.svelte';
   import Landmark from '@lucide/svelte/icons/landmark';
   import Lock from '@lucide/svelte/icons/lock';
   import Globe from '@lucide/svelte/icons/globe';
@@ -333,7 +333,7 @@
           {#if !me.isPending && me.data?.authenticated}
             <Link href="/account">
               <Button size="lg" class="text-base">
-                <SocksIcon class="size-4" />
+                <StarIcon class="size-4" />
                 {t('nav.account')}
                 <ArrowRight class="size-4" />
               </Button>
@@ -346,7 +346,7 @@
           {:else}
             <Link href="/get-account">
               <Button size="lg" class="text-base">
-                <SocksIcon class="size-4" />
+                <StarIcon class="size-4" />
                 {t('nav.getAccount')}
                 <ArrowRight class="size-4" />
               </Button>

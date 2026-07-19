@@ -39,7 +39,7 @@
   } from '../../shared/contracts/account';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
-  import SocksIcon from '../components/SocksIcon.svelte';
+  import StarIcon from '../components/StarIcon.svelte';
   import Check from '@lucide/svelte/icons/check';
   import KeyRound from '@lucide/svelte/icons/key-round';
 
@@ -469,7 +469,7 @@
         size="lg"
         class="w-full min-h-11"
       >
-        <SocksIcon class="size-4" />
+        <StarIcon class="size-4" />
         {createAccount.isPending ? t('common.working') : t('get.createAccount')}
       </Button>
 
