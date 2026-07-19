@@ -1,5 +1,5 @@
 // Idempotent pre-`up` secret bootstrap for a fresh deploy. Fills every
-// GENERATABLE secret so a fresh `docker compose -f docker-compose.beta.yml
+// GENERATABLE secret so a fresh `docker compose -f docker-compose.stack.yml
 // --env-file <target> up` needs no manual `openssl rand`. It NEVER overwrites a
 // value that is already set — only replaces empty / CHANGE_ME placeholders — so
 // it is safe to re-run on testing, beta, and prod.

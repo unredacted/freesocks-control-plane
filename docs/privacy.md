@@ -99,7 +99,7 @@ volume against the rotation cap.
 Verify after a deploy:
 
 ```sh
-docker compose -f docker-compose.beta.yml logs backend | grep 'GET /api'   # → empty
+docker compose -f docker-compose.stack.yml logs backend | grep 'GET /api'   # → empty
 ```
 
 If a future Convex version renames that log target, the request lines will

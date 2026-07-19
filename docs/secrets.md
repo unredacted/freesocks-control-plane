@@ -7,7 +7,7 @@ system. Everything else is generated for you, idempotently.
 
 Three homes for configuration:
 
-- **`.env.beta`** — container-infra env, read by `docker-compose.beta.yml` (Caddy,
+- **`.env.beta`** — container-infra env, read by `docker-compose.stack.yml` (Caddy,
   the Convex backend identity, Postgres) **plus the CDN-blinding PUBLIC pins**
   (`VITE_FS_*`) baked into the SPA build.
 - **`.env.convex`** — the Convex **deployment** env. The `deployer` service applies
@@ -104,8 +104,8 @@ cp .env.beta.example   .env.beta
 cp .env.convex.example .env.convex
 bun run bootstrap                         # §1-adjacent infra randoms + §2 CDN-blinding keys
 $EDITOR .env.beta .env.convex             # fill the §3 external creds
-docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --build
-docker compose -f docker-compose.beta.yml --env-file .env.beta logs deployer  # "[deploy] OK"
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build
+docker compose -f docker-compose.stack.yml --env-file .env.beta logs deployer  # "[deploy] OK"
 ```
 
 The deployer then auto-generates the §1 core secrets, applies `.env.convex`, and

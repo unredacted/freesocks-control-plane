@@ -8,7 +8,7 @@
 # it is NOT published. The deploy/sync API (:3210) + dashboard (:6791) bind to
 # 127.0.0.1 only (on-host `convex deploy` + an SSH-tunnelled dashboard); never
 # expose them publicly. Full runbook: docs/beta-deploy.md.
-name: fcp-beta
+name: ${COMPOSE_PROJECT_NAME:-fcp-beta}
 
 # P2: cap container log growth (json-file default grows unbounded). Applied to
 # every long-lived service below via `logging: *log`.

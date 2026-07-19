@@ -12,7 +12,7 @@
 set -eu
 
 cd "$(dirname "$0")/.."
-COMPOSE="docker compose --env-file .env.beta -f docker-compose.beta.yml"
+COMPOSE="docker compose --env-file .env.beta -f docker-compose.stack.yml"
 SCRATCH="restore_verify_$(date -u +%Y%m%d%H%M%S)"
 
 # shellcheck disable=SC1091

@@ -127,7 +127,7 @@ sessions that predate PoP or that belong to a client which could not enroll a ke
   backend is only reachable in-network), so a bare `bunx convex env set` from the host shell fails
   with _"No CONVEX_DEPLOYMENT set"_ — drive it through the deployer instead. Declarative (preferred):
   add `POP_REQUIRED=true` to `.env.convex`, then
-  `docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --no-deps --force-recreate deployer`
+  `docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --no-deps --force-recreate deployer`
   and confirm `env set POP_REQUIRED` in `docker compose ... logs deployer`. No function redeploy is
   needed — `resolveMember` / `resolveAdmin` read the var per request. Effect: an unbound session's
   next request returns 401; the SPA treats it as signed-out and re-logs-in, minting a bound session.

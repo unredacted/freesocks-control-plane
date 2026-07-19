@@ -8,7 +8,7 @@
 # pass --env-file .env.docker. The docker env lives in .env.docker, NOT .env,
 # which Vite and the Convex CLI would also load.
 #
-# This is the DEV stack. PRODUCTION uses docker-compose.beta.yml, which is fully
+# This is the DEV stack. PRODUCTION uses docker-compose.stack.yml, which is fully
 # digest-pinned — do NOT promote this file to prod. (The `:latest` tags below are
 # fine for throwaway local dev; pin them to a `:<rev>`/digest first if you ever
 # must ship this file.)

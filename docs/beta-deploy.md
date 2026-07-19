@@ -17,7 +17,7 @@ beta.freesocks.org ─▶ Caddy (auto Let's Encrypt TLS + security headers)
   keygen (one-shot) ─▶ admin key ─▶ deployer (one-shot): convex deploy + env set + seedCutover
 ```
 
-Files: `docker-compose.beta.yml`, `Caddyfile`, `docker/web.Dockerfile`,
+Files: `docker-compose.stack.yml`, `Caddyfile`, `docker/web.Dockerfile`,
 `docker/deploy.Dockerfile`, `.env.beta.example`, `.env.convex.example`.
 
 ## 0. Prerequisites
@@ -72,7 +72,7 @@ To also seed a Remnawave instance automatically, set `REMNAWAVE_BASE_URL` +
 ## 2. Bring up the whole stack
 
 ```sh
-docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --build
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build
 ```
 
 This builds the SPA + deployer images, then starts, in order:
@@ -95,8 +95,8 @@ serving, so there is no gap at all.
 Confirm the deploy job succeeded:
 
 ```sh
-docker compose -f docker-compose.beta.yml --env-file .env.beta logs deployer   # ends with "[deploy] OK"
-docker compose -f docker-compose.beta.yml --env-file .env.beta ps              # backend + postgres healthy
+docker compose -f docker-compose.stack.yml --env-file .env.beta logs deployer   # ends with "[deploy] OK"
+docker compose -f docker-compose.stack.yml --env-file .env.beta ps              # backend + postgres healthy
 ```
 
 `keygen` and `deployer` are **one-shot jobs**: they show `Exited (0)` in `ps` when
@@ -160,8 +160,8 @@ refresh BOTH or you get a version mismatch:
 
 ```sh
 git pull
-docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --build --force-recreate web deployer
-docker compose -f docker-compose.beta.yml --env-file .env.beta logs --tail=40 deployer  # expect "[deploy] OK"
+docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --build --force-recreate web deployer
+docker compose -f docker-compose.stack.yml --env-file .env.beta logs --tail=40 deployer  # expect "[deploy] OK"
 ```
 
 `--build` rebuilds both images from the pulled source; `--force-recreate web
@@ -185,7 +185,7 @@ the backend log during a push are benign analyzer chatter, not errors.
 Header-only Caddyfile tweaks need no rebuild:
 
 ```sh
-docker compose -f docker-compose.beta.yml --env-file .env.beta exec web \
+docker compose -f docker-compose.stack.yml --env-file .env.beta exec web \
   caddy reload --config /etc/caddy/Caddyfile
 ```
 
@@ -197,7 +197,7 @@ through the **deployer container**, which has the backend URL and can read the
 admin key from the shared `/keys` volume:
 
 ```sh
-docker compose -f docker-compose.beta.yml --env-file .env.beta \
+docker compose -f docker-compose.stack.yml --env-file .env.beta \
   run --rm --no-deps --entrypoint bash deployer -c '
     export CONVEX_SELF_HOSTED_ADMIN_KEY="$(grep "|" /keys/admin_key | tail -n1 | tr -d "[:space:]")" \
     && bunx convex run seed:refreshDefaultClients "{}"'
@@ -224,7 +224,7 @@ Everything the deployer applies on `up` (deploy, env, seed) stays the normal pat
    `FS_SERVER_HPKE_SK`; `POP_REQUIRED` after the client soaks) so the deployer sets
    them.
 3. Pass the public halves as build args to the web image (uncomment the `args` in
-   `docker-compose.beta.yml`): `VITE_FS_MANIFEST_PK`, `VITE_FS_MANIFEST_PK_PQ`,
+   `docker-compose.stack.yml`): `VITE_FS_MANIFEST_PK`, `VITE_FS_MANIFEST_PK_PQ`,
    `VITE_FS_SERVER_HPKE_KID`, `VITE_FS_SERVER_HPKE_PK`, then re-run §6.
 
 See `docs/threat-model-cdn-blinding.md`.
@@ -277,7 +277,7 @@ See `docs/threat-model-cdn-blinding.md`.
   `http://127.0.0.1:6791` (function `console.*` logs live here, under **Logs**).
   It asks for a **deployment URL** (`http://127.0.0.1:3210` over the tunnel) and
   the **admin key** every time. Retrieve the admin key on the host with
-  `docker compose -f docker-compose.beta.yml --env-file .env.beta exec backend ./generate_admin_key.sh`
+  `docker compose -f docker-compose.stack.yml --env-file .env.beta exec backend ./generate_admin_key.sh`
   (the `--env-file` is required — Compose validates the whole file's `${VAR:?}`
   guards on every subcommand, so omitting it aborts with a misleading
   "CAP_ADMIN_KEY is missing"). The key is derived from `INSTANCE_SECRET`, so it's
@@ -364,7 +364,7 @@ ssh -L 3000:127.0.0.1:3000 <beta-host>   # then open http://127.0.0.1:3000
   baseline; pair it with Convex log streaming (below) for error-rate alerts.
 - **Error visibility.** Stream the backend's logs off-box and alert on the rate
   of `issuance failed` / `create failed` lines and 5xx envelopes. Minimal setup:
-  `docker compose -f docker-compose.beta.yml logs -f backend | <log shipper>`,
+  `docker compose -f docker-compose.stack.yml logs -f backend | <log shipper>`,
   or a sidecar that tails and POSTs to a webhook. The audit log
   (admin CMS → Audit log) is the pull-based record of lifecycle events.
 
@@ -407,7 +407,7 @@ Backup coverage notes:
   `.env.beta` var shared by the postgres env, its healthcheck, and the backup
   sidecar — set it there, never by editing the compose file.
 
-**Pre-launch check:** `docker compose -f docker-compose.beta.yml logs backup |
+**Pre-launch check:** `docker compose -f docker-compose.stack.yml logs backup |
 grep uploading` must show offsite uploads (not the LOCAL ONLY warning), and the
 restore drill below must have been run at least once.
 
@@ -417,7 +417,7 @@ Restore a dump:
 # copy the chosen dump to the host, then (for an age-encrypted dump, decrypt first):
 #   age -d -i backup-key.txt freesocks-freesocks_beta-<ts>.sql.gz.age > dump.sql.gz
 gunzip -c freesocks-freesocks_beta-<ts>.sql.gz \
-  | docker compose -f docker-compose.beta.yml exec -T postgres \
+  | docker compose -f docker-compose.stack.yml exec -T postgres \
       psql -U convex -d freesocks_beta
 ```
 
@@ -432,7 +432,7 @@ Deploys are idempotent and the contract changes are kept additive (backend-first
 is safe). To roll back:
 
 1. **Backend/functions:** check out the previous good tag and re-run the deployer
-   (`docker compose -f docker-compose.beta.yml up -d --build --force-recreate deployer`
+   (`docker compose -f docker-compose.stack.yml up -d --build --force-recreate deployer`
    — `--force-recreate` so the one-shot actually re-runs), or in CI
    re-tag the previous good commit (`git tag -f vX … && git push -f --tags`), or
    `git revert` the bad commit and tag. `convex deploy` replaces the function set.

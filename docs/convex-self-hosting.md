@@ -103,8 +103,8 @@ optional one-time bootstrap.)
 > edit `.env.convex` and re-run just the deployer:
 >
 > ```sh
-> docker compose -f docker-compose.beta.yml --env-file .env.beta up -d --no-deps --force-recreate deployer
-> docker compose -f docker-compose.beta.yml --env-file .env.beta logs --tail=50 deployer   # look for: env set <KEY>  →  [deploy] OK
+> docker compose -f docker-compose.stack.yml --env-file .env.beta up -d --no-deps --force-recreate deployer
+> docker compose -f docker-compose.stack.yml --env-file .env.beta logs --tail=50 deployer   # look for: env set <KEY>  →  [deploy] OK
 > ```
 >
 > A bare `bunx convex env set` from the host shell fails with _"No CONVEX_DEPLOYMENT set"_ — the
