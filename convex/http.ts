@@ -2828,6 +2828,29 @@ http.route({
   }),
 });
 
+http.route({
+  path: '/api/v1/admin/billing/test-connection',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    // Read-only probe (same scope convention as backend-servers/test-connection).
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    const body = await readJson<{ processor?: string }>(req);
+    if (
+      body.processor !== 'nowpayments' &&
+      body.processor !== 'btcpay' &&
+      body.processor !== 'stripe' &&
+      body.processor !== 'paypal'
+    ) {
+      return errorJson('validation', 'unknown processor', 400);
+    }
+    return json(
+      await ctx.runAction(internal.billing.testProcessorConnection, {
+        processor: body.processor,
+      }),
+    );
+  }),
+});
+
 // Set the connection-mode catalog (per-mode label/description + the default) and
 // the per-mode Remnawave placement pool. The Ansible panel-bootstrap PATCHes this
 // to bind the squads it creates (dual-mode: an fsv1_ token with

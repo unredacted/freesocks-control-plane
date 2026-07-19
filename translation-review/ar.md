@@ -164,6 +164,7 @@ review.
 | `login.failed` | Sign-in failed | فشل تسجيل الدخول |
 | `login.success` | Signed in | تم تسجيل الدخول |
 | `login.sessionExpired` | Please sign in again - your session may have ended. | يرجى تسجيل الدخول مرة أخرى - ربما انتهت جلستك. |
+| `login.popBroken` | Your browser can't secure this session because Web Workers are blocked or unavailable. Enable them (check your browser's privacy settings) or try a different browser, then sign in again. | لا يمكن لمتصفحك تأمين هذه الجلسة لأن Web Workers محظورة أو غير متاحة. فعِّلها (راجع إعدادات الخصوصية في متصفحك) أو جرِّب متصفحًا آخر، ثم سجِّل الدخول مجددًا. |
 | `login.digitProgress` | {count} of {total} digits entered | {count} من {total} رقمًا تم إدخالها |
 | `login.or` | or | أو |
 
@@ -255,9 +256,9 @@ review.
 | `account.section.connection.title` | Your connection | اتصالك |
 | `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | مفتاح البروكسي الخاص بك، ومساعدة الإعداد، والأجهزة المتصلة. |
 | `account.section.membership.title` | Membership | عضوية |
-| `account.section.membership.desc` | Your plan, and how to upgrade or extend it. | خطتك، وكيفية ترقيتها أو توسيعها. |
+| `account.section.membership.desc` | Your plan - upgrade, extend, or redeem a membership code. | خطتك — ترقية أو تمديد أو استبدال رمز عضوية. |
 | `account.section.gifts.title` | Gifts & referrals | الهدايا والإحالات |
-| `account.section.gifts.desc` | Redeem a code, buy codes to share, and invite people you trust. | استبدل رمزًا، أو اشترِ رموزًا لتشاركها، وادعُ من تثق بهم. |
+| `account.section.gifts.desc` | Buy codes to share, and invite people you trust. | اشترِ رموزًا لتشاركها، وادعُ من تثق بهم. |
 | `account.section.codes.title` | Codes & gifts | رموز وهدايا |
 | `account.section.codes.desc` | Redeem a membership code, or buy codes to share with others. | استخدم رمز العضوية، أو اشترِ رموزًا لمشاركتها مع الآخرين. |
 | `account.section.security.title` | Account & security | الحساب والأمان |
@@ -272,7 +273,6 @@ review.
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
 | `hero.titleDefault` | Your key | اشتراكك |
-| `hero.eyebrowAccessKey` | FreeSocks Access Pass | مفتاح الوصول الخاص بك |
 | `hero.urlLabelSubscription` | Your link | رابط الاشتراك |
 | `hero.urlLabelAccessKey` | Access key | مفتاح الوصول |
 | `hero.tierLine` | Plan {tier} | الفئة {tier} |
@@ -662,6 +662,7 @@ review.
 | --- | --- | --- |
 | `mirror.disclosure` | Trouble connecting? | تواجه مشكلة في الاتصال؟ |
 | `mirror.explainer` | If your normal subscription link won't connect where you are, add a mirror link below. It serves the same key from a different host that may not be blocked. | إذا كان رابط الاشتراك العادي لا يتصل في مكانك، أضِف رابط مرآة أدناه. يقدّم المفتاح نفسه من مضيف آخر قد لا يكون محجوبًا. |
+| `mirror.unavailable` | Mirrors aren't available on this deployment right now - there are no mirror links to add. | المرايا غير متاحة على هذا النشر حاليًا — لا توجد روابط مرآة لإضافتها. |
 | `mirror.addedLabel` | Your mirror links | روابط المرآة الخاصة بك |
 | `mirror.addToAppHint` | Add each one as an extra subscription in your app, then try connecting. | أضِف كل رابط كاشتراك إضافي في تطبيقك ثم حاول الاتصال. |
 | `mirror.regionLabel` | Your region | منطقتك |
@@ -943,7 +944,6 @@ review.
 | `status.overallPartial` | Some locations are having issues | بعض المواقع تواجه مشكلات |
 | `status.overallMajor` | A major outage is in progress | هناك انقطاع كبير جارٍ |
 | `status.locationsTitle` | Locations | المواقع |
-| `status.nodesUp` | {online} of {total} nodes up | {online} من {total} عقدة متصلة |
 | `status.online` | Online | متصل |
 | `status.offline` | Offline | غير متصل |
 | `status.srOnline` | online | متصل |

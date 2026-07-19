@@ -163,6 +163,7 @@ review.
 | `login.failed` | Sign-in failed | 登录失败 |
 | `login.success` | Signed in | 已登录 |
 | `login.sessionExpired` | Please sign in again - your session may have ended. | 请重新登录 - 你的会话可能已结束。 |
+| `login.popBroken` | Your browser can't secure this session because Web Workers are blocked or unavailable. Enable them (check your browser's privacy settings) or try a different browser, then sign in again. | 您的浏览器无法保护此会话，因为 Web Workers 被阻止或不可用。请启用它们（检查浏览器的隐私设置）或使用其他浏览器，然后重新登录。 |
 | `login.digitProgress` | {count} of {total} digits entered | {count}位数，共{total}位数字 |
 | `login.or` | or | 或 |
 
@@ -254,9 +255,9 @@ review.
 | `account.section.connection.title` | Your connection | 您的连接 |
 | `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | 您的代理密钥、设置帮助和已连接的设备。 |
 | `account.section.membership.title` | Membership | 会员资格 |
-| `account.section.membership.desc` | Your plan, and how to upgrade or extend it. | 您的计划，以及如何升级或扩展它。 |
+| `account.section.membership.desc` | Your plan - upgrade, extend, or redeem a membership code. | 您的计划——升级、续期或兑换会员码。 |
 | `account.section.gifts.title` | Gifts & referrals | 礼品与推荐 |
-| `account.section.gifts.desc` | Redeem a code, buy codes to share, and invite people you trust. | 兑换礼品码、购买可分享的礼品码，并邀请你信任的人。 |
+| `account.section.gifts.desc` | Buy codes to share, and invite people you trust. | 购买可分享的礼品码，并邀请你信任的人。 |
 | `account.section.codes.title` | Codes & gifts | 代码和礼物 |
 | `account.section.codes.desc` | Redeem a membership code, or buy codes to share with others. | 兑换会员码，或购买会员码与他人分享。 |
 | `account.section.security.title` | Account & security | 账户与安全 |
@@ -271,7 +272,6 @@ review.
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `hero.titleDefault` | Your key | 你的订阅 |
-| `hero.eyebrowAccessKey` | FreeSocks Access Pass | 你的访问密钥 |
 | `hero.urlLabelSubscription` | Your link | 订阅链接 |
 | `hero.urlLabelAccessKey` | Access key | 访问密钥 |
 | `hero.tierLine` | Plan {tier} | 套餐 {tier} |
@@ -661,6 +661,7 @@ review.
 | --- | --- | --- |
 | `mirror.disclosure` | Trouble connecting? | 连接有问题？ |
 | `mirror.explainer` | If your normal subscription link won't connect where you are, add a mirror link below. It serves the same key from a different host that may not be blocked. | 如果你所在位置无法用普通订阅链接连接，可在下方添加镜像链接。它会从另一个可能未被封锁的主机提供相同的密钥。 |
+| `mirror.unavailable` | Mirrors aren't available on this deployment right now - there are no mirror links to add. | 此部署当前不提供镜像——没有可添加的镜像链接。 |
 | `mirror.addedLabel` | Your mirror links | 你的镜像链接 |
 | `mirror.addToAppHint` | Add each one as an extra subscription in your app, then try connecting. | 将每个链接作为额外的订阅添加到你的应用中，然后尝试连接。 |
 | `mirror.regionLabel` | Your region | 你所在的地区 |
@@ -942,7 +943,6 @@ review.
 | `status.overallPartial` | Some locations are having issues | 部分位置出现问题 |
 | `status.overallMajor` | A major outage is in progress | 正在发生重大故障 |
 | `status.locationsTitle` | Locations | 位置 |
-| `status.nodesUp` | {online} of {total} nodes up | {total} 个节点中 {online} 个在线 |
 | `status.online` | Online | 在线 |
 | `status.offline` | Offline | 离线 |
 | `status.srOnline` | online | 在线 |

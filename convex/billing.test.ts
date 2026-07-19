@@ -1786,3 +1786,74 @@ describe('billing donations', () => {
     });
   });
 });
+
+describe('billing.testProcessorConnection (live credential probe)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  test('ok on a 200 from the processor; status-only error on failure; never the key', async () => {
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-live-key');
+    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api.nowpayments.example');
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      expect(headers['x-api-key']).toBe('np-live-key'); // stored secret is used…
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const t = convexTest(schema, modules);
+    const res = await t.action(internal.billing.testProcessorConnection, {
+      processor: 'nowpayments',
+    });
+    expect(res).toEqual({ ok: true, error: null });
+    expect(JSON.stringify(res)).not.toContain('np-live-key'); // …but never echoed
+  });
+
+  test('a 401 surfaces as a status-only error', async () => {
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-bad-key');
+    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api.nowpayments.example');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 401 })),
+    );
+    const t = convexTest(schema, modules);
+    const res = await t.action(internal.billing.testProcessorConnection, {
+      processor: 'nowpayments',
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/401/);
+    expect(JSON.stringify(res)).not.toContain('np-bad-key');
+  });
+
+  test('an unconfigured rail fails without any network call', async () => {
+    vi.stubEnv('NOWPAYMENTS_API_KEY', '');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const t = convexTest(schema, modules);
+    const res = await t.action(internal.billing.testProcessorConnection, {
+      processor: 'nowpayments',
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/not configured/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('paypal probe validates via the OAuth token fetch', async () => {
+    vi.stubEnv('PAYPAL_CLIENT_ID', 'cid');
+    vi.stubEnv('PAYPAL_SECRET', 'sec');
+    vi.stubEnv('PAYPAL_API_BASE', 'https://api-m.sandbox.example');
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      expect(String(input)).toContain('/v1/oauth2/token');
+      return new Response(JSON.stringify({ access_token: 'tok' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const t = convexTest(schema, modules);
+    const res = await t.action(internal.billing.testProcessorConnection, { processor: 'paypal' });
+    expect(res).toEqual({ ok: true, error: null });
+    expect(JSON.stringify(res)).not.toContain('sec');
+  });
+});

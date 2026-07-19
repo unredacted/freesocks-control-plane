@@ -51,21 +51,29 @@ export const SETTINGS_DEFAULTS = {
 /**
  * Settings as a typed bag with defaults applied (replaces
  * AppSettingsService.getAll). Unknown/corrupt rows fall back to the default so
- * a bad row fails closed instead of breaking reads.
+ * a bad row fails closed instead of breaking reads. Per-key INDEXED reads (the
+ * keys are a small compile-time set) rather than a full-table collect — this
+ * runs on hot paths (publicConfig, issuance) and the table also accumulates
+ * the ratelimit/billing policy namespaces we must never load here anyway.
  */
 export const resolved = internalQuery({
   args: {},
   handler: async (ctx): Promise<Record<string, unknown>> => {
-    const rows = await ctx.db.query('appSettings').collect();
     const map: Record<string, unknown> = { ...SETTINGS_DEFAULTS };
-    for (const row of rows) {
-      if (!(row.key in SETTINGS_DEFAULTS)) continue;
-      try {
-        map[row.key] = JSON.parse(row.value);
-      } catch {
-        /* keep the default */
-      }
-    }
+    await Promise.all(
+      Object.keys(SETTINGS_DEFAULTS).map(async (key) => {
+        const row = await ctx.db
+          .query('appSettings')
+          .withIndex('by_key', (q) => q.eq('key', key))
+          .unique();
+        if (!row) return;
+        try {
+          map[key] = JSON.parse(row.value);
+        } catch {
+          /* keep the default */
+        }
+      }),
+    );
     return map;
   },
 });

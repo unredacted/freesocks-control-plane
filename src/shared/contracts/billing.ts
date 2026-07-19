@@ -187,3 +187,12 @@ export const AdminBillingConfigResponse = z.object({
   secretStatus: ProcessorSecretStatus,
 });
 export type AdminBillingConfigResponse = z.infer<typeof AdminBillingConfigResponse>;
+
+/** `POST /api/v1/admin/billing/test-connection`: a LIVE credential probe —
+ *  proves the stored key actually authenticates (status-only error text,
+ *  never secret material). */
+export const BillingTestConnectionResponse = z.object({
+  ok: z.boolean(),
+  error: z.string().nullable(),
+});
+export type BillingTestConnectionResponse = z.infer<typeof BillingTestConnectionResponse>;

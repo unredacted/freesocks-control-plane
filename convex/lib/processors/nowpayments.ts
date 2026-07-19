@@ -217,3 +217,27 @@ export async function verifyAndParse(args: {
     },
   };
 }
+
+/**
+ * Live credential probe for the Admin → Billing "test connection" button.
+ * `GET /v1/currencies` is the cheapest authenticated read — a 401/403 means a
+ * bad key, a 200 means the rail can actually transact. Never captures the key.
+ */
+export async function testConnection(
+  cfg: NowPaymentsConfig,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
+  try {
+    const res = await fetch(new URL('/v1/currencies', cfg.apiUrl).toString(), {
+      headers: { 'x-api-key': cfg.apiKey, accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (res.ok) return { ok: true };
+    return { ok: false, error: `NOWPayments returned HTTP ${res.status}` };
+  } catch {
+    return { ok: false, error: 'Connection failed' };
+  } finally {
+    clearTimeout(timer);
+  }
+}

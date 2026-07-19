@@ -11,6 +11,7 @@
   import { adminBillingQuery, adminReferralConfigQuery, queryKeys } from '../../lib/queries';
   import {
     AdminBillingConfigResponse,
+    BillingTestConnectionResponse,
     type BillingConfigPatch,
     type BillingConfigView,
     type BillingProcessor,
@@ -60,6 +61,28 @@
     { key: 'stripe', label: 'Card (Stripe)' },
     { key: 'paypal', label: 'PayPal' },
   ];
+
+  // --- Live credential probe (per rail) ---------------------------------------
+  // Beyond the presence check above: pings the processor's API with the STORED
+  // secret so "ready" means the key actually authenticates. Per-rail result
+  // chip; a fresh probe result expires with the next config save.
+  let probe = $state<Record<string, { pending?: boolean; ok?: boolean; error?: string | null }>>(
+    {},
+  );
+  async function probeRail(key: BillingProcessor) {
+    probe[key] = { pending: true };
+    try {
+      const res = await apiClient.post(
+        '/api/v1/admin/billing/test-connection',
+        { processor: key },
+        BillingTestConnectionResponse,
+      );
+      probe[key] = res.ok ? { ok: true } : { ok: false, error: res.error };
+      if (!res.ok && res.error) toast.error(res.error);
+    } catch (err) {
+      probe[key] = { ok: false, error: apiErrorMessage(err) };
+    }
+  }
   const STATUS_FILTERS = ['', 'pending', 'confirming', 'paid', 'failed', 'expired'];
 
   function addDuration() {
@@ -283,6 +306,34 @@
                 <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
                   not configured
                 </span>
+              {/if}
+              {#if rs.ready}
+                <!-- Live probe: proves the STORED key actually authenticates
+                     (the readiness badge only proves presence). -->
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="min-h-7 px-2 text-xs"
+                  disabled={probe[rail.key]?.pending}
+                  onclick={() => probeRail(rail.key)}
+                >
+                  {probe[rail.key]?.pending ? 'Testing…' : 'Test connection'}
+                </Button>
+                {#if probe[rail.key] && !probe[rail.key]?.pending}
+                  {#if probe[rail.key]?.ok}
+                    <span
+                      class="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400"
+                    >
+                      live ✓
+                    </span>
+                  {:else if probe[rail.key]?.error}
+                    <span
+                      class="rounded bg-destructive/15 px-1.5 py-0.5 text-[11px] text-destructive"
+                    >
+                      {probe[rail.key]?.error}
+                    </span>
+                  {/if}
+                {/if}
               {/if}
             </label>
           {/each}

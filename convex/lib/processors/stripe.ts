@@ -223,3 +223,26 @@ export async function verifyAndParse(args: {
     },
   };
 }
+
+/**
+ * Live credential probe (Admin → Billing): `GET /v1/balance` — the cheapest
+ * authenticated read; a 401 means a bad secret key. Never captures the key.
+ */
+export async function testConnection(
+  cfg: StripeConfig,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(`${cfg.apiBase ?? DEFAULT_BASE}/v1/balance`, {
+      headers: { authorization: `Bearer ${cfg.apiKey}`, accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (res.ok) return { ok: true };
+    return { ok: false, error: `Stripe returned HTTP ${res.status}` };
+  } catch {
+    return { ok: false, error: 'Connection failed' };
+  } finally {
+    clearTimeout(timer);
+  }
+}

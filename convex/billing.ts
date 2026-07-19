@@ -871,6 +871,55 @@ export const ingestEvent = internalAction({
   },
 });
 
+// --- admin: live credential probe (Admin → Billing "test connection") ---------
+
+/**
+ * Ping a processor's API with the STORED credentials (never round-tripped to
+ * the client). Beyond the config-presence readiness check: proves the key
+ * actually authenticates. The result is an ok/error pair — the error text is
+ * status-only (never secret material).
+ */
+export const testProcessorConnection = internalAction({
+  args: { processor: processorValidator },
+  handler: async (ctx, { processor }): Promise<{ ok: boolean; error: string | null }> => {
+    const secrets = await ctx.runQuery(internal.billing.resolveSecrets, {});
+    const fail = (error: string) => ({ ok: false, error });
+    let res: { ok: true } | { ok: false; error: string };
+    switch (processor) {
+      case 'nowpayments': {
+        if (!secrets.nowpayments.apiKey) return fail('API key not configured');
+        res = await nowpayments.testConnection({
+          apiUrl: secrets.nowpayments.apiUrl,
+          apiKey: secrets.nowpayments.apiKey,
+        });
+        break;
+      }
+      case 'btcpay': {
+        const bp = secrets.btcpay;
+        if (!bp.apiUrl || !bp.storeId || !bp.apiKey) return fail('Not fully configured');
+        res = await btcpay.testConnection({
+          apiUrl: bp.apiUrl,
+          storeId: bp.storeId,
+          apiKey: bp.apiKey,
+        });
+        break;
+      }
+      case 'stripe': {
+        if (!secrets.stripe.apiKey) return fail('API key not configured');
+        res = await stripe.testConnection({ apiKey: secrets.stripe.apiKey });
+        break;
+      }
+      case 'paypal': {
+        const pp = secrets.paypal;
+        if (!pp.clientId || !pp.secret) return fail('Not fully configured');
+        res = await paypal.testConnection(pp);
+        break;
+      }
+    }
+    return res.ok ? { ok: true, error: null } : { ok: false, error: res.error };
+  },
+});
+
 // --- member order polling ----------------------------------------------------
 
 /**

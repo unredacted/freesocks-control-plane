@@ -234,3 +234,27 @@ export async function verifyAndParse(args: {
     },
   };
 }
+
+/**
+ * Live credential probe (Admin → Billing): `GET /api/v1/stores/{storeId}` —
+ * validates the API key AND the store id in one read. Never captures the key.
+ */
+export async function testConnection(
+  cfg: BtcpayConfig,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const base = cfg.apiUrl.replace(/\/$/, '');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
+  try {
+    const res = await fetch(`${base}/api/v1/stores/${encodeURIComponent(cfg.storeId)}`, {
+      headers: { authorization: `token ${cfg.apiKey}`, accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (res.ok) return { ok: true };
+    return { ok: false, error: `BTCPay returned HTTP ${res.status}` };
+  } catch {
+    return { ok: false, error: 'Connection failed' };
+  } finally {
+    clearTimeout(timer);
+  }
+}

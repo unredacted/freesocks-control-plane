@@ -164,6 +164,7 @@ review.
 | `login.failed` | Sign-in failed | ورود ناموفق بود |
 | `login.success` | Signed in | وارد شدید |
 | `login.sessionExpired` | Please sign in again - your session may have ended. | لطفاً دوباره وارد شوید - ممکن است نشست شما پایان یافته باشد. |
+| `login.popBroken` | Your browser can't secure this session because Web Workers are blocked or unavailable. Enable them (check your browser's privacy settings) or try a different browser, then sign in again. | مرورگر شما نمی‌تواند این نشست را امن کند چون Web Workers مسدود یا در دسترس نیست. آن‌ها را فعال کنید (تنظیمات حریم خصوصی مرورگر را بررسی کنید) یا از مرورگر دیگری استفاده کنید و دوباره وارد شوید. |
 | `login.digitProgress` | {count} of {total} digits entered | {count} از {total} رقم وارد شده است |
 | `login.or` | or | یا |
 
@@ -255,9 +256,9 @@ review.
 | `account.section.connection.title` | Your connection | ارتباط شما |
 | `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | کلید پروکسی شما، راهنمای راه‌اندازی و دستگاه‌های متصل. |
 | `account.section.membership.title` | Membership | عضویت |
-| `account.section.membership.desc` | Your plan, and how to upgrade or extend it. | طرح شما و نحوه ارتقا یا تمدید آن. |
+| `account.section.membership.desc` | Your plan - upgrade, extend, or redeem a membership code. | طرح شما — ارتقا، تمدید، یا بازخرید کد عضویت. |
 | `account.section.gifts.title` | Gifts & referrals | هدیه و معرفی |
-| `account.section.gifts.desc` | Redeem a code, buy codes to share, and invite people you trust. | کد را بازخرید کنید، کد بخرید تا با دیگران بدهید، و آشنایان خود را دعوت کنید. |
+| `account.section.gifts.desc` | Buy codes to share, and invite people you trust. | کد بخرید تا با دیگران بدهید، و آشنایان خود را دعوت کنید. |
 | `account.section.codes.title` | Codes & gifts | کدها و هدایا |
 | `account.section.codes.desc` | Redeem a membership code, or buy codes to share with others. | یک کد عضویت را بازخرید کنید، یا کدهایی را برای اشتراک‌گذاری با دیگران خریداری کنید. |
 | `account.section.security.title` | Account & security | حساب کاربری و امنیت |
@@ -272,7 +273,6 @@ review.
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `hero.titleDefault` | Your key | اشتراک شما |
-| `hero.eyebrowAccessKey` | FreeSocks Access Pass | کلید دسترسی شما |
 | `hero.urlLabelSubscription` | Your link | لینک اشتراک |
 | `hero.urlLabelAccessKey` | Access key | کلید دسترسی |
 | `hero.tierLine` | Plan {tier} | سطح {tier} |
@@ -662,6 +662,7 @@ review.
 | --- | --- | --- |
 | `mirror.disclosure` | Trouble connecting? | مشکل در اتصال دارید؟ |
 | `mirror.explainer` | If your normal subscription link won't connect where you are, add a mirror link below. It serves the same key from a different host that may not be blocked. | اگر لینک اشتراک معمولی شما در محل شما وصل نمی‌شود، یک لینک آینه از پایین اضافه کنید. همان کلید را از میزبانی دیگر که ممکن است مسدود نباشد ارائه می‌دهد. |
+| `mirror.unavailable` | Mirrors aren't available on this deployment right now - there are no mirror links to add. | آینه‌ها در حال حاضر روی این استقرار در دسترس نیستند — هیچ پیوند آینه‌ای برای افزودن وجود ندارد. |
 | `mirror.addedLabel` | Your mirror links | لینک‌های آینهٔ شما |
 | `mirror.addToAppHint` | Add each one as an extra subscription in your app, then try connecting. | هر کدام را به‌عنوان یک اشتراک اضافی در برنامه‌تان وارد کنید و سپس اتصال را امتحان کنید. |
 | `mirror.regionLabel` | Your region | منطقهٔ شما |
@@ -943,7 +944,6 @@ review.
 | `status.overallPartial` | Some locations are having issues | برخی مکان‌ها مشکل دارند |
 | `status.overallMajor` | A major outage is in progress | یک قطعی بزرگ در جریان است |
 | `status.locationsTitle` | Locations | مکان‌ها |
-| `status.nodesUp` | {online} of {total} nodes up | {online} از {total} گره فعال است |
 | `status.online` | Online | آنلاین |
 | `status.offline` | Offline | آفلاین |
 | `status.srOnline` | online | آنلاین |

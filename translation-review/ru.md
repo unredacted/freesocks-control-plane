@@ -163,6 +163,7 @@ review.
 | `login.failed` | Sign-in failed | Не удалось войти |
 | `login.success` | Signed in | Вы вошли |
 | `login.sessionExpired` | Please sign in again - your session may have ended. | Пожалуйста, войдите снова - возможно, ваша сессия завершилась. |
+| `login.popBroken` | Your browser can't secure this session because Web Workers are blocked or unavailable. Enable them (check your browser's privacy settings) or try a different browser, then sign in again. | Ваш браузер не может защитить эту сессию: Web Workers заблокированы или недоступны. Включите их (проверьте настройки приватности браузера) или используйте другой браузер, затем войдите снова. |
 | `login.digitProgress` | {count} of {total} digits entered | {count} из {total} цифр введено |
 | `login.or` | or | или |
 
@@ -254,9 +255,9 @@ review.
 | `account.section.connection.title` | Your connection | Ваше соединение |
 | `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | Ваш прокси-ключ, справка по настройке и подключенные устройства. |
 | `account.section.membership.title` | Membership | Членство |
-| `account.section.membership.desc` | Your plan, and how to upgrade or extend it. | Ваш план и способы его модернизации или расширения. |
+| `account.section.membership.desc` | Your plan - upgrade, extend, or redeem a membership code. | Ваш план — обновление, продление или погашение кода участника. |
 | `account.section.gifts.title` | Gifts & referrals | Подарки и приглашения |
-| `account.section.gifts.desc` | Redeem a code, buy codes to share, and invite people you trust. | Погасите код, купите коды в подарок и пригласите тех, кому доверяете. |
+| `account.section.gifts.desc` | Buy codes to share, and invite people you trust. | Купите коды в подарок и пригласите тех, кому доверяете. |
 | `account.section.codes.title` | Codes & gifts | Коды и подарки |
 | `account.section.codes.desc` | Redeem a membership code, or buy codes to share with others. | Активируйте промокод или купите коды, чтобы поделиться ими с другими. |
 | `account.section.security.title` | Account & security | Учетная запись и безопасность |
@@ -271,7 +272,6 @@ review.
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `hero.titleDefault` | Your key | Ваша подписка |
-| `hero.eyebrowAccessKey` | FreeSocks Access Pass | Ваш ключ доступа |
 | `hero.urlLabelSubscription` | Your link | Ссылка подписки |
 | `hero.urlLabelAccessKey` | Access key | Ключ доступа |
 | `hero.tierLine` | Plan {tier} | Тариф {tier} |
@@ -661,6 +661,7 @@ review.
 | --- | --- | --- |
 | `mirror.disclosure` | Trouble connecting? | Проблемы с подключением? |
 | `mirror.explainer` | If your normal subscription link won't connect where you are, add a mirror link below. It serves the same key from a different host that may not be blocked. | Если обычная ссылка-подписка не подключается в вашем регионе, добавьте зеркальную ссылку ниже. Она отдаёт тот же ключ с другого хоста, который может быть не заблокирован. |
+| `mirror.unavailable` | Mirrors aren't available on this deployment right now - there are no mirror links to add. | Зеркала сейчас недоступны на этом развёртывании — зеркальные ссылки добавить нельзя. |
 | `mirror.addedLabel` | Your mirror links | Ваши зеркальные ссылки |
 | `mirror.addToAppHint` | Add each one as an extra subscription in your app, then try connecting. | Добавьте каждую как отдельную подписку в приложении и попробуйте подключиться. |
 | `mirror.regionLabel` | Your region | Ваш регион |
@@ -942,7 +943,6 @@ review.
 | `status.overallPartial` | Some locations are having issues | В некоторых локациях есть проблемы |
 | `status.overallMajor` | A major outage is in progress | Идёт крупный сбой |
 | `status.locationsTitle` | Locations | Локации |
-| `status.nodesUp` | {online} of {total} nodes up | {online} из {total} узлов в сети |
 | `status.online` | Online | В сети |
 | `status.offline` | Offline | Не в сети |
 | `status.srOnline` | online | в сети |

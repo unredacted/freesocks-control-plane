@@ -301,3 +301,19 @@ export async function verifyAndParse(args: {
     summary: { event_type: eventType, event_id: event.id ?? null, resource_id: processorRef },
   };
 }
+
+/**
+ * Live credential probe (Admin → Billing): an OAuth client-credentials token
+ * fetch — validates clientId + secret in one call. Never captures the secret.
+ */
+export async function testConnection(
+  cfg: PayPalConfig,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await accessToken(cfg);
+    return { ok: true };
+  } catch (err) {
+    const status = err instanceof PayPalApiError ? err.status : undefined;
+    return { ok: false, error: status ? `PayPal returned HTTP ${status}` : 'Connection failed' };
+  }
+}

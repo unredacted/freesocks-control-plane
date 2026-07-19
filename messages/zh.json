@@ -85,7 +85,8 @@
     "success": "已登录",
     "sessionExpired": "请重新登录 - 你的会话可能已结束。",
     "digitProgress": "{count}位数，共{total}位数字",
-    "or": "或"
+    "or": "或",
+    "popBroken": "您的浏览器无法保护此会话，因为 Web Workers 被阻止或不可用。请启用它们（检查浏览器的隐私设置）或使用其他浏览器，然后重新登录。"
   },
   "passkey": {
     "title": "通行密钥",
@@ -176,11 +177,11 @@
       },
       "membership": {
         "title": "会员资格",
-        "desc": "您的计划，以及如何升级或扩展它。"
+        "desc": "您的计划——升级、续期或兑换会员码。"
       },
       "gifts": {
         "title": "礼品与推荐",
-        "desc": "兑换礼品码、购买可分享的礼品码，并邀请你信任的人。"
+        "desc": "购买可分享的礼品码，并邀请你信任的人。"
       },
       "codes": {
         "title": "代码和礼物",
@@ -427,7 +428,6 @@
       "step2": "保存你的号码",
       "step3": "完成连接"
     },
-    "introTwoSteps": "两个快速步骤：完成真人验证以创建免费账户，然后创建订阅。",
     "step1Title": "创建你的账户",
     "chooseBackend": "选择服务器类型",
     "backendAria": "服务器类型",
@@ -438,9 +438,6 @@
     "freeAccountNoteNoDevices": "免费账户有效期 {days} 天。无需电子邮件或密码。",
     "step3Title": "获取你的密钥",
     "step3Intro": "密钥是让你的应用连接到 VPN 的凭证。创建它，然后添加到你的应用中。",
-    "accountReady": "你的账户已就绪。",
-    "step2Title": "创建你的订阅",
-    "step2Intro": "创建代理订阅，获得可粘贴到任何兼容 VPN 客户端的链接。",
     "manageHintPrefix": "随时管理此订阅，前往",
     "manageLinkLabel": "你的账户",
     "subErrorSafePrefix": "你的账户是安全的。稍后可以创建订阅，前往",
@@ -453,8 +450,6 @@
     "lostNumberHint": "保存前丢失了账户号码？可以换一个新号码--",
     "lostNumberLinkLabel": "在账户页面更换",
     "redeemPrompt": "有礼品码？请在创建密钥前先兑换。",
-    "upsellTitle": "想要无限制？",
-    "upsellBody": "随时可升级到 FreeSocks 会员，享受无限流量与设备。",
     "redeemTitle": "你有礼品码吗？",
     "redeemBody": "立即兑换，即可立即升级您的新账户。"
   },
@@ -625,7 +620,8 @@
     "noSubscription": "请先创建你的密钥，然后才能添加镜像。",
     "removeAll": "移除所有镜像",
     "errorToast": "无法添加镜像",
-    "removedToast": "镜像已移除"
+    "removedToast": "镜像已移除",
+    "unavailable": "此部署当前不提供镜像——没有可添加的镜像链接。"
   },
   "rawconfig": {
     "disclosure": "显示原始配置",
