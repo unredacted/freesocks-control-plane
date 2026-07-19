@@ -19,8 +19,19 @@
 	# leaving it off "by omission" — the intent is now tamper-evident, and a
 	# future edit that wants logging has to consciously remove this. Caddy's own
 	# runtime/error log (no per-request client IPs) still goes to stderr.
+	# Privacy default: NO access logs. FCP serves users in censored regions and
+	# never persists a client IP at rest (the app HMAC-buckets it, never logs it —
+	# see convex/lib/http.ts + docs/privacy.md). Caddy would still see the real
+	# client IP, so we discard the access log EXPLICITLY (a null sink) rather than
+	# leaving it off "by omission" — the intent is now tamper-evident, and a
+	# future edit that wants logging has to consciously remove this.
+	# IMPORTANT: this must NOT be a global `log default { output discard }` —
+	# in Caddy the default logger IS the runtime logger, so discarding it
+	# globally also silences startup + ACME logs (and made deploy debugging
+	# blind). Access logs are discarded per-site below; runtime logs keep
+	# going to stderr (docker logs).
 	log default {
-		output discard
+		output stderr
 	}
 
 	# Client-IP trust (see the @api block + docs/beta-deploy.md §"Client IP").
@@ -41,6 +52,12 @@
 
 {$SITE_ADDRESS:beta.freesocks.org} {
 	encode zstd gzip
+
+	# Per-site ACCESS log discard (the privacy intent — see the header comment).
+	# The global runtime logger stays on stderr so startup/ACME logs are visible.
+	log {
+		output discard
+	}
 
 	# --- Security headers (CDN-blinding hardening) ---------------------------
 	# W1: with Cloudflare Turnstile replaced by self-hosted Cap, the member CSP
