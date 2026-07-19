@@ -278,6 +278,9 @@ services:
     environment:
       - SITE_ADDRESS=${SITE_ADDRESS:-beta.freesocks.org}
       - ACME_EMAIL=${ACME_EMAIL:-}
+      # http = plain HTTP on :80, ACME off (edge-fronted / Tailscale-proxy
+      # deployments); https (default) = Caddy manages a public LE cert.
+      - CADDY_SCHEME=${CADDY_SCHEME:-https}
       # Client-IP trust: set to the fronting proxy's peer IP/CIDR (e.g. the tailnet
       # 100.64.0.0/10) ONLY when something fronts Caddy (Pangolin / CF Tunnel / LB).
       # Empty = Caddy is the public edge (overwrites XFF). See Caddyfile + docs.
