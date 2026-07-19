@@ -1,12 +1,14 @@
 // Idempotent pre-`up` secret bootstrap for a fresh deploy. Fills every
 // GENERATABLE secret so a fresh `docker compose -f docker-compose.beta.yml
-// --env-file .env.beta up` needs no manual `openssl rand`. It NEVER overwrites a
+// --env-file <target> up` needs no manual `openssl rand`. It NEVER overwrites a
 // value that is already set — only replaces empty / CHANGE_ME placeholders — so
 // it is safe to re-run on testing, beta, and prod.
 //
-//   .env.beta   (container infra, read by compose):
-//       INSTANCE_SECRET, POSTGRES_PASSWORD, CAP_ADMIN_KEY   (random)
-//       + the CDN-blinding PUBLIC pins VITE_FS_*            (baked into the SPA build)
+//   target env  (container infra, read by compose; .env.beta by default —
+//       override with `bun scripts/bootstrap-secrets.mjs .env.prod` or
+//       FCP_ENV_FILE): INSTANCE_SECRET, POSTGRES_PASSWORD, CAP_ADMIN_KEY
+//       (random) + the CDN-blinding PUBLIC pins VITE_FS_* (baked into the SPA
+//       build)
 //   .env.convex (Convex deployment env, applied by the deployer):
 //       the CDN-blinding SECRET keys FS_*                   (private halves)
 //
@@ -25,7 +27,15 @@ import { generateE2eeKeys } from './gen-e2ee-keys.mjs';
 // crypto/example imports still resolve against this script's real location.
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const ROOT = process.env.FCP_BOOTSTRAP_ROOT ?? path.resolve(HERE, '..');
-const ENV_BETA = path.join(ROOT, '.env.beta');
+// Target infra env file: `.env.beta` by default; override for other
+// deployments — positional arg (`bun scripts/bootstrap-secrets.mjs .env.prod`)
+// or FCP_ENV_FILE. The matching `.example` falls back to `.env.beta.example`
+// when no target-specific example exists (prod has no .env.prod.example).
+const TARGET_ENV = process.env.FCP_ENV_FILE ?? process.argv[2] ?? '.env.beta';
+const TARGET_EXAMPLE = existsSync(path.join(ROOT, `${TARGET_ENV}.example`))
+  ? `${TARGET_ENV}.example`
+  : '.env.beta.example';
+const ENV_BETA = path.join(ROOT, TARGET_ENV);
 const ENV_CONVEX = path.join(ROOT, '.env.convex');
 
 const randHex = (n = 32) =>
@@ -36,10 +46,13 @@ const randHex = (n = 32) =>
 const isPlaceholder = (v) => v === undefined || v === '' || /CHANGE_ME/.test(v);
 
 function ensureFromExample(file) {
-  if (!existsSync(file)) {
-    copyFileSync(`${file}.example`, file);
-    console.log(`[bootstrap] created ${path.basename(file)} from its .example`);
-  }
+  if (existsSync(file)) return;
+  // Prefer the file's own example (.env.convex.example); the TARGET env file
+  // falls back to .env.beta.example when it has none (.env.prod).
+  const own = `${file}.example`;
+  const example = existsSync(own) ? own : path.join(ROOT, TARGET_EXAMPLE);
+  copyFileSync(example, file);
+  console.log(`[bootstrap] created ${path.basename(file)} from ${path.basename(example)}`);
 }
 
 /** Parse a KEY=VALUE file into { lines, get(key) }; preserves comments + order. */
