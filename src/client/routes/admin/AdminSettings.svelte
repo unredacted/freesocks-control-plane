@@ -129,6 +129,8 @@
   let sDraft = $state<{
     bannerEnabled: boolean;
     bannerText: string;
+    bannerLinkUrl: string;
+    bannerLinkLabel: string;
     repoEnabled: boolean;
     repoUrl: string;
     tosUrl: string;
@@ -144,6 +146,8 @@
   }>({
     bannerEnabled: false,
     bannerText: '',
+    bannerLinkUrl: '',
+    bannerLinkLabel: '',
     repoEnabled: false,
     repoUrl: '',
     tosUrl: '',
@@ -164,6 +168,8 @@
       sDraft = {
         bannerEnabled: s.bannerEnabled,
         bannerText: s.bannerText,
+        bannerLinkUrl: s.bannerLinkUrl,
+        bannerLinkLabel: s.bannerLinkLabel,
         repoEnabled: s.repoEnabled,
         repoUrl: s.repoUrl,
         tosUrl: s.tosUrl,
@@ -185,6 +191,8 @@
       const Resp = z.object({
         bannerEnabled: z.boolean(),
         bannerText: z.string(),
+        bannerLinkUrl: z.string(),
+        bannerLinkLabel: z.string(),
         repoEnabled: z.boolean(),
         repoUrl: z.string(),
         tosUrl: z.string(),
@@ -671,6 +679,32 @@
               oninput={(e) =>
                 (sDraft = { ...sDraft, bannerText: (e.target as HTMLInputElement).value })}
             />
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="site-banner-link-url">
+                Banner link URL (https, optional)
+              </label>
+              <Input
+                id="site-banner-link-url"
+                placeholder="https://example.org/blog/announcement"
+                value={sDraft.bannerLinkUrl}
+                oninput={(e) =>
+                  (sDraft = { ...sDraft, bannerLinkUrl: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="site-banner-link-label">
+                Banner link label
+              </label>
+              <Input
+                id="site-banner-link-label"
+                placeholder="e.g. Read the launch post"
+                value={sDraft.bannerLinkLabel}
+                oninput={(e) =>
+                  (sDraft = { ...sDraft, bannerLinkLabel: (e.target as HTMLInputElement).value })}
+              />
+            </div>
           </div>
           <label class="flex items-center gap-3">
             <Checkbox

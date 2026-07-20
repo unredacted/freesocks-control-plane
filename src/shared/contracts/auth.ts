@@ -231,6 +231,10 @@ export const PublicConfig = z.object({
     .object({
       bannerEnabled: z.boolean(),
       bannerText: z.string(),
+      /** Optional banner link (an <a> after the text): https-only URL + visible
+       *  label; '' = no link. Defaulted for deploy skew (older backends). */
+      bannerLinkUrl: httpsOrEmpty.optional().default(''),
+      bannerLinkLabel: z.string().optional().default(''),
       repoEnabled: z.boolean(),
       repoUrl: httpsOrEmpty,
       tosUrl: httpsOrEmpty,

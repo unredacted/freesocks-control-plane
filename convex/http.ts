@@ -2576,6 +2576,8 @@ http.route({
     const body = await readJson<{
       bannerEnabled?: boolean;
       bannerText?: string;
+      bannerLinkUrl?: string;
+      bannerLinkLabel?: string;
       repoEnabled?: boolean;
       repoUrl?: string;
       tosUrl?: string;
@@ -2594,6 +2596,9 @@ http.route({
         await ctx.runMutation(internal.adminApi.setSiteConfig, {
           bannerEnabled: body.bannerEnabled === true,
           bannerText: typeof body.bannerText === 'string' ? body.bannerText : '',
+          bannerLinkUrl: typeof body.bannerLinkUrl === 'string' ? body.bannerLinkUrl : undefined,
+          bannerLinkLabel:
+            typeof body.bannerLinkLabel === 'string' ? body.bannerLinkLabel : undefined,
           repoEnabled: body.repoEnabled === true,
           repoUrl: typeof body.repoUrl === 'string' ? body.repoUrl : '',
           tosUrl: typeof body.tosUrl === 'string' ? body.tosUrl : '',

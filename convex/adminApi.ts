@@ -1973,6 +1973,10 @@ export const setSiteConfig = internalMutation({
     socialMastodonUrl: v.string(),
     socialBlueskyUrl: v.string(),
     supportEmail: v.string(),
+    // Optional (older callers don't send them): the banner's link (https URL +
+    // visible label, rendered as an <a> after the text); absent = no change.
+    bannerLinkUrl: v.optional(v.string()),
+    bannerLinkLabel: v.optional(v.string()),
     // Optional (older callers don't send them): the home hero title/subtitle
     // overrides; absent = no change to the stored value.
     heroTitle: v.optional(v.string()),
@@ -1987,6 +1991,8 @@ export const setSiteConfig = internalMutation({
     {
       bannerEnabled,
       bannerText,
+      bannerLinkUrl,
+      bannerLinkLabel,
       repoEnabled,
       repoUrl,
       tosUrl,
@@ -2005,6 +2011,8 @@ export const setSiteConfig = internalMutation({
     const clean = {
       bannerEnabled,
       bannerText: sanitizeBannerText(bannerText),
+      bannerLinkUrl: sanitizeHttpsUrl(bannerLinkUrl ?? ''),
+      bannerLinkLabel: sanitizeBannerText(bannerLinkLabel ?? '', 60),
       repoEnabled,
       repoUrl: sanitizeHttpsUrl(repoUrl),
       tosUrl: sanitizeHttpsUrl(tosUrl),
@@ -2025,6 +2033,23 @@ export const setSiteConfig = internalMutation({
       actorAdminId,
     );
     await upsertSetting(ctx, 'site.bannerText', JSON.stringify(clean.bannerText), actorAdminId);
+    // Banner link is write-only-when-sent (absent preserves the stored value).
+    if (bannerLinkUrl !== undefined) {
+      await upsertSetting(
+        ctx,
+        'site.bannerLinkUrl',
+        JSON.stringify(clean.bannerLinkUrl),
+        actorAdminId,
+      );
+    }
+    if (bannerLinkLabel !== undefined) {
+      await upsertSetting(
+        ctx,
+        'site.bannerLinkLabel',
+        JSON.stringify(clean.bannerLinkLabel),
+        actorAdminId,
+      );
+    }
     await upsertSetting(ctx, 'site.repoEnabled', JSON.stringify(clean.repoEnabled), actorAdminId);
     await upsertSetting(ctx, 'site.repoUrl', JSON.stringify(clean.repoUrl), actorAdminId);
     await upsertSetting(ctx, 'site.tosUrl', JSON.stringify(clean.tosUrl), actorAdminId);

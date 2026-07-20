@@ -17,6 +17,13 @@ export interface SiteConfig {
   /** Banner message (operator free text; rendered as ESCAPED text by the SPA,
    *  never as HTML). '' = empty (the banner hides even if enabled). */
   bannerText: string;
+  /** Optional banner link target (https-only; '' = no link). Rendered as an
+   *  <a href> AFTER the banner text, labeled by bannerLinkLabel — so the banner
+   *  can point at e.g. a blog post without pasting the raw URL into the text. */
+  bannerLinkUrl: string;
+  /** The banner link's visible label (operator free text, escaped; '' with a
+   *  set URL falls back to the URL's hostname). */
+  bannerLinkLabel: string;
   /** Master switch for the footer "View source" repo link. */
   repoEnabled: boolean;
   /** Public source-repo URL shown in the footer (https-only); '' = unset (hidden). */
@@ -51,6 +58,8 @@ export interface SiteConfig {
 export const SITE_DEFAULTS: SiteConfig = {
   bannerEnabled: false,
   bannerText: '',
+  bannerLinkUrl: '',
+  bannerLinkLabel: '',
   repoEnabled: false,
   repoUrl: '',
   tosUrl: '',
@@ -66,6 +75,7 @@ export const SITE_DEFAULTS: SiteConfig = {
 };
 
 const MAX_BANNER = 280;
+const MAX_BANNER_LINK_LABEL = 60;
 const MAX_EMAIL = 254;
 const MAX_HERO_TITLE = 160;
 const MAX_HERO_SUBTITLE = 500;
@@ -130,6 +140,9 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
     bannerEnabled:
       typeof bannerEnabledVal === 'boolean' ? bannerEnabledVal : SITE_DEFAULTS.bannerEnabled,
     bannerText: sanitizeBannerText(await read('site.bannerText')),
+    // https-only like every other operator link, so it's safe as an <a href>.
+    bannerLinkUrl: sanitizeHttpsUrl(await read('site.bannerLinkUrl')),
+    bannerLinkLabel: sanitizeBannerText(await read('site.bannerLinkLabel'), MAX_BANNER_LINK_LABEL),
     repoEnabled: typeof repoEnabledVal === 'boolean' ? repoEnabledVal : SITE_DEFAULTS.repoEnabled,
     // https-only (rejects `javascript:`/`data:`) so it's safe to render as an <a href>.
     repoUrl: sanitizeHttpsUrl(await read('site.repoUrl')),

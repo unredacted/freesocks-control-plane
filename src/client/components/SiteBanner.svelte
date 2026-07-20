@@ -19,5 +19,18 @@
     class="flex items-center justify-center gap-2 border-b border-border bg-muted/60 px-3 py-1.5 text-center text-xs text-foreground"
   >
     <span class="font-medium">{site.bannerText}</span>
+    <!-- Optional operator link (server-sanitized to https-only). The label is
+         escaped text like the banner itself; blank label falls back to the
+         link's hostname so a URL-only config still reads sanely. -->
+    {#if site.bannerLinkUrl}
+      <a
+        href={site.bannerLinkUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="shrink-0 rounded-sm font-medium text-primary underline underline-offset-2 hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {site.bannerLinkLabel || new URL(site.bannerLinkUrl).hostname}
+      </a>
+    {/if}
   </div>
 {/if}

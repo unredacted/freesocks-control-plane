@@ -394,6 +394,8 @@ describe('route-level scope enforcement', () => {
     const body = JSON.stringify({
       bannerEnabled: true,
       bannerText: '  Service maintenance 03:00 UTC  ',
+      bannerLinkUrl: 'https://example.org/blog/launch',
+      bannerLinkLabel: '  Read the launch post  ',
       repoEnabled: true,
       repoUrl: 'http://insecure.example', // non-https → must sanitize to ''
       transparencyUrl: 'https://example.org/transparency',
@@ -417,6 +419,8 @@ describe('route-level scope enforcement', () => {
     expect(ok.status).toBe(200);
     const clean = (await ok.json()) as {
       bannerText: string;
+      bannerLinkUrl: string;
+      bannerLinkLabel: string;
       repoUrl: string;
       bannerEnabled: boolean;
       transparencyUrl: string;
@@ -425,6 +429,8 @@ describe('route-level scope enforcement', () => {
       socialBlueskyUrl: string;
     };
     expect(clean.bannerText).toBe('Service maintenance 03:00 UTC'); // trimmed
+    expect(clean.bannerLinkUrl).toBe('https://example.org/blog/launch');
+    expect(clean.bannerLinkLabel).toBe('Read the launch post'); // trimmed
     expect(clean.repoUrl).toBe(''); // unsafe scheme dropped
     expect(clean.bannerEnabled).toBe(true);
     expect(clean.transparencyUrl).toBe('https://example.org/transparency');
@@ -439,6 +445,8 @@ describe('route-level scope enforcement', () => {
       site?: {
         bannerEnabled: boolean;
         bannerText: string;
+        bannerLinkUrl: string;
+        bannerLinkLabel: string;
         repoUrl: string;
         transparencyUrl: string;
         socialXUrl: string;
@@ -448,7 +456,26 @@ describe('route-level scope enforcement', () => {
     };
     expect(pub.site?.bannerEnabled).toBe(true);
     expect(pub.site?.bannerText).toBe('Service maintenance 03:00 UTC');
+    expect(pub.site?.bannerLinkUrl).toBe('https://example.org/blog/launch');
+    expect(pub.site?.bannerLinkLabel).toBe('Read the launch post');
     expect(pub.site?.repoUrl).toBe('');
+
+    // An unsafe banner-link scheme sanitizes to '' (no link rendered) while the
+    // banner text itself is preserved.
+    const unsafe = await t.fetch('/api/v1/admin/site', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${settingsW}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        bannerEnabled: true,
+        bannerText: 'Launch!',
+        bannerLinkUrl: 'javascript:alert(1)',
+        bannerLinkLabel: 'click',
+      }),
+    });
+    expect(unsafe.status).toBe(200);
+    const unsafeClean = (await unsafe.json()) as { bannerLinkUrl: string; bannerText: string };
+    expect(unsafeClean.bannerLinkUrl).toBe('');
+    expect(unsafeClean.bannerText).toBe('Launch!');
     expect(pub.site?.transparencyUrl).toBe('https://example.org/transparency');
     expect(pub.site?.socialXUrl).toBe('https://x.com/freesocks');
     expect(pub.site?.socialMastodonUrl).toBe('');
