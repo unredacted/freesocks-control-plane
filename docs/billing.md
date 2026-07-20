@@ -232,6 +232,14 @@ section, both gated on donations being enabled and non-empty history.
    (`convex/lib/processors/nowpayments.ts:verifyAndParse`). Status mapping:
    `finished`→paid, `confirming`/`confirmed`/`sending`/`partially_paid`→confirming,
    `waiting`→pending, `failed`/`refunded`→failed, `expired`→expired.
+   **HMAC-mismatch postback fallback:** the verifier's canonicalization is a
+   reconstruction of NOWPayments' serializer (PHP escaping, `N.0` float combos)
+   and cannot cover every number rendering, so a mismatched IPN that carries a
+   `payment_id` is re-verified by fetching that payment straight from
+   `GET /v1/payment/{id}` (api key) and building the event from the
+   AUTHORITATIVE response — the IPN body is discarded. A postback logs a
+   `[billing] nowpayments IPN HMAC mismatch … verified via API postback`
+   warning; if you see it recur, check the IPN secret first.
 5. **Sandbox:** `api-sandbox.nowpayments.io` + the IPN simulator lets you drive a
    payment to `finished` without real funds.
 6. **Per-coin minimums (a PRICING constraint).** NOWPayments enforces a minimum

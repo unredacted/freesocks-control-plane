@@ -1008,6 +1008,121 @@ describe('nowpayments.verifyAndParse signature canonicalization', () => {
   });
 });
 
+describe('nowpayments IPN API-postback fallback (HMAC mismatch)', () => {
+  const SECRET = 'ipn-secret';
+  const cfg = { apiUrl: 'https://api.nowpayments.test', apiKey: 'np-key' };
+  // An IPN whose signature we can't reproduce (a canonicalization corner or a
+  // wrong IPN secret) — carries a payment_id pointer.
+  const ipnBody = JSON.stringify({ payment_id: 4567, payment_status: 'finished', order_id: 'oX' });
+  const badSig = 'f'.repeat(128);
+  const apiPayment = (over: Record<string, unknown> = {}) => ({
+    payment_id: 4567,
+    invoice_id: 999,
+    payment_status: 'finished',
+    order_id: 'order-real',
+    price_amount: 2,
+    price_currency: 'usd',
+    pay_amount: 0.001,
+    actually_paid: 0.001,
+    pay_currency: 'btc',
+    ...over,
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  test('re-verifies via GET /v1/payment/{id} and builds the result from the API record', async () => {
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      expect(url).toBe('https://api.nowpayments.test/v1/payment/4567');
+      expect((init?.headers as Record<string, string>)['x-api-key']).toBe('np-key');
+      return res(apiPayment());
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const r = await nowpayments.verifyAndParse({
+      rawBody: ipnBody,
+      signature: badSig,
+      ipnSecret: SECRET,
+      cfg,
+    });
+    expect(r).toMatchObject({
+      ok: true,
+      status: 'paid',
+      // Everything comes from the AUTHORITATIVE API record, not the IPN body.
+      orderRef: 'order-real',
+      checkoutRef: '999',
+      amountMinor: 200,
+      amountCurrency: 'USD',
+    });
+  });
+
+  test('the underpaid downgrade applies to the API record too', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => res(apiPayment({ actually_paid: 0.0004 }))),
+    );
+    const r = await nowpayments.verifyAndParse({
+      rawBody: ipnBody,
+      signature: badSig,
+      ipnSecret: SECRET,
+      cfg,
+    });
+    expect(r.ok && r.status).toBe('confirming');
+  });
+
+  test('rejects when the API lookup fails (postback is a fallback, not a bypass)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('not found', { status: 404 })),
+    );
+    const r = await nowpayments.verifyAndParse({
+      rawBody: ipnBody,
+      signature: badSig,
+      ipnSecret: SECRET,
+      cfg,
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  test('rejects when the API returns a DIFFERENT payment than asked for', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => res(apiPayment({ payment_id: 1111 }))),
+    );
+    const r = await nowpayments.verifyAndParse({
+      rawBody: ipnBody,
+      signature: badSig,
+      ipnSecret: SECRET,
+      cfg,
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  test('no cfg → the old fail-closed behavior (no network call)', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const r = await nowpayments.verifyAndParse({
+      rawBody: ipnBody,
+      signature: badSig,
+      ipnSecret: SECRET,
+    });
+    expect(r.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('a non-numeric payment_id never triggers a postback (no URL injection)', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const r = await nowpayments.verifyAndParse({
+      rawBody: JSON.stringify({ payment_id: '../v1/payout', payment_status: 'finished' }),
+      signature: badSig,
+      ipnSecret: SECRET,
+      cfg,
+    });
+    expect(r.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('nowpayments partial-settle guard', () => {
   const SECRET = 'ipn-secret';
 

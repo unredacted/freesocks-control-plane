@@ -192,10 +192,55 @@ function candidatePayloads(sorted: unknown): string[] {
 }
 
 /**
+ * Fetch a payment's authoritative state straight from NOWPayments
+ * (`GET /v1/payment/{id}`, x-api-key) — the postback path for an IPN whose
+ * HMAC we couldn't reproduce (see verifyAndParse). Returns the raw payment
+ * record (same field names as the IPN body) or null on ANY failure; never
+ * captures the api key or full URL in errors.
+ */
+async function fetchPayment(
+  cfg: NowPaymentsConfig,
+  paymentId: string,
+): Promise<Record<string, unknown> | null> {
+  if (!/^\d{1,20}$/.test(paymentId)) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
+  try {
+    const res = await fetch(new URL(`/v1/payment/${paymentId}`, cfg.apiUrl).toString(), {
+      headers: { 'x-api-key': cfg.apiKey, accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const body: unknown = await res.json().catch(() => null);
+    if (!body || typeof body !== 'object') return null;
+    const rec = body as Record<string, unknown>;
+    // Must actually be the payment we asked about, with a status to map.
+    if (String(rec.payment_id ?? '') !== paymentId) return null;
+    if (typeof rec.payment_status !== 'string') return null;
+    return rec;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Verify an IPN's authenticity and parse it. The signature is HMAC-SHA512 of the
  * key-sorted JSON body (the EXACT bytes we received, re-serialized in sorted-key
  * order) using the IPN secret — checked against every PHP-canonical candidate
  * (see candidatePayloads: slash/unicode escaping + whole-number float forms).
+ *
+ * HMAC-mismatch fallback (when `cfg` is supplied): the canonicalization is a
+ * reconstruction of NOWPayments' serializer and CANNOT cover every number
+ * rendering (exponent forms, float-typed zeros, >8 whole-number leaves — the
+ * combo search caps out), so a mismatched IPN carrying a payment_id is
+ * re-verified by POSTBACK: fetch that payment straight from the NOWPayments
+ * API and build the result from the AUTHORITATIVE response, ignoring the IPN
+ * body entirely. Safe by construction — a forged IPN can only point us at a
+ * real payment whose real state we then process (the order-bound cross-checks
+ * + exactly-once claim still gate the grant).
+ *
  * On success, the order is looked up by `order_id` (our opaque ref). The
  * persisted summary is REDACTED (NOWPayments IPNs carry no payer PII, but we
  * allowlist fields defensively).
@@ -204,6 +249,8 @@ export async function verifyAndParse(args: {
   rawBody: string;
   signature: string | null;
   ipnSecret: string;
+  /** API credentials for the postback fallback; omit to disable it. */
+  cfg?: NowPaymentsConfig;
 }): Promise<VerifyResult> {
   if (!args.signature) return { ok: false, reason: 'missing x-nowpayments-sig' };
   let payload: unknown;
@@ -223,9 +270,18 @@ export async function verifyAndParse(args: {
       break;
     }
   }
-  if (!matched) return { ok: false, reason: 'IPN signature mismatch' };
-
-  const p = payload as Record<string, unknown>;
+  let p = payload as Record<string, unknown>;
+  if (!matched) {
+    const paymentId = p.payment_id != null ? String(p.payment_id) : '';
+    const viaApi = args.cfg && paymentId ? await fetchPayment(args.cfg, paymentId) : null;
+    if (!viaApi) return { ok: false, reason: 'IPN signature mismatch' };
+    // Loud but secret-free: a recurring postback means the IPN secret is wrong
+    // OR the canonicalization drifted — worth the operator's attention either way.
+    console.warn(
+      `[billing] nowpayments IPN HMAC mismatch for payment ${paymentId}; verified via API postback`,
+    );
+    p = viaApi;
+  }
   const rawStatus = typeof p.payment_status === 'string' ? p.payment_status : '';
   const orderRef = typeof p.order_id === 'string' && p.order_id ? p.order_id : null;
   const processorRef =

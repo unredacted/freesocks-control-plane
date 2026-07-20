@@ -132,6 +132,16 @@ async function verifyForProcessor(
         rawBody,
         signature,
         ipnSecret: secrets.nowpayments.ipnSecret,
+        // Optional: enables the API-postback fallback for an IPN whose HMAC we
+        // can't reproduce (the canonicalization is a reconstruction of their
+        // serializer and has corners) — the payment is re-verified straight
+        // from the NOWPayments API instead of lost as a stuck-pending order.
+        cfg: secrets.nowpayments.apiKey
+          ? {
+              apiUrl: secrets.nowpayments.apiUrl,
+              apiKey: secrets.nowpayments.apiKey,
+            }
+          : undefined,
       });
     }
     case 'btcpay': {
