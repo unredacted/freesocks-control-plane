@@ -178,6 +178,50 @@ describe('userStats counters (WS3)', () => {
     expect(await counts(t)).toMatchObject({ active: 2, grace: 1, freeActive: 2 });
   });
 
+  test('refreshFreeActive recounts ONLY freeActive (targeted, other fields untouched)', async () => {
+    const t = convexTest(schema, modules);
+    const freeTierId = await seedFreeTier(t);
+    const paidTierId = await t.run((ctx) =>
+      ctx.db.insert('tiers', {
+        slug: 'member',
+        name: 'Member',
+        backend: 'remnawave',
+        monthlyTrafficGb: 0,
+        deviceLimit: 3,
+        hwidLimit: 3,
+        hwidEnabled: false,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: false,
+        isActive: true,
+        priority: 10,
+        expirationDaysAfterMembershipLapse: 30,
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert('users', { tierId: freeTierId, status: 'active', updatedAt: now });
+      await ctx.db.insert('users', { tierId: freeTierId, status: 'active', updatedAt: now });
+      await ctx.db.insert('users', { tierId: freeTierId, status: 'inactive', updatedAt: now }); // idle — excluded
+      await ctx.db.insert('users', { tierId: paidTierId, status: 'active', updatedAt: now }); // paid — excluded
+    });
+    // A stale counter row (the donation-time case: signups since the last daily
+    // reconcile aren't reflected) with a sentinel in an unrelated field.
+    await t.run((ctx) =>
+      ctx.db.insert('appState', {
+        key: 'stats:userCounts',
+        value: JSON.stringify({ active: 42, freeActive: 0 }),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    await t.action(internal.userStats.refreshFreeActive, {});
+
+    const c = await counts(t);
+    expect(c.freeActive).toBe(2); // exact recount
+    expect(c.active).toBe(42); // untouched — the daily reconcile owns the rest
+  });
+
   test('backend drift bumps exactly once (no double-count across setters)', async () => {
     const t = convexTest(schema, modules);
     const tierId = await seedFreeTier(t);

@@ -453,6 +453,11 @@ async function fundDonation(
     });
   }
   await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
+  // Refresh the "free accounts reached" impact stat NOW: freeActive is
+  // otherwise recounted only by the daily reconcile, so a donor would stare
+  // at a stale figure right after giving. (Targeted recount; the daily full
+  // reconcile stays as the self-healing backstop.)
+  await ctx.scheduler.runAfter(0, internal.userStats.refreshFreeActive, {});
 }
 
 /**

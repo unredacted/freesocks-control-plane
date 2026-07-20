@@ -80,6 +80,67 @@ export const applyReconcileDelta = internalMutation({
   },
 });
 
+/** One page of ACTIVE users on a free tier (index prefix scan) — the targeted
+ *  freeActive recount, far cheaper than the full-table reconcile scan. */
+export const countFreeActivePage = internalQuery({
+  args: {
+    tierId: v.id('tiers'),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+  },
+  handler: async (ctx, { tierId, cursor, numItems }) => {
+    const res = await ctx.db
+      .query('users')
+      .withIndex('by_tier_status_freekey', (q) => q.eq('tierId', tierId).eq('status', 'active'))
+      .paginate({ cursor, numItems });
+    return { count: res.page.length, isDone: res.isDone, continueCursor: res.continueCursor };
+  },
+});
+
+/** Overwrite ONLY the freeActive field of the live counter row (read-full/
+ *  write-full, so concurrent status-transition bumps to other fields are kept). */
+export const setFreeActive = internalMutation({
+  args: { freeActive: v.number() },
+  handler: async (ctx, { freeActive }) => {
+    const live = await readUserCounts(ctx.db);
+    await writeUserCounts(ctx, { ...live, freeActive: Math.max(0, freeActive) });
+    return null;
+  },
+});
+
+/**
+ * Refresh JUST the freeActive counter (the "free accounts reached" impact stat)
+ * by an exact recount over the free tiers' (tierId, 'active') index prefix.
+ * Scheduled from the donation grant so a donor sees a current figure right away
+ * — freeActive is otherwise maintained only by the DAILY full reconcile (a
+ * status transition can't bump it: it doesn't know tier membership), which
+ * stays as the self-healing backstop. Deliberately not the full
+ * reconcileUserCounts: this scan is bounded to free users, touches no other
+ * counter field, and two concurrent runs converge on the same exact value
+ * (the full reconcile's delta-write can transiently corrupt under a race).
+ */
+export const refreshFreeActive = internalAction({
+  args: {},
+  handler: async (ctx): Promise<null> => {
+    const freeTierIds: Id<'tiers'>[] = await ctx.runQuery(internal.tiers.defaultFreeTierIds, {});
+    let freeActive = 0;
+    for (const tierId of freeTierIds) {
+      let cursor: string | null = null;
+      for (let i = 0; i < 100_000; i++) {
+        const res: { count: number; isDone: boolean; continueCursor: string } = await ctx.runQuery(
+          internal.userStats.countFreeActivePage,
+          { tierId, cursor, numItems: 500 },
+        );
+        freeActive += res.count;
+        if (res.isDone) break;
+        cursor = res.continueCursor;
+      }
+    }
+    await ctx.runMutation(internal.userStats.setFreeActive, { freeActive });
+    return null;
+  },
+});
+
 /** Recompute the counter row from scratch (idempotent, self-healing). */
 export const reconcileUserCounts = internalAction({
   args: {},

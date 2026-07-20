@@ -1870,6 +1870,12 @@ describe('billing donations', () => {
         .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
         .unique();
       expect(JSON.parse(st!.value).donatedCents).toBe(1000);
+      // The grant schedules BOTH the instant fleet re-cap and the targeted
+      // freeActive recount — the donor must see a current "free accounts
+      // reached" figure right away, not the last daily reconcile's.
+      const scheduled = await ctx.db.system.query('_scheduled_functions').collect();
+      expect(scheduled.some((f) => f.name.includes('applyFreeBonus'))).toBe(true);
+      expect(scheduled.some((f) => f.name.includes('refreshFreeActive'))).toBe(true);
     });
   });
 
