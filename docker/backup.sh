@@ -62,17 +62,23 @@ backup_once() {
 
   # Pre-dump sanity: a mis-pointed PGDB (e.g. INSTANCE_NAME changed without a
   # matching POSTGRES_DB) dumps an EMPTY or WRONG database with an otherwise
-  # green heartbeat. `tiers` is seeded by every deploy cutover, so a missing
-  # table or a zero-row count means this is not the live datastore — fail the
-  # cycle (heartbeat not touched → healthcheck trips).
-  tier_count="$(psql -h "$PGHOST" -U "$PGUSER" -d "$PGDB" -tAc 'SELECT count(*) FROM tiers' 2>/dev/null || true)"
-  case "$tier_count" in
-    ''|*[!0-9]*|0)
-      echo "[backup] ERROR: sanity check failed — '${PGDB}.tiers' is missing or empty (count='${tier_count}')." >&2
-      echo "[backup]        Is POSTGRES_DB in sync with INSTANCE_NAME? Refusing to dump the wrong DB." >&2
-      return 1
-      ;;
-  esac
+  # green heartbeat. Convex does NOT create one Postgres relation per logical
+  # table (there is no `tiers` table — the old probe here failed EVERY cycle):
+  # all documents live in internal tables (documents/indexes/…) inside a schema
+  # named after the instance. Locate that schema and probe for at least one
+  # document row (a live datastore always has system + seeded docs); anything
+  # else means this is not the live datastore — fail the cycle (heartbeat not
+  # touched → healthcheck trips).
+  cx_schema="$(psql -h "$PGHOST" -U "$PGUSER" -d "$PGDB" -tAc "SELECT table_schema FROM information_schema.tables WHERE table_name = 'documents' LIMIT 1" 2>/dev/null || true)"
+  doc_probe=""
+  if [ -n "$cx_schema" ]; then
+    doc_probe="$(psql -h "$PGHOST" -U "$PGUSER" -d "$PGDB" -tAc "SELECT 1 FROM \"${cx_schema}\".documents LIMIT 1" 2>/dev/null || true)"
+  fi
+  if [ "$doc_probe" != "1" ]; then
+    echo "[backup] ERROR: sanity check failed — no Convex 'documents' table with rows in '${PGDB}' (schema='${cx_schema:-none}')." >&2
+    echo "[backup]        Is POSTGRES_DB in sync with INSTANCE_NAME? Refusing to dump the wrong DB." >&2
+    return 1
+  fi
 
   echo "[backup] dumping ${PGDB} -> ${file}"
   if [ -n "${BACKUP_AGE_PUBLIC_KEY:-}" ]; then
