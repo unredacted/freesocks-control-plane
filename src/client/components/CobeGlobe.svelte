@@ -5,18 +5,18 @@
   /**
    * The cobe WebGL globe on the front page: markers on censored countries, and
    * every voice country carries a LABEL (its line + city tag) pinned to its
-   * marker via cobe v2's DOM anchors (the documented "Custom Labels" pattern:
-   * `position-anchor` + the `--cobe-visible-<id>` opacity variable, so a label
-   * fades out as its marker rotates to the far side). Only 3 labels show at a
-   * time (a sliding schedule), and each alternates between two lines on a slow
-   * staggered clock, so the hemisphere keeps murmuring without crowding.
-   * Illustrative, not live data: fixed coordinates, archetypal lines with city
-   * tags (no names — these are not testimonials).
+   * marker. Positioning is plain JS: each layout pass copies the marker's stage
+   * position off cobe v2's DOM anchor divs onto the label (CSS anchor
+   * positioning — the earlier approach — never shipped on iOS/Firefox, which
+   * left the globe label-less there); the `--cobe-visible-<id>` variable still
+   * fades a label as its marker rotates to the far side. Only 3 labels show at
+   * a time (1 on small stages; a sliding schedule), and each alternates between
+   * lines on a slow staggered clock, so the hemisphere keeps murmuring without
+   * crowding. Illustrative, not live data: fixed coordinates, archetypal lines
+   * with city tags (no names — these are not testimonials).
    *
    * Engineering notes:
    *  - `cobe` is imported DYNAMICALLY on mount (code-split, like the admin CMS).
-   *  - Browsers without CSS anchor positioning get a cycling caption instead;
-   *    small viewports get the caption too (labels can't breathe there).
    *  - prefers-reduced-motion → a static globe, static first lines, no clock.
    *  - The rAF loop only calls `update({ phi })` (v2 API); GL context and the
    *    label clock are torn down on unmount.
@@ -77,7 +77,6 @@
   let visibleIds = $state<string[]>([]);
   let reducedMotion = $state(false);
   const MAX_VISIBLE = 3;
-  const SLOT_TICKS = 4; // 4 × 600ms = 2.4s per priority step
   // Anti-blink cooldown: a label dropped (collision, edge, limb) may not be
   // re-admitted for this long — without it a label that collides one frame
   // after admission blinks in and out.
@@ -116,10 +115,25 @@
     const cobeFront = (id: string) =>
       rootStyle.getPropertyValue(`--cobe-visible-${id}`).trim() !== '';
     const z = canvas?.parentElement; // cobe's anchor wrapper
+    const anchorDiv = (id: string) =>
+      z?.querySelector<HTMLElement>(`div[style*="anchor-name: --cobe-${id}"]`) ?? null;
+    // Pin every label to its marker in plain JS (cobe's anchor divs carry the
+    // marker's stage position each frame). CSS anchor positioning — the old
+    // approach — never shipped on iOS/Firefox, which left the globe label-less
+    // there. Labels are positioned even while hidden so the admission pass
+    // below measures each box exactly where it would appear.
+    for (const v of VOICES) {
+      const el = labelEls.get(v.id);
+      const div = anchorDiv(v.id);
+      if (!el || !div) continue;
+      const r = div.getBoundingClientRect();
+      el.style.left = `${r.left + r.width / 2 - srect.left}px`;
+      el.style.top = `${r.top + r.height / 2 - srect.top}px`;
+    }
     const DISC_R = 0.4; // disc radius as a fraction of the stage (slightly inside the silhouette)
     const onFrontFace = (id: string): boolean => {
-      if (!z || !cobeFront(id)) return false;
-      const div = z.querySelector<HTMLElement>(`div[style*="anchor-name: --cobe-${id}"]`);
+      if (!cobeFront(id)) return false;
+      const div = anchorDiv(id);
       if (!div) return false;
       const dx = parseFloat(div.style.left) / 100 - 0.5;
       const dy = parseFloat(div.style.top) / 100 - 0.5;
@@ -155,6 +169,9 @@
     };
     const kept: { id: string; r: Rect }[] = [];
     const now = Date.now();
+    // Small stages can't breathe with three labels — show one at a time there
+    // (the rotation still cycles every voice through).
+    const maxVisible = srect.width < 480 ? 1 : MAX_VISIBLE;
     // Sticky: a visible label STAYS until it is genuinely no longer visible —
     // the marker is drawn (cobe's flag), the box is (mostly) inside the stage,
     // and no collision. There is no timed eviction: the priority rotation only
@@ -165,6 +182,7 @@
       const gone =
         drop ||
         !r ||
+        kept.length >= maxVisible || // a resize can shrink the budget mid-flight
         r[0] < -12 ||
         r[1] < -12 ||
         r[2] > srect.width + 12 ||
@@ -182,7 +200,7 @@
       (a, b) => (lastShownAt.get(a.id) ?? 0) - (lastShownAt.get(b.id) ?? 0),
     );
     for (const v of candidates) {
-      if (kept.length >= MAX_VISIBLE) break;
+      if (kept.length >= maxVisible) break;
       if (kept.some((k) => k.id === v.id)) continue;
       const dropped = droppedAt.get(v.id);
       if (dropped && now - dropped < READMIT_COOLDOWN_MS) continue;
@@ -200,10 +218,6 @@
   function variant(i: number): 0 | 1 | 2 {
     return (Math.floor((tick + i * 1.5) / TICKS_PER_CYCLE) % 3) as 0 | 1 | 2;
   }
-  // Fallback caption (no anchor-positioning support): a faster single rotation
-  // through every voice, every ~2.4s.
-  let fallbackIdx = $derived(Math.floor(tick / SLOT_TICKS) % VOICES.length);
-
   onMount(() => {
     reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const interval = reducedMotion
@@ -285,25 +299,24 @@
   <canvas
     bind:this={canvas}
     class={className}
-    style="width:{size}px;height:{size}px;max-width:100%;aspect-ratio:1"
+    style="width:{size}px;max-width:100%;aspect-ratio:1"
     role="img"
     aria-label={t('home.globe.aria')}
   ></canvas>
 
-  <!-- Voice labels, pinned to their markers. Visibility cascades in the
-       STYLESHEET only (never inline): per-id rules fade a label as its marker
-       crosses the limb (cobe's --cobe-visible-<id> variable), and the LATER
-       `.off` rule always wins for labels the scheduler has turned off — an
-       inline `opacity: var(...)` would beat `.off` for every front-facing
-       marker and show all ten at once (the pile-up bug). Decorative; the sr
-       list carries them. -->
+  <!-- Voice labels, pinned to their markers (left/top set by layoutPass).
+       Visibility cascades in the STYLESHEET only (never inline): per-id rules
+       fade a label as its marker crosses the limb (cobe's --cobe-visible-<id>
+       variable), and the LATER `.off` rule always wins for labels the
+       scheduler has turned off — an inline `opacity: var(...)` would beat
+       `.off` for every front-facing marker and show them all at once (the
+       pile-up bug). Decorative; the sr list carries them. -->
   {#each VOICES as v, i (v.id)}
     {@const keys = voiceKeys(v.id)}
     <blockquote
       class="voice-float"
       class:off={!visibleIds.includes(v.id)}
       data-voice={v.id}
-      style="position-anchor: --cobe-{v.id}"
       aria-hidden="true"
       use:registerLabel={v.id}
     >
@@ -313,17 +326,6 @@
       <footer>{t(keys.place)}</footer>
     </blockquote>
   {/each}
-
-  <!-- Fallback when the browser can't anchor-position: one cycling caption. -->
-  <p class="voice-fallback" aria-hidden="true">
-    {#key fallbackIdx}
-      <span class="swap"
-        >“{t(voiceKeys(VOICES[fallbackIdx]!.id).lines[0])}” — {t(
-          voiceKeys(VOICES[fallbackIdx]!.id).place,
-        )}</span
-      >
-    {/key}
-  </p>
 
   <!-- All voices for screen readers (the animated labels are decorative). -->
   <ul class="sr-only">
@@ -342,116 +344,106 @@
   }
 
   .voice-float {
-    display: none;
+    display: block;
+    position: absolute;
+    /* left/top are set per-frame by layoutPass (the marker's stage position);
+       this translate floats the card centered above its marker. */
+    translate: -50% calc(-100% - 8px);
+    width: max-content;
+    max-width: 10.5rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 0.65rem;
+    border: 1px solid var(--border);
+    background: var(--popover);
+    color: var(--popover-foreground);
+    box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+    font-size: 0.72rem;
+    line-height: 1.35;
+    pointer-events: none;
+    z-index: 2;
+    /* Base opacity 1; per-id rules below fade far-side markers; `.off` (last)
+       always wins for scheduler-hidden labels. */
+    opacity: 1;
+    transition: opacity 0.7s ease;
   }
-  .voice-fallback {
-    margin: 0.5rem auto 0;
-    max-width: 22rem;
-    text-align: center;
-    font-size: 0.8125rem;
+  /* Far-side fade per marker: cobe sets --cobe-visible-<id> while the marker
+     faces the camera (deleted when hidden → the fallback 0 applies; an
+     invalid value resolves to the base 1 — robust either way). */
+  .voice-float[data-voice='ir'] {
+    opacity: var(--cobe-visible-ir, 0);
+  }
+  .voice-float[data-voice='cu'] {
+    opacity: var(--cobe-visible-cu, 0);
+  }
+  .voice-float[data-voice='ru'] {
+    opacity: var(--cobe-visible-ru, 0);
+  }
+  .voice-float[data-voice='sa'] {
+    opacity: var(--cobe-visible-sa, 0);
+  }
+  .voice-float[data-voice='vn'] {
+    opacity: var(--cobe-visible-vn, 0);
+  }
+  .voice-float[data-voice='by'] {
+    opacity: var(--cobe-visible-by, 0);
+  }
+  .voice-float[data-voice='pk'] {
+    opacity: var(--cobe-visible-pk, 0);
+  }
+  .voice-float[data-voice='tr'] {
+    opacity: var(--cobe-visible-tr, 0);
+  }
+  .voice-float[data-voice='ve'] {
+    opacity: var(--cobe-visible-ve, 0);
+  }
+  .voice-float[data-voice='cn'] {
+    opacity: var(--cobe-visible-cn, 0);
+  }
+  .voice-float[data-voice='uz'] {
+    opacity: var(--cobe-visible-uz, 0);
+  }
+  .voice-float[data-voice='tm'] {
+    opacity: var(--cobe-visible-tm, 0);
+  }
+  .voice-float[data-voice='mm'] {
+    opacity: var(--cobe-visible-mm, 0);
+  }
+  .voice-float[data-voice='eg'] {
+    opacity: var(--cobe-visible-eg, 0);
+  }
+  .voice-float[data-voice='et'] {
+    opacity: var(--cobe-visible-et, 0);
+  }
+  .voice-float[data-voice='az'] {
+    opacity: var(--cobe-visible-az, 0);
+  }
+  /* The scheduler's gate — declared LAST so it beats every per-id rule. */
+  .voice-float.off {
+    opacity: 0;
+  }
+  .voice-float .line {
+    font-weight: 500;
+  }
+  .voice-float footer {
+    margin-top: 0.1rem;
+    font-size: 0.65rem;
     color: var(--muted-foreground);
   }
-  @supports (position-anchor: --x) {
-    .voice-fallback {
-      display: none;
-    }
-    /* Small viewports can't fit labels around the globe — caption instead. */
-    @media (max-width: 640px) {
-      .voice-float {
-        display: none !important;
-      }
-      .voice-fallback {
-        display: block;
-      }
-    }
-    .voice-float {
-      display: block;
-      position: absolute;
-      bottom: anchor(top);
-      left: anchor(center);
-      translate: -50% -8px;
-      width: max-content;
-      max-width: 10.5rem;
-      padding: 0.4rem 0.6rem;
-      border-radius: 0.65rem;
-      border: 1px solid var(--border);
-      background: var(--popover);
-      color: var(--popover-foreground);
-      box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
-      font-size: 0.72rem;
-      line-height: 1.35;
-      pointer-events: none;
-      z-index: 2;
-      /* Base opacity 1; per-id rules below fade far-side markers; `.off` (last)
-         always wins for scheduler-hidden labels. */
-      opacity: 1;
-      transition: opacity 0.7s ease;
-    }
-    /* Far-side fade per marker: cobe sets --cobe-visible-<id> while the marker
-       faces the camera (deleted when hidden → the fallback 0 applies; an
-       invalid value resolves to the base 1 — robust either way). */
-    .voice-float[data-voice='ir'] {
-      opacity: var(--cobe-visible-ir, 0);
-    }
-    .voice-float[data-voice='cu'] {
-      opacity: var(--cobe-visible-cu, 0);
-    }
-    .voice-float[data-voice='ru'] {
-      opacity: var(--cobe-visible-ru, 0);
-    }
-    .voice-float[data-voice='vn'] {
-      opacity: var(--cobe-visible-vn, 0);
-    }
-    .voice-float[data-voice='by'] {
-      opacity: var(--cobe-visible-by, 0);
-    }
-    .voice-float[data-voice='pk'] {
-      opacity: var(--cobe-visible-pk, 0);
-    }
-    .voice-float[data-voice='ve'] {
-      opacity: var(--cobe-visible-ve, 0);
-    }
-    .voice-float[data-voice='cn'] {
-      opacity: var(--cobe-visible-cn, 0);
-    }
-    .voice-float[data-voice='tm'] {
-      opacity: var(--cobe-visible-tm, 0);
-    }
-    .voice-float[data-voice='mm'] {
-      opacity: var(--cobe-visible-mm, 0);
-    }
-    /* The scheduler's gate — declared LAST so it beats every per-id rule. */
-    .voice-float.off {
-      opacity: 0;
-    }
-    .voice-float .line {
-      font-weight: 500;
-    }
-    .voice-float footer {
-      margin-top: 0.1rem;
-      font-size: 0.65rem;
-      color: var(--muted-foreground);
-    }
-    .voice-float::after {
-      content: '';
-      position: absolute;
-      top: 100%;
-      left: 50%;
-      width: 0.5rem;
-      height: 0.5rem;
-      background: inherit;
-      border-inline-end: 1px solid var(--border);
-      border-block-end: 1px solid var(--border);
-      translate: -50% -0.25rem;
-      rotate: 45deg;
-    }
+  .voice-float::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    width: 0.5rem;
+    height: 0.5rem;
+    background: inherit;
+    border-inline-end: 1px solid var(--border);
+    border-block-end: 1px solid var(--border);
+    translate: -50% -0.25rem;
+    rotate: 45deg;
   }
   .line {
     animation: voice-in 0.6s ease-out;
-  }
-  .swap {
-    animation: voice-in 0.6s ease-out;
-    display: inline-block;
   }
   @keyframes voice-in {
     from {
