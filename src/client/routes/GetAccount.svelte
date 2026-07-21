@@ -15,6 +15,7 @@
   import { resolveEffectiveModeId } from '../lib/connectionMode';
   import ConnectClient from '../components/ConnectClient.svelte';
   import RedeemCode from '../components/RedeemCode.svelte';
+  import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import LocationPicker from '../components/LocationPicker.svelte';
@@ -67,8 +68,6 @@
   let showPasskeyPrompt = $state(false);
   let accountTier = $state<CreateAccountPayload['tier'] | null>(null);
   let created = $state(false);
-  // Inline gift-code expander in step 3 (pre-issuance, so the upgrade binds at issuance).
-  let redeemOpen = $state(false);
 
   // Referral code: prefilled from the captured ?ref= link (localStorage),
   // editable for a manually-quoted code. Hidden unless the program is enabled.
@@ -493,13 +492,13 @@
     {#if showPasskeyPrompt && !revealOpen && passkeySupported}
       <div class="max-w-xl mx-auto w-full space-y-2">
         <PasskeyManager showList={false} onEnrolled={() => (showPasskeyPrompt = false)} />
-        <button
-          type="button"
-          class="mx-auto block text-xs text-muted-foreground underline hover:text-foreground"
+        <Button
+          variant="outline"
+          class="mx-auto flex min-h-11 w-full max-w-xs"
           onclick={() => (showPasskeyPrompt = false)}
         >
           {t('passkey.notNow')}
-        </button>
+        </Button>
       </div>
     {/if}
   {:else if account.isPending && !subscription}
@@ -546,21 +545,17 @@
       />
 
       {#if !isCurrentMember}
-        {#if !redeemOpen}
-          <p class="text-xs text-muted-foreground">
-            <button
-              type="button"
-              class="rounded-sm underline hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onclick={() => (redeemOpen = true)}
-            >
-              {t('get.redeemPrompt')}
-            </button>
-          </p>
-        {:else}
-          <div class="border-t border-border/60 pt-4">
-            <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" flat />
-          </div>
-        {/if}
+        <!-- Membership BEFORE the first key: both paths are userId-bound (no
+             subscription needed) and the grant patches user.tierId immediately,
+             so "Get my key" below then issues straight on the member tier. The
+             purchase card self-gates on billing being enabled; a paid checkout
+             returns to /account?order=…, which also offers first-key create.
+             A successful gift-code redeem flips isCurrentMember and this whole
+             group hides. -->
+        <UpgradeMembership mode="upgrade" currentTierSlug={account.data?.user.tier.slug} />
+        <div class="border-t border-border/60 pt-4">
+          <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" flat />
+        </div>
       {/if}
 
       {#if locations.length >= 2}

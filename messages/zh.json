@@ -449,7 +449,6 @@
     "haveAccountPrefix": "已有账户？",
     "lostNumberHint": "保存前丢失了账户号码？可以换一个新号码--",
     "lostNumberLinkLabel": "在账户页面更换",
-    "redeemPrompt": "有礼品码？请在创建密钥前先兑换。",
     "redeemTitle": "你有礼品码吗？",
     "redeemBody": "立即兑换，即可立即升级您的新账户。"
   },

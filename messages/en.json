@@ -455,7 +455,6 @@
     "haveAccountPrefix": "Already have an account?",
     "lostNumberHint": "Lost your account number before saving it? You can switch to a new one -",
     "lostNumberLinkLabel": "change it from your account page",
-    "redeemPrompt": "Have a gift code? Redeem it before creating your key.",
     "redeemTitle": "Got a gift code?",
     "redeemBody": "Redeem it now to upgrade your new account instantly."
   },
