@@ -16,6 +16,8 @@
   import ConnectClient from '../components/ConnectClient.svelte';
   import RedeemCode from '../components/RedeemCode.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
+  import TierComparison from '../components/TierComparison.svelte';
+  import { tick } from 'svelte';
   import Link from '../components/Link.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import LocationPicker from '../components/LocationPicker.svelte';
@@ -124,6 +126,15 @@
   );
   // Hide the gift-code redeem once they're a member.
   let isCurrentMember = $derived(account.data?.user.membership?.isCurrent ?? false);
+
+  // The membership purchase form stays hidden until the comparison's Upgrade
+  // CTA asks for it, so the checkout UI can never read as a required step.
+  let showPurchase = $state(false);
+  async function revealPurchase() {
+    showPurchase = true;
+    await tick();
+    document.getElementById('get-upgrade')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   // Self-hosted Cap captcha config from /api/v1/config (same-origin endpoint).
   let captchaEndpoint = $derived(config.data?.captcha.apiEndpoint ?? '/cap');
@@ -510,87 +521,107 @@
       <Skeleton class="h-11 w-full rounded-md" />
     </div>
   {:else if !subscription}
-    <!-- STEP 3 (pre-key): delivery focus, optional gift code, location, then
-         the one primary action. -->
-    <div
-      id="step-3"
-      class="scroll-mt-24 rounded-xl border border-border bg-card p-6 md:p-8 space-y-5"
-    >
-      <div class="space-y-1">
-        <h2 class="text-lg font-display font-semibold">{t('get.step3Title')}</h2>
-        <p class="text-sm text-muted-foreground">{t('get.step3Intro')}</p>
-        {#if created}
-          <!-- Recovery pointer for fresh sign-ups: the reveal-once number is
+    <!-- STEP 3 (pre-key): the key panel holds ONLY the free action; the
+         optional membership section is a separate block below it. -->
+    <div class="space-y-6">
+      <div
+        id="step-3"
+        class="scroll-mt-24 rounded-xl border border-border bg-card p-6 md:p-8 space-y-5"
+      >
+        <div class="space-y-1">
+          <h2 class="text-lg font-display font-semibold">{t('get.step3Title')}</h2>
+          <p class="text-sm text-muted-foreground">{t('get.step3Intro')}</p>
+          {#if created}
+            <!-- Recovery pointer for fresh sign-ups: the reveal-once number is
                volatile, so if it wasn't saved the only recourse is rotating to
                a fresh (re-revealed) number on /account. -->
-          <p class="text-xs text-muted-foreground">
-            {t('get.lostNumberHint')}
-            <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
-          </p>
-        {/if}
-      </div>
-
-      <!-- Delivery focus - flat (the step panel is the surface). Before the
-           first key it's a local pref that shapes issuance; once a key exists
-           it re-issues via the confirm modal, exactly like /account. -->
-      <ConnectionModeSwitcher
-        modes={connectionModes}
-        selected={effectiveModeId}
-        suggested={account.data?.suggestedModeId ?? null}
-        serverBacked={profileServerBacked}
-        deviceCount={0}
-        disabled={actionsDisabled}
-        signup
-        flat
-      />
-
-      {#if !isCurrentMember}
-        <!-- Membership BEFORE the first key: both paths are userId-bound (no
-             subscription needed) and the grant patches user.tierId immediately,
-             so "Get my key" below then issues straight on the member tier. The
-             purchase card self-gates on billing being enabled; a paid checkout
-             returns to /account?order=…, which also offers first-key create.
-             A successful gift-code redeem flips isCurrentMember and this whole
-             group hides. -->
-        <UpgradeMembership mode="upgrade" currentTierSlug={account.data?.user.tier.slug} />
-        <div class="border-t border-border/60 pt-4">
-          <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" flat />
-        </div>
-      {/if}
-
-      {#if locations.length >= 2}
-        <LocationPicker
-          {locations}
-          bind:value={pickedLocation}
-          disabled={createSubscription.isPending}
-          id="get-account-location"
-        />
-      {/if}
-
-      {#if createSubscription.error}
-        <div
-          class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive space-y-1"
-        >
-          <p>{apiErrorMessage(createSubscription.error)}</p>
-          {#if subErrorIsUnavailable}
             <p class="text-xs text-muted-foreground">
-              {t('get.subErrorSafePrefix')}
-              <Link href="/account" class="underline">{t('get.manageLinkLabel')}</Link>
-              {t('get.subErrorSafeSuffix')}
+              {t('get.lostNumberHint')}
+              <Link href="/account" class="underline">{t('get.lostNumberLinkLabel')}</Link>.
             </p>
           {/if}
         </div>
-      {/if}
 
-      <Button
-        onclick={() => createSubscription.mutate()}
-        disabled={createSubscription.isPending}
-        size="lg"
-        class="w-full min-h-11"
-      >
-        <KeyRound class="size-4" />
-        {createSubscription.isPending ? t('account.creating') : t('account.createSub')}
-      </Button>
+        <!-- Delivery focus - flat (the step panel is the surface). Before the
+           first key it's a local pref that shapes issuance; once a key exists
+           it re-issues via the confirm modal, exactly like /account. -->
+        <ConnectionModeSwitcher
+          modes={connectionModes}
+          selected={effectiveModeId}
+          suggested={account.data?.suggestedModeId ?? null}
+          serverBacked={profileServerBacked}
+          deviceCount={0}
+          disabled={actionsDisabled}
+          signup
+          flat
+        />
+
+        {#if locations.length >= 2}
+          <LocationPicker
+            {locations}
+            bind:value={pickedLocation}
+            disabled={createSubscription.isPending}
+            id="get-account-location"
+          />
+        {/if}
+
+        {#if createSubscription.error}
+          <div
+            class="rounded-md bg-destructive/10 border border-destructive/40 px-3 py-2 text-sm text-destructive space-y-1"
+          >
+            <p>{apiErrorMessage(createSubscription.error)}</p>
+            {#if subErrorIsUnavailable}
+              <p class="text-xs text-muted-foreground">
+                {t('get.subErrorSafePrefix')}
+                <Link href="/account" class="underline">{t('get.manageLinkLabel')}</Link>
+                {t('get.subErrorSafeSuffix')}
+              </p>
+            {/if}
+          </div>
+        {/if}
+
+        <Button
+          onclick={() => createSubscription.mutate()}
+          disabled={createSubscription.isPending}
+          size="lg"
+          class="w-full min-h-11"
+        >
+          <KeyRound class="size-4" />
+          {createSubscription.isPending
+            ? t('account.creating')
+            : t(isCurrentMember ? 'account.createSub' : 'get.createFreeSub')}
+        </Button>
+      </div>
+
+      {#if !isCurrentMember}
+        <!-- Membership, SEPARATE from key creation (inside the panel it read
+             as a required checkout step). The comparison states what both
+             plans include; the purchase form renders only after the Upgrade
+             CTA. Grants land pre-key (both paths are userId-bound and patch
+             user.tierId immediately), so a redeem or checkout before "Get my
+             free key" issues the first key straight on the member tier; a
+             successful redeem flips isCurrentMember and hides this whole
+             section. Paid checkout returns to /account?order=…, which also
+             offers first-key create. -->
+        <div class="rounded-xl border border-border/60 p-6 md:p-8 space-y-5">
+          <TierComparison
+            currentTierSlug={account.data?.user.tier.slug ?? 'free'}
+            titleKey="get.plansTitle"
+            subtitleKey="get.plansSubtitle"
+            onUpgrade={revealPurchase}
+          />
+
+          {#if showPurchase}
+            <div id="get-upgrade" class="scroll-mt-24">
+              <UpgradeMembership mode="upgrade" currentTierSlug={account.data?.user.tier.slug} />
+            </div>
+          {/if}
+
+          <div class="border-t border-border/60 pt-4">
+            <RedeemCode titleKey="get.redeemTitle" descriptionKey="get.redeemBody" flat />
+          </div>
+        </div>
+      {/if}
     </div>
   {:else}
     <!-- STEP 3 (key issued): the pass + setup. This is the flow's destination. -->

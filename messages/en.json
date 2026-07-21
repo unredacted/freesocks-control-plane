@@ -456,7 +456,10 @@
     "lostNumberHint": "Lost your account number before saving it? You can switch to a new one -",
     "lostNumberLinkLabel": "change it from your account page",
     "redeemTitle": "Got a gift code?",
-    "redeemBody": "Redeem it now to upgrade your new account instantly."
+    "redeemBody": "Redeem it now to upgrade your new account instantly.",
+    "createFreeSub": "Get my free key",
+    "plansTitle": "What each plan includes",
+    "plansSubtitle": "The free plan is yours already, and your key works either way. Membership is an optional upgrade that supports the network."
   },
   "tiers": {
     "title": "Tiers",

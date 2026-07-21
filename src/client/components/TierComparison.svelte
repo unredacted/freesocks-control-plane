@@ -3,7 +3,7 @@
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import { configQuery } from '../lib/queries';
-  import { t } from '../lib/i18n/index.svelte';
+  import { t, type MessageKey } from '../lib/i18n/index.svelte';
   import { formatMoney } from '../lib/i18n/format';
   import { baselinePerMonth } from '../lib/billing';
   import { deviceLimitsShown } from '../lib/tiers';
@@ -21,8 +21,16 @@
     currentTierSlug: string;
     /** Called when the membership-card CTA is clicked (parent scrolls to / opens the panel). */
     onUpgrade?: () => void;
+    /** Per-surface header copy (the RedeemCode pattern); defaults keep Home unchanged. */
+    titleKey?: MessageKey;
+    subtitleKey?: MessageKey;
   }
-  let { currentTierSlug, onUpgrade }: Props = $props();
+  let {
+    currentTierSlug,
+    onUpgrade,
+    titleKey = 'tiers.title',
+    subtitleKey = 'tiers.subtitle',
+  }: Props = $props();
 
   const config = configQuery();
   let tiers = $derived(config.data?.tiers ?? []);
@@ -52,8 +60,8 @@
 
 <section class="space-y-4">
   <div>
-    <h2 class="font-display text-xl font-bold tracking-tight">{t('tiers.title')}</h2>
-    <p class="text-sm text-muted-foreground">{t('tiers.subtitle')}</p>
+    <h2 class="font-display text-xl font-bold tracking-tight">{t(titleKey)}</h2>
+    <p class="text-sm text-muted-foreground">{t(subtitleKey)}</p>
   </div>
 
   {#if config.isPending}
