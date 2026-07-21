@@ -8,11 +8,17 @@
   import { Input } from '@client/components/ui/input';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
-  import { formatDate } from '../../lib/i18n/format';
+  import { formatDate, formatDateTime } from '../../lib/i18n/format';
   import { formatBytes } from '../../lib/utils';
   import AdminListState from './AdminListState.svelte';
   import { UserAdmin } from '../../../shared/contracts/admin';
-  import { adminTiersQuery, adminUsersQuery, adminUserBackendStateQuery } from '../../lib/queries';
+  import { deviceLimitsShown } from '../../lib/tiers';
+  import {
+    adminTiersQuery,
+    adminUsersQuery,
+    adminUserBackendStateQuery,
+    configQuery,
+  } from '../../lib/queries';
   import * as Select from '@client/components/ui/select';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
@@ -94,6 +100,9 @@
     drift: driftFilter,
   }));
   const tiers = adminTiersQuery();
+  // Public config: only read for devices.enforcementEnabled, so the Live
+  // details expander can say WHY a device list is empty (tracking off vs none).
+  const config = configQuery();
   const qc = useQueryClient();
 
   // Per-user LIVE backend state (status/usage/devices), lazily fetched only for
@@ -380,8 +389,33 @@
                       : formatBytes(s.trafficLimitBytes)}
                   </div>
                   <div class="text-muted-foreground">
-                    {s.devices.length} device{s.devices.length === 1 ? '' : 's'} connected
+                    Last online: <span class="text-foreground"
+                      >{s.onlineAt ? formatDateTime(s.onlineAt) : 'never'}</span
+                    >
                   </div>
+                  {#if s.devices.length > 0}
+                    <div class="text-muted-foreground">
+                      {s.devices.length} registered device{s.devices.length === 1 ? '' : 's'}:
+                    </div>
+                    <ul class="list-disc space-y-0.5 ps-5 text-muted-foreground">
+                      {#each s.devices as d (d.hwid)}
+                        <li>
+                          {d.platform ?? 'Unknown platform'}{d.deviceModel
+                            ? ` · ${d.deviceModel}`
+                            : ''}{d.lastSeenAt
+                            ? ` · last seen ${formatDateTime(d.lastSeenAt)}`
+                            : ''}
+                        </li>
+                      {/each}
+                    </ul>
+                  {:else if !deviceLimitsShown(config.data)}
+                    <div class="text-muted-foreground">
+                      No registered devices. Device tracking is off (device-limit enforcement in
+                      Settings), so the panel doesn't record them.
+                    </div>
+                  {:else}
+                    <div class="text-muted-foreground">No registered devices.</div>
+                  {/if}
                 {:else}
                   <p class="text-muted-foreground">
                     No live data (no subscription, or the backend is unreachable).

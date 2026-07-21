@@ -768,6 +768,7 @@ export const userBackendState = internalAction({
     usedTrafficBytes: number;
     trafficLimitStrategy: 'NO_RESET' | 'DAY' | 'WEEK' | 'MONTH' | null;
     lastTrafficResetAt: string | null;
+    onlineAt: string | null;
     devices: {
       hwid: string;
       platform: string | null;
@@ -789,6 +790,7 @@ export const userBackendState = internalAction({
         usedTrafficBytes: state.usedTrafficBytes,
         trafficLimitStrategy: state.trafficLimitStrategy ?? null,
         lastTrafficResetAt: state.lastTrafficResetAt ?? null,
+        onlineAt: state.onlineAt ?? null,
         devices: state.devices.map((d) => ({
           hwid: d.hwid,
           platform: d.platform ?? null,

@@ -56,8 +56,13 @@ const RemnawaveUser = z.object({
   // (the flat top-level `usedTrafficBytes` no longer exists on GET). Kept lenient
   // like the device dates — a panel shape change must never fail-parse the whole
   // user (that silent-0 masking is exactly what broke the account traffic counter).
-  // Extra siblings (lifetimeUsedTrafficBytes/onlineAt/…) are stripped by z.object.
+  // Extra siblings (lifetimeUsedTrafficBytes/…) are stripped by z.object.
   userTraffic: z.object({ usedTrafficBytes: z.number().int().nonnegative().nullish() }).nullish(),
+  // Panel-side "last seen online" stamp — the closest per-user liveness signal
+  // Remnawave exposes (there is no live-connection list). Display-only string,
+  // kept lenient like the device dates; surfaced on the admin Live-details
+  // expander. Older panels omit it.
+  onlineAt: z.string().nullish(),
   expireAt: z.string().datetime().nullable(),
   hwidDeviceLimit: z.number().int().nonnegative().nullable(),
   // Plain string, matching the panel contract (z.string(), not .url()) — a
@@ -336,6 +341,7 @@ function toState(user: RemnawaveUser, devices: BackendDevice[]): UserState {
     usedTrafficBytes: user.userTraffic?.usedTrafficBytes ?? user.usedTrafficBytes,
     trafficLimitStrategy: user.trafficLimitStrategy,
     lastTrafficResetAt: user.lastTrafficResetAt ?? undefined,
+    onlineAt: user.onlineAt ?? undefined,
     expireAt: user.expireAt,
     status,
     devices,

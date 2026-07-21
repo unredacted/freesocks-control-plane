@@ -131,6 +131,9 @@ export interface UserState {
   // undefined for backends without periodic resets, e.g. Outline).
   trafficLimitStrategy?: TrafficLimitStrategy;
   lastTrafficResetAt?: string;
+  // Panel-side "last seen online" stamp (Remnawave-only; undefined for
+  // backends that don't report liveness, e.g. Outline).
+  onlineAt?: string;
   expireAt: string | null;
   status: BackendUserStatus;
   devices: BackendDevice[];

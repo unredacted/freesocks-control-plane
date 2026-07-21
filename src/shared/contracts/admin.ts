@@ -101,6 +101,9 @@ export const AdminUserBackendState = z.object({
       usedTrafficBytes: z.number(),
       trafficLimitStrategy: z.enum(['NO_RESET', 'DAY', 'WEEK', 'MONTH']).nullable(),
       lastTrafficResetAt: z.string().nullable(),
+      // Panel-side "last seen online" (nullish: additive field, so a client
+      // built ahead of the server redeploy still parses).
+      onlineAt: z.string().nullish(),
       devices: z.array(
         z.object({
           hwid: z.string(),

@@ -281,6 +281,16 @@ describe('remnawaveGetUser', () => {
     ]);
   });
 
+  test('surfaces the panel onlineAt stamp (and tolerates its absence)', async () => {
+    routeUserAndDevices(userObj({ onlineAt: '2026-07-20T12:34:56.000Z' }));
+    const withStamp = await remnawaveGetUser(cfg, UUID);
+    expect(withStamp.onlineAt).toBe('2026-07-20T12:34:56.000Z');
+
+    routeUserAndDevices(userObj()); // older panels omit the field entirely
+    const withoutStamp = await remnawaveGetUser(cfg, UUID);
+    expect(withoutStamp.onlineAt).toBeUndefined();
+  });
+
   test('degrades to no devices when the hwid endpoint fails', async () => {
     routeUserAndDevices(userObj(), 404);
     const state = await remnawaveGetUser(cfg, UUID);
