@@ -13,7 +13,9 @@ import type { Id } from './_generated/dataModel';
 import {
   applyUsageCarryover,
   computeExpireAtIso,
+  farFutureExpiryIso,
   gbToBytes,
+  isFarFutureExpiry,
   resolveTrafficLimitBytes,
 } from './lib/backends/types';
 import { remnawaveUpdateUser } from './lib/backends/remnawave';
@@ -36,20 +38,29 @@ describe('issuance spec helpers', () => {
     expect(resolveTrafficLimitBytes({ monthlyTrafficGb: 50, isDefaultFree: true }, 2.01)).toBe(b);
   });
 
-  test('computeExpireAtIso: a member term wins; free falls to now + window', () => {
+  test('computeExpireAtIso: a member term wins; free carries the no-expiry sentinel', () => {
     const termMs = Date.UTC(2030, 0, 1);
-    expect(computeExpireAtIso(termMs, 90)).toBe(new Date(termMs).toISOString());
-    // Free (no membership): ~90 days out (a few seconds of slack for the clock).
-    const freeMs = Date.parse(computeExpireAtIso(null, 90));
-    expect(freeMs).toBeGreaterThan(Date.now() + 89 * 86_400_000);
-    expect(freeMs).toBeLessThan(Date.now() + 91 * 86_400_000);
+    expect(computeExpireAtIso(termMs)).toBe(new Date(termMs).toISOString());
+    // Free (no membership): the far-future sentinel — the panel never expires a
+    // free key on its own clock; the usage-based idle sweep owns reclaim.
+    const freeIso = computeExpireAtIso(null);
+    const freeMs = Date.parse(freeIso);
+    expect(freeMs).toBeGreaterThan(Date.now() + 3649 * 86_400_000);
+    expect(isFarFutureExpiry(freeIso)).toBe(true);
+  });
+
+  test('isFarFutureExpiry: sentinel dates map back to "no expiry", real terms do not', () => {
+    expect(isFarFutureExpiry(farFutureExpiryIso())).toBe(true);
+    // A real (even long) membership term stays a real date.
+    expect(isFarFutureExpiry(new Date(Date.now() + 365 * 86_400_000).toISOString())).toBe(false);
+    expect(isFarFutureExpiry('not-a-date')).toBe(false);
   });
 
   test('computeExpireAtIso clamps a PAST membership expiry to a near-future grace (Review D-#7)', () => {
     // A lapsed member's stored expiry is in the past; Remnawave's create DTO
     // rejects past dates, which made regenerate permanently fail for them.
     const past = Date.now() - 86_400_000;
-    const clamped = Date.parse(computeExpireAtIso(past, 90));
+    const clamped = Date.parse(computeExpireAtIso(past));
     expect(clamped).toBeGreaterThan(Date.now());
     expect(clamped).toBeLessThanOrEqual(Date.now() + 6 * 60_000);
   });

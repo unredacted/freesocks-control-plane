@@ -434,8 +434,6 @@
     "backendMultiProtocol": "VLESS (Xray)",
     "backendShadowsocks": "通过 Outline 的 Shadowsocks",
     "createAccount": "创建我的账户",
-    "freeAccountNote": "免费账户有效期 {days} 天，限 {devices}。无需电子邮件或密码。",
-    "freeAccountNoteNoDevices": "免费账户有效期 {days} 天。无需电子邮件或密码。",
     "step3Title": "获取你的密钥",
     "step3Intro": "密钥是让你的应用连接到 VPN 的凭证。创建它，然后添加到你的应用中。",
     "manageHintPrefix": "随时管理此订阅，前往",
@@ -469,8 +467,6 @@
     "bonusThisMonthDetail": "在每个免费账户每月额度之上额外增加",
     "usersHelped": "惠及的免费账户",
     "usersHelpedDetail": "额度被此奖励提升的活跃免费用户",
-    "historyTitle": "每月增加的带宽",
-    "chartAria": "过去 {n} 个月中，捐款为每位免费用户逐月增加的带宽",
     "yourContribution": "你的贡献",
     "yourGiven": "你已捐出 {amount}",
     "yourGb": "约为免费用户增加了 {gb} GB 带宽",
@@ -632,7 +628,6 @@
     "title": "你最看重什么？",
     "subtitle": "选择一个侧重点 - 仅保存在本设备，可随时更改。",
     "recommended": "推荐",
-    "subtitleServer": "选择一个焦点。更改焦点后，系统会重新颁发匹配服务器的密钥；您当前的密钥将继续有效 24 小时。",
     "subtitleSignup": "选择一个焦点。它会保存到你的账户，你的第一个密钥将使用它--可随时更改。",
     "evadeTitle": "互联网自由模式",
     "evadeAudience": "适合受审查国家",
@@ -642,8 +637,6 @@
     "privacyBody": "如果你所在的地方网络基本开放，请选择此项。机密性最强--你的配置不经过第三方服务器--但也更容易被审查者封锁。",
     "unavailable": "暂无",
     "confirmTitle": "切换到“ {label} \"？",
-    "confirmBody": "这将重新颁发您用于{label}服务器的代理密钥。您当前的密钥将继续有效 24 小时，因此您可以先在所有设备上重新导入。",
-    "confirmPoint1": "为{label}服务器颁发新的订阅 URL",
     "confirmPoint2": "您当前的密钥将继续有效 24 小时，然后将被删除。",
     "confirmPoint3": "您需要在您使用的每个 VPN 客户端中重新导入新的 URL。",
     "confirmPointDevices": [
@@ -906,8 +899,7 @@
     "impact": {
       "title": "捐款在行动",
       "body": "通过 FreeSocks 捐出的每一笔捐款，都会提升当月每个免费账户的每月带宽。以下是捐赠者迄今增加的带宽--你也可以添一份力。",
-      "cta": "立即捐款",
-      "chartAria": "捐款为每位免费用户逐月增加的带宽"
+      "cta": "立即捐款"
     },
     "hero": {
       "variants": {

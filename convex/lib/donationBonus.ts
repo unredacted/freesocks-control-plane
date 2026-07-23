@@ -37,6 +37,13 @@ export interface DonationState {
   /** Bonus GB last pushed to the free fleet — the idempotence marker applyFreeBonus
    *  compares against so it only re-pushes when the effective bonus actually moves. */
   appliedBonusGb: number;
+  /**
+   * Per-day cumulative `donatedCents` snapshots for THIS month (UTC 'YYYY-MM-DD'
+   * → the running total after the last write that day) — feeds the member-facing
+   * month-to-date impact graph. Lives on the accumulator on purpose: the
+   * month-roll replacement in {@link recordDonation} clears it for free.
+   */
+  days?: Record<string, number>;
 }
 
 const ZERO: DonationState = { monthKey: '', donatedCents: 0, appliedBonusGb: 0 };
@@ -46,6 +53,11 @@ export function currentMonthKey(now: number): string {
   const d = new Date(now);
   const m = d.getUTCMonth() + 1;
   return `${d.getUTCFullYear()}-${m < 10 ? '0' : ''}${m}`;
+}
+
+/** 'YYYY-MM-DD' in UTC (its first 7 chars equal {@link currentMonthKey}). */
+export function currentDayKey(now: number): string {
+  return new Date(now).toISOString().slice(0, 10);
 }
 
 export async function readDonationState(db: DatabaseReader): Promise<DonationState> {
@@ -164,6 +176,7 @@ export async function recordDonation(
     state.monthKey === mk
       ? { ...state, donatedCents: state.donatedCents + donationCents }
       : { monthKey: mk, donatedCents: donationCents, appliedBonusGb: 0 };
+  next.days = { ...(next.days ?? {}), [currentDayKey(now)]: next.donatedCents };
   await writeDonationState(ctx, next);
   const cfg = await resolveBillingConfig(ctx.db);
   await upsertHistoryForMonth(ctx, {
@@ -191,6 +204,7 @@ export async function subtractDonation(
     ...state,
     donatedCents: Math.max(0, state.donatedCents - donationCents),
   };
+  next.days = { ...(next.days ?? {}), [currentDayKey(now)]: next.donatedCents };
   await writeDonationState(ctx, next);
   const cfg = await resolveBillingConfig(ctx.db);
   await upsertHistoryForMonth(ctx, {
@@ -206,4 +220,45 @@ export async function resolveCurrentBonusGb(db: DatabaseReader, now: number): Pr
   const [state, cfg] = await Promise.all([readDonationState(db), resolveBillingConfig(db)]);
   if (!cfg.donation.enabled) return 0;
   return effectiveBonusGb(state, cfg.donation, now);
+}
+
+/**
+ * Month-to-date cumulative bonus series for the impact graph: one GB value per
+ * UTC day from the 1st through today. Each day carries the last `days` snapshot
+ * at or before it forward (0 before the first donation), converted at the
+ * configured rate and clamped to the cap — same formula as
+ * {@link effectiveBonusGb}, so the last element always equals the live bonus.
+ * GB only, never cents (the public no-dollar-figures rule). A rolled/unset
+ * accumulator yields a flat zero series (a fresh month starts at 0).
+ */
+export function currentMonthDailyGb(
+  state: DonationState,
+  cfg: Pick<DonationConfig, 'bonusGbPerUsd' | 'monthlyBonusCapGb'>,
+  now: number,
+): number[] {
+  const mk = currentMonthKey(now);
+  const today = new Date(now).getUTCDate();
+  if (state.monthKey !== mk) return Array.from({ length: today }, () => 0);
+  const snapshots = Object.entries(state.days ?? {})
+    .filter(([day]) => day.startsWith(mk))
+    .sort(([a], [b]) => (a < b ? -1 : 1));
+  const toGb = (cents: number) =>
+    Math.max(0, Math.min(cfg.monthlyBonusCapGb, (cents / 100) * cfg.bonusGbPerUsd));
+  const series: number[] = [];
+  let carried = 0;
+  let i = 0;
+  for (let day = 1; day <= today; day++) {
+    const key = `${mk}-${day < 10 ? '0' : ''}${day}`;
+    while (i < snapshots.length && snapshots[i]![0] <= key) {
+      carried = snapshots[i]![1];
+      i += 1;
+    }
+    series.push(toGb(carried));
+  }
+  // Pre-feature months can hold donations with no day snapshots — pin the live
+  // total on today so the graph never under-reports the current bonus.
+  if (snapshots.length === 0 && state.donatedCents > 0) {
+    series[series.length - 1] = toGb(state.donatedCents);
+  }
+  return series;
 }

@@ -137,6 +137,9 @@
   let copied = $state<'primary' | 'fallback' | null>(null);
   let qrOpen = $state(false);
   let qrFallbackOpen = $state(false);
+  // QR for the danger-gated URL reveal (rawConfig mode) — same exposure class
+  // as the visible link + copy button beside it; the amber warning covers it.
+  let qrHiddenUrlOpen = $state(false);
   // hideUrl escape hatch: the member can still reveal the (CDN-fetched) link
   // behind an explicit click + warning, for apps that can't import a raw config.
   let showHiddenUrl = $state(false);
@@ -449,7 +452,25 @@
                 <Copy class="size-3.5" />
               {/if}
             </Button>
+            {#if showQr}
+              <Button
+                variant="outline"
+                size="sm"
+                class="min-h-11"
+                onclick={() => (qrHiddenUrlOpen = !qrHiddenUrlOpen)}
+                aria-expanded={qrHiddenUrlOpen}
+                aria-label={qrHiddenUrlOpen ? t('hero.qrHide') : t('hero.qrShow')}
+              >
+                <QrCodeIcon class="size-3.5" />
+              </Button>
+            {/if}
           </div>
+          {#if showQr && qrHiddenUrlOpen}
+            <div class="flex flex-col items-center pt-2" in:fade={{ duration: 200 }}>
+              <QrCode text={subscriptionUrl} size={176} />
+              <p class="mt-2 text-xs text-muted-foreground">{t('hero.scanOther')}</p>
+            </div>
+          {/if}
         {/if}
       </div>
     {/if}

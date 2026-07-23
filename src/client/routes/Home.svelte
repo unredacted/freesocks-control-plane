@@ -25,7 +25,7 @@
   import { membershipTier, tierLimits, deviceLimitsShown, type TierLimits } from '../lib/tiers';
   import { baselinePerMonth } from '../lib/billing';
   import { t, type MessageKey } from '../lib/i18n/index.svelte';
-  import { formatMoney } from '../lib/i18n/format';
+  import { formatMoney, formatDate } from '../lib/i18n/format';
   import { router } from '../stores/router.svelte';
   import { slide } from 'svelte/transition';
   import StarIcon from '../components/StarIcon.svelte';
@@ -39,7 +39,7 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import CodeXml from '@lucide/svelte/icons/code-xml';
   import DitherChart from '../components/DitherChart.svelte';
-  import { impactChartSeries } from '../lib/impact';
+  import { dailyImpactSeries, dailyImpactBounds } from '../lib/impact';
   import { onMount } from 'svelte';
   import { fly, fade } from 'svelte/transition';
 
@@ -85,10 +85,13 @@
   // page). The in-app donate controls live on the account Membership tab; an
   // anon visitor creates a free account first.
   const donation = $derived(config.data?.billing?.donation);
-  const donationHistory = $derived(donation?.history ?? []);
-  // The chart always renders: real history, or a flat zero baseline while
-  // there is none yet (the note under it explains).
-  const impactSeries = $derived(impactChartSeries(donationHistory));
+  // The chart always renders: the month-to-date cumulative daily series, or a
+  // flat zero baseline while there is none yet (the note under it explains).
+  const impactDaily = $derived(dailyImpactSeries(donation?.currentMonthDaily ?? []));
+  const impactEmpty = $derived(!impactDaily.some((v) => v > 0));
+  const impactLabels = $derived(
+    dailyImpactBounds().map((d) => formatDate(d, { month: 'short', day: 'numeric' })),
+  );
   function goDonate() {
     router.navigate(me.data?.authenticated ? '/account?tab=membership' : '/get-account');
   }
@@ -674,13 +677,13 @@
         </div>
         <div class="rounded-xl border border-amber-500/30 bg-background/60 p-4">
           <DitherChart
-            values={impactSeries.map((h) => h.bonusGb)}
-            labels={impactSeries.map((h) => h.month)}
-            variant="bars"
+            values={impactDaily}
+            labels={impactLabels}
+            variant="area"
             height={120}
             ariaLabel={t('home.impact.chartAria')}
           />
-          {#if donationHistory.length === 0}
+          {#if impactEmpty}
             <p class="mt-2 text-xs text-muted-foreground text-center">{t('impact.empty')}</p>
           {/if}
         </div>

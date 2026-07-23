@@ -1,15 +1,15 @@
 <script lang="ts">
   import Heart from '@lucide/svelte/icons/heart';
   import { t } from '../lib/i18n/index.svelte';
-  import { formatMoney } from '../lib/i18n/format';
+  import { formatMoney, formatDate } from '../lib/i18n/format';
   import { configQuery, accountQuery } from '../lib/queries';
-  import { impactChartSeries } from '../lib/impact';
+  import { dailyImpactSeries, dailyImpactBounds } from '../lib/impact';
   import DitherChart from './DitherChart.svelte';
 
   /**
    * Donation-impact panel: what the community's donations are doing for free
    * users right now (bonus GB live this month, free accounts it reaches, and
-   * the per-month history as a dithered bar chart), plus - for donors - their
+   * the month-to-date daily staircase as a dithered chart), plus - for donors - their
    * own contribution. The nonprofit framing card grew into this once the
    * impact numbers became available from publicConfig (`billing.donation`).
    * Falls back to the plain framing when donations are disabled or there's no
@@ -19,11 +19,16 @@
   const account = accountQuery();
 
   const donation = $derived(config.data?.billing?.donation);
-  const history = $derived(donation?.history ?? []);
   // Renders whenever donations are live (a zero month is honest data - the
   // empty note explains it); the chart falls back to a flat zero baseline.
   const showImpact = $derived(!!config.data?.billing?.enabled && !!donation?.enabled);
-  const chartSeries = $derived(impactChartSeries(history));
+  // Month-to-date cumulative staircase (one point per day). The per-month
+  // ledger stays recorded server-side; a single live month made the old
+  // month-by-month bars degenerate to one full-width bar.
+  const dailyValues = $derived(dailyImpactSeries(donation?.currentMonthDaily ?? []));
+  const dailyEmpty = $derived(!dailyValues.some((v) => v > 0));
+  const dayLabel = (d: Date) => formatDate(d, { month: 'short', day: 'numeric' });
+  const dailyLabels = $derived(dailyImpactBounds().map(dayLabel));
   const user = $derived(account.data?.user);
   const isDonor = $derived(!!user?.donorSince && (user?.donatedCentsTotal ?? 0) > 0);
   // Personal display framing: the member's lifetime giving in GB, computed
@@ -68,16 +73,16 @@
 
     <div>
       <div class="text-xs font-medium text-muted-foreground mb-2">
-        {t('impact.historyTitle')}
+        {t('impact.dailyTitle')}
       </div>
       <DitherChart
-        values={chartSeries.map((h) => h.bonusGb)}
-        labels={chartSeries.map((h) => h.month)}
-        variant="bars"
+        values={dailyValues}
+        labels={dailyLabels}
+        variant="area"
         height={88}
-        ariaLabel={t('impact.chartAria', { n: chartSeries.length })}
+        ariaLabel={t('impact.dailyChartAria')}
       />
-      {#if history.length === 0}
+      {#if dailyEmpty}
         <p class="mt-2 text-xs text-muted-foreground">{t('impact.empty')}</p>
       {/if}
     </div>

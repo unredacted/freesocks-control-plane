@@ -13,6 +13,7 @@ import {
   readDonationHistory,
   effectiveBonusGb,
   currentMonthKey,
+  currentMonthDailyGb,
 } from './lib/donationBonus';
 import { readUserCounts } from './lib/statusCounters';
 import { resolveTheme } from './lib/themeConfig';
@@ -167,6 +168,13 @@ export const get = query({
           freeUsersHelped: Math.floor(userCounts.freeActive / 10) * 10,
           // Per-month bonus-GB ledger (last 12; GB only — no dollar amounts).
           history: donationHistory,
+          // Month-to-date cumulative bonus-GB series (one value per UTC day,
+          // 1st → today) for the impact graph. Same GB-only posture: the
+          // conversion rate stays server-side, so per-day dollars remain
+          // underivable, exactly like `currentBonusGb`.
+          currentMonthDaily: billing.donation.enabled
+            ? currentMonthDailyGb(donationState, billing.donation, Date.now())
+            : [],
         },
       },
       mirrorsEnabled,

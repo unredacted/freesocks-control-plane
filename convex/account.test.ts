@@ -626,6 +626,105 @@ describe('account.switchMode saga', () => {
     });
   });
 
+  test('repairs a STALE backendServerId (re-registered panel) and still switches in place', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const SQUAD = '11111111-2222-3333-4444-555555555555';
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    const { activeInstanceId } = await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.privacy.squads',
+        value: JSON.stringify([SQUAD]),
+        updatedAt: Date.now(),
+      });
+      // The panel row the sub was issued against was deleted + re-registered
+      // (e.g. an Ansible by-slug re-create): the sub's pointer is now stale,
+      // which used to force the re-issue fallback on EVERY mode switch.
+      const staleId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'old-row',
+        slug: 'old-row',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.delete(staleId);
+      const liveId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'panel',
+        slug: 'panel',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'old-key-uuid',
+        backendShortId: 'oldshort',
+        backendServerId: staleId,
+        subscriptionUrl: 'https://panel.test/sub/oldshort',
+        subToken: 'tok-abc',
+        subscriptionMirrors: [],
+        backendPlacement: 'old-squad',
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'evade' });
+      return { activeInstanceId: liveId };
+    });
+    // The probe GETs the user off the live panel; the switch PATCHes the squad.
+    const fetchMock = vi.fn(
+      async (_input: string | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            response: {
+              uuid: '550e8400-e29b-41d4-a716-446655440000',
+              shortUuid: 'oldshort',
+              username: 'u',
+              status: 'ACTIVE',
+              trafficLimitBytes: null,
+              trafficLimitStrategy: 'MONTH',
+              userTraffic: { usedTrafficBytes: 0 },
+              expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+              hwidDeviceLimit: null,
+              subscriptionUrl: 'https://panel.test/sub/oldshort',
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
+    // In place: same key/URL, nothing tombstoned, no create POST.
+    expect(res).toMatchObject({
+      ok: true,
+      mode: { id: 'privacy' },
+      subscriptionUrl: 'https://panel.test/sub/oldshort',
+      oldSubscriptionDeletedAt: null,
+    });
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
+      ),
+    ).toBe(false);
+    await t.run(async (ctx) => {
+      const subs = await ctx.db.query('subscriptions').collect();
+      expect(subs).toHaveLength(1);
+      expect(subs[0]!.backendUserId).toBe('old-key-uuid'); // not re-issued
+      expect(subs[0]!.backendPlacement).toBe(SQUAD);
+      // The stale pointer was repaired to the live panel row.
+      expect(subs[0]!.backendServerId).toBe(activeInstanceId);
+    });
+  });
+
   test('falls back to re-issue (new key + tombstone) when there is no current key to update', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');

@@ -55,19 +55,35 @@ export function applyUsageCarryover(limitBytes: number, usedBytes: number): numb
   return Math.max(1, limitBytes - Math.max(0, Math.floor(usedBytes)));
 }
 
+/** Panel-side "no expiry" sentinel horizon (~10 years). Remnawave requires a
+ *  concrete date, so keys that must never expire on the panel's clock carry
+ *  this instead of null. */
+export const FAR_FUTURE_EXPIRY_DAYS = 3650;
+
+export function farFutureExpiryIso(now = Date.now()): string {
+  return new Date(now + FAR_FUTURE_EXPIRY_DAYS * DAY_MS).toISOString();
+}
+
+/** True when a panel `expireAt` is (a drifted copy of) the far-future sentinel —
+ *  read-side, it maps back to "no expiry". The 5-year threshold sits far above
+ *  any real membership term and comfortably below the 10-year sentinel. */
+export function isFarFutureExpiry(iso: string, now = Date.now()): boolean {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) && t - now > 1825 * DAY_MS;
+}
+
 /**
  * The backend `expireAt` (ISO) for a user: a paid member's purchased term
- * (`membershipExpiresAt`), else the free-account window (now + `freeExpiryDays`).
- * Remnawave REQUIRES a date — FCP's lifecycle is still the source of truth for
- * disable/delete, this just keeps the key's own expiry honest + a backstop, and
- * a renewal re-pushes it. Call from an ACTION (uses Date.now()).
+ * (`membershipExpiresAt`), else the far-future sentinel — a FREE key never
+ * expires on the panel's clock. Free-account reclaim is usage-based instead:
+ * the deactivate-idle-free sweep consults the panel's last-online stamp and
+ * only reclaims genuinely idle accounts, so an actively-used free key keeps
+ * the same config indefinitely. Call from an ACTION (uses Date.now()).
  */
-export function computeExpireAtIso(
-  membershipExpiresAtMs: number | null | undefined,
-  freeExpiryDays: number,
-): string {
+export function computeExpireAtIso(membershipExpiresAtMs: number | null | undefined): string {
   const now = Date.now();
-  let ms = membershipExpiresAtMs ?? now + freeExpiryDays * DAY_MS;
+  if (membershipExpiresAtMs == null) return farFutureExpiryIso(now);
+  let ms = membershipExpiresAtMs;
   // A LAPSED member's stored expiry is in the past — and Remnawave's create
   // DTO rejects past dates, which made self-serve regenerate fail permanently
   // for exactly the members most likely to need it. Clamp to a near-future

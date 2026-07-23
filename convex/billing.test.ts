@@ -1217,7 +1217,10 @@ describe('billing.applyEvent grant cross-checks', () => {
         .query('appState')
         .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
         .unique();
-      expect(JSON.parse(pool!.value).donatedCents).toBe(500);
+      const poolState = JSON.parse(pool!.value);
+      expect(poolState.donatedCents).toBe(500);
+      // The daily impact series gets a cumulative snapshot for today (UTC).
+      expect(poolState.days[new Date().toISOString().slice(0, 10)]).toBe(500);
       const u = await ctx.db.get(userId);
       expect(u!.donatedCentsTotal).toBe(500);
       expect(u!.donationCount).toBe(1);
@@ -1236,7 +1239,10 @@ describe('billing.applyEvent grant cross-checks', () => {
         .query('appState')
         .withIndex('by_key', (q) => q.eq('key', 'donation:freeBonus'))
         .unique();
-      expect(JSON.parse(pool!.value).donatedCents).toBe(0);
+      const drained = JSON.parse(pool!.value);
+      expect(drained.donatedCents).toBe(0);
+      // The refund re-snapshots today at the reduced total.
+      expect(drained.days[new Date().toISOString().slice(0, 10)]).toBe(0);
       const ref = await ctx.db.get(referralId);
       expect(ref!.status).toBe('void');
       expect(ref!.voidReason).toBe('refund');

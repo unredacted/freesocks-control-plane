@@ -440,8 +440,8 @@
     "backendMultiProtocol": "VLESS (Xray)",
     "backendShadowsocks": "Shadowsocks via Outline",
     "createAccount": "Create my account",
-    "freeAccountNote": "Free accounts are valid for {days} days and limited to {devices}. No email or password.",
-    "freeAccountNoteNoDevices": "Free accounts are valid for {days} days. No email or password.",
+    "freeAccountNote": "Free accounts stay active as long as you use them; after {days} days of no use they pause until you sign back in. Limited to {devices}. No email or password.",
+    "freeAccountNoteNoDevices": "Free accounts stay active as long as you use them; after {days} days of no use they pause until you sign back in. No email or password.",
     "step3Title": "Get your key",
     "step3Intro": "Your key is what connects your app to the VPN. Create it, then add it to your app.",
     "manageHintPrefix": "Manage your key anytime from",
@@ -478,8 +478,8 @@
     "bonusThisMonthDetail": "on top of every free account's monthly allowance",
     "usersHelped": "free accounts reached",
     "usersHelpedDetail": "active free users whose allowance the bonus raises",
-    "historyTitle": "Bandwidth added per month",
-    "chartAria": "Bandwidth added to every free user by donations, month by month over the last {n} months",
+    "dailyTitle": "Bandwidth added this month",
+    "dailyChartAria": "Bandwidth added to every free user by donations, day by day this month",
     "yourContribution": "Your contribution",
     "yourGiven": "You've given {amount}",
     "yourGb": "That's about {gb} GB of extra bandwidth for free users",
@@ -743,7 +743,7 @@
   "delivery": {
     "title": "What matters most to you?",
     "subtitle": "Pick a focus. It's saved on this device only, and you can change it anytime.",
-    "subtitleServer": "Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same.",
+    "subtitleServer": "Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL usually stays the same.",
     "subtitleSignup": "Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime.",
     "evadeTitle": "Internet Freedom Mode",
     "evadeAudience": "For censored countries",
@@ -754,8 +754,8 @@
     "recommended": "Recommended",
     "unavailable": "Not available yet",
     "confirmTitle": "Switch to \"{label}\"?",
-    "confirmBody": "This moves your existing key to the {label} servers, keeping the same subscription URL. Your apps keep working and pick up the new servers on their next refresh.",
-    "confirmPoint1": "Your key moves to the {label} servers - same subscription URL, nothing to re-import",
+    "confirmBody": "This moves your existing key to the {label} servers - usually keeping the same subscription URL. If your key has to move to a different server, you get a new link instead, and the old one keeps working for 24 hours while you re-import.",
+    "confirmPoint1": "Your key moves to the {label} servers - usually with the same subscription URL, nothing to re-import",
     "confirmPoint2": "Takes effect within a minute - reconnect in your app if it doesn't refresh on its own",
     "confirmPoint3": "Using the raw config? Copy the new one after switching",
     "confirmPointDevices": [
@@ -918,7 +918,7 @@
       "title": "Donations at work",
       "body": "Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too.",
       "cta": "Make a donation",
-      "chartAria": "Bandwidth added to every free user by donations, month by month"
+      "chartAria": "Bandwidth added to every free user by donations, day by day this month"
     },
     "hero": {
       "variants": {

@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import {
   currentMonthKey,
+  currentDayKey,
+  currentMonthDailyGb,
   effectiveBonusGb,
   upsertHistoryEntry,
   type DonationHistoryEntry,
@@ -46,6 +48,62 @@ describe('effectiveBonusGb', () => {
 
   test('never negative', () => {
     expect(effectiveBonusGb(state({ donatedCents: 0 }), cfg, JULY)).toBe(0);
+  });
+});
+
+describe('currentDayKey', () => {
+  test('formats YYYY-MM-DD in UTC; prefix matches the month key', () => {
+    expect(currentDayKey(JULY)).toBe('2026-07-12');
+    expect(currentDayKey(JULY).slice(0, 7)).toBe(currentMonthKey(JULY));
+  });
+});
+
+describe('currentMonthDailyGb', () => {
+  const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
+  const state = (over: Partial<DonationState> = {}): DonationState => ({
+    monthKey: '2026-07',
+    donatedCents: 0,
+    appliedBonusGb: 0,
+    ...over,
+  });
+
+  test('carries snapshots forward: 0 before the first donation, staircase after', () => {
+    const series = currentMonthDailyGb(
+      state({
+        donatedCents: 3000,
+        days: { '2026-07-03': 1000, '2026-07-09': 3000 },
+      }),
+      cfg,
+      JULY, // July 12 → 12 points
+    );
+    expect(series).toHaveLength(12);
+    expect(series.slice(0, 2)).toEqual([0, 0]); // Jul 1-2
+    expect(series[2]).toBe(10); // Jul 3: $10
+    expect(series[7]).toBe(10); // Jul 8: carried
+    expect(series[8]).toBe(30); // Jul 9: $30 cumulative
+    expect(series[11]).toBe(30); // today: matches the live bonus
+  });
+
+  test('clamps each day at the monthly cap', () => {
+    const series = currentMonthDailyGb(
+      state({ donatedCents: 50_000, days: { '2026-07-05': 50_000 } }),
+      cfg,
+      JULY,
+    );
+    expect(series[4]).toBe(100); // $500 → capped at 100 GB
+    expect(series[11]).toBe(100);
+  });
+
+  test('rolled or unset accumulator yields a flat zero series through today', () => {
+    expect(
+      currentMonthDailyGb(state({ monthKey: '2026-06', donatedCents: 999 }), cfg, JULY),
+    ).toEqual(Array.from({ length: 12 }, () => 0));
+  });
+
+  test('pre-feature month totals (no day snapshots) pin the live bonus on today', () => {
+    const series = currentMonthDailyGb(state({ donatedCents: 2500 }), cfg, JULY);
+    expect(series.slice(0, 11)).toEqual(Array.from({ length: 11 }, () => 0));
+    expect(series[11]).toBe(25);
   });
 });
 

@@ -18,6 +18,7 @@ import { v } from 'convex/values';
 import { deleteSubscriptionEverywhere } from './lib/issuance';
 import {
   computeExpireAtIso,
+  farFutureExpiryIso,
   resolveHwidLimit,
   resolveTrafficLimitBytes,
 } from './lib/backends/types';
@@ -357,7 +358,6 @@ export const pushTierToBackend = internalAction({
     const st = await ctx.runQuery(internal.lifecycle.activeSubAndTier, { userId });
     if (!st) return null; // no active sub to push to (e.g. free user pre-issuance)
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
-    const freeExpiryDays = Number(settings['freetier.expiryDays'] ?? 90);
     try {
       // Re-enable a key the grace sweep disabled: updateUser/remnawaveUpdateUser
       // never touches enable/disable state, so a renewal or lapsed→free downgrade
@@ -381,8 +381,10 @@ export const pushTierToBackend = internalAction({
           placement: st.placement,
           // Keep the panel-side tag in step with the tier (member ⇄ free).
           tag: st.tag,
-          // Push the entitlement expiry too, so a renewal extends the backend key.
-          expireAt: computeExpireAtIso(st.membershipExpiresAt, freeExpiryDays),
+          // Push the entitlement expiry too: a renewal extends the backend key,
+          // and a downgrade-to-free pushes the no-expiry sentinel over the old
+          // membership date (free reclaim is the usage-based idle sweep).
+          expireAt: computeExpireAtIso(st.membershipExpiresAt),
         },
       });
       // Push succeeded: clear any prior drift flag (no-op if it wasn't set).
@@ -799,11 +801,19 @@ export async function freeWindowDays(db: DatabaseReader): Promise<number> {
   return 90;
 }
 
-/** The free-key window expiry (ms from now) — matching what issuance stamps on
- *  the backend key. */
+/** The free-key window expiry (ms from now) — the FCP-side idle marker
+ *  (`users.freeKeyExpiresAt`); the backend key itself carries the no-expiry
+ *  sentinel and is reclaimed only by the usage-based idle sweep. */
 export async function freeWindowExpiryMs(db: DatabaseReader): Promise<number> {
   return Date.now() + (await freeWindowDays(db)) * 86_400_000;
 }
+
+/** Action-side read of the idle window (the sweep compares the panel's
+ *  last-online stamp against this many days). */
+export const freeWindowDaysQuery = internalQuery({
+  args: {},
+  handler: (ctx): Promise<number> => freeWindowDays(ctx.db),
+});
 
 /**
  * One page of ACTIVE free users on a SINGLE tier whose free key has expired and
@@ -925,16 +935,25 @@ export const refreshFreeWindow = internalMutation({
 });
 
 /** Cron: deactivate + RETAIN idle free users (key reclaimed, row kept on the free
- *  tier, reactivatable on return). Never deletes — manual `purgeInactiveFree`
- *  removes long-inactive rows on operator demand. */
+ *  tier, reactivatable on return). USAGE-AWARE: a due candidate whose panel
+ *  last-online stamp falls inside the window is refreshed, not reclaimed — only
+ *  accounts with no VPN activity for the whole window lose their key. Never
+ *  deletes — manual `purgeInactiveFree` removes long-inactive rows on operator
+ *  demand. */
 export const deactivateIdleFree = internalAction({
   args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }): Promise<{ deactivated: number }> =>
+  handler: async (ctx, { limit }): Promise<{ deactivated: number; refreshed: number }> =>
     runWithCronOutcome(ctx, 'deactivate-idle-free', async () => {
       const now = Date.now();
       const pageSize = limit ?? 100;
       const tierIds = await ctx.runQuery(internal.lifecycle.defaultFreeTierIds, {});
+      // The idle window: a key whose panel last-online stamp is within this many
+      // days is IN USE and gets refreshed instead of reclaimed (the member never
+      // needs to visit the website to keep their config).
+      const windowMs =
+        (await ctx.runQuery(internal.lifecycle.freeWindowDaysQuery, {})) * 86_400_000;
       let deactivated = 0;
+      let refreshed = 0;
       for (const tierId of tierIds) {
         // Collect the due set read-only across pages (cursor stable — no mutation
         // between pages), then apply.
@@ -980,6 +999,50 @@ export const deactivateIdleFree = internalAction({
             });
             if (!stillDue) continue;
             if (e.backendUserId && e.backend) {
+              // Usage check: the control plane can't see proxy traffic, but the
+              // panel stamps each user's last-online time. A key used within
+              // the window is IN USE — refresh the FCP window instead of
+              // reclaiming, so an active member keeps the same config forever
+              // without ever visiting the website.
+              let state: { onlineAt?: string | null; status: string } | null = null;
+              try {
+                state = await ctx.runAction(internal.backends.getUser, {
+                  backend: e.backend,
+                  backendUserId: e.backendUserId,
+                });
+              } catch (err) {
+                // Panel-side 404 = the key is already gone; fall through and
+                // reclaim the FCP side. Anything else (unreachable panel) must
+                // NOT reclaim on missing evidence — skip until the next run.
+                if (!/\b404\b/.test(String(err))) continue;
+              }
+              const onlineMs = state?.onlineAt ? Date.parse(state.onlineAt) : NaN;
+              if (Number.isFinite(onlineMs) && now - onlineMs < windowMs) {
+                await ctx.runMutation(internal.lifecycle.refreshFreeWindow, {
+                  userId: e.userId,
+                });
+                // Heal panel-side expiry (best-effort): keys issued before the
+                // no-expiry cutover still carry a concrete date; push the
+                // sentinel — and re-enable if the panel already expired it.
+                try {
+                  await ctx.runAction(internal.backends.updateUser, {
+                    backend: e.backend,
+                    backendUserId: e.backendUserId,
+                    patch: { expireAt: farFutureExpiryIso() },
+                  });
+                  if (state?.status === 'expired') {
+                    await ctx.runAction(internal.backends.setUserStatus, {
+                      backend: e.backend,
+                      backendUserId: e.backendUserId,
+                      active: true,
+                    });
+                  }
+                } catch {
+                  /* the refreshed window already spares them; heal retries next run */
+                }
+                refreshed++;
+                continue;
+              }
               await deleteSubscriptionEverywhere(ctx, {
                 backend: e.backend,
                 backendUserId: e.backendUserId,
@@ -992,7 +1055,7 @@ export const deactivateIdleFree = internalAction({
           }
         }
       }
-      return { deactivated };
+      return { deactivated, refreshed };
     }),
 });
 

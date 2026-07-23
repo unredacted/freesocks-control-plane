@@ -26,3 +26,18 @@ export function impactChartSeries(history: ImpactPoint[], placeholderMonths = 6)
   if (history.length > 0) return history;
   return lastMonthKeys(placeholderMonths).map((month) => ({ month, bonusGb: 0 }));
 }
+
+/** Month-to-date cumulative daily series (one GB value per UTC day, 1st →
+ *  today): the server's `currentMonthDaily`, or a flat zero baseline through
+ *  today while there is none yet — the chart is always present. */
+export function dailyImpactSeries(daily: number[], now = Date.now()): number[] {
+  if (daily.length > 0) return daily;
+  return Array.from({ length: new Date(now).getUTCDate() }, () => 0);
+}
+
+/** Endcap labels for the daily chart: the month's 1st and today (UTC), as Date
+ *  objects for the caller's locale-aware formatter. */
+export function dailyImpactBounds(now = Date.now()): [Date, Date] {
+  const d = new Date(now);
+  return [new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)), d];
+}

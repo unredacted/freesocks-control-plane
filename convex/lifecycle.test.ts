@@ -564,6 +564,170 @@ describe('lifecycle idle-free deactivate + retain (WS2)', () => {
     });
   });
 
+  // Usage-aware sweep: seed a due free user whose sub resolves to a real (fetch-
+  // stubbed) Remnawave instance, so the sweep's panel read actually runs.
+  async function seedDueFreeUserWithPanel(t: ReturnType<typeof convexTest>, freeTierId: unknown) {
+    const RW_UUID = '00000000-0000-4000-8000-000000000001';
+    const now = Date.now();
+    const userId = await t.run(async (ctx) => {
+      const serverId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave' as const,
+        name: 'panel',
+        slug: 'panel',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        updatedAt: now,
+      });
+      const uid = await ctx.db.insert('users', {
+        tierId: freeTierId as Id<'tiers'>,
+        status: 'active' as const,
+        freeKeyExpiresAt: now - DAY,
+        updatedAt: now,
+      });
+      await ctx.db.insert('subscriptions', {
+        userId: uid,
+        backend: 'remnawave' as const,
+        backendUserId: RW_UUID,
+        backendShortId: 'bs-live',
+        backendServerId: serverId,
+        subscriptionUrl: 'https://x/sub',
+        subscriptionMirrors: [],
+        state: 'active' as const,
+        updatedAt: now,
+      });
+      return uid;
+    });
+    const panelUser = (onlineAt: string) => ({
+      response: {
+        uuid: RW_UUID,
+        shortUuid: 'bs-live',
+        username: 'freesocks-free-live',
+        status: 'ACTIVE',
+        trafficLimitBytes: 1000,
+        trafficLimitStrategy: 'MONTH',
+        usedTrafficBytes: 10,
+        expireAt: new Date(Date.now() + 5 * DAY).toISOString(),
+        hwidDeviceLimit: null,
+        subscriptionUrl: 'https://panel.test/sub/bs-live',
+        onlineAt,
+      },
+    });
+    return { userId, panelUser };
+  }
+
+  test('deactivateIdleFree REFRESHES (not reclaims) a key the panel saw online recently', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    const t = convexTest(schema, modules);
+    const { freeTierId } = await seedTiers(t);
+    const { userId, panelUser } = await seedDueFreeUserWithPanel(t, freeTierId);
+    const patches: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        const method = init?.method ?? 'GET';
+        if (method === 'GET' && url.pathname.startsWith('/api/users/')) {
+          // Online an hour ago → in use.
+          return new Response(
+            JSON.stringify(panelUser(new Date(Date.now() - 3_600_000).toISOString())),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (method === 'GET' && url.pathname.startsWith('/api/hwid/devices/')) {
+          return new Response('not found', { status: 404 }); // devices degrade to []
+        }
+        if (method === 'PATCH' && url.pathname === '/api/users') {
+          patches.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          return new Response(JSON.stringify(panelUser(new Date().toISOString())), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return new Response('unexpected', { status: 500 });
+      }),
+    );
+
+    const res = await t.action(internal.lifecycle.deactivateIdleFree, {});
+    expect(res.deactivated).toBe(0);
+    expect(res.refreshed).toBe(1);
+    await t.run(async (ctx) => {
+      const u = await ctx.db.get(userId);
+      expect(u!.status).toBe('active'); // spared
+      expect(u!.freeKeyExpiresAt!).toBeGreaterThan(Date.now()); // window re-stamped
+      const sub = await ctx.db
+        .query('subscriptions')
+        .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+        .first();
+      expect(sub).not.toBeNull(); // key NOT reclaimed
+    });
+    // The heal pushed the no-expiry sentinel over the old concrete date.
+    expect(patches).toHaveLength(1);
+    const pushed = Date.parse(patches[0]!.expireAt as string);
+    expect(pushed).toBeGreaterThan(Date.now() + 3649 * DAY);
+  });
+
+  test('deactivateIdleFree SKIPS (no reclaim) when the panel is unreachable', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    const t = convexTest(schema, modules);
+    const { freeTierId } = await seedTiers(t);
+    const { userId } = await seedDueFreeUserWithPanel(t, freeTierId);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('boom', { status: 502 })),
+    );
+
+    const res = await t.action(internal.lifecycle.deactivateIdleFree, {});
+    expect(res.deactivated).toBe(0);
+    expect(res.refreshed).toBe(0);
+    await t.run(async (ctx) => {
+      const u = await ctx.db.get(userId);
+      expect(u!.status).toBe('active'); // not reclaimed on missing evidence
+      const sub = await ctx.db
+        .query('subscriptions')
+        .withIndex('by_user_state', (q) => q.eq('userId', userId).eq('state', 'active'))
+        .first();
+      expect(sub).not.toBeNull();
+    });
+  });
+
+  test('deactivateIdleFree RECLAIMS when the panel last saw the key outside the window', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    const t = convexTest(schema, modules);
+    const { freeTierId } = await seedTiers(t);
+    const { userId, panelUser } = await seedDueFreeUserWithPanel(t, freeTierId);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        const method = init?.method ?? 'GET';
+        if (method === 'GET' && url.pathname.startsWith('/api/users/')) {
+          // Last online 200 days ago → idle beyond any window.
+          return new Response(
+            JSON.stringify(panelUser(new Date(Date.now() - 200 * DAY).toISOString())),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (method === 'GET' && url.pathname.startsWith('/api/hwid/devices/')) {
+          return new Response('not found', { status: 404 });
+        }
+        // The reclaim path deletes the panel user.
+        return new Response(JSON.stringify({ response: { ok: true } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+
+    const res = await t.action(internal.lifecycle.deactivateIdleFree, {});
+    expect(res.deactivated).toBe(1);
+    expect(res.refreshed).toBe(0);
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.status).toBe('inactive');
+    });
+  });
+
   test('refreshFreeWindow reactivates an inactive user + pushes the window forward', async () => {
     const t = convexTest(schema, modules);
     const { freeTierId } = await seedTiers(t);

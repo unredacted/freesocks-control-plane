@@ -590,7 +590,6 @@ export const regenerate = internalAction({
     const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
 
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
-    const freeExpiryDays = Number(settings['freetier.expiryDays'] ?? 90);
     // Refuse a re-issue that would silently downgrade the member's mode (an
     // admin unbound its pool) — they must pick an available mode first.
     if (await isEffectiveModeBlocked(ctx, tier.backend, user.connectionModeId ?? null)) {
@@ -616,8 +615,9 @@ export const regenerate = internalAction({
           resolveTrafficLimitBytes(tier, bonusGb),
         ),
         trafficLimitStrategy: tier.trafficStrategy,
-        // Member term, else the free window — Remnawave requires a real date.
-        expireAt: computeExpireAtIso(user.membershipExpiresAt, freeExpiryDays),
+        // Member term, else the far-future sentinel (free keys never expire
+        // panel-side; the usage-based idle sweep owns free reclaim).
+        expireAt: computeExpireAtIso(user.membershipExpiresAt),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
         tag: tier.slug,
         placement: target.placement,
@@ -746,11 +746,9 @@ export const switchBackend = internalAction({
           resolveTrafficLimitBytes(peerTier, bonusGb),
         ),
         trafficLimitStrategy: peerTier.trafficStrategy,
-        // Entitlement unchanged by a backend switch: keep the member's term / free window.
-        expireAt: computeExpireAtIso(
-          user.membershipExpiresAt,
-          Number(settings['freetier.expiryDays'] ?? 90),
-        ),
+        // Entitlement unchanged by a backend switch: keep the member's term
+        // (free keys carry the no-expiry sentinel).
+        expireAt: computeExpireAtIso(user.membershipExpiresAt),
         hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], peerTier),
         tag: peerTier.slug,
         placement: issueTarget.placement,
@@ -901,10 +899,7 @@ export const switchMode = internalAction({
             resolveTrafficLimitBytes(tier, bonusGb),
           ),
           trafficLimitStrategy: tier.trafficStrategy,
-          expireAt: computeExpireAtIso(
-            user.membershipExpiresAt,
-            Number(settings['freetier.expiryDays'] ?? 90),
-          ),
+          expireAt: computeExpireAtIso(user.membershipExpiresAt),
           hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
           tag: tier.slug,
           placement: issueTarget.placement,
@@ -957,13 +952,36 @@ export const switchMode = internalAction({
     // alive for 24h. Only when the current key AND the tier are Remnawave.
     if (oldSub && tier.backend === 'remnawave' && oldSub.backend === 'remnawave') {
       // The in-place PATCH lands on the key's OWN panel, so the new mode's
-      // placement must exist there — a hard `onlyServerId` pin. A legacy sub
-      // with no recorded instance resolves unpinned (single-panel deploys).
+      // placement must exist there — a hard `onlyServerId` pin. The stored
+      // backendServerId can be stale (its panel row was re-registered) or
+      // absent (legacy sub); either used to force the re-issue fallback on
+      // EVERY switch. Repair it first: probe the active fleet for the panel
+      // that actually hosts this key, and persist the fix so every later
+      // key→instance resolution works again too. A failed probe resolves
+      // unpinned (the historical single-panel behavior).
+      let pinServerId: string | null = oldSub.backendServerId ?? null;
+      const activeIds = new Set(
+        (await ctx.runQuery(internal.backendServers.listActiveWithSecret, {}))
+          .filter((s) => s.backend === 'remnawave')
+          .map((s) => s._id as string),
+      );
+      if (!pinServerId || !activeIds.has(pinServerId)) {
+        pinServerId = await ctx.runAction(internal.backends.locateKeyInstance, {
+          backend: 'remnawave',
+          backendUserId: oldSub.backendUserId,
+        });
+        if (pinServerId) {
+          await ctx.runMutation(internal.subscriptions.setBackendServer, {
+            subscriptionId: oldSub._id,
+            backendServerId: pinServerId as Id<'backendServers'>,
+          });
+        }
+      }
       const { placement: nodePlacement } = await ctx.runQuery(
         internal.remnawaveNodes.resolveTarget,
         {
           modeId: target,
-          onlyServerId: oldSub.backendServerId ?? null,
+          onlyServerId: pinServerId as Id<'backendServers'> | null,
         },
       );
       // null when no pool is bound anywhere OR the target mode has no squad on

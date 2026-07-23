@@ -402,6 +402,18 @@ export const setCurrentSubscription = internalMutation({
  * placement (mirrors insertSubscription's optional-field mapping). No state/token
  * change, so the member's saved URL keeps working.
  */
+/** Repair a subscription's hosting-instance pointer (the stored id went stale
+ *  after a panel re-registration, or a legacy row never had one). Every
+ *  key→instance resolution (getUser/updateUser/node-status/mode switch) reads
+ *  this, so healing it fixes them all at once. */
+export const setBackendServer = internalMutation({
+  args: { subscriptionId: v.id('subscriptions'), backendServerId: v.id('backendServers') },
+  handler: async (ctx, { subscriptionId, backendServerId }) => {
+    await ctx.db.patch(subscriptionId, { backendServerId, updatedAt: Date.now() });
+    return null;
+  },
+});
+
 export const setPlacementAndClearCache = internalMutation({
   args: { subscriptionId: v.id('subscriptions'), placement: v.union(v.string(), v.null()) },
   handler: async (ctx, { subscriptionId, placement }) => {

@@ -229,6 +229,33 @@ export const deleteUser = internalAction({
   },
 });
 
+/**
+ * Locate which ACTIVE instance actually hosts a key by probing the fleet — the
+ * repair path for a subscription whose stored `backendServerId` is stale (its
+ * panel row was re-registered) or absent (legacy). Bounded by the fleet size;
+ * a per-instance failure (404 = not this panel; anything else = unreachable)
+ * just moves on. Returns the hosting instance's id, or null when no active
+ * instance answers for the key.
+ */
+export const locateKeyInstance = internalAction({
+  args: { backend: backendId, backendUserId: v.string() },
+  handler: async (ctx, { backend, backendUserId }): Promise<string | null> => {
+    if (mockBackendEnabled()) return null;
+    const servers = (await ctx.runQuery(internal.backendServers.listActiveWithSecret, {})).filter(
+      (s) => s.backend === backend,
+    );
+    for (const server of servers) {
+      try {
+        await PROVIDERS[server.backend].get(server.config as BackendConfig, backendUserId);
+        return server._id as string;
+      } catch {
+        continue; // not on this panel (404) or unreachable — try the next
+      }
+    }
+    return null;
+  },
+});
+
 export const revokeDevice = internalAction({
   args: { backend: backendId, backendUserId: v.string(), hwid: v.string() },
   handler: async (ctx, { backendUserId, hwid }): Promise<null> => {

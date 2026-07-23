@@ -466,14 +466,15 @@
         <CardHeader>
           <CardTitle class="text-base">Free accounts</CardTitle>
           <CardDescription>
-            How long a free account (and its proxy key) lasts before the daily cleanup removes it.
-            Also stamped as the key's expiry on the backend.
+            The idle window: a free account with no VPN activity for this many days is deactivated
+            by the daily sweep (key reclaimed; the account reactivates on sign-in). Actively-used
+            keys are refreshed automatically and never expire.
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-3 text-sm">
           <div>
             <label class="text-xs text-muted-foreground mb-1 block" for="free-expiry-days">
-              Free account lifetime (days)
+              Idle window (days)
             </label>
             <Input
               id="free-expiry-days"

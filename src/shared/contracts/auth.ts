@@ -168,6 +168,10 @@ export const PublicConfig = z.object({
         /** Per-month bonus-GB ledger (last 12) for the impact graphs. GB only —
          *  dollar amounts are never projected publicly. */
         history: z.array(z.object({ month: z.string(), bonusGb: z.number() })).default([]),
+        /** Month-to-date cumulative bonus-GB series (one value per UTC day,
+         *  1st → today) for the daily impact graph. GB only. Defaulted for
+         *  deploy skew (older backends omit it). */
+        currentMonthDaily: z.array(z.number()).optional().default([]),
       })
       .default({
         enabled: false,
@@ -177,6 +181,7 @@ export const PublicConfig = z.object({
         currentBonusGb: 0,
         freeUsersHelped: 0,
         history: [],
+        currentMonthDaily: [],
       }),
   }),
   /** Whether the opt-in "trouble connecting? try a mirror" affordance is available

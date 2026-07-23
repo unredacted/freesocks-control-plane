@@ -16,6 +16,7 @@ import type {
   UsageSeries,
   UserState,
 } from './types';
+import { farFutureExpiryIso, isFarFutureExpiry } from './types';
 
 export interface RemnawaveConfig {
   baseUrl: string;
@@ -342,7 +343,10 @@ function toState(user: RemnawaveUser, devices: BackendDevice[]): UserState {
     trafficLimitStrategy: user.trafficLimitStrategy,
     lastTrafficResetAt: user.lastTrafficResetAt ?? undefined,
     onlineAt: user.onlineAt ?? undefined,
-    expireAt: user.expireAt,
+    // The far-future write sentinel reads back as "no expiry" — free keys carry
+    // it (they never expire on the panel's clock), and members shouldn't see a
+    // 10-year countdown.
+    expireAt: user.expireAt && !isFarFutureExpiry(user.expireAt) ? user.expireAt : null,
     status,
     devices,
   };
@@ -357,7 +361,7 @@ const DAY_MS = 86_400_000;
  * Remnawave expire the key on its own clock.
  */
 function expiryOrFarFuture(expireAt: string | null): string {
-  return expireAt ?? new Date(Date.now() + 3650 * DAY_MS).toISOString();
+  return expireAt ?? farFutureExpiryIso();
 }
 
 /**
