@@ -97,6 +97,12 @@ describe('account.regenerate saga', () => {
       expect(old.deletedAt!).toBeLessThanOrEqual(Date.now() + 24 * 3_600_000 + 5_000);
       const user = await ctx.db.get(userId);
       expect(user!.currentSubscriptionId).toBe(fresh._id);
+      // Regenerate ROTATES the fronted URL (unlike mode/backend switches, which
+      // carry the token): the new row minted a fresh token, and the old row
+      // keeps its own so the old URL still resolves through the grace window.
+      expect(fresh.subToken).toMatch(/^[0-9a-f]{32}$/);
+      expect(old.subToken).toMatch(/^[0-9a-f]{32}$/);
+      expect(fresh.subToken).not.toBe(old.subToken);
     });
   });
 
@@ -722,6 +728,101 @@ describe('account.switchMode saga', () => {
       expect(subs[0]!.backendPlacement).toBe(SQUAD);
       // The stale pointer was repaired to the live panel row.
       expect(subs[0]!.backendServerId).toBe(activeInstanceId);
+    });
+  });
+
+  test('the re-issue path CARRIES the subToken: same fronted URL, old row vacated', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const SQUAD = '11111111-2222-3333-4444-555555555555';
+    const NEW_UUID = '550e8400-e29b-41d4-a716-446655440099';
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.privacy.squads',
+        value: JSON.stringify([SQUAD]),
+        updatedAt: Date.now(),
+      });
+      const instanceId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'test',
+        slug: 'test',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'old-key-uuid',
+        backendShortId: 'oldshort',
+        backendServerId: instanceId,
+        subscriptionUrl: 'https://panel.test/sub/oldshort',
+        subToken: 'tok-carry',
+        subscriptionMirrors: [],
+        backendPlacement: 'old-squad',
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'evade' });
+    });
+    // Force the fallback: the in-place squad PATCH 500s, the re-issue POST works.
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      if (String(input).includes('/api/users') && method === 'PATCH')
+        return new Response('boom', { status: 500 });
+      if (String(input).includes('/api/hwid/devices'))
+        return new Response('not found', { status: 404 });
+      if (String(input).includes('/api/users') && method === 'POST')
+        return new Response(
+          JSON.stringify({
+            response: {
+              uuid: NEW_UUID,
+              shortUuid: 'newshort',
+              username: 'u',
+              status: 'ACTIVE',
+              trafficLimitBytes: null,
+              trafficLimitStrategy: 'MONTH',
+              usedTrafficBytes: 0,
+              expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+              hwidDeviceLimit: null,
+              subscriptionUrl: 'https://panel.test/sub/newshort',
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      return new Response(JSON.stringify({ response: { ok: true } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
+    expect(res).toMatchObject({ ok: true, mode: { id: 'privacy' } });
+    // A re-issue DID happen (grace window on the old key)…
+    expect((res as { oldSubscriptionDeletedAt: string | null }).oldSubscriptionDeletedAt).not.toBe(
+      null,
+    );
+    await t.run(async (ctx) => {
+      const subs = await ctx.db.query('subscriptions').collect();
+      expect(subs).toHaveLength(2);
+      const fresh = subs.find((s) => s.state === 'active')!;
+      const old = subs.find((s) => s.state === 'disabled')!;
+      // …but the member's fronted URL is byte-identical: the token moved to
+      // the new row and the old row was vacated (bySubToken is .unique()).
+      expect(fresh.backendUserId).toBe(NEW_UUID);
+      expect(fresh.subToken).toBe('tok-carry');
+      expect(old.subToken).toBeUndefined();
+      const resolved = await ctx.db
+        .query('subscriptions')
+        .withIndex('by_sub_token', (q) => q.eq('subToken', 'tok-carry'))
+        .unique();
+      expect(resolved!._id).toBe(fresh._id);
     });
   });
 

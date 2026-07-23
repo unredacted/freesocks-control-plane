@@ -8,6 +8,7 @@
   import Check from '@lucide/svelte/icons/check';
   import Download from '@lucide/svelte/icons/download';
   import Calendar from '@lucide/svelte/icons/calendar';
+  import Activity from '@lucide/svelte/icons/activity';
   import Gauge from '@lucide/svelte/icons/gauge';
   import QrCodeIcon from '@lucide/svelte/icons/qr-code';
   import Link2 from '@lucide/svelte/icons/link-2';
@@ -45,6 +46,13 @@
     subscriptionUrl: string;
     fallbackUrl?: string;
     expiresAt: string | null;
+    /** Free-tier key: the expiry stat becomes activity-framed ("Active while
+     *  you use it") — free keys never expire on a calendar; only accounts idle
+     *  for `idleDays` are paused. Ignores `expiresAt` entirely (keys issued
+     *  before the no-expiry cutover may still carry a stale panel date). */
+    freeTier?: boolean;
+    /** The idle window (publicConfig.freeTierDays) for the free-key subline. */
+    idleDays?: number;
     trafficLimitBytes: number | null;
     trafficUsedBytes: number;
     tierName: string;
@@ -101,6 +109,8 @@
     subscriptionUrl,
     fallbackUrl,
     expiresAt,
+    freeTier = false,
+    idleDays = 90,
     trafficLimitBytes,
     trafficUsedBytes,
     tierName,
@@ -559,24 +569,36 @@
         {/if}
       </StatBlock>
 
-      <StatBlock icon={Calendar} label={t('hero.expires')}>
-        {#if expiryDate}
-          <p class="text-sm tabular-nums {expiryUrgency}">
-            {formatDate(expiryDate)}
+      {#if freeTier}
+        <!-- Free keys have no calendar expiry (the panel carries the no-expiry
+             sentinel; the usage-based idle sweep governs) — frame the stat
+             around activity instead of a date. -->
+        <StatBlock icon={Activity} label={t('hero.validityLabel')}>
+          <p class="text-sm">{t('hero.staysActive')}</p>
+          <p class="text-[11px] text-muted-foreground">
+            {t('hero.idleNote', { days: idleDays })}
           </p>
-        {:else}
-          <p class="text-sm text-muted-foreground">{t('hero.noExpiry')}</p>
-        {/if}
-        {#if daysLeft !== null}
-          <p class="text-[11px] tabular-nums {expiryUrgency}">
-            {daysLeft < 0
-              ? t('hero.expiredDaysAgo', { count: -daysLeft })
-              : daysLeft === 0
-                ? t('hero.expiresToday')
-                : t('hero.daysRemaining', { count: daysLeft })}
-          </p>
-        {/if}
-      </StatBlock>
+        </StatBlock>
+      {:else}
+        <StatBlock icon={Calendar} label={t('hero.expires')}>
+          {#if expiryDate}
+            <p class="text-sm tabular-nums {expiryUrgency}">
+              {formatDate(expiryDate)}
+            </p>
+          {:else}
+            <p class="text-sm text-muted-foreground">{t('hero.noExpiry')}</p>
+          {/if}
+          {#if daysLeft !== null}
+            <p class="text-[11px] tabular-nums {expiryUrgency}">
+              {daysLeft < 0
+                ? t('hero.expiredDaysAgo', { count: -daysLeft })
+                : daysLeft === 0
+                  ? t('hero.expiresToday')
+                  : t('hero.daysRemaining', { count: daysLeft })}
+            </p>
+          {/if}
+        </StatBlock>
+      {/if}
     </div>
 
     <!-- Pass footer: the key-management actions live ON the pass. -->

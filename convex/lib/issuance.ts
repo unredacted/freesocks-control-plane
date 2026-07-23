@@ -40,6 +40,11 @@ export async function issueNewSubscription(
     // The node the PREVIOUS key was pinned to (regenerate) — stored on the new
     // row and avoided on the next fetch's pin pick (different node guaranteed).
     excludeNode?: string;
+    // Carry the fronted-URL subToken forward from this about-to-be-tombstoned
+    // row (mode/backend switch), so the member's saved URL never changes. On
+    // saga failure the compensation hands the token BACK to this row.
+    // regenerate omits it — URL rotation is that action's purpose.
+    carrySubTokenFromId?: Id<'subscriptions'>;
   },
 ): Promise<IssueResult> {
   const issued = await ctx.runAction(internal.backends.issueUser, {
@@ -62,6 +67,7 @@ export async function issueNewSubscription(
       // re-send the SAME placement instead of re-picking (Remnawave only).
       placement: input.backend === 'remnawave' ? (input.spec.placement ?? undefined) : undefined,
       excludeNode: input.excludeNode,
+      carrySubTokenFromId: input.carrySubTokenFromId,
     });
     await ctx.runMutation(internal.subscriptions.setCurrentSubscription, {
       userId: input.userId,
@@ -102,7 +108,12 @@ export async function issueNewSubscription(
     }
     if (subscriptionId) {
       try {
-        await ctx.runMutation(internal.subscriptions.markSubscriptionDeleted, { subscriptionId });
+        await ctx.runMutation(internal.subscriptions.markSubscriptionDeleted, {
+          subscriptionId,
+          // A carried token must survive the failed saga — hand it back to the
+          // old (still-live) row so the member's saved URL keeps resolving.
+          returnSubTokenToId: input.carrySubTokenFromId,
+        });
       } catch {
         /* the row points at a gone backend user; retention deletes it eventually */
       }

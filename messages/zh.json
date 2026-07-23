@@ -157,8 +157,6 @@
     "regenSuccessBody": "请在每台设备上重新导入。旧链接还能用 24 小时。",
     "regenFailedTitle": "无法创建新密钥",
     "switchSuccessTitle": "已切换到 {tier}",
-    "switchSuccessBodyGrace": "请在每台设备上导入新订阅链接。旧订阅还能用 24 小时。",
-    "switchSuccessBody": "请在每台设备上导入新订阅链接。",
     "switchFailedTitle": "无法切换服务器类型",
     "refreshWelcome": "欢迎加入 {tier}",
     "refreshNoneTitle": "尚未找到有效会员",
@@ -397,25 +395,6 @@
   },
   "switch": {
     "title": "切换到 {to}？",
-    "body": "你当前的 {from} 订阅将被新的 {to} 订阅替换。旧订阅在 24 小时内仍可使用，方便你在所有设备上完成重新导入。",
-    "point1": "将在 {to} 服务器上签发新的订阅链接",
-    "point2": "当前 {from} 链接还能用 24 小时，之后删除",
-    "point3": "你需要在使用的每个 VPN 客户端中重新导入新链接",
-    "pointDevices": [
-      {
-        "declarations": [
-          "input count",
-          "local countPlural = count: plural"
-        ],
-        "selectors": [
-          "countPlural"
-        ],
-        "match": {
-          "countPlural=one": "你当前有 1 台已连接设备--请全部重新导入",
-          "countPlural=other": "你当前有 {count} 台已连接设备--请全部重新导入"
-        }
-      }
-    ],
     "confirm": "切换到 {to}",
     "working": "切换中…"
   },
@@ -657,7 +636,6 @@
     "confirm": "切换焦点",
     "working": "交换…",
     "switchSuccessTitle": "切换到“ {label}",
-    "switchSuccessBodyGrace": "在每台设备上重新导入新的订阅网址。您的旧密钥还能再用24小时。",
     "switchSuccessBody": "在每台设备上重新导入新的订阅网址。",
     "switchFailedTitle": "无法切换焦点"
   },

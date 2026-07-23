@@ -21,7 +21,6 @@
     currentBackend: 'remnawave' | 'outline';
     /** Admin-configurable labels (default to provider names). */
     labels: { remnawave: string; outline: string };
-    deviceCount: number;
     onCancel: () => void;
     onConfirm: () => void;
     busy: boolean;
@@ -32,7 +31,6 @@
     targetBackend,
     currentBackend,
     labels,
-    deviceCount,
     onCancel,
     onConfirm,
     busy,
@@ -59,13 +57,12 @@
         {t('switch.body', { from: fromLabel, to: toLabel })}
       </Dialog.Description>
     </Dialog.Header>
+    <!-- The re-issue carries the fronted-URL token forward, so a backend
+         switch never changes the member's saved URL - no re-import copy. -->
     <ul class="text-sm space-y-1 list-disc ps-5">
       <li>{t('switch.point1', { to: toLabel })}</li>
-      <li>{t('switch.point2', { from: fromLabel })}</li>
+      <li>{t('switch.point2')}</li>
       <li>{t('switch.point3')}</li>
-      {#if deviceCount > 0}
-        <li>{t('switch.pointDevices', { count: deviceCount })}</li>
-      {/if}
     </ul>
     <Dialog.Footer>
       <Button variant="ghost" onclick={onCancel} disabled={busy}>{t('common.cancel')}</Button>

@@ -237,8 +237,7 @@
     "regenSuccessBody": "Re-import it on each of your devices. The old URL works for 24 more hours.",
     "regenFailedTitle": "Could not create a new key",
     "switchSuccessTitle": "Switched to {tier}",
-    "switchSuccessBodyGrace": "Re-import the new subscription URL on each device. The old subscription works for 24 more hours.",
-    "switchSuccessBody": "Re-import the new subscription URL on each device.",
+    "switchSuccessBody": "Same subscription URL - your apps pick up the new configuration on their next refresh.",
     "switchFailedTitle": "Could not switch server type",
     "refreshWelcome": "Welcome to {tier}",
     "refreshNoneTitle": "No active membership found yet",
@@ -309,6 +308,9 @@
     "nearlyOut": "Nearly out, only {amount} left this period.",
     "expires": "Expires",
     "noExpiry": "No expiry",
+    "validityLabel": "Validity",
+    "staysActive": "Active while you use it",
+    "idleNote": "Paused after {days} days of no use - sign in to reactivate.",
     "expiresToday": "Expires today",
     "daysRemaining": [
       {
@@ -403,25 +405,10 @@
   },
   "switch": {
     "title": "Switch to {to}?",
-    "body": "Your current {from} subscription will be replaced with a new {to} one. The old subscription stays usable for 24 hours so you can re-import on every device before it stops working.",
-    "point1": "A new subscription URL is issued on the {to} backend",
-    "point2": "The current {from} URL keeps working for 24 hours, then is deleted",
-    "point3": "You'll need to re-import the new URL in each VPN client you use",
-    "pointDevices": [
-      {
-        "declarations": [
-          "input count",
-          "local countPlural = count: plural"
-        ],
-        "selectors": [
-          "countPlural"
-        ],
-        "match": {
-          "countPlural=one": "You currently have 1 connected device - re-import on it",
-          "countPlural=other": "You currently have {count} connected devices - re-import on all of them"
-        }
-      }
-    ],
+    "body": "Your current {from} subscription is replaced with a new {to} one. Your subscription URL stays the same, so there is nothing to re-import.",
+    "point1": "A new key is issued on the {to} backend",
+    "point2": "Your subscription URL stays the same - apps pick up the new configuration on their next refresh",
+    "point3": "The old key keeps working for 24 hours while your apps refresh",
     "confirm": "Switch to {to}",
     "working": "Switching…"
   },
@@ -743,7 +730,7 @@
   "delivery": {
     "title": "What matters most to you?",
     "subtitle": "Pick a focus. It's saved on this device only, and you can change it anytime.",
-    "subtitleServer": "Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL usually stays the same.",
+    "subtitleServer": "Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same.",
     "subtitleSignup": "Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime.",
     "evadeTitle": "Internet Freedom Mode",
     "evadeAudience": "For censored countries",
@@ -754,8 +741,8 @@
     "recommended": "Recommended",
     "unavailable": "Not available yet",
     "confirmTitle": "Switch to \"{label}\"?",
-    "confirmBody": "This moves your existing key to the {label} servers - usually keeping the same subscription URL. If your key has to move to a different server, you get a new link instead, and the old one keeps working for 24 hours while you re-import.",
-    "confirmPoint1": "Your key moves to the {label} servers - usually with the same subscription URL, nothing to re-import",
+    "confirmBody": "This moves your existing key to the {label} servers, keeping the same subscription URL. Your apps keep working and pick up the new servers on their next refresh.",
+    "confirmPoint1": "Your key moves to the {label} servers - same subscription URL, nothing to re-import",
     "confirmPoint2": "Takes effect within a minute - reconnect in your app if it doesn't refresh on its own",
     "confirmPoint3": "Using the raw config? Copy the new one after switching",
     "confirmPointDevices": [
@@ -776,7 +763,6 @@
     "confirm": "Switch focus",
     "working": "Switching…",
     "switchSuccessTitle": "Switched to \"{label}\"",
-    "switchSuccessBodyGrace": "Re-import the new subscription URL on each device. Your old key works for 24 more hours.",
     "switchSuccessBody": "Same subscription URL - your apps will pick up the new servers on their next refresh.",
     "switchFailedTitle": "Could not switch focus"
   },

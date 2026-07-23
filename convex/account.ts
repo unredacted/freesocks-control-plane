@@ -627,6 +627,9 @@ export const regenerate = internalAction({
       // fetch, so regenerate moves the member to a different node when one
       // exists (Remnawave node pinning).
       excludeNode: oldSub?.pinnedNode ?? undefined,
+      // NO carrySubTokenFromId: regenerate exists to ROTATE the member's URL
+      // (the recover-from-a-leaked-link action) — mode/backend switches carry
+      // the token so their URL never changes; this one must not.
     });
 
     if (oldSub) {
@@ -754,6 +757,9 @@ export const switchBackend = internalAction({
         placement: issueTarget.placement,
       },
       pinServerId: issueTarget.serverId,
+      // A backend switch is not a rotation: carry the fronted-URL token so the
+      // member's saved link keeps working, now serving the new backend's config.
+      carrySubTokenFromId: oldSub?._id,
     });
 
     // P1-6: tombstone the OLD subscription BEFORE flipping the tier. issueNew
@@ -905,6 +911,10 @@ export const switchMode = internalAction({
           placement: issueTarget.placement,
         },
         pinServerId: issueTarget.serverId,
+        // A mode switch is not a rotation: carry the fronted-URL token so the
+        // member's saved link is byte-identical even on the re-issue path —
+        // their app's next refresh serves the new mode's config from it.
+        carrySubTokenFromId: oldSub?._id,
       });
       // Tombstone the OLD key before recording the choice (issueNew already
       // repointed currentSubscriptionId), same 24h grace as regenerate/switch.

@@ -113,10 +113,10 @@
       // prominent block is the ONLY thing shown, so it must not stay stale.
       void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
       liveMessage = t('delivery.switchSuccessTitle', { label: modeLabel(result.mode.id) });
+      // Both switch paths keep the same fronted URL now (the re-issue carries
+      // the subToken forward), so there is no re-import case to announce.
       toast.success(t('delivery.switchSuccessTitle', { label: modeLabel(result.mode.id) }), {
-        description: result.oldSubscriptionDeletedAt
-          ? t('delivery.switchSuccessBodyGrace')
-          : t('delivery.switchSuccessBody'),
+        description: t('delivery.switchSuccessBody'),
       });
     },
     onError: (err) => {

@@ -103,21 +103,40 @@ export const insertSubscription = internalMutation({
     // The node the PREVIOUS key was pinned to (regenerate) — avoided on the
     // next fetch's pin pick so the new key lands on a different node.
     excludeNode: v.optional(v.string()),
+    // Carry the fronted-URL token FORWARD from this (about-to-be-tombstoned)
+    // subscription, so the member's saved `<origin>/api/v1/sub/<token>` URL
+    // survives a mode/backend-switch re-issue byte-identical. `regenerate`
+    // deliberately omits it — rotating the URL is that action's whole point.
+    carrySubTokenFromId: v.optional(v.id('subscriptions')),
   },
   handler: async (ctx, a) => {
-    // Mint the opaque per-subscription token for the FCP-fronted URL. 128-bit;
-    // uniqueness enforced by an index read-check inside this mutation (Convex has
-    // no UNIQUE constraint), matching the slug/tokenHash/accountIdHash convention.
-    let subToken = randomHex(16);
-    while (
-      await ctx.db
-        .query('subscriptions')
-        .withIndex('by_sub_token', (q) => q.eq('subToken', subToken))
-        .first()
-    ) {
-      subToken = randomHex(16);
+    // The fronted-URL token: carried from the old row when requested, else a
+    // fresh 128-bit mint. INVARIANT: at most one row per token — bySubToken
+    // resolves with .unique(), so a carry VACATES the old row and inserts the
+    // new one inside this single serializable mutation (never two holders).
+    let subToken: string | null = null;
+    if (a.carrySubTokenFromId) {
+      const old = await ctx.db.get(a.carrySubTokenFromId);
+      if (old?.subToken) {
+        subToken = old.subToken;
+        await ctx.db.patch(old._id, { subToken: undefined, updatedAt: Date.now() });
+      }
     }
-    const { placement, ...rest } = a;
+    if (subToken === null) {
+      // Mint; uniqueness enforced by an index read-check inside this mutation
+      // (Convex has no UNIQUE constraint), matching the slug/tokenHash/
+      // accountIdHash convention.
+      subToken = randomHex(16);
+      while (
+        await ctx.db
+          .query('subscriptions')
+          .withIndex('by_sub_token', (q) => q.eq('subToken', subToken!))
+          .first()
+      ) {
+        subToken = randomHex(16);
+      }
+    }
+    const { placement, carrySubTokenFromId: _carry, ...rest } = a;
     return ctx.db.insert('subscriptions', {
       ...rest,
       // Map the generic arg onto the schema field name.
@@ -372,13 +391,27 @@ export const updateMirrors = internalMutation({
 
 /** Hard-delete marker: state→deleted (used by cleanup + tombstone sweep). */
 export const markSubscriptionDeleted = internalMutation({
-  args: { subscriptionId: v.id('subscriptions') },
-  handler: async (ctx, { subscriptionId }) => {
+  args: {
+    subscriptionId: v.id('subscriptions'),
+    // Issuance-compensation only: the dying row may hold a subToken CARRIED
+    // from this (still-live) source row — hand it back atomically, or the
+    // member's saved fronted URL would die with the failed saga.
+    returnSubTokenToId: v.optional(v.id('subscriptions')),
+  },
+  handler: async (ctx, { subscriptionId, returnSubTokenToId }) => {
+    const dying = await ctx.db.get(subscriptionId);
     await ctx.db.patch(subscriptionId, {
       state: 'deleted',
       deletedAt: Date.now(),
+      subToken: undefined,
       updatedAt: Date.now(),
     });
+    if (returnSubTokenToId && dying?.subToken) {
+      const source = await ctx.db.get(returnSubTokenToId);
+      if (source && !source.subToken) {
+        await ctx.db.patch(source._id, { subToken: dying.subToken, updatedAt: Date.now() });
+      }
+    }
     return null;
   },
 });

@@ -630,6 +630,8 @@
         backendLabel={config.data?.backends.labels[subscription.backend]}
         subscriptionUrl={subUrl}
         expiresAt={subscription.expiresAt}
+        freeTier={!isCurrentMember}
+        idleDays={freeDays}
         trafficLimitBytes={subscription.trafficLimitBytes}
         trafficUsedBytes={subscription.trafficUsedBytes}
         status={subscription.status}

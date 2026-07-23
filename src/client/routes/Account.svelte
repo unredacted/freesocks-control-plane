@@ -337,10 +337,10 @@
       // The new key may live on a different node/location.
       void qc.invalidateQueries({ queryKey: queryKeys.nodeStatus });
       liveMessage = t('account.switchSuccessTitle', { tier: result.tier.name });
+      // The backend switch carries the subToken forward — same fronted URL,
+      // now serving the new backend's config; nothing to re-import.
       toast.success(t('account.switchSuccessTitle', { tier: result.tier.name }), {
-        description: result.oldSubscriptionDeletedAt
-          ? t('account.switchSuccessBodyGrace')
-          : t('account.switchSuccessBody'),
+        description: t('account.switchSuccessBody'),
       });
     },
     onError: (err) => {
@@ -848,6 +848,8 @@
               backendLabel={config.data?.backends.labels[data.subscription.backend]}
               subscriptionUrl={subUrl}
               expiresAt={data.subscription.expiresAt}
+              freeTier={!(data.user.membership?.isCurrent ?? false)}
+              idleDays={config.data?.freeTierDays ?? 90}
               trafficLimitBytes={data.subscription.trafficLimitBytes}
               trafficUsedBytes={data.subscription.trafficUsedBytes}
               status={data.subscription.status}
@@ -1222,7 +1224,6 @@
           targetBackend={pendingSwitchTarget}
           currentBackend={data.subscription.backend}
           labels={config.data.backends.labels}
-          deviceCount={data.subscription.devices.length}
           onCancel={() => {
             switchBackendOpen = false;
             pendingSwitchTarget = null;
