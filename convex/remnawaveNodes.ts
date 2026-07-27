@@ -8,6 +8,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import { ConvexError, v } from 'convex/values';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
+import { canonicalModeId, resolveConnectionModes } from './lib/connectionModes';
 import {
   resolvePlacementTarget,
   modePlacementWrites,
@@ -89,20 +90,33 @@ export const resolveTarget = internalQuery({
  * Re-issue gate for the member's EFFECTIVE mode (regenerate / switch-backend).
  * WS1's cross-mode placement fallback keeps a key from going squad-less, but
  * applied blindly it silently DOWNGRADES a member whose stored mode's pool was
- * unbound by an admin (e.g. a 'privacy' key re-issued into the CDN-fronted
- * 'evade' pool while the UI still says privacy). `blocked` is true exactly
- * when the effective mode's own pool is empty AND some other mode has a pool —
- * the caller then refuses with an actionable error (the member picks another
- * mode first, mirroring the /connection-mode + switchMode guards). When NO
- * mode is bound anywhere (bring-up), blocked is false and issuance proceeds
+ * unbound by an admin (e.g. a 'privacy-reality' key re-issued into the
+ * CDN-fronted 'freedom-ws' pool while the UI still says Privacy Mode). `blocked`
+ * is true exactly when the effective mode is unusable AND some other mode is
+ * usable — the caller then refuses with an actionable error (the member picks
+ * another mode first, mirroring the /connection-mode + switchMode guards). When
+ * NO mode is usable anywhere (bring-up), blocked is false and issuance proceeds
  * squad-less + audited (the WS1 safety net stays).
+ *
+ * "Unusable" now covers admin-DISABLED as well as unbound: disabling a mode has
+ * to behave like unbinding it, or a member on a disabled mode would keep being
+ * silently re-issued onto its nodes.
  */
 export const effectivePlacementGate = internalQuery({
   args: { modeId: v.union(v.string(), v.null()) },
   handler: async (ctx, { modeId }) => {
+    const modes = await resolveConnectionModes(ctx.db);
+    const enabled = new Set(modes.filter((m) => m.enabled).map((m) => m.id));
+    const effective = modeId ? canonicalModeId(modeId) : null;
+
     const own = await resolveModeSquadPool(ctx.db, modeId);
-    if (own.length > 0) return { blocked: false };
-    return { blocked: (await resolveBoundModeIds(ctx.db)).size > 0 };
+    if (own.length > 0 && (effective === null || enabled.has(effective))) {
+      return { blocked: false };
+    }
+    // Some OTHER mode is both enabled and bound → refuse rather than downgrade.
+    const bound = await resolveBoundModeIds(ctx.db);
+    const alternativeExists = [...enabled].some((id) => id !== effective && bound.has(id));
+    return { blocked: alternativeExists };
   },
 });
 

@@ -287,8 +287,9 @@ squad UUID (`activeInternalSquads: [placement]`); Outline ignores it. Nothing in
 How a placement is chosen (all Remnawave-local, under `convex/remnawaveNodes.ts` +
 `convex/lib/remnawavePlacement.ts`):
 
-- A **connection mode** (`evade` / `privacy`, data-driven — see
-  `convex/lib/connectionModes.ts`) binds a **pool** of squad UUIDs, stored in
+- A **connection mode** (a LEAF id: `freedom-ws` / `freedom-reality` /
+  `privacy-reality`, grouped under the parent families `freedom` / `privacy` —
+  see `convex/lib/connectionModes.ts`) binds a **pool** of squad UUIDs, stored in
   `appSettings` under `remnawave.modePlacement.<id>.squads`. Bind it in
   **Admin → Remnawave** (one UUID per line, per mode) or via
   `PATCH /api/v1/admin/remnawave/mode-placements` (scope `admin:servers:write`) —
@@ -415,7 +416,7 @@ Constraints to know:
 - **Clash-family clients are `url`-delivery only.** In a `rawConfig` connection
   mode (privacy) the URL is hidden, the import deep-links are suppressed, and the
   raw-config copy path (`/api/v1/subscription/content`) sends no UA → it always
-  returns the base64 default, never Clash. Recommend Clash apps for `url`/evade mode.
+  returns the base64 default, never Clash. Recommend Clash apps for `url` modes (`freedom-ws`).
 - **S3 mirror URLs serve one fixed format** (the base64 default). The mirror
   refresh/provision jobs fetch with no UA (`convex/storage.ts`) and S3 does no UA
   negotiation, so a Clash client pointed at a _mirror_ URL gets base64, not YAML.

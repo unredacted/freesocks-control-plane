@@ -14,8 +14,19 @@ import {
   CONNECTION_MODES,
   CONNECTION_MODE_KEYS,
   DEFAULT_CONNECTION_MODE,
+  LEGACY_MODE_ID_MAP,
+  canonicalModeId,
   isConnectionModeId,
+  resolveConnectionModes,
 } from './connectionModes';
+
+// canonical id -> the legacy id that migrates onto it. During the dual-accept
+// window the pool is still stored under the LEGACY key (Phase 2 renames it), so
+// a lookup for `freedom-ws` must also try `evade` before giving up. Once
+// seed:migrateConnectionModeIds has run this fallback simply never fires.
+const LEGACY_ALIAS_OF: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(LEGACY_MODE_ID_MAP).map(([legacy, current]) => [current, legacy]),
+);
 
 // The per-mode squad pool a mode's keys are placed across. Remnawave-specific
 // (squad UUIDs), so it lives in the Remnawave-namespaced appSettings prefix
@@ -59,12 +70,18 @@ export async function resolveModeSquadPool(
   db: DatabaseReader,
   modeId: string | null | undefined,
 ): Promise<string[]> {
-  const id = isConnectionModeId(modeId)
+  const raw = isConnectionModeId(modeId)
     ? modeId
     : isConnectionModeId(await readSetting(db, CONNECTION_MODE_KEYS.defaultId))
       ? ((await readSetting(db, CONNECTION_MODE_KEYS.defaultId)) as string)
       : DEFAULT_CONNECTION_MODE;
-  return sanitizePool(await readSetting(db, MODE_POOL_KEY(id)));
+  const id = canonicalModeId(raw);
+  const pool = sanitizePool(await readSetting(db, MODE_POOL_KEY(id)));
+  if (pool.length) return pool;
+  // Dual-accept window: the pool may still live under the pre-migration key.
+  const legacy = LEGACY_ALIAS_OF[id];
+  if (legacy) return sanitizePool(await readSetting(db, MODE_POOL_KEY(legacy)));
+  return [];
 }
 
 /**
@@ -85,9 +102,19 @@ export async function resolvePlacementPool(
   if (own.length) return own;
   const viaDefault = await resolveModeSquadPool(db, null);
   if (viaDefault.length) return viaDefault;
+  // Last resort: any bound pool — but never one belonging to an admin-DISABLED
+  // mode. An operator who turns a mode off must not have keys land on its nodes
+  // by way of the fallback ladder.
   const bound = await resolveBoundModeIds(db);
+  const enabled = new Set(
+    (await resolveConnectionModes(db)).filter((m) => m.enabled).map((m) => m.id),
+  );
   for (const def of CONNECTION_MODES) {
+    if (!enabled.has(def.id)) continue;
     if (bound.has(def.id)) return resolveModeSquadPool(db, def.id);
+    // The pool may still be under the legacy key mid-migration.
+    const legacy = LEGACY_ALIAS_OF[def.id];
+    if (legacy && bound.has(legacy)) return resolveModeSquadPool(db, def.id);
   }
   return [];
 }
@@ -110,7 +137,8 @@ export async function resolveModePlacementStable(
 export async function resolveBoundModeCounts(db: DatabaseReader): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
   for (const def of CONNECTION_MODES) {
-    counts[def.id] = sanitizePool(await readSetting(db, MODE_POOL_KEY(def.id))).length;
+    if (def.deprecated) continue; // legacy aliases are never shown in the editor
+    counts[def.id] = (await resolveModeSquadPool(db, def.id)).length;
   }
   return counts;
 }
@@ -127,7 +155,13 @@ export async function resolveBoundModeIds(db: DatabaseReader): Promise<Set<strin
     if (!r.key.endsWith(POOL_KEY_SUFFIX)) continue;
     const id = r.key.slice(POOL_PREFIX.length, -POOL_KEY_SUFFIX.length);
     try {
-      if (sanitizePool(JSON.parse(r.value)).length > 0) bound.add(id);
+      if (sanitizePool(JSON.parse(r.value)).length > 0) {
+        bound.add(id);
+        // A pool still stored under a pre-migration key still makes its
+        // SUCCESSOR available, so `available` stays truthful mid-migration.
+        const canonical = canonicalModeId(id);
+        if (canonical !== id) bound.add(canonical);
+      }
     } catch {
       /* malformed → not bound */
     }

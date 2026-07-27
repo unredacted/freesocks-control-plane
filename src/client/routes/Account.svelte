@@ -14,7 +14,7 @@
   import PasskeyManager from '../components/PasskeyManager.svelte';
   import ConnectionModeSwitcher from '../components/ConnectionModeSwitcher.svelte';
   import { connectionModePref } from '../lib/connectionModePref.svelte';
-  import { resolveEffectiveModeId } from '../lib/connectionMode';
+  import { FALLBACK_CONNECTION_MODE, resolveEffectiveModeId } from '../lib/connectionMode';
   import MembershipCallout from '../components/MembershipCallout.svelte';
   import RegenerateModal from '../components/RegenerateModal.svelte';
   import RevokeDeviceModal from '../components/RevokeDeviceModal.svelte';
@@ -102,8 +102,11 @@
   // member has a key to re-issue) the picker is a local presentation preference
   // only - choosing wouldn't change the issued node, so we skip the server round-trip.
   let connectionModes = $derived(config.data?.connectionModes ?? []);
+  let connectionModeFamilies = $derived(config.data?.connectionModeFamilies ?? []);
   let defaultModeId = $derived(
-    connectionModes.find((m) => m.isDefault)?.id ?? connectionModes[0]?.id ?? 'evade',
+    connectionModes.find((m) => m.isDefault)?.id ??
+      connectionModes[0]?.id ??
+      FALLBACK_CONNECTION_MODE,
   );
   let profileServerBacked = $derived(
     !!data?.subscription && connectionModes.some((m) => m.available),
@@ -119,6 +122,7 @@
       pref: connectionModePref(),
       suggested: data?.suggestedModeId,
       fallback: defaultModeId,
+      knownIds: connectionModes.map((m) => m.id),
     }),
   );
 
@@ -832,6 +836,7 @@
            subscription link is fetched through a CDN; url modes keep the link as the star. -->
           <ConnectionModeSwitcher
             modes={connectionModes}
+            families={connectionModeFamilies}
             selected={effectiveModeId}
             suggested={data.suggestedModeId ?? null}
             serverBacked={profileServerBacked}

@@ -191,6 +191,26 @@ members to carry). On a fresh backend:
    deactivated-and-retained. On the beta stack run them through the deployer
    container (see `docs/beta-deploy.md` §"One-off functions").
 
+   **Upgrading an EXISTING deployment to the family/sub-mode connection modes**
+   (one-time; a fresh install needs nothing — the new ids are the defaults):
+
+   ```sh
+   bunx convex run seed:migrateConnectionModeIds '{}'
+   ```
+
+   Renames `evade` → `freedom-ws` and `privacy` → `privacy-reality` across
+   `users.connectionModeId`, the `connectionMode.*` copy keys, the
+   `remnawave.modePlacement.*` squad pools, and the stored default; then seeds the
+   new admin `enabled` toggles (`freedom-reality` ships OFF). **No schema change**,
+   so it needs only the one deploy. It returns `nextCursor` — while that is
+   non-null, re-run with `'{"cursor": <nextCursor>}'` until it comes back null
+   (the user scan is paged). Idempotent: re-running is free.
+
+   The code deployed before it already accepts both spellings, so nothing breaks
+   mid-migration. Afterwards, re-run the Ansible panel-bootstrap so it re-binds the
+   squad pools under the new mode ids, then enable `freedom-reality` in
+   **Admin → Settings → Connection modes** once its pool is bound.
+
 4. **Register Outline servers** (only if using the Outline backend): admin CMS →
    **Backend servers** (the `apiUrl` secret is stored server-side, never echoed back).
 5. **Bootstrap the first admin passkey**: open `/admin` in a browser; the wizard

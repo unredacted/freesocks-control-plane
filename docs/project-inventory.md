@@ -44,8 +44,10 @@ redesign — Phases 1–5a). That redesign replaced the earlier squad-pool "load
 balanced nothing in a real fleet: a Remnawave internal squad is a set of inbounds, not a node)
 with **issuance-time node placement**. The generic backend layer is now **squad-free** — it
 carries an opaque **`placement` handle** (`subscriptions.backendPlacement`); only Remnawave-local
-code maps it to a squad UUID. A **connection mode** (renamed from "connection profile"; `evade` /
-`privacy`, data-driven with a `deliveryStyle` capability flag) binds a **pool of per-node squads**
+code maps it to a squad UUID. A **connection mode** (renamed from "connection profile"; leaf ids
+`freedom-ws` / `freedom-reality` / `privacy-reality` under the parent families `freedom` /
+`privacy`, data-driven with a `deliveryStyle` capability flag and an admin `enabled` toggle at
+both levels) binds a **pool of per-node squads**
 (`remnawave.modePlacement.<id>.squads`), and issuance homes each new key to the **least-loaded
 node** of that pool by node telemetry (`usersOnline` + optional realtime bandwidth, cached in
 `remnawaveNodeStats` by the healthcheck cron); the pick is persisted so tier pushes never re-home

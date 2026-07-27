@@ -16,6 +16,7 @@ import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
 import {
+  CENSORSHIP_MODE_FAMILY,
   CONNECTION_MODES,
   DEFAULT_CONNECTION_MODE,
   isConnectionModeId,
@@ -785,14 +786,22 @@ http.route({
     const geoCountry = resolveCountry(req);
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const privacyCountries = (settings['delivery.privacyCountries'] as string[] | undefined) ?? [];
-    // Suggest the hardened (rawConfig) mode for the admin-listed countries, else
-    // the catalog default. Data-driven off the mode catalog; the choice itself
-    // stays client-side and the country list never leaves the server.
-    const hardenedModeId =
-      CONNECTION_MODES.find((m) => m.deliveryStyle === 'rawConfig')?.id ?? DEFAULT_CONNECTION_MODE;
+    // Suggest a censorship-hardened mode for the admin-listed countries, else the
+    // catalog default. The country list never leaves the server; only the verdict
+    // ships, and the choice itself stays client-side.
+    //
+    // This used to pick `CONNECTION_MODES.find(deliveryStyle === 'rawConfig')` —
+    // first match wins, which with more than one rawConfig mode would have
+    // suggested Privacy Mode. Privacy Mode is explicitly NOT a censorship tool
+    // (its decoy is SNI-blocked in China by design), so the suggestion is now
+    // pinned to the censorship-oriented FAMILY instead of a delivery style.
+    const censorshipModeId =
+      CONNECTION_MODES.find(
+        (m) => m.family === CENSORSHIP_MODE_FAMILY && m.deliveryStyle === 'rawConfig',
+      )?.id ?? DEFAULT_CONNECTION_MODE;
     const suggestedModeId =
       geoCountry && privacyCountries.includes(geoCountry)
-        ? hardenedModeId
+        ? censorshipModeId
         : DEFAULT_CONNECTION_MODE;
     return json({ ...view, geoCountry, suggestedModeId });
   }),
@@ -2935,6 +2944,19 @@ http.route({
 // admin:settings:write works); also editable in the admin CMS. Squad UUIDs are
 // write-only (never read back). (The placement pool moves to the namespaced
 // /admin/remnawave/* endpoint in a later phase.)
+// GET: the editor's current state — families + their leaf sub-modes with copy,
+// `enabled`, and `bound`. Needed now that enablement is admin-controlled: the
+// public config omits disabled entries, so the admin UI cannot reconstruct the
+// full catalog from it.
+http.route({
+  path: '/api/v1/admin/connection-modes',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.adminApi.getConnectionModes, {}));
+  }),
+});
+
 http.route({
   path: '/api/v1/admin/connection-modes',
   method: 'PATCH',

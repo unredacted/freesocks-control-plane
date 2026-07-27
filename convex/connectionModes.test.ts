@@ -4,10 +4,14 @@ import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import {
   resolveConnectionModes,
+  resolveConnectionModeFamilies,
   resolveDefaultModeId,
   publicProjection,
+  publicFamilyProjection,
   connectionModeWrites,
+  canonicalModeId,
   CONNECTION_MODE_KEYS,
+  CONNECTION_MODE_FAMILY_KEYS,
   DEFAULT_CONNECTION_MODE,
   type ConnectionMode,
 } from './lib/connectionModes';
@@ -21,17 +25,114 @@ import {
 
 const modules = import.meta.glob('./**/*.*s');
 
+/** A resolved-leaf fixture with the boilerplate filled in. */
+function mode(over: Partial<ConnectionMode> & Pick<ConnectionMode, 'id'>): ConnectionMode {
+  return {
+    family: 'freedom',
+    deliveryStyle: 'url',
+    label: null,
+    description: null,
+    isDefault: false,
+    isFamilyDefault: false,
+    enabled: true,
+    order: 0,
+    deprecated: false,
+    ...over,
+  };
+}
+
 describe('connectionModes catalog', () => {
-  test('resolves defaults with no rows: both modes, evade default, deliveryStyle set', async () => {
+  test('resolves defaults with no rows: freedom-ws default, deliveryStyle + family set', async () => {
     const t = convexTest(schema, modules);
     const modes = await t.run((ctx) => resolveConnectionModes(ctx.db));
-    expect(modes.map((m) => m.id).sort()).toEqual(['evade', 'privacy']);
-    expect(modes.find((m) => m.id === 'evade')!.isDefault).toBe(true);
-    expect(modes.find((m) => m.id === 'evade')!.deliveryStyle).toBe('url');
-    expect(modes.find((m) => m.id === 'privacy')!.deliveryStyle).toBe('rawConfig');
+    const live = modes.filter((m) => !m.deprecated).map((m) => m.id);
+    expect(live.sort()).toEqual(['freedom-reality', 'freedom-ws', 'privacy-reality']);
+    const ws = modes.find((m) => m.id === 'freedom-ws')!;
+    expect(ws.isDefault).toBe(true);
+    expect(ws.deliveryStyle).toBe('url');
+    expect(ws.family).toBe('freedom');
+    expect(ws.isFamilyDefault).toBe(true);
+    expect(modes.find((m) => m.id === 'privacy-reality')!.deliveryStyle).toBe('rawConfig');
+    expect(modes.find((m) => m.id === 'privacy-reality')!.family).toBe('privacy');
     expect(modes.every((m) => m.label === null && m.description === null)).toBe(true);
-    expect(DEFAULT_CONNECTION_MODE).toBe('evade');
-    expect(await t.run((ctx) => resolveDefaultModeId(ctx.db))).toBe('evade');
+    expect(DEFAULT_CONNECTION_MODE).toBe('freedom-ws');
+    expect(await t.run((ctx) => resolveDefaultModeId(ctx.db))).toBe('freedom-ws');
+  });
+
+  test('freedom-reality ships DARK: enabled only once an admin turns it on', async () => {
+    const t = convexTest(schema, modules);
+    let modes = await t.run((ctx) => resolveConnectionModes(ctx.db));
+    expect(modes.find((m) => m.id === 'freedom-reality')!.enabled).toBe(false);
+    expect(modes.find((m) => m.id === 'freedom-ws')!.enabled).toBe(true);
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_MODE_KEYS.enabled('freedom-reality'),
+        value: JSON.stringify(true),
+        updatedAt: Date.now(),
+      });
+    });
+    modes = await t.run((ctx) => resolveConnectionModes(ctx.db));
+    expect(modes.find((m) => m.id === 'freedom-reality')!.enabled).toBe(true);
+  });
+
+  test('disabling a FAMILY disables its whole subtree', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_MODE_FAMILY_KEYS.enabled('freedom'),
+        value: JSON.stringify(false),
+        updatedAt: Date.now(),
+      });
+    });
+    const modes = await t.run((ctx) => resolveConnectionModes(ctx.db));
+    expect(modes.find((m) => m.id === 'freedom-ws')!.enabled).toBe(false);
+    expect(modes.find((m) => m.id === 'freedom-reality')!.enabled).toBe(false);
+    expect(modes.find((m) => m.id === 'privacy-reality')!.enabled).toBe(true);
+  });
+
+  test('the default never resolves to a DISABLED mode', async () => {
+    const t = convexTest(schema, modules);
+    // Disable the whole freedom family, which owns the compiled default.
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_MODE_FAMILY_KEYS.enabled('freedom'),
+        value: JSON.stringify(false),
+        updatedAt: Date.now(),
+      });
+    });
+    // Falls through to the only remaining enabled mode rather than a dead id.
+    expect(await t.run((ctx) => resolveDefaultModeId(ctx.db))).toBe('privacy-reality');
+    const modes = await t.run((ctx) => resolveConnectionModes(ctx.db));
+    expect(modes.find((m) => m.isDefault)!.id).toBe('privacy-reality');
+  });
+
+  test('a stored default naming a DISABLED mode is ignored', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      // freedom-reality is dark by default; pointing the default at it must not stick.
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_MODE_KEYS.defaultId,
+        value: JSON.stringify('freedom-reality'),
+        updatedAt: now,
+      });
+    });
+    expect(await t.run((ctx) => resolveDefaultModeId(ctx.db))).toBe('freedom-ws');
+  });
+
+  test('a stored default naming a LEGACY id resolves to its successor', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_MODE_KEYS.defaultId,
+        value: JSON.stringify('privacy'),
+        updatedAt: Date.now(),
+      });
+    });
+    expect(await t.run((ctx) => resolveDefaultModeId(ctx.db))).toBe('privacy-reality');
+    expect(canonicalModeId('evade')).toBe('freedom-ws');
+    expect(canonicalModeId('freedom-ws')).toBe('freedom-ws');
   });
 
   test('resolves admin label/description + custom default from appSettings', async () => {
@@ -39,28 +140,49 @@ describe('connectionModes catalog', () => {
     await t.run(async (ctx) => {
       const now = Date.now();
       await ctx.db.insert('appSettings', {
-        key: CONNECTION_MODE_KEYS.label('privacy'),
+        key: CONNECTION_MODE_KEYS.label('privacy-reality'),
         value: JSON.stringify('Max privacy'),
         updatedAt: now,
       });
       await ctx.db.insert('appSettings', {
-        key: CONNECTION_MODE_KEYS.description('privacy'),
+        key: CONNECTION_MODE_KEYS.description('privacy-reality'),
         value: JSON.stringify('Direct Reality, no CDN.'),
         updatedAt: now,
       });
       await ctx.db.insert('appSettings', {
         key: CONNECTION_MODE_KEYS.defaultId,
-        value: JSON.stringify('privacy'),
+        value: JSON.stringify('privacy-reality'),
         updatedAt: now,
       });
     });
     const modes = await t.run((ctx) => resolveConnectionModes(ctx.db));
-    const priv = modes.find((m) => m.id === 'privacy')!;
+    const priv = modes.find((m) => m.id === 'privacy-reality')!;
     expect(priv.label).toBe('Max privacy');
     expect(priv.description).toBe('Direct Reality, no CDN.');
     expect(priv.isDefault).toBe(true);
-    expect(modes.find((m) => m.id === 'evade')!.isDefault).toBe(false);
-    expect(await t.run((ctx) => resolveDefaultModeId(ctx.db))).toBe('privacy');
+    expect(modes.find((m) => m.id === 'freedom-ws')!.isDefault).toBe(false);
+    expect(await t.run((ctx) => resolveDefaultModeId(ctx.db))).toBe('privacy-reality');
+  });
+
+  test('family label/description resolve, and blank clears to null', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_MODE_FAMILY_KEYS.label('freedom'),
+        value: JSON.stringify('Freedom'),
+        updatedAt: now,
+      });
+      await ctx.db.insert('appSettings', {
+        key: CONNECTION_MODE_FAMILY_KEYS.description('privacy'),
+        value: JSON.stringify('   '),
+        updatedAt: now,
+      });
+    });
+    const families = await t.run((ctx) => resolveConnectionModeFamilies(ctx.db));
+    expect(families.find((f) => f.id === 'freedom')!.label).toBe('Freedom');
+    expect(families.find((f) => f.id === 'privacy')!.description).toBeNull();
+    expect(families.every((f) => f.enabled)).toBe(true);
   });
 
   test('blank/whitespace label + description clear to null; corrupt/invalid default never throws', async () => {
@@ -68,12 +190,12 @@ describe('connectionModes catalog', () => {
     await t.run(async (ctx) => {
       const now = Date.now();
       await ctx.db.insert('appSettings', {
-        key: CONNECTION_MODE_KEYS.label('evade'),
+        key: CONNECTION_MODE_KEYS.label('freedom-ws'),
         value: JSON.stringify('   '),
         updatedAt: now,
       });
       await ctx.db.insert('appSettings', {
-        key: CONNECTION_MODE_KEYS.description('evade'),
+        key: CONNECTION_MODE_KEYS.description('freedom-ws'),
         value: 'not json{',
         updatedAt: now,
       });
@@ -84,63 +206,105 @@ describe('connectionModes catalog', () => {
       });
     });
     const modes = await t.run((ctx) => resolveConnectionModes(ctx.db));
-    expect(modes.find((m) => m.id === 'evade')!.label).toBeNull();
-    expect(modes.find((m) => m.id === 'evade')!.description).toBeNull();
-    expect(modes.find((m) => m.id === 'evade')!.isDefault).toBe(true); // invalid default → evade
+    expect(modes.find((m) => m.id === 'freedom-ws')!.label).toBeNull();
+    expect(modes.find((m) => m.id === 'freedom-ws')!.description).toBeNull();
+    expect(modes.find((m) => m.id === 'freedom-ws')!.isDefault).toBe(true); // invalid → compiled
   });
 
-  test('publicProjection ships deliveryStyle + admin copy + available; sorts by order; leaks no UUID', () => {
+  test('publicProjection: omits disabled + deprecated, ships family, sorts by order, no UUID', () => {
     const modes: ConnectionMode[] = [
-      {
-        id: 'privacy',
+      mode({
+        id: 'privacy-reality',
+        family: 'privacy',
         deliveryStyle: 'rawConfig',
         label: 'Custom privacy',
         description: 'Body',
-        isDefault: false,
+        isFamilyDefault: true,
         order: 1,
-      },
-      {
-        id: 'evade',
-        deliveryStyle: 'url',
-        label: null,
-        description: null,
-        isDefault: true,
-        order: 0,
-      },
+      }),
+      mode({ id: 'freedom-ws', isDefault: true, isFamilyDefault: true, order: 0 }),
+      // Admin-disabled and legacy entries must not reach members.
+      mode({ id: 'freedom-reality', deliveryStyle: 'rawConfig', enabled: false, order: 2 }),
+      mode({ id: 'evade', family: undefined, enabled: false, deprecated: true, order: 90 }),
     ];
-    const pub = publicProjection(modes, new Set(['evade']));
-    expect(pub.map((m) => m.id)).toEqual(['evade', 'privacy']); // sorted by order
+    const pub = publicProjection(modes, new Set(['freedom-ws']));
+    expect(pub.map((m) => m.id)).toEqual(['freedom-ws', 'privacy-reality']); // sorted by order
     expect(pub[0]).toEqual({
-      id: 'evade',
+      id: 'freedom-ws',
+      family: 'freedom',
       deliveryStyle: 'url',
       label: null,
       description: null,
       isDefault: true,
+      isFamilyDefault: true,
       available: true,
     });
     expect(pub[1]).toMatchObject({
-      id: 'privacy',
+      id: 'privacy-reality',
+      family: 'privacy',
       deliveryStyle: 'rawConfig',
       label: 'Custom privacy',
       available: false, // not in the bound set
     });
   });
 
-  test('connectionModeWrites: label/description/default only, empty string clears, unknown ids ignored', () => {
+  test('publicProjection: an enabled-but-UNBOUND mode ships as available:false, not hidden', () => {
+    const pub = publicProjection([mode({ id: 'freedom-ws', isDefault: true })], new Set());
+    expect(pub).toHaveLength(1);
+    expect(pub[0]!.available).toBe(false);
+  });
+
+  test('publicFamilyProjection drops families with no visible child', () => {
+    const families = [
+      { id: 'freedom', label: null, description: null, enabled: true, order: 0 },
+      { id: 'privacy', label: 'P', description: null, enabled: true, order: 1 },
+    ];
+    const visible = publicProjection([mode({ id: 'freedom-ws' })], new Set(['freedom-ws']));
+    expect(publicFamilyProjection(families, visible).map((f) => f.id)).toEqual(['freedom']);
+  });
+
+  test('connectionModeWrites: families + enabled toggles, empty string clears, unknown ids ignored', () => {
     const writes = connectionModeWrites({
-      default: 'privacy',
-      modes: { evade: { description: 'Own copy' }, privacy: { label: 'P', description: '' } },
+      default: 'privacy-reality',
+      families: { privacy: { label: 'Privacy Mode', enabled: true } },
+      modes: {
+        'freedom-ws': { description: 'Own copy' },
+        'privacy-reality': { label: 'P', description: '', enabled: true },
+        'freedom-reality': { enabled: true },
+      },
     });
     const byKey = Object.fromEntries(writes.map((w) => [w.key, JSON.parse(w.value)]));
-    expect(byKey[CONNECTION_MODE_KEYS.defaultId]).toBe('privacy');
-    expect(byKey[CONNECTION_MODE_KEYS.description('evade')]).toBe('Own copy');
-    expect(byKey[CONNECTION_MODE_KEYS.label('privacy')]).toBe('P');
-    expect(byKey[CONNECTION_MODE_KEYS.description('privacy')]).toBe(''); // explicit clear-write
+    expect(byKey[CONNECTION_MODE_KEYS.defaultId]).toBe('privacy-reality');
+    expect(byKey[CONNECTION_MODE_KEYS.description('freedom-ws')]).toBe('Own copy');
+    expect(byKey[CONNECTION_MODE_KEYS.label('privacy-reality')]).toBe('P');
+    expect(byKey[CONNECTION_MODE_KEYS.description('privacy-reality')]).toBe(''); // explicit clear
+    expect(byKey[CONNECTION_MODE_KEYS.enabled('freedom-reality')]).toBe(true);
+    expect(byKey[CONNECTION_MODE_FAMILY_KEYS.label('privacy')]).toBe('Privacy Mode');
+    expect(byKey[CONNECTION_MODE_FAMILY_KEYS.enabled('privacy')]).toBe(true);
     // It never writes squad/pool keys (those go through modePlacementWrites).
     expect(writes.every((w) => !w.key.endsWith('.squadUuids'))).toBe(true);
     expect(() => connectionModeWrites({ default: 'nope' })).toThrow(/default/);
     expect(() => connectionModeWrites('x')).toThrow();
     expect(connectionModeWrites({ modes: { bogus: { label: 'x' } } })).toEqual([]);
+    // Legacy aliases are read-only: they resolve but can never be edited.
+    expect(connectionModeWrites({ modes: { evade: { label: 'x' } } })).toEqual([]);
+  });
+
+  test('connectionModeWrites refuses to make a mode default and disable it in one save', () => {
+    expect(() =>
+      connectionModeWrites({
+        default: 'privacy-reality',
+        modes: { 'privacy-reality': { enabled: false } },
+      }),
+    ).toThrow(/disabled/);
+    expect(() =>
+      connectionModeWrites({
+        default: 'privacy-reality',
+        families: { privacy: { enabled: false } },
+      }),
+    ).toThrow(/disabled/);
+    // A deprecated alias can never be the default.
+    expect(() => connectionModeWrites({ default: 'evade' })).toThrow(/default/);
   });
 });
 
@@ -183,18 +347,35 @@ describe('remnawave mode placement pools', () => {
     await t.run(async (ctx) => {
       const now = Date.now();
       await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.evade.squads',
+        key: 'remnawave.modePlacement.freedom-ws.squads',
         value: JSON.stringify(['sq-a']),
         updatedAt: now,
       });
       await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.privacy.squads',
+        key: 'remnawave.modePlacement.privacy-reality.squads',
         value: JSON.stringify([]), // empty → not bound
         updatedAt: now,
       });
     });
     const bound = await t.run(async (ctx) => [...(await resolveBoundModeIds(ctx.db))]);
-    expect(bound).toEqual(['evade']);
+    expect(bound).toEqual(['freedom-ws']);
+  });
+
+  test('resolveBoundModeIds: a pre-migration pool also marks its SUCCESSOR bound', async () => {
+    // Dual-accept window: the pool is still stored under the legacy key, but the
+    // public `available` flag is computed against the new id, so both must resolve.
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.evade.squads',
+        value: JSON.stringify(['sq-a']),
+        updatedAt: Date.now(),
+      }),
+    );
+    const bound = await t.run(async (ctx) => [...(await resolveBoundModeIds(ctx.db))]);
+    expect(bound.sort()).toEqual(['evade', 'freedom-ws']);
+    // …and the pool itself resolves through the new id.
+    expect(await t.run((ctx) => resolveModeSquadPool(ctx.db, 'freedom-ws'))).toEqual(['sq-a']);
   });
 
   // Real-shaped squad UUIDs — replace/add entries are UUID-validated server-side.

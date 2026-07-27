@@ -12,7 +12,7 @@
   import InlineError from '../components/InlineError.svelte';
   import ConnectionModeSwitcher from '../components/ConnectionModeSwitcher.svelte';
   import { connectionModePref } from '../lib/connectionModePref.svelte';
-  import { resolveEffectiveModeId } from '../lib/connectionMode';
+  import { FALLBACK_CONNECTION_MODE, resolveEffectiveModeId } from '../lib/connectionMode';
   import ConnectClient from '../components/ConnectClient.svelte';
   import RedeemCode from '../components/RedeemCode.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
@@ -103,8 +103,11 @@
   // catalog default); orders the panels. `rawConfigFirst` is data-driven off the
   // selected mode's deliveryStyle (replaces the hardcoded `=== 'privacy'`).
   let connectionModes = $derived(config.data?.connectionModes ?? []);
+  let connectionModeFamilies = $derived(config.data?.connectionModeFamilies ?? []);
   let defaultModeId = $derived(
-    connectionModes.find((m) => m.isDefault)?.id ?? connectionModes[0]?.id ?? 'evade',
+    connectionModes.find((m) => m.isDefault)?.id ??
+      connectionModes[0]?.id ??
+      FALLBACK_CONNECTION_MODE,
   );
   // Server-backed once a key exists AND a placement pool is bound - then the
   // mode switcher re-issues (like /account) instead of only setting a local pref.
@@ -118,6 +121,7 @@
       pref: connectionModePref(),
       suggested: account.data?.suggestedModeId,
       fallback: defaultModeId,
+      knownIds: connectionModes.map((m) => m.id),
     }),
   );
   let actionsDisabled = $derived(account.data?.user.status === 'disabled');
@@ -547,6 +551,7 @@
            it re-issues via the confirm modal, exactly like /account. -->
         <ConnectionModeSwitcher
           modes={connectionModes}
+          families={connectionModeFamilies}
           selected={effectiveModeId}
           suggested={account.data?.suggestedModeId ?? null}
           serverBacked={profileServerBacked}

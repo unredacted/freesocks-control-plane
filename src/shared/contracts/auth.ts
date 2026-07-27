@@ -262,22 +262,42 @@ export const PublicConfig = z.object({
       heroTitles: z.array(z.string()).optional().default([]),
     })
     .optional(),
-  /** Member-facing connection-mode catalog (the transport chooser): id +
-   *  `deliveryStyle` (url vs rawConfig — drives delivery behavior) + admin copy
-   *  overrides + whether it's the default + `available` (its backend placement
-   *  pool is bound). `label`/`description` are null unless the admin set them —
-   *  a non-null value overrides the SPA's translated copy verbatim (all
-   *  locales); null keeps the i18n defaults. NEVER a squad UUID. Data-driven
-   *  (string ids). Optional/defaulted for forward-compat. */
+  /** Member-facing connection-mode catalog (the transport chooser): the LEAF
+   *  sub-choices. `family` names the parent mode the leaf belongs to (see
+   *  `connectionModeFamilies`); `isFamilyDefault` is the leaf selected when a
+   *  member picks that family without choosing a transport. `deliveryStyle`
+   *  (url vs rawConfig) drives delivery behavior; `available` = the mode is
+   *  enabled AND its backend placement pool is bound. Admin-DISABLED modes are
+   *  omitted entirely, so a mode the member is currently on may be absent —
+   *  the SPA synthesizes an entry for it rather than showing an empty picker.
+   *  `label`/`description` are null unless the admin set them — a non-null value
+   *  overrides the SPA's translated copy verbatim (all locales). NEVER a squad
+   *  UUID. Data-driven (string ids). Optional/defaulted for forward-compat. */
   connectionModes: z
     .array(
       z.object({
         id: z.string(),
+        family: z.string().optional(),
         deliveryStyle: z.enum(['url', 'rawConfig']),
         label: z.string().nullable(),
         description: z.string().nullable().optional().default(null),
         isDefault: z.boolean(),
+        isFamilyDefault: z.boolean().optional().default(false),
         available: z.boolean(),
+      }),
+    )
+    .optional()
+    .default([]),
+  /** The PARENT modes a member picks first ("Freedom Mode", "Privacy Mode").
+   *  Only families that are enabled and still have at least one visible child
+   *  appear. Purely presentational — nothing is ever issued against a family;
+   *  the value committed to the server is always a leaf `connectionModes[].id`. */
+  connectionModeFamilies: z
+    .array(
+      z.object({
+        id: z.string(),
+        label: z.string().nullable(),
+        description: z.string().nullable().optional().default(null),
       }),
     )
     .optional()

@@ -363,6 +363,38 @@ export const RemnawaveNodeStatsResponse = z.object({
 });
 export type RemnawaveNodeStatsResponse = z.infer<typeof RemnawaveNodeStatsResponse>;
 
+/** The admin catalog of connection modes: the PARENT families and their LEAF
+ *  transport sub-modes. Shared by GET and PATCH /api/v1/admin/connection-modes.
+ *
+ *  Unlike publicConfig.connectionModes this includes DISABLED entries — the
+ *  operator has to be able to see and re-enable what they switched off — but,
+ *  like every mode surface, it never carries a squad UUID (pools live behind
+ *  /admin/remnawave/mode-placements and are write-only). */
+export const AdminConnectionModesResponse = z.object({
+  families: z.array(
+    z.object({
+      id: z.string(),
+      label: z.string().nullable(),
+      description: z.string().nullable(),
+      enabled: z.boolean(),
+    }),
+  ),
+  modes: z.array(
+    z.object({
+      id: z.string(),
+      family: z.string().nullable(),
+      label: z.string().nullable(),
+      description: z.string().nullable(),
+      deliveryStyle: z.enum(['url', 'rawConfig']),
+      isDefault: z.boolean(),
+      isFamilyDefault: z.boolean(),
+      enabled: z.boolean(),
+      bound: z.boolean(),
+    }),
+  ),
+});
+export type AdminConnectionModesResponse = z.infer<typeof AdminConnectionModesResponse>;
+
 // --- admin management (multi-admin onboarding via invite links) ---
 
 /** One row in the admins list (GET /api/v1/admin/admins). */

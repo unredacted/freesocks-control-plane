@@ -19,7 +19,7 @@
  * cycle (this repo has hit it before).
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { MutationCtx } from './_generated/server';
+import type { DatabaseReader, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
@@ -30,7 +30,11 @@ import { applyCountsDelta, readUserCounts } from './lib/statusCounters';
 import { upsertSettingRow as upsertSetting } from './appSettings';
 import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
-import { connectionModeWrites, resolveConnectionModes } from './lib/connectionModes';
+import {
+  connectionModeWrites,
+  resolveConnectionModeFamilies,
+  resolveConnectionModes,
+} from './lib/connectionModes';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { sanitizeBannerText, sanitizeEmail, sanitizeHeroTitles } from './lib/siteConfig';
@@ -2112,6 +2116,11 @@ export const setSiteConfig = internalMutation({
  * view (label null unless admin-set, so it doesn't round-trip the compiled
  * default into the form + pin English over i18n).
  */
+export const getConnectionModes = internalQuery({
+  args: {},
+  handler: (ctx) => connectionModeAdminView(ctx.db),
+});
+
 export const setConnectionModes = internalMutation({
   args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { patch, actorAdminId }) => {
@@ -2141,19 +2150,39 @@ export const setConnectionModes = internalMutation({
         payload: { key },
       });
     }
-    const [modes, bound] = await Promise.all([
-      resolveConnectionModes(ctx.db),
-      resolveBoundModeIds(ctx.db),
-    ]);
-    return {
-      modes: modes.map((m) => ({
+    return connectionModeAdminView(ctx.db);
+  },
+});
+
+/** The admin editor's view of the mode catalog: families + their leaf sub-modes,
+ *  each with its admin copy, `enabled` toggle, and `bound` (placement pool) flag.
+ *  Deprecated legacy aliases are excluded — they exist only so pre-migration rows
+ *  validate and must never appear as something an operator can edit. */
+export async function connectionModeAdminView(db: DatabaseReader) {
+  const [modes, families, bound] = await Promise.all([
+    resolveConnectionModes(db),
+    resolveConnectionModeFamilies(db),
+    resolveBoundModeIds(db),
+  ]);
+  return {
+    families: families.map((f) => ({
+      id: f.id,
+      label: f.label,
+      description: f.description,
+      enabled: f.enabled,
+    })),
+    modes: modes
+      .filter((m) => !m.deprecated)
+      .map((m) => ({
         id: m.id,
+        family: m.family ?? null,
         label: m.label,
         description: m.description,
         deliveryStyle: m.deliveryStyle,
         isDefault: m.isDefault,
+        isFamilyDefault: m.isFamilyDefault,
+        enabled: m.enabled,
         bound: bound.has(m.id),
       })),
-    };
-  },
-});
+  };
+}

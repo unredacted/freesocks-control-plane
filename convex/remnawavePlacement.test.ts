@@ -12,8 +12,10 @@ import type { Id } from './_generated/dataModel';
 import {
   pickByNodeLoad,
   resolveBoundModeCounts,
+  resolvePlacementPool,
   resolvePlacementTarget,
 } from './lib/remnawavePlacement';
+import { internal } from './_generated/api';
 import { remnawaveGetNodeStats } from './lib/backends/remnawave';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -201,7 +203,20 @@ describe('remnawaveGetNodeStats (provider aggregation)', () => {
 });
 
 describe('resolveBoundModeCounts', () => {
-  test('returns per-mode pool sizes (never UUIDs); unbound = 0', async () => {
+  test('returns per-mode pool sizes (never UUIDs); unbound = 0; legacy aliases excluded', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.freedom-ws.squads',
+        value: JSON.stringify(['sq-1', 'sq-2', 'sq-3']),
+        updatedAt: Date.now(),
+      });
+    });
+    const counts = await t.run((ctx) => resolveBoundModeCounts(ctx.db));
+    expect(counts).toEqual({ 'freedom-ws': 3, 'freedom-reality': 0, 'privacy-reality': 0 });
+  });
+
+  test('counts a pre-migration pool under its SUCCESSOR id', async () => {
     const t = convexTest(schema, modules);
     await t.run(async (ctx) => {
       await ctx.db.insert('appSettings', {
@@ -211,7 +226,7 @@ describe('resolveBoundModeCounts', () => {
       });
     });
     const counts = await t.run((ctx) => resolveBoundModeCounts(ctx.db));
-    expect(counts).toEqual({ evade: 3, privacy: 0 });
+    expect(counts).toEqual({ 'freedom-ws': 3, 'freedom-reality': 0, 'privacy-reality': 0 });
   });
 });
 
@@ -383,5 +398,68 @@ describe('resolvePlacementTarget', () => {
       placement: null,
       serverId: null,
     });
+  });
+});
+
+describe('admin enablement gates placement', () => {
+  async function setEnabled(
+    t: ReturnType<typeof convexTest>,
+    key: string,
+    value: boolean,
+  ): Promise<void> {
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', { key, value: JSON.stringify(value), updatedAt: Date.now() }),
+    );
+  }
+
+  test('the fallback ladder never lands a key on a DISABLED mode', async () => {
+    const t = convexTest(schema, modules);
+    // Only freedom-reality has a pool, and it ships disabled. An unbound member
+    // must NOT be silently homed onto its nodes just because it is the only pool.
+    await bindPool(t, 'freedom-reality', ['sq-reality']);
+    expect(await t.run((ctx) => resolvePlacementPool(ctx.db, 'privacy-reality'))).toEqual([]);
+
+    // Enable it and the same call now resolves through the ladder.
+    await setEnabled(t, 'connectionMode.freedom-reality.enabled', true);
+    expect(await t.run((ctx) => resolvePlacementPool(ctx.db, 'privacy-reality'))).toEqual([
+      'sq-reality',
+    ]);
+  });
+
+  test('a mode with its OWN pool still resolves even when another is disabled', async () => {
+    const t = convexTest(schema, modules);
+    await bindPool(t, 'privacy-reality', ['sq-priv']);
+    await bindPool(t, 'freedom-reality', ['sq-reality']); // disabled by default
+    expect(await t.run((ctx) => resolvePlacementPool(ctx.db, 'privacy-reality'))).toEqual([
+      'sq-priv',
+    ]);
+  });
+
+  test('effectivePlacementGate: blocks when the member’s mode is disabled but another is usable', async () => {
+    const t = convexTest(schema, modules);
+    await bindPool(t, 'freedom-ws', ['sq-ws']);
+    await bindPool(t, 'freedom-reality', ['sq-reality']);
+    // freedom-reality is bound but DISABLED, and freedom-ws is usable → refuse
+    // rather than silently re-home the member into the CDN pool.
+    expect(
+      await t.query(internal.remnawaveNodes.effectivePlacementGate, {
+        modeId: 'freedom-reality',
+      }),
+    ).toEqual({ blocked: true });
+
+    // Once enabled, the same member proceeds.
+    await setEnabled(t, 'connectionMode.freedom-reality.enabled', true);
+    expect(
+      await t.query(internal.remnawaveNodes.effectivePlacementGate, {
+        modeId: 'freedom-reality',
+      }),
+    ).toEqual({ blocked: false });
+  });
+
+  test('effectivePlacementGate: nothing usable anywhere → not blocked (bring-up)', async () => {
+    const t = convexTest(schema, modules);
+    expect(
+      await t.query(internal.remnawaveNodes.effectivePlacementGate, { modeId: 'freedom-ws' }),
+    ).toEqual({ blocked: false });
   });
 });

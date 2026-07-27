@@ -19,7 +19,12 @@ import { readUserCounts } from './lib/statusCounters';
 import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
 import { resolveSiteConfig } from './lib/siteConfig';
-import { resolveConnectionModes, publicProjection } from './lib/connectionModes';
+import {
+  publicFamilyProjection,
+  publicProjection,
+  resolveConnectionModeFamilies,
+  resolveConnectionModes,
+} from './lib/connectionModes';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { resolveClients, publicClients } from './lib/clientCatalog';
 import { resolveLocations } from './lib/locations';
@@ -116,6 +121,13 @@ export const get = query({
         .withIndex('by_active', (q) => q.eq('isActive', true))
         .first()) !== null;
 
+    // Resolved once: the family list is derived from it (a family with no visible
+    // child is itself hidden), so the two must be computed from the same snapshot.
+    const modeProjection = publicProjection(
+      await resolveConnectionModes(ctx.db),
+      await resolveBoundModeIds(ctx.db),
+    );
+
     return {
       membersJoinUrl: process.env.MEMBERS_JOIN_URL || undefined,
       membersAccountUrl: process.env.MEMBERS_ACCOUNT_URL || undefined,
@@ -205,12 +217,14 @@ export const get = query({
       // + text) and the footer "View source" repo link (toggle + https URL). Both
       // resolve to safe defaults (off/empty) until the operator sets them.
       site: await resolveSiteConfig(ctx.db),
-      // Member-facing connection-mode catalog (id + label + description +
-      // deliveryStyle + isDefault + available = placement pool bound). NEVER a
-      // squad UUID. Drives the transport chooser + its delivery behavior.
-      connectionModes: publicProjection(
-        await resolveConnectionModes(ctx.db),
-        await resolveBoundModeIds(ctx.db),
+      // Member-facing connection-mode catalog: the PARENT families a member picks
+      // first, plus their transport sub-choices (id + family + label + description
+      // + deliveryStyle + isDefault + available = enabled AND placement pool
+      // bound). Admin-disabled entries are omitted entirely. NEVER a squad UUID.
+      connectionModes: modeProjection,
+      connectionModeFamilies: publicFamilyProjection(
+        await resolveConnectionModeFamilies(ctx.db),
+        modeProjection,
       ),
       // Member-facing node-location catalog (active Remnawave instances with a
       // location set): code + display label + a coarse online bit. Never a URL

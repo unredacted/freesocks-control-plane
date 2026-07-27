@@ -17,9 +17,14 @@
   import { apiErrorMessage } from '../../lib/errors';
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import AdminListState from './AdminListState.svelte';
-  import { appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
+  import {
+    adminConnectionModesQuery,
+    appSettingsQuery,
+    configQuery,
+    queryKeys,
+  } from '../../lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { AppSettingsRecord } from '../../../shared/contracts/admin';
+  import { AdminConnectionModesResponse, AppSettingsRecord } from '../../../shared/contracts/admin';
   import { toast } from 'svelte-sonner';
 
   /**
@@ -225,69 +230,59 @@
   // Connection modes (transport) - the GENERIC catalog (label/description/default).
   // The Remnawave placement pool (which nodes each mode issues into) is managed on
   // the Remnawave admin page, not here.
-  let cpDraft = $state<{
-    default: string;
-    evadeLabel: string;
-    privacyLabel: string;
-    evadeDescription: string;
-    privacyDescription: string;
-  }>({
-    default: 'evade',
-    evadeLabel: '',
-    privacyLabel: '',
-    evadeDescription: '',
-    privacyDescription: '',
-  });
+  // Data-driven off the ADMIN catalog (which, unlike publicConfig, includes
+  // disabled entries — the operator must be able to see and re-enable what they
+  // switched off). Per-entry drafts are keyed by id, so adding a mode or a family
+  // needs no edit here.
+  type CpEntry = { label: string; description: string; enabled: boolean };
+  const cpModes = adminConnectionModesQuery();
+  let cpDefault = $state('');
+  let cpFamilyDraft = $state<Record<string, CpEntry>>({});
+  let cpModeDraft = $state<Record<string, CpEntry>>({});
   let cpInit = $state(false);
+  /** Families in catalog order with their leaf children, for the nested editor. */
+  let cpGroups = $derived(
+    (cpModes.data?.families ?? [])
+      .map((f) => ({
+        family: f,
+        children: (cpModes.data?.modes ?? []).filter((m) => m.family === f.id),
+      }))
+      .filter((g) => g.children.length > 0),
+  );
+  function hydrateCp(data: NonNullable<typeof cpModes.data>) {
+    // label/description arrive null unless the admin set them (blank input =
+    // members see the app's own translated copy).
+    cpDefault = data.modes.find((m) => m.isDefault)?.id ?? cpDefault;
+    cpFamilyDraft = Object.fromEntries(
+      data.families.map((f) => [
+        f.id,
+        { label: f.label ?? '', description: f.description ?? '', enabled: f.enabled },
+      ]),
+    );
+    cpModeDraft = Object.fromEntries(
+      data.modes.map((m) => [
+        m.id,
+        { label: m.label ?? '', description: m.description ?? '', enabled: m.enabled },
+      ]),
+    );
+  }
   $effect(() => {
-    const modes = cfg.data?.connectionModes;
-    if (modes && modes.length > 0 && !cpInit) {
-      // label/description arrive null unless the admin set them (blank input =
-      // members see the app's own translated copy).
-      cpDraft = {
-        default: modes.find((m) => m.isDefault)?.id ?? 'evade',
-        evadeLabel: modes.find((m) => m.id === 'evade')?.label ?? '',
-        privacyLabel: modes.find((m) => m.id === 'privacy')?.label ?? '',
-        evadeDescription: modes.find((m) => m.id === 'evade')?.description ?? '',
-        privacyDescription: modes.find((m) => m.id === 'privacy')?.description ?? '',
-      };
+    if (cpModes.data && !cpInit) {
+      hydrateCp(cpModes.data);
       cpInit = true;
     }
   });
   const saveConnectionModes = createMutation(() => ({
-    mutationFn: async () => {
-      const CpResp = z.object({
-        modes: z.array(
-          z.object({
-            id: z.string(),
-            label: z.string().nullable(),
-            description: z.string().nullable(),
-            deliveryStyle: z.enum(['url', 'rawConfig']),
-            isDefault: z.boolean(),
-            bound: z.boolean(),
-          }),
-        ),
-      });
-      const modes = {
-        evade: { label: cpDraft.evadeLabel, description: cpDraft.evadeDescription },
-        privacy: { label: cpDraft.privacyLabel, description: cpDraft.privacyDescription },
-      };
-      return apiClient.patch(
+    mutationFn: async () =>
+      apiClient.patch(
         '/api/v1/admin/connection-modes',
-        { default: cpDraft.default, modes },
-        CpResp,
-      );
-    },
+        { default: cpDefault, families: cpFamilyDraft, modes: cpModeDraft },
+        AdminConnectionModesResponse,
+      ),
     onSuccess: (updated) => {
-      // label/description come back null when cleared - reflect that as blank inputs.
-      cpDraft = {
-        default: updated.modes.find((m) => m.isDefault)?.id ?? cpDraft.default,
-        evadeLabel: updated.modes.find((m) => m.id === 'evade')?.label ?? '',
-        privacyLabel: updated.modes.find((m) => m.id === 'privacy')?.label ?? '',
-        evadeDescription: updated.modes.find((m) => m.id === 'evade')?.description ?? '',
-        privacyDescription: updated.modes.find((m) => m.id === 'privacy')?.description ?? '',
-      };
+      hydrateCp(updated);
       void qc.invalidateQueries({ queryKey: queryKeys.config });
+      void qc.invalidateQueries({ queryKey: queryKeys.adminConnectionModes });
       toast.success('Connection modes saved');
     },
     onError: (err) => {
@@ -882,109 +877,168 @@
         <CardHeader>
           <CardTitle class="text-base">Connection modes</CardTitle>
           <CardDescription>
-            The member-facing transport choice: "Internet Freedom Mode" (evade) and "Privacy Mode"
-            (privacy). Set the default and, optionally, a custom label/description that replaces the
+            The member-facing transport choice, in two levels: a parent mode ("Freedom Mode",
+            "Privacy Mode") and its transport sub-modes. Turn a parent off to hide its whole
+            subtree. Set the default and, optionally, a custom label/description that replaces the
             member picker's translated copy verbatim in EVERY language (leave blank to keep the
-            app's own translations). Which Remnawave nodes each mode issues into - the placement
+            app's own translations). Which Remnawave nodes each sub-mode issues into - the placement
             pool + live node load - is managed on the <strong>Remnawave</strong> page.
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-5 text-sm">
-          <!-- evade -->
-          <div class="space-y-2">
-            <label class="flex items-center gap-2 font-medium">
-              <input
-                type="radio"
-                name="cp-default"
-                checked={cpDraft.default === 'evade'}
-                onchange={() => (cpDraft = { ...cpDraft, default: 'evade' })}
-              />
-              Internet Freedom Mode (evade)
-              {#if cpDraft.default === 'evade'}
-                <span
-                  class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
-                  >default</span
-                >
-              {/if}
-            </label>
-            <div>
-              <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-label"
-                >Label <span class="opacity-70">(blank = translated default)</span></label
+          {#each cpGroups as g, gi (g.family.id)}
+            {@const fd = cpFamilyDraft[g.family.id]}
+            {#if fd}
+              <div
+                class="space-y-3"
+                class:border-t={gi > 0}
+                class:border-border={gi > 0}
+                class:pt-4={gi > 0}
               >
-              <Input
-                id="cp-evade-label"
-                placeholder="Internet Freedom Mode"
-                value={cpDraft.evadeLabel}
-                oninput={(e) =>
-                  (cpDraft = { ...cpDraft, evadeLabel: (e.target as HTMLInputElement).value })}
-              />
-            </div>
-            <div>
-              <label class="text-xs text-muted-foreground mb-1 block" for="cp-evade-description"
-                >Description <span class="opacity-70">(blank = translated default)</span></label
-              >
-              <textarea
-                id="cp-evade-description"
-                rows="2"
-                class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
-                placeholder="Shown on the member's picker card"
-                value={cpDraft.evadeDescription}
-                oninput={(e) =>
-                  (cpDraft = {
-                    ...cpDraft,
-                    evadeDescription: (e.target as HTMLTextAreaElement).value,
-                  })}
-              ></textarea>
-            </div>
-          </div>
+                <label class="flex items-center gap-2 font-medium">
+                  <input
+                    type="checkbox"
+                    checked={fd.enabled}
+                    onchange={(e) =>
+                      (cpFamilyDraft = {
+                        ...cpFamilyDraft,
+                        [g.family.id]: {
+                          ...fd,
+                          enabled: (e.target as HTMLInputElement).checked,
+                        },
+                      })}
+                  />
+                  {g.family.label ?? g.family.id}
+                  <span class="font-mono text-xs text-muted-foreground">({g.family.id})</span>
+                </label>
+                <div>
+                  <label
+                    class="text-xs text-muted-foreground mb-1 block"
+                    for={`cp-fam-${g.family.id}-label`}
+                    >Label <span class="opacity-70">(blank = translated default)</span></label
+                  >
+                  <Input
+                    id={`cp-fam-${g.family.id}-label`}
+                    value={fd.label}
+                    oninput={(e) =>
+                      (cpFamilyDraft = {
+                        ...cpFamilyDraft,
+                        [g.family.id]: { ...fd, label: (e.target as HTMLInputElement).value },
+                      })}
+                  />
+                </div>
+                <div>
+                  <label
+                    class="text-xs text-muted-foreground mb-1 block"
+                    for={`cp-fam-${g.family.id}-description`}
+                    >Description <span class="opacity-70">(blank = translated default)</span></label
+                  >
+                  <textarea
+                    id={`cp-fam-${g.family.id}-description`}
+                    rows="2"
+                    class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
+                    placeholder="Shown on the member's picker card"
+                    value={fd.description}
+                    oninput={(e) =>
+                      (cpFamilyDraft = {
+                        ...cpFamilyDraft,
+                        [g.family.id]: {
+                          ...fd,
+                          description: (e.target as HTMLTextAreaElement).value,
+                        },
+                      })}
+                  ></textarea>
+                </div>
 
-          <!-- privacy -->
-          <div class="space-y-2 border-t border-border pt-4">
-            <label class="flex items-center gap-2 font-medium">
-              <input
-                type="radio"
-                name="cp-default"
-                checked={cpDraft.default === 'privacy'}
-                onchange={() => (cpDraft = { ...cpDraft, default: 'privacy' })}
-              />
-              Privacy Mode (privacy)
-              {#if cpDraft.default === 'privacy'}
-                <span
-                  class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
-                  >default</span
-                >
-              {/if}
-            </label>
-            <div>
-              <label class="text-xs text-muted-foreground mb-1 block" for="cp-privacy-label"
-                >Label <span class="opacity-70">(blank = translated default)</span></label
-              >
-              <Input
-                id="cp-privacy-label"
-                placeholder="Privacy Mode"
-                value={cpDraft.privacyLabel}
-                oninput={(e) =>
-                  (cpDraft = { ...cpDraft, privacyLabel: (e.target as HTMLInputElement).value })}
-              />
-            </div>
-            <div>
-              <label class="text-xs text-muted-foreground mb-1 block" for="cp-privacy-description"
-                >Description <span class="opacity-70">(blank = translated default)</span></label
-              >
-              <textarea
-                id="cp-privacy-description"
-                rows="2"
-                class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
-                placeholder="Shown on the member's picker card"
-                value={cpDraft.privacyDescription}
-                oninput={(e) =>
-                  (cpDraft = {
-                    ...cpDraft,
-                    privacyDescription: (e.target as HTMLTextAreaElement).value,
-                  })}
-              ></textarea>
-            </div>
-          </div>
+                <div class="space-y-3 border-s-2 border-border ps-4">
+                  {#each g.children as m (m.id)}
+                    {@const md = cpModeDraft[m.id]}
+                    {#if md}
+                      <div class="space-y-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <label class="flex items-center gap-2 font-medium">
+                            <input
+                              type="checkbox"
+                              checked={md.enabled}
+                              onchange={(e) =>
+                                (cpModeDraft = {
+                                  ...cpModeDraft,
+                                  [m.id]: {
+                                    ...md,
+                                    enabled: (e.target as HTMLInputElement).checked,
+                                  },
+                                })}
+                            />
+                            {m.label ?? m.id}
+                            <span class="font-mono text-xs text-muted-foreground">({m.id})</span>
+                          </label>
+                          <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <input
+                              type="radio"
+                              name="cp-default"
+                              checked={cpDefault === m.id}
+                              onchange={() => (cpDefault = m.id)}
+                            />
+                            default
+                          </label>
+                          {#if !m.bound}
+                            <!-- Enabled but with no placement pool = still not
+                                 selectable; say so here rather than letting the
+                                 operator think the toggle was enough. -->
+                            <span
+                              class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+                            >
+                              No pool bound
+                            </span>
+                          {/if}
+                        </div>
+                        <div>
+                          <label
+                            class="text-xs text-muted-foreground mb-1 block"
+                            for={`cp-mode-${m.id}-label`}
+                            >Label
+                            <span class="opacity-70">(blank = translated default)</span></label
+                          >
+                          <Input
+                            id={`cp-mode-${m.id}-label`}
+                            value={md.label}
+                            oninput={(e) =>
+                              (cpModeDraft = {
+                                ...cpModeDraft,
+                                [m.id]: { ...md, label: (e.target as HTMLInputElement).value },
+                              })}
+                          />
+                        </div>
+                        <div>
+                          <label
+                            class="text-xs text-muted-foreground mb-1 block"
+                            for={`cp-mode-${m.id}-description`}
+                            >Description
+                            <span class="opacity-70">(blank = translated default)</span></label
+                          >
+                          <textarea
+                            id={`cp-mode-${m.id}-description`}
+                            rows="2"
+                            class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
+                            placeholder="Shown under the transport choice"
+                            value={md.description}
+                            oninput={(e) =>
+                              (cpModeDraft = {
+                                ...cpModeDraft,
+                                [m.id]: {
+                                  ...md,
+                                  description: (e.target as HTMLTextAreaElement).value,
+                                },
+                              })}
+                          ></textarea>
+                        </div>
+                      </div>
+                    {/if}
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          {/each}
 
           <div class="flex justify-end">
             {#if !cpInit}

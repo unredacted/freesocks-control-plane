@@ -28,6 +28,7 @@ import {
   BackendServerAdmin,
   ClientAdmin,
   MirrorProviderAdmin,
+  AdminConnectionModesResponse,
   RemnawaveNodeStatsResponse,
   AdminReferralConfig,
   TierAdmin,
@@ -64,6 +65,7 @@ export const queryKeys = {
   adminSettings: ['admin', 'settings'] as const,
   adminBackendServers: ['admin', 'backend-servers'] as const,
   adminNodeStats: ['admin', 'remnawave', 'node-stats'] as const,
+  adminConnectionModes: ['admin', 'connection-modes'] as const,
   adminMirrorProviders: ['admin', 'mirror-providers'] as const,
   adminClients: ['admin', 'clients'] as const,
   adminRateLimits: ['admin', 'rate-limits'] as const,
@@ -466,6 +468,17 @@ export const adminNodeStatsQuery = () =>
     queryKey: queryKeys.adminNodeStats,
     queryFn: () => apiClient.get('/api/v1/admin/remnawave/node-stats', RemnawaveNodeStatsResponse),
     staleTime: 60_000,
+  }));
+
+/** The admin view of the connection-mode catalog: families + their leaf
+ *  sub-modes with copy, the `enabled` toggle, and `bound`. Distinct from
+ *  publicConfig.connectionModes, which OMITS disabled entries — an operator must
+ *  still be able to see and edit a mode they have switched off. */
+export const adminConnectionModesQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminConnectionModes,
+    queryFn: () => apiClient.get('/api/v1/admin/connection-modes', AdminConnectionModesResponse),
+    staleTime: 30_000,
   }));
 
 /** Admin Status page: the censorship matrix + load thresholds editor state. */

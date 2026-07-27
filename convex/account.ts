@@ -865,6 +865,19 @@ export const switchMode = internalAction({
     if (!chosen) {
       return { ok: false, code: 'validation', message: 'Unknown connection mode', status: 400 };
     }
+    // Refuse to switch INTO a mode an admin has turned off. publicConfig already
+    // omits it from the picker, but that is presentation — this is the
+    // server-authoritative guard (and the only one an API caller hits).
+    // Deliberately one-way: the member's CURRENT mode is never re-validated here,
+    // so someone stranded on a just-disabled mode can always switch AWAY.
+    if (!chosen.enabled) {
+      return {
+        ok: false,
+        code: 'validation',
+        message: 'This connection mode is not available.',
+        status: 400,
+      };
+    }
     // Refuse to switch to a mode with no placement pool bound (Remnawave only):
     // issuing into it would mint a squad-less "dead" key AND we'd have tombstoned
     // the working key to do it. The picker also disables unbound modes; this is

@@ -6,11 +6,18 @@
  * lives in convex/remnawaveNodes.ts, not here.
  */
 import { internalQuery } from './_generated/server';
-import { resolveConnectionModes, resolveDefaultModeId } from './lib/connectionModes';
+import {
+  resolveConnectionModeFamilies,
+  resolveConnectionModes,
+  resolveDefaultModeId,
+} from './lib/connectionModes';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 
-/** Admin/status view + the switch-mode validity check: id/label/deliveryStyle/
- *  isDefault plus a `bound` boolean (a placement pool is bound) — NEVER a UUID. */
+/** Admin/status view + the switch-mode validity check: id/family/label/
+ *  deliveryStyle/isDefault plus `enabled` (admin toggle, family AND sub-mode) and
+ *  `bound` (a placement pool is bound) — NEVER a UUID. Deprecated legacy aliases
+ *  are excluded: they exist only so pre-migration rows validate, and surfacing
+ *  them would put dead ids in the admin UI. */
 export const list = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -18,14 +25,25 @@ export const list = internalQuery({
       resolveConnectionModes(ctx.db),
       resolveBoundModeIds(ctx.db),
     ]);
-    return modes.map((m) => ({
-      id: m.id,
-      label: m.label,
-      deliveryStyle: m.deliveryStyle,
-      isDefault: m.isDefault,
-      bound: bound.has(m.id),
-    }));
+    return modes
+      .filter((m) => !m.deprecated)
+      .map((m) => ({
+        id: m.id,
+        family: m.family ?? null,
+        label: m.label,
+        deliveryStyle: m.deliveryStyle,
+        isDefault: m.isDefault,
+        isFamilyDefault: m.isFamilyDefault,
+        enabled: m.enabled,
+        bound: bound.has(m.id),
+      }));
   },
+});
+
+/** The family catalog for the admin editor (label/description/enabled). */
+export const families = internalQuery({
+  args: {},
+  handler: (ctx) => resolveConnectionModeFamilies(ctx.db),
 });
 
 /** The resolved default mode id (for AccountView when a member hasn't chosen). */

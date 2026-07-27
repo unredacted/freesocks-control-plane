@@ -10,6 +10,7 @@
   import { queryKeys } from '../lib/queries';
   import { setConnectionModePref } from '../lib/connectionModePref.svelte';
   import { shouldConfirmSwitch } from '../lib/connectionMode';
+  import { qualifiedModeLabel } from '../lib/connectionModeCopy';
 
   /**
    * The connection-mode (transport) switcher, shared by BOTH /account and
@@ -27,15 +28,24 @@
    */
   interface Mode {
     id: string;
+    family?: string;
     deliveryStyle: 'url' | 'rawConfig';
     label: string | null;
     description: string | null;
     isDefault: boolean;
+    isFamilyDefault?: boolean;
     available: boolean;
   }
+  interface Family {
+    id: string;
+    label: string | null;
+    description: string | null;
+  }
   interface Props {
-    /** The public mode catalog (config.connectionModes). */
+    /** The public LEAF catalog (config.connectionModes). */
     modes: Mode[];
+    /** The public FAMILY catalog (config.connectionModeFamilies). */
+    families?: Family[];
     /** The parent's effectiveModeId - the base highlight (server-authoritative or local). */
     selected: string;
     /** Server's country-based recommendation id, badged. */
@@ -54,6 +64,7 @@
   }
   let {
     modes,
+    families = [],
     selected,
     suggested = null,
     serverBacked = false,
@@ -74,14 +85,13 @@
   // role="status" region so the switch outcome is spoken once. Never the account number.
   let liveMessage = $state('');
 
-  // Mode title for the toast + confirm dialog: an admin-set catalog label overrides
-  // the translated copy verbatim (all locales); else the known-mode i18n, else the id.
+  // Mode title for the toast + confirm dialog. Qualified with the family
+  // ("Freedom Mode - REALITY") because a bare transport name is ambiguous once
+  // two families each offer REALITY. Resolution (admin label -> i18n -> id) lives
+  // in lib/connectionModeCopy so this and the picker can't drift.
   function modeLabel(id: string): string {
-    const custom = modes.find((m) => m.id === id)?.label;
-    if (custom?.trim()) return custom;
-    if (id === 'privacy') return t('delivery.privacyTitle');
-    if (id === 'evade') return t('delivery.evadeTitle');
-    return id;
+    const m = modes.find((x) => x.id === id);
+    return m ? qualifiedModeLabel(m, families) : id;
   }
 
   const switchMode = createMutation(() => ({
@@ -150,6 +160,7 @@
 
 <DeliveryPreference
   {modes}
+  {families}
   selected={pendingModeId ?? selected}
   {suggested}
   {serverBacked}

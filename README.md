@@ -97,7 +97,7 @@ convex/                            The backend (Convex functions)
 ├── backends.ts                    proxy-backend dispatch (action)
 ├── backendServers.ts              generic backend-instance pool (DB half) + healthcheck
 ├── remnawaveNodes.ts              node-load telemetry + mode-placement pools (issuance placement)
-├── connectionModes.ts             member connection-mode read/switch (evade / privacy)
+├── connectionModes.ts             member connection-mode read/switch (families + sub-modes)
 ├── clients.ts                     DB-driven recommended-client catalog (admin CRUD)
 ├── webauthn.ts                    admin passkey ceremonies + bootstrap ("use node")
 ├── memberWebauthn.ts, memberPasskeys.ts   opt-in member passkeys ("use node" + data half)
