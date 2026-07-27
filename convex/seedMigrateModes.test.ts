@@ -179,3 +179,53 @@ describe('seed:migrateConnectionModeIds', () => {
     });
   });
 });
+
+describe('lazy self-heal (users.canonicalizeConnectionMode)', () => {
+  test('rewrites a pre-rename id so no legacy value reaches the picker', async () => {
+    // The reported bug: a member still on `evade` got an id publicConfig no
+    // longer lists, which the picker rendered as a raw "evade" chip.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId, 'evade');
+
+    const out = await t.mutation(internal.users.canonicalizeConnectionMode, { userId });
+    expect(out).toBe('freedom-ws');
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('freedom-ws');
+    });
+  });
+
+  test('maps privacy to privacy-reality, never to the catalog default', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId, 'privacy');
+    expect(await t.mutation(internal.users.canonicalizeConnectionMode, { userId })).toBe(
+      'privacy-reality',
+    );
+  });
+
+  test('is a no-op for a current id (the account view refetches every 60s)', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId, 'privacy-reality');
+    const before = await t.run(async (ctx) => (await ctx.db.get(userId))!.updatedAt);
+
+    expect(await t.mutation(internal.users.canonicalizeConnectionMode, { userId })).toBe(
+      'privacy-reality',
+    );
+    await t.run(async (ctx) => {
+      // updatedAt untouched proves no write fired.
+      expect((await ctx.db.get(userId))!.updatedAt).toBe(before);
+    });
+  });
+
+  test('leaves an unset mode alone (the member follows the catalog default)', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    expect(await t.mutation(internal.users.canonicalizeConnectionMode, { userId })).toBeNull();
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.connectionModeId).toBeUndefined();
+    });
+  });
+});

@@ -2,6 +2,7 @@
 // status, tier) must never be readable on the raw Convex channel.
 import { internalMutation, internalQuery } from './_generated/server';
 import { v } from 'convex/values';
+import { canonicalModeId } from './lib/connectionModes';
 
 export const get = internalQuery({
   args: { id: v.id('users') },
@@ -25,6 +26,30 @@ export const setConnectionMode = internalMutation({
   handler: async (ctx, { userId, modeId }) => {
     await ctx.db.patch(userId, { connectionModeId: modeId, updatedAt: Date.now() });
     return null;
+  },
+});
+
+/**
+ * Lazy self-heal for a member still holding a PRE-RENAME mode id (`evade` /
+ * `privacy`). Called from the account view, so an active member is migrated the
+ * first time they load the page and never sees the legacy id — the bulk
+ * `seed:migrateConnectionModeIds` run stays the path for everyone else.
+ *
+ * Same lazy-backfill shape as `supportId` / `referralCode`. Compare-and-set: the
+ * patch only fires when the stored value is actually a legacy id, so the account
+ * view's 60s refetch does not write on every load, and a concurrent switch that
+ * already moved the member is left alone. Returns the canonical id either way.
+ */
+export const canonicalizeConnectionMode = internalMutation({
+  args: { userId: v.id('users') },
+  handler: async (ctx, { userId }): Promise<string | null> => {
+    const user = await ctx.db.get(userId);
+    const stored = user?.connectionModeId ?? null;
+    if (!stored) return null;
+    const canonical = canonicalModeId(stored);
+    if (canonical === stored) return stored;
+    await ctx.db.patch(userId, { connectionModeId: canonical, updatedAt: Date.now() });
+    return canonical;
   },
 });
 

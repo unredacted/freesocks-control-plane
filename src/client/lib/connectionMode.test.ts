@@ -96,12 +96,23 @@ describe('shouldConfirmSwitch', () => {
 describe('resolveEffectiveModeId: catalog validation', () => {
   const KNOWN = ['freedom-ws', 'freedom-reality', 'privacy-reality'];
 
-  test('drops a stored pref that is no longer in the catalog', () => {
-    // localStorage outlives deploys: a browser can still hold a renamed id.
+  test('MAPS a pre-rename pref to its successor instead of dropping it', () => {
+    // localStorage outlives deploys, so a browser can still hold `privacy`.
+    // Dropping it would fall through to the default and silently move a Privacy
+    // member into Freedom Mode - map, don't discard.
     expect(
       resolveEffectiveModeId({
         serverBacked: false,
-        pref: 'evade', // pre-rename value
+        pref: 'privacy',
+        suggested: null,
+        fallback: 'freedom-ws',
+        knownIds: KNOWN,
+      }),
+    ).toBe('privacy-reality');
+    expect(
+      resolveEffectiveModeId({
+        serverBacked: false,
+        pref: 'evade',
         suggested: null,
         fallback: 'freedom-ws',
         knownIds: KNOWN,
@@ -109,12 +120,27 @@ describe('resolveEffectiveModeId: catalog validation', () => {
     ).toBe('freedom-ws');
   });
 
-  test('drops a suggestion that is not in the catalog', () => {
+  test('MAPS a pre-rename server value, so no legacy id reaches the picker', () => {
+    // This is the "weird `evade` button under Freedom Mode" case: an un-migrated
+    // account row must resolve to freedom-ws, not be rendered as a raw id.
+    expect(
+      resolveEffectiveModeId({
+        serverBacked: true,
+        connectionModeId: 'evade',
+        pref: null,
+        suggested: null,
+        fallback: 'freedom-ws',
+        knownIds: KNOWN,
+      }),
+    ).toBe('freedom-ws');
+  });
+
+  test('drops a genuinely unknown pref / suggestion', () => {
     expect(
       resolveEffectiveModeId({
         serverBacked: false,
-        pref: null,
-        suggested: 'privacy', // pre-rename value
+        pref: 'no-such-mode',
+        suggested: 'also-bogus',
         fallback: 'freedom-ws',
         knownIds: KNOWN,
       }),
