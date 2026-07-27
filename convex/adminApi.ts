@@ -1541,8 +1541,9 @@ export const deleteBackendServerBySlug = internalMutation({
  *
  * With `id` set (editing an EXISTING instance), blank fields fall back to the
  * STORED config so an admin can verify a live instance without retyping its
- * secret — the secret never round-trips to the client either way. Typed fields
- * still override the stored ones.
+ * secret — the secret never round-trips to the client either way. Remnawave's
+ * stored token is only reused for its stored URL; changing the destination
+ * requires an explicitly supplied token.
  */
 export const testBackendConnection = internalAction({
   args: {
@@ -1574,6 +1575,9 @@ export const testBackendConnection = internalAction({
       const apiToken = a.apiToken?.trim() || rw?.apiToken;
       if (!baseUrl || !apiToken)
         return { ok: false, error: 'A base URL and an API token are required' };
+      if (!a.apiToken?.trim() && rw && baseUrl !== rw.baseUrl) {
+        return { ok: false, error: 'An API token is required when changing the base URL' };
+      }
       config = { type: 'remnawave', baseUrl, apiToken };
     } else {
       const ol = stored?.type === 'outline' ? stored : null;
