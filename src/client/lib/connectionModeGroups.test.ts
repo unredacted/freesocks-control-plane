@@ -42,11 +42,24 @@ describe('groupModesByFamily', () => {
     expect(groups[1]!.children.map((m) => m.id)).toEqual(['privacy-reality']);
   });
 
-  test('a family with ONE child still groups (the caller collapses the sub-choice)', () => {
-    // Privacy Mode has a single transport today, so it must render as a plain
-    // card - the component keys that off children.length, not a special case.
+  test('a family with ONE child still groups, so its transport stays visible', () => {
+    // Privacy Mode has a single transport today. It must still come back as a
+    // family with a child - the component renders that child as a static chip
+    // rather than hiding it, and turns the row interactive once a second
+    // transport is added, with no code change.
     const groups = groupModesByFamily([WS, PRIVACY], FAMILIES);
-    expect(groups.find((g) => g.family?.id === 'privacy')!.children).toHaveLength(1);
+    expect(groups.find((g) => g.family?.id === 'privacy')!.children).toEqual([PRIVACY]);
+  });
+
+  test('a SECOND privacy transport slots in with no special-casing', () => {
+    // The forward-looking case: adding a transport is a catalog entry plus copy.
+    const privacyAlt = mode({ id: 'privacy-alt', family: 'privacy' });
+    const groups = groupModesByFamily([WS, PRIVACY, privacyAlt], FAMILIES);
+    const privacyGroup = groups.find((g) => g.family?.id === 'privacy')!;
+    expect(privacyGroup.children.map((m) => m.id)).toEqual(['privacy-reality', 'privacy-alt']);
+    // The declared family default still wins the parent-card click, so adding a
+    // sibling cannot silently change what picking "Privacy Mode" selects.
+    expect(familyTargetMode(privacyGroup.children)!.id).toBe('privacy-reality');
   });
 
   test('drops a family whose children are all gone (e.g. admin-disabled)', () => {

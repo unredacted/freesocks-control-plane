@@ -20,9 +20,13 @@
   /**
    * "What matters most to you?" picker - the member-facing connection-mode
    * choice, in TWO levels: a parent FAMILY card (Freedom Mode / Privacy Mode),
-   * and inside the selected family a transport SUB-CHOICE (WebSocket / REALITY).
-   * A family with a single visible child renders no sub-choice at all, so a
-   * one-transport family looks exactly like the old flat card.
+   * and inside it a transport row (WebSocket / REALITY / ...).
+   *
+   * EVERY family shows its transport row, including one-transport families like
+   * Privacy Mode today: the member should always be able to see which method
+   * their key uses. With a single transport the row is a static chip; it turns
+   * into a keyboard-navigable radiogroup on its own as soon as a second
+   * transport is enabled, with no change here.
    *
    * The hierarchy is presentation only: what `onChoose` emits, and what the
    * server stores, is always a flat LEAF id.
@@ -188,43 +192,61 @@
           <p class="mt-1 text-xs text-muted-foreground">{body}</p>
         </button>
 
-        <!-- Transport sub-choice. Only when the family actually offers a choice:
-             a single-child family stays a plain card. -->
-        {#if g.children.length > 1}
+        <!-- Transport row. Shown for EVERY family, including one-transport ones:
+             a member should always be able to see which method their key uses,
+             and a family that hides its only transport gives no hint that more
+             can be added. With one option it is a static chip rather than a
+             pointless single-item radiogroup; it becomes interactive on its own
+             the moment a second transport is enabled. Skipped for an orphan leaf
+             (family === null), where the card head already IS the mode. -->
+        {#if g.family}
+          {@const interactive = g.children.length > 1}
+          <!-- Describe whichever transport the row is highlighting: the single one
+               when static, otherwise the selected chip (nothing, when this family
+               is not the selected one and so no chip is active). -->
+          {@const described = interactive
+            ? g.children.find((c) => c.id === selected)
+            : g.children[0]}
           <div class="border-t border-border/60 px-4 pb-4 pt-3">
             <p class="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {t('delivery.transportLabel')}
             </p>
-            <div
-              role="radiogroup"
-              aria-label={`${title} - ${t('delivery.transportLabel')}`}
-              class="flex flex-wrap gap-2"
-              onkeydown={(e) => onTransportKeydown(e, g.children)}
-            >
-              {#each g.children as child (child.id)}
-                {@const disabled = isDisabled(child)}
-                {@const active = selected === child.id}
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  tabindex={active ? 0 : -1}
-                  {disabled}
-                  onclick={() => choose(child)}
-                  title={disabled && !active ? t('delivery.unavailable') : undefined}
-                  class="rounded-md border px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 {active
-                    ? 'border-primary bg-primary/10 text-primary'
-                    : 'border-border text-muted-foreground hover:border-primary/40'}"
-                >
-                  {modeTitle(child)}
-                </button>
-              {/each}
-            </div>
-            {#each g.children as child (child.id)}
-              {#if selected === child.id && modeBody(child)}
-                <p class="mt-2 text-xs text-muted-foreground">{modeBody(child)}</p>
-              {/if}
-            {/each}
+            {#if interactive}
+              <div
+                role="radiogroup"
+                aria-label={`${title} - ${t('delivery.transportLabel')}`}
+                class="flex flex-wrap gap-2"
+                onkeydown={(e) => onTransportKeydown(e, g.children)}
+              >
+                {#each g.children as child (child.id)}
+                  {@const disabled = isDisabled(child)}
+                  {@const active = selected === child.id}
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    tabindex={active ? 0 : -1}
+                    {disabled}
+                    onclick={() => choose(child)}
+                    title={disabled && !active ? t('delivery.unavailable') : undefined}
+                    class="rounded-md border px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 {active
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border text-muted-foreground hover:border-primary/40'}"
+                  >
+                    {modeTitle(child)}
+                  </button>
+                {/each}
+              </div>
+            {:else}
+              <span
+                class="inline-block rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground"
+              >
+                {modeTitle(g.children[0]!)}
+              </span>
+            {/if}
+            {#if described && modeBody(described)}
+              <p class="mt-2 text-xs text-muted-foreground">{modeBody(described)}</p>
+            {/if}
           </div>
         {/if}
       </div>

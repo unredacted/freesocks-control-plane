@@ -58,11 +58,28 @@ export const CONNECTION_MODE_FAMILIES: readonly ConnectionModeFamilyDef[] = [
   },
 ] as const;
 
-/** The compiled catalog of known LEAF modes (transport sub-choices). Adding one:
- *  add an entry here plus its i18n keys; a novel mode with no key falls back to
- *  the admin DB copy, then the id. `deprecated` entries are legacy ids retained
- *  only so pre-migration rows still validate — they carry no family and are
- *  never projected to members (see the WS2 migration in the plan). */
+/**
+ * The compiled catalog of known LEAF modes (transport sub-choices).
+ *
+ * ADDING A TRANSPORT to an existing family (the expected way this grows — e.g. a
+ * second Privacy Mode method alongside REALITY) is additive and needs no new
+ * plumbing:
+ *   1. an entry here with the family's id and the next `order`. Do NOT set
+ *      `isFamilyDefault` unless you intend to change what clicking the parent
+ *      card selects; exactly one leaf per family should carry it.
+ *   2. `delivery.<id>Title` / `delivery.<id>Body` in `messages/en.json`, then
+ *      `bun run i18n:keys`, plus a `MODE_COPY` entry in
+ *      `src/client/lib/connectionModeCopy.ts` (without it the picker falls back
+ *      to the admin-set label, then the raw id).
+ *   3. bind its placement pool in Admin → Remnawave, then enable it in
+ *      Admin → Settings. It ships unselectable until BOTH are done.
+ * Everything else — the picker (a one-transport family's static chip becomes a
+ * radiogroup automatically), the admin editors, placement resolution, the status
+ * matrix — is data-driven off this array.
+ *
+ * `deprecated` entries are legacy ids retained only so pre-migration rows still
+ * validate; they carry no family and are never projected to members.
+ */
 export interface ConnectionModeDef {
   id: string;
   /** Parent family id; absent ONLY for deprecated legacy ids. */
