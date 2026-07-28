@@ -31,14 +31,27 @@ wire protocol is pluggable.
      update(config, backendUserId, patch) -> void
      resetTraffic(config, backendUserId) -> void
      remove(config, backendUserId) -> void
-     removeDevice?(config, backendUserId, hwid) -> void   // optional: revoke one HWID device
-     setStatus?(config, backendUserId, active) -> void    // optional: enable/disable
-     fetchContent(config, backendShortId, ua?) -> SubscriptionContent
+     removeDevice?(config, backendUserId, hwid) -> void        // optional: revoke one HWID device
+     setStatus?(config, backendUserId, active) -> void         // optional: enable/disable
+     bulkUpdateTrafficLimit?(config, ids, bytes) -> void       // optional: fleet re-cap in bulk
+     getUserUsage?(config, backendUserId, days) -> UsageSeries // optional: member usage trend
+     getFleetStats?(config) -> FleetStats                      // optional: admin dashboard stats
+     getNodeStats?(config) -> NodeStats[]                      // optional: per-placement node load
+     hardenLogging?(config, dryRun) -> report                  // optional: no-IP-log enforcement
+     fetchContent(config, backendShortId, ua?, subUrl?, hwid?) -> SubscriptionContent
      health(config) -> { keyCount: number | null, rttMs }
      testConnection(config) -> { ok, keyCount } | { ok:false, error }
    }
    const PROVIDERS: Record<BackendId, BackendProvider> = { remnawave, outline }
    ```
+
+   **The capability record** (`convex/lib/backends/capabilities.ts`) is the DB-side mirror of the
+   optional ops: `CAPABILITIES: Record<BackendId, {placement, nodePinning, deviceManagement,
+nodeStats, locations, bulkTrafficUpdate, usageHistory, fetch404IsDeviceRejection,
+accessKeyDelivery}>`. Domain code branches on these flags, never on backend-id literals; a
+   consistency test pins each flag to the presence of the matching optional provider method (and
+   `placement` to the placement-resolver registry), so the layers cannot drift. `publicConfig`
+   ships a member-safe subset per backend (`backends.list[].capabilities`).
 
    `config` is the instance's `backendServers.config` (a variant of the schema's discriminated
    `backendServerConfig` union). The shared TS types (`IssueUserSpec`, `IssuedUser`, `UserState`,
@@ -53,9 +66,10 @@ wire protocol is pluggable.
    (`resolveKeyServer` via `subscriptions.backendServerId`), `bumpKeyCount`, the per-type
    `healthcheck` action (cron), and `markHealthy`. This is shared by all types.
 
-4. **The dispatch** `convex/backends.ts` (six `internalAction`s). It resolves an instance, then calls
-   `PROVIDERS[instance.backend].<op>(instance.config, ...)`. There are no per-backend `if` arms and
-   no env-based config.
+4. **The dispatch** `convex/backends.ts` (the `internalAction`s). It resolves an instance, then calls
+   `PROVIDERS[instance.backend].<op>(instance.config, ...)`. Branches are allowed ONLY on declared
+   capabilities (e.g. `capabilitiesOf(backend).nodePinning` gates the subscription node-pinning
+   pass), never on backend-id literals; there is no env-based config.
    - `issueUser({ backend, spec })` dispatches on the tier's backend **type**, picks an active
      instance of that type from the scored pool (random among the top candidates; the CSPRNG pick
      lives in the action, not the query), issues, bumps the instance's key count, and returns the
@@ -144,26 +158,41 @@ skip the env entirely and add every instance in the CMS.
 
 ## Adding a backend type
 
-1. **Add the id** to `BACKEND_IDS` in `src/shared/contracts/backends.ts`, the `backendId` literal +
-   a `backendServerConfig` variant in `convex/schema.ts`, and the inline `backendId` validators in
-   `convex/backends.ts` / `convex/backendServers.ts` / `convex/adminApi.ts` (kept in sync via the
-   comment that points back to `BACKEND_IDS`).
+1. **Add the id** to `BACKEND_IDS` in `src/shared/contracts/backendIds.ts` — the single source of
+   truth. Every derived surface follows automatically or FAILS TO COMPILE until you fill it in: the
+   Convex validator (`convex/lib/backendIds.ts`), the zod enum (contracts), the `Record<BackendId,
+...>` maps (providers, capabilities), plus exhaustiveness tests (`convex/lib/backendIds.test.ts`)
+   for the one hand-written union left, the `backendServerConfig` variant set in `convex/schema.ts`
+   (add the new config variant there).
 2. **Write the pure HTTP functions** at `convex/lib/backends/<id>.ts` (mirror `remnawave.ts`),
    including a `health` + `testConnection`. Custom error classes must NOT capture URLs or secrets
    (see `OutlineApiError` / `RemnawaveApiError`, which record only status + path).
-3. **Add a provider + a config type** in `convex/lib/backends/registry.ts` and register it in
-   `PROVIDERS` (the `Record<BackendId, ...>` makes a missing provider a compile error).
-4. **Add an enable toggle + label** to `SETTINGS_DEFAULTS` in `convex/appSettings.ts`
+3. **Add a provider + a config type** in `convex/lib/backends/registry.ts`, register it in
+   `PROVIDERS`, and declare its **capability row** in `convex/lib/backends/capabilities.ts` (both
+   `Record<BackendId, ...>` maps make a missing entry a compile error; the consistency test keeps
+   flags ⇔ optional methods honest).
+4. **Placement (optional)**: if the backend has a mode→placement concept, register a
+   `PlacementResolver` in `convex/lib/placement.ts` and flip its `placement` capability — issuance,
+   the availability projection, the effective-mode gates, and the generic
+   `GET|PATCH /api/v1/admin/backends/{backend}/mode-placements` route all pick it up with no
+   further changes. Placement-less backends need nothing (modes declaring them are trivially
+   available when enabled).
+5. **Add an enable toggle + label** to `SETTINGS_DEFAULTS` in `convex/appSettings.ts`
    (`'<id>.enabled': false` + an entry in `subscription.backend_labels`). Defaulting `enabled` to
    `false` keeps the type dark until an admin turns it on; the free-tier + switch-backend paths
-   check `settings['<id>.enabled']` before dispatching.
-5. **Surface in the admin UI**: add the type's fields to `BackendServerEditor.svelte` (the type
+   check `settings['<id>.enabled']` before dispatching, and `publicConfig.backends.list` projects
+   the entry to the SPA (the signup radio + switch buttons render one entry per enabled backend).
+6. **Surface in the admin UI**: add the type's fields to `BackendServerEditor.svelte` (the type
    select already iterates `BACKEND_IDS`) and add the option to the tier backend `<Select>` in
-   `TierEditor.svelte`.
-6. **Tests**: unit-test the pure HTTP functions with a stubbed `fetch` (mirror `remnawave.test.ts`),
+   `TierEditor.svelte`. Declare the mode applicability where relevant (the connection-mode editor's
+   backend checkboxes already iterate `BACKEND_IDS`).
+7. **Cross-backend tiers**: give the equivalent paid tiers on each backend the same `peerGroup`
+   string (symmetric + N-ary; free tiers auto-peer via the per-backend default-free row).
+8. **Tests**: unit-test the pure HTTP functions with a stubbed `fetch` (mirror `remnawave.test.ts`),
    and add a `convex-test` case that issues through the dispatch (mirror `backendServers.test.ts`).
 
-Most domain code needs no changes; it already dispatches through `convex/backends.ts`.
+Most domain code needs no changes; it dispatches through `convex/backends.ts` and branches only on
+capabilities.
 
 ## Remnawave API contract (pinned)
 
@@ -264,7 +293,7 @@ Two Remnawave quirks the harness handles (both bit us / would bite a naive calle
 When adding a new backend read/write (§"Adding a backend type"), extend the integration
 test so the real contract stays pinned by an executable check, not just a comment.
 
-## Node placement (issuance-time, Remnawave)
+## Node placement (issuance-time, per-backend)
 
 FCP's instance pool (`convex/backendServers.ts`) spreads keys across distinct
 backend-server rows by score (`latency_weight*rtt + key_count_weight*keyCount`,
@@ -279,29 +308,49 @@ home each new key to the emptiest node.
 
 The generic layer stays backend-agnostic: it carries an opaque **`placement`
 handle** (a `string`) end to end (`IssueUserSpec.placement`, persisted as
-`subscriptions.backendPlacement`). Only Remnawave-local code interprets it as a
-squad UUID (`activeInternalSquads: [placement]`); Outline ignores it. Nothing in
-`lib/backends/{types,registry}.ts`, `backends.ts`, `issuance.ts`, or
+`subscriptions.backendPlacement` on placement-capable backends only). Only
+Remnawave-local code interprets it as a squad UUID
+(`activeInternalSquads: [placement]`); Outline has no placement concept. Nothing
+in `lib/backends/{types,registry}.ts`, `backends.ts`, `issuance.ts`, or
 `subscriptions.ts` mentions "squad".
 
-How a placement is chosen (all Remnawave-local, under `convex/remnawaveNodes.ts` +
-`convex/lib/remnawavePlacement.ts`):
+**The placement seam** (`convex/lib/placement.ts`): a `PlacementResolver` per
+placement-capable backend — `resolveTarget` (the (placement, panel) pair a new
+key issues into), `boundModeSlugs`/`boundCounts` (per-backend availability +
+admin feedback), `effectiveGate` (the re-issue anti-downgrade gate), and
+`applyConfigPatch`/`summarize` (the write-only admin binding). Domain code
+dispatches through `resolverFor(backend)`; backends without a resolver get a
+trivial one (placement null, gate judged from the catalog). The registry ⇔
+`CAPABILITIES[b].placement` invariant is pinned by a test.
 
-- A **connection mode** (a LEAF id: `freedom-ws` / `freedom-reality` /
-  `privacy-reality`, grouped under the parent families `freedom` / `privacy` —
-  see `convex/lib/connectionModes.ts`) binds a **pool** of squad UUIDs, stored in
-  `appSettings` under `remnawave.modePlacement.<id>.squads`. Bind it in
-  **Admin → Remnawave** (one UUID per line, per mode) or via
-  `PATCH /api/v1/admin/remnawave/mode-placements` (scope `admin:servers:write`) —
-  the Ansible panel-bootstrap PATCHes this after it creates the per-node squads.
-  Per mode the patch composes three ops (applied replace → add → remove):
-  `squadUuids` (full replace; `[]` clears), `addSquadUuids` (union, deduped), and
-  `removeSquadUuids` — the add/remove forms exist so a node deploy can append or
-  detach just ITSELF without knowing the rest of the pool. Replace/add entries are
-  UUID-validated server-side; remove accepts any string so pre-validation garbage
-  can be purged. Squad UUIDs are **write-only** (never echoed back; audited as a
-  `poolBound` boolean + pool size; the response carries `bound` mode ids +
-  per-mode `placements[].boundCount`, sizes only).
+How a placement is chosen for Remnawave (all Remnawave-local, under
+`convex/lib/remnawavePlacement.ts` + the node-stats cache in
+`convex/remnawaveNodes.ts`):
+
+- A **connection mode** (a LEAF row in the DB-driven `connectionModes` table,
+  grouped under a `connectionModeFamilies` row — full admin CRUD at
+  **Admin → Connection modes**; compiled defaults in
+  `convex/lib/connectionModes.ts` seed a fresh deploy and serve reads while the
+  tables are empty) binds a **pool** of squad UUIDs per backend, stored as a
+  `modePlacements` row keyed `(modeSlug, backend)` with a backend-defined JSON
+  config (Remnawave: `{"squadUuids": [...]}`). Bind it in **Admin → Remnawave**
+  (one UUID per line, per mode) or via
+  `PATCH /api/v1/admin/backends/remnawave/mode-placements` (scope
+  `admin:servers:write`); the legacy `PATCH /api/v1/admin/remnawave/mode-placements`
+  stays a byte-compatible ALIAS for the Ansible role's panel-bootstrap until the
+  role migrates. Per mode the patch composes three ops (applied replace → add →
+  remove): `squadUuids` (full replace; `[]` clears), `addSquadUuids` (union,
+  deduped), and `removeSquadUuids` — the add/remove forms exist so a node deploy
+  can append or detach just ITSELF without knowing the rest of the pool.
+  Replace/add entries are UUID-validated server-side; remove accepts any string
+  so pre-validation garbage can be purged. Squad UUIDs are **write-only** (never
+  echoed back; audited as `poolBound` + pool size; reads get summaries only).
+- A mode declares **backend applicability** (`connectionModes.backends[]`, the
+  clients-catalog pattern) and is **available** on a backend when it is enabled
+  (own toggle AND its family's) AND applicable AND — on placement-capable
+  backends — bound there. `publicConfig.connectionModes[].availableBackends`
+  ships the per-backend result; the SPA judges availability against the
+  member's own backend.
 - At issuance FCP picks the **least-loaded node** of the mode's pool
   (`pickByNodeLoad`): per-squad node load — `usersOnline` (primary) + optional
   realtime bandwidth (secondary; weights `remnawave.nodePlacement.*_weight`, default
@@ -311,8 +360,8 @@ How a placement is chosen (all Remnawave-local, under `convex/remnawaveNodes.ts`
   stay selectable; a single-element or empty pool short-circuits.
 - The chosen placement is **persisted on the subscription row**
   (`subscriptions.backendPlacement`). A tier push (`lifecycle.pushTierToBackend`)
-  re-sends _that_ placement — it never re-picks (`stablePlacement` only fills a row
-  that has none, deterministically) — so renewals/downgrades can't thrash a live
+  re-sends _that_ placement — it never re-picks (a legacy row with none resolves
+  deterministically, pinned to its recorded panel) — so renewals/downgrades can't thrash a live
   key across nodes. Only **regenerate** / **switch-mode** / **switch-backend**
   re-pick.
 - **Multi-panel pairing (2026-07-16):** a mode's pool may span several panels, and

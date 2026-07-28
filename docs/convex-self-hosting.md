@@ -178,9 +178,28 @@ members to carry). On a fresh backend:
 
    `seedCutover` seeds the default-free + member tiers, app settings (including the
    device-limit enforcement default, OFF), the primary Remnawave instance (from
-   `REMNAWAVE_*` env, if set), and the recommended-client catalog.
+   `REMNAWAVE_*` env, if set), the recommended-client catalog, and the
+   **connection-mode catalog** (the `connectionModeFamilies` / `connectionModes` /
+   `modePlacements` tables — full admin CRUD at Admin → Connection modes; the
+   compiled defaults also serve reads while the tables are empty, so the picker
+   is never blank pre-seed). It also converts legacy state automatically:
+   pre-refactor `connectionMode.*` / `connectionModeFamily.*` appSettings
+   overrides and `remnawave.modePlacement.*` pools fold into the new rows
+   (current keys beat legacy `evade`/`privacy` spellings; an existing row always
+   wins), the default pointer is canonicalized, pre-rename `users.connectionModeId`
+   values are rewritten (paged, run to completion inside the seed), and tiers
+   still linked by the deprecated pairwise `peerTierId` get a shared `peerGroup`.
    (The beta compose `deployer` service runs it automatically.) Adjust the
    tier limits afterward in the admin CMS (Tiers) or edit `convex/seed.ts`.
+
+   **Upgrading an existing deployment**: take a Convex snapshot export first
+   (the absorbed appSettings rows are left in place as dead data for rollback,
+   but a snapshot makes rollback trivial either way). Ship this refactor to
+   prod as its own PR/deploy and verify BEFORE any later cleanup change that
+   deletes the legacy read-fallbacks (the `LEGACY_MODE_ID_MAP` shim, the
+   appSettings pool fallback, `users.canonicalizeConnectionMode`, and the dead
+   `connectionMode.*` / `connectionModeFamily.*` / `remnawave.modePlacement.*`
+   rows) lands in a SECOND deploy, after the audit log shows no legacy traffic.
 
    Two other operator-run functions exist for later (never run automatically):
    `seed:refreshDefaultClients` re-syncs the recommended-client catalog after a
@@ -191,25 +210,11 @@ members to carry). On a fresh backend:
    deactivated-and-retained. On the beta stack run them through the deployer
    container (see `docs/beta-deploy.md` §"One-off functions").
 
-   **Upgrading an EXISTING deployment to the family/sub-mode connection modes**
-   (one-time; a fresh install needs nothing — the new ids are the defaults):
-
-   ```sh
-   bunx convex run seed:migrateConnectionModeIds '{}'
-   ```
-
-   Renames `evade` → `freedom-ws` and `privacy` → `privacy-reality` across
-   `users.connectionModeId`, the `connectionMode.*` copy keys, the
-   `remnawave.modePlacement.*` squad pools, and the stored default; then seeds the
-   new admin `enabled` toggles (`freedom-reality` ships OFF). **No schema change**,
-   so it needs only the one deploy. It returns `nextCursor` — while that is
-   non-null, re-run with `'{"cursor": <nextCursor>}'` until it comes back null
-   (the user scan is paged). Idempotent: re-running is free.
-
-   The code deployed before it already accepts both spellings, so nothing breaks
-   mid-migration. Afterwards, re-run the Ansible panel-bootstrap so it re-binds the
-   squad pools under the new mode ids, then enable `freedom-reality` in
-   **Admin → Settings → Connection modes** once its pool is bound.
+   After the first upgraded deploy, re-run the Ansible panel-bootstrap once so
+   it converges the squad pools through the placement route (the legacy
+   `/admin/remnawave/mode-placements` path stays a byte-compatible alias of
+   `/admin/backends/remnawave/mode-placements`), then enable `freedom-reality`
+   in **Admin → Connection modes** once its pool is bound.
 
 4. **Register Outline servers** (only if using the Outline backend): admin CMS →
    **Backend servers** (the `apiUrl` secret is stored server-side, never echoed back).

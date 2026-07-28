@@ -38,6 +38,28 @@ scan that 500-ed the /status health-gate; (WS4) the fronted `/api/v1/sub` route 
 `/api/v1/e2ee/keys` are per-IP rate-limited; (WS6) removed dead migration-era symbols
 (`tiers.list`/`listActive`, `BILLING_PROCESSORS`, `remnawaveNodes.stablePlacement`).
 
+**Update 2026-07-28 (branch `beta`): the DB-driven mode catalog + multi-backend overhaul.**
+The compiled connection-mode catalog became three tables — `connectionModeFamilies`,
+`connectionModes` (string slugs stay the wire id; full admin CRUD at **Admin → Connection
+modes**: create/edit/delete families + modes, deliveryStyle/icon/audience/order/backend
+applicability, family-default + censorship-recommendation flags, strand-nobody delete guards),
+and `modePlacements` keyed `(modeSlug, backend)` behind a per-backend `PlacementResolver`
+registry (`convex/lib/placement.ts`) — so any backend can participate in modes and availability
+is per-backend (`availableBackends`; the SPA judges against the member's own backend). A
+declarative capability record (`convex/lib/backends/capabilities.ts`) replaced the
+`backend === 'remnawave'` branch sites; backend-id unions all derive from `BACKEND_IDS`
+(`src/shared/contracts/backendIds.ts`); tiers gained a symmetric N-ary `peerGroup`
+(`peerTierId` is a deprecated read-fallback). `seedCutover` seeds the catalog and converts
+legacy state automatically (appSettings copy/pools fold into rows, legacy `evade`/`privacy`
+user ids rewritten, peer pairs grouped); the pre-refactor appSettings rows are left dead for
+rollback and the legacy shims (`LEGACY_MODE_ID_MAP`, the appSettings pool read-fallback,
+`users.canonicalizeConnectionMode`, the Remnawave placement-route alias for the Ansible role)
+are removed in a LATER second deploy. Behavior fixes shipped with it: the geo suggestion can no
+longer point at a disabled/unbound mode; switch-mode validates per-(mode, backend) availability;
+switch-mode on a placement-less backend is a preference no-op (no more tombstoning a working
+key); the /status matrix stopped leaking deprecated columns and the admin matrix editor stopped
+erasing disabled modes' cells on save.
+
 **Last reconciled against the code: 2026-07-13.** The note below is from the earlier
 node-placement reconcile and still holds. **2026-07-07** (branch `v2`, after the node-placement
 redesign — Phases 1–5a). That redesign replaced the earlier squad-pool "load balancing" (which
