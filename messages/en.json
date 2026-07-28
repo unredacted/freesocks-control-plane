@@ -747,6 +747,7 @@
     "transportLabel": "Connection method",
     "recommended": "Recommended",
     "unavailable": "Not available yet",
+    "currentUnavailable": "Currently unavailable",
     "confirmTitle": "Switch to \"{label}\"?",
     "confirmBody": "This moves your existing key to the {label} servers, keeping the same subscription URL. Your apps keep working and pick up the new servers on their next refresh.",
     "confirmPoint1": "Your key moves to the {label} servers - same subscription URL, nothing to re-import",

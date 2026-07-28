@@ -2,13 +2,13 @@
   import Check from '@lucide/svelte/icons/check';
   import { t } from '../lib/i18n/index.svelte';
   import {
-    FAMILY_COPY,
+    familyAudience,
     familyBody,
-    familyIcon,
     familyTitle,
     modeBody,
     modeTitle,
   } from '../lib/connectionModeCopy';
+  import { familyIcon } from '../lib/connectionModeIcons';
   import {
     familyTargetMode,
     groupModesByFamily,
@@ -16,6 +16,7 @@
     type PickerFamily,
     type PickerMode,
   } from '../lib/connectionModeGroups';
+  import type { MemberCurrentMode } from '../../shared/contracts/connectionModes';
 
   /**
    * "What matters most to you?" picker - the member-facing connection-mode
@@ -51,6 +52,10 @@
     modes: Mode[];
     /** The public FAMILY catalog (config.connectionModeFamilies). */
     families?: Family[];
+    /** The account view's resolved current-mode projection — the synthesized
+     *  entry for an admin-disabled current mode carries its REAL deliveryStyle/
+     *  label/family instead of a blind guess. */
+    currentMode?: MemberCurrentMode | null;
     /** Highlighted current choice (the parent passes the optimistic-or-server id). */
     selected: string;
     /** Server's country-based recommendation id, badged. */
@@ -71,6 +76,7 @@
   let {
     modes,
     families = [],
+    currentMode = null,
     selected,
     suggested = null,
     serverBacked = false,
@@ -83,7 +89,7 @@
   // Grouping rules live in lib/connectionModeGroups (pure + unit-tested): the
   // synthesized entry for an admin-disabled current mode, family collapsing, and
   // orphan handling are all easy to get subtly wrong by eye.
-  let visibleModes = $derived(withCurrentMode(modes, selected));
+  let visibleModes = $derived(withCurrentMode(modes, selected, currentMode));
   let groups = $derived(groupModesByFamily(visibleModes, families));
   let selectedGroupIndex = $derived(
     groups.findIndex((g) => g.children.some((m) => m.id === selected)),
@@ -145,7 +151,7 @@
     </p>
   </div>
 
-  <div class="grid gap-3 sm:grid-cols-2">
+  <div class="grid gap-3 {groups.length === 1 ? '' : 'sm:grid-cols-2'}">
     {#each groups as g, gi (g.family?.id ?? g.children[0]!.id)}
       {@const isSelectedGroup = gi === selectedGroupIndex}
       {@const Icon = g.family ? familyIcon(g.family) : undefined}
@@ -186,15 +192,24 @@
               >
                 {t('delivery.recommended')}
               </span>
+            {:else if isSelectedGroup && g.children.some((m) => m.id === selected && !m.available)}
+              <!-- The member's CURRENT mode was disabled/unbound under them:
+                   still highlighted (it is where they are), but flagged so the
+                   muted styling reads as "unavailable", not "broken". -->
+              <span
+                class="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400"
+              >
+                {t('delivery.currentUnavailable')}
+              </span>
             {:else if isSelectedGroup}
               <Check class="size-4 shrink-0 text-primary" />
             {/if}
           </div>
-          {#if g.family && FAMILY_COPY[g.family.id]}
+          {#if g.family && familyAudience(g.family)}
             <span
               class="mt-1.5 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
             >
-              {t(FAMILY_COPY[g.family.id]!.audienceKey)}
+              {familyAudience(g.family)}
             </span>
           {/if}
           <p class="mt-1 text-xs text-muted-foreground">{body}</p>

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
+  availableOn,
   familyTargetMode,
   groupModesByFamily,
   withCurrentMode,
@@ -15,14 +16,15 @@ function mode(over: Partial<PickerMode> & Pick<PickerMode, 'id'>): PickerMode {
     description: null,
     isDefault: false,
     isFamilyDefault: false,
+    availableBackends: ['remnawave'],
     available: true,
     ...over,
   };
 }
 
 const FAMILIES: PickerFamily[] = [
-  { id: 'freedom', label: null, description: null },
-  { id: 'privacy', label: null, description: null },
+  { id: 'freedom', label: null, description: null, audience: null, iconId: 'zap' },
+  { id: 'privacy', label: null, description: null, audience: null, iconId: 'shield-check' },
 ];
 
 const WS = mode({ id: 'freedom-ws', isDefault: true, isFamilyDefault: true });
@@ -87,21 +89,73 @@ describe('withCurrentMode', () => {
     expect(withCurrentMode(modes, 'freedom-ws')).toBe(modes);
   });
 
-  test('synthesizes an entry for a selection the catalog omits (admin-disabled)', () => {
+  test('synthesizes from the currentMode PROJECTION: real deliveryStyle/label/family', () => {
     // The member is on freedom-reality when an admin turns it off: publicConfig
-    // stops shipping it, but they must still see it and be able to move away.
-    const out = withCurrentMode([WS, PRIVACY], 'freedom-reality');
-    expect(out.map((m) => m.id)).toContain('freedom-reality');
+    // stops shipping it, but the account view still projects it — the synth
+    // entry must carry the REAL rawConfig delivery style (the old blind 'url'
+    // guess flipped a privacy-posture member to URL-first delivery UI).
+    const out = withCurrentMode([WS, PRIVACY], 'freedom-reality', {
+      id: 'freedom-reality',
+      deliveryStyle: 'rawConfig',
+      label: null,
+      description: null,
+      family: { id: 'freedom', label: null },
+      available: false,
+    });
     const synthetic = out.find((m) => m.id === 'freedom-reality')!;
+    expect(synthetic.deliveryStyle).toBe('rawConfig');
+    expect(synthetic.family).toBe('freedom');
     expect(synthetic.available).toBe(false); // not a switch TARGET…
-    // …but it lands in a standalone group, so it is visible and selectable-off.
+    // …and with its family known it renders INSIDE the family group.
     const groups = groupModesByFamily(out, FAMILIES);
-    expect(groups.some((g) => g.children.some((m) => m.id === 'freedom-reality'))).toBe(true);
+    const freedom = groups.find((g) => g.family?.id === 'freedom')!;
+    expect(freedom.children.map((m) => m.id)).toContain('freedom-reality');
+  });
+
+  test('deploy-skew fallback (no projection): the old blind synth, standalone group', () => {
+    const out = withCurrentMode([WS, PRIVACY], 'freedom-reality');
+    const synthetic = out.find((m) => m.id === 'freedom-reality')!;
+    expect(synthetic.available).toBe(false);
+    expect(synthetic.deliveryStyle).toBe('url');
+    const groups = groupModesByFamily(out, FAMILIES);
+    expect(groups.some((g) => g.family === null && g.children[0]!.id === 'freedom-reality')).toBe(
+      true,
+    );
+  });
+
+  test('a projection for a DIFFERENT id is ignored (stale account cache)', () => {
+    const out = withCurrentMode([WS], 'gone-mode', {
+      id: 'other-mode',
+      deliveryStyle: 'rawConfig',
+      label: 'Other',
+      description: null,
+      family: null,
+      available: false,
+    });
+    const synthetic = out.find((m) => m.id === 'gone-mode')!;
+    expect(synthetic.deliveryStyle).toBe('url');
+    expect(synthetic.label).toBeNull();
   });
 
   test('an empty selection is a no-op', () => {
     const modes = [WS];
     expect(withCurrentMode(modes, '')).toBe(modes);
+  });
+});
+
+describe('availableOn', () => {
+  test('joins per-backend availability; falls back to `available` without a backend', () => {
+    const m = mode({ id: 'x', availableBackends: ['remnawave'], available: true });
+    expect(availableOn(m, 'remnawave')).toBe(true);
+    expect(availableOn(m, 'outline')).toBe(false);
+    expect(availableOn(m, null)).toBe(true);
+  });
+
+  test('deploy skew: empty availableBackends falls back to the any-backend bool', () => {
+    const m = mode({ id: 'x', availableBackends: [], available: true });
+    expect(availableOn(m, 'outline')).toBe(true);
+    const n = mode({ id: 'y', availableBackends: [], available: false });
+    expect(availableOn(n, 'remnawave')).toBe(false);
   });
 });
 

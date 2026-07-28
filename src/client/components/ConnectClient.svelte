@@ -20,12 +20,13 @@
   import QrCodeIcon from '@lucide/svelte/icons/qr-code';
   import QrCode from './QrCode.svelte';
   import { configQuery } from '../lib/queries';
+  import { backendEntry } from '../lib/backends';
   import { buildImportLink, IMPORT_PROFILE_NAME } from '../lib/appLinks';
   import { installKind, type InstallKind } from '../lib/installKind';
   import { detectClientPlatform, type PlatformKey } from '../lib/platform';
 
   interface Props {
-    backend?: 'remnawave' | 'outline';
+    backend?: string;
     /** The FCP-fronted subscription URL. Absent in rawConfig mode / before a key
      *  exists → we show install + manual-import guidance, no deep-link buttons. */
     subscriptionUrl?: string;
@@ -58,12 +59,18 @@
   let active = $state<PlatformKey>(detectClientPlatform());
 
   // Catalog for this backend (already enabled + priority-sorted server-side).
-  let clients = $derived((config.data?.clients ?? []).filter((c) => c.backends.includes(backend)));
+  let clients = $derived(
+    (config.data?.clients ?? []).filter((c) => (c.backends as string[]).includes(backend)),
+  );
   let currentClients = $derived(clients.filter((c) => c.platforms.includes(active)));
   // On a device-limited plan, HWID-capable apps honor the limit; others each
   // consume a slot per launch (or, with panel enforcement on, fail to connect),
-  // so we surface them separately. `gateDevices` is true only when it matters.
-  let gateDevices = $derived(deviceLimited && backend !== 'outline');
+  // so we surface them separately. `gateDevices` is true only when it matters —
+  // the backend's DEVICE capability comes from publicConfig, not an id literal.
+  let gateDevices = $derived(
+    deviceLimited &&
+      (backendEntry(config.data?.backends, backend)?.capabilities.devices ?? backend !== 'outline'),
+  );
   let compatClients = $derived(currentClients.filter((c) => c.hwid));
   let incompatClients = $derived(currentClients.filter((c) => !c.hwid));
 

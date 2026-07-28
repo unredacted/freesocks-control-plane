@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MemberCurrentMode } from './connectionModes';
 import { UserStatus } from './common';
 import { SubscriptionMirror } from './subscription';
 import { BackendId } from './admin';
@@ -44,6 +45,12 @@ export const AccountResponse = z.object({
      *  resolved catalog default when unset. A plain string (data-driven catalog).
      *  Optional for rolling-deploy compat. */
     connectionModeId: z.string().optional(),
+    /** Fully-resolved projection of the CURRENT mode — present even when the
+     *  mode is admin-disabled or gone from the catalog, so the client renders
+     *  the right delivery UI + label instead of a raw slug. Optional for
+     *  rolling-deploy compat; prefer it over joining connectionModeId against
+     *  publicConfig (which omits disabled modes). */
+    currentMode: MemberCurrentMode.nullable().optional(),
     /** ISO timestamp of the member's first settled donation, or null if they've
      *  never donated. Drives the persistent account donor badge. Optional for
      *  rolling-deploy compat. */

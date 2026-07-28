@@ -102,6 +102,7 @@ export type MessageKey =
   | "delivery.confirmPoint3"
   | "delivery.confirmPointDevices"
   | "delivery.confirmTitle"
+  | "delivery.currentUnavailable"
   | "delivery.freedomAudience"
   | "delivery.freedomBody"
   | "delivery.freedomRealityBody"

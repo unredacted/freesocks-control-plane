@@ -10,6 +10,7 @@
    */
   import { networkStatusQuery, configQuery } from '../lib/queries';
   import { t, type MessageKey } from '../lib/i18n/index.svelte';
+  import { modeTitle } from '../lib/connectionModeCopy';
   import { Skeleton } from '@client/components/ui/skeleton';
   import Link from '../components/Link.svelte';
   import type { StatusIncident } from '../../shared/contracts/status';
@@ -179,7 +180,11 @@
                 <th class="px-4 py-2.5 text-start font-medium"></th>
                 {#each status.data.censorship.modes as m (m.id)}
                   <th class="px-4 py-2.5 text-center font-medium">
-                    {m.label ?? m.id}
+                    <!-- Through the copy layer: admin label verbatim, else the
+                         built-in translated title, else a humanized slug — the
+                         raw id never renders (it used to, for every built-in
+                         with no admin label). -->
+                    {modeTitle(m)}
                   </th>
                 {/each}
               </tr>

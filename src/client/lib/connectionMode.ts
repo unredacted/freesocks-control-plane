@@ -15,40 +15,19 @@
 export const FALLBACK_CONNECTION_MODE = 'freedom-ws';
 
 /**
- * Pre-rename mode id -> its successor. Mirrors LEGACY_MODE_ID_MAP in
- * convex/lib/connectionModes.ts (the source of truth).
- *
- * localStorage outlives deploys, so a browser can still hold `evade`/`privacy`
- * long after the server migrated. Mapping beats dropping: discarding a stale
- * `privacy` would fall through to the catalog default and silently move a
- * Privacy member into Freedom Mode.
- */
-const LEGACY_MODE_IDS: Readonly<Record<string, string>> = {
-  evade: 'freedom-ws',
-  privacy: 'privacy-reality',
-};
-
-/** A possibly-legacy id in its current spelling (identity for current ids). */
-export function canonicalModeId(id: string): string {
-  return LEGACY_MODE_IDS[id] ?? id;
-}
-
-/**
  * Which mode to highlight/use. When server-backed (a key exists + a pool is
  * bound), the server-persisted `connectionModeId` is authoritative and the local
  * pref is only an optimistic bridge; otherwise the local device choice wins, then
  * the server's country suggestion, then the catalog default.
  *
- * Every input is first mapped through `canonicalModeId`, so a pre-rename value
- * from localStorage or an un-migrated account row resolves to its successor
- * rather than being treated as unknown.
- *
- * `knownIds`, when supplied, then VALIDATES the client-side inputs (`pref` and
+ * `knownIds`, when supplied, VALIDATES the client-side inputs (`pref` and
  * `suggested`) against the live catalog — without it the member lands on a dead
  * id that every server call rejects. The server-persisted `connectionModeId` is
  * deliberately NOT validated: an admin-disabled mode is omitted from the catalog
  * but is still where the member actually is, and the picker synthesizes an entry
- * for it so they can move off.
+ * for it so they can move off. (The pre-rename legacy-id map is gone: the server
+ * migrates stored rows at deploy and serves canonical ids; a stale localStorage
+ * pref simply fails the knownIds check and falls through.)
  */
 export function resolveEffectiveModeId(opts: {
   serverBacked: boolean;
@@ -61,10 +40,9 @@ export function resolveEffectiveModeId(opts: {
   const { serverBacked, suggested, fallback, knownIds } = opts;
   const known = (id: string | null | undefined): string | null => {
     if (!id) return null;
-    const c = canonicalModeId(id);
-    return !knownIds || knownIds.includes(c) ? c : null;
+    return !knownIds || knownIds.includes(id) ? id : null;
   };
-  const stored = opts.connectionModeId ? canonicalModeId(opts.connectionModeId) : null;
+  const stored = opts.connectionModeId ?? null;
   const pref = known(opts.pref);
   const sugg = known(suggested);
   if (serverBacked) return stored ?? pref ?? sugg ?? fallback;

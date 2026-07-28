@@ -15,6 +15,8 @@
   import ConnectionModeSwitcher from '../components/ConnectionModeSwitcher.svelte';
   import { connectionModePref } from '../lib/connectionModePref.svelte';
   import { FALLBACK_CONNECTION_MODE, resolveEffectiveModeId } from '../lib/connectionMode';
+  import { availableOn } from '../lib/connectionModeGroups';
+  import { backendEntry, enabledBackends } from '../lib/backends';
   import MembershipCallout from '../components/MembershipCallout.svelte';
   import RegenerateModal from '../components/RegenerateModal.svelte';
   import RevokeDeviceModal from '../components/RevokeDeviceModal.svelte';
@@ -103,14 +105,22 @@
   // only - choosing wouldn't change the issued node, so we skip the server round-trip.
   let connectionModes = $derived(config.data?.connectionModes ?? []);
   let connectionModeFamilies = $derived(config.data?.connectionModeFamilies ?? []);
+  // The member's OWN backend decides availability: each mode's `available`
+  // resolves through availableBackends before anything downstream consumes it,
+  // so the picker/gates never show Remnawave-derived availability to an
+  // Outline member (or vice versa).
+  let memberModes = $derived(
+    connectionModes.map((m) => ({
+      ...m,
+      available: availableOn(m, data?.subscription?.backend ?? null),
+    })),
+  );
   let defaultModeId = $derived(
     connectionModes.find((m) => m.isDefault)?.id ??
       connectionModes[0]?.id ??
       FALLBACK_CONNECTION_MODE,
   );
-  let profileServerBacked = $derived(
-    !!data?.subscription && connectionModes.some((m) => m.available),
-  );
+  let profileServerBacked = $derived(!!data?.subscription && memberModes.some((m) => m.available));
 
   // Delivery emphasis. Server-backed → the member's server-side mode is
   // authoritative (localStorage is just an optimistic bridge); otherwise the
@@ -127,8 +137,13 @@
   );
 
   // The selected mode's delivery behavior (data-driven; replaces `=== 'privacy'`).
+  // The account view's resolved currentMode wins when it IS the effective mode:
+  // publicConfig omits admin-disabled modes, and the old catalog-only join
+  // flipped a member on a disabled rawConfig mode to URL-first delivery UI.
   let rawConfigFirst = $derived(
-    connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle === 'rawConfig',
+    (data?.user.currentMode && data.user.currentMode.id === effectiveModeId
+      ? data.user.currentMode.deliveryStyle
+      : connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle) === 'rawConfig',
   );
 
   // a11y: sonner toasts aren't reliably announced; this feeds a visually
@@ -139,10 +154,10 @@
   let regenerateOpen = $state(false);
   let switchBackendOpen = $state(false);
   // Which backend is the user about to switch TO when they confirm. Computed
-  // at button-click time from `oppositeBackend` so the modal can render the
+  // at button-click time from `switchTargets` so the modal can render the
   // right "from X to Y" copy even after the mutation lands and the account
   // query updates `data.subscription.backend` to the new value.
-  let pendingSwitchTarget = $state<'remnawave' | 'outline' | null>(null);
+  let pendingSwitchTarget = $state<string | null>(null);
 
   // 401 from /api/v1/account means the cookie session is missing or expired;
   // bounce to the account-number sign-in form (no OIDC anymore). The once-flag
@@ -489,18 +504,16 @@
   //   - both Remnawave and Outline are configured to serve this user's
   //     membership type (server-side: we render the button optimistically and
   //     surface a 409 toast if no peer tier exists).
-  let oppositeBackend = $derived<'remnawave' | 'outline' | null>(
-    data?.subscription?.backend === 'remnawave'
-      ? 'outline'
-      : data?.subscription?.backend === 'outline'
-        ? 'remnawave'
-        : null,
+  let switchTargets = $derived(
+    data?.subscription
+      ? enabledBackends(config.data?.backends).filter((b) => b.id !== data.subscription!.backend)
+      : [],
+  );
+  let currentBackendEnabled = $derived(
+    !!backendEntry(config.data?.backends, data?.subscription?.backend)?.enabled,
   );
   let canSwitchBackend = $derived(
-    !!data?.subscription &&
-      !!oppositeBackend &&
-      !!config.data?.backends.remnawaveEnabled &&
-      !!config.data?.backends.outlineEnabled,
+    !!data?.subscription && currentBackendEnabled && switchTargets.length > 0,
   );
 
   // In-app renew CTA target: point the expiry/lifecycle callouts at the Membership
@@ -835,8 +848,9 @@
           <!-- Delivery focus: a rawConfig mode promotes the raw E2EE config + warns the
            subscription link is fetched through a CDN; url modes keep the link as the star. -->
           <ConnectionModeSwitcher
-            modes={connectionModes}
+            modes={memberModes}
             families={connectionModeFamilies}
+            currentMode={data.user.currentMode ?? null}
             selected={effectiveModeId}
             suggested={data.suggestedModeId ?? null}
             serverBacked={profileServerBacked}
@@ -850,7 +864,9 @@
               data.subscription.url,
             )}
             <SubscriptionHero
-              backendLabel={config.data?.backends.labels[data.subscription.backend]}
+              backendLabel={backendEntry(config.data?.backends, data.subscription.backend)?.label}
+              accessKeyOnly={backendEntry(config.data?.backends, data.subscription.backend)
+                ?.capabilities.accessKeyOnly}
               subscriptionUrl={subUrl}
               expiresAt={data.subscription.expiresAt}
               freeTier={!(data.user.membership?.isCurrent ?? false)}
@@ -889,24 +905,26 @@
                     <RotateCcw class="size-4" />
                     {regenerate.isPending ? t('common.working') : t('account.regenerate')}
                   </Button>
-                  {#if canSwitchBackend && oppositeBackend && config.data}
-                    <Button
-                      onclick={() => {
-                        pendingSwitchTarget = oppositeBackend;
-                        switchBackendOpen = true;
-                      }}
-                      disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
-                      variant="outline"
-                      size="sm"
-                      class="min-h-11"
-                    >
-                      <ArrowLeftRight class="size-4" />
-                      {switchBackend.isPending
-                        ? t('switch.working')
-                        : t('account.switchTo', {
-                            label: config.data.backends.labels[oppositeBackend],
-                          })}
-                    </Button>
+                  {#if canSwitchBackend}
+                    {#each switchTargets as target (target.id)}
+                      <Button
+                        onclick={() => {
+                          pendingSwitchTarget = target.id;
+                          switchBackendOpen = true;
+                        }}
+                        disabled={regenerate.isPending ||
+                          switchBackend.isPending ||
+                          actionsDisabled}
+                        variant="outline"
+                        size="sm"
+                        class="min-h-11"
+                      >
+                        <ArrowLeftRight class="size-4" />
+                        {switchBackend.isPending
+                          ? t('switch.working')
+                          : t('account.switchTo', { label: target.label })}
+                      </Button>
+                    {/each}
                   {/if}
                   <p class="w-full text-xs text-muted-foreground">{t('account.keyActionsHint')}</p>
                 </div>

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BackendId } from './backends';
+import { PublicConnectionMode, PublicConnectionModeFamily } from './connectionModes';
 
 /**
  * CMS-sourced URL fields that flow to href: https-only or '' (unset). The
@@ -111,6 +112,7 @@ export const PublicConfig = z.object({
    * user with an option they can't use.
    */
   backends: z.object({
+    /** DEPRECATED per-id flags (kept one release for cached SPAs; use `list`). */
     remnawaveEnabled: z.boolean(),
     outlineEnabled: z.boolean(),
     defaultBackend: BackendId,
@@ -119,6 +121,24 @@ export const PublicConfig = z.object({
       remnawave: z.string(),
       outline: z.string(),
     }),
+    /** The N-backend projection: every backend type with its member-facing
+     *  label, enabled flag, and a MEMBER-SAFE capability subset (device-limit
+     *  UI gating; access-key vs subscription delivery chrome). Defaulted for
+     *  deploy skew — the client synthesizes from the legacy flags when empty. */
+    list: z
+      .array(
+        z.object({
+          id: z.string(),
+          label: z.string(),
+          enabled: z.boolean(),
+          capabilities: z.object({
+            devices: z.boolean(),
+            accessKeyOnly: z.boolean(),
+          }),
+        }),
+      )
+      .optional()
+      .default([]),
   }),
   /**
    * Public billing catalog for the self-service membership upgrade. Prices and
@@ -274,35 +294,12 @@ export const PublicConfig = z.object({
    *  `label`/`description` are null unless the admin set them — a non-null value
    *  overrides the SPA's translated copy verbatim (all locales). NEVER a squad
    *  UUID. Data-driven (string ids). Optional/defaulted for forward-compat. */
-  connectionModes: z
-    .array(
-      z.object({
-        id: z.string(),
-        family: z.string().optional(),
-        deliveryStyle: z.enum(['url', 'rawConfig']),
-        label: z.string().nullable(),
-        description: z.string().nullable().optional().default(null),
-        isDefault: z.boolean(),
-        isFamilyDefault: z.boolean().optional().default(false),
-        available: z.boolean(),
-      }),
-    )
-    .optional()
-    .default([]),
+  connectionModes: z.array(PublicConnectionMode).optional().default([]),
   /** The PARENT modes a member picks first ("Freedom Mode", "Privacy Mode").
    *  Only families that are enabled and still have at least one visible child
    *  appear. Purely presentational — nothing is ever issued against a family;
    *  the value committed to the server is always a leaf `connectionModes[].id`. */
-  connectionModeFamilies: z
-    .array(
-      z.object({
-        id: z.string(),
-        label: z.string().nullable(),
-        description: z.string().nullable().optional().default(null),
-      }),
-    )
-    .optional()
-    .default([]),
+  connectionModeFamilies: z.array(PublicConnectionModeFamily).optional().default([]),
   /** Member-facing node-location catalog (active Remnawave instances with a
    *  location set, deduped by code): the picker a member chooses their config's
    *  location from. `online` = ≥1 healthy instance at that location; `load` is

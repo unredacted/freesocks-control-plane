@@ -96,10 +96,11 @@ describe('shouldConfirmSwitch', () => {
 describe('resolveEffectiveModeId: catalog validation', () => {
   const KNOWN = ['freedom-ws', 'freedom-reality', 'privacy-reality'];
 
-  test('MAPS a pre-rename pref to its successor instead of dropping it', () => {
-    // localStorage outlives deploys, so a browser can still hold `privacy`.
-    // Dropping it would fall through to the default and silently move a Privacy
-    // member into Freedom Mode - map, don't discard.
+  test('a stale pre-rename pref fails the catalog check and falls through', () => {
+    // The client legacy-id map is GONE: the server migrates stored rows at
+    // deploy and serves canonical ids, so the only place a legacy id survives
+    // is old localStorage — which simply fails knownIds and falls to the
+    // suggestion/default instead of resolving to a dead id.
     expect(
       resolveEffectiveModeId({
         serverBacked: false,
@@ -108,31 +109,22 @@ describe('resolveEffectiveModeId: catalog validation', () => {
         fallback: 'freedom-ws',
         knownIds: KNOWN,
       }),
-    ).toBe('privacy-reality');
-    expect(
-      resolveEffectiveModeId({
-        serverBacked: false,
-        pref: 'evade',
-        suggested: null,
-        fallback: 'freedom-ws',
-        knownIds: KNOWN,
-      }),
     ).toBe('freedom-ws');
   });
 
-  test('MAPS a pre-rename server value, so no legacy id reaches the picker', () => {
-    // This is the "weird `evade` button under Freedom Mode" case: an un-migrated
-    // account row must resolve to freedom-ws, not be rendered as a raw id.
+  test('the server value passes through VERBATIM (server serves canonical ids)', () => {
+    // Deliberately unvalidated: an admin-disabled mode is omitted from the
+    // catalog but is still where the member is; the picker synthesizes it.
     expect(
       resolveEffectiveModeId({
         serverBacked: true,
-        connectionModeId: 'evade',
+        connectionModeId: 'some-disabled-mode',
         pref: null,
         suggested: null,
         fallback: 'freedom-ws',
         knownIds: KNOWN,
       }),
-    ).toBe('freedom-ws');
+    ).toBe('some-disabled-mode');
   });
 
   test('drops a genuinely unknown pref / suggestion', () => {
