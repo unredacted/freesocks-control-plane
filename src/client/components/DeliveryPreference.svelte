@@ -153,19 +153,27 @@
       {@const body = g.family ? familyBody(g.family) : modeBody(g.children[0]!)}
       {@const groupSuggested = g.children.some((m) => m.id === suggested)}
       {@const allDisabled = g.children.every((m) => isDisabled(m))}
+      <!-- The WHOLE card selects the family, not just its head: the transport row
+           sits outside the head button (a button cannot contain the transport
+           radios), so without this, clicking anywhere below "Connection method"
+           did nothing and read as broken. `role="presentation"` because the
+           wrapper carries no semantics of its own - the head button below is the
+           real control and still provides the keyboard/AT path (its activation
+           fires a click that bubbles here, which is why it has no own handler and
+           cannot double-fire). The transport radios stopPropagation so picking a
+           transport never also re-selects the family. -->
       <div
-        class="rounded-lg border transition {isSelectedGroup
+        role="presentation"
+        onclick={() => chooseGroup(g)}
+        class="rounded-lg border transition {allDisabled ? '' : 'cursor-pointer'} {isSelectedGroup
           ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-          : 'border-border'}"
+          : 'border-border hover:border-primary/40'}"
       >
         <button
           type="button"
-          onclick={() => chooseGroup(g)}
           disabled={allDisabled}
           aria-pressed={isSelectedGroup}
-          class="w-full rounded-lg p-4 text-start transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 {isSelectedGroup
-            ? ''
-            : 'hover:border-primary/40'}"
+          class="w-full rounded-lg p-4 text-start transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
         >
           <div class="flex items-center justify-between gap-2">
             <span class="flex items-center gap-2 text-sm font-semibold">
@@ -227,7 +235,12 @@
                     aria-checked={active}
                     tabindex={active ? 0 : -1}
                     {disabled}
-                    onclick={() => choose(child)}
+                    onclick={(e) => {
+                      // Don't let a transport pick bubble up and re-select the
+                      // family (which would snap back to the family default).
+                      e.stopPropagation();
+                      choose(child);
+                    }}
                     title={disabled && !active ? t('delivery.unavailable') : undefined}
                     class="rounded-md border px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 {active
                       ? 'border-primary bg-primary/10 text-primary'
@@ -238,11 +251,13 @@
                 {/each}
               </div>
             {:else}
-              <span
-                class="inline-block rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground"
-              >
+              <!-- One transport: render the NAME, not a chip. A bordered muted
+                   chip was indistinguishable from the disabled state of the
+                   interactive chips, so Privacy Mode's REALITY read as greyed
+                   out / unsupported when it is simply the only method. -->
+              <p class="text-sm font-medium text-foreground">
                 {modeTitle(g.children[0]!)}
-              </span>
+              </p>
             {/if}
             {#if described && modeBody(described)}
               <p class="mt-2 text-xs text-muted-foreground">{modeBody(described)}</p>

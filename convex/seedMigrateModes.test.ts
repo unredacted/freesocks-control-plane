@@ -56,15 +56,22 @@ async function setSetting(t: ReturnType<typeof convexTest>, key: string, value: 
   );
 }
 
-/** The stored value, or null when the row is absent. (Convex serializes an
- *  `undefined` return as null, so the absent case is spelled null throughout.) */
+/**
+ * The stored value, or null when the row is absent. (Convex serializes an
+ * `undefined` return as null, so the absent case is spelled null throughout.)
+ *
+ * `filter`, not `withIndex`: the `ReturnType<typeof convexTest>` parameter type
+ * erases the schema generic, so an indexed read here only sees the system
+ * indexes and does not typecheck. A filter over a handful of seeded rows is
+ * fine in a test, and keeps the helper signature simple.
+ */
 async function readSetting(t: ReturnType<typeof convexTest>, key: string): Promise<unknown> {
   return t.run(async (ctx) => {
     const row = await ctx.db
       .query('appSettings')
-      .withIndex('by_key', (q) => q.eq('key', key))
+      .filter((q) => q.eq(q.field('key'), key))
       .unique();
-    return row ? JSON.parse(row.value) : null;
+    return row ? JSON.parse(row.value as string) : null;
   });
 }
 
