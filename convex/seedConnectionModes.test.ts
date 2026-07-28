@@ -227,6 +227,50 @@ describe('migrateLegacyModeUserIds', () => {
   });
 });
 
+describe('seedPeerGroups', () => {
+  test('groups legacy pairwise links symmetrically; idempotent; never touches an existing group', async () => {
+    const t = convexTest(schema, modules);
+    const mk = (slug: string, backend: 'remnawave' | 'outline') =>
+      t.run((ctx) =>
+        ctx.db.insert('tiers', {
+          slug,
+          name: slug,
+          backend,
+          monthlyTrafficGb: 0,
+          deviceLimit: 0,
+          hwidLimit: 0,
+          hwidEnabled: false,
+          trafficStrategy: 'NO_RESET',
+          isDefaultFree: false,
+          isActive: true,
+          priority: 10,
+          expirationDaysAfterMembershipLapse: 7,
+          updatedAt: Date.now(),
+        }),
+      );
+    const a = await mk('member', 'remnawave');
+    const b = await mk('member-outline', 'outline');
+    const c = await mk('vip', 'remnawave');
+    await t.run(async (ctx) => {
+      await ctx.db.patch(a, { peerTierId: b }); // one-directional legacy link
+      await ctx.db.patch(c, { peerGroup: 'vip-group' }); // pre-set group: untouched
+    });
+
+    const out = await t.mutation(internal.seed.seedPeerGroups, {});
+    expect(out.grouped).toBe(2);
+    await t.run(async (ctx) => {
+      const ta = (await ctx.db.get(a))!;
+      const tb = (await ctx.db.get(b))!;
+      expect(ta.peerGroup).toBeTruthy();
+      expect(ta.peerGroup).toBe(tb.peerGroup);
+      expect((await ctx.db.get(c))!.peerGroup).toBe('vip-group');
+    });
+
+    // Re-run converges: nothing left to group.
+    expect((await t.mutation(internal.seed.seedPeerGroups, {})).grouped).toBe(0);
+  });
+});
+
 describe('seedCutover integration', () => {
   test('one call seeds the catalog AND runs the user rewrite to completion', async () => {
     const t = convexTest(schema, modules);

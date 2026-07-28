@@ -107,11 +107,16 @@ export default defineSchema({
     hwidLimit: v.number(),
     hwidEnabled: v.boolean(),
     trafficStrategy,
-    // Cross-backend peer (D-1): the equivalent tier on the OTHER backend, so a
-    // member on this tier can switch backends (account.switchBackend). Optional;
-    // free tiers auto-resolve their peer via the per-backend default-free row and
-    // need no explicit link. Resolved (incl. a reverse lookup) in convex/tiers.ts
-    // getPeerTier; set by an admin in the tier editor.
+    // Cross-backend peer GROUP: tiers sharing this key are "the same tier" on
+    // their respective backends, so a member can switch backends between them
+    // (account.switchBackend). Symmetric and N-ary by construction (the old
+    // pairwise peerTierId link could not express 3+ backends). Optional; free
+    // tiers auto-resolve their peer via the per-backend default-free row and
+    // need no group. Resolved in convex/tiers.ts getPeerTier; set by an admin
+    // in the tier editor.
+    peerGroup: v.optional(v.string()),
+    // DEPRECATED (read-fallback only; superseded by peerGroup — the seed
+    // assigns a group to existing pairs; schema drop is a later two-deploy).
     peerTierId: v.optional(v.id('tiers')),
     isDefaultFree: v.boolean(),
     isActive: v.boolean(),

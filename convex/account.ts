@@ -248,7 +248,10 @@ async function isEffectiveModeBlocked(
   backend: Backend,
   modeId: string | null,
 ): Promise<boolean> {
-  if (!capabilitiesOf(backend).placement) return false;
+  // Backend-AGNOSTIC: dispatched to the backend's placement resolver (or the
+  // catalog-judged trivial gate), so switching to a placement-less backend can
+  // no longer bypass a blocked stored mode when that backend has usable modes
+  // of its own.
   const gate = await ctx.runQuery(internal.connectionModes.effectiveGate, { backend, modeId });
   return gate.blocked;
 }
@@ -910,11 +913,12 @@ export const switchMode = internalAction({
         status: 400,
       };
     }
-    // Refuse to switch to a mode with no placement pool bound (Remnawave only):
-    // issuing into it would mint a squad-less "dead" key AND we'd have tombstoned
-    // the working key to do it. The picker also disables unbound modes; this is
-    // the server-authoritative guard. (WS1.)
-    if (capabilitiesOf(tier.backend).placement && !chosen.bound) {
+    // Refuse to switch to a mode that is not AVAILABLE on the member's backend:
+    // not applicable there (backends[]), or unbound on a placement-capable
+    // backend (issuing into it would mint a placement-less "dead" key AND we'd
+    // have tombstoned the working key to do it). The picker also disables
+    // unavailable modes; this is the server-authoritative guard. (WS1.)
+    if (!chosen.availableBackends.includes(tier.backend)) {
       return {
         ok: false,
         code: 'validation',
@@ -925,6 +929,31 @@ export const switchMode = internalAction({
 
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+
+    // A placement-less backend (no placement capability) has nothing to move:
+    // the switch is a PREFERENCE update, not a key operation. Record it and
+    // leave the working subscription untouched — the old behavior fell through
+    // to the re-issue saga and tombstoned a live key for zero functional
+    // change. (A member with no key yet still falls through to the issue path.)
+    if (oldSub && !capabilitiesOf(tier.backend).placement) {
+      await ctx.runMutation(internal.users.setConnectionMode, { userId, modeId: target });
+      await ctx.runMutation(internal.audit.record, {
+        actorType: 'member',
+        actorId: userId,
+        action: 'subscription.switch_mode',
+        targetType: 'subscription',
+        targetId: oldSub._id,
+        payload: { fromMode: user.connectionModeId ?? null, toMode: target, inPlace: true },
+        requestId,
+      });
+      return {
+        ok: true,
+        subscriptionUrl: oldSub.subscriptionUrl,
+        shortUuid: oldSub.backendShortId,
+        mode: { id: chosen.id, label: chosen.label },
+        oldSubscriptionDeletedAt: null,
+      };
+    }
 
     // Re-issue path (the historical behavior): mint a NEW key into the mode's
     // placement and tombstone the old one with 24h grace. Used only when there is

@@ -22,10 +22,12 @@ export const TierAdmin = z.object({
   hwidEnabled: z.boolean(),
   trafficStrategy: TrafficStrategy,
   /**
-   * D-1: the cross-backend peer tier id (opaque), or null — the equivalent tier
-   * on the OTHER backend used by account.switchBackend. Free tiers auto-peer via
-   * the per-backend default-free row and leave this null.
+   * Cross-backend peer group: tiers sharing this key are "the same tier" on
+   * their backends (account.switchBackend). Symmetric and N-ary. Free tiers
+   * auto-peer via the per-backend default-free row and leave this null.
    */
+  peerGroup: z.string().nullable().optional().default(null),
+  /** DEPRECATED pairwise link, superseded by peerGroup (read-fallback only). */
   peerTierId: z.string().nullable(),
   isDefaultFree: z.boolean(),
   isActive: z.boolean(),

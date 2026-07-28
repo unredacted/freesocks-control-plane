@@ -55,6 +55,7 @@
     hwidLimit: 1,
     hwidEnabled: true,
     trafficStrategy: 'MONTH',
+    peerGroup: null,
     peerTierId: null,
     isDefaultFree: false,
     isActive: true,

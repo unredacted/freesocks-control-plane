@@ -13,7 +13,7 @@ import { internal } from '../_generated/api';
 import type { Id } from '../_generated/dataModel';
 import { BACKEND_IDS } from './backendIds';
 import { CAPABILITIES } from './backends/capabilities';
-import { PLACEMENT_RESOLVERS, TRIVIAL_RESOLVER, resolverFor } from './placement';
+import { PLACEMENT_RESOLVERS, resolverFor, trivialResolver } from './placement';
 
 const modules = import.meta.glob('../**/*.*s');
 
@@ -24,26 +24,52 @@ describe('registry ⇔ capability invariant', () => {
     }
   });
 
-  test('resolverFor falls back to the trivial resolver for placement-less backends', () => {
+  test('resolverFor falls back to a (cached) trivial resolver for placement-less backends', () => {
     for (const b of BACKEND_IDS) {
-      if (!CAPABILITIES[b].placement) expect(resolverFor(b)).toBe(TRIVIAL_RESOLVER);
-      else expect(resolverFor(b)).not.toBe(TRIVIAL_RESOLVER);
+      if (!CAPABILITIES[b].placement) expect(resolverFor(b)).toBe(resolverFor(b));
+      else expect(resolverFor(b)).toBe(PLACEMENT_RESOLVERS[b]);
     }
   });
 });
 
 describe('trivial resolver contract', () => {
-  test('never resolves a placement, never blocks, refuses config writes', async () => {
+  test('never resolves a placement, refuses config writes', async () => {
     const t = convexTest(schema, modules);
-    const target = await t.run((ctx) => TRIVIAL_RESOLVER.resolveTarget(ctx.db, 'freedom-ws', {}));
+    const trivial = trivialResolver('outline');
+    const target = await t.run((ctx) => trivial.resolveTarget(ctx.db, 'freedom-ws', {}));
     expect(target).toEqual({ placement: null, serverId: null });
-    expect(await t.run((ctx) => TRIVIAL_RESOLVER.effectiveGate(ctx.db, 'freedom-ws'))).toEqual({
-      blocked: false,
-    });
-    expect(() => TRIVIAL_RESOLVER.applyConfigPatch(null, { squadUuids: [] })).toThrow(
+    expect(() => trivial.applyConfigPatch(null, { squadUuids: [] })).toThrow(
       /no placement configuration/i,
     );
-    expect(TRIVIAL_RESOLVER.summarize(null)).toEqual({ bound: false, count: 0 });
+    expect(trivial.summarize(null)).toEqual({ bound: false, count: 0 });
+  });
+
+  test('effectiveGate: blocked only when another mode is usable on THIS backend', async () => {
+    const t = convexTest(schema, modules);
+    const trivial = trivialResolver('outline');
+    // Default catalog: nothing declares outline → nothing usable there →
+    // a stored (not-applicable) mode never blocks (nothing to switch to).
+    expect(await t.run((ctx) => trivial.effectiveGate(ctx.db, 'privacy-reality'))).toEqual({
+      blocked: false,
+    });
+    // Add an outline-applicable enabled mode: now the stored not-applicable
+    // mode IS blocked (the member must pick a usable mode first).
+    await t.mutation(internal.connectionModes.createMode, {
+      slug: 'outline-basic',
+      label: 'Outline Basic',
+      family: 'freedom',
+      deliveryStyle: 'url',
+      backends: ['outline'],
+    });
+    expect(await t.run((ctx) => trivial.effectiveGate(ctx.db, 'privacy-reality'))).toEqual({
+      blocked: true,
+    });
+    // The stored mode being usable here never blocks.
+    expect(await t.run((ctx) => trivial.effectiveGate(ctx.db, 'outline-basic'))).toEqual({
+      blocked: false,
+    });
+    // No stored choice → the default applies → never blocks.
+    expect(await t.run((ctx) => trivial.effectiveGate(ctx.db, null))).toEqual({ blocked: false });
   });
 });
 

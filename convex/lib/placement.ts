@@ -72,25 +72,46 @@ const remnawaveResolver: PlacementResolver = {
 
 /** For backends with no placement concept: every applicable mode is trivially
  *  "bound", nothing resolves to a placement, and there is no config to write.
- *  (The effective-mode availability gate for these backends is composed from
- *  the catalog — enabled + applicable — by the callers, not here.) */
-export const TRIVIAL_RESOLVER: PlacementResolver = {
-  resolveTarget: async () => ({ placement: null, serverId: null }),
-  boundModeSlugs: async (db) => new Set((await resolveModeCatalog(db)).modes.map((m) => m.id)),
-  boundCounts: async () => ({}),
-  effectiveGate: async () => ({ blocked: false }),
-  applyConfigPatch: () => {
-    throw new Error('this backend has no placement configuration');
-  },
-  summarize: () => ({ bound: false, count: 0 }),
-};
+ *  The effective-mode gate is NOT a blind false: a member whose stored mode is
+ *  disabled or not applicable on this backend is blocked exactly when another
+ *  mode IS usable here — the same anti-downgrade posture as the Remnawave
+ *  gate, judged from the catalog alone. (With zero applicable modes on the
+ *  backend there is nothing to choose, so nothing blocks.) */
+export function trivialResolver(backend: BackendId): PlacementResolver {
+  return {
+    resolveTarget: async () => ({ placement: null, serverId: null }),
+    boundModeSlugs: async (db) => new Set((await resolveModeCatalog(db)).modes.map((m) => m.id)),
+    boundCounts: async () => ({}),
+    effectiveGate: async (db, modeSlug) => {
+      if (!modeSlug) return { blocked: false }; // no choice yet → the default applies
+      const { modes } = await resolveCatalogWithAvailability(db);
+      const usableHere = (m: ModeWithAvailability) => m.availableBackends.includes(backend);
+      const stored = modes.find((m) => m.id === modeSlug);
+      if (stored && usableHere(stored)) return { blocked: false };
+      return { blocked: modes.some((m) => m.id !== modeSlug && usableHere(m)) };
+    },
+    applyConfigPatch: () => {
+      throw new Error('this backend has no placement configuration');
+    },
+    summarize: () => ({ bound: false, count: 0 }),
+  };
+}
 
 export const PLACEMENT_RESOLVERS: Partial<Record<BackendId, PlacementResolver>> = {
   remnawave: remnawaveResolver,
 };
 
+const trivialCache = new Map<BackendId, PlacementResolver>();
+
 export function resolverFor(backend: BackendId): PlacementResolver {
-  return PLACEMENT_RESOLVERS[backend] ?? TRIVIAL_RESOLVER;
+  const registered = PLACEMENT_RESOLVERS[backend];
+  if (registered) return registered;
+  let cached = trivialCache.get(backend);
+  if (!cached) {
+    cached = trivialResolver(backend);
+    trivialCache.set(backend, cached);
+  }
+  return cached;
 }
 
 export function hasPlacementResolver(backend: BackendId): boolean {

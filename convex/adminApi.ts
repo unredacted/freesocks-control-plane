@@ -74,8 +74,10 @@ const tierUpsertFields = {
   hwidLimit: v.number(),
   hwidEnabled: v.boolean(),
   trafficStrategy,
-  // Optional at create (most tiers leave it unset); the SPA's TierUpsert always
-  // sends it (null default), but other internal callers / tests may omit it.
+  // Cross-backend peer group (symmetric, N-ary); free tiers leave it unset.
+  peerGroup: v.optional(v.union(v.string(), v.null())),
+  // DEPRECATED pairwise link (read-fallback in tiers.getPeerTier; superseded
+  // by peerGroup). Optional at create; the SPA no longer sends it.
   peerTierId: v.optional(v.union(v.id('tiers'), v.null())),
   isDefaultFree: v.boolean(),
   isActive: v.boolean(),
@@ -137,6 +139,7 @@ function mapTier(t: Doc<'tiers'>) {
     hwidLimit: t.hwidLimit,
     hwidEnabled: t.hwidEnabled,
     trafficStrategy: t.trafficStrategy,
+    peerGroup: t.peerGroup ?? null,
     peerTierId: (t.peerTierId as string | undefined) ?? null,
     isDefaultFree: t.isDefaultFree,
     isActive: t.isActive,
@@ -283,6 +286,7 @@ export const createTier = internalMutation({
       hwidLimit: a.hwidLimit,
       hwidEnabled: a.hwidEnabled,
       trafficStrategy: a.trafficStrategy,
+      peerGroup: a.peerGroup?.trim() || undefined,
       peerTierId: a.peerTierId ?? undefined,
       isDefaultFree: a.isDefaultFree,
       isActive: a.isActive,
@@ -305,7 +309,7 @@ export const createTier = internalMutation({
 });
 
 /** Nullable-optional tier fields whose explicit `null` maps to Convex "absent". */
-const TIER_NULLABLE_KEYS = new Set(['description', 'peerTierId']);
+const TIER_NULLABLE_KEYS = new Set(['description', 'peerGroup', 'peerTierId']);
 
 /**
  * Build a tier patch `fields` object from provided args: skip undefined, map an
@@ -337,6 +341,7 @@ export const updateTier = internalMutation({
     hwidLimit: v.optional(v.number()),
     hwidEnabled: v.optional(v.boolean()),
     trafficStrategy: v.optional(trafficStrategy),
+    peerGroup: v.optional(v.union(v.string(), v.null())),
     peerTierId: v.optional(v.union(v.id('tiers'), v.null())),
     isDefaultFree: v.optional(v.boolean()),
     isActive: v.optional(v.boolean()),

@@ -443,6 +443,38 @@ export const migrateLegacyModeUserIds = internalMutation({
   },
 });
 
+/**
+ * Assign a shared `peerGroup` to tiers still linked by the DEPRECATED pairwise
+ * `peerTierId` (either direction). Idempotent: a tier that already has a group
+ * is never touched; the group name is derived from the sorted slug pair so a
+ * re-run converges on the same value. Runs at every deploy via seedCutover.
+ */
+export const seedPeerGroups = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ grouped: number }> => {
+    const tiers = await ctx.db.query('tiers').collect();
+    const assigned = new Map<string, string>(); // tierId -> group (this run)
+    for (const t of tiers) if (t.peerGroup) assigned.set(t._id as string, t.peerGroup);
+    let grouped = 0;
+    for (const t of tiers) {
+      if (!t.peerTierId || assigned.has(t._id as string)) continue;
+      const peer = tiers.find((x) => x._id === t.peerTierId);
+      if (!peer) continue;
+      const group =
+        assigned.get(peer._id as string) ?? `peer-${[t.slug, peer.slug].sort().join('+')}`;
+      await ctx.db.patch(t._id, { peerGroup: group, updatedAt: Date.now() });
+      assigned.set(t._id as string, group);
+      grouped++;
+      if (!assigned.has(peer._id as string)) {
+        await ctx.db.patch(peer._id, { peerGroup: group, updatedAt: Date.now() });
+        assigned.set(peer._id as string, group);
+        grouped++;
+      }
+    }
+    return { grouped };
+  },
+});
+
 export const seedCutover = internalAction({
   args: {},
   handler: async (
@@ -464,6 +496,7 @@ export const seedCutover = internalAction({
     const instances = await ctx.runMutation(internal.seed.seedBackendServersFromEnv, {});
     const clients = await ctx.runMutation(internal.seed.seedClients, {});
     const modes = await ctx.runMutation(internal.seed.seedConnectionModes, {});
+    await ctx.runMutation(internal.seed.seedPeerGroups, {});
     // Loop the paged legacy-id rewrite to completion (an action may chain
     // mutations): the migration runs itself at deploy, no operator step. A
     // converged deploy pays one page scan that finds nothing.

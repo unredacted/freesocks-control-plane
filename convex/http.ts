@@ -51,6 +51,8 @@ function statusFromCode(code: string): number {
       return 429;
     case 'not_found':
       return 404;
+    case 'conflict':
+      return 409;
     default:
       return 400;
   }
@@ -2952,6 +2954,219 @@ http.route({
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
     return json(await ctx.runQuery(internal.adminApi.getConnectionModes, {}));
+  }),
+});
+
+// Explicit field picks (never `...body`): the mutations use strict validators,
+// so an extra client field would 500 the whole request instead of being ignored
+// (the test-connection/Ansible trap).
+function pickModeFields(body: Record<string, unknown>) {
+  const out: Record<string, unknown> = {};
+  for (const k of [
+    'family',
+    'label',
+    'description',
+    'deliveryStyle',
+    'enabled',
+    'isFamilyDefault',
+    'isCensorshipRecommended',
+    'backends',
+    'order',
+    'makeDefault',
+  ]) {
+    if (body[k] !== undefined) out[k] = body[k];
+  }
+  return out;
+}
+
+function pickFamilyFields(body: Record<string, unknown>) {
+  const out: Record<string, unknown> = {};
+  for (const k of ['label', 'description', 'audience', 'iconId', 'enabled', 'order']) {
+    if (body[k] !== undefined) out[k] = body[k];
+  }
+  return out;
+}
+
+http.route({
+  path: '/api/v1/admin/connection-modes',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.createMode, {
+          ...pickModeFields(body),
+          slug: typeof body.slug === 'string' ? body.slug : '',
+          label: typeof body.label === 'string' ? body.label : '',
+          family: typeof body.family === 'string' ? body.family : '',
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/connection-modes/',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const slug = decodeURIComponent(lastPathSegment(req));
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.updateMode, {
+          ...pickModeFields(body),
+          slug,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/connection-modes/',
+  method: 'DELETE',
+  handler: httpAction(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const slug = decodeURIComponent(lastPathSegment(req));
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.removeMode, {
+          slug,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/connection-mode-families',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.createFamily, {
+          ...pickFamilyFields(body),
+          slug: typeof body.slug === 'string' ? body.slug : '',
+          label: typeof body.label === 'string' ? body.label : '',
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/connection-mode-families/',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const slug = decodeURIComponent(lastPathSegment(req));
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.updateFamily, {
+          ...pickFamilyFields(body),
+          slug,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/connection-mode-families/',
+  method: 'DELETE',
+  handler: httpAction(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const slug = decodeURIComponent(lastPathSegment(req));
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.removeFamily, {
+          slug,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// --- generic per-backend placement binding ------------------------------------
+// The backend-agnostic successor of /admin/remnawave/mode-placements (which
+// stays as a byte-compatible alias for the Ansible role). Path shape:
+// /api/v1/admin/backends/{backend}/mode-placements.
+
+function backendFromPlacementPath(req: Request): BackendId | null {
+  const parts = new URL(req.url).pathname.split('/').filter(Boolean);
+  // ['api','v1','admin','backends','<backend>','mode-placements']
+  const candidate = parts[4];
+  return candidate && isBackendId(candidate) && parts[5] === 'mode-placements' ? candidate : null;
+}
+
+http.route({
+  pathPrefix: '/api/v1/admin/backends/',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
+    const backend = backendFromPlacementPath(req);
+    if (!backend) return errorJson('not_found', 'unknown backend route', 404);
+    const summaries = await ctx.runQuery(internal.connectionModes.placementSummaries, {});
+    return json({
+      backend,
+      placements: Object.entries(summaries).flatMap(([modeId, list]) =>
+        list
+          .filter((e) => e.backendId === backend)
+          .map((e) => ({ modeId, bound: e.bound, boundCount: e.boundCount })),
+      ),
+    });
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/backends/',
+  method: 'PATCH',
+  handler: sealed(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const backend = backendFromPlacementPath(req);
+    if (!backend) return errorJson('not_found', 'unknown backend route', 404);
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.setModePlacements, {
+          backend,
+          patch: body,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
   }),
 });
 
