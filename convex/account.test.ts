@@ -1352,3 +1352,65 @@ describe('account.getNodeStatus', () => {
     expect(again.node).toMatchObject({ online: true });
   });
 });
+
+/**
+ * CHARACTERIZATION (mode/backend overhaul, phase 0): these pin CURRENT behavior
+ * that the capability refactor deliberately changes. Each test says what it
+ * flips to; the flip lands in the same commit as the behavior change.
+ */
+describe('characterization: mode gates around non-remnawave backends', () => {
+  test('switch AWAY to outline is allowed while the stored mode is blocked (FLIPS to mode.unavailable)', async () => {
+    // Today isEffectiveModeBlocked() returns false for any non-remnawave target,
+    // so a member whose stored mode lost its pool can escape the gate by
+    // switching to Outline (mode kept verbatim, silently meaningless there).
+    // After the refactor the gate is backend-agnostic and this refuses 400
+    // mode.unavailable, matching the remnawave-direction test above.
+    const t = convexTest(schema, modules);
+    const fromTier = await seedTier(t, { slug: 'free', backend: 'remnawave' });
+    await seedTier(t, { slug: 'free-outline', backend: 'outline' }); // default-free peer
+    const userId = await seedUser(t, fromTier);
+    await t.action(internal.account.regenerate, { userId }); // key minted BEFORE the mode breaks
+    await t.run(async (ctx) => {
+      // Member sits on privacy-reality (unbound); only freedom-ws has a pool.
+      await ctx.db.patch(userId, { connectionModeId: 'privacy-reality' });
+      await ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.freedom-ws.squads',
+        value: JSON.stringify(['11111111-2222-3333-4444-555555555555']),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('appSettings', {
+        key: 'outline.enabled',
+        value: 'true',
+        updatedAt: Date.now(),
+      });
+    });
+
+    const res = await t.action(internal.account.switchBackend, { userId, target: 'outline' });
+    expect(res).toMatchObject({ ok: true, backend: 'outline' });
+    await t.run(async (ctx) => {
+      // The blocked mode rode along untouched.
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('privacy-reality');
+    });
+  });
+
+  test('switch-mode on an outline tier re-issues + tombstones for zero functional change (FLIPS to a no-op preference update)', async () => {
+    // Outline has no placement concept, so a mode switch changes nothing about
+    // the key — yet today it falls through to the full re-issue saga: a fresh
+    // key is minted and the working one tombstoned. After the refactor the
+    // server records the preference and leaves the subscription untouched.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { slug: 'free-outline', backend: 'outline' });
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId });
+
+    const res = await t.action(internal.account.switchMode, { userId, target: 'freedom-ws' });
+    expect(res).toMatchObject({ ok: true, mode: { id: 'freedom-ws' } });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('freedom-ws');
+      const subs = await ctx.db.query('subscriptions').collect();
+      // CURRENT (to flip): pointless churn — 2 rows, the old one tombstoned.
+      expect(subs.filter((s) => s.state === 'disabled')).toHaveLength(1);
+      expect(subs.filter((s) => s.state === 'active')).toHaveLength(1);
+    });
+  });
+});

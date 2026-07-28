@@ -1222,3 +1222,57 @@ describe('rate-limit coverage (pre-launch review)', () => {
     expect((await t.fetch('/api/v1/account/usage', { headers: { cookie } })).status).toBe(429);
   });
 });
+
+/**
+ * CHARACTERIZATION (mode/backend overhaul, phase 0): suggestedModeId is picked
+ * from the COMPILED catalog with no enabled/bound filtering, so a privacy-country
+ * caller is pointed at freedom-reality — a mode that ships dark
+ * (defaultEnabled:false) and has no pool bound. FLIPS: after the DB-driven
+ * catalog lands, the suggestion respects enabled + per-backend availability and
+ * this case falls back to the resolved default instead.
+ */
+describe('characterization: suggestedModeId ignores enabled/bound', () => {
+  test('privacy-country caller is suggested the dark freedom-reality mode (FLIPS to the resolved default)', async () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'delivery.privacyCountries',
+        value: JSON.stringify(['IR']),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    const res = await t.fetch('/api/v1/account', {
+      headers: { cookie, 'cf-ipcountry': 'IR' },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { suggestedModeId: string; geoCountry: string | null };
+    expect(body.geoCountry).toBe('IR');
+    // CURRENT (to flip): the dark, unbound mode is suggested.
+    expect(body.suggestedModeId).toBe('freedom-reality');
+  });
+
+  test('a non-listed country gets the compiled default', async () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'delivery.privacyCountries',
+        value: JSON.stringify(['IR']),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    const res = await t.fetch('/api/v1/account', {
+      headers: { cookie, 'cf-ipcountry': 'DE' },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { suggestedModeId: string };
+    expect(body.suggestedModeId).toBe('freedom-ws');
+  });
+});

@@ -1249,3 +1249,87 @@ describe('admin mutation audit coverage', () => {
     expect(JSON.stringify(rows)).not.toContain('MIRROR-SECRET-NEVER-AUDIT');
   });
 });
+
+/**
+ * CHARACTERIZATION (mode/backend overhaul, phase 0): exhaustive secret-masking
+ * for both backendServer config variants. The per-type config plumbing in
+ * adminApi is being converted to per-type field descriptors — this suite pins
+ * the masking contract so the conversion cannot regress it. NOT expected to
+ * flip: the masked shapes must survive the refactor byte-identical.
+ */
+describe('characterization: backendServersList masks every secret', () => {
+  const OUTLINE_SECRET_PATH = 'SeCrEt-OuTlInE-PaTh';
+  const REMNAWAVE_SECRET_TOKEN = 'SeCrEt-Rw-ToKeN';
+
+  async function seedBothVariants(t: ReturnType<typeof convexTest>) {
+    await t.run(async (ctx) => {
+      await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'RW Panel',
+        slug: 'rw-panel',
+        config: {
+          type: 'remnawave',
+          baseUrl: 'https://panel.example.com',
+          apiToken: REMNAWAVE_SECRET_TOKEN,
+        },
+        isActive: true,
+        priority: 0,
+        keyCount: 3,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('backendServers', {
+        backend: 'outline',
+        name: 'OL Server',
+        slug: 'ol-server',
+        config: {
+          type: 'outline',
+          apiUrl: `https://outline.example.com:8443/${OUTLINE_SECRET_PATH}/api`,
+          websocketEnabled: true,
+          websocketDomain: 'ws.example.com',
+          prometheusUrl: 'https://prom.example.com',
+        },
+        isActive: true,
+        priority: 1,
+        keyCount: 7,
+        updatedAt: Date.now(),
+      });
+    });
+  }
+
+  test('remnawave: apiToken never ships; only apiTokenSet', async () => {
+    const t = convexTest(schema, modules);
+    await seedBothVariants(t);
+    const { servers } = await t.query(internal.adminApi.backendServersList, {});
+    const rw = servers.find((s) => s.backend === 'remnawave')!;
+    expect(rw.config).toEqual({
+      type: 'remnawave',
+      baseUrl: 'https://panel.example.com',
+      apiTokenSet: true,
+    });
+    expect('apiToken' in rw.config).toBe(false);
+  });
+
+  test('outline: apiUrl path (the credential) is replaced; non-secret fields pass through', async () => {
+    const t = convexTest(schema, modules);
+    await seedBothVariants(t);
+    const { servers } = await t.query(internal.adminApi.backendServersList, {});
+    const ol = servers.find((s) => s.backend === 'outline')!;
+    expect(ol.config).toEqual({
+      type: 'outline',
+      apiUrlMasked: 'https://outline.example.com:8443/***',
+      websocketEnabled: true,
+      websocketDomain: 'ws.example.com',
+      prometheusUrl: 'https://prom.example.com',
+    });
+    expect('apiUrl' in ol.config).toBe(false);
+  });
+
+  test('no secret substring survives anywhere in the whole serialized response', async () => {
+    const t = convexTest(schema, modules);
+    await seedBothVariants(t);
+    const out = await t.query(internal.adminApi.backendServersList, {});
+    const serialized = JSON.stringify(out);
+    expect(serialized).not.toContain(OUTLINE_SECRET_PATH);
+    expect(serialized).not.toContain(REMNAWAVE_SECRET_TOKEN);
+  });
+});
