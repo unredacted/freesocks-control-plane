@@ -3286,6 +3286,17 @@ http.route({
 // (PATCH /api/v1/admin/backends/remnawave/mode-placements, phase 3): the
 // Ansible role calls THIS path with this exact body/response shape, so it
 // keeps working byte-identically while the role migrates at leisure.
+//
+// The role also still keys its entries by the PRE-RENAME mode ids
+// (evade/privacy — tasks/providers/fcp/bind_placements.yml and the node
+// teardown detach), so this route maps them onto the current slugs before
+// delegating. The map lives HERE and only here: it is part of the alias
+// contract and is deleted together with the route once the role migrates.
+// When both spellings of a mode appear in one body, the canonical entry wins.
+const ANSIBLE_LEGACY_PLACEMENT_IDS: Readonly<Record<string, string>> = {
+  evade: 'freedom-ws',
+  privacy: 'privacy-reality',
+};
 http.route({
   path: '/api/v1/admin/remnawave/mode-placements',
   method: 'PATCH',
@@ -3293,11 +3304,24 @@ http.route({
     const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
     if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
+    const rawModes =
+      body && typeof body.modes === 'object' && body.modes !== null
+        ? (body.modes as Record<string, unknown>)
+        : {};
+    const modes: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(rawModes)) {
+      const canonical = ANSIBLE_LEGACY_PLACEMENT_IDS[key];
+      if (canonical) {
+        if (!(canonical in rawModes)) modes[canonical] = entry;
+      } else {
+        modes[key] = entry;
+      }
+    }
     try {
       return json(
         await ctx.runMutation(internal.connectionModes.setModePlacements, {
           backend: 'remnawave',
-          patch: body,
+          patch: { ...body, modes },
           actorAdminId: admin.adminUserId,
         }),
       );

@@ -18,7 +18,6 @@ import {
   BUILT_IN_MODE_SLUGS,
   CONNECTION_MODE_DEFAULT_KEY,
   MODE_SLUG_RE,
-  canonicalModeId,
   resolveDefaultModeId,
   resolveModeCatalog,
   type DeliveryStyle,
@@ -79,15 +78,14 @@ export const memberMode = internalQuery({
   },
   handler: async (ctx, { modeId, backend }) => {
     const { families, modes } = await resolveCatalogWithAvailability(ctx.db);
-    const stored = modeId ? canonicalModeId(modeId) : null;
     const effective =
-      (stored ? modes.find((m) => m.id === stored) : undefined) ?? modes.find((m) => m.isDefault);
+      (modeId ? modes.find((m) => m.id === modeId) : undefined) ?? modes.find((m) => m.isDefault);
     if (!effective) {
       // Deleted-from-catalog id on an empty-ish catalog: ship a minimal echo so
       // the client still has a stable id + a sane delivery default.
-      return stored
+      return modeId
         ? {
-            id: stored,
+            id: modeId,
             deliveryStyle: 'url' as DeliveryStyle,
             label: null,
             description: null,
@@ -124,7 +122,7 @@ export const resolveIssueTarget = internalQuery({
     rand: v.optional(v.number()),
   },
   handler: (ctx, { backend, modeId, location, onlyServerId, rand }) =>
-    resolverFor(backend).resolveTarget(ctx.db, modeId ? canonicalModeId(modeId) : null, {
+    resolverFor(backend).resolveTarget(ctx.db, modeId, {
       location: location ?? null,
       onlyServerId: (onlyServerId as string | null | undefined) ?? null,
       rand: typeof rand === 'number' ? () => rand : undefined,
@@ -134,8 +132,7 @@ export const resolveIssueTarget = internalQuery({
 /** The re-issue anti-downgrade gate for `backend` (see PlacementResolver). */
 export const effectiveGate = internalQuery({
   args: { backend: backendIdValidator, modeId: v.union(v.string(), v.null()) },
-  handler: (ctx, { backend, modeId }) =>
-    resolverFor(backend).effectiveGate(ctx.db, modeId ? canonicalModeId(modeId) : null),
+  handler: (ctx, { backend, modeId }) => resolverFor(backend).effectiveGate(ctx.db, modeId),
 });
 
 // --- placement binding (admin:servers:write surface) ---------------------------
@@ -174,8 +171,7 @@ export const setModePlacements = internalMutation({
     const known = new Set(modes.map((m) => m.id));
 
     let applied = 0;
-    for (const rawId of Object.keys(entries)) {
-      const slug = canonicalModeId(rawId);
+    for (const slug of Object.keys(entries)) {
       if (!known.has(slug)) continue; // unknown ids are ignored (never an error)
       const existing = await ctx.db
         .query('modePlacements')
@@ -183,7 +179,7 @@ export const setModePlacements = internalMutation({
         .unique();
       let nextConfig: string | null;
       try {
-        nextConfig = resolver.applyConfigPatch(existing?.config ?? null, entries[rawId]);
+        nextConfig = resolver.applyConfigPatch(existing?.config ?? null, entries[slug]);
       } catch (e) {
         throw new ConvexError({
           code: 'validation',

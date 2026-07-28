@@ -24,7 +24,6 @@ import {
   resolveTrafficLimitBytes,
   type UsageSeries,
 } from './lib/backends/types';
-import { canonicalModeId } from './lib/connectionModes';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
 
@@ -350,20 +349,8 @@ export const getAccountView = internalAction({
 
     // Member's chosen connection mode (or the catalog default) — surfaced so the
     // client renders the selected transport server-authoritatively.
-    //
-    // A member still holding a PRE-RENAME id (`evade` / `privacy`) is migrated
-    // here, lazily: the mutation is a no-op unless the stored value is legacy, so
-    // this costs nothing on the account view's 60s refetch. Without it the client
-    // received an id that publicConfig no longer lists and rendered it as a raw
-    // "evade" chip. Belt and braces: the value is canonicalized for THIS response
-    // even if the write is skipped, so the client never sees a legacy id.
-    const healed: string | null = await ctx.runMutation(internal.users.canonicalizeConnectionMode, {
-      userId,
-    });
     const connectionModeId =
-      healed ??
-      (user.connectionModeId ? canonicalModeId(user.connectionModeId) : null) ??
-      (await ctx.runQuery(internal.connectionModes.defaultId, {}));
+      user.connectionModeId ?? (await ctx.runQuery(internal.connectionModes.defaultId, {}));
     const currentMode = await ctx.runQuery(internal.connectionModes.memberMode, {
       modeId: connectionModeId,
       backend: tier.backend,

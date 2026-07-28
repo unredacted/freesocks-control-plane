@@ -11,29 +11,10 @@
  * resolver registry in lib/placement.ts.
  *
  * The per-mode squad pool lives in the `modePlacements` table, one row per
- * (modeSlug, 'remnawave'), config = {"squadUuids":[...]}. During the deploy-1
- * window (schema pushed, seed not yet run) reads FALL BACK to the pre-refactor
- * appSettings keys (`remnawave.modePlacement.<id>.squads`, legacy mode ids
- * included) — deleted in deploy 2.
+ * (modeSlug, 'remnawave'), config = {"squadUuids":[...]}.
  */
 import type { DatabaseReader } from '../_generated/server';
-import {
-  LEGACY_MODE_ID_MAP,
-  canonicalModeId,
-  resolveDefaultModeId,
-  resolveModeCatalog,
-} from './connectionModes';
-
-// canonical id -> the legacy id whose appSettings pool may still exist during
-// the deploy-1 window (before seedConnectionModes folds it into the table).
-const LEGACY_ALIAS_OF: Readonly<Record<string, string>> = Object.fromEntries(
-  Object.entries(LEGACY_MODE_ID_MAP).map(([legacy, current]) => [current, legacy]),
-);
-
-// The pre-refactor appSettings namespace (read fallback only; deploy 2 drops it).
-const POOL_PREFIX = 'remnawave.modePlacement.';
-const POOL_KEY_SUFFIX = '.squads';
-const MODE_POOL_KEY = (id: string) => `${POOL_PREFIX}${id}${POOL_KEY_SUFFIX}`;
+import { resolveDefaultModeId, resolveModeCatalog } from './connectionModes';
 
 /** Fail-safe parse of a stored squad pool: a JSON array of non-empty strings,
  *  de-duplicated in declaration order; anything else resolves to []. */
@@ -58,34 +39,13 @@ export function poolFromConfig(configJson: string | null | undefined): string[] 
   }
 }
 
-async function readSetting(db: DatabaseReader, key: string): Promise<unknown> {
-  const row = await db
-    .query('appSettings')
-    .withIndex('by_key', (q) => q.eq('key', key))
-    .unique();
-  if (!row) return undefined;
-  try {
-    return JSON.parse(row.value);
-  } catch {
-    return undefined;
-  }
-}
-
-/** The stored pool for ONE canonical slug: the modePlacements row, else (while
- *  the seed hasn't folded it in yet) the appSettings key under the canonical
- *  AND legacy spellings. */
+/** The stored pool for ONE slug: its modePlacements row (missing row = unbound). */
 async function readStoredPool(db: DatabaseReader, slug: string): Promise<string[]> {
   const row = await db
     .query('modePlacements')
     .withIndex('by_mode_backend', (q) => q.eq('modeSlug', slug).eq('backend', 'remnawave'))
     .unique();
-  if (row) return poolFromConfig(row.config);
-  // Deploy-1 window fallback (dropped in deploy 2).
-  const viaSettings = sanitizePool(await readSetting(db, MODE_POOL_KEY(slug)));
-  if (viaSettings.length) return viaSettings;
-  const legacy = LEGACY_ALIAS_OF[slug];
-  if (legacy) return sanitizePool(await readSetting(db, MODE_POOL_KEY(legacy)));
-  return [];
+  return row ? poolFromConfig(row.config) : [];
 }
 
 /** The squad pool a mode issues into. When the member has made no explicit
@@ -100,8 +60,7 @@ export async function resolveModeSquadPool(
 ): Promise<string[]> {
   const { modes } = await resolveModeCatalog(db);
   const known = new Set(modes.map((m) => m.id));
-  const canonical = typeof modeId === 'string' ? canonicalModeId(modeId) : null;
-  const slug = canonical && known.has(canonical) ? canonical : await resolveDefaultModeId(db);
+  const slug = modeId && known.has(modeId) ? modeId : await resolveDefaultModeId(db);
   return readStoredPool(db, slug);
 }
 
@@ -160,8 +119,7 @@ export async function resolveBoundModeCounts(db: DatabaseReader): Promise<Record
 }
 
 /** The set of mode slugs with ≥1 squad bound on Remnawave — feeds per-backend
- *  availability. One index scan over `modePlacements`, plus (deploy-1 window
- *  only) the pre-refactor appSettings namespace with legacy-id canonicalization. */
+ *  availability. One index scan over `modePlacements`. */
 export async function resolveBoundModeIds(db: DatabaseReader): Promise<Set<string>> {
   const bound = new Set<string>();
   const rows = await db
@@ -170,25 +128,6 @@ export async function resolveBoundModeIds(db: DatabaseReader): Promise<Set<strin
     .collect();
   for (const r of rows) {
     if (poolFromConfig(r.config).length > 0) bound.add(r.modeSlug);
-  }
-  // Deploy-1 window fallback: pools still living in appSettings (canonical or
-  // legacy spelling) keep their mode available until the seed folds them in.
-  // A table row for the slug — even an emptied one — takes precedence, so an
-  // admin who deliberately unbinds via the new store isn't overridden.
-  const withRow = new Set(rows.map((r) => r.modeSlug));
-  const legacyRows = await db
-    .query('appSettings')
-    .withIndex('by_key', (q) => q.gte('key', POOL_PREFIX).lt('key', POOL_PREFIX.slice(0, -1) + '/'))
-    .collect();
-  for (const r of legacyRows) {
-    if (!r.key.endsWith(POOL_KEY_SUFFIX)) continue;
-    const id = canonicalModeId(r.key.slice(POOL_PREFIX.length, -POOL_KEY_SUFFIX.length));
-    if (withRow.has(id)) continue;
-    try {
-      if (sanitizePool(JSON.parse(r.value)).length > 0) bound.add(id);
-    } catch {
-      /* malformed → not bound */
-    }
   }
   return bound;
 }
@@ -210,15 +149,14 @@ export async function remnawaveEffectiveGate(
 ): Promise<{ blocked: boolean }> {
   const { modes } = await resolveModeCatalog(db);
   const enabled = new Set(modes.filter((m) => m.enabled).map((m) => m.id));
-  const effective = modeId ? canonicalModeId(modeId) : null;
 
-  const own = await resolveModeSquadPool(db, modeId ?? null);
-  if (own.length > 0 && (effective === null || enabled.has(effective))) {
+  const own = await resolveModeSquadPool(db, modeId);
+  if (own.length > 0 && (modeId === null || enabled.has(modeId))) {
     return { blocked: false };
   }
   // Some OTHER mode is both enabled and bound → refuse rather than downgrade.
   const bound = await resolveBoundModeIds(db);
-  const alternativeExists = [...enabled].some((id) => id !== effective && bound.has(id));
+  const alternativeExists = [...enabled].some((id) => id !== modeId && bound.has(id));
   return { blocked: alternativeExists };
 }
 

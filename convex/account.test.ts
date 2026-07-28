@@ -503,9 +503,10 @@ describe('account.switchBackend guards', () => {
     await t.run(async (ctx) => {
       // The member chose privacy (unbound); only evade has a pool bound.
       await ctx.db.patch(userId, { connectionModeId: 'privacy-reality' });
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.freedom-ws.squads',
-        value: JSON.stringify(['sq-freedom-ws']),
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['sq-freedom-ws'] }),
         updatedAt: Date.now(),
       });
     });
@@ -560,9 +561,10 @@ describe('account.switchMode saga', () => {
     // freedom-reality ships dark. Binding a pool must not make it selectable —
     // the operator turns it on deliberately, in the admin panel.
     await t.run((ctx) =>
-      ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.freedom-reality.squads',
-        value: JSON.stringify(['11111111-2222-3333-4444-555555555555']),
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['11111111-2222-3333-4444-555555555555'] }),
         updatedAt: Date.now(),
       }),
     );
@@ -584,9 +586,10 @@ describe('account.switchMode saga', () => {
     const userId = await seedUser(t, tierId);
     await t.run(async (ctx) => {
       await ctx.db.patch(userId, { connectionModeId: 'freedom-reality' }); // disabled
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.freedom-ws.squads',
-        value: JSON.stringify(['11111111-2222-3333-4444-555555555555']),
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['11111111-2222-3333-4444-555555555555'] }),
         updatedAt: Date.now(),
       });
     });
@@ -606,9 +609,10 @@ describe('account.switchMode saga', () => {
     const userId = await seedUser(t, tierId);
     await t.run(async (ctx) => {
       // Bind the privacy mode's placement pool — the infra detail never audited.
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.privacy-reality.squads',
-        value: JSON.stringify([SQUAD]),
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'privacy-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD] }),
         updatedAt: Date.now(),
       });
       const instanceId = await ctx.db.insert('backendServers', {
@@ -718,9 +722,10 @@ describe('account.switchMode saga', () => {
     const tierId = await seedTier(t, { backend: 'remnawave' });
     const userId = await seedUser(t, tierId);
     const { activeInstanceId } = await t.run(async (ctx) => {
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.privacy-reality.squads',
-        value: JSON.stringify([SQUAD]),
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'privacy-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD] }),
         updatedAt: Date.now(),
       });
       // The panel row the sub was issued against was deleted + re-registered
@@ -818,9 +823,10 @@ describe('account.switchMode saga', () => {
     const tierId = await seedTier(t, { backend: 'remnawave' });
     const userId = await seedUser(t, tierId);
     await t.run(async (ctx) => {
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.privacy-reality.squads',
-        value: JSON.stringify([SQUAD]),
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'privacy-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD] }),
         updatedAt: Date.now(),
       });
       const instanceId = await ctx.db.insert('backendServers', {
@@ -913,9 +919,10 @@ describe('account.switchMode saga', () => {
     const tierId = await seedTier(t, { backend: 'remnawave' });
     const userId = await seedUser(t, tierId);
     await t.run(async (ctx) => {
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.privacy-reality.squads',
-        value: JSON.stringify([SQUAD]),
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'privacy-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD] }),
         updatedAt: Date.now(),
       });
       await ctx.db.insert('backendServers', {
@@ -978,9 +985,10 @@ describe('account.switchMode saga', () => {
     const userId = await seedUser(t, tierId);
     await t.run(async (ctx) => {
       // evade is bound; privacy is NOT — switching to privacy must be refused.
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.freedom-ws.squads',
-        value: JSON.stringify(['sq-freedom-ws']),
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['sq-freedom-ws'] }),
         updatedAt: Date.now(),
       });
       const subId = await ctx.db.insert('subscriptions', {
@@ -1026,9 +1034,10 @@ describe('account.switchMode saga', () => {
     await t.run(async (ctx) => {
       // The member chose privacy (unbound); only evade has a pool.
       await ctx.db.patch(userId, { connectionModeId: 'privacy-reality' });
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.freedom-ws.squads',
-        value: JSON.stringify(['sq-freedom-ws']),
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['sq-freedom-ws'] }),
         updatedAt: Date.now(),
       });
       await ctx.db.insert('backendServers', {
@@ -1413,9 +1422,10 @@ describe('mode gates on placement-less backends', () => {
     await t.run(async (ctx) => {
       // Member sits on privacy-reality (unbound); only freedom-ws has a pool.
       await ctx.db.patch(userId, { connectionModeId: 'privacy-reality' });
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.freedom-ws.squads',
-        value: JSON.stringify(['11111111-2222-3333-4444-555555555555']),
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['11111111-2222-3333-4444-555555555555'] }),
         updatedAt: Date.now(),
       });
       await ctx.db.insert('appSettings', {

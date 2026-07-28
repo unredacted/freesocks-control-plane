@@ -182,39 +182,42 @@ members to carry). On a fresh backend:
    **connection-mode catalog** (the `connectionModeFamilies` / `connectionModes` /
    `modePlacements` tables — full admin CRUD at Admin → Connection modes; the
    compiled defaults also serve reads while the tables are empty, so the picker
-   is never blank pre-seed). It also converts legacy state automatically:
-   pre-refactor `connectionMode.*` / `connectionModeFamily.*` appSettings
-   overrides and `remnawave.modePlacement.*` pools fold into the new rows
-   (current keys beat legacy `evade`/`privacy` spellings; an existing row always
-   wins), the default pointer is canonicalized, pre-rename `users.connectionModeId`
-   values are rewritten (paged, run to completion inside the seed), and tiers
-   still linked by the deprecated pairwise `peerTierId` get a shared `peerGroup`.
+   is never blank pre-seed). Tiers still linked by the deprecated pairwise
+   `peerTierId` get a shared `peerGroup`.
    (The beta compose `deployer` service runs it automatically.) Adjust the
    tier limits afterward in the admin CMS (Tiers) or edit `convex/seed.ts`.
 
-   **Upgrading an existing deployment**: take a Convex snapshot export first
-   (the absorbed appSettings rows are left in place as dead data for rollback,
-   but a snapshot makes rollback trivial either way). Ship this refactor to
-   prod as its own PR/deploy and verify BEFORE any later cleanup change that
-   deletes the legacy read-fallbacks (the `LEGACY_MODE_ID_MAP` shim, the
-   appSettings pool fallback, `users.canonicalizeConnectionMode`, and the dead
-   `connectionMode.*` / `connectionModeFamily.*` / `remnawave.modePlacement.*`
-   rows) lands in a SECOND deploy, after the audit log shows no legacy traffic.
+   **Upgrading a deployment that predates the 2026-07-28 mode-catalog release**:
+   that release's `seedCutover` performed the one-time migration (appSettings
+   copy/pool fold-in, legacy `evade`/`privacy` user-id rewrite) — and the
+   CURRENT code no longer carries it. Such a deployment MUST pass through the
+   migration release first (take a Convex snapshot export before it); jumping
+   straight to post-migration code seeds the compiled defaults and leaves
+   legacy user rows unreadable. Once the migration release has run and
+   verified, the one-shot `seed:cleanupLegacyModeSettings` deletes the dead
+   appSettings rows it absorbed (`connectionMode.*` except the live
+   `connectionMode.default` pointer, `connectionModeFamily.*`,
+   `remnawave.modePlacement.*`); it refuses to run while any user still holds
+   a pre-rename mode id, so running it too early is loud, not destructive.
 
-   Two other operator-run functions exist for later (never run automatically):
+   Operator-run functions for later (never run automatically):
    `seed:refreshDefaultClients` re-syncs the recommended-client catalog after a
    code update changes `DEFAULT_CLIENTS` (upserts by name, overwrites the
    default-managed fields, preserves each row's `enabled` flag and any
-   admin-added clients), and `lifecycle:purgeInactiveFree` is the only path that
+   admin-added clients); `lifecycle:purgeInactiveFree` is the only path that
    actually removes idle free accounts the `deactivate-idle-free` cron has
-   deactivated-and-retained. On the beta stack run them through the deployer
-   container (see `docs/beta-deploy.md` §"One-off functions").
+   deactivated-and-retained; and `seed:cleanupLegacyModeSettings` is the
+   one-shot post-migration cleanup described above. On the beta stack run them
+   through the deployer container (see `docs/beta-deploy.md` §"One-off
+   functions").
 
-   After the first upgraded deploy, re-run the Ansible panel-bootstrap once so
-   it converges the squad pools through the placement route (the legacy
-   `/admin/remnawave/mode-placements` path stays a byte-compatible alias of
-   `/admin/backends/remnawave/mode-placements`), then enable `freedom-reality`
-   in **Admin → Connection modes** once its pool is bound.
+   The Ansible role's panel-bootstrap converges the squad pools through the
+   legacy `/admin/remnawave/mode-placements` path — a byte-compatible alias of
+   `/admin/backends/remnawave/mode-placements` that also still maps the role's
+   pre-rename mode ids (`evade`/`privacy`) onto the current slugs; the alias
+   (and that mapping) lives until the role migrates to the generic route.
+   Enable `freedom-reality` in **Admin → Connection modes** once its pool is
+   bound.
 
 4. **Register Outline servers** (only if using the Outline backend): admin CMS →
    **Backend servers** (the `apiUrl` secret is stored server-side, never echoed back).

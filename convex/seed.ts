@@ -14,10 +14,7 @@ import {
   CONNECTION_MODE_DEFAULT_KEY,
   DEFAULT_CONNECTION_MODES,
   DEFAULT_CONNECTION_MODE_FAMILIES,
-  LEGACY_MODE_ID_MAP,
-  canonicalModeId,
 } from './lib/connectionModes';
-import { sanitizePool } from './lib/remnawavePlacement';
 
 /** Insert the default-free tier if absent; return its id. */
 export const seedDefaultFreeTier = internalMutation({
@@ -243,66 +240,22 @@ export const refreshDefaultClients = internalMutation({
 });
 
 /**
- * Seed the DB-driven connection-mode catalog (families + leaf modes) and fold
- * the pre-refactor state in. Idempotent; runs at every deploy via seedCutover.
+ * Seed the DB-driven connection-mode catalog (families + leaf modes).
+ * Idempotent; runs at every deploy via seedCutover. Catalog rows are inserted
+ * ONLY while both tables are empty (the clients-seed rule inverted:
+ * table-level, not per-row, so a built-in row an admin deliberately DELETED is
+ * never resurrected by a later deploy).
  *
- * Catalog rows are inserted ONLY while both tables are empty (the clients-seed
- * rule inverted: table-level, not per-row, so a built-in row an admin
- * deliberately DELETED is never resurrected by a later deploy). On that first
- * run the old appSettings state is absorbed into the rows:
- *   - `connectionMode.<id>.label/description/enabled` + the family namespace
- *     (legacy-keyed copies fold onto their successors; a current-key value
- *     wins over a legacy-key one),
- *   - `connectionMode.default` is canonicalized in place (the pointer key
- *     itself stays live — it is still the default-mode store),
- *   - `remnawave.modePlacement.<id>.squads` pools become `modePlacements`
- *     rows (canonical slug; an existing row wins — insert-if-missing).
- * The absorbed appSettings rows are LEFT IN PLACE (dead) for deploy-1
- * rollback safety; a deploy-2 cleanup mutation deletes them.
+ * The 2026-07-28 migration release (deploy 1) additionally absorbed the
+ * pre-refactor appSettings state (copy/enabled overrides, placement pools,
+ * legacy mode ids) on that first run — a deployment coming from the old
+ * catalog MUST pass through that release before this one; jumping straight
+ * here starts from the compiled defaults.
  */
 export const seedConnectionModes = internalMutation({
   args: {},
-  handler: async (
-    ctx,
-  ): Promise<{ familiesInserted: number; modesInserted: number; poolsMoved: number }> => {
+  handler: async (ctx): Promise<{ familiesInserted: number; modesInserted: number }> => {
     const now = Date.now();
-    const readSetting = async (key: string): Promise<unknown> => {
-      const row = await ctx.db
-        .query('appSettings')
-        .withIndex('by_key', (q) => q.eq('key', key))
-        .unique();
-      if (!row) return undefined;
-      try {
-        return JSON.parse(row.value);
-      } catch {
-        return undefined;
-      }
-    };
-    // Absorb a copy override for `slug`, preferring the current key, falling
-    // back to the legacy spelling's key.
-    const legacyOf: Record<string, string> = {};
-    for (const [legacy, current] of Object.entries(LEGACY_MODE_ID_MAP)) legacyOf[current] = legacy;
-    const absorbString = async (prefix: string, slug: string, field: string) => {
-      const current = await readSetting(`${prefix}.${slug}.${field}`);
-      if (typeof current === 'string' && current.trim()) return current;
-      const legacy = legacyOf[slug];
-      if (legacy) {
-        const viaLegacy = await readSetting(`${prefix}.${legacy}.${field}`);
-        if (typeof viaLegacy === 'string' && viaLegacy.trim()) return viaLegacy;
-      }
-      return undefined;
-    };
-    const absorbBool = async (prefix: string, slug: string, fallback: boolean) => {
-      const current = await readSetting(`${prefix}.${slug}.enabled`);
-      if (typeof current === 'boolean') return current;
-      const legacy = legacyOf[slug];
-      if (legacy) {
-        const viaLegacy = await readSetting(`${prefix}.${legacy}.enabled`);
-        if (typeof viaLegacy === 'boolean') return viaLegacy;
-      }
-      return fallback;
-    };
-
     let familiesInserted = 0;
     let modesInserted = 0;
     const [famAny, modeAny] = await Promise.all([
@@ -313,10 +266,8 @@ export const seedConnectionModes = internalMutation({
       for (const f of DEFAULT_CONNECTION_MODE_FAMILIES) {
         await ctx.db.insert('connectionModeFamilies', {
           slug: f.slug,
-          label: await absorbString('connectionModeFamily', f.slug, 'label'),
-          description: await absorbString('connectionModeFamily', f.slug, 'description'),
           iconId: f.iconId,
-          enabled: await absorbBool('connectionModeFamily', f.slug, f.enabled),
+          enabled: f.enabled,
           order: f.order,
           updatedAt: now,
         });
@@ -327,9 +278,7 @@ export const seedConnectionModes = internalMutation({
           slug: m.slug,
           familySlug: m.familySlug,
           deliveryStyle: m.deliveryStyle,
-          label: await absorbString('connectionMode', m.slug, 'label'),
-          description: await absorbString('connectionMode', m.slug, 'description'),
-          enabled: await absorbBool('connectionMode', m.slug, m.enabled),
+          enabled: m.enabled,
           isFamilyDefault: m.isFamilyDefault,
           isCensorshipRecommended: m.isCensorshipRecommended,
           backends: [...m.backends],
@@ -339,107 +288,61 @@ export const seedConnectionModes = internalMutation({
         modesInserted++;
       }
     }
-
-    // Canonicalize the default pointer in place (idempotent).
-    const defaultRow = await ctx.db
-      .query('appSettings')
-      .withIndex('by_key', (q) => q.eq('key', CONNECTION_MODE_DEFAULT_KEY))
-      .unique();
-    if (defaultRow) {
-      try {
-        const parsed: unknown = JSON.parse(defaultRow.value);
-        if (typeof parsed === 'string' && LEGACY_MODE_ID_MAP[parsed]) {
-          await ctx.db.patch(defaultRow._id, {
-            value: JSON.stringify(LEGACY_MODE_ID_MAP[parsed]),
-            updatedAt: now,
-          });
-        }
-      } catch {
-        /* malformed → resolution already falls back to the compiled default */
-      }
-    }
-
-    // Move the Remnawave placement pools into modePlacements rows. Canonical
-    // slugs; fold canonical keys FIRST so a legacy key never shadows one, and an
-    // existing table row always wins (a re-run, or an admin/Ansible that already
-    // wrote the new store). Source rows stay in place (deploy-2 deletes them).
-    let poolsMoved = 0;
-    const POOL_PREFIX = 'remnawave.modePlacement.';
-    const POOL_SUFFIX = '.squads';
-    const poolRows = await ctx.db
-      .query('appSettings')
-      .withIndex('by_key', (q) =>
-        q.gte('key', POOL_PREFIX).lt('key', POOL_PREFIX.slice(0, -1) + '/'),
-      )
-      .collect();
-    const parsedPools = poolRows
-      .filter((r) => r.key.endsWith(POOL_SUFFIX))
-      .map((r) => {
-        const rawId = r.key.slice(POOL_PREFIX.length, -POOL_SUFFIX.length);
-        let pool: string[] = [];
-        try {
-          pool = sanitizePool(JSON.parse(r.value));
-        } catch {
-          /* malformed → skip */
-        }
-        return {
-          slug: canonicalModeId(rawId),
-          canonicalKey: canonicalModeId(rawId) === rawId,
-          pool,
-        };
-      })
-      .filter((e) => e.pool.length > 0)
-      .sort((a, b) => Number(b.canonicalKey) - Number(a.canonicalKey));
-    for (const entry of parsedPools) {
-      const existing = await ctx.db
-        .query('modePlacements')
-        .withIndex('by_mode_backend', (q) =>
-          q.eq('modeSlug', entry.slug).eq('backend', 'remnawave'),
-        )
-        .unique();
-      if (existing) continue;
-      await ctx.db.insert('modePlacements', {
-        modeSlug: entry.slug,
-        backend: 'remnawave',
-        config: JSON.stringify({ squadUuids: entry.pool }),
-        updatedAt: now,
-      });
-      poolsMoved++;
-    }
-
-    return { familiesInserted, modesInserted, poolsMoved };
+    return { familiesInserted, modesInserted };
   },
 });
 
+// The pre-rename mode ids (dropped from the wire 2026-07-28). Only the cleanup
+// guard below still knows them.
+const LEGACY_MODE_IDS = ['evade', 'privacy'] as const;
+
 /**
- * Rewrite users still holding a PRE-RENAME connection-mode id (evade/privacy)
- * onto the successor slug. Paged (no index on connectionModeId — a bounded
- * _creationTime scan); seedCutover loops it to completion at every deploy, so
- * the migration needs no operator step and a converged deploy pays one cheap
- * page scan. Deleted (with the LEGACY_MODE_ID_MAP shim) in deploy 2.
+ * ONE-SHOT operator cleanup (deploy 2 of the DB-driven mode catalog): delete
+ * the appSettings rows the 2026-07-28 migration absorbed into tables and left
+ * dead for rollback safety:
+ *   - `connectionMode.<id>.*` copy/enabled overrides — the DEFAULT POINTER
+ *     `connectionMode.default` is KEPT (still the live default-mode store),
+ *   - `connectionModeFamily.*` family overrides,
+ *   - `remnawave.modePlacement.*` squad pools (now `modePlacements` rows).
+ *
+ * GUARDED: refuses while any user still holds a pre-rename mode id — that
+ * means this deployment never ran the deploy-1 migration (it jumped straight
+ * to post-shim code); deploy the 2026-07-28 release first so its seed rewrites
+ * those rows. Idempotent: a re-run deletes nothing and returns 0.
+ *
+ * Run through the stack's deployer container:
+ *   bunx convex run seed:cleanupLegacyModeSettings '{}'
  */
-export const migrateLegacyModeUserIds = internalMutation({
-  args: { limit: v.optional(v.number()), cursor: v.optional(v.number()) },
-  handler: async (
-    ctx,
-    { limit, cursor },
-  ): Promise<{ usersUpdated: number; nextCursor: number | null }> => {
-    const now = Date.now();
-    const pageSize = Math.min(Math.max(limit ?? 500, 1), 2000);
-    let usersUpdated = 0;
-    const page = await ctx.db
-      .query('users')
-      .withIndex('by_creation_time', (q) => (cursor != null ? q.gt('_creationTime', cursor) : q))
-      .take(pageSize);
-    for (const user of page) {
-      const current = user.connectionModeId ? LEGACY_MODE_ID_MAP[user.connectionModeId] : undefined;
-      if (!current) continue;
-      await ctx.db.patch(user._id, { connectionModeId: current, updatedAt: now });
-      usersUpdated++;
+export const cleanupLegacyModeSettings = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<{ deleted: number }> => {
+    for (const legacyId of LEGACY_MODE_IDS) {
+      const holder = await ctx.db
+        .query('users')
+        .withIndex('by_connection_mode', (q) => q.eq('connectionModeId', legacyId))
+        .first();
+      if (holder) {
+        throw new Error(
+          `refusing to clean up: a user still holds the pre-rename mode id "${legacyId}". ` +
+            'This deployment has not run the deploy-1 migration (the 2026-07-28 release ' +
+            'whose seedCutover rewrites legacy user rows) — deploy that release first.',
+        );
+      }
     }
-    const nextCursor =
-      page.length === pageSize ? (page[page.length - 1]?._creationTime ?? null) : null;
-    return { usersUpdated, nextCursor };
+    const prefixes = ['connectionMode.', 'connectionModeFamily.', 'remnawave.modePlacement.'];
+    let deleted = 0;
+    for (const prefix of prefixes) {
+      const rows = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.gte('key', prefix).lt('key', prefix.slice(0, -1) + '/'))
+        .collect();
+      for (const row of rows) {
+        if (row.key === CONNECTION_MODE_DEFAULT_KEY) continue;
+        await ctx.db.delete(row._id);
+        deleted++;
+      }
+    }
+    return { deleted };
   },
 });
 
@@ -487,8 +390,6 @@ export const seedCutover = internalAction({
     clientsInserted: number;
     modeFamiliesInserted: number;
     modesInserted: number;
-    modePoolsMoved: number;
-    modeUsersUpdated: number;
   }> => {
     const freeTierId = await ctx.runMutation(internal.seed.seedDefaultFreeTier, {});
     const memberTierId = await ctx.runMutation(internal.seed.seedMemberTier, {});
@@ -497,19 +398,6 @@ export const seedCutover = internalAction({
     const clients = await ctx.runMutation(internal.seed.seedClients, {});
     const modes = await ctx.runMutation(internal.seed.seedConnectionModes, {});
     await ctx.runMutation(internal.seed.seedPeerGroups, {});
-    // Loop the paged legacy-id rewrite to completion (an action may chain
-    // mutations): the migration runs itself at deploy, no operator step. A
-    // converged deploy pays one page scan that finds nothing.
-    let modeUsersUpdated = 0;
-    let cursor: number | null = null;
-    do {
-      const page: { usersUpdated: number; nextCursor: number | null } = await ctx.runMutation(
-        internal.seed.migrateLegacyModeUserIds,
-        cursor != null ? { cursor } : {},
-      );
-      modeUsersUpdated += page.usersUpdated;
-      cursor = page.nextCursor;
-    } while (cursor != null);
     return {
       freeTierId,
       memberTierId,
@@ -518,8 +406,6 @@ export const seedCutover = internalAction({
       clientsInserted: clients.inserted,
       modeFamiliesInserted: modes.familiesInserted,
       modesInserted: modes.modesInserted,
-      modePoolsMoved: modes.poolsMoved,
-      modeUsersUpdated,
     };
   },
 });

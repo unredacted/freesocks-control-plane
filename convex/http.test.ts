@@ -1432,10 +1432,14 @@ describe('connection-mode admin routes', () => {
       scopes: ['admin:servers:write'],
       subjectType: 'service',
     });
+    // The role keys its entries by the PRE-RENAME ids (evade/privacy — see
+    // tasks/providers/fcp/bind_placements.yml); the alias route must map them
+    // onto the current slugs. Pinned with the role's real body, not the
+    // canonical spelling.
     const res = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
       method: 'PATCH',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ modes: { 'freedom-ws': { addSquadUuids: [SQUAD] } } }),
+      body: JSON.stringify({ modes: { evade: { addSquadUuids: [SQUAD] } } }),
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -1454,6 +1458,35 @@ describe('connection-mode admin routes', () => {
       ),
     );
     expect(settingsPools).toHaveLength(0);
+
+    // Canonical ids pass through the alias untouched; when both spellings of
+    // one mode appear in a single body the canonical entry wins.
+    const SQUAD2 = '22222222-3333-4444-5555-666666666666';
+    const SQUAD3 = '33333333-4444-5555-6666-777777777777';
+    const mixed = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        modes: {
+          evade: { squadUuids: [SQUAD3] },
+          'freedom-ws': { squadUuids: [SQUAD2] },
+        },
+      }),
+    });
+    expect(mixed.status).toBe(200);
+    const after = await t.run(async (ctx) => ctx.db.query('modePlacements').collect());
+    expect(after).toHaveLength(1);
+    expect(JSON.parse(after[0]!.config)).toEqual({ squadUuids: [SQUAD2] });
+
+    // The node-teardown detach path (removeSquadUuids under the legacy id).
+    const detach = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ modes: { evade: { removeSquadUuids: [SQUAD2] } } }),
+    });
+    expect(detach.status).toBe(200);
+    const detached = await t.run(async (ctx) => ctx.db.query('modePlacements').collect());
+    expect(JSON.parse(detached[0]!.config)).toEqual({ squadUuids: [] });
   });
 
   test('generic per-backend placement route: PATCH + GET summaries; placement-less backend 400s', async () => {

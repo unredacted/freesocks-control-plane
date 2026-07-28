@@ -49,12 +49,18 @@ is per-backend (`availableBackends`; the SPA judges against the member's own bac
 declarative capability record (`convex/lib/backends/capabilities.ts`) replaced the
 `backend === 'remnawave'` branch sites; backend-id unions all derive from `BACKEND_IDS`
 (`src/shared/contracts/backendIds.ts`); tiers gained a symmetric N-ary `peerGroup`
-(`peerTierId` is a deprecated read-fallback). `seedCutover` seeds the catalog and converts
-legacy state automatically (appSettings copy/pools fold into rows, legacy `evade`/`privacy`
-user ids rewritten, peer pairs grouped); the pre-refactor appSettings rows are left dead for
-rollback and the legacy shims (`LEGACY_MODE_ID_MAP`, the appSettings pool read-fallback,
-`users.canonicalizeConnectionMode`, the Remnawave placement-route alias for the Ansible role)
-are removed in a LATER second deploy. Behavior fixes shipped with it: the geo suggestion can no
+(`peerTierId` is a deprecated read-fallback). The migration release's `seedCutover` converted
+legacy state automatically (appSettings copy/pools folded into rows, legacy `evade`/`privacy`
+user ids rewritten, peer pairs grouped). **The deploy-2 cleanup landed right after on `beta`**:
+the legacy shims (`LEGACY_MODE_ID_MAP` + read-point canonicalization, the appSettings pool
+read-fallback, `users.canonicalizeConnectionMode`, the seed absorb/rewrite steps) are GONE, and
+the one-shot `seed:cleanupLegacyModeSettings` deletes the dead appSettings rows (guarded: refuses
+while any user still holds a pre-rename id). A deployment predating the migration release must
+pass through it before taking deploy-2 code — on `main` that means TWO sequential PRs. Still
+present: the Remnawave placement-route ALIAS (which also maps the role's `evade`/`privacy`
+entry ids) — it lives until `ansible-role-freesocks` targets the generic route; the role's
+opt-in `bind_default_mode.yml` task targets the removed bulk PATCH shape and needs the same
+cross-repo pass. Behavior fixes shipped with the overhaul: the geo suggestion can no
 longer point at a disabled/unbound mode; switch-mode validates per-(mode, backend) availability;
 switch-mode on a placement-less backend is a preference no-op (no more tombstoning a working
 key); the /status matrix stopped leaking deprecated columns and the admin matrix editor stopped

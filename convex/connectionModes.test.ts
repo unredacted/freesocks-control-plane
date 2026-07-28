@@ -122,7 +122,7 @@ describe('resolveModeCatalog', () => {
     expect(lost.orphaned).toBe(true);
   });
 
-  test('default ladder: stored pointer → compiled default → legacy pointer canonicalizes', async () => {
+  test('default ladder: stored pointer → compiled default; an unusable pointer falls through', async () => {
     const t = convexTest(schema, modules);
     // Stored pointer respected while its mode is enabled.
     await t.run((ctx) =>
@@ -144,15 +144,15 @@ describe('resolveModeCatalog', () => {
     });
     expect(await t.run((ctx) => resolveDefaultModeId(ctx.db))).toBe(DEFAULT_CONNECTION_MODE);
 
-    // A legacy-id pointer canonicalizes.
+    // A pointer at an id the catalog doesn't know falls through the same way.
     await t.run(async (ctx) => {
       const row = await ctx.db
         .query('appSettings')
         .withIndex('by_key', (q) => q.eq('key', 'connectionMode.default'))
         .unique();
-      await ctx.db.patch(row!._id, { value: JSON.stringify('privacy') });
+      await ctx.db.patch(row!._id, { value: JSON.stringify('no-such-mode') });
     });
-    expect(await t.run((ctx) => resolveDefaultModeId(ctx.db))).toBe('privacy-reality');
+    expect(await t.run((ctx) => resolveDefaultModeId(ctx.db))).toBe(DEFAULT_CONNECTION_MODE);
   });
 });
 
@@ -286,13 +286,8 @@ describe('memberMode', () => {
     });
   });
 
-  test('canonicalizes a legacy id and falls back to the default for null', async () => {
+  test('falls back to the default for null', async () => {
     const t = convexTest(schema, modules);
-    const legacy = await t.query(internal.connectionModes.memberMode, {
-      modeId: 'privacy',
-      backend: 'remnawave',
-    });
-    expect(legacy!.id).toBe('privacy-reality');
     const none = await t.query(internal.connectionModes.memberMode, {
       modeId: null,
       backend: 'remnawave',
