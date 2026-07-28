@@ -33,6 +33,7 @@ import type {
   UserState,
 } from './lib/backends/types';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
+import { backendIdValidator } from './lib/backendIds';
 import { pinSubscriptionToNode } from './lib/nodePinning';
 import {
   mockBackendEnabled,
@@ -42,8 +43,7 @@ import {
 } from './lib/backends/mock';
 import { isRemnawaveNotFound } from './lib/backends/remnawave';
 
-// Keep in sync with BACKEND_IDS (src/shared/contracts/backends.ts).
-const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
+const backendId = backendIdValidator;
 const trafficStrategy = v.union(
   v.literal('NO_RESET'),
   v.literal('DAY'),

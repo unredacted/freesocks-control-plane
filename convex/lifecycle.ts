@@ -28,6 +28,7 @@ import { writeAuditLog } from './lib/audit';
 import { applyCountsDelta } from './lib/statusCounters';
 import { resolvePlacementTarget } from './lib/remnawavePlacement';
 import { resolveDefaultFreeTier } from './tiers';
+import type { BackendId } from './lib/backendIds';
 
 // --- entitlement seam ------------------------------------------------------
 
@@ -842,7 +843,7 @@ export const findIdleFree = internalQuery({
       .paginate({ cursor, numItems });
     const idle: {
       userId: Id<'users'>;
-      backend: 'remnawave' | 'outline' | null;
+      backend: BackendId | null;
       backendUserId: string | null;
     }[] = [];
     for (const u of res.page) {
@@ -959,7 +960,7 @@ export const deactivateIdleFree = internalAction({
         // between pages), then apply.
         const due: {
           userId: Id<'users'>;
-          backend: 'remnawave' | 'outline' | null;
+          backend: BackendId | null;
           backendUserId: string | null;
         }[] = [];
         let cursor: string | null = null;
@@ -968,7 +969,7 @@ export const deactivateIdleFree = internalAction({
           const res: {
             idle: {
               userId: Id<'users'>;
-              backend: 'remnawave' | 'outline' | null;
+              backend: BackendId | null;
               backendUserId: string | null;
             }[];
             isDone: boolean;

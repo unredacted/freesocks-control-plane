@@ -22,12 +22,13 @@ import {
 } from './lib/donationBonus';
 import { readUserCounts } from './lib/statusCounters';
 import { resolveTrafficLimitBytes } from './lib/backends/types';
+import type { BackendId } from './lib/backendIds';
 
 /** One page of active free users' active subs (shared by the query + the action,
  *  and annotated at the call site to break Convex's self-file inference cycle). */
 type ActiveFreeSubsPage = {
   subs: {
-    backend: 'remnawave' | 'outline';
+    backend: BackendId;
     backendUserId: string;
     backendServerId: Id<'backendServers'> | null;
   }[];
@@ -151,7 +152,7 @@ export const findActiveFreeSubs = internalQuery({
       .withIndex('by_tier_status_freekey', (q) => q.eq('tierId', tierId).eq('status', 'active'))
       .paginate({ cursor, numItems });
     const subs: {
-      backend: 'remnawave' | 'outline';
+      backend: BackendId;
       backendUserId: string;
       backendServerId: Id<'backendServers'> | null;
     }[] = [];

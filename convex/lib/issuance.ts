@@ -32,7 +32,7 @@ export async function issueNewSubscription(
   ctx: ActionCtx,
   input: {
     userId: Id<'users'>;
-    backend: 'remnawave' | 'outline';
+    backend: BackendId;
     spec: IssueUserSpec;
     // Pin to one instance — set when node placement resolved the (placement,
     // panel) pair together (the squad only exists on that panel).
@@ -162,7 +162,7 @@ export async function issueNewSubscription(
  */
 export async function deleteSubscriptionEverywhere(
   ctx: ActionCtx,
-  input: { backend: 'remnawave' | 'outline'; backendUserId: string },
+  input: { backend: BackendId; backendUserId: string },
 ): Promise<void> {
   const sub = await ctx.runQuery(internal.subscriptions.byBackendUserId, {
     backendUserId: input.backendUserId,

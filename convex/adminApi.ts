@@ -24,6 +24,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { applyCountsDelta, readUserCounts } from './lib/statusCounters';
 // One shared by-key upsert (Review P3): the local upsertSetting + setBillingConfig's
 // inline copy both delegate here (also appSettings.set/setMany use it).
@@ -57,7 +58,7 @@ import {
 
 // --- shared validators (mirror the contract enums) --------------------------
 
-const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
+const backendId = backendIdValidator;
 const trafficStrategy = v.union(
   v.literal('NO_RESET'),
   v.literal('DAY'),
@@ -248,7 +249,7 @@ export const tiersList = internalQuery({
  */
 async function clearOtherDefaultFree(
   ctx: MutationCtx,
-  backend: 'remnawave' | 'outline',
+  backend: BackendId,
   keepId: Id<'tiers'>,
 ): Promise<void> {
   const tiers = await ctx.db.query('tiers').collect(); // admin write path; tiny table
@@ -541,7 +542,7 @@ const userStatus = v.union(
 async function currentBackendForUser(
   ctx: { db: import('./_generated/server').QueryCtx['db'] },
   user: Doc<'users'>,
-): Promise<{ backend: 'remnawave' | 'outline' | null; backendUserId: string | null }> {
+): Promise<{ backend: BackendId | null; backendUserId: string | null }> {
   let sub: Doc<'subscriptions'> | null = null;
   if (user.currentSubscriptionId) {
     const cur = await ctx.db.get(user.currentSubscriptionId);
@@ -1161,7 +1162,7 @@ export const backendServersList = internalQuery({
 type BackendServerConfig = Doc<'backendServers'>['config'];
 
 interface BackendServerConfigArgs {
-  backend: 'remnawave' | 'outline';
+  backend: BackendId;
   baseUrl?: string;
   apiToken?: string;
   apiUrl?: string;

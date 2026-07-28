@@ -261,7 +261,7 @@ export const ClientAdmin = z.object({
   id: z.string(),
   name: z.string().min(1).max(64),
   platforms: z.array(z.string()),
-  backends: z.array(z.enum(['remnawave', 'outline'])),
+  backends: z.array(BackendId),
   homepageUrl: z.string(),
   /** An appLinks deep-link builder id, or null = manual / QR import only. */
   schemeId: z.string().nullable(),
@@ -287,7 +287,7 @@ export type ClientAdmin = z.infer<typeof ClientAdmin>;
 export const ClientUpsert = z.object({
   name: z.string().min(1).max(64),
   platforms: z.array(z.string()).default([]),
-  backends: z.array(z.enum(['remnawave', 'outline'])).default(['remnawave']),
+  backends: z.array(BackendId).default(['remnawave']),
   homepageUrl: z.string().min(1),
   schemeId: z.string().nullable().optional(),
   hwid: z.boolean().default(false),

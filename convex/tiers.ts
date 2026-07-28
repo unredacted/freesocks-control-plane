@@ -3,6 +3,7 @@
 import { internalQuery } from './_generated/server';
 import type { DatabaseReader } from './_generated/server';
 import { v } from 'convex/values';
+import { backendIdValidator, type BackendId } from './lib/backendIds';
 
 export const get = internalQuery({
   args: { id: v.id('tiers') },
@@ -26,7 +27,7 @@ export const getBySlug = internalQuery({
  */
 export async function resolveDefaultFreeTier(
   db: DatabaseReader,
-  backend?: 'remnawave' | 'outline',
+  backend?: BackendId,
 ) {
   const active = await db
     .query('tiers')
@@ -45,7 +46,7 @@ export async function resolveDefaultFreeTier(
  * user requesting an Outline key gets the Outline-backed default-free tier.
  */
 export const getDefaultFree = internalQuery({
-  args: { backend: v.optional(v.union(v.literal('remnawave'), v.literal('outline'))) },
+  args: { backend: v.optional(backendIdValidator) },
   handler: (ctx, { backend }) => resolveDefaultFreeTier(ctx.db, backend),
 });
 
@@ -74,7 +75,7 @@ export const defaultFreeTierIds = internalQuery({
 export const getPeerTier = internalQuery({
   args: {
     tierId: v.id('tiers'),
-    targetBackend: v.union(v.literal('remnawave'), v.literal('outline')),
+    targetBackend: backendIdValidator,
   },
   handler: async (ctx, { tierId, targetBackend }) => {
     const tier = await ctx.db.get(tierId);

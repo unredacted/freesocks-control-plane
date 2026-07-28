@@ -25,6 +25,7 @@ import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sealed } from './lib/e2ee';
 import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
+import { isBackendId, type BackendId } from './lib/backendIds';
 import {
   ADMIN_COOKIE,
   MEMBER_COOKIE,
@@ -465,7 +466,7 @@ http.route({
 
     const body = await readJson<{
       captchaToken?: string;
-      backend?: 'remnawave' | 'outline';
+      backend?: BackendId;
       referralCode?: string;
     }>(req);
     const captchaToken = body.captchaToken;
@@ -502,7 +503,7 @@ http.route({
     // Resolve which default-free tier (backend) the new account lands on. This
     // reads only the admin enabled/default toggles, never proxy availability.
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
-    let backend = settings['subscription.default_backend'] as 'remnawave' | 'outline';
+    let backend = settings['subscription.default_backend'] as BackendId;
     if (body.backend && settings['subscription.user_choice_enabled']) backend = body.backend;
     if (!settings[`${backend}.enabled`]) {
       return errorJson(
@@ -1105,8 +1106,8 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const body = await readJson<{ backend?: 'remnawave' | 'outline'; confirm?: boolean }>(req);
-    if (body.backend !== 'remnawave' && body.backend !== 'outline') {
+    const body = await readJson<{ backend?: BackendId; confirm?: boolean }>(req);
+    if (!isBackendId(body.backend)) {
       return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
     }
     if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
@@ -3166,7 +3167,7 @@ http.route({
     const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
     if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
-    if (body.backend !== 'remnawave' && body.backend !== 'outline') {
+    if (!isBackendId(body.backend)) {
       return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
     }
     try {
@@ -3190,7 +3191,7 @@ http.route({
   handler: sealed(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
-    if (body.backend !== 'remnawave' && body.backend !== 'outline') {
+    if (!isBackendId(body.backend)) {
       return json({ ok: false, error: 'Pick a backend type first' });
     }
     // Forward ONLY the connection fields the action declares. Convex arg
@@ -3224,7 +3225,7 @@ http.route({
     if (!admin) return ADMIN_UNAUTH();
     const slug = decodeURIComponent(lastPathSegment(req));
     const body = await readJson<Record<string, unknown>>(req);
-    if (body.backend !== 'remnawave' && body.backend !== 'outline') {
+    if (!isBackendId(body.backend)) {
       return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
     }
     try {

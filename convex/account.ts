@@ -25,8 +25,9 @@ import {
   type UsageSeries,
 } from './lib/backends/types';
 import { canonicalModeId } from './lib/connectionModes';
+import { backendIdValidator, type BackendId } from './lib/backendIds';
 
-type Backend = 'remnawave' | 'outline';
+type Backend = BackendId;
 
 /**
  * WS1 bring-up safety net: when a Remnawave key is issued with a null placement
@@ -687,7 +688,7 @@ type SwitchResult =
 export const switchBackend = internalAction({
   args: {
     userId: v.id('users'),
-    target: v.union(v.literal('remnawave'), v.literal('outline')),
+    target: backendIdValidator,
     requestId: v.optional(v.string()),
   },
   handler: async (ctx, { userId, target, requestId }): Promise<SwitchResult> => {

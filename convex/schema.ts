@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { backendIdValidator } from './lib/backendIds';
 
 /**
  * Convex schema for FreeSocks Control Plane: the migration target
@@ -21,10 +22,10 @@ import { v } from 'convex/values';
  *    and `rateLimits` replace the former KvStore namespaces.
  */
 
-// The set of proxy-backend TYPES. Keep these literals in sync with BACKEND_IDS
-// in src/shared/contracts/backends.ts (the client-side source of truth): adding
-// a backend type means a literal here + a config variant in backendServerConfig.
-const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
+// The set of proxy-backend TYPES, derived from BACKEND_IDS (the single source
+// of truth in src/shared/contracts/backendIds.ts): adding a backend type means
+// an id there + a config variant in backendServerConfig below.
+const backendId = backendIdValidator;
 
 // Per-instance backend config: the secret-bearing connection details for one
 // deployed server. A discriminated union keyed by backend type (`type` matches

@@ -28,6 +28,7 @@ import { MEMBER_TTL_MS } from './auth';
 import { freeWindowExpiryMs } from './lifecycle';
 import { applyCountsDelta } from './lib/statusCounters';
 import { writeAuditLog } from './lib/audit';
+import { backendIdValidator, type BackendId } from './lib/backendIds';
 
 // Explicit return type breaks the same-file internal-reference inference cycle.
 type CreateAccountResult =
@@ -46,7 +47,7 @@ type CreateAccountResult =
         name: string;
         monthlyTrafficGb: number;
         deviceLimit: number;
-        backend: 'remnawave' | 'outline';
+        backend: BackendId;
       };
     }
   | { ok: false; reason: 'cap_reached' };
@@ -102,7 +103,7 @@ export const createFreeAccount = internalAction({
     ip: v.string(),
     ipCountry: v.optional(v.string()),
     requestId: v.string(),
-    backend: v.optional(v.union(v.literal('remnawave'), v.literal('outline'))),
+    backend: v.optional(backendIdValidator),
     // PoP (CDN-blinding Phase 2): account creation establishes a member session,
     // so the client folds its session public key in to bind it (like login).
     popPublicKey: v.optional(v.string()),

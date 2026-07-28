@@ -29,6 +29,7 @@ import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { resolveClients, publicClients } from './lib/clientCatalog';
 import { resolveLocations } from './lib/locations';
 import { resolveReferralConfig } from './lib/referralConfig';
+import type { BackendId } from './lib/backendIds';
 
 export const get = query({
   args: {},
@@ -150,7 +151,7 @@ export const get = query({
       backends: {
         remnawaveEnabled: settings['remnawave.enabled'] as boolean,
         outlineEnabled: settings['outline.enabled'] as boolean,
-        defaultBackend: settings['subscription.default_backend'] as 'remnawave' | 'outline',
+        defaultBackend: settings['subscription.default_backend'] as BackendId,
         userChoiceEnabled: settings['subscription.user_choice_enabled'] as boolean,
         labels,
       },

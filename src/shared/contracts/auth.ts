@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BackendId } from './backends';
 
 /**
  * CMS-sourced URL fields that flow to href: https-only or '' (unset). The
@@ -112,7 +113,7 @@ export const PublicConfig = z.object({
   backends: z.object({
     remnawaveEnabled: z.boolean(),
     outlineEnabled: z.boolean(),
-    defaultBackend: z.enum(['remnawave', 'outline']),
+    defaultBackend: BackendId,
     userChoiceEnabled: z.boolean(),
     labels: z.object({
       remnawave: z.string(),
@@ -327,7 +328,7 @@ export const PublicConfig = z.object({
       z.object({
         name: z.string(),
         platforms: z.array(z.string()),
-        backends: z.array(z.enum(['remnawave', 'outline'])),
+        backends: z.array(BackendId),
         homepageUrl: z
           .string()
           .refine((u) => u.startsWith('https://'), { message: 'must be https' }),
