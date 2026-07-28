@@ -29,6 +29,7 @@ import { applyCountsDelta } from './lib/statusCounters';
 import { resolvePlacementTarget } from './lib/remnawavePlacement';
 import { resolveDefaultFreeTier } from './tiers';
 import type { BackendId } from './lib/backendIds';
+import { capabilitiesOf } from './lib/backends/capabilities';
 
 // --- entitlement seam ------------------------------------------------------
 
@@ -301,9 +302,10 @@ export const activeSubAndTier = internalQuery({
     // squad is on it), and the push OMITS placement (undefined — never null,
     // which would clear the squad panel-side) on multi-panel deploys where the
     // panel can't be proven.
-    const placement =
-      sub.backendPlacement ??
-      (await legacyPushPlacement(ctx.db, user.connectionModeId ?? null, sub.backendServerId));
+    const placement = capabilitiesOf(sub.backend).placement
+      ? (sub.backendPlacement ??
+        (await legacyPushPlacement(ctx.db, user.connectionModeId ?? null, sub.backendServerId)))
+      : undefined;
     // Read the device-limit master toggle (fail-safe to the compiled default) so
     // the tier push honors it exactly like the issuance path — flipping it off
     // clears hwidDeviceLimit on the next push.

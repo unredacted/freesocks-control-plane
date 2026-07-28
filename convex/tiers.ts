@@ -25,10 +25,7 @@ export const getBySlug = internalQuery({
  * backend. Shared by the getDefaultFree query and lifecycle.downgradeLapsedToFree
  * (a mutation — which can't call a query, so it needs the DatabaseReader form).
  */
-export async function resolveDefaultFreeTier(
-  db: DatabaseReader,
-  backend?: BackendId,
-) {
+export async function resolveDefaultFreeTier(db: DatabaseReader, backend?: BackendId) {
   const active = await db
     .query('tiers')
     .withIndex('by_active', (q) => q.eq('isActive', true))

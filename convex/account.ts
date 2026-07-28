@@ -26,6 +26,7 @@ import {
 } from './lib/backends/types';
 import { canonicalModeId } from './lib/connectionModes';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
+import { capabilitiesOf } from './lib/backends/capabilities';
 
 type Backend = BackendId;
 
@@ -48,8 +49,8 @@ async function auditIfPlacementless(
     requestId?: string;
   },
 ): Promise<void> {
-  if (args.backend !== 'remnawave' || args.placement !== null) return;
-  console.warn('[placement] issued a squad-less key: no Remnawave pool bound on this deploy');
+  if (!capabilitiesOf(args.backend).placement || args.placement !== null) return;
+  console.warn('[placement] issued a placement-less key: no pool bound on this deploy');
   await ctx.runMutation(internal.audit.record, {
     actorType: 'member',
     actorId: args.userId,
@@ -135,7 +136,7 @@ async function resolveIssueTarget(
   modeId: string | null,
   location: string | null,
 ): Promise<{ placement: string | null; serverId: Id<'backendServers'> | null }> {
-  if (backend !== 'remnawave') return { placement: null, serverId: null };
+  if (!capabilitiesOf(backend).placement) return { placement: null, serverId: null };
   // Mint the anti-herding randomness HERE (actions may use the CSPRNG; queries
   // must stay deterministic) and thread it through the resolution.
   const randBuf = new Uint32Array(1);
@@ -246,7 +247,7 @@ async function isEffectiveModeBlocked(
   backend: Backend,
   modeId: string | null,
 ): Promise<boolean> {
-  if (backend !== 'remnawave') return false;
+  if (!capabilitiesOf(backend).placement) return false;
   const gate = await ctx.runQuery(internal.remnawaveNodes.effectivePlacementGate, { modeId });
   return gate.blocked;
 }
@@ -524,7 +525,7 @@ export const getNodeStatus = internalAction({
       ? await ctx.runQuery(internal.statusPage.locationLoad, { code: location.code })
       : null;
 
-    if (sub.backend === 'remnawave' && sub.backendPlacement) {
+    if (capabilitiesOf(sub.backend).nodeStats && sub.backendPlacement) {
       let stats = await ctx.runQuery(internal.remnawaveNodes.getPlacementStats, {
         placement: sub.backendPlacement,
       });
@@ -896,7 +897,7 @@ export const switchMode = internalAction({
     // issuing into it would mint a squad-less "dead" key AND we'd have tombstoned
     // the working key to do it. The picker also disables unbound modes; this is
     // the server-authoritative guard. (WS1.)
-    if (tier.backend === 'remnawave' && !chosen.bound) {
+    if (capabilitiesOf(tier.backend).placement && !chosen.bound) {
       return {
         ok: false,
         code: 'validation',
@@ -987,7 +988,7 @@ export const switchMode = internalAction({
     // subscription row/URL/token, live traffic counter, and registered devices are
     // all preserved — no user churn in the panel and no separate "old key" to keep
     // alive for 24h. Only when the current key AND the tier are Remnawave.
-    if (oldSub && tier.backend === 'remnawave' && oldSub.backend === 'remnawave') {
+    if (oldSub && capabilitiesOf(tier.backend).placement && oldSub.backend === tier.backend) {
       // The in-place PATCH lands on the key's OWN panel, so the new mode's
       // placement must exist there — a hard `onlyServerId` pin. The stored
       // backendServerId can be stale (its panel row was re-registered) or
@@ -999,12 +1000,12 @@ export const switchMode = internalAction({
       let pinServerId: string | null = oldSub.backendServerId ?? null;
       const activeIds = new Set(
         (await ctx.runQuery(internal.backendServers.listActiveWithSecret, {}))
-          .filter((s) => s.backend === 'remnawave')
+          .filter((s) => s.backend === tier.backend)
           .map((s) => s._id as string),
       );
       if (!pinServerId || !activeIds.has(pinServerId)) {
         pinServerId = await ctx.runAction(internal.backends.locateKeyInstance, {
-          backend: 'remnawave',
+          backend: tier.backend,
           backendUserId: oldSub.backendUserId,
         });
         if (pinServerId) {
@@ -1105,7 +1106,7 @@ export const revokeDevice = internalAction({
         status: 404,
       };
     }
-    if (sub.backend !== 'remnawave') {
+    if (!capabilitiesOf(sub.backend).deviceManagement) {
       return {
         ok: false,
         code: 'devices.unsupported',

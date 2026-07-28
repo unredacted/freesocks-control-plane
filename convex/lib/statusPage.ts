@@ -14,6 +14,7 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import type { Doc } from '../_generated/dataModel';
+import { collectLocationCapableServers } from './locations';
 import { CONNECTION_MODES, isConnectionModeId, resolveConnectionModes } from './connectionModes';
 import {
   computeLocationLoad,
@@ -168,10 +169,7 @@ export async function resolveStatusConfig(db: DatabaseReader): Promise<StatusPag
  * status projection and (single-code) the member node-status badge.
  */
 export async function resolveStatusLocations(db: DatabaseReader): Promise<StatusLocation[]> {
-  const servers = await db
-    .query('backendServers')
-    .withIndex('by_backend_active', (q) => q.eq('backend', 'remnawave').eq('isActive', true))
-    .collect();
+  const servers = await collectLocationCapableServers(db);
   const statsRows = await db.query('remnawaveNodeStats').collect();
   const cfg = await resolveStatusConfig(db);
   const now = Date.now();
@@ -216,10 +214,7 @@ export async function resolveLocationLoad(
   db: DatabaseReader,
   code: string,
 ): Promise<LoadBand | null> {
-  const servers = await db
-    .query('backendServers')
-    .withIndex('by_backend_active', (q) => q.eq('backend', 'remnawave').eq('isActive', true))
-    .collect();
+  const servers = await collectLocationCapableServers(db);
   const instances = servers.filter((s) => s.location === code);
   if (instances.length === 0) return null;
   const statsRows = await db.query('remnawaveNodeStats').collect();

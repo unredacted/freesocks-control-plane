@@ -16,6 +16,7 @@ import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
 import type { BackendId, IssueUserSpec } from './backends/types';
+import { capabilitiesOf } from './backends/capabilities';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -64,8 +65,11 @@ export async function issueNewSubscription(
       subscriptionMirrors: [],
       rawContentHash: undefined,
       // Persist the opaque placement the key was issued into, so tier pushes
-      // re-send the SAME placement instead of re-picking (Remnawave only).
-      placement: input.backend === 'remnawave' ? (input.spec.placement ?? undefined) : undefined,
+      // re-send the SAME placement instead of re-picking (placement-capable
+      // backends only).
+      placement: capabilitiesOf(input.backend).placement
+        ? (input.spec.placement ?? undefined)
+        : undefined,
       excludeNode: input.excludeNode,
       carrySubTokenFromId: input.carrySubTokenFromId,
     });
