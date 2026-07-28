@@ -15,12 +15,7 @@ import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
-import {
-  CENSORSHIP_MODE_FAMILY,
-  CONNECTION_MODES,
-  DEFAULT_CONNECTION_MODE,
-  isConnectionModeId,
-} from './lib/connectionModes';
+import { DEFAULT_CONNECTION_MODE } from './lib/connectionModes';
 import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sealed } from './lib/e2ee';
@@ -791,19 +786,21 @@ http.route({
     // catalog default. The country list never leaves the server; only the verdict
     // ships, and the choice itself stays client-side.
     //
-    // This used to pick `CONNECTION_MODES.find(deliveryStyle === 'rawConfig')` —
-    // first match wins, which with more than one rawConfig mode would have
-    // suggested Privacy Mode. Privacy Mode is explicitly NOT a censorship tool
-    // (its decoy is SNI-blocked in China by design), so the suggestion is now
-    // pinned to the censorship-oriented FAMILY instead of a delivery style.
-    const censorshipModeId =
-      CONNECTION_MODES.find(
-        (m) => m.family === CENSORSHIP_MODE_FAMILY && m.deliveryStyle === 'rawConfig',
-      )?.id ?? DEFAULT_CONNECTION_MODE;
+    // Resolved from the LIVE catalog: only a mode flagged isCensorshipRecommended
+    // that is actually AVAILABLE on the member's backend (enabled + applicable +
+    // bound) is ever suggested — the old compiled-array pick could point a
+    // censored-region member at a dark, unbound mode. No available candidate →
+    // the resolved default. (Privacy Mode is deliberately never flagged: its
+    // decoy is SNI-blocked in China by design.)
+    const modeList = await ctx.runQuery(internal.connectionModes.list, {});
+    const resolvedDefault = modeList.find((m) => m.isDefault)?.id ?? DEFAULT_CONNECTION_MODE;
+    const censorshipModeId = modeList.find(
+      (m) => m.isCensorshipRecommended && m.availableBackends.includes(view.user.tier.backend),
+    )?.id;
     const suggestedModeId =
-      geoCountry && privacyCountries.includes(geoCountry)
+      geoCountry && privacyCountries.includes(geoCountry) && censorshipModeId
         ? censorshipModeId
-        : DEFAULT_CONNECTION_MODE;
+        : resolvedDefault;
     return json({ ...view, geoCountry, suggestedModeId });
   }),
 });
@@ -1135,23 +1132,26 @@ http.route({
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const body = await readJson<{ modeId?: string }>(req);
-    if (!isConnectionModeId(body.modeId)) {
+    const modeId = typeof body.modeId === 'string' ? body.modeId : '';
+    // Validated against the LIVE catalog (the compiled sync guard is gone with
+    // the compiled catalog).
+    const modes = await ctx.runQuery(internal.connectionModes.list, {});
+    const chosen = modes.find((m) => m.id === modeId);
+    if (!chosen) {
       return errorJson('validation', 'unknown connection mode', 400);
     }
     // Defense-in-depth (the picker already disables unbound modes, and issuance
     // falls back so a stored unbound preference can't mint a dead key): refuse to
     // persist an unbound mode when a bound alternative exists. Allowed on an
     // all-unbound (bring-up) deploy so signup can still record the default. (WS1.)
-    const modes = await ctx.runQuery(internal.connectionModes.list, {});
-    const chosen = modes.find((m) => m.id === body.modeId);
-    if (chosen && !chosen.bound && modes.some((m) => m.bound)) {
+    if (!chosen.bound && modes.some((m) => m.bound)) {
       return errorJson('validation', 'This connection mode is not available yet.', 400);
     }
     await ctx.runMutation(internal.users.setConnectionMode, {
       userId: member.userId,
-      modeId: body.modeId,
+      modeId: chosen.id,
     });
-    return json({ ok: true, modeId: body.modeId });
+    return json({ ok: true, modeId: chosen.id });
   }),
 });
 
@@ -1165,7 +1165,9 @@ http.route({
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const body = await readJson<{ modeId?: string; confirm?: boolean }>(req);
-    if (!isConnectionModeId(body.modeId)) {
+    // Cheap shape check only — account.switchMode validates against the live
+    // catalog and is the single authority (a second DB read here buys nothing).
+    if (typeof body.modeId !== 'string' || !body.modeId || body.modeId.length > 64) {
       return errorJson('validation', 'unknown connection mode', 400);
     }
     if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
@@ -2939,42 +2941,17 @@ http.route({
   }),
 });
 
-// Set the connection-mode catalog (per-mode label/description + the default) and
-// the per-mode Remnawave placement pool. The Ansible panel-bootstrap PATCHes this
-// to bind the squads it creates (dual-mode: an fsv1_ token with
-// admin:settings:write works); also editable in the admin CMS. Squad UUIDs are
-// write-only (never read back). (The placement pool moves to the namespaced
-// /admin/remnawave/* endpoint in a later phase.)
-// GET: the editor's current state — families + their leaf sub-modes with copy,
-// `enabled`, and `bound`. Needed now that enablement is admin-controlled: the
-// public config omits disabled entries, so the admin UI cannot reconstruct the
-// full catalog from it.
+// The connection-mode catalog admin surface (DB-driven; full CRUD lands with
+// the per-entity routes in phase 3 — this GET is the editor's read).
+// GET: families + leaf modes with full CMS fields and per-backend placement
+// SUMMARIES (bound + counts, never a config). Needed because publicConfig
+// omits disabled entries, so the admin UI cannot reconstruct the catalog from it.
 http.route({
   path: '/api/v1/admin/connection-modes',
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
     return json(await ctx.runQuery(internal.adminApi.getConnectionModes, {}));
-  }),
-});
-
-http.route({
-  path: '/api/v1/admin/connection-modes',
-  method: 'PATCH',
-  handler: sealed(async (ctx, req) => {
-    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
-    if (!admin) return ADMIN_UNAUTH();
-    const body = await readJson<Record<string, unknown>>(req);
-    try {
-      return json(
-        await ctx.runMutation(internal.adminApi.setConnectionModes, {
-          patch: body,
-          actorAdminId: admin.adminUserId,
-        }),
-      );
-    } catch (err) {
-      return adminError(err);
-    }
   }),
 });
 
@@ -3089,6 +3066,11 @@ http.route({
 // nodes its keys are issued across). Write-only squad UUIDs; dual-mode (an fsv1_
 // token with admin:servers:write works — the Ansible panel-bootstrap PATCHes this
 // after it creates the per-node squads).
+//
+// PERMANENT-UNTIL-FURTHER-NOTICE ALIAS of the generic per-backend route
+// (PATCH /api/v1/admin/backends/remnawave/mode-placements, phase 3): the
+// Ansible role calls THIS path with this exact body/response shape, so it
+// keeps working byte-identically while the role migrates at leisure.
 http.route({
   path: '/api/v1/admin/remnawave/mode-placements',
   method: 'PATCH',
@@ -3098,7 +3080,8 @@ http.route({
     const body = await readJson<Record<string, unknown>>(req);
     try {
       return json(
-        await ctx.runMutation(internal.remnawaveNodes.setModePlacements, {
+        await ctx.runMutation(internal.connectionModes.setModePlacements, {
+          backend: 'remnawave',
           patch: body,
           actorAdminId: admin.adminUserId,
         }),

@@ -141,7 +141,8 @@ async function resolveIssueTarget(
   // must stay deterministic) and thread it through the resolution.
   const randBuf = new Uint32Array(1);
   crypto.getRandomValues(randBuf);
-  const t = await ctx.runQuery(internal.remnawaveNodes.resolveTarget, {
+  const t = await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
+    backend,
     modeId,
     location,
     rand: randBuf[0]! / 2 ** 32,
@@ -248,7 +249,7 @@ async function isEffectiveModeBlocked(
   modeId: string | null,
 ): Promise<boolean> {
   if (!capabilitiesOf(backend).placement) return false;
-  const gate = await ctx.runQuery(internal.remnawaveNodes.effectivePlacementGate, { modeId });
+  const gate = await ctx.runQuery(internal.connectionModes.effectiveGate, { backend, modeId });
   return gate.blocked;
 }
 
@@ -269,6 +270,17 @@ interface AccountView {
     };
     membership: { expiresAt: string | null; isCurrent: boolean } | null;
     connectionModeId: string;
+    // Fully-resolved projection of the member's CURRENT mode — present even
+    // when the mode is admin-disabled or gone from the catalog, so the client
+    // renders the right delivery UI + label instead of a raw slug.
+    currentMode: {
+      id: string;
+      deliveryStyle: 'url' | 'rawConfig';
+      label: string | null;
+      description: string | null;
+      family: { id: string; label: string | null } | null;
+      available: boolean;
+    } | null;
     /** ISO of the member's first settled donation (null = not a donor). */
     donorSince: string | null;
     /** Lifetime settled donation total (cents) — the member's own impact figure. */
@@ -349,6 +361,10 @@ export const getAccountView = internalAction({
       healed ??
       (user.connectionModeId ? canonicalModeId(user.connectionModeId) : null) ??
       (await ctx.runQuery(internal.connectionModes.defaultId, {}));
+    const currentMode = await ctx.runQuery(internal.connectionModes.memberMode, {
+      modeId: connectionModeId,
+      backend: tier.backend,
+    });
     // Fold the current shared donation bonus into the free-tier fallback so an
     // outage (backend unreachable) still shows the raised cap, not the base.
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
@@ -454,6 +470,7 @@ export const getAccountView = internalAction({
             }
           : null,
         connectionModeId,
+        currentMode,
         donorSince: user.firstDonatedAt ? new Date(user.firstDonatedAt).toISOString() : null,
         donatedCentsTotal: donationTotals.donatedCentsTotal,
         donationCount: donationTotals.donationCount,
@@ -1016,8 +1033,9 @@ export const switchMode = internalAction({
         }
       }
       const { placement: nodePlacement } = await ctx.runQuery(
-        internal.remnawaveNodes.resolveTarget,
+        internal.connectionModes.resolveIssueTarget,
         {
+          backend: tier.backend,
           modeId: target,
           onlyServerId: pinServerId as Id<'backendServers'> | null,
         },
@@ -1041,7 +1059,7 @@ export const switchMode = internalAction({
         });
         try {
           await ctx.runAction(internal.backends.updateUser, {
-            backend: 'remnawave',
+            backend: tier.backend,
             backendUserId: oldSub.backendUserId,
             patch: { placement: nodePlacement },
           });

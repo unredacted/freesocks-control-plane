@@ -19,13 +19,10 @@ import { readUserCounts } from './lib/statusCounters';
 import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
 import { resolveSiteConfig } from './lib/siteConfig';
-import {
-  publicFamilyProjection,
-  publicProjection,
-  resolveConnectionModeFamilies,
-  resolveConnectionModes,
-} from './lib/connectionModes';
-import { resolveBoundModeIds } from './lib/remnawavePlacement';
+import { publicFamilyProjection } from './lib/connectionModes';
+import { resolvePublicModes } from './lib/placement';
+import { BACKEND_IDS } from './lib/backendIds';
+import { CAPABILITIES } from './lib/backends/capabilities';
 import { resolveClients, publicClients } from './lib/clientCatalog';
 import { resolveLocations } from './lib/locations';
 import { resolveReferralConfig } from './lib/referralConfig';
@@ -124,10 +121,7 @@ export const get = query({
 
     // Resolved once: the family list is derived from it (a family with no visible
     // child is itself hidden), so the two must be computed from the same snapshot.
-    const modeProjection = publicProjection(
-      await resolveConnectionModes(ctx.db),
-      await resolveBoundModeIds(ctx.db),
-    );
+    const { modes: modeProjection, catalog: modeCatalog } = await resolvePublicModes(ctx.db);
 
     return {
       membersJoinUrl: process.env.MEMBERS_JOIN_URL || undefined,
@@ -149,11 +143,25 @@ export const get = query({
       tiers,
       freeTierDays: settings['freetier.expiryDays'] as number,
       backends: {
+        // Legacy per-id flags kept one release for cached SPAs; `list` is the
+        // N-backend projection new clients consume.
         remnawaveEnabled: settings['remnawave.enabled'] as boolean,
         outlineEnabled: settings['outline.enabled'] as boolean,
         defaultBackend: settings['subscription.default_backend'] as BackendId,
         userChoiceEnabled: settings['subscription.user_choice_enabled'] as boolean,
         labels,
+        list: BACKEND_IDS.map((id) => ({
+          id,
+          label: labels[id] ?? id,
+          enabled: settings[`${id}.enabled`] === true,
+          // Member-safe capability subset: drives device-limit UI gating and
+          // the access-key-vs-subscription delivery chrome. Never the full
+          // server-side record.
+          capabilities: {
+            devices: CAPABILITIES[id].deviceManagement,
+            accessKeyOnly: CAPABILITIES[id].accessKeyDelivery,
+          },
+        })),
       },
       billing: {
         enabled: billing.enabled,
@@ -223,10 +231,7 @@ export const get = query({
       // + deliveryStyle + isDefault + available = enabled AND placement pool
       // bound). Admin-disabled entries are omitted entirely. NEVER a squad UUID.
       connectionModes: modeProjection,
-      connectionModeFamilies: publicFamilyProjection(
-        await resolveConnectionModeFamilies(ctx.db),
-        modeProjection,
-      ),
+      connectionModeFamilies: publicFamilyProjection(modeCatalog.families, modeProjection),
       // Member-facing node-location catalog (active Remnawave instances with a
       // location set): code + display label + a coarse online bit. Never a URL
       // or credential. Drives the location picker at issuance; the SPA hides

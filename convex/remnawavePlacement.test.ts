@@ -12,6 +12,8 @@ import type { Id } from './_generated/dataModel';
 import {
   pickByNodeLoad,
   resolveBoundModeCounts,
+  resolveBoundModeIds,
+  resolveModeSquadPool,
   resolvePlacementPool,
   resolvePlacementTarget,
 } from './lib/remnawavePlacement';
@@ -262,6 +264,19 @@ async function seedLocatedServer(
 
 async function bindPool(t: ReturnType<typeof convexTest>, modeId: string, squads: string[]) {
   await t.run((ctx) =>
+    ctx.db.insert('modePlacements', {
+      modeSlug: modeId,
+      backend: 'remnawave',
+      config: JSON.stringify({ squadUuids: squads }),
+      updatedAt: Date.now(),
+    }),
+  );
+}
+
+/** Deploy-1 window shape: the pool still lives in the pre-refactor appSettings
+ *  key (the seed hasn't folded it in yet). */
+async function bindLegacyPool(t: ReturnType<typeof convexTest>, modeId: string, squads: string[]) {
+  await t.run((ctx) =>
     ctx.db.insert('appSettings', {
       key: `remnawave.modePlacement.${modeId}.squads`,
       value: JSON.stringify(squads),
@@ -270,16 +285,53 @@ async function bindPool(t: ReturnType<typeof convexTest>, modeId: string, squads
   );
 }
 
+describe('deploy-1 window: appSettings pool fallback', () => {
+  test('a pool still under the pre-refactor key (even a LEGACY id) resolves + reads bound', async () => {
+    const t = convexTest(schema, modules);
+    // The seed hasn't folded the pools into modePlacements yet: canonical-key
+    // and legacy-key appSettings pools must both keep working.
+    await bindLegacyPool(t, 'privacy-reality', ['sq-priv']);
+    await bindLegacyPool(t, 'evade', ['sq-ws']); // pre-rename spelling
+    expect(await t.run((ctx) => resolveModeSquadPool(ctx.db, 'privacy-reality'))).toEqual([
+      'sq-priv',
+    ]);
+    expect(await t.run((ctx) => resolveModeSquadPool(ctx.db, 'freedom-ws'))).toEqual(['sq-ws']);
+    const bound = await t.run(async (ctx) => [...(await resolveBoundModeIds(ctx.db))]);
+    expect(bound).toContain('privacy-reality');
+    expect(bound).toContain('freedom-ws');
+  });
+
+  test('a modePlacements row wins over a stale appSettings pool (deliberate unbind sticks)', async () => {
+    const t = convexTest(schema, modules);
+    await bindLegacyPool(t, 'freedom-ws', ['sq-old']);
+    // The admin emptied the pool via the NEW store; the dead settings row must
+    // not resurrect it.
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    expect(await t.run((ctx) => resolveModeSquadPool(ctx.db, 'freedom-ws'))).toEqual([]);
+    const bound = await t.run(async (ctx) => [...(await resolveBoundModeIds(ctx.db))]);
+    expect(bound).not.toContain('freedom-ws');
+  });
+});
+
 describe('resolvePlacementTarget', () => {
   test('pairs the placement with its own panel (least-loaded across panels)', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
-    await bindPool(t, 'evade', ['sq-mci', 'sq-ams']);
+    await bindPool(t, 'freedom-ws', ['sq-mci', 'sq-ams']);
     await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 50 });
     await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 1 });
     // rand → 0 pins the least-loaded of the top-3 (anti-herding spread).
-    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade', { rand: () => 0 }));
+    const target = await t.run((ctx) =>
+      resolvePlacementTarget(ctx.db, 'freedom-ws', { rand: () => 0 }),
+    );
     expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
   });
 
@@ -287,11 +339,11 @@ describe('resolvePlacementTarget', () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
-    await bindPool(t, 'evade', ['sq-mci', 'sq-ams']);
+    await bindPool(t, 'freedom-ws', ['sq-mci', 'sq-ams']);
     await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 50 });
     await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 1 });
     const target = await t.run((ctx) =>
-      resolvePlacementTarget(ctx.db, 'evade', { location: 'MCI' }),
+      resolvePlacementTarget(ctx.db, 'freedom-ws', { location: 'MCI' }),
     );
     expect(target).toEqual({ placement: 'sq-mci', serverId: mci });
   });
@@ -299,10 +351,10 @@ describe('resolvePlacementTarget', () => {
   test('an unknown/stale location code fails soft to any panel, never blocks issuance', async () => {
     const t = convexTest(schema, modules);
     const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
-    await bindPool(t, 'evade', ['sq-ams']);
+    await bindPool(t, 'freedom-ws', ['sq-ams']);
     await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 1 });
     const target = await t.run((ctx) =>
-      resolvePlacementTarget(ctx.db, 'evade', { location: 'GONE' }),
+      resolvePlacementTarget(ctx.db, 'freedom-ws', { location: 'GONE' }),
     );
     expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
   });
@@ -316,11 +368,11 @@ describe('resolvePlacementTarget', () => {
       maxKeys: 10,
     });
     const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
-    await bindPool(t, 'evade', ['sq-mci', 'sq-ams']);
+    await bindPool(t, 'freedom-ws', ['sq-mci', 'sq-ams']);
     await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 1 });
     await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 50 });
     const target = await t.run((ctx) =>
-      resolvePlacementTarget(ctx.db, 'evade', { location: 'MCI' }),
+      resolvePlacementTarget(ctx.db, 'freedom-ws', { location: 'MCI' }),
     );
     expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
   });
@@ -329,22 +381,22 @@ describe('resolvePlacementTarget', () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
-    await bindPool(t, 'evade', ['sq-mci', 'sq-ams']);
-    await bindPool(t, 'privacy', ['sq-ams-priv']);
+    await bindPool(t, 'freedom-ws', ['sq-mci', 'sq-ams']);
+    await bindPool(t, 'privacy-reality', ['sq-ams-priv']);
     await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 5 });
     await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 1 });
     await seedNode(t, ams, { placement: 'sq-ams-priv', usersOnline: 1 });
     // Pinned to MCI: the evade squad on MCI wins despite AMS being idler.
     expect(
       await t.run((ctx) =>
-        resolvePlacementTarget(ctx.db, 'evade', { onlyServerId: mci as string }),
+        resolvePlacementTarget(ctx.db, 'freedom-ws', { onlyServerId: mci as string }),
       ),
     ).toEqual({ placement: 'sq-mci', serverId: mci });
     // Privacy has no squad on MCI (its only squad is attributed to AMS) → null,
     // the caller falls back to a re-issue that may move panels.
     expect(
       await t.run((ctx) =>
-        resolvePlacementTarget(ctx.db, 'privacy', { onlyServerId: mci as string }),
+        resolvePlacementTarget(ctx.db, 'privacy-reality', { onlyServerId: mci as string }),
       ),
     ).toEqual({ placement: null, serverId: null });
   });
@@ -352,11 +404,11 @@ describe('resolvePlacementTarget', () => {
   test('onlyServerId keeps UNATTRIBUTED squads eligible (bring-up / single panel)', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
-    await bindPool(t, 'privacy', ['sq-unobserved']);
+    await bindPool(t, 'privacy-reality', ['sq-unobserved']);
     // No stats row for sq-unobserved: can't be proven foreign → still usable.
     expect(
       await t.run((ctx) =>
-        resolvePlacementTarget(ctx.db, 'privacy', { onlyServerId: mci as string }),
+        resolvePlacementTarget(ctx.db, 'privacy-reality', { onlyServerId: mci as string }),
       ),
     ).toEqual({ placement: 'sq-unobserved', serverId: mci });
   });
@@ -364,8 +416,8 @@ describe('resolvePlacementTarget', () => {
   test('bring-up (no stats rows at all): global pick, no panel pin', async () => {
     const t = convexTest(schema, modules);
     await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
-    await bindPool(t, 'evade', ['sq-a', 'sq-b']);
-    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade'));
+    await bindPool(t, 'freedom-ws', ['sq-a', 'sq-b']);
+    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'freedom-ws'));
     expect(target).toEqual({ placement: 'sq-a', serverId: null });
   });
 
@@ -373,11 +425,11 @@ describe('resolvePlacementTarget', () => {
     const t = convexTest(schema, modules);
     await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
-    await bindPool(t, 'evade', ['sq-a', 'sq-b']);
+    await bindPool(t, 'freedom-ws', ['sq-a', 'sq-b']);
     // No stats rows: the (squad, panel) pair can't be resolved, and an unpinned
     // pick could mint a squad onto the wrong panel — a dead key. The caller
     // (account.resolveIssueTarget) turns this flag into a 503 instead.
-    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade'));
+    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'freedom-ws'));
     expect(target).toEqual({ placement: null, serverId: null, unattributedMultiPanel: true });
   });
 
@@ -385,16 +437,16 @@ describe('resolvePlacementTarget', () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
     await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
-    await bindPool(t, 'evade', ['sq-a']);
+    await bindPool(t, 'freedom-ws', ['sq-a']);
     await seedNode(t, mci, { placement: 'sq-a', usersOnline: 3 });
-    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade'));
+    const target = await t.run((ctx) => resolvePlacementTarget(ctx.db, 'freedom-ws'));
     expect(target).toEqual({ placement: 'sq-a', serverId: mci });
   });
 
   test('no pool bound anywhere: null placement (caller audits the squad-less key)', async () => {
     const t = convexTest(schema, modules);
     await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
-    expect(await t.run((ctx) => resolvePlacementTarget(ctx.db, 'evade'))).toEqual({
+    expect(await t.run((ctx) => resolvePlacementTarget(ctx.db, 'freedom-ws'))).toEqual({
       placement: null,
       serverId: null,
     });
@@ -404,12 +456,10 @@ describe('resolvePlacementTarget', () => {
 describe('admin enablement gates placement', () => {
   async function setEnabled(
     t: ReturnType<typeof convexTest>,
-    key: string,
+    slug: string,
     value: boolean,
   ): Promise<void> {
-    await t.run((ctx) =>
-      ctx.db.insert('appSettings', { key, value: JSON.stringify(value), updatedAt: Date.now() }),
-    );
+    await t.mutation(internal.connectionModes.updateMode, { slug, enabled: value });
   }
 
   test('the fallback ladder never lands a key on a DISABLED mode', async () => {
@@ -420,7 +470,7 @@ describe('admin enablement gates placement', () => {
     expect(await t.run((ctx) => resolvePlacementPool(ctx.db, 'privacy-reality'))).toEqual([]);
 
     // Enable it and the same call now resolves through the ladder.
-    await setEnabled(t, 'connectionMode.freedom-reality.enabled', true);
+    await setEnabled(t, 'freedom-reality', true);
     expect(await t.run((ctx) => resolvePlacementPool(ctx.db, 'privacy-reality'))).toEqual([
       'sq-reality',
     ]);
@@ -442,15 +492,17 @@ describe('admin enablement gates placement', () => {
     // freedom-reality is bound but DISABLED, and freedom-ws is usable → refuse
     // rather than silently re-home the member into the CDN pool.
     expect(
-      await t.query(internal.remnawaveNodes.effectivePlacementGate, {
+      await t.query(internal.connectionModes.effectiveGate, {
+        backend: 'remnawave',
         modeId: 'freedom-reality',
       }),
     ).toEqual({ blocked: true });
 
     // Once enabled, the same member proceeds.
-    await setEnabled(t, 'connectionMode.freedom-reality.enabled', true);
+    await setEnabled(t, 'freedom-reality', true);
     expect(
-      await t.query(internal.remnawaveNodes.effectivePlacementGate, {
+      await t.query(internal.connectionModes.effectiveGate, {
+        backend: 'remnawave',
         modeId: 'freedom-reality',
       }),
     ).toEqual({ blocked: false });
@@ -459,7 +511,10 @@ describe('admin enablement gates placement', () => {
   test('effectivePlacementGate: nothing usable anywhere → not blocked (bring-up)', async () => {
     const t = convexTest(schema, modules);
     expect(
-      await t.query(internal.remnawaveNodes.effectivePlacementGate, { modeId: 'freedom-ws' }),
+      await t.query(internal.connectionModes.effectiveGate, {
+        backend: 'remnawave',
+        modeId: 'freedom-ws',
+      }),
     ).toEqual({ blocked: false });
   });
 });

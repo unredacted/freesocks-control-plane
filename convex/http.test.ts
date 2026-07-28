@@ -1224,15 +1224,13 @@ describe('rate-limit coverage (pre-launch review)', () => {
 });
 
 /**
- * CHARACTERIZATION (mode/backend overhaul, phase 0): suggestedModeId is picked
- * from the COMPILED catalog with no enabled/bound filtering, so a privacy-country
- * caller is pointed at freedom-reality — a mode that ships dark
- * (defaultEnabled:false) and has no pool bound. FLIPS: after the DB-driven
- * catalog lands, the suggestion respects enabled + per-backend availability and
- * this case falls back to the resolved default instead.
+ * suggestedModeId respects the LIVE catalog (flipped characterization from the
+ * mode overhaul): a censorship-recommended mode is suggested only when it is
+ * enabled AND available on the member's backend; otherwise the resolved
+ * default. The old compiled-array pick suggested the dark freedom-reality.
  */
-describe('characterization: suggestedModeId ignores enabled/bound', () => {
-  test('privacy-country caller is suggested the dark freedom-reality mode (FLIPS to the resolved default)', async () => {
+describe('suggestedModeId respects enabled + availability', () => {
+  test('privacy-country caller falls back to the default while freedom-reality is dark/unbound', async () => {
     vi.stubEnv('CF_FRONTED', 'true');
     const t = convexTest(schema, modules);
     const { userId } = await seedTierAndUser(t);
@@ -1251,7 +1249,63 @@ describe('characterization: suggestedModeId ignores enabled/bound', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { suggestedModeId: string; geoCountry: string | null };
     expect(body.geoCountry).toBe('IR');
-    // CURRENT (to flip): the dark, unbound mode is suggested.
+    // freedom-reality ships dark (disabled) and unbound → never suggested.
+    expect(body.suggestedModeId).toBe('freedom-ws');
+  });
+
+  test('privacy-country caller gets the censorship-recommended mode once enabled + bound', async () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'delivery.privacyCountries',
+        value: JSON.stringify(['IR']),
+        updatedAt: Date.now(),
+      });
+      // Materialize the catalog with freedom-reality enabled + bound.
+      await ctx.db.insert('connectionModeFamilies', {
+        slug: 'freedom',
+        iconId: 'zap',
+        enabled: true,
+        order: 0,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('connectionModes', {
+        slug: 'freedom-ws',
+        familySlug: 'freedom',
+        deliveryStyle: 'url',
+        enabled: true,
+        isFamilyDefault: true,
+        backends: ['remnawave'],
+        order: 0,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('connectionModes', {
+        slug: 'freedom-reality',
+        familySlug: 'freedom',
+        deliveryStyle: 'rawConfig',
+        enabled: true,
+        isFamilyDefault: false,
+        isCensorshipRecommended: true,
+        backends: ['remnawave'],
+        order: 1,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['11111111-2222-3333-4444-555555555555'] }),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const res = await t.fetch('/api/v1/account', {
+      headers: { cookie, 'cf-ipcountry': 'IR' },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { suggestedModeId: string };
     expect(body.suggestedModeId).toBe('freedom-reality');
   });
 

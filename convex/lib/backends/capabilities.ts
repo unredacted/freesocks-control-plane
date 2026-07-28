@@ -41,6 +41,10 @@ export interface BackendCapabilities {
   /** A 404 from fetchSubscriptionContent means the panel rejected the DEVICE
    *  (HWID enforcement), not that the key is gone. */
   fetch404IsDeviceRejection: boolean;
+  /** Delivery is a single bare access key (ss:// etc.), not a multi-config
+   *  subscription document — drives the member-facing chrome (URL noun, no
+   *  one-tap import builder, no per-node pinning talk). */
+  accessKeyDelivery: boolean;
 }
 
 export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
@@ -53,6 +57,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     bulkTrafficUpdate: true,
     usageHistory: true,
     fetch404IsDeviceRejection: true,
+    accessKeyDelivery: false,
   },
   outline: {
     placement: false,
@@ -63,6 +68,7 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     bulkTrafficUpdate: false,
     usageHistory: false,
     fetch404IsDeviceRejection: false,
+    accessKeyDelivery: true,
   },
 };
 

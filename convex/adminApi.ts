@@ -31,11 +31,8 @@ import { applyCountsDelta, readUserCounts } from './lib/statusCounters';
 import { upsertSettingRow as upsertSetting } from './appSettings';
 import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
-import {
-  connectionModeWrites,
-  resolveConnectionModeFamilies,
-  resolveConnectionModes,
-} from './lib/connectionModes';
+import { CAPABILITIES } from './lib/backends/capabilities';
+import { resolveCatalogWithAvailability, resolverFor } from './lib/placement';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { sanitizeBannerText, sanitizeEmail, sanitizeHeroTitles } from './lib/siteConfig';
@@ -2110,80 +2107,73 @@ export const setSiteConfig = internalMutation({
 // === connection modes ========================================================
 
 /**
- * Admin sets the GENERIC connection-mode catalog: per-mode label/description +
- * the default. Writes the appSettings `connectionMode.*` namespace. The
- * Remnawave placement pool (which squads a mode issues into) is backend-specific
- * and set separately via remnawaveNodes.setModePlacements. Returns the catalog
- * view (label null unless admin-set, so it doesn't round-trip the compiled
- * default into the form + pin English over i18n).
+ * The admin CMS view of the DB-driven mode catalog: families + leaf modes with
+ * full CMS fields (copy, flags, order, backend applicability, builtIn) plus
+ * per-(mode, backend) placement SUMMARIES (bound + counts — never a config).
+ * CRUD itself lives in convex/connectionModes.ts; the legacy bulk-PATCH shape
+ * (connectionModeWrites over appSettings) is gone with the appSettings
+ * namespaces.
  */
 export const getConnectionModes = internalQuery({
   args: {},
-  handler: (ctx) => connectionModeAdminView(ctx.db),
-});
-
-export const setConnectionModes = internalMutation({
-  args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
-  handler: async (ctx, { patch, actorAdminId }) => {
-    let writes: Array<{ key: string; value: string }>;
-    try {
-      writes = connectionModeWrites(patch);
-    } catch (e) {
-      throw new ConvexError({
-        code: 'validation',
-        message: e instanceof Error ? e.message : 'invalid connection-mode config',
-      });
-    }
-    if (writes.length === 0) {
-      throw new ConvexError({
-        code: 'validation',
-        message: 'no recognized connection-mode fields',
-      });
-    }
-    for (const { key, value } of writes) {
-      await upsertSetting(ctx, key, value, actorAdminId);
-      await writeAuditLog(ctx, {
-        actorType: 'admin',
-        actorId: actorAdminId ?? undefined,
-        action: 'admin.connection_mode.update',
-        targetType: 'connection_mode',
-        targetId: key,
-        payload: { key },
-      });
-    }
-    return connectionModeAdminView(ctx.db);
-  },
-});
-
-/** The admin editor's view of the mode catalog: families + their leaf sub-modes,
- *  each with its admin copy, `enabled` toggle, and `bound` (placement pool) flag.
- *  Deprecated legacy aliases are excluded — they exist only so pre-migration rows
- *  validate and must never appear as something an operator can edit. */
-export async function connectionModeAdminView(db: DatabaseReader) {
-  const [modes, families, bound] = await Promise.all([
-    resolveConnectionModes(db),
-    resolveConnectionModeFamilies(db),
-    resolveBoundModeIds(db),
-  ]);
-  return {
-    families: families.map((f) => ({
-      id: f.id,
-      label: f.label,
-      description: f.description,
-      enabled: f.enabled,
-    })),
-    modes: modes
-      .filter((m) => !m.deprecated)
-      .map((m) => ({
+  handler: async (ctx) => {
+    const { families, modes } = await resolveCatalogWithAvailability(ctx.db);
+    const summaries = await placementSummariesFor(ctx.db, modes);
+    return {
+      families: families.map((f) => ({
+        id: f.id,
+        label: f.label,
+        description: f.description,
+        audience: f.audience,
+        iconId: f.iconId,
+        enabled: f.enabled,
+        order: f.order,
+        builtIn: f.builtIn,
+      })),
+      modes: modes.map((m) => ({
         id: m.id,
-        family: m.family ?? null,
+        family: m.family,
         label: m.label,
         description: m.description,
         deliveryStyle: m.deliveryStyle,
         isDefault: m.isDefault,
         isFamilyDefault: m.isFamilyDefault,
+        isCensorshipRecommended: m.isCensorshipRecommended,
         enabled: m.enabled,
-        bound: bound.has(m.id),
+        ownEnabled: m.ownEnabled,
+        orphaned: m.orphaned,
+        backends: m.backends,
+        availableBackends: m.availableBackends,
+        order: m.order,
+        builtIn: m.builtIn,
+        placements: summaries[m.id] ?? [],
       })),
-  };
+    };
+  },
+});
+
+/** Per-(mode, backend) placement summaries for the modes given (sizes only). */
+async function placementSummariesFor(
+  db: DatabaseReader,
+  modes: Array<{ id: string; backends: BackendId[] }>,
+): Promise<Record<string, Array<{ backendId: BackendId; bound: boolean; boundCount: number }>>> {
+  const countsByBackend = new Map<BackendId, Record<string, number>>();
+  const out: Record<
+    string,
+    Array<{ backendId: BackendId; bound: boolean; boundCount: number }>
+  > = {};
+  for (const m of modes) {
+    out[m.id] = [];
+    for (const b of m.backends) {
+      if (!CAPABILITIES[b].placement) continue;
+      let counts = countsByBackend.get(b);
+      if (!counts) {
+        counts = await resolverFor(b).boundCounts(db);
+        countsByBackend.set(b, counts);
+      }
+      const n = counts[m.id] ?? 0;
+      out[m.id]!.push({ backendId: b, bound: n > 0, boundCount: n });
+    }
+  }
+  return out;
 }

@@ -199,7 +199,70 @@ export default defineSchema({
     // users due for deactivation; `inactive` rows fall outside the range, so the
     // sweep never re-scans its own output (no accretion).
     .index('by_tier_status_freekey', ['tierId', 'status', 'freeKeyExpiresAt'])
-    .index('by_tier', ['tierId']),
+    .index('by_tier', ['tierId'])
+    // Mode-catalog delete/disable guards: cheap "is any member on this mode?"
+    // existence checks (never full counts on the hot path).
+    .index('by_connection_mode', ['connectionModeId']),
+
+  // === DB-driven connection-mode catalog (families + leaf modes) =============
+  // The member-facing transport choice, fully admin-managed (create/edit/delete
+  // in the CMS). Compiled defaults in lib/connectionModes.ts seed a fresh deploy
+  // and serve as the read fallback while both tables are empty, so the picker is
+  // never blank. The string `slug` is the wire id everywhere (users.
+  // connectionModeId, censorship-matrix cells, audit payloads) and is IMMUTABLE
+  // after create — a rename is create+migrate+delete, never an alias layer.
+  connectionModeFamilies: defineTable({
+    slug: v.string(), // unique (read-check in the create mutation)
+    // Admin-set copy; absent → the SPA renders its compiled i18n for built-in
+    // slugs (and a humanized slug otherwise, which create() prevents by
+    // requiring a label for non-built-ins).
+    label: v.optional(v.string()),
+    description: v.optional(v.string()),
+    // The "who is this for" picker chip; absent → built-in i18n or no chip.
+    audience: v.optional(v.string()),
+    // OPEN icon id resolved by the client icon registry; unknown → fallback.
+    iconId: v.string(),
+    enabled: v.boolean(),
+    order: v.number(),
+    updatedAt: v.number(),
+  }).index('by_slug', ['slug']),
+
+  connectionModes: defineTable({
+    slug: v.string(), // unique (read-check in the create mutation)
+    familySlug: v.string(),
+    // Closed CODE enum — drives member delivery UI (URL-first vs raw-config).
+    deliveryStyle: v.union(v.literal('url'), v.literal('rawConfig')),
+    label: v.optional(v.string()),
+    description: v.optional(v.string()),
+    enabled: v.boolean(),
+    // The leaf selected when a member picks the family without a transport.
+    isFamilyDefault: v.boolean(),
+    // The geo-based suggestion for censored-region members targets this mode
+    // (replaces the compiled CENSORSHIP_MODE_FAMILY constant).
+    isCensorshipRecommended: v.optional(v.boolean()),
+    // Backend APPLICABILITY (the clients.backends pattern): which backend types
+    // this mode is offered on. Availability additionally requires a bound
+    // placement on placement-capable backends.
+    backends: v.array(backendId),
+    order: v.number(),
+    updatedAt: v.number(),
+  }).index('by_slug', ['slug']),
+
+  // Per-(mode, backend) placement binding. `config` is a backend-defined JSON
+  // string (Remnawave: {"squadUuids":[...]}) parsed fail-safe by that backend's
+  // placement resolver — malformed config reads as unbound, never a throw.
+  // WRITE-ONLY over HTTP: admin reads get {bound, boundCount} summaries, never
+  // the config; audits carry poolBound + counts only. Scope admin:servers:write
+  // (the Ansible role's token), deliberately separate from the catalog tables'
+  // admin:settings:write.
+  modePlacements: defineTable({
+    modeSlug: v.string(),
+    backend: backendId,
+    config: v.string(),
+    updatedAt: v.number(),
+  })
+    .index('by_mode_backend', ['modeSlug', 'backend'])
+    .index('by_backend', ['backend']),
 
   subscriptions: defineTable({
     userId: v.id('users'),
