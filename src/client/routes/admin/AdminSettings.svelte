@@ -17,14 +17,10 @@
   import { apiErrorMessage } from '../../lib/errors';
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import AdminListState from './AdminListState.svelte';
-  import {
-    adminConnectionModesQuery,
-    appSettingsQuery,
-    configQuery,
-    queryKeys,
-  } from '../../lib/queries';
+  import { appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
+  import Link from '../../components/Link.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { AdminConnectionModesResponse, AppSettingsRecord } from '../../../shared/contracts/admin';
+  import { AppSettingsRecord } from '../../../shared/contracts/admin';
   import { toast } from 'svelte-sonner';
 
   /**
@@ -224,69 +220,6 @@
     },
     onError: (err) => {
       toast.error('Could not save site settings', { description: apiErrorMessage(err) });
-    },
-  }));
-
-  // Connection modes (transport) - the GENERIC catalog (label/description/default).
-  // The Remnawave placement pool (which nodes each mode issues into) is managed on
-  // the Remnawave admin page, not here.
-  // Data-driven off the ADMIN catalog (which, unlike publicConfig, includes
-  // disabled entries — the operator must be able to see and re-enable what they
-  // switched off). Per-entry drafts are keyed by id, so adding a mode or a family
-  // needs no edit here.
-  type CpEntry = { label: string; description: string; enabled: boolean };
-  const cpModes = adminConnectionModesQuery();
-  let cpDefault = $state('');
-  let cpFamilyDraft = $state<Record<string, CpEntry>>({});
-  let cpModeDraft = $state<Record<string, CpEntry>>({});
-  let cpInit = $state(false);
-  /** Families in catalog order with their leaf children, for the nested editor. */
-  let cpGroups = $derived(
-    (cpModes.data?.families ?? [])
-      .map((f) => ({
-        family: f,
-        children: (cpModes.data?.modes ?? []).filter((m) => m.family === f.id),
-      }))
-      .filter((g) => g.children.length > 0),
-  );
-  function hydrateCp(data: NonNullable<typeof cpModes.data>) {
-    // label/description arrive null unless the admin set them (blank input =
-    // members see the app's own translated copy).
-    cpDefault = data.modes.find((m) => m.isDefault)?.id ?? cpDefault;
-    cpFamilyDraft = Object.fromEntries(
-      data.families.map((f) => [
-        f.id,
-        { label: f.label ?? '', description: f.description ?? '', enabled: f.enabled },
-      ]),
-    );
-    cpModeDraft = Object.fromEntries(
-      data.modes.map((m) => [
-        m.id,
-        { label: m.label ?? '', description: m.description ?? '', enabled: m.enabled },
-      ]),
-    );
-  }
-  $effect(() => {
-    if (cpModes.data && !cpInit) {
-      hydrateCp(cpModes.data);
-      cpInit = true;
-    }
-  });
-  const saveConnectionModes = createMutation(() => ({
-    mutationFn: async () =>
-      apiClient.patch(
-        '/api/v1/admin/connection-modes',
-        { default: cpDefault, families: cpFamilyDraft, modes: cpModeDraft },
-        AdminConnectionModesResponse,
-      ),
-    onSuccess: (updated) => {
-      hydrateCp(updated);
-      void qc.invalidateQueries({ queryKey: queryKeys.config });
-      void qc.invalidateQueries({ queryKey: queryKeys.adminConnectionModes });
-      toast.success('Connection modes saved');
-    },
-    onError: (err) => {
-      toast.error('Could not save connection modes', { description: apiErrorMessage(err) });
     },
   }));
 </script>
@@ -528,9 +461,9 @@
         <CardHeader>
           <CardTitle class="text-base">Delivery preference</CardTitle>
           <CardDescription>
-            Countries (ISO 2-letter) where the signup picker suggests "hardened privacy" instead of
-            the default "stay connected". Empty = always suggest stay-connected. The member's actual
-            choice is stored only on their device, never here.
+            Countries (ISO 2-letter) where the picker suggests the censorship-recommended mode (see
+            the Connection modes page) instead of the catalog default. Empty = always suggest the
+            default. The member's actual choice is stored only on their device, never here.
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-3 text-sm">
@@ -877,183 +810,14 @@
         <CardHeader>
           <CardTitle class="text-base">Connection modes</CardTitle>
           <CardDescription>
-            The member-facing transport choice, in two levels: a parent mode ("Freedom Mode",
-            "Privacy Mode") and its transport sub-modes. Turn a parent off to hide its whole
-            subtree. Set the default and, optionally, a custom label/description that replaces the
-            member picker's translated copy verbatim in EVERY language (leave blank to keep the
-            app's own translations). Which Remnawave nodes each sub-mode issues into - the placement
-            pool + live node load - is managed on the <strong>Remnawave</strong> page.
+            The member transport catalog (families, modes, copy, defaults, per-backend
+            applicability) moved to its own manager with full create/edit/delete:
+            <Link href="/admin/connection-modes" class="underline">Connection modes</Link>.
+            Placement pools stay on the <Link href="/admin/remnawave" class="underline"
+              >Remnawave</Link
+            > page.
           </CardDescription>
         </CardHeader>
-        <CardContent class="space-y-5 text-sm">
-          {#each cpGroups as g, gi (g.family.id)}
-            {@const fd = cpFamilyDraft[g.family.id]}
-            {#if fd}
-              <div
-                class="space-y-3"
-                class:border-t={gi > 0}
-                class:border-border={gi > 0}
-                class:pt-4={gi > 0}
-              >
-                <label class="flex items-center gap-2 font-medium">
-                  <input
-                    type="checkbox"
-                    checked={fd.enabled}
-                    onchange={(e) =>
-                      (cpFamilyDraft = {
-                        ...cpFamilyDraft,
-                        [g.family.id]: {
-                          ...fd,
-                          enabled: (e.target as HTMLInputElement).checked,
-                        },
-                      })}
-                  />
-                  {g.family.label ?? g.family.id}
-                  <span class="font-mono text-xs text-muted-foreground">({g.family.id})</span>
-                </label>
-                <div>
-                  <label
-                    class="text-xs text-muted-foreground mb-1 block"
-                    for={`cp-fam-${g.family.id}-label`}
-                    >Label <span class="opacity-70">(blank = translated default)</span></label
-                  >
-                  <Input
-                    id={`cp-fam-${g.family.id}-label`}
-                    value={fd.label}
-                    oninput={(e) =>
-                      (cpFamilyDraft = {
-                        ...cpFamilyDraft,
-                        [g.family.id]: { ...fd, label: (e.target as HTMLInputElement).value },
-                      })}
-                  />
-                </div>
-                <div>
-                  <label
-                    class="text-xs text-muted-foreground mb-1 block"
-                    for={`cp-fam-${g.family.id}-description`}
-                    >Description <span class="opacity-70">(blank = translated default)</span></label
-                  >
-                  <textarea
-                    id={`cp-fam-${g.family.id}-description`}
-                    rows="2"
-                    class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
-                    placeholder="Shown on the member's picker card"
-                    value={fd.description}
-                    oninput={(e) =>
-                      (cpFamilyDraft = {
-                        ...cpFamilyDraft,
-                        [g.family.id]: {
-                          ...fd,
-                          description: (e.target as HTMLTextAreaElement).value,
-                        },
-                      })}
-                  ></textarea>
-                </div>
-
-                <div class="space-y-3 border-s-2 border-border ps-4">
-                  {#each g.children as m (m.id)}
-                    {@const md = cpModeDraft[m.id]}
-                    {#if md}
-                      <div class="space-y-2">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <label class="flex items-center gap-2 font-medium">
-                            <input
-                              type="checkbox"
-                              checked={md.enabled}
-                              onchange={(e) =>
-                                (cpModeDraft = {
-                                  ...cpModeDraft,
-                                  [m.id]: {
-                                    ...md,
-                                    enabled: (e.target as HTMLInputElement).checked,
-                                  },
-                                })}
-                            />
-                            {m.label ?? m.id}
-                            <span class="font-mono text-xs text-muted-foreground">({m.id})</span>
-                          </label>
-                          <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <input
-                              type="radio"
-                              name="cp-default"
-                              checked={cpDefault === m.id}
-                              onchange={() => (cpDefault = m.id)}
-                            />
-                            default
-                          </label>
-                          {#if !m.bound}
-                            <!-- Enabled but with no placement pool = still not
-                                 selectable; say so here rather than letting the
-                                 operator think the toggle was enough. -->
-                            <span
-                              class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
-                            >
-                              No pool bound
-                            </span>
-                          {/if}
-                        </div>
-                        <div>
-                          <label
-                            class="text-xs text-muted-foreground mb-1 block"
-                            for={`cp-mode-${m.id}-label`}
-                            >Label
-                            <span class="opacity-70">(blank = translated default)</span></label
-                          >
-                          <Input
-                            id={`cp-mode-${m.id}-label`}
-                            value={md.label}
-                            oninput={(e) =>
-                              (cpModeDraft = {
-                                ...cpModeDraft,
-                                [m.id]: { ...md, label: (e.target as HTMLInputElement).value },
-                              })}
-                          />
-                        </div>
-                        <div>
-                          <label
-                            class="text-xs text-muted-foreground mb-1 block"
-                            for={`cp-mode-${m.id}-description`}
-                            >Description
-                            <span class="opacity-70">(blank = translated default)</span></label
-                          >
-                          <textarea
-                            id={`cp-mode-${m.id}-description`}
-                            rows="2"
-                            class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
-                            placeholder="Shown under the transport choice"
-                            value={md.description}
-                            oninput={(e) =>
-                              (cpModeDraft = {
-                                ...cpModeDraft,
-                                [m.id]: {
-                                  ...md,
-                                  description: (e.target as HTMLTextAreaElement).value,
-                                },
-                              })}
-                          ></textarea>
-                        </div>
-                      </div>
-                    {/if}
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          {/each}
-
-          <div class="flex justify-end">
-            {#if !cpInit}
-              <span class="me-3 self-center text-xs text-muted-foreground"
-                >Loading current values…</span
-              >
-            {/if}
-            <Button
-              onclick={() => saveConnectionModes.mutate()}
-              disabled={saveConnectionModes.isPending || !cpInit}
-            >
-              {saveConnectionModes.isPending ? 'Saving…' : 'Save connection modes'}
-            </Button>
-          </div>
-        </CardContent>
       </Card>
     </div>
   {/if}

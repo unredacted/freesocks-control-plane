@@ -36,12 +36,25 @@
   // disabled modes, and an operator must still be able to bind a pool to a mode
   // before turning it on.
   const modeCatalog = adminConnectionModesQuery();
-  let adminModes = $derived(modeCatalog.data?.modes ?? []);
+  // Only modes that DECLARE the remnawave backend can be bound here; an orphan
+  // bucket keeps modes whose family row is gone manageable (the old grouping
+  // hid them entirely, so their pool could never be bound or cleared).
+  let adminModes = $derived(
+    (modeCatalog.data?.modes ?? []).filter((m) => (m.backends as string[]).includes('remnawave')),
+  );
   let adminFamilies = $derived(modeCatalog.data?.families ?? []);
   let modeGroups = $derived(
-    adminFamilies
-      .map((f) => ({ family: f, children: adminModes.filter((m) => m.family === f.id) }))
-      .filter((g) => g.children.length > 0),
+    (() => {
+      const grouped = adminFamilies
+        .map((f) => ({
+          family: f as (typeof adminFamilies)[number] | null,
+          children: adminModes.filter((m) => m.family === f.id),
+        }))
+        .filter((g) => g.children.length > 0);
+      const known = new Set(adminFamilies.map((f) => f.id));
+      const orphans = adminModes.filter((m) => !m.family || !known.has(m.family));
+      return orphans.length ? [...grouped, { family: null, children: orphans }] : grouped;
+    })(),
   );
 
   // Per-leaf textarea contents, keyed by mode id.
@@ -50,12 +63,18 @@
   // silently and only surface later as a dead/offline pool.
   let draftError = $state<string | null>(null);
 
-  // Per-mode bound-pool SIZES from the node-stats endpoint (never the UUIDs).
+  // Per-mode bound-pool SIZES (never the UUIDs): the catalog's per-backend
+  // placement summaries, with the node-stats counts as an older-server fallback.
   let boundCounts = $derived(
     Object.fromEntries(
       (nodeStats.data?.placements ?? []).map((p) => [p.modeId, p.boundCount]),
     ) as Record<string, number>,
   );
+  function remnawaveSummary(m: (typeof adminModes)[number]): { bound: boolean; count: number } {
+    const viaCatalog = m.placements.find((p) => p.backendId === 'remnawave');
+    if (viaCatalog) return { bound: viaCatalog.bound, count: viaCatalog.boundCount };
+    return { bound: m.bound, count: boundCounts[m.id] ?? 0 };
+  }
 
   // One UUID per line (commas also accepted); trims + dedupes.
   function parseSquadList(text: string): string[] {
@@ -86,7 +105,7 @@
         throw new Error(`Not a squad UUID: ${invalid.join(', ')}`);
       }
       return apiClient.patch(
-        '/api/v1/admin/remnawave/mode-placements',
+        '/api/v1/admin/backends/remnawave/mode-placements',
         { modes },
         RemnawavePlacementUpdateResponse,
       );
@@ -156,7 +175,7 @@
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-5 text-sm">
-        {#each modeGroups as g, gi (g.family.id)}
+        {#each modeGroups as g, gi (g.family?.id ?? '__orphans__')}
           <div
             class="space-y-4"
             class:border-t={gi > 0}
@@ -164,10 +183,11 @@
             class:pt-4={gi > 0}
           >
             <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {g.family.label ?? g.family.id}
+              {g.family ? (g.family.label ?? g.family.id) : 'No family (orphaned modes)'}
             </p>
             {#each g.children as m (m.id)}
-              {@const bound = m.bound}
+              {@const summary = remnawaveSummary(m)}
+              {@const bound = summary.bound}
               <div class="space-y-2">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                   <span class="font-medium">
@@ -190,8 +210,8 @@
                         : 'bg-muted text-muted-foreground'}"
                     >
                       {#if bound}
-                        {boundCounts[m.id] != null
-                          ? `${boundCounts[m.id]} squad${boundCounts[m.id] === 1 ? '' : 's'} bound`
+                        {summary.count > 0
+                          ? `${summary.count} squad${summary.count === 1 ? '' : 's'} bound`
                           : 'Pool bound'}
                       {:else}
                         Not set

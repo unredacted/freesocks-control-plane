@@ -15,10 +15,12 @@
   import AdminListState from './AdminListState.svelte';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
+  import { mergeMatrixColumns } from '../../lib/matrixColumns';
+  import { humanizeSlug } from '../../lib/humanize';
   import {
+    adminConnectionModesQuery,
     adminStatusIncidentsQuery,
     adminStatusPageQuery,
-    configQuery,
     queryKeys,
   } from '../../lib/queries';
   import {
@@ -38,12 +40,31 @@
    * to the `status.*` namespace; nothing here needs a redeploy. English-only
    * (admin CMS convention).
    */
-  const config = configQuery();
   const page = adminStatusPageQuery();
   const incidents = adminStatusIncidentsQuery();
   const qc = useQueryClient();
 
-  const MODES = $derived((config.data?.connectionModes ?? []).map((m) => m.id));
+  const modeCatalog = adminConnectionModesQuery();
+  // Columns come from the ADMIN catalog (incl. disabled modes) merged with any
+  // id still present in stored rows: the old publicConfig-derived set dropped
+  // disabled modes, so the next save silently ERASED their stored cells.
+  const MODES = $derived(
+    mergeMatrixColumns(
+      (modeCatalog.data?.modes ?? []).map((m) => m.id),
+      page.data?.rows ?? [],
+    ),
+  );
+  let modeById = $derived(new Map((modeCatalog.data?.modes ?? []).map((m) => [m.id, m])));
+  function columnLabel(id: string): string {
+    const m = modeById.get(id);
+    if (!m) return `${humanizeSlug(id)} (removed)`;
+    return (m.label ?? humanizeSlug(id)) + (m.enabled ? '' : ' (disabled)');
+  }
+  // The grid must actually track the column count — grid-cols-[...repeat(auto,6rem)]
+  // is invalid CSS and never was a per-mode template.
+  let matrixGridStyle = $derived(
+    `grid-template-columns: 7rem 1fr repeat(${MODES.length}, 6rem) 2rem;`,
+  );
 
   function invalidate() {
     void qc.invalidateQueries({ queryKey: queryKeys.adminStatusPage });
@@ -398,17 +419,18 @@
         {:else}
           <div class="space-y-2">
             <div
-              class="grid grid-cols-[7rem_1fr_repeat(auto,6rem)] items-center gap-2 text-xs font-medium text-muted-foreground"
+              style={matrixGridStyle}
+              class="grid items-center gap-2 text-xs font-medium text-muted-foreground"
             >
               <span>Country (alpha-2)</span>
               <span>Label (optional)</span>
               {#each MODES as m (m)}
-                <span class="text-center">{m}</span>
+                <span class="text-center" title={m}>{columnLabel(m)}</span>
               {/each}
               <span></span>
             </div>
             {#each matrixRows() as row, idx (idx)}
-              <div class="grid grid-cols-[7rem_1fr_repeat(auto,6rem)] items-center gap-2">
+              <div style={matrixGridStyle} class="grid items-center gap-2">
                 <Input
                   value={row.countryCode}
                   oninput={(e) => {
