@@ -1090,11 +1090,7 @@ export const deleteInactiveUser = internalMutation({
     if (!u || u.status !== 'inactive') return null;
     const deleteByUser = async (
       table:
-        | 'subscriptions'
-        | 'tierHistory'
-        | 'billingOrders'
-        | 'memberPasskeyCredentials'
-        | 'sessions',
+        'subscriptions' | 'tierHistory' | 'billingOrders' | 'memberPasskeyCredentials' | 'sessions',
     ) => {
       const rows = await ctx.db
         .query(table)

@@ -178,8 +178,7 @@
                 : 'squad-uuid per line'}
               value={draft[m.id as 'evade' | 'privacy']}
               oninput={(e) =>
-                (draft = { ...draft, [m.id]: (e.target as HTMLTextAreaElement).value })}
-            ></textarea>
+                (draft = { ...draft, [m.id]: (e.target as HTMLTextAreaElement).value })}></textarea>
           </div>
         {/each}
         {#if draftError}

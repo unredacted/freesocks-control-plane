@@ -73,9 +73,7 @@ export const get = query({
       outline: string;
     };
     const environment = (process.env.ENVIRONMENT ?? 'production') as
-      | 'production'
-      | 'development'
-      | 'test';
+      'production' | 'development' | 'test';
 
     // Public-safe billing catalog: prices, durations, which rails are live, and
     // the tier slug the membership maps to. No secrets (API keys/IPN secrets are

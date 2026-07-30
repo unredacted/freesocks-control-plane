@@ -1055,8 +1055,7 @@ export const switchMode = internalAction({
 });
 
 type RevokeDeviceResult =
-  | { ok: true }
-  | { ok: false; code: string; message: string; status: number };
+  { ok: true } | { ok: false; code: string; message: string; status: number };
 
 /**
  * Revoke one of the member's HWID devices, freeing a slot under the tier's

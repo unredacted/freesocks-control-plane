@@ -201,8 +201,7 @@
           rows={2}
           maxlength={280}
           placeholder="Why choose this app? Shown to members under the app name."
-          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-        ></textarea>
+          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"></textarea>
         <p class="text-xs text-muted-foreground/80 mt-1">
           Shown verbatim in every language. Leave blank to use the built-in translated description
           for known default apps.

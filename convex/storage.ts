@@ -58,8 +58,7 @@ function clientFor(p: S3Provider): S3Client {
  * unit-testable with a plain stub, without the AWS SDK or the Convex runtime.
  */
 export type S3Op =
-  | { kind: 'put'; key: string; body: string; contentType: string }
-  | { kind: 'delete'; key: string };
+  { kind: 'put'; key: string; body: string; contentType: string } | { kind: 'delete'; key: string };
 export type S3Send = (provider: S3Provider, op: S3Op) => Promise<void>;
 
 const realSend: S3Send = async (p, op) => {
