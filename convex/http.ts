@@ -15,15 +15,12 @@ import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
-import {
-  CONNECTION_MODES,
-  DEFAULT_CONNECTION_MODE,
-  isConnectionModeId,
-} from './lib/connectionModes';
+import { DEFAULT_CONNECTION_MODE } from './lib/connectionModes';
 import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sealed } from './lib/e2ee';
 import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
+import { isBackendId, type BackendId } from './lib/backendIds';
 import {
   ADMIN_COOKIE,
   MEMBER_COOKIE,
@@ -54,6 +51,8 @@ function statusFromCode(code: string): number {
       return 429;
     case 'not_found':
       return 404;
+    case 'conflict':
+      return 409;
     default:
       return 400;
   }
@@ -464,7 +463,7 @@ http.route({
 
     const body = await readJson<{
       captchaToken?: string;
-      backend?: 'remnawave' | 'outline';
+      backend?: BackendId;
       referralCode?: string;
     }>(req);
     const captchaToken = body.captchaToken;
@@ -501,7 +500,7 @@ http.route({
     // Resolve which default-free tier (backend) the new account lands on. This
     // reads only the admin enabled/default toggles, never proxy availability.
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
-    let backend = settings['subscription.default_backend'] as 'remnawave' | 'outline';
+    let backend = settings['subscription.default_backend'] as BackendId;
     if (body.backend && settings['subscription.user_choice_enabled']) backend = body.backend;
     if (!settings[`${backend}.enabled`]) {
       return errorJson(
@@ -785,15 +784,25 @@ http.route({
     const geoCountry = resolveCountry(req);
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const privacyCountries = (settings['delivery.privacyCountries'] as string[] | undefined) ?? [];
-    // Suggest the hardened (rawConfig) mode for the admin-listed countries, else
-    // the catalog default. Data-driven off the mode catalog; the choice itself
-    // stays client-side and the country list never leaves the server.
-    const hardenedModeId =
-      CONNECTION_MODES.find((m) => m.deliveryStyle === 'rawConfig')?.id ?? DEFAULT_CONNECTION_MODE;
+    // Suggest a censorship-hardened mode for the admin-listed countries, else the
+    // catalog default. The country list never leaves the server; only the verdict
+    // ships, and the choice itself stays client-side.
+    //
+    // Resolved from the LIVE catalog: only a mode flagged isCensorshipRecommended
+    // that is actually AVAILABLE on the member's backend (enabled + applicable +
+    // bound) is ever suggested — the old compiled-array pick could point a
+    // censored-region member at a dark, unbound mode. No available candidate →
+    // the resolved default. (Privacy Mode is deliberately never flagged: its
+    // decoy is SNI-blocked in China by design.)
+    const modeList = await ctx.runQuery(internal.connectionModes.list, {});
+    const resolvedDefault = modeList.find((m) => m.isDefault)?.id ?? DEFAULT_CONNECTION_MODE;
+    const censorshipModeId = modeList.find(
+      (m) => m.isCensorshipRecommended && m.availableBackends.includes(view.user.tier.backend),
+    )?.id;
     const suggestedModeId =
-      geoCountry && privacyCountries.includes(geoCountry)
-        ? hardenedModeId
-        : DEFAULT_CONNECTION_MODE;
+      geoCountry && privacyCountries.includes(geoCountry) && censorshipModeId
+        ? censorshipModeId
+        : resolvedDefault;
     return json({ ...view, geoCountry, suggestedModeId });
   }),
 });
@@ -1096,8 +1105,8 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const body = await readJson<{ backend?: 'remnawave' | 'outline'; confirm?: boolean }>(req);
-    if (body.backend !== 'remnawave' && body.backend !== 'outline') {
+    const body = await readJson<{ backend?: BackendId; confirm?: boolean }>(req);
+    if (!isBackendId(body.backend)) {
       return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
     }
     if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
@@ -1125,23 +1134,26 @@ http.route({
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const body = await readJson<{ modeId?: string }>(req);
-    if (!isConnectionModeId(body.modeId)) {
+    const modeId = typeof body.modeId === 'string' ? body.modeId : '';
+    // Validated against the LIVE catalog (the compiled sync guard is gone with
+    // the compiled catalog).
+    const modes = await ctx.runQuery(internal.connectionModes.list, {});
+    const chosen = modes.find((m) => m.id === modeId);
+    if (!chosen) {
       return errorJson('validation', 'unknown connection mode', 400);
     }
     // Defense-in-depth (the picker already disables unbound modes, and issuance
     // falls back so a stored unbound preference can't mint a dead key): refuse to
     // persist an unbound mode when a bound alternative exists. Allowed on an
     // all-unbound (bring-up) deploy so signup can still record the default. (WS1.)
-    const modes = await ctx.runQuery(internal.connectionModes.list, {});
-    const chosen = modes.find((m) => m.id === body.modeId);
-    if (chosen && !chosen.bound && modes.some((m) => m.bound)) {
+    if (!chosen.bound && modes.some((m) => m.bound)) {
       return errorJson('validation', 'This connection mode is not available yet.', 400);
     }
     await ctx.runMutation(internal.users.setConnectionMode, {
       userId: member.userId,
-      modeId: body.modeId,
+      modeId: chosen.id,
     });
-    return json({ ok: true, modeId: body.modeId });
+    return json({ ok: true, modeId: chosen.id });
   }),
 });
 
@@ -1155,7 +1167,9 @@ http.route({
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const body = await readJson<{ modeId?: string; confirm?: boolean }>(req);
-    if (!isConnectionModeId(body.modeId)) {
+    // Cheap shape check only — account.switchMode validates against the live
+    // catalog and is the single authority (a second DB read here buys nothing).
+    if (typeof body.modeId !== 'string' || !body.modeId || body.modeId.length > 64) {
       return errorJson('validation', 'unknown connection mode', 400);
     }
     if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
@@ -2929,22 +2943,223 @@ http.route({
   }),
 });
 
-// Set the connection-mode catalog (per-mode label/description + the default) and
-// the per-mode Remnawave placement pool. The Ansible panel-bootstrap PATCHes this
-// to bind the squads it creates (dual-mode: an fsv1_ token with
-// admin:settings:write works); also editable in the admin CMS. Squad UUIDs are
-// write-only (never read back). (The placement pool moves to the namespaced
-// /admin/remnawave/* endpoint in a later phase.)
+// The connection-mode catalog admin surface (DB-driven; full CRUD lands with
+// the per-entity routes in phase 3 — this GET is the editor's read).
+// GET: families + leaf modes with full CMS fields and per-backend placement
+// SUMMARIES (bound + counts, never a config). Needed because publicConfig
+// omits disabled entries, so the admin UI cannot reconstruct the catalog from it.
 http.route({
   path: '/api/v1/admin/connection-modes',
-  method: 'PATCH',
-  handler: sealed(async (ctx, req) => {
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.adminApi.getConnectionModes, {}));
+  }),
+});
+
+// Explicit field picks (never `...body`): the mutations use strict validators,
+// so an extra client field would 500 the whole request instead of being ignored
+// (the test-connection/Ansible trap).
+function pickModeFields(body: Record<string, unknown>) {
+  const out: Record<string, unknown> = {};
+  for (const k of [
+    'family',
+    'label',
+    'description',
+    'deliveryStyle',
+    'enabled',
+    'isFamilyDefault',
+    'isCensorshipRecommended',
+    'backends',
+    'order',
+    'makeDefault',
+  ]) {
+    if (body[k] !== undefined) out[k] = body[k];
+  }
+  return out;
+}
+
+function pickFamilyFields(body: Record<string, unknown>) {
+  const out: Record<string, unknown> = {};
+  for (const k of ['label', 'description', 'audience', 'iconId', 'enabled', 'order']) {
+    if (body[k] !== undefined) out[k] = body[k];
+  }
+  return out;
+}
+
+http.route({
+  path: '/api/v1/admin/connection-modes',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
     const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
     if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
     try {
       return json(
-        await ctx.runMutation(internal.adminApi.setConnectionModes, {
+        await ctx.runMutation(internal.connectionModes.createMode, {
+          ...pickModeFields(body),
+          slug: typeof body.slug === 'string' ? body.slug : '',
+          label: typeof body.label === 'string' ? body.label : '',
+          family: typeof body.family === 'string' ? body.family : '',
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/connection-modes/',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const slug = decodeURIComponent(lastPathSegment(req));
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.updateMode, {
+          ...pickModeFields(body),
+          slug,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/connection-modes/',
+  method: 'DELETE',
+  handler: httpAction(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const slug = decodeURIComponent(lastPathSegment(req));
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.removeMode, {
+          slug,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/connection-mode-families',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.createFamily, {
+          ...pickFamilyFields(body),
+          slug: typeof body.slug === 'string' ? body.slug : '',
+          label: typeof body.label === 'string' ? body.label : '',
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/connection-mode-families/',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const slug = decodeURIComponent(lastPathSegment(req));
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.updateFamily, {
+          ...pickFamilyFields(body),
+          slug,
+          actorAdminId: admin.adminUserId,
+        } as never),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/connection-mode-families/',
+  method: 'DELETE',
+  handler: httpAction(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const slug = decodeURIComponent(lastPathSegment(req));
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.removeFamily, {
+          slug,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// --- generic per-backend placement binding ------------------------------------
+// The backend-agnostic successor of /admin/remnawave/mode-placements (which
+// stays as a byte-compatible alias for the Ansible role). Path shape:
+// /api/v1/admin/backends/{backend}/mode-placements.
+
+function backendFromPlacementPath(req: Request): BackendId | null {
+  const parts = new URL(req.url).pathname.split('/').filter(Boolean);
+  // ['api','v1','admin','backends','<backend>','mode-placements']
+  const candidate = parts[4];
+  return candidate && isBackendId(candidate) && parts[5] === 'mode-placements' ? candidate : null;
+}
+
+http.route({
+  pathPrefix: '/api/v1/admin/backends/',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
+    const backend = backendFromPlacementPath(req);
+    if (!backend) return errorJson('not_found', 'unknown backend route', 404);
+    const summaries = await ctx.runQuery(internal.connectionModes.placementSummaries, {});
+    return json({
+      backend,
+      placements: Object.entries(summaries).flatMap(([modeId, list]) =>
+        list
+          .filter((e) => e.backendId === backend)
+          .map((e) => ({ modeId, bound: e.bound, boundCount: e.boundCount })),
+      ),
+    });
+  }),
+});
+
+http.route({
+  pathPrefix: '/api/v1/admin/backends/',
+  method: 'PATCH',
+  handler: sealed(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const backend = backendFromPlacementPath(req);
+    if (!backend) return errorJson('not_found', 'unknown backend route', 404);
+    const body = await readJson<Record<string, unknown>>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.connectionModes.setModePlacements, {
+          backend,
           patch: body,
           actorAdminId: admin.adminUserId,
         }),
@@ -3066,6 +3281,11 @@ http.route({
 // nodes its keys are issued across). Write-only squad UUIDs; dual-mode (an fsv1_
 // token with admin:servers:write works — the Ansible panel-bootstrap PATCHes this
 // after it creates the per-node squads).
+//
+// PERMANENT-UNTIL-FURTHER-NOTICE ALIAS of the generic per-backend route
+// (PATCH /api/v1/admin/backends/remnawave/mode-placements, phase 3): the
+// Ansible role calls THIS path with this exact body/response shape, so it
+// keeps working byte-identically while the role migrates at leisure.
 http.route({
   path: '/api/v1/admin/remnawave/mode-placements',
   method: 'PATCH',
@@ -3075,7 +3295,8 @@ http.route({
     const body = await readJson<Record<string, unknown>>(req);
     try {
       return json(
-        await ctx.runMutation(internal.remnawaveNodes.setModePlacements, {
+        await ctx.runMutation(internal.connectionModes.setModePlacements, {
+          backend: 'remnawave',
           patch: body,
           actorAdminId: admin.adminUserId,
         }),
@@ -3144,7 +3365,7 @@ http.route({
     const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
     if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
-    if (body.backend !== 'remnawave' && body.backend !== 'outline') {
+    if (!isBackendId(body.backend)) {
       return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
     }
     try {
@@ -3168,7 +3389,7 @@ http.route({
   handler: sealed(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:servers:read'))) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
-    if (body.backend !== 'remnawave' && body.backend !== 'outline') {
+    if (!isBackendId(body.backend)) {
       return json({ ok: false, error: 'Pick a backend type first' });
     }
     // Forward ONLY the connection fields the action declares. Convex arg
@@ -3202,7 +3423,7 @@ http.route({
     if (!admin) return ADMIN_UNAUTH();
     const slug = decodeURIComponent(lastPathSegment(req));
     const body = await readJson<Record<string, unknown>>(req);
-    if (body.backend !== 'remnawave' && body.backend !== 'outline') {
+    if (!isBackendId(body.backend)) {
       return errorJson('validation', 'backend must be "remnawave" or "outline"', 400);
     }
     try {

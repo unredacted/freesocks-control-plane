@@ -15,9 +15,9 @@ import type { QueryCtx } from './_generated/server';
 import type { BackendConfig } from './lib/backends/registry';
 import { PROVIDERS } from './lib/backends/registry';
 import { resolveLocations } from './lib/locations';
+import { backendIdValidator } from './lib/backendIds';
 
-// Keep in sync with BACKEND_IDS (src/shared/contracts/backends.ts).
-const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
+const backendId = backendIdValidator;
 
 const DEFAULT_LATENCY_WEIGHT = 1;
 const DEFAULT_KEY_COUNT_WEIGHT = 100;

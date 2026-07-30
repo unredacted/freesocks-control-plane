@@ -12,8 +12,9 @@
  * a genuinely new scheme is a small code add to appLinks.ts + this default list.
  */
 import type { DatabaseReader } from '../_generated/server';
+import type { BackendId } from './backendIds';
 
-export type ClientBackend = 'remnawave' | 'outline';
+export type ClientBackend = BackendId;
 
 /** Ease-of-use rating: sorts within each open-source group (easier first) and
  *  drives an "Easy to use" / "Advanced" badge. Missing = treated as moderate. */

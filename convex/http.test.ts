@@ -1222,3 +1222,280 @@ describe('rate-limit coverage (pre-launch review)', () => {
     expect((await t.fetch('/api/v1/account/usage', { headers: { cookie } })).status).toBe(429);
   });
 });
+
+/**
+ * suggestedModeId respects the LIVE catalog (flipped characterization from the
+ * mode overhaul): a censorship-recommended mode is suggested only when it is
+ * enabled AND available on the member's backend; otherwise the resolved
+ * default. The old compiled-array pick suggested the dark freedom-reality.
+ */
+describe('suggestedModeId respects enabled + availability', () => {
+  test('privacy-country caller falls back to the default while freedom-reality is dark/unbound', async () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'delivery.privacyCountries',
+        value: JSON.stringify(['IR']),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    const res = await t.fetch('/api/v1/account', {
+      headers: { cookie, 'cf-ipcountry': 'IR' },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { suggestedModeId: string; geoCountry: string | null };
+    expect(body.geoCountry).toBe('IR');
+    // freedom-reality ships dark (disabled) and unbound → never suggested.
+    expect(body.suggestedModeId).toBe('freedom-ws');
+  });
+
+  test('privacy-country caller gets the censorship-recommended mode once enabled + bound', async () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'delivery.privacyCountries',
+        value: JSON.stringify(['IR']),
+        updatedAt: Date.now(),
+      });
+      // Materialize the catalog with freedom-reality enabled + bound.
+      await ctx.db.insert('connectionModeFamilies', {
+        slug: 'freedom',
+        iconId: 'zap',
+        enabled: true,
+        order: 0,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('connectionModes', {
+        slug: 'freedom-ws',
+        familySlug: 'freedom',
+        deliveryStyle: 'url',
+        enabled: true,
+        isFamilyDefault: true,
+        backends: ['remnawave'],
+        order: 0,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('connectionModes', {
+        slug: 'freedom-reality',
+        familySlug: 'freedom',
+        deliveryStyle: 'rawConfig',
+        enabled: true,
+        isFamilyDefault: false,
+        isCensorshipRecommended: true,
+        backends: ['remnawave'],
+        order: 1,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['11111111-2222-3333-4444-555555555555'] }),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const res = await t.fetch('/api/v1/account', {
+      headers: { cookie, 'cf-ipcountry': 'IR' },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { suggestedModeId: string };
+    expect(body.suggestedModeId).toBe('freedom-reality');
+  });
+
+  test('a non-listed country gets the compiled default', async () => {
+    vi.stubEnv('CF_FRONTED', 'true');
+    const t = convexTest(schema, modules);
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'delivery.privacyCountries',
+        value: JSON.stringify(['IR']),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    const res = await t.fetch('/api/v1/account', {
+      headers: { cookie, 'cf-ipcountry': 'DE' },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { suggestedModeId: string };
+    expect(body.suggestedModeId).toBe('freedom-ws');
+  });
+});
+
+/**
+ * The connection-mode admin surface: per-entity CRUD routes, the generic
+ * per-backend placement route, and THE ANSIBLE CONTRACT — the legacy
+ * /admin/remnawave/mode-placements PATCH must keep accepting its exact body
+ * shape and returning its exact response shape while the role migrates.
+ */
+describe('connection-mode admin routes', () => {
+  const SQUAD = '11111111-2222-3333-4444-555555555555';
+
+  test('CRUD round-trip: create family + mode, patch, delete; scopes enforced', async () => {
+    const t = convexTest(schema, modules);
+    const write = await insertToken(t, {
+      scopes: ['admin:settings:write'],
+      subjectType: 'service',
+    });
+    const read = await insertToken(t, { scopes: ['admin:settings:read'], subjectType: 'service' });
+
+    // Wrong scope refused.
+    expect(
+      (
+        await t.fetch('/api/v1/admin/connection-modes', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${read}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ slug: 'x', label: 'X', family: 'freedom' }),
+        })
+      ).status,
+    ).toBe(401);
+
+    const famRes = await t.fetch('/api/v1/admin/connection-mode-families', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ slug: 'stealth', label: 'Stealth', iconId: 'eye-off' }),
+    });
+    expect(famRes.status).toBe(200);
+
+    const modeRes = await t.fetch('/api/v1/admin/connection-modes', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        slug: 'stealth-x',
+        label: 'Stealth X',
+        family: 'stealth',
+        deliveryStyle: 'rawConfig',
+        backends: ['remnawave'],
+        // A stray field must be filtered, not 500 the strict validator.
+        bogusField: true,
+      }),
+    });
+    expect(modeRes.status).toBe(200);
+
+    const patch = await t.fetch('/api/v1/admin/connection-modes/stealth-x', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ description: 'For hostile networks', order: 3 }),
+    });
+    expect(patch.status).toBe(200);
+
+    const view = await t.fetch('/api/v1/admin/connection-modes', {
+      headers: { authorization: `Bearer ${read}` },
+    });
+    const body = (await view.json()) as {
+      modes: Array<{ id: string; description: string | null; order: number }>;
+      families: Array<{ id: string }>;
+    };
+    expect(body.families.map((f) => f.id)).toContain('stealth');
+    const x = body.modes.find((m) => m.id === 'stealth-x')!;
+    expect(x).toMatchObject({ description: 'For hostile networks', order: 3 });
+
+    // Delete mode then family (order matters: family refuses while occupied).
+    expect(
+      (
+        await t.fetch('/api/v1/admin/connection-mode-families/stealth', {
+          method: 'DELETE',
+          headers: { authorization: `Bearer ${write}` },
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await t.fetch('/api/v1/admin/connection-modes/stealth-x', {
+          method: 'DELETE',
+          headers: { authorization: `Bearer ${write}` },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await t.fetch('/api/v1/admin/connection-mode-families/stealth', {
+          method: 'DELETE',
+          headers: { authorization: `Bearer ${write}` },
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  test('ANSIBLE CONTRACT: the legacy remnawave placement PATCH keeps its body + response shape, writes the NEW store', async () => {
+    const t = convexTest(schema, modules);
+    const token = await insertToken(t, {
+      scopes: ['admin:servers:write'],
+      subjectType: 'service',
+    });
+    const res = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ modes: { 'freedom-ws': { addSquadUuids: [SQUAD] } } }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      bound: string[];
+      placements: Array<{ modeId: string; boundCount: number }>;
+    };
+    expect(body.bound).toContain('freedom-ws');
+    expect(body.placements.find((p) => p.modeId === 'freedom-ws')!.boundCount).toBe(1);
+    // The write landed in the NEW store, not appSettings.
+    const stored = await t.run(async (ctx) => ctx.db.query('modePlacements').collect());
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({ modeSlug: 'freedom-ws', backend: 'remnawave' });
+    const settingsPools = await t.run(async (ctx) =>
+      (await ctx.db.query('appSettings').collect()).filter((r) =>
+        r.key.startsWith('remnawave.modePlacement.'),
+      ),
+    );
+    expect(settingsPools).toHaveLength(0);
+  });
+
+  test('generic per-backend placement route: PATCH + GET summaries; placement-less backend 400s', async () => {
+    const t = convexTest(schema, modules);
+    const write = await insertToken(t, { scopes: ['admin:servers:write'], subjectType: 'service' });
+    const read = await insertToken(t, { scopes: ['admin:servers:read'], subjectType: 'service' });
+
+    const patch = await t.fetch('/api/v1/admin/backends/remnawave/mode-placements', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ modes: { 'privacy-reality': { squadUuids: [SQUAD] } } }),
+    });
+    expect(patch.status).toBe(200);
+
+    const get = await t.fetch('/api/v1/admin/backends/remnawave/mode-placements', {
+      headers: { authorization: `Bearer ${read}` },
+    });
+    expect(get.status).toBe(200);
+    const body = (await get.json()) as {
+      backend: string;
+      placements: Array<{ modeId: string; bound: boolean; boundCount: number }>;
+    };
+    expect(body.backend).toBe('remnawave');
+    expect(body.placements.find((p) => p.modeId === 'privacy-reality')).toMatchObject({
+      bound: true,
+      boundCount: 1,
+    });
+    // No config contents anywhere in the response.
+    expect(JSON.stringify(body)).not.toContain(SQUAD);
+
+    const outline = await t.fetch('/api/v1/admin/backends/outline/mode-placements', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ modes: { 'freedom-ws': { squadUuids: [SQUAD] } } }),
+    });
+    expect(outline.status).toBe(400);
+
+    const bogus = await t.fetch('/api/v1/admin/backends/wireguard/mode-placements', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ modes: {} }),
+    });
+    expect(bogus.status).toBe(404);
+  });
+});

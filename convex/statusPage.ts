@@ -12,6 +12,7 @@ import {
   resolvePublicStatusPage,
   resolveLocationLoad,
   resolveStatusConfig,
+  resolveValidModeIds,
   sanitizeCensorshipRows,
   validateIncidentInput,
   STATUS_KEYS,
@@ -76,7 +77,7 @@ export const setPageConfig = internalMutation({
       }
     }
     if (rows !== undefined) {
-      const clean = sanitizeCensorshipRows({ rows });
+      const clean = sanitizeCensorshipRows({ rows }, await resolveValidModeIds(ctx.db));
       await upsertSettingRow(
         ctx,
         STATUS_KEYS.censorship,
@@ -100,7 +101,12 @@ export const setPageConfig = internalMutation({
       action: 'status.page.update',
       targetType: 'status_page',
       payload: {
-        ...(rows !== undefined ? { censorshipRows: sanitizeCensorshipRows({ rows }).length } : {}),
+        ...(rows !== undefined
+          ? {
+              censorshipRows: sanitizeCensorshipRows({ rows }, await resolveValidModeIds(ctx.db))
+                .length,
+            }
+          : {}),
         ...(busyAt !== undefined ? { busyAt } : {}),
         ...(crowdedAt !== undefined ? { crowdedAt } : {}),
       },

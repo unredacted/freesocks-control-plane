@@ -10,7 +10,7 @@
   import { Button } from '@client/components/ui/button';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
-  import { adminNodeStatsQuery, configQuery, queryKeys } from '../../lib/queries';
+  import { adminConnectionModesQuery, adminNodeStatsQuery, queryKeys } from '../../lib/queries';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { z } from 'zod';
   import { toast } from 'svelte-sonner';
@@ -27,28 +27,54 @@
    * panel, refreshed by the healthcheck cron). Squad UUIDs are write-only; the
    * live node-load view below is read-only. English-only (admin CMS convention).
    */
-  const config = configQuery();
   const nodeStats = adminNodeStatsQuery();
   const qc = useQueryClient();
 
-  // The two shipped modes. (The generic catalog is data-driven; the pool editor
-  // stays keyed to the known modes - a novel mode would add a row here.)
-  let cpAvailable = $derived({
-    evade: config.data?.connectionModes?.find((m) => m.id === 'evade')?.available ?? false,
-    privacy: config.data?.connectionModes?.find((m) => m.id === 'privacy')?.available ?? false,
-  });
+  // Pools are bound per LEAF mode and grouped by family for legibility. Fully
+  // data-driven off the admin catalog, so a new mode needs no edit here.
+  // Note this reads the ADMIN catalog, not publicConfig: publicConfig omits
+  // disabled modes, and an operator must still be able to bind a pool to a mode
+  // before turning it on.
+  const modeCatalog = adminConnectionModesQuery();
+  // Only modes that DECLARE the remnawave backend can be bound here; an orphan
+  // bucket keeps modes whose family row is gone manageable (the old grouping
+  // hid them entirely, so their pool could never be bound or cleared).
+  let adminModes = $derived(
+    (modeCatalog.data?.modes ?? []).filter((m) => (m.backends as string[]).includes('remnawave')),
+  );
+  let adminFamilies = $derived(modeCatalog.data?.families ?? []);
+  let modeGroups = $derived(
+    (() => {
+      const grouped = adminFamilies
+        .map((f) => ({
+          family: f as (typeof adminFamilies)[number] | null,
+          children: adminModes.filter((m) => m.family === f.id),
+        }))
+        .filter((g) => g.children.length > 0);
+      const known = new Set(adminFamilies.map((f) => f.id));
+      const orphans = adminModes.filter((m) => !m.family || !known.has(m.family));
+      return orphans.length ? [...grouped, { family: null, children: orphans }] : grouped;
+    })(),
+  );
 
-  let draft = $state<{ evade: string; privacy: string }>({ evade: '', privacy: '' });
+  // Per-leaf textarea contents, keyed by mode id.
+  let draft = $state<Record<string, string>>({});
   // Inline validation error (bad UUID lines) — a typo'd squad UUID used to save
   // silently and only surface later as a dead/offline pool.
   let draftError = $state<string | null>(null);
 
-  // Per-mode bound-pool SIZES from the node-stats endpoint (never the UUIDs).
+  // Per-mode bound-pool SIZES (never the UUIDs): the catalog's per-backend
+  // placement summaries, with the node-stats counts as an older-server fallback.
   let boundCounts = $derived(
     Object.fromEntries(
       (nodeStats.data?.placements ?? []).map((p) => [p.modeId, p.boundCount]),
     ) as Record<string, number>,
   );
+  function remnawaveSummary(m: (typeof adminModes)[number]): { bound: boolean; count: number } {
+    const viaCatalog = m.placements.find((p) => p.backendId === 'remnawave');
+    if (viaCatalog) return { bound: viaCatalog.bound, count: viaCatalog.boundCount };
+    return { bound: m.bound, count: boundCounts[m.id] ?? 0 };
+  }
 
   // One UUID per line (commas also accepted); trims + dedupes.
   function parseSquadList(text: string): string[] {
@@ -65,25 +91,29 @@
   const save = createMutation(() => ({
     mutationFn: async () => {
       const modes: Record<string, { squadUuids: string[] }> = {};
+      const invalid: string[] = [];
       // Only send a mode when the admin typed something - blank keeps the current
       // binding (keep-secret-on-blank). An explicit line clears/sets the pool.
-      const evade = parseSquadList(draft.evade);
-      const privacy = parseSquadList(draft.privacy);
-      const invalid = [...evade, ...privacy].filter((s) => !UUID_RE.test(s));
+      for (const m of adminModes) {
+        const text = draft[m.id] ?? '';
+        if (!text.trim()) continue;
+        const uuids = parseSquadList(text);
+        invalid.push(...uuids.filter((s) => !UUID_RE.test(s)));
+        modes[m.id] = { squadUuids: uuids };
+      }
       if (invalid.length > 0) {
         throw new Error(`Not a squad UUID: ${invalid.join(', ')}`);
       }
-      if (draft.evade.trim()) modes.evade = { squadUuids: evade };
-      if (draft.privacy.trim()) modes.privacy = { squadUuids: privacy };
       return apiClient.patch(
-        '/api/v1/admin/remnawave/mode-placements',
+        '/api/v1/admin/backends/remnawave/mode-placements',
         { modes },
         RemnawavePlacementUpdateResponse,
       );
     },
     onSuccess: () => {
-      draft = { evade: '', privacy: '' };
+      draft = {};
       draftError = null;
+      void qc.invalidateQueries({ queryKey: queryKeys.adminConnectionModes });
       void qc.invalidateQueries({ queryKey: queryKeys.config }); // refresh `available`
       void qc.invalidateQueries({ queryKey: queryKeys.adminNodeStats }); // refresh bound counts
       toast.success('Node placement saved');
@@ -145,41 +175,61 @@
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-5 text-sm">
-        {#each [{ id: 'evade', label: 'Internet Freedom Mode (evade)' }, { id: 'privacy', label: 'Privacy Mode (privacy)' }] as m (m.id)}
+        {#each modeGroups as g, gi (g.family?.id ?? '__orphans__')}
           <div
-            class="space-y-2"
-            class:border-t={m.id === 'privacy'}
-            class:border-border={m.id === 'privacy'}
-            class:pt-4={m.id === 'privacy'}
+            class="space-y-4"
+            class:border-t={gi > 0}
+            class:border-border={gi > 0}
+            class:pt-4={gi > 0}
           >
-            <div class="flex items-center justify-between gap-2">
-              <span class="font-medium">{m.label}</span>
-              <span
-                class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide {cpAvailable[
-                  m.id as 'evade' | 'privacy'
-                ]
-                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                  : 'bg-muted text-muted-foreground'}"
-              >
-                {#if cpAvailable[m.id as 'evade' | 'privacy']}
-                  {boundCounts[m.id] != null
-                    ? `${boundCounts[m.id]} squad${boundCounts[m.id] === 1 ? '' : 's'} bound`
-                    : 'Pool bound'}
-                {:else}
-                  Not set
-                {/if}
-              </span>
-            </div>
-            <textarea
-              rows="2"
-              class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 font-mono text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
-              placeholder={cpAvailable[m.id as 'evade' | 'privacy']
-                ? 'Bound - leave blank to keep'
-                : 'squad-uuid per line'}
-              value={draft[m.id as 'evade' | 'privacy']}
-              oninput={(e) =>
-                (draft = { ...draft, [m.id]: (e.target as HTMLTextAreaElement).value })}
-            ></textarea>
+            <p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {g.family ? (g.family.label ?? g.family.id) : 'No family (orphaned modes)'}
+            </p>
+            {#each g.children as m (m.id)}
+              {@const summary = remnawaveSummary(m)}
+              {@const bound = summary.bound}
+              <div class="space-y-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="font-medium">
+                    {m.label ?? m.id}
+                    <span class="font-mono text-xs text-muted-foreground">({m.id})</span>
+                  </span>
+                  <span class="flex items-center gap-1.5">
+                    {#if !m.enabled}
+                      <!-- A pool can be bound BEFORE the mode is switched on; say so
+                           rather than letting "bound" read as "live to members". -->
+                      <span
+                        class="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400"
+                      >
+                        Disabled
+                      </span>
+                    {/if}
+                    <span
+                      class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide {bound
+                        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                        : 'bg-muted text-muted-foreground'}"
+                    >
+                      {#if bound}
+                        {summary.count > 0
+                          ? `${summary.count} squad${summary.count === 1 ? '' : 's'} bound`
+                          : 'Pool bound'}
+                      {:else}
+                        Not set
+                      {/if}
+                    </span>
+                  </span>
+                </div>
+                <textarea
+                  rows="2"
+                  aria-label={`Squad pool for ${m.label ?? m.id}`}
+                  class="border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full min-w-0 rounded-lg border bg-transparent px-2.5 py-1 font-mono text-base outline-none transition-colors focus-visible:ring-3 md:text-sm placeholder:text-muted-foreground"
+                  placeholder={bound ? 'Bound - leave blank to keep' : 'squad-uuid per line'}
+                  value={draft[m.id] ?? ''}
+                  oninput={(e) =>
+                    (draft = { ...draft, [m.id]: (e.target as HTMLTextAreaElement).value })}
+                ></textarea>
+              </div>
+            {/each}
           </div>
         {/each}
         {#if draftError}

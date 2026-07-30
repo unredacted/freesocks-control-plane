@@ -15,8 +15,9 @@ import type { Doc } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { sanitizeHttpsUrl } from './lib/verificationConfig';
 import { writeAuditLog } from './lib/audit';
+import { backendIdValidator } from './lib/backendIds';
 
-const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
+const backendId = backendIdValidator;
 const PLATFORM_KEYS = ['android', 'ios', 'windows', 'desktop'];
 // Ease-of-use rating; null clears it (treated as 'moderate' downstream).
 const easeOfUse = v.union(v.literal('easy'), v.literal('moderate'), v.literal('advanced'));

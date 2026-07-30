@@ -196,26 +196,50 @@ describe('setPageConfig threshold validation', () => {
 });
 
 describe('sanitizeCensorshipRows', () => {
+  const VALID = new Set(['freedom-ws', 'freedom-reality', 'privacy-reality']);
+
   test('keeps valid rows/cells, drops junk, dedupes + sorts + normalizes case', () => {
-    const rows = sanitizeCensorshipRows({
-      rows: [
-        { countryCode: 'ir', label: ' Iran ', cells: { evade: 'available', privacy: 'partial' } },
-        { countryCode: 'IR', cells: { evade: 'blocked' } }, // dup → last wins
-        { countryCode: 'XX1', cells: { evade: 'available' } }, // bad code
-        { countryCode: 'CN', cells: { evade: 'maybe', privacy: 'available', bogus: 'blocked' } },
-        'garbage',
-      ],
-    });
+    const rows = sanitizeCensorshipRows(
+      {
+        rows: [
+          {
+            countryCode: 'ir',
+            label: ' Iran ',
+            cells: { 'freedom-ws': 'available', 'privacy-reality': 'partial' },
+          },
+          { countryCode: 'IR', cells: { 'freedom-ws': 'blocked' } }, // dup → last wins
+          { countryCode: 'XX1', cells: { 'freedom-ws': 'available' } }, // bad code
+          {
+            countryCode: 'CN',
+            cells: { 'freedom-ws': 'maybe', 'privacy-reality': 'available', bogus: 'blocked' },
+          },
+          'garbage',
+        ],
+      },
+      VALID,
+    );
     expect(rows).toEqual([
-      { countryCode: 'CN', label: null, cells: { privacy: 'available' } },
-      { countryCode: 'IR', label: null, cells: { evade: 'blocked' } },
+      { countryCode: 'CN', label: null, cells: { 'privacy-reality': 'available' } },
+      { countryCode: 'IR', label: null, cells: { 'freedom-ws': 'blocked' } },
+    ]);
+  });
+
+  test('cells for a DISABLED-but-known mode are PRESERVED (validity ≠ enablement)', () => {
+    // freedom-reality ships dark; its stored cells must survive a save so
+    // re-enabling the mode restores the column with its data.
+    const rows = sanitizeCensorshipRows(
+      { rows: [{ countryCode: 'CN', cells: { 'freedom-reality': 'blocked' } }] },
+      VALID,
+    );
+    expect(rows).toEqual([
+      { countryCode: 'CN', label: null, cells: { 'freedom-reality': 'blocked' } },
     ]);
   });
 
   test('non-object input resolves to empty', () => {
-    expect(sanitizeCensorshipRows(undefined)).toEqual([]);
-    expect(sanitizeCensorshipRows('nope')).toEqual([]);
-    expect(sanitizeCensorshipRows({ rows: 'nope' })).toEqual([]);
+    expect(sanitizeCensorshipRows(undefined, VALID)).toEqual([]);
+    expect(sanitizeCensorshipRows('nope', VALID)).toEqual([]);
+    expect(sanitizeCensorshipRows({ rows: 'nope' }, VALID)).toEqual([]);
   });
 });
 

@@ -1,6 +1,16 @@
+import path from 'node:path';
 import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  resolve: {
+    // Mirror vite.config.ts so modules using the '@' alias (the i18n shim's
+    // paraglide import) stay unit-testable.
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+      '@client': path.resolve(__dirname, './src/client'),
+      '@shared': path.resolve(__dirname, './src/shared'),
+    },
+  },
   test: {
     environment: 'edge-runtime',
     server: { deps: { inline: ['convex-test'] } },

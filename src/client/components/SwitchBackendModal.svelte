@@ -16,11 +16,11 @@
   interface Props {
     open: boolean;
     /** Target backend after the switch, used for the body copy. */
-    targetBackend: 'remnawave' | 'outline';
+    targetBackend: string;
     /** Current backend, for the "from X to Y" framing. */
-    currentBackend: 'remnawave' | 'outline';
-    /** Admin-configurable labels (default to provider names). */
-    labels: { remnawave: string; outline: string };
+    currentBackend: string;
+    /** Admin-configurable labels by backend id (default to provider names). */
+    labels: Record<string, string>;
     onCancel: () => void;
     onConfirm: () => void;
     busy: boolean;
@@ -36,8 +36,8 @@
     busy,
   }: Props = $props();
 
-  let fromLabel = $derived(labels[currentBackend]);
-  let toLabel = $derived(labels[targetBackend]);
+  let fromLabel = $derived(labels[currentBackend] ?? currentBackend);
+  let toLabel = $derived(labels[targetBackend] ?? targetBackend);
 
   function onOpenChange(next: boolean) {
     // Don't allow Escape / outside-click while the switch is in flight:

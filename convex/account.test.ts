@@ -435,6 +435,40 @@ describe('account.switchBackend guards', () => {
     });
   });
 
+  test('a paid tier switches via the symmetric peerGroup (no pairwise link needed)', async () => {
+    const t = convexTest(schema, modules);
+    const fromTier = await seedTier(t, {
+      slug: 'member',
+      backend: 'remnawave',
+      isDefaultFree: false,
+    });
+    const peerTier = await seedTier(t, {
+      slug: 'member-outline',
+      backend: 'outline',
+      isDefaultFree: false,
+    });
+    // One shared string on both rows — no peerTierId anywhere.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fromTier, { peerGroup: 'member' });
+      await ctx.db.patch(peerTier, { peerGroup: 'member' });
+    });
+    const userId = await seedUser(t, fromTier);
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'outline.enabled',
+        value: 'true',
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.action(internal.account.regenerate, { userId });
+
+    const res = await t.action(internal.account.switchBackend, { userId, target: 'outline' });
+    expect(res).toMatchObject({ ok: true, backend: 'outline' });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.tierId).toBe(peerTier);
+    });
+  });
+
   test('a free user switches via the default-free peer tier', async () => {
     const t = convexTest(schema, modules);
     const fromTier = await seedTier(t, { slug: 'free', backend: 'remnawave' });
@@ -468,10 +502,10 @@ describe('account.switchBackend guards', () => {
     const userId = await seedUser(t, fromTier);
     await t.run(async (ctx) => {
       // The member chose privacy (unbound); only evade has a pool bound.
-      await ctx.db.patch(userId, { connectionModeId: 'privacy' });
+      await ctx.db.patch(userId, { connectionModeId: 'privacy-reality' });
       await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.evade.squads',
-        value: JSON.stringify(['sq-evade']),
+        key: 'remnawave.modePlacement.freedom-ws.squads',
+        value: JSON.stringify(['sq-freedom-ws']),
         updatedAt: Date.now(),
       });
     });
@@ -482,7 +516,7 @@ describe('account.switchBackend guards', () => {
       // Tier + mode untouched, and no key was minted into the wrong pool.
       const user = await ctx.db.get(userId);
       expect(user!.tierId).toBe(fromTier);
-      expect(user!.connectionModeId).toBe('privacy');
+      expect(user!.connectionModeId).toBe('privacy-reality');
       expect(await ctx.db.query('subscriptions').collect()).toHaveLength(0);
     });
   });
@@ -502,9 +536,9 @@ describe('account.switchMode saga', () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);
     const userId = await seedUser(t, tierId);
-    await t.run((ctx) => ctx.db.patch(userId, { connectionModeId: 'privacy' }));
+    await t.run((ctx) => ctx.db.patch(userId, { connectionModeId: 'privacy-reality' }));
 
-    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy-reality' });
     expect(res).toMatchObject({ ok: false, code: 'validation', status: 400 });
     await t.run(async (ctx) => {
       expect(await ctx.db.query('subscriptions').collect()).toHaveLength(0);
@@ -519,6 +553,50 @@ describe('account.switchMode saga', () => {
     expect(res).toMatchObject({ ok: false, code: 'validation', status: 400 });
   });
 
+  test('rejects a mode an admin has DISABLED, even when its pool is bound', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    // freedom-reality ships dark. Binding a pool must not make it selectable —
+    // the operator turns it on deliberately, in the admin panel.
+    await t.run((ctx) =>
+      ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.freedom-reality.squads',
+        value: JSON.stringify(['11111111-2222-3333-4444-555555555555']),
+        updatedAt: Date.now(),
+      }),
+    );
+    const res = await t.action(internal.account.switchMode, {
+      userId,
+      target: 'freedom-reality',
+    });
+    expect(res).toMatchObject({ ok: false, code: 'validation', status: 400 });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.connectionModeId ?? null).not.toBe('freedom-reality');
+    });
+  });
+
+  test('a member STRANDED on a disabled mode can still switch AWAY from it', async () => {
+    // The guard above is one-way on purpose: disabling a mode must not trap the
+    // members already on it. Only the TARGET is validated.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(userId, { connectionModeId: 'freedom-reality' }); // disabled
+      await ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.freedom-ws.squads',
+        value: JSON.stringify(['11111111-2222-3333-4444-555555555555']),
+        updatedAt: Date.now(),
+      });
+    });
+    const res = await t.action(internal.account.switchMode, { userId, target: 'freedom-ws' });
+    expect(res).toMatchObject({ ok: true, mode: { id: 'freedom-ws' } });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('freedom-ws');
+    });
+  });
+
   test('switches IN PLACE: PATCHes the existing key’s squad, keeps the same sub row/URL/token, audits without the squad uuid', async () => {
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
@@ -529,7 +607,7 @@ describe('account.switchMode saga', () => {
     await t.run(async (ctx) => {
       // Bind the privacy mode's placement pool — the infra detail never audited.
       await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.privacy.squads',
+        key: 'remnawave.modePlacement.privacy-reality.squads',
         value: JSON.stringify([SQUAD]),
         updatedAt: Date.now(),
       });
@@ -559,7 +637,7 @@ describe('account.switchMode saga', () => {
         updatedAt: Date.now(),
       });
       // Currently on evade → switching to privacy is a real change.
-      await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'evade' });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'freedom-ws' });
     });
     // The only HTTP an in-place switch makes is the squad PATCH (PATCH /api/users).
     const fetchMock = vi.fn(
@@ -584,11 +662,11 @@ describe('account.switchMode saga', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy-reality' });
     // Same key returned; nothing tombstoned.
     expect(res).toMatchObject({
       ok: true,
-      mode: { id: 'privacy' },
+      mode: { id: 'privacy-reality' },
       subscriptionUrl: 'https://panel.test/sub/oldshort',
       oldSubscriptionDeletedAt: null,
     });
@@ -609,7 +687,7 @@ describe('account.switchMode saga', () => {
 
     await t.run(async (ctx) => {
       const user = await ctx.db.get(userId);
-      expect(user!.connectionModeId).toBe('privacy');
+      expect(user!.connectionModeId).toBe('privacy-reality');
       // The SAME row survives: no tombstone, no new row.
       const subs = await ctx.db.query('subscriptions').collect();
       expect(subs).toHaveLength(1);
@@ -641,7 +719,7 @@ describe('account.switchMode saga', () => {
     const userId = await seedUser(t, tierId);
     const { activeInstanceId } = await t.run(async (ctx) => {
       await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.privacy.squads',
+        key: 'remnawave.modePlacement.privacy-reality.squads',
         value: JSON.stringify([SQUAD]),
         updatedAt: Date.now(),
       });
@@ -682,7 +760,7 @@ describe('account.switchMode saga', () => {
         state: 'active',
         updatedAt: Date.now(),
       });
-      await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'evade' });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'freedom-ws' });
       return { activeInstanceId: liveId };
     });
     // The probe GETs the user off the live panel; the switch PATCHes the squad.
@@ -708,11 +786,11 @@ describe('account.switchMode saga', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy-reality' });
     // In place: same key/URL, nothing tombstoned, no create POST.
     expect(res).toMatchObject({
       ok: true,
-      mode: { id: 'privacy' },
+      mode: { id: 'privacy-reality' },
       subscriptionUrl: 'https://panel.test/sub/oldshort',
       oldSubscriptionDeletedAt: null,
     });
@@ -741,7 +819,7 @@ describe('account.switchMode saga', () => {
     const userId = await seedUser(t, tierId);
     await t.run(async (ctx) => {
       await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.privacy.squads',
+        key: 'remnawave.modePlacement.privacy-reality.squads',
         value: JSON.stringify([SQUAD]),
         updatedAt: Date.now(),
       });
@@ -768,7 +846,7 @@ describe('account.switchMode saga', () => {
         state: 'active',
         updatedAt: Date.now(),
       });
-      await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'evade' });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'freedom-ws' });
     });
     // Force the fallback: the in-place squad PATCH 500s, the re-issue POST works.
     const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
@@ -802,8 +880,8 @@ describe('account.switchMode saga', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
-    expect(res).toMatchObject({ ok: true, mode: { id: 'privacy' } });
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy-reality' });
+    expect(res).toMatchObject({ ok: true, mode: { id: 'privacy-reality' } });
     // A re-issue DID happen (grace window on the old key)…
     expect((res as { oldSubscriptionDeletedAt: string | null }).oldSubscriptionDeletedAt).not.toBe(
       null,
@@ -836,7 +914,7 @@ describe('account.switchMode saga', () => {
     const userId = await seedUser(t, tierId);
     await t.run(async (ctx) => {
       await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.privacy.squads',
+        key: 'remnawave.modePlacement.privacy-reality.squads',
         value: JSON.stringify([SQUAD]),
         updatedAt: Date.now(),
       });
@@ -874,8 +952,8 @@ describe('account.switchMode saga', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
-    expect(res).toMatchObject({ ok: true, mode: { id: 'privacy' } });
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy-reality' });
+    expect(res).toMatchObject({ ok: true, mode: { id: 'privacy-reality' } });
     // A create POST happened (re-issue), homing into the mode's squad.
     const createCall = fetchMock.mock.calls.find(
       ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
@@ -887,7 +965,7 @@ describe('account.switchMode saga', () => {
         (s) => s.state === 'active',
       );
       expect(fresh!.backendPlacement).toBe(SQUAD);
-      expect((await ctx.db.get(userId))!.connectionModeId).toBe('privacy');
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('privacy-reality');
     });
   });
 
@@ -901,8 +979,8 @@ describe('account.switchMode saga', () => {
     await t.run(async (ctx) => {
       // evade is bound; privacy is NOT — switching to privacy must be refused.
       await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.evade.squads',
-        value: JSON.stringify(['sq-evade']),
+        key: 'remnawave.modePlacement.freedom-ws.squads',
+        value: JSON.stringify(['sq-freedom-ws']),
         updatedAt: Date.now(),
       });
       const subId = await ctx.db.insert('subscriptions', {
@@ -922,7 +1000,7 @@ describe('account.switchMode saga', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy' });
+    const res = await t.action(internal.account.switchMode, { userId, target: 'privacy-reality' });
     expect(res).toMatchObject({ ok: false, code: 'validation', status: 400 });
     // No key was minted…
     expect(
@@ -935,7 +1013,7 @@ describe('account.switchMode saga', () => {
       const subs = await ctx.db.query('subscriptions').collect();
       expect(subs).toHaveLength(1);
       expect(subs[0]!.state).toBe('active');
-      expect((await ctx.db.get(userId))!.connectionModeId ?? null).not.toBe('privacy');
+      expect((await ctx.db.get(userId))!.connectionModeId ?? null).not.toBe('privacy-reality');
     });
   });
 
@@ -947,10 +1025,10 @@ describe('account.switchMode saga', () => {
     const userId = await seedUser(t, tierId);
     await t.run(async (ctx) => {
       // The member chose privacy (unbound); only evade has a pool.
-      await ctx.db.patch(userId, { connectionModeId: 'privacy' });
+      await ctx.db.patch(userId, { connectionModeId: 'privacy-reality' });
       await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.evade.squads',
-        value: JSON.stringify(['sq-evade']),
+        key: 'remnawave.modePlacement.freedom-ws.squads',
+        value: JSON.stringify(['sq-freedom-ws']),
         updatedAt: Date.now(),
       });
       await ctx.db.insert('backendServers', {
@@ -999,7 +1077,7 @@ describe('account.switchMode saga', () => {
     ).toBe(false);
     await t.run(async (ctx) => {
       // …and the member's mode + subs are untouched (nothing to tombstone).
-      expect((await ctx.db.get(userId))!.connectionModeId).toBe('privacy');
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('privacy-reality');
       expect(await ctx.db.query('subscriptions').collect()).toHaveLength(0);
     });
   });
@@ -1306,5 +1384,103 @@ describe('account.getNodeStatus', () => {
     const again = await t.action(internal.account.getNodeStatus, { userId });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(again.node).toMatchObject({ online: true });
+  });
+});
+
+/**
+ * Mode gates around placement-less backends (flipped characterization from the
+ * mode overhaul): the effective-mode gate is backend-AGNOSTIC (judged per
+ * target backend from the catalog), and a mode switch on a placement-less
+ * backend is a preference no-op, never a re-issue.
+ */
+describe('mode gates on placement-less backends', () => {
+  async function createOutlineMode(t: ReturnType<typeof convexTest>) {
+    await t.mutation(internal.connectionModes.createMode, {
+      slug: 'outline-basic',
+      label: 'Outline Basic',
+      family: 'freedom',
+      deliveryStyle: 'url',
+      backends: ['outline'],
+    });
+  }
+
+  test('switch AWAY to outline with a blocked stored mode: allowed while outline has no modes, refused once it does', async () => {
+    const t = convexTest(schema, modules);
+    const fromTier = await seedTier(t, { slug: 'free', backend: 'remnawave' });
+    await seedTier(t, { slug: 'free-outline', backend: 'outline' }); // default-free peer
+    const userId = await seedUser(t, fromTier);
+    await t.action(internal.account.regenerate, { userId }); // key minted BEFORE the mode breaks
+    await t.run(async (ctx) => {
+      // Member sits on privacy-reality (unbound); only freedom-ws has a pool.
+      await ctx.db.patch(userId, { connectionModeId: 'privacy-reality' });
+      await ctx.db.insert('appSettings', {
+        key: 'remnawave.modePlacement.freedom-ws.squads',
+        value: JSON.stringify(['11111111-2222-3333-4444-555555555555']),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('appSettings', {
+        key: 'outline.enabled',
+        value: 'true',
+        updatedAt: Date.now(),
+      });
+    });
+
+    // No outline-applicable mode exists → nothing on outline to downgrade to →
+    // the switch proceeds (the stored mode rides along, meaningless there).
+    const res = await t.action(internal.account.switchBackend, { userId, target: 'outline' });
+    expect(res).toMatchObject({ ok: true, backend: 'outline' });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('privacy-reality');
+    });
+
+    // Switch back for the second leg (freedom-ws is bound, so the return gate
+    // blocks privacy-reality — pick the bound mode first, mirroring the UX).
+    await t.run((ctx) => ctx.db.patch(userId, { connectionModeId: 'freedom-ws' }));
+    await t.action(internal.account.switchBackend, { userId, target: 'remnawave' });
+    await t.run((ctx) => ctx.db.patch(userId, { connectionModeId: 'privacy-reality' }));
+
+    // Once outline HAS a usable mode, the anti-downgrade gate applies there
+    // too: the blocked stored mode must be re-picked BEFORE switching.
+    await createOutlineMode(t);
+    const refused = await t.action(internal.account.switchBackend, { userId, target: 'outline' });
+    expect(refused).toMatchObject({ ok: false, code: 'mode.unavailable', status: 400 });
+  });
+
+  test('switch-mode on an outline tier: not-applicable target → 400; applicable target → preference no-op (no re-issue, no tombstone)', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { slug: 'free-outline', backend: 'outline' });
+    const userId = await seedUser(t, tierId);
+    await t.action(internal.account.regenerate, { userId });
+
+    // freedom-ws declares remnawave only → not available on outline → refused.
+    const refused = await t.action(internal.account.switchMode, {
+      userId,
+      target: 'freedom-ws',
+    });
+    expect(refused).toMatchObject({ ok: false, code: 'validation', status: 400 });
+
+    // An outline-applicable mode: the switch records the preference and leaves
+    // the working key untouched (the old behavior tombstoned it for zero
+    // functional change).
+    await createOutlineMode(t);
+    const before = await t.run(async (ctx) => {
+      const subs = await ctx.db.query('subscriptions').collect();
+      return { count: subs.length, url: subs[0]!.subscriptionUrl, token: subs[0]!.subToken };
+    });
+    const res = await t.action(internal.account.switchMode, { userId, target: 'outline-basic' });
+    expect(res).toMatchObject({
+      ok: true,
+      mode: { id: 'outline-basic' },
+      oldSubscriptionDeletedAt: null,
+    });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('outline-basic');
+      const subs = await ctx.db.query('subscriptions').collect();
+      // Same single subscription, same URL/token — nothing was re-issued.
+      expect(subs).toHaveLength(before.count);
+      expect(subs[0]!.state).toBe('active');
+      expect(subs[0]!.subscriptionUrl).toBe(before.url);
+      expect(subs[0]!.subToken).toBe(before.token);
+    });
   });
 });

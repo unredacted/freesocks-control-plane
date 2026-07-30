@@ -16,6 +16,7 @@ import type { ActionCtx } from '../_generated/server';
 import type { Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
 import type { BackendId, IssueUserSpec } from './backends/types';
+import { capabilitiesOf } from './backends/capabilities';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -32,7 +33,7 @@ export async function issueNewSubscription(
   ctx: ActionCtx,
   input: {
     userId: Id<'users'>;
-    backend: 'remnawave' | 'outline';
+    backend: BackendId;
     spec: IssueUserSpec;
     // Pin to one instance — set when node placement resolved the (placement,
     // panel) pair together (the squad only exists on that panel).
@@ -64,8 +65,11 @@ export async function issueNewSubscription(
       subscriptionMirrors: [],
       rawContentHash: undefined,
       // Persist the opaque placement the key was issued into, so tier pushes
-      // re-send the SAME placement instead of re-picking (Remnawave only).
-      placement: input.backend === 'remnawave' ? (input.spec.placement ?? undefined) : undefined,
+      // re-send the SAME placement instead of re-picking (placement-capable
+      // backends only).
+      placement: capabilitiesOf(input.backend).placement
+        ? (input.spec.placement ?? undefined)
+        : undefined,
       excludeNode: input.excludeNode,
       carrySubTokenFromId: input.carrySubTokenFromId,
     });
@@ -162,7 +166,7 @@ export async function issueNewSubscription(
  */
 export async function deleteSubscriptionEverywhere(
   ctx: ActionCtx,
-  input: { backend: 'remnawave' | 'outline'; backendUserId: string },
+  input: { backend: BackendId; backendUserId: string },
 ): Promise<void> {
   const sub = await ctx.runQuery(internal.subscriptions.byBackendUserId, {
     backendUserId: input.backendUserId,

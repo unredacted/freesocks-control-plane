@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { backendIdValidator } from './lib/backendIds';
 
 /**
  * Convex schema for FreeSocks Control Plane: the migration target
@@ -21,10 +22,10 @@ import { v } from 'convex/values';
  *    and `rateLimits` replace the former KvStore namespaces.
  */
 
-// The set of proxy-backend TYPES. Keep these literals in sync with BACKEND_IDS
-// in src/shared/contracts/backends.ts (the client-side source of truth): adding
-// a backend type means a literal here + a config variant in backendServerConfig.
-const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
+// The set of proxy-backend TYPES, derived from BACKEND_IDS (the single source
+// of truth in src/shared/contracts/backendIds.ts): adding a backend type means
+// an id there + a config variant in backendServerConfig below.
+const backendId = backendIdValidator;
 
 // Per-instance backend config: the secret-bearing connection details for one
 // deployed server. A discriminated union keyed by backend type (`type` matches
@@ -106,11 +107,16 @@ export default defineSchema({
     hwidLimit: v.number(),
     hwidEnabled: v.boolean(),
     trafficStrategy,
-    // Cross-backend peer (D-1): the equivalent tier on the OTHER backend, so a
-    // member on this tier can switch backends (account.switchBackend). Optional;
-    // free tiers auto-resolve their peer via the per-backend default-free row and
-    // need no explicit link. Resolved (incl. a reverse lookup) in convex/tiers.ts
-    // getPeerTier; set by an admin in the tier editor.
+    // Cross-backend peer GROUP: tiers sharing this key are "the same tier" on
+    // their respective backends, so a member can switch backends between them
+    // (account.switchBackend). Symmetric and N-ary by construction (the old
+    // pairwise peerTierId link could not express 3+ backends). Optional; free
+    // tiers auto-resolve their peer via the per-backend default-free row and
+    // need no group. Resolved in convex/tiers.ts getPeerTier; set by an admin
+    // in the tier editor.
+    peerGroup: v.optional(v.string()),
+    // DEPRECATED (read-fallback only; superseded by peerGroup — the seed
+    // assigns a group to existing pairs; schema drop is a later two-deploy).
     peerTierId: v.optional(v.id('tiers')),
     isDefaultFree: v.boolean(),
     isActive: v.boolean(),
@@ -198,7 +204,70 @@ export default defineSchema({
     // users due for deactivation; `inactive` rows fall outside the range, so the
     // sweep never re-scans its own output (no accretion).
     .index('by_tier_status_freekey', ['tierId', 'status', 'freeKeyExpiresAt'])
-    .index('by_tier', ['tierId']),
+    .index('by_tier', ['tierId'])
+    // Mode-catalog delete/disable guards: cheap "is any member on this mode?"
+    // existence checks (never full counts on the hot path).
+    .index('by_connection_mode', ['connectionModeId']),
+
+  // === DB-driven connection-mode catalog (families + leaf modes) =============
+  // The member-facing transport choice, fully admin-managed (create/edit/delete
+  // in the CMS). Compiled defaults in lib/connectionModes.ts seed a fresh deploy
+  // and serve as the read fallback while both tables are empty, so the picker is
+  // never blank. The string `slug` is the wire id everywhere (users.
+  // connectionModeId, censorship-matrix cells, audit payloads) and is IMMUTABLE
+  // after create — a rename is create+migrate+delete, never an alias layer.
+  connectionModeFamilies: defineTable({
+    slug: v.string(), // unique (read-check in the create mutation)
+    // Admin-set copy; absent → the SPA renders its compiled i18n for built-in
+    // slugs (and a humanized slug otherwise, which create() prevents by
+    // requiring a label for non-built-ins).
+    label: v.optional(v.string()),
+    description: v.optional(v.string()),
+    // The "who is this for" picker chip; absent → built-in i18n or no chip.
+    audience: v.optional(v.string()),
+    // OPEN icon id resolved by the client icon registry; unknown → fallback.
+    iconId: v.string(),
+    enabled: v.boolean(),
+    order: v.number(),
+    updatedAt: v.number(),
+  }).index('by_slug', ['slug']),
+
+  connectionModes: defineTable({
+    slug: v.string(), // unique (read-check in the create mutation)
+    familySlug: v.string(),
+    // Closed CODE enum — drives member delivery UI (URL-first vs raw-config).
+    deliveryStyle: v.union(v.literal('url'), v.literal('rawConfig')),
+    label: v.optional(v.string()),
+    description: v.optional(v.string()),
+    enabled: v.boolean(),
+    // The leaf selected when a member picks the family without a transport.
+    isFamilyDefault: v.boolean(),
+    // The geo-based suggestion for censored-region members targets this mode
+    // (replaces the compiled CENSORSHIP_MODE_FAMILY constant).
+    isCensorshipRecommended: v.optional(v.boolean()),
+    // Backend APPLICABILITY (the clients.backends pattern): which backend types
+    // this mode is offered on. Availability additionally requires a bound
+    // placement on placement-capable backends.
+    backends: v.array(backendId),
+    order: v.number(),
+    updatedAt: v.number(),
+  }).index('by_slug', ['slug']),
+
+  // Per-(mode, backend) placement binding. `config` is a backend-defined JSON
+  // string (Remnawave: {"squadUuids":[...]}) parsed fail-safe by that backend's
+  // placement resolver — malformed config reads as unbound, never a throw.
+  // WRITE-ONLY over HTTP: admin reads get {bound, boundCount} summaries, never
+  // the config; audits carry poolBound + counts only. Scope admin:servers:write
+  // (the Ansible role's token), deliberately separate from the catalog tables'
+  // admin:settings:write.
+  modePlacements: defineTable({
+    modeSlug: v.string(),
+    backend: backendId,
+    config: v.string(),
+    updatedAt: v.number(),
+  })
+    .index('by_mode_backend', ['modeSlug', 'backend'])
+    .index('by_backend', ['backend']),
 
   subscriptions: defineTable({
     userId: v.id('users'),

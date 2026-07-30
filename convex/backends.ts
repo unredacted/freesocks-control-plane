@@ -33,6 +33,8 @@ import type {
   UserState,
 } from './lib/backends/types';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
+import { backendIdValidator } from './lib/backendIds';
+import { capabilitiesOf } from './lib/backends/capabilities';
 import { pinSubscriptionToNode } from './lib/nodePinning';
 import {
   mockBackendEnabled,
@@ -42,8 +44,7 @@ import {
 } from './lib/backends/mock';
 import { isRemnawaveNotFound } from './lib/backends/remnawave';
 
-// Keep in sync with BACKEND_IDS (src/shared/contracts/backends.ts).
-const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
+const backendId = backendIdValidator;
 const trafficStrategy = v.union(
   v.literal('NO_RESET'),
   v.literal('DAY'),
@@ -373,7 +374,7 @@ export const fetchSubscriptionContent = internalAction({
       // subscription. Filter down to the pinned node's lines (deterministic
       // rendezvous pick on the panel user id — stable per key, moves only when
       // the pinned node disappears, e.g. rotation/teardown).
-      if (server.backend === 'remnawave' && typeof fetched.content === 'string') {
+      if (capabilitiesOf(server.backend).nodePinning && typeof fetched.content === 'string') {
         const pinned = pinSubscriptionToNode(fetched.content, backendShortId, excludeNode);
         return { ...fetched, content: pinned.content, pinnedNode: pinned.node ?? undefined };
       }
@@ -382,7 +383,7 @@ export const fetchSubscriptionContent = internalAction({
       // A panel 404 on a HWID-gated fetch (no/invalid x-hwid) is AUTHORITATIVE,
       // not an outage — surface it as a typed error so the fronted route passes
       // 404 through instead of serving a stale entry or a generic 502.
-      if (isRemnawaveNotFound(err)) {
+      if (capabilitiesOf(server.backend).fetch404IsDeviceRejection && isRemnawaveNotFound(err)) {
         throw new ConvexError({ code: 'subscription.device_rejected' });
       }
       throw err;

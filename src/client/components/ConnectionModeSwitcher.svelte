@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { z } from 'zod';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { toast } from 'svelte-sonner';
   import DeliveryPreference from './DeliveryPreference.svelte';
@@ -10,6 +9,12 @@
   import { queryKeys } from '../lib/queries';
   import { setConnectionModePref } from '../lib/connectionModePref.svelte';
   import { shouldConfirmSwitch } from '../lib/connectionMode';
+  import { humanizeSlug, qualifiedModeLabel } from '../lib/connectionModeCopy';
+  import type { PickerFamily, PickerMode } from '../lib/connectionModeGroups';
+  import {
+    SwitchModeResponse,
+    type MemberCurrentMode,
+  } from '../../shared/contracts/connectionModes';
 
   /**
    * The connection-mode (transport) switcher, shared by BOTH /account and
@@ -25,17 +30,17 @@
    *    presentation preference only (localStorage), no server round-trip.
    * `pendingModeId` drives the optimistic picker highlight while the re-issue is in flight.
    */
-  interface Mode {
-    id: string;
-    deliveryStyle: 'url' | 'rawConfig';
-    label: string | null;
-    description: string | null;
-    isDefault: boolean;
-    available: boolean;
-  }
+  // The mode/family shapes are the SHARED CONTRACTS (this file used to carry a
+  // third hand-copied variant of the shape).
   interface Props {
-    /** The public mode catalog (config.connectionModes). */
-    modes: Mode[];
+    /** The public LEAF catalog (config.connectionModes). */
+    modes: PickerMode[];
+    /** The public FAMILY catalog (config.connectionModeFamilies). */
+    families?: PickerFamily[];
+    /** The account view's resolved current-mode projection: lets the picker
+     *  synthesize an admin-disabled current mode with its REAL deliveryStyle/
+     *  label/family, and names it properly in the confirm dialog. */
+    currentMode?: MemberCurrentMode | null;
     /** The parent's effectiveModeId - the base highlight (server-authoritative or local). */
     selected: string;
     /** Server's country-based recommendation id, badged. */
@@ -54,6 +59,8 @@
   }
   let {
     modes,
+    families = [],
+    currentMode = null,
     selected,
     suggested = null,
     serverBacked = false,
@@ -74,15 +81,29 @@
   // role="status" region so the switch outcome is spoken once. Never the account number.
   let liveMessage = $state('');
 
-  // Mode title for the toast + confirm dialog: an admin-set catalog label overrides
-  // the translated copy verbatim (all locales); else the known-mode i18n, else the id.
+  // Mode title for the toast + confirm dialog. Qualified with the family
+  // ("Freedom Mode - REALITY") because a bare transport name is ambiguous once
+  // two families each offer REALITY. Resolution (admin label -> i18n -> id) lives
+  // in lib/connectionModeCopy so this and the picker can't drift.
   function modeLabel(id: string): string {
-    const custom = modes.find((m) => m.id === id)?.label;
-    if (custom?.trim()) return custom;
-    if (id === 'privacy') return t('delivery.privacyTitle');
-    if (id === 'evade') return t('delivery.evadeTitle');
-    return id;
+    const m = modes.find((x) => x.id === id);
+    if (m) return qualifiedModeLabel(m, families);
+    // The catalog omits admin-disabled modes; the current-mode projection still
+    // names the member's own. Humanize as the last resort — raw ids never render.
+    if (currentMode && currentMode.id === id) {
+      return qualifiedModeLabel(
+        { id, family: currentMode.family?.id, label: currentMode.label },
+        currentMode.family ? [...families, currentMode.family] : families,
+      );
+    }
+    return humanizeSlug(id);
   }
+
+  // The pending TARGET's delivery style (drives the confirm dialog's
+  // raw-config bullet). Targets are always catalog modes.
+  let pendingDeliveryStyle = $derived(
+    modes.find((m) => m.id === pendingModeId)?.deliveryStyle ?? 'url',
+  );
 
   const switchMode = createMutation(() => ({
     mutationFn: () => {
@@ -90,13 +111,7 @@
       return apiClient.post(
         '/api/v1/account/switch-mode',
         { modeId: pendingModeId, confirm: true },
-        z.object({
-          subscriptionUrl: z.string(),
-          shortUuid: z.string(),
-          mode: z.object({ id: z.string(), label: z.string().nullable() }),
-          // Null when there was no live previous subscription to tombstone.
-          oldSubscriptionDeletedAt: z.string().nullable(),
-        }),
+        SwitchModeResponse,
       );
     },
     onSuccess: (result) => {
@@ -150,6 +165,8 @@
 
 <DeliveryPreference
   {modes}
+  {families}
+  {currentMode}
   selected={pendingModeId ?? selected}
   {suggested}
   {serverBacked}
@@ -162,6 +179,7 @@
   <SwitchModeModal
     bind:open={switchModeOpen}
     targetLabel={modeLabel(pendingModeId)}
+    targetDeliveryStyle={pendingDeliveryStyle}
     {deviceCount}
     onCancel={() => {
       switchModeOpen = false;

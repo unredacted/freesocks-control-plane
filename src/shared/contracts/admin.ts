@@ -22,10 +22,12 @@ export const TierAdmin = z.object({
   hwidEnabled: z.boolean(),
   trafficStrategy: TrafficStrategy,
   /**
-   * D-1: the cross-backend peer tier id (opaque), or null — the equivalent tier
-   * on the OTHER backend used by account.switchBackend. Free tiers auto-peer via
-   * the per-backend default-free row and leave this null.
+   * Cross-backend peer group: tiers sharing this key are "the same tier" on
+   * their backends (account.switchBackend). Symmetric and N-ary. Free tiers
+   * auto-peer via the per-backend default-free row and leave this null.
    */
+  peerGroup: z.string().nullable().optional().default(null),
+  /** DEPRECATED pairwise link, superseded by peerGroup (read-fallback only). */
   peerTierId: z.string().nullable(),
   isDefaultFree: z.boolean(),
   isActive: z.boolean(),
@@ -261,7 +263,7 @@ export const ClientAdmin = z.object({
   id: z.string(),
   name: z.string().min(1).max(64),
   platforms: z.array(z.string()),
-  backends: z.array(z.enum(['remnawave', 'outline'])),
+  backends: z.array(BackendId),
   homepageUrl: z.string(),
   /** An appLinks deep-link builder id, or null = manual / QR import only. */
   schemeId: z.string().nullable(),
@@ -287,7 +289,7 @@ export type ClientAdmin = z.infer<typeof ClientAdmin>;
 export const ClientUpsert = z.object({
   name: z.string().min(1).max(64),
   platforms: z.array(z.string()).default([]),
-  backends: z.array(z.enum(['remnawave', 'outline'])).default(['remnawave']),
+  backends: z.array(BackendId).default(['remnawave']),
   homepageUrl: z.string().min(1),
   schemeId: z.string().nullable().optional(),
   hwid: z.boolean().default(false),
@@ -362,6 +364,19 @@ export const RemnawaveNodeStatsResponse = z.object({
   placements: z.array(RemnawavePlacementCount).optional().default([]),
 });
 export type RemnawaveNodeStatsResponse = z.infer<typeof RemnawaveNodeStatsResponse>;
+
+/** The admin mode-catalog shapes moved to ./connectionModes (the single home
+ *  of every mode wire shape); re-exported here for existing importers. */
+export {
+  AdminConnectionMode,
+  AdminConnectionModeFamily,
+  AdminConnectionModesResponse,
+  FamilyCreate,
+  FamilyUpsert,
+  ModeCreate,
+  ModePlacementSummary,
+  ModeUpsert,
+} from './connectionModes';
 
 // --- admin management (multi-admin onboarding via invite links) ---
 

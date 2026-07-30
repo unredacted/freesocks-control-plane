@@ -19,18 +19,20 @@
  * cycle (this repo has hit it before).
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { MutationCtx } from './_generated/server';
+import type { DatabaseReader, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { applyCountsDelta, readUserCounts } from './lib/statusCounters';
 // One shared by-key upsert (Review P3): the local upsertSetting + setBillingConfig's
 // inline copy both delegate here (also appSettings.set/setMany use it).
 import { upsertSettingRow as upsertSetting } from './appSettings';
 import { applyMembership } from './lifecycle';
 import { THEME_PRESET_IDS, sanitizeHue } from './lib/themeConfig';
-import { connectionModeWrites, resolveConnectionModes } from './lib/connectionModes';
+import { CAPABILITIES } from './lib/backends/capabilities';
+import { resolveCatalogWithAvailability, resolverFor } from './lib/placement';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { sanitizeBannerText, sanitizeEmail, sanitizeHeroTitles } from './lib/siteConfig';
@@ -53,7 +55,7 @@ import {
 
 // --- shared validators (mirror the contract enums) --------------------------
 
-const backendId = v.union(v.literal('remnawave'), v.literal('outline'));
+const backendId = backendIdValidator;
 const trafficStrategy = v.union(
   v.literal('NO_RESET'),
   v.literal('DAY'),
@@ -72,8 +74,10 @@ const tierUpsertFields = {
   hwidLimit: v.number(),
   hwidEnabled: v.boolean(),
   trafficStrategy,
-  // Optional at create (most tiers leave it unset); the SPA's TierUpsert always
-  // sends it (null default), but other internal callers / tests may omit it.
+  // Cross-backend peer group (symmetric, N-ary); free tiers leave it unset.
+  peerGroup: v.optional(v.union(v.string(), v.null())),
+  // DEPRECATED pairwise link (read-fallback in tiers.getPeerTier; superseded
+  // by peerGroup). Optional at create; the SPA no longer sends it.
   peerTierId: v.optional(v.union(v.id('tiers'), v.null())),
   isDefaultFree: v.boolean(),
   isActive: v.boolean(),
@@ -135,6 +139,7 @@ function mapTier(t: Doc<'tiers'>) {
     hwidLimit: t.hwidLimit,
     hwidEnabled: t.hwidEnabled,
     trafficStrategy: t.trafficStrategy,
+    peerGroup: t.peerGroup ?? null,
     peerTierId: (t.peerTierId as string | undefined) ?? null,
     isDefaultFree: t.isDefaultFree,
     isActive: t.isActive,
@@ -244,7 +249,7 @@ export const tiersList = internalQuery({
  */
 async function clearOtherDefaultFree(
   ctx: MutationCtx,
-  backend: 'remnawave' | 'outline',
+  backend: BackendId,
   keepId: Id<'tiers'>,
 ): Promise<void> {
   const tiers = await ctx.db.query('tiers').collect(); // admin write path; tiny table
@@ -281,6 +286,7 @@ export const createTier = internalMutation({
       hwidLimit: a.hwidLimit,
       hwidEnabled: a.hwidEnabled,
       trafficStrategy: a.trafficStrategy,
+      peerGroup: a.peerGroup?.trim() || undefined,
       peerTierId: a.peerTierId ?? undefined,
       isDefaultFree: a.isDefaultFree,
       isActive: a.isActive,
@@ -303,7 +309,7 @@ export const createTier = internalMutation({
 });
 
 /** Nullable-optional tier fields whose explicit `null` maps to Convex "absent". */
-const TIER_NULLABLE_KEYS = new Set(['description', 'peerTierId']);
+const TIER_NULLABLE_KEYS = new Set(['description', 'peerGroup', 'peerTierId']);
 
 /**
  * Build a tier patch `fields` object from provided args: skip undefined, map an
@@ -335,6 +341,7 @@ export const updateTier = internalMutation({
     hwidLimit: v.optional(v.number()),
     hwidEnabled: v.optional(v.boolean()),
     trafficStrategy: v.optional(trafficStrategy),
+    peerGroup: v.optional(v.union(v.string(), v.null())),
     peerTierId: v.optional(v.union(v.id('tiers'), v.null())),
     isDefaultFree: v.optional(v.boolean()),
     isActive: v.optional(v.boolean()),
@@ -537,7 +544,7 @@ const userStatus = v.union(
 async function currentBackendForUser(
   ctx: { db: import('./_generated/server').QueryCtx['db'] },
   user: Doc<'users'>,
-): Promise<{ backend: 'remnawave' | 'outline' | null; backendUserId: string | null }> {
+): Promise<{ backend: BackendId | null; backendUserId: string | null }> {
   let sub: Doc<'subscriptions'> | null = null;
   if (user.currentSubscriptionId) {
     const cur = await ctx.db.get(user.currentSubscriptionId);
@@ -1157,7 +1164,7 @@ export const backendServersList = internalQuery({
 type BackendServerConfig = Doc<'backendServers'>['config'];
 
 interface BackendServerConfigArgs {
-  backend: 'remnawave' | 'outline';
+  backend: BackendId;
   baseUrl?: string;
   apiToken?: string;
   apiUrl?: string;
@@ -2109,55 +2116,73 @@ export const setSiteConfig = internalMutation({
 // === connection modes ========================================================
 
 /**
- * Admin sets the GENERIC connection-mode catalog: per-mode label/description +
- * the default. Writes the appSettings `connectionMode.*` namespace. The
- * Remnawave placement pool (which squads a mode issues into) is backend-specific
- * and set separately via remnawaveNodes.setModePlacements. Returns the catalog
- * view (label null unless admin-set, so it doesn't round-trip the compiled
- * default into the form + pin English over i18n).
+ * The admin CMS view of the DB-driven mode catalog: families + leaf modes with
+ * full CMS fields (copy, flags, order, backend applicability, builtIn) plus
+ * per-(mode, backend) placement SUMMARIES (bound + counts — never a config).
+ * CRUD itself lives in convex/connectionModes.ts; the legacy bulk-PATCH shape
+ * (connectionModeWrites over appSettings) is gone with the appSettings
+ * namespaces.
  */
-export const setConnectionModes = internalMutation({
-  args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
-  handler: async (ctx, { patch, actorAdminId }) => {
-    let writes: Array<{ key: string; value: string }>;
-    try {
-      writes = connectionModeWrites(patch);
-    } catch (e) {
-      throw new ConvexError({
-        code: 'validation',
-        message: e instanceof Error ? e.message : 'invalid connection-mode config',
-      });
-    }
-    if (writes.length === 0) {
-      throw new ConvexError({
-        code: 'validation',
-        message: 'no recognized connection-mode fields',
-      });
-    }
-    for (const { key, value } of writes) {
-      await upsertSetting(ctx, key, value, actorAdminId);
-      await writeAuditLog(ctx, {
-        actorType: 'admin',
-        actorId: actorAdminId ?? undefined,
-        action: 'admin.connection_mode.update',
-        targetType: 'connection_mode',
-        targetId: key,
-        payload: { key },
-      });
-    }
-    const [modes, bound] = await Promise.all([
-      resolveConnectionModes(ctx.db),
-      resolveBoundModeIds(ctx.db),
-    ]);
+export const getConnectionModes = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const { families, modes } = await resolveCatalogWithAvailability(ctx.db);
+    const summaries = await placementSummariesFor(ctx.db, modes);
     return {
+      families: families.map((f) => ({
+        id: f.id,
+        label: f.label,
+        description: f.description,
+        audience: f.audience,
+        iconId: f.iconId,
+        enabled: f.enabled,
+        order: f.order,
+        builtIn: f.builtIn,
+      })),
       modes: modes.map((m) => ({
         id: m.id,
+        family: m.family,
         label: m.label,
         description: m.description,
         deliveryStyle: m.deliveryStyle,
         isDefault: m.isDefault,
-        bound: bound.has(m.id),
+        isFamilyDefault: m.isFamilyDefault,
+        isCensorshipRecommended: m.isCensorshipRecommended,
+        enabled: m.enabled,
+        ownEnabled: m.ownEnabled,
+        orphaned: m.orphaned,
+        backends: m.backends,
+        availableBackends: m.availableBackends,
+        order: m.order,
+        builtIn: m.builtIn,
+        placements: summaries[m.id] ?? [],
       })),
     };
   },
 });
+
+/** Per-(mode, backend) placement summaries for the modes given (sizes only). */
+async function placementSummariesFor(
+  db: DatabaseReader,
+  modes: Array<{ id: string; backends: BackendId[] }>,
+): Promise<Record<string, Array<{ backendId: BackendId; bound: boolean; boundCount: number }>>> {
+  const countsByBackend = new Map<BackendId, Record<string, number>>();
+  const out: Record<
+    string,
+    Array<{ backendId: BackendId; bound: boolean; boundCount: number }>
+  > = {};
+  for (const m of modes) {
+    out[m.id] = [];
+    for (const b of m.backends) {
+      if (!CAPABILITIES[b].placement) continue;
+      let counts = countsByBackend.get(b);
+      if (!counts) {
+        counts = await resolverFor(b).boundCounts(db);
+        countsByBackend.set(b, counts);
+      }
+      const n = counts[m.id] ?? 0;
+      out[m.id]!.push({ backendId: b, bound: n > 0, boundCount: n });
+    }
+  }
+  return out;
+}

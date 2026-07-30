@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { BackendId } from './backends';
+import { PublicConnectionMode, PublicConnectionModeFamily } from './connectionModes';
 
 /**
  * CMS-sourced URL fields that flow to href: https-only or '' (unset). The
@@ -110,14 +112,33 @@ export const PublicConfig = z.object({
    * user with an option they can't use.
    */
   backends: z.object({
+    /** DEPRECATED per-id flags (kept one release for cached SPAs; use `list`). */
     remnawaveEnabled: z.boolean(),
     outlineEnabled: z.boolean(),
-    defaultBackend: z.enum(['remnawave', 'outline']),
+    defaultBackend: BackendId,
     userChoiceEnabled: z.boolean(),
     labels: z.object({
       remnawave: z.string(),
       outline: z.string(),
     }),
+    /** The N-backend projection: every backend type with its member-facing
+     *  label, enabled flag, and a MEMBER-SAFE capability subset (device-limit
+     *  UI gating; access-key vs subscription delivery chrome). Defaulted for
+     *  deploy skew — the client synthesizes from the legacy flags when empty. */
+    list: z
+      .array(
+        z.object({
+          id: z.string(),
+          label: z.string(),
+          enabled: z.boolean(),
+          capabilities: z.object({
+            devices: z.boolean(),
+            accessKeyOnly: z.boolean(),
+          }),
+        }),
+      )
+      .optional()
+      .default([]),
   }),
   /**
    * Public billing catalog for the self-service membership upgrade. Prices and
@@ -262,26 +283,23 @@ export const PublicConfig = z.object({
       heroTitles: z.array(z.string()).optional().default([]),
     })
     .optional(),
-  /** Member-facing connection-mode catalog (the transport chooser): id +
-   *  `deliveryStyle` (url vs rawConfig — drives delivery behavior) + admin copy
-   *  overrides + whether it's the default + `available` (its backend placement
-   *  pool is bound). `label`/`description` are null unless the admin set them —
-   *  a non-null value overrides the SPA's translated copy verbatim (all
-   *  locales); null keeps the i18n defaults. NEVER a squad UUID. Data-driven
-   *  (string ids). Optional/defaulted for forward-compat. */
-  connectionModes: z
-    .array(
-      z.object({
-        id: z.string(),
-        deliveryStyle: z.enum(['url', 'rawConfig']),
-        label: z.string().nullable(),
-        description: z.string().nullable().optional().default(null),
-        isDefault: z.boolean(),
-        available: z.boolean(),
-      }),
-    )
-    .optional()
-    .default([]),
+  /** Member-facing connection-mode catalog (the transport chooser): the LEAF
+   *  sub-choices. `family` names the parent mode the leaf belongs to (see
+   *  `connectionModeFamilies`); `isFamilyDefault` is the leaf selected when a
+   *  member picks that family without choosing a transport. `deliveryStyle`
+   *  (url vs rawConfig) drives delivery behavior; `available` = the mode is
+   *  enabled AND its backend placement pool is bound. Admin-DISABLED modes are
+   *  omitted entirely, so a mode the member is currently on may be absent —
+   *  the SPA synthesizes an entry for it rather than showing an empty picker.
+   *  `label`/`description` are null unless the admin set them — a non-null value
+   *  overrides the SPA's translated copy verbatim (all locales). NEVER a squad
+   *  UUID. Data-driven (string ids). Optional/defaulted for forward-compat. */
+  connectionModes: z.array(PublicConnectionMode).optional().default([]),
+  /** The PARENT modes a member picks first ("Freedom Mode", "Privacy Mode").
+   *  Only families that are enabled and still have at least one visible child
+   *  appear. Purely presentational — nothing is ever issued against a family;
+   *  the value committed to the server is always a leaf `connectionModes[].id`. */
+  connectionModeFamilies: z.array(PublicConnectionModeFamily).optional().default([]),
   /** Member-facing node-location catalog (active Remnawave instances with a
    *  location set, deduped by code): the picker a member chooses their config's
    *  location from. `online` = ≥1 healthy instance at that location; `load` is
@@ -307,7 +325,7 @@ export const PublicConfig = z.object({
       z.object({
         name: z.string(),
         platforms: z.array(z.string()),
-        backends: z.array(z.enum(['remnawave', 'outline'])),
+        backends: z.array(BackendId),
         homepageUrl: z
           .string()
           .refine((u) => u.startsWith('https://'), { message: 'must be https' }),

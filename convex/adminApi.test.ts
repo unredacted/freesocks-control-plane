@@ -956,85 +956,103 @@ describe('adminApi setTheme + resolveTheme', () => {
   });
 });
 
-describe('adminApi connection modes + remnawave placements', () => {
+describe('adminApi connection modes + placements (DB-driven catalog)', () => {
   // UUID-shaped (the placement PATCH validates replace/add entries server-side).
   const FRONTED_UUID = 'f7011ed0-1111-4111-8111-aaaaaaaaaaaa';
   const REALITY_UUID = 'dead1ea1-2222-4222-8222-bbbbbbbbbbbb';
-  test('splits generic catalog (label/default) from the Remnawave placement pool; view is BOUND, never the uuid', async () => {
+
+  test('splits catalog CRUD from the placement pool; view ships SUMMARIES, never a uuid', async () => {
     const t = convexTest(schema, modules);
-    // Remnawave-namespaced pool bind: squad UUIDs are write-only + return only
-    // which modes are now bound.
-    const placed = await t.mutation(internal.remnawaveNodes.setModePlacements, {
+    // Generic per-backend pool bind: config contents are write-only + return
+    // only which modes are now bound.
+    const placed = await t.mutation(internal.connectionModes.setModePlacements, {
+      backend: 'remnawave',
       patch: {
         modes: {
-          evade: { squadUuids: [FRONTED_UUID] },
-          privacy: { squadUuids: [REALITY_UUID] },
+          'freedom-ws': { squadUuids: [FRONTED_UUID] },
+          'privacy-reality': { squadUuids: [REALITY_UUID] },
         },
       },
     });
-    expect([...placed.bound].sort()).toEqual(['evade', 'privacy']);
+    expect([...placed.bound].sort()).toEqual(['freedom-ws', 'privacy-reality']);
     expect(JSON.stringify(placed)).not.toContain(REALITY_UUID);
     expect(JSON.stringify(placed)).not.toContain(FRONTED_UUID);
 
-    // Generic catalog copy + default live behind the settings scope — no squads here.
-    const out = await t.mutation(internal.adminApi.setConnectionModes, {
-      patch: {
-        default: 'privacy',
-        modes: {
-          privacy: { label: 'Max privacy', description: 'Direct Reality, no CDN in the path.' },
-        },
-      },
+    // Catalog copy + default via the CRUD mutations — no squads on this surface.
+    await t.mutation(internal.connectionModes.updateMode, {
+      slug: 'privacy-reality',
+      label: 'Max privacy',
+      description: 'Direct Reality, no CDN in the path.',
+      makeDefault: true,
     });
-    const priv = out.modes.find((m) => m.id === 'privacy')!;
-    expect(priv.bound).toBe(true); // pool bound above
+    const out = await t.query(internal.adminApi.getConnectionModes, {});
+    const priv = out.modes.find((m: { id: string }) => m.id === 'privacy-reality')!;
     expect(priv.label).toBe('Max privacy');
     expect(priv.description).toBe('Direct Reality, no CDN in the path.');
     expect(priv.deliveryStyle).toBe('rawConfig');
     expect(priv.isDefault).toBe(true);
-    const evade = out.modes.find((m) => m.id === 'evade')!;
-    expect(evade.bound).toBe(true);
-    // No custom copy set on evade → nulls (never the compiled English default,
-    // which would round-trip through the admin form and pin English over i18n).
-    expect(evade.label).toBeNull();
-    expect(evade.description).toBeNull();
+    expect(priv.placements).toEqual([{ backendId: 'remnawave', bound: true, boundCount: 1 }]);
+    const ws = out.modes.find((m: { id: string }) => m.id === 'freedom-ws')!;
+    expect(ws.placements).toEqual([{ backendId: 'remnawave', bound: true, boundCount: 1 }]);
+    // No custom copy set on freedom-ws → nulls (never the compiled English
+    // default, which would round-trip through the admin form and pin English
+    // over i18n for the built-ins).
+    expect(ws.label).toBeNull();
+    expect(ws.description).toBeNull();
     // Neither the catalog view nor the pool return ever carries a squad UUID.
     expect(JSON.stringify(out)).not.toContain(REALITY_UUID);
     expect(JSON.stringify(out)).not.toContain(FRONTED_UUID);
 
     // Server-only resolver reads the bound pools back (the issuance path).
-    const priv2 = await t.run((ctx) => resolveModeSquadPool(ctx.db, 'privacy'));
+    const priv2 = await t.run((ctx) => resolveModeSquadPool(ctx.db, 'privacy-reality'));
     expect(priv2).toEqual([REALITY_UUID]);
-    const evade2 = await t.run((ctx) => resolveModeSquadPool(ctx.db, 'evade'));
-    expect(evade2).toEqual([FRONTED_UUID]);
+    const ws2 = await t.run((ctx) => resolveModeSquadPool(ctx.db, 'freedom-ws'));
+    expect(ws2).toEqual([FRONTED_UUID]);
   });
 
-  test('audits a pool bind as a boolean, never the uuid', async () => {
+  test('audits a pool bind as backend + boolean + count, never the uuid', async () => {
     const t = convexTest(schema, modules);
-    await t.mutation(internal.remnawaveNodes.setModePlacements, {
-      patch: { modes: { privacy: { squadUuids: [REALITY_UUID] } } },
+    await t.mutation(internal.connectionModes.setModePlacements, {
+      backend: 'remnawave',
+      patch: { modes: { 'privacy-reality': { squadUuids: [REALITY_UUID] } } },
     });
     const audit = await t.run((ctx) =>
       ctx.db
         .query('auditLog')
-        .withIndex('by_action', (q) => q.eq('action', 'admin.remnawave.mode_placement.update'))
+        .withIndex('by_action', (q) => q.eq('action', 'admin.backend.mode_placement.update'))
         .collect(),
     );
     expect(audit).toHaveLength(1);
     expect(audit[0]!.payload).toMatchObject({
-      key: 'remnawave.modePlacement.privacy.squads',
+      backend: 'remnawave',
+      modeSlug: 'privacy-reality',
       poolBound: true,
+      boundCount: 1,
     });
     expect(JSON.stringify(audit[0]!.payload)).not.toContain(REALITY_UUID);
   });
 
-  test('rejects a bad default id and an empty patch', async () => {
+  test('rejects a placement-less backend, an empty patch, and a bad makeDefault', async () => {
     const t = convexTest(schema, modules);
     await expect(
-      t.mutation(internal.adminApi.setConnectionModes, { patch: { default: 'nope' } }),
-    ).rejects.toThrow(/invalid default mode id/i);
+      t.mutation(internal.connectionModes.setModePlacements, {
+        backend: 'outline',
+        patch: { modes: { 'freedom-ws': { squadUuids: [FRONTED_UUID] } } },
+      }),
+    ).rejects.toThrow(/no placement configuration/i);
     await expect(
-      t.mutation(internal.adminApi.setConnectionModes, { patch: { modes: {} } }),
-    ).rejects.toThrow(/no recognized connection-mode fields/i);
+      t.mutation(internal.connectionModes.setModePlacements, {
+        backend: 'remnawave',
+        patch: { modes: {} },
+      }),
+    ).rejects.toThrow(/no recognized mode-placement fields/i);
+    // makeDefault on a disabled mode is refused (freedom-reality ships dark).
+    await expect(
+      t.mutation(internal.connectionModes.updateMode, {
+        slug: 'freedom-reality',
+        makeDefault: true,
+      }),
+    ).rejects.toThrow(/disabled mode/i);
   });
 });
 
@@ -1244,5 +1262,89 @@ describe('admin mutation audit coverage', () => {
       'admin.mirror_provider.delete',
     ]);
     expect(JSON.stringify(rows)).not.toContain('MIRROR-SECRET-NEVER-AUDIT');
+  });
+});
+
+/**
+ * CHARACTERIZATION (mode/backend overhaul, phase 0): exhaustive secret-masking
+ * for both backendServer config variants. The per-type config plumbing in
+ * adminApi is being converted to per-type field descriptors — this suite pins
+ * the masking contract so the conversion cannot regress it. NOT expected to
+ * flip: the masked shapes must survive the refactor byte-identical.
+ */
+describe('characterization: backendServersList masks every secret', () => {
+  const OUTLINE_SECRET_PATH = 'SeCrEt-OuTlInE-PaTh';
+  const REMNAWAVE_SECRET_TOKEN = 'SeCrEt-Rw-ToKeN';
+
+  async function seedBothVariants(t: ReturnType<typeof convexTest>) {
+    await t.run(async (ctx) => {
+      await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'RW Panel',
+        slug: 'rw-panel',
+        config: {
+          type: 'remnawave',
+          baseUrl: 'https://panel.example.com',
+          apiToken: REMNAWAVE_SECRET_TOKEN,
+        },
+        isActive: true,
+        priority: 0,
+        keyCount: 3,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('backendServers', {
+        backend: 'outline',
+        name: 'OL Server',
+        slug: 'ol-server',
+        config: {
+          type: 'outline',
+          apiUrl: `https://outline.example.com:8443/${OUTLINE_SECRET_PATH}/api`,
+          websocketEnabled: true,
+          websocketDomain: 'ws.example.com',
+          prometheusUrl: 'https://prom.example.com',
+        },
+        isActive: true,
+        priority: 1,
+        keyCount: 7,
+        updatedAt: Date.now(),
+      });
+    });
+  }
+
+  test('remnawave: apiToken never ships; only apiTokenSet', async () => {
+    const t = convexTest(schema, modules);
+    await seedBothVariants(t);
+    const { servers } = await t.query(internal.adminApi.backendServersList, {});
+    const rw = servers.find((s) => s.backend === 'remnawave')!;
+    expect(rw.config).toEqual({
+      type: 'remnawave',
+      baseUrl: 'https://panel.example.com',
+      apiTokenSet: true,
+    });
+    expect('apiToken' in rw.config).toBe(false);
+  });
+
+  test('outline: apiUrl path (the credential) is replaced; non-secret fields pass through', async () => {
+    const t = convexTest(schema, modules);
+    await seedBothVariants(t);
+    const { servers } = await t.query(internal.adminApi.backendServersList, {});
+    const ol = servers.find((s) => s.backend === 'outline')!;
+    expect(ol.config).toEqual({
+      type: 'outline',
+      apiUrlMasked: 'https://outline.example.com:8443/***',
+      websocketEnabled: true,
+      websocketDomain: 'ws.example.com',
+      prometheusUrl: 'https://prom.example.com',
+    });
+    expect('apiUrl' in ol.config).toBe(false);
+  });
+
+  test('no secret substring survives anywhere in the whole serialized response', async () => {
+    const t = convexTest(schema, modules);
+    await seedBothVariants(t);
+    const out = await t.query(internal.adminApi.backendServersList, {});
+    const serialized = JSON.stringify(out);
+    expect(serialized).not.toContain(OUTLINE_SECRET_PATH);
+    expect(serialized).not.toContain(REMNAWAVE_SECRET_TOKEN);
   });
 });

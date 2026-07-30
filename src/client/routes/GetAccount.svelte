@@ -12,7 +12,9 @@
   import InlineError from '../components/InlineError.svelte';
   import ConnectionModeSwitcher from '../components/ConnectionModeSwitcher.svelte';
   import { connectionModePref } from '../lib/connectionModePref.svelte';
-  import { resolveEffectiveModeId } from '../lib/connectionMode';
+  import { FALLBACK_CONNECTION_MODE, resolveEffectiveModeId } from '../lib/connectionMode';
+  import { availableOn } from '../lib/connectionModeGroups';
+  import { backendEntry, enabledBackends } from '../lib/backends';
   import ConnectClient from '../components/ConnectClient.svelte';
   import RedeemCode from '../components/RedeemCode.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
@@ -59,7 +61,7 @@
   let capWidget = $state<ReturnType<typeof CapWidget>>();
   // Tracked separately from `config.data?.backends.defaultBackend` because the
   // user can pick a non-default; seeded in $effect once config loads.
-  let chosenBackend = $state<'remnawave' | 'outline' | null>(null);
+  let chosenBackend = $state<string | null>(null);
 
   // Set once account creation succeeds. The reveal-once number stays visible in
   // its modal while the user saves it.
@@ -103,12 +105,24 @@
   // catalog default); orders the panels. `rawConfigFirst` is data-driven off the
   // selected mode's deliveryStyle (replaces the hardcoded `=== 'privacy'`).
   let connectionModes = $derived(config.data?.connectionModes ?? []);
+  let connectionModeFamilies = $derived(config.data?.connectionModeFamilies ?? []);
+  // The backend availability is judged against: the issued key's backend once
+  // one exists, else the chooser pick — so flipping the sign-up backend radio
+  // re-filters transport availability live, without a round-trip.
+  let effectiveBackend = $derived(
+    subscription?.backend ?? chosenBackend ?? config.data?.backends.defaultBackend ?? null,
+  );
+  let memberModes = $derived(
+    connectionModes.map((m) => ({ ...m, available: availableOn(m, effectiveBackend) })),
+  );
   let defaultModeId = $derived(
-    connectionModes.find((m) => m.isDefault)?.id ?? connectionModes[0]?.id ?? 'evade',
+    connectionModes.find((m) => m.isDefault)?.id ??
+      connectionModes[0]?.id ??
+      FALLBACK_CONNECTION_MODE,
   );
   // Server-backed once a key exists AND a placement pool is bound - then the
   // mode switcher re-issues (like /account) instead of only setting a local pref.
-  let profileServerBacked = $derived(!!subscription && connectionModes.some((m) => m.available));
+  let profileServerBacked = $derived(!!subscription && memberModes.some((m) => m.available));
   // Server-backed → the persisted mode is authoritative (local pref is just an
   // optimistic bridge); otherwise the local choice wins, then the suggestion, else default.
   let effectiveModeId = $derived(
@@ -118,11 +132,14 @@
       pref: connectionModePref(),
       suggested: account.data?.suggestedModeId,
       fallback: defaultModeId,
+      knownIds: connectionModes.map((m) => m.id),
     }),
   );
   let actionsDisabled = $derived(account.data?.user.status === 'disabled');
   let rawConfigFirst = $derived(
-    connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle === 'rawConfig',
+    (account.data?.user.currentMode && account.data.user.currentMode.id === effectiveModeId
+      ? account.data.user.currentMode.deliveryStyle
+      : connectionModes.find((m) => m.id === effectiveModeId)?.deliveryStyle) === 'rawConfig',
   );
   // Hide the gift-code redeem once they're a member.
   let isCurrentMember = $derived(account.data?.user.membership?.isCurrent ?? false);
@@ -155,11 +172,9 @@
   // Chooser is visible only when BOTH backends are enabled AND the admin has
   // turned on user-choice. It selects which default-free tier (backend) the new
   // account lands on; it never depends on a proxy server being available.
+  let chooserBackends = $derived(enabledBackends(config.data?.backends));
   let showChooser = $derived(
-    !!config.data &&
-      config.data.backends.remnawaveEnabled &&
-      config.data.backends.outlineEnabled &&
-      config.data.backends.userChoiceEnabled,
+    !!config.data && config.data.backends.userChoiceEnabled && chooserBackends.length > 1,
   );
 
   $effect(() => {
@@ -198,7 +213,11 @@
   function chooserKeydown(e: KeyboardEvent) {
     if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(e.key)) return;
     e.preventDefault();
-    chosenBackend = chosenBackend === 'remnawave' ? 'outline' : 'remnawave';
+    const ids = chooserBackends.map((b) => b.id);
+    if (ids.length < 2) return;
+    const at = Math.max(0, ids.indexOf(chosenBackend ?? ''));
+    const delta = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1;
+    chosenBackend = ids[(at + delta + ids.length) % ids.length]!;
     (e.currentTarget as HTMLElement).parentElement
       ?.querySelector<HTMLElement>('[aria-checked="true"]')
       ?.focus();
@@ -371,53 +390,48 @@
           <p class="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
             {t('get.chooseBackend')}
           </p>
+          <!-- One radio per ENABLED backend (N-backend, no hardcoded pair). The
+               built-in blurbs cover the shipped ids; an unknown id simply has
+               no sub-caption. -->
           <div
             role="radiogroup"
             aria-label={t('get.backendAria')}
-            class="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-lg border border-border p-1"
+            class="grid grid-cols-1 gap-2 rounded-lg border border-border p-1 {chooserBackends.length >
+            1
+              ? 'sm:grid-cols-2'
+              : ''}"
           >
-            <button
-              type="button"
-              role="radio"
-              aria-checked={chosenBackend === 'remnawave'}
-              tabindex={chosenBackend === 'remnawave' ? 0 : -1}
-              onclick={() => (chosenBackend = 'remnawave')}
-              onkeydown={chooserKeydown}
-              class="rounded-md px-3 py-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {chosenBackend ===
-              'remnawave'
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'text-muted-foreground hover:bg-muted'}"
-            >
-              <div class="font-semibold">{config.data.backends.labels.remnawave}</div>
-              <div
-                class="text-[11px] leading-tight mt-0.5 {chosenBackend === 'remnawave'
-                  ? 'text-primary-foreground/80'
-                  : 'text-muted-foreground/80'}"
+            {#each chooserBackends as b (b.id)}
+              {@const active = chosenBackend === b.id}
+              {@const blurb =
+                b.id === 'remnawave'
+                  ? t('get.backendMultiProtocol')
+                  : b.id === 'outline'
+                    ? t('get.backendShadowsocks')
+                    : ''}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={active}
+                tabindex={active ? 0 : -1}
+                onclick={() => (chosenBackend = b.id)}
+                onkeydown={chooserKeydown}
+                class="rounded-md px-3 py-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {active
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:bg-muted'}"
               >
-                {t('get.backendMultiProtocol')}
-              </div>
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={chosenBackend === 'outline'}
-              tabindex={chosenBackend === 'outline' ? 0 : -1}
-              onclick={() => (chosenBackend = 'outline')}
-              onkeydown={chooserKeydown}
-              class="rounded-md px-3 py-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background {chosenBackend ===
-              'outline'
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'text-muted-foreground hover:bg-muted'}"
-            >
-              <div class="font-semibold">{config.data.backends.labels.outline}</div>
-              <div
-                class="text-[11px] leading-tight mt-0.5 {chosenBackend === 'outline'
-                  ? 'text-primary-foreground/80'
-                  : 'text-muted-foreground/80'}"
-              >
-                {t('get.backendShadowsocks')}
-              </div>
-            </button>
+                <div class="font-semibold">{b.label}</div>
+                {#if blurb}
+                  <div
+                    class="text-[11px] leading-tight mt-0.5 {active
+                      ? 'text-primary-foreground/80'
+                      : 'text-muted-foreground/80'}"
+                  >
+                    {blurb}
+                  </div>
+                {/if}
+              </button>
+            {/each}
           </div>
         </div>
       {/if}
@@ -546,7 +560,9 @@
            first key it's a local pref that shapes issuance; once a key exists
            it re-issues via the confirm modal, exactly like /account. -->
         <ConnectionModeSwitcher
-          modes={connectionModes}
+          modes={memberModes}
+          families={connectionModeFamilies}
+          currentMode={account.data?.user.currentMode ?? null}
           selected={effectiveModeId}
           suggested={account.data?.suggestedModeId ?? null}
           serverBacked={profileServerBacked}
@@ -627,7 +643,9 @@
     <!-- STEP 3 (key issued): the pass + setup. This is the flow's destination. -->
     <div id="get-key" class="scroll-mt-24 space-y-6">
       <SubscriptionHero
-        backendLabel={config.data?.backends.labels[subscription.backend]}
+        backendLabel={backendEntry(config.data?.backends, subscription.backend)?.label}
+        accessKeyOnly={backendEntry(config.data?.backends, subscription.backend)?.capabilities
+          .accessKeyOnly}
         subscriptionUrl={subUrl}
         expiresAt={subscription.expiresAt}
         freeTier={!isCurrentMember}

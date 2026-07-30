@@ -73,7 +73,11 @@
      * key) and the download filename. Defaults to `remnawave` so existing
      * callers keep their behavior.
      */
-    backend?: 'remnawave' | 'outline';
+    backend?: string;
+    /** Delivery is a single bare access key (no subscription document). From
+     *  the backend's public capabilities; defaults to the historical
+     *  outline-only heuristic for older callers. */
+    accessKeyOnly?: boolean;
     /** Live key state from the backend (undefined/'unknown' when unreachable).
      *  `limited`/`disabled`/`expired` surface a "why your VPN stopped" callout. */
     status?: 'active' | 'disabled' | 'limited' | 'expired' | 'unknown';
@@ -118,6 +122,7 @@
     showQr = true,
     hideUrl = false,
     backend = 'remnawave',
+    accessKeyOnly = undefined,
     status,
     resetStrategy,
     lastResetAt,
@@ -136,12 +141,13 @@
   // the UI so the user knows what they're looking at. All labels resolve in
   // $derived so a locale switch re-renders them (t() reads $state).
   let resolvedTitle = $derived(title ?? t('hero.titleDefault'));
+  let isAccessKey = $derived(accessKeyOnly ?? backend === 'outline');
   let urlLabel = $derived(
-    backend === 'outline' ? t('hero.urlLabelAccessKey') : t('hero.urlLabelSubscription'),
+    isAccessKey ? t('hero.urlLabelAccessKey') : t('hero.urlLabelSubscription'),
   );
-  let resolvedBackendLabel = $derived(backendLabel ?? (backend === 'outline' ? 'Outline' : 'Xray'));
+  let resolvedBackendLabel = $derived(backendLabel ?? (isAccessKey ? 'Outline' : 'Xray'));
   let downloadFilename = $derived(
-    backend === 'outline' ? 'freesocks-outline.txt' : 'freesocks-subscription.txt',
+    isAccessKey ? 'freesocks-outline.txt' : 'freesocks-subscription.txt',
   );
 
   let copied = $state<'primary' | 'fallback' | null>(null);

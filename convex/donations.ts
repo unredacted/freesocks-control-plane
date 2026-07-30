@@ -22,12 +22,14 @@ import {
 } from './lib/donationBonus';
 import { readUserCounts } from './lib/statusCounters';
 import { resolveTrafficLimitBytes } from './lib/backends/types';
+import type { BackendId } from './lib/backendIds';
+import { capabilitiesOf } from './lib/backends/capabilities';
 
 /** One page of active free users' active subs (shared by the query + the action,
  *  and annotated at the call site to break Convex's self-file inference cycle). */
 type ActiveFreeSubsPage = {
   subs: {
-    backend: 'remnawave' | 'outline';
+    backend: BackendId;
     backendUserId: string;
     backendServerId: Id<'backendServers'> | null;
   }[];
@@ -151,7 +153,7 @@ export const findActiveFreeSubs = internalQuery({
       .withIndex('by_tier_status_freekey', (q) => q.eq('tierId', tierId).eq('status', 'active'))
       .paginate({ cursor, numItems });
     const subs: {
-      backend: 'remnawave' | 'outline';
+      backend: BackendId;
       backendUserId: string;
       backendServerId: Id<'backendServers'> | null;
     }[] = [];
@@ -222,7 +224,7 @@ export const applyFreeBonus = internalAction({
           // Group this page's Remnawave keys by hosting instance, then bulk-update.
           const byServer = new Map<Id<'backendServers'>, string[]>();
           for (const s of res.subs) {
-            if (s.backend !== 'remnawave') continue;
+            if (!capabilitiesOf(s.backend).bulkTrafficUpdate) continue;
             // No recorded hosting instance → can't route the bulk call. Tally it
             // (no silent coverage gaps) — issuance always records the instance,
             // so anything here is a legacy/abnormal row worth surfacing.
@@ -256,10 +258,10 @@ export const applyFreeBonus = internalAction({
           // same per-key isolation (a throw leaves the applied marker unset so the
           // next run retries, but must not abort the rest of the fleet).
           for (const s of res.subs) {
-            if (s.backend !== 'outline') continue;
+            if (capabilitiesOf(s.backend).bulkTrafficUpdate) continue;
             try {
               await ctx.runAction(internal.backends.updateUser, {
-                backend: 'outline',
+                backend: s.backend,
                 backendUserId: s.backendUserId,
                 patch: { trafficLimitBytes: limitBytes },
               });

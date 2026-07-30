@@ -8,6 +8,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { v } from 'convex/values';
 import { randomHex } from './lib/crypto';
+import { backendIdValidator, type BackendId } from './lib/backendIds';
 
 const mirror = v.object({
   provider: v.string(),
@@ -89,7 +90,7 @@ export const resolveCurrentOrActive = internalQuery({
 export const insertSubscription = internalMutation({
   args: {
     userId: v.id('users'),
-    backend: v.union(v.literal('remnawave'), v.literal('outline')),
+    backend: backendIdValidator,
     backendUserId: v.string(),
     backendShortId: v.string(),
     backendServerId: v.optional(v.id('backendServers')),
@@ -224,7 +225,7 @@ export interface ActiveMirrorPage {
   continueCursor: string;
   items: {
     id: Id<'subscriptions'>;
-    backend: 'remnawave' | 'outline';
+    backend: BackendId;
     backendServerId: Id<'backendServers'> | null;
     backendShortId: string;
     subscriptionUrl: string;
@@ -272,7 +273,7 @@ export const pageActiveForMirror = internalQuery({
  */
 export interface MirrorContext {
   subscriptionId: Id<'subscriptions'>;
-  backend: 'remnawave' | 'outline';
+  backend: BackendId;
   backendServerId: Id<'backendServers'> | null;
   backendShortId: string;
   /** The panel-provided public subscription URL — where the raw content actually lives. */

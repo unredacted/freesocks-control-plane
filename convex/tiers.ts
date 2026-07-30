@@ -3,6 +3,7 @@
 import { internalQuery } from './_generated/server';
 import type { DatabaseReader } from './_generated/server';
 import { v } from 'convex/values';
+import { backendIdValidator, type BackendId } from './lib/backendIds';
 
 export const get = internalQuery({
   args: { id: v.id('tiers') },
@@ -24,10 +25,7 @@ export const getBySlug = internalQuery({
  * backend. Shared by the getDefaultFree query and lifecycle.downgradeLapsedToFree
  * (a mutation — which can't call a query, so it needs the DatabaseReader form).
  */
-export async function resolveDefaultFreeTier(
-  db: DatabaseReader,
-  backend?: 'remnawave' | 'outline',
-) {
+export async function resolveDefaultFreeTier(db: DatabaseReader, backend?: BackendId) {
   const active = await db
     .query('tiers')
     .withIndex('by_active', (q) => q.eq('isActive', true))
@@ -45,7 +43,7 @@ export async function resolveDefaultFreeTier(
  * user requesting an Outline key gets the Outline-backed default-free tier.
  */
 export const getDefaultFree = internalQuery({
-  args: { backend: v.optional(v.union(v.literal('remnawave'), v.literal('outline'))) },
+  args: { backend: v.optional(backendIdValidator) },
   handler: (ctx, { backend }) => resolveDefaultFreeTier(ctx.db, backend),
 });
 
@@ -64,26 +62,27 @@ export const defaultFreeTierIds = internalQuery({
  * equivalent ACTIVE tier on `targetBackend`, or null if none is linked:
  *   - FREE tier (isDefaultFree): the per-backend default-free row is its peer, so
  *     a free user always switches cleanly (preserves the prior behavior).
- *   - PAID tier: the admin-declared `peerTierId` on the other backend. The link is
- *     resolved in EITHER direction (a single admin-set link works both ways): the
- *     tier's own `peerTierId`, OR a tier on the target backend whose `peerTierId`
- *     points back here.
+ *   - PAID tier: the active tier on the target backend sharing this tier's
+ *     `peerGroup` (lowest priority wins if several) — symmetric and N-ary, so
+ *     three backends need one shared string, not a web of pairwise links.
+ *     Falls back to the DEPRECATED pairwise `peerTierId` (either direction)
+ *     until the seed has grouped every legacy pair.
  * The caller (account.switchBackend) has already ensured targetBackend differs
  * from the current one.
  */
 export const getPeerTier = internalQuery({
   args: {
     tierId: v.id('tiers'),
-    targetBackend: v.union(v.literal('remnawave'), v.literal('outline')),
+    targetBackend: backendIdValidator,
   },
   handler: async (ctx, { tierId, targetBackend }) => {
     const tier = await ctx.db.get(tierId);
     if (!tier) return null;
+    const active = await ctx.db
+      .query('tiers')
+      .withIndex('by_active', (q) => q.eq('isActive', true))
+      .collect();
     if (tier.isDefaultFree) {
-      const active = await ctx.db
-        .query('tiers')
-        .withIndex('by_active', (q) => q.eq('isActive', true))
-        .collect();
       return (
         active
           .slice()
@@ -91,17 +90,18 @@ export const getPeerTier = internalQuery({
           .find((t) => t.isDefaultFree && t.backend === targetBackend) ?? null
       );
     }
-    // Forward link: this tier points at an active peer on the target backend.
+    // Peer group: the symmetric N-ary link.
+    if (tier.peerGroup) {
+      const grouped = active
+        .filter((t) => t.backend === targetBackend && t.peerGroup === tier.peerGroup)
+        .sort((a, b) => a.priority - b.priority);
+      if (grouped[0]) return grouped[0];
+    }
+    // DEPRECATED pairwise fallback (either direction) until the seed groups it.
     if (tier.peerTierId) {
       const peer = await ctx.db.get(tier.peerTierId);
       if (peer && peer.isActive && peer.backend === targetBackend) return peer;
     }
-    // Reverse link: an active tier on the target backend points back at this one
-    // (so the admin only has to set the link on one side).
-    const active = await ctx.db
-      .query('tiers')
-      .withIndex('by_active', (q) => q.eq('isActive', true))
-      .collect();
     return active.find((t) => t.backend === targetBackend && t.peerTierId === tierId) ?? null;
   },
 });

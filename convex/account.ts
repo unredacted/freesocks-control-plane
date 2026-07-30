@@ -24,8 +24,11 @@ import {
   resolveTrafficLimitBytes,
   type UsageSeries,
 } from './lib/backends/types';
+import { canonicalModeId } from './lib/connectionModes';
+import { backendIdValidator, type BackendId } from './lib/backendIds';
+import { capabilitiesOf } from './lib/backends/capabilities';
 
-type Backend = 'remnawave' | 'outline';
+type Backend = BackendId;
 
 /**
  * WS1 bring-up safety net: when a Remnawave key is issued with a null placement
@@ -46,8 +49,8 @@ async function auditIfPlacementless(
     requestId?: string;
   },
 ): Promise<void> {
-  if (args.backend !== 'remnawave' || args.placement !== null) return;
-  console.warn('[placement] issued a squad-less key: no Remnawave pool bound on this deploy');
+  if (!capabilitiesOf(args.backend).placement || args.placement !== null) return;
+  console.warn('[placement] issued a placement-less key: no pool bound on this deploy');
   await ctx.runMutation(internal.audit.record, {
     actorType: 'member',
     actorId: args.userId,
@@ -133,12 +136,13 @@ async function resolveIssueTarget(
   modeId: string | null,
   location: string | null,
 ): Promise<{ placement: string | null; serverId: Id<'backendServers'> | null }> {
-  if (backend !== 'remnawave') return { placement: null, serverId: null };
+  if (!capabilitiesOf(backend).placement) return { placement: null, serverId: null };
   // Mint the anti-herding randomness HERE (actions may use the CSPRNG; queries
   // must stay deterministic) and thread it through the resolution.
   const randBuf = new Uint32Array(1);
   crypto.getRandomValues(randBuf);
-  const t = await ctx.runQuery(internal.remnawaveNodes.resolveTarget, {
+  const t = await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
+    backend,
     modeId,
     location,
     rand: randBuf[0]! / 2 ** 32,
@@ -244,8 +248,11 @@ async function isEffectiveModeBlocked(
   backend: Backend,
   modeId: string | null,
 ): Promise<boolean> {
-  if (backend !== 'remnawave') return false;
-  const gate = await ctx.runQuery(internal.remnawaveNodes.effectivePlacementGate, { modeId });
+  // Backend-AGNOSTIC: dispatched to the backend's placement resolver (or the
+  // catalog-judged trivial gate), so switching to a placement-less backend can
+  // no longer bypass a blocked stored mode when that backend has usable modes
+  // of its own.
+  const gate = await ctx.runQuery(internal.connectionModes.effectiveGate, { backend, modeId });
   return gate.blocked;
 }
 
@@ -266,6 +273,17 @@ interface AccountView {
     };
     membership: { expiresAt: string | null; isCurrent: boolean } | null;
     connectionModeId: string;
+    // Fully-resolved projection of the member's CURRENT mode — present even
+    // when the mode is admin-disabled or gone from the catalog, so the client
+    // renders the right delivery UI + label instead of a raw slug.
+    currentMode: {
+      id: string;
+      deliveryStyle: 'url' | 'rawConfig';
+      label: string | null;
+      description: string | null;
+      family: { id: string; label: string | null } | null;
+      available: boolean;
+    } | null;
     /** ISO of the member's first settled donation (null = not a donor). */
     donorSince: string | null;
     /** Lifetime settled donation total (cents) — the member's own impact figure. */
@@ -332,8 +350,24 @@ export const getAccountView = internalAction({
 
     // Member's chosen connection mode (or the catalog default) — surfaced so the
     // client renders the selected transport server-authoritatively.
+    //
+    // A member still holding a PRE-RENAME id (`evade` / `privacy`) is migrated
+    // here, lazily: the mutation is a no-op unless the stored value is legacy, so
+    // this costs nothing on the account view's 60s refetch. Without it the client
+    // received an id that publicConfig no longer lists and rendered it as a raw
+    // "evade" chip. Belt and braces: the value is canonicalized for THIS response
+    // even if the write is skipped, so the client never sees a legacy id.
+    const healed: string | null = await ctx.runMutation(internal.users.canonicalizeConnectionMode, {
+      userId,
+    });
     const connectionModeId =
-      user.connectionModeId ?? (await ctx.runQuery(internal.connectionModes.defaultId, {}));
+      healed ??
+      (user.connectionModeId ? canonicalModeId(user.connectionModeId) : null) ??
+      (await ctx.runQuery(internal.connectionModes.defaultId, {}));
+    const currentMode = await ctx.runQuery(internal.connectionModes.memberMode, {
+      modeId: connectionModeId,
+      backend: tier.backend,
+    });
     // Fold the current shared donation bonus into the free-tier fallback so an
     // outage (backend unreachable) still shows the raised cap, not the base.
     const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
@@ -439,6 +473,7 @@ export const getAccountView = internalAction({
             }
           : null,
         connectionModeId,
+        currentMode,
         donorSince: user.firstDonatedAt ? new Date(user.firstDonatedAt).toISOString() : null,
         donatedCentsTotal: donationTotals.donatedCentsTotal,
         donationCount: donationTotals.donationCount,
@@ -510,7 +545,7 @@ export const getNodeStatus = internalAction({
       ? await ctx.runQuery(internal.statusPage.locationLoad, { code: location.code })
       : null;
 
-    if (sub.backend === 'remnawave' && sub.backendPlacement) {
+    if (capabilitiesOf(sub.backend).nodeStats && sub.backendPlacement) {
       let stats = await ctx.runQuery(internal.remnawaveNodes.getPlacementStats, {
         placement: sub.backendPlacement,
       });
@@ -674,7 +709,7 @@ type SwitchResult =
 export const switchBackend = internalAction({
   args: {
     userId: v.id('users'),
-    target: v.union(v.literal('remnawave'), v.literal('outline')),
+    target: backendIdValidator,
     requestId: v.optional(v.string()),
   },
   handler: async (ctx, { userId, target, requestId }): Promise<SwitchResult> => {
@@ -865,11 +900,25 @@ export const switchMode = internalAction({
     if (!chosen) {
       return { ok: false, code: 'validation', message: 'Unknown connection mode', status: 400 };
     }
-    // Refuse to switch to a mode with no placement pool bound (Remnawave only):
-    // issuing into it would mint a squad-less "dead" key AND we'd have tombstoned
-    // the working key to do it. The picker also disables unbound modes; this is
-    // the server-authoritative guard. (WS1.)
-    if (tier.backend === 'remnawave' && !chosen.bound) {
+    // Refuse to switch INTO a mode an admin has turned off. publicConfig already
+    // omits it from the picker, but that is presentation — this is the
+    // server-authoritative guard (and the only one an API caller hits).
+    // Deliberately one-way: the member's CURRENT mode is never re-validated here,
+    // so someone stranded on a just-disabled mode can always switch AWAY.
+    if (!chosen.enabled) {
+      return {
+        ok: false,
+        code: 'validation',
+        message: 'This connection mode is not available.',
+        status: 400,
+      };
+    }
+    // Refuse to switch to a mode that is not AVAILABLE on the member's backend:
+    // not applicable there (backends[]), or unbound on a placement-capable
+    // backend (issuing into it would mint a placement-less "dead" key AND we'd
+    // have tombstoned the working key to do it). The picker also disables
+    // unavailable modes; this is the server-authoritative guard. (WS1.)
+    if (!chosen.availableBackends.includes(tier.backend)) {
       return {
         ok: false,
         code: 'validation',
@@ -880,6 +929,31 @@ export const switchMode = internalAction({
 
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
     const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+
+    // A placement-less backend (no placement capability) has nothing to move:
+    // the switch is a PREFERENCE update, not a key operation. Record it and
+    // leave the working subscription untouched — the old behavior fell through
+    // to the re-issue saga and tombstoned a live key for zero functional
+    // change. (A member with no key yet still falls through to the issue path.)
+    if (oldSub && !capabilitiesOf(tier.backend).placement) {
+      await ctx.runMutation(internal.users.setConnectionMode, { userId, modeId: target });
+      await ctx.runMutation(internal.audit.record, {
+        actorType: 'member',
+        actorId: userId,
+        action: 'subscription.switch_mode',
+        targetType: 'subscription',
+        targetId: oldSub._id,
+        payload: { fromMode: user.connectionModeId ?? null, toMode: target, inPlace: true },
+        requestId,
+      });
+      return {
+        ok: true,
+        subscriptionUrl: oldSub.subscriptionUrl,
+        shortUuid: oldSub.backendShortId,
+        mode: { id: chosen.id, label: chosen.label },
+        oldSubscriptionDeletedAt: null,
+      };
+    }
 
     // Re-issue path (the historical behavior): mint a NEW key into the mode's
     // placement and tombstone the old one with 24h grace. Used only when there is
@@ -960,7 +1034,7 @@ export const switchMode = internalAction({
     // subscription row/URL/token, live traffic counter, and registered devices are
     // all preserved — no user churn in the panel and no separate "old key" to keep
     // alive for 24h. Only when the current key AND the tier are Remnawave.
-    if (oldSub && tier.backend === 'remnawave' && oldSub.backend === 'remnawave') {
+    if (oldSub && capabilitiesOf(tier.backend).placement && oldSub.backend === tier.backend) {
       // The in-place PATCH lands on the key's OWN panel, so the new mode's
       // placement must exist there — a hard `onlyServerId` pin. The stored
       // backendServerId can be stale (its panel row was re-registered) or
@@ -972,12 +1046,12 @@ export const switchMode = internalAction({
       let pinServerId: string | null = oldSub.backendServerId ?? null;
       const activeIds = new Set(
         (await ctx.runQuery(internal.backendServers.listActiveWithSecret, {}))
-          .filter((s) => s.backend === 'remnawave')
+          .filter((s) => s.backend === tier.backend)
           .map((s) => s._id as string),
       );
       if (!pinServerId || !activeIds.has(pinServerId)) {
         pinServerId = await ctx.runAction(internal.backends.locateKeyInstance, {
-          backend: 'remnawave',
+          backend: tier.backend,
           backendUserId: oldSub.backendUserId,
         });
         if (pinServerId) {
@@ -988,8 +1062,9 @@ export const switchMode = internalAction({
         }
       }
       const { placement: nodePlacement } = await ctx.runQuery(
-        internal.remnawaveNodes.resolveTarget,
+        internal.connectionModes.resolveIssueTarget,
         {
+          backend: tier.backend,
           modeId: target,
           onlyServerId: pinServerId as Id<'backendServers'> | null,
         },
@@ -1013,7 +1088,7 @@ export const switchMode = internalAction({
         });
         try {
           await ctx.runAction(internal.backends.updateUser, {
-            backend: 'remnawave',
+            backend: tier.backend,
             backendUserId: oldSub.backendUserId,
             patch: { placement: nodePlacement },
           });
@@ -1078,7 +1153,7 @@ export const revokeDevice = internalAction({
         status: 404,
       };
     }
-    if (sub.backend !== 'remnawave') {
+    if (!capabilitiesOf(sub.backend).deviceManagement) {
       return {
         ok: false,
         code: 'devices.unsupported',

@@ -1,13 +1,17 @@
 /**
  * Member-facing node-location catalog, derived from the backend-server pool:
- * active Remnawave instances that have a `location` code set, deduped by code
- * (several panels may share a location). Non-secret by construction — only the
+ * active instances of location-capable backends (the `locations` capability)
+ * that have a `location` code set, deduped by code (several panels may share
+ * a location). Non-secret by construction — only the
  * operator-entered code + display label, a coarse online bit, and the coarse
  * load BAND ever leave this projection (never a URL, token, key count, or raw
  * user count). `online` = ≥1 of the code's instances passed a healthcheck
  * within the pool's 30-min "fresh" window.
  */
 import type { DatabaseReader } from '../_generated/server';
+import type { Doc } from '../_generated/dataModel';
+import { BACKEND_IDS } from './backendIds';
+import { CAPABILITIES } from './backends/capabilities';
 import {
   computeLocationLoad,
   HEALTH_FRESH_MS,
@@ -21,6 +25,23 @@ export interface LocationEntry {
   label: string;
   online: boolean;
   load: LoadBand;
+}
+
+/** Active instances of every backend type that participates in the location
+ *  catalog (the `locations` capability), in backend-id order then priority.
+ *  Shared by the member location picker and the status-page projections. */
+export async function collectLocationCapableServers(
+  db: DatabaseReader,
+): Promise<Doc<'backendServers'>[]> {
+  const perBackend = await Promise.all(
+    BACKEND_IDS.filter((b) => CAPABILITIES[b].locations).map((b) =>
+      db
+        .query('backendServers')
+        .withIndex('by_backend_active', (q) => q.eq('backend', b).eq('isActive', true))
+        .collect(),
+    ),
+  );
+  return perBackend.flat();
 }
 
 export { HEALTH_FRESH_MS };
@@ -51,10 +72,7 @@ async function readThresholds(db: DatabaseReader): Promise<LoadThresholds> {
 }
 
 export async function resolveLocations(db: DatabaseReader): Promise<LocationEntry[]> {
-  const servers = await db
-    .query('backendServers')
-    .withIndex('by_backend_active', (q) => q.eq('backend', 'remnawave').eq('isActive', true))
-    .collect();
+  const servers = await collectLocationCapableServers(db);
   const statsRows = await db.query('remnawaveNodeStats').collect();
   const thresholds = await readThresholds(db);
   const now = Date.now();

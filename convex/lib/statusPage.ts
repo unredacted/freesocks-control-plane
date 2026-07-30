@@ -14,7 +14,8 @@
  */
 import type { DatabaseReader } from '../_generated/server';
 import type { Doc } from '../_generated/dataModel';
-import { CONNECTION_MODES, isConnectionModeId, resolveConnectionModes } from './connectionModes';
+import { collectLocationCapableServers } from './locations';
+import { byFamilyThenOrder, resolveModeCatalog } from './connectionModes';
 import {
   computeLocationLoad,
   HEALTH_FRESH_MS,
@@ -105,8 +106,15 @@ function sanitizeThreshold(raw: unknown, fallback: number): number {
 
 /** Coerce an operator-supplied censorship matrix: unknown countries/modes/cell
  *  values are dropped (never an error), rows are deduped by country code
- *  (last wins), capped, and sorted by code for a stable public order. */
-export function sanitizeCensorshipRows(raw: unknown): CensorshipRow[] {
+ *  (last wins), capped, and sorted by code for a stable public order.
+ *  `validModeIds` = ALL catalog slugs (enabled or not — cells for a
+ *  temporarily-disabled mode are PRESERVED in storage so re-enabling it
+ *  restores the column; only genuinely unknown/deleted slugs drop). Kept a
+ *  pure sync fn — async callers resolve the set first. */
+export function sanitizeCensorshipRows(
+  raw: unknown,
+  validModeIds: ReadonlySet<string>,
+): CensorshipRow[] {
   if (!raw || typeof raw !== 'object') return [];
   const rows = (raw as Record<string, unknown>).rows;
   if (!Array.isArray(rows)) return [];
@@ -123,7 +131,7 @@ export function sanitizeCensorshipRows(raw: unknown): CensorshipRow[] {
     const cells: Record<string, CensorshipCell> = {};
     if (o.cells && typeof o.cells === 'object') {
       for (const [modeId, val] of Object.entries(o.cells as Record<string, unknown>)) {
-        if (!isConnectionModeId(modeId)) continue;
+        if (!validModeIds.has(modeId)) continue;
         if (typeof val === 'string' && CELL_VALUES.has(val as CensorshipCell)) {
           cells[modeId] = val as CensorshipCell;
         }
@@ -140,6 +148,11 @@ export interface StatusPageConfig extends LoadThresholds {
   censorshipRows: CensorshipRow[];
 }
 
+/** Every catalog mode slug, enabled or not — the matrix-cell validity set. */
+export async function resolveValidModeIds(db: DatabaseReader): Promise<Set<string>> {
+  return new Set((await resolveModeCatalog(db)).modes.map((m) => m.id));
+}
+
 /** Resolve the `status.*` namespace, fail-safe. */
 export async function resolveStatusConfig(db: DatabaseReader): Promise<StatusPageConfig> {
   const busyAt = sanitizeThreshold(
@@ -150,11 +163,15 @@ export async function resolveStatusConfig(db: DatabaseReader): Promise<StatusPag
     await readSetting(db, STATUS_KEYS.loadCrowdedAt),
     LOAD_THRESHOLD_DEFAULTS.crowdedAt,
   );
+  const validModeIds = await resolveValidModeIds(db);
   return {
     busyAt,
     // Invariant: crowded >= busy (a mis-ordered pair would invert the bands).
     crowdedAt: Math.max(crowdedRaw, busyAt),
-    censorshipRows: sanitizeCensorshipRows(await readSetting(db, STATUS_KEYS.censorship)),
+    censorshipRows: sanitizeCensorshipRows(
+      await readSetting(db, STATUS_KEYS.censorship),
+      validModeIds,
+    ),
   };
 }
 
@@ -168,10 +185,7 @@ export async function resolveStatusConfig(db: DatabaseReader): Promise<StatusPag
  * status projection and (single-code) the member node-status badge.
  */
 export async function resolveStatusLocations(db: DatabaseReader): Promise<StatusLocation[]> {
-  const servers = await db
-    .query('backendServers')
-    .withIndex('by_backend_active', (q) => q.eq('backend', 'remnawave').eq('isActive', true))
-    .collect();
+  const servers = await collectLocationCapableServers(db);
   const statsRows = await db.query('remnawaveNodeStats').collect();
   const cfg = await resolveStatusConfig(db);
   const now = Date.now();
@@ -216,10 +230,7 @@ export async function resolveLocationLoad(
   db: DatabaseReader,
   code: string,
 ): Promise<LoadBand | null> {
-  const servers = await db
-    .query('backendServers')
-    .withIndex('by_backend_active', (q) => q.eq('backend', 'remnawave').eq('isActive', true))
-    .collect();
+  const servers = await collectLocationCapableServers(db);
   const instances = servers.filter((s) => s.location === code);
   if (instances.length === 0) return null;
   const statsRows = await db.query('remnawaveNodeStats').collect();
@@ -333,21 +344,30 @@ export function validateIncidentInput(raw: unknown): IncidentInput {
 // ---------------------------------------------------------------------------
 
 export async function resolvePublicStatusPage(db: DatabaseReader): Promise<PublicStatusPage> {
-  const [locations, cfg, incidents, modes] = await Promise.all([
+  const [locations, cfg, incidents, catalog] = await Promise.all([
     resolveStatusLocations(db),
     resolveStatusConfig(db),
     resolvePublicIncidents(db, Date.now()),
-    resolveConnectionModes(db),
+    resolveModeCatalog(db),
   ]);
+  // Columns = ENABLED catalog modes in display order (the old compiled-array
+  // projection leaked deprecated/disabled columns). Cells stored for a
+  // disabled mode survive in the config but are filtered from the public rows
+  // until the mode is re-enabled.
+  const familyOrder = new Map(catalog.families.map((f) => [f.id, f.order]));
+  const columns = catalog.modes.filter((m) => m.enabled).sort(byFamilyThenOrder(familyOrder));
+  const columnIds = new Set(columns.map((m) => m.id));
   return {
     generatedAt: new Date().toISOString(),
     locations,
     censorship: {
-      modes: CONNECTION_MODES.map((def) => ({
-        id: def.id,
-        label: modes.find((m) => m.id === def.id)?.label ?? null,
+      modes: columns.map((m) => ({ id: m.id, label: m.label })),
+      rows: cfg.censorshipRows.map((r) => ({
+        ...r,
+        cells: Object.fromEntries(
+          Object.entries(r.cells).filter(([modeId]) => columnIds.has(modeId)),
+        ),
       })),
-      rows: cfg.censorshipRows,
     },
     incidents,
   };

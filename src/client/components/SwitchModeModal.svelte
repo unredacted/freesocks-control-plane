@@ -15,13 +15,24 @@
     open: boolean;
     /** Human label of the mode being switched TO (localized title). */
     targetLabel: string;
+    /** Delivery style of the TARGET mode: the raw-config bullet only applies
+     *  when the destination actually delivers a raw config. */
+    targetDeliveryStyle?: 'url' | 'rawConfig';
     deviceCount: number;
     onCancel: () => void;
     onConfirm: () => void;
     busy: boolean;
   }
 
-  let { open = $bindable(), targetLabel, deviceCount, onCancel, onConfirm, busy }: Props = $props();
+  let {
+    open = $bindable(),
+    targetLabel,
+    targetDeliveryStyle = 'url',
+    deviceCount,
+    onCancel,
+    onConfirm,
+    busy,
+  }: Props = $props();
 
   function onOpenChange(next: boolean) {
     // Don't allow Escape / outside-click while the switch is in flight: a
@@ -43,7 +54,9 @@
     <ul class="text-sm space-y-1 list-disc ps-5">
       <li>{t('delivery.confirmPoint1', { label: targetLabel })}</li>
       <li>{t('delivery.confirmPoint2')}</li>
-      <li>{t('delivery.confirmPoint3')}</li>
+      {#if targetDeliveryStyle === 'rawConfig'}
+        <li>{t('delivery.confirmPoint3')}</li>
+      {/if}
       {#if deviceCount > 0}
         <li>{t('delivery.confirmPointDevices', { count: deviceCount })}</li>
       {/if}

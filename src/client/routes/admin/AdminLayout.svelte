@@ -23,6 +23,7 @@
   import Cloud from '@lucide/svelte/icons/cloud';
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import Waypoints from '@lucide/svelte/icons/waypoints';
+  import GitBranch from '@lucide/svelte/icons/git-branch';
   import HeartPulse from '@lucide/svelte/icons/heart-pulse';
   import LogOut from '@lucide/svelte/icons/log-out';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -68,6 +69,7 @@
       icon: Server,
       children: [
         { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
+        { to: '/admin/connection-modes', label: 'Connection modes', icon: GitBranch },
         { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
         { to: '/admin/status', label: 'Status page', icon: HeartPulse },
       ],

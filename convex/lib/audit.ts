@@ -196,12 +196,18 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Idempotent tier upsert by slug (Ansible / IaC). Node placement is bound
   // separately per connection mode (admin.remnawave.mode_placement.update).
   'admin.tier.upsert': ['slug', 'backend', 'created'],
-  // Admin/IaC edits a connection-mode label/description/default (generic).
-  'admin.connection_mode.update': ['key'],
-  // Admin/IaC binds a mode's Remnawave placement pool. `poolBound`/`boundCount`
-  // are booleans/counts — the squad UUIDs are NEVER logged (only which mode's
-  // pool + whether/how many it's bound to).
-  'admin.remnawave.mode_placement.update': ['key', 'poolBound', 'boundCount'],
+  // Admin CRUD on the DB-driven connection-mode catalog (slug only — copy and
+  // flags are non-secret but noisy; the row itself is the record).
+  'admin.connection_mode.create': ['slug'],
+  'admin.connection_mode.update': ['slug'],
+  'admin.connection_mode.delete': ['slug'],
+  'admin.connection_mode_family.create': ['slug'],
+  'admin.connection_mode_family.update': ['slug'],
+  'admin.connection_mode_family.delete': ['slug'],
+  // Admin/IaC binds a mode's placement pool on one backend. `poolBound` /
+  // `boundCount` are booleans/counts — the config contents (squad UUIDs) are
+  // NEVER logged (only which mode's pool + whether/how many it's bound to).
+  'admin.backend.mode_placement.update': ['backend', 'modeSlug', 'poolBound', 'boundCount'],
   // Admin enforced the no-client-IP-logging posture on the Remnawave config
   // profiles (Xray log/policy). Counts only — no config content is logged.
   'admin.remnawave.logging_hardened': ['instances', 'profilesChanged', 'profilesTotal'],
