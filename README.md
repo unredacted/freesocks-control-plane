@@ -296,7 +296,7 @@ Highlights:
   `POST /api/v1/billing/checkout` + `GET /api/v1/billing/order/*` (self-service
   membership + donations),
   `POST /api/v1/account/gift-codes/ack` + `GET /api/v1/account/codes` (gift purchases).
-- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{status,tiers,users,admins,tokens,audit,settings,rate-limits,membership-codes,backend-servers,billing,mirror-providers,theme,site,verification,clients,connection-modes,client-ip,status/{page,incidents},referrals/config,remnawave/{node-stats,mode-placements,logging-status,harden-logging}}/*` — every route enforces a scope on token callers (several features share the broader `admin:settings:*` / `admin:users:*` scopes rather than one scope per feature); the Ansible role's idempotent `by-slug` / `by-name` upserts live under these.
+- **Admin (cookie or scope-checked token):** `GET|POST|PATCH|DELETE /api/v1/admin/{status,tiers,users,admins,tokens,audit,settings,rate-limits,membership-codes,backend-servers,backends/{backend}/mode-placements,billing,mirror-providers,theme,site,verification,clients,connection-modes,connection-mode-families,client-ip,status/{page,incidents},referrals/config,remnawave/{node-stats,logging-status,harden-logging}}/*` — every route enforces a scope on token callers (several features share the broader `admin:settings:*` / `admin:users:*` scopes rather than one scope per feature); the Ansible role's idempotent `by-slug` / `by-name` upserts live under these.
 - **Plumbing:** `GET|POST /api/admin/auth/*` (WebAuthn passkey ceremonies + bootstrap),
   `POST /api/webhooks/billing` (generic HMAC inbound), and the processor webhooks
   `POST /api/webhooks/{nowpayments,btcpay,stripe,paypal}`.

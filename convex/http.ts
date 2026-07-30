@@ -2198,7 +2198,7 @@ http.route({
 // PUT /api/v1/admin/tiers/by-slug/{slug}: idempotent upsert (Ansible / IaC).
 // A distinct METHOD (PUT) from the by-id PATCH/DELETE prefix routes above, so
 // the two never collide; the slug comes from the path (authoritative). Node
-// placement is NOT bound here — that's /api/v1/admin/remnawave/mode-placements.
+// placement is NOT bound here — that's /api/v1/admin/backends/{backend}/mode-placements.
 http.route({
   pathPrefix: '/api/v1/admin/tiers/by-slug/',
   method: 'PUT',
@@ -3122,9 +3122,9 @@ http.route({
 });
 
 // --- generic per-backend placement binding ------------------------------------
-// The backend-agnostic successor of /admin/remnawave/mode-placements (which
-// stays as a byte-compatible alias for the Ansible role). Path shape:
-// /api/v1/admin/backends/{backend}/mode-placements.
+// Path shape: /api/v1/admin/backends/{backend}/mode-placements. (Succeeded the
+// Remnawave-only /admin/remnawave/mode-placements route; its byte-compatible
+// alias was removed 2026-07-30 once the Ansible role converged on this one.)
 
 function backendFromPlacementPath(req: Request): BackendId | null {
   const parts = new URL(req.url).pathname.split('/').filter(Boolean);
@@ -3282,59 +3282,10 @@ http.route({
   }),
 });
 
-// PATCH /api/v1/admin/remnawave/mode-placements: bind each mode's squad pool (the
-// nodes its keys are issued across). Write-only squad UUIDs; dual-mode (an fsv1_
-// token with admin:servers:write works — the Ansible panel-bootstrap PATCHes this
-// after it creates the per-node squads).
-//
-// PERMANENT-UNTIL-FURTHER-NOTICE ALIAS of the generic per-backend route
-// (PATCH /api/v1/admin/backends/remnawave/mode-placements, phase 3): the
-// Ansible role calls THIS path with this exact body/response shape, so it
-// keeps working byte-identically while the role migrates at leisure.
-//
-// The role also still keys its entries by the PRE-RENAME mode ids
-// (evade/privacy — tasks/providers/fcp/bind_placements.yml and the node
-// teardown detach), so this route maps them onto the current slugs before
-// delegating. The map lives HERE and only here: it is part of the alias
-// contract and is deleted together with the route once the role migrates.
-// When both spellings of a mode appear in one body, the canonical entry wins.
-const ANSIBLE_LEGACY_PLACEMENT_IDS: Readonly<Record<string, string>> = {
-  evade: 'freedom-ws',
-  privacy: 'privacy-reality',
-};
-http.route({
-  path: '/api/v1/admin/remnawave/mode-placements',
-  method: 'PATCH',
-  handler: sealed(async (ctx, req) => {
-    const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
-    if (!admin) return ADMIN_UNAUTH();
-    const body = await readJson<Record<string, unknown>>(req);
-    const rawModes =
-      body && typeof body.modes === 'object' && body.modes !== null
-        ? (body.modes as Record<string, unknown>)
-        : {};
-    const modes: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(rawModes)) {
-      const canonical = ANSIBLE_LEGACY_PLACEMENT_IDS[key];
-      if (canonical) {
-        if (!(canonical in rawModes)) modes[canonical] = entry;
-      } else {
-        modes[key] = entry;
-      }
-    }
-    try {
-      return json(
-        await ctx.runMutation(internal.connectionModes.setModePlacements, {
-          backend: 'remnawave',
-          patch: { ...body, modes },
-          actorAdminId: admin.adminUserId,
-        }),
-      );
-    } catch (err) {
-      return adminError(err);
-    }
-  }),
-});
+// (The legacy PATCH /api/v1/admin/remnawave/mode-placements alias — kept while
+// ansible-role-freesocks still targeted it with pre-rename mode ids — was
+// REMOVED 2026-07-30 after both stacks converged on the role version that
+// PATCHes the generic /api/v1/admin/backends/remnawave/mode-placements route.)
 
 // GET /api/v1/admin/remnawave/logging-status: dry-run report of the Xray
 // no-client-IP-logging posture across every Remnawave config profile (read-only;

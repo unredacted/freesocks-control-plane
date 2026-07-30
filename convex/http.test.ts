@@ -355,18 +355,18 @@ describe('route-level scope enforcement', () => {
       subjectType: 'service',
     });
     const body = JSON.stringify({
-      modes: { evade: { squadUuids: ['e5c4de00-1111-4111-8111-cccccccccccc'] } },
+      modes: { 'freedom-ws': { squadUuids: ['e5c4de00-1111-4111-8111-cccccccccccc'] } },
     });
 
-    const bound = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
+    const bound = await t.fetch('/api/v1/admin/backends/remnawave/mode-placements', {
       method: 'PATCH',
       headers: { authorization: `Bearer ${serversW}`, 'content-type': 'application/json' },
       body,
     });
     expect(bound.status).toBe(200);
 
-    // The OLD scope (settings:write) is now rejected on the pool bind.
-    const wrongScope = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
+    // The OLD scope (settings:write) is rejected on the pool bind.
+    const wrongScope = await t.fetch('/api/v1/admin/backends/remnawave/mode-placements', {
       method: 'PATCH',
       headers: { authorization: `Bearer ${settingsW}`, 'content-type': 'application/json' },
       body,
@@ -1332,10 +1332,10 @@ describe('suggestedModeId respects enabled + availability', () => {
 });
 
 /**
- * The connection-mode admin surface: per-entity CRUD routes, the generic
- * per-backend placement route, and THE ANSIBLE CONTRACT — the legacy
- * /admin/remnawave/mode-placements PATCH must keep accepting its exact body
- * shape and returning its exact response shape while the role migrates.
+ * The connection-mode admin surface: per-entity CRUD routes and the generic
+ * per-backend placement route (the Ansible role's bind path; its legacy
+ * /admin/remnawave/mode-placements alias was removed 2026-07-30 after the
+ * role converged — pinned below as a 404).
  */
 describe('connection-mode admin routes', () => {
   const SQUAD = '11111111-2222-3333-4444-555555555555';
@@ -1426,67 +1426,22 @@ describe('connection-mode admin routes', () => {
     ).toBe(200);
   });
 
-  test('ANSIBLE CONTRACT: the legacy remnawave placement PATCH keeps its body + response shape, writes the NEW store', async () => {
+  test('the legacy remnawave placement alias is GONE (removed 2026-07-30, role converged)', async () => {
+    // The byte-compatible alias (with its evade/privacy id mapping) existed
+    // for ansible-role-freesocks; both stacks now converge through the
+    // generic route, so a request here must 404 — never silently rebind.
     const t = convexTest(schema, modules);
     const token = await insertToken(t, {
       scopes: ['admin:servers:write'],
       subjectType: 'service',
     });
-    // The role keys its entries by the PRE-RENAME ids (evade/privacy — see
-    // tasks/providers/fcp/bind_placements.yml); the alias route must map them
-    // onto the current slugs. Pinned with the role's real body, not the
-    // canonical spelling.
     const res = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
       method: 'PATCH',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ modes: { evade: { addSquadUuids: [SQUAD] } } }),
     });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      bound: string[];
-      placements: Array<{ modeId: string; boundCount: number }>;
-    };
-    expect(body.bound).toContain('freedom-ws');
-    expect(body.placements.find((p) => p.modeId === 'freedom-ws')!.boundCount).toBe(1);
-    // The write landed in the NEW store, not appSettings.
-    const stored = await t.run(async (ctx) => ctx.db.query('modePlacements').collect());
-    expect(stored).toHaveLength(1);
-    expect(stored[0]).toMatchObject({ modeSlug: 'freedom-ws', backend: 'remnawave' });
-    const settingsPools = await t.run(async (ctx) =>
-      (await ctx.db.query('appSettings').collect()).filter((r) =>
-        r.key.startsWith('remnawave.modePlacement.'),
-      ),
-    );
-    expect(settingsPools).toHaveLength(0);
-
-    // Canonical ids pass through the alias untouched; when both spellings of
-    // one mode appear in a single body the canonical entry wins.
-    const SQUAD2 = '22222222-3333-4444-5555-666666666666';
-    const SQUAD3 = '33333333-4444-5555-6666-777777777777';
-    const mixed = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
-      method: 'PATCH',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        modes: {
-          evade: { squadUuids: [SQUAD3] },
-          'freedom-ws': { squadUuids: [SQUAD2] },
-        },
-      }),
-    });
-    expect(mixed.status).toBe(200);
-    const after = await t.run(async (ctx) => ctx.db.query('modePlacements').collect());
-    expect(after).toHaveLength(1);
-    expect(JSON.parse(after[0]!.config)).toEqual({ squadUuids: [SQUAD2] });
-
-    // The node-teardown detach path (removeSquadUuids under the legacy id).
-    const detach = await t.fetch('/api/v1/admin/remnawave/mode-placements', {
-      method: 'PATCH',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ modes: { evade: { removeSquadUuids: [SQUAD2] } } }),
-    });
-    expect(detach.status).toBe(200);
-    const detached = await t.run(async (ctx) => ctx.db.query('modePlacements').collect());
-    expect(JSON.parse(detached[0]!.config)).toEqual({ squadUuids: [] });
+    expect(res.status).toBe(404);
+    expect(await t.run(async (ctx) => ctx.db.query('modePlacements').collect())).toHaveLength(0);
   });
 
   test('generic per-backend placement route: PATCH + GET summaries; placement-less backend 400s', async () => {

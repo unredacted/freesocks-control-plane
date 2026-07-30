@@ -338,9 +338,9 @@ export const RemnawavePlacementCount = z.object({
 });
 export type RemnawavePlacementCount = z.infer<typeof RemnawavePlacementCount>;
 
-/** Response of PATCH /api/v1/admin/remnawave/mode-placements: which modes now
- *  have a pool bound + the per-mode sizes. `placements` is defaulted for
- *  rolling-deploy compat (an older backend omits it). */
+/** Response of PATCH /api/v1/admin/backends/remnawave/mode-placements: which
+ *  modes now have a pool bound + the per-mode sizes. `placements` is defaulted
+ *  for rolling-deploy compat (an older backend omits it). */
 export const RemnawavePlacementUpdateResponse = z.object({
   bound: z.array(z.string()),
   placements: z.array(RemnawavePlacementCount).optional().default([]),

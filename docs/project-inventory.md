@@ -56,11 +56,12 @@ the legacy shims (`LEGACY_MODE_ID_MAP` + read-point canonicalization, the appSet
 read-fallback, `users.canonicalizeConnectionMode`, the seed absorb/rewrite steps) are GONE, and
 the one-shot `seed:cleanupLegacyModeSettings` deletes the dead appSettings rows (guarded: refuses
 while any user still holds a pre-rename id). A deployment predating the migration release must
-pass through it before taking deploy-2 code — on `main` that means TWO sequential PRs. Still
-present: the Remnawave placement-route ALIAS (which also maps the role's `evade`/`privacy`
-entry ids) — it lives until `ansible-role-freesocks` targets the generic route; the role's
-opt-in `bind_default_mode.yml` task targets the removed bulk PATCH shape and needs the same
-cross-repo pass. Behavior fixes shipped with the overhaul: the geo suggestion can no
+pass through it before taking deploy-2 code — on `main` that meant TWO sequential PRs (both
+deployed to prod 2026-07-30; 1478 member rows migrated, cleanup ran on both stacks).
+`ansible-role-freesocks` migrated to the generic placement route + per-slug default-mode PATCH
+and both stacks converged with it, after which the legacy Remnawave placement-route ALIAS (and
+its `evade`/`privacy` id mapping) was REMOVED (2026-07-30) — the legacy path now 404s, pinned
+by a test. Behavior fixes shipped with the overhaul: the geo suggestion can no
 longer point at a disabled/unbound mode; switch-mode validates per-(mode, backend) availability;
 switch-mode on a placement-less backend is a preference no-op (no more tombstoning a working
 key); the /status matrix stopped leaking deprecated columns and the admin matrix editor stopped
@@ -80,10 +81,12 @@ both levels) binds a **pool of per-node squads**
 node** of that pool by node telemetry (`usersOnline` + optional realtime bandwidth, cached in
 `remnawaveNodeStats` by the healthcheck cron); the pick is persisted so tier pushes never re-home
 a live key. Remnawave specifics moved behind a namespaced admin surface — **Admin → Remnawave**
-(`PATCH /api/v1/admin/remnawave/mode-placements` [`admin:servers:write`],
-`GET /api/v1/admin/remnawave/node-stats` [`admin:servers:read`]) — while the generic mode
-catalog (labels/description/default) stays at `PATCH /api/v1/admin/connection-modes`
-(`admin:settings:write`). A one-time cutover migration copied live subs/users/settings onto
+(placement binding, now `PATCH /api/v1/admin/backends/remnawave/mode-placements`
+[`admin:servers:write`] — the original `/admin/remnawave/mode-placements` path this redesign
+introduced was removed 2026-07-30; `GET /api/v1/admin/remnawave/node-stats`
+[`admin:servers:read`]) — while the mode catalog moved to the per-entity
+`/api/v1/admin/connection-modes` CRUD routes (`admin:settings:write`; the bulk PATCH this
+paragraph originally described is gone). A one-time cutover migration copied live subs/users/settings onto
 the new fields, after which the old fields (`subscriptions.remnawaveSquadUuid`,
 `users.connectionProfileId`, `tiers.remnawaveSquadUuid`, the `remnawaveSquadStats` table) + the
 migration itself were **removed** (Phase 5b). See `docs/backends.md` § "Node placement".
@@ -293,7 +296,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 - **IaC-addressable mutations** (for the Ansible role): idempotent **`PUT …/backend-servers/by-slug/{slug}`** + **`DELETE …/by-slug/{slug}`**, **`PUT …/tiers/by-slug/{slug}`**, and **`PUT
 …/mirror-providers/by-name/{name}`**. Each is a single keep-secret-on-blank upsert; no
   client-side id resolution. Backed by `convex/adminApi.ts` / `convex/mirrorProviders.ts`.
-  Node placement is bound separately via **`PATCH …/remnawave/mode-placements`**
+  Node placement is bound separately via **`PATCH …/backends/remnawave/mode-placements`**
   (`admin:servers:write`): the role creates one squad per node and binds each connection mode's
   pool there — per mode via full-replace `squadUuids` or the append/detach forms
   `addSquadUuids`/`removeSquadUuids` (so a node deploy adds/removes just itself; UUIDs stay
