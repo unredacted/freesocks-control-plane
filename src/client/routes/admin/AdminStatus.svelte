@@ -302,7 +302,8 @@
                 id="inc-body"
                 class="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 bind:value={editor.body}
-                maxlength={2000}></textarea>
+                maxlength={2000}
+              ></textarea>
             </div>
             <div class="flex gap-2">
               <Button type="submit" size="sm" disabled={saveIncident.isPending}>

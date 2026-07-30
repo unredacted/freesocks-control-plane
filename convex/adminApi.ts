@@ -1764,10 +1764,9 @@ export const statusSummary = internalQuery({
     // signal we have, so it doubles as a liveness proxy for that cron.
     const lastOkMs = serverRows
       .filter((s) => s.isActive && s.lastHealthOkAt != null)
-      .reduce<number | null>(
-        (max, s) => (max == null || s.lastHealthOkAt! > max ? s.lastHealthOkAt! : max),
-        null,
-      );
+      .reduce<
+        number | null
+      >((max, s) => (max == null || s.lastHealthOkAt! > max ? s.lastHealthOkAt! : max), null);
 
     // Per-cron liveness (W4-B4): join the heartbeat rows against the known cron
     // cadences (CRON_META). `pending` = never observed since heartbeats shipped;

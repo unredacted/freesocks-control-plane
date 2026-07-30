@@ -1893,7 +1893,10 @@ function processorWebhook(opts: {
   /** Header set PayPal verifies over (its API call needs all of them). */
   headerNames?: string[];
   policyKey:
-    'webhook.nowpayments.ip' | 'webhook.btcpay.ip' | 'webhook.stripe.ip' | 'webhook.paypal.ip';
+    | 'webhook.nowpayments.ip'
+    | 'webhook.btcpay.ip'
+    | 'webhook.stripe.ip'
+    | 'webhook.paypal.ip';
 }) {
   const notConfigured = () =>
     errorJson(

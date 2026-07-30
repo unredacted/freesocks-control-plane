@@ -933,7 +933,8 @@
                   (cpDraft = {
                     ...cpDraft,
                     evadeDescription: (e.target as HTMLTextAreaElement).value,
-                  })}></textarea>
+                  })}
+              ></textarea>
             </div>
           </div>
 
@@ -980,7 +981,8 @@
                   (cpDraft = {
                     ...cpDraft,
                     privacyDescription: (e.target as HTMLTextAreaElement).value,
-                  })}></textarea>
+                  })}
+              ></textarea>
             </div>
           </div>
 
