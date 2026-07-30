@@ -543,6 +543,34 @@ describe('testBackendConnection stored-credential fallback', () => {
     expect(headers.authorization).toBe('Bearer replacement-token');
   });
 
+  test('reuses the stored token when an unchanged URL is normalized by the editor', async () => {
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t);
+    await t.run((ctx) =>
+      ctx.db.patch(serverId, {
+        config: {
+          type: 'remnawave',
+          baseUrl: '  https://panel.test.example  ',
+          apiToken: 'tkn',
+        },
+      }),
+    );
+    const spy = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) => new Response('nope', { status: 500 }),
+    );
+    vi.stubGlobal('fetch', spy);
+
+    await t.action(internal.adminApi.testBackendConnection, {
+      backend: 'remnawave',
+      id: serverId,
+      baseUrl: 'https://panel.test.example',
+    });
+
+    expect(spy).toHaveBeenCalled();
+    const headers = (spy.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer tkn');
+  });
+
   test('does not send a stored token to an overridden URL', async () => {
     const t = convexTest(schema, modules);
     const serverId = await seedServer(t);

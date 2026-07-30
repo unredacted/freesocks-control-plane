@@ -1575,7 +1575,7 @@ export const testBackendConnection = internalAction({
       const apiToken = a.apiToken?.trim() || rw?.apiToken;
       if (!baseUrl || !apiToken)
         return { ok: false, error: 'A base URL and an API token are required' };
-      if (!a.apiToken?.trim() && rw && baseUrl !== rw.baseUrl) {
+      if (!a.apiToken?.trim() && rw && baseUrl.trim() !== rw.baseUrl.trim()) {
         return { ok: false, error: 'An API token is required when changing the base URL' };
       }
       config = { type: 'remnawave', baseUrl, apiToken };
@@ -1764,9 +1764,10 @@ export const statusSummary = internalQuery({
     // signal we have, so it doubles as a liveness proxy for that cron.
     const lastOkMs = serverRows
       .filter((s) => s.isActive && s.lastHealthOkAt != null)
-      .reduce<
-        number | null
-      >((max, s) => (max == null || s.lastHealthOkAt! > max ? s.lastHealthOkAt! : max), null);
+      .reduce<number | null>(
+        (max, s) => (max == null || s.lastHealthOkAt! > max ? s.lastHealthOkAt! : max),
+        null,
+      );
 
     // Per-cron liveness (W4-B4): join the heartbeat rows against the known cron
     // cadences (CRON_META). `pending` = never observed since heartbeats shipped;
