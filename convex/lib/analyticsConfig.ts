@@ -21,11 +21,11 @@ export interface AnalyticsConfig {
   /** Umami website id (UUID) the relay reports under; '' = unset. */
   websiteId: string;
   /**
-   * Forward the visitor's IP to Umami in the custom `x-freesocks-client-ip`
-   * header (enables Umami-side geo). OFF by default: Umami then sees only this
-   * backend's egress IP. The custom header name fails CLOSED — Umami ignores it
-   * unless the operator sets CLIENT_IP_HEADER=x-freesocks-client-ip on the
-   * Umami side (unlike x-forwarded-for, which Umami reads by default).
+   * Forward the visitor's IP to Umami per request as `payload.ip` (enables
+   * Umami-side geo; supported since Umami v2.17.0, older versions ignore it).
+   * OFF by default: Umami then sees only this backend's egress IP. Payload
+   * placement (never a header) needs no Umami instance config, so a shared
+   * multi-site Umami is unaffected for its other sites.
    */
   forwardIp: boolean;
 }

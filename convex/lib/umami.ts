@@ -14,9 +14,10 @@
  *   cookie, or session value is ever forwarded. The client's User-Agent is
  *   forwarded (Umami drops events without a valid UA) after stripping
  *   non-printable chars — CR/LF removal is header-injection hygiene.
- * - The visitor IP is included ONLY when the operator enabled forwardIp, via
- *   the custom `x-freesocks-client-ip` header (fails closed: Umami ignores it
- *   unless CLIENT_IP_HEADER=x-freesocks-client-ip is set on the Umami side).
+ * - The visitor IP is included ONLY when the operator enabled forwardIp, as
+ *   `payload.ip` (Umami v2.17+): honored per request with no Umami instance
+ *   config, so a shared multi-site Umami instance is unaffected for its other
+ *   sites. Older Umami versions simply ignore the field (no geo).
  * - Fail-soft and silent: errors are swallowed, nothing is logged (a log line
  *   here would carry a UA/IP), the response body is never read.
  */
@@ -104,6 +105,17 @@ export function sanitizeUserAgent(v: unknown): string {
   return s === '' ? UA_FALLBACK : s;
 }
 
+/**
+ * Charset/length check for the opt-in forwarded IP. The value comes from
+ * resolveClientIp (trusted-proxy-derived), so this is belt-and-braces before
+ * embedding it in the outbound JSON — never from the beacon body.
+ */
+export function sanitizeIp(v: unknown): string {
+  if (typeof v !== 'string') return '';
+  const s = v.trim();
+  return /^[0-9a-f.:]{2,45}$/i.test(s) ? s : '';
+}
+
 export interface UmamiEventArgs {
   cfg: Pick<AnalyticsConfig, 'umamiUrl' | 'websiteId'>;
   /** The raw (untrusted) beacon body from the client. */
@@ -126,6 +138,14 @@ export async function sendUmamiEvent(args: UmamiEventArgs): Promise<void> {
   if (!cfg.umamiUrl || !cfg.websiteId) return;
 
   const route = resolveRoute(input?.route);
+  // Opt-in IP forwarding rides in `payload.ip` (Umami v2.17+): honored
+  // PER REQUEST with no Umami instance config, so a shared multi-site Umami
+  // is unaffected for its other sites (the instance-global CLIENT_IP_HEADER
+  // approach couldn't offer that). Umami then ignores proxy geo headers and
+  // does a local GeoIP lookup — deterministic regardless of what fronts it.
+  // The value comes ONLY from the resolved-clientIp argument, never from the
+  // untrusted beacon body.
+  const ip = sanitizeIp(clientIp);
   const payload = {
     type: 'event',
     payload: {
@@ -136,16 +156,16 @@ export async function sendUmamiEvent(args: UmamiEventArgs): Promise<void> {
       referrer: sanitizeReferrer(input?.referrer),
       screen: sanitizeScreen(input?.screen),
       language: sanitizeLanguage(input?.language),
+      ...(ip ? { ip } : {}),
     },
   };
 
   // Explicit header literal: nothing from the inbound request is forwarded
-  // except the sanitized UA and (opt-in) the resolved client IP.
+  // except the sanitized UA (Umami rejects UA-less events).
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     'user-agent': sanitizeUserAgent(userAgent),
   };
-  if (clientIp) headers['x-freesocks-client-ip'] = clientIp;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1000);
@@ -157,7 +177,7 @@ export async function sendUmamiEvent(args: UmamiEventArgs): Promise<void> {
       signal: controller.signal,
       // Never follow redirects: the SSRF denylist (checkInfraUrl) ran against
       // the CONFIGURED host at save time, so a permitted host answering 30x
-      // could otherwise steer the relay (and the opt-in client-IP header) to a
+      // could otherwise steer the relay (and the opt-in payload IP) to a
       // loopback/link-local/metadata address it couldn't register directly.
       // The response is never read, so dropping the redirect loses nothing.
       redirect: 'manual',

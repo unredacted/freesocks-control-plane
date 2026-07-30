@@ -190,13 +190,17 @@ in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
 - **The visitor's IP does not leave FCP by default.** `analytics.forwardIp`
   ships off: Umami then sees only the backend's egress IP (no geolocation;
   unique-visitor counts degrade to per-user-agent buckets — accepted). When an
-  operator turns it on, the resolved client IP is sent in a custom
-  `x-freesocks-client-ip` header that Umami **ignores unless**
-  `CLIENT_IP_HEADER=x-freesocks-client-ip` is set on the Umami side —
-  deliberately fail-closed (an `X-Forwarded-For` would be honored by default).
-  Umami v2 hashes the IP into a daily-rotating session hash and stores derived
-  geo, not a raw IP column — but **verify this against your own Umami version**,
-  and make sure Umami's own fronting proxy does not access-log the header.
+  operator turns it on, the resolved client IP is sent **per request inside the
+  event payload** (`payload.ip`, supported since **Umami v2.17.0**) — never in a
+  header, and requiring **no Umami instance configuration**, so a shared
+  multi-site Umami is unaffected for its other sites (the instance-global
+  `CLIENT_IP_HEADER` approach could not offer that). A pre-2.17 Umami simply
+  ignores the field. When `payload.ip` is set, Umami ignores proxy geo headers
+  and does a local GeoIP lookup, so the result is deterministic regardless of
+  what fronts the instance. Umami v2 hashes the IP into a daily-rotating
+  session hash and stores derived geo, not a raw IP column — but **verify this
+  against your own Umami version**, and make sure Umami's own fronting proxy
+  does not access-log request bodies.
 - **The audit log never records the Umami URL or website id** —
   `admin.analytics.change` stores booleans plus a truncated hash of the URL
   (`umamiUrlHash`), so a silent repoint of this exfiltration-capable endpoint

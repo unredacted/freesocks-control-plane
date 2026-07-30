@@ -1610,7 +1610,7 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
     expect(JSON.stringify(init.body)).not.toContain(String(userId));
   });
 
-  test('forwardIp OFF omits the client-ip header; ON forwards it', async () => {
+  test('forwardIp OFF omits payload.ip; ON embeds it (v2.17+ per-request shape)', async () => {
     const t = convexTest(schema, modules);
     await seedAnalytics(t, { enabled: true, umamiUrl: 'https://umami.example', websiteId: A_UUID });
     const spy = vi.fn().mockResolvedValue(new Response('ok'));
@@ -1619,8 +1619,10 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
       '/api/v1/telemetry',
       beacon({ route: '/' }, { 'x-forwarded-for': '203.0.113.9' }),
     );
-    let headers = (spy.mock.calls[0] as [string, RequestInit])[1].headers as Record<string, string>;
-    expect(headers['x-freesocks-client-ip']).toBeUndefined();
+    const offBody = JSON.parse((spy.mock.calls[0] as [string, RequestInit])[1].body as string) as {
+      payload: Record<string, string>;
+    };
+    expect(offBody.payload).not.toHaveProperty('ip');
 
     await t.run(async (ctx) => {
       const row = await ctx.db
@@ -1633,9 +1635,13 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
       '/api/v1/telemetry',
       beacon({ route: '/' }, { 'x-forwarded-for': '203.0.113.9' }),
     );
-    headers = (spy.mock.calls[1] as [string, RequestInit])[1].headers as Record<string, string>;
-    expect(headers['x-freesocks-client-ip']).toBe('203.0.113.9');
-    expect(headers['x-forwarded-for']).toBeUndefined();
+    const [, onInit] = spy.mock.calls[1] as [string, RequestInit];
+    const onBody = JSON.parse(onInit.body as string) as { payload: Record<string, string> };
+    expect(onBody.payload.ip).toBe('203.0.113.9');
+    // Never via headers: CLIENT_IP_HEADER is instance-global on Umami and
+    // unusable on a shared multi-site instance.
+    const headers = onInit.headers as Record<string, string>;
+    expect(Object.keys(headers).sort()).toEqual(['content-type', 'user-agent']);
   });
 
   test('per-IP throttle: second POST past the policy is 429 with no outbound', async () => {

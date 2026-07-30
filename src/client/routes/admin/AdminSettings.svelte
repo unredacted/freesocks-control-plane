@@ -895,11 +895,10 @@
           </label>
           <p class="text-xs text-muted-foreground">
             Off (default): Umami sees only this server's IP, so no geo data and maximum privacy. On:
-            the visitor IP is sent in an <code>x-freesocks-client-ip</code> header, which Umami
-            ignores unless you also set
-            <code>CLIENT_IP_HEADER=x-freesocks-client-ip</code> on the Umami side (deliberately fail-closed).
-            Umami stores a daily-rotating hash, never the raw IP; verify your Umami version and its reverse
-            proxy's access logs before enabling. See docs/privacy.md.
+            the visitor IP is sent per request inside the event payload (requires Umami v2.17 or
+            newer; no Umami-side configuration, so other sites on a shared instance are unaffected).
+            Umami stores a daily-rotating hash, never the raw IP; verify your Umami version and its
+            reverse proxy's access logs before enabling. See docs/privacy.md.
           </p>
           <div class="flex justify-end">
             {#if !aInit}

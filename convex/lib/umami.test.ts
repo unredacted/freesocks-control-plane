@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   resolveRoute,
   sanitizeHostname,
+  sanitizeIp,
   sanitizeLanguage,
   sanitizeReferrer,
   sanitizeScreen,
@@ -150,7 +151,7 @@ describe('sendUmamiEvent', () => {
     });
   });
 
-  test('forwardIp: the custom client-ip header appears only when an IP is given', async () => {
+  test('forwardIp: payload.ip appears only when a resolved IP is given (v2.17+ shape)', async () => {
     const spy = vi.fn().mockResolvedValue(new Response('ok'));
     vi.stubGlobal('fetch', spy);
     await sendUmamiEvent({
@@ -160,13 +161,36 @@ describe('sendUmamiEvent', () => {
       hostname: 'freesocks.org',
       clientIp: '203.0.113.7',
     });
-    const headers = (spy.mock.calls[0] as [string, RequestInit])[1].headers as Record<
-      string,
-      string
-    >;
-    expect(headers['x-freesocks-client-ip']).toBe('203.0.113.7');
+    const [, init] = spy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { payload: Record<string, string> };
+    expect(body.payload.ip).toBe('203.0.113.7');
+    // The IP rides in the payload, never in a header (CLIENT_IP_HEADER is
+    // instance-global on Umami and unusable on a shared multi-site instance).
+    const headers = init.headers as Record<string, string>;
+    expect(Object.keys(headers).sort()).toEqual(['content-type', 'user-agent']);
     expect(headers['x-forwarded-for']).toBeUndefined();
     expect(headers['cookie']).toBeUndefined();
+  });
+
+  test('sanitizeIp: charset/length-checked; junk drops the field entirely', async () => {
+    expect(sanitizeIp('203.0.113.7')).toBe('203.0.113.7');
+    expect(sanitizeIp('2001:db8::1')).toBe('2001:db8::1');
+    expect(sanitizeIp('evil\r\nheader')).toBe('');
+    expect(sanitizeIp('not an ip')).toBe('');
+    expect(sanitizeIp(null)).toBe('');
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+    await sendUmamiEvent({
+      cfg: CFG,
+      input: { route: '/' },
+      userAgent: 'UA',
+      hostname: null,
+      clientIp: 'garbage value',
+    });
+    const body = JSON.parse((spy.mock.calls[0] as [string, RequestInit])[1].body as string) as {
+      payload: Record<string, string>;
+    };
+    expect(body.payload).not.toHaveProperty('ip');
   });
 
   test('a hostile body still produces only allowlisted values', async () => {
@@ -180,6 +204,7 @@ describe('sendUmamiEvent', () => {
         screen: '1234x777',
         language: 'x'.repeat(50),
         extra: 'field',
+        ip: '198.51.100.99', // a spoofed beacon-body ip must NEVER be forwarded
       },
       userAgent: 'UA\r\nX-Injected: 1',
       hostname: 'bad host',
@@ -194,6 +219,7 @@ describe('sendUmamiEvent', () => {
     expect(body.payload.language).toBe('');
     expect(body.payload.hostname).toBe('');
     expect(body.payload).not.toHaveProperty('extra');
+    expect(body.payload).not.toHaveProperty('ip'); // clientIp arg is the ONLY source
     const headers = init.headers as Record<string, string>;
     expect(headers['user-agent']).not.toMatch(/[\r\n]/);
   });

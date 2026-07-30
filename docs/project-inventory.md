@@ -390,8 +390,8 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   there) and forwards to `<umamiUrl>/api/send` (1s timeout, fail-soft 202). Config in the
   `appSettings` `analytics.*` namespace, edited on Admin → Settings
   (`GET/PATCH /api/v1/admin/analytics`, `admin:settings:read|write`); `analytics.forwardIp`
-  (default off) gates the `x-freesocks-client-ip` header (Umami must set
-  `CLIENT_IP_HEADER=x-freesocks-client-ip` to honor it — fail-closed). Audited as
+  (default off) embeds the visitor IP per request as `payload.ip` (Umami v2.17+; no
+  Umami-side config, so a shared multi-site instance is unaffected). Audited as
   `admin.analytics.change` (booleans + truncated URL hash; never the host). **DORMANT by
   default** — ships disabled until an admin sets the URL + website id and enables it.
 - **Self-hosted Cap captcha** (`convex/lib/captcha.ts` + `src/client/components/CapWidget.svelte`):

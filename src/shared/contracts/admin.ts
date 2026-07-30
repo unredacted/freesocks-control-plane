@@ -552,8 +552,8 @@ export const AdminAnalyticsConfig = z.object({
   umamiUrl: z.string(),
   /** Umami website id (UUID); '' = unset. */
   websiteId: z.string(),
-  /** Forward the visitor IP as x-freesocks-client-ip (requires
-   *  CLIENT_IP_HEADER=x-freesocks-client-ip on the Umami side). */
+  /** Forward the visitor IP per request as `payload.ip` (Umami v2.17+;
+   *  no Umami-side config — safe on a shared multi-site instance). */
   forwardIp: z.boolean(),
 });
 export type AdminAnalyticsConfig = z.infer<typeof AdminAnalyticsConfig>;
