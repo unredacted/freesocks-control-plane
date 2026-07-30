@@ -525,7 +525,7 @@ describe('testBackendConnection stored-credential fallback', () => {
     expect(headers.authorization).toBe('Bearer tkn');
   });
 
-  test('a typed field overrides the stored one', async () => {
+  test('explicit URL and token override the stored ones together', async () => {
     const t = convexTest(schema, modules);
     const serverId = await seedServer(t);
     const spy = vi.fn(
@@ -536,8 +536,56 @@ describe('testBackendConnection stored-credential fallback', () => {
       backend: 'remnawave',
       id: serverId,
       baseUrl: 'https://other.test.example',
+      apiToken: 'replacement-token',
     });
     expect(String(spy.mock.calls[0]?.[0])).toContain('https://other.test.example');
+    const headers = (spy.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer replacement-token');
+  });
+
+  test('reuses the stored token when an unchanged URL is normalized by the editor', async () => {
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t);
+    await t.run((ctx) =>
+      ctx.db.patch(serverId, {
+        config: {
+          type: 'remnawave',
+          baseUrl: '  https://panel.test.example  ',
+          apiToken: 'tkn',
+        },
+      }),
+    );
+    const spy = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) => new Response('nope', { status: 500 }),
+    );
+    vi.stubGlobal('fetch', spy);
+
+    await t.action(internal.adminApi.testBackendConnection, {
+      backend: 'remnawave',
+      id: serverId,
+      baseUrl: 'https://panel.test.example',
+    });
+
+    expect(spy).toHaveBeenCalled();
+    const headers = (spy.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer tkn');
+  });
+
+  test('does not send a stored token to an overridden URL', async () => {
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t);
+    const spy = vi.fn();
+    vi.stubGlobal('fetch', spy);
+    const res = await t.action(internal.adminApi.testBackendConnection, {
+      backend: 'remnawave',
+      id: serverId,
+      baseUrl: 'https://attacker.example',
+    });
+    expect(res).toEqual({
+      ok: false,
+      error: 'An API token is required when changing the base URL',
+    });
+    expect(spy).not.toHaveBeenCalled();
   });
 
   test('backend-type mismatch against the stored instance is a friendly error, no fetch', async () => {
