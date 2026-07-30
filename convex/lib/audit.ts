@@ -94,6 +94,12 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'heroSubtitle',
     'heroTitles',
   ],
+  // Analytics relay config. Booleans + presence/hash flags ONLY: the Umami
+  // host is an apiUrl-class value (and an exfiltration target if repointed) and
+  // the website id is a correlatable UUID, so neither is ever persisted here.
+  // `umamiUrlHash` (truncated sha-256 of the cleaned URL, '' when unset) makes
+  // a repoint DETECTABLE in the trail without recording the host itself.
+  'admin.analytics.change': ['enabled', 'forwardIp', 'umamiUrlHash', 'hasWebsiteId'],
   // Member opt-in passkeys: enroll / revoke (device label is a non-secret display
   // string; the credential id / public key are never logged). Login is audited as
   // `account.login.passkey` with NO payload (like `account.login.account_id`).

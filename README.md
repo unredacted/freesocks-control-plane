@@ -106,6 +106,7 @@ convex/                            The backend (Convex functions)
 ├── storage.ts                     S3 subscription mirrors ("use node")
 ├── retention.ts                   daily append-only-table retention sweeps
 ├── health.ts                      /readyz deep readiness (DB ping)
+├── analytics.ts                   optional self-hosted Umami relay (server-side; docs/privacy.md §6)
 ├── subscriptions.ts, tiers.ts, users.ts, admins.ts, appSettings.ts,
 │   publicConfig.ts, audit.ts, rateLimits.ts, sessions.ts, adminApi.ts,
 │   userStats.ts, cronHeartbeat.ts, keyEpochs.ts, keyRevocations.ts, replayGuard.ts
@@ -114,7 +115,7 @@ convex/                            The backend (Convex functions)
     ├── cookies.ts, crypto.ts, accountId.ts, supportId.ts, captcha.ts,
     │   membershipCode.ts, rateLimitPolicy.ts, issuance.ts, connectionModes.ts,
     │   remnawavePlacement.ts, clientCatalog.ts, donationBonus.ts, billingConfig.ts,
-    │   siteConfig.ts, statusCounters.ts
+    │   siteConfig.ts, statusCounters.ts, analyticsConfig.ts, umami.ts
     ├── processors/{nowpayments,btcpay,stripe,paypal}.ts   billing rails
     └── backends/{types,registry,remnawave,outline}.ts   pure HTTP backend fns
 

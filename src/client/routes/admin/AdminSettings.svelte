@@ -17,10 +17,10 @@
   import { apiErrorMessage } from '../../lib/errors';
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import AdminListState from './AdminListState.svelte';
-  import { appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
+  import { adminAnalyticsQuery, appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
   import Link from '../../components/Link.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { AppSettingsRecord } from '../../../shared/contracts/admin';
+  import { AdminAnalyticsConfig, AppSettingsRecord } from '../../../shared/contracts/admin';
   import { toast } from 'svelte-sonner';
 
   /**
@@ -220,6 +220,41 @@
     },
     onError: (err) => {
       toast.error('Could not save site settings', { description: apiErrorMessage(err) });
+    },
+  }));
+
+  // Analytics relay (self-hosted Umami): its own namespace + own admin GET —
+  // the Umami URL/website id are deliberately NOT in the public /api/v1/config
+  // (only the enabled bit is), so current values come from adminAnalyticsQuery,
+  // not configQuery. The server sanitizes (https-only URL, UUID id) and echoes
+  // the cleaned values back.
+  const analytics = adminAnalyticsQuery();
+  let aDraft = $state<{
+    enabled: boolean;
+    umamiUrl: string;
+    websiteId: string;
+    forwardIp: boolean;
+  }>({ enabled: false, umamiUrl: '', websiteId: '', forwardIp: false });
+  let aInit = $state(false);
+  $effect(() => {
+    if (analytics.data && !aInit) {
+      aDraft = { ...analytics.data };
+      aInit = true;
+    }
+  });
+  const saveAnalytics = createMutation(() => ({
+    mutationFn: async () => {
+      return apiClient.patch('/api/v1/admin/analytics', aDraft, AdminAnalyticsConfig);
+    },
+    onSuccess: (updated) => {
+      aDraft = { ...updated };
+      void qc.invalidateQueries({ queryKey: queryKeys.adminAnalytics });
+      // The enabled bit feeds the public /api/v1/config (the SPA's beacon gate).
+      void qc.invalidateQueries({ queryKey: queryKeys.config });
+      toast.success('Analytics settings saved');
+    },
+    onError: (err) => {
+      toast.error('Could not save analytics settings', { description: apiErrorMessage(err) });
     },
   }));
 </script>
@@ -801,6 +836,82 @@
             {/if}
             <Button onclick={() => saveSite.mutate()} disabled={saveSite.isPending || !sInit}>
               {saveSite.isPending ? 'Saving…' : 'Save site settings'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <!-- Analytics relay (self-hosted Umami): own namespace + own save -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Analytics (self-hosted Umami)</CardTitle>
+          <CardDescription>
+            Anonymous pageview counts relayed server-side to your own Umami instance. No third-party
+            script is loaded, browsers never learn the Umami address, and pageviews report a fixed
+            set of routes only: no query strings, no titles, and referrers reduced to their origin
+            (so Umami's referrer-path report stays empty by design). Off by default.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-3 text-sm">
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={aDraft.enabled}
+              onCheckedChange={(v) => (aDraft = { ...aDraft, enabled: v === true })}
+            />
+            <span>Send pageviews to a self-hosted Umami instance</span>
+          </label>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="analytics-umami-url">
+                Umami base URL (https)
+              </label>
+              <Input
+                id="analytics-umami-url"
+                placeholder="https://analytics.example.org"
+                value={aDraft.umamiUrl}
+                oninput={(e) =>
+                  (aDraft = { ...aDraft, umamiUrl: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="analytics-website-id">
+                Website ID (UUID)
+              </label>
+              <Input
+                id="analytics-website-id"
+                placeholder="b1f0a2c4-…"
+                value={aDraft.websiteId}
+                oninput={(e) =>
+                  (aDraft = { ...aDraft, websiteId: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+          </div>
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={aDraft.forwardIp}
+              onCheckedChange={(v) => (aDraft = { ...aDraft, forwardIp: v === true })}
+            />
+            <span>Forward the visitor's IP address to Umami (country stats)</span>
+          </label>
+          <p class="text-xs text-muted-foreground">
+            Off (default): Umami sees only this server's IP, so no geo data and maximum privacy. On:
+            the visitor IP is sent in an <code>x-freesocks-client-ip</code> header, which Umami
+            ignores unless you also set
+            <code>CLIENT_IP_HEADER=x-freesocks-client-ip</code> on the Umami side (deliberately fail-closed).
+            Umami stores a daily-rotating hash, never the raw IP; verify your Umami version and its reverse
+            proxy's access logs before enabling. See docs/privacy.md.
+          </p>
+          <div class="flex justify-end">
+            {#if !aInit}
+              <span class="me-3 self-center text-xs text-muted-foreground"
+                >Loading current values…</span
+              >
+            {/if}
+            <Button
+              onclick={() => saveAnalytics.mutate()}
+              disabled={saveAnalytics.isPending || !aInit}
+            >
+              {saveAnalytics.isPending ? 'Saving…' : 'Save analytics settings'}
             </Button>
           </div>
         </CardContent>

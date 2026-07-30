@@ -542,3 +542,18 @@ export const AdminReferralConfig = z.object({
   maxRewardsPerMonth: z.number().int(),
 });
 export type AdminReferralConfig = z.infer<typeof AdminReferralConfig>;
+
+/** Admin analytics-relay config (`/api/v1/admin/analytics`): the self-hosted
+ *  Umami target. Admin-readable but NEVER public — publicConfig projects only
+ *  the effective enabled bit. Server-sanitized: '' = unset/rejected. */
+export const AdminAnalyticsConfig = z.object({
+  enabled: z.boolean(),
+  /** https-only Umami base URL (SSRF-checked server-side); '' = unset. */
+  umamiUrl: z.string(),
+  /** Umami website id (UUID); '' = unset. */
+  websiteId: z.string(),
+  /** Forward the visitor IP as x-freesocks-client-ip (requires
+   *  CLIENT_IP_HEADER=x-freesocks-client-ip on the Umami side). */
+  forwardIp: z.boolean(),
+});
+export type AdminAnalyticsConfig = z.infer<typeof AdminAnalyticsConfig>;

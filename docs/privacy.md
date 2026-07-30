@@ -156,6 +156,57 @@ and the inbound/Reality settings remain Ansible-only. See `docs/backends.md`
 - **Verify (live):** on a node `docker logs <xray>` shows no connection/IP lines;
   the panel "IP Management" / online view is empty; a client still connects.
 
+## 6. Analytics (optional self-hosted Umami relay)
+
+FCP can report **anonymous pageview counts** to an operator-run
+[Umami](https://umami.is) instance. It ships **off** and is configured entirely
+in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
+**server-side relay**, not the stock Umami integration:
+
+- **No Umami script is ever loaded** (the zero-third-party-scripts posture
+  holds). A ~40-line bundled beacon (`src/client/lib/analytics.ts`) POSTs to
+  the same-origin `POST /api/v1/telemetry`, and the Convex backend forwards to
+  `<umamiUrl>/api/send` (`convex/lib/umami.ts`).
+- **Browsers never learn the Umami address.** The public config exposes only
+  an `analytics.enabled` boolean; the URL + website id are admin-readable only
+  (`GET /api/v1/admin/analytics`). A client can't enumerate the operator's
+  analytics infrastructure.
+- **What a pageview carries — and only this:** an **allowlist-checked route**
+  (`ROUTE_ALLOWLIST` in `convex/lib/umami.ts`; unknown paths bucket to
+  `/other`, so a path or title can never embed an identifier), a static
+  English title from that same allowlist, the referrer reduced to its
+  **origin** (never a full URL — Umami's referrer-path report stays empty by
+  design), one of **three coarse screen buckets**, and the SPA's active locale
+  (a bare primary subtag). Query strings and fragments are stripped
+  client-side AND ignored server-side, so `?ref=` codes can't leak. `/admin`
+  navigation is never reported.
+- **The beacon is anonymous by construction.** It is a raw `fetch` with
+  `credentials: 'omit'` — never `apiClient` (which would attach a PoP
+  signature binding the pageview to the member's session) and never
+  `navigator.sendBeacon` (which cannot drop cookies same-origin). The relay
+  route reads no cookie and resolves no member. The client's User-Agent is
+  forwarded transiently (Umami drops UA-less events), CR/LF-stripped, and is
+  never logged or audited.
+- **The visitor's IP does not leave FCP by default.** `analytics.forwardIp`
+  ships off: Umami then sees only the backend's egress IP (no geolocation;
+  unique-visitor counts degrade to per-user-agent buckets — accepted). When an
+  operator turns it on, the resolved client IP is sent in a custom
+  `x-freesocks-client-ip` header that Umami **ignores unless**
+  `CLIENT_IP_HEADER=x-freesocks-client-ip` is set on the Umami side —
+  deliberately fail-closed (an `X-Forwarded-For` would be honored by default).
+  Umami v2 hashes the IP into a daily-rotating session hash and stores derived
+  geo, not a raw IP column — but **verify this against your own Umami version**,
+  and make sure Umami's own fronting proxy does not access-log the header.
+- **The audit log never records the Umami URL or website id** —
+  `admin.analytics.change` stores booleans plus a truncated hash of the URL
+  (`umamiUrlHash`), so a silent repoint of this exfiltration-capable endpoint
+  is detectable without the host ever being persisted.
+- **Fail-soft + silent:** the relay answers 202 regardless of Umami's outcome,
+  bounds the outbound call to 1s, reads no response body, and logs nothing (a
+  log line here would carry a UA/IP). A per-IP rate-limit policy
+  (`telemetry.send`) caps the outbound amplification. Counts are therefore
+  approximate by design — treat Umami numbers as trends, not truth.
+
 ## Downstream-deployer checklist
 
 If you deploy or fork FCP, keep the posture:
@@ -170,6 +221,10 @@ If you deploy or fork FCP, keep the posture:
 - [ ] If you add a new rate limit or audit event, bucket on `ipHashSubject(ip)`
       (the hash lives only in the ephemeral `rateLimits` counter) and keep the audit
       payload within the allowlist — never persist an IP, hashed or otherwise.
+- [ ] Analytics (§6): leave `analytics.forwardIp` off unless you have confirmed
+      your Umami version's IP handling AND that Umami's fronting proxy doesn't
+      access-log requests; when adding a member-facing SPA route, add it to
+      `ROUTE_ALLOWLIST` in `convex/lib/umami.ts` or it reports as `/other`.
 - [ ] Nodes (§5): Xray Config Profile has `log.access:"none"` + `loglevel:"none"` +
       `dnsLog:false` (+ `maskAddress:"full"`) and `policy.statsUserOnline:false`;
       node container logging driver `none`. Enforced by `ansible-role-freesocks`;

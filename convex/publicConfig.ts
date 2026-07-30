@@ -19,6 +19,7 @@ import { readUserCounts } from './lib/statusCounters';
 import { resolveTheme } from './lib/themeConfig';
 import { resolveVerification } from './lib/verificationConfig';
 import { resolveSiteConfig } from './lib/siteConfig';
+import { publicAnalytics, resolveAnalyticsConfig } from './lib/analyticsConfig';
 import { publicFamilyProjection } from './lib/connectionModes';
 import { resolvePublicModes } from './lib/placement';
 import { BACKEND_IDS } from './lib/backendIds';
@@ -226,6 +227,10 @@ export const get = query({
       // + text) and the footer "View source" repo link (toggle + https URL). Both
       // resolve to safe defaults (off/empty) until the operator sets them.
       site: await resolveSiteConfig(ctx.db),
+      // Analytics relay: ONLY the effective on/off bit (toggle AND configured).
+      // The Umami host + website id are server-side-only — publicAnalytics's
+      // narrow return type is the structural guarantee they can't leak here.
+      analytics: publicAnalytics(await resolveAnalyticsConfig(ctx.db)),
       // Member-facing connection-mode catalog: the PARENT families a member picks
       // first, plus their transport sub-choices (id + family + label + description
       // + deliveryStyle + isDefault + available = enabled AND placement pool

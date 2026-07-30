@@ -283,6 +283,11 @@ export const PublicConfig = z.object({
       heroTitles: z.array(z.string()).optional().default([]),
     })
     .optional(),
+  /** Whether the SPA should send its anonymous pageview beacon to
+   *  POST /api/v1/telemetry. ONLY this boolean: the operator's Umami host +
+   *  website id are server-side only and never reach a client. Optional +
+   *  defaulted for deploy skew (same reason as site.transparencyUrl above). */
+  analytics: z.object({ enabled: z.boolean() }).optional().default({ enabled: false }),
   /** Member-facing connection-mode catalog (the transport chooser): the LEAF
    *  sub-choices. `family` names the parent mode the leaf belongs to (see
    *  `connectionModeFamilies`); `isFamilyDefault` is the leaf selected when a

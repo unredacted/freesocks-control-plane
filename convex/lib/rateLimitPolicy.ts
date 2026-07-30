@@ -127,6 +127,12 @@ export const RATE_LIMIT_DEFAULTS = {
   // Member referral-stats read (per user): the account-page card fetches once
   // per view; hygiene against a hot refresh loop.
   'account.referrals': { max: 20, windowMs: MINUTE, enabled: true },
+  // Anonymous SPA pageview beacon (per IP): each POST costs one small outbound
+  // relay to the operator's Umami, so this is DoS-amplification hygiene, not
+  // accuracy control — over the cap, pageviews are silently dropped. Matched to
+  // config.fetch/status.fetch because the same shared-exit/CGNAT populations
+  // hit all three; a real user generates well under 20 route changes a minute.
+  'telemetry.send': { max: 120, windowMs: MINUTE, enabled: true },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyKey = keyof typeof RATE_LIMIT_DEFAULTS;

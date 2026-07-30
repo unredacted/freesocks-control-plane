@@ -30,6 +30,7 @@ import {
   MirrorProviderAdmin,
   AdminConnectionModesResponse,
   RemnawaveNodeStatsResponse,
+  AdminAnalyticsConfig,
   AdminReferralConfig,
   TierAdmin,
   UserAdmin,
@@ -81,6 +82,7 @@ export const queryKeys = {
   adminStatusIncidents: ['admin', 'status-incidents'] as const,
   accountReferrals: ['account', 'referrals'] as const,
   adminReferralConfig: ['admin', 'referral-config'] as const,
+  adminAnalytics: ['admin', 'analytics'] as const,
 };
 
 // --- Public surface ----------------------------------------------------------
@@ -232,6 +234,15 @@ export const adminReferralConfigQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.adminReferralConfig,
     queryFn: () => apiClient.get('/api/v1/admin/referrals/config', AdminReferralConfig),
+    staleTime: 60_000,
+  }));
+
+/** Admin analytics-relay config (Umami URL + website id — admin-only, never
+ *  in /api/v1/config, so the Settings card can't read it from configQuery). */
+export const adminAnalyticsQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminAnalytics,
+    queryFn: () => apiClient.get('/api/v1/admin/analytics', AdminAnalyticsConfig),
     staleTime: 60_000,
   }));
 
