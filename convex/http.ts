@@ -1135,25 +1135,30 @@ http.route({
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const body = await readJson<{ modeId?: string }>(req);
     const modeId = typeof body.modeId === 'string' ? body.modeId : '';
-    // Validated against the LIVE catalog (the compiled sync guard is gone with
-    // the compiled catalog).
-    const modes = await ctx.runQuery(internal.connectionModes.list, {});
-    const chosen = modes.find((m) => m.id === modeId);
-    if (!chosen) {
+    if (!modeId || modeId.length > 64) {
       return errorJson('validation', 'unknown connection mode', 400);
     }
-    // Defense-in-depth (the picker already disables unbound modes, and issuance
-    // falls back so a stored unbound preference can't mint a dead key): refuse to
-    // persist an unbound mode when a bound alternative exists. Allowed on an
-    // all-unbound (bring-up) deploy so signup can still record the default. (WS1.)
-    if (!chosen.bound && modes.some((m) => m.bound)) {
-      return errorJson('validation', 'This connection mode is not available yet.', 400);
+    // Validated per-(mode, MEMBER's backend) against the live catalog — the
+    // same gate switch-mode applies (enabled + applicable + bound where the
+    // backend has a placement concept), with the WS1 bring-up allowance so
+    // signup can still record an enabled mode on an all-unbound deploy. The
+    // old cross-backend `bound` check let a disabled-but-pooled mode (or a
+    // wrong-backend mode) be persisted, and wrongly refused a placement-less
+    // backend's own modes whenever any Remnawave pool was bound.
+    const verdict = await ctx.runQuery(internal.connectionModes.validateMemberChoice, {
+      userId: member.userId,
+      modeId,
+    });
+    if (!verdict.ok) {
+      return verdict.code === 'unavailable'
+        ? errorJson('validation', 'This connection mode is not available yet.', 400)
+        : errorJson('validation', 'unknown connection mode', 400);
     }
     await ctx.runMutation(internal.users.setConnectionMode, {
       userId: member.userId,
-      modeId: chosen.id,
+      modeId: verdict.modeId,
     });
-    return json({ ok: true, modeId: chosen.id });
+    return json({ ok: true, modeId: verdict.modeId });
   }),
 });
 
@@ -3286,6 +3291,17 @@ http.route({
 // (PATCH /api/v1/admin/backends/remnawave/mode-placements, phase 3): the
 // Ansible role calls THIS path with this exact body/response shape, so it
 // keeps working byte-identically while the role migrates at leisure.
+//
+// The role also still keys its entries by the PRE-RENAME mode ids
+// (evade/privacy — tasks/providers/fcp/bind_placements.yml and the node
+// teardown detach), so this route maps them onto the current slugs before
+// delegating. The map lives HERE and only here: it is part of the alias
+// contract and is deleted together with the route once the role migrates.
+// When both spellings of a mode appear in one body, the canonical entry wins.
+const ANSIBLE_LEGACY_PLACEMENT_IDS: Readonly<Record<string, string>> = {
+  evade: 'freedom-ws',
+  privacy: 'privacy-reality',
+};
 http.route({
   path: '/api/v1/admin/remnawave/mode-placements',
   method: 'PATCH',
@@ -3293,11 +3309,24 @@ http.route({
     const admin = await resolveAdmin(ctx, req, 'admin:servers:write');
     if (!admin) return ADMIN_UNAUTH();
     const body = await readJson<Record<string, unknown>>(req);
+    const rawModes =
+      body && typeof body.modes === 'object' && body.modes !== null
+        ? (body.modes as Record<string, unknown>)
+        : {};
+    const modes: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(rawModes)) {
+      const canonical = ANSIBLE_LEGACY_PLACEMENT_IDS[key];
+      if (canonical) {
+        if (!(canonical in rawModes)) modes[canonical] = entry;
+      } else {
+        modes[key] = entry;
+      }
+    }
     try {
       return json(
         await ctx.runMutation(internal.connectionModes.setModePlacements, {
           backend: 'remnawave',
-          patch: body,
+          patch: { ...body, modes },
           actorAdminId: admin.adminUserId,
         }),
       );

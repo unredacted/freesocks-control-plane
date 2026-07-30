@@ -205,7 +205,21 @@ describe('remnawaveGetNodeStats (provider aggregation)', () => {
 });
 
 describe('resolveBoundModeCounts', () => {
-  test('returns per-mode pool sizes (never UUIDs); unbound = 0; legacy aliases excluded', async () => {
+  test('returns per-mode pool sizes (never UUIDs); unbound = 0', async () => {
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['sq-1', 'sq-2', 'sq-3'] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    const counts = await t.run((ctx) => resolveBoundModeCounts(ctx.db));
+    expect(counts).toEqual({ 'freedom-ws': 3, 'freedom-reality': 0, 'privacy-reality': 0 });
+  });
+
+  test('a stale pre-refactor appSettings pool is IGNORED (the table is the only store)', async () => {
     const t = convexTest(schema, modules);
     await t.run(async (ctx) => {
       await ctx.db.insert('appSettings', {
@@ -215,20 +229,10 @@ describe('resolveBoundModeCounts', () => {
       });
     });
     const counts = await t.run((ctx) => resolveBoundModeCounts(ctx.db));
-    expect(counts).toEqual({ 'freedom-ws': 3, 'freedom-reality': 0, 'privacy-reality': 0 });
-  });
-
-  test('counts a pre-migration pool under its SUCCESSOR id', async () => {
-    const t = convexTest(schema, modules);
-    await t.run(async (ctx) => {
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.evade.squads',
-        value: JSON.stringify(['sq-1', 'sq-2', 'sq-3']),
-        updatedAt: Date.now(),
-      });
-    });
-    const counts = await t.run((ctx) => resolveBoundModeCounts(ctx.db));
-    expect(counts).toEqual({ 'freedom-ws': 3, 'freedom-reality': 0, 'privacy-reality': 0 });
+    expect(counts).toEqual({ 'freedom-ws': 0, 'freedom-reality': 0, 'privacy-reality': 0 });
+    expect(await t.run((ctx) => resolveModeSquadPool(ctx.db, 'freedom-ws'))).toEqual([]);
+    const bound = await t.run(async (ctx) => [...(await resolveBoundModeIds(ctx.db))]);
+    expect(bound).toEqual([]);
   });
 });
 
@@ -272,53 +276,6 @@ async function bindPool(t: ReturnType<typeof convexTest>, modeId: string, squads
     }),
   );
 }
-
-/** Deploy-1 window shape: the pool still lives in the pre-refactor appSettings
- *  key (the seed hasn't folded it in yet). */
-async function bindLegacyPool(t: ReturnType<typeof convexTest>, modeId: string, squads: string[]) {
-  await t.run((ctx) =>
-    ctx.db.insert('appSettings', {
-      key: `remnawave.modePlacement.${modeId}.squads`,
-      value: JSON.stringify(squads),
-      updatedAt: Date.now(),
-    }),
-  );
-}
-
-describe('deploy-1 window: appSettings pool fallback', () => {
-  test('a pool still under the pre-refactor key (even a LEGACY id) resolves + reads bound', async () => {
-    const t = convexTest(schema, modules);
-    // The seed hasn't folded the pools into modePlacements yet: canonical-key
-    // and legacy-key appSettings pools must both keep working.
-    await bindLegacyPool(t, 'privacy-reality', ['sq-priv']);
-    await bindLegacyPool(t, 'evade', ['sq-ws']); // pre-rename spelling
-    expect(await t.run((ctx) => resolveModeSquadPool(ctx.db, 'privacy-reality'))).toEqual([
-      'sq-priv',
-    ]);
-    expect(await t.run((ctx) => resolveModeSquadPool(ctx.db, 'freedom-ws'))).toEqual(['sq-ws']);
-    const bound = await t.run(async (ctx) => [...(await resolveBoundModeIds(ctx.db))]);
-    expect(bound).toContain('privacy-reality');
-    expect(bound).toContain('freedom-ws');
-  });
-
-  test('a modePlacements row wins over a stale appSettings pool (deliberate unbind sticks)', async () => {
-    const t = convexTest(schema, modules);
-    await bindLegacyPool(t, 'freedom-ws', ['sq-old']);
-    // The admin emptied the pool via the NEW store; the dead settings row must
-    // not resurrect it.
-    await t.run((ctx) =>
-      ctx.db.insert('modePlacements', {
-        modeSlug: 'freedom-ws',
-        backend: 'remnawave',
-        config: JSON.stringify({ squadUuids: [] }),
-        updatedAt: Date.now(),
-      }),
-    );
-    expect(await t.run((ctx) => resolveModeSquadPool(ctx.db, 'freedom-ws'))).toEqual([]);
-    const bound = await t.run(async (ctx) => [...(await resolveBoundModeIds(ctx.db))]);
-    expect(bound).not.toContain('freedom-ws');
-  });
-});
 
 describe('resolvePlacementTarget', () => {
   test('pairs the placement with its own panel (least-loaded across panels)', async () => {

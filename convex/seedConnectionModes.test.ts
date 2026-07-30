@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 /**
- * The connection-mode seed + migration centerpiece: fresh-deploy seeding,
- * absorption of the pre-refactor appSettings state (current AND legacy keys,
- * current-beats-legacy), the placement-pool move (existing-row-wins), the paged
- * legacy user-id rewrite, and the idempotency guarantees (double-run = zero
- * writes; admin edits survive every later deploy).
+ * The connection-mode seed (post-migration, deploy-2 shape): fresh-deploy
+ * seeding, the idempotency guarantees (double-run = zero writes; admin edits
+ * survive every later deploy), peer-group conversion, and the guarded one-shot
+ * `cleanupLegacyModeSettings` that deletes the dead appSettings rows the
+ * 2026-07-28 migration absorbed.
  */
 import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
@@ -58,7 +58,7 @@ describe('seedConnectionModes: fresh deploy', () => {
   test('inserts the compiled defaults into empty tables', async () => {
     const t = convexTest(schema, modules);
     const out = await t.mutation(internal.seed.seedConnectionModes, {});
-    expect(out).toMatchObject({ familiesInserted: 2, modesInserted: 3, poolsMoved: 0 });
+    expect(out).toMatchObject({ familiesInserted: 2, modesInserted: 3 });
     const fams = await t.run((ctx) => ctx.db.query('connectionModeFamilies').collect());
     const modes = await t.run((ctx) => ctx.db.query('connectionModes').collect());
     expect(fams.map((f) => f.slug).sort()).toEqual(['freedom', 'privacy']);
@@ -82,7 +82,7 @@ describe('seedConnectionModes: fresh deploy', () => {
       pools: await ctx.db.query('modePlacements').collect(),
     }));
     const out2 = await t.mutation(internal.seed.seedConnectionModes, {});
-    expect(out2).toMatchObject({ familiesInserted: 0, modesInserted: 0, poolsMoved: 0 });
+    expect(out2).toMatchObject({ familiesInserted: 0, modesInserted: 0 });
     const snapshot2 = await t.run(async (ctx) => ({
       fams: await ctx.db.query('connectionModeFamilies').collect(),
       modes: await ctx.db.query('connectionModes').collect(),
@@ -110,99 +110,111 @@ describe('seedConnectionModes: fresh deploy', () => {
   });
 });
 
-describe('seedConnectionModes: absorbing pre-refactor appSettings', () => {
-  test('label/description/enabled fold in from current keys', async () => {
+describe('cleanupLegacyModeSettings', () => {
+  test('deletes the absorbed namespaces, keeps the default pointer + unrelated keys; idempotent', async () => {
     const t = convexTest(schema, modules);
     await putSetting(t, 'connectionMode.privacy-reality.label', 'Max privacy');
-    await putSetting(t, 'connectionMode.privacy-reality.description', 'No CDN in the path.');
-    await putSetting(t, 'connectionMode.freedom-reality.enabled', true); // operator lit it up
-    await putSetting(t, 'connectionModeFamily.freedom.label', 'Internet Freedom');
-    await t.mutation(internal.seed.seedConnectionModes, {});
-    const modes = await t.run((ctx) => ctx.db.query('connectionModes').collect());
-    const fams = await t.run((ctx) => ctx.db.query('connectionModeFamilies').collect());
-    expect(modes.find((m) => m.slug === 'privacy-reality')).toMatchObject({
-      label: 'Max privacy',
-      description: 'No CDN in the path.',
-    });
-    expect(modes.find((m) => m.slug === 'freedom-reality')!.enabled).toBe(true);
-    expect(fams.find((f) => f.slug === 'freedom')!.label).toBe('Internet Freedom');
-    // Absorbed source rows are LEFT IN PLACE (deploy-1 rollback safety).
-    const leftover = await t.run((ctx) =>
-      ctx.db
-        .query('appSettings')
-        .withIndex('by_key', (q) => q.eq('key', 'connectionMode.privacy-reality.label'))
-        .unique(),
-    );
-    expect(leftover).not.toBeNull();
-  });
-
-  test('legacy-keyed copy folds onto the successor; a current key wins over it', async () => {
-    const t = convexTest(schema, modules);
     await putSetting(t, 'connectionMode.evade.label', 'Old Evade Label');
-    await putSetting(t, 'connectionMode.privacy.label', 'Old Privacy Label');
-    await putSetting(t, 'connectionMode.privacy-reality.label', 'New Privacy Label'); // wins
-    await t.mutation(internal.seed.seedConnectionModes, {});
-    const modes = await t.run((ctx) => ctx.db.query('connectionModes').collect());
-    expect(modes.find((m) => m.slug === 'freedom-ws')!.label).toBe('Old Evade Label');
-    expect(modes.find((m) => m.slug === 'privacy-reality')!.label).toBe('New Privacy Label');
-  });
-
-  test('the default pointer is canonicalized in place', async () => {
-    const t = convexTest(schema, modules);
-    await putSetting(t, 'connectionMode.default', 'privacy'); // legacy id
-    await t.mutation(internal.seed.seedConnectionModes, {});
-    const row = await t.run((ctx) =>
-      ctx.db
-        .query('appSettings')
-        .withIndex('by_key', (q) => q.eq('key', 'connectionMode.default'))
-        .unique(),
-    );
-    expect(JSON.parse(row!.value)).toBe('privacy-reality');
-  });
-
-  test('placement pools move to modePlacements rows (canonical slug, legacy key folds, existing row wins)', async () => {
-    const t = convexTest(schema, modules);
+    await putSetting(t, 'connectionMode.freedom-reality.enabled', true);
+    await putSetting(t, 'connectionModeFamily.freedom.label', 'Internet Freedom');
     await putSetting(t, 'remnawave.modePlacement.evade.squads', ['sq-legacy-ws']);
-    await putSetting(t, 'remnawave.modePlacement.privacy-reality.squads', ['sq-priv']);
-    // The admin already wrote the new store for privacy-reality → the seed must not clobber it.
+    await putSetting(t, 'remnawave.modePlacement.freedom-ws.squads', ['sq-ws']);
+    // Survivors: the live default pointer + neighbors outside the namespaces.
+    await putSetting(t, 'connectionMode.default', 'freedom-ws');
+    await putSetting(t, 'remnawave.nodePlacement.usersOnline_weight', 1);
+    await putSetting(t, 'site.bannerEnabled', false);
+    // A migrated deployment: the pool already lives in the new store.
     await t.run((ctx) =>
       ctx.db.insert('modePlacements', {
-        modeSlug: 'privacy-reality',
+        modeSlug: 'freedom-ws',
         backend: 'remnawave',
-        config: JSON.stringify({ squadUuids: ['sq-priv-new-store'] }),
+        config: JSON.stringify({ squadUuids: ['sq-ws'] }),
         updatedAt: Date.now(),
       }),
     );
-    const out = await t.mutation(internal.seed.seedConnectionModes, {});
-    expect(out.poolsMoved).toBe(1); // only the evade pool moved
-    const pools = await t.run((ctx) => ctx.db.query('modePlacements').collect());
-    const ws = pools.find((p) => p.modeSlug === 'freedom-ws')!;
-    expect(JSON.parse(ws.config)).toEqual({ squadUuids: ['sq-legacy-ws'] });
-    const priv = pools.find((p) => p.modeSlug === 'privacy-reality')!;
-    expect(JSON.parse(priv.config)).toEqual({ squadUuids: ['sq-priv-new-store'] });
+
+    const out = await t.mutation(internal.seed.cleanupLegacyModeSettings, {});
+    expect(out.deleted).toBe(6);
+
+    const keys = await t.run(async (ctx) =>
+      (await ctx.db.query('appSettings').collect()).map((r) => r.key).sort(),
+    );
+    expect(keys).toEqual([
+      'connectionMode.default',
+      'remnawave.nodePlacement.usersOnline_weight',
+      'site.bannerEnabled',
+    ]);
+
+    // Idempotent: a re-run deletes nothing.
+    expect((await t.mutation(internal.seed.cleanupLegacyModeSettings, {})).deleted).toBe(0);
   });
 
-  test('canonical-key pool wins over a legacy-key pool for the same mode', async () => {
+  test('refuses while any user still holds a pre-rename mode id', async () => {
     const t = convexTest(schema, modules);
-    await putSetting(t, 'remnawave.modePlacement.evade.squads', ['sq-old']);
-    await putSetting(t, 'remnawave.modePlacement.freedom-ws.squads', ['sq-new']);
-    await t.mutation(internal.seed.seedConnectionModes, {});
-    const pools = await t.run((ctx) => ctx.db.query('modePlacements').collect());
-    expect(pools).toHaveLength(1);
-    expect(JSON.parse(pools[0]!.config)).toEqual({ squadUuids: ['sq-new'] });
+    await putSetting(t, 'connectionMode.evade.label', 'Old Evade Label');
+    const legacy = await seedUserWithMode(t, 'evade');
+    await expect(t.mutation(internal.seed.cleanupLegacyModeSettings, {})).rejects.toThrow(
+      /pre-rename mode id "evade"/,
+    );
+    // Nothing was deleted on the refused run.
+    const rows = await t.run((ctx) => ctx.db.query('appSettings').collect());
+    expect(rows).toHaveLength(1);
+    // Once the user is off the legacy id, the cleanup proceeds.
+    await t.run((ctx) => ctx.db.patch(legacy, { connectionModeId: 'freedom-ws' }));
+    expect((await t.mutation(internal.seed.cleanupLegacyModeSettings, {})).deleted).toBe(1);
   });
 
-  test('censorship-matrix cells re-key from legacy mode ids (canonical cell wins; labels survive)', async () => {
+  test('a current-id or unset user does not trip the guard', async () => {
+    const t = convexTest(schema, modules);
+    await seedUserWithMode(t, 'freedom-ws');
+    await seedUserWithMode(t, undefined);
+    expect((await t.mutation(internal.seed.cleanupLegacyModeSettings, {})).deleted).toBe(0);
+  });
+
+  test('refuses while a non-empty pool was never absorbed into modePlacements', async () => {
+    const t = convexTest(schema, modules);
+    // A pool under the LEGACY spelling whose successor mode is live (compiled
+    // defaults count — this is exactly the skipped-deploy-1 disaster shape).
+    await putSetting(t, 'remnawave.modePlacement.evade.squads', ['sq-only-copy']);
+    await expect(t.mutation(internal.seed.cleanupLegacyModeSettings, {})).rejects.toThrow(
+      /never absorbed/,
+    );
+    // Nothing deleted on the refused run.
+    expect(await t.run((ctx) => ctx.db.query('appSettings').collect())).toHaveLength(1);
+    // Once the pool exists in the new store, cleanup proceeds.
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['sq-only-copy'] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    expect((await t.mutation(internal.seed.cleanupLegacyModeSettings, {})).deleted).toBe(1);
+  });
+
+  test('an empty pool, or one whose mode left the catalog, does not block', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    // Empty pool: nothing to lose.
+    await putSetting(t, 'remnawave.modePlacement.freedom-ws.squads', []);
+    // Non-empty pool for a mode the admin deleted from the catalog: dead either way.
+    await t.mutation(internal.connectionModes.removeMode, { slug: 'privacy-reality' });
+    await putSetting(t, 'remnawave.modePlacement.privacy.squads', ['sq-dead']);
+    expect((await t.mutation(internal.seed.cleanupLegacyModeSettings, {})).deleted).toBe(2);
+  });
+
+  test('re-keys censorship-matrix cells still stored under a pre-rename id', async () => {
     const t = convexTest(schema, modules);
     await putSetting(t, 'status.censorship', {
       rows: [
-        // Pure-legacy cells re-key onto the successors.
         { countryCode: 'CN', label: 'China', cells: { evade: 'partial', privacy: 'blocked' } },
-        // A row that already has the canonical cell keeps it (legacy copy dropped).
+        // Canonical cell wins over the legacy copy.
         { countryCode: 'IR', cells: { evade: 'blocked', 'freedom-ws': 'available' } },
       ],
     });
-    await t.mutation(internal.seed.seedConnectionModes, {});
+    const out = await t.mutation(internal.seed.cleanupLegacyModeSettings, {});
+    expect(out.matrixCellsRekeyed).toBe(3);
     const row = await t.run((ctx) =>
       ctx.db
         .query('appSettings')
@@ -215,25 +227,19 @@ describe('seedConnectionModes: absorbing pre-refactor appSettings', () => {
     const cn = parsed.rows.find((r) => r.countryCode === 'CN')!;
     expect(cn.cells).toEqual({ 'freedom-ws': 'partial', 'privacy-reality': 'blocked' });
     expect(cn.label).toBe('China');
-    const ir = parsed.rows.find((r) => r.countryCode === 'IR')!;
-    expect(ir.cells).toEqual({ 'freedom-ws': 'available' });
-
-    // Idempotent: a second seed run leaves the value byte-identical.
-    const before = row!.value;
-    await t.mutation(internal.seed.seedConnectionModes, {});
-    const again = await t.run((ctx) =>
-      ctx.db
-        .query('appSettings')
-        .withIndex('by_key', (q) => q.eq('key', 'status.censorship'))
-        .unique(),
+    expect(parsed.rows.find((r) => r.countryCode === 'IR')!.cells).toEqual({
+      'freedom-ws': 'available',
+    });
+    // Idempotent: nothing left to re-key.
+    expect((await t.mutation(internal.seed.cleanupLegacyModeSettings, {})).matrixCellsRekeyed).toBe(
+      0,
     );
-    expect(again!.value).toBe(before);
   });
 
   test('a legacy spelling that IS a live catalog slug is never re-keyed', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.seed.seedConnectionModes, {});
-    // An admin later creates a mode literally slugged 'evade' and curates a cell.
+    // An admin re-created a mode literally slugged 'evade' and curated a cell.
     await t.run((ctx) =>
       ctx.db.insert('connectionModes', {
         slug: 'evade',
@@ -250,7 +256,8 @@ describe('seedConnectionModes: absorbing pre-refactor appSettings', () => {
     await putSetting(t, 'status.censorship', {
       rows: [{ countryCode: 'RU', cells: { evade: 'available' } }],
     });
-    await t.mutation(internal.seed.seedConnectionModes, {});
+    const out = await t.mutation(internal.seed.cleanupLegacyModeSettings, {});
+    expect(out.matrixCellsRekeyed).toBe(0);
     const row = await t.run((ctx) =>
       ctx.db
         .query('appSettings')
@@ -259,40 +266,6 @@ describe('seedConnectionModes: absorbing pre-refactor appSettings', () => {
     );
     const parsed = JSON.parse(row!.value) as { rows: Array<{ cells: Record<string, string> }> };
     expect(parsed.rows[0]!.cells).toEqual({ evade: 'available' });
-  });
-});
-
-describe('migrateLegacyModeUserIds', () => {
-  test('rewrites legacy ids, leaves everything else alone, pages to completion', async () => {
-    const t = convexTest(schema, modules);
-    const legacy1 = await seedUserWithMode(t, 'evade');
-    const legacy2 = await seedUserWithMode(t, 'privacy');
-    const current = await seedUserWithMode(t, 'freedom-ws');
-    const unset = await seedUserWithMode(t, undefined);
-
-    // Page size 1 exercises the cursor loop.
-    let cursor: number | null = null;
-    let total = 0;
-    do {
-      const page: { usersUpdated: number; nextCursor: number | null } = await t.mutation(
-        internal.seed.migrateLegacyModeUserIds,
-        cursor != null ? { cursor, limit: 1 } : { limit: 1 },
-      );
-      total += page.usersUpdated;
-      cursor = page.nextCursor;
-    } while (cursor != null);
-    expect(total).toBe(2);
-
-    await t.run(async (ctx) => {
-      expect((await ctx.db.get(legacy1))!.connectionModeId).toBe('freedom-ws');
-      expect((await ctx.db.get(legacy2))!.connectionModeId).toBe('privacy-reality');
-      expect((await ctx.db.get(current))!.connectionModeId).toBe('freedom-ws');
-      expect((await ctx.db.get(unset))!.connectionModeId).toBeUndefined();
-    });
-
-    // Converged: a re-run finds nothing.
-    const again = await t.mutation(internal.seed.migrateLegacyModeUserIds, {});
-    expect(again).toEqual({ usersUpdated: 0, nextCursor: null });
   });
 });
 
@@ -341,18 +314,14 @@ describe('seedPeerGroups', () => {
 });
 
 describe('seedCutover integration', () => {
-  test('one call seeds the catalog AND runs the user rewrite to completion', async () => {
+  test('one call seeds the catalog; a second deploy is zero work', async () => {
     const t = convexTest(schema, modules);
-    const legacy = await seedUserWithMode(t, 'evade');
     const out = await t.action(internal.seed.seedCutover, {});
     expect(out.modesInserted).toBe(3);
-    expect(out.modeUsersUpdated).toBe(1);
-    await t.run(async (ctx) => {
-      expect((await ctx.db.get(legacy))!.connectionModeId).toBe('freedom-ws');
-    });
+    expect(out.modeFamiliesInserted).toBe(2);
     // Second deploy: fully converged, zero work.
     const out2 = await t.action(internal.seed.seedCutover, {});
     expect(out2.modesInserted).toBe(0);
-    expect(out2.modeUsersUpdated).toBe(0);
+    expect(out2.modeFamiliesInserted).toBe(0);
   });
 });

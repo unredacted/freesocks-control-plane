@@ -928,15 +928,16 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     const t = convexTest(schema, modules);
     const { memberTierId } = await seedTiers(t);
     const userId = await t.run(async (ctx) => {
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.privacy.squads',
-        value: JSON.stringify(['PRIVACY_SQUAD']),
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'privacy-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['PRIVACY_SQUAD'] }),
         updatedAt: Date.now(),
       });
       return ctx.db.insert('users', {
         tierId: memberTierId,
         status: 'active',
-        connectionModeId: 'privacy',
+        connectionModeId: 'privacy-reality',
         membershipExpiresAt: Date.now() + 30 * DAY,
         updatedAt: Date.now(),
       });
@@ -959,7 +960,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
       ctx.db.insert('users', {
         tierId: memberTierId,
         status: 'active',
-        connectionModeId: 'evade',
+        connectionModeId: 'freedom-ws',
         membershipExpiresAt: Date.now() + 30 * DAY,
         updatedAt: Date.now(),
       }),
@@ -1010,9 +1011,10 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
     const t = convexTest(schema, modules);
     const { memberTierId } = await seedTiers(t);
     const userId = await t.run(async (ctx) => {
-      await ctx.db.insert('appSettings', {
-        key: 'remnawave.modePlacement.privacy.squads',
-        value: JSON.stringify(['SQUAD_A', 'SQUAD_B']),
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'privacy-reality',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['SQUAD_A', 'SQUAD_B'] }),
         updatedAt: Date.now(),
       });
       const serverId = await ctx.db.insert('backendServers', {
@@ -1048,7 +1050,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
       return ctx.db.insert('users', {
         tierId: memberTierId,
         status: 'active',
-        connectionModeId: 'privacy',
+        connectionModeId: 'privacy-reality',
         membershipExpiresAt: Date.now() + 30 * DAY,
         updatedAt: Date.now(),
       });
@@ -1066,7 +1068,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
       ctx.db.insert('users', {
         tierId: memberTierId,
         status: 'active',
-        connectionModeId: 'privacy',
+        connectionModeId: 'privacy-reality',
         membershipExpiresAt: Date.now() + 30 * DAY,
         updatedAt: Date.now(),
       }),
@@ -1108,7 +1110,7 @@ describe('lifecycle push: re-enable + profile squad (Review #2/#3)', () => {
       ctx.db.insert('users', {
         tierId: memberTierId,
         status: 'active',
-        connectionModeId: 'privacy',
+        connectionModeId: 'privacy-reality',
         membershipExpiresAt: Date.now() + 30 * DAY,
         updatedAt: Date.now(),
       }),

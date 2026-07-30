@@ -22,11 +22,6 @@
  * module never reads a placement store. Admin label/description override the
  * SPA's compiled i18n (null → i18n for built-in slugs, humanized slug
  * otherwise); publicConfig ships copy + availability, never a placement.
- *
- * LEGACY (drop in deploy 2): `LEGACY_MODE_ID_MAP` + `canonicalModeId` map the
- * pre-rename ids (evade/privacy) onto their successors at the read points,
- * covering the window until seed:migrateLegacyModeUserIds has rewritten every
- * user row.
  */
 import type { DatabaseReader } from '../_generated/server';
 import type { Doc } from '../_generated/dataModel';
@@ -106,18 +101,6 @@ export const BUILT_IN_MODE_SLUGS: ReadonlySet<string> = new Set(
   DEFAULT_CONNECTION_MODES.map((m) => m.slug),
 );
 
-/** Legacy id -> current id (pre-2026-07 catalog). Read-point shim ONLY —
- *  deleted in deploy 2 once seed:migrateLegacyModeUserIds has run live. */
-export const LEGACY_MODE_ID_MAP: Readonly<Record<string, string>> = {
-  evade: 'freedom-ws',
-  privacy: 'privacy-reality',
-} as const;
-
-/** Map a possibly-legacy id onto its current spelling (identity otherwise). */
-export function canonicalModeId(v: string): string {
-  return LEGACY_MODE_ID_MAP[v] ?? v;
-}
-
 /** The wire id everywhere (users.connectionModeId, matrix cells, audits). */
 export const MODE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
@@ -176,7 +159,7 @@ async function readDefaultPointer(db: DatabaseReader): Promise<string | null> {
   if (!row) return null;
   try {
     const parsed: unknown = JSON.parse(row.value);
-    return typeof parsed === 'string' ? canonicalModeId(parsed) : null;
+    return typeof parsed === 'string' ? parsed : null;
   } catch {
     return null;
   }
