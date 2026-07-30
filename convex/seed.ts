@@ -407,6 +407,47 @@ export const seedConnectionModes = internalMutation({
       poolsMoved++;
     }
 
+    // Re-key the stored censorship matrix: cells written before the catalog
+    // rename are keyed by the PRE-RENAME mode ids, and the matrix validity
+    // filter (statusPage.sanitizeCensorshipRows) only knows live catalog
+    // slugs — without this rewrite every legacy cell silently drops from
+    // public/admin reads and the next editor save persists the loss.
+    // Canonical-key-wins on collision; a legacy spelling that IS a live
+    // catalog slug (an admin re-created it) is never touched. Idempotent, and
+    // deliberately OUTSIDE the both-tables-empty guard so a deployment that
+    // took an earlier build of this release is repaired on its next deploy.
+    const matrixRow = await ctx.db
+      .query('appSettings')
+      .withIndex('by_key', (q) => q.eq('key', 'status.censorship'))
+      .unique();
+    if (matrixRow) {
+      try {
+        const parsed: unknown = JSON.parse(matrixRow.value);
+        const rows = (parsed as { rows?: unknown })?.rows;
+        if (Array.isArray(rows)) {
+          const liveSlugs = new Set(
+            (await ctx.db.query('connectionModes').collect()).map((r) => r.slug),
+          );
+          let changed = false;
+          for (const r of rows) {
+            const cells = (r as { cells?: Record<string, unknown> })?.cells;
+            if (!cells || typeof cells !== 'object') continue;
+            for (const [legacy, current] of Object.entries(LEGACY_MODE_ID_MAP)) {
+              if (!(legacy in cells) || liveSlugs.has(legacy)) continue;
+              if (!(current in cells)) cells[current] = cells[legacy];
+              delete cells[legacy];
+              changed = true;
+            }
+          }
+          if (changed) {
+            await ctx.db.patch(matrixRow._id, { value: JSON.stringify(parsed), updatedAt: now });
+          }
+        }
+      } catch {
+        /* malformed matrix → the status page already fail-safes to empty */
+      }
+    }
+
     return { familiesInserted, modesInserted, poolsMoved };
   },
 });

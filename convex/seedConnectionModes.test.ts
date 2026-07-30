@@ -191,6 +191,75 @@ describe('seedConnectionModes: absorbing pre-refactor appSettings', () => {
     expect(pools).toHaveLength(1);
     expect(JSON.parse(pools[0]!.config)).toEqual({ squadUuids: ['sq-new'] });
   });
+
+  test('censorship-matrix cells re-key from legacy mode ids (canonical cell wins; labels survive)', async () => {
+    const t = convexTest(schema, modules);
+    await putSetting(t, 'status.censorship', {
+      rows: [
+        // Pure-legacy cells re-key onto the successors.
+        { countryCode: 'CN', label: 'China', cells: { evade: 'partial', privacy: 'blocked' } },
+        // A row that already has the canonical cell keeps it (legacy copy dropped).
+        { countryCode: 'IR', cells: { evade: 'blocked', 'freedom-ws': 'available' } },
+      ],
+    });
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    const row = await t.run((ctx) =>
+      ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', 'status.censorship'))
+        .unique(),
+    );
+    const parsed = JSON.parse(row!.value) as {
+      rows: Array<{ countryCode: string; label?: string; cells: Record<string, string> }>;
+    };
+    const cn = parsed.rows.find((r) => r.countryCode === 'CN')!;
+    expect(cn.cells).toEqual({ 'freedom-ws': 'partial', 'privacy-reality': 'blocked' });
+    expect(cn.label).toBe('China');
+    const ir = parsed.rows.find((r) => r.countryCode === 'IR')!;
+    expect(ir.cells).toEqual({ 'freedom-ws': 'available' });
+
+    // Idempotent: a second seed run leaves the value byte-identical.
+    const before = row!.value;
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    const again = await t.run((ctx) =>
+      ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', 'status.censorship'))
+        .unique(),
+    );
+    expect(again!.value).toBe(before);
+  });
+
+  test('a legacy spelling that IS a live catalog slug is never re-keyed', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    // An admin later creates a mode literally slugged 'evade' and curates a cell.
+    await t.run((ctx) =>
+      ctx.db.insert('connectionModes', {
+        slug: 'evade',
+        familySlug: 'freedom',
+        deliveryStyle: 'url',
+        label: 'Evade (new)',
+        enabled: true,
+        isFamilyDefault: false,
+        backends: ['remnawave'],
+        order: 9,
+        updatedAt: Date.now(),
+      }),
+    );
+    await putSetting(t, 'status.censorship', {
+      rows: [{ countryCode: 'RU', cells: { evade: 'available' } }],
+    });
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    const row = await t.run((ctx) =>
+      ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', 'status.censorship'))
+        .unique(),
+    );
+    const parsed = JSON.parse(row!.value) as { rows: Array<{ cells: Record<string, string> }> };
+    expect(parsed.rows[0]!.cells).toEqual({ evade: 'available' });
+  });
 });
 
 describe('migrateLegacyModeUserIds', () => {
