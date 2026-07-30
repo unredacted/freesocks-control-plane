@@ -312,6 +312,121 @@ describe('memberMode', () => {
   });
 });
 
+describe('validateMemberChoice (the pre-issuance preference gate)', () => {
+  async function seedMember(
+    t: ReturnType<typeof convexTest>,
+    backend: 'remnawave' | 'outline',
+  ): Promise<Id<'users'>> {
+    const tierId: Id<'tiers'> = await t.run((ctx) =>
+      ctx.db.insert('tiers', {
+        slug: `free-${backend}`,
+        name: 'Free',
+        backend,
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: backend === 'remnawave',
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    return t.run((ctx) =>
+      ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }),
+    );
+  }
+
+  test('accepts an enabled, bound mode on the member’s backend', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedMember(t, 'remnawave');
+    await bindPool(t, 'freedom-ws', [SQUAD]);
+    const out = await t.query(internal.connectionModes.validateMemberChoice, {
+      userId,
+      modeId: 'freedom-ws',
+    });
+    expect(out).toEqual({ ok: true, modeId: 'freedom-ws' });
+  });
+
+  test('rejects a DISABLED mode even while its pool is still bound', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedMember(t, 'remnawave');
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    await bindPool(t, 'freedom-ws', [SQUAD]);
+    await bindPool(t, 'privacy-reality', [SQUAD]);
+    await t.mutation(internal.connectionModes.updateMode, {
+      slug: 'privacy-reality',
+      enabled: false,
+    });
+    const out = await t.query(internal.connectionModes.validateMemberChoice, {
+      userId,
+      modeId: 'privacy-reality',
+    });
+    expect(out).toEqual({ ok: false, code: 'unknown_mode' });
+  });
+
+  test('rejects an unbound mode while another IS available on that backend', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedMember(t, 'remnawave');
+    await bindPool(t, 'freedom-ws', [SQUAD]);
+    const out = await t.query(internal.connectionModes.validateMemberChoice, {
+      userId,
+      modeId: 'privacy-reality', // enabled but unbound
+    });
+    expect(out).toEqual({ ok: false, code: 'unavailable' });
+  });
+
+  test('bring-up allowance: nothing available on the backend → an enabled mode still records', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedMember(t, 'remnawave');
+    const out = await t.query(internal.connectionModes.validateMemberChoice, {
+      userId,
+      modeId: 'freedom-ws',
+    });
+    expect(out).toEqual({ ok: true, modeId: 'freedom-ws' });
+  });
+
+  test('judges against the MEMBER’s backend: outline member, remnawave-only mode rejected; an outline-applicable mode accepted despite remnawave pools', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedMember(t, 'outline');
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    await bindPool(t, 'freedom-ws', [SQUAD]);
+    // remnawave-only mode → not applicable to an outline member.
+    const wrongBackend = await t.query(internal.connectionModes.validateMemberChoice, {
+      userId,
+      modeId: 'freedom-ws',
+    });
+    expect(wrongBackend).toEqual({ ok: false, code: 'unknown_mode' });
+    // An outline-applicable mode is trivially available there — the OLD
+    // cross-backend `bound` check refused it whenever any remnawave pool
+    // was bound.
+    await t.mutation(internal.connectionModes.createMode, {
+      slug: 'outline-basic',
+      label: 'Outline Basic',
+      family: 'freedom',
+      deliveryStyle: 'url',
+      backends: ['outline'],
+    });
+    const out = await t.query(internal.connectionModes.validateMemberChoice, {
+      userId,
+      modeId: 'outline-basic',
+    });
+    expect(out).toEqual({ ok: true, modeId: 'outline-basic' });
+  });
+
+  test('unknown mode id and unknown user both reject', async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedMember(t, 'remnawave');
+    const out = await t.query(internal.connectionModes.validateMemberChoice, {
+      userId,
+      modeId: 'no-such-mode',
+    });
+    expect(out).toEqual({ ok: false, code: 'unknown_mode' });
+  });
+});
+
 describe('admin CRUD', () => {
   test('first edit MATERIALIZES the compiled defaults, then applies (no stranded defaults)', async () => {
     const t = convexTest(schema, modules);

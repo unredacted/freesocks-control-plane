@@ -123,6 +123,15 @@ describe('cleanupLegacyModeSettings', () => {
     await putSetting(t, 'connectionMode.default', 'freedom-ws');
     await putSetting(t, 'remnawave.nodePlacement.usersOnline_weight', 1);
     await putSetting(t, 'site.bannerEnabled', false);
+    // A migrated deployment: the pool already lives in the new store.
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['sq-ws'] }),
+        updatedAt: Date.now(),
+      }),
+    );
 
     const out = await t.mutation(internal.seed.cleanupLegacyModeSettings, {});
     expect(out.deleted).toBe(6);
@@ -160,6 +169,103 @@ describe('cleanupLegacyModeSettings', () => {
     await seedUserWithMode(t, 'freedom-ws');
     await seedUserWithMode(t, undefined);
     expect((await t.mutation(internal.seed.cleanupLegacyModeSettings, {})).deleted).toBe(0);
+  });
+
+  test('refuses while a non-empty pool was never absorbed into modePlacements', async () => {
+    const t = convexTest(schema, modules);
+    // A pool under the LEGACY spelling whose successor mode is live (compiled
+    // defaults count — this is exactly the skipped-deploy-1 disaster shape).
+    await putSetting(t, 'remnawave.modePlacement.evade.squads', ['sq-only-copy']);
+    await expect(t.mutation(internal.seed.cleanupLegacyModeSettings, {})).rejects.toThrow(
+      /never absorbed/,
+    );
+    // Nothing deleted on the refused run.
+    expect(await t.run((ctx) => ctx.db.query('appSettings').collect())).toHaveLength(1);
+    // Once the pool exists in the new store, cleanup proceeds.
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: ['sq-only-copy'] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    expect((await t.mutation(internal.seed.cleanupLegacyModeSettings, {})).deleted).toBe(1);
+  });
+
+  test('an empty pool, or one whose mode left the catalog, does not block', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    // Empty pool: nothing to lose.
+    await putSetting(t, 'remnawave.modePlacement.freedom-ws.squads', []);
+    // Non-empty pool for a mode the admin deleted from the catalog: dead either way.
+    await t.mutation(internal.connectionModes.removeMode, { slug: 'privacy-reality' });
+    await putSetting(t, 'remnawave.modePlacement.privacy.squads', ['sq-dead']);
+    expect((await t.mutation(internal.seed.cleanupLegacyModeSettings, {})).deleted).toBe(2);
+  });
+
+  test('re-keys censorship-matrix cells still stored under a pre-rename id', async () => {
+    const t = convexTest(schema, modules);
+    await putSetting(t, 'status.censorship', {
+      rows: [
+        { countryCode: 'CN', label: 'China', cells: { evade: 'partial', privacy: 'blocked' } },
+        // Canonical cell wins over the legacy copy.
+        { countryCode: 'IR', cells: { evade: 'blocked', 'freedom-ws': 'available' } },
+      ],
+    });
+    const out = await t.mutation(internal.seed.cleanupLegacyModeSettings, {});
+    expect(out.matrixCellsRekeyed).toBe(3);
+    const row = await t.run((ctx) =>
+      ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', 'status.censorship'))
+        .unique(),
+    );
+    const parsed = JSON.parse(row!.value) as {
+      rows: Array<{ countryCode: string; label?: string; cells: Record<string, string> }>;
+    };
+    const cn = parsed.rows.find((r) => r.countryCode === 'CN')!;
+    expect(cn.cells).toEqual({ 'freedom-ws': 'partial', 'privacy-reality': 'blocked' });
+    expect(cn.label).toBe('China');
+    expect(parsed.rows.find((r) => r.countryCode === 'IR')!.cells).toEqual({
+      'freedom-ws': 'available',
+    });
+    // Idempotent: nothing left to re-key.
+    expect((await t.mutation(internal.seed.cleanupLegacyModeSettings, {})).matrixCellsRekeyed).toBe(
+      0,
+    );
+  });
+
+  test('a legacy spelling that IS a live catalog slug is never re-keyed', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.seed.seedConnectionModes, {});
+    // An admin re-created a mode literally slugged 'evade' and curated a cell.
+    await t.run((ctx) =>
+      ctx.db.insert('connectionModes', {
+        slug: 'evade',
+        familySlug: 'freedom',
+        deliveryStyle: 'url',
+        label: 'Evade (new)',
+        enabled: true,
+        isFamilyDefault: false,
+        backends: ['remnawave'],
+        order: 9,
+        updatedAt: Date.now(),
+      }),
+    );
+    await putSetting(t, 'status.censorship', {
+      rows: [{ countryCode: 'RU', cells: { evade: 'available' } }],
+    });
+    const out = await t.mutation(internal.seed.cleanupLegacyModeSettings, {});
+    expect(out.matrixCellsRekeyed).toBe(0);
+    const row = await t.run((ctx) =>
+      ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', 'status.censorship'))
+        .unique(),
+    );
+    const parsed = JSON.parse(row!.value) as { rows: Array<{ cells: Record<string, string> }> };
+    expect(parsed.rows[0]!.cells).toEqual({ evade: 'available' });
   });
 });
 

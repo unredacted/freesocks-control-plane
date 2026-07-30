@@ -14,6 +14,7 @@ import {
   CONNECTION_MODE_DEFAULT_KEY,
   DEFAULT_CONNECTION_MODES,
   DEFAULT_CONNECTION_MODE_FAMILIES,
+  resolveModeCatalog,
 } from './lib/connectionModes';
 
 /** Insert the default-free tier if absent; return its id. */
@@ -292,9 +293,12 @@ export const seedConnectionModes = internalMutation({
   },
 });
 
-// The pre-rename mode ids (dropped from the wire 2026-07-28). Only the cleanup
-// guard below still knows them.
-const LEGACY_MODE_IDS = ['evade', 'privacy'] as const;
+// The pre-rename mode ids (dropped from the wire 2026-07-28) and their
+// successors. Only the cleanup mutation below still knows them.
+const LEGACY_MODE_ID_SUCCESSORS: Readonly<Record<string, string>> = {
+  evade: 'freedom-ws',
+  privacy: 'privacy-reality',
+};
 
 /**
  * ONE-SHOT operator cleanup (deploy 2 of the DB-driven mode catalog): delete
@@ -304,19 +308,26 @@ const LEGACY_MODE_IDS = ['evade', 'privacy'] as const;
  *     `connectionMode.default` is KEPT (still the live default-mode store),
  *   - `connectionModeFamily.*` family overrides,
  *   - `remnawave.modePlacement.*` squad pools (now `modePlacements` rows).
+ * It also re-keys any censorship-matrix cells still stored under a pre-rename
+ * mode id (belt and braces for a deployment that ran an EARLY build of the
+ * migration release, before its seed learned the matrix rewrite).
  *
- * GUARDED: refuses while any user still holds a pre-rename mode id — that
- * means this deployment never ran the deploy-1 migration (it jumped straight
- * to post-shim code); deploy the 2026-07-28 release first so its seed rewrites
- * those rows. Idempotent: a re-run deletes nothing and returns 0.
+ * GUARDED, twice — both refusals mean the deploy-1 migration never ran here
+ * (this deployment jumped straight to post-shim code); deploy the 2026-07-28
+ * release first:
+ *   1. refuses while any user still holds a pre-rename mode id;
+ *   2. refuses while a non-empty appSettings squad pool has NO modePlacements
+ *      row for its (successor) slug even though that mode is still in the
+ *      catalog — deleting it would destroy the only copy of the pool.
+ * Idempotent: a re-run deletes nothing and returns 0.
  *
  * Run through the stack's deployer container:
  *   bunx convex run seed:cleanupLegacyModeSettings '{}'
  */
 export const cleanupLegacyModeSettings = internalMutation({
   args: {},
-  handler: async (ctx): Promise<{ deleted: number }> => {
-    for (const legacyId of LEGACY_MODE_IDS) {
+  handler: async (ctx): Promise<{ deleted: number; matrixCellsRekeyed: number }> => {
+    for (const legacyId of Object.keys(LEGACY_MODE_ID_SUCCESSORS)) {
       const holder = await ctx.db
         .query('users')
         .withIndex('by_connection_mode', (q) => q.eq('connectionModeId', legacyId))
@@ -329,6 +340,84 @@ export const cleanupLegacyModeSettings = internalMutation({
         );
       }
     }
+
+    const now = Date.now();
+    // The RESOLVED catalog (compiled-defaults fallback included): on a
+    // deployment whose tables are still empty, the defaults are what issuance
+    // resolves against, so a pool for a default slug is still load-bearing.
+    const catalogSlugs = new Set((await resolveModeCatalog(ctx.db)).modes.map((m) => m.id));
+
+    // Guard 2: verify every still-relevant squad pool was actually absorbed
+    // into `modePlacements` before deleting its appSettings copy. A pool for a
+    // mode the admin has since DELETED from the catalog is dead either way and
+    // does not block; an emptied/absent pool has nothing to lose.
+    const POOL_PREFIX = 'remnawave.modePlacement.';
+    const POOL_SUFFIX = '.squads';
+    const poolRows = await ctx.db
+      .query('appSettings')
+      .withIndex('by_key', (q) =>
+        q.gte('key', POOL_PREFIX).lt('key', POOL_PREFIX.slice(0, -1) + '/'),
+      )
+      .collect();
+    for (const row of poolRows) {
+      if (!row.key.endsWith(POOL_SUFFIX)) continue;
+      let pool: unknown;
+      try {
+        pool = JSON.parse(row.value);
+      } catch {
+        continue; // malformed → nothing to lose
+      }
+      if (!Array.isArray(pool) || !pool.some((s) => typeof s === 'string' && s.trim())) continue;
+      const rawId = row.key.slice(POOL_PREFIX.length, -POOL_SUFFIX.length);
+      const slug = LEGACY_MODE_ID_SUCCESSORS[rawId] ?? rawId;
+      if (!catalogSlugs.has(slug)) continue;
+      const transferred = await ctx.db
+        .query('modePlacements')
+        .withIndex('by_mode_backend', (q) => q.eq('modeSlug', slug).eq('backend', 'remnawave'))
+        .unique();
+      if (!transferred) {
+        throw new Error(
+          `refusing to clean up: the appSettings squad pool for "${rawId}" was never absorbed ` +
+            `into modePlacements (mode "${slug}" has no row) — deleting it would destroy the ` +
+            'only copy. Deploy the 2026-07-28 migration release first, or bind the pool via ' +
+            'Admin -> Remnawave / the placement route before cleaning up.',
+        );
+      }
+    }
+
+    // Re-key censorship-matrix cells still stored under a pre-rename id
+    // (canonical-cell-wins; a legacy spelling that IS a live catalog slug is
+    // never touched). The migration release's seed does this too — this covers
+    // deployments that ran an early build of it.
+    let matrixCellsRekeyed = 0;
+    const matrixRow = await ctx.db
+      .query('appSettings')
+      .withIndex('by_key', (q) => q.eq('key', 'status.censorship'))
+      .unique();
+    if (matrixRow) {
+      try {
+        const parsed: unknown = JSON.parse(matrixRow.value);
+        const rows = (parsed as { rows?: unknown })?.rows;
+        if (Array.isArray(rows)) {
+          for (const r of rows) {
+            const cells = (r as { cells?: Record<string, unknown> })?.cells;
+            if (!cells || typeof cells !== 'object') continue;
+            for (const [legacy, current] of Object.entries(LEGACY_MODE_ID_SUCCESSORS)) {
+              if (!(legacy in cells) || catalogSlugs.has(legacy)) continue;
+              if (!(current in cells)) cells[current] = cells[legacy];
+              delete cells[legacy];
+              matrixCellsRekeyed++;
+            }
+          }
+          if (matrixCellsRekeyed > 0) {
+            await ctx.db.patch(matrixRow._id, { value: JSON.stringify(parsed), updatedAt: now });
+          }
+        }
+      } catch {
+        /* malformed matrix → the status page already fail-safes to empty */
+      }
+    }
+
     const prefixes = ['connectionMode.', 'connectionModeFamily.', 'remnawave.modePlacement.'];
     let deleted = 0;
     for (const prefix of prefixes) {
@@ -342,7 +431,7 @@ export const cleanupLegacyModeSettings = internalMutation({
         deleted++;
       }
     }
-    return { deleted };
+    return { deleted, matrixCellsRekeyed };
   },
 });
 
