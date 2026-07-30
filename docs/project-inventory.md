@@ -81,10 +81,12 @@ both levels) binds a **pool of per-node squads**
 node** of that pool by node telemetry (`usersOnline` + optional realtime bandwidth, cached in
 `remnawaveNodeStats` by the healthcheck cron); the pick is persisted so tier pushes never re-home
 a live key. Remnawave specifics moved behind a namespaced admin surface — **Admin → Remnawave**
-(`PATCH /api/v1/admin/remnawave/mode-placements` [`admin:servers:write`],
-`GET /api/v1/admin/remnawave/node-stats` [`admin:servers:read`]) — while the generic mode
-catalog (labels/description/default) stays at `PATCH /api/v1/admin/connection-modes`
-(`admin:settings:write`). A one-time cutover migration copied live subs/users/settings onto
+(placement binding, now `PATCH /api/v1/admin/backends/remnawave/mode-placements`
+[`admin:servers:write`] — the original `/admin/remnawave/mode-placements` path this redesign
+introduced was removed 2026-07-30; `GET /api/v1/admin/remnawave/node-stats`
+[`admin:servers:read`]) — while the mode catalog moved to the per-entity
+`/api/v1/admin/connection-modes` CRUD routes (`admin:settings:write`; the bulk PATCH this
+paragraph originally described is gone). A one-time cutover migration copied live subs/users/settings onto
 the new fields, after which the old fields (`subscriptions.remnawaveSquadUuid`,
 `users.connectionProfileId`, `tiers.remnawaveSquadUuid`, the `remnawaveSquadStats` table) + the
 migration itself were **removed** (Phase 5b). See `docs/backends.md` § "Node placement".
