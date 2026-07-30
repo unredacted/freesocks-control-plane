@@ -336,9 +336,9 @@ How a placement is chosen for Remnawave (all Remnawave-local, under
   config (Remnawave: `{"squadUuids": [...]}`). Bind it in **Admin → Remnawave**
   (one UUID per line, per mode) or via
   `PATCH /api/v1/admin/backends/remnawave/mode-placements` (scope
-  `admin:servers:write`); the legacy `PATCH /api/v1/admin/remnawave/mode-placements`
-  stays a byte-compatible ALIAS for the Ansible role's panel-bootstrap until the
-  role migrates. Per mode the patch composes three ops (applied replace → add →
+  `admin:servers:write`) — the route the Ansible role's panel-bootstrap PATCHes
+  (its legacy `/admin/remnawave/mode-placements` alias was removed 2026-07-30
+  once the role converged). Per mode the patch composes three ops (applied replace → add →
   remove): `squadUuids` (full replace; `[]` clears), `addSquadUuids` (union,
   deduped), and `removeSquadUuids` — the add/remove forms exist so a node deploy
   can append or detach just ITSELF without knowing the rest of the pool.

@@ -445,7 +445,7 @@ export const deleteTier = internalMutation({
  *    converge can adjust an already-seeded tier without disturbing its other
  *    entitlements.
  * Audited as `admin.tier.upsert`. (Node placement is bound separately, per
- * connection mode, via /api/v1/admin/remnawave/mode-placements — never here.)
+ * connection mode, via /api/v1/admin/backends/{backend}/mode-placements — never here.)
  */
 export const upsertTierBySlug = internalMutation({
   args: {

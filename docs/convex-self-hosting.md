@@ -211,11 +211,10 @@ members to carry). On a fresh backend:
    through the deployer container (see `docs/beta-deploy.md` §"One-off
    functions").
 
-   The Ansible role's panel-bootstrap converges the squad pools through the
-   legacy `/admin/remnawave/mode-placements` path — a byte-compatible alias of
-   `/admin/backends/remnawave/mode-placements` that also still maps the role's
-   pre-rename mode ids (`evade`/`privacy`) onto the current slugs; the alias
-   (and that mapping) lives until the role migrates to the generic route.
+   The Ansible role's panel-bootstrap converges the squad pools through
+   `PATCH /admin/backends/remnawave/mode-placements` (requires role
+   `b082c2b`+; the legacy `/admin/remnawave/mode-placements` alias and its
+   pre-rename id mapping were removed 2026-07-30 after both stacks converged).
    Enable `freedom-reality` in **Admin → Connection modes** once its pool is
    bound.
 
