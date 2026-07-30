@@ -129,6 +129,9 @@ describe('sendUmamiEvent', () => {
     const [url, init] = spy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://analytics.example.org/api/send');
     expect(init.method).toBe('POST');
+    // SSRF guard: the denylist ran against the configured host at save time,
+    // so the relay must never follow a redirect off it.
+    expect(init.redirect).toBe('manual');
     const headers = init.headers as Record<string, string>;
     expect(headers['content-type']).toBe('application/json');
     expect(headers['user-agent']).toBe('TestUA/1.0');

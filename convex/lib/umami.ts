@@ -155,6 +155,12 @@ export async function sendUmamiEvent(args: UmamiEventArgs): Promise<void> {
       headers,
       body: JSON.stringify(payload),
       signal: controller.signal,
+      // Never follow redirects: the SSRF denylist (checkInfraUrl) ran against
+      // the CONFIGURED host at save time, so a permitted host answering 30x
+      // could otherwise steer the relay (and the opt-in client-IP header) to a
+      // loopback/link-local/metadata address it couldn't register directly.
+      // The response is never read, so dropping the redirect loses nothing.
+      redirect: 'manual',
     });
   } catch {
     // Fail-soft by design: a lost pageview is the intended failure mode.
