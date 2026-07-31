@@ -7,6 +7,7 @@ import {
   ANALYTICS_DEFAULTS,
   publicAnalytics,
   resolveAnalyticsConfig,
+  sanitizeGeoMode,
   sanitizeIpHeaderName,
   sanitizeUmamiUrl,
   sanitizeWebsiteId,
@@ -99,6 +100,16 @@ describe('sanitizeIpHeaderName', () => {
   });
 });
 
+describe('sanitizeGeoMode', () => {
+  test('coarse passes; everything else falls back to full', () => {
+    expect(sanitizeGeoMode('coarse')).toBe('coarse');
+    expect(sanitizeGeoMode('full')).toBe('full');
+    expect(sanitizeGeoMode('city')).toBe('full');
+    expect(sanitizeGeoMode(undefined)).toBe('full');
+    expect(sanitizeGeoMode(42)).toBe('full');
+  });
+});
+
 describe('resolveAnalyticsConfig', () => {
   test('defaults (no rows): disabled, empty targets, forwardIp off', async () => {
     const t = convexTest(schema, modules);
@@ -135,6 +146,7 @@ describe('publicAnalytics', () => {
     websiteId: UUID,
     forwardIp: false,
     ipHeader: '',
+    geoMode: 'full' as const,
   };
 
   test('effectively enabled only when the toggle AND both targets are set', () => {
@@ -158,6 +170,7 @@ describe('setAnalyticsConfig', () => {
       websiteId: UUID.toUpperCase(),
       forwardIp: false,
       ipHeader: 'CF-Connecting-IP',
+      geoMode: 'coarse',
       umamiUrlHash: 'deadbeef',
     });
     expect(clean).toEqual({
@@ -166,6 +179,7 @@ describe('setAnalyticsConfig', () => {
       websiteId: UUID,
       forwardIp: false,
       ipHeader: 'cf-connecting-ip',
+      geoMode: 'coarse',
     });
     const cfg = await t.run((ctx) => resolveAnalyticsConfig(ctx.db));
     expect(cfg).toEqual(clean);

@@ -235,7 +235,15 @@
     websiteId: string;
     forwardIp: boolean;
     ipHeader: string;
-  }>({ enabled: false, umamiUrl: '', websiteId: '', forwardIp: false, ipHeader: '' });
+    geoMode: 'full' | 'coarse';
+  }>({
+    enabled: false,
+    umamiUrl: '',
+    websiteId: '',
+    forwardIp: false,
+    ipHeader: '',
+    geoMode: 'full',
+  });
   let aInit = $state(false);
   $effect(() => {
     if (analytics.data && !aInit) {
@@ -921,16 +929,54 @@
               checked={aDraft.forwardIp}
               onCheckedChange={(v) => (aDraft = { ...aDraft, forwardIp: v === true })}
             />
-            <span>Forward the visitor's IP address to Umami (country stats)</span>
+            <span>Send visitor location to Umami (geo stats)</span>
           </label>
           <p class="text-xs text-muted-foreground">
             Off (default): Umami sees only this server's IP, so no geo data and maximum privacy. On:
-            the visitor IP is sent per request inside the event payload (requires Umami v2.17 or
-            newer; no Umami-side configuration, so other sites on a shared instance are unaffected).
-            Umami stores a daily-rotating hash, never the raw IP; verify your Umami version and its
-            reverse proxy's access logs before enabling. See docs/privacy.md.
+            location is reported per request with no Umami-side configuration, so other sites on a
+            shared instance are unaffected. See docs/privacy.md.
           </p>
           {#if aDraft.forwardIp}
+            <div>
+              <label
+                class="text-xs text-muted-foreground mb-1 block"
+                for="analytics-geo-mode-trigger"
+              >
+                Location detail
+              </label>
+              <Select.Root
+                type="single"
+                value={aDraft.geoMode}
+                onValueChange={(v) =>
+                  (aDraft = { ...aDraft, geoMode: v === 'coarse' ? 'coarse' : 'full' })}
+              >
+                <Select.Trigger id="analytics-geo-mode-trigger" class="w-96">
+                  {aDraft.geoMode === 'coarse'
+                    ? 'Country and region only (IP never sent, no city)'
+                    : 'Full (IP-based: city + real unique-visitor counts)'}
+                </Select.Trigger>
+                <Select.Content>
+                  <Select.Item value="full">
+                    Full (IP-based: city + real unique-visitor counts)
+                  </Select.Item>
+                  <Select.Item value="coarse">
+                    Country and region only (IP never sent, no city)
+                  </Select.Item>
+                </Select.Content>
+              </Select.Root>
+              <p class="text-xs text-muted-foreground mt-1">
+                Full: the visitor IP is embedded in the event (requires Umami v2.17 or newer); Umami
+                hashes it with a daily-rotating salt and stores derived country/region/city, never
+                the raw IP. Country and region only: the relay copies the Cloudflare edge's geo
+                headers instead and the IP never leaves this server; city is never sent, and
+                unique-visitor counts fall back to per-device approximations. Region needs the free
+                "Add visitor location headers" Managed Transform enabled on your Cloudflare zone
+                (country works out of the box). If your Umami instance is itself behind Cloudflare,
+                disable IP geolocation on that zone or the relayed location gets overwritten.
+              </p>
+            </div>
+          {/if}
+          {#if aDraft.forwardIp && aDraft.geoMode === 'full'}
             <div>
               <label
                 class="text-xs text-muted-foreground mb-1 block"

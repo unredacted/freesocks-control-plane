@@ -201,6 +201,21 @@ in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
   session hash and stores derived geo, not a raw IP column — but **verify this
   against your own Umami version**, and make sure Umami's own fronting proxy
   does not access-log request bodies.
+- **Location detail is operator-selectable, down to "no city, no IP, ever."**
+  With forwarding on, `analytics.geoMode` picks the granularity: **`full`**
+  (the default) sends `payload.ip` as above — Umami derives country, region,
+  and city, and keeps real per-visitor uniqueness. **`coarse`** never sends the
+  IP at all: the relay copies the fronting Cloudflare edge's `cf-ipcountry` +
+  `cf-region-code` request headers onto the outbound Umami call (Umami reads
+  provider geo headers when `payload.ip` is absent), and the city header is
+  **never** sent — city is structurally absent from the operator's Umami, and
+  the visitor IP never leaves the backend. Costs: unique-visitor counts
+  degrade to per-user-agent buckets (Umami hashes the request IP, which is
+  then always the backend's); region requires the free Cloudflare "Add visitor
+  location headers" Managed Transform on the zone; and an Umami that is
+  itself behind Cloudflare with IP geolocation enabled will overwrite the
+  relayed `cf-ipcountry` — disable geolocation on that zone. CF's non-country
+  sentinels (`XX` unknown, `T1` Tor) are dropped rather than recorded.
 - **The IP the relay forwards is operator-selectable — analytics-only trust.**
   By default it is the fail-closed `resolveClientIp` (the `CF_FRONTED` /
   `TRUSTED_PROXY_HOPS` env trust that also feeds rate limiting — right-anchored

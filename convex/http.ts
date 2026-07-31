@@ -427,12 +427,25 @@ http.route({
         hostname: req.headers.get('x-forwarded-host') ?? req.headers.get('host'),
         // IP source: the operator-chosen single-IP CDN header (analytics-only
         // trust — never feeds resolveClientIp/rate limits) or, by default, the
-        // fail-closed resolveClientIp. sanitizeIp guards either value.
-        clientIp: cfg.forwardIp
-          ? cfg.ipHeader
-            ? req.headers.get(cfg.ipHeader)
-            : resolveClientIp(req)
-          : null,
+        // fail-closed resolveClientIp. sanitizeIp guards either value. Coarse
+        // geoMode sends country+region headers INSTEAD of any IP (see below).
+        clientIp:
+          cfg.forwardIp && cfg.geoMode === 'full'
+            ? cfg.ipHeader
+              ? req.headers.get(cfg.ipHeader)
+              : resolveClientIp(req)
+            : null,
+        // Coarse geo: copy the fronting Cloudflare edge's geo headers (country
+        // always; region needs the free "visitor location headers" Managed
+        // Transform on the zone). The visitor IP never leaves this backend and
+        // the city header is never sent.
+        geo:
+          cfg.forwardIp && cfg.geoMode === 'coarse'
+            ? {
+                country: req.headers.get('cf-ipcountry'),
+                region: req.headers.get('cf-region-code'),
+              }
+            : null,
       });
     }
     return json({ ok: true }, 202);
@@ -2709,6 +2722,7 @@ http.route({
       websiteId?: string;
       forwardIp?: boolean;
       ipHeader?: string;
+      geoMode?: string;
     }>(req);
     // Hash the CLEANED url (what will actually be stored/used) — sanitize here
     // with the same function the mutation applies, so the hash matches.
@@ -2722,6 +2736,7 @@ http.route({
           websiteId: typeof body.websiteId === 'string' ? body.websiteId : '',
           forwardIp: body.forwardIp === true,
           ipHeader: typeof body.ipHeader === 'string' ? body.ipHeader : '',
+          geoMode: typeof body.geoMode === 'string' ? body.geoMode : 'full',
           umamiUrlHash: cleanUrl === '' ? '' : (await sha256Hex(cleanUrl)).slice(0, 8),
           actorAdminId: admin.adminUserId,
         }),

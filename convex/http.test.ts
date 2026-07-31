@@ -1500,6 +1500,7 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
       websiteId: string;
       forwardIp?: boolean;
       ipHeader?: string;
+      geoMode?: string;
     },
   ) {
     await t.run(async (ctx) => {
@@ -1509,6 +1510,7 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
         ['analytics.websiteId', cfg.websiteId],
         ['analytics.forwardIp', cfg.forwardIp === true],
         ['analytics.ipHeader', cfg.ipHeader ?? ''],
+        ['analytics.geoMode', cfg.geoMode ?? 'full'],
       ];
       for (const [key, value] of rows) {
         await ctx.db.insert('appSettings', {
@@ -1689,6 +1691,39 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
     expect(withoutHeader.payload).not.toHaveProperty('ip');
   });
 
+  test('coarse geoMode: geo headers out, no payload.ip, city never sent', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, {
+      enabled: true,
+      umamiUrl: 'https://umami.example',
+      websiteId: A_UUID,
+      forwardIp: true,
+      geoMode: 'coarse',
+    });
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+    await t.fetch(
+      '/api/v1/telemetry',
+      beacon(
+        { route: '/status' },
+        {
+          'cf-ipcountry': 'IR',
+          'cf-region-code': 'THR',
+          'cf-ipcity': 'Tehran', // inbound city must NOT be forwarded
+          'x-forwarded-for': '203.0.113.60',
+        },
+      ),
+    );
+    const [, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['cf-ipcountry']).toBe('IR');
+    expect(headers['cf-region-code']).toBe('THR');
+    expect(headers['cf-ipcity']).toBeUndefined();
+    const body = JSON.parse(init.body as string) as { payload: Record<string, string> };
+    expect(body.payload).not.toHaveProperty('ip');
+    expect(JSON.stringify(init.body)).not.toContain('203.0.113.60');
+  });
+
   test('per-IP throttle: second POST past the policy is 429 with no outbound', async () => {
     const t = convexTest(schema, modules);
     await seedAnalytics(t, { enabled: true, umamiUrl: 'https://umami.example', websiteId: A_UUID });
@@ -1736,6 +1771,7 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
       websiteId: '',
       forwardIp: false,
       ipHeader: '',
+      geoMode: 'full',
     });
 
     expect(
@@ -1784,6 +1820,7 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
       websiteId: '',
       forwardIp: false,
       ipHeader: '',
+      geoMode: 'full',
     });
   });
 

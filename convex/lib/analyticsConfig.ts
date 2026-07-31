@@ -41,6 +41,18 @@ export interface AnalyticsConfig {
    * the web (Caddy) service — the stock Caddyfile strips that header.
    */
   ipHeader: string;
+  /**
+   * Location granularity when forwardIp is on. 'full' (default) = the visitor
+   * IP is sent as payload.ip: Umami derives country/region/CITY and keeps real
+   * per-visitor uniqueness. 'coarse' = the IP is NEVER sent; the relay instead
+   * copies the fronting Cloudflare edge's inbound geo headers (cf-ipcountry +
+   * cf-region-code — region needs the free "Add visitor location headers"
+   * Managed Transform on the zone) onto the outbound Umami request, which
+   * Umami reads when payload.ip is absent. City is structurally absent in
+   * coarse mode; unique-visitor counts degrade to per-user-agent buckets
+   * (Umami hashes the request IP, which is then always this backend's).
+   */
+  geoMode: 'full' | 'coarse';
 }
 
 export const ANALYTICS_DEFAULTS: AnalyticsConfig = {
@@ -49,6 +61,7 @@ export const ANALYTICS_DEFAULTS: AnalyticsConfig = {
   websiteId: '',
   forwardIp: false,
   ipHeader: '',
+  geoMode: 'full',
 };
 
 const MAX_URL = 512;
@@ -95,6 +108,11 @@ export function sanitizeIpHeaderName(v: unknown): string {
   return /^[a-z0-9-]{1,64}$/.test(s) ? s : '';
 }
 
+/** Location granularity; anything unrecognized falls back to 'full'. */
+export function sanitizeGeoMode(v: unknown): 'full' | 'coarse' {
+  return v === 'coarse' ? 'coarse' : 'full';
+}
+
 export async function resolveAnalyticsConfig(db: DatabaseReader): Promise<AnalyticsConfig> {
   const read = async (key: string): Promise<unknown> => {
     const row = await db
@@ -116,6 +134,7 @@ export async function resolveAnalyticsConfig(db: DatabaseReader): Promise<Analyt
     websiteId: sanitizeWebsiteId(await read('analytics.websiteId')),
     forwardIp: typeof forwardIpVal === 'boolean' ? forwardIpVal : ANALYTICS_DEFAULTS.forwardIp,
     ipHeader: sanitizeIpHeaderName(await read('analytics.ipHeader')),
+    geoMode: sanitizeGeoMode(await read('analytics.geoMode')),
   };
 }
 

@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   resolveRoute,
+  sanitizeCountryCode,
   sanitizeHostname,
   sanitizeIp,
   sanitizeLanguage,
   sanitizeReferrer,
+  sanitizeRegionCode,
   sanitizeScreen,
   sanitizeUserAgent,
   sendUmamiEvent,
@@ -125,6 +127,7 @@ describe('sendUmamiEvent', () => {
       userAgent: 'TestUA/1.0',
       hostname: 'freesocks.org:443',
       clientIp: null,
+      geo: null,
     });
     expect(spy).toHaveBeenCalledTimes(1);
     const [url, init] = spy.mock.calls[0] as [string, RequestInit];
@@ -160,6 +163,7 @@ describe('sendUmamiEvent', () => {
       userAgent: 'UA',
       hostname: 'freesocks.org',
       clientIp: '203.0.113.7',
+      geo: null,
     });
     const [, init] = spy.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as { payload: Record<string, string> };
@@ -186,6 +190,7 @@ describe('sendUmamiEvent', () => {
       userAgent: 'UA',
       hostname: null,
       clientIp: 'garbage value',
+      geo: null,
     });
     const body = JSON.parse((spy.mock.calls[0] as [string, RequestInit])[1].body as string) as {
       payload: Record<string, string>;
@@ -209,6 +214,7 @@ describe('sendUmamiEvent', () => {
       userAgent: 'UA\r\nX-Injected: 1',
       hostname: 'bad host',
       clientIp: null,
+      geo: null,
     });
     const [, init] = spy.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as { payload: Record<string, string> };
@@ -233,6 +239,7 @@ describe('sendUmamiEvent', () => {
         userAgent: 'UA',
         hostname: null,
         clientIp: null,
+        geo: null,
       }),
     ).resolves.toBeUndefined();
 
@@ -244,6 +251,7 @@ describe('sendUmamiEvent', () => {
         userAgent: 'UA',
         hostname: null,
         clientIp: null,
+        geo: null,
       }),
     ).resolves.toBeUndefined();
 
@@ -263,6 +271,7 @@ describe('sendUmamiEvent', () => {
         userAgent: 'UA',
         hostname: null,
         clientIp: null,
+        geo: null,
       }),
     ).resolves.toBeUndefined();
   }, 10_000);
@@ -276,6 +285,7 @@ describe('sendUmamiEvent', () => {
       userAgent: 'UA',
       hostname: null,
       clientIp: null,
+      geo: null,
     });
     await sendUmamiEvent({
       cfg: { umamiUrl: 'https://a.example', websiteId: '' },
@@ -283,6 +293,7 @@ describe('sendUmamiEvent', () => {
       userAgent: 'UA',
       hostname: null,
       clientIp: null,
+      geo: null,
     });
     expect(spy).not.toHaveBeenCalled();
   });
@@ -296,10 +307,88 @@ describe('sendUmamiEvent', () => {
       userAgent: null,
       hostname: null,
       clientIp: null,
+      geo: null,
     });
     const body = JSON.parse((spy.mock.calls[0] as [string, RequestInit])[1].body as string) as {
       payload: Record<string, string>;
     };
     expect(body.payload.url).toBe('/other');
+  });
+});
+
+describe('coarse geo mode', () => {
+  test('sanitizeCountryCode / sanitizeRegionCode', () => {
+    expect(sanitizeCountryCode('us')).toBe('US');
+    expect(sanitizeCountryCode(' IR ')).toBe('IR');
+    expect(sanitizeCountryCode('XX')).toBe(''); // CF unknown sentinel
+    expect(sanitizeCountryCode('T1')).toBe(''); // CF Tor sentinel
+    expect(sanitizeCountryCode('USA')).toBe('');
+    expect(sanitizeCountryCode('u\r\ns')).toBe('');
+    expect(sanitizeCountryCode(null)).toBe('');
+    expect(sanitizeRegionCode('mo')).toBe('MO');
+    expect(sanitizeRegionCode('75')).toBe('75');
+    expect(sanitizeRegionCode('evil header')).toBe('');
+    expect(sanitizeRegionCode('a'.repeat(20))).toBe('');
+    expect(sanitizeRegionCode(null)).toBe('');
+  });
+
+  test('sends country+region as geo headers, NEVER a city header, NEVER payload.ip', async () => {
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+    await sendUmamiEvent({
+      cfg: CFG,
+      input: { route: '/status' },
+      userAgent: 'UA',
+      hostname: 'freesocks.org',
+      // Even if a caller passes an IP, coarse geo wins: payload.ip would make
+      // Umami skip the geo headers entirely.
+      clientIp: '203.0.113.7',
+      geo: { country: 'ir', region: 'thr' },
+    });
+    const [, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['cf-ipcountry']).toBe('IR');
+    expect(headers['cf-region-code']).toBe('THR');
+    expect(headers['cf-ipcity']).toBeUndefined();
+    const body = JSON.parse(init.body as string) as { payload: Record<string, string> };
+    expect(body.payload).not.toHaveProperty('ip');
+  });
+
+  test('junk/sentinel country drops BOTH geo headers (region never rides alone)', async () => {
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+    await sendUmamiEvent({
+      cfg: CFG,
+      input: { route: '/' },
+      userAgent: 'UA',
+      hostname: null,
+      clientIp: null,
+      geo: { country: 'XX', region: 'MO' },
+    });
+    const headers = (spy.mock.calls[0] as [string, RequestInit])[1].headers as Record<
+      string,
+      string
+    >;
+    expect(headers['cf-ipcountry']).toBeUndefined();
+    expect(headers['cf-region-code']).toBeUndefined();
+  });
+
+  test('country without region sends the country header alone', async () => {
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+    await sendUmamiEvent({
+      cfg: CFG,
+      input: { route: '/' },
+      userAgent: 'UA',
+      hostname: null,
+      clientIp: null,
+      geo: { country: 'DE', region: null },
+    });
+    const headers = (spy.mock.calls[0] as [string, RequestInit])[1].headers as Record<
+      string,
+      string
+    >;
+    expect(headers['cf-ipcountry']).toBe('DE');
+    expect(headers['cf-region-code']).toBeUndefined();
   });
 });

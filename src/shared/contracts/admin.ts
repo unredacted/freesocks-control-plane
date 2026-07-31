@@ -560,5 +560,10 @@ export const AdminAnalyticsConfig = z.object({
    *  'fastly-client-ip', custom). Analytics-only trust. Defaulted for
    *  deploy skew against an older backend. */
   ipHeader: z.string().optional().default(''),
+  /** Location detail for forwardIp: 'full' = payload.ip (city + real
+   *  unique-visitor counts); 'coarse' = country+region geo headers only —
+   *  the IP never leaves the backend and city is structurally absent.
+   *  Defaulted for deploy skew. */
+  geoMode: z.enum(['full', 'coarse']).optional().default('full'),
 });
 export type AdminAnalyticsConfig = z.infer<typeof AdminAnalyticsConfig>;

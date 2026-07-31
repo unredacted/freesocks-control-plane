@@ -14,10 +14,12 @@
  *   cookie, or session value is ever forwarded. The client's User-Agent is
  *   forwarded (Umami drops events without a valid UA) after stripping
  *   non-printable chars — CR/LF removal is header-injection hygiene.
- * - The visitor IP is included ONLY when the operator enabled forwardIp, as
- *   `payload.ip` (Umami v2.17+): honored per request with no Umami instance
- *   config, so a shared multi-site Umami instance is unaffected for its other
- *   sites. Older Umami versions simply ignore the field (no geo).
+ * - The visitor IP is included ONLY when the operator enabled forwardIp with
+ *   geoMode 'full', as `payload.ip` (Umami v2.17+): honored per request with
+ *   no Umami instance config, so a shared multi-site Umami instance is
+ *   unaffected for its other sites. Older Umami versions simply ignore the
+ *   field (no geo). geoMode 'coarse' sends country+region GEO HEADERS instead
+ *   (no IP ever, no city ever) — see UmamiEventArgs.geo.
  * - Fail-soft and silent: errors are swallowed, nothing is logged (a log line
  *   here would carry a UA/IP), the response body is never read.
  */
@@ -116,6 +118,26 @@ export function sanitizeIp(v: unknown): string {
   return /^[0-9a-f.:]{2,45}$/i.test(s) ? s : '';
 }
 
+/**
+ * ISO-3166-1 alpha-2 country for the coarse geo mode, read from the fronting
+ * Cloudflare edge's cf-ipcountry. CF's non-country sentinels (XX unknown,
+ * T1 Tor) drop to '' (send nothing rather than a junk dimension).
+ */
+export function sanitizeCountryCode(v: unknown): string {
+  if (typeof v !== 'string') return '';
+  const s = v.trim().toUpperCase();
+  if (s === 'XX' || s === 'T1' || s === 'T2') return '';
+  return /^[A-Z]{2}$/.test(s) ? s : '';
+}
+
+/** ISO-3166-2 region suffix (cf-region-code, e.g. "MO", "75"); outbound-header
+ *  safe charset. Umami combines it with the country ("US-MO") itself. */
+export function sanitizeRegionCode(v: unknown): string {
+  if (typeof v !== 'string') return '';
+  const s = v.trim().toUpperCase();
+  return /^[A-Z0-9-]{1,6}$/.test(s) ? s : '';
+}
+
 export interface UmamiEventArgs {
   cfg: Pick<AnalyticsConfig, 'umamiUrl' | 'websiteId'>;
   /** The raw (untrusted) beacon body from the client. */
@@ -123,8 +145,17 @@ export interface UmamiEventArgs {
   userAgent: string | null;
   /** Server-derived site hostname (x-forwarded-host || host), pre-sanitize. */
   hostname: string | null;
-  /** Resolved client IP, ONLY when analytics.forwardIp is on; else null. */
+  /** Resolved client IP, ONLY when forwardIp is on AND geoMode is 'full'. */
   clientIp: string | null;
+  /**
+   * Coarse geo (forwardIp on + geoMode 'coarse'): the fronting edge's inbound
+   * cf-ipcountry / cf-region-code, pre-sanitize. Sent as OUTBOUND geo headers,
+   * which Umami reads when payload.ip is absent — so country/region record
+   * WITHOUT the visitor IP ever leaving this backend, and city is structurally
+   * absent (the city header is never sent). Mutually exclusive with clientIp:
+   * when set, no payload.ip is emitted.
+   */
+  geo: { country: string | null; region: string | null } | null;
 }
 
 /**
@@ -134,7 +165,7 @@ export interface UmamiEventArgs {
  * slot per beacon while action concurrency is shared with issuance.
  */
 export async function sendUmamiEvent(args: UmamiEventArgs): Promise<void> {
-  const { cfg, input, userAgent, hostname, clientIp } = args;
+  const { cfg, input, userAgent, hostname, clientIp, geo } = args;
   if (!cfg.umamiUrl || !cfg.websiteId) return;
 
   const route = resolveRoute(input?.route);
@@ -144,8 +175,9 @@ export async function sendUmamiEvent(args: UmamiEventArgs): Promise<void> {
   // approach couldn't offer that). Umami then ignores proxy geo headers and
   // does a local GeoIP lookup — deterministic regardless of what fronts it.
   // The value comes ONLY from the resolved-clientIp argument, never from the
-  // untrusted beacon body.
-  const ip = sanitizeIp(clientIp);
+  // untrusted beacon body — and NEVER alongside coarse geo (payload.ip would
+  // make Umami skip the geo headers entirely).
+  const ip = geo ? '' : sanitizeIp(clientIp);
   const payload = {
     type: 'event',
     payload: {
@@ -166,6 +198,18 @@ export async function sendUmamiEvent(args: UmamiEventArgs): Promise<void> {
     'content-type': 'application/json',
     'user-agent': sanitizeUserAgent(userAgent),
   };
+  // Coarse geo mode: Umami reads Cloudflare-style geo headers when payload.ip
+  // is absent. cf-ipcity is deliberately NEVER sent — city stays structurally
+  // out of the operator's Umami. (Caveat, documented: an Umami itself fronted
+  // by Cloudflare with IP-geolocation on will overwrite cf-ipcountry.)
+  if (geo) {
+    const country = sanitizeCountryCode(geo.country);
+    const region = sanitizeRegionCode(geo.region);
+    if (country) {
+      headers['cf-ipcountry'] = country;
+      if (region) headers['cf-region-code'] = region;
+    }
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1000);

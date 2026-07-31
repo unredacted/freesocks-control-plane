@@ -36,7 +36,12 @@ import { resolveCatalogWithAvailability, resolverFor } from './lib/placement';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { sanitizeBannerText, sanitizeEmail, sanitizeHeroTitles } from './lib/siteConfig';
-import { sanitizeIpHeaderName, sanitizeUmamiUrl, sanitizeWebsiteId } from './lib/analyticsConfig';
+import {
+  sanitizeGeoMode,
+  sanitizeIpHeaderName,
+  sanitizeUmamiUrl,
+  sanitizeWebsiteId,
+} from './lib/analyticsConfig';
 import { normalizeSupportId } from './lib/supportId';
 import { checkInfraUrl } from './lib/urlSafety';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
@@ -2132,12 +2137,14 @@ export const setAnalyticsConfig = internalMutation({
     // '' = resolveClientIp; else a fronting-CDN client-IP header name
     // (analytics-only trust). Optional: older callers don't send it.
     ipHeader: v.optional(v.string()),
+    // 'full' (payload.ip) | 'coarse' (country+region headers, no IP, no city).
+    geoMode: v.optional(v.string()),
     umamiUrlHash: v.string(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (
     ctx,
-    { enabled, umamiUrl, websiteId, forwardIp, ipHeader, umamiUrlHash, actorAdminId },
+    { enabled, umamiUrl, websiteId, forwardIp, ipHeader, geoMode, umamiUrlHash, actorAdminId },
   ) => {
     const clean = {
       enabled,
@@ -2145,12 +2152,14 @@ export const setAnalyticsConfig = internalMutation({
       websiteId: sanitizeWebsiteId(websiteId),
       forwardIp,
       ipHeader: sanitizeIpHeaderName(ipHeader ?? ''),
+      geoMode: sanitizeGeoMode(geoMode),
     };
     await upsertSetting(ctx, 'analytics.enabled', JSON.stringify(clean.enabled), actorAdminId);
     await upsertSetting(ctx, 'analytics.umamiUrl', JSON.stringify(clean.umamiUrl), actorAdminId);
     await upsertSetting(ctx, 'analytics.websiteId', JSON.stringify(clean.websiteId), actorAdminId);
     await upsertSetting(ctx, 'analytics.forwardIp', JSON.stringify(clean.forwardIp), actorAdminId);
     await upsertSetting(ctx, 'analytics.ipHeader', JSON.stringify(clean.ipHeader), actorAdminId);
+    await upsertSetting(ctx, 'analytics.geoMode', JSON.stringify(clean.geoMode), actorAdminId);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -2160,6 +2169,7 @@ export const setAnalyticsConfig = internalMutation({
         enabled: clean.enabled,
         forwardIp: clean.forwardIp,
         ipHeader: clean.ipHeader,
+        geoMode: clean.geoMode,
         umamiUrlHash: clean.umamiUrl === '' ? '' : umamiUrlHash,
         hasWebsiteId: clean.websiteId !== '',
       },
