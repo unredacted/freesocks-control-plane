@@ -134,27 +134,63 @@ export async function resolveSiteConfig(db: DatabaseReader): Promise<SiteConfig>
       return undefined;
     }
   };
-  const bannerEnabledVal = await read('site.bannerEnabled');
-  const repoEnabledVal = await read('site.repoEnabled');
+  // Parallel point reads: 16 sequential awaits here were a major slice of
+  // publicConfig.get's round-trip budget (the 1s UDF limit bit on beta
+  // 2026-07-31 when the datastore slowed down).
+  const [
+    bannerEnabledVal,
+    bannerTextVal,
+    bannerLinkUrlVal,
+    bannerLinkLabelVal,
+    repoEnabledVal,
+    repoUrlVal,
+    tosUrlVal,
+    privacyUrlVal,
+    transparencyUrlVal,
+    socialXUrlVal,
+    socialMastodonUrlVal,
+    socialBlueskyUrlVal,
+    supportEmailVal,
+    heroTitleVal,
+    heroSubtitleVal,
+    heroTitlesVal,
+  ] = await Promise.all([
+    read('site.bannerEnabled'),
+    read('site.bannerText'),
+    read('site.bannerLinkUrl'),
+    read('site.bannerLinkLabel'),
+    read('site.repoEnabled'),
+    read('site.repoUrl'),
+    read('site.tosUrl'),
+    read('site.privacyUrl'),
+    read('site.transparencyUrl'),
+    read('site.socialXUrl'),
+    read('site.socialMastodonUrl'),
+    read('site.socialBlueskyUrl'),
+    read('site.supportEmail'),
+    read('site.heroTitle'),
+    read('site.heroSubtitle'),
+    read('site.heroTitles'),
+  ]);
   return {
     bannerEnabled:
       typeof bannerEnabledVal === 'boolean' ? bannerEnabledVal : SITE_DEFAULTS.bannerEnabled,
-    bannerText: sanitizeBannerText(await read('site.bannerText')),
+    bannerText: sanitizeBannerText(bannerTextVal),
     // https-only like every other operator link, so it's safe as an <a href>.
-    bannerLinkUrl: sanitizeHttpsUrl(await read('site.bannerLinkUrl')),
-    bannerLinkLabel: sanitizeBannerText(await read('site.bannerLinkLabel'), MAX_BANNER_LINK_LABEL),
+    bannerLinkUrl: sanitizeHttpsUrl(bannerLinkUrlVal),
+    bannerLinkLabel: sanitizeBannerText(bannerLinkLabelVal, MAX_BANNER_LINK_LABEL),
     repoEnabled: typeof repoEnabledVal === 'boolean' ? repoEnabledVal : SITE_DEFAULTS.repoEnabled,
     // https-only (rejects `javascript:`/`data:`) so it's safe to render as an <a href>.
-    repoUrl: sanitizeHttpsUrl(await read('site.repoUrl')),
-    tosUrl: sanitizeHttpsUrl(await read('site.tosUrl')),
-    privacyUrl: sanitizeHttpsUrl(await read('site.privacyUrl')),
-    transparencyUrl: sanitizeHttpsUrl(await read('site.transparencyUrl')),
-    socialXUrl: sanitizeHttpsUrl(await read('site.socialXUrl')),
-    socialMastodonUrl: sanitizeHttpsUrl(await read('site.socialMastodonUrl')),
-    socialBlueskyUrl: sanitizeHttpsUrl(await read('site.socialBlueskyUrl')),
-    supportEmail: sanitizeEmail(await read('site.supportEmail')),
-    heroTitle: sanitizeBannerText(await read('site.heroTitle'), MAX_HERO_TITLE),
-    heroSubtitle: sanitizeBannerText(await read('site.heroSubtitle'), MAX_HERO_SUBTITLE),
-    heroTitles: sanitizeHeroTitles(await read('site.heroTitles')),
+    repoUrl: sanitizeHttpsUrl(repoUrlVal),
+    tosUrl: sanitizeHttpsUrl(tosUrlVal),
+    privacyUrl: sanitizeHttpsUrl(privacyUrlVal),
+    transparencyUrl: sanitizeHttpsUrl(transparencyUrlVal),
+    socialXUrl: sanitizeHttpsUrl(socialXUrlVal),
+    socialMastodonUrl: sanitizeHttpsUrl(socialMastodonUrlVal),
+    socialBlueskyUrl: sanitizeHttpsUrl(socialBlueskyUrlVal),
+    supportEmail: sanitizeEmail(supportEmailVal),
+    heroTitle: sanitizeBannerText(heroTitleVal, MAX_HERO_TITLE),
+    heroSubtitle: sanitizeBannerText(heroSubtitleVal, MAX_HERO_SUBTITLE),
+    heroTitles: sanitizeHeroTitles(heroTitlesVal),
   };
 }

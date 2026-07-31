@@ -542,3 +542,28 @@ export const AdminReferralConfig = z.object({
   maxRewardsPerMonth: z.number().int(),
 });
 export type AdminReferralConfig = z.infer<typeof AdminReferralConfig>;
+
+/** Admin analytics-relay config (`/api/v1/admin/analytics`): the self-hosted
+ *  Umami target. Admin-readable but NEVER public — publicConfig projects only
+ *  the effective enabled bit. Server-sanitized: '' = unset/rejected. */
+export const AdminAnalyticsConfig = z.object({
+  enabled: z.boolean(),
+  /** https-only Umami base URL (SSRF-checked server-side); '' = unset. */
+  umamiUrl: z.string(),
+  /** Umami website id (UUID); '' = unset. */
+  websiteId: z.string(),
+  /** Forward the visitor IP per request as `payload.ip` (Umami v2.17+;
+   *  no Umami-side config — safe on a shared multi-site instance). */
+  forwardIp: z.boolean(),
+  /** IP source for forwardIp: '' = the fail-closed resolveClientIp (env
+   *  trust), else a single-IP CDN header name ('cf-connecting-ip',
+   *  'fastly-client-ip', custom). Analytics-only trust. Defaulted for
+   *  deploy skew against an older backend. */
+  ipHeader: z.string().optional().default(''),
+  /** Location detail for forwardIp: 'full' = payload.ip (city + real
+   *  unique-visitor counts); 'coarse' = country+region geo headers only —
+   *  the IP never leaves the backend and city is structurally absent.
+   *  Defaulted for deploy skew. */
+  geoMode: z.enum(['full', 'coarse']).optional().default('full'),
+});
+export type AdminAnalyticsConfig = z.infer<typeof AdminAnalyticsConfig>;

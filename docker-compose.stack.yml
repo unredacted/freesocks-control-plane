@@ -285,6 +285,11 @@ services:
       # 100.64.0.0/10) ONLY when something fronts Caddy (Pangolin / CF Tunnel / LB).
       # Empty = Caddy is the public edge (overwrites XFF). See Caddyfile + docs.
       - CADDY_TRUSTED_PROXIES=${CADDY_TRUSTED_PROXIES:-}
+      # Set true ONLY when a real Cloudflare edge fronts this deployment AND the
+      # origin rejects non-CF traffic: Caddy then passes CF-Connecting-IP through
+      # to the backend (needed for CF_FRONTED / the analytics Cloudflare IP
+      # source). Default: the header is stripped (spoofable otherwise).
+      - CADDY_TRUST_CF_HEADER=${CADDY_TRUST_CF_HEADER:-}
       # Optional Convex-dashboard exposure (see the commented site blocks in
       # Caddyfile + docs/beta-deploy.md). Empty unless you opt in; Caddy only
       # references them when those blocks are uncommented.

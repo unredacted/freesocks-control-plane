@@ -18,6 +18,9 @@ import { SETTINGS_DEFAULTS } from './appSettings';
 import { DEFAULT_CONNECTION_MODE } from './lib/connectionModes';
 import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
+import { sendUmamiEvent } from './lib/umami';
+import { sanitizeUmamiUrl } from './lib/analyticsConfig';
+import { sha256Hex } from './lib/crypto';
 import { sealed } from './lib/e2ee';
 import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
 import { isBackendId, type BackendId } from './lib/backendIds';
@@ -355,7 +358,8 @@ async function throttlePublicGet(
     | 'e2ee.keys.fetch'
     | 'status.fetch'
     | 'readyz.fetch'
-    | 'admin.auth-status.fetch',
+    | 'admin.auth-status.fetch'
+    | 'telemetry.send',
   opts?: { unknownSubject?: boolean },
 ): Promise<Response | null> {
   const ip = resolveClientIp(req);
@@ -394,6 +398,57 @@ http.route({
     return json(await ctx.runQuery(internal.statusPage.getPublic, {}), 200, {
       'cache-control': 'public, max-age=30',
     });
+  }),
+});
+
+// Server-side analytics relay: the SPA posts a tiny anonymous pageview beacon
+// and FCP forwards it to the operator's self-hosted Umami (docs/privacy.md).
+// No Umami script is ever loaded and the Umami HOST NEVER REACHES A CLIENT
+// (publicConfig exposes only `analytics.enabled`). Anonymous by construction:
+// no resolveMember/resolveAdmin, no cookie read, no PoP — and the client beacon
+// sends credentials:'omit', so a session can't be correlated with pageviews.
+// Fail-soft: 202 whether analytics is off, unconfigured, or Umami is down.
+// The per-IP throttle (shared unknown-ip bucket when the client IP can't be
+// resolved) runs FIRST because this route makes an OUTBOUND request — the one
+// non-202 outcome, and it's invisible to users (the beacon ignores responses).
+http.route({
+  path: '/api/v1/telemetry',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const limited = await throttlePublicGet(ctx, req, 'telemetry.send', { unknownSubject: true });
+    if (limited) return limited;
+    const cfg = await ctx.runQuery(internal.analytics.getConfig, {});
+    if (cfg.enabled && cfg.umamiUrl && cfg.websiteId) {
+      const input = await readJson<Record<string, unknown>>(req, { maxBytes: 2_048 });
+      await sendUmamiEvent({
+        cfg,
+        input,
+        userAgent: req.headers.get('user-agent'),
+        hostname: req.headers.get('x-forwarded-host') ?? req.headers.get('host'),
+        // IP source: the operator-chosen single-IP CDN header (analytics-only
+        // trust — never feeds resolveClientIp/rate limits) or, by default, the
+        // fail-closed resolveClientIp. sanitizeIp guards either value. Coarse
+        // geoMode sends country+region headers INSTEAD of any IP (see below).
+        clientIp:
+          cfg.forwardIp && cfg.geoMode === 'full'
+            ? cfg.ipHeader
+              ? req.headers.get(cfg.ipHeader)
+              : resolveClientIp(req)
+            : null,
+        // Coarse geo: copy the fronting Cloudflare edge's geo headers (country
+        // always; region needs the free "visitor location headers" Managed
+        // Transform on the zone). The visitor IP never leaves this backend and
+        // the city header is never sent.
+        geo:
+          cfg.forwardIp && cfg.geoMode === 'coarse'
+            ? {
+                country: req.headers.get('cf-ipcountry'),
+                region: req.headers.get('cf-region-code'),
+              }
+            : null,
+      });
+    }
+    return json({ ok: true }, 202);
   }),
 });
 
@@ -2631,6 +2686,58 @@ http.route({
           heroTitle: typeof body.heroTitle === 'string' ? body.heroTitle : undefined,
           heroSubtitle: typeof body.heroSubtitle === 'string' ? body.heroSubtitle : undefined,
           heroTitles: Array.isArray(body.heroTitles) ? body.heroTitles : undefined,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+// --- admin: analytics relay (self-hosted Umami) ------------------------------
+// The umamiUrl/websiteId are ADMIN-READABLE here but never public (publicConfig
+// projects only the enabled bit). The PATCH pre-computes the truncated URL hash
+// for the audit trail here (Web Crypto is action-side only) so a repoint of the
+// exfiltration-capable endpoint is detectable without the host ever being stored.
+
+http.route({
+  path: '/api/v1/admin/analytics',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.analytics.getConfig, {}));
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/analytics',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<{
+      enabled?: boolean;
+      umamiUrl?: string;
+      websiteId?: string;
+      forwardIp?: boolean;
+      ipHeader?: string;
+      geoMode?: string;
+    }>(req);
+    // Hash the CLEANED url (what will actually be stored/used) — sanitize here
+    // with the same function the mutation applies, so the hash matches.
+    const cleanUrl = sanitizeUmamiUrl(typeof body.umamiUrl === 'string' ? body.umamiUrl : '');
+    try {
+      return json(
+        await ctx.runMutation(internal.adminApi.setAnalyticsConfig, {
+          // Booleans use `=== true` (missing → OFF): both default off.
+          enabled: body.enabled === true,
+          umamiUrl: typeof body.umamiUrl === 'string' ? body.umamiUrl : '',
+          websiteId: typeof body.websiteId === 'string' ? body.websiteId : '',
+          forwardIp: body.forwardIp === true,
+          ipHeader: typeof body.ipHeader === 'string' ? body.ipHeader : '',
+          geoMode: typeof body.geoMode === 'string' ? body.geoMode : 'full',
+          umamiUrlHash: cleanUrl === '' ? '' : (await sha256Hex(cleanUrl)).slice(0, 8),
           actorAdminId: admin.adminUserId,
         }),
       );

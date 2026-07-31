@@ -17,10 +17,10 @@
   import { apiErrorMessage } from '../../lib/errors';
   import { ADMIN_BACKEND_LABELS } from '../../lib/backendLabels';
   import AdminListState from './AdminListState.svelte';
-  import { appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
+  import { adminAnalyticsQuery, appSettingsQuery, configQuery, queryKeys } from '../../lib/queries';
   import Link from '../../components/Link.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { AppSettingsRecord } from '../../../shared/contracts/admin';
+  import { AdminAnalyticsConfig, AppSettingsRecord } from '../../../shared/contracts/admin';
   import { toast } from 'svelte-sonner';
 
   /**
@@ -220,6 +220,79 @@
     },
     onError: (err) => {
       toast.error('Could not save site settings', { description: apiErrorMessage(err) });
+    },
+  }));
+
+  // Analytics relay (self-hosted Umami): its own namespace + own admin GET —
+  // the Umami URL/website id are deliberately NOT in the public /api/v1/config
+  // (only the enabled bit is), so current values come from adminAnalyticsQuery,
+  // not configQuery. The server sanitizes (https-only URL, UUID id) and echoes
+  // the cleaned values back.
+  const analytics = adminAnalyticsQuery();
+  let aDraft = $state<{
+    enabled: boolean;
+    umamiUrl: string;
+    websiteId: string;
+    forwardIp: boolean;
+    ipHeader: string;
+    geoMode: 'full' | 'coarse';
+  }>({
+    enabled: false,
+    umamiUrl: '',
+    websiteId: '',
+    forwardIp: false,
+    ipHeader: '',
+    geoMode: 'full',
+  });
+  let aInit = $state(false);
+  $effect(() => {
+    if (analytics.data && !aInit) {
+      aDraft = { ...analytics.data };
+      aInit = true;
+    }
+  });
+
+  // The IP-source select maps well-known CDN headers to friendly labels;
+  // anything else stored in ipHeader renders as the "Custom header" choice.
+  const IP_SOURCES = [
+    { value: '', label: 'Resolved client IP (default)' },
+    { value: 'cf-connecting-ip', label: 'Cloudflare (cf-connecting-ip)' },
+    { value: 'fastly-client-ip', label: 'Fastly (fastly-client-ip)' },
+    { value: 'custom', label: 'Custom header…' },
+  ];
+  let ipSourceChoice = $derived(
+    IP_SOURCES.some((s) => s.value === aDraft.ipHeader && s.value !== 'custom')
+      ? aDraft.ipHeader
+      : 'custom',
+  );
+  // Keeps the custom text box populated while switching between choices.
+  let customIpHeader = $state('');
+  $effect(() => {
+    if (aInit && ipSourceChoice === 'custom' && customIpHeader === '' && aDraft.ipHeader !== '') {
+      customIpHeader = aDraft.ipHeader;
+    }
+  });
+  function pickIpSource(v: string) {
+    if (v === 'custom') {
+      aDraft = { ...aDraft, ipHeader: customIpHeader || 'x-real-ip' };
+      customIpHeader = aDraft.ipHeader;
+    } else {
+      aDraft = { ...aDraft, ipHeader: v };
+    }
+  }
+  const saveAnalytics = createMutation(() => ({
+    mutationFn: async () => {
+      return apiClient.patch('/api/v1/admin/analytics', aDraft, AdminAnalyticsConfig);
+    },
+    onSuccess: (updated) => {
+      aDraft = { ...updated };
+      void qc.invalidateQueries({ queryKey: queryKeys.adminAnalytics });
+      // The enabled bit feeds the public /api/v1/config (the SPA's beacon gate).
+      void qc.invalidateQueries({ queryKey: queryKeys.config });
+      toast.success('Analytics settings saved');
+    },
+    onError: (err) => {
+      toast.error('Could not save analytics settings', { description: apiErrorMessage(err) });
     },
   }));
 </script>
@@ -801,6 +874,164 @@
             {/if}
             <Button onclick={() => saveSite.mutate()} disabled={saveSite.isPending || !sInit}>
               {saveSite.isPending ? 'Saving…' : 'Save site settings'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <!-- Analytics relay (self-hosted Umami): own namespace + own save -->
+      <Card>
+        <CardHeader>
+          <CardTitle class="text-base">Analytics (self-hosted Umami)</CardTitle>
+          <CardDescription>
+            Anonymous pageview counts relayed server-side to your own Umami instance. No third-party
+            script is loaded, browsers never learn the Umami address, and pageviews report a fixed
+            set of routes only: no query strings, no titles, and referrers reduced to their origin
+            (so Umami's referrer-path report stays empty by design). Off by default.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-3 text-sm">
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={aDraft.enabled}
+              onCheckedChange={(v) => (aDraft = { ...aDraft, enabled: v === true })}
+            />
+            <span>Send pageviews to a self-hosted Umami instance</span>
+          </label>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="analytics-umami-url">
+                Umami base URL (https)
+              </label>
+              <Input
+                id="analytics-umami-url"
+                placeholder="https://analytics.example.org"
+                value={aDraft.umamiUrl}
+                oninput={(e) =>
+                  (aDraft = { ...aDraft, umamiUrl: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+            <div>
+              <label class="text-xs text-muted-foreground mb-1 block" for="analytics-website-id">
+                Website ID (UUID)
+              </label>
+              <Input
+                id="analytics-website-id"
+                placeholder="b1f0a2c4-…"
+                value={aDraft.websiteId}
+                oninput={(e) =>
+                  (aDraft = { ...aDraft, websiteId: (e.target as HTMLInputElement).value })}
+              />
+            </div>
+          </div>
+          <label class="flex items-center gap-3">
+            <Checkbox
+              checked={aDraft.forwardIp}
+              onCheckedChange={(v) => (aDraft = { ...aDraft, forwardIp: v === true })}
+            />
+            <span>Send visitor location to Umami (geo stats)</span>
+          </label>
+          <p class="text-xs text-muted-foreground">
+            Off (default): Umami sees only this server's IP, so no geo data and maximum privacy. On:
+            location is reported per request with no Umami-side configuration, so other sites on a
+            shared instance are unaffected. See docs/privacy.md.
+          </p>
+          {#if aDraft.forwardIp}
+            <div>
+              <label
+                class="text-xs text-muted-foreground mb-1 block"
+                for="analytics-geo-mode-trigger"
+              >
+                Location detail
+              </label>
+              <Select.Root
+                type="single"
+                value={aDraft.geoMode}
+                onValueChange={(v) =>
+                  (aDraft = { ...aDraft, geoMode: v === 'coarse' ? 'coarse' : 'full' })}
+              >
+                <Select.Trigger id="analytics-geo-mode-trigger" class="w-96">
+                  {aDraft.geoMode === 'coarse'
+                    ? 'Country and region only (IP never sent, no city)'
+                    : 'Full (IP-based: city + real unique-visitor counts)'}
+                </Select.Trigger>
+                <Select.Content>
+                  <Select.Item value="full">
+                    Full (IP-based: city + real unique-visitor counts)
+                  </Select.Item>
+                  <Select.Item value="coarse">
+                    Country and region only (IP never sent, no city)
+                  </Select.Item>
+                </Select.Content>
+              </Select.Root>
+              <p class="text-xs text-muted-foreground mt-1">
+                Full: the visitor IP is embedded in the event (requires Umami v2.17 or newer); Umami
+                hashes it with a daily-rotating salt and stores derived country/region/city, never
+                the raw IP. Country and region only: the relay copies the Cloudflare edge's geo
+                headers instead and the IP never leaves this server; city is never sent, and
+                unique-visitor counts fall back to per-device approximations. Like the Cloudflare IP
+                source, this needs CADDY_TRUST_CF_HEADER=true on the web service (the Caddyfile
+                strips client-suppliable Cloudflare headers otherwise). Region needs the free "Add
+                visitor location headers" Managed Transform enabled on your Cloudflare zone (country
+                works out of the box). If your Umami instance is itself behind Cloudflare, disable
+                IP geolocation on that zone or the relayed location gets overwritten.
+              </p>
+            </div>
+          {/if}
+          {#if aDraft.forwardIp && aDraft.geoMode === 'full'}
+            <div>
+              <label
+                class="text-xs text-muted-foreground mb-1 block"
+                for="analytics-ip-source-trigger"
+              >
+                Visitor IP source
+              </label>
+              <div class="flex flex-wrap gap-3">
+                <Select.Root type="single" value={ipSourceChoice} onValueChange={pickIpSource}>
+                  <Select.Trigger id="analytics-ip-source-trigger" class="w-64">
+                    {IP_SOURCES.find((s) => s.value === ipSourceChoice)?.label ?? 'Custom header…'}
+                  </Select.Trigger>
+                  <Select.Content>
+                    {#each IP_SOURCES as src (src.value)}
+                      <Select.Item value={src.value}>{src.label}</Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+                {#if ipSourceChoice === 'custom'}
+                  <Input
+                    class="w-56"
+                    placeholder="x-real-ip"
+                    aria-label="Custom IP header name"
+                    value={customIpHeader}
+                    oninput={(e) => {
+                      customIpHeader = (e.target as HTMLInputElement).value;
+                      aDraft = { ...aDraft, ipHeader: customIpHeader };
+                    }}
+                  />
+                {/if}
+              </div>
+              <p class="text-xs text-muted-foreground mt-1">
+                Where the relay reads the visitor IP. Default: the platform's trusted-proxy
+                resolution (TRUSTED_PROXY_HOPS / CF_FRONTED). Pick your fronting CDN's header when
+                the proxy chain doesn't preserve the forwarded chain (for example Cloudflare in
+                front of a tunnel). This choice affects analytics only, never rate limiting.
+                Cloudflare additionally needs CADDY_TRUST_CF_HEADER=true on the web service (the
+                stock Caddyfile strips cf-connecting-ip). A header your chain doesn't actually set
+                can be spoofed by clients; worst case is wrong geo data in your own Umami.
+              </p>
+            </div>
+          {/if}
+          <div class="flex justify-end">
+            {#if !aInit}
+              <span class="me-3 self-center text-xs text-muted-foreground"
+                >Loading current values…</span
+              >
+            {/if}
+            <Button
+              onclick={() => saveAnalytics.mutate()}
+              disabled={saveAnalytics.isPending || !aInit}
+            >
+              {saveAnalytics.isPending ? 'Saving…' : 'Save analytics settings'}
             </Button>
           </div>
         </CardContent>

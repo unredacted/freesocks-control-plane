@@ -36,6 +36,12 @@ import { resolveCatalogWithAvailability, resolverFor } from './lib/placement';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { sanitizeBannerText, sanitizeEmail, sanitizeHeroTitles } from './lib/siteConfig';
+import {
+  sanitizeGeoMode,
+  sanitizeIpHeaderName,
+  sanitizeUmamiUrl,
+  sanitizeWebsiteId,
+} from './lib/analyticsConfig';
 import { normalizeSupportId } from './lib/supportId';
 import { checkInfraUrl } from './lib/urlSafety';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
@@ -2108,6 +2114,65 @@ export const setSiteConfig = internalMutation({
       action: 'admin.site.change',
       targetType: 'site',
       payload: clean,
+    });
+    return clean;
+  },
+});
+
+/**
+ * Set the analytics-relay config (self-hosted Umami). Sanitizes the base URL
+ * (https-only + SSRF denylist, else '') and website id (UUID, else '') so a
+ * bad value stores harmlessly. `umamiUrlHash` is computed by the HTTP caller
+ * (truncated sha-256 of the CLEANED url; Web Crypto isn't available in this
+ * mutation runtime) and is the only URL-derived value the audit log keeps —
+ * the host and website id themselves are never audited (any admin:audit:read
+ * token could read them, and a silent repoint must still be detectable).
+ */
+export const setAnalyticsConfig = internalMutation({
+  args: {
+    enabled: v.boolean(),
+    umamiUrl: v.string(),
+    websiteId: v.string(),
+    forwardIp: v.boolean(),
+    // '' = resolveClientIp; else a fronting-CDN client-IP header name
+    // (analytics-only trust). Optional: older callers don't send it.
+    ipHeader: v.optional(v.string()),
+    // 'full' (payload.ip) | 'coarse' (country+region headers, no IP, no city).
+    geoMode: v.optional(v.string()),
+    umamiUrlHash: v.string(),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (
+    ctx,
+    { enabled, umamiUrl, websiteId, forwardIp, ipHeader, geoMode, umamiUrlHash, actorAdminId },
+  ) => {
+    const clean = {
+      enabled,
+      umamiUrl: sanitizeUmamiUrl(umamiUrl),
+      websiteId: sanitizeWebsiteId(websiteId),
+      forwardIp,
+      ipHeader: sanitizeIpHeaderName(ipHeader ?? ''),
+      geoMode: sanitizeGeoMode(geoMode),
+    };
+    await upsertSetting(ctx, 'analytics.enabled', JSON.stringify(clean.enabled), actorAdminId);
+    await upsertSetting(ctx, 'analytics.umamiUrl', JSON.stringify(clean.umamiUrl), actorAdminId);
+    await upsertSetting(ctx, 'analytics.websiteId', JSON.stringify(clean.websiteId), actorAdminId);
+    await upsertSetting(ctx, 'analytics.forwardIp', JSON.stringify(clean.forwardIp), actorAdminId);
+    await upsertSetting(ctx, 'analytics.ipHeader', JSON.stringify(clean.ipHeader), actorAdminId);
+    await upsertSetting(ctx, 'analytics.geoMode', JSON.stringify(clean.geoMode), actorAdminId);
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'admin.analytics.change',
+      targetType: 'analytics',
+      payload: {
+        enabled: clean.enabled,
+        forwardIp: clean.forwardIp,
+        ipHeader: clean.ipHeader,
+        geoMode: clean.geoMode,
+        umamiUrlHash: clean.umamiUrl === '' ? '' : umamiUrlHash,
+        hasWebsiteId: clean.websiteId !== '',
+      },
     });
     return clean;
   },

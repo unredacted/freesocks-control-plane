@@ -8,6 +8,7 @@
   import { e2eeSession } from './lib/e2ee-status.svelte';
   import PopWarm from './components/PopWarm.svelte';
   import ThemeSync from './components/ThemeSync.svelte';
+  import PageviewBeacon from './components/PageviewBeacon.svelte';
   import { Toaster } from '@client/components/ui/sonner';
   import { ModeWatcher } from 'mode-watcher';
   import ErrorBoundary from './components/ErrorBoundary.svelte';
@@ -94,6 +95,7 @@
 <QueryClientProvider client={queryClient}>
   <PopWarm />
   <ThemeSync />
+  <PageviewBeacon />
   <ErrorBoundary>
     <div class="min-h-screen flex flex-col overflow-x-clip">
       <!-- a11y: first focusable element, lets keyboard users jump the header. -->

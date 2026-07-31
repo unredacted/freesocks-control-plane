@@ -1487,3 +1487,370 @@ describe('connection-mode admin routes', () => {
     expect(bogus.status).toBe(404);
   });
 });
+
+describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
+  const A_UUID = 'b1f0a2c4-1234-4abc-9def-0123456789ab';
+
+  /** Store an analytics config directly (bypassing the admin PATCH). */
+  async function seedAnalytics(
+    t: ReturnType<typeof convexTest>,
+    cfg: {
+      enabled: boolean;
+      umamiUrl: string;
+      websiteId: string;
+      forwardIp?: boolean;
+      ipHeader?: string;
+      geoMode?: string;
+    },
+  ) {
+    await t.run(async (ctx) => {
+      const rows: Array<[string, unknown]> = [
+        ['analytics.enabled', cfg.enabled],
+        ['analytics.umamiUrl', cfg.umamiUrl],
+        ['analytics.websiteId', cfg.websiteId],
+        ['analytics.forwardIp', cfg.forwardIp === true],
+        ['analytics.ipHeader', cfg.ipHeader ?? ''],
+        ['analytics.geoMode', cfg.geoMode ?? 'full'],
+      ];
+      for (const [key, value] of rows) {
+        await ctx.db.insert('appSettings', {
+          key,
+          value: JSON.stringify(value),
+          updatedAt: Date.now(),
+        });
+      }
+    });
+  }
+
+  const beacon = (body: unknown, headers: Record<string, string> = {}) => ({
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  });
+
+  test('analytics off (default): 202 and NO outbound call', async () => {
+    const t = convexTest(schema, modules);
+    const spy = vi.fn();
+    vi.stubGlobal('fetch', spy);
+    const res = await t.fetch('/api/v1/telemetry', beacon({ route: '/' }));
+    expect(res.status).toBe(202);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  test('enabled + configured: 202 and exactly one sanitized outbound call', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, { enabled: true, umamiUrl: 'https://umami.example', websiteId: A_UUID });
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+    const res = await t.fetch(
+      '/api/v1/telemetry',
+      beacon(
+        { route: '/account', referrer: 'https://ref.example/private?x=1', language: 'fa' },
+        { 'user-agent': 'TestUA/1.0', host: 'freesocks.org' },
+      ),
+    );
+    expect(res.status).toBe(202);
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [url, init] = spy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://umami.example/api/send');
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      type: 'event',
+      payload: {
+        website: A_UUID,
+        url: '/account',
+        title: 'Account',
+        referrer: 'https://ref.example',
+      },
+    });
+  });
+
+  test('Umami failure (reject / 500): still 202', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, { enabled: true, umamiUrl: 'https://umami.example', websiteId: A_UUID });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('down')));
+    expect((await t.fetch('/api/v1/telemetry', beacon({ route: '/' }))).status).toBe(202);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('err', { status: 500 })));
+    expect((await t.fetch('/api/v1/telemetry', beacon({ route: '/' }))).status).toBe(202);
+  });
+
+  test('malformed body → 202 (bucketed to /other); oversized body → 413', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, { enabled: true, umamiUrl: 'https://umami.example', websiteId: A_UUID });
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+
+    const garbage = await t.fetch('/api/v1/telemetry', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'not json at all',
+    });
+    expect(garbage.status).toBe(202);
+    expect(
+      (
+        JSON.parse((spy.mock.calls[0] as [string, RequestInit])[1].body as string) as {
+          payload: { url: string };
+        }
+      ).payload.url,
+    ).toBe('/other');
+
+    const oversized = await t.fetch(
+      '/api/v1/telemetry',
+      beacon({ route: '/', junk: 'x'.repeat(10_000) }),
+    );
+    expect(oversized.status).toBe(413);
+  });
+
+  test('a signed-in member beacon leaks nothing session-derived outbound', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, { enabled: true, umamiUrl: 'https://umami.example', websiteId: A_UUID });
+    const { userId } = await seedTierAndUser(t);
+    const cookie = await memberCookie(t, userId);
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+    const res = await t.fetch(
+      '/api/v1/telemetry',
+      beacon({ route: '/account' }, { cookie, 'user-agent': 'UA' }),
+    );
+    expect(res.status).toBe(202);
+    const [, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['cookie']).toBeUndefined();
+    expect(JSON.stringify(init.body)).not.toContain('fs_session');
+    expect(JSON.stringify(init.body)).not.toContain(String(userId));
+  });
+
+  test('forwardIp OFF omits payload.ip; ON embeds it (v2.17+ per-request shape)', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, { enabled: true, umamiUrl: 'https://umami.example', websiteId: A_UUID });
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+    await t.fetch(
+      '/api/v1/telemetry',
+      beacon({ route: '/' }, { 'x-forwarded-for': '203.0.113.9' }),
+    );
+    const offBody = JSON.parse((spy.mock.calls[0] as [string, RequestInit])[1].body as string) as {
+      payload: Record<string, string>;
+    };
+    expect(offBody.payload).not.toHaveProperty('ip');
+
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', 'analytics.forwardIp'))
+        .unique();
+      if (row) await ctx.db.patch(row._id, { value: JSON.stringify(true) });
+    });
+    await t.fetch(
+      '/api/v1/telemetry',
+      beacon({ route: '/' }, { 'x-forwarded-for': '203.0.113.9' }),
+    );
+    const [, onInit] = spy.mock.calls[1] as [string, RequestInit];
+    const onBody = JSON.parse(onInit.body as string) as { payload: Record<string, string> };
+    expect(onBody.payload.ip).toBe('203.0.113.9');
+    // Never via headers: CLIENT_IP_HEADER is instance-global on Umami and
+    // unusable on a shared multi-site instance.
+    const headers = onInit.headers as Record<string, string>;
+    expect(Object.keys(headers).sort()).toEqual(['content-type', 'user-agent']);
+  });
+
+  test('ipHeader source: payload.ip comes from the chosen CDN header, not XFF', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, {
+      enabled: true,
+      umamiUrl: 'https://umami.example',
+      websiteId: A_UUID,
+      forwardIp: true,
+      ipHeader: 'cf-connecting-ip',
+    });
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+
+    // The CDN header wins; the XFF chain (which resolveClientIp would read,
+    // and which here carries the fronting tunnel's private hop) is ignored.
+    await t.fetch(
+      '/api/v1/telemetry',
+      beacon(
+        { route: '/' },
+        { 'cf-connecting-ip': '203.0.113.50', 'x-forwarded-for': '172.16.0.9' },
+      ),
+    );
+    const withHeader = JSON.parse(
+      (spy.mock.calls[0] as [string, RequestInit])[1].body as string,
+    ) as { payload: Record<string, string> };
+    expect(withHeader.payload.ip).toBe('203.0.113.50');
+
+    // Header absent → the field is simply omitted (no silent XFF fallback:
+    // the operator chose header trust, so resolveClientIp is not consulted).
+    await t.fetch(
+      '/api/v1/telemetry',
+      beacon({ route: '/' }, { 'x-forwarded-for': '203.0.113.51' }),
+    );
+    const withoutHeader = JSON.parse(
+      (spy.mock.calls[1] as [string, RequestInit])[1].body as string,
+    ) as { payload: Record<string, string> };
+    expect(withoutHeader.payload).not.toHaveProperty('ip');
+  });
+
+  test('coarse geoMode: geo headers out, no payload.ip, city never sent', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, {
+      enabled: true,
+      umamiUrl: 'https://umami.example',
+      websiteId: A_UUID,
+      forwardIp: true,
+      geoMode: 'coarse',
+    });
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+    await t.fetch(
+      '/api/v1/telemetry',
+      beacon(
+        { route: '/status' },
+        {
+          'cf-ipcountry': 'IR',
+          'cf-region-code': 'THR',
+          'cf-ipcity': 'Tehran', // inbound city must NOT be forwarded
+          'x-forwarded-for': '203.0.113.60',
+        },
+      ),
+    );
+    const [, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers['cf-ipcountry']).toBe('IR');
+    expect(headers['cf-region-code']).toBe('THR');
+    expect(headers['cf-ipcity']).toBeUndefined();
+    const body = JSON.parse(init.body as string) as { payload: Record<string, string> };
+    expect(body.payload).not.toHaveProperty('ip');
+    expect(JSON.stringify(init.body)).not.toContain('203.0.113.60');
+  });
+
+  test('per-IP throttle: second POST past the policy is 429 with no outbound', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, { enabled: true, umamiUrl: 'https://umami.example', websiteId: A_UUID });
+    await t.mutation(internal.rateLimits.setPolicy, {
+      policyKey: 'telemetry.send',
+      max: 1,
+      windowMs: 60_000,
+      enabled: true,
+    });
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+    const headers = { 'x-forwarded-for': '203.0.113.80' };
+    expect((await t.fetch('/api/v1/telemetry', beacon({ route: '/' }, headers))).status).toBe(202);
+    const blocked = await t.fetch('/api/v1/telemetry', beacon({ route: '/' }, headers));
+    expect(blocked.status).toBe(429);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  test('admin GET requires admin:settings:read; PATCH requires write', async () => {
+    const t = convexTest(schema, modules);
+    const wrongScope = await insertToken(t, {
+      scopes: ['admin:tiers:read'],
+      subjectType: 'service',
+    });
+    const read = await insertToken(t, { scopes: ['admin:settings:read'], subjectType: 'service' });
+    const write = await insertToken(t, {
+      scopes: ['admin:settings:write'],
+      subjectType: 'service',
+    });
+
+    expect(
+      (
+        await t.fetch('/api/v1/admin/analytics', {
+          headers: { authorization: `Bearer ${wrongScope}` },
+        })
+      ).status,
+    ).toBe(401);
+    const ok = await t.fetch('/api/v1/admin/analytics', {
+      headers: { authorization: `Bearer ${read}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({
+      enabled: false,
+      umamiUrl: '',
+      websiteId: '',
+      forwardIp: false,
+      ipHeader: '',
+      geoMode: 'full',
+    });
+
+    expect(
+      (
+        await t.fetch('/api/v1/admin/analytics', {
+          method: 'PATCH',
+          headers: { authorization: `Bearer ${read}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ enabled: true }),
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await t.fetch('/api/v1/admin/analytics', {
+          method: 'PATCH',
+          headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            enabled: true,
+            umamiUrl: 'https://umami.example',
+            websiteId: A_UUID,
+          }),
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  test('PATCH sanitizes: http url → "", junk id → "", missing booleans → off', async () => {
+    const t = convexTest(schema, modules);
+    const write = await insertToken(t, {
+      scopes: ['admin:settings:write'],
+      subjectType: 'service',
+    });
+    const res = await t.fetch('/api/v1/admin/analytics', {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        umamiUrl: 'http://insecure.example',
+        websiteId: 'not-a-uuid',
+        ipHeader: 'x-forwarded-for', // multi-hop list header → rejected to ''
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      enabled: false,
+      umamiUrl: '',
+      websiteId: '',
+      forwardIp: false,
+      ipHeader: '',
+      geoMode: 'full',
+    });
+  });
+
+  test('LEAK GUARD: /api/v1/config carries only the enabled bit', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, { enabled: true, umamiUrl: 'https://umami.example', websiteId: A_UUID });
+    const res = await t.fetch('/api/v1/config');
+    expect(res.status).toBe(200);
+    const text = JSON.stringify(await res.json());
+    expect(text).toContain('"analytics":{"enabled":true}');
+    expect(text).not.toContain('umami.example');
+    expect(text).not.toContain(A_UUID);
+  });
+
+  test('LEAK GUARD: the generic settings surface never sees analytics.*', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, { enabled: true, umamiUrl: 'https://umami.example', websiteId: A_UUID });
+    const cookie = await adminCookie(t);
+
+    const settings = await t.fetch('/api/v1/admin/settings', { headers: { cookie } });
+    expect(settings.status).toBe(200);
+    const text = JSON.stringify(await settings.json());
+    expect(text).not.toContain('umami.example');
+    expect(text).not.toContain(A_UUID);
+
+    const patch = await t.fetch('/api/v1/admin/settings', {
+      method: 'PATCH',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ 'analytics.enabled': true }),
+    });
+    expect(patch.status).toBe(400);
+  });
+});

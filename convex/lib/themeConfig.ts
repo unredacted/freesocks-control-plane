@@ -47,8 +47,7 @@ export async function resolveTheme(db: DatabaseReader): Promise<ThemeConfig> {
       return undefined;
     }
   };
-  const presetVal = await read('theme.preset');
-  const hueVal = await read('theme.hue');
+  const [presetVal, hueVal] = await Promise.all([read('theme.preset'), read('theme.hue')]);
   return {
     preset: isThemePresetId(presetVal) ? presetVal : DEFAULT_THEME_PRESET,
     hue: sanitizeHue(hueVal),

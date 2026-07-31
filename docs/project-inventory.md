@@ -381,6 +381,24 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   (ownership-checked against their own key, confirmation-gated, rate-limited via the
   `account.device-revoke` policy) instead of the nuclear full-key regenerate. Remnawave only
   (Outline has no device concept → typed 409). **Live.**
+- **Umami analytics relay** (`convex/lib/{analyticsConfig,umami}.ts` + `convex/analytics.ts` +
+  `src/client/lib/analytics.ts` + `PageviewBeacon.svelte`; `docs/privacy.md` §6): anonymous
+  pageview counts relayed **server-side** to an operator-run Umami — the SPA loads no Umami
+  script and never learns the Umami host (`publicConfig.analytics` = the enabled bit only).
+  `POST /api/v1/telemetry` (per-IP `telemetry.send` policy) sanitizes against a server-side
+  **route allowlist** (`ROUTE_ALLOWLIST`; unknown → `/other` — new member routes must be added
+  there) and forwards to `<umamiUrl>/api/send` (1s timeout, fail-soft 202). Config in the
+  `appSettings` `analytics.*` namespace, edited on Admin → Settings
+  (`GET/PATCH /api/v1/admin/analytics`, `admin:settings:read|write`); `analytics.forwardIp`
+  (default off) embeds the visitor IP per request as `payload.ip` (Umami v2.17+; no
+  Umami-side config, so a shared multi-site instance is unaffected), sourced from
+  `resolveClientIp` or an operator-chosen single-IP CDN header (`analytics.ipHeader`:
+  Cloudflare/Fastly/custom — analytics-only trust, never rate limits; the Cloudflare
+  header also needs `CADDY_TRUST_CF_HEADER=true` on the web service). `analytics.geoMode`
+  `'coarse'` sends country+region GEO HEADERS instead (from the CF edge's
+  cf-ipcountry/cf-region-code) — IP never sent, city structurally absent. Audited as
+  `admin.analytics.change` (booleans + truncated URL hash; never the host). **DORMANT by
+  default** — ships disabled until an admin sets the URL + website id and enables it.
 - **Self-hosted Cap captcha** (`convex/lib/captcha.ts` + `src/client/components/CapWidget.svelte`):
   proof-of-work CAPTCHA gating free issuance + account login. Replaced Cloudflare Turnstile (W1)
   — the widget is bundled from npm and challenge traffic is same-origin (Caddy `/cap` → the `cap`
