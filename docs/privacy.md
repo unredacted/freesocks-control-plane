@@ -215,7 +215,12 @@ in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
   location headers" Managed Transform on the zone; and an Umami that is
   itself behind Cloudflare with IP geolocation enabled will overwrite the
   relayed `cf-ipcountry` — disable geolocation on that zone. CF's non-country
-  sentinels (`XX` unknown, `T1` Tor) are dropped rather than recorded.
+  sentinels (`XX` unknown, `T1` Tor) are dropped rather than recorded. The
+  inbound geo headers are covered by the same Caddy gate as the IP header:
+  with `CADDY_TRUST_CF_HEADER` unset (the default) Caddy strips
+  `CF-IPCountry`/`CF-Region-Code`/`CF-IPCity` before the backend, so a client
+  can't spoof geo values into the operator's Umami on a deployment that isn't
+  genuinely Cloudflare-fronted.
 - **The IP the relay forwards is operator-selectable — analytics-only trust.**
   By default it is the fail-closed `resolveClientIp` (the `CF_FRONTED` /
   `TRUSTED_PROXY_HOPS` env trust that also feeds rate limiting — right-anchored

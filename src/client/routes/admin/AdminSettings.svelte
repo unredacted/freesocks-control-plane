@@ -969,10 +969,12 @@
                 hashes it with a daily-rotating salt and stores derived country/region/city, never
                 the raw IP. Country and region only: the relay copies the Cloudflare edge's geo
                 headers instead and the IP never leaves this server; city is never sent, and
-                unique-visitor counts fall back to per-device approximations. Region needs the free
-                "Add visitor location headers" Managed Transform enabled on your Cloudflare zone
-                (country works out of the box). If your Umami instance is itself behind Cloudflare,
-                disable IP geolocation on that zone or the relayed location gets overwritten.
+                unique-visitor counts fall back to per-device approximations. Like the Cloudflare IP
+                source, this needs CADDY_TRUST_CF_HEADER=true on the web service (the Caddyfile
+                strips client-suppliable Cloudflare headers otherwise). Region needs the free "Add
+                visitor location headers" Managed Transform enabled on your Cloudflare zone (country
+                works out of the box). If your Umami instance is itself behind Cloudflare, disable
+                IP geolocation on that zone or the relayed location gets overwritten.
               </p>
             </div>
           {/if}

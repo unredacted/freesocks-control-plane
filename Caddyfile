@@ -202,15 +202,22 @@
 		#       appends rather than discards a client-supplied header.
 		#   (c) Cloudflare CDN edge: CF_FRONTED=true on the backend + origin locked
 		#       to CF-only (see docs/threat-model-cdn-blinding.md).
-		# Defense in depth: strip any client-supplied CF-Connecting-IP before it
-		# reaches the backend — UNLESS the operator declares a real Cloudflare
+		# Defense in depth: strip any client-supplied Cloudflare headers before
+		# they reach the backend — UNLESS the operator declares a real Cloudflare
 		# edge fronts this deployment (CADDY_TRUST_CF_HEADER=true, and the origin
-		# must then be locked to CF-only traffic so the header can't be spoofed
+		# must then be locked to CF-only traffic so the headers can't be spoofed
 		# by a direct hit). With the strip active (the default), the backend can
-		# never see the header, so CF_FRONTED / the analytics Cloudflare IP
-		# source stay inert even if misconfigured — the two layers can't disagree.
+		# never see them, so CF_FRONTED, the analytics Cloudflare IP source, and
+		# the analytics coarse-geo mode stay inert even if misconfigured — the
+		# two layers can't disagree. The geo trio (IPCountry/Region-Code/IPCity)
+		# gets the same treatment as the IP: resolveCountry (mirror tiering) and
+		# the analytics relay consume the first two, and the vouched-or-absent
+		# invariant should cover every CF-derived value alike.
 		@untrustedCfHeader `{env.CADDY_TRUST_CF_HEADER} != "true"`
 		request_header @untrustedCfHeader -CF-Connecting-IP
+		request_header @untrustedCfHeader -CF-IPCountry
+		request_header @untrustedCfHeader -CF-Region-Code
+		request_header @untrustedCfHeader -CF-IPCity
 		reverse_proxy backend:3211
 	}
 

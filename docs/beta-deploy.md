@@ -269,7 +269,9 @@ See `docs/threat-model-cdn-blinding.md`.
     `CADDY_TRUSTED_PROXIES` and bump `TRUSTED_PROXY_HOPS`.
   - **(c) Cloudflare CDN edge**: `CF_FRONTED=true` on the backend **+
     `CADDY_TRUST_CF_HEADER=true` on the `web` service** (the stock Caddyfile otherwise strips
-    `CF-Connecting-IP` before it reaches the backend) + origin locked to CF-only traffic.
+    `CF-Connecting-IP` AND the `CF-IPCountry`/`CF-Region-Code`/`CF-IPCity` geo headers before
+    they reach the backend — so `resolveCountry` mirror tiering and the analytics geo options
+    also depend on the flag) + origin locked to CF-only traffic.
   - **(d) Cloudflare in front of a Pangolin-style tunnel** (CF → Pangolin → Caddy): XFF **cannot**
     carry the visitor here — Pangolin discards the inbound chain (see (b)), so Cloudflare's
     appended visitor entry is destroyed and no `TRUSTED_PROXY_HOPS` value recovers it. Use

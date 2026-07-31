@@ -200,8 +200,11 @@ export async function sendUmamiEvent(args: UmamiEventArgs): Promise<void> {
   };
   // Coarse geo mode: Umami reads Cloudflare-style geo headers when payload.ip
   // is absent. cf-ipcity is deliberately NEVER sent — city stays structurally
-  // out of the operator's Umami. (Caveat, documented: an Umami itself fronted
-  // by Cloudflare with IP-geolocation on will overwrite cf-ipcountry.)
+  // out of the operator's Umami. The INBOUND values are spoof-gated upstream:
+  // Caddy strips the CF geo headers unless CADDY_TRUST_CF_HEADER=true, so on a
+  // non-CF-fronted deployment a client can't inject geo values here. (Caveat,
+  // documented: an Umami itself fronted by Cloudflare with IP-geolocation on
+  // will overwrite cf-ipcountry.)
   if (geo) {
     const country = sanitizeCountryCode(geo.country);
     const region = sanitizeRegionCode(geo.region);
