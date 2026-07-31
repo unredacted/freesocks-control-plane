@@ -1494,7 +1494,13 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
   /** Store an analytics config directly (bypassing the admin PATCH). */
   async function seedAnalytics(
     t: ReturnType<typeof convexTest>,
-    cfg: { enabled: boolean; umamiUrl: string; websiteId: string; forwardIp?: boolean },
+    cfg: {
+      enabled: boolean;
+      umamiUrl: string;
+      websiteId: string;
+      forwardIp?: boolean;
+      ipHeader?: string;
+    },
   ) {
     await t.run(async (ctx) => {
       const rows: Array<[string, unknown]> = [
@@ -1502,6 +1508,7 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
         ['analytics.umamiUrl', cfg.umamiUrl],
         ['analytics.websiteId', cfg.websiteId],
         ['analytics.forwardIp', cfg.forwardIp === true],
+        ['analytics.ipHeader', cfg.ipHeader ?? ''],
       ];
       for (const [key, value] of rows) {
         await ctx.db.insert('appSettings', {
@@ -1644,6 +1651,44 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
     expect(Object.keys(headers).sort()).toEqual(['content-type', 'user-agent']);
   });
 
+  test('ipHeader source: payload.ip comes from the chosen CDN header, not XFF', async () => {
+    const t = convexTest(schema, modules);
+    await seedAnalytics(t, {
+      enabled: true,
+      umamiUrl: 'https://umami.example',
+      websiteId: A_UUID,
+      forwardIp: true,
+      ipHeader: 'cf-connecting-ip',
+    });
+    const spy = vi.fn().mockResolvedValue(new Response('ok'));
+    vi.stubGlobal('fetch', spy);
+
+    // The CDN header wins; the XFF chain (which resolveClientIp would read,
+    // and which here carries the fronting tunnel's private hop) is ignored.
+    await t.fetch(
+      '/api/v1/telemetry',
+      beacon(
+        { route: '/' },
+        { 'cf-connecting-ip': '203.0.113.50', 'x-forwarded-for': '172.16.0.9' },
+      ),
+    );
+    const withHeader = JSON.parse(
+      (spy.mock.calls[0] as [string, RequestInit])[1].body as string,
+    ) as { payload: Record<string, string> };
+    expect(withHeader.payload.ip).toBe('203.0.113.50');
+
+    // Header absent → the field is simply omitted (no silent XFF fallback:
+    // the operator chose header trust, so resolveClientIp is not consulted).
+    await t.fetch(
+      '/api/v1/telemetry',
+      beacon({ route: '/' }, { 'x-forwarded-for': '203.0.113.51' }),
+    );
+    const withoutHeader = JSON.parse(
+      (spy.mock.calls[1] as [string, RequestInit])[1].body as string,
+    ) as { payload: Record<string, string> };
+    expect(withoutHeader.payload).not.toHaveProperty('ip');
+  });
+
   test('per-IP throttle: second POST past the policy is 429 with no outbound', async () => {
     const t = convexTest(schema, modules);
     await seedAnalytics(t, { enabled: true, umamiUrl: 'https://umami.example', websiteId: A_UUID });
@@ -1690,6 +1735,7 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
       umamiUrl: '',
       websiteId: '',
       forwardIp: false,
+      ipHeader: '',
     });
 
     expect(
@@ -1725,7 +1771,11 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
     const res = await t.fetch('/api/v1/admin/analytics', {
       method: 'PATCH',
       headers: { authorization: `Bearer ${write}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ umamiUrl: 'http://insecure.example', websiteId: 'not-a-uuid' }),
+      body: JSON.stringify({
+        umamiUrl: 'http://insecure.example',
+        websiteId: 'not-a-uuid',
+        ipHeader: 'x-forwarded-for', // multi-hop list header → rejected to ''
+      }),
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
@@ -1733,6 +1783,7 @@ describe('analytics relay (POST /api/v1/telemetry + admin config)', () => {
       umamiUrl: '',
       websiteId: '',
       forwardIp: false,
+      ipHeader: '',
     });
   });
 

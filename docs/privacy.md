@@ -201,6 +201,22 @@ in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
   session hash and stores derived geo, not a raw IP column — but **verify this
   against your own Umami version**, and make sure Umami's own fronting proxy
   does not access-log request bodies.
+- **The IP the relay forwards is operator-selectable — analytics-only trust.**
+  By default it is the fail-closed `resolveClientIp` (the `CF_FRONTED` /
+  `TRUSTED_PROXY_HOPS` env trust that also feeds rate limiting — right-anchored
+  XFF hop counting handles CDN → tunnel → edge chains generically; tune the hop
+  count with the `GET /api/v1/admin/client-ip` diagnostic). For chains where
+  XFF doesn't survive, `analytics.ipHeader` names a **single-IP fronting-CDN
+  header** to read instead (`cf-connecting-ip`, `fastly-client-ip`, or a custom
+  name; `x-forwarded-for` is refused — that's what hop counting is for). This
+  trust is **deliberately scoped to the relay** and never feeds
+  `resolveClientIp`, so an `admin:settings:write` token cannot widen the
+  security-path IP trust; a header the chain doesn't actually set is
+  client-spoofable, and the worst case is wrong geo in the operator's own
+  Umami. The chosen header name is audited. Note: the stock Caddyfile strips
+  `CF-Connecting-IP` before the backend; a genuinely Cloudflare-fronted
+  deployment sets `CADDY_TRUST_CF_HEADER=true` on the web service (and must
+  lock the origin to CF-only traffic).
 - **The audit log never records the Umami URL or website id** —
   `admin.analytics.change` stores booleans plus a truncated hash of the URL
   (`umamiUrlHash`), so a silent repoint of this exfiltration-capable endpoint

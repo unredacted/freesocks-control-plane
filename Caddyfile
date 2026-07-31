@@ -202,13 +202,16 @@
 		#       appends rather than discards a client-supplied header.
 		#   (c) Cloudflare CDN edge: CF_FRONTED=true on the backend + origin locked
 		#       to CF-only (see docs/threat-model-cdn-blinding.md).
-		reverse_proxy backend:3211 {
-			# Defense in depth: strip any client-supplied CF-Connecting-IP before it
-			# reaches the backend. The backend only honours that header when
-			# CF_FRONTED=true (topology (c)); stripping here means the two layers can
-			# never disagree and a request hitting Caddy directly can't spoof its IP.
-			header_up -CF-Connecting-IP
-		}
+		# Defense in depth: strip any client-supplied CF-Connecting-IP before it
+		# reaches the backend — UNLESS the operator declares a real Cloudflare
+		# edge fronts this deployment (CADDY_TRUST_CF_HEADER=true, and the origin
+		# must then be locked to CF-only traffic so the header can't be spoofed
+		# by a direct hit). With the strip active (the default), the backend can
+		# never see the header, so CF_FRONTED / the analytics Cloudflare IP
+		# source stay inert even if misconfigured — the two layers can't disagree.
+		@untrustedCfHeader `{env.CADDY_TRUST_CF_HEADER} != "true"`
+		request_header @untrustedCfHeader -CF-Connecting-IP
+		reverse_proxy backend:3211
 	}
 
 	# Never serve source maps from the public root (defense in depth; the prod

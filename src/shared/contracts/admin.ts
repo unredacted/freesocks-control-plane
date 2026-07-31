@@ -555,5 +555,10 @@ export const AdminAnalyticsConfig = z.object({
   /** Forward the visitor IP per request as `payload.ip` (Umami v2.17+;
    *  no Umami-side config — safe on a shared multi-site instance). */
   forwardIp: z.boolean(),
+  /** IP source for forwardIp: '' = the fail-closed resolveClientIp (env
+   *  trust), else a single-IP CDN header name ('cf-connecting-ip',
+   *  'fastly-client-ip', custom). Analytics-only trust. Defaulted for
+   *  deploy skew against an older backend. */
+  ipHeader: z.string().optional().default(''),
 });
 export type AdminAnalyticsConfig = z.infer<typeof AdminAnalyticsConfig>;

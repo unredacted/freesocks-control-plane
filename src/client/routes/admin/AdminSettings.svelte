@@ -234,7 +234,8 @@
     umamiUrl: string;
     websiteId: string;
     forwardIp: boolean;
-  }>({ enabled: false, umamiUrl: '', websiteId: '', forwardIp: false });
+    ipHeader: string;
+  }>({ enabled: false, umamiUrl: '', websiteId: '', forwardIp: false, ipHeader: '' });
   let aInit = $state(false);
   $effect(() => {
     if (analytics.data && !aInit) {
@@ -242,6 +243,35 @@
       aInit = true;
     }
   });
+
+  // The IP-source select maps well-known CDN headers to friendly labels;
+  // anything else stored in ipHeader renders as the "Custom header" choice.
+  const IP_SOURCES = [
+    { value: '', label: 'Resolved client IP (default)' },
+    { value: 'cf-connecting-ip', label: 'Cloudflare (cf-connecting-ip)' },
+    { value: 'fastly-client-ip', label: 'Fastly (fastly-client-ip)' },
+    { value: 'custom', label: 'Custom header…' },
+  ];
+  let ipSourceChoice = $derived(
+    IP_SOURCES.some((s) => s.value === aDraft.ipHeader && s.value !== 'custom')
+      ? aDraft.ipHeader
+      : 'custom',
+  );
+  // Keeps the custom text box populated while switching between choices.
+  let customIpHeader = $state('');
+  $effect(() => {
+    if (aInit && ipSourceChoice === 'custom' && customIpHeader === '' && aDraft.ipHeader !== '') {
+      customIpHeader = aDraft.ipHeader;
+    }
+  });
+  function pickIpSource(v: string) {
+    if (v === 'custom') {
+      aDraft = { ...aDraft, ipHeader: customIpHeader || 'x-real-ip' };
+      customIpHeader = aDraft.ipHeader;
+    } else {
+      aDraft = { ...aDraft, ipHeader: v };
+    }
+  }
   const saveAnalytics = createMutation(() => ({
     mutationFn: async () => {
       return apiClient.patch('/api/v1/admin/analytics', aDraft, AdminAnalyticsConfig);
@@ -900,6 +930,49 @@
             Umami stores a daily-rotating hash, never the raw IP; verify your Umami version and its
             reverse proxy's access logs before enabling. See docs/privacy.md.
           </p>
+          {#if aDraft.forwardIp}
+            <div>
+              <label
+                class="text-xs text-muted-foreground mb-1 block"
+                for="analytics-ip-source-trigger"
+              >
+                Visitor IP source
+              </label>
+              <div class="flex flex-wrap gap-3">
+                <Select.Root type="single" value={ipSourceChoice} onValueChange={pickIpSource}>
+                  <Select.Trigger id="analytics-ip-source-trigger" class="w-64">
+                    {IP_SOURCES.find((s) => s.value === ipSourceChoice)?.label ?? 'Custom header…'}
+                  </Select.Trigger>
+                  <Select.Content>
+                    {#each IP_SOURCES as src (src.value)}
+                      <Select.Item value={src.value}>{src.label}</Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
+                {#if ipSourceChoice === 'custom'}
+                  <Input
+                    class="w-56"
+                    placeholder="x-real-ip"
+                    aria-label="Custom IP header name"
+                    value={customIpHeader}
+                    oninput={(e) => {
+                      customIpHeader = (e.target as HTMLInputElement).value;
+                      aDraft = { ...aDraft, ipHeader: customIpHeader };
+                    }}
+                  />
+                {/if}
+              </div>
+              <p class="text-xs text-muted-foreground mt-1">
+                Where the relay reads the visitor IP. Default: the platform's trusted-proxy
+                resolution (TRUSTED_PROXY_HOPS / CF_FRONTED). Pick your fronting CDN's header when
+                the proxy chain doesn't preserve the forwarded chain (for example Cloudflare in
+                front of a tunnel). This choice affects analytics only, never rate limiting.
+                Cloudflare additionally needs CADDY_TRUST_CF_HEADER=true on the web service (the
+                stock Caddyfile strips cf-connecting-ip). A header your chain doesn't actually set
+                can be spoofed by clients; worst case is wrong geo data in your own Umami.
+              </p>
+            </div>
+          {/if}
           <div class="flex justify-end">
             {#if !aInit}
               <span class="me-3 self-center text-xs text-muted-foreground"

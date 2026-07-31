@@ -36,7 +36,7 @@ import { resolveCatalogWithAvailability, resolverFor } from './lib/placement';
 import { resolveBoundModeIds } from './lib/remnawavePlacement';
 import { sanitizeHttpsUrl, sanitizeOnion } from './lib/verificationConfig';
 import { sanitizeBannerText, sanitizeEmail, sanitizeHeroTitles } from './lib/siteConfig';
-import { sanitizeUmamiUrl, sanitizeWebsiteId } from './lib/analyticsConfig';
+import { sanitizeIpHeaderName, sanitizeUmamiUrl, sanitizeWebsiteId } from './lib/analyticsConfig';
 import { normalizeSupportId } from './lib/supportId';
 import { checkInfraUrl } from './lib/urlSafety';
 import { CRON_META, cronStaleAfterMs } from './cronHeartbeat';
@@ -2129,20 +2129,28 @@ export const setAnalyticsConfig = internalMutation({
     umamiUrl: v.string(),
     websiteId: v.string(),
     forwardIp: v.boolean(),
+    // '' = resolveClientIp; else a fronting-CDN client-IP header name
+    // (analytics-only trust). Optional: older callers don't send it.
+    ipHeader: v.optional(v.string()),
     umamiUrlHash: v.string(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { enabled, umamiUrl, websiteId, forwardIp, umamiUrlHash, actorAdminId }) => {
+  handler: async (
+    ctx,
+    { enabled, umamiUrl, websiteId, forwardIp, ipHeader, umamiUrlHash, actorAdminId },
+  ) => {
     const clean = {
       enabled,
       umamiUrl: sanitizeUmamiUrl(umamiUrl),
       websiteId: sanitizeWebsiteId(websiteId),
       forwardIp,
+      ipHeader: sanitizeIpHeaderName(ipHeader ?? ''),
     };
     await upsertSetting(ctx, 'analytics.enabled', JSON.stringify(clean.enabled), actorAdminId);
     await upsertSetting(ctx, 'analytics.umamiUrl', JSON.stringify(clean.umamiUrl), actorAdminId);
     await upsertSetting(ctx, 'analytics.websiteId', JSON.stringify(clean.websiteId), actorAdminId);
     await upsertSetting(ctx, 'analytics.forwardIp', JSON.stringify(clean.forwardIp), actorAdminId);
+    await upsertSetting(ctx, 'analytics.ipHeader', JSON.stringify(clean.ipHeader), actorAdminId);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -2151,6 +2159,7 @@ export const setAnalyticsConfig = internalMutation({
       payload: {
         enabled: clean.enabled,
         forwardIp: clean.forwardIp,
+        ipHeader: clean.ipHeader,
         umamiUrlHash: clean.umamiUrl === '' ? '' : umamiUrlHash,
         hasWebsiteId: clean.websiteId !== '',
       },

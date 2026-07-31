@@ -391,7 +391,10 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   `appSettings` `analytics.*` namespace, edited on Admin → Settings
   (`GET/PATCH /api/v1/admin/analytics`, `admin:settings:read|write`); `analytics.forwardIp`
   (default off) embeds the visitor IP per request as `payload.ip` (Umami v2.17+; no
-  Umami-side config, so a shared multi-site instance is unaffected). Audited as
+  Umami-side config, so a shared multi-site instance is unaffected), sourced from
+  `resolveClientIp` or an operator-chosen single-IP CDN header (`analytics.ipHeader`:
+  Cloudflare/Fastly/custom — analytics-only trust, never rate limits; the Cloudflare
+  header also needs `CADDY_TRUST_CF_HEADER=true` on the web service). Audited as
   `admin.analytics.change` (booleans + truncated URL hash; never the host). **DORMANT by
   default** — ships disabled until an admin sets the URL + website id and enables it.
 - **Self-hosted Cap captcha** (`convex/lib/captcha.ts` + `src/client/components/CapWidget.svelte`):

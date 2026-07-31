@@ -425,7 +425,14 @@ http.route({
         input,
         userAgent: req.headers.get('user-agent'),
         hostname: req.headers.get('x-forwarded-host') ?? req.headers.get('host'),
-        clientIp: cfg.forwardIp ? resolveClientIp(req) : null,
+        // IP source: the operator-chosen single-IP CDN header (analytics-only
+        // trust — never feeds resolveClientIp/rate limits) or, by default, the
+        // fail-closed resolveClientIp. sanitizeIp guards either value.
+        clientIp: cfg.forwardIp
+          ? cfg.ipHeader
+            ? req.headers.get(cfg.ipHeader)
+            : resolveClientIp(req)
+          : null,
       });
     }
     return json({ ok: true }, 202);
@@ -2701,6 +2708,7 @@ http.route({
       umamiUrl?: string;
       websiteId?: string;
       forwardIp?: boolean;
+      ipHeader?: string;
     }>(req);
     // Hash the CLEANED url (what will actually be stored/used) — sanitize here
     // with the same function the mutation applies, so the hash matches.
@@ -2713,6 +2721,7 @@ http.route({
           umamiUrl: typeof body.umamiUrl === 'string' ? body.umamiUrl : '',
           websiteId: typeof body.websiteId === 'string' ? body.websiteId : '',
           forwardIp: body.forwardIp === true,
+          ipHeader: typeof body.ipHeader === 'string' ? body.ipHeader : '',
           umamiUrlHash: cleanUrl === '' ? '' : (await sha256Hex(cleanUrl)).slice(0, 8),
           actorAdminId: admin.adminUserId,
         }),

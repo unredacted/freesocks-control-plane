@@ -28,6 +28,19 @@ export interface AnalyticsConfig {
    * multi-site Umami is unaffected for its other sites.
    */
   forwardIp: boolean;
+  /**
+   * Where the relay reads the visitor IP when forwardIp is on. '' (default) =
+   * the fail-closed resolveClientIp (CF_FRONTED / TRUSTED_PROXY_HOPS envs);
+   * else the NAME of a single-IP request header set by the operator's fronting
+   * CDN, e.g. 'cf-connecting-ip' (Cloudflare) or 'fastly-client-ip' (Fastly).
+   * ANALYTICS-ONLY trust, deliberately separate from resolveClientIp: the
+   * security-path IP trust (rate-limit buckets) stays env-based and fail-
+   * closed, so an admin:settings:write token can't widen it. Worst case for a
+   * wrong/spoofed header here is polluted geo in the operator's own Umami.
+   * NOTE: cf-connecting-ip additionally needs CADDY_TRUST_CF_HEADER=true on
+   * the web (Caddy) service — the stock Caddyfile strips that header.
+   */
+  ipHeader: string;
 }
 
 export const ANALYTICS_DEFAULTS: AnalyticsConfig = {
@@ -35,6 +48,7 @@ export const ANALYTICS_DEFAULTS: AnalyticsConfig = {
   umamiUrl: '',
   websiteId: '',
   forwardIp: false,
+  ipHeader: '',
 };
 
 const MAX_URL = 512;
@@ -67,6 +81,20 @@ export function sanitizeWebsiteId(v: unknown): string {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s) ? s : '';
 }
 
+/**
+ * An HTTP header NAME (RFC 9110 token charset, conservatively narrowed to the
+ * chars real client-IP headers use), lowercased; '' = use resolveClientIp.
+ * Never trust x-forwarded-for through this knob — it's a multi-hop LIST, and
+ * picking the right entry is exactly what TRUSTED_PROXY_HOPS already does
+ * fail-closed; naive first-entry reads are client-spoofable.
+ */
+export function sanitizeIpHeaderName(v: unknown): string {
+  if (typeof v !== 'string') return '';
+  const s = v.trim().toLowerCase();
+  if (s === '' || s === 'x-forwarded-for') return '';
+  return /^[a-z0-9-]{1,64}$/.test(s) ? s : '';
+}
+
 export async function resolveAnalyticsConfig(db: DatabaseReader): Promise<AnalyticsConfig> {
   const read = async (key: string): Promise<unknown> => {
     const row = await db
@@ -87,6 +115,7 @@ export async function resolveAnalyticsConfig(db: DatabaseReader): Promise<Analyt
     umamiUrl: sanitizeUmamiUrl(await read('analytics.umamiUrl')),
     websiteId: sanitizeWebsiteId(await read('analytics.websiteId')),
     forwardIp: typeof forwardIpVal === 'boolean' ? forwardIpVal : ANALYTICS_DEFAULTS.forwardIp,
+    ipHeader: sanitizeIpHeaderName(await read('analytics.ipHeader')),
   };
 }
 

@@ -267,10 +267,19 @@ See `docs/threat-model-cdn-blinding.md`.
     the diagnostic's `chain` rightmost entry is the compose gateway `172.18.0.1` instead of the
     Tailscale peer, Docker's userland proxy masked the source — add `172.18.0.1` to
     `CADDY_TRUSTED_PROXIES` and bump `TRUSTED_PROXY_HOPS`.
-  - **(c) Cloudflare CDN edge**: `CF_FRONTED=true` + origin locked to CF-only traffic.
+  - **(c) Cloudflare CDN edge**: `CF_FRONTED=true` on the backend **+
+    `CADDY_TRUST_CF_HEADER=true` on the `web` service** (the stock Caddyfile otherwise strips
+    `CF-Connecting-IP` before it reaches the backend) + origin locked to CF-only traffic.
+  - **(d) Cloudflare in front of a Pangolin-style tunnel** (CF → Pangolin → Caddy): XFF **cannot**
+    carry the visitor here — Pangolin discards the inbound chain (see (b)), so Cloudflare's
+    appended visitor entry is destroyed and no `TRUSTED_PROXY_HOPS` value recovers it. Use
+    `cf-connecting-ip` instead, which Pangolin passes through untouched: topology (c)'s two flags,
+    since the origin only accepts CF-sourced traffic via the tunnel. For **analytics-only** geo
+    (without widening the security-path trust), the Admin → Settings analytics card's "Visitor IP
+    source" (`analytics.ipHeader`) reads the header for the Umami relay alone.
 
-  `CF_FRONTED` unset trusts no `cf-connecting-ip` (it would be spoofable); Caddy strips it upstream
-  anyway.
+  `CF_FRONTED` unset trusts no `cf-connecting-ip` (it would be spoofable); with
+  `CADDY_TRUST_CF_HEADER` unset Caddy strips it upstream anyway, so the two layers can't disagree.
 
 - **Dashboard.** By default, reach it over an SSH tunnel:
   `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 <beta-host>`, then open

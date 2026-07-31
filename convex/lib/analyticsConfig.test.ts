@@ -7,6 +7,7 @@ import {
   ANALYTICS_DEFAULTS,
   publicAnalytics,
   resolveAnalyticsConfig,
+  sanitizeIpHeaderName,
   sanitizeUmamiUrl,
   sanitizeWebsiteId,
 } from './analyticsConfig';
@@ -76,6 +77,28 @@ describe('sanitizeWebsiteId', () => {
   });
 });
 
+describe('sanitizeIpHeaderName', () => {
+  test('accepts well-known and custom single-IP header names, lowercased', () => {
+    expect(sanitizeIpHeaderName('cf-connecting-ip')).toBe('cf-connecting-ip');
+    expect(sanitizeIpHeaderName('Fastly-Client-IP')).toBe('fastly-client-ip');
+    expect(sanitizeIpHeaderName('  X-Real-IP  ')).toBe('x-real-ip');
+  });
+
+  test('rejects x-forwarded-for (multi-hop list; that is TRUSTED_PROXY_HOPS territory)', () => {
+    expect(sanitizeIpHeaderName('x-forwarded-for')).toBe('');
+    expect(sanitizeIpHeaderName('X-Forwarded-For')).toBe('');
+  });
+
+  test('rejects junk and non-strings', () => {
+    expect(sanitizeIpHeaderName('')).toBe('');
+    expect(sanitizeIpHeaderName('not a header')).toBe('');
+    expect(sanitizeIpHeaderName('evil\r\nname')).toBe('');
+    expect(sanitizeIpHeaderName('a'.repeat(100))).toBe('');
+    expect(sanitizeIpHeaderName(42)).toBe('');
+    expect(sanitizeIpHeaderName(null)).toBe('');
+  });
+});
+
 describe('resolveAnalyticsConfig', () => {
   test('defaults (no rows): disabled, empty targets, forwardIp off', async () => {
     const t = convexTest(schema, modules);
@@ -106,7 +129,13 @@ describe('resolveAnalyticsConfig', () => {
 });
 
 describe('publicAnalytics', () => {
-  const base = { enabled: true, umamiUrl: 'https://a.example', websiteId: UUID, forwardIp: false };
+  const base = {
+    enabled: true,
+    umamiUrl: 'https://a.example',
+    websiteId: UUID,
+    forwardIp: false,
+    ipHeader: '',
+  };
 
   test('effectively enabled only when the toggle AND both targets are set', () => {
     expect(publicAnalytics(base)).toEqual({ enabled: true });
@@ -128,6 +157,7 @@ describe('setAnalyticsConfig', () => {
       umamiUrl: '  https://analytics.example.org/  ',
       websiteId: UUID.toUpperCase(),
       forwardIp: false,
+      ipHeader: 'CF-Connecting-IP',
       umamiUrlHash: 'deadbeef',
     });
     expect(clean).toEqual({
@@ -135,6 +165,7 @@ describe('setAnalyticsConfig', () => {
       umamiUrl: 'https://analytics.example.org',
       websiteId: UUID,
       forwardIp: false,
+      ipHeader: 'cf-connecting-ip',
     });
     const cfg = await t.run((ctx) => resolveAnalyticsConfig(ctx.db));
     expect(cfg).toEqual(clean);
