@@ -126,15 +126,25 @@ export async function resolveAnalyticsConfig(db: DatabaseReader): Promise<Analyt
       return undefined;
     }
   };
-  const enabledVal = await read('analytics.enabled');
-  const forwardIpVal = await read('analytics.forwardIp');
+  // Parallel point reads: publicConfig.get runs dozens of these across its
+  // namespace resolvers, and sequential awaits march a slow datastore straight
+  // into the 1s UDF limit (seen live on beta 2026-07-31).
+  const [enabledVal, umamiUrlVal, websiteIdVal, forwardIpVal, ipHeaderVal, geoModeVal] =
+    await Promise.all([
+      read('analytics.enabled'),
+      read('analytics.umamiUrl'),
+      read('analytics.websiteId'),
+      read('analytics.forwardIp'),
+      read('analytics.ipHeader'),
+      read('analytics.geoMode'),
+    ]);
   return {
     enabled: typeof enabledVal === 'boolean' ? enabledVal : ANALYTICS_DEFAULTS.enabled,
-    umamiUrl: sanitizeUmamiUrl(await read('analytics.umamiUrl')),
-    websiteId: sanitizeWebsiteId(await read('analytics.websiteId')),
+    umamiUrl: sanitizeUmamiUrl(umamiUrlVal),
+    websiteId: sanitizeWebsiteId(websiteIdVal),
     forwardIp: typeof forwardIpVal === 'boolean' ? forwardIpVal : ANALYTICS_DEFAULTS.forwardIp,
-    ipHeader: sanitizeIpHeaderName(await read('analytics.ipHeader')),
-    geoMode: sanitizeGeoMode(await read('analytics.geoMode')),
+    ipHeader: sanitizeIpHeaderName(ipHeaderVal),
+    geoMode: sanitizeGeoMode(geoModeVal),
   };
 }
 

@@ -81,12 +81,55 @@ export const get = query({
       | 'development'
       | 'test';
 
-    // Public-safe billing catalog: prices, durations, which rails are live, and
-    // the tier slug the membership maps to. No secrets (API keys/IPN secrets are
-    // env-only). The SPA gates the upgrade UI on `billing.enabled` + `rails.*`.
-    const billing = await resolveBillingConfig(ctx.db);
-    // Live shared donation bonus (GB) on every free user's monthly cap this month.
-    const donationState = await readDonationState(ctx.db);
+    // All the independent sub-resolvers fan out in ONE Promise.all: this
+    // function became the single heaviest public query (each resolver is
+    // itself many indexed point reads), and awaiting them sequentially marched
+    // a slow datastore straight into the 1s UDF timeout (seen live on beta
+    // 2026-07-31: "Restarting Isolate user_timeout ... publicConfig.js:get").
+    const [
+      billing,
+      donationState,
+      storedDonationHistory,
+      userCounts,
+      firstMirror,
+      publicModes,
+      referralCfg,
+      theme,
+      verification,
+      site,
+      analyticsCfg,
+      locations,
+      clientsCatalog,
+    ] = await Promise.all([
+      // Public-safe billing catalog: prices, durations, which rails are live, and
+      // the tier slug the membership maps to. No secrets (API keys/IPN secrets are
+      // env-only). The SPA gates the upgrade UI on `billing.enabled` + `rails.*`.
+      resolveBillingConfig(ctx.db),
+      // Live shared donation bonus (GB) on every free user's monthly cap this month.
+      readDonationState(ctx.db),
+      readDonationHistory(ctx.db),
+      readUserCounts(ctx.db),
+      // Is the opt-in "trouble connecting? try a mirror" affordance available? Only
+      // a boolean (≥1 active mirror provider) — no provider details/secrets. Lets the
+      // SPA hide the affordance entirely on a dormant deployment.
+      ctx.db
+        .query('mirrorProviders')
+        .withIndex('by_active', (q) => q.eq('isActive', true))
+        .first(),
+      // Resolved once: the family list is derived from it (a family with no visible
+      // child is itself hidden), so the two must be computed from the same snapshot.
+      resolvePublicModes(ctx.db),
+      resolveReferralConfig(ctx.db),
+      resolveTheme(ctx.db),
+      resolveVerification(ctx.db),
+      resolveSiteConfig(ctx.db),
+      resolveAnalyticsConfig(ctx.db),
+      resolveLocations(ctx.db),
+      resolveClients(ctx.db),
+    ]);
+    const mirrorsEnabled = firstMirror !== null;
+    const { modes: modeProjection, catalog: modeCatalog } = publicModes;
+
     const currentBonusGb = billing.donation.enabled
       ? effectiveBonusGb(donationState, billing.donation, Date.now())
       : 0;
@@ -97,7 +140,7 @@ export const get = query({
     let donationHistory: { month: string; bonusGb: number }[] = [];
     if (billing.donation.enabled) {
       const mk = currentMonthKey(Date.now());
-      const stored = (await readDonationHistory(ctx.db))
+      const stored = storedDonationHistory
         .filter((h) => h.monthKey !== mk)
         .map((h) => ({ month: h.monthKey, bonusGb: h.bonusGb }));
       // Skip the synthesized entry on a deployment with no impact yet (empty
@@ -109,20 +152,6 @@ export const get = query({
           ? [...stored, { month: mk, bonusGb: currentBonusGb }].slice(-12)
           : [];
     }
-    const userCounts = await readUserCounts(ctx.db);
-
-    // Is the opt-in "trouble connecting? try a mirror" affordance available? Only
-    // a boolean (≥1 active mirror provider) — no provider details/secrets. Lets the
-    // SPA hide the affordance entirely on a dormant deployment.
-    const mirrorsEnabled =
-      (await ctx.db
-        .query('mirrorProviders')
-        .withIndex('by_active', (q) => q.eq('isActive', true))
-        .first()) !== null;
-
-    // Resolved once: the family list is derived from it (a family with no visible
-    // child is itself hidden), so the two must be computed from the same snapshot.
-    const { modes: modeProjection, catalog: modeCatalog } = await resolvePublicModes(ctx.db);
 
     return {
       membersJoinUrl: process.env.MEMBERS_JOIN_URL || undefined,
@@ -202,15 +231,12 @@ export const get = query({
       mirrorsEnabled,
       // Referral-program knobs (enabled + the bonus-days numbers for the
       // signup/account copy). Non-secret; drives the referral surfaces.
-      referrals: await (async () => {
-        const rc = await resolveReferralConfig(ctx.db);
-        return {
-          enabled: rc.enabled,
-          refereeBonusDays: rc.refereeBonusDays,
-          referrerBonusDays: rc.referrerBonusDays,
-          vestingDays: rc.vestingDays,
-        };
-      })(),
+      referrals: {
+        enabled: referralCfg.enabled,
+        refereeBonusDays: referralCfg.refereeBonusDays,
+        referrerBonusDays: referralCfg.referrerBonusDays,
+        vestingDays: referralCfg.vestingDays,
+      },
       // Device-limit enforcement master switch (non-secret). When false the SPA
       // hides device-limit UI + app-compatibility gating (unlimited-by-default).
       devices: {
@@ -218,19 +244,19 @@ export const get = query({
       },
       // Admin-selected brand theme (preset + optional hue), applied client-side
       // over the baked default. Non-secret; always present (fail-safe default).
-      theme: await resolveTheme(ctx.db),
+      theme,
       // Admin-configured E2EE verification channels (non-secret): which off-CDN
       // channels the "Verify connection" panel shows, and whether to surface the
       // whole E2EE badge/panel at all. The panel renders only the set channels.
-      verification: await resolveVerification(ctx.db),
+      verification,
       // Admin-configured site chrome (non-secret): the announcement banner (toggle
       // + text) and the footer "View source" repo link (toggle + https URL). Both
       // resolve to safe defaults (off/empty) until the operator sets them.
-      site: await resolveSiteConfig(ctx.db),
+      site,
       // Analytics relay: ONLY the effective on/off bit (toggle AND configured).
       // The Umami host + website id are server-side-only — publicAnalytics's
       // narrow return type is the structural guarantee they can't leak here.
-      analytics: publicAnalytics(await resolveAnalyticsConfig(ctx.db)),
+      analytics: publicAnalytics(analyticsCfg),
       // Member-facing connection-mode catalog: the PARENT families a member picks
       // first, plus their transport sub-choices (id + family + label + description
       // + deliveryStyle + isDefault + available = enabled AND placement pool
@@ -241,12 +267,12 @@ export const get = query({
       // location set): code + display label + a coarse online bit. Never a URL
       // or credential. Drives the location picker at issuance; the SPA hides
       // the picker when fewer than two locations exist.
-      locations: await resolveLocations(ctx.db),
+      locations,
       // Member-facing recommended-client catalog (CMS-managed `clients` table, or
       // the compiled defaults when unseeded). Public-safe: names, platforms, install
       // links, hwid flag, and the import scheme id (the SPA maps it to a deep-link
       // builder). No secrets. Drives the single "set up your app" section.
-      clients: publicClients(await resolveClients(ctx.db)),
+      clients: publicClients(clientsCatalog),
     };
   },
 });

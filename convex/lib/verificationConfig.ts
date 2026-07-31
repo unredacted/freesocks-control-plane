@@ -75,12 +75,21 @@ export async function resolveVerification(db: DatabaseReader): Promise<Verificat
       return undefined;
     }
   };
-  const showPanelVal = await read('verification.showPanel');
+  // Parallel point reads (see siteConfig.ts — sequential awaits add up inside
+  // publicConfig.get's 1s UDF budget).
+  const [showPanelVal, releaseUrlVal, onionAddressVal, sourceUrlVal, extensionUrlVal] =
+    await Promise.all([
+      read('verification.showPanel'),
+      read('verification.releaseUrl'),
+      read('verification.onionAddress'),
+      read('verification.sourceUrl'),
+      read('verification.extensionUrl'),
+    ]);
   return {
     showPanel: typeof showPanelVal === 'boolean' ? showPanelVal : VERIFICATION_DEFAULTS.showPanel,
-    releaseUrl: sanitizeHttpsUrl(await read('verification.releaseUrl')),
-    onionAddress: sanitizeOnion(await read('verification.onionAddress')),
-    sourceUrl: sanitizeHttpsUrl(await read('verification.sourceUrl')),
-    extensionUrl: sanitizeHttpsUrl(await read('verification.extensionUrl')),
+    releaseUrl: sanitizeHttpsUrl(releaseUrlVal),
+    onionAddress: sanitizeOnion(onionAddressVal),
+    sourceUrl: sanitizeHttpsUrl(sourceUrlVal),
+    extensionUrl: sanitizeHttpsUrl(extensionUrlVal),
   };
 }
