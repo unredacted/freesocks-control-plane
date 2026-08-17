@@ -465,6 +465,96 @@ describe('subscriptions.markSubscriptionDeleted — compensation returns the car
   });
 });
 
+describe('subscriptions.updateMirrors — a stale writer names the current owner', () => {
+  test('reports staleWriter + the owner so the caller can repair the object', async () => {
+    // Dropping the DB write stops the old row reclaiming ownership, but its S3
+    // upload already overwrote the shared object with the old key's config. The
+    // mutation reports that, and who owns the object now, so the caller can
+    // re-drive the owner's refresh instead of leaving a dead key in the mirror.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const { oldId, newId } = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const oldId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'old',
+        backendShortId: 'oldshort',
+        subscriptionUrl: 'https://panel.test/sub/oldshort',
+        subToken: 'tok-abc',
+        subscriptionMirrors: [
+          { provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'subs/x' },
+        ],
+        rawContentHash: 'old-hash',
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: oldId });
+      const newId = await ctx.runMutation(internal.subscriptions.insertSubscription, {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'new',
+        backendShortId: 'newshort',
+        subscriptionUrl: 'https://panel.test/sub/newshort',
+        subscriptionMirrors: [],
+        carrySubTokenFromId: oldId,
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: newId });
+      return { oldId, newId };
+    });
+
+    const res = await t.mutation(internal.subscriptions.updateMirrors, {
+      subscriptionId: oldId,
+      successes: [{ provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'subs/x' }],
+      failedProviders: [],
+      rawContentHash: 'stale-hash',
+    });
+
+    expect(res).toEqual({ staleWriter: true, currentOwner: newId });
+    await t.run(async (ctx) => {
+      // Ownership did not move back.
+      expect((await ctx.db.get(oldId))!.subscriptionMirrors).toEqual([]);
+    });
+  });
+
+  test('a normal round reports no stale writer', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const subId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'k',
+        backendShortId: 's',
+        subscriptionUrl: 'https://panel.test/sub/s',
+        subscriptionMirrors: [{ provider: 'p1', publicUrl: 'https://cdn.test/a', objectPath: 'a' }],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+      return subId;
+    });
+
+    const res = await t.mutation(internal.subscriptions.updateMirrors, {
+      subscriptionId: subId,
+      successes: [{ provider: 'p1', publicUrl: 'https://cdn.test/a', objectPath: 'a' }],
+      failedProviders: [],
+      rawContentHash: 'h',
+    });
+
+    expect(res).toEqual({ staleWriter: false, currentOwner: null });
+  });
+});
+
 describe('subscriptions.appendMirror — a superseded row is refused', () => {
   test('refuses a late provision against a row a re-issue has replaced', async () => {
     // provisionMirror reads its context, a switch re-issues, and the upload then

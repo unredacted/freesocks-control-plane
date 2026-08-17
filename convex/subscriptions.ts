@@ -476,9 +476,12 @@ export const updateMirrors = internalMutation({
     // content would strand that provider forever (never retried).
     rawContentHash: v.optional(v.string()),
   },
-  handler: async (ctx, { subscriptionId, successes, failedProviders, rawContentHash }) => {
+  handler: async (
+    ctx,
+    { subscriptionId, successes, failedProviders, rawContentHash },
+  ): Promise<{ staleWriter: boolean; currentOwner: Id<'subscriptions'> | null }> => {
     const row = await ctx.db.get(subscriptionId);
-    if (!row || row.state !== 'active') return null;
+    if (!row || row.state !== 'active') return { staleWriter: true, currentOwner: null };
     const fresh = new Map(successes.map((m) => [m.provider, m]));
     const failed = new Set(failedProviders);
     const merged = row.subscriptionMirrors.map((m) => {
@@ -496,12 +499,23 @@ export const updateMirrors = internalMutation({
     // between the page read and this write. Re-attaching them would leave two
     // rows owning one object path, and tearing the old row down would then
     // delete the object the live row is serving.
+    //
+    // Dropping the DB write is necessary but NOT sufficient: the S3 upload has
+    // already happened, so this writer has just overwritten the shared object
+    // with its own (old) key's config. Report that, plus who owns the object
+    // now, so the caller can re-drive the owner's refresh and converge.
+    const staleWriter = fresh.size > 0;
     await ctx.db.patch(subscriptionId, {
       subscriptionMirrors: merged,
       ...(rawContentHash !== undefined ? { rawContentHash } : {}),
       updatedAt: Date.now(),
     });
-    return null;
+    if (!staleWriter) return { staleWriter: false, currentOwner: null };
+    const owner = await ctx.db.get(row.userId);
+    return {
+      staleWriter: true,
+      currentOwner: owner?.currentSubscriptionId ?? null,
+    };
   },
 });
 

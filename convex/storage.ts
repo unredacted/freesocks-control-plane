@@ -334,6 +334,11 @@ async function refreshOneSubMirrors(
   ctx: ActionCtx,
   byName: Map<string, S3Provider>,
   sub: MirrorRefreshItem,
+  // Skip the unchanged-content short-circuit. Used by the self-heal below: after
+  // a stale writer overwrites the shared object, the OWNER's stored hash still
+  // describes the content it uploaded, so an ordinary refresh would match and
+  // decline to repair the object.
+  force = false,
 ): Promise<boolean> {
   try {
     // Re-upload only to THIS sub's providers that are still active.
@@ -424,15 +429,20 @@ async function refreshOneSubMirrors(
  * that 24h window. This closes the gap in seconds instead.
  */
 export const refreshMirrorsForSubscription = internalAction({
-  args: { subscriptionId: v.id('subscriptions') },
-  handler: async (ctx, { subscriptionId }): Promise<null> => {
+  args: { subscriptionId: v.id('subscriptions'), force: v.optional(v.boolean()) },
+  handler: async (ctx, { subscriptionId, force }): Promise<null> => {
     const providers = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
     if (providers.length === 0) return null;
     const target = await ctx.runQuery(internal.subscriptions.mirrorRefreshTarget, {
       subscriptionId,
     });
     if (!target) return null;
-    await refreshOneSubMirrors(ctx, new Map(providers.map((p) => [p.name, p])), target);
+    await refreshOneSubMirrors(
+      ctx,
+      new Map(providers.map((p) => [p.name, p])),
+      target,
+      force === true,
+    );
     return null;
   },
 });
