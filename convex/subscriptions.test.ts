@@ -464,3 +464,94 @@ describe('subscriptions.markSubscriptionDeleted — compensation returns the car
     });
   });
 });
+
+describe('subscriptions.appendMirror — a superseded row is refused', () => {
+  test('refuses a late provision against a row a re-issue has replaced', async () => {
+    // provisionMirror reads its context, a switch re-issues, and the upload then
+    // reports back against the OLD id. That row is still `active` until the
+    // tombstone a moment later, so state alone does not catch it — and appending
+    // would hand the member a URL that is deleted with the old row.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const { oldId, newId } = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const oldId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'old',
+        backendShortId: 'oldshort',
+        subscriptionUrl: 'https://panel.test/sub/oldshort',
+        subToken: 'tok-abc',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: oldId });
+      const newId = await ctx.runMutation(internal.subscriptions.insertSubscription, {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'new',
+        backendShortId: 'newshort',
+        subscriptionUrl: 'https://panel.test/sub/newshort',
+        subscriptionMirrors: [],
+        carrySubTokenFromId: oldId,
+      });
+      // The saga repoints the user before the old row is tombstoned.
+      await ctx.db.patch(userId, { currentSubscriptionId: newId });
+      return { oldId, newId };
+    });
+
+    const res = await t.mutation(internal.subscriptions.appendMirror, {
+      subscriptionId: oldId,
+      mirror: { provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'subs/x' },
+      rawContentHash: 'h',
+      cap: 3,
+    });
+
+    expect(res).toEqual({ appended: false, reason: 'superseded' });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(oldId))!.subscriptionMirrors).toEqual([]);
+      expect((await ctx.db.get(newId))!.subscriptionMirrors).toEqual([]);
+    });
+  });
+
+  test('still appends normally to the current subscription', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const subId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'k',
+        backendShortId: 's',
+        subscriptionUrl: 'https://panel.test/sub/s',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+      return subId;
+    });
+
+    const res = await t.mutation(internal.subscriptions.appendMirror, {
+      subscriptionId: subId,
+      mirror: { provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'subs/x' },
+      rawContentHash: 'h',
+      cap: 3,
+    });
+
+    expect(res.appended).toBe(true);
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subId))!.subscriptionMirrors).toHaveLength(1);
+    });
+  });
+});

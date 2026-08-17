@@ -369,16 +369,29 @@ export const appendMirror = internalMutation({
   },
   handler: async (ctx, { subscriptionId, mirror: entry, rawContentHash, cap }) => {
     const row = await ctx.db.get(subscriptionId);
-    if (!row || row.state !== 'active') return { appended: false as const };
+    if (!row || row.state !== 'active')
+      return { appended: false as const, reason: 'gone' as const };
+    // SUPERSEDED: a re-issue can land between provisionMirror's context read and
+    // this write, and the old row stays `active` until the tombstone a moment
+    // later — so `state` alone does not catch it. Appending here would attach the
+    // mirror to a row that is about to be torn down: never refreshed, deleted
+    // with the row after the grace period, and the member was already handed its
+    // URL. Refuse instead, so the retry provisions against the live key.
+    const owner = await ctx.db.get(row.userId);
+    if (owner?.currentSubscriptionId && owner.currentSubscriptionId !== subscriptionId) {
+      return { appended: false as const, reason: 'superseded' as const };
+    }
     const existing = row.subscriptionMirrors.some((m) => m.provider === entry.provider);
-    if (!existing && row.subscriptionMirrors.length >= cap) return { appended: false as const };
+    if (!existing && row.subscriptionMirrors.length >= cap) {
+      return { appended: false as const, reason: 'capped' as const };
+    }
     const others = row.subscriptionMirrors.filter((m) => m.provider !== entry.provider);
     await ctx.db.patch(subscriptionId, {
       subscriptionMirrors: [...others, entry],
       rawContentHash,
       updatedAt: Date.now(),
     });
-    return { appended: true as const };
+    return { appended: true as const, reason: null };
   },
 });
 

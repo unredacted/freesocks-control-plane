@@ -207,10 +207,16 @@ export const provisionMirror = internalAction({
       rawContentHash: hash,
       cap,
     });
-    // Lost the cap race with a concurrent provision (Review D-#8): the object
-    // was uploaded but the row didn't change — harmless residue, reported as
-    // capped (the next request picks the same provider and re-appends).
-    if (!appended.appended) return { status: 'capped', remaining: 0 };
+    // The object was uploaded but the row didn't change. Two causes, and they
+    // need different answers: a lost cap race (Review D-#8) really is capped,
+    // but a SUPERSEDED row means a re-issue overtook us — the member is not
+    // capped at all and a retry will provision against their live key, so report
+    // it as a retryable error. Either way the uploaded object is residue.
+    if (!appended.appended) {
+      return appended.reason === 'superseded'
+        ? { status: 'error', remaining: Math.max(0, cap - used) }
+        : { status: 'capped', remaining: 0 };
+    }
     // Record the node only now: the object is uploaded AND the row references
     // it, so this is the first moment the pin describes what the member is
     // actually served. For someone who only ever uses the mirror, this is also
