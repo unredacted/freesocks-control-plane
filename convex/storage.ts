@@ -18,6 +18,7 @@
  * pulls the provider list from `internal.mirrorProviders.*`.
  */
 import { internalAction } from './_generated/server';
+import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { v } from 'convex/values';
@@ -319,6 +320,123 @@ export const testProviderConnection = internalAction({
 const REFRESH_MAX_PAGES = 50;
 const REFRESH_PAGE = 50;
 
+/** One page item of the mirror sweep. */
+type MirrorRefreshItem = ActiveMirrorPage['items'][number];
+
+/**
+ * Re-upload ONE subscription's mirrors to its own providers, in place. Shared by
+ * the periodic sweep and the targeted refresh a re-issue schedules, so both apply
+ * the same node exclusion, the same "record the pin only once the mirror serves
+ * it" rule, and the same partial-round hold. Returns whether anything was
+ * re-uploaded; never throws (a backend/S3 hiccup must not stall the caller).
+ */
+async function refreshOneSubMirrors(
+  ctx: ActionCtx,
+  byName: Map<string, S3Provider>,
+  sub: MirrorRefreshItem,
+): Promise<boolean> {
+  try {
+    // Re-upload only to THIS sub's providers that are still active.
+    const targets = sub.providers.map((n) => byName.get(n)).filter((p): p is S3Provider => !!p);
+    if (targets.length === 0 || !sub.objectPath) return false;
+    const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
+      backend: sub.backend,
+      backendServerId: sub.backendServerId ?? undefined,
+      backendShortId: sub.backendShortId,
+      subscriptionUrl: sub.subscriptionUrl,
+      // Same exclusion the live /sub route applies, or the deterministic
+      // pin regenerates the node the member switched AWAY from — and the
+      // unchanged hash below would then skip the re-upload, leaving the
+      // mirror pointed at it indefinitely.
+      excludeNode: sub.excludeNode ?? undefined,
+    });
+    // Record the node this landed on, exactly as the live /sub routes do.
+    // For a member who only ever uses the mirror URL this is the ONLY
+    // place the pin gets written, and without it their next switch-server
+    // finds no pin to rotate and refuses with `no_alternative` even
+    // though the squad has other nodes.
+    //
+    // The pin must describe the node the member's mirror ACTUALLY serves,
+    // so it is written at exactly the two points where that is true:
+    // unchanged content (the mirror already holds this node's config), or
+    // a successful upload. Writing it before a failed upload would record
+    // a node the member is not on, and their next switch would then
+    // exclude the wrong one.
+    const recordPin = async () => {
+      if (!fetched.pinnedNode) return;
+      await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
+        subscriptionId: sub.id,
+        node: fetched.pinnedNode,
+      });
+    };
+    const hash = await sha256Hex(fetched.content);
+    if (hash === sub.rawContentHash) {
+      // Nothing to re-upload — but the pin can move while the bytes stay
+      // identical, and the mirror is already correct, so record it.
+      await recordPin();
+      return false;
+    }
+    // Throws only if EVERY provider failed (caught below → sub skipped,
+    // pin deliberately unrecorded: the mirror still serves the old node).
+    const mirrors = await uploadToProviders(targets, {
+      objectPath: sub.objectPath,
+      content: fetched.content,
+      contentType: fetched.contentType,
+    });
+    // Providers we attempted but that didn't come back a success this round →
+    // updateMirrors keeps their existing entry marked failed (Review #2),
+    // rather than dropping it. (uploadToProviders throws only if ALL fail,
+    // caught above → the sub is skipped, entries untouched.)
+    const succeeded = new Set(mirrors.map((m) => m.provider));
+    const failedProviders = targets.map((t) => t.name).filter((n) => !succeeded.has(n));
+    // A PARTIAL round leaves at least one provider serving the previous
+    // content, so neither the hash nor the pin may advance yet:
+    //  - the hash is subscription-wide, and advancing it would make the
+    //    next run take the unchanged-content short-circuit and never
+    //    retry the stale provider — stranding it permanently;
+    //  - the pin would then describe a node some mirror URL does not
+    //    serve, so a later switch-server would exclude the wrong node.
+    // Holding both means the next run retries (one extra re-upload to
+    // the healthy providers every 6h until the broken one recovers) and
+    // both advance together on the first clean round.
+    const allSucceeded = failedProviders.length === 0;
+    await ctx.runMutation(internal.subscriptions.updateMirrors, {
+      subscriptionId: sub.id,
+      successes: mirrors,
+      failedProviders,
+      ...(allSucceeded ? { rawContentHash: hash } : {}),
+    });
+    if (allSucceeded) await recordPin();
+    return true;
+  } catch {
+    /* best-effort per sub: one backend/S3 hiccup must not stall the sweep */
+    return false;
+  }
+}
+
+/**
+ * Targeted mirror refresh for ONE subscription, scheduled when a re-issue carries
+ * mirrors onto a replacement row. The carry moves the metadata but not the S3
+ * object, so until something rewrites it the mirror still serves the OLD key —
+ * which stops routing when the tombstone sweep deletes that key 24h later.
+ * Waiting for the 6h sweep is not sufficient at scale: it scans a bounded number
+ * of active rows per run, so on a large fleet a given row's turn can fall outside
+ * that 24h window. This closes the gap in seconds instead.
+ */
+export const refreshMirrorsForSubscription = internalAction({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }): Promise<null> => {
+    const providers = await ctx.runQuery(internal.mirrorProviders.listActiveWithSecret, {});
+    if (providers.length === 0) return null;
+    const target = await ctx.runQuery(internal.subscriptions.mirrorRefreshTarget, {
+      subscriptionId,
+    });
+    if (!target) return null;
+    await refreshOneSubMirrors(ctx, new Map(providers.map((p) => [p.name, p])), target);
+    return null;
+  },
+});
+
 /**
  * Cron: keep EXISTING (opt-in) mirrors fresh. Pages only subs that already have a
  * mirror (never creates one) and re-uploads each sub's current content to ITS OWN
@@ -359,84 +477,7 @@ export const refreshActiveMirrors = internalAction({
         }
         for (const sub of res.items) {
           scanned++;
-          // Re-upload only to THIS sub's providers that are still active.
-          const targets = sub.providers
-            .map((n) => byName.get(n))
-            .filter((p): p is S3Provider => !!p);
-          if (targets.length === 0 || !sub.objectPath) continue;
-          try {
-            const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
-              backend: sub.backend,
-              backendServerId: sub.backendServerId ?? undefined,
-              backendShortId: sub.backendShortId,
-              subscriptionUrl: sub.subscriptionUrl,
-              // Same exclusion the live /sub route applies, or the deterministic
-              // pin regenerates the node the member switched AWAY from — and the
-              // unchanged hash below would then skip the re-upload, leaving the
-              // mirror pointed at it indefinitely.
-              excludeNode: sub.excludeNode ?? undefined,
-            });
-            // Record the node this landed on, exactly as the live /sub routes do.
-            // For a member who only ever uses the mirror URL this is the ONLY
-            // place the pin gets written, and without it their next switch-server
-            // finds no pin to rotate and refuses with `no_alternative` even
-            // though the squad has other nodes.
-            //
-            // The pin must describe the node the member's mirror ACTUALLY serves,
-            // so it is written at exactly the two points where that is true:
-            // unchanged content (the mirror already holds this node's config), or
-            // a successful upload. Writing it before a failed upload would record
-            // a node the member is not on, and their next switch would then
-            // exclude the wrong one.
-            const recordPin = async () => {
-              if (!fetched.pinnedNode) return;
-              await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
-                subscriptionId: sub.id,
-                node: fetched.pinnedNode,
-              });
-            };
-            const hash = await sha256Hex(fetched.content);
-            if (hash === sub.rawContentHash) {
-              // Nothing to re-upload — but the pin can move while the bytes stay
-              // identical, and the mirror is already correct, so record it.
-              await recordPin();
-              continue;
-            }
-            // Throws only if EVERY provider failed (caught below → sub skipped,
-            // pin deliberately unrecorded: the mirror still serves the old node).
-            const mirrors = await uploadToProviders(targets, {
-              objectPath: sub.objectPath,
-              content: fetched.content,
-              contentType: fetched.contentType,
-            });
-            // Providers we attempted but that didn't come back a success this round →
-            // updateMirrors keeps their existing entry marked failed (Review #2),
-            // rather than dropping it. (uploadToProviders throws only if ALL fail,
-            // caught above → the sub is skipped, entries untouched.)
-            const succeeded = new Set(mirrors.map((m) => m.provider));
-            const failedProviders = targets.map((t) => t.name).filter((n) => !succeeded.has(n));
-            // A PARTIAL round leaves at least one provider serving the previous
-            // content, so neither the hash nor the pin may advance yet:
-            //  - the hash is subscription-wide, and advancing it would make the
-            //    next run take the unchanged-content short-circuit and never
-            //    retry the stale provider — stranding it permanently;
-            //  - the pin would then describe a node some mirror URL does not
-            //    serve, so a later switch-server would exclude the wrong node.
-            // Holding both means the next run retries (one extra re-upload to
-            // the healthy providers every 6h until the broken one recovers) and
-            // both advance together on the first clean round.
-            const allSucceeded = failedProviders.length === 0;
-            await ctx.runMutation(internal.subscriptions.updateMirrors, {
-              subscriptionId: sub.id,
-              successes: mirrors,
-              failedProviders,
-              ...(allSucceeded ? { rawContentHash: hash } : {}),
-            });
-            if (allSucceeded) await recordPin();
-            refreshed++;
-          } catch {
-            /* best-effort per sub: one backend/S3 hiccup must not stall the sweep */
-          }
+          if (await refreshOneSubMirrors(ctx, byName, sub)) refreshed++;
         }
         if (res.isDone) {
           // Full pass complete: restart from the beginning next tick.

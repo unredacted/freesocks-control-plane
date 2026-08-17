@@ -159,7 +159,7 @@ export const insertSubscription = internalMutation({
       }
     }
     const { placement, carrySubTokenFromId: _carry, ...rest } = a;
-    return ctx.db.insert('subscriptions', {
+    const inserted = await ctx.db.insert('subscriptions', {
       ...rest,
       ...(carriedMirrors ? { subscriptionMirrors: carriedMirrors } : {}),
       // Map the generic arg onto the schema field name.
@@ -168,6 +168,16 @@ export const insertSubscription = internalMutation({
       state: 'active',
       updatedAt: Date.now(),
     });
+    // Carried mirrors still hold the OLD key's config until something rewrites
+    // the object. Do it now rather than waiting for the 6h sweep, whose scan is
+    // bounded per run — on a large fleet a row's turn can fall outside the 24h
+    // grace, and the mirror would then serve a key that no longer routes.
+    if (carriedMirrors) {
+      await ctx.scheduler.runAfter(0, internal.storage.refreshMirrorsForSubscription, {
+        subscriptionId: inserted,
+      });
+    }
+    return inserted;
   },
 });
 
@@ -313,6 +323,31 @@ export const pageActiveForMirror = internalQuery({
           excludeNode: s.excludeNode ?? null,
           providers: s.subscriptionMirrors.map((m) => m.provider),
         })),
+    };
+  },
+});
+
+/**
+ * ONE subscription in the mirror-sweep's item shape, for the targeted refresh a
+ * re-issue schedules. Same projection as pageActiveForMirror so both drive the
+ * identical refresh helper; null when the row is gone, not active, or has no
+ * mirror to refresh.
+ */
+export const mirrorRefreshTarget = internalQuery({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }): Promise<ActiveMirrorPage['items'][number] | null> => {
+    const s = await ctx.db.get(subscriptionId);
+    if (!s || s.state !== 'active' || s.subscriptionMirrors.length === 0) return null;
+    return {
+      id: s._id,
+      backend: s.backend,
+      backendServerId: s.backendServerId ?? null,
+      backendShortId: s.backendShortId,
+      subscriptionUrl: s.subscriptionUrl,
+      rawContentHash: s.rawContentHash ?? null,
+      objectPath: s.subscriptionMirrors[0]?.objectPath ?? null,
+      excludeNode: s.excludeNode ?? null,
+      providers: s.subscriptionMirrors.map((m) => m.provider),
     };
   },
 });

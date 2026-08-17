@@ -1342,7 +1342,15 @@ export const switchServer = internalAction({
         excludePlacement: oldSub.backendPlacement ?? null,
         rand: rand[0]! / 2 ** 32,
       });
-      if (placement !== null && placement !== (oldSub.backendPlacement ?? null)) {
+      // A legacy row (issued before placements were persisted — a state
+      // lifecycle.legacyPushPlacement still supports) has NO source placement to
+      // compare against, so "different from null" proves nothing: the key may
+      // already sit in the very squad we resolved, making the PATCH a no-op that
+      // we would report as a move. Require a KNOWN source that actually differs.
+      // The unknown case still falls through to the pin rotation and the
+      // cross-panel re-issue, both of which prove a move on their own terms.
+      const sourcePlacement = oldSub.backendPlacement ?? null;
+      if (placement !== null && sourcePlacement !== null && placement !== sourcePlacement) {
         // DB before panel, as in switchMode: a concurrent pushTierToBackend
         // re-sends the PERSISTED placement, so this ordering keeps the two
         // convergent. Restore on failure so the DB never claims a move that

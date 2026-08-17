@@ -2085,6 +2085,68 @@ describe('account.switchServer', () => {
     );
   });
 
+  test('a LEGACY key with no recorded squad re-issues rather than faking an in-place move', async () => {
+    // Without a source placement, "different from null" proves nothing: the key
+    // may already sit in the squad we resolved, so an in-place PATCH could be a
+    // no-op reported as a move. The re-issue path stays open (it mints a new key
+    // and applies the node exclusion, exactly as regenerate does) and, crucially,
+    // RECORDS the placement — so the member's next switch is provable.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A, SQUAD_B] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedKey(t, userId); // legacy: no backendPlacement, no pinnedNode
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/users') && init?.method === 'PATCH') {
+        throw new Error('no in-place PATCH should be attempted for an unknown source placement');
+      }
+      return new Response(
+        JSON.stringify({
+          response: {
+            uuid: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+            shortUuid: 'newshort',
+            username: 'u2',
+            status: 'ACTIVE',
+            trafficLimitBytes: null,
+            trafficLimitStrategy: 'MONTH',
+            userTraffic: { usedTrafficBytes: 0 },
+            expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+            hwidDeviceLimit: null,
+            subscriptionUrl: 'https://panel.test/sub/newshort',
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    // Re-issued, never claimed as in-place.
+    expect(res).toMatchObject({ ok: true, inPlace: false });
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) => String(input).includes('/api/users') && init?.method === 'PATCH',
+      ),
+    ).toBe(false);
+    await t.run(async (ctx) => {
+      const fresh = (await ctx.db.query('subscriptions').collect()).find(
+        (x) => x.state === 'active',
+      )!;
+      // The placement is now recorded, so the NEXT switch can prove a move.
+      expect(fresh.backendPlacement).toBeTruthy();
+      expect(fresh.subToken).toBe('tok-abc'); // saved link still works
+    });
+  });
+
   test('refuses server.unsupported on a backend with no placement AND no node pinning', async () => {
     // Outline has neither lever, so no deployment shape makes this work — say so
     // distinctly instead of `no_alternative`, which invites a pointless retry.
