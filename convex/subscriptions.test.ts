@@ -350,3 +350,62 @@ describe('subscriptions.updateMirrors — partial rounds hold the hash', () => {
     });
   });
 });
+
+describe('subscriptions.markSubscriptionDeleted — compensation returns the carry', () => {
+  const MIRROR = { provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'subs/x' };
+
+  test('hands BOTH the token and the mirrors back to the still-live source row', async () => {
+    // A saga that inserts the replacement and then fails (e.g. setCurrentSubscription)
+    // must leave the original exactly as it found it. Restoring only the token
+    // would strand the mirrors on a deleted row: never refreshed again, and the
+    // member's imported mirror URL goes stale.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const { sourceId, dyingId } = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const sourceId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'old',
+        backendShortId: 'oldshort',
+        subscriptionUrl: 'https://panel.test/sub/oldshort',
+        subToken: 'tok-abc',
+        subscriptionMirrors: [MIRROR],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      // The replacement, minted by insertSubscription (which vacated both).
+      const dyingId = await ctx.runMutation(internal.subscriptions.insertSubscription, {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'new',
+        backendShortId: 'newshort',
+        subscriptionUrl: 'https://panel.test/sub/newshort',
+        subscriptionMirrors: [],
+        carrySubTokenFromId: sourceId,
+      });
+      return { sourceId, dyingId };
+    });
+
+    await t.mutation(internal.subscriptions.markSubscriptionDeleted, {
+      subscriptionId: dyingId,
+      returnSubTokenToId: sourceId,
+    });
+
+    await t.run(async (ctx) => {
+      const source = (await ctx.db.get(sourceId))!;
+      expect(source.subToken).toBe('tok-abc');
+      expect(source.subscriptionMirrors).toEqual([MIRROR]);
+      const dying = (await ctx.db.get(dyingId))!;
+      expect(dying.state).toBe('deleted');
+      expect(dying.subToken).toBeUndefined();
+      // Released too, so tearing down the dead row cannot delete the S3 object
+      // the source row now owns again.
+      expect(dying.subscriptionMirrors).toEqual([]);
+    });
+  });
+});

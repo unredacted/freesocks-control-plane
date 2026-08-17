@@ -449,9 +449,11 @@ export const updateMirrors = internalMutation({
 export const markSubscriptionDeleted = internalMutation({
   args: {
     subscriptionId: v.id('subscriptions'),
-    // Issuance-compensation only: the dying row may hold a subToken CARRIED
-    // from this (still-live) source row — hand it back atomically, or the
-    // member's saved fronted URL would die with the failed saga.
+    // Issuance-compensation only: the dying row may hold a subToken AND S3
+    // mirrors CARRIED from this (still-live) source row — hand both back
+    // atomically, or the member's saved URLs would die with the failed saga.
+    // Everything insertSubscription vacates has to come back here, or the carry
+    // is a one-way transfer out of a row that is still serving.
     returnSubTokenToId: v.optional(v.id('subscriptions')),
   },
   handler: async (ctx, { subscriptionId, returnSubTokenToId }) => {
@@ -460,12 +462,28 @@ export const markSubscriptionDeleted = internalMutation({
       state: 'deleted',
       deletedAt: Date.now(),
       subToken: undefined,
+      // Released with the mirrors below, so the teardown of this dead row can't
+      // delete S3 objects the source row is about to own again.
+      ...(returnSubTokenToId && dying && dying.subscriptionMirrors.length > 0
+        ? { subscriptionMirrors: [] }
+        : {}),
       updatedAt: Date.now(),
     });
-    if (returnSubTokenToId && dying?.subToken) {
+    if (returnSubTokenToId && dying) {
       const source = await ctx.db.get(returnSubTokenToId);
-      if (source && !source.subToken) {
-        await ctx.db.patch(source._id, { subToken: dying.subToken, updatedAt: Date.now() });
+      if (source) {
+        const restoreToken = dying.subToken && !source.subToken;
+        // Only when the source is empty: a mirror it re-acquired on its own
+        // meanwhile is newer than what this failed saga took.
+        const restoreMirrors =
+          dying.subscriptionMirrors.length > 0 && source.subscriptionMirrors.length === 0;
+        if (restoreToken || restoreMirrors) {
+          await ctx.db.patch(source._id, {
+            ...(restoreToken ? { subToken: dying.subToken } : {}),
+            ...(restoreMirrors ? { subscriptionMirrors: dying.subscriptionMirrors } : {}),
+            updatedAt: Date.now(),
+          });
+        }
       }
     }
     return null;
