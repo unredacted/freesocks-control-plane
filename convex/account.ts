@@ -1196,8 +1196,17 @@ export const switchServer = internalAction({
     }
 
     const modeId = user.connectionModeId ?? null;
+    // Two DIFFERENT backends are in play, and the split matters (see the
+    // tier-vs-subscription rule in docs/backends.md): a placement move resolves
+    // a pool for the TIER's backend and either PATCHes or re-issues into it, so
+    // it is only coherent while the live key is already on that backend. A pin
+    // rotation touches nothing but the member's own key, so it follows the
+    // SUBSCRIPTION's backend — otherwise flipping a tier to Outline would strand
+    // every retained Remnawave key on its node, unable to move at all, even
+    // though rotating its pin is entirely safe and local.
     const canPlaceBackend =
       capabilitiesOf(tier.backend).placement && oldSub.backend === tier.backend;
+    const canPinBackend = capabilitiesOf(oldSub.backend).nodePinning;
     // Is the member's stored mode still usable here? `resolvePlacementPool` falls
     // back across modes (own pool → default → any bound), which is right at
     // ISSUANCE but wrong here: a placement move would silently re-home the key
@@ -1392,11 +1401,12 @@ export const switchServer = internalAction({
     // would still read >1 from a stale row, putting us right back to claiming a
     // move that cannot happen — so apply the same staleness bar pickByNodeLoad
     // uses for its own load decisions.
-    // Deliberately `canPlaceBackend`, not `canPlace`: rotating the pin stays
-    // available to a member whose mode an admin just unbound, because it moves
-    // WITHIN their current squad and so cannot change their transport.
+    // Deliberately `canPinBackend`, not `canPlace`: rotating the pin stays
+    // available to a member whose mode an admin just unbound, or whose tier was
+    // flipped to another backend, because it moves WITHIN their current squad —
+    // it cannot change their transport and needs nothing from the tier.
     const placementStats =
-      canPlaceBackend && oldSub.backendPlacement
+      canPinBackend && oldSub.backendPlacement
         ? await ctx.runQuery(internal.remnawaveNodes.getPlacementStats, {
             placement: oldSub.backendPlacement,
           })

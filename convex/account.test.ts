@@ -2054,6 +2054,37 @@ describe('account.switchServer', () => {
     );
   });
 
+  test('a key retained on Remnawave can still rotate after its TIER flips to Outline', async () => {
+    // The tier editor leaves existing users on their current backend until they
+    // switch or regenerate, and docs/backends.md is explicit that the SUB's
+    // backend governs later reads/writes. Gating the pin on the tier's backend
+    // stranded every retained key: no placement move (correct — the pool belongs
+    // to the other backend) and no rotation either (wrong — it is purely local).
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'outline' }); // flipped by an admin
+    const userId = await seedUser(t, tierId);
+    // ...while the live key is still the Remnawave one they were issued.
+    await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    await seedNodeStats(t, SQUAD_A, 3);
+    const fetchMock = panelStub();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    expect(res).toMatchObject({ ok: true, inPlace: true });
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.query('subscriptions').collect())[0]!;
+      expect(sub.excludeNode).toBe('xray1');
+      expect(sub.pinnedNode).toBeUndefined();
+      expect(sub.backendPlacement).toBe(SQUAD_A); // no placement move attempted
+    });
+    // Purely local: no panel call at all.
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/users'))).toBe(
+      false,
+    );
+  });
+
   test('refuses server.unsupported on a backend with no placement AND no node pinning', async () => {
     // Outline has neither lever, so no deployment shape makes this work — say so
     // distinctly instead of `no_alternative`, which invites a pointless retry.
