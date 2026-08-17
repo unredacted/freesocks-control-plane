@@ -49,12 +49,43 @@ function fromRefs(dockerfile: string): string[] {
 }
 
 /**
- * A bun version written out as a literal, in any of the shapes it takes across
- * the repo: `bun@1.2.3`, `oven/bun:1.2.3`, `bun-version: '1.2.3'`, or prose
- * ("bun `1.2.3`"). Deliberately anchored on the word "bun" so unrelated semver
- * in the same file (image digests, action tags, Postgres versions) is ignored.
+ * A bun version written out as a literal, in any shape: `bun@1.2.3`,
+ * `oven/bun:1.2.3`, `bun-version: '1.2.3'`, or prose ("bun `1.2.3`", "Bun
+ * version 1.2.3", "bun release 1.2.3").
+ *
+ * The gap is "any run of up to 20 characters that is neither a newline nor a
+ * digit" rather than an enumerated set. Enumerating punctuation missed
+ * `Bun version 1.2.3` — the most natural way to write it in a README, and the
+ * exact wording a person adding operational docs would reach for. Enumerating
+ * words instead would just move the gap to whichever synonym nobody listed.
+ *
+ * Still anchored on a whole-word "bun" so unrelated semver in the same files
+ * (image digests, action tags, Postgres versions) is ignored, and the
+ * digit-free gap stops it leaping over a nearby number — `setup-bun@v2` cannot
+ * reach a version on the following line.
  */
-const BUN_VERSION_LITERAL = /bun[\s`'":@\/-]{0,12}v?\d+\.\d+\.\d+/i;
+const BUN_VERSION_LITERAL = /\bbun\b[^\n\d]{0,20}\d+\.\d+\.\d+/i;
+
+/** Shapes the pattern must catch / must not catch. Pins its coverage. */
+const BUN_LITERAL_CASES = {
+  matches: [
+    '"packageManager": "bun@1.3.14"',
+    'FROM oven/bun:1.3.14@sha256:abc',
+    "          bun-version: '1.3.14'",
+    'Pinned toolchain: bun `1.3.14`',
+    'Requires Bun version 1.3.14 or newer',
+    'built with bun release 1.3.14',
+    "Bun's 1.3.14 runtime",
+  ],
+  ignores: [
+    '- uses: oven-sh/setup-bun@v2', // action tag, and the digit blocks the gap
+    'bun install --frozen-lockfile',
+    'FROM postgres:18@sha256:4aabea78cf39b90e', // unrelated pin
+    'caddy:2-alpine@sha256:5f5c8640aae01df965',
+    'bun-version-file: package.json',
+    'the exact version is `packageManager` in `package.json`',
+  ],
+};
 
 /**
  * The three files allowed to name a bun version. `package.json` is the source of
@@ -155,6 +186,18 @@ describe('cross-file image pins', () => {
     const setupSteps = (ciWorkflow.match(/uses:\s*oven-sh\/setup-bun@/g) ?? []).length;
     const versionFiles = (ciWorkflow.match(/bun-version-file:\s*package\.json/g) ?? []).length;
     expect(versionFiles, 'every setup-bun step must declare bun-version-file').toBe(setupSteps);
+  });
+
+  test('the bun-literal pattern catches every shape it claims to', () => {
+    // A drift guard whose own coverage is unpinned is just a different place for
+    // the gap to hide: two of the cases below (prose "version"/"release") went
+    // undetected by an earlier punctuation-only pattern.
+    for (const sample of BUN_LITERAL_CASES.matches) {
+      expect(BUN_VERSION_LITERAL.test(sample), `should flag: ${sample}`).toBe(true);
+    }
+    for (const sample of BUN_LITERAL_CASES.ignores) {
+      expect(BUN_VERSION_LITERAL.test(sample), `should ignore: ${sample}`).toBe(false);
+    }
   });
 
   test('no operational file states a literal bun version', () => {
