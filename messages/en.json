@@ -460,7 +460,7 @@
     "title": "Donations support Unredacted",
     "body": "Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site.",
     "collectiveTitle": "Donation impact",
-    "collectiveBody": "Donations made through FreeSocks raise every free user's bandwidth for 30 days from the day they're given. This is what the community's donations are doing right now.",
+    "collectiveBody": "Donations made through FreeSocks raise every free user's bandwidth for {days} days from the day they're given. This is what the community's donations are doing right now.",
     "bonusThisMonth": "GB on every free account now",
     "bonusThisMonthDetail": "on top of every free account's monthly allowance",
     "usersHelped": "free accounts reached",
@@ -912,7 +912,7 @@
     },
     "impact": {
       "title": "Donations at work",
-      "body": "Every donation made through FreeSocks raises the bandwidth of every free account for the next 30 days. This is what donors have added so far - you could add to it too.",
+      "body": "Every donation made through FreeSocks raises the bandwidth of every free account for the next {days} days. This is what donors have added so far - you could add to it too.",
       "cta": "Make a donation",
       "chartAria": "Bandwidth added to every free user by donations, day by day this month"
     },

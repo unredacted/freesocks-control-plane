@@ -30,6 +30,9 @@
   // Round headroom above the month's total, so the last step reads as a step
   // rather than a full-height block pinned to the top edge.
   const dailyMax = $derived(niceCeil(Math.max(...dailyValues, 0)));
+  // How long a gift funds the pool. Operator-tunable (1-365), so the copy must
+  // read it rather than promise a fixed 30 days.
+  const windowDays = $derived(donation?.bonusWindowDays ?? 30);
   // UTC, matching the series: the buckets are UTC days, so formatting the
   // endcaps in local time renders "Jul 31 - Aug 30" for an August series.
   const dayLabel = (d: Date) => formatDate(d, { month: 'short', day: 'numeric', timeZone: 'UTC' });
@@ -50,7 +53,7 @@
         {showImpact ? t('impact.collectiveTitle') : t('impact.title')}
       </h2>
       <p class="text-sm text-muted-foreground mt-1 max-w-xl leading-relaxed">
-        {showImpact ? t('impact.collectiveBody') : t('impact.body')}
+        {showImpact ? t('impact.collectiveBody', { days: windowDays }) : t('impact.body')}
       </p>
     </div>
   </div>

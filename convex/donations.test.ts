@@ -562,6 +562,47 @@ describe('donation pool windows (lib/donationBonus)', () => {
     expect(state.buckets!.map((b) => b.c)).toEqual([1000]);
   });
 
+  test('a refund drains the bucket that actually funded it, not the newest one', async () => {
+    const { t } = await setup();
+    const may10 = Date.UTC(2026, 4, 10);
+    const may20 = Date.UTC(2026, 4, 20);
+    await t.run(async (ctx) => recordDonation(ctx, 1000, may10)); // the one refunded
+    await t.run(async (ctx) => recordDonation(ctx, 500, may20)); // unrelated, later
+    await t.run(async (ctx) => subtractDonation(ctx, 1000, may20 + DAY, may10));
+
+    const state = await readState(t);
+    // The later gift survives intact; the refunded day is gone.
+    expect(state.buckets!.map((b) => ({ d: b.d, c: b.c }))).toEqual([{ d: '2026-05-20', c: 500 }]);
+  });
+
+  test('a refund of an EXPIRED donation leaves the live pool alone', async () => {
+    const { t } = await setup();
+    const jan = Date.UTC(2026, 0, 10);
+    const now = Date.UTC(2026, 4, 20);
+    await t.run(async (ctx) => recordDonation(ctx, 1000, jan)); // long expired
+    await t.run(async (ctx) => recordDonation(ctx, 500, now)); // live
+    await t.run(async (ctx) => subtractDonation(ctx, 1000, now, jan));
+
+    const state = await readState(t);
+    const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
+    // The live $5 is untouched — the refund had nothing live to take back.
+    expect(effectiveBonusGb(state, cfg, now)).toBe(5);
+  });
+
+  test("a previous month's refund does not shrink THIS month's ledger", async () => {
+    const { t } = await setup();
+    const apr = Date.UTC(2026, 3, 10);
+    const may = Date.UTC(2026, 4, 20);
+    await t.run(async (ctx) => recordDonation(ctx, 1000, apr));
+    await t.run(async (ctx) => recordDonation(ctx, 500, may));
+    await t.run(async (ctx) => subtractDonation(ctx, 1000, may, apr));
+
+    const state = await readState(t);
+    // May raised $5 and still reports $5; April's refund is not May's business.
+    expect(state.monthKey).toBe('2026-05');
+    expect(state.donatedCents).toBe(500);
+  });
+
   test('a legacy `days` row converts to buckets that expire when ITS month ended', async () => {
     const { t } = await setup();
     await t.run(async (ctx) => {

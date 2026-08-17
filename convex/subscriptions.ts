@@ -255,6 +255,11 @@ export interface ActiveMirrorPage {
     subscriptionUrl: string;
     rawContentHash: string | null;
     objectPath: string | null;
+    /** The node this key is moving OFF (switch-server / regenerate). The refresh
+     *  MUST re-pin with the same exclusion the live route uses: node pinning is
+     *  deterministic, so fetching without it regenerates the old node, the hash
+     *  matches, and the mirror stays parked on the server the member just left. */
+    excludeNode: string | null;
     /** The providers THIS sub was mirrored to (names) — refresh re-uploads to these only. */
     providers: string[];
   }[];
@@ -283,6 +288,7 @@ export const pageActiveForMirror = internalQuery({
           subscriptionUrl: s.subscriptionUrl,
           rawContentHash: s.rawContentHash ?? null,
           objectPath: s.subscriptionMirrors[0]?.objectPath ?? null,
+          excludeNode: s.excludeNode ?? null,
           providers: s.subscriptionMirrors.map((m) => m.provider),
         })),
     };

@@ -1501,6 +1501,27 @@ describe('account.switchServer', () => {
   const SQUAD_A = '11111111-2222-3333-4444-555555555555';
   const SQUAD_B = '99999999-8888-7777-6666-555555555555';
 
+  /** The healthcheck cron's cached node-load row. `nodeCount` is what tells a
+   *  pin-only switch whether there is another node to land on at all. */
+  async function seedNodeStats(
+    t: ReturnType<typeof convexTest>,
+    placement: string,
+    nodeCount: number,
+  ) {
+    await t.run(async (ctx) => {
+      const server = (await ctx.db.query('backendServers').collect())[0]!;
+      await ctx.db.insert('remnawaveNodeStats', {
+        backendServerId: server._id,
+        placement,
+        usersOnline: 1,
+        online: true,
+        nodeCount,
+        lastStatsAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+  }
+
   /** A live Remnawave key on `placement`, optionally pinned to a node. */
   async function seedKey(
     t: ReturnType<typeof convexTest>,
@@ -1668,6 +1689,7 @@ describe('account.switchServer', () => {
       }),
     );
     await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    await seedNodeStats(t, SQUAD_A, 3); // the squad really does span other nodes
     const fetchMock = panelStub();
     vi.stubGlobal('fetch', fetchMock);
 
@@ -1686,6 +1708,66 @@ describe('account.switchServer', () => {
         (r) => r.action === 'subscription.switch_server',
       );
       expect(audit!.payload).toMatchObject({ movedPlacement: false, movedNodePin: true });
+    });
+  });
+
+  test('refuses instead of claiming a move when the squad has only ONE node', async () => {
+    // The pin is set, so the old code rotated it and reported success — but
+    // pickNode drops the exclusion rather than empty a one-node pool, so the very
+    // next fetch serves the SAME server. Telling the member their key moved was a
+    // lie; the honest answer is that there is nowhere to go.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    await seedNodeStats(t, SQUAD_A, 1); // one squad, ONE node behind it
+    vi.stubGlobal('fetch', panelStub());
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    expect(res).toMatchObject({ ok: false, code: 'server.no_alternative', status: 409 });
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.query('subscriptions').collect())[0]!;
+      // The pin is left exactly as it was — no phantom rotation.
+      expect(sub.pinnedNode).toBe('xray1');
+      expect(sub.excludeNode).toBeUndefined();
+      expect(sub.subCache).toBeTruthy();
+    });
+  });
+
+  test('refuses when the node count is unknown (no stats row observed yet)', async () => {
+    // Bring-up, or a placement the healthcheck cron has not reached. We cannot
+    // prove another node exists, so we do not assert a move; the next cron pass
+    // makes the switch work.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    vi.stubGlobal('fetch', panelStub());
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    expect(res).toMatchObject({ ok: false, code: 'server.no_alternative' });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.query('subscriptions').collect())[0]!.pinnedNode).toBe('xray1');
     });
   });
 

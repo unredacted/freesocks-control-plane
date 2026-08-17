@@ -339,44 +339,66 @@ export async function recordDonation(
 }
 
 /**
- * Reverse a donation (refund/chargeback unwind): drain the refunded cents from
- * the LIVE buckets, newest first (the refunded gift is the likeliest recent one,
- * and draining the newest keeps the most funding in place for the longest), then
- * rewrite this month's ledger entry. A refund of money that already expired has
- * nothing live to take back and only moves the ledger. The fleet re-cap picks the
- * reduced pool up on its next reconcile.
+ * Reverse a donation (refund/chargeback unwind): take the refunded cents out of
+ * the bucket that ACTUALLY funded them, identified by the order's settle time
+ * (`fundedAt` = the order's `paidAt`).
+ *
+ * Attribution is the whole point. Draining the newest bucket instead would cancel
+ * later, legitimate funding while leaving the refunded contribution live — and
+ * since the surviving older bucket expires sooner, the shared bonus would then
+ * fall off early. For the same reason there is NO spill to other buckets when the
+ * funding bucket is gone (expired and pruned): money that already stopped funding
+ * the pool has nothing left to reclaim, and reaching into a live bucket to
+ * "balance the books" would take bandwidth from free users over a refund that
+ * costs the pool nothing.
+ *
+ * Without `fundedAt` (a legacy order with no timestamp) it degrades to
+ * newest-first, the best guess available.
  */
 export async function subtractDonation(
   ctx: MutationCtx,
   donationCents: number,
   now: number,
+  fundedAt?: number,
 ): Promise<void> {
   if (!Number.isFinite(donationCents) || donationCents <= 0) return;
   const state = await readDonationState(ctx.db);
   let remaining = donationCents;
   const buckets = [...(state.buckets ?? [])];
-  for (let i = buckets.length - 1; i >= 0 && remaining > 0; i--) {
+  const drain = (i: number) => {
     const b = buckets[i]!;
-    if (b.x <= now) continue; // already expired: not part of the live pool
+    if (b.x <= now) return; // already expired: not part of the live pool
     const take = Math.min(b.c, remaining);
     buckets[i] = { ...b, c: b.c - take };
     remaining -= take;
+  };
+  const known = fundedAt !== undefined && Number.isFinite(fundedAt);
+  if (known) {
+    // Its own day, and only its own day.
+    const own = buckets.findIndex((b) => b.d === currentDayKey(fundedAt!));
+    if (own >= 0) drain(own);
+  } else {
+    for (let i = buckets.length - 1; i >= 0 && remaining > 0; i--) drain(i);
   }
+
   const mk = currentMonthKey(now);
+  // Decrement the month's running total only when the REFUNDED money was raised
+  // in the month that total belongs to. Subtracting a previous month's refund
+  // from this month would under-report what this month actually raised.
+  const fundedThisMonth = !known || currentMonthKey(fundedAt!) === mk;
+  const touchesLedger = state.monthKey === mk && fundedThisMonth;
   const next: DonationState = {
     ...state,
     buckets: pruneBuckets(
       buckets.filter((b) => b.c > 0),
       now,
     ),
-    ...(state.monthKey === mk
-      ? { donatedCents: Math.max(0, state.donatedCents - donationCents) }
-      : {}),
+    ...(touchesLedger ? { donatedCents: Math.max(0, state.donatedCents - donationCents) } : {}),
   };
   await writeDonationState(ctx, next);
   // Only rewrite the ledger when the running total belongs to the current month —
   // a finished month's recorded impact is frozen and must not be restated.
-  if (state.monthKey !== mk) return;
+  if (!touchesLedger) return;
   const cfg = await resolveBillingConfig(ctx.db);
   await upsertHistoryForMonth(ctx, {
     monthKey: mk,

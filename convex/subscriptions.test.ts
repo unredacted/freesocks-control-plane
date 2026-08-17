@@ -166,3 +166,63 @@ describe('subscriptions.updateMirrors — refresh merge (Review #2)', () => {
     expect(new Set(mc?.triedProviders)).toEqual(new Set(['A', 'B']));
   });
 });
+
+describe('subscriptions.pageActiveForMirror', () => {
+  test('carries excludeNode so the refresh re-pins like the live route', async () => {
+    // Node pinning is deterministic: a refresh that fetches WITHOUT the exclusion
+    // regenerates the node the member just switched away from, the content hash
+    // matches, and storage.refreshActiveMirrors skips the re-upload — parking the
+    // mirror on the old server indefinitely.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }),
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'k1',
+        backendShortId: 'short1',
+        subscriptionUrl: 'https://panel.test/sub/short1',
+        subscriptionMirrors: [{ provider: 'p1', publicUrl: 'https://mirror/x', objectPath: 'x' }],
+        excludeNode: 'xray1',
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+    });
+
+    const page = await t.query(internal.subscriptions.pageActiveForMirror, {
+      cursor: null,
+      numItems: 10,
+    });
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]!.excludeNode).toBe('xray1');
+  });
+
+  test('reports null when the key has never been switched', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }),
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'k2',
+        backendShortId: 'short2',
+        subscriptionUrl: 'https://panel.test/sub/short2',
+        subscriptionMirrors: [{ provider: 'p1', publicUrl: 'https://mirror/y', objectPath: 'y' }],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+    });
+
+    const page = await t.query(internal.subscriptions.pageActiveForMirror, {
+      cursor: null,
+      numItems: 10,
+    });
+    expect(page.items[0]!.excludeNode).toBeNull();
+  });
+});

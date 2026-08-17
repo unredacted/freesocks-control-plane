@@ -349,6 +349,11 @@ export const refreshActiveMirrors = internalAction({
               backendServerId: sub.backendServerId ?? undefined,
               backendShortId: sub.backendShortId,
               subscriptionUrl: sub.subscriptionUrl,
+              // Same exclusion the live /sub route applies, or the deterministic
+              // pin regenerates the node the member switched AWAY from — and the
+              // unchanged hash below would then skip the re-upload, leaving the
+              // mirror pointed at it indefinitely.
+              excludeNode: sub.excludeNode ?? undefined,
             });
             const hash = await sha256Hex(fetched.content);
             if (hash === sub.rawContentHash) continue; // unchanged → no re-upload

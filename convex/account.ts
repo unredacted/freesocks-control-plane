@@ -1338,11 +1338,29 @@ export const switchServer = internalAction({
       }
     }
 
-    // (2) alone: no other squad to move to, but the key is pinned to one node of
-    // a multi-node squad — rotating the pin genuinely changes their server.
-    const leftNode = await ctx.runMutation(internal.subscriptions.rotateNodePin, {
-      subscriptionId: oldSub._id,
-    });
+    // (2) alone: no other squad to move to, but the key may be pinned to one node
+    // of a MULTI-node squad, where rotating the pin genuinely changes the server.
+    //
+    // "Multi-node" is load-bearing, not decoration: pinSubscriptionToNode refuses
+    // to pin a single-node list at all, and pickNode DROPS the exclusion rather
+    // than empty the pool (lib/nodePinning.ts). So on a one-node squad the next
+    // fetch serves the very same node while we'd have told the member their key
+    // moved. Only claim the move when the cached stats prove another node exists;
+    // an unknown count (no stats row yet — bring-up, or a placement the
+    // healthcheck cron hasn't observed) counts as unproven, which reads as
+    // "try again later" and self-heals on the next cron pass.
+    const placementStats =
+      canPlace && oldSub.backendPlacement
+        ? await ctx.runQuery(internal.remnawaveNodes.getPlacementStats, {
+            placement: oldSub.backendPlacement,
+          })
+        : null;
+    const hasOtherNode = (placementStats?.nodeCount ?? 0) > 1;
+    const leftNode = hasOtherNode
+      ? await ctx.runMutation(internal.subscriptions.rotateNodePin, {
+          subscriptionId: oldSub._id,
+        })
+      : null;
     if (leftNode !== null) {
       await audit({
         inPlace: true,
@@ -1360,9 +1378,11 @@ export const switchServer = internalAction({
       };
     }
 
-    // Nothing to move: a single-squad, single-node deployment (or a key that has
-    // never been served, so there is no pin yet). Change nothing and say so —
-    // tombstoning a working key to land back on the same server helps no one.
+    // Nothing to move: a single-squad, single-node deployment, a key that has
+    // never been served (so there is no pin yet), or a node count we can't prove.
+    // Change nothing and say so — tombstoning a working key to land back on the
+    // same server helps no one, and neither does claiming a move that didn't
+    // happen.
     return {
       ok: false,
       code: 'server.no_alternative',

@@ -569,7 +569,10 @@ export const applyEvent = internalMutation({
         if (donated > 0 && order.donationUnwoundAt == null) {
           const refundNow = Date.now();
           await ctx.db.patch(order._id, { donationUnwoundAt: refundNow, updatedAt: refundNow });
-          await subtractDonation(ctx, donated, refundNow);
+          // `paidAt` identifies the pool bucket this order actually funded, so the
+          // unwind takes the money back out of ITS day rather than off whatever
+          // landed most recently (which would cancel unrelated later funding).
+          await subtractDonation(ctx, donated, refundNow, order.paidAt);
           // Re-cap the fleet NOW (symmetric with fundDonation): without this the
           // refunded bonus bandwidth lingered until the next hourly reconcile.
           await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
