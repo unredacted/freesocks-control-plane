@@ -119,7 +119,16 @@ export default defineConfig(() => ({
     // exists, so maps stay private.)
     sourcemap: false,
     target: 'esnext',
-    rollupOptions: { input: path.resolve(__dirname, 'index.html') },
+    rolldownOptions: {
+      input: path.resolve(__dirname, 'index.html'),
+      // `@hpke/common` (a transitive dep of the E2EE stack) writes
+      // `/* @__PURE__ */` in positions Rolldown's parser ignores, so every build
+      // printed two multi-line INVALID_ANNOTATION blocks. It is upstream code we
+      // do not control and the only consequence is slightly weaker dead-code
+      // elimination in a lazy chunk. Muting it keeps the build log short enough
+      // that a warning we CAN act on is actually visible in the deploy scroll.
+      checks: { invalidAnnotation: false },
+    },
   },
   server: {
     port: 5173,

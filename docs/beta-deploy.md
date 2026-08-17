@@ -189,6 +189,53 @@ docker compose -f docker-compose.stack.yml --env-file .env.beta exec web \
   caddy reload --config /etc/caddy/Caddyfile
 ```
 
+### Reading the build output (what scrolled past?)
+
+On a TTY, BuildKit collapses each `RUN` step to the last handful of lines
+(`=> => # …`) and overwrites them in place, so `bun run build` chatter flies by
+unreadably. Two things to know before chasing it:
+
+**A build that finished did not hit an error.** `bun run build` exits non-zero on
+a real failure, which fails the `RUN`, which aborts the build — and BuildKit then
+prints that step's full log at the end and stops. So anything you saw scroll past
+on a build that reached `Successfully built` was a **warning**, by construction.
+
+To read them anyway, disable the collapsing renderer and tee to a file:
+
+```sh
+docker compose -f docker-compose.stack.yml --env-file .env.beta build --progress=plain web 2>&1 | tee /tmp/fcp-build.log
+```
+
+Caveat: if the `RUN bun run build` layer is cached the step prints `CACHED` with
+no output. Force it with `--no-cache` (slow, rebuilds everything) or just run the
+same build outside Docker — it is the identical command:
+
+```sh
+bun run build 2>&1 | tee /tmp/fcp-build.log
+```
+
+`--progress=plain` also works as the `BUILDKIT_PROGRESS=plain` env var if you
+want it on the combined `up -d --build` command, which has no such flag:
+
+```sh
+BUILDKIT_PROGRESS=plain docker compose -f docker-compose.stack.yml --env-file .env.beta \
+  up -d --build --force-recreate web deployer 2>&1 | tee /tmp/fcp-deploy.log
+```
+
+Known-benign lines you will see and can ignore:
+
+- **`See https://rolldown.rs/options/checks#plugintimings`** with a plugin
+  percentage breakdown — a Rolldown performance report, not a diagnostic.
+- **`Some chunks are larger than 500 kB`** — the member SPA entry chunk is ~1.2 MB
+  (365 kB gzipped). Real, known, and tracked; the admin CMS and the E2EE crypto
+  are already split out.
+- **`Failed to resolve http.js:/api/...`** and **`Module not in functions: …`** in
+  the _backend_ log during a `convex deploy` — benign analyzer chatter (above).
+
+`@hpke/common`'s `INVALID_ANNOTATION` blocks used to dominate this log; they are
+muted in `vite.config.ts` (`build.rolldownOptions.checks`) precisely so the list
+above stays short enough to scan.
+
 ## One-off functions (running `bunx convex …` against the stack)
 
 The host shell has no Convex CLI credentials, so a bare `bunx convex run` /

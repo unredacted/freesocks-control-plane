@@ -1,0 +1,111 @@
+# Dependabot version updates.
+#
+# Scope: the container supply chain only (compose image pins, Dockerfile base
+# images, CI action pins). Application dependencies (bun.lock) are deliberately
+# NOT enrolled — see the commented block at the bottom.
+#
+# Everything in the stack is digest-pinned on purpose (supply-chain safety, see
+# the docker-compose.stack.yml header). Re-pinning by hand is easy to forget:
+# the prod backup sidecar ran a broken image for four weeks in Aug 2026 because
+# nothing was watching. Dependabot updates BOTH halves of a `tag@sha256:` pin,
+# and for the digest-only Convex pins it tracks the digest behind `:latest`.
+#
+# Everything here opens a PR; nothing auto-merges. Review before deploying, and
+# note that a deploy is `up -d --build --force-recreate` (docs/beta-deploy.md §6).
+
+version: 2
+updates:
+  # --- compose image pins ---------------------------------------------------
+  # Matches docker-compose.yml, docker-compose.stack.yml and
+  # docker-compose.remnawave-test.yml: Dependabot's compose matcher is
+  # /(docker-)?compose(-[\w]+)?(\.[\w-]+)?\.ya?ml/i, so the `.stack` /
+  # `.remnawave-test` infixes are covered.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore(docker)
+    groups:
+      compose-images:
+        patterns: ['*']
+        # Majors stay separate: postgres/valkey majors are data-dir migrations,
+        # not restarts, and must not ride along in a routine digest bump.
+        update-types: [minor, patch]
+    # Read the Convex PRs with extra care: `ghcr.io/get-convex/convex-*` are
+    # pinned by digest with NO tag, so Dependabot tracks whatever `:latest`
+    # currently is — that can carry a backend/schema change, not just a patch.
+    # Same for `tiago2/cap:latest` (the accepted-risk image, see
+    # docs/beta-deploy.md § "Cap image provenance").
+    ignore:
+      # A major Postgres bump requires a dump/restore across the data dir, not a
+      # container swap. Do it deliberately (docs/beta-deploy.md § Backups).
+      - dependency-name: postgres
+        update-types: [version-update:semver-major]
+      # Valkey majors changed the on-disk RDB/AOF format historically.
+      - dependency-name: valkey/valkey
+        update-types: [version-update:semver-major]
+
+  # --- Dockerfile base images ----------------------------------------------
+  # docker/{web,deploy,backup}.Dockerfile. NOTE: `oven/bun` is pinned in THREE
+  # places — both bun Dockerfiles and `packageManager` in package.json. When a
+  # bun bump lands here, bump package.json to match or CI and the image build
+  # drift apart.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore(docker)
+    groups:
+      base-images:
+        patterns: ['*']
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: postgres
+        update-types: [version-update:semver-major]
+      # Caddy 3 would be a config-format review, not a redeploy.
+      - dependency-name: caddy
+        update-types: [version-update:semver-major]
+
+  # --- CI action pins -------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: chore(ci)
+    groups:
+      actions:
+        patterns: ['*']
+# --- application dependencies (opt-in) --------------------------------------
+# Not enrolled. The tree is large (Svelte/Vite/Tailwind/Convex) and a weekly
+# firehose of PRs against a security-sensitive SPA is worse than a deliberate
+# `bun update` with the full suite green. Uncomment to enrol; group aggressively
+# if you do.
+#
+#  - package-ecosystem: bun
+#    directory: /
+#    schedule:
+#      interval: monthly
+#    open-pull-requests-limit: 3
+#    labels: [dependencies]
+#    groups:
+#      all-minor-patch:
+#        patterns: ['*']
+#        update-types: [minor, patch]
