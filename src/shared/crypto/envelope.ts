@@ -255,6 +255,7 @@ export const SEALED_ROUTES: Record<string, RoutePolicy> = {
   'POST /api/v1/account/regenerate': REVEAL,
   'POST /api/v1/account/switch-backend': REVEAL,
   'POST /api/v1/account/switch-mode': REVEAL,
+  'POST /api/v1/account/switch-server': REVEAL,
   'POST /api/v1/account/account-id/rotate': REVEAL,
   // Admin secret reveals (server returns a fresh secret once).
   'POST /api/v1/admin/tokens': REVEAL,

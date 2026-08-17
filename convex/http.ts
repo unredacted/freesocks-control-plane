@@ -24,6 +24,7 @@ import { sha256Hex } from './lib/crypto';
 import { sealed } from './lib/e2ee';
 import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
 import { isBackendId, type BackendId } from './lib/backendIds';
+import { isSwitchServerReason } from '../src/shared/contracts/switchServerReasons';
 import {
   ADMIN_COOKIE,
   MEMBER_COOKIE,
@@ -1238,6 +1239,34 @@ http.route({
       const result = await ctx.runAction(internal.account.switchMode, {
         userId: member.userId,
         target,
+        requestId,
+      });
+      return sagaResult(result);
+    });
+  }),
+});
+
+// Move the member's key to a different server WITHOUT changing their connection
+// mode. Same saga shape as switch-mode (the fallback leg re-issues), and sealed
+// because that leg's response carries a subscription URL.
+http.route({
+  path: '/api/v1/account/switch-server',
+  method: 'POST',
+  handler: sealed(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'subscription:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const body = await readJson<{ reason?: string; confirm?: boolean }>(req);
+    // A closed set: the reason is audited, and the audit log never stores
+    // user-authored text.
+    if (!isSwitchServerReason(body.reason)) {
+      return errorJson('validation', 'unknown reason', 400);
+    }
+    if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
+    const reason = body.reason;
+    return withIssuanceSaga(ctx, member.userId, 'account.switch-server', async (requestId) => {
+      const result = await ctx.runAction(internal.account.switchServer, {
+        userId: member.userId,
+        reason,
         requestId,
       });
       return sagaResult(result);

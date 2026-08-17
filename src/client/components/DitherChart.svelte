@@ -24,6 +24,10 @@
     /** 'bars' = one dithered column per value (discrete months); 'area' = a
      *  continuous dithered slope sampled across the width. */
     variant?: 'bars' | 'area';
+    /** 'area' only: hold each value until the next one instead of interpolating
+     *  between them. A cumulative daily series is a staircase, not a ramp -
+     *  smoothing it invents growth on days nothing happened. */
+    step?: boolean;
     /** Backing-resolution basis in CSS px (the canvas stretches to its box). */
     width?: number;
     height?: number;
@@ -38,6 +42,7 @@
     values,
     labels = [],
     variant = 'bars',
+    step = false,
     width = 320,
     height = 96,
     color = '#e3b34d',
@@ -95,9 +100,14 @@
     if (depth > 1) paint(top + 1, BORDER_ALPHA * 0.5);
   }
 
-  /** Linear-interpolated sample of `values` at fraction t ∈ [0,1] (area). */
+  /** Sample of `values` at fraction t ∈ [0,1] (area): linear-interpolated, or
+   *  held flat within each value's slot when `step` is set. */
   function sampleAt(t: number): number {
     if (values.length === 1) return values[0] ?? 0;
+    if (step) {
+      const i = Math.min(values.length - 1, Math.floor(t * values.length));
+      return values[i] ?? 0;
+    }
     const pos = t * (values.length - 1);
     const i = Math.floor(pos);
     const f = pos - i;
@@ -147,6 +157,7 @@
   $effect(() => {
     void values;
     void variant;
+    void step;
     void width;
     void height;
     void color;

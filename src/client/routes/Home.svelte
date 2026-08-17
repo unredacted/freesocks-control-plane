@@ -39,7 +39,7 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import CodeXml from '@lucide/svelte/icons/code-xml';
   import DitherChart from '../components/DitherChart.svelte';
-  import { dailyImpactSeries, dailyImpactBounds } from '../lib/impact';
+  import { dailyImpactSeries, dailyImpactBounds, niceCeil } from '../lib/impact';
   import { onMount } from 'svelte';
   import { fly, fade } from 'svelte/transition';
 
@@ -85,12 +85,19 @@
   // page). The in-app donate controls live on the account Membership tab; an
   // anon visitor creates a free account first.
   const donation = $derived(config.data?.billing?.donation);
-  // The chart always renders: the month-to-date cumulative daily series, or a
-  // flat zero baseline while there is none yet (the note under it explains).
+  // The chart always renders: the month's cumulative daily series, or a flat
+  // zero baseline while there is none yet (the note under it explains).
   const impactDaily = $derived(dailyImpactSeries(donation?.currentMonthDaily ?? []));
   const impactEmpty = $derived(!impactDaily.some((v) => v > 0));
+  const impactMax = $derived(niceCeil(Math.max(...impactDaily, 0)));
+  // Operator-tunable (1-365); never hardcode the window into donor-facing copy.
+  const impactWindowDays = $derived(donation?.bonusWindowDays ?? 30);
+  // UTC, matching the series: the daily buckets are UTC days, so local-time
+  // endcaps render "Jul 31 - Aug 30" for an August series.
   const impactLabels = $derived(
-    dailyImpactBounds().map((d) => formatDate(d, { month: 'short', day: 'numeric' })),
+    dailyImpactBounds().map((d) =>
+      formatDate(d, { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+    ),
   );
   function goDonate() {
     router.navigate(me.data?.authenticated ? '/account?tab=membership' : '/get-account');
@@ -648,7 +655,9 @@
           <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
             {t('home.impact.title')}
           </h2>
-          <p class="text-muted-foreground leading-relaxed">{t('home.impact.body')}</p>
+          <p class="text-muted-foreground leading-relaxed">
+            {t('home.impact.body', { days: impactWindowDays })}
+          </p>
           <div class="flex flex-wrap gap-x-6 gap-y-2 pt-1">
             <div>
               <span
@@ -680,6 +689,8 @@
             values={impactDaily}
             labels={impactLabels}
             variant="area"
+            step
+            max={impactMax}
             height={120}
             ariaLabel={t('home.impact.chartAria')}
           />

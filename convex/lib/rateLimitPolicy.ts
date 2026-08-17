@@ -43,6 +43,11 @@ export const RATE_LIMIT_DEFAULTS = {
   'account.regenerate': { max: 10, windowMs: HOUR, enabled: true },
   'account.switch-backend': { max: 10, windowMs: HOUR, enabled: true },
   'account.switch-mode': { max: 10, windowMs: HOUR, enabled: true },
+  // Member moves their key to a different server. Tighter and DAY-scoped than the
+  // other switches: the cheap path churns nothing, but the fallback re-issues a
+  // key, and a member hopping nodes all day is a node-thrash signal rather than a
+  // real need. Generous enough to escape a genuinely bad node a few times over.
+  'account.switch-server': { max: 4, windowMs: DAY, enabled: true },
   // Shared bucket across ALL THREE issuance routes: every re-issue mints a
   // fresh backend traffic counter, so per-route buckets alone let a member
   // triple their effective quota rate by rotating routes. 12/hour ≈ every 5

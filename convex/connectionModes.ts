@@ -153,14 +153,18 @@ export const resolveIssueTarget = internalQuery({
     modeId: v.union(v.string(), v.null()),
     location: v.optional(v.union(v.string(), v.null())),
     onlyServerId: v.optional(v.union(v.id('backendServers'), v.null())),
+    // "Anything but this one" — the member's switch-server action, so the pick
+    // has to actually move the key off the placement it is on.
+    excludePlacement: v.optional(v.union(v.string(), v.null())),
     // A [0,1) float minted by the calling ACTION (CSPRNG): the anti-herding
     // pick needs randomness, but a query must stay deterministic for OCC.
     rand: v.optional(v.number()),
   },
-  handler: (ctx, { backend, modeId, location, onlyServerId, rand }) =>
+  handler: (ctx, { backend, modeId, location, onlyServerId, excludePlacement, rand }) =>
     resolverFor(backend).resolveTarget(ctx.db, modeId, {
       location: location ?? null,
       onlyServerId: (onlyServerId as string | null | undefined) ?? null,
+      excludePlacement: excludePlacement ?? null,
       rand: typeof rand === 'number' ? () => rand : undefined,
     }),
 });

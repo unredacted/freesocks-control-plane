@@ -226,8 +226,10 @@ export function summarizeRemnawaveConfig(configJson: string | null): {
 
 // A node-load snapshot older than this is treated as unknown load (the
 // healthcheck cron refreshes every 10 min; 30 min matches the instance pool's
-// "fresh" window).
-const NODE_STATS_STALE_MS = 30 * 60_000;
+// "fresh" window). Exported because the same bar decides whether a snapshot's
+// `nodeCount` is trustworthy enough to promise a member a different server
+// (account.switchServer) — one staleness rule, not two.
+export const NODE_STATS_STALE_MS = 30 * 60_000;
 
 const DEFAULT_USERS_ONLINE_WEIGHT = 1;
 const DEFAULT_BANDWIDTH_WEIGHT = 0; // usersOnline-only until the realtime shape is pinned
@@ -273,6 +275,10 @@ async function placementWeights(
  *    lives on that panel, so a placement on another panel is unusable. Returns
  *    `{placement:null}` when the target mode has no squad there; the caller
  *    falls back to a re-issue (which may move panels).
+ *  - `excludePlacement` (the member's "switch server" action): skip the squad the
+ *    key is already on, so the pick must actually MOVE it. Fail-soft: dropped when
+ *    it would empty the pool, and the caller compares the result against the
+ *    current placement to tell "moved" from "nowhere else to go".
  *
  * A squad with no stats row yet (bring-up: the cron hasn't observed it) can't be
  * attributed to a panel; when the constrained pool is empty we fall back to the
@@ -285,6 +291,7 @@ export async function resolvePlacementTarget(
   opts: {
     location?: string | null;
     onlyServerId?: string | null;
+    excludePlacement?: string | null;
     // Injected PRNG for the anti-herding pick (queries must stay deterministic —
     // callers on the issuance path mint this in the ACTION and thread it down).
     rand?: () => number;
@@ -294,7 +301,13 @@ export async function resolvePlacementTarget(
   serverId: string | null;
   unattributedMultiPanel?: boolean;
 }> {
-  const pool = await resolvePlacementPool(db, modeId);
+  const fullPool = await resolvePlacementPool(db, modeId);
+  // Fail-soft exclusion: a one-squad pool still issues (onto the same squad), and
+  // the caller decides what "didn't move" means.
+  const pool =
+    opts.excludePlacement && fullPool.some((p) => p !== opts.excludePlacement)
+      ? fullPool.filter((p) => p !== opts.excludePlacement)
+      : fullPool;
   if (pool.length === 0) return { placement: null, serverId: null };
 
   // Attribute each pool squad to its panel via the node-stats cache.
@@ -364,7 +377,16 @@ export async function resolvePlacementTarget(
     // single-panel deploy keeps the fail-soft (the pair can't mismatch).
     if (servers.length > 1)
       return { placement: null, serverId: null, unattributedMultiPanel: true };
-    return { placement: await pickByNodeLoad(db, pool, opts.rand), serverId: null };
+    // UNKNOWN is not the same as KNOWN-UNUSABLE. The fail-soft below exists for
+    // squads we could not attribute at all; a squad we DID attribute, to a panel
+    // that is inactive (or whose row has since been replaced), is proven to be
+    // somewhere the key cannot be created. Passing it through would mint exactly
+    // the (squad, wrong-panel) dead key this branch warns about — issueUser would
+    // pick the one active panel on its own — and switch-server would tombstone a
+    // working key to do it. Offer only the genuinely unattributed ones.
+    const unattributed = pool.filter((p) => !statsByPlacement.has(p));
+    if (unattributed.length === 0) return { placement: null, serverId: null };
+    return { placement: await pickByNodeLoad(db, unattributed, opts.rand), serverId: null };
   }
   const placement = await pickByNodeLoad(db, constrained, opts.rand);
   return {

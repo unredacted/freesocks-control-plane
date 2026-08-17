@@ -116,11 +116,32 @@ export const insertSubscription = internalMutation({
     // resolves with .unique(), so a carry VACATES the old row and inserts the
     // new one inside this single serializable mutation (never two holders).
     let subToken: string | null = null;
+    // S3 mirrors ride along with the token, for the same reason and by the same
+    // rule: these paths promise the member's saved URLs keep working, and a
+    // mirror URL is one of those. Without the carry the new row starts with no
+    // mirrors, so the refresh cron (active rows only) never touches the object
+    // again — the imported mirror serves the OLD key until the 24h tombstone
+    // sweep deletes it, then 404s forever, while we reported "nothing to
+    // re-import". Carrying is safe only WITH the vacate below: teardown deletes
+    // the objects listed on the row it is tearing down, which would otherwise
+    // destroy the very objects the new row now serves. The next refresh rewrites
+    // them with the new key's config (the new row has no rawContentHash, so it
+    // cannot short-circuit) well inside the old key's 24h grace.
+    let carriedMirrors: typeof a.subscriptionMirrors | null = null;
     if (a.carrySubTokenFromId) {
       const old = await ctx.db.get(a.carrySubTokenFromId);
       if (old?.subToken) {
         subToken = old.subToken;
-        await ctx.db.patch(old._id, { subToken: undefined, updatedAt: Date.now() });
+      }
+      if (old && old.subscriptionMirrors.length > 0) {
+        carriedMirrors = old.subscriptionMirrors;
+      }
+      if (old) {
+        await ctx.db.patch(old._id, {
+          ...(old.subToken ? { subToken: undefined } : {}),
+          ...(carriedMirrors ? { subscriptionMirrors: [] } : {}),
+          updatedAt: Date.now(),
+        });
       }
     }
     if (subToken === null) {
@@ -138,14 +159,16 @@ export const insertSubscription = internalMutation({
       }
     }
     const { placement, carrySubTokenFromId: _carry, ...rest } = a;
-    return ctx.db.insert('subscriptions', {
+    const inserted = await ctx.db.insert('subscriptions', {
       ...rest,
+      ...(carriedMirrors ? { subscriptionMirrors: carriedMirrors } : {}),
       // Map the generic arg onto the schema field name.
       backendPlacement: placement,
       subToken,
       state: 'active',
       updatedAt: Date.now(),
     });
+    return inserted;
   },
 });
 
@@ -214,6 +237,30 @@ export const recordPinnedNode = internalMutation({
 });
 
 /**
+ * Move a live key off the node it is pinned to (the member's switch-server
+ * action): exclude the current node from the next rendezvous pick, forget the
+ * pin, and drop the content cache so the next fetch actually re-pins instead of
+ * serving the cached node's links. Cheap — no panel call, no new key, and the
+ * member's saved subscription URL is untouched.
+ *
+ * Returns the node that was left, or null when there was no pin to rotate (the
+ * caller needs that to tell a real move from a no-op).
+ */
+export const rotateNodePin = internalMutation({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }): Promise<string | null> => {
+    const sub = await ctx.db.get(subscriptionId);
+    if (!sub?.pinnedNode) return null;
+    await ctx.db.patch(subscriptionId, {
+      excludeNode: sub.pinnedNode,
+      pinnedNode: undefined,
+      subCache: undefined,
+    });
+    return sub.pinnedNode;
+  },
+});
+
+/**
  * Page active subscriptions for the S3 mirror-refresh cron. Mirrors are OPT-IN +
  * LAZY now, so the refresh only keeps EXISTING mirrors fresh — it pages only subs
  * that already have ≥1 mirror and reports each sub's OWN providers + the shared
@@ -231,6 +278,11 @@ export interface ActiveMirrorPage {
     subscriptionUrl: string;
     rawContentHash: string | null;
     objectPath: string | null;
+    /** The node this key is moving OFF (switch-server / regenerate). The refresh
+     *  MUST re-pin with the same exclusion the live route uses: node pinning is
+     *  deterministic, so fetching without it regenerates the old node, the hash
+     *  matches, and the mirror stays parked on the server the member just left. */
+    excludeNode: string | null;
     /** The providers THIS sub was mirrored to (names) — refresh re-uploads to these only. */
     providers: string[];
   }[];
@@ -259,8 +311,34 @@ export const pageActiveForMirror = internalQuery({
           subscriptionUrl: s.subscriptionUrl,
           rawContentHash: s.rawContentHash ?? null,
           objectPath: s.subscriptionMirrors[0]?.objectPath ?? null,
+          excludeNode: s.excludeNode ?? null,
           providers: s.subscriptionMirrors.map((m) => m.provider),
         })),
+    };
+  },
+});
+
+/**
+ * ONE subscription in the mirror-sweep's item shape, for the targeted refresh a
+ * re-issue schedules. Same projection as pageActiveForMirror so both drive the
+ * identical refresh helper; null when the row is gone, not active, or has no
+ * mirror to refresh.
+ */
+export const mirrorRefreshTarget = internalQuery({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }): Promise<ActiveMirrorPage['items'][number] | null> => {
+    const s = await ctx.db.get(subscriptionId);
+    if (!s || s.state !== 'active' || s.subscriptionMirrors.length === 0) return null;
+    return {
+      id: s._id,
+      backend: s.backend,
+      backendServerId: s.backendServerId ?? null,
+      backendShortId: s.backendShortId,
+      subscriptionUrl: s.subscriptionUrl,
+      rawContentHash: s.rawContentHash ?? null,
+      objectPath: s.subscriptionMirrors[0]?.objectPath ?? null,
+      excludeNode: s.excludeNode ?? null,
+      providers: s.subscriptionMirrors.map((m) => m.provider),
     };
   },
 });
@@ -317,16 +395,46 @@ export const appendMirror = internalMutation({
   },
   handler: async (ctx, { subscriptionId, mirror: entry, rawContentHash, cap }) => {
     const row = await ctx.db.get(subscriptionId);
-    if (!row || row.state !== 'active') return { appended: false as const };
+    if (!row || row.state !== 'active')
+      return { appended: false as const, reason: 'gone' as const };
+    // SUPERSEDED: a re-issue can land between provisionMirror's context read and
+    // this write, and the old row stays `active` until the tombstone a moment
+    // later — so `state` alone does not catch it. Appending here would attach the
+    // mirror to a row that is about to be torn down: never refreshed, deleted
+    // with the row after the grace period, and the member was already handed its
+    // URL. Refuse instead, so the retry provisions against the live key.
+    //
+    // The NEWER-ROW test is the authoritative one. `currentSubscriptionId` is
+    // repointed by a separate mutation after insertSubscription commits
+    // (lib/issuance.ts), so between those two writes the pointer still names
+    // this row while its replacement already exists — a pointer-only check
+    // would wave the late append through in exactly that window. Active rows
+    // per user are normally one (transiently two during a saga), so this stays
+    // a tiny read.
+    const actives = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user_state', (q) => q.eq('userId', row.userId).eq('state', 'active'))
+      .collect();
+    const hasNewer = actives.some(
+      (s) => s._id !== subscriptionId && s._creationTime > row._creationTime,
+    );
+    const owner = await ctx.db.get(row.userId);
+    const pointerMoved =
+      !!owner?.currentSubscriptionId && owner.currentSubscriptionId !== subscriptionId;
+    if (hasNewer || pointerMoved) {
+      return { appended: false as const, reason: 'superseded' as const };
+    }
     const existing = row.subscriptionMirrors.some((m) => m.provider === entry.provider);
-    if (!existing && row.subscriptionMirrors.length >= cap) return { appended: false as const };
+    if (!existing && row.subscriptionMirrors.length >= cap) {
+      return { appended: false as const, reason: 'capped' as const };
+    }
     const others = row.subscriptionMirrors.filter((m) => m.provider !== entry.provider);
     await ctx.db.patch(subscriptionId, {
       subscriptionMirrors: [...others, entry],
       rawContentHash,
       updatedAt: Date.now(),
     });
-    return { appended: true as const };
+    return { appended: true as const, reason: null };
   },
 });
 
@@ -363,11 +471,17 @@ export const updateMirrors = internalMutation({
     subscriptionId: v.id('subscriptions'),
     successes: v.array(mirror),
     failedProviders: v.array(v.string()),
-    rawContentHash: v.string(),
+    // Omitted on a PARTIAL round: the stored hash is what makes the next refresh
+    // short-circuit, so advancing it while a provider is still serving the old
+    // content would strand that provider forever (never retried).
+    rawContentHash: v.optional(v.string()),
   },
-  handler: async (ctx, { subscriptionId, successes, failedProviders, rawContentHash }) => {
+  handler: async (
+    ctx,
+    { subscriptionId, successes, failedProviders, rawContentHash },
+  ): Promise<{ staleWriter: boolean; currentOwner: Id<'subscriptions'> | null }> => {
     const row = await ctx.db.get(subscriptionId);
-    if (!row || row.state !== 'active') return null;
+    if (!row || row.state !== 'active') return { staleWriter: true, currentOwner: null };
     const fresh = new Map(successes.map((m) => [m.provider, m]));
     const failed = new Set(failedProviders);
     const merged = row.subscriptionMirrors.map((m) => {
@@ -378,15 +492,30 @@ export const updateMirrors = internalMutation({
       }
       return failed.has(m.provider) ? { ...m, status: 'failed' as const } : m;
     });
-    // Defensive: a success for a provider not previously mirrored (refresh targets
-    // are always already-mirrored, so normally none).
-    for (const m of fresh.values()) merged.push(m);
+    // Successes for providers the row no longer lists are DROPPED, never
+    // appended. A refresh only ever targets providers the row already had, so
+    // the only way to get here is that the list changed under the in-flight
+    // upload — i.e. a re-issue vacated these mirrors onto a replacement row
+    // between the page read and this write. Re-attaching them would leave two
+    // rows owning one object path, and tearing the old row down would then
+    // delete the object the live row is serving.
+    //
+    // Dropping the DB write is necessary but NOT sufficient: the S3 upload has
+    // already happened, so this writer has just overwritten the shared object
+    // with its own (old) key's config. Report that, plus who owns the object
+    // now, so the caller can re-drive the owner's refresh and converge.
+    const staleWriter = fresh.size > 0;
     await ctx.db.patch(subscriptionId, {
       subscriptionMirrors: merged,
-      rawContentHash,
+      ...(rawContentHash !== undefined ? { rawContentHash } : {}),
       updatedAt: Date.now(),
     });
-    return null;
+    if (!staleWriter) return { staleWriter: false, currentOwner: null };
+    const owner = await ctx.db.get(row.userId);
+    return {
+      staleWriter: true,
+      currentOwner: owner?.currentSubscriptionId ?? null,
+    };
   },
 });
 
@@ -394,9 +523,11 @@ export const updateMirrors = internalMutation({
 export const markSubscriptionDeleted = internalMutation({
   args: {
     subscriptionId: v.id('subscriptions'),
-    // Issuance-compensation only: the dying row may hold a subToken CARRIED
-    // from this (still-live) source row — hand it back atomically, or the
-    // member's saved fronted URL would die with the failed saga.
+    // Issuance-compensation only: the dying row may hold a subToken AND S3
+    // mirrors CARRIED from this (still-live) source row — hand both back
+    // atomically, or the member's saved URLs would die with the failed saga.
+    // Everything insertSubscription vacates has to come back here, or the carry
+    // is a one-way transfer out of a row that is still serving.
     returnSubTokenToId: v.optional(v.id('subscriptions')),
   },
   handler: async (ctx, { subscriptionId, returnSubTokenToId }) => {
@@ -405,12 +536,36 @@ export const markSubscriptionDeleted = internalMutation({
       state: 'deleted',
       deletedAt: Date.now(),
       subToken: undefined,
+      // Released with the mirrors below, so the teardown of this dead row can't
+      // delete S3 objects the source row is about to own again.
+      ...(returnSubTokenToId && dying && dying.subscriptionMirrors.length > 0
+        ? { subscriptionMirrors: [] }
+        : {}),
       updatedAt: Date.now(),
     });
-    if (returnSubTokenToId && dying?.subToken) {
+    if (returnSubTokenToId && dying) {
       const source = await ctx.db.get(returnSubTokenToId);
-      if (source && !source.subToken) {
-        await ctx.db.patch(source._id, { subToken: dying.subToken, updatedAt: Date.now() });
+      if (source) {
+        const restoreToken = dying.subToken && !source.subToken;
+        // Only when the source is empty: a mirror it re-acquired on its own
+        // meanwhile is newer than what this failed saga took.
+        const restoreMirrors =
+          dying.subscriptionMirrors.length > 0 && source.subscriptionMirrors.length === 0;
+        if (restoreToken || restoreMirrors) {
+          await ctx.db.patch(source._id, {
+            ...(restoreToken ? { subToken: dying.subToken } : {}),
+            // Returning the mirrors also INVALIDATES the source's content hash.
+            // The failed saga may have rewritten the shared object with the
+            // replacement key's config before compensation ran; leaving the old
+            // hash in place would make the next refresh fetch the source key,
+            // see a match, and skip the rewrite — stranding a deleted key's
+            // config in the member's mirror permanently.
+            ...(restoreMirrors
+              ? { subscriptionMirrors: dying.subscriptionMirrors, rawContentHash: undefined }
+              : {}),
+            updatedAt: Date.now(),
+          });
+        }
       }
     }
     return null;

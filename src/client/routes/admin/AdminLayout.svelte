@@ -1,3 +1,14 @@
+<script lang="ts" module>
+  /**
+   * Nav-group open state, MODULE-scoped on purpose: App.svelte wraps the route in
+   * `{#key router.pathname}`, so this layout is torn down and rebuilt on every
+   * navigation. Component-local state would reset each click, discarding the
+   * admin's manual open/close. Keyed by group name; `undefined` = never toggled,
+   * so the route decides.
+   */
+  const groupOpen = $state<Record<string, boolean | undefined>>({});
+</script>
+
 <script lang="ts">
   import { z } from 'zod';
   import Link from '../../components/Link.svelte';
@@ -86,14 +97,22 @@
 
   let mobileOpen = $state(false);
 
-  // The "Servers" group is a collapsible section. One group exists today; if you add
-  // another, give it its own open-state (this single var backs the one group).
-  const SERVER_PATHS = ['/admin/backend-servers', '/admin/remnawave', '/admin/status'];
-  let serversOpen = $state(SERVER_PATHS.includes(router.pathname));
-  // Keep it open whenever the active route is one of its children (initial deep-link
-  // + later navigation in); stays user-toggleable the rest of the time.
+  /** Is the active route one of this group's children? Derived from the group's OWN
+   *  children — a second hand-maintained path list drifted once already (it omitted
+   *  /admin/connection-modes, so that page rendered the group collapsed). */
+  const holdsActiveRoute = (item: NavGroup) => item.children.some((c) => c.to === router.pathname);
+
+  /** Open when the admin has toggled it, else whenever the active route lives in it
+   *  (initial deep-link + navigating in). */
+  const isOpen = (item: NavGroup) => groupOpen[item.group] ?? holdsActiveRoute(item);
+
+  // Entering a group's page opens it, so the active item is never hidden inside a
+  // collapsed section. Closing it by hand sticks until the next navigation into
+  // one of its pages (the module-scoped store survives the route remount).
   $effect(() => {
-    if (SERVER_PATHS.includes(router.pathname)) serversOpen = true;
+    for (const item of NAV) {
+      if ('children' in item && holdsActiveRoute(item)) groupOpen[item.group] = true;
+    }
   });
 </script>
 
@@ -143,11 +162,13 @@
     <nav class="space-y-0.5">
       {#each NAV as item, i (i)}
         {#if 'children' in item}
-          <Collapsible.Root bind:open={serversOpen}>
+          <Collapsible.Root
+            bind:open={() => isOpen(item), (open) => (groupOpen[item.group] = open)}
+          >
             <Collapsible.Trigger
               class={cn(
                 'group flex w-full items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors',
-                item.children.some((c) => c.to === router.pathname)
+                holdsActiveRoute(item)
                   ? 'text-foreground font-medium'
                   : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
               )}

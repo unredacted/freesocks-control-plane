@@ -39,6 +39,13 @@ export interface DonationConfig {
   bonusGbPerUsd: number;
   /** Ceiling on the shared monthly bonus (GB) regardless of how much is donated. */
   monthlyBonusCapGb: number;
+  /**
+   * How long ONE donation keeps funding the shared pool, in days from the moment
+   * it settles. Replaced the old "until the calendar month rolls" rule, which paid
+   * a gift on the 29th only two days of bonus. Applies to donations recorded from
+   * here on; already-recorded ones keep the expiry they were stamped with.
+   */
+  bonusWindowDays: number;
 }
 
 export interface BillingConfig {
@@ -90,6 +97,7 @@ export const BILLING_DEFAULTS: BillingConfig = {
     minAmountCents: 200,
     bonusGbPerUsd: 1,
     monthlyBonusCapGb: 100,
+    bonusWindowDays: 30,
   },
 };
 
@@ -110,6 +118,7 @@ export const BILLING_KEYS = {
   donation_minAmountCents: 'billing.donation.minAmountCents',
   donation_bonusGbPerUsd: 'billing.donation.bonusGbPerUsd',
   donation_monthlyBonusCapGb: 'billing.donation.monthlyBonusCapGb',
+  donation_bonusWindowDays: 'billing.donation.bonusWindowDays',
 } as const;
 
 const MAX_MONTHS = 120; // 10 years — a sane upper bound on a single fixed term.
@@ -117,6 +126,7 @@ const MAX_AMOUNT_CENTS = 10_000_00; // $10,000 — guards a fat-fingered admin e
 const MAX_SUGGESTED_AMOUNTS = 8; // cap the preset-chip list length.
 const MAX_BONUS_GB_PER_USD = 1000; // sanity ceiling on the donation→bandwidth rate.
 const MAX_MONTHLY_CAP_GB = 100_000; // sanity ceiling on the shared monthly bonus.
+const MAX_BONUS_WINDOW_DAYS = 365; // a donation can fund the pool for at most a year.
 
 /** Coerce a single duration entry; returns null if unusable (dropped by the caller). */
 function sanitizeDuration(raw: unknown): BillingDuration | null {
@@ -173,6 +183,16 @@ function asAmountCents(raw: unknown, fallback: number): number {
     : fallback;
 }
 
+/** A whole number of days in [1, MAX_BONUS_WINDOW_DAYS]; else the fallback. */
+function asWindowDays(raw: unknown, fallback: number): number {
+  return typeof raw === 'number' &&
+    Number.isInteger(raw) &&
+    raw >= 1 &&
+    raw <= MAX_BONUS_WINDOW_DAYS
+    ? raw
+    : fallback;
+}
+
 /** A finite non-negative number clamped to [0, max]; else the fallback. */
 function asNonNegNumber(raw: unknown, fallback: number, max: number): number {
   return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 && raw <= max ? raw : fallback;
@@ -223,6 +243,7 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     dMin,
     dRate,
     dCap,
+    dWindow,
   ] = await Promise.all([
     readSetting(db, BILLING_KEYS.enabled),
     readSetting(db, BILLING_KEYS.rail_nowpayments),
@@ -239,6 +260,7 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     readSetting(db, BILLING_KEYS.donation_minAmountCents),
     readSetting(db, BILLING_KEYS.donation_bonusGbPerUsd),
     readSetting(db, BILLING_KEYS.donation_monthlyBonusCapGb),
+    readSetting(db, BILLING_KEYS.donation_bonusWindowDays),
   ]);
   const d = BILLING_DEFAULTS.donation;
   return {
@@ -260,6 +282,7 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
       minAmountCents: asAmountCents(dMin, d.minAmountCents),
       bonusGbPerUsd: asNonNegNumber(dRate, d.bonusGbPerUsd, MAX_BONUS_GB_PER_USD),
       monthlyBonusCapGb: asNonNegNumber(dCap, d.monthlyBonusCapGb, MAX_MONTHLY_CAP_GB),
+      bonusWindowDays: asWindowDays(dWindow, d.bonusWindowDays),
     },
   };
 }
@@ -348,6 +371,12 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
       put(
         BILLING_KEYS.donation_monthlyBonusCapGb,
         asNonNegNumber(dd.monthlyBonusCapGb, def.monthlyBonusCapGb, MAX_MONTHLY_CAP_GB),
+      );
+    }
+    if ('bonusWindowDays' in dd) {
+      put(
+        BILLING_KEYS.donation_bonusWindowDays,
+        asWindowDays(dd.bonusWindowDays, def.bonusWindowDays),
       );
     }
   }

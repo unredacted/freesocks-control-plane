@@ -134,6 +134,10 @@ export const PublicConfig = z.object({
           capabilities: z.object({
             devices: z.boolean(),
             accessKeyOnly: z.boolean(),
+            /** Whether this backend can move a key to a different server at all.
+             *  Defaulted for deploy skew (older backends omit it) — false, so a
+             *  stale config hides the control rather than showing a dead one. */
+            switchServer: z.boolean().optional().default(false),
           }),
         }),
       )
@@ -173,8 +177,8 @@ export const PublicConfig = z.object({
     /**
      * Optional donations. Public so the picker can render preset amounts and the
      * "adds ~N GB to every free user" copy. `currentBonusGb` is the bonus live on
-     * every free user's monthly cap right now (this calendar month's pool).
-     * Defaulted so a newer SPA still parses an older backend's config.
+     * every free user's cap right now (every donation still inside its funding
+     * window). Defaulted so a newer SPA still parses an older backend's config.
      */
     donation: z
       .object({
@@ -182,6 +186,9 @@ export const PublicConfig = z.object({
         suggestedAmountsCents: z.array(z.number().int()),
         minAmountCents: z.number().int(),
         monthlyBonusCapGb: z.number(),
+        /** How many days one donation keeps funding the shared pool. Defaulted for
+         *  deploy skew (older backends omit it). */
+        bonusWindowDays: z.number().int().optional().default(30),
         currentBonusGb: z.number(),
         /** Active free users the shared bonus reaches (daily-reconciled count,
          *  rounded DOWN to the nearest 10 — never an exact fleet-size signal). */
@@ -189,9 +196,9 @@ export const PublicConfig = z.object({
         /** Per-month bonus-GB ledger (last 12) for the impact graphs. GB only —
          *  dollar amounts are never projected publicly. */
         history: z.array(z.object({ month: z.string(), bonusGb: z.number() })).default([]),
-        /** Month-to-date cumulative bonus-GB series (one value per UTC day,
-         *  1st → today) for the daily impact graph. GB only. Defaulted for
-         *  deploy skew (older backends omit it). */
+        /** Cumulative bonus-GB series for the WHOLE current month (one value per
+         *  UTC day, 1st → last day; days after today repeat today's total). GB
+         *  only. Defaulted for deploy skew (older backends omit it). */
         currentMonthDaily: z.array(z.number()).optional().default([]),
       })
       .default({
@@ -199,6 +206,7 @@ export const PublicConfig = z.object({
         suggestedAmountsCents: [],
         minAmountCents: 0,
         monthlyBonusCapGb: 0,
+        bonusWindowDays: 30,
         currentBonusGb: 0,
         freeUsersHelped: 0,
         history: [],

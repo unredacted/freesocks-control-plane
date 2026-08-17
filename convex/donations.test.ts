@@ -4,6 +4,13 @@ import schema from './schema';
 import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { gbToBytes } from './lib/backends/types';
+import {
+  currentMonthDailyGb,
+  effectiveBonusGb,
+  readDonationState,
+  recordDonation,
+  subtractDonation,
+} from './lib/donationBonus';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -224,10 +231,12 @@ describe('donations.applyFreeBonus', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test('resets free keys to base when the calendar month has rolled', async () => {
+  test('resets free keys to base once a pre-window pool has expired', async () => {
     const { t, freeTierId, instanceId } = await setup();
     await seedFreeKey(t, freeTierId, instanceId, 'u-1');
-    // Last month's pool with a bonus still applied → this month must push base back.
+    // A row written before the rolling window: no `buckets`, so its money is read
+    // as expiring when ITS month ended (never retroactively extended). Long past
+    // → the fleet must be pushed back to base.
     await t.run(async (ctx) => {
       await ctx.db.insert('appState', {
         key: 'donation:freeBonus',
@@ -272,6 +281,39 @@ describe('donations.applyFreeBonus', () => {
       expect(fresh?.bonusGb).toBe(0);
       expect(fresh?.donatedCents).toBe(0);
     });
+  });
+
+  test('a donation keeps funding the fleet across a calendar-month roll', async () => {
+    const { t, freeTierId, instanceId } = await setup();
+    await seedFreeKey(t, freeTierId, instanceId, 'u-1');
+    // $30 given LAST month, inside a 30-day window that is still open. The old
+    // month-bucket model zeroed this at 00:00 UTC on the 1st.
+    const lastMonth = new Date();
+    lastMonth.setUTCMonth(lastMonth.getUTCMonth() - 1);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appState', {
+        key: 'donation:freeBonus',
+        value: JSON.stringify({
+          monthKey: lastMonth.toISOString().slice(0, 7),
+          donatedCents: 3000,
+          appliedBonusGb: 0,
+          buckets: [
+            {
+              d: lastMonth.toISOString().slice(0, 10),
+              c: 3000,
+              x: Date.now() + 5 * 86_400_000,
+            },
+          ],
+        }),
+        updatedAt: Date.now(),
+      });
+    });
+    const bulk: BulkBody[] = [];
+    vi.stubGlobal('fetch', captureBulk(bulk));
+
+    await t.action(internal.donations.applyFreeBonus, {});
+
+    expect(bulk[0]!.fields.trafficLimitBytes).toBe(gbToBytes(80)); // 50 base + 30 bonus
   });
 
   test('a failing chunk does not abort the run, sets NO marker, and audits donation.bonus_partial', async () => {
@@ -439,5 +481,335 @@ describe('publicConfig donation impact projection', () => {
     const cfg = await t.query(api.publicConfig.get, {});
     expect(cfg.billing.donation.history).toEqual([]);
     expect(cfg.billing.donation.freeUsersHelped).toBe(0);
+  });
+});
+
+describe('donation pool windows (lib/donationBonus)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  const DAY = 86_400_000;
+  /** When a gift made on `at`'s UTC day stops funding the pool: measured from the
+   *  END of that day, so the expiry depends on (day, window) and not on the
+   *  second the payment settled. */
+  const expiryFor = (at: number, windowDays: number) =>
+    Date.parse(`${new Date(at).toISOString().slice(0, 10)}T00:00:00Z`) + DAY + windowDays * DAY;
+  const readState = (t: ReturnType<typeof convexTest>) =>
+    t.run(async (ctx) => readDonationState(ctx.db));
+
+  test('a donation is stamped with the configured window and expires after it', async () => {
+    const { t } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'billing.donation.bonusWindowDays',
+        value: JSON.stringify(7),
+        updatedAt: Date.now(),
+      });
+    });
+    const now = Date.now();
+    await t.run(async (ctx) => recordDonation(ctx, 1000, now));
+
+    const state = await readState(t);
+    expect(state.buckets).toHaveLength(1);
+    expect(state.buckets![0]!.c).toBe(1000);
+    expect(state.buckets![0]!.x).toBe(expiryFor(now, 7));
+    const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
+    expect(effectiveBonusGb(state, cfg, now + 6 * DAY)).toBe(10);
+    expect(effectiveBonusGb(state, cfg, now + 8 * DAY)).toBe(0);
+  });
+
+  test('changing the window does NOT extend donations already recorded', async () => {
+    const { t } = await setup();
+    // Fixed mid-month anchor: both gifts land in the same month, so the prune
+    // can't remove one and make the assertion depend on the calendar.
+    const may10 = Date.UTC(2026, 4, 10);
+    await t.run(async (ctx) => recordDonation(ctx, 1000, may10)); // default 30d
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'billing.donation.bonusWindowDays',
+        value: JSON.stringify(365),
+        updatedAt: Date.now(),
+      });
+    });
+    await t.run(async (ctx) => recordDonation(ctx, 500, may10 + 2 * DAY));
+
+    const state = await readState(t);
+    const first = state.buckets!.find((b) => b.c === 1000);
+    expect(first?.x).toBe(expiryFor(may10, 30)); // still its original window
+    const second = state.buckets!.find((b) => b.c === 500);
+    expect(second?.x).toBe(expiryFor(may10 + 2 * DAY, 365));
+  });
+
+  test('same-day donations merge into one bucket', async () => {
+    const { t } = await setup();
+    const now = Date.now();
+    await t.run(async (ctx) => recordDonation(ctx, 1000, now));
+    await t.run(async (ctx) => recordDonation(ctx, 250, now + 60_000));
+
+    const state = await readState(t);
+    expect(state.buckets).toHaveLength(1);
+    expect(state.buckets![0]!.c).toBe(1250);
+    // One entry, because the expiry is a function of (day, window) — not of the
+    // seconds between the two payments.
+    expect(state.buckets![0]!.x).toBe(expiryFor(now, 30));
+  });
+
+  test('a refund drains the live pool, newest bucket first', async () => {
+    const { t } = await setup();
+    const now = Date.now();
+    await t.run(async (ctx) => recordDonation(ctx, 1000, now - 2 * DAY));
+    await t.run(async (ctx) => recordDonation(ctx, 500, now));
+    await t.run(async (ctx) => subtractDonation(ctx, 500, now));
+
+    const state = await readState(t);
+    expect(state.buckets!.reduce((s, b) => s + b.c, 0)).toBe(1000);
+    // The older bucket is the survivor: draining newest-first keeps funding live
+    // for as long as possible.
+    expect(state.buckets!.map((b) => b.c)).toEqual([1000]);
+  });
+
+  test('same-day gifts keep SEPARATE windows when the admin retunes between them', async () => {
+    // Merging them under one expiry would silently re-date a gift: dropping
+    // 365 -> 1 would leave the later gift funding the pool for a year, and
+    // raising it would extend the earlier one retroactively.
+    const { t } = await setup();
+    const may10 = Date.UTC(2026, 4, 10, 6);
+    const setWindow = (days: number) =>
+      t.run(async (ctx) => {
+        const existing = await ctx.db
+          .query('appSettings')
+          .withIndex('by_key', (q) => q.eq('key', 'billing.donation.bonusWindowDays'))
+          .unique();
+        if (existing) await ctx.db.patch(existing._id, { value: JSON.stringify(days) });
+        else
+          await ctx.db.insert('appSettings', {
+            key: 'billing.donation.bonusWindowDays',
+            value: JSON.stringify(days),
+            updatedAt: Date.now(),
+          });
+      });
+
+    await setWindow(365);
+    await t.run(async (ctx) => recordDonation(ctx, 1000, may10));
+    await setWindow(1);
+    await t.run(async (ctx) => recordDonation(ctx, 500, may10 + 3600_000)); // same UTC day
+
+    const state = await readState(t);
+    expect(state.buckets).toHaveLength(2);
+    expect(state.buckets!.map((b) => b.c)).toEqual([500, 1000]); // soonest expiry first
+    expect(state.buckets!.find((b) => b.c === 1000)!.x).toBe(expiryFor(may10, 365));
+    expect(state.buckets!.find((b) => b.c === 500)!.x).toBe(expiryFor(may10, 1));
+
+    // A week later only the 365-day gift is still funding the pool.
+    const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
+    expect(effectiveBonusGb(state, cfg, may10 + 7 * DAY)).toBe(10);
+  });
+
+  test('a refund drains the bucket that actually funded it, not the newest one', async () => {
+    const { t } = await setup();
+    const may10 = Date.UTC(2026, 4, 10);
+    const may20 = Date.UTC(2026, 4, 20);
+    await t.run(async (ctx) => recordDonation(ctx, 1000, may10)); // the one refunded
+    await t.run(async (ctx) => recordDonation(ctx, 500, may20)); // unrelated, later
+    await t.run(async (ctx) => subtractDonation(ctx, 1000, may20 + DAY, may10));
+
+    const state = await readState(t);
+    // The later gift survives intact; the refunded day is gone.
+    expect(state.buckets!.map((b) => ({ d: b.d, c: b.c }))).toEqual([{ d: '2026-05-20', c: 500 }]);
+  });
+
+  test('a same-day refund targets the EXACT bucket, not a neighbour with another window', async () => {
+    // Two gifts on one UTC day under different windows sit in separate buckets.
+    // Refunding the 365-day one must take back the 365-day money, not drain the
+    // 1-day gift and leave the refunded contribution funding the pool for a year.
+    const { t } = await setup();
+    const may10 = Date.UTC(2026, 4, 10, 6);
+    const setWindow = (days: number) =>
+      t.run(async (ctx) => {
+        const existing = await ctx.db
+          .query('appSettings')
+          .withIndex('by_key', (q) => q.eq('key', 'billing.donation.bonusWindowDays'))
+          .unique();
+        if (existing) await ctx.db.patch(existing._id, { value: JSON.stringify(days) });
+        else
+          await ctx.db.insert('appSettings', {
+            key: 'billing.donation.bonusWindowDays',
+            value: JSON.stringify(days),
+            updatedAt: Date.now(),
+          });
+      });
+
+    await setWindow(1);
+    await t.run(async (ctx) => recordDonation(ctx, 300, may10)); // short window
+    await setWindow(365);
+    const longExpiry = await t.run(async (ctx) => recordDonation(ctx, 1000, may10 + 3600_000));
+    expect(longExpiry).toBe(expiryFor(may10, 365));
+
+    // Refund the 365-day gift, naming the bucket it funded.
+    await t.run(async (ctx) =>
+      subtractDonation(ctx, 1000, may10 + 2 * 3600_000, may10, longExpiry!),
+    );
+
+    const state = await readState(t);
+    // The 1-day gift survives untouched; the refunded 365-day money is gone.
+    expect(state.buckets!.map((b) => ({ c: b.c, x: b.x }))).toEqual([
+      { c: 300, x: expiryFor(may10, 1) },
+    ]);
+  });
+
+  test('refunding an expired-but-same-month gift also clears it from the month chart', async () => {
+    // A short window can expire a gift before its month ends; pruneBuckets keeps
+    // that bucket so the impact chart keeps its staircase. If the refund only
+    // touched the ledger, publicConfig would report a zero month while the chart
+    // went on drawing the refunded money.
+    const { t } = await setup();
+    const may5 = Date.UTC(2026, 4, 5);
+    const may20 = Date.UTC(2026, 4, 20);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'billing.donation.bonusWindowDays',
+        value: JSON.stringify(3), // expires May 9
+        updatedAt: Date.now(),
+      });
+    });
+    const expiry = await t.run(async (ctx) => recordDonation(ctx, 1000, may5));
+    await t.run(async (ctx) => subtractDonation(ctx, 1000, may20, may5, expiry!));
+
+    const state = await readState(t);
+    const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
+    expect(state.donatedCents).toBe(0); // the ledger wrote it off...
+    // ...and the chart agrees: no phantom staircase for refunded money.
+    expect(currentMonthDailyGb(state, cfg, may20).some((v) => v > 0)).toBe(false);
+  });
+
+  test('a refund of an EXPIRED donation leaves the live pool alone', async () => {
+    const { t } = await setup();
+    const jan = Date.UTC(2026, 0, 10);
+    const now = Date.UTC(2026, 4, 20);
+    await t.run(async (ctx) => recordDonation(ctx, 1000, jan)); // long expired
+    await t.run(async (ctx) => recordDonation(ctx, 500, now)); // live
+    await t.run(async (ctx) => subtractDonation(ctx, 1000, now, jan));
+
+    const state = await readState(t);
+    const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
+    // The live $5 is untouched — the refund had nothing live to take back.
+    expect(effectiveBonusGb(state, cfg, now)).toBe(5);
+  });
+
+  test("a previous month's refund does not shrink THIS month's ledger", async () => {
+    const { t } = await setup();
+    const apr = Date.UTC(2026, 3, 10);
+    const may = Date.UTC(2026, 4, 20);
+    await t.run(async (ctx) => recordDonation(ctx, 1000, apr));
+    await t.run(async (ctx) => recordDonation(ctx, 500, may));
+    await t.run(async (ctx) => subtractDonation(ctx, 1000, may, apr));
+
+    const state = await readState(t);
+    // May raised $5 and still reports $5; April's refund is not May's business.
+    expect(state.monthKey).toBe('2026-05');
+    expect(state.donatedCents).toBe(500);
+  });
+
+  test('a legacy `days` row converts to buckets that expire when ITS month ended', async () => {
+    const { t } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appState', {
+        key: 'donation:freeBonus',
+        value: JSON.stringify({
+          monthKey: '2026-07',
+          donatedCents: 3000,
+          appliedBonusGb: 30,
+          // Cumulative snapshots, the pre-window shape.
+          days: { '2026-07-03': 1000, '2026-07-09': 3000 },
+        }),
+        updatedAt: Date.now(),
+      });
+    });
+    const state = await readState(t);
+    // Deltas, not the cumulative totals.
+    expect(state.buckets).toEqual([
+      { d: '2026-07-03', c: 1000, x: Date.UTC(2026, 7, 1) },
+      { d: '2026-07-09', c: 2000, x: Date.UTC(2026, 7, 1) },
+    ]);
+    expect(state.days).toBeUndefined();
+    const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
+    // Live during July, gone in August — the rule those gifts were made under.
+    expect(effectiveBonusGb(state, cfg, Date.UTC(2026, 6, 20))).toBe(30);
+    expect(effectiveBonusGb(state, cfg, Date.UTC(2026, 7, 2))).toBe(0);
+  });
+
+  test('a legacy refund (a DECREASING snapshot) is not resurrected by the migration', async () => {
+    // The old subtractDonation recorded a refund by writing the REDUCED running
+    // total into `days`. Reading only the positive deltas would rebuild the
+    // original gift, and the next reconcile would hand the whole free fleet a
+    // bonus that had been refunded.
+    const { t } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appState', {
+        key: 'donation:freeBonus',
+        value: JSON.stringify({
+          monthKey: '2026-07',
+          donatedCents: 0, // fully refunded
+          appliedBonusGb: 0,
+          days: { '2026-07-03': 10000, '2026-07-04': 0 },
+        }),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const state = await readState(t);
+    expect(state.buckets).toEqual([]);
+    const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
+    expect(effectiveBonusGb(state, cfg, Date.UTC(2026, 6, 20))).toBe(0);
+  });
+
+  test('a legacy PARTIAL refund migrates to the remaining balance', async () => {
+    const { t } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appState', {
+        key: 'donation:freeBonus',
+        value: JSON.stringify({
+          monthKey: '2026-07',
+          donatedCents: 1500,
+          appliedBonusGb: 0,
+          // +$10 on the 1st, +$20 on the 5th, then a $15 refund on the 9th.
+          days: { '2026-07-01': 1000, '2026-07-05': 3000, '2026-07-09': 1500 },
+        }),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const state = await readState(t);
+    // The refund comes off the most recent money; the total matches the last
+    // snapshot, which is what the ledger already reports.
+    expect(state.buckets).toEqual([
+      { d: '2026-07-01', c: 1000, x: Date.UTC(2026, 7, 1) },
+      { d: '2026-07-05', c: 500, x: Date.UTC(2026, 7, 1) },
+    ]);
+    expect(state.buckets!.reduce((s, b) => s + b.c, 0)).toBe(1500);
+  });
+
+  test('expired buckets outside the current month are pruned on write', async () => {
+    const { t } = await setup();
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appState', {
+        key: 'donation:freeBonus',
+        value: JSON.stringify({
+          monthKey: '2020-01',
+          donatedCents: 5000,
+          appliedBonusGb: 0,
+          buckets: [{ d: '2020-01-05', c: 5000, x: Date.UTC(2020, 1, 1) }],
+        }),
+        updatedAt: now,
+      });
+    });
+    await t.run(async (ctx) => recordDonation(ctx, 100, now));
+
+    const state = await readState(t);
+    expect(state.buckets).toHaveLength(1);
+    expect(state.buckets![0]!.c).toBe(100);
   });
 });

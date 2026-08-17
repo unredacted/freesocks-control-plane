@@ -106,7 +106,7 @@ Earlier: the full-audit pass:
 the **retryable webhook dedupe claim** (a grant that throws no longer strands the event —
 `webhookEvents.status` pending/processed/failed), member **device revocation**
 (`POST /api/v1/account/devices/revoke`, Remnawave HWID), WebAuthn-challenge **retention
-sweeps**, compose **resource limits**, rate limits on rotate + device-revoke, translated
+sweeps**, rate limits on rotate + device-revoke, translated
 member error codes, a lazy-loaded Cap widget, per-route titles + back/forward scroll
 restoration, a proactive admin auth gate, membership-code pagination, rate-limit
 reset-to-default, and URL-persisted admin filters; before that, the improvement-roadmap

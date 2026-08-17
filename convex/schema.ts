@@ -556,6 +556,13 @@ export default defineSchema({
     // dedupe id — so without the flag every event re-subtracted the FULL
     // donation, over-correcting the pool by an arbitrary multiple. (Review C-F2.)
     donationUnwoundAt: v.optional(v.number()),
+    // Expiry of the pool bucket this order's donation landed in. A UTC day can
+    // hold SEVERAL buckets once an admin retunes `donation.bonusWindowDays`
+    // (same-day gifts keep their own windows), so the day alone no longer
+    // identifies the funding — without this a refund could drain a neighbouring
+    // gift's bucket and leave the refunded money live. Absent on orders granted
+    // before this field existed; the unwind then falls back to the day.
+    donationBucketExpiresAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index('by_opaque_ref', ['opaqueRef'])

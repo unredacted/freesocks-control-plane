@@ -9,7 +9,7 @@ import {
   type DonationState,
 } from './lib/donationBonus';
 import { gbToBytes, resolveTrafficLimitBytes } from './lib/backends/types';
-import { sanitizeAmountsList, BILLING_DEFAULTS } from './lib/billingConfig';
+import { sanitizeAmountsList, BILLING_DEFAULTS, billingConfigWrites } from './lib/billingConfig';
 
 const JULY = Date.UTC(2026, 6, 12); // month index 6 = July
 const AUGUST = Date.UTC(2026, 7, 3);
@@ -22,32 +22,69 @@ describe('currentMonthKey', () => {
   });
 });
 
+/** A state whose whole pool is one bucket landing on `day` and expiring at `x`. */
+const poolState = (
+  day: string,
+  cents: number,
+  x: number,
+  over: Partial<DonationState> = {},
+): DonationState => ({
+  monthKey: day.slice(0, 7),
+  donatedCents: cents,
+  appliedBonusGb: 0,
+  buckets: [{ d: day, c: cents, x }],
+  ...over,
+});
+
 describe('effectiveBonusGb', () => {
   const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
-  const state = (over: Partial<DonationState> = {}): DonationState => ({
-    monthKey: '2026-07',
-    donatedCents: 0,
-    appliedBonusGb: 0,
-    ...over,
-  });
+  const thirtyDays = 30 * 86_400_000;
 
-  test('converts this-month donations at the rate', () => {
-    expect(effectiveBonusGb(state({ donatedCents: 5000 }), cfg, JULY)).toBe(50); // $50 × 1
-    expect(effectiveBonusGb(state({ donatedCents: 250 }), { ...cfg, bonusGbPerUsd: 2 }, JULY)).toBe(
-      5, // $2.50 × 2
-    );
+  test('converts live donations at the rate', () => {
+    expect(effectiveBonusGb(poolState('2026-07-12', 5000, JULY + thirtyDays), cfg, JULY)).toBe(50);
+    expect(
+      effectiveBonusGb(
+        poolState('2026-07-12', 250, JULY + thirtyDays),
+        { ...cfg, bonusGbPerUsd: 2 },
+        JULY,
+      ),
+    ).toBe(5); // $2.50 × 2
   });
 
   test('clamps to the monthly cap', () => {
-    expect(effectiveBonusGb(state({ donatedCents: 1_000_00 }), cfg, JULY)).toBe(100); // $1000 → capped
+    expect(effectiveBonusGb(poolState('2026-07-12', 1_000_00, JULY + thirtyDays), cfg, JULY)).toBe(
+      100, // $1000 → capped
+    );
   });
 
-  test('is 0 once the calendar month has rolled', () => {
-    expect(effectiveBonusGb(state({ donatedCents: 5000 }), cfg, AUGUST)).toBe(0);
+  test('survives the calendar-month roll while the window is open', () => {
+    // A gift on Jul 12 with a 30-day window still funds the pool on Aug 3.
+    expect(effectiveBonusGb(poolState('2026-07-12', 5000, JULY + thirtyDays), cfg, AUGUST)).toBe(
+      50,
+    );
+  });
+
+  test('is 0 once the funding window has closed', () => {
+    const shortWindow = JULY + 86_400_000; // expires Jul 13
+    expect(effectiveBonusGb(poolState('2026-07-12', 5000, shortWindow), cfg, AUGUST)).toBe(0);
+  });
+
+  test('sums the live buckets and ignores the expired ones', () => {
+    const state: DonationState = {
+      monthKey: '2026-07',
+      donatedCents: 9000,
+      appliedBonusGb: 0,
+      buckets: [
+        { d: '2026-06-20', c: 4000, x: JULY - 1 }, // expired
+        { d: '2026-07-02', c: 2000, x: JULY + thirtyDays },
+        { d: '2026-07-11', c: 3000, x: JULY + thirtyDays },
+      ],
+    };
+    expect(effectiveBonusGb(state, cfg, JULY)).toBe(50); // $20 + $30
   });
 
   test('never negative', () => {
-    expect(effectiveBonusGb(state({ donatedCents: 0 }), cfg, JULY)).toBe(0);
+    expect(effectiveBonusGb(poolState('2026-07-12', 0, JULY + thirtyDays), cfg, JULY)).toBe(0);
   });
 });
 
@@ -60,50 +97,76 @@ describe('currentDayKey', () => {
 
 describe('currentMonthDailyGb', () => {
   const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
-  const state = (over: Partial<DonationState> = {}): DonationState => ({
-    monthKey: '2026-07',
-    donatedCents: 0,
-    appliedBonusGb: 0,
-    ...over,
-  });
+  const thirtyDays = 30 * 86_400_000;
+  const state = (buckets: DonationState['buckets'], over: Partial<DonationState> = {}) =>
+    ({
+      monthKey: '2026-07',
+      donatedCents: (buckets ?? []).reduce((s, b) => s + b.c, 0),
+      appliedBonusGb: 0,
+      buckets,
+      ...over,
+    }) satisfies DonationState;
 
-  test('carries snapshots forward: 0 before the first donation, staircase after', () => {
+  test('spans the WHOLE month and steps up cumulatively', () => {
     const series = currentMonthDailyGb(
-      state({
-        donatedCents: 3000,
-        days: { '2026-07-03': 1000, '2026-07-09': 3000 },
-      }),
+      state([
+        { d: '2026-07-03', c: 1000, x: JULY + thirtyDays },
+        { d: '2026-07-09', c: 2000, x: JULY + thirtyDays },
+      ]),
       cfg,
-      JULY, // July 12 → 12 points
+      JULY, // July 12, in a 31-day month
     );
-    expect(series).toHaveLength(12);
+    expect(series).toHaveLength(31);
     expect(series.slice(0, 2)).toEqual([0, 0]); // Jul 1-2
     expect(series[2]).toBe(10); // Jul 3: $10
     expect(series[7]).toBe(10); // Jul 8: carried
-    expect(series[8]).toBe(30); // Jul 9: $30 cumulative
-    expect(series[11]).toBe(30); // today: matches the live bonus
+    expect(series[8]).toBe(30); // Jul 9: $10 + $20 cumulative
+    expect(series[11]).toBe(30); // today
+    // Days after today hold today's total, so the axis is a stable month.
+    expect(series.slice(12)).toEqual(Array.from({ length: 19 }, () => 30));
+    // Never steps down.
+    for (let i = 1; i < series.length; i++)
+      expect(series[i]!).toBeGreaterThanOrEqual(series[i - 1]!);
+  });
+
+  test('counts a month with 30 days as 30 points', () => {
+    const JUNE = Date.UTC(2026, 5, 10);
+    expect(currentMonthDailyGb(state([], { monthKey: '2026-06' }), cfg, JUNE)).toHaveLength(30);
   });
 
   test('clamps each day at the monthly cap', () => {
     const series = currentMonthDailyGb(
-      state({ donatedCents: 50_000, days: { '2026-07-05': 50_000 } }),
+      state([{ d: '2026-07-05', c: 50_000, x: JULY + thirtyDays }]),
       cfg,
       JULY,
     );
     expect(series[4]).toBe(100); // $500 → capped at 100 GB
-    expect(series[11]).toBe(100);
+    expect(series[30]).toBe(100);
   });
 
-  test('rolled or unset accumulator yields a flat zero series through today', () => {
-    expect(
-      currentMonthDailyGb(state({ monthKey: '2026-06', donatedCents: 999 }), cfg, JULY),
-    ).toEqual(Array.from({ length: 12 }, () => 0));
+  test('keeps the month staircase after the money has expired', () => {
+    // The graph reports what the month RAISED; the live bonus is reported
+    // separately, so an expired bucket must not erase the step.
+    const series = currentMonthDailyGb(
+      state([{ d: '2026-07-03', c: 1000, x: JULY - 1 }]),
+      cfg,
+      JULY,
+    );
+    expect(series[2]).toBe(10);
+    expect(series[30]).toBe(10);
   });
 
-  test('pre-feature month totals (no day snapshots) pin the live bonus on today', () => {
-    const series = currentMonthDailyGb(state({ donatedCents: 2500 }), cfg, JULY);
-    expect(series.slice(0, 11)).toEqual(Array.from({ length: 11 }, () => 0));
-    expect(series[11]).toBe(25);
+  test('an empty pool yields a flat zero series over the full month', () => {
+    expect(currentMonthDailyGb(state([]), cfg, JULY)).toEqual(Array.from({ length: 31 }, () => 0));
+  });
+
+  test('ignores buckets from other months', () => {
+    const series = currentMonthDailyGb(
+      state([{ d: '2026-06-20', c: 5000, x: JULY + thirtyDays }], { monthKey: '2026-06' }),
+      cfg,
+      JULY,
+    );
+    expect(series).toEqual(Array.from({ length: 31 }, () => 0));
   });
 });
 
@@ -191,5 +254,34 @@ describe('sanitizeAmountsList', () => {
   test('empty / non-array falls back to the compiled defaults', () => {
     expect(sanitizeAmountsList([])).toEqual(BILLING_DEFAULTS.donation.suggestedAmountsCents);
     expect(sanitizeAmountsList('nope')).toEqual(BILLING_DEFAULTS.donation.suggestedAmountsCents);
+  });
+});
+
+describe('donation.bonusWindowDays (admin tunable)', () => {
+  test('defaults to 30 days', () => {
+    expect(BILLING_DEFAULTS.donation.bonusWindowDays).toBe(30);
+  });
+
+  test('an admin edit round-trips through the write/resolve pair', () => {
+    const writes = billingConfigWrites({ donation: { bonusWindowDays: 45 } });
+    const row = writes.find((w) => w.key === 'billing.donation.bonusWindowDays');
+    expect(row).toBeTruthy();
+    expect(JSON.parse(row!.value)).toBe(45);
+  });
+
+  test('rejects junk and out-of-range values, falling back to the default', () => {
+    const write = (v: unknown) =>
+      JSON.parse(
+        billingConfigWrites({ donation: { bonusWindowDays: v } }).find(
+          (w) => w.key === 'billing.donation.bonusWindowDays',
+        )!.value,
+      );
+    expect(write(0)).toBe(30); // a zero-day window would kill every bonus instantly
+    expect(write(-5)).toBe(30);
+    expect(write(400)).toBe(30); // past the 365-day ceiling
+    expect(write(1.5)).toBe(30); // whole days only
+    expect(write('30')).toBe(30);
+    expect(write(1)).toBe(1); // the tightest legal window is honored
+    expect(write(365)).toBe(365);
   });
 });
