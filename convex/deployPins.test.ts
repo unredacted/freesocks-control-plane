@@ -22,7 +22,16 @@ import { describe, expect, test } from 'vitest';
  *    (per Aug 2026) nobody would necessarily be watching.
  *  - `oven/bun` vs. `packageManager` in package.json: the image and CI would
  *    silently build on different Bun versions. package.json is NOT enrolled in
- *    Dependabot, so nothing bumps that half automatically.
+ *    Dependabot, so nothing bumps that half automatically. CI itself is kept out
+ *    of the duplication entirely — `.github/workflows/ci.yml` uses
+ *    `bun-version-file: package.json`, and the last test here stops a literal
+ *    `bun-version:` creeping back in.
+ *
+ * Precedent: ci.yml already carries an inline shell guard holding its Caddy
+ * digest equal to docker/web.Dockerfile's, added after the two drifted and CI
+ * validated a different Caddy than the one deployed for weeks. Same failure
+ * shape, same fix; that one stays where it is because it guards a step in its
+ * own job.
  */
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 
@@ -31,6 +40,7 @@ const backupDockerfile = read('../docker/backup.Dockerfile');
 const webDockerfile = read('../docker/web.Dockerfile');
 const deployDockerfile = read('../docker/deploy.Dockerfile');
 const packageJson = read('../package.json');
+const ciWorkflow = read('../.github/workflows/ci.yml');
 
 /** Every `FROM <ref>` in a Dockerfile, stage aliases stripped. */
 function fromRefs(dockerfile: string): string[] {
@@ -78,6 +88,24 @@ describe('cross-file image pins', () => {
           'versions.',
       ).toBe(expected);
     }
+  });
+
+  test('CI derives its Bun version from package.json rather than pinning a copy', () => {
+    // `setup-bun` reads `packageManager` (then `engines.bun`) out of the file,
+    // so `bun-version-file: package.json` keeps CI on the same Bun as the images
+    // by construction. A literal `bun-version:` would be a copy Dependabot never
+    // touches — and it is the input that actually WINS, so CI could build on a
+    // different runtime than it ships while the pins above still looked clean.
+    expect(ciWorkflow).toContain('bun-version-file: package.json');
+    expect(
+      ciWorkflow,
+      'ci.yml pins a literal `bun-version:`. Use `bun-version-file: package.json` instead — ' +
+        'a hardcoded version here silently overrides the single source of truth in package.json.',
+    ).not.toMatch(/^\s*bun-version:/m);
+
+    const setupSteps = (ciWorkflow.match(/uses:\s*oven-sh\/setup-bun@/g) ?? []).length;
+    const versionFiles = (ciWorkflow.match(/bun-version-file:\s*package\.json/g) ?? []).length;
+    expect(versionFiles, 'every setup-bun step must declare bun-version-file').toBe(setupSteps);
   });
 
   test('every convex-backend pin in the stack is the same digest', () => {
