@@ -377,8 +377,25 @@ export const appendMirror = internalMutation({
     // mirror to a row that is about to be torn down: never refreshed, deleted
     // with the row after the grace period, and the member was already handed its
     // URL. Refuse instead, so the retry provisions against the live key.
+    //
+    // The NEWER-ROW test is the authoritative one. `currentSubscriptionId` is
+    // repointed by a separate mutation after insertSubscription commits
+    // (lib/issuance.ts), so between those two writes the pointer still names
+    // this row while its replacement already exists — a pointer-only check
+    // would wave the late append through in exactly that window. Active rows
+    // per user are normally one (transiently two during a saga), so this stays
+    // a tiny read.
+    const actives = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_user_state', (q) => q.eq('userId', row.userId).eq('state', 'active'))
+      .collect();
+    const hasNewer = actives.some(
+      (s) => s._id !== subscriptionId && s._creationTime > row._creationTime,
+    );
     const owner = await ctx.db.get(row.userId);
-    if (owner?.currentSubscriptionId && owner.currentSubscriptionId !== subscriptionId) {
+    const pointerMoved =
+      !!owner?.currentSubscriptionId && owner.currentSubscriptionId !== subscriptionId;
+    if (hasNewer || pointerMoved) {
       return { appended: false as const, reason: 'superseded' as const };
     }
     const existing = row.subscriptionMirrors.some((m) => m.provider === entry.provider);

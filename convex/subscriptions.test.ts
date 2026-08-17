@@ -519,6 +519,57 @@ describe('subscriptions.appendMirror — a superseded row is refused', () => {
     });
   });
 
+  test('refuses in the window BEFORE the user pointer is repointed', async () => {
+    // issueNewSubscription inserts the replacement and repoints
+    // currentSubscriptionId in two separate mutations. In between, the pointer
+    // still names the old row while its replacement already exists — a
+    // pointer-only check would wave the late append through exactly there.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const { oldId } = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const oldId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'old',
+        backendShortId: 'oldshort',
+        subscriptionUrl: 'https://panel.test/sub/oldshort',
+        subToken: 'tok-abc',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: oldId });
+      await ctx.runMutation(internal.subscriptions.insertSubscription, {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'new',
+        backendShortId: 'newshort',
+        subscriptionUrl: 'https://panel.test/sub/newshort',
+        subscriptionMirrors: [],
+        carrySubTokenFromId: oldId,
+      });
+      // Deliberately NOT repointed: this is the gap between the two mutations.
+      return { oldId };
+    });
+
+    const res = await t.mutation(internal.subscriptions.appendMirror, {
+      subscriptionId: oldId,
+      mirror: { provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'subs/x' },
+      rawContentHash: 'h',
+      cap: 3,
+    });
+
+    expect(res).toEqual({ appended: false, reason: 'superseded' });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(oldId))!.subscriptionMirrors).toEqual([]);
+    });
+  });
+
   test('still appends normally to the current subscription', async () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);
