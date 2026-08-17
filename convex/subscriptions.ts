@@ -433,9 +433,13 @@ export const updateMirrors = internalMutation({
       }
       return failed.has(m.provider) ? { ...m, status: 'failed' as const } : m;
     });
-    // Defensive: a success for a provider not previously mirrored (refresh targets
-    // are always already-mirrored, so normally none).
-    for (const m of fresh.values()) merged.push(m);
+    // Successes for providers the row no longer lists are DROPPED, never
+    // appended. A refresh only ever targets providers the row already had, so
+    // the only way to get here is that the list changed under the in-flight
+    // upload — i.e. a re-issue vacated these mirrors onto a replacement row
+    // between the page read and this write. Re-attaching them would leave two
+    // rows owning one object path, and tearing the old row down would then
+    // delete the object the live row is serving.
     await ctx.db.patch(subscriptionId, {
       subscriptionMirrors: merged,
       ...(rawContentHash !== undefined ? { rawContentHash } : {}),

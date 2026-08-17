@@ -351,6 +351,61 @@ describe('subscriptions.updateMirrors — partial rounds hold the hash', () => {
   });
 });
 
+describe('subscriptions.updateMirrors — an in-flight refresh cannot reclaim a carry', () => {
+  test('drops successes for providers the row no longer lists', async () => {
+    // The refresh pages the old row, then a switch vacates its mirrors onto the
+    // replacement, then the in-flight upload reports success against the OLD id.
+    // Re-attaching would leave two rows owning one object path — and tearing the
+    // old row down would delete the object the live row is serving.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const { oldId, newId } = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const oldId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'old',
+        backendShortId: 'oldshort',
+        subscriptionUrl: 'https://panel.test/sub/oldshort',
+        subToken: 'tok-abc',
+        subscriptionMirrors: [
+          { provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'subs/x' },
+        ],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      const newId = await ctx.runMutation(internal.subscriptions.insertSubscription, {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'new',
+        backendShortId: 'newshort',
+        subscriptionUrl: 'https://panel.test/sub/newshort',
+        subscriptionMirrors: [],
+        carrySubTokenFromId: oldId,
+      });
+      return { oldId, newId };
+    });
+
+    // The straggler write lands on the (still active) old row.
+    await t.mutation(internal.subscriptions.updateMirrors, {
+      subscriptionId: oldId,
+      successes: [{ provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'subs/x' }],
+      failedProviders: [],
+      rawContentHash: 'hash-new',
+    });
+
+    await t.run(async (ctx) => {
+      // The old row stays empty: exactly one row owns the object path.
+      expect((await ctx.db.get(oldId))!.subscriptionMirrors).toEqual([]);
+      expect((await ctx.db.get(newId))!.subscriptionMirrors).toHaveLength(1);
+    });
+  });
+});
+
 describe('subscriptions.markSubscriptionDeleted — compensation returns the carry', () => {
   const MIRROR = { provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'subs/x' };
 

@@ -570,9 +570,11 @@
               ))}
           />
           <span class="mt-1 block text-xs text-muted-foreground">
-            How long one donation keeps funding the shared pool, counted from when it settles.
-            Changing this affects donations made from now on; ones already recorded keep the window
-            they were given.
+            How long one donation keeps funding the shared pool. Counted from the END of the UTC day
+            it settles, so a gift funds the pool for at least this many days and at most one day
+            more - gifts landing on the same day share one expiry, which is what keeps the
+            bookkeeping per-day rather than per-payment. Changing this affects donations made from
+            now on; ones already recorded keep the window they were given.
           </span>
         </label>
       </div>
