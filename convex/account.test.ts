@@ -1744,6 +1744,44 @@ describe('account.switchServer', () => {
     });
   });
 
+  test('refuses on a STALE node count, even when it says multiple nodes', async () => {
+    // A squad that has since shrunk to one node still reads >1 from an old
+    // snapshot; trusting it would put us right back to promising a move that
+    // cannot happen. Same staleness bar pickByNodeLoad applies.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    const { instanceId } = await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    await t.run((ctx) =>
+      ctx.db.insert('remnawaveNodeStats', {
+        backendServerId: instanceId,
+        placement: SQUAD_A,
+        usersOnline: 1,
+        online: true,
+        nodeCount: 4,
+        lastStatsAt: Date.now() - 61 * 60_000, // an hour old: past the 30 min bar
+        updatedAt: Date.now(),
+      }),
+    );
+    vi.stubGlobal('fetch', panelStub());
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    expect(res).toMatchObject({ ok: false, code: 'server.no_alternative' });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.query('subscriptions').collect())[0]!.pinnedNode).toBe('xray1');
+    });
+  });
+
   test('refuses when the node count is unknown (no stats row observed yet)', async () => {
     // Bring-up, or a placement the healthcheck cron has not reached. We cannot
     // prove another node exists, so we do not assert a move; the next cron pass
@@ -1798,6 +1836,93 @@ describe('account.switchServer', () => {
       expect(subs[0]!.state).toBe('active'); // the working key is untouched
       expect(subs[0]!.backendPlacement).toBe(SQUAD_A);
       expect(subs[0]!.subCache).toBeTruthy(); // not even the cache was dropped
+    });
+  });
+
+  test("re-issues across panels when the member's own panel is a dead end", async () => {
+    // One squad on this panel, one node behind it — both cheap levers are out.
+    // But the mode pool has a squad on ANOTHER panel, which the same-panel lookup
+    // deliberately hides (`onlyServerId` is a hard pin). Without the cross-panel
+    // probe the member could never leave, despite a whole other location bound.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    const { instanceId } = await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    const otherPanel = await t.run(async (ctx) => {
+      const other = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'other',
+        slug: 'other',
+        config: { type: 'remnawave', baseUrl: 'https://panel2.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A, SQUAD_B] }),
+        updatedAt: Date.now(),
+      });
+      // Attribute each squad to its own panel; SQUAD_A is single-node, so the pin
+      // rotation is not an option either.
+      await ctx.db.insert('remnawaveNodeStats', {
+        backendServerId: instanceId,
+        placement: SQUAD_A,
+        usersOnline: 1,
+        online: true,
+        nodeCount: 1,
+        lastStatsAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('remnawaveNodeStats', {
+        backendServerId: other,
+        placement: SQUAD_B,
+        usersOnline: 0,
+        online: true,
+        nodeCount: 2,
+        lastStatsAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return other;
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              response: {
+                uuid: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+                shortUuid: 'newshort',
+                username: 'u2',
+                status: 'ACTIVE',
+                trafficLimitBytes: null,
+                trafficLimitStrategy: 'MONTH',
+                userTraffic: { usedTrafficBytes: 0 },
+                expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+                hwidDeviceLimit: null,
+                subscriptionUrl: 'https://panel2.test/sub/newshort',
+              },
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    );
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'blocked' });
+    expect(res).toMatchObject({ ok: true, inPlace: false });
+    await t.run(async (ctx) => {
+      const fresh = (await ctx.db.query('subscriptions').collect()).find(
+        (x) => x.state === 'active',
+      )!;
+      expect(fresh.backendPlacement).toBe(SQUAD_B); // the other panel's squad
+      expect(fresh.backendServerId).toBe(otherPanel);
+      expect(fresh.subToken).toBe('tok-abc'); // saved link still works
     });
   });
 

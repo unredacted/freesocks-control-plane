@@ -26,6 +26,7 @@ import {
 } from './lib/backends/types';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
 import { capabilitiesOf } from './lib/backends/capabilities';
+import { NODE_STATS_STALE_MS } from './lib/remnawavePlacement';
 
 type Backend = BackendId;
 
@@ -1208,20 +1209,31 @@ export const switchServer = internalAction({
       });
     };
 
-    // (3) Re-issue: a new key in the SAME mode, excluding the placement the
-    // member is leaving, unpinned so it may land on another panel/location.
-    const reissue = async (): Promise<SwitchServerResult> => {
+    // Where a re-issue would land: the mode's pool with NO panel pin, so it can
+    // cross to another panel/location — the only lever that can, since a panel
+    // owns its user records. Separate from `reissue` itself so the caller can ask
+    // "is there anywhere else to go?" WITHOUT minting a key to find out.
+    const resolveCrossPanelTarget = async () => {
+      if (!canPlace) return { placement: null, serverId: null, unattributedMultiPanel: false };
       const rand = new Uint32Array(1);
       crypto.getRandomValues(rand);
-      const target = canPlace
-        ? await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
-            backend: tier.backend,
-            modeId,
-            location: user.preferredLocation ?? null,
-            excludePlacement: oldSub.backendPlacement ?? null,
-            rand: rand[0]! / 2 ** 32,
-          })
-        : { placement: null, serverId: null, unattributedMultiPanel: false };
+      return ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
+        backend: tier.backend,
+        modeId,
+        location: user.preferredLocation ?? null,
+        excludePlacement: oldSub.backendPlacement ?? null,
+        rand: rand[0]! / 2 ** 32,
+      });
+    };
+
+    // (3) Re-issue: a new key in the SAME mode, excluding the placement the
+    // member is leaving, unpinned so it may land on another panel/location.
+    // `pre` is a target already resolved by the caller (the cross-panel probe);
+    // the PATCH-failure path passes nothing and resolves fresh.
+    const reissue = async (
+      pre?: Awaited<ReturnType<typeof resolveCrossPanelTarget>>,
+    ): Promise<SwitchServerResult> => {
+      const target = pre ?? (await resolveCrossPanelTarget());
       if (target.unattributedMultiPanel) {
         return {
           ok: false,
@@ -1349,13 +1361,19 @@ export const switchServer = internalAction({
     // an unknown count (no stats row yet — bring-up, or a placement the
     // healthcheck cron hasn't observed) counts as unproven, which reads as
     // "try again later" and self-heals on the next cron pass.
+    // The snapshot must also be FRESH. A squad that has since shrunk to one node
+    // would still read >1 from a stale row, putting us right back to claiming a
+    // move that cannot happen — so apply the same staleness bar pickByNodeLoad
+    // uses for its own load decisions.
     const placementStats =
       canPlace && oldSub.backendPlacement
         ? await ctx.runQuery(internal.remnawaveNodes.getPlacementStats, {
             placement: oldSub.backendPlacement,
           })
         : null;
-    const hasOtherNode = (placementStats?.nodeCount ?? 0) > 1;
+    const statsFresh =
+      placementStats != null && Date.now() - placementStats.lastStatsAt < NODE_STATS_STALE_MS;
+    const hasOtherNode = statsFresh && placementStats.nodeCount > 1;
     const leftNode = hasOtherNode
       ? await ctx.runMutation(internal.subscriptions.rotateNodePin, {
           subscriptionId: oldSub._id,
@@ -1376,6 +1394,21 @@ export const switchServer = internalAction({
         inPlace: true,
         oldSubscriptionDeletedAt: null,
       };
+    }
+
+    // (3) Cross-panel re-issue. Both cheap levers are exhausted, but the mode's
+    // pool may still hold a placement on ANOTHER panel — the same-panel lookup
+    // above deliberately hides those (`onlyServerId` is a hard pin), so without
+    // this probe a member on a one-squad, one-node panel could never leave it
+    // even with a whole other location bound. Probe before committing: reissue
+    // mints a key and tombstones the old one, which is far too much to spend
+    // landing back where we started.
+    const crossPanel = await resolveCrossPanelTarget();
+    if (
+      crossPanel.unattributedMultiPanel ||
+      (crossPanel.placement !== null && crossPanel.placement !== (oldSub.backendPlacement ?? null))
+    ) {
+      return reissue(crossPanel);
     }
 
     // Nothing to move: a single-squad, single-node deployment, a key that has

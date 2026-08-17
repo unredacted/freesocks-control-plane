@@ -490,6 +490,11 @@ describe('donation pool windows (lib/donationBonus)', () => {
   });
 
   const DAY = 86_400_000;
+  /** When a gift made on `at`'s UTC day stops funding the pool: measured from the
+   *  END of that day, so the expiry depends on (day, window) and not on the
+   *  second the payment settled. */
+  const expiryFor = (at: number, windowDays: number) =>
+    Date.parse(`${new Date(at).toISOString().slice(0, 10)}T00:00:00Z`) + DAY + windowDays * DAY;
   const readState = (t: ReturnType<typeof convexTest>) =>
     t.run(async (ctx) => readDonationState(ctx.db));
 
@@ -508,7 +513,7 @@ describe('donation pool windows (lib/donationBonus)', () => {
     const state = await readState(t);
     expect(state.buckets).toHaveLength(1);
     expect(state.buckets![0]!.c).toBe(1000);
-    expect(state.buckets![0]!.x).toBe(now + 7 * DAY);
+    expect(state.buckets![0]!.x).toBe(expiryFor(now, 7));
     const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
     expect(effectiveBonusGb(state, cfg, now + 6 * DAY)).toBe(10);
     expect(effectiveBonusGb(state, cfg, now + 8 * DAY)).toBe(0);
@@ -531,9 +536,9 @@ describe('donation pool windows (lib/donationBonus)', () => {
 
     const state = await readState(t);
     const first = state.buckets!.find((b) => b.c === 1000);
-    expect(first?.x).toBe(may10 + 30 * DAY); // still its original window
+    expect(first?.x).toBe(expiryFor(may10, 30)); // still its original window
     const second = state.buckets!.find((b) => b.c === 500);
-    expect(second?.x).toBe(may10 + 2 * DAY + 365 * DAY);
+    expect(second?.x).toBe(expiryFor(may10 + 2 * DAY, 365));
   });
 
   test('same-day donations merge into one bucket', async () => {
@@ -545,7 +550,9 @@ describe('donation pool windows (lib/donationBonus)', () => {
     const state = await readState(t);
     expect(state.buckets).toHaveLength(1);
     expect(state.buckets![0]!.c).toBe(1250);
-    expect(state.buckets![0]!.x).toBe(now + 60_000 + 30 * DAY); // the later expiry wins
+    // One entry, because the expiry is a function of (day, window) — not of the
+    // seconds between the two payments.
+    expect(state.buckets![0]!.x).toBe(expiryFor(now, 30));
   });
 
   test('a refund drains the live pool, newest bucket first', async () => {
@@ -560,6 +567,43 @@ describe('donation pool windows (lib/donationBonus)', () => {
     // The older bucket is the survivor: draining newest-first keeps funding live
     // for as long as possible.
     expect(state.buckets!.map((b) => b.c)).toEqual([1000]);
+  });
+
+  test('same-day gifts keep SEPARATE windows when the admin retunes between them', async () => {
+    // Merging them under one expiry would silently re-date a gift: dropping
+    // 365 -> 1 would leave the later gift funding the pool for a year, and
+    // raising it would extend the earlier one retroactively.
+    const { t } = await setup();
+    const may10 = Date.UTC(2026, 4, 10, 6);
+    const setWindow = (days: number) =>
+      t.run(async (ctx) => {
+        const existing = await ctx.db
+          .query('appSettings')
+          .withIndex('by_key', (q) => q.eq('key', 'billing.donation.bonusWindowDays'))
+          .unique();
+        if (existing) await ctx.db.patch(existing._id, { value: JSON.stringify(days) });
+        else
+          await ctx.db.insert('appSettings', {
+            key: 'billing.donation.bonusWindowDays',
+            value: JSON.stringify(days),
+            updatedAt: Date.now(),
+          });
+      });
+
+    await setWindow(365);
+    await t.run(async (ctx) => recordDonation(ctx, 1000, may10));
+    await setWindow(1);
+    await t.run(async (ctx) => recordDonation(ctx, 500, may10 + 3600_000)); // same UTC day
+
+    const state = await readState(t);
+    expect(state.buckets).toHaveLength(2);
+    expect(state.buckets!.map((b) => b.c)).toEqual([500, 1000]); // soonest expiry first
+    expect(state.buckets!.find((b) => b.c === 1000)!.x).toBe(expiryFor(may10, 365));
+    expect(state.buckets!.find((b) => b.c === 500)!.x).toBe(expiryFor(may10, 1));
+
+    // A week later only the 365-day gift is still funding the pool.
+    const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
+    expect(effectiveBonusGb(state, cfg, may10 + 7 * DAY)).toBe(10);
   });
 
   test('a refund drains the bucket that actually funded it, not the newest one', async () => {

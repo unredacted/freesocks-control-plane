@@ -226,8 +226,10 @@ export function summarizeRemnawaveConfig(configJson: string | null): {
 
 // A node-load snapshot older than this is treated as unknown load (the
 // healthcheck cron refreshes every 10 min; 30 min matches the instance pool's
-// "fresh" window).
-const NODE_STATS_STALE_MS = 30 * 60_000;
+// "fresh" window). Exported because the same bar decides whether a snapshot's
+// `nodeCount` is trustworthy enough to promise a member a different server
+// (account.switchServer) — one staleness rule, not two.
+export const NODE_STATS_STALE_MS = 30 * 60_000;
 
 const DEFAULT_USERS_ONLINE_WEIGHT = 1;
 const DEFAULT_BANDWIDTH_WEIGHT = 0; // usersOnline-only until the realtime shape is pinned

@@ -99,6 +99,19 @@ function monthEndMs(monthKey: string): number {
   return Number.isFinite(y) && Number.isFinite(m) ? Date.UTC(y!, m!, 1) : 0;
 }
 
+/**
+ * When a gift made on `dayKey` stops funding the pool, under a `windowDays`
+ * window. Measured from the END of the gift's UTC day, so the expiry is a
+ * function of (day, window) alone rather than of the exact second the payment
+ * settled. Two consequences, both wanted: same-day gifts under an unchanged
+ * window land in ONE bucket (the list stays day-granular instead of growing per
+ * donation), and every donor gets at least their full window — up to a day
+ * extra, rounding in their favour rather than against.
+ */
+function bucketExpiryMs(dayKey: string, windowDays: number): number {
+  return Date.parse(`${dayKey}T00:00:00Z`) + DAY_MS + windowDays * DAY_MS;
+}
+
 /** Days in the UTC month containing `now`. */
 export function daysInMonth(now: number): number {
   const d = new Date(now);
@@ -277,7 +290,17 @@ function pruneBuckets(buckets: DonationBucket[], now: number): DonationBucket[] 
   return buckets.filter((b) => b.x > now || monthStartMs(b.d.slice(0, 7)) >= monthStart);
 }
 
-/** Merge `cents` into `dayKey`'s bucket (or append one), keeping the list sorted. */
+/**
+ * Add `cents` to the bucket for (`dayKey`, `expiresAt`), or append one.
+ *
+ * Buckets merge on the day AND the expiry, never the day alone: an admin who
+ * retunes `bonusWindowDays` between two gifts on the same UTC day would
+ * otherwise have one of them silently re-dated — dropping 365→1 would leave the
+ * later gift funding the pool for a year, and raising it would extend the
+ * earlier one retroactively, which is exactly the promise the read-time legacy
+ * conversion exists to keep. Same-day gifts under an UNCHANGED window still
+ * collapse into one entry, so the list stays short in the normal case.
+ */
 function addToBucket(
   buckets: DonationBucket[],
   dayKey: string,
@@ -285,21 +308,20 @@ function addToBucket(
   expiresAt: number,
 ): DonationBucket[] {
   const next = [...buckets];
-  const i = next.findIndex((b) => b.d === dayKey);
+  const i = next.findIndex((b) => b.d === dayKey && b.x === expiresAt);
   if (i >= 0) {
-    // Same day, so the newer gift's (later) expiry governs the merged bucket —
-    // rounding a few hours in the donor's favour rather than against them.
-    next[i] = { d: dayKey, c: next[i]!.c + cents, x: Math.max(next[i]!.x, expiresAt) };
+    next[i] = { ...next[i]!, c: next[i]!.c + cents };
   } else {
     next.push({ d: dayKey, c: cents, x: expiresAt });
-    next.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
+    next.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : a.x - b.x));
   }
   return next;
 }
 
 /**
- * Add a settled donation to the pool, stamped to expire `bonusWindowDays` from
- * now. Caller schedules applyFreeBonus after. Also upserts the month's ledger
+ * Add a settled donation to the pool, stamped to expire `bonusWindowDays` after
+ * its day (see {@link bucketExpiryMs}). Caller schedules applyFreeBonus after.
+ * Also upserts the month's ledger
  * entry — that ledger stays calendar-month-keyed (it is the historical record of
  * what each month raised), independently of how long a donation funds the pool.
  */
@@ -312,6 +334,7 @@ export async function recordDonation(
   const state = await readDonationState(ctx.db);
   const cfg = await resolveBillingConfig(ctx.db);
   const mk = currentMonthKey(now);
+  const day = currentDayKey(now);
   const next: DonationState = {
     ...state,
     // `donatedCents` is the MONTH's running total for the ledger, so it still
@@ -321,9 +344,9 @@ export async function recordDonation(
     buckets: pruneBuckets(
       addToBucket(
         state.buckets ?? [],
-        currentDayKey(now),
+        day,
         donationCents,
-        now + cfg.donation.bonusWindowDays * DAY_MS,
+        bucketExpiryMs(day, cfg.donation.bonusWindowDays),
       ),
       now,
     ),
@@ -374,9 +397,15 @@ export async function subtractDonation(
   };
   const known = fundedAt !== undefined && Number.isFinite(fundedAt);
   if (known) {
-    // Its own day, and only its own day.
-    const own = buckets.findIndex((b) => b.d === currentDayKey(fundedAt!));
-    if (own >= 0) drain(own);
+    // Its own day, and only its own day — but a day can hold more than one
+    // bucket now (same-day gifts made under different windows stay separate),
+    // so drain every bucket on it, soonest-expiring first: that is the funding
+    // the refund is most likely to have been part of, and it leaves the
+    // longest-lived money in place.
+    const fundedDay = currentDayKey(fundedAt!);
+    for (let i = 0; i < buckets.length && remaining > 0; i++) {
+      if (buckets[i]!.d === fundedDay) drain(i);
+    }
   } else {
     for (let i = buckets.length - 1; i >= 0 && remaining > 0; i--) drain(i);
   }
