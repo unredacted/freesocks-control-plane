@@ -103,15 +103,23 @@ Recipe for a publishable hash:
 
 1. Clean checkout at the release tag (no local edits): `git clean -fdx` then
    `bun install --frozen-lockfile` (the lockfile pins every dependency).
-2. Pinned toolchain: bun `1.3.14` (`packageManager` in `package.json`); CI uses
-   the same via `oven-sh/setup-bun`.
-3. `bash scripts/verify-reproducible.sh` and record the `dist-sha256`.
+2. Pinned toolchain: the bun version in `packageManager` in `package.json`. That
+   field is the single source of truth — the `oven/bun` base images and CI's
+   `setup-bun` (via `bun-version-file`) both derive from it, and
+   `convex/deployPins.test.ts` fails the build if any of them drift. No literal
+   version is repeated in this document on purpose: a Dependabot bump would
+   otherwise leave stale instructions here while every guard stayed green.
+3. `bash scripts/verify-reproducible.sh` and record the `dist-sha256`. The script
+   refuses to run if your `bun --version` does not match `packageManager`
+   (override with `ALLOW_BUN_MISMATCH=true`, but the resulting hash is not
+   publishable).
 
 Determinism notes / current limits:
 
 - Same toolchain + lockfile gives a stable hash (verified: two builds match, and
   CI enforces it). A DIFFERENT OS/arch or bun version MAY produce a different
-  hash; pin the rebuild environment to match CI (ubuntu-latest, bun 1.3.14).
+  hash; match CI's environment (ubuntu-latest, plus the bun version above, which
+  the script checks for you).
 - The SPA build embeds no wall-clock timestamps; the `VITE_*` values (including
   the baked keys) are build inputs, so the published hash is specific to a given
   key set. Re-publish the hash whenever the baked keys change.

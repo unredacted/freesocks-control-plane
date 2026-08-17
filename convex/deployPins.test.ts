@@ -108,6 +108,28 @@ describe('cross-file image pins', () => {
     expect(versionFiles, 'every setup-bun step must declare bun-version-file').toBe(setupSteps);
   });
 
+  test('nothing outside package.json states a literal bun version', () => {
+    // The reproducibility protocol is the sharpest case: docs/oob-verification.md
+    // tells independent rebuilders which toolchain to use, and its own text warns
+    // that a different bun MAY change the dist-sha256. A stale version there
+    // would have an honest rebuilder publish dissent against a hash that was
+    // never wrong — just built differently. So the docs name the FIELD, never
+    // the value, and verify-reproducible.sh reads it at runtime.
+    const bunVersion = (JSON.parse(packageJson).packageManager as string).slice('bun@'.length);
+    for (const [name, text] of [
+      ['docs/oob-verification.md', read('../docs/oob-verification.md')],
+      ['scripts/verify-reproducible.sh', read('../scripts/verify-reproducible.sh')],
+      ['.github/workflows/ci.yml', ciWorkflow],
+    ] as const) {
+      expect(
+        text.includes(bunVersion),
+        `${name} hardcodes bun ${bunVersion}. Reference \`packageManager\` in package.json ` +
+          'instead — a Dependabot bump would leave this copy stale while every other guard ' +
+          'stayed green.',
+      ).toBe(false);
+    }
+  });
+
   test('every convex-backend pin in the stack is the same digest', () => {
     const refs = [...stack.matchAll(/image:\s*(ghcr\.io\/get-convex\/convex-backend\S+)/g)].map(
       (m) => m[1],
