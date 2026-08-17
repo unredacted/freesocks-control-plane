@@ -200,10 +200,18 @@ a real failure, which fails the `RUN`, which aborts the build — and BuildKit t
 prints that step's full log at the end and stops. So anything you saw scroll past
 on a build that reached `Successfully built` was a **warning**, by construction.
 
-To read them anyway, disable the collapsing renderer and tee to a file:
+To read them anyway, disable the collapsing renderer and tee to a file. **Every
+recipe below starts with `set -o pipefail`, and that line is not optional:** a
+shell pipeline reports the exit status of its LAST command, so without it a
+failed build hands you `tee`'s cheerful `0` and the guarantee above quietly stops
+holding. (`pipefail` is a shell option, not a per-command flag — set it once per
+interactive shell and every later pipeline inherits it, or keep pasting the whole
+block.)
 
 ```sh
+set -o pipefail
 docker compose -f docker-compose.stack.yml --env-file .env.beta build --progress=plain web 2>&1 | tee /tmp/fcp-build.log
+echo "build exit: $?"
 ```
 
 Caveat: if the `RUN bun run build` layer is cached the step prints `CACHED` with
@@ -211,16 +219,25 @@ no output. Force it with `--no-cache` (slow, rebuilds everything) or just run th
 same build outside Docker — it is the identical command:
 
 ```sh
+set -o pipefail
 bun run build 2>&1 | tee /tmp/fcp-build.log
+echo "build exit: $?"
 ```
 
 `--progress=plain` also works as the `BUILDKIT_PROGRESS=plain` env var if you
 want it on the combined `up -d --build` command, which has no such flag:
 
 ```sh
+set -o pipefail
 BUILDKIT_PROGRESS=plain docker compose -f docker-compose.stack.yml --env-file .env.beta \
   up -d --build --force-recreate web deployer 2>&1 | tee /tmp/fcp-deploy.log
+echo "deploy exit: $?"
 ```
+
+A non-zero exit there means the build failed or a container was not recreated —
+do not read the log for warnings and assume you deployed. Confirm the deploy
+landed the usual way regardless (`logs --tail=40 deployer` ends with
+`[deploy] OK`).
 
 Known-benign lines you will see and can ignore:
 

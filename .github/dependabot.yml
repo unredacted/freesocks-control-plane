@@ -34,22 +34,20 @@ updates:
     groups:
       compose-images:
         patterns: ['*']
-        # Majors stay separate: postgres/valkey majors are data-dir migrations,
-        # not restarts, and must not ride along in a routine digest bump.
+        # Only minor/patch ride together. A major (postgres 19, valkey 10) does
+        # NOT match the group and so lands as its own PR — "Any outdated
+        # dependencies that do not match a rule are updated in individual pull
+        # requests." Deliberately NOT `ignore`d: a Postgres major is a
+        # dump/restore across the data dir (docs/beta-deploy.md § Backups) and a
+        # valkey major has changed the on-disk format before, so those are
+        # exactly the bumps that must stay VISIBLE. A PR is a notification, not
+        # a merge — read it, then sit on it.
         update-types: [minor, patch]
     # Read the Convex PRs with extra care: `ghcr.io/get-convex/convex-*` are
     # pinned by digest with NO tag, so Dependabot tracks whatever `:latest`
     # currently is — that can carry a backend/schema change, not just a patch.
     # Same for `tiago2/cap:latest` (the accepted-risk image, see
     # docs/beta-deploy.md § "Cap image provenance").
-    ignore:
-      # A major Postgres bump requires a dump/restore across the data dir, not a
-      # container swap. Do it deliberately (docs/beta-deploy.md § Backups).
-      - dependency-name: postgres
-        update-types: [version-update:semver-major]
-      # Valkey majors changed the on-disk RDB/AOF format historically.
-      - dependency-name: valkey/valkey
-        update-types: [version-update:semver-major]
 
   # --- Dockerfile base images ----------------------------------------------
   # docker/{web,deploy,backup}.Dockerfile. NOTE: `oven/bun` is pinned in THREE
@@ -70,13 +68,10 @@ updates:
     groups:
       base-images:
         patterns: ['*']
+        # Same rule as above — a caddy 3 or postgres 19 base-image bump arrives
+        # as its own PR (a Caddyfile format review, not a redeploy) rather than
+        # riding along in a digest sweep or being silently suppressed.
         update-types: [minor, patch]
-    ignore:
-      - dependency-name: postgres
-        update-types: [version-update:semver-major]
-      # Caddy 3 would be a config-format review, not a redeploy.
-      - dependency-name: caddy
-        update-types: [version-update:semver-major]
 
   # --- CI action pins -------------------------------------------------------
   - package-ecosystem: github-actions
