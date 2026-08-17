@@ -12,6 +12,15 @@
 #
 # Everything here opens a PR; nothing auto-merges. Review before deploying, and
 # note that a deploy is `up -d --build --force-recreate` (docs/beta-deploy.md §6).
+#
+# CROSS-UPDATER HAZARD: three pins live in more than one file, and the compose
+# and docker updaters below are independent — one upstream release arrives as
+# TWO PRs that can each pass CI and merge alone. Dependabot cannot group across
+# ecosystems, so `convex/deployPins.test.ts` is the guard: it fails the moment
+# the halves disagree, forcing them into a single PR. The one that bites is
+# postgres — the server pin is in the compose file, the sidecar's `pg_dump` is
+# `FROM postgres:…` in docker/backup.Dockerfile, and an older pg_dump refuses to
+# dump a newer-major server, so a compose-only bump silently breaks backups.
 
 version: 2
 updates:
@@ -50,10 +59,11 @@ updates:
     # docs/beta-deploy.md § "Cap image provenance").
 
   # --- Dockerfile base images ----------------------------------------------
-  # docker/{web,deploy,backup}.Dockerfile. NOTE: `oven/bun` is pinned in THREE
-  # places — both bun Dockerfiles and `packageManager` in package.json. When a
-  # bun bump lands here, bump package.json to match or CI and the image build
-  # drift apart.
+  # docker/{web,deploy,backup}.Dockerfile. Two of these are half of a cross-file
+  # pin (see CROSS-UPDATER HAZARD above): `postgres` must equal the compose
+  # server pin, and `oven/bun` must equal `packageManager` in package.json —
+  # which Dependabot does NOT touch, since the bun ecosystem is not enrolled.
+  # Both are enforced by convex/deployPins.test.ts.
   - package-ecosystem: docker
     directory: /docker
     schedule:
