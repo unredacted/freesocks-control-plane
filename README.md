@@ -74,7 +74,7 @@ the API surface. Keep the client and the Convex HTTP handlers in agreement.
 
 ### Tooling
 
-- **Bun 1.3.14** as the package manager and CLI launcher (`bun.lock` is the only lockfile). The Convex backend runs on Convex's own V8 runtime.
+- **Bun** as the package manager and CLI launcher (`bun.lock` is the only lockfile; the exact version is `packageManager` in `package.json`, which the Docker base images and CI both derive from). The Convex backend runs on Convex's own V8 runtime.
 - **Vite 8** builds the SPA (the only build artifact; the backend is `convex/`).
 - **Vitest 4** with **`convex-test`** for an in-memory Convex test harness (no backend needed).
 - **svelte-check** alongside `tsc -b` in the typecheck pipeline; **ESLint 10** + **Prettier 3**.

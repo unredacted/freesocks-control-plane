@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 
@@ -45,6 +46,54 @@ const ciWorkflow = read('../.github/workflows/ci.yml');
 /** Every `FROM <ref>` in a Dockerfile, stage aliases stripped. */
 function fromRefs(dockerfile: string): string[] {
   return [...dockerfile.matchAll(/^FROM\s+(\S+)/gm)].map((m) => m[1]);
+}
+
+/**
+ * A bun version written out as a literal, in any of the shapes it takes across
+ * the repo: `bun@1.2.3`, `oven/bun:1.2.3`, `bun-version: '1.2.3'`, or prose
+ * ("bun `1.2.3`"). Deliberately anchored on the word "bun" so unrelated semver
+ * in the same file (image digests, action tags, Postgres versions) is ignored.
+ */
+const BUN_VERSION_LITERAL = /bun[\s`'":@\/-]{0,12}v?\d+\.\d+\.\d+/i;
+
+/**
+ * The three files allowed to name a bun version. `package.json` is the source of
+ * truth; the two Dockerfiles carry the real base-image pin and are held equal to
+ * it by the bun test above. Listed by exact path, so a NEW file introducing a
+ * literal fails rather than slipping in under a pattern.
+ */
+const BUN_LITERAL_EXEMPT = new Set([
+  'package.json',
+  'docker/web.Dockerfile',
+  'docker/deploy.Dockerfile',
+]);
+
+/**
+ * Operational surfaces — deploy config, docs, scripts, CI — walked recursively
+ * so a newly added doc or script is covered without editing a list here (a
+ * hand-maintained file list would rot the same way the version literals did).
+ * Application source under src/ and convex/ is out of scope: a toolchain pin has
+ * no business there, and scanning it would trade real coverage for noise.
+ */
+function operationalFiles(): string[] {
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+  const out: string[] = [];
+  const textFile = /\.(ts|md|ya?ml|sh|json|Dockerfile)$/;
+
+  const walk = (rel: string) => {
+    for (const entry of readdirSync(path.join(repoRoot, rel), { withFileTypes: true })) {
+      const child = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(child);
+      else if (textFile.test(entry.name)) out.push(child);
+    }
+  };
+
+  for (const dir of ['docs', 'scripts', '.github', 'docker']) walk(dir);
+  // Root-level config/docs only — not a recursive walk of the repo.
+  for (const entry of readdirSync(repoRoot, { withFileTypes: true })) {
+    if (entry.isFile() && textFile.test(entry.name)) out.push(entry.name);
+  }
+  return out;
 }
 
 describe('cross-file image pins', () => {
@@ -108,26 +157,30 @@ describe('cross-file image pins', () => {
     expect(versionFiles, 'every setup-bun step must declare bun-version-file').toBe(setupSteps);
   });
 
-  test('nothing outside package.json states a literal bun version', () => {
+  test('no operational file states a literal bun version', () => {
     // The reproducibility protocol is the sharpest case: docs/oob-verification.md
     // tells independent rebuilders which toolchain to use, and its own text warns
     // that a different bun MAY change the dist-sha256. A stale version there
     // would have an honest rebuilder publish dissent against a hash that was
     // never wrong — just built differently. So the docs name the FIELD, never
     // the value, and verify-reproducible.sh reads it at runtime.
-    const bunVersion = (JSON.parse(packageJson).packageManager as string).slice('bun@'.length);
-    for (const [name, text] of [
-      ['docs/oob-verification.md', read('../docs/oob-verification.md')],
-      ['scripts/verify-reproducible.sh', read('../scripts/verify-reproducible.sh')],
-      ['.github/workflows/ci.yml', ciWorkflow],
-    ] as const) {
-      expect(
-        text.includes(bunVersion),
-        `${name} hardcodes bun ${bunVersion}. Reference \`packageManager\` in package.json ` +
-          'instead — a Dependabot bump would leave this copy stale while every other guard ' +
-          'stayed green.',
-      ).toBe(false);
+    //
+    // Matched by SHAPE, not by the value package.json happens to hold today.
+    // Searching for the current version would invert the guard: the literal left
+    // behind by a bump is the OLD one, so the only case worth catching is the one
+    // a value-equality check cannot see.
+    const offenders: string[] = [];
+    for (const file of operationalFiles()) {
+      if (BUN_LITERAL_EXEMPT.has(file)) continue;
+      const hit = read(`../${file}`).match(BUN_VERSION_LITERAL);
+      if (hit) offenders.push(`${file} (${hit[0].trim()})`);
     }
+    expect(
+      offenders,
+      'these files state a bun version literally. Reference `packageManager` in package.json ' +
+        'instead (or read it at runtime) — a Dependabot bump leaves the copy stale while every ' +
+        'other guard stays green, which is exactly how a reproducibility instruction rots.',
+    ).toEqual([]);
   });
 
   test('every convex-backend pin in the stack is the same digest', () => {
