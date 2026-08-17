@@ -18,18 +18,25 @@ x-logging: &log
     max-size: '10m'
     max-file: '5'
 
-# Per-service resource ceilings (sized for a 4 GB / 2 vCPU host). These are
-# OOM-kill guards, not reservations — the long-lived sum deliberately
-# over-commits a little because dashboard/backup rarely peak; `restart:
-# unless-stopped` recovers an OOM-killed container. pids_limit bounds
-# fork-bomb blast radius.
+# NO cpu/memory limits, deliberately. Per-service `mem_limit` + `cpus` ceilings
+# used to live here (sized for a 4 GB / 2 vCPU host) and did far more harm than
+# good: `cpus` is a hard CFS quota, not a share, so the backend was throttled to
+# its slice even when the box was idle. That starved the V8 isolates — trivial
+# UDFs (rateLimits.enforce, connectionModes.list) hit UserTimeout, each timeout
+# restarted an isolate, and the restart cold-imported the whole function bundle,
+# which timed out again. `convex deploy` failed the same way, with module Analyze
+# blowing the 4s cap. The ceilings also summed to ~5 CPUs of quota on a 2 vCPU
+# host, so they never described reality anyway.
+#
+# The kernel already handles genuine contention (CPU shares + the OOM killer),
+# and `restart: unless-stopped` recovers a killed container. If a service needs
+# bounding, bound THAT service on evidence — do not reinstate a blanket set.
+# `pids_limit` stays: it caps fork-bomb blast radius and throttles nothing.
 
 services:
   backend:
     # Pinned to the digest tested in dev (immutable). Re-pin when you upgrade.
     image: ghcr.io/get-convex/convex-backend@sha256:104b8bc70e29b31fa4a57551596090bfc9eedc3d1f27fd4b8cd8d0e782b9b070
-    mem_limit: 1500m
-    cpus: 1.5
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -86,8 +93,6 @@ services:
     # Pinned by digest like every other image (re-pin on upgrade:
     # docker buildx imagetools inspect postgres:18).
     image: postgres:18@sha256:4aabea78cf39b90e834caf3af7d602a18565f6fe2508705c8d01aa63245c2e20
-    mem_limit: 1g
-    cpus: 1.0
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -115,8 +120,6 @@ services:
     build:
       context: .
       dockerfile: docker/backup.Dockerfile
-    mem_limit: 256m
-    cpus: 0.5
     pids_limit: 128
     restart: unless-stopped
     logging: *log
@@ -166,8 +169,6 @@ services:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
   dashboard:
     image: ghcr.io/get-convex/convex-dashboard@sha256:60b04b339d6cd6623057b03e5275329a20011051907ec5e689a38a401cfdc409
-    mem_limit: 512m
-    cpus: 0.5
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -194,8 +195,6 @@ services:
   cap:
     # Pinned by digest (re-pin on upgrade: docker buildx imagetools inspect tiago2/cap:latest).
     image: tiago2/cap:latest@sha256:97455d85b5517172397c7053837d377c72ded6250777928d5435c3eab2f58779
-    mem_limit: 256m
-    cpus: 0.5
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -233,8 +232,6 @@ services:
     # Cap uses it purely as a Redis-compatible store (challenges/tokens), so the
     # 8→9 bump is transparent; the --save/--appendonly flags below are unchanged.
     image: valkey/valkey:9-alpine@sha256:11dfc5d3ce9c570a516760935053687aea8e938be51b17cf112f71ab573e6f7b
-    mem_limit: 256m
-    cpus: 0.5
     pids_limit: 128
     restart: unless-stopped
     logging: *log
@@ -262,8 +259,6 @@ services:
         VITE_FS_SERVER_HPKE_KID: ${VITE_FS_SERVER_HPKE_KID:-}
         VITE_FS_MANIFEST_PK: ${VITE_FS_MANIFEST_PK:-}
         VITE_FS_MANIFEST_PK_PQ: ${VITE_FS_MANIFEST_PK_PQ:-}
-    mem_limit: 256m
-    cpus: 0.5
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -319,8 +314,6 @@ services:
   # deployer. The key is accepted by the backend because it shares INSTANCE_SECRET.
   keygen:
     image: ghcr.io/get-convex/convex-backend@sha256:104b8bc70e29b31fa4a57551596090bfc9eedc3d1f27fd4b8cd8d0e782b9b070
-    mem_limit: 256m
-    cpus: 0.5
     pids_limit: 128
     restart: 'no'
     logging: *log
@@ -341,12 +334,10 @@ services:
     build:
       context: .
       dockerfile: docker/deploy.Dockerfile
-    # Transient one-shot (exits after deploy), so a generous ceiling does NOT count
-    # against the long-lived steady-state budget above. `convex deploy` bundles +
-    # typechecks convex/ (and `tsc` is memory-hungry); 512m OOM-killed it (exit 137)
-    # before the deploy ever ran, silently leaving the backend on the old code.
-    mem_limit: 2g
-    cpus: 1.0
+    # Unbounded like everything else here. `convex deploy` bundles + typechecks
+    # convex/ and `tsc` is memory-hungry: a 512m ceiling once OOM-killed it
+    # (exit 137) before the deploy even ran, silently leaving the backend on the
+    # old code — the exact failure mode the header warns about.
     pids_limit: 256
     restart: 'no'
     logging: *log
