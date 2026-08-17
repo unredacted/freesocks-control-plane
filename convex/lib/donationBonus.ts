@@ -421,6 +421,27 @@ export async function subtractDonation(
   // from this month would under-report what this month actually raised.
   const fundedThisMonth = !known || currentMonthKey(fundedAt!) === mk;
   const touchesLedger = state.monthKey === mk && fundedThisMonth;
+
+  // Second pass, HISTORICAL only. A short window can expire a gift before its
+  // month ends, and pruneBuckets deliberately keeps that bucket so the month's
+  // impact chart keeps its staircase. `drain` skips expired buckets — right for
+  // the live pool — but then a refund would zero the ledger while
+  // currentMonthDailyGb went on charting the refunded money. Deduct it here
+  // too: an expired bucket contributes nothing to `liveDonatedCents`, so this
+  // cannot move the live bonus.
+  if (touchesLedger && remaining > 0) {
+    const fundedDay = known ? currentDayKey(fundedAt!) : null;
+    for (let i = 0; i < buckets.length && remaining > 0; i++) {
+      const b = buckets[i]!;
+      if (b.x > now) continue; // still live — the pass above owns it
+      if (!b.d.startsWith(mk)) continue; // a finished month's record is frozen
+      if (fundedDay !== null && b.d !== fundedDay) continue;
+      const take = Math.min(b.c, remaining);
+      buckets[i] = { ...b, c: b.c - take };
+      remaining -= take;
+    }
+  }
+
   const next: DonationState = {
     ...state,
     buckets: pruneBuckets(

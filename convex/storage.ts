@@ -355,6 +355,18 @@ export const refreshActiveMirrors = internalAction({
               // mirror pointed at it indefinitely.
               excludeNode: sub.excludeNode ?? undefined,
             });
+            // Record the node this landed on, exactly as the live /sub routes do.
+            // For a member who only ever uses the mirror URL this is the ONLY
+            // place the pin gets written, and without it their next switch-server
+            // finds no pin to rotate and refuses with `no_alternative` even
+            // though the squad has other nodes. Before the hash short-circuit:
+            // the pin can move while the bytes stay identical.
+            if (fetched.pinnedNode) {
+              await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
+                subscriptionId: sub.id,
+                node: fetched.pinnedNode,
+              });
+            }
             const hash = await sha256Hex(fetched.content);
             if (hash === sub.rawContentHash) continue; // unchanged → no re-upload
             const mirrors = await uploadToProviders(targets, {

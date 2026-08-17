@@ -1298,6 +1298,7 @@
           data.subscription.location?.label ??
           nodeStatus.data?.node?.label ??
           null}
+        deviceCount={data.subscription.devices.length}
         bind:reason={switchServerReason}
         onCancel={() => {
           switchServerOpen = false;

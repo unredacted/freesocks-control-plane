@@ -716,6 +716,7 @@ export type MessageKey =
   | "switchServer.failed"
   | "switchServer.point1"
   | "switchServer.point2"
+  | "switchServer.point3"
   | "switchServer.reasonBlocked"
   | "switchServer.reasonDisconnects"
   | "switchServer.reasonLegend"

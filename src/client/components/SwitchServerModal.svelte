@@ -19,6 +19,9 @@
     /** Name/location of the server they're on now, when known - so the dialog can
      *  say what they are leaving rather than talking about "a server". */
     currentServer?: string | null;
+    /** Registered HWID devices. Drives the re-registration caveat, which only
+     *  matters to someone who HAS devices registered. */
+    deviceCount?: number;
     reason: SwitchServerReason | null;
     onCancel: () => void;
     onConfirm: () => void;
@@ -28,6 +31,7 @@
   let {
     open = $bindable(),
     currentServer = null,
+    deviceCount = 0,
     reason = $bindable(),
     onCancel,
     onConfirm,
@@ -83,6 +87,12 @@
     <ul class="text-sm text-muted-foreground space-y-1 list-disc ps-5">
       <li>{t('switchServer.point1')}</li>
       <li>{t('switchServer.point2')}</li>
+      <!-- Only shown when it can actually apply: the server may have to re-issue
+           the key on another panel, which cannot carry HWID registrations over.
+           Members with no registered devices never see the caveat. -->
+      {#if deviceCount > 0}
+        <li>{t('switchServer.point3')}</li>
+      {/if}
     </ul>
 
     <Dialog.Footer>

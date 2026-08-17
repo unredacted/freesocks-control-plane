@@ -1,5 +1,11 @@
 // @vitest-environment node
+/// <reference types="vite/client" />
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { convexTest } from 'convex-test';
+import schema from './schema';
+import { internal } from './_generated/api';
+import { pinSubscriptionToNode } from './lib/nodePinning';
+import { sha256Hex } from './lib/crypto';
 import {
   deleteFromProviders,
   uploadToProviders,
@@ -128,5 +134,99 @@ describe('deleteFromProviders', () => {
     await expect(
       deleteFromProviders([provider(1)], [{ provider: 'p1', objectPath: 'subs/abc' }], send),
     ).resolves.toBeUndefined();
+  });
+});
+
+const modules = import.meta.glob('./**/*.*s');
+
+/** Two nodes' links, so the pin has a real choice to make. */
+const RAW = [
+  'vless://a@1.1.1.1:443?type=ws#xray1-ws',
+  'vless://b@2.2.2.2:443?type=ws#xray2-ws',
+].join('\n');
+
+describe('mirror refresh records the pinned node', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  test('persists the node even when the content hash is unchanged', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const shortId = 'short1';
+    // What the refresh will see after pinning — set as rawContentHash so the
+    // upload short-circuits and the ONLY observable effect is the recorded pin.
+    const pinned = pinSubscriptionToNode(RAW, shortId);
+    expect(pinned.node).toBeTruthy();
+    const hash = await sha256Hex(pinned.content);
+
+    const subId = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const instanceId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'n1',
+        slug: 'n1',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('mirrorProviders', {
+        name: 'p1',
+        endpoint: 'https://s3.test',
+        bucket: 'b',
+        publicUrl: 'https://cdn.test',
+        region: 'auto',
+        accessKeyId: 'ak',
+        secretAccessKey: 'sk',
+        isActive: true,
+        priority: 0,
+        updatedAt: Date.now(),
+      });
+      return ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'k1',
+        backendShortId: shortId,
+        backendServerId: instanceId,
+        subscriptionUrl: 'https://panel.test/sub/short1',
+        subscriptionMirrors: [{ provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'x' }],
+        rawContentHash: hash,
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(RAW, { status: 200 })),
+    );
+    await t.action(internal.storage.refreshActiveMirrors, {});
+
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subId))!.pinnedNode).toBe(pinned.node);
+    });
   });
 });

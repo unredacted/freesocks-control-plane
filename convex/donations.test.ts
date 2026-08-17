@@ -5,6 +5,7 @@ import { api, internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { gbToBytes } from './lib/backends/types';
 import {
+  currentMonthDailyGb,
   effectiveBonusGb,
   readDonationState,
   recordDonation,
@@ -656,6 +657,31 @@ describe('donation pool windows (lib/donationBonus)', () => {
     expect(state.buckets!.map((b) => ({ c: b.c, x: b.x }))).toEqual([
       { c: 300, x: expiryFor(may10, 1) },
     ]);
+  });
+
+  test('refunding an expired-but-same-month gift also clears it from the month chart', async () => {
+    // A short window can expire a gift before its month ends; pruneBuckets keeps
+    // that bucket so the impact chart keeps its staircase. If the refund only
+    // touched the ledger, publicConfig would report a zero month while the chart
+    // went on drawing the refunded money.
+    const { t } = await setup();
+    const may5 = Date.UTC(2026, 4, 5);
+    const may20 = Date.UTC(2026, 4, 20);
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appSettings', {
+        key: 'billing.donation.bonusWindowDays',
+        value: JSON.stringify(3), // expires May 9
+        updatedAt: Date.now(),
+      });
+    });
+    const expiry = await t.run(async (ctx) => recordDonation(ctx, 1000, may5));
+    await t.run(async (ctx) => subtractDonation(ctx, 1000, may20, may5, expiry!));
+
+    const state = await readState(t);
+    const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
+    expect(state.donatedCents).toBe(0); // the ledger wrote it off...
+    // ...and the chart agrees: no phantom staircase for refunded money.
+    expect(currentMonthDailyGb(state, cfg, may20).some((v) => v > 0)).toBe(false);
   });
 
   test('a refund of an EXPIRED donation leaves the live pool alone', async () => {
