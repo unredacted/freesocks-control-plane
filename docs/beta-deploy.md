@@ -208,31 +208,49 @@ holding. (`pipefail` is a shell option, not a per-command flag — set it once p
 interactive shell and every later pipeline inherits it, or keep pasting the whole
 block.)
 
+`--progress` is a **global** compose flag, so it goes before the subcommand, not
+after (`docker compose build --progress=plain` warns and tells you the same):
+
 ```sh
 set -o pipefail
-docker compose -f docker-compose.stack.yml --env-file .env.beta build --progress=plain web 2>&1 | tee /tmp/fcp-build.log
+docker compose --progress plain -f docker-compose.stack.yml --env-file .env.beta \
+  build web 2>&1 | tee /tmp/fcp-build.log
 echo "build exit: $?"
 ```
 
-Caveat: if the `RUN bun run build` layer is cached the step prints `CACHED` with
-no output. Force it with `--no-cache` (slow, rebuilds everything) or just run the
-same build outside Docker — it is the identical command:
+The same flag works on the combined deploy command, which is usually what you
+actually want to capture:
 
 ```sh
 set -o pipefail
-bun run build 2>&1 | tee /tmp/fcp-build.log
-echo "build exit: $?"
-```
-
-`--progress=plain` also works as the `BUILDKIT_PROGRESS=plain` env var if you
-want it on the combined `up -d --build` command, which has no such flag:
-
-```sh
-set -o pipefail
-BUILDKIT_PROGRESS=plain docker compose -f docker-compose.stack.yml --env-file .env.beta \
+docker compose --progress plain -f docker-compose.stack.yml --env-file .env.beta \
   up -d --build --force-recreate web deployer 2>&1 | tee /tmp/fcp-deploy.log
 echo "deploy exit: $?"
 ```
+
+A non-zero exit there means the build failed or a container was not recreated —
+do not read the log for warnings and assume you deployed. Confirm the deploy
+landed the usual way regardless (`logs --tail=40 deployer` ends with
+`[deploy] OK`).
+
+**If the step prints `CACHED` with no output**, add `--no-cache` to a `build web`
+run. It is slow (it re-runs `bun install` too), but it is the only in-Docker way
+to force the step, and the deploy host has nothing else — §0 requires Docker and
+compose and explicitly _not_ Bun, so a bare `bun run build` there just fails with
+`command not found`. In practice you rarely need it: `RUN bun run build` sits
+after `COPY . .`, so any source change invalidates the layer and a real deploy
+after a `git pull` always executes it. `CACHED` means you are re-running a build
+whose output you already have.
+
+```sh
+set -o pipefail
+docker compose --progress plain -f docker-compose.stack.yml --env-file .env.beta \
+  build --no-cache web 2>&1 | tee /tmp/fcp-build.log
+echo "build exit: $?"
+```
+
+On a **dev machine** (not the deploy host), `bun run build` is the identical
+command the image runs and is far quicker to iterate against.
 
 A non-zero exit there means the build failed or a container was not recreated —
 do not read the log for warnings and assume you deployed. Confirm the deploy
