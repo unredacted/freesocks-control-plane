@@ -377,7 +377,16 @@ export async function resolvePlacementTarget(
     // single-panel deploy keeps the fail-soft (the pair can't mismatch).
     if (servers.length > 1)
       return { placement: null, serverId: null, unattributedMultiPanel: true };
-    return { placement: await pickByNodeLoad(db, pool, opts.rand), serverId: null };
+    // UNKNOWN is not the same as KNOWN-UNUSABLE. The fail-soft below exists for
+    // squads we could not attribute at all; a squad we DID attribute, to a panel
+    // that is inactive (or whose row has since been replaced), is proven to be
+    // somewhere the key cannot be created. Passing it through would mint exactly
+    // the (squad, wrong-panel) dead key this branch warns about — issueUser would
+    // pick the one active panel on its own — and switch-server would tombstone a
+    // working key to do it. Offer only the genuinely unattributed ones.
+    const unattributed = pool.filter((p) => !statsByPlacement.has(p));
+    if (unattributed.length === 0) return { placement: null, serverId: null };
+    return { placement: await pickByNodeLoad(db, unattributed, opts.rand), serverId: null };
   }
   const placement = await pickByNodeLoad(db, constrained, opts.rand);
   return {

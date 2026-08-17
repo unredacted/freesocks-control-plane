@@ -1983,6 +1983,77 @@ describe('account.switchServer', () => {
     });
   });
 
+  test("never re-homes into ANOTHER mode when the member's own mode is unbound", async () => {
+    // resolvePlacementPool falls back across modes (own -> default -> any bound),
+    // which is right at issuance but would silently move this key into a
+    // different mode's squad — changing the transport the member chose while the
+    // UI still shows the original. regenerate/switch-backend refuse here; so must
+    // this. No pin either, so there is nothing safe left to do.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run(async (ctx) => {
+      // The member sits on privacy-reality; only freedom-ws is bound.
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_B] }),
+        updatedAt: Date.now(),
+      });
+    });
+    await seedKey(t, userId, { placement: SQUAD_A });
+    await t.run((ctx) => ctx.db.patch(userId, { connectionModeId: 'privacy-reality' }));
+    const fetchMock = panelStub();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    expect(res).toMatchObject({ ok: false, code: 'mode.unavailable' });
+    await t.run(async (ctx) => {
+      const subs = await ctx.db.query('subscriptions').collect();
+      expect(subs).toHaveLength(1); // nothing re-issued, nothing tombstoned
+      expect(subs[0]!.backendPlacement).toBe(SQUAD_A); // never moved to freedom-ws
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('privacy-reality');
+    });
+  });
+
+  test('an unbound mode still permits the transport-safe NODE PIN rotation', async () => {
+    // Rotating the pin moves inside the member's CURRENT squad, so it cannot
+    // change their transport — no reason to withhold it just because an admin
+    // unbound their mode.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_B] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    await seedNodeStats(t, SQUAD_A, 3);
+    await t.run((ctx) => ctx.db.patch(userId, { connectionModeId: 'privacy-reality' }));
+    const fetchMock = panelStub();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    expect(res).toMatchObject({ ok: true, inPlace: true });
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.query('subscriptions').collect())[0]!;
+      expect(sub.excludeNode).toBe('xray1');
+      expect(sub.backendPlacement).toBe(SQUAD_A); // squad untouched → transport intact
+    });
+    // No panel PATCH: the pin is a local move.
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/users'))).toBe(
+      false,
+    );
+  });
+
   test('refuses server.unsupported on a backend with no placement AND no node pinning', async () => {
     // Outline has neither lever, so no deployment shape makes this work — say so
     // distinctly instead of `no_alternative`, which invites a pointless retry.

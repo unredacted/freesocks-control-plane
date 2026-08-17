@@ -1196,7 +1196,19 @@ export const switchServer = internalAction({
     }
 
     const modeId = user.connectionModeId ?? null;
-    const canPlace = capabilitiesOf(tier.backend).placement && oldSub.backend === tier.backend;
+    const canPlaceBackend =
+      capabilitiesOf(tier.backend).placement && oldSub.backend === tier.backend;
+    // Is the member's stored mode still usable here? `resolvePlacementPool` falls
+    // back across modes (own pool → default → any bound), which is right at
+    // ISSUANCE but wrong here: a placement move would silently re-home the key
+    // into ANOTHER mode's squad while connectionModeId and the whole UI still say
+    // the original. On a privacy mode that quietly swaps the transport the member
+    // deliberately chose. regenerate and switch-backend already refuse in this
+    // state; so does this. The node-pin rotation below stays available — it moves
+    // inside the current squad and cannot change the transport.
+    const modeBlocked =
+      canPlaceBackend && (await isEffectiveModeBlocked(ctx, tier.backend, modeId));
+    const canPlace = canPlaceBackend && !modeBlocked;
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
 
     const audit = async (payload: {
@@ -1380,8 +1392,11 @@ export const switchServer = internalAction({
     // would still read >1 from a stale row, putting us right back to claiming a
     // move that cannot happen — so apply the same staleness bar pickByNodeLoad
     // uses for its own load decisions.
+    // Deliberately `canPlaceBackend`, not `canPlace`: rotating the pin stays
+    // available to a member whose mode an admin just unbound, because it moves
+    // WITHIN their current squad and so cannot change their transport.
     const placementStats =
-      canPlace && oldSub.backendPlacement
+      canPlaceBackend && oldSub.backendPlacement
         ? await ctx.runQuery(internal.remnawaveNodes.getPlacementStats, {
             placement: oldSub.backendPlacement,
           })
@@ -1424,6 +1439,18 @@ export const switchServer = internalAction({
       (crossPanel.placement !== null && crossPanel.placement !== (oldSub.backendPlacement ?? null))
     ) {
       return reissue(crossPanel);
+    }
+
+    // The pin was the only lever left and it wasn't available: if placement moves
+    // were the thing we withheld, say WHY, so the member is pointed at picking an
+    // available mode rather than at a retry that will keep failing.
+    if (modeBlocked) {
+      return {
+        ok: false,
+        code: 'mode.unavailable',
+        message: MODE_UNAVAILABLE_MESSAGE,
+        status: 400,
+      };
     }
 
     // Nothing to move: a single-squad, single-node deployment, a key that has
