@@ -140,9 +140,25 @@ function bucketsFromLegacyDays(state: DonationState): DonationBucket[] {
   for (const [day, total] of snapshots) {
     const delta = total - prev;
     prev = total;
-    if (delta > 0) out.push({ d: day, c: delta, x });
+    if (delta > 0) {
+      out.push({ d: day, c: delta, x });
+    } else if (delta < 0) {
+      // A DECREASE is a refund: the old subtractDonation wrote the reduced
+      // running total into `days`. Keeping only the positive deltas would
+      // reconstruct the original gift and resurrect a refunded bonus for the
+      // whole free fleet on the first read after deploy. Take it back off the
+      // most recent money, mirroring how a refund with no recorded bucket
+      // unwinds today.
+      let owed = -delta;
+      for (let i = out.length - 1; i >= 0 && owed > 0; i--) {
+        const take = Math.min(out[i]!.c, owed);
+        out[i] = { ...out[i]!, c: out[i]!.c - take };
+        owed -= take;
+      }
+    }
   }
-  return out;
+  // Invariant: the surviving cents equal the last snapshot's running total.
+  return out.filter((b) => b.c > 0);
 }
 
 /** Coerce a stored bucket list, dropping anything malformed (fail-safe read). */

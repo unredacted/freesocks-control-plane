@@ -740,6 +740,57 @@ describe('donation pool windows (lib/donationBonus)', () => {
     expect(effectiveBonusGb(state, cfg, Date.UTC(2026, 7, 2))).toBe(0);
   });
 
+  test('a legacy refund (a DECREASING snapshot) is not resurrected by the migration', async () => {
+    // The old subtractDonation recorded a refund by writing the REDUCED running
+    // total into `days`. Reading only the positive deltas would rebuild the
+    // original gift, and the next reconcile would hand the whole free fleet a
+    // bonus that had been refunded.
+    const { t } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appState', {
+        key: 'donation:freeBonus',
+        value: JSON.stringify({
+          monthKey: '2026-07',
+          donatedCents: 0, // fully refunded
+          appliedBonusGb: 0,
+          days: { '2026-07-03': 10000, '2026-07-04': 0 },
+        }),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const state = await readState(t);
+    expect(state.buckets).toEqual([]);
+    const cfg = { bonusGbPerUsd: 1, monthlyBonusCapGb: 100 };
+    expect(effectiveBonusGb(state, cfg, Date.UTC(2026, 6, 20))).toBe(0);
+  });
+
+  test('a legacy PARTIAL refund migrates to the remaining balance', async () => {
+    const { t } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('appState', {
+        key: 'donation:freeBonus',
+        value: JSON.stringify({
+          monthKey: '2026-07',
+          donatedCents: 1500,
+          appliedBonusGb: 0,
+          // +$10 on the 1st, +$20 on the 5th, then a $15 refund on the 9th.
+          days: { '2026-07-01': 1000, '2026-07-05': 3000, '2026-07-09': 1500 },
+        }),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const state = await readState(t);
+    // The refund comes off the most recent money; the total matches the last
+    // snapshot, which is what the ledger already reports.
+    expect(state.buckets).toEqual([
+      { d: '2026-07-01', c: 1000, x: Date.UTC(2026, 7, 1) },
+      { d: '2026-07-05', c: 500, x: Date.UTC(2026, 7, 1) },
+    ]);
+    expect(state.buckets!.reduce((s, b) => s + b.c, 0)).toBe(1500);
+  });
+
   test('expired buckets outside the current month are pruned on write', async () => {
     const { t } = await setup();
     const now = Date.now();
