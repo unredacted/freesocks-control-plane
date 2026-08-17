@@ -1494,3 +1494,293 @@ describe('mode gates on placement-less backends', () => {
     });
   });
 });
+
+describe('account.switchServer', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const SQUAD_A = '11111111-2222-3333-4444-555555555555';
+  const SQUAD_B = '99999999-8888-7777-6666-555555555555';
+
+  /** A live Remnawave key on `placement`, optionally pinned to a node. */
+  async function seedKey(
+    t: ReturnType<typeof convexTest>,
+    userId: Id<'users'>,
+    over: { placement?: string; pinnedNode?: string; instanceId?: Id<'backendServers'> } = {},
+  ) {
+    return t.run(async (ctx) => {
+      const instanceId =
+        over.instanceId ??
+        (await ctx.db.insert('backendServers', {
+          backend: 'remnawave',
+          name: 'test',
+          slug: 'test',
+          config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+          isActive: true,
+          priority: 0,
+          keyCount: 1,
+          updatedAt: Date.now(),
+        }));
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'old-key-uuid',
+        backendShortId: 'oldshort',
+        backendServerId: instanceId,
+        subscriptionUrl: 'https://panel.test/sub/oldshort',
+        subToken: 'tok-abc',
+        subCache: JSON.stringify([{ ua: 'x', content: 'stale', contentType: 't', at: Date.now() }]),
+        subscriptionMirrors: [],
+        ...(over.placement ? { backendPlacement: over.placement } : {}),
+        ...(over.pinnedNode ? { pinnedNode: over.pinnedNode } : {}),
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId, connectionModeId: 'freedom-ws' });
+      return { subId, instanceId };
+    });
+  }
+
+  /** Panel stub: answers the squad PATCH with a plausible user record. */
+  function panelStub() {
+    return vi.fn(
+      async (_input: string | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            response: {
+              uuid: '550e8400-e29b-41d4-a716-446655440000',
+              shortUuid: 'oldshort',
+              username: 'u',
+              status: 'ACTIVE',
+              trafficLimitBytes: null,
+              trafficLimitStrategy: 'MONTH',
+              userTraffic: { usedTrafficBytes: 0 },
+              expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+              hwidDeviceLimit: null,
+              subscriptionUrl: 'https://panel.test/sub/oldshort',
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+  }
+
+  test('moves to another squad IN PLACE, keeping the key, URL and token', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A, SQUAD_B] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    const fetchMock = panelStub();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    expect(res).toMatchObject({
+      ok: true,
+      inPlace: true,
+      subscriptionUrl: 'https://panel.test/sub/oldshort',
+      oldSubscriptionDeletedAt: null,
+    });
+
+    // The move is a PATCH onto the SAME panel user, never a create.
+    const patchCall = fetchMock.mock.calls.find(
+      ([input, init]) => String(input).includes('/api/users') && init?.method === 'PATCH',
+    );
+    expect(JSON.parse(String(patchCall![1]!.body)).activeInternalSquads).toEqual([SQUAD_B]);
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) => String(input).includes('/api/users') && init?.method === 'POST',
+      ),
+    ).toBe(false);
+
+    await t.run(async (ctx) => {
+      const subs = await ctx.db.query('subscriptions').collect();
+      expect(subs).toHaveLength(1); // no re-issue, no tombstone
+      const only = subs[0]!;
+      expect(only.backendUserId).toBe('old-key-uuid');
+      expect(only.subToken).toBe('tok-abc'); // saved link unchanged
+      expect(only.backendPlacement).toBe(SQUAD_B);
+      // The node pin is rotated too: the new squad may still span nodes.
+      expect(only.excludeNode).toBe('xray1');
+      expect(only.pinnedNode).toBeUndefined();
+      expect(only.subCache).toBeUndefined();
+      // The member's connection mode is untouched — this is not a mode switch.
+      expect((await ctx.db.get(userId))!.connectionModeId).toBe('freedom-ws');
+    });
+  });
+
+  test('records the reason and the node left, never the squad uuid', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A, SQUAD_B] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    vi.stubGlobal('fetch', panelStub());
+
+    await t.action(internal.account.switchServer, { userId, reason: 'blocked' });
+
+    await t.run(async (ctx) => {
+      const audit = (await ctx.db.query('auditLog').collect()).find(
+        (r) => r.action === 'subscription.switch_server',
+      );
+      expect(audit).toBeTruthy();
+      expect(audit!.payload).toMatchObject({
+        reason: 'blocked',
+        inPlace: true,
+        movedPlacement: true,
+        movedNodePin: true,
+        fromNode: 'xray1',
+      });
+      expect(JSON.stringify(audit!.payload)).not.toContain(SQUAD_A);
+      expect(JSON.stringify(audit!.payload)).not.toContain(SQUAD_B);
+    });
+  });
+
+  test('with only one squad, rotates the NODE PIN instead (no panel call at all)', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    const fetchMock = panelStub();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'disconnects' });
+    expect(res).toMatchObject({ ok: true, inPlace: true });
+    // A single-squad pool has nowhere to PATCH to — the pin does the work.
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/users'))).toBe(
+      false,
+    );
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.query('subscriptions').collect())[0]!;
+      expect(sub.excludeNode).toBe('xray1');
+      expect(sub.pinnedNode).toBeUndefined();
+      expect(sub.backendPlacement).toBe(SQUAD_A); // unchanged
+      const audit = (await ctx.db.query('auditLog').collect()).find(
+        (r) => r.action === 'subscription.switch_server',
+      );
+      expect(audit!.payload).toMatchObject({ movedPlacement: false, movedNodePin: true });
+    });
+  });
+
+  test('refuses with server.no_alternative when there is nowhere to go, changing nothing', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    // One squad AND no pin yet (the key has never been served).
+    await seedKey(t, userId, { placement: SQUAD_A });
+    const fetchMock = panelStub();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    expect(res).toMatchObject({ ok: false, code: 'server.no_alternative', status: 409 });
+    await t.run(async (ctx) => {
+      const subs = await ctx.db.query('subscriptions').collect();
+      expect(subs).toHaveLength(1);
+      expect(subs[0]!.state).toBe('active'); // the working key is untouched
+      expect(subs[0]!.backendPlacement).toBe(SQUAD_A);
+      expect(subs[0]!.subCache).toBeTruthy(); // not even the cache was dropped
+    });
+  });
+
+  test('a failed panel PATCH falls back to a re-issue that CARRIES the sub token', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    await t.run((ctx) =>
+      ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_A, SQUAD_B] }),
+        updatedAt: Date.now(),
+      }),
+    );
+    await seedKey(t, userId, { placement: SQUAD_A, pinnedNode: 'xray1' });
+    // PATCH fails (e.g. the panel user was deleted by hand); POST (create) works.
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/users') && init?.method === 'PATCH') {
+        return new Response('{"message":"not found"}', { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({
+          response: {
+            uuid: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+            shortUuid: 'newshort',
+            username: 'u2',
+            status: 'ACTIVE',
+            trafficLimitBytes: null,
+            trafficLimitStrategy: 'MONTH',
+            userTraffic: { usedTrafficBytes: 0 },
+            expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+            hwidDeviceLimit: null,
+            subscriptionUrl: 'https://panel.test/sub/newshort',
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    expect(res).toMatchObject({ ok: true, inPlace: false });
+
+    await t.run(async (ctx) => {
+      const subs = await ctx.db.query('subscriptions').collect();
+      expect(subs).toHaveLength(2); // new key + the tombstoned old one
+      const fresh = subs.find((s) => s.state === 'active')!;
+      const old = subs.find((s) => s._id !== fresh._id)!;
+      // The member's saved link survives a re-issue: the token moved across.
+      expect(fresh.subToken).toBe('tok-abc');
+      expect(old.subToken).toBeUndefined();
+      expect(old.deletedAt).toBeGreaterThan(Date.now()); // 24h grace, still routing
+      // The failed PATCH must not leave the DB claiming a move that didn't land.
+      expect(old.backendPlacement).toBe(SQUAD_A);
+    });
+  });
+
+  test('refuses when the member has no key to move', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await seedUser(t, tierId);
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'other' });
+    expect(res).toMatchObject({ ok: false, code: 'server.no_subscription', status: 409 });
+  });
+});

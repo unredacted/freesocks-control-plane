@@ -11,6 +11,7 @@ import { resolveBillingConfig } from './lib/billingConfig';
 import {
   readDonationState,
   readDonationHistory,
+  bonusGbFromCents,
   effectiveBonusGb,
   currentMonthKey,
   currentMonthDailyGb,
@@ -143,13 +144,17 @@ export const get = query({
       const stored = storedDonationHistory
         .filter((h) => h.monthKey !== mk)
         .map((h) => ({ month: h.monthKey, bonusGb: h.bonusGb }));
+      // This month's own raise, matching what the ledger will freeze for it — NOT
+      // the live pool, which can still hold last month's money now that a
+      // donation's window runs 30 days rather than to the month's end.
+      const thisMonthCents = donationState.monthKey === mk ? donationState.donatedCents : 0;
+      const thisMonthGb = bonusGbFromCents(thisMonthCents, billing.donation);
       // Skip the synthesized entry on a deployment with no impact yet (empty
       // ledger + nothing this month) so the SPA's non-empty gate stays honest.
-      const hasCurrent =
-        currentBonusGb > 0 || (donationState.monthKey === mk && donationState.donatedCents > 0);
+      const hasCurrent = currentBonusGb > 0 || thisMonthCents > 0;
       donationHistory =
         stored.length > 0 || hasCurrent
-          ? [...stored, { month: mk, bonusGb: currentBonusGb }].slice(-12)
+          ? [...stored, { month: mk, bonusGb: thisMonthGb }].slice(-12)
           : [];
     }
 
@@ -211,6 +216,9 @@ export const get = query({
           // server-side. (Review B-F3.)
           minAmountCents: billing.donation.minAmountCents,
           monthlyBonusCapGb: billing.donation.monthlyBonusCapGb,
+          // How long a gift keeps funding the pool — non-secret, and the donate
+          // copy needs it to say what a donation actually buys.
+          bonusWindowDays: billing.donation.bonusWindowDays,
           currentBonusGb,
           // Active free users the shared bonus reaches (daily-reconciled
           // counter) — rounded DOWN to the nearest 10 so the public bootstrap

@@ -72,6 +72,9 @@ export const DonationConfigView = z.object({
   minAmountCents: z.number().int(),
   bonusGbPerUsd: z.number(),
   monthlyBonusCapGb: z.number(),
+  /** Days one donation keeps funding the shared pool. Defaulted so an SPA newer
+   *  than the backend still parses (the backend gained this field later). */
+  bonusWindowDays: z.number().int().default(30),
 });
 export type DonationConfigView = z.infer<typeof DonationConfigView>;
 
@@ -81,6 +84,7 @@ const DONATION_VIEW_DEFAULT: DonationConfigView = {
   minAmountCents: 0,
   bonusGbPerUsd: 0,
   monthlyBonusCapGb: 0,
+  bonusWindowDays: 30,
 };
 
 /** The full (admin-editable) billing config — superset of PublicConfig.billing. */

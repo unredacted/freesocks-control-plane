@@ -159,6 +159,40 @@ async function resolveIssueTarget(
   return { placement: t.placement, serverId: (t.serverId as Id<'backendServers'> | null) ?? null };
 }
 
+/**
+ * The panel that actually hosts a live key, for the in-place update paths. The
+ * stored `backendServerId` can be stale (its panel row was re-registered) or
+ * absent (legacy sub); either used to force the re-issue fallback on EVERY
+ * switch. Repair it: probe the active fleet for the panel that really has this
+ * key, and persist the fix so later key→instance resolutions work too. A failed
+ * probe resolves null = unpinned (the historical single-panel behavior).
+ */
+async function resolveOwnPanel(
+  ctx: ActionCtx,
+  sub: { _id: Id<'subscriptions'>; backendUserId: string; backendServerId?: Id<'backendServers'> },
+  backend: Backend,
+): Promise<string | null> {
+  let pinServerId: string | null = sub.backendServerId ?? null;
+  const activeIds = new Set(
+    (await ctx.runQuery(internal.backendServers.listActiveWithSecret, {}))
+      .filter((s) => s.backend === backend)
+      .map((s) => s._id as string),
+  );
+  if (!pinServerId || !activeIds.has(pinServerId)) {
+    pinServerId = await ctx.runAction(internal.backends.locateKeyInstance, {
+      backend,
+      backendUserId: sub.backendUserId,
+    });
+    if (pinServerId) {
+      await ctx.runMutation(internal.subscriptions.setBackendServer, {
+        subscriptionId: sub._id,
+        backendServerId: pinServerId as Id<'backendServers'>,
+      });
+    }
+  }
+  return pinServerId;
+}
+
 // P1-3: a serializable per-user issuance lock. regenerate / switch-backend /
 // switch-profile each mint a NEW backend key and tombstone the old one; two
 // concurrent runs would mint two keys but tombstone only one, orphaning a live key
@@ -1023,31 +1057,8 @@ export const switchMode = internalAction({
     // alive for 24h. Only when the current key AND the tier are Remnawave.
     if (oldSub && capabilitiesOf(tier.backend).placement && oldSub.backend === tier.backend) {
       // The in-place PATCH lands on the key's OWN panel, so the new mode's
-      // placement must exist there — a hard `onlyServerId` pin. The stored
-      // backendServerId can be stale (its panel row was re-registered) or
-      // absent (legacy sub); either used to force the re-issue fallback on
-      // EVERY switch. Repair it first: probe the active fleet for the panel
-      // that actually hosts this key, and persist the fix so every later
-      // key→instance resolution works again too. A failed probe resolves
-      // unpinned (the historical single-panel behavior).
-      let pinServerId: string | null = oldSub.backendServerId ?? null;
-      const activeIds = new Set(
-        (await ctx.runQuery(internal.backendServers.listActiveWithSecret, {}))
-          .filter((s) => s.backend === tier.backend)
-          .map((s) => s._id as string),
-      );
-      if (!pinServerId || !activeIds.has(pinServerId)) {
-        pinServerId = await ctx.runAction(internal.backends.locateKeyInstance, {
-          backend: tier.backend,
-          backendUserId: oldSub.backendUserId,
-        });
-        if (pinServerId) {
-          await ctx.runMutation(internal.subscriptions.setBackendServer, {
-            subscriptionId: oldSub._id,
-            backendServerId: pinServerId as Id<'backendServers'>,
-          });
-        }
-      }
+      // placement must exist there — a hard `onlyServerId` pin.
+      const pinServerId = await resolveOwnPanel(ctx, oldSub, tier.backend);
       const { placement: nodePlacement } = await ctx.runQuery(
         internal.connectionModes.resolveIssueTarget,
         {
@@ -1113,6 +1124,251 @@ export const switchMode = internalAction({
       }
     }
     return reissue();
+  },
+});
+
+type SwitchServerResult =
+  | {
+      ok: true;
+      subscriptionUrl: string;
+      shortUuid: string;
+      /** True when the key stayed put and only its server moved — the member's
+       *  URL, traffic counter and devices all survive. */
+      inPlace: boolean;
+      oldSubscriptionDeletedAt: string | null;
+    }
+  | { ok: false; code: string; message: string; status: number };
+
+/**
+ * Move the member's key to a DIFFERENT server, keeping their connection mode.
+ * The escape hatch for a node that is slow or locally blocked: before this, the
+ * only way off a node was switching modes (which changes the transport too) or
+ * regenerating (which rotates the saved URL).
+ *
+ * Three levers, cheapest first, because they move different things:
+ *  1. a different squad on the key's OWN panel — an in-place PATCH, nothing else
+ *     changes;
+ *  2. the node pin — when one squad spans several nodes, this is the ONLY thing
+ *     that decides which node a member gets, so it is always rotated;
+ *  3. a re-issue — the only way to reach another panel (the panel owns the user
+ *     record), used when (1) is impossible or its PATCH failed. Carries the sub
+ *     token, so even here the member's saved URL does not change.
+ *
+ * `reason` is a bounded enum chosen by the member, recorded so an operator can
+ * see WHICH nodes people are leaving and why.
+ */
+export const switchServer = internalAction({
+  args: {
+    userId: v.id('users'),
+    reason: v.string(),
+    requestId: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, reason, requestId }): Promise<SwitchServerResult> => {
+    const user = await ctx.runQuery(internal.users.get, { id: userId });
+    if (!user) return { ok: false, code: 'not_found', message: 'user not found', status: 404 };
+    const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
+    if (!tier) return { ok: false, code: 'not_found', message: 'tier not found', status: 404 };
+
+    const oldSub = await ctx.runQuery(internal.subscriptions.resolveCurrentOrActive, { userId });
+    if (!oldSub) {
+      return {
+        ok: false,
+        code: 'server.no_subscription',
+        message: 'You have no active key to move.',
+        status: 409,
+      };
+    }
+
+    const modeId = user.connectionModeId ?? null;
+    const canPlace = capabilitiesOf(tier.backend).placement && oldSub.backend === tier.backend;
+    const settings = await ctx.runQuery(internal.appSettings.resolved, {});
+
+    const audit = async (payload: {
+      inPlace: boolean;
+      movedPlacement: boolean;
+      movedNodePin: boolean;
+      fromNode: string | null;
+      subscriptionId: Id<'subscriptions'>;
+    }) => {
+      await ctx.runMutation(internal.audit.record, {
+        actorType: 'member',
+        actorId: userId,
+        action: 'subscription.switch_server',
+        targetType: 'subscription',
+        targetId: payload.subscriptionId,
+        // The member's reason + WHAT moved. Never a placement/squad uuid.
+        payload: {
+          reason,
+          inPlace: payload.inPlace,
+          movedPlacement: payload.movedPlacement,
+          movedNodePin: payload.movedNodePin,
+          fromNode: payload.fromNode,
+        },
+        requestId,
+      });
+    };
+
+    // (3) Re-issue: a new key in the SAME mode, excluding the placement the
+    // member is leaving, unpinned so it may land on another panel/location.
+    const reissue = async (): Promise<SwitchServerResult> => {
+      const rand = new Uint32Array(1);
+      crypto.getRandomValues(rand);
+      const target = canPlace
+        ? await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
+            backend: tier.backend,
+            modeId,
+            location: user.preferredLocation ?? null,
+            excludePlacement: oldSub.backendPlacement ?? null,
+            rand: rand[0]! / 2 ** 32,
+          })
+        : { placement: null, serverId: null, unattributedMultiPanel: false };
+      if (target.unattributedMultiPanel) {
+        return {
+          ok: false,
+          code: 'backend.placement_unresolved',
+          message: 'Node placement is still resolving. Please try again in a few minutes.',
+          status: 503,
+        };
+      }
+      const bonusGb = await ctx.runQuery(internal.donations.currentBonusGb, {});
+      const issued = await issueNewSubscription(ctx, {
+        userId,
+        backend: tier.backend,
+        spec: {
+          username: `freesocks-${tier.slug}-${randomHex(8)}`,
+          trafficLimitBytes: await carriedTrafficLimit(
+            ctx,
+            oldSub,
+            resolveTrafficLimitBytes(tier, bonusGb),
+          ),
+          trafficLimitStrategy: tier.trafficStrategy,
+          expireAt: computeExpireAtIso(user.membershipExpiresAt),
+          hwidDeviceLimit: resolveHwidLimit(!!settings['devices.enforcementEnabled'], tier),
+          tag: tier.slug,
+          placement: target.placement,
+        },
+        pinServerId: (target.serverId as Id<'backendServers'> | null) ?? undefined,
+        // Land on a different node than the one being left, for the same reason
+        // regenerate does — the squad may span nodes.
+        excludeNode: oldSub.pinnedNode ?? undefined,
+        // Moving servers is not a rotation: the member keeps their saved link.
+        carrySubTokenFromId: oldSub._id,
+      });
+      const tomb = await tombstoneOldSub(ctx, oldSub.backendUserId);
+      await auditIfPlacementless(ctx, {
+        backend: tier.backend,
+        placement: target.placement,
+        userId,
+        subscriptionId: issued.subscriptionId,
+        requestedMode: modeId,
+        requestId,
+      });
+      if (tier.isDefaultFree) {
+        await ctx.runMutation(internal.lifecycle.refreshFreeWindow, { userId });
+      }
+      await audit({
+        inPlace: false,
+        movedPlacement: target.placement !== (oldSub.backendPlacement ?? null),
+        movedNodePin: true,
+        fromNode: oldSub.pinnedNode ?? null,
+        subscriptionId: issued.subscriptionId,
+      });
+      return {
+        ok: true,
+        subscriptionUrl: issued.subscriptionUrl,
+        shortUuid: issued.backendShortId,
+        inPlace: false,
+        oldSubscriptionDeletedAt: tomb ? new Date(tomb.deletedAt).toISOString() : null,
+      };
+    };
+
+    // (1) A different squad on this key's own panel.
+    if (canPlace) {
+      const pinServerId = await resolveOwnPanel(ctx, oldSub, tier.backend);
+      const rand = new Uint32Array(1);
+      crypto.getRandomValues(rand);
+      const { placement } = await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
+        backend: tier.backend,
+        modeId,
+        onlyServerId: pinServerId as Id<'backendServers'> | null,
+        excludePlacement: oldSub.backendPlacement ?? null,
+        rand: rand[0]! / 2 ** 32,
+      });
+      if (placement !== null && placement !== (oldSub.backendPlacement ?? null)) {
+        // DB before panel, as in switchMode: a concurrent pushTierToBackend
+        // re-sends the PERSISTED placement, so this ordering keeps the two
+        // convergent. Restore on failure so the DB never claims a move that
+        // didn't happen.
+        await ctx.runMutation(internal.subscriptions.setPlacementAndClearCache, {
+          subscriptionId: oldSub._id,
+          placement,
+        });
+        try {
+          await ctx.runAction(internal.backends.updateUser, {
+            backend: tier.backend,
+            backendUserId: oldSub.backendUserId,
+            patch: { placement },
+          });
+        } catch (e) {
+          console.warn('[switchServer] in-place placement update failed; re-issuing', e);
+          await ctx.runMutation(internal.subscriptions.setPlacementAndClearCache, {
+            subscriptionId: oldSub._id,
+            placement: oldSub.backendPlacement ?? null,
+          });
+          return reissue();
+        }
+        // (2) also rotate the pin: the new squad may still serve several nodes.
+        const leftNode = await ctx.runMutation(internal.subscriptions.rotateNodePin, {
+          subscriptionId: oldSub._id,
+        });
+        await audit({
+          inPlace: true,
+          movedPlacement: true,
+          movedNodePin: leftNode !== null,
+          fromNode: leftNode,
+          subscriptionId: oldSub._id,
+        });
+        return {
+          ok: true,
+          subscriptionUrl: oldSub.subscriptionUrl,
+          shortUuid: oldSub.backendShortId,
+          inPlace: true,
+          oldSubscriptionDeletedAt: null,
+        };
+      }
+    }
+
+    // (2) alone: no other squad to move to, but the key is pinned to one node of
+    // a multi-node squad — rotating the pin genuinely changes their server.
+    const leftNode = await ctx.runMutation(internal.subscriptions.rotateNodePin, {
+      subscriptionId: oldSub._id,
+    });
+    if (leftNode !== null) {
+      await audit({
+        inPlace: true,
+        movedPlacement: false,
+        movedNodePin: true,
+        fromNode: leftNode,
+        subscriptionId: oldSub._id,
+      });
+      return {
+        ok: true,
+        subscriptionUrl: oldSub.subscriptionUrl,
+        shortUuid: oldSub.backendShortId,
+        inPlace: true,
+        oldSubscriptionDeletedAt: null,
+      };
+    }
+
+    // Nothing to move: a single-squad, single-node deployment (or a key that has
+    // never been served, so there is no pin yet). Change nothing and say so —
+    // tombstoning a working key to land back on the same server helps no one.
+    return {
+      ok: false,
+      code: 'server.no_alternative',
+      message: 'There is no other server available right now. Please try again later.',
+      status: 409,
+    };
   },
 });
 

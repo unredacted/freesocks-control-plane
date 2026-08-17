@@ -460,8 +460,8 @@
     "title": "Donations support Unredacted",
     "body": "Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site.",
     "collectiveTitle": "Donation impact",
-    "collectiveBody": "Donations made through FreeSocks raise every free user's monthly bandwidth for the month they're given. This is what the community's donations are doing right now.",
-    "bonusThisMonth": "GB added this month",
+    "collectiveBody": "Donations made through FreeSocks raise every free user's bandwidth for 30 days from the day they're given. This is what the community's donations are doing right now.",
+    "bonusThisMonth": "GB on every free account now",
     "bonusThisMonthDetail": "on top of every free account's monthly allowance",
     "usersHelped": "free accounts reached",
     "usersHelpedDetail": "active free users whose allowance the bonus raises",
@@ -487,7 +487,8 @@
     ],
     "empty": "No donations yet this month - the first one starts the counter.",
     "externalNote": "This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here.",
-    "aboutUnredacted": "About Unredacted"
+    "aboutUnredacted": "About Unredacted",
+    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises the bandwidth every free user gets."
   },
   "donate": {
     "addTitle": "Add a donation",
@@ -498,8 +499,8 @@
     "none": "No thanks",
     "custom": "Custom",
     "customPlaceholder": "Other amount",
-    "impact": "Adds about {gb} GB to every free user this month",
-    "bonusActive": "Donations this month have added {gb} GB to every free user's monthly allowance.",
+    "impact": "Adds about {gb} GB to every free user",
+    "bonusActive": "Donations have added {gb} GB to every free user’s allowance right now.",
     "minNote": "Minimum {amount}",
     "give": "Donate {amount}",
     "giving": "Starting…",
@@ -652,7 +653,8 @@
     "deviceUnsupported": "Your current server type doesn't support removing individual devices.",
     "billing": "The payment service couldn't process this. Please try again later.",
     "serverError": "The server had a problem handling this. Please try again in a few minutes.",
-    "modeUnavailable": "Your current connection mode is no longer available. Switch to another mode first, then try again."
+    "modeUnavailable": "Your current connection mode is no longer available. Switch to another mode first, then try again.",
+    "noOtherServer": "There is no other server available right now. Please try again later."
   },
   "setup": {
     "title": "Set up your VPN app",
@@ -910,7 +912,7 @@
     },
     "impact": {
       "title": "Donations at work",
-      "body": "Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too.",
+      "body": "Every donation made through FreeSocks raises the bandwidth of every free account for the next 30 days. This is what donors have added so far - you could add to it too.",
       "cta": "Make a donation",
       "chartAria": "Bandwidth added to every free user by donations, day by day this month"
     },
@@ -922,7 +924,7 @@
         "world": "A VPN for the world"
       },
       "subtitle": "FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}.",
-      "impactNote": "Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month.",
+      "impactNote": "Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, right away.",
       "impactLink": "See the impact"
     },
     "cta": {
@@ -1102,5 +1104,22 @@
     "incidentsGlobal": "All locations",
     "incidentsPast": "Past incidents",
     "report": "Report a problem"
+  },
+  "switchServer": {
+    "action": "Switch server",
+    "title": "Move to a different server?",
+    "body": "We will move your key to another server. Your subscription URL stays the same, so there is nothing to re-import.",
+    "bodyWithServer": "We will move your key off {server} to another server. Your subscription URL stays the same, so there is nothing to re-import.",
+    "reasonLegend": "What's wrong with your current server?",
+    "reasonSlow": "It's slow",
+    "reasonBlocked": "It's blocked where I am",
+    "reasonDisconnects": "It keeps disconnecting",
+    "reasonOther": "Something else",
+    "point1": "Your apps pick up the new server on their next refresh",
+    "point2": "Your account, devices and remaining data are unchanged",
+    "confirm": "Move my key",
+    "working": "Moving…",
+    "done": "Your key has moved to a different server.",
+    "failed": "Could not move your key"
   }
 }

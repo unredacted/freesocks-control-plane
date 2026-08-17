@@ -573,7 +573,6 @@ export const applyEvent = internalMutation({
           // Re-cap the fleet NOW (symmetric with fundDonation): without this the
           // refunded bonus bandwidth lingered until the next hourly reconcile.
           await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
-          await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
           const donor = await ctx.db.get(order.userId);
           if (donor) {
             const count = Math.max(0, (donor.donationCount ?? 0) - 1);

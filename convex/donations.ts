@@ -1,8 +1,8 @@
 /**
  * Donation free-bandwidth bonus — the runtime side of lib/donationBonus.ts.
  * `applyFreeBonus` re-caps the whole free fleet to base+bonus whenever the shared
- * monthly bonus moves (a donation lands, or the calendar month rolls over → back
- * to base), idempotently. Scheduled from the checkout grant (billing.applyEvent)
+ * bonus moves (a donation lands, or a donation's funding window closes → back
+ * toward base), idempotently. Scheduled from the checkout grant (billing.applyEvent)
  * and backstopped by the hourly `donation-bonus-reconcile` cron. Every function is
  * internal — the accumulator is not world-readable (publicConfig ships only the
  * derived `currentBonusGb`).
@@ -14,6 +14,7 @@ import { v } from 'convex/values';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { resolveBillingConfig } from './lib/billingConfig';
 import {
+  bonusGbFromCents,
   currentMonthKey,
   effectiveBonusGb,
   readDonationState,
@@ -112,21 +113,23 @@ export const setAppliedBonusGb = internalMutation({
  * projection ships the GB side).
  */
 export const stampBonusHistory = internalMutation({
-  args: { effective: v.number() },
-  handler: async (ctx, { effective }) => {
+  args: {},
+  handler: async (ctx) => {
     const state = await readDonationState(ctx.db);
     const counts = await readUserCounts(ctx.db);
-    // Stamp the CURRENT month, never the accumulator's stored month: the
-    // month-roll revert runs while state still carries the finished month's
-    // key + cents, and stamping THAT entry with the now-0 effective bonus
-    // wiped the finished month's recorded impact (bonusGb) from the ledger.
-    // After a roll the new month starts a fresh zeroed entry instead.
+    const cfg = await resolveBillingConfig(ctx.db);
+    // Stamp the CURRENT month, never the accumulator's stored month: after a roll
+    // the state still carries the finished month's key + cents, and restating THAT
+    // entry would overwrite the finished month's recorded impact.
     const mk = currentMonthKey(Date.now());
     const rolled = state.monthKey !== mk;
+    const donatedCents = rolled ? 0 : state.donatedCents;
     await upsertHistoryForMonth(ctx, {
       monthKey: mk,
-      donatedCents: rolled ? 0 : state.donatedCents,
-      bonusGb: effective,
+      donatedCents,
+      // The month's OWN raise, not the live pool — with rolling windows the pool
+      // can still hold last month's money, which is not this month's impact.
+      bonusGb: bonusGbFromCents(donatedCents, cfg.donation),
       freeUsers: counts.freeActive,
     });
     return null;
@@ -181,10 +184,11 @@ const BULK_CHUNK = 500; // Remnawave bulk/update uuids cap
 
 /**
  * Re-cap the free fleet's `trafficLimitBytes` to base+bonus whenever the shared
- * monthly bonus moves. Idempotent: a no-op when the effective bonus already equals
- * what was last pushed (so the hourly cron is cheap, and the month-roll reset — when
- * effective drops to 0 — pushes base back exactly once). Groups each page's
- * Remnawave keys by hosting instance and bulk-updates in ≤500-uuid chunks.
+ * bonus moves. Idempotent: a no-op when the effective bonus already equals what was
+ * last pushed (so the hourly cron is cheap, and an expiring donation — which drops
+ * the effective bonus — pushes the lower cap back exactly once). This cron is what
+ * drives window expiry: nothing else notices that a bucket aged out. Groups each
+ * page's Remnawave keys by hosting instance and bulk-updates in ≤500-uuid chunks.
  *
  * Failure semantics: each chunk is isolated (one down panel must not abort the
  * whole run — the start-of-run heartbeat would otherwise make a wedged job look
@@ -307,7 +311,7 @@ export const applyFreeBonus = internalAction({
       }
       await ctx.runMutation(internal.donations.setAppliedBonusGb, { appliedBonusGb: effective });
       // Clean full drain: stamp the month's ledger with the fleet size reached.
-      await ctx.runMutation(internal.donations.stampBonusHistory, { effective });
+      await ctx.runMutation(internal.donations.stampBonusHistory, {});
       return null;
     }),
 });

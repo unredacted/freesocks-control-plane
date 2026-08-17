@@ -273,6 +273,10 @@ async function placementWeights(
  *    lives on that panel, so a placement on another panel is unusable. Returns
  *    `{placement:null}` when the target mode has no squad there; the caller
  *    falls back to a re-issue (which may move panels).
+ *  - `excludePlacement` (the member's "switch server" action): skip the squad the
+ *    key is already on, so the pick must actually MOVE it. Fail-soft: dropped when
+ *    it would empty the pool, and the caller compares the result against the
+ *    current placement to tell "moved" from "nowhere else to go".
  *
  * A squad with no stats row yet (bring-up: the cron hasn't observed it) can't be
  * attributed to a panel; when the constrained pool is empty we fall back to the
@@ -285,6 +289,7 @@ export async function resolvePlacementTarget(
   opts: {
     location?: string | null;
     onlyServerId?: string | null;
+    excludePlacement?: string | null;
     // Injected PRNG for the anti-herding pick (queries must stay deterministic —
     // callers on the issuance path mint this in the ACTION and thread it down).
     rand?: () => number;
@@ -294,7 +299,13 @@ export async function resolvePlacementTarget(
   serverId: string | null;
   unattributedMultiPanel?: boolean;
 }> {
-  const pool = await resolvePlacementPool(db, modeId);
+  const fullPool = await resolvePlacementPool(db, modeId);
+  // Fail-soft exclusion: a one-squad pool still issues (onto the same squad), and
+  // the caller decides what "didn't move" means.
+  const pool =
+    opts.excludePlacement && fullPool.some((p) => p !== opts.excludePlacement)
+      ? fullPool.filter((p) => p !== opts.excludePlacement)
+      : fullPool;
   if (pool.length === 0) return { placement: null, serverId: null };
 
   // Attribute each pool squad to its panel via the node-stats cache.

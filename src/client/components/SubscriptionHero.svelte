@@ -14,6 +14,7 @@
   import Link2 from '@lucide/svelte/icons/link-2';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import MapPin from '@lucide/svelte/icons/map-pin';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import { formatBytes, daysUntil, copyText } from '../lib/utils';
   import { t } from '../lib/i18n/index.svelte';
   import { formatDate } from '../lib/i18n/format';
@@ -103,6 +104,10 @@
     nodeLabel?: string | null;
     /** The location's coarse public load band (quiet/busy/crowded). */
     nodeLoad?: 'quiet' | 'busy' | 'crowded' | 'unknown' | null;
+    /** Opens the "move me to a different server" flow. Rendered on the node line,
+     *  where the member is already looking when their server is the problem.
+     *  Omitted (no control) when the page has no key to move. */
+    onSwitchServer?: () => void;
     /** Optional key-management actions (regenerate / switch backend), rendered
      *  in a hairline-separated footer of the pass - the pass owns its actions. */
     actions?: Snippet;
@@ -133,6 +138,7 @@
     nodeLocationCode,
     nodeLabel,
     nodeLoad,
+    onSwitchServer,
     actions,
   }: Props = $props();
 
@@ -253,7 +259,7 @@
       <!-- Node status, ONE compact line: the live dot (tooltip carries the node
            label + load band + state) + location + the status deep link. Offline
            is the only state spelled out (it's the actionable one). -->
-      {#if nodeLocationLabel || nodeOnline !== undefined || nodeLocationCode}
+      {#if nodeLocationLabel || nodeOnline !== undefined || nodeLocationCode || onSwitchServer}
         {@const nodeStateText =
           nodeOnline === true
             ? t('hero.nodeOnline')
@@ -300,6 +306,17 @@
             >
               {t('hero.nodeStatusLink')} →
             </Link>
+          {/if}
+          {#if onSwitchServer}
+            <span class="text-muted-foreground/60">·</span>
+            <button
+              type="button"
+              onclick={onSwitchServer}
+              class="inline-flex items-center gap-1 underline underline-offset-2 hover:text-foreground min-h-[44px] md:min-h-0"
+            >
+              <RefreshCw class="size-3.5" aria-hidden="true" />
+              {t('switchServer.action')}
+            </button>
           {/if}
         </p>
       {/if}

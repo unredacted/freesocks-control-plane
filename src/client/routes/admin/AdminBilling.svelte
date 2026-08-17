@@ -457,9 +457,9 @@
           <span class="text-sm font-medium">Donations enabled</span>
         </label>
         <p class="mt-1 text-xs text-muted-foreground">
-          Members can add a donation to a membership or give on its own. Donations in a calendar
-          month raise every free user's monthly bandwidth by the rate below (shared pool), capped,
-          then reset next month.
+          Members can add a donation to a membership or give on its own. Each donation raises every
+          free user's bandwidth by the rate below (a shared pool, capped) for as long as its funding
+          window lasts, then rolls off.
         </p>
 
         <p class="mb-2 mt-4 text-xs font-medium text-muted-foreground">Suggested amounts</p>
@@ -548,6 +548,31 @@
           <span class="mt-1 block text-xs text-muted-foreground">
             Ceiling on the shared monthly bonus regardless of how much is donated (protects node
             capacity).
+          </span>
+        </label>
+
+        <label class="mt-4 block">
+          <span class="mb-1 block text-xs font-medium text-muted-foreground"
+            >Donation funding window (days)</span
+          >
+          <Input
+            type="number"
+            min={1}
+            max={365}
+            step="1"
+            class="min-h-9 w-24"
+            value={draft.donation.bonusWindowDays}
+            oninput={(e) =>
+              draft &&
+              (draft.donation.bonusWindowDays = Math.min(
+                365,
+                Math.max(1, Math.round(Number((e.currentTarget as HTMLInputElement).value))),
+              ))}
+          />
+          <span class="mt-1 block text-xs text-muted-foreground">
+            How long one donation keeps funding the shared pool, counted from when it settles.
+            Changing this affects donations made from now on; ones already recorded keep the window
+            they were given.
           </span>
         </label>
       </div>

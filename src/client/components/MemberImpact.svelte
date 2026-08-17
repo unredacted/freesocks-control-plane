@@ -3,7 +3,7 @@
   import { t } from '../lib/i18n/index.svelte';
   import { formatMoney, formatDate } from '../lib/i18n/format';
   import { configQuery, accountQuery } from '../lib/queries';
-  import { dailyImpactSeries, dailyImpactBounds } from '../lib/impact';
+  import { dailyImpactSeries, dailyImpactBounds, niceCeil } from '../lib/impact';
   import DitherChart from './DitherChart.svelte';
 
   /**
@@ -22,12 +22,17 @@
   // Renders whenever donations are live (a zero month is honest data - the
   // empty note explains it); the chart falls back to a flat zero baseline.
   const showImpact = $derived(!!config.data?.billing?.enabled && !!donation?.enabled);
-  // Month-to-date cumulative staircase (one point per day). The per-month
-  // ledger stays recorded server-side; a single live month made the old
+  // Cumulative staircase across the whole month (one point per day). The
+  // per-month ledger stays recorded server-side; a single live month made the old
   // month-by-month bars degenerate to one full-width bar.
   const dailyValues = $derived(dailyImpactSeries(donation?.currentMonthDaily ?? []));
   const dailyEmpty = $derived(!dailyValues.some((v) => v > 0));
-  const dayLabel = (d: Date) => formatDate(d, { month: 'short', day: 'numeric' });
+  // Round headroom above the month's total, so the last step reads as a step
+  // rather than a full-height block pinned to the top edge.
+  const dailyMax = $derived(niceCeil(Math.max(...dailyValues, 0)));
+  // UTC, matching the series: the buckets are UTC days, so formatting the
+  // endcaps in local time renders "Jul 31 - Aug 30" for an August series.
+  const dayLabel = (d: Date) => formatDate(d, { month: 'short', day: 'numeric', timeZone: 'UTC' });
   const dailyLabels = $derived(dailyImpactBounds().map(dayLabel));
   const user = $derived(account.data?.user);
   const isDonor = $derived(!!user?.donorSince && (user?.donatedCentsTotal ?? 0) > 0);
@@ -79,6 +84,8 @@
         values={dailyValues}
         labels={dailyLabels}
         variant="area"
+        step
+        max={dailyMax}
         height={88}
         ariaLabel={t('impact.dailyChartAria')}
       />

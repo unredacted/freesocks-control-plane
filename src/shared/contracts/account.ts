@@ -3,6 +3,7 @@ import { MemberCurrentMode } from './connectionModes';
 import { UserStatus } from './common';
 import { SubscriptionMirror } from './subscription';
 import { BackendId } from './admin';
+import { SWITCH_SERVER_REASONS } from './switchServerReasons';
 
 // Tier slugs are admin-controlled free text (the admin tier validator accepts
 // any string), so the member-facing contracts accept any non-empty string here
@@ -277,6 +278,29 @@ export const SwitchModeResponse = z.object({
   oldSubscriptionDeletedAt: z.string().datetime().nullable(),
 });
 export type SwitchModeResponse = z.infer<typeof SwitchModeResponse>;
+
+/** Why the member is moving servers — the closed set in ./switchServerReasons. */
+export const SwitchServerReason = z.enum(SWITCH_SERVER_REASONS);
+export type SwitchServerReason = z.infer<typeof SwitchServerReason>;
+
+/** Move the member's key to a different server, keeping their connection mode. */
+export const SwitchServerRequest = z.object({
+  reason: SwitchServerReason,
+  confirm: z.literal(true),
+});
+export type SwitchServerRequest = z.infer<typeof SwitchServerRequest>;
+
+export const SwitchServerResponse = z.object({
+  subscriptionUrl: z.string(),
+  shortUuid: z.string(),
+  /** True when the existing key simply moved (URL, traffic counter and devices
+   *  all preserved); false when it had to be re-issued to reach another panel. */
+  inPlace: z.boolean(),
+  /** ISO timestamp the previous key stops working (24h grace); null on the
+   *  in-place path, where there is no previous key to retire. */
+  oldSubscriptionDeletedAt: z.string().datetime().nullable(),
+});
+export type SwitchServerResponse = z.infer<typeof SwitchServerResponse>;
 
 /**
  * Revoke one of the member's HWID devices (frees a slot under the tier's device

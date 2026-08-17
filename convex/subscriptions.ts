@@ -214,6 +214,30 @@ export const recordPinnedNode = internalMutation({
 });
 
 /**
+ * Move a live key off the node it is pinned to (the member's switch-server
+ * action): exclude the current node from the next rendezvous pick, forget the
+ * pin, and drop the content cache so the next fetch actually re-pins instead of
+ * serving the cached node's links. Cheap — no panel call, no new key, and the
+ * member's saved subscription URL is untouched.
+ *
+ * Returns the node that was left, or null when there was no pin to rotate (the
+ * caller needs that to tell a real move from a no-op).
+ */
+export const rotateNodePin = internalMutation({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (ctx, { subscriptionId }): Promise<string | null> => {
+    const sub = await ctx.db.get(subscriptionId);
+    if (!sub?.pinnedNode) return null;
+    await ctx.db.patch(subscriptionId, {
+      excludeNode: sub.pinnedNode,
+      pinnedNode: undefined,
+      subCache: undefined,
+    });
+    return sub.pinnedNode;
+  },
+});
+
+/**
  * Page active subscriptions for the S3 mirror-refresh cron. Mirrors are OPT-IN +
  * LAZY now, so the refresh only keeps EXISTING mirrors fresh — it pages only subs
  * that already have ≥1 mirror and reports each sub's OWN providers + the shared

@@ -21,6 +21,7 @@
   import RegenerateModal from '../components/RegenerateModal.svelte';
   import RevokeDeviceModal from '../components/RevokeDeviceModal.svelte';
   import SwitchBackendModal from '../components/SwitchBackendModal.svelte';
+  import SwitchServerModal from '../components/SwitchServerModal.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import MemberImpact from '../components/MemberImpact.svelte';
   import DonateCard from '../components/DonateCard.svelte';
@@ -68,7 +69,9 @@
     ConnectionModeResponse,
     RefreshMembershipResponse,
     RegenerateResponse,
+    SwitchServerResponse,
   } from '../../shared/contracts/account';
+  import type { SwitchServerReason } from '../../shared/contracts/switchServerReasons';
 
   const account = accountQuery();
   const config = configQuery();
@@ -153,6 +156,10 @@
 
   let regenerateOpen = $state(false);
   let switchBackendOpen = $state(false);
+  let switchServerOpen = $state(false);
+  // The member's stated reason for moving servers - required before confirming,
+  // and reset per open so a previous answer is never resubmitted silently.
+  let switchServerReason = $state<SwitchServerReason | null>(null);
   // Which backend is the user about to switch TO when they confirm. Computed
   // at button-click time from `switchTargets` so the modal can render the
   // right "from X to Y" copy even after the mutation lands and the account
@@ -311,6 +318,37 @@
     onError: (err) => {
       liveMessage = t('account.regenFailedTitle');
       toast.error(t('account.regenFailedTitle'), { description: apiErrorMessage(err) });
+    },
+  }));
+
+  // Mutation: move this key to a different server, same connection mode. The
+  // server prefers an in-place move (URL, traffic counter and devices all
+  // survive) and only re-issues when it has to cross panels — either way the
+  // saved subscription URL is unchanged, so there is nothing to re-import.
+  const switchServer = createMutation(() => ({
+    mutationFn: () => {
+      if (!switchServerReason) throw new Error('No reason selected');
+      return apiClient.post(
+        '/api/v1/account/switch-server',
+        { reason: switchServerReason, confirm: true },
+        SwitchServerResponse,
+      );
+    },
+    onSuccess: () => {
+      switchServerOpen = false;
+      switchServerReason = null;
+      void qc.invalidateQueries({ queryKey: queryKeys.account });
+      void qc.invalidateQueries({ queryKey: queryKeys.accountUsage });
+      // The raw-config viewer reads a separate key; the config now names a
+      // different server.
+      void qc.invalidateQueries({ queryKey: queryKeys.subscriptionContent });
+      void qc.invalidateQueries({ queryKey: queryKeys.nodeStatus });
+      liveMessage = t('switchServer.done');
+      toast.success(t('switchServer.done'), { description: t('switchServer.point1') });
+    },
+    onError: (err) => {
+      liveMessage = t('switchServer.failed');
+      toast.error(t('switchServer.failed'), { description: apiErrorMessage(err) });
     },
   }));
 
@@ -890,6 +928,12 @@
                 null}
               nodeLabel={nodeStatus.data?.node?.label ?? null}
               nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
+              onSwitchServer={actionsDisabled
+                ? undefined
+                : () => {
+                    switchServerReason = null;
+                    switchServerOpen = true;
+                  }}
             >
               {#snippet actions()}
                 <!-- Key actions live on the pass: regenerate, and switch backend
@@ -1240,6 +1284,20 @@
         onCancel={() => (regenerateOpen = false)}
         onConfirm={() => regenerate.mutate()}
         busy={regenerate.isPending}
+      />
+      <SwitchServerModal
+        bind:open={switchServerOpen}
+        currentServer={nodeStatus.data?.node?.location?.label ??
+          data.subscription.location?.label ??
+          nodeStatus.data?.node?.label ??
+          null}
+        bind:reason={switchServerReason}
+        onCancel={() => {
+          switchServerOpen = false;
+          switchServerReason = null;
+        }}
+        onConfirm={() => switchServer.mutate()}
+        busy={switchServer.isPending}
       />
       {#if pendingSwitchTarget && config.data}
         <SwitchBackendModal

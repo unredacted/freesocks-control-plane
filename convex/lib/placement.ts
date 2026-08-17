@@ -39,11 +39,18 @@ export interface PlacementTarget {
 }
 
 export interface PlacementResolver {
-  /** The (placement, server) pair a NEW key issues into. */
+  /** The (placement, server) pair a NEW key issues into. `excludePlacement` asks
+   *  for anything BUT that placement (the member's "switch server" action);
+   *  fail-soft, so a single-placement pool still resolves to it. */
   resolveTarget(
     db: DatabaseReader,
     modeSlug: string | null,
-    opts: { location?: string | null; onlyServerId?: string | null; rand?: () => number },
+    opts: {
+      location?: string | null;
+      onlyServerId?: string | null;
+      excludePlacement?: string | null;
+      rand?: () => number;
+    },
   ): Promise<PlacementTarget>;
   /** Mode slugs with a usable binding on this backend (raw, no cross-mode
    *  fallback — feeds per-backend availability). */

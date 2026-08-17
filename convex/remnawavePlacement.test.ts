@@ -292,6 +292,37 @@ describe('resolvePlacementTarget', () => {
     expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
   });
 
+  test('excludePlacement skips the squad the key is already on (switch server)', async () => {
+    const t = convexTest(schema, modules);
+    const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
+    const ams = await seedLocatedServer(t, { slug: 'ams', location: 'AMS' });
+    await bindPool(t, 'freedom-ws', ['sq-mci', 'sq-ams']);
+    // The least-loaded squad is the one the member is ALREADY on, so without the
+    // exclusion the "switch" would return them to the same server.
+    await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 1 });
+    await seedNode(t, ams, { placement: 'sq-ams', usersOnline: 50 });
+    const target = await t.run((ctx) =>
+      resolvePlacementTarget(ctx.db, 'freedom-ws', {
+        excludePlacement: 'sq-mci',
+        rand: () => 0,
+      }),
+    );
+    expect(target).toEqual({ placement: 'sq-ams', serverId: ams });
+  });
+
+  test('excludePlacement fails soft on a single-squad pool (still resolves it)', async () => {
+    const t = convexTest(schema, modules);
+    const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });
+    await bindPool(t, 'freedom-ws', ['sq-mci']);
+    await seedNode(t, mci, { placement: 'sq-mci', usersOnline: 1 });
+    // Emptying the pool would break issuance; the CALLER compares the result
+    // against the current placement to see that nothing moved.
+    const target = await t.run((ctx) =>
+      resolvePlacementTarget(ctx.db, 'freedom-ws', { excludePlacement: 'sq-mci' }),
+    );
+    expect(target).toEqual({ placement: 'sq-mci', serverId: mci });
+  });
+
   test('a location pick narrows to that panel even when another is less loaded', async () => {
     const t = convexTest(schema, modules);
     const mci = await seedLocatedServer(t, { slug: 'mci', location: 'MCI' });

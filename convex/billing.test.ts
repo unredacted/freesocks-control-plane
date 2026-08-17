@@ -1219,8 +1219,12 @@ describe('billing.applyEvent grant cross-checks', () => {
         .unique();
       const poolState = JSON.parse(pool!.value);
       expect(poolState.donatedCents).toBe(500);
-      // The daily impact series gets a cumulative snapshot for today (UTC).
-      expect(poolState.days[new Date().toISOString().slice(0, 10)]).toBe(500);
+      // The gift lands in today's (UTC) bucket, stamped with its funding window.
+      const today = new Date().toISOString().slice(0, 10);
+      expect(poolState.buckets).toEqual([
+        { d: today, c: 500, x: expect.any(Number) as unknown as number },
+      ]);
+      expect(poolState.buckets[0].x).toBeGreaterThan(Date.now());
       const u = await ctx.db.get(userId);
       expect(u!.donatedCentsTotal).toBe(500);
       expect(u!.donationCount).toBe(1);
@@ -1241,8 +1245,9 @@ describe('billing.applyEvent grant cross-checks', () => {
         .unique();
       const drained = JSON.parse(pool!.value);
       expect(drained.donatedCents).toBe(0);
-      // The refund re-snapshots today at the reduced total.
-      expect(drained.days[new Date().toISOString().slice(0, 10)]).toBe(0);
+      // The refunded cents came back out of the live bucket, which is now empty
+      // and dropped entirely.
+      expect(drained.buckets).toEqual([]);
       const ref = await ctx.db.get(referralId);
       expect(ref!.status).toBe('void');
       expect(ref!.voidReason).toBe('refund');

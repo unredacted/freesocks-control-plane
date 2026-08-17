@@ -42,6 +42,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // Member switches connection mode (transport) within a backend. `inPlace` marks
   // an in-place squad re-point (existing key kept) vs a re-issue fallback.
   'subscription.switch_mode': ['fromMode', 'toMode', 'inPlace'],
+  // Member moves their key to a different server, keeping their mode. `reason` is
+  // a bounded enum the member picked (never free text); `fromNode` is the node
+  // name they left — operator infrastructure, already shown to the member, and
+  // the whole point of the record. Never a placement/squad uuid.
+  'subscription.switch_server': ['reason', 'inPlace', 'movedPlacement', 'movedNodePin', 'fromNode'],
   // Member revokes one HWID device (truncated identifier only, never the full hwid).
   'subscription.device_revoke': ['hwidPrefix'],
   // A key was issued with no placement (no Remnawave pool bound anywhere) — a
