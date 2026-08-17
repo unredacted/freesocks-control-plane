@@ -253,3 +253,107 @@ describe('mirror refresh records the pinned node', () => {
     });
   });
 });
+
+describe('provisionMirror honours the pending node switch', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  test('excludes the node the member left, and records the one it landed on', async () => {
+    // A member who switches servers and then provisions their FIRST mirror
+    // before ever fetching /sub. Without the exclusion the deterministic picker
+    // uploads the node they just left; without the pin write their next switch
+    // finds nothing to rotate.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const left = pinSubscriptionToNode(RAW, 'short1').node!;
+    const expected = pinSubscriptionToNode(RAW, 'short1', left).node!;
+    expect(expected).not.toBe(left); // the fixture really does offer a choice
+
+    const { userId, subId } = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const instanceId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'n1',
+        slug: 'n1',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('mirrorProviders', {
+        name: 'p1',
+        endpoint: 'https://s3.invalid',
+        bucket: 'b',
+        publicUrl: 'https://cdn.test',
+        region: 'auto',
+        accessKeyId: 'ak',
+        secretAccessKey: 'sk',
+        isActive: true,
+        priority: 0,
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'k1',
+        backendShortId: 'short1',
+        backendServerId: instanceId,
+        subscriptionUrl: 'https://panel.test/sub/short1',
+        subscriptionMirrors: [],
+        // Mid-switch: the pin was rotated away and no fetch has happened yet.
+        excludeNode: left,
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+      return { userId, subId };
+    });
+
+    const uploaded: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        // The S3 PUT goes through the AWS SDK, not fetch; only the panel read
+        // lands here.
+        uploaded.push(String(input));
+        return new Response(RAW, { status: 200 });
+      }),
+    );
+
+    const res = await t.action(internal.storage.provisionMirror, { userId, countryCode: null });
+
+    // The panel read happened (so the fetch leg ran with the exclusion applied)
+    // and the upload then failed against the unroutable S3 endpoint.
+    expect(uploaded.some((u) => u.includes('/sub/short1'))).toBe(true);
+    expect(res.status).toBe('error');
+    await t.run(async (ctx) => {
+      // A failed upload must NOT record the pin — same rule as the refresh path.
+      expect((await ctx.db.get(subId))!.pinnedNode).toBeUndefined();
+      // ...and no mirror entry was appended for an object that isn't there.
+      expect((await ctx.db.get(subId))!.subscriptionMirrors).toEqual([]);
+    });
+  }, 20_000);
+});

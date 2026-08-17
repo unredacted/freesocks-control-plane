@@ -169,13 +169,17 @@ export const provisionMirror = internalAction({
     const provider = providers.find((p) => p.name === next.name);
     if (!provider) return { status: 'exhausted', remaining: Math.max(0, cap - used) };
 
-    let fetched: { content: string; contentType?: string };
+    let fetched: { content: string; contentType?: string; pinnedNode?: string };
     try {
       fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
         backend: context.backend,
         backendServerId: context.backendServerId ?? undefined,
         backendShortId: context.backendShortId,
         subscriptionUrl: context.subscriptionUrl,
+        // The same exclusion the live /sub route and the refresh apply. Node
+        // pinning is deterministic, so provisioning a FIRST mirror without it
+        // uploads the very node the member just switched away from.
+        excludeNode: context.excludeNode ?? undefined,
       });
     } catch {
       return { status: 'error', remaining: Math.max(0, cap - used) };
@@ -207,6 +211,17 @@ export const provisionMirror = internalAction({
     // was uploaded but the row didn't change — harmless residue, reported as
     // capped (the next request picks the same provider and re-appends).
     if (!appended.appended) return { status: 'capped', remaining: 0 };
+    // Record the node only now: the object is uploaded AND the row references
+    // it, so this is the first moment the pin describes what the member is
+    // actually served. For someone who only ever uses the mirror, this is also
+    // the only place it gets written — without it their next switch-server finds
+    // no pin to rotate and refuses with `no_alternative`.
+    if (fetched.pinnedNode) {
+      await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
+        subscriptionId: context.subscriptionId,
+        node: fetched.pinnedNode,
+      });
+    }
     return {
       status: 'ok',
       publicUrl: entry.publicUrl,
