@@ -394,14 +394,24 @@ export const refreshActiveMirrors = internalAction({
             // caught above → the sub is skipped, entries untouched.)
             const succeeded = new Set(mirrors.map((m) => m.provider));
             const failedProviders = targets.map((t) => t.name).filter((n) => !succeeded.has(n));
+            // A PARTIAL round leaves at least one provider serving the previous
+            // content, so neither the hash nor the pin may advance yet:
+            //  - the hash is subscription-wide, and advancing it would make the
+            //    next run take the unchanged-content short-circuit and never
+            //    retry the stale provider — stranding it permanently;
+            //  - the pin would then describe a node some mirror URL does not
+            //    serve, so a later switch-server would exclude the wrong node.
+            // Holding both means the next run retries (one extra re-upload to
+            // the healthy providers every 6h until the broken one recovers) and
+            // both advance together on the first clean round.
+            const allSucceeded = failedProviders.length === 0;
             await ctx.runMutation(internal.subscriptions.updateMirrors, {
               subscriptionId: sub.id,
               successes: mirrors,
               failedProviders,
-              rawContentHash: hash,
+              ...(allSucceeded ? { rawContentHash: hash } : {}),
             });
-            // At least one provider now serves this node's config.
-            await recordPin();
+            if (allSucceeded) await recordPin();
             refreshed++;
           } catch {
             /* best-effort per sub: one backend/S3 hiccup must not stall the sweep */

@@ -226,3 +226,127 @@ describe('subscriptions.pageActiveForMirror', () => {
     expect(page.items[0]!.excludeNode).toBeNull();
   });
 });
+
+describe('subscriptions.insertSubscription — mirror carry', () => {
+  const MIRROR = { provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'subs/x' };
+
+  async function seedOld(t: ReturnType<typeof convexTest>, withMirror: boolean) {
+    const tierId = await seedTier(t);
+    return t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      const id = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'old',
+        backendShortId: 'oldshort',
+        subscriptionUrl: 'https://panel.test/sub/oldshort',
+        subToken: 'tok-abc',
+        subscriptionMirrors: withMirror ? [MIRROR] : [],
+        rawContentHash: 'hash-old',
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      return { userId, id };
+    });
+  }
+
+  test('carries mirrors with the token and VACATES them from the old row', async () => {
+    // The member's imported mirror URL must keep working across a switch. It can
+    // only do so if the new row owns the entry (the refresh cron pages ACTIVE
+    // rows) and the old row no longer does — teardown deletes the S3 objects
+    // listed on the row it tears down, which would destroy the live object.
+    const t = convexTest(schema, modules);
+    const { userId, id: oldId } = await seedOld(t, true);
+    const newId = await t.run((ctx) =>
+      ctx.runMutation(internal.subscriptions.insertSubscription, {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'new',
+        backendShortId: 'newshort',
+        subscriptionUrl: 'https://panel.test/sub/newshort',
+        subscriptionMirrors: [],
+        carrySubTokenFromId: oldId,
+      }),
+    );
+
+    await t.run(async (ctx) => {
+      const fresh = (await ctx.db.get(newId))!;
+      expect(fresh.subscriptionMirrors).toEqual([MIRROR]);
+      expect(fresh.subToken).toBe('tok-abc');
+      // No hash on the new row → the next refresh cannot short-circuit, so the
+      // object is rewritten with the new key's config.
+      expect(fresh.rawContentHash).toBeUndefined();
+      const old = (await ctx.db.get(oldId))!;
+      expect(old.subscriptionMirrors).toEqual([]); // vacated: teardown won't delete it
+      expect(old.subToken).toBeUndefined();
+    });
+  });
+
+  test('a rotation (no token carry) leaves the old mirrors behind to be swept', async () => {
+    // regenerate deliberately invalidates the old link; its mirror must go with it.
+    const t = convexTest(schema, modules);
+    const { userId, id: oldId } = await seedOld(t, true);
+    const newId = await t.run((ctx) =>
+      ctx.runMutation(internal.subscriptions.insertSubscription, {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'new',
+        backendShortId: 'newshort',
+        subscriptionUrl: 'https://panel.test/sub/newshort',
+        subscriptionMirrors: [],
+      }),
+    );
+
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(newId))!.subscriptionMirrors).toEqual([]);
+      expect((await ctx.db.get(oldId))!.subscriptionMirrors).toEqual([MIRROR]);
+    });
+  });
+});
+
+describe('subscriptions.updateMirrors — partial rounds hold the hash', () => {
+  test('omitting rawContentHash leaves the stored one intact', async () => {
+    // A partial round must not advance the hash, or the next refresh takes the
+    // unchanged-content short-circuit and never retries the stale provider.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const subId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      return ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'k',
+        backendShortId: 's',
+        subscriptionUrl: 'https://panel.test/sub/s',
+        subscriptionMirrors: [
+          { provider: 'p1', publicUrl: 'https://cdn.test/a', objectPath: 'a' },
+          { provider: 'p2', publicUrl: 'https://cdn2.test/a', objectPath: 'a' },
+        ],
+        rawContentHash: 'hash-old',
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+    });
+
+    await t.mutation(internal.subscriptions.updateMirrors, {
+      subscriptionId: subId,
+      successes: [{ provider: 'p1', publicUrl: 'https://cdn.test/a', objectPath: 'a' }],
+      failedProviders: ['p2'],
+      // no rawContentHash — p2 is still serving the old content
+    });
+
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.get(subId))!;
+      expect(row.rawContentHash).toBe('hash-old'); // held, so p2 is retried
+      expect(row.subscriptionMirrors.find((m) => m.provider === 'p2')!.status).toBe('failed');
+    });
+  });
+});

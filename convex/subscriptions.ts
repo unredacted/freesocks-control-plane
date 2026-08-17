@@ -116,11 +116,32 @@ export const insertSubscription = internalMutation({
     // resolves with .unique(), so a carry VACATES the old row and inserts the
     // new one inside this single serializable mutation (never two holders).
     let subToken: string | null = null;
+    // S3 mirrors ride along with the token, for the same reason and by the same
+    // rule: these paths promise the member's saved URLs keep working, and a
+    // mirror URL is one of those. Without the carry the new row starts with no
+    // mirrors, so the refresh cron (active rows only) never touches the object
+    // again — the imported mirror serves the OLD key until the 24h tombstone
+    // sweep deletes it, then 404s forever, while we reported "nothing to
+    // re-import". Carrying is safe only WITH the vacate below: teardown deletes
+    // the objects listed on the row it is tearing down, which would otherwise
+    // destroy the very objects the new row now serves. The next refresh rewrites
+    // them with the new key's config (the new row has no rawContentHash, so it
+    // cannot short-circuit) well inside the old key's 24h grace.
+    let carriedMirrors: typeof a.subscriptionMirrors | null = null;
     if (a.carrySubTokenFromId) {
       const old = await ctx.db.get(a.carrySubTokenFromId);
       if (old?.subToken) {
         subToken = old.subToken;
-        await ctx.db.patch(old._id, { subToken: undefined, updatedAt: Date.now() });
+      }
+      if (old && old.subscriptionMirrors.length > 0) {
+        carriedMirrors = old.subscriptionMirrors;
+      }
+      if (old) {
+        await ctx.db.patch(old._id, {
+          ...(old.subToken ? { subToken: undefined } : {}),
+          ...(carriedMirrors ? { subscriptionMirrors: [] } : {}),
+          updatedAt: Date.now(),
+        });
       }
     }
     if (subToken === null) {
@@ -140,6 +161,7 @@ export const insertSubscription = internalMutation({
     const { placement, carrySubTokenFromId: _carry, ...rest } = a;
     return ctx.db.insert('subscriptions', {
       ...rest,
+      ...(carriedMirrors ? { subscriptionMirrors: carriedMirrors } : {}),
       // Map the generic arg onto the schema field name.
       backendPlacement: placement,
       subToken,
@@ -393,7 +415,10 @@ export const updateMirrors = internalMutation({
     subscriptionId: v.id('subscriptions'),
     successes: v.array(mirror),
     failedProviders: v.array(v.string()),
-    rawContentHash: v.string(),
+    // Omitted on a PARTIAL round: the stored hash is what makes the next refresh
+    // short-circuit, so advancing it while a provider is still serving the old
+    // content would strand that provider forever (never retried).
+    rawContentHash: v.optional(v.string()),
   },
   handler: async (ctx, { subscriptionId, successes, failedProviders, rawContentHash }) => {
     const row = await ctx.db.get(subscriptionId);
@@ -413,7 +438,7 @@ export const updateMirrors = internalMutation({
     for (const m of fresh.values()) merged.push(m);
     await ctx.db.patch(subscriptionId, {
       subscriptionMirrors: merged,
-      rawContentHash,
+      ...(rawContentHash !== undefined ? { rawContentHash } : {}),
       updatedAt: Date.now(),
     });
     return null;
