@@ -329,27 +329,20 @@ export async function recordDonation(
   ctx: MutationCtx,
   donationCents: number,
   now: number,
-): Promise<void> {
-  if (!Number.isFinite(donationCents) || donationCents <= 0) return;
+): Promise<number | null> {
+  if (!Number.isFinite(donationCents) || donationCents <= 0) return null;
   const state = await readDonationState(ctx.db);
   const cfg = await resolveBillingConfig(ctx.db);
   const mk = currentMonthKey(now);
   const day = currentDayKey(now);
+  const expiresAt = bucketExpiryMs(day, cfg.donation.bonusWindowDays);
   const next: DonationState = {
     ...state,
     // `donatedCents` is the MONTH's running total for the ledger, so it still
     // resets on a month roll; the pool itself lives in `buckets`.
     monthKey: mk,
     donatedCents: state.monthKey === mk ? state.donatedCents + donationCents : donationCents,
-    buckets: pruneBuckets(
-      addToBucket(
-        state.buckets ?? [],
-        day,
-        donationCents,
-        bucketExpiryMs(day, cfg.donation.bonusWindowDays),
-      ),
-      now,
-    ),
+    buckets: pruneBuckets(addToBucket(state.buckets ?? [], day, donationCents, expiresAt), now),
   };
   await writeDonationState(ctx, next);
   await upsertHistoryForMonth(ctx, {
@@ -359,6 +352,9 @@ export async function recordDonation(
     // the previous month now that windows straddle month boundaries.
     bonusGb: bonusGbFromCents(next.donatedCents, cfg.donation),
   });
+  // The bucket this landed in, so the caller can record which funding a refund
+  // would have to take back (a day can hold several buckets).
+  return expiresAt;
 }
 
 /**
@@ -383,6 +379,7 @@ export async function subtractDonation(
   donationCents: number,
   now: number,
   fundedAt?: number,
+  fundedBucketExpiresAt?: number,
 ): Promise<void> {
   if (!Number.isFinite(donationCents) || donationCents <= 0) return;
   const state = await readDonationState(ctx.db);
@@ -397,14 +394,22 @@ export async function subtractDonation(
   };
   const known = fundedAt !== undefined && Number.isFinite(fundedAt);
   if (known) {
-    // Its own day, and only its own day — but a day can hold more than one
-    // bucket now (same-day gifts made under different windows stay separate),
-    // so drain every bucket on it, soonest-expiring first: that is the funding
-    // the refund is most likely to have been part of, and it leaves the
-    // longest-lived money in place.
     const fundedDay = currentDayKey(fundedAt!);
-    for (let i = 0; i < buckets.length && remaining > 0; i++) {
-      if (buckets[i]!.d === fundedDay) drain(i);
+    const exact =
+      fundedBucketExpiresAt !== undefined && Number.isFinite(fundedBucketExpiresAt)
+        ? buckets.findIndex((b) => b.d === fundedDay && b.x === fundedBucketExpiresAt)
+        : -1;
+    if (exact >= 0) {
+      // The precise bucket this order funded. Necessary once a day can hold
+      // several: refunding a 365-day gift must not drain the 1-day gift that
+      // happened to land the same day and leave the refunded money live.
+      drain(exact);
+    } else {
+      // No recorded bucket (an order granted before the field existed) or it has
+      // since been pruned: fall back to the day, soonest-expiring first.
+      for (let i = 0; i < buckets.length && remaining > 0; i++) {
+        if (buckets[i]!.d === fundedDay) drain(i);
+      }
     }
   } else {
     for (let i = buckets.length - 1; i >= 0 && remaining > 0; i--) drain(i);

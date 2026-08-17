@@ -17,6 +17,10 @@ export interface BackendEntry {
     devices: boolean;
     /** Delivery is a bare access key, not a multi-config subscription. */
     accessKeyOnly: boolean;
+    /** A key on this backend can be moved to a different server (it has a
+     *  placement to re-point, or a node pin to rotate). False hides the
+     *  switch-server affordance rather than showing one that can only fail. */
+    switchServer: boolean;
   };
 }
 
@@ -32,13 +36,13 @@ export function allBackends(backends: BackendsConfig): BackendEntry[] {
       id: 'remnawave',
       label: backends.labels.remnawave,
       enabled: backends.remnawaveEnabled,
-      capabilities: { devices: true, accessKeyOnly: false },
+      capabilities: { devices: true, accessKeyOnly: false, switchServer: true },
     },
     {
       id: 'outline',
       label: backends.labels.outline,
       enabled: backends.outlineEnabled,
-      capabilities: { devices: false, accessKeyOnly: true },
+      capabilities: { devices: false, accessKeyOnly: true, switchServer: false },
     },
   ];
 }

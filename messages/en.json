@@ -654,7 +654,8 @@
     "billing": "The payment service couldn't process this. Please try again later.",
     "serverError": "The server had a problem handling this. Please try again in a few minutes.",
     "modeUnavailable": "Your current connection mode is no longer available. Switch to another mode first, then try again.",
-    "noOtherServer": "There is no other server available right now. Please try again later."
+    "noOtherServer": "There is no other server available right now. Please try again later.",
+    "switchServerUnsupported": "Switching servers is not available for this key."
   },
   "setup": {
     "title": "Set up your VPN app",

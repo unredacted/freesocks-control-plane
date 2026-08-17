@@ -553,6 +553,13 @@
   let canSwitchBackend = $derived(
     !!data?.subscription && currentBackendEnabled && switchTargets.length > 0,
   );
+  // Only offer "switch server" on a backend that can actually move a key —
+  // Outline has neither placement nor node pinning, so the control could only
+  // ever fail. Server-authoritative too: switchServer refuses `server.unsupported`.
+  let canSwitchServer = $derived(
+    !!data?.subscription &&
+      !!backendEntry(config.data?.backends, data?.subscription?.backend)?.capabilities.switchServer,
+  );
 
   // In-app renew CTA target: point the expiry/lifecycle callouts at the Membership
   // tab when self-service purchase is available, instead of the external donate
@@ -928,7 +935,7 @@
                 null}
               nodeLabel={nodeStatus.data?.node?.label ?? null}
               nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
-              onSwitchServer={actionsDisabled
+              onSwitchServer={actionsDisabled || !canSwitchServer
                 ? undefined
                 : () => {
                     switchServerReason = null;

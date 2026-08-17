@@ -195,6 +195,11 @@ export const get = query({
           capabilities: {
             devices: CAPABILITIES[id].deviceManagement,
             accessKeyOnly: CAPABILITIES[id].accessKeyDelivery,
+            // Can a member be moved to a different server at all? Needs at least
+            // one lever — a placement to re-point, or a node pin to rotate. A
+            // backend with neither (Outline) would show a control that could
+            // only ever fail, so the SPA hides it.
+            switchServer: CAPABILITIES[id].placement || CAPABILITIES[id].nodePinning,
           },
         })),
       },

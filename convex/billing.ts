@@ -447,10 +447,17 @@ async function fundDonation(
   userId: Id<'users'>,
   donationCents: number | undefined,
   now: number,
+  orderId?: Id<'billingOrders'>,
 ): Promise<void> {
   const cents = donationCents ?? 0;
   if (cents <= 0) return;
-  await recordDonation(ctx, cents, now);
+  // Record WHICH pool bucket this order funded: a UTC day can hold several once
+  // an admin retunes the window, so a later refund needs the exact one or it
+  // could drain a neighbouring gift and leave this money live.
+  const bucketExpiresAt = await recordDonation(ctx, cents, now);
+  if (orderId && bucketExpiresAt !== null) {
+    await ctx.db.patch(orderId, { donationBucketExpiresAt: bucketExpiresAt });
+  }
   const u = await ctx.db.get(userId);
   if (u) {
     // Lifetime aggregates on the user row (billing-order retention pruning must
@@ -572,7 +579,13 @@ export const applyEvent = internalMutation({
           // `paidAt` identifies the pool bucket this order actually funded, so the
           // unwind takes the money back out of ITS day rather than off whatever
           // landed most recently (which would cancel unrelated later funding).
-          await subtractDonation(ctx, donated, refundNow, order.paidAt);
+          await subtractDonation(
+            ctx,
+            donated,
+            refundNow,
+            order.paidAt,
+            order.donationBucketExpiresAt,
+          );
           // Re-cap the fleet NOW (symmetric with fundDonation): without this the
           // refunded bonus bandwidth lingered until the next hourly reconcile.
           await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
@@ -689,7 +702,13 @@ export const applyEvent = internalMutation({
           processorRef: a.processorRef || order.processorRef,
           updatedAt: now,
         });
-        await fundDonation(ctx, order.userId, order.donationCents ?? order.amountCents, now);
+        await fundDonation(
+          ctx,
+          order.userId,
+          order.donationCents ?? order.amountCents,
+          now,
+          order._id,
+        );
         await writeAuditLog(ctx, {
           actorType: 'webhook',
           actorId: order.userId,
@@ -745,7 +764,7 @@ export const applyEvent = internalMutation({
           });
         }
         // A donation may ride a gift purchase too.
-        await fundDonation(ctx, order.userId, order.donationCents, now);
+        await fundDonation(ctx, order.userId, order.donationCents, now, order._id);
         await writeAuditLog(ctx, {
           actorType: 'webhook',
           actorId: order.userId,
@@ -783,7 +802,7 @@ export const applyEvent = internalMutation({
         triggeredBy: 'webhook',
       });
       // Apply any optional donation that rode on the membership charge.
-      await fundDonation(ctx, order.userId, order.donationCents, now);
+      await fundDonation(ctx, order.userId, order.donationCents, now, order._id);
       await writeAuditLog(ctx, {
         actorType: 'webhook',
         actorId: order.userId,

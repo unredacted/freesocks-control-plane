@@ -213,6 +213,7 @@ export type MessageKey =
   | "error.renderTitle"
   | "error.serverError"
   | "error.sessionExpired"
+  | "error.switchServerUnsupported"
   | "error.tryAgain"
   | "faq.contactPrefix"
   | "faq.contactSuffix"

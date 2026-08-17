@@ -53,6 +53,7 @@ const CODE_MESSAGES: Record<string, () => string> = {
   'mode.unavailable': () => t('error.modeUnavailable'),
   'server.no_alternative': () => t('error.noOtherServer'),
   'server.no_subscription': () => t('error.generic'),
+  'server.unsupported': () => t('error.switchServerUnsupported'),
   'backend.placement_unresolved': () => t('error.backendUnavailable'),
   config: () => t('error.captchaUnconfigured'),
   not_found: () => t('error.generic'),

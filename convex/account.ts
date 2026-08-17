@@ -1180,6 +1180,21 @@ export const switchServer = internalAction({
       };
     }
 
+    // A backend with neither lever (Outline: no placement, no node pinning) can
+    // never move a key. Say so distinctly instead of falling through to
+    // `server.no_alternative`, which invites a pointless retry — nothing about
+    // this deployment will make it work later. The SPA hides the control on the
+    // same capability; this is the server-authoritative half.
+    const subCaps = capabilitiesOf(oldSub.backend);
+    if (!subCaps.placement && !subCaps.nodePinning) {
+      return {
+        ok: false,
+        code: 'server.unsupported',
+        message: 'Switching servers is not available for this key.',
+        status: 409,
+      };
+    }
+
     const modeId = user.connectionModeId ?? null;
     const canPlace = capabilitiesOf(tier.backend).placement && oldSub.backend === tier.backend;
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});

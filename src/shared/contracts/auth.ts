@@ -134,6 +134,10 @@ export const PublicConfig = z.object({
           capabilities: z.object({
             devices: z.boolean(),
             accessKeyOnly: z.boolean(),
+            /** Whether this backend can move a key to a different server at all.
+             *  Defaulted for deploy skew (older backends omit it) — false, so a
+             *  stale config hides the control rather than showing a dead one. */
+            switchServer: z.boolean().optional().default(false),
           }),
         }),
       )

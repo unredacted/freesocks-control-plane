@@ -1983,6 +1983,45 @@ describe('account.switchServer', () => {
     });
   });
 
+  test('refuses server.unsupported on a backend with no placement AND no node pinning', async () => {
+    // Outline has neither lever, so no deployment shape makes this work — say so
+    // distinctly instead of `no_alternative`, which invites a pointless retry.
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'outline', slug: 'free-outline' });
+    const userId = await seedUser(t, tierId);
+    await t.run(async (ctx) => {
+      const instanceId = await ctx.db.insert('backendServers', {
+        backend: 'outline',
+        name: 'ol',
+        slug: 'ol',
+        config: {
+          type: 'outline',
+          apiUrl: 'https://outline.test/secret/',
+          websocketEnabled: false,
+        },
+        isActive: true,
+        priority: 0,
+        keyCount: 1,
+        updatedAt: Date.now(),
+      });
+      const subId = await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'outline',
+        backendUserId: 'ol-key',
+        backendShortId: 'ol-key',
+        backendServerId: instanceId,
+        subscriptionUrl: 'ss://x',
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(userId, { currentSubscriptionId: subId });
+    });
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    expect(res).toMatchObject({ ok: false, code: 'server.unsupported', status: 409 });
+  });
+
   test('refuses when the member has no key to move', async () => {
     const t = convexTest(schema, modules);
     const tierId = await seedTier(t);

@@ -619,6 +619,45 @@ describe('donation pool windows (lib/donationBonus)', () => {
     expect(state.buckets!.map((b) => ({ d: b.d, c: b.c }))).toEqual([{ d: '2026-05-20', c: 500 }]);
   });
 
+  test('a same-day refund targets the EXACT bucket, not a neighbour with another window', async () => {
+    // Two gifts on one UTC day under different windows sit in separate buckets.
+    // Refunding the 365-day one must take back the 365-day money, not drain the
+    // 1-day gift and leave the refunded contribution funding the pool for a year.
+    const { t } = await setup();
+    const may10 = Date.UTC(2026, 4, 10, 6);
+    const setWindow = (days: number) =>
+      t.run(async (ctx) => {
+        const existing = await ctx.db
+          .query('appSettings')
+          .withIndex('by_key', (q) => q.eq('key', 'billing.donation.bonusWindowDays'))
+          .unique();
+        if (existing) await ctx.db.patch(existing._id, { value: JSON.stringify(days) });
+        else
+          await ctx.db.insert('appSettings', {
+            key: 'billing.donation.bonusWindowDays',
+            value: JSON.stringify(days),
+            updatedAt: Date.now(),
+          });
+      });
+
+    await setWindow(1);
+    await t.run(async (ctx) => recordDonation(ctx, 300, may10)); // short window
+    await setWindow(365);
+    const longExpiry = await t.run(async (ctx) => recordDonation(ctx, 1000, may10 + 3600_000));
+    expect(longExpiry).toBe(expiryFor(may10, 365));
+
+    // Refund the 365-day gift, naming the bucket it funded.
+    await t.run(async (ctx) =>
+      subtractDonation(ctx, 1000, may10 + 2 * 3600_000, may10, longExpiry!),
+    );
+
+    const state = await readState(t);
+    // The 1-day gift survives untouched; the refunded 365-day money is gone.
+    expect(state.buckets!.map((b) => ({ c: b.c, x: b.x }))).toEqual([
+      { c: 300, x: expiryFor(may10, 1) },
+    ]);
+  });
+
   test('a refund of an EXPIRED donation leaves the live pool alone', async () => {
     const { t } = await setup();
     const jan = Date.UTC(2026, 0, 10);
