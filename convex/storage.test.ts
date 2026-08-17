@@ -151,18 +151,9 @@ describe('mirror refresh records the pinned node', () => {
     vi.unstubAllGlobals();
   });
 
-  test('persists the node even when the content hash is unchanged', async () => {
-    vi.stubEnv('DEV_MOCK_BACKEND', '');
-    vi.stubEnv('ENVIRONMENT', 'production');
-    const t = convexTest(schema, modules);
-    const shortId = 'short1';
-    // What the refresh will see after pinning — set as rawContentHash so the
-    // upload short-circuits and the ONLY observable effect is the recorded pin.
-    const pinned = pinSubscriptionToNode(RAW, shortId);
-    expect(pinned.node).toBeTruthy();
-    const hash = await sha256Hex(pinned.content);
-
-    const subId = await t.run(async (ctx) => {
+  /** A mirrored sub whose stored hash may or may not match what the panel serves. */
+  async function seedMirroredSub(t: ReturnType<typeof convexTest>, rawContentHash: string) {
+    return t.run(async (ctx) => {
       const tierId = await ctx.db.insert('tiers', {
         slug: 'free',
         name: 'Free',
@@ -195,7 +186,7 @@ describe('mirror refresh records the pinned node', () => {
       });
       await ctx.db.insert('mirrorProviders', {
         name: 'p1',
-        endpoint: 'https://s3.test',
+        endpoint: 'https://s3.invalid',
         bucket: 'b',
         publicUrl: 'https://cdn.test',
         region: 'auto',
@@ -209,20 +200,52 @@ describe('mirror refresh records the pinned node', () => {
         userId,
         backend: 'remnawave',
         backendUserId: 'k1',
-        backendShortId: shortId,
+        backendShortId: 'short1',
         backendServerId: instanceId,
         subscriptionUrl: 'https://panel.test/sub/short1',
         subscriptionMirrors: [{ provider: 'p1', publicUrl: 'https://cdn.test/x', objectPath: 'x' }],
-        rawContentHash: hash,
+        rawContentHash,
         state: 'active',
         updatedAt: Date.now(),
       });
     });
+  }
 
+  test('does NOT record the pin when every mirror upload fails', async () => {
+    // The mirror still serves the OLD node, so recording the new one would make
+    // the member's next switch exclude a node they are not actually on.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    // A hash that cannot match → the refresh attempts an upload, which fails
+    // against the unroutable endpoint above.
+    const subId = await seedMirroredSub(t, 'stale-hash');
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(RAW, { status: 200 })),
     );
+
+    await t.action(internal.storage.refreshActiveMirrors, {});
+
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subId))!.pinnedNode).toBeUndefined();
+    });
+  }, 20_000);
+
+  test('persists the node even when the content hash is unchanged', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    // What the refresh sees AFTER pinning — stored as rawContentHash so the
+    // upload short-circuits and the only observable effect is the recorded pin.
+    const pinned = pinSubscriptionToNode(RAW, 'short1');
+    expect(pinned.node).toBeTruthy();
+    const subId = await seedMirroredSub(t, await sha256Hex(pinned.content));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(RAW, { status: 200 })),
+    );
+
     await t.action(internal.storage.refreshActiveMirrors, {});
 
     await t.run(async (ctx) => {

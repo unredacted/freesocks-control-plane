@@ -359,16 +359,30 @@ export const refreshActiveMirrors = internalAction({
             // For a member who only ever uses the mirror URL this is the ONLY
             // place the pin gets written, and without it their next switch-server
             // finds no pin to rotate and refuses with `no_alternative` even
-            // though the squad has other nodes. Before the hash short-circuit:
-            // the pin can move while the bytes stay identical.
-            if (fetched.pinnedNode) {
+            // though the squad has other nodes.
+            //
+            // The pin must describe the node the member's mirror ACTUALLY serves,
+            // so it is written at exactly the two points where that is true:
+            // unchanged content (the mirror already holds this node's config), or
+            // a successful upload. Writing it before a failed upload would record
+            // a node the member is not on, and their next switch would then
+            // exclude the wrong one.
+            const recordPin = async () => {
+              if (!fetched.pinnedNode) return;
               await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
                 subscriptionId: sub.id,
                 node: fetched.pinnedNode,
               });
-            }
+            };
             const hash = await sha256Hex(fetched.content);
-            if (hash === sub.rawContentHash) continue; // unchanged → no re-upload
+            if (hash === sub.rawContentHash) {
+              // Nothing to re-upload — but the pin can move while the bytes stay
+              // identical, and the mirror is already correct, so record it.
+              await recordPin();
+              continue;
+            }
+            // Throws only if EVERY provider failed (caught below → sub skipped,
+            // pin deliberately unrecorded: the mirror still serves the old node).
             const mirrors = await uploadToProviders(targets, {
               objectPath: sub.objectPath,
               content: fetched.content,
@@ -386,6 +400,8 @@ export const refreshActiveMirrors = internalAction({
               failedProviders,
               rawContentHash: hash,
             });
+            // At least one provider now serves this node's config.
+            await recordPin();
             refreshed++;
           } catch {
             /* best-effort per sub: one backend/S3 hiccup must not stall the sweep */
