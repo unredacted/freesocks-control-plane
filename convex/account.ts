@@ -1218,6 +1218,10 @@ export const switchServer = internalAction({
     const modeBlocked =
       canPlaceBackend && (await isEffectiveModeBlocked(ctx, tier.backend, modeId));
     const canPlace = canPlaceBackend && !modeBlocked;
+    // The panel this key actually lives on. Resolved once: the in-place lever
+    // pins to it, and the cross-panel probe compares against it to tell a real
+    // relocation from a same-panel shuffle.
+    const ownPanelId = canPlaceBackend ? await resolveOwnPanel(ctx, oldSub, tier.backend) : null;
     const settings = await ctx.runQuery(internal.appSettings.resolved, {});
 
     const audit = async (payload: {
@@ -1332,7 +1336,7 @@ export const switchServer = internalAction({
 
     // (1) A different squad on this key's own panel.
     if (canPlace) {
-      const pinServerId = await resolveOwnPanel(ctx, oldSub, tier.backend);
+      const pinServerId = ownPanelId;
       const rand = new Uint32Array(1);
       crypto.getRandomValues(rand);
       const { placement } = await ctx.runQuery(internal.connectionModes.resolveIssueTarget, {
@@ -1452,10 +1456,21 @@ export const switchServer = internalAction({
     // mints a key and tombstones the old one, which is far too much to spend
     // landing back where we started.
     const crossPanel = await resolveCrossPanelTarget();
-    if (
-      crossPanel.unattributedMultiPanel ||
-      (crossPanel.placement !== null && crossPanel.placement !== (oldSub.backendPlacement ?? null))
-    ) {
+    const knownSource = oldSub.backendPlacement ?? null;
+    // With a KNOWN current squad, a different resolved squad is proof enough.
+    // With an UNKNOWN one (a legacy row) it is not: `excludePlacement` was null,
+    // so the pick can be the very squad the key already sits in, and on a
+    // one-squad/one-node pool the re-issue would then tombstone a working key,
+    // re-register the member's devices and land them on the same server — while
+    // reporting success. A different PANEL is the one thing that still proves a
+    // move without knowing the squad: a key created on panel B is by definition
+    // not on panel A. (Such a row can also recover a recorded placement via
+    // regenerate, after which its switches are provable the normal way.)
+    const provenAlternative =
+      knownSource !== null
+        ? crossPanel.placement !== null && crossPanel.placement !== knownSource
+        : crossPanel.serverId !== null && crossPanel.serverId !== ownPanelId;
+    if (crossPanel.unattributedMultiPanel || provenAlternative) {
       return reissue(crossPanel);
     }
 

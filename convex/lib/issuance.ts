@@ -77,6 +77,19 @@ export async function issueNewSubscription(
       userId: input.userId,
       subscriptionId,
     });
+    // Only now that the saga has committed: a carry brings the member's mirror
+    // metadata onto this row, but not the S3 object, which still holds the OLD
+    // key's config until something rewrites it. Waiting for the periodic sweep
+    // is not enough (its per-run scan is bounded, so on a large fleet a row's
+    // turn can fall outside the old key's 24h grace). Scheduling it any EARLIER
+    // would race compensation: a failed saga would leave the shared object
+    // holding a key that was then deleted. Harmlessly no-ops when the row has no
+    // mirrors.
+    if (input.carrySubTokenFromId) {
+      await ctx.scheduler.runAfter(0, internal.storage.refreshMirrorsForSubscription, {
+        subscriptionId,
+      });
+    }
 
     return {
       subscriptionId,

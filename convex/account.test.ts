@@ -2085,12 +2085,12 @@ describe('account.switchServer', () => {
     );
   });
 
-  test('a LEGACY key with no recorded squad re-issues rather than faking an in-place move', async () => {
-    // Without a source placement, "different from null" proves nothing: the key
-    // may already sit in the squad we resolved, so an in-place PATCH could be a
-    // no-op reported as a move. The re-issue path stays open (it mints a new key
-    // and applies the node exclusion, exactly as regenerate does) and, crucially,
-    // RECORDS the placement — so the member's next switch is provable.
+  test('a LEGACY key with no recorded squad refuses on a single-panel deployment', async () => {
+    // With no source placement AND no second panel, nothing can prove a move:
+    // the resolved squad may be the one the key already sits in, so re-issuing
+    // would tombstone a working key and re-register the member's devices to land
+    // them on the same server. Refuse instead. (regenerate still records a
+    // placement for such a row, after which its switches are provable.)
     vi.stubEnv('DEV_MOCK_BACKEND', '');
     vi.stubEnv('ENVIRONMENT', 'production');
     const t = convexTest(schema, modules);
@@ -2105,45 +2105,91 @@ describe('account.switchServer', () => {
       }),
     );
     await seedKey(t, userId); // legacy: no backendPlacement, no pinnedNode
-    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
-      if (String(input).includes('/api/users') && init?.method === 'PATCH') {
-        throw new Error('no in-place PATCH should be attempted for an unknown source placement');
-      }
-      return new Response(
-        JSON.stringify({
-          response: {
-            uuid: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
-            shortUuid: 'newshort',
-            username: 'u2',
-            status: 'ACTIVE',
-            trafficLimitBytes: null,
-            trafficLimitStrategy: 'MONTH',
-            userTraffic: { usedTrafficBytes: 0 },
-            expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
-            hwidDeviceLimit: null,
-            subscriptionUrl: 'https://panel.test/sub/newshort',
-          },
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
-    });
+    const fetchMock = panelStub();
     vi.stubGlobal('fetch', fetchMock);
 
     const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
-    // Re-issued, never claimed as in-place.
-    expect(res).toMatchObject({ ok: true, inPlace: false });
-    expect(
-      fetchMock.mock.calls.some(
-        ([input, init]) => String(input).includes('/api/users') && init?.method === 'PATCH',
+    expect(res).toMatchObject({ ok: false, code: 'server.no_alternative' });
+    await t.run(async (ctx) => {
+      const subs = await ctx.db.query('subscriptions').collect();
+      expect(subs).toHaveLength(1); // working key untouched
+      expect(subs[0]!.state).toBe('active');
+    });
+    // Neither a squad PATCH nor a create was attempted.
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/users'))).toBe(
+      false,
+    );
+  });
+
+  test('a LEGACY key DOES re-issue when another panel is available', async () => {
+    // A different panel is the one proof that survives an unknown squad: a key
+    // created on panel B is by definition not on panel A.
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t, { backend: 'remnawave' });
+    const userId = await seedUser(t, tierId);
+    const { instanceId } = await seedKey(t, userId); // legacy: no placement
+    await t.run(async (ctx) => {
+      const other = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'other',
+        slug: 'other',
+        config: { type: 'remnawave', baseUrl: 'https://panel2.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('modePlacements', {
+        modeSlug: 'freedom-ws',
+        backend: 'remnawave',
+        config: JSON.stringify({ squadUuids: [SQUAD_B] }),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('remnawaveNodeStats', {
+        backendServerId: other,
+        placement: SQUAD_B,
+        usersOnline: 0,
+        online: true,
+        nodeCount: 2,
+        lastStatsAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return { other, instanceId };
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              response: {
+                uuid: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+                shortUuid: 'newshort',
+                username: 'u2',
+                status: 'ACTIVE',
+                trafficLimitBytes: null,
+                trafficLimitStrategy: 'MONTH',
+                userTraffic: { usedTrafficBytes: 0 },
+                expireAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+                hwidDeviceLimit: null,
+                subscriptionUrl: 'https://panel2.test/sub/newshort',
+              },
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
       ),
-    ).toBe(false);
+    );
+
+    const res = await t.action(internal.account.switchServer, { userId, reason: 'slow' });
+    expect(res).toMatchObject({ ok: true, inPlace: false });
     await t.run(async (ctx) => {
       const fresh = (await ctx.db.query('subscriptions').collect()).find(
         (x) => x.state === 'active',
       )!;
-      // The placement is now recorded, so the NEXT switch can prove a move.
-      expect(fresh.backendPlacement).toBeTruthy();
-      expect(fresh.subToken).toBe('tok-abc'); // saved link still works
+      expect(fresh.backendPlacement).toBe(SQUAD_B); // recorded → next switch provable
+      expect(fresh.subToken).toBe('tok-abc');
     });
   });
 

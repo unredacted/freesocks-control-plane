@@ -168,15 +168,6 @@ export const insertSubscription = internalMutation({
       state: 'active',
       updatedAt: Date.now(),
     });
-    // Carried mirrors still hold the OLD key's config until something rewrites
-    // the object. Do it now rather than waiting for the 6h sweep, whose scan is
-    // bounded per run — on a large fleet a row's turn can fall outside the 24h
-    // grace, and the mirror would then serve a key that no longer routes.
-    if (carriedMirrors) {
-      await ctx.scheduler.runAfter(0, internal.storage.refreshMirrorsForSubscription, {
-        subscriptionId: inserted,
-      });
-    }
     return inserted;
   },
 });
@@ -549,7 +540,15 @@ export const markSubscriptionDeleted = internalMutation({
         if (restoreToken || restoreMirrors) {
           await ctx.db.patch(source._id, {
             ...(restoreToken ? { subToken: dying.subToken } : {}),
-            ...(restoreMirrors ? { subscriptionMirrors: dying.subscriptionMirrors } : {}),
+            // Returning the mirrors also INVALIDATES the source's content hash.
+            // The failed saga may have rewritten the shared object with the
+            // replacement key's config before compensation ran; leaving the old
+            // hash in place would make the next refresh fetch the source key,
+            // see a match, and skip the rewrite — stranding a deleted key's
+            // config in the member's mirror permanently.
+            ...(restoreMirrors
+              ? { subscriptionMirrors: dying.subscriptionMirrors, rawContentHash: undefined }
+              : {}),
             updatedAt: Date.now(),
           });
         }
