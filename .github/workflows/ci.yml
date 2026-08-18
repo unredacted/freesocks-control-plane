@@ -14,7 +14,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Bun version comes from `packageManager` in package.json — ONE source of
       # truth shared with the Dockerfile base images (convex/deployPins.test.ts
       # locks those to it). A literal `bun-version:` here would be a fourth copy
@@ -48,7 +48,7 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: shellcheck the docker scripts
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
@@ -66,7 +66,7 @@ jobs:
   reproducible-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Same single source of truth as the `check` job above. A reproducible
       # build especially must not pin Bun independently of the images.
       - uses: oven-sh/setup-bun@v2
@@ -84,7 +84,7 @@ jobs:
   caddyfile:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Guard against digest drift vs docker/web.Dockerfile
         run: |
           ci_digest="$(grep -oP 'caddy:2-alpine@sha256:\K[0-9a-f]{64}' .github/workflows/ci.yml | head -1)"
