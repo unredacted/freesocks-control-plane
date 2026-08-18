@@ -112,19 +112,33 @@ updates:
     groups:
       actions:
         patterns: ['*']
-# --- application dependencies (opt-in) --------------------------------------
-# Not enrolled. The tree is large (Svelte/Vite/Tailwind/Convex) and a weekly
-# firehose of PRs against a security-sensitive SPA is worse than a deliberate
-# `bun update` with the full suite green. Uncomment to enrol; group aggressively
-# if you do.
-#
-#  - package-ecosystem: bun
-#    directory: /
-#    schedule:
-#      interval: monthly
-#    open-pull-requests-limit: 3
-#    labels: [dependencies]
-#    groups:
-#      all-minor-patch:
-#        patterns: ['*']
-#        update-types: [minor, patch]
+  # --- the convex CLI/client (npm) ------------------------------------------
+  # The THIRD Convex version in the stack, and the only one with real semver —
+  # this is what ship.convex.dev publishes (v1.44.0 and friends). It is not the
+  # backend: `ghcr.io/get-convex/convex-*` has never carried a semver tag, only
+  # per-commit git shas (the curated `self-hosted-release-<date>-<sha>` git tags
+  # stopped in 2025-09).
+  #
+  # It matters because `docker/deploy-entrypoint.sh` runs `bunx convex …` from
+  # THIS lockfile: the pinned CLI is what pushes functions, schema and env to the
+  # pinned backend, and Convex's self-hosted README says to keep it current
+  # ("you'll need the latest version of Convex").
+  #
+  # `allow` keeps this to the convex packages only. The rest of the tree
+  # (Svelte/Vite/Tailwind) stays out on purpose: a weekly firehose of PRs against
+  # a security-sensitive SPA is worse than a deliberate `bun update` with the
+  # full suite green. Widen `allow`, don't delete it, if that changes.
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels: [dependencies]
+    commit-message:
+      prefix: chore(deps)
+    allow:
+      - dependency-name: convex
+      - dependency-name: '@convex-dev/*'

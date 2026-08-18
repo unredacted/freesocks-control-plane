@@ -369,3 +369,25 @@ bunx convex import --replace-all snapshot.zip
 > `.github/workflows/convex-release-watch.yml` files an issue when the pin falls
 > behind, and `convex/deployPins.test.ts` fails the build if the two images
 > drift apart or someone re-floats one to `:latest`.
+
+### Three Convex versions, only one of them semver
+
+Easy to conflate, so worth stating plainly:
+
+| what                        | where                       | versioning                           | tracked by                   |
+| --------------------------- | --------------------------- | ------------------------------------ | ---------------------------- |
+| `convex-backend` image      | `docker-compose.stack.yml`  | 40-char git sha = one GitHub release | `convex-release-watch.yml`   |
+| `convex-dashboard` image    | `docker-compose.stack.yml`  | same git sha, must match the backend | `deployPins.test.ts`         |
+| `convex` npm (client + CLI) | `package.json` / `bun.lock` | real semver (`1.44.0`)               | Dependabot (`bun` ecosystem) |
+
+The versions on [ship.convex.dev](https://ship.convex.dev/) are the **npm
+package**, not the backend image — there is no `convex-backend:v1.44.0` to pin
+to, and there never has been. The images carry only per-commit git shas plus
+`latest` (the curated `self-hosted-release-<date>-<sha>` git tags stopped in
+2025-09).
+
+The npm half is not cosmetic: `docker/deploy-entrypoint.sh` runs `bunx convex …`
+from this repo's lockfile, so the pinned CLI is what pushes functions, schema and
+env to the pinned backend. Convex's self-hosted README asks you to keep it
+current, which is why `convex` (and `@convex-dev/*`) are the only npm packages
+enrolled in Dependabot.
