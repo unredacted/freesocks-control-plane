@@ -54,8 +54,9 @@ jobs:
             exit 1
           fi
           behind=$((line - 1))
+          pinned_tag="$(sed -n "${line}p" releases.txt)"
           newest="$(head -1 releases.txt)"
-          echo "pinned $short is $behind release(s) behind; newest is $newest"
+          echo "pinned $pinned_tag is $behind release(s) behind; newest is $newest"
 
           existing="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" \
             --json number --jq '.[0].number // empty')"
@@ -72,13 +73,18 @@ jobs:
 
           | | |
           |---|---|
-          | pinned | \`$pinned\` |
+          | pinned | \`$pinned_tag\` (\`$pinned\`) |
           | newest | \`$newest\` |
-          | changes | https://github.com/$UPSTREAM/compare/$pinned...HEAD |
+          | changes | https://github.com/$UPSTREAM/compare/$pinned_tag...$newest |
 
           Convex stopped maintaining \`self-hosted/CHANGELOG.md\` in 2025-09 ("check
           \`git log\` for a detailed listing of changes"), so that compare view **is** the
           changelog. Read it before upgrading.
+
+          It is pinned release to newest release, deliberately — NOT \`...HEAD\`. Convex
+          ships most days, so HEAD is normally ahead of the newest release and a
+          \`...HEAD\` range would show commits that are not in the upgrade you are
+          being offered.
 
           Upgrading (\`self-hosted/advanced/upgrading.md\`):
 
