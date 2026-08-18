@@ -92,7 +92,7 @@ services:
   postgres:
     # Pinned by digest like every other image (re-pin on upgrade:
     # docker buildx imagetools inspect postgres:18).
-    image: postgres:18@sha256:4aabea78cf39b90e834caf3af7d602a18565f6fe2508705c8d01aa63245c2e20
+    image: postgres:18@sha256:06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941
     pids_limit: 512
     restart: unless-stopped
     logging: *log

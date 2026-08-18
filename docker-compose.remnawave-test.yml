@@ -3,7 +3,11 @@
 # NOT for production and NOT part of the FCP stack — a throwaway panel that a
 # real end-to-end test drives FCP's Remnawave provider against, so a contract
 # drift (endpoint path / response shape / version bump) fails a test instead of
-# silently shipping. Pinned to the latest Remnawave release (2.8.0) + Postgres 18.
+# silently shipping. Pinned to a Remnawave release + Postgres (the `image:` lines
+# below are the only statement of which — repeating a version in prose here just
+# goes stale the first time Dependabot bumps the pin). Keep the panel version
+# aligned with what the REAL panels run, or this test asserts a contract
+# production does not have.
 #
 # Fresh state every `up` (no persistent DB volume) so the bootstrap can always
 # register the first admin. Bring the whole thing up + test + tear down with:
