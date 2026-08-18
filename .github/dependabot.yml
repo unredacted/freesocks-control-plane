@@ -1,0 +1,116 @@
+# Dependabot version updates.
+#
+# Scope: the container supply chain only (compose image pins, Dockerfile base
+# images, CI action pins). Application dependencies (bun.lock) are deliberately
+# NOT enrolled — see the commented block at the bottom.
+#
+# Everything in the stack is digest-pinned on purpose (supply-chain safety, see
+# the docker-compose.stack.yml header). Re-pinning by hand is easy to forget:
+# the prod backup sidecar ran a broken image for four weeks in Aug 2026 because
+# nothing was watching. Dependabot updates BOTH halves of a `tag@sha256:` pin,
+# and for the digest-only Convex pins it tracks the digest behind `:latest`.
+#
+# Everything here opens a PR; nothing auto-merges. Review before deploying, and
+# note that a deploy is `up -d --build --force-recreate` (docs/beta-deploy.md §6).
+#
+# CROSS-UPDATER HAZARD: three pins live in more than one file, and the compose
+# and docker updaters below are independent — one upstream release arrives as
+# TWO PRs that can each pass CI and merge alone. Dependabot cannot group across
+# ecosystems, so `convex/deployPins.test.ts` is the guard: it fails the moment
+# the halves disagree, forcing them into a single PR. The one that bites is
+# postgres — the server pin is in the compose file, the sidecar's `pg_dump` is
+# `FROM postgres:…` in docker/backup.Dockerfile, and an older pg_dump refuses to
+# dump a newer-major server, so a compose-only bump silently breaks backups.
+
+version: 2
+updates:
+  # --- compose image pins ---------------------------------------------------
+  # Matches docker-compose.yml, docker-compose.stack.yml and
+  # docker-compose.remnawave-test.yml: Dependabot's compose matcher is
+  # /(docker-)?compose(-[\w]+)?(\.[\w-]+)?\.ya?ml/i, so the `.stack` /
+  # `.remnawave-test` infixes are covered.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore(docker)
+    groups:
+      compose-images:
+        patterns: ['*']
+        # Only minor/patch ride together. A major (postgres 19, valkey 10) does
+        # NOT match the group and so lands as its own PR — "Any outdated
+        # dependencies that do not match a rule are updated in individual pull
+        # requests." Deliberately NOT `ignore`d: a Postgres major is a
+        # dump/restore across the data dir (docs/beta-deploy.md § Backups) and a
+        # valkey major has changed the on-disk format before, so those are
+        # exactly the bumps that must stay VISIBLE. A PR is a notification, not
+        # a merge — read it, then sit on it.
+        update-types: [minor, patch]
+    # Read the Convex PRs with extra care: `ghcr.io/get-convex/convex-*` are
+    # pinned by digest with NO tag, so Dependabot tracks whatever `:latest`
+    # currently is — that can carry a backend/schema change, not just a patch.
+    # Same for `tiago2/cap:latest` (the accepted-risk image, see
+    # docs/beta-deploy.md § "Cap image provenance").
+
+  # --- Dockerfile base images ----------------------------------------------
+  # docker/{web,deploy,backup}.Dockerfile. Two of these are half of a cross-file
+  # pin (see CROSS-UPDATER HAZARD above): `postgres` must equal the compose
+  # server pin, and `oven/bun` must equal `packageManager` in package.json —
+  # which Dependabot does NOT touch, since the bun ecosystem is not enrolled.
+  # Both are enforced by convex/deployPins.test.ts.
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore(docker)
+    groups:
+      base-images:
+        patterns: ['*']
+        # Same rule as above — a caddy 3 or postgres 19 base-image bump arrives
+        # as its own PR (a Caddyfile format review, not a redeploy) rather than
+        # riding along in a digest sweep or being silently suppressed.
+        update-types: [minor, patch]
+
+  # --- CI action pins -------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: chore(ci)
+    groups:
+      actions:
+        patterns: ['*']
+# --- application dependencies (opt-in) --------------------------------------
+# Not enrolled. The tree is large (Svelte/Vite/Tailwind/Convex) and a weekly
+# firehose of PRs against a security-sensitive SPA is worse than a deliberate
+# `bun update` with the full suite green. Uncomment to enrol; group aggressively
+# if you do.
+#
+#  - package-ecosystem: bun
+#    directory: /
+#    schedule:
+#      interval: monthly
+#    open-pull-requests-limit: 3
+#    labels: [dependencies]
+#    groups:
+#      all-minor-patch:
+#        patterns: ['*']
+#        update-types: [minor, patch]

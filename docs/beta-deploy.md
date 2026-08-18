@@ -189,6 +189,88 @@ docker compose -f docker-compose.stack.yml --env-file .env.beta exec web \
   caddy reload --config /etc/caddy/Caddyfile
 ```
 
+### Reading the build output (what scrolled past?)
+
+On a TTY, BuildKit collapses each `RUN` step to the last handful of lines
+(`=> => # …`) and overwrites them in place, so `bun run build` chatter flies by
+unreadably. Two things to know before chasing it:
+
+**A build that finished did not hit an error.** `bun run build` exits non-zero on
+a real failure, which fails the `RUN`, which aborts the build — and BuildKit then
+prints that step's full log at the end and stops. So anything you saw scroll past
+on a build that reached `Successfully built` was a **warning**, by construction.
+
+To read them anyway, disable the collapsing renderer and tee to a file. **Every
+recipe below starts with `set -o pipefail`, and that line is not optional:** a
+shell pipeline reports the exit status of its LAST command, so without it a
+failed build hands you `tee`'s cheerful `0` and the guarantee above quietly stops
+holding. (`pipefail` is a shell option, not a per-command flag — set it once per
+interactive shell and every later pipeline inherits it, or keep pasting the whole
+block.)
+
+`--progress` is a **global** compose flag, so it goes before the subcommand, not
+after (`docker compose build --progress=plain` warns and tells you the same):
+
+```sh
+set -o pipefail
+docker compose --progress plain -f docker-compose.stack.yml --env-file .env.beta \
+  build web 2>&1 | tee /tmp/fcp-build.log
+echo "build exit: $?"
+```
+
+The same flag works on the combined deploy command, which is usually what you
+actually want to capture:
+
+```sh
+set -o pipefail
+docker compose --progress plain -f docker-compose.stack.yml --env-file .env.beta \
+  up -d --build --force-recreate web deployer 2>&1 | tee /tmp/fcp-deploy.log
+echo "deploy exit: $?"
+```
+
+A non-zero exit there means the build failed or a container was not recreated —
+do not read the log for warnings and assume you deployed. Confirm the deploy
+landed the usual way regardless (`logs --tail=40 deployer` ends with
+`[deploy] OK`).
+
+**If the step prints `CACHED` with no output**, add `--no-cache` to a `build web`
+run. It is slow (it re-runs `bun install` too), but it is the only in-Docker way
+to force the step, and the deploy host has nothing else — §0 requires Docker and
+compose and explicitly _not_ Bun, so a bare `bun run build` there just fails with
+`command not found`. In practice you rarely need it: `RUN bun run build` sits
+after `COPY . .`, so any source change invalidates the layer and a real deploy
+after a `git pull` always executes it. `CACHED` means you are re-running a build
+whose output you already have.
+
+```sh
+set -o pipefail
+docker compose --progress plain -f docker-compose.stack.yml --env-file .env.beta \
+  build --no-cache web 2>&1 | tee /tmp/fcp-build.log
+echo "build exit: $?"
+```
+
+On a **dev machine** (not the deploy host), `bun run build` is the identical
+command the image runs and is far quicker to iterate against.
+
+A non-zero exit there means the build failed or a container was not recreated —
+do not read the log for warnings and assume you deployed. Confirm the deploy
+landed the usual way regardless (`logs --tail=40 deployer` ends with
+`[deploy] OK`).
+
+Known-benign lines you will see and can ignore:
+
+- **`See https://rolldown.rs/options/checks#plugintimings`** with a plugin
+  percentage breakdown — a Rolldown performance report, not a diagnostic.
+- **`Some chunks are larger than 500 kB`** — the member SPA entry chunk is ~1.2 MB
+  (365 kB gzipped). Real, known, and tracked; the admin CMS and the E2EE crypto
+  are already split out.
+- **`Failed to resolve http.js:/api/...`** and **`Module not in functions: …`** in
+  the _backend_ log during a `convex deploy` — benign analyzer chatter (above).
+
+`@hpke/common`'s `INVALID_ANNOTATION` blocks used to dominate this log; they are
+muted in `vite.config.ts` (`build.rolldownOptions.checks`) precisely so the list
+above stays short enough to scan.
+
 ## One-off functions (running `bunx convex …` against the stack)
 
 The host shell has no Convex CLI credentials, so a bare `bunx convex run` /
