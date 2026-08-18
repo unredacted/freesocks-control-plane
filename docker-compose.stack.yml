@@ -168,7 +168,7 @@ services:
   # Admin-only Convex dashboard, bound to localhost (reach via SSH tunnel:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
   dashboard:
-    image: ghcr.io/get-convex/convex-dashboard@sha256:60b04b339d6cd6623057b03e5275329a20011051907ec5e689a38a401cfdc409
+    image: ghcr.io/get-convex/convex-dashboard@sha256:284a2638e0c1a4ec0c2327d8219776f3a426ca5824b81686ae4d9454dc0ce8ed
     pids_limit: 256
     restart: unless-stopped
     logging: *log
