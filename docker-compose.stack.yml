@@ -194,7 +194,7 @@ services:
   # (CAP_API_ENDPOINT=http://cap:3000).
   cap:
     # Pinned by digest (re-pin on upgrade: docker buildx imagetools inspect tiago2/cap:latest).
-    image: tiago2/cap:latest@sha256:97455d85b5517172397c7053837d377c72ded6250777928d5435c3eab2f58779
+    image: tiago2/cap:latest@sha256:98fdaaf4ffe6bea18549484a431c601399f24dd561370e196970e6fc0e6b79d0
     pids_limit: 256
     restart: unless-stopped
     logging: *log
