@@ -7,8 +7,7 @@
 # Everything in the stack is digest-pinned on purpose (supply-chain safety, see
 # the docker-compose.stack.yml header). Re-pinning by hand is easy to forget:
 # the prod backup sidecar ran a broken image for four weeks in Aug 2026 because
-# nothing was watching. Dependabot updates BOTH halves of a `tag@sha256:` pin,
-# and for the digest-only Convex pins it tracks the digest behind `:latest`.
+# nothing was watching. Dependabot updates BOTH halves of a `tag@sha256:` pin.
 #
 # Everything here opens a PR; nothing auto-merges. Review before deploying, and
 # note that a deploy is `up -d --build --force-recreate` (docs/beta-deploy.md §6).
@@ -30,14 +29,17 @@ updates:
   # /(docker-)?compose(-[\w]+)?(\.[\w-]+)?\.ya?ml/i, so the `.stack` /
   # `.remnawave-test` infixes are covered.
   #
-  # Three of these want a human, not a rubber stamp:
-  #  - `ghcr.io/get-convex/convex-*` are pinned by digest with NO tag, so this
-  #    tracks `:latest`. Convex publishes a build most days and ships no
-  #    per-image release notes (the registry carries only `latest` + git-sha
-  #    tags), so a green PR here means "Convex HEAD moved", not "a release
-  #    happened". Merge when you intend to upgrade, not because it is open.
+  # NOT here: `ghcr.io/get-convex/convex-*`. Those are pinned to a release git
+  # sha, which Dependabot cannot version-compare (a 40-hex tag fails its
+  # NAME_WITH_VERSION regex), so it will never open a PR for them.
+  # `.github/workflows/convex-release-watch.yml` is their watcher instead, and
+  # convex/deployPins.test.ts keeps backend and dashboard on the same release.
+  # See the comment on the `backend` service in docker-compose.stack.yml.
+  #
+  # Two of the remaining ones want a human, not a rubber stamp:
   #  - `tiago2/cap:latest` is the accepted-risk image (docs/beta-deploy.md
-  #    § "Cap image provenance") — same HEAD-tracking caveat.
+  #    § "Cap image provenance"), tracked by digest on a floating tag — the PR
+  #    tells you the image moved, not what changed in it.
   #  - `remnawave/backend` is only the throwaway integration-test panel in
   #    docker-compose.remnawave-test.yml, whose whole job is to catch provider
   #    contract drift. Bumping it is in scope, but it should track whatever

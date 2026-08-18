@@ -1,0 +1,100 @@
+# Dependabot cannot watch the Convex images.
+#
+# They are pinned to a release git sha (see docker-compose.stack.yml), and a
+# 40-hex tag is not version-comparable — it fails dependabot-core's
+# NAME_WITH_VERSION regex, so no update is ever proposed. The tag is worth
+# keeping anyway: it names a GitHub release, and `git log <pinned>..<target>` is
+# the only changelog Convex still publishes for self-hosted.
+#
+# This job is the replacement notification. It files (and keeps updating) a
+# single issue while newer releases exist, and closes it once the pin catches
+# up — so the pin cannot quietly rot the way the backup sidecar's image did for
+# four weeks in Aug 2026.
+name: Convex release watch
+
+on:
+  schedule:
+    # Mondays, just after Dependabot's 09:00 UTC run.
+    - cron: '15 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM: get-convex/convex-backend
+      ISSUE_TITLE: 'Convex self-hosted: pinned release is behind upstream'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Compare the pinned Convex release against upstream
+        run: |
+          set -euo pipefail
+
+          pinned="$(grep -oE 'ghcr\.io/get-convex/convex-backend:[0-9a-f]{40}' \
+            docker-compose.stack.yml | head -1 | cut -d: -f2)"
+          if [ -z "$pinned" ]; then
+            echo "::error::no git-sha-tagged convex-backend pin found in docker-compose.stack.yml"
+            exit 1
+          fi
+          short="${pinned:0:7}"
+
+          # Releases are `precompiled-<date>-<sha7>`, newest first.
+          gh api --paginate "/repos/$UPSTREAM/releases?per_page=100" \
+            --jq '.[].tag_name' > releases.txt
+
+          line="$(grep -nE -- "-${short}\$" releases.txt | head -1 | cut -d: -f1 || true)"
+          if [ -z "$line" ]; then
+            echo "::error::pinned sha $short matches no $UPSTREAM release — someone pinned an untagged build. Re-pin to a release."
+            exit 1
+          fi
+          behind=$((line - 1))
+          newest="$(head -1 releases.txt)"
+          echo "pinned $short is $behind release(s) behind; newest is $newest"
+
+          existing="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" \
+            --json number --jq '.[0].number // empty')"
+
+          if [ "$behind" -eq 0 ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "Pin is current again ($newest). Closing automatically."
+            fi
+            exit 0
+          fi
+
+          cat > body.md <<EOF
+          The stack pins Convex at \`$short\`; upstream is **$behind release(s)** ahead.
+
+          | | |
+          |---|---|
+          | pinned | \`$pinned\` |
+          | newest | \`$newest\` |
+          | changes | https://github.com/$UPSTREAM/compare/$pinned...HEAD |
+
+          Convex stopped maintaining \`self-hosted/CHANGELOG.md\` in 2025-09 ("check
+          \`git log\` for a detailed listing of changes"), so that compare view **is** the
+          changelog. Read it before upgrading.
+
+          Upgrading (\`self-hosted/advanced/upgrading.md\`):
+
+          1. Take an export first — upgrades run in-place DB migrations.
+          2. Re-pin **both** \`convex-backend\` and \`convex-dashboard\` in
+             \`docker-compose.stack.yml\` to the same new git sha, with fresh digests.
+             They must match, and \`convex/deployPins.test.ts\` fails the build otherwise.
+          3. Deploy, then watch the backend log for \`MigrationComplete(N)\`.
+
+          _Filed automatically by \`.github/workflows/convex-release-watch.yml\`._
+          EOF
+          sed -i 's/^          //' body.md
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file body.md
+            echo "updated issue #$existing"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file body.md
+          fi

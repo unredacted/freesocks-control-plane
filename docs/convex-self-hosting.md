@@ -357,4 +357,15 @@ bunx convex import --replace-all snapshot.zip
 ```
 
 > Pin the `:latest` image tags in `docker-compose.yml` to a specific `:<rev>`
-> before any production use.
+> before any production use. The beta/prod stack already does — see the comment
+> on the `backend` service in `docker-compose.stack.yml`. The short version:
+> every Convex image tag is a 40-char git sha that maps 1:1 to a GitHub release
+> (`precompiled-<date>-<sha7>`), backend and dashboard must be on the SAME sha,
+> and `git log <pinned>..<target>` is the changelog (Convex stopped maintaining
+> `self-hosted/CHANGELOG.md` in 2025-09). Upgrades run in-place DB migrations,
+> so export first and watch for `MigrationComplete(N)`.
+>
+> Dependabot cannot see past a git-sha tag, so
+> `.github/workflows/convex-release-watch.yml` files an issue when the pin falls
+> behind, and `convex/deployPins.test.ts` fails the build if the two images
+> drift apart or someone re-floats one to `:latest`.

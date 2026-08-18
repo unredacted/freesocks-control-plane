@@ -226,16 +226,50 @@ describe('cross-file image pins', () => {
     ).toEqual([]);
   });
 
-  test('every convex-backend pin in the stack is the same digest', () => {
-    const refs = [...stack.matchAll(/image:\s*(ghcr\.io\/get-convex\/convex-backend\S+)/g)].map(
-      (m) => m[1],
+  test('the Convex images are pinned to one release git sha, tag and digest', () => {
+    // Convex is explicit that these two ship together: "Make sure to use the
+    // same version of convex-backend and convex-dashboard. Different versions
+    // are not guaranteed to be compatible with one another."
+    // (get-convex/convex-backend, self-hosted/CHANGELOG.md.)
+    //
+    // Nothing else enforces that. Dependabot sees two unrelated images in two
+    // PRs and cannot know they are halves of one release — the same cross-file
+    // shape as postgres/pg_dump above, one ecosystem further out.
+    const refs = [
+      ...stack.matchAll(
+        /image:\s*ghcr\.io\/get-convex\/(convex-\w+):(\S+?)@(sha256:[a-f0-9]{64})/g,
+      ),
+    ].map(([, image, tag, digest]) => ({ image, tag, digest }));
+
+    // backend x2 (the `backend` service + the one-shot `keygen`, which derives
+    // the admin key with the same binary) + dashboard x1.
+    expect(refs.length, 'expected three ghcr.io/get-convex/* refs in the stack').toBe(3);
+    expect(new Set(refs.map((r) => r.image))).toEqual(
+      new Set(['convex-backend', 'convex-dashboard']),
     );
-    // The backend image is referenced by both the `backend` service and the
-    // one-shot `keygen` (it derives the admin key with the same binary).
-    expect(refs.length).toBeGreaterThan(1);
+
+    // A release tag is the full 40-char git sha. Rejecting `latest` here is the
+    // point: a floating tag cannot be mapped back to a release, and
+    // `git log <pinned>..<target>` is the only changelog Convex still publishes.
+    for (const r of refs) {
+      expect(
+        r.tag,
+        `${r.image} must be pinned to a 40-char release git sha, got "${r.tag}"`,
+      ).toMatch(/^[0-9a-f]{40}$/);
+    }
+
+    const tags = new Set(refs.map((r) => r.tag));
     expect(
-      new Set(refs).size,
-      `convex-backend is pinned to ${new Set(refs).size} different refs`,
+      tags.size,
+      `Convex images span ${tags.size} release shas (${[...tags].map((t) => t.slice(0, 7)).join(', ')}). ` +
+        'Backend and dashboard must be the SAME release, and both backend refs must match each other.',
     ).toBe(1);
+
+    // One image, one digest — a copy/paste slip that left the two backend refs
+    // on different digests would otherwise pass the tag check above.
+    for (const image of ['convex-backend', 'convex-dashboard']) {
+      const digests = new Set(refs.filter((r) => r.image === image).map((r) => r.digest));
+      expect(digests.size, `${image} is pinned to ${digests.size} different digests`).toBe(1);
+    }
   });
 });
