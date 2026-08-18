@@ -216,7 +216,7 @@ services:
   # (CAP_API_ENDPOINT=http://cap:3000).
   cap:
     # Pinned by digest (re-pin on upgrade: docker buildx imagetools inspect tiago2/cap:latest).
-    image: tiago2/cap:latest@sha256:97455d85b5517172397c7053837d377c72ded6250777928d5435c3eab2f58779
+    image: tiago2/cap:latest@sha256:98fdaaf4ffe6bea18549484a431c601399f24dd561370e196970e6fc0e6b79d0
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -253,7 +253,7 @@ services:
     # Pinned by digest (re-pin: docker buildx imagetools inspect valkey/valkey:9-alpine).
     # Cap uses it purely as a Redis-compatible store (challenges/tokens), so the
     # 8→9 bump is transparent; the --save/--appendonly flags below are unchanged.
-    image: valkey/valkey:9-alpine@sha256:11dfc5d3ce9c570a516760935053687aea8e938be51b17cf112f71ab573e6f7b
+    image: valkey/valkey:9-alpine@sha256:ee91f7a174ac4d6a6b0685b3a60e321f0a9dbbb691f9b0e285be2ba1d1be8328
     pids_limit: 128
     restart: unless-stopped
     logging: *log
