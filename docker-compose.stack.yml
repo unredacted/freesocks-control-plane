@@ -35,8 +35,29 @@ x-logging: &log
 
 services:
   backend:
-    # Pinned to the digest tested in dev (immutable). Re-pin when you upgrade.
-    image: ghcr.io/get-convex/convex-backend@sha256:104b8bc70e29b31fa4a57551596090bfc9eedc3d1f27fd4b8cd8d0e782b9b070
+    # Convex ships one image per commit, and EVERY image tag is a GitHub release
+    # (`precompiled-<date>-<sha7>` in get-convex/convex-backend). So the tag here
+    # is the git sha of a release: 1bd6910 = precompiled-2026-07-06-1bd6910.
+    #
+    # The tag is what makes an upgrade auditable. Convex stopped maintaining
+    # self-hosted/CHANGELOG.md in 2025-09 ("check `git log` for a detailed
+    # listing of changes"), so `git log <pinned>..<target>` IS the changelog —
+    # and you can only run it if the pin names a commit. A bare digest cannot
+    # tell you what you are on.
+    #
+    # Dependabot CANNOT bump these (a 40-hex tag fails its NAME_WITH_VERSION
+    # regex, so it is not version-comparable). That is the deliberate trade for
+    # the tag, and .github/workflows/convex-release-watch.yml replaces the
+    # notification — it files an issue when newer releases exist.
+    #
+    # Backend and dashboard MUST share this tag: "Make sure to use the same
+    # version of convex-backend and convex-dashboard. Different versions are not
+    # guaranteed to be compatible" (self-hosted/CHANGELOG.md). One git sha tags
+    # both images; convex/deployPins.test.ts enforces it.
+    #
+    # Upgrading runs in-place DB migrations. Take an export first, then watch for
+    # `MigrationComplete(N)` in the backend log (self-hosted/advanced/upgrading.md).
+    image: ghcr.io/get-convex/convex-backend:1bd6910bc0b4066a918809912670d42afc8fdfb0@sha256:104b8bc70e29b31fa4a57551596090bfc9eedc3d1f27fd4b8cd8d0e782b9b070
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -92,7 +113,7 @@ services:
   postgres:
     # Pinned by digest like every other image (re-pin on upgrade:
     # docker buildx imagetools inspect postgres:18).
-    image: postgres:18@sha256:4aabea78cf39b90e834caf3af7d602a18565f6fe2508705c8d01aa63245c2e20
+    image: postgres:18@sha256:06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -168,7 +189,8 @@ services:
   # Admin-only Convex dashboard, bound to localhost (reach via SSH tunnel:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
   dashboard:
-    image: ghcr.io/get-convex/convex-dashboard@sha256:60b04b339d6cd6623057b03e5275329a20011051907ec5e689a38a401cfdc409
+    # Same release git sha as `backend` above — required, not cosmetic.
+    image: ghcr.io/get-convex/convex-dashboard:1bd6910bc0b4066a918809912670d42afc8fdfb0@sha256:60b04b339d6cd6623057b03e5275329a20011051907ec5e689a38a401cfdc409
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -313,7 +335,7 @@ services:
   # running server needed) and write it to the shared `convexkey` volume for the
   # deployer. The key is accepted by the backend because it shares INSTANCE_SECRET.
   keygen:
-    image: ghcr.io/get-convex/convex-backend@sha256:104b8bc70e29b31fa4a57551596090bfc9eedc3d1f27fd4b8cd8d0e782b9b070
+    image: ghcr.io/get-convex/convex-backend:1bd6910bc0b4066a918809912670d42afc8fdfb0@sha256:104b8bc70e29b31fa4a57551596090bfc9eedc3d1f27fd4b8cd8d0e782b9b070
     pids_limit: 128
     restart: 'no'
     logging: *log

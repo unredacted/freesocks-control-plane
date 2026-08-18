@@ -7,8 +7,7 @@
 # Everything in the stack is digest-pinned on purpose (supply-chain safety, see
 # the docker-compose.stack.yml header). Re-pinning by hand is easy to forget:
 # the prod backup sidecar ran a broken image for four weeks in Aug 2026 because
-# nothing was watching. Dependabot updates BOTH halves of a `tag@sha256:` pin,
-# and for the digest-only Convex pins it tracks the digest behind `:latest`.
+# nothing was watching. Dependabot updates BOTH halves of a `tag@sha256:` pin.
 #
 # Everything here opens a PR; nothing auto-merges. Review before deploying, and
 # note that a deploy is `up -d --build --force-recreate` (docs/beta-deploy.md §6).
@@ -29,6 +28,23 @@ updates:
   # docker-compose.remnawave-test.yml: Dependabot's compose matcher is
   # /(docker-)?compose(-[\w]+)?(\.[\w-]+)?\.ya?ml/i, so the `.stack` /
   # `.remnawave-test` infixes are covered.
+  #
+  # NOT here: `ghcr.io/get-convex/convex-*`. Those are pinned to a release git
+  # sha, which Dependabot cannot version-compare (a 40-hex tag fails its
+  # NAME_WITH_VERSION regex), so it will never open a PR for them.
+  # `.github/workflows/convex-release-watch.yml` is their watcher instead, and
+  # convex/deployPins.test.ts keeps backend and dashboard on the same release.
+  # See the comment on the `backend` service in docker-compose.stack.yml.
+  #
+  # Two of the remaining ones want a human, not a rubber stamp:
+  #  - `tiago2/cap:latest` is the accepted-risk image (docs/beta-deploy.md
+  #    § "Cap image provenance"), tracked by digest on a floating tag — the PR
+  #    tells you the image moved, not what changed in it.
+  #  - `remnawave/backend` is only the throwaway integration-test panel in
+  #    docker-compose.remnawave-test.yml, whose whole job is to catch provider
+  #    contract drift. Bumping it is in scope, but it should track whatever
+  #    version the REAL panels run (the separate Ansible repo), or the
+  #    integration test starts asserting a contract production does not have.
   - package-ecosystem: docker-compose
     directory: /
     schedule:
@@ -36,27 +52,28 @@ updates:
       day: monday
       time: '09:00'
       timezone: Etc/UTC
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     labels: [dependencies, docker]
     commit-message:
       prefix: chore(docker)
     groups:
       compose-images:
+        # NO `update-types` filter, deliberately. It looks like a way to keep
+        # majors out of the group, but it silently drops DIGEST-ONLY updates too
+        # — which is nearly everything here, because every image is digest-
+        # pinned. dependabot-core's `semver_rules_allow_grouping?` bails with
+        # `return false` when either side fails `Version.correct?` (`latest`,
+        # `9-alpine`) and again when major/minor/patch are all equal (`18` ->
+        # `18`), commented there as "some ecosystems don't do semver exactly, so
+        # anything lower gets individual for now". The first run proved it: the
+        # two filtered groups produced ZERO grouped PRs and five individual ones,
+        # while the unfiltered github-actions group below grouped correctly.
+        #
+        # So majors now ride in the group. That is the accepted trade: a major
+        # here fails LOUDLY at deploy (PG19 refuses a PG18 data dir) rather than
+        # silently, the PR body names every bump, and the cross-file locks in
+        # convex/deployPins.test.ts still fail CI on a half-applied one.
         patterns: ['*']
-        # Only minor/patch ride together. A major (postgres 19, valkey 10) does
-        # NOT match the group and so lands as its own PR — "Any outdated
-        # dependencies that do not match a rule are updated in individual pull
-        # requests." Deliberately NOT `ignore`d: a Postgres major is a
-        # dump/restore across the data dir (docs/beta-deploy.md § Backups) and a
-        # valkey major has changed the on-disk format before, so those are
-        # exactly the bumps that must stay VISIBLE. A PR is a notification, not
-        # a merge — read it, then sit on it.
-        update-types: [minor, patch]
-    # Read the Convex PRs with extra care: `ghcr.io/get-convex/convex-*` are
-    # pinned by digest with NO tag, so Dependabot tracks whatever `:latest`
-    # currently is — that can carry a backend/schema change, not just a patch.
-    # Same for `tiago2/cap:latest` (the accepted-risk image, see
-    # docs/beta-deploy.md § "Cap image provenance").
 
   # --- Dockerfile base images ----------------------------------------------
   # docker/{web,deploy,backup}.Dockerfile. Two of these are half of a cross-file
@@ -71,17 +88,14 @@ updates:
       day: monday
       time: '09:00'
       timezone: Etc/UTC
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     labels: [dependencies, docker]
     commit-message:
       prefix: chore(docker)
     groups:
       base-images:
+        # Unfiltered for the same reason as the compose group above.
         patterns: ['*']
-        # Same rule as above — a caddy 3 or postgres 19 base-image bump arrives
-        # as its own PR (a Caddyfile format review, not a redeploy) rather than
-        # riding along in a digest sweep or being silently suppressed.
-        update-types: [minor, patch]
 
   # --- CI action pins -------------------------------------------------------
   - package-ecosystem: github-actions
@@ -98,19 +112,33 @@ updates:
     groups:
       actions:
         patterns: ['*']
-# --- application dependencies (opt-in) --------------------------------------
-# Not enrolled. The tree is large (Svelte/Vite/Tailwind/Convex) and a weekly
-# firehose of PRs against a security-sensitive SPA is worse than a deliberate
-# `bun update` with the full suite green. Uncomment to enrol; group aggressively
-# if you do.
-#
-#  - package-ecosystem: bun
-#    directory: /
-#    schedule:
-#      interval: monthly
-#    open-pull-requests-limit: 3
-#    labels: [dependencies]
-#    groups:
-#      all-minor-patch:
-#        patterns: ['*']
-#        update-types: [minor, patch]
+  # --- the convex CLI/client (npm) ------------------------------------------
+  # The THIRD Convex version in the stack, and the only one with real semver —
+  # this is what ship.convex.dev publishes (v1.44.0 and friends). It is not the
+  # backend: `ghcr.io/get-convex/convex-*` has never carried a semver tag, only
+  # per-commit git shas (the curated `self-hosted-release-<date>-<sha>` git tags
+  # stopped in 2025-09).
+  #
+  # It matters because `docker/deploy-entrypoint.sh` runs `bunx convex …` from
+  # THIS lockfile: the pinned CLI is what pushes functions, schema and env to the
+  # pinned backend, and Convex's self-hosted README says to keep it current
+  # ("you'll need the latest version of Convex").
+  #
+  # `allow` keeps this to the convex packages only. The rest of the tree
+  # (Svelte/Vite/Tailwind) stays out on purpose: a weekly firehose of PRs against
+  # a security-sensitive SPA is worse than a deliberate `bun update` with the
+  # full suite green. Widen `allow`, don't delete it, if that changes.
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels: [dependencies]
+    commit-message:
+      prefix: chore(deps)
+    allow:
+      - dependency-name: convex
+      - dependency-name: '@convex-dev/*'
