@@ -30,7 +30,7 @@ jobs:
       UPSTREAM: get-convex/convex-backend
       ISSUE_TITLE: 'Convex self-hosted: pinned release is behind upstream'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Compare the pinned Convex release against upstream
         run: |
