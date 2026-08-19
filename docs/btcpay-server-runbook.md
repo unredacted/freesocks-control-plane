@@ -271,8 +271,23 @@ funds** (item 3). That exception is the one counter-intuitive thing in this sect
      (which the shipped v26.06 satisfies) export it as a 12-word BIP39 mnemonic with
      `lightning-hsmtool getsecret` and store that on paper, rather than trying to
      archive a binary file offline.
-   - **`emergency.recover`** — required once the node has channels. It is what makes
-     peer-assisted recovery (`emergencyrecover`) possible.
+   - **`emergency.recover`** — required once the node has channels, and **not a
+     write-once artifact.** It carries per-channel data, so a copy taken before a
+     channel existed cannot recover that channel. CLN's docs do not state the exact
+     write trigger, so do not reason about it: **re-copy it off-host whenever the
+     channel set changes** (open or close), confirm the file actually changed, and
+     prefer a scripted copy over remembering. This matters most in the
+     no-replication posture permitted below, where it is the primary artifact rather
+     than a backstop — an operator who saves it once at bring-up and opens a channel
+     three months later has a backup that silently excludes the channel holding the
+     money.
+
+     Know what it buys, too: `emergencyrecover` is **passive**. It prompts your peers
+     to force-close, after which the node sweeps the funds on-chain — it recovers
+     _funds_, not a working channel. And CLN cautions recovering only from state you
+     are sure is **latest**, since outdated state risks permanent loss through the
+     penalty mechanism.
+
    - **The channel database** — and here the usual advice inverts. CLN's docs call
      real-time replication "the recommended approach to backing up node data" and
      state that snapshot-style backups are **discouraged**, because _"any loss of state
@@ -356,6 +371,8 @@ hand; the runbook for both will be `docs/finance-offramp.md`.
 - [ ] Wallet descriptor/xpub and Postgres backup taken
 - [ ] CLN `hsm_secret` exported as a BIP39 mnemonic (`lightning-hsmtool getsecret`)
       and `emergency.recover` saved — **not** a snapshot of the channel DB
+- [ ] A scripted off-host copy of `emergency.recover` that re-runs on channel changes
+      (a bring-up-only copy goes stale the first time a channel is opened)
 - [ ] CLN database replication configured and confirmed writing, or the Lightning
       balance deliberately kept small because it is unbacked
 - [ ] A restore actually **tested**, not just taken
