@@ -120,13 +120,18 @@ CDN an off switch, since blocking the next request (`unreachable`) or stripping 
 (`stale`) would clear the banner. Inconclusive is not exculpatory.
 
 Because an expired epoch is indistinguishable from a tampered one at the crypto layer,
-both ends refuse to let a cache create that state: the client fetches the key endpoint
-with `cache: 'no-cache'` (never use a cached body without revalidating at the origin,
-while still letting caches be populated and answer with a 304), and the server clamps the
-response `max-age` to the epoch's own remaining validity, sending `no-store` during a
-rotation gap. The clamp is a guarantee rather than a hot path: rotation every 10 minutes
-against a 30-minute validity means the epoch on the wire normally has 20+ minutes left,
-so a conformant 60-second cache could not serve an expired one anyway.
+the **server** is what keeps a cache from creating that state: the key endpoint clamps its
+response `max-age` to the epoch's own remaining validity, and sends `no-store` during a
+rotation gap. That clamp is load-bearing — raising `max-age` past the epoch validity would
+reintroduce the bug — and it is why the client can then read the endpoint under normal
+cache rules.
+
+The client deliberately does **not** force revalidation. The fetch-spec cache modes
+(`no-store`, `no-cache`) send `max-age=0`, which punches every request past the CDN to the
+origin, where the per-IP `e2ee.keys.fetch` policy lives; and a per-browser cache saves
+nothing for many distinct clients sharing one carrier-grade NAT, which only the shared CDN
+cache can absorb. Bypassing it would trade a bounded, now-quiet staleness for 429s and a
+silent static-key fallback precisely where censorship makes NAT sharing the norm.
 
 The client also re-attests every 5 minutes and on refocus or regained connectivity
 (throttled to one check per minute), so a long-lived tab's verdict is current rather than

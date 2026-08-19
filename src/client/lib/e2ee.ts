@@ -193,19 +193,24 @@ function applyRevocation(r: {
 }
 
 /**
- * Fetch the server-attested key material, never accepting a cached body without
- * asking the origin first.
+ * Fetch the server-attested key material under NORMAL cache rules, deliberately.
  *
- * An epoch that has expired is indistinguishable at the crypto layer from one an
- * attacker swapped in, so a cache that hands back a long-dead response corrupts the
- * verdict (and silently keeps the seal path on the static key, losing the epoch's
- * forward secrecy). `cache: 'no-cache'` rather than `'no-store'`: it forbids using a
- * cached response unvalidated - the actual guarantee we need - while still letting
- * the cache be populated and a cheap 304 answer the revalidation, so the endpoint's
- * own `max-age` keeps working for shared caches.
+ * An expired epoch is indistinguishable at the crypto layer from one an attacker
+ * swapped in, and the fix for that lives on the server: the endpoint clamps its
+ * `max-age` to the epoch's own remaining validity (`no-store` during a rotation
+ * gap), so no conformant cache can hand back a dead key. That clamp is load-bearing
+ * - raising max-age past the validity would reintroduce the bug.
+ *
+ * Forcing revalidation from here instead (`no-store` / `no-cache`, both tried) is
+ * WORSE for the population this serves: the fetch-spec cache modes send
+ * `max-age=0`, which punches every request past the CDN to the origin, where the
+ * per-IP `e2ee.keys.fetch` policy lives. A per-browser cache saves nothing for many
+ * distinct clients behind one carrier-grade NAT - only the shared CDN cache does -
+ * so bypassing it trades a bounded, quiet staleness for 429s and a silent
+ * static-key fallback exactly where censorship makes NAT sharing the norm.
  */
 function fetchKeys(): Promise<Response> {
-  return fetch('/api/v1/e2ee/keys', { credentials: 'omit', cache: 'no-cache' });
+  return fetch('/api/v1/e2ee/keys', { credentials: 'omit' });
 }
 
 async function refreshEpoch(): Promise<void> {
