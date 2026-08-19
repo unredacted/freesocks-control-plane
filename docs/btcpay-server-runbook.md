@@ -26,7 +26,29 @@ wallet keys and (later) an exchange API key. Co-locating them means one web
 compromise reaches the money. Keep them on separate machines with no shared secrets.
 
 Use the standard [`btcpayserver-docker`](https://github.com/btcpayserver/btcpayserver-docker)
-deployment. Sizing depends on which chains you enable — see §5.
+deployment.
+
+**Sizing.** Driven almost entirely by how much of the Bitcoin chain you keep. The
+`opt-save-storage*` fragments set Bitcoin Core's `prune` in MiB:
+
+| Fragment               | `prune=` | Blocks kept | Lightning-safe?            | Disk to provision |
+| ---------------------- | -------- | ----------- | -------------------------- | ----------------- |
+| _(none)_               | off      | all         | yes                        | 1 TB+, growing    |
+| `opt-save-storage`     | 100000   | ~1 year     | yes                        | ~200 GB           |
+| `opt-save-storage-s`   | 50000    | ~6 months   | yes (BTCPay's own example) | ~150 GB           |
+| `opt-save-storage-xs`  | 25000    | ~3 months   | marginal                   | ~100 GB           |
+| `opt-save-storage-xxs` | 5000     | ~2 weeks    | **no**                     | ~60 GB            |
+
+The fragments' own comments warn that a pruned node's Lightning implementation
+"won't be able to see channel created \<window\> since the time you start it", so do
+not go below `-s` while running Lightning. **Recommendation: `opt-save-storage`**
+(~1 year) — one notch above BTCPay's example, because the marginal disk is far
+cheaper than a Lightning channel we cannot see. Add ~2 GB RAM per extra chain, and
+put chain data on its own volume.
+
+**Ports that must be reachable:** `80` and `443` (ACME + the checkout page) and
+**`9735`** for Lightning. Nothing else. `9735` is easy to forget and its absence
+looks like "Lightning just doesn't get channels" rather than a firewall problem.
 
 ## 2. Hostname
 
@@ -63,6 +85,55 @@ domain's fate. This was a deliberate call for operational simplicity and user
 recognizability. If payment reachability degrades, the mitigation is a **separate apex
 domain** (not another subdomain) swapped in via `BTCPAY_API_URL` in Admin → Billing.
 
+## 2a. Install
+
+Per the [official Docker guide](https://docs.btcpayserver.org/Docker/), with three
+deliberate deviations noted below. DNS for `pay.freesocks.org` must resolve to this host
+**before** you run it, or ACME cannot issue.
+
+```sh
+sudo su -
+mkdir -p /root/BTCPayServer && cd /root/BTCPayServer
+git clone https://github.com/btcpayserver/btcpayserver-docker
+cd btcpayserver-docker
+
+export BTCPAY_HOST="pay.freesocks.org"
+export NBITCOIN_NETWORK="mainnet"
+export BTCPAYGEN_CRYPTO1="btc"
+export BTCPAYGEN_REVERSEPROXY="nginx"
+export BTCPAYGEN_LIGHTNING="clightning"
+export BTCPAYGEN_ADDITIONAL_FRAGMENTS="opt-save-storage"
+export LETSENCRYPT_EMAIL="ops@freesocks.org"
+export BTCPAY_ENABLE_SSH=false
+
+. ./btcpay-setup.sh -i
+exit
+```
+
+Then browse to `https://pay.freesocks.org`, create the admin account **immediately**
+(the first account to register becomes admin — an exposed, un-registered instance is
+a free admin account for whoever finds it first), and enable 2FA on it.
+
+### The three deviations from BTCPay's example, and why
+
+1. **`BTCPAY_ENABLE_SSH=false`** (BTCPay's example sets it `true`). That flag "gives
+   BTCPay Server SSH access to the host by allowing it to edit `authorized_keys`",
+   which turns any web-layer compromise of BTCPay into host access. On a box holding
+   wallet keys that trade is bad on its own terms, and 2.4.2 was precisely a
+   web-reachable pre-auth bug in this software. Cost: updates are a manual `btcpay-update.sh`
+   over SSH instead of a button in the UI (§7). Worth it.
+2. **`clightning`, not `lnd`.** Both are supported and CLN is BTCPay's own example.
+   The deciding factor is that the actively-exploited 2.4.2 bug was an **LND macaroon**
+   disclosure; per the advisory, CLN and Eclair users were not exposed to that class.
+   Choosing the implementation that was not the blast radius is free here.
+3. **`opt-save-storage`, not `-s`.** One notch more retained chain (~1 year vs ~6
+   months) for ~50 GB, because a pruned window shorter than a channel's age makes that
+   channel invisible to the node. See §1.
+
+If the hostname ever has to change, use the bundled `changedomain.sh` — and **disable
+2FA/U2F first**, since the domain is part of the WebAuthn origin and you will otherwise
+lock yourself out.
+
 ## 3. Store and wallet
 
 1. Create a store. Note the **store ID** (Store Settings → General).
@@ -74,6 +145,13 @@ domain** (not another subdomain) swapped in via `BTCPAY_API_URL` in Admin → Bi
    exactly what the 2.4.2 advisory drained. **In this posture BTCPay only ever holds the
    xpub, which cannot spend — so the signing seed is backed up from the hardware device,
    not from BTCPay. See §6.1; getting this wrong loses the funds.**
+
+   Note the scope: this applies to the **on-chain** wallet only. A Lightning node holds
+   channel funds in keys it must be able to sign with unattended — there is no watch-only
+   Lightning. So the honest posture is a watch-only on-chain wallet holding the bulk, plus
+   a deliberately small Lightning balance treated as hot-wallet money, swept to the
+   exchange often (§8).
+
 4. Set the store's **Checkout Appearance** to match the invoice defaults FCP sends
    (Admin → Billing): 90-minute expiry, and whichever payment methods you enable in §5.
 
@@ -112,17 +190,30 @@ the blast radius of the key that lives on the public host.
 ## 5. Chains
 
 Enable these in waves, verifying each with a canary deposit before raising limits.
-The operational facts per chain:
 
-| Asset                                      | How                                                                                    | Cost                                                                                                                                                                                                                   |
-| ------------------------------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| BTC on-chain + Lightning                   | Native (`BTCPAYGEN_CRYPTO1="btc"`)                                                     | Baseline. One unified BIP21 QR at checkout, no coin selector.                                                                                                                                                          |
-| USDT (TRON / ERC20 / Polygon)              | [Tether USDt plugin](https://github.com/btcpayserver-tether/BTCPayServer.Plugins.USDt) | **No node** — a JSON-RPC endpoint per chain (e.g. TronGrid) is enough. Plugin is **0.x, flagged pre-release**; min BTCPay 2.3.7. Verify whether it derives a fresh address per invoice before trusting reconciliation. |
-| Monero                                     | [Monero plugin](https://github.com/btcpay-monero/btcpayserver-monero-plugin)           | Needs **both** `monerod` and `monero-wallet-rpc`. Significant disk and RAM; put chain data on separate storage. Community guidance is explicit that this is not for non-advanced operators.                            |
-| Native altcoins (LTC, DOGE, DASH, LBTC, …) | `BTCPAYGEN_CRYPTO2..9`, max 9                                                          | **A full node per chain**, plus an NBXplorer instance each. Disk and RAM scale linearly.                                                                                                                               |
-| Zcash                                      | Plugin                                                                                 | ~10 months stale as of 2026-08. Check it has caught up before enabling.                                                                                                                                                |
+**Two different mechanisms, and conflating them wastes a day.** A `BTCPAYGEN_CRYPTO*`
+fragment spins up that chain's **daemon** containers; a **plugin** supplies the
+**payment method** BTCPay can invoice in. Some coins need one, some need both, and a
+fragment existing in the repo does not mean the coin works — Monero and Zcash were moved
+out of core in 2.1.0, so their fragments now provide only the daemons that their plugins
+talk to. The `BTCPAYGEN_CRYPTO*` slots cap at **9**.
 
-Two things to internalize:
+Verified against the fragment directory and plugin registry on 2026-08-19:
+
+| Asset                                                                                                                        | Fragment                                   | Plugin                                                                          | Reality                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **BTC on-chain + Lightning**                                                                                                 | `btc`                                      | —                                                                               | Native, first-class. One unified BIP21 QR, no coin selector.                                                                                                                                                           |
+| **USDT** — TRON / ERC20 / Polygon                                                                                            | none needed                                | [Tether USDt](https://github.com/btcpayserver-tether/BTCPayServer.Plugins.USDt) | **No node** — a JSON-RPC endpoint per chain (e.g. TronGrid) suffices. Plugin is **0.x, flagged pre-release**; min BTCPay 2.3.7. Confirm whether it derives a fresh address per invoice before trusting reconciliation. |
+| **Monero**                                                                                                                   | `monero` (`monerod` + `monero-wallet-rpc`) | [Monero](https://github.com/btcpay-monero/btcpayserver-monero-plugin)           | Actively maintained plugin, heavy daemons. Community guidance is explicit this is not for non-advanced operators. Put chain data on its own volume.                                                                    |
+| **Litecoin, Dogecoin, Dash, Groestlcoin, Liquid, Monacoin, Viacoin, Bitcore, Feathercoin, Trezarcoin, Bitcoin Gold, Decred** | one each                                   | —                                                                               | **A full node + NBXplorer per chain.** Disk and RAM scale linearly. Thin order books make the off-ramp manual.                                                                                                         |
+| **Zcash**                                                                                                                    | `zcash` / `zcash-fullnode`                 | Zcash Support                                                                   | Plugin ~10 months stale as of 2026-08. Verify it has caught up before enabling.                                                                                                                                        |
+| **Ethereum (native ETH)**                                                                                                    | `ethereum` exists                          | **none**                                                                        | Treat as **unsupported**. The fragment is vestigial — EVM payment support was removed and no payment-method plugin exists. USDT-on-ERC20 goes through the Tether plugin instead, which is a different thing.           |
+| **USDT-BEP20**                                                                                                               | —                                          | —                                                                               | **Impossible.** See below.                                                                                                                                                                                             |
+
+BTCPay's own Docker guide warns that going beyond its supported set means changes to
+NBitcoin, NBXplorer and BTCPay core plus custom images — i.e. not an ops task at all.
+
+Three things to internalize:
 
 - **`USDT-BEP20` is not available at any price.** The Tether plugin does TRON, ERC20 and
   Polygon only. BEP20 is the chain Iranian exchanges actually have enabled (Nobitex and
@@ -187,8 +278,16 @@ Back up all four of these, and test a restore before the store handles real mone
    Basic-auth integration breaks. **2.4.0** dropped LNBank and Lightning Charge backends.
    **2.1.0** moved Monero and Zcash out of core into plugins. **2.0.0** removed the
    experimental custodian/exchange feature entirely.
-3. Upgrade, then re-run Admin → Billing → **Test connection** and put a real invoice
-   through end to end.
+3. Upgrade over SSH (the UI's update button is unavailable by design — §2a):
+
+   ```sh
+   sudo su -
+   cd /root/BTCPayServer/btcpayserver-docker
+   . ./btcpay-update.sh
+   ```
+
+4. Then re-run Admin → Billing → **Test connection** and put a real invoice through end
+   to end.
 
 ### After running any version below 2.4.2
 
@@ -217,7 +316,11 @@ hand; the runbook for both will be `docs/finance-offramp.md`.
 ## 9. Bring-up checklist
 
 - [ ] Dedicated host, not the FCP stack
+- [ ] Disk sized per §1 (~200 GB for `opt-save-storage`), chain data on its own volume
+- [ ] Ports 80, 443 **and 9735** reachable
 - [ ] BTCPay ≥ 2.4.2, NBXplorer ≥ 2.6.10
+- [ ] `BTCPAY_ENABLE_SSH=false`; Lightning is `clightning`, not `lnd`
+- [ ] Admin account registered immediately after first boot, with 2FA enabled
 - [ ] DNS for `pay.freesocks.org` resolves; TLS cert issued
 - [ ] `BTCPAY_HOST` set; `BTCPAY_ROOTPATH` untouched; `X-Forwarded-Proto` forwarded if proxied
 - [ ] **An invoice's `checkoutLink` points at `pay.freesocks.org`**
