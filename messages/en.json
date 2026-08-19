@@ -1054,6 +1054,7 @@
     "attestationEpoch": "Current key {kid}, expires {expiry}.",
     "attestationFail": "Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing.",
     "attestationUnreachable": "The live key check is temporarily unavailable. Your connection still uses the verified key built into the app.",
+    "attestationStale": "The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering.",
     "attestationUnconfigured": "Live key checking isn't set up on this build.",
     "compareHeading": "How to verify",
     "compareBody": "Compare the fingerprints above against the values published through a channel this server doesn't control. They must match.",

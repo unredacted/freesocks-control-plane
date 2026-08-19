@@ -11,6 +11,10 @@
  * lazy. `ensureAttestationChecked()` lazy-imports `e2ee.ts` only on demand, so a
  * dark build whose badge never renders the active branch never pulls the chunk.
  */
+import { classifyAttestation, type E2eeAttestation } from './e2ee-attestation';
+
+export { classifyAttestation };
+export type { E2eeAttestation };
 
 /**
  * COMPILE-TIME read of the baked pins (same expression as api.ts E2EE_ENABLED and
@@ -20,8 +24,6 @@
  */
 const SEALING_CONFIGURED =
   !!import.meta.env.VITE_FS_SERVER_HPKE_PK && !!import.meta.env.VITE_FS_SERVER_HPKE_KID;
-
-export type E2eeAttestation = 'pending' | 'active' | 'warn' | 'unreachable' | 'unconfigured';
 
 export const e2eeSession = $state<{
   lastSealedAt: number | null;
@@ -44,36 +46,73 @@ export function markSealedResponse(): void {
   e2eeSession.lastSealedAt = Date.now();
 }
 
-let attestationStarted = false;
+/** Don't re-hit the key endpoint more often than this (its own max-age is 60s). */
+const MIN_RECHECK_MS = 60_000;
+/** Re-attest this often, so a tab left open for days isn't stuck on a stale verdict. */
+const RECHECK_INTERVAL_MS = 5 * 60_000;
 
-/**
- * Run the read-only live key attestation once per page load and fold the verdict
- * into `e2eeSession`. Verdicts:
- *  - `active`      key verified against the baked manifest key, unexpired, not revoked.
- *  - `warn`        the endpoint answered but the key FAILS to verify (expired/revoked
- *                  or a CDN tampering with /api/v1/e2ee/keys) - the active-CDN tamper
- *                  tell; this is the one state that must be surfaced loudly.
- *  - `unreachable` couldn't reach the endpoint (a network blip); the pinned key is
- *                  still in use, so this is NOT an alarm.
- * Lazy-imports the crypto chunk so the light badge can trigger it without eagerly
- * loading `e2ee.ts`. Idempotent - the first caller wins, later callers no-op.
- */
-export async function ensureAttestationChecked(): Promise<void> {
-  if (!SEALING_CONFIGURED) return; // dark build: compile-time false → import() below is tree-shaken
-  if (attestationStarted) return;
-  attestationStarted = true;
+let lastCheckedAt = 0;
+let inFlight: Promise<void> | null = null;
+let hooksInstalled = false;
+
+async function runAttestation(): Promise<void> {
   const { verifyConnection } = await import('./e2ee');
   const att = await verifyConnection();
+  lastCheckedAt = Date.now();
   e2eeSession.epochKid = att.epochKid ?? null;
   e2eeSession.notAfter = att.notAfter ?? null;
-  e2eeSession.attestation =
-    att.configured === false
-      ? 'unconfigured' // manifest key not baked: can't verify (not a network fault)
-      : att.attested
-        ? 'active'
-        : att.reachable
-          ? 'warn'
-          : 'unreachable';
+  e2eeSession.attestation = classifyAttestation(att);
+}
+
+/**
+ * Re-run the live key attestation and fold the fresh verdict into `e2eeSession`.
+ * Throttled to one call per MIN_RECHECK_MS (pass `force` for an explicit user
+ * action, e.g. opening the verify panel), and single-flighted so a burst of
+ * triggers - the interval firing as a tab is refocused - is one request.
+ */
+export async function refreshAttestation(opts?: { force?: boolean }): Promise<void> {
+  if (!SEALING_CONFIGURED) return; // dark build: compile-time false → import() is tree-shaken
+  if (inFlight) return inFlight;
+  if (!opts?.force && Date.now() - lastCheckedAt < MIN_RECHECK_MS) return;
+  inFlight = runAttestation().finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
+}
+
+/**
+ * Keep the verdict live for the lifetime of the tab. Without this the check ran
+ * exactly once per page load, so a tab left open (or, worse, silently reloaded
+ * from cache by a browser restoring a discarded tab) kept whatever verdict it
+ * first computed - including a scary banner that a single manual refresh cleared.
+ *
+ * The interval is the failsafe and runs unconditionally; refocus + regained
+ * connectivity are extra nudges on top of it. Deliberately NOT gated on
+ * `visibilityState === 'visible'`: some embedded webviews report a displayed page
+ * as hidden forever, which would silently disable the whole refresh. Browsers
+ * throttle background timers on their own, and the throttle below plus the key
+ * endpoint's per-IP policy bound the cost either way.
+ */
+function installRefreshHooks(): void {
+  if (hooksInstalled || typeof document === 'undefined') return;
+  hooksInstalled = true;
+  const refresh = () => void refreshAttestation();
+  document.addEventListener('visibilitychange', refresh);
+  window.addEventListener('online', refresh);
+  setInterval(refresh, RECHECK_INTERVAL_MS);
+}
+
+/**
+ * Run the live key attestation for this page and keep it fresh from then on.
+ * Idempotent: the first caller starts the check and installs the refresh hooks,
+ * later callers fall through to the throttled `refreshAttestation`.
+ * Lazy-imports the crypto chunk so the light badge can trigger it without eagerly
+ * loading `e2ee.ts`.
+ */
+export async function ensureAttestationChecked(opts?: { force?: boolean }): Promise<void> {
+  if (!SEALING_CONFIGURED) return; // dark build: compile-time false → import() is tree-shaken
+  installRefreshHooks();
+  await refreshAttestation(opts);
 }
 
 /** Open the shared "Verify connection" modal from anywhere (badge or alert). */

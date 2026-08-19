@@ -152,6 +152,7 @@ export type MessageKey =
   | "e2ee.attestationFail"
   | "e2ee.attestationHeading"
   | "e2ee.attestationOk"
+  | "e2ee.attestationStale"
   | "e2ee.attestationUnconfigured"
   | "e2ee.attestationUnreachable"
   | "e2ee.badgeActiveTitle"
