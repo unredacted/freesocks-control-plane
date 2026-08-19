@@ -230,7 +230,9 @@ Three things to internalize:
 
 ## 6. Backups
 
-Back up all four of these, and test a restore before the store handles real money.
+Back up all of these before the store handles real money, and test a restore of each —
+**except the Lightning database, where restoring a stale copy is itself a way to lose
+funds** (item 3). That exception is the one counter-intuitive thing in this section.
 
 > **A seed and an xpub are NOT alternatives.** An xpub (or wallet descriptor)
 > recreates a **watch-only** wallet: BTCPay can see balances and derive receive
@@ -258,10 +260,34 @@ Back up all four of these, and test a restore before the store handles real mone
    configuration without re-deriving from the seed, which makes a rebuild faster and
    avoids re-exposing the seed to a machine. Useful; not sufficient.
 
-3. **Lightning channel state** (`static channel backup` for LND). Not reconstructible
-   from the seed, and note what an SCB actually does: it lets you force-close channels
-   to recover your balance, not resume operating them. Re-export it whenever channels
-   change.
+3. **Lightning (Core Lightning).** §2a recommends `clightning`, so there is **no static
+   channel backup** here — SCB is an LND artifact and does not exist for CLN, whose
+   backup model is different in a way that matters. BTCPay currently ships CLN
+   `v26.06`, and the state lives in the `clightning_bitcoin_datadir` volume, i.e.
+   `/root/.lightning/bitcoin/` inside `btcpayserver_clightning_bitcoin`.
+
+   Three artifacts, per [CLN's own backup docs](https://docs.corelightning.org/docs/backup):
+   - **`hsm_secret`** — the node's master key; required by everyone. On CLN ≥ 25.12
+     (which the shipped v26.06 satisfies) export it as a 12-word BIP39 mnemonic with
+     `lightning-hsmtool getsecret` and store that on paper, rather than trying to
+     archive a binary file offline.
+   - **`emergency.recover`** — required once the node has channels. It is what makes
+     peer-assisted recovery (`emergencyrecover`) possible.
+   - **The channel database** — and here the usual advice inverts. CLN's docs call
+     real-time replication "the recommended approach to backing up node data" and
+     state that snapshot-style backups are **discouraged**, because _"any loss of state
+     may result in permanent loss of funds"_ under the BOLT
+     [penalty mechanism](https://github.com/lightning/bolts/blob/master/05-onchain.md#revoked-transaction-close-handling):
+     restoring an out-of-date channel state can publish a revoked commitment and forfeit
+     the channel balance to your counterparty.
+
+     **So: do not put the CLN database in a nightly-snapshot rotation, and never restore
+     an old copy to "recover".** Configure replication instead — extra `lightningd`
+     options go in the fragment's `LIGHTNINGD_OPT` block — and verify on the box that
+     the replica is being written before relying on it. If replication is not set up,
+     treat the Lightning balance as unbacked and keep it small (§3), leaning on
+     `hsm_secret` + `emergency.recover` + peer-assisted recovery as the floor rather
+     than the plan.
 
 4. **The BTCPay Postgres database** (invoices, store config, webhook secrets). Losing
    it loses the audit trail and the store setup even though the coins survive — and for
@@ -327,7 +353,11 @@ hand; the runbook for both will be `docs/finance-offramp.md`.
 - [ ] Store created, wallet and/or Lightning node connected, wallet posture decided
 - [ ] **Signing seed** backed up offline (plus passphrase / derivation path if used) —
       NOT just the xpub, which cannot spend
-- [ ] Wallet descriptor/xpub, Lightning channel backup, and Postgres backup taken
+- [ ] Wallet descriptor/xpub and Postgres backup taken
+- [ ] CLN `hsm_secret` exported as a BIP39 mnemonic (`lightning-hsmtool getsecret`)
+      and `emergency.recover` saved — **not** a snapshot of the channel DB
+- [ ] CLN database replication configured and confirmed writing, or the Lightning
+      balance deliberately kept small because it is unbacked
 - [ ] A restore actually **tested**, not just taken
 - [ ] Three separate API keys created with the permissions in §4
 - [ ] Store webhook registered → `https://<PUBLIC_BASE_URL host>/api/webhooks/btcpay`
