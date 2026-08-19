@@ -1,7 +1,7 @@
 # Threat model: CDN-blinding (application-layer E2EE + proof-of-possession)
 
-Design + status for the CDN-blinding feature. Full plan: `.claude/plans/`. Phase 0 gate
-artifact: `docs/e2ee-phase0-spike.md`. This doc is the standing "what is and is not protected"
+Design + status for the CDN-blinding feature. Phase 0 gate artifact:
+`docs/e2ee-phase0-spike.md`. This doc is the standing "what is and is not protected"
 reference. Status: Phases 0 to 4 implemented on `v2`. The manifest trust anchor is post-quantum
 (hybrid Ed25519 + ML-DSA-65). The remaining pieces are operator-shipped, not code: the out-of-band
 publication + reproducible rebuilder (`docs/oob-verification.md`) and the verifier extension

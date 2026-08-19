@@ -87,6 +87,29 @@ const DONATION_VIEW_DEFAULT: DonationConfigView = {
   bonusWindowDays: 30,
 };
 
+/**
+ * Per-invoice BTCPay checkout overrides. Operational and payer-invisible, so
+ * these are admin-only and deliberately absent from PublicConfig.
+ */
+export const BtcpayCheckoutView = z.object({
+  /** Minutes the payer has to pay. BTCPay's own default is 15, which is too short. */
+  expirationMinutes: z.number().int(),
+  /** Minutes past expiry BTCPay keeps watching for a late payment. */
+  monitoringMinutes: z.number().int(),
+  /** Percent under the invoiced amount that still settles. 0 = exact amount. */
+  paymentTolerance: z.number(),
+  /** Preselected method on checkout (e.g. `BTC-LN`). Empty = let BTCPay choose. */
+  defaultPaymentMethod: z.string(),
+});
+export type BtcpayCheckoutView = z.infer<typeof BtcpayCheckoutView>;
+
+const BTCPAY_CHECKOUT_VIEW_DEFAULT: BtcpayCheckoutView = {
+  expirationMinutes: 90,
+  monitoringMinutes: 1440,
+  paymentTolerance: 0,
+  defaultPaymentMethod: '',
+};
+
 /** The full (admin-editable) billing config — superset of PublicConfig.billing. */
 export const BillingConfigView = z.object({
   enabled: z.boolean(),
@@ -103,6 +126,8 @@ export const BillingConfigView = z.object({
   cryptoMinMonths: z.number().int(),
   /** Minimum term (months) purchasable with the BTCPay rail (default 1). */
   btcpayMinMonths: z.number().int().default(1),
+  /** Defaulted so a transient SPA-newer-than-backend deploy skew still parses. */
+  btcpayCheckout: BtcpayCheckoutView.default(BTCPAY_CHECKOUT_VIEW_DEFAULT),
   /** Defaulted so a transient SPA-newer-than-backend deploy skew still parses. */
   donation: DonationConfigView.default(DONATION_VIEW_DEFAULT),
 });

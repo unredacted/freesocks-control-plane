@@ -1,7 +1,7 @@
 # E2EE Phase 0 spike: KEM decision, KAT sources, and the isolate-budget gate
 
 This is the on-the-record decision artifact for the CDN-blinding feature (full design:
-`.claude/plans/`, and once promoted `docs/threat-model-cdn-blinding.md`). It exists because the
+`docs/threat-model-cdn-blinding.md`). It exists because the
 Harvest-Now-Decrypt-Later threat makes the Phase 1 KEM choice effectively permanent for any traffic
 an adversary logs, so the choice is recorded here and validated before any sealing code ships.
 

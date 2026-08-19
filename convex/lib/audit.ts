@@ -156,6 +156,7 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // tolerance): the grant was refused by downgrade, so this is the operator's
   // follow-up queue (refund or request a top-up).
   'billing.underpayment_seen': ['processor', 'expectedMinor', 'reportedMinor'],
+  'billing.settle_detail_unavailable': ['processor'],
   // A referral's pending/converted reward was voided (refund, referee lapse,
   // program disabled, cap, referrer gone).
   'referral.void': ['reason', 'referrerUserId'],

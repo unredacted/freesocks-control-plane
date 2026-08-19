@@ -446,6 +446,100 @@
         </span>
       </label>
 
+      <!-- BTCPay per-invoice checkout overrides. BTCPay's own defaults (15-minute
+           expiry, exact-amount settlement) are wrong for payers who have to go
+           acquire crypto mid-checkout, which is the common case in censored regions. -->
+      <div class="grid gap-4 sm:grid-cols-2">
+        <label class="block">
+          <span class="mb-1 block text-xs font-medium text-muted-foreground"
+            >BTCPay invoice expiry (minutes)</span
+          >
+          <Input
+            type="number"
+            min={1}
+            class="min-h-9 w-28"
+            value={draft.btcpayCheckout.expirationMinutes}
+            oninput={(e) =>
+              draft &&
+              (draft.btcpayCheckout.expirationMinutes = Math.max(
+                1,
+                Math.round(Number((e.currentTarget as HTMLInputElement).value)),
+              ))}
+          />
+          <span class="mt-1 block text-xs text-muted-foreground">
+            How long the payer has to pay. BTCPay defaults to 15 minutes, which expires before
+            someone can buy crypto and send it.
+          </span>
+        </label>
+
+        <label class="block">
+          <span class="mb-1 block text-xs font-medium text-muted-foreground"
+            >Late-payment monitoring (minutes)</span
+          >
+          <Input
+            type="number"
+            min={1}
+            class="min-h-9 w-28"
+            value={draft.btcpayCheckout.monitoringMinutes}
+            oninput={(e) =>
+              draft &&
+              (draft.btcpayCheckout.monitoringMinutes = Math.max(
+                1,
+                Math.round(Number((e.currentTarget as HTMLInputElement).value)),
+              ))}
+          />
+          <span class="mt-1 block text-xs text-muted-foreground">
+            How long after expiry BTCPay keeps watching. A payment that arrives late with no
+            monitoring window is money the payer already sent.
+          </span>
+        </label>
+
+        <label class="block">
+          <span class="mb-1 block text-xs font-medium text-muted-foreground"
+            >Payment tolerance (%)</span
+          >
+          <Input
+            type="number"
+            min={0}
+            max={10}
+            step="0.1"
+            class="min-h-9 w-28"
+            value={draft.btcpayCheckout.paymentTolerance}
+            oninput={(e) =>
+              draft &&
+              (draft.btcpayCheckout.paymentTolerance = Math.min(
+                10,
+                Math.max(0, Number((e.currentTarget as HTMLInputElement).value)),
+              ))}
+          />
+          <span class="mt-1 block text-xs text-muted-foreground">
+            How far under the invoice still counts as paid. A payer sending from an exchange has the
+            withdrawal fee deducted, so 0 turns a good-faith payment into a partial one. Raising it
+            also widens what the underpayment guard allows, so keep it small.
+          </span>
+        </label>
+
+        <label class="block">
+          <span class="mb-1 block text-xs font-medium text-muted-foreground"
+            >Default payment method</span
+          >
+          <Input
+            class="min-h-9"
+            placeholder="e.g. BTC-LN"
+            value={draft.btcpayCheckout.defaultPaymentMethod}
+            oninput={(e) =>
+              draft &&
+              (draft.btcpayCheckout.defaultPaymentMethod = (
+                e.currentTarget as HTMLInputElement
+              ).value)}
+          />
+          <span class="mt-1 block text-xs text-muted-foreground">
+            Which method the checkout page preselects. Leave blank unless your store offers more
+            than Bitcoin: on-chain and Lightning already share one QR code.
+          </span>
+        </label>
+      </div>
+
       <!-- Donations: an optional add-on at checkout + a standalone give. Donations
            this month raise every free user's monthly bandwidth cap. -->
       <div class="border-t border-border pt-4">

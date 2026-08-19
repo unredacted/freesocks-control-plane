@@ -672,10 +672,37 @@ describe('btcpay.verifyAndParse', () => {
     if (withCfg.ok) {
       expect(withCfg.status).toBe('paid');
       expect(withCfg.amountMinor).toBeNull();
+      // We asked for the detail and didn't get it, so the amount + PaidPartial
+      // guards ran on nothing. Flagged so applyEvent can audit the weakened
+      // grant (usually an API key missing btcpay.store.canviewinvoices).
+      expect(withCfg.detailUnavailable).toBe(true);
     }
-    // And without cfg no fetch happens at all (legacy behavior).
+    // And without cfg no fetch happens at all (legacy behavior) — that is a
+    // deliberate not-configured state, NOT a degraded one, so no flag.
     const noCfg = await btcpay.verifyAndParse({ rawBody: body, signature, webhookSecret: SECRET });
     expect(noCfg.ok && noCfg.status).toBe('paid');
+    expect(noCfg.ok && noCfg.detailUnavailable).toBeUndefined();
+  });
+
+  test('a successful detail fetch does not flag detailUnavailable', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => res({ amount: '15.00', currency: 'USD' })),
+    );
+    const { body, signature } = await signed({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_ok',
+      metadata: { orderId: 'o-ok' },
+    });
+    const r = await btcpay.verifyAndParse({
+      rawBody: body,
+      signature,
+      webhookSecret: SECRET,
+      cfg: { apiUrl: 'https://btcpay.test', storeId: 'store_1', apiKey: 'k' },
+    });
+    expect(r.ok && r.status).toBe('paid');
+    expect(r.ok && r.amountMinor).toBe(1500);
+    expect(r.ok && r.detailUnavailable).toBeUndefined();
   });
 
   test('invoice event types map correctly', async () => {
@@ -768,6 +795,69 @@ describe('btcpay.createCheckout', () => {
     expect(body.currency).toBe('USD'); // uppercased
     expect(body.metadata.orderId).toBe('order-1'); // echoed back on webhooks
     expect(body.checkout.redirectURL).toBe(params.successUrl);
+  });
+
+  test('omits every checkout override when unset, so BTCPay defaults stand', async () => {
+    let captured: { url: string; init?: RequestInit } | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        captured = { url: String(url), init };
+        return res({ id: 'inv_d', checkoutLink: 'https://pay.example.org/i/inv_d' });
+      }),
+    );
+    await btcpay.createCheckout(cfg, params);
+    const checkout = JSON.parse(String(captured!.init!.body)).checkout;
+    expect(Object.keys(checkout)).toEqual(['redirectURL']);
+  });
+
+  test('sends the checkout overrides under `checkout`, not top level', async () => {
+    let captured: { url: string; init?: RequestInit } | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        captured = { url: String(url), init };
+        return res({ id: 'inv_o', checkoutLink: 'https://pay.example.org/i/inv_o' });
+      }),
+    );
+    await btcpay.createCheckout(
+      {
+        ...cfg,
+        expirationMinutes: 90,
+        monitoringMinutes: 1440,
+        paymentTolerance: 1.5,
+        defaultPaymentMethod: 'BTC-LN',
+      },
+      params,
+    );
+    const body = JSON.parse(String(captured!.init!.body));
+    expect(body.checkout).toEqual({
+      redirectURL: params.successUrl,
+      expirationMinutes: 90,
+      monitoringMinutes: 1440,
+      paymentTolerance: 1.5,
+      defaultPaymentMethod: 'BTC-LN',
+    });
+    // Greenfield rejects these at top level — regression guard on the nesting.
+    expect(body.expirationMinutes).toBeUndefined();
+    expect(body.paymentTolerance).toBeUndefined();
+    expect(body.defaultPaymentMethod).toBeUndefined();
+    // metadata stays top level.
+    expect(body.metadata.orderId).toBe('order-1');
+  });
+
+  test('a zero paymentTolerance is sent, not dropped as falsy', async () => {
+    let captured: { url: string; init?: RequestInit } | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        captured = { url: String(url), init };
+        return res({ id: 'inv_z', checkoutLink: 'https://pay.example.org/i/inv_z' });
+      }),
+    );
+    await btcpay.createCheckout({ ...cfg, paymentTolerance: 0 }, params);
+    const checkout = JSON.parse(String(captured!.init!.body)).checkout;
+    expect(checkout.paymentTolerance).toBe(0);
   });
 
   test('throws when BTCPay returns a non-OK status', async () => {

@@ -23,6 +23,40 @@ export interface BtcpayConfig {
   storeId: string;
   apiKey: string;
   timeoutMs?: number;
+  // --- per-invoice checkout overrides ---------------------------------------
+  // All four go under the Greenfield request's `checkout` object (NOT top level —
+  // only `amount`/`currency`/`metadata` live there). They're on the CONFIG rather
+  // than on `CheckoutParams` because that struct is shared by all four rails and
+  // none of these translate to the hosted ones. Each is omitted from the request
+  // when unset, so BTCPay's own default applies.
+  /**
+   * How long the payer has to pay. BTCPay's default is 15 minutes — far too
+   * short for someone who has to go acquire crypto first, which is the common
+   * case in censored regions.
+   */
+  expirationMinutes?: number;
+  /**
+   * How long after expiry BTCPay keeps watching for a late payment. A payment
+   * that lands after expiry with no monitoring window is a stuck payment the
+   * payer already made.
+   */
+  monitoringMinutes?: number;
+  /**
+   * Percentage under the invoiced amount BTCPay still settles (default 0). A
+   * payer funding from an exchange has the withdrawal fee deducted from the
+   * amount that arrives, so an exact-amount requirement turns a good-faith full
+   * payment into a PaidPartial. Trades a little under-collection for materially
+   * fewer stuck payments. NOTE: raising this widens what the PaidPartial guard
+   * lets through, so keep it small.
+   */
+  paymentTolerance?: number;
+  /**
+   * Which payment method is preselected on the checkout page, e.g. `BTC-LN`.
+   * Only meaningful once the store offers more than Bitcoin: Checkout v2 shows
+   * one unified BIP21 QR for on-chain + Lightning, but any non-Bitcoin chain
+   * reintroduces a payer-facing coin selector, and this decides where it lands.
+   */
+  defaultPaymentMethod?: string;
 }
 
 const InvoiceResponse = z.object({
@@ -86,7 +120,18 @@ export async function createCheckout(
         amount: (params.amountCents / 100).toFixed(2),
         currency: params.currency.toUpperCase(),
         metadata: { orderId: params.orderRef, itemDesc: params.description },
-        checkout: { redirectURL: params.successUrl },
+        checkout: {
+          redirectURL: params.successUrl,
+          // Each override is omitted when unset so BTCPay's own default stands.
+          ...(cfg.expirationMinutes !== undefined
+            ? { expirationMinutes: cfg.expirationMinutes }
+            : {}),
+          ...(cfg.monitoringMinutes !== undefined
+            ? { monitoringMinutes: cfg.monitoringMinutes }
+            : {}),
+          ...(cfg.paymentTolerance !== undefined ? { paymentTolerance: cfg.paymentTolerance } : {}),
+          ...(cfg.defaultPaymentMethod ? { defaultPaymentMethod: cfg.defaultPaymentMethod } : {}),
+        },
       }),
       signal: controller.signal,
     });
@@ -204,11 +249,17 @@ export async function verifyAndParse(args: {
   // cross-check (one API read, only on the granting transition, only when
   // configured). A Settled-at-partial invoice (store settle-tolerance) is NOT a
   // grant: downgrade to confirming + flag the underpayment for audit.
-  const detail =
-    type === 'InvoiceSettled' && invoiceId && args.cfg
-      ? await invoiceDetail(args.cfg, invoiceId)
-      : null;
+  // Hoisted so TS narrows `cfg` for the call below AND so `detailUnavailable`
+  // keys off the same value rather than re-deriving the condition (a cast here
+  // would start lying the moment either half changed).
+  const settleCfg = type === 'InvoiceSettled' && invoiceId ? args.cfg : undefined;
+  const detail = settleCfg ? await invoiceDetail(settleCfg, invoiceId) : null;
   const underpaid = detail?.paidPartial === true;
+  // We asked for the settle detail and didn't get it, so this grant proceeds
+  // with the amount + PaidPartial cross-checks disabled. Almost always an
+  // API key missing `btcpay.store.canviewinvoices`. Surfaced so it can be
+  // fixed rather than quietly under-collecting.
+  const detailUnavailable = !!settleCfg && detail === null;
   const status = underpaid ? 'confirming' : mapEventType(type);
   return {
     ok: true,
@@ -216,6 +267,7 @@ export async function verifyAndParse(args: {
     processorRef: invoiceId,
     status,
     ...(underpaid ? { underpaid: true } : {}),
+    ...(detailUnavailable ? { detailUnavailable: true } : {}),
     // The settle event carries no amount, so the invoice-id binding IS the
     // grant guard: applyEvent refuses when it differs from the invoice id FCP
     // itself minted at checkout — an attacker-created invoice on a shared

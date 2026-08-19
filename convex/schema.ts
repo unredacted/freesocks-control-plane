@@ -3,8 +3,8 @@ import { v } from 'convex/values';
 import { backendIdValidator } from './lib/backendIds';
 
 /**
- * Convex schema for FreeSocks Control Plane: the migration target
- * (`.claude/plans/...`, phase P2). Ported from `src/server/db/schema.ts` with
+ * Convex schema for FreeSocks Control Plane: the migration target. Ported from
+ * the previous Drizzle schema (`src/server/db/schema.ts`, since removed) with
  * Convex idioms:
  *
  *  - Integer PKs/FKs become `_id` / `v.id("table")`. No referential enforcement
