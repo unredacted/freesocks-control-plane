@@ -672,10 +672,37 @@ describe('btcpay.verifyAndParse', () => {
     if (withCfg.ok) {
       expect(withCfg.status).toBe('paid');
       expect(withCfg.amountMinor).toBeNull();
+      // We asked for the detail and didn't get it, so the amount + PaidPartial
+      // guards ran on nothing. Flagged so applyEvent can audit the weakened
+      // grant (usually an API key missing btcpay.store.canviewinvoices).
+      expect(withCfg.detailUnavailable).toBe(true);
     }
-    // And without cfg no fetch happens at all (legacy behavior).
+    // And without cfg no fetch happens at all (legacy behavior) — that is a
+    // deliberate not-configured state, NOT a degraded one, so no flag.
     const noCfg = await btcpay.verifyAndParse({ rawBody: body, signature, webhookSecret: SECRET });
     expect(noCfg.ok && noCfg.status).toBe('paid');
+    expect(noCfg.ok && noCfg.detailUnavailable).toBeUndefined();
+  });
+
+  test('a successful detail fetch does not flag detailUnavailable', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => res({ amount: '15.00', currency: 'USD' })),
+    );
+    const { body, signature } = await signed({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_ok',
+      metadata: { orderId: 'o-ok' },
+    });
+    const r = await btcpay.verifyAndParse({
+      rawBody: body,
+      signature,
+      webhookSecret: SECRET,
+      cfg: { apiUrl: 'https://btcpay.test', storeId: 'store_1', apiKey: 'k' },
+    });
+    expect(r.ok && r.status).toBe('paid');
+    expect(r.ok && r.amountMinor).toBe(1500);
+    expect(r.ok && r.detailUnavailable).toBeUndefined();
   });
 
   test('invoice event types map correctly', async () => {
@@ -768,6 +795,52 @@ describe('btcpay.createCheckout', () => {
     expect(body.currency).toBe('USD'); // uppercased
     expect(body.metadata.orderId).toBe('order-1'); // echoed back on webhooks
     expect(body.checkout.redirectURL).toBe(params.successUrl);
+  });
+
+  test('omits every checkout override when unset, so BTCPay defaults stand', async () => {
+    let captured: { url: string; init?: RequestInit } | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        captured = { url: String(url), init };
+        return res({ id: 'inv_d', checkoutLink: 'https://pay.example.org/i/inv_d' });
+      }),
+    );
+    await btcpay.createCheckout(cfg, params);
+    const checkout = JSON.parse(String(captured!.init!.body)).checkout;
+    expect(Object.keys(checkout)).toEqual(['redirectURL']);
+  });
+
+  test('sends the checkout overrides under `checkout`, not top level', async () => {
+    let captured: { url: string; init?: RequestInit } | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        captured = { url: String(url), init };
+        return res({ id: 'inv_o', checkoutLink: 'https://pay.example.org/i/inv_o' });
+      }),
+    );
+    await btcpay.createCheckout(
+      {
+        ...cfg,
+        expirationMinutes: 90,
+        monitoringMinutes: 1440,
+        defaultPaymentMethod: 'BTC-LN',
+      },
+      params,
+    );
+    const body = JSON.parse(String(captured!.init!.body));
+    expect(body.checkout).toEqual({
+      redirectURL: params.successUrl,
+      expirationMinutes: 90,
+      monitoringMinutes: 1440,
+      defaultPaymentMethod: 'BTC-LN',
+    });
+    // Greenfield rejects these at top level — regression guard on the nesting.
+    expect(body.expirationMinutes).toBeUndefined();
+    expect(body.defaultPaymentMethod).toBeUndefined();
+    // metadata stays top level.
+    expect(body.metadata.orderId).toBe('order-1');
   });
 
   test('throws when BTCPay returns a non-OK status', async () => {
@@ -1201,5 +1274,93 @@ describe('nowpayments partial-settle guard', () => {
     const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.underpaid).toBe(true);
+  });
+});
+
+describe('btcpay.testConnection', () => {
+  const cfg = { apiUrl: 'https://pay.example.org', storeId: 'store_1', apiKey: 'token-abc' };
+  const INVOICES = 'https://pay.example.org/api/v1/stores/store_1/invoices';
+
+  /** Capture (method, url, body) per call so ordering + shape are assertable. */
+  function spy(handler: (url: string, init?: RequestInit) => Response) {
+    const calls: { method: string; url: string; body?: unknown }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        calls.push({
+          method: (init?.method ?? 'GET').toUpperCase(),
+          url: String(url),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return handler(String(url), init);
+      }),
+    );
+    return calls;
+  }
+
+  test('checks both permissions and creates nothing', async () => {
+    // Read proves canviewinvoices; the POST proves cancreateinvoice via a body
+    // that cannot bind, so BTCPay authorizes first and then rejects it as 400.
+    const calls = spy((_u, init) =>
+      (init?.method ?? 'GET') === 'POST' ? res({}, { ok: false, status: 400 }) : res({}),
+    );
+    expect(await btcpay.testConnection(cfg)).toEqual({ ok: true });
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET ${INVOICES}?take=1`,
+      `POST ${INVOICES}`,
+    ]);
+    // The amount MUST be non-numeric: an amount-less body is a valid top-up
+    // invoice and would really be created.
+    expect(calls[1].body).toEqual({ amount: 'not-a-number', currency: 'USD' });
+  });
+
+  test('403 on create names cancreateinvoice, not the read permission', async () => {
+    spy((_u, init) =>
+      (init?.method ?? 'GET') === 'POST' ? res({}, { ok: false, status: 403 }) : res({}),
+    );
+    const out = await btcpay.testConnection(cfg);
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.error).toMatch(/cancreateinvoice/);
+      expect(out.error).not.toMatch(/canviewinvoices/);
+    }
+  });
+
+  test('fails open on an unexpected create status rather than blocking go-live', async () => {
+    // Only 403 proves the permission is absent. A missing create permission fails
+    // loudly and harmlessly at checkout, so a false red is the worse error.
+    for (const status of [400, 422, 500]) {
+      spy((_u, init) =>
+        (init?.method ?? 'GET') === 'POST' ? res({}, { ok: false, status }) : res({}),
+      );
+      expect(await btcpay.testConnection(cfg)).toEqual({ ok: true });
+    }
+  });
+
+  test('a failing read short-circuits before the create probe', async () => {
+    const calls = spy(() => res({}, { ok: false, status: 403 }));
+    const out = await btcpay.testConnection(cfg);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toMatch(/canviewinvoices/);
+    expect(calls).toHaveLength(1); // never POSTs when the read already failed
+  });
+
+  test('401 and 404 on the read are distinguished from a permission problem', async () => {
+    for (const [status, pattern] of [
+      [401, /api key/i],
+      [404, /store id/i],
+    ] as const) {
+      spy(() => res({}, { ok: false, status }));
+      const out = await btcpay.testConnection(cfg);
+      expect(out.ok).toBe(false);
+      if (!out.ok) expect(out.error).toMatch(pattern);
+    }
+  });
+
+  test('never leaks the API key in an error', async () => {
+    spy(() => res({}, { ok: false, status: 500 }));
+    const out = await btcpay.testConnection(cfg);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).not.toContain('token-abc');
   });
 });

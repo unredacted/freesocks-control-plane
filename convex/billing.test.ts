@@ -836,6 +836,47 @@ describe('billing.ingestEvent (BTCPay)', () => {
     });
   });
 
+  test('an unreadable settle detail still grants but audits the weakened guard', async () => {
+    // The store API is configured but the invoice read fails — the real-world
+    // cause is an API key without btcpay.store.canviewinvoices, which the setup
+    // runbook wrongly advised until 2026-08. The invoice-id binding still holds
+    // so this DOES grant, but the amount + PaidPartial guards ran on nothing,
+    // so the misconfiguration must not be silent.
+    vi.stubEnv('BTCPAY_API_URL', 'https://btcpay.test');
+    vi.stubEnv('BTCPAY_STORE_ID', 'store_1');
+    vi.stubEnv('BTCPAY_API_KEY', 'k');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('forbidden', { status: 403 })),
+    );
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertPendingOrder(t, userId, memberTierId, 'ref-btcpay-nodetail');
+    const rawBody = JSON.stringify({
+      type: 'InvoiceSettled',
+      invoiceId: 'inv_nd',
+      metadata: { orderId: 'ref-btcpay-nodetail' },
+    });
+    const res = await t.action(internal.billing.ingestEvent, {
+      processor: 'btcpay',
+      rawBody,
+      signature: await signBtcpay(rawBody),
+    });
+    expect(res).toEqual({ ok: true, applied: true });
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-btcpay-nodetail'))
+        .unique();
+      expect(order?.status).toBe('paid'); // the checkoutRef binding is still a valid guard
+      expect(order?.tierId).toBe(memberTierId);
+      const audits = await ctx.db.query('auditLog').collect();
+      expect(audits.some((a) => a.action === 'billing.settle_detail_unavailable')).toBe(true);
+      // Not an underpayment — we simply couldn't tell either way.
+      expect(audits.some((a) => a.action === 'billing.underpayment_seen')).toBe(false);
+    });
+  });
+
   test('a redelivered settled event dedupes (no double grant)', async () => {
     const t = convexTest(schema, modules);
     const { userId, memberTierId } = await seedTiersAndUser(t);

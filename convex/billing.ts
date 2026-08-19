@@ -30,7 +30,7 @@ import {
   resolveBillingConfig,
   resolveProcessorSecrets,
 } from './lib/billingConfig';
-import type { BillingConfig, ProcessorSecrets } from './lib/billingConfig';
+import type { BillingConfig, BtcpayCheckoutConfig, ProcessorSecrets } from './lib/billingConfig';
 import * as nowpayments from './lib/processors/nowpayments';
 import * as btcpay from './lib/processors/btcpay';
 import * as stripe from './lib/processors/stripe';
@@ -83,6 +83,7 @@ async function createCheckoutForProcessor(
   processor: ProcessorId,
   params: CheckoutParams,
   secrets: ProcessorSecrets,
+  btcpayCheckout?: BtcpayCheckoutConfig,
 ): Promise<CheckoutResult> {
   switch (processor) {
     case 'nowpayments': {
@@ -96,7 +97,14 @@ async function createCheckoutForProcessor(
       const bp = secrets.btcpay;
       if (!bp.apiUrl || !bp.storeId || !bp.apiKey) throw new Error('BTCPay not configured');
       return btcpay.createCheckout(
-        { apiUrl: bp.apiUrl, storeId: bp.storeId, apiKey: bp.apiKey },
+        {
+          apiUrl: bp.apiUrl,
+          storeId: bp.storeId,
+          apiKey: bp.apiKey,
+          // Per-invoice checkout overrides from the admin-editable catalog. Only
+          // this rail takes them — the hosted rails have no equivalent.
+          ...(btcpayCheckout ?? {}),
+        },
         params,
       );
     }
@@ -391,7 +399,12 @@ export const createCheckout = internalAction({
     // operator; the member only ever sees the generic message.
     let result: CheckoutResult;
     try {
-      result = await createCheckoutForProcessor(a.processor, params, secrets);
+      result = await createCheckoutForProcessor(
+        a.processor,
+        params,
+        secrets,
+        config.btcpayCheckout,
+      );
     } catch (err) {
       console.error(
         `[billing] ${a.processor} checkout create failed:`,
@@ -502,6 +515,10 @@ export const applyEvent = internalMutation({
     // confirming — audit it so the underpayment is a visible operator signal
     // instead of a silently-stalled order.
     underpaid: v.optional(v.boolean()),
+    // See ParsedEvent.detailUnavailable: the granting transition's amount +
+    // settle-tolerance cross-checks could not be read back (BTCPay API key
+    // missing canviewinvoices). Audited so the weakened guard is visible.
+    detailUnavailable: v.optional(v.boolean()),
     // For a 'gift' order being paid: the codes the caller pre-generated (CSPRNG
     // runs in the ingest action). Inserted hash-only into redemptionCodes here;
     // the plaintext is stashed in the order's transient giftReveal buffer.
@@ -624,6 +641,22 @@ export const applyEvent = internalMutation({
         }
       }
       return { applied: false, granted: false };
+    }
+
+    // The granting transition's cross-checks were unavailable (see
+    // ParsedEvent.detailUnavailable). This DOES still grant — the checkoutRef
+    // binding holds — but the amount + PaidPartial guards are off, so make the
+    // misconfiguration loud. Deduped by the webhook claim id like the
+    // underpayment audit below.
+    if (a.detailUnavailable) {
+      await writeAuditLog(ctx, {
+        actorType: 'webhook',
+        actorId: order.userId,
+        action: 'billing.settle_detail_unavailable',
+        targetType: 'billing_order',
+        targetId: order._id,
+        payload: { processor: a.processor },
+      });
     }
 
     // An underpaid settle (merchant settle-tolerance) never grants, but must
@@ -924,6 +957,7 @@ export const ingestEvent = internalAction({
         amountMinor: verified.amountMinor ?? null,
         amountCurrency: verified.amountCurrency ?? null,
         underpaid: verified.underpaid === true,
+        detailUnavailable: verified.detailUnavailable === true,
         giftCodes,
       });
       await ctx.runMutation(internal.webhooks.markEventProcessed, {

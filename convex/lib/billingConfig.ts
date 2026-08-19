@@ -73,8 +73,26 @@ export interface BillingConfig {
    * BTCPay policy (not a third party's coin list) governs on-chain floors.
    */
   btcpayMinMonths: number;
+  /** Per-invoice BTCPay checkout overrides (see BtcpayCheckoutConfig). */
+  btcpayCheckout: BtcpayCheckoutConfig;
   /** Optional-donation config (add-on + standalone → free-user bandwidth pool). */
   donation: DonationConfig;
+}
+
+/**
+ * BTCPay per-invoice checkout knobs. Operational, payer-invisible, and NOT in
+ * publicConfig — the SPA never renders these, so they stay off the public
+ * projection. Each maps to a field under the Greenfield request's `checkout`
+ * object; see BtcpayConfig in lib/processors/btcpay.ts for what each one does
+ * and why BTCPay's own defaults are wrong for censored-region payers.
+ */
+export interface BtcpayCheckoutConfig {
+  /** Minutes the payer has to pay. BTCPay's default is 15 — too short. */
+  expirationMinutes: number;
+  /** Minutes past expiry BTCPay keeps watching for a late payment. */
+  monitoringMinutes: number;
+  /** Preselected method on checkout, e.g. `BTC-LN`. Empty = let BTCPay choose. */
+  defaultPaymentMethod: string;
 }
 
 /** Compiled defaults. PLACEHOLDER prices — set real ones in Admin → Billing pre-launch. */
@@ -91,6 +109,16 @@ export const BILLING_DEFAULTS: BillingConfig = {
   ],
   cryptoMinMonths: 3,
   btcpayMinMonths: 1,
+  btcpayCheckout: {
+    // 90 min, not BTCPay's 15: a payer in a censored region often has to go buy
+    // crypto mid-checkout, and 15 minutes guarantees the invoice dies first.
+    expirationMinutes: 90,
+    // BTCPay's own default. Explicit so it's visible and tunable.
+    monitoringMinutes: 1440,
+    // Empty until the store offers more than Bitcoin (Checkout v2 shows one
+    // unified BIP21 QR for on-chain + Lightning, so there's nothing to preselect).
+    defaultPaymentMethod: '',
+  },
   donation: {
     enabled: true,
     suggestedAmountsCents: [300, 500, 1000, 2500],
@@ -113,6 +141,9 @@ export const BILLING_KEYS = {
   durations: 'billing.membership.durations',
   cryptoMinMonths: 'billing.nowpayments.minMonths',
   btcpayMinMonths: 'billing.btcpay.minMonths',
+  btcpay_expirationMinutes: 'billing.btcpay.expirationMinutes',
+  btcpay_monitoringMinutes: 'billing.btcpay.monitoringMinutes',
+  btcpay_defaultPaymentMethod: 'billing.btcpay.defaultPaymentMethod',
   donation_enabled: 'billing.donation.enabled',
   donation_suggestedAmounts: 'billing.donation.suggestedAmounts',
   donation_minAmountCents: 'billing.donation.minAmountCents',
@@ -127,6 +158,7 @@ const MAX_SUGGESTED_AMOUNTS = 8; // cap the preset-chip list length.
 const MAX_BONUS_GB_PER_USD = 1000; // sanity ceiling on the donation→bandwidth rate.
 const MAX_MONTHLY_CAP_GB = 100_000; // sanity ceiling on the shared monthly bonus.
 const MAX_BONUS_WINDOW_DAYS = 365; // a donation can fund the pool for at most a year.
+const MAX_CHECKOUT_MINUTES = 60 * 24 * 30; // 30 days — an upper bound on invoice expiry/monitoring.
 
 /** Coerce a single duration entry; returns null if unusable (dropped by the caller). */
 function sanitizeDuration(raw: unknown): BillingDuration | null {
@@ -181,6 +213,29 @@ function asAmountCents(raw: unknown, fallback: number): number {
   return typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 && raw <= MAX_AMOUNT_CENTS
     ? raw
     : fallback;
+}
+
+/** A whole number of minutes in [1, MAX_CHECKOUT_MINUTES]; else the fallback. */
+function asMinutes(raw: unknown, fallback: number): number {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 && raw <= MAX_CHECKOUT_MINUTES
+    ? raw
+    : fallback;
+}
+
+/**
+ * A BTCPay payment-method id, e.g. `BTC`, `BTC-LN`, `BTC_LightningLike`,
+ * `XMR-CHAIN`. Validated for shape only, NEVER case-folded: real ids are
+ * mixed-case (`BTC_LightningLike`) and upper-casing one produces a method
+ * BTCPay does not recognize, which silently drops the preselection. The charset
+ * is permissive rather than an enum because the set grows with whatever plugins
+ * the operator installs, so FCP must not gate it. Empty string is valid and
+ * means "let BTCPay choose".
+ */
+function asPaymentMethodId(raw: unknown, fallback: string): string {
+  if (typeof raw !== 'string') return fallback;
+  const s = raw.trim();
+  if (s === '') return '';
+  return /^[A-Za-z0-9_-]{1,32}$/.test(s) ? s : fallback;
 }
 
 /** A whole number of days in [1, MAX_BONUS_WINDOW_DAYS]; else the fallback. */
@@ -238,6 +293,9 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     durations,
     cryptoMin,
     btcpayMin,
+    bpExpiry,
+    bpMonitor,
+    bpDefaultMethod,
     dEnabled,
     dAmounts,
     dMin,
@@ -255,6 +313,9 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     readSetting(db, BILLING_KEYS.durations),
     readSetting(db, BILLING_KEYS.cryptoMinMonths),
     readSetting(db, BILLING_KEYS.btcpayMinMonths),
+    readSetting(db, BILLING_KEYS.btcpay_expirationMinutes),
+    readSetting(db, BILLING_KEYS.btcpay_monitoringMinutes),
+    readSetting(db, BILLING_KEYS.btcpay_defaultPaymentMethod),
     readSetting(db, BILLING_KEYS.donation_enabled),
     readSetting(db, BILLING_KEYS.donation_suggestedAmounts),
     readSetting(db, BILLING_KEYS.donation_minAmountCents),
@@ -263,6 +324,7 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     readSetting(db, BILLING_KEYS.donation_bonusWindowDays),
   ]);
   const d = BILLING_DEFAULTS.donation;
+  const bpc = BILLING_DEFAULTS.btcpayCheckout;
   return {
     enabled: asBool(enabled, BILLING_DEFAULTS.enabled),
     rails: {
@@ -276,6 +338,11 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     durations: sanitizeDurations(durations),
     cryptoMinMonths: asMinMonths(cryptoMin, BILLING_DEFAULTS.cryptoMinMonths),
     btcpayMinMonths: asMinMonths(btcpayMin, BILLING_DEFAULTS.btcpayMinMonths),
+    btcpayCheckout: {
+      expirationMinutes: asMinutes(bpExpiry, bpc.expirationMinutes),
+      monitoringMinutes: asMinutes(bpMonitor, bpc.monitoringMinutes),
+      defaultPaymentMethod: asPaymentMethodId(bpDefaultMethod, bpc.defaultPaymentMethod),
+    },
     donation: {
       enabled: asBool(dEnabled, d.enabled),
       suggestedAmountsCents: sanitizeAmountsList(dAmounts),
@@ -347,6 +414,28 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
       BILLING_KEYS.btcpayMinMonths,
       asMinMonths(p.btcpayMinMonths, BILLING_DEFAULTS.btcpayMinMonths),
     );
+  }
+  if (p.btcpayCheckout && typeof p.btcpayCheckout === 'object') {
+    const bc = p.btcpayCheckout as Record<string, unknown>;
+    const def = BILLING_DEFAULTS.btcpayCheckout;
+    if ('expirationMinutes' in bc) {
+      put(
+        BILLING_KEYS.btcpay_expirationMinutes,
+        asMinutes(bc.expirationMinutes, def.expirationMinutes),
+      );
+    }
+    if ('monitoringMinutes' in bc) {
+      put(
+        BILLING_KEYS.btcpay_monitoringMinutes,
+        asMinutes(bc.monitoringMinutes, def.monitoringMinutes),
+      );
+    }
+    if ('defaultPaymentMethod' in bc) {
+      put(
+        BILLING_KEYS.btcpay_defaultPaymentMethod,
+        asPaymentMethodId(bc.defaultPaymentMethod, def.defaultPaymentMethod),
+      );
+    }
   }
   if (p.donation && typeof p.donation === 'object') {
     const dd = p.donation as Record<string, unknown>;

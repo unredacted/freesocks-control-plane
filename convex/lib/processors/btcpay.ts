@@ -23,6 +23,42 @@ export interface BtcpayConfig {
   storeId: string;
   apiKey: string;
   timeoutMs?: number;
+  // --- per-invoice checkout overrides ---------------------------------------
+  // All three go under the Greenfield request's `checkout` object (NOT top level —
+  // only `amount`/`currency`/`metadata` live there). They're on the CONFIG rather
+  // than on `CheckoutParams` because that struct is shared by all four rails and
+  // none of these translate to the hosted ones. Each is omitted from the request
+  // when unset, so BTCPay's own default applies.
+  //
+  // DELIBERATELY ABSENT: `checkout.paymentTolerance`. Setting it above 0 makes
+  // BTCPay settle a short payment as Settled + additionalStatus PaidPartial —
+  // which `verifyAndParse` below downgrades to `confirming` and never grants. So
+  // a tolerance would be inert: the payer's money arrives, the order stays
+  // non-terminal, and the operator believes they configured otherwise. Supporting
+  // it means comparing the ACTUAL shortfall against the tolerance before
+  // downgrading, which needs the paid amount (a second read of
+  // `/invoices/{id}/payment-methods`, summed across methods via each one's rate)
+  // plus currency + rounding care. That loosens a grant guard, so it belongs in
+  // its own change — not smuggled in as a config default.
+  /**
+   * How long the payer has to pay. BTCPay's default is 15 minutes — far too
+   * short for someone who has to go acquire crypto first, which is the common
+   * case in censored regions.
+   */
+  expirationMinutes?: number;
+  /**
+   * How long after expiry BTCPay keeps watching for a late payment. A payment
+   * that lands after expiry with no monitoring window is a stuck payment the
+   * payer already made.
+   */
+  monitoringMinutes?: number;
+  /**
+   * Which payment method is preselected on the checkout page, e.g. `BTC-LN`.
+   * Only meaningful once the store offers more than Bitcoin: Checkout v2 shows
+   * one unified BIP21 QR for on-chain + Lightning, but any non-Bitcoin chain
+   * reintroduces a payer-facing coin selector, and this decides where it lands.
+   */
+  defaultPaymentMethod?: string;
 }
 
 const InvoiceResponse = z.object({
@@ -86,7 +122,17 @@ export async function createCheckout(
         amount: (params.amountCents / 100).toFixed(2),
         currency: params.currency.toUpperCase(),
         metadata: { orderId: params.orderRef, itemDesc: params.description },
-        checkout: { redirectURL: params.successUrl },
+        checkout: {
+          redirectURL: params.successUrl,
+          // Each override is omitted when unset so BTCPay's own default stands.
+          ...(cfg.expirationMinutes !== undefined
+            ? { expirationMinutes: cfg.expirationMinutes }
+            : {}),
+          ...(cfg.monitoringMinutes !== undefined
+            ? { monitoringMinutes: cfg.monitoringMinutes }
+            : {}),
+          ...(cfg.defaultPaymentMethod ? { defaultPaymentMethod: cfg.defaultPaymentMethod } : {}),
+        },
       }),
       signal: controller.signal,
     });
@@ -204,11 +250,17 @@ export async function verifyAndParse(args: {
   // cross-check (one API read, only on the granting transition, only when
   // configured). A Settled-at-partial invoice (store settle-tolerance) is NOT a
   // grant: downgrade to confirming + flag the underpayment for audit.
-  const detail =
-    type === 'InvoiceSettled' && invoiceId && args.cfg
-      ? await invoiceDetail(args.cfg, invoiceId)
-      : null;
+  // Hoisted so TS narrows `cfg` for the call below AND so `detailUnavailable`
+  // keys off the same value rather than re-deriving the condition (a cast here
+  // would start lying the moment either half changed).
+  const settleCfg = type === 'InvoiceSettled' && invoiceId ? args.cfg : undefined;
+  const detail = settleCfg ? await invoiceDetail(settleCfg, invoiceId) : null;
   const underpaid = detail?.paidPartial === true;
+  // We asked for the settle detail and didn't get it, so this grant proceeds
+  // with the amount + PaidPartial cross-checks disabled. Almost always an
+  // API key missing `btcpay.store.canviewinvoices`. Surfaced so it can be
+  // fixed rather than quietly under-collecting.
+  const detailUnavailable = !!settleCfg && detail === null;
   const status = underpaid ? 'confirming' : mapEventType(type);
   return {
     ok: true,
@@ -216,6 +268,7 @@ export async function verifyAndParse(args: {
     processorRef: invoiceId,
     status,
     ...(underpaid ? { underpaid: true } : {}),
+    ...(detailUnavailable ? { detailUnavailable: true } : {}),
     // The settle event carries no amount, so the invoice-id binding IS the
     // grant guard: applyEvent refuses when it differs from the invoice id FCP
     // itself minted at checkout — an attacker-created invoice on a shared
@@ -236,22 +289,93 @@ export async function verifyAndParse(args: {
 }
 
 /**
- * Live credential probe (Admin → Billing): `GET /api/v1/stores/{storeId}` —
- * validates the API key AND the store id in one read. Never captures the key.
+ * Live credential probe (Admin → Billing). Checks BOTH permissions the rail
+ * needs — and only those two — without creating anything:
+ *
+ *  1. `GET /stores/{storeId}/invoices?take=1` — validates the API URL, the key,
+ *     the store id, and `btcpay.store.canviewinvoices` (the permission
+ *     `verifyAndParse` needs for the amount + PaidPartial cross-checks) in one
+ *     call. `take=1` keeps it cheap on a long invoice history.
+ *  2. `POST /stores/{storeId}/invoices` with a DELIBERATELY UNBINDABLE body —
+ *     validates `btcpay.store.cancreateinvoice` without minting an invoice.
+ *
+ * Why (2) looks strange: there is no side-effect-free way to read a key's own
+ * permissions. `GET /api/v1/api-keys/current` needs
+ * `btcpay.server.canmanageusers` — a SERVER-level permission far beyond
+ * anything the control plane should hold — and archiving a throwaway invoice
+ * needs `canmodifyinvoices`, a fourth permission. Both would mean over-granting
+ * the key that lives on the public host, which is what
+ * docs/btcpay-server-runbook.md §4 exists to prevent.
+ *
+ * So instead we exploit ordering: ASP.NET Core runs authorization BEFORE model
+ * binding, so a request whose body cannot bind still gets permission-checked
+ * first. A key without the permission answers 403; a key with it answers 400
+ * (the body is rejected as intended) and no invoice is created. `amount` is a
+ * decimal string in the Greenfield schema, so a non-numeric value fails binding
+ * outright — note it must NOT be an empty/None body, because an amount-less
+ * invoice is a VALID top-up invoice and would really be created.
+ *
+ * Only 403 is treated as failure here. Anything else passes: 400 proves the
+ * permission, and on an unexpected status we FAIL OPEN deliberately, because a
+ * missing create permission fails loudly and harmlessly at checkout (the member
+ * sees an error, nothing is granted) whereas a false red would block a
+ * correctly-configured operator from going live.
+ *
+ * Never captures the key.
  */
 export async function testConnection(
   cfg: BtcpayConfig,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const base = cfg.apiUrl.replace(/\/$/, '');
+  const invoices = `/api/v1/stores/${encodeURIComponent(cfg.storeId)}/invoices`;
+  const headers = { authorization: `token ${cfg.apiKey}`, accept: 'application/json' };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(`${base}/api/v1/stores/${encodeURIComponent(cfg.storeId)}`, {
-      headers: { authorization: `token ${cfg.apiKey}`, accept: 'application/json' },
+    // (1) Read: URL + key + store id + canviewinvoices.
+    const readRes = await fetch(`${base}${invoices}?take=1`, {
+      headers,
       signal: controller.signal,
     });
-    if (res.ok) return { ok: true };
-    return { ok: false, error: `BTCPay returned HTTP ${res.status}` };
+    if (!readRes.ok) {
+      if (readRes.status === 401) {
+        return { ok: false, error: 'BTCPay rejected the API key (HTTP 401)' };
+      }
+      // BTCPay answers 403 both for a key lacking the permission and for a key
+      // scoped to a DIFFERENT store, so name both rather than guess wrong.
+      if (readRes.status === 403) {
+        return {
+          ok: false,
+          error:
+            'BTCPay refused the invoice read (HTTP 403) — either the API key lacks ' +
+            'btcpay.store.canviewinvoices, or it is not scoped to this store id. ' +
+            'Without that permission a settled invoice grants without the amount and ' +
+            'partial-payment checks.',
+        };
+      }
+      if (readRes.status === 404) {
+        return { ok: false, error: 'BTCPay store not found (HTTP 404) — check the store id' };
+      }
+      return { ok: false, error: `BTCPay returned HTTP ${readRes.status}` };
+    }
+
+    // (2) Create permission, without creating an invoice. See the header comment
+    // for why the body is intentionally unbindable and why only 403 fails.
+    const createRes = await fetch(`${base}${invoices}`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ amount: 'not-a-number', currency: 'USD' }),
+      signal: controller.signal,
+    });
+    if (createRes.status === 403) {
+      return {
+        ok: false,
+        error:
+          'API key can read invoices but not create them — add the ' +
+          'btcpay.store.cancreateinvoice permission. Checkout would fail for every member.',
+      };
+    }
+    return { ok: true };
   } catch {
     return { ok: false, error: 'Connection failed' };
   } finally {

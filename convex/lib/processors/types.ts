@@ -76,6 +76,18 @@ export interface ParsedEvent {
    * visible operator signal instead of a silently-stalled order.
    */
   underpaid?: boolean;
+  /**
+   * The rail could NOT read back the settle detail that powers the amount +
+   * settle-tolerance cross-checks, on the one transition that grants. Today
+   * only BTCPay sets it: its settle event carries neither amount nor settle
+   * state, so `verifyAndParse` re-reads the invoice — and that read needs
+   * `btcpay.store.canviewinvoices` on the API key. An under-scoped key (the
+   * setup runbook wrongly advised invoice-create only until 2026-08) makes the
+   * read fail, `invoiceDetail` returns null, and the settle grants with the
+   * PaidPartial guard silently disabled. This flag turns that degradation into
+   * an audited operator signal rather than an invisible one.
+   */
+  detailUnavailable?: boolean;
 }
 
 export interface VerifyFailure {

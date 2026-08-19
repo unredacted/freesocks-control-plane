@@ -92,7 +92,10 @@ Beyond the signature layer, a `paid` webhook must match the order it grants —
 - the event's **reported amount** undershoots the order (1-cent tolerance) or
   its currency differs. NOWPayments reports the fiat `price_amount`; Stripe the
   session `amount_total`; PayPal the capture/order money object. BTCPay's settle
-  event carries no amount — its checkout-id binding is the guard there.
+  event carries no amount, so the adapter **re-reads the invoice** on settle to
+  recover one (needs `btcpay.store.canviewinvoices` — see the BTCPay setup
+  section); when that read is unavailable the checkout-id binding is the only
+  guard left, and the grant is audited as `billing.settle_detail_unavailable`.
 
 A refusal never advances the order (the REAL invoice's webhook can still grant).
 
@@ -273,16 +276,39 @@ Pre-launch checklist (see also the launch plan):
 ## BTCPay Server setup (self-hosted Bitcoin rail — on-chain + Lightning)
 
 Unlike the hosted rails, BTCPay runs on the **operator's own server**: payments
-settle directly to the org's node/wallet with no intermediary, no third-party
-ToS, and no off-ramp dependency for the Bitcoin leg. Invoices are created via
+settle directly to the org's node/wallet with no intermediary and no third-party
+ToS. It is also the only rail whose checkout page loads **zero third-party
+subresources** — the payer reaches exactly one host, ours — which is why it is
+the primary rail for censored regions. Converting what it receives into USD is a
+separate job with no BTCPay-native support; see "USD off-ramp" below.
+
+**Minimum server version: BTCPay 2.4.2** (with NBXplorer ≥ 2.6.10). Everything
+below 2.4.2, release candidates included, has an actively-exploited LND macaroon
+disclosure bug with confirmed fund theft. Provisioning, upgrades and the key
+inventory live in **`docs/btcpay-server-runbook.md`**. Invoices are created via
 the Greenfield API; the payer gets BTCPay's hosted checkout page (on-chain
 address + Lightning invoice side by side).
 
 1. On your BTCPay Server: create (or reuse) a **store**, connect the wallet
    and/or Lightning node, and note the **store ID** (Store Settings → General).
-2. Create a **restricted API key** (Account → Manage API keys) scoped to just
-   `btcpay.store.cancreateinvoice` for that store — the control plane only ever
-   creates invoices.
+2. Create a **restricted API key** (Account → Manage API keys) for that store
+   with **both** of these permissions:
+   - `btcpay.store.cancreateinvoice` — creating the invoice.
+   - `btcpay.store.canviewinvoices` — reading it back. **Not optional.** On every
+     `InvoiceSettled` the adapter re-reads the invoice to recover the amount and
+     the settle state, because the webhook carries neither
+     (`convex/lib/processors/btcpay.ts:invoiceDetail`). Without this permission
+     that read 403s, the read returns null, and **the settle grants with the
+     amount + partial-payment guards disabled** — a store settle-tolerance could
+     then hand out a membership for a part-paid invoice. The same permission
+     backs the Admin → Billing credential probe. When the read fails, the grant
+     is audited as `billing.settle_detail_unavailable`; if you see that action,
+     this is why.
+
+   Do **not** reuse this key for the off-ramp agent — that one needs payout and
+   Lightning permissions the control plane must never hold. See
+   `docs/btcpay-server-runbook.md` for the full key inventory.
+
 3. Register a **store webhook** (Store Settings → Webhooks): URL
    `https://<PUBLIC_BASE_URL host>/api/webhooks/btcpay`, a strong random
    secret, and the invoice events (settled/processing/expired/invalid — "send
@@ -303,12 +329,68 @@ address + Lightning invoice side by side).
    Status mapping: `InvoiceSettled`→paid;
    `InvoiceProcessing`/`InvoiceReceivedPayment`/`InvoicePaymentSettled`→confirming;
    `InvoiceCreated`→pending; `InvoiceExpired`→expired; `InvoiceInvalid`→failed.
+
+   One exception to `InvoiceSettled`→paid: an invoice whose `additionalStatus`
+   is `PaidPartial` (the store settled it under a configured tolerance) is
+   downgraded to **confirming**, never grants, and is audited as
+   `billing.underpayment_seen` so you can refund or ask for a top-up. This is
+   the guard that step 2's `canviewinvoices` permission makes possible.
+
 7. **Minimum term:** `btcpayMinMonths` (Admin → Billing) defaults to **1** —
    Lightning has no meaningful floor. If you run on-chain-only, consider raising
    it (or your store's BTCPay policy) so fees don't dwarf small payments.
-8. **Redelivery:** BTCPay retries failed webhook deliveries and offers manual
-   redelivery per event in the store's webhook UI — combined with the
-   per-(invoice, event-type) dedupe id, replays are safe.
+8. **Checkout behavior** (Admin → Billing, all three admin-editable without a
+   deploy). BTCPay's own defaults are tuned for a payer who already holds
+   bitcoin; ours are not, so these override them per invoice:
+   - **Invoice expiry** — default **90 min** (BTCPay's own default is 15, which
+     expires before someone in a censored region can acquire crypto and send it).
+   - **Late-payment monitoring** — default **1440 min**. How long past expiry
+     BTCPay keeps watching, so a late payment isn't money the payer already sent
+     into a dead invoice.
+   - **Default payment method** — blank unless the store offers more than
+     Bitcoin. Checkout v2 shows one unified BIP21 QR for on-chain + Lightning,
+     but any non-Bitcoin chain reintroduces a payer-facing coin selector, and
+     this decides where it lands (e.g. `BTC-LN`).
+
+   **Not exposed: `paymentTolerance`.** Setting it above 0 makes BTCPay settle a
+   short payment as `Settled` + `PaidPartial` — which the guard in step 6
+   downgrades to `confirming` and never grants. A tolerance would therefore be
+   inert _and_ misleading: the payer's money arrives, the order stays
+   non-terminal, and the operator believes they configured otherwise. Supporting
+   it means comparing the ACTUAL shortfall against the tolerance before
+   downgrading, which needs the paid amount (a second read of
+   `/invoices/{id}/payment-methods`, summed across methods via each one's rate)
+   plus currency and rounding care. That loosens a grant guard, so it is its own
+   change rather than a config default. If exchange-fee shortfalls become a real
+   problem, that is the work to do — not flipping a percentage.
+
+9. **Verify before going live:** Admin → Billing → **Test connection** on the
+   BTCPay rail (`POST /api/v1/admin/billing/test-connection`) checks **both**
+   permissions from step 2, and creates nothing:
+   - `GET /stores/{storeId}/invoices?take=1` — the API URL, key, store id and
+     `canviewinvoices` in one call. A key scoped per an older runbook fails here
+     instead of passing and then 403-ing at settle time.
+   - `POST /stores/{storeId}/invoices` with a deliberately **unbindable** body —
+     `cancreateinvoice`, without minting an invoice. BTCPay authorizes before it
+     binds the body, so a key without the permission answers 403 while a key with
+     it answers 400 and nothing is created.
+
+   Run it after any credential change. Two deliberate non-goals: it does not read
+   `GET /stores/{storeId}` (that needs `canviewstoresettings`, a third permission
+   the control plane never uses) and it does not read the key's own permission
+   list (`GET /api/v1/api-keys/current` needs the **server-level**
+   `btcpay.server.canmanageusers`). Either would mean over-granting the key that
+   lives on the public host. The two permissions in step 2 are all this rail
+   needs — and all it should have.
+
+   On an unexpected status from the create probe the check **passes**: only a 403
+   proves the permission is absent, and a missing `cancreateinvoice` fails loudly
+   and harmlessly at checkout (the member sees an error, nothing is granted),
+   whereas a false failure would block a correctly-configured operator.
+
+10. **Redelivery:** BTCPay retries failed webhook deliveries and offers manual
+    redelivery per event in the store's webhook UI — combined with the
+    per-(invoice, event-type) dedupe id, replays are safe.
 
 ## Stripe setup (Phase 2)
 

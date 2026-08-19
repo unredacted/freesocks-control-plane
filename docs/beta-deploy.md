@@ -148,6 +148,26 @@ In a browser:
 - `/admin` passkey login works;
 - the session cookie is `Secure` (DevTools), because `ENVIRONMENT=production`.
 
+### Billing rails (only if any rail is enabled)
+
+Nothing in the checks above touches billing, so a misconfigured rail ships silently and
+is discovered by a member who cannot pay. Per enabled rail:
+
+- Admin → **Billing** shows the rail as **ready**, not `enabled · missing …`.
+- Admin → Billing → **Test connection** passes (it probes real credentials).
+- The webhook URL is reachable **from the processor's side**, which is the part local
+  checks cannot prove. An unset secret answers a distinct `503`, so a `200`/`400` here
+  means the route is live and the secret is set:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://beta.freesocks.org/api/webhooks/btcpay
+```
+
+- After the first real payment, confirm the audit log has **no**
+  `billing.settle_detail_unavailable` entry — that means the BTCPay API key is missing
+  `btcpay.store.canviewinvoices` and grants are running with the amount and
+  partial-payment guards off (`docs/btcpay-server-runbook.md` §4).
+
 ## 6. Updating / redeploying
 
 A release has **two independently-built halves**, and a normal update must
