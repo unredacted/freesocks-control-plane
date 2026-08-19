@@ -289,56 +289,93 @@ export async function verifyAndParse(args: {
 }
 
 /**
- * Live credential probe (Admin → Billing): ONE read of
- * `GET /api/v1/stores/{storeId}/invoices?take=1`.
+ * Live credential probe (Admin → Billing). Checks BOTH permissions the rail
+ * needs — and only those two — without creating anything:
  *
- * That single call validates everything the rail actually needs — the API URL,
- * the API key, the store id, AND `btcpay.store.canviewinvoices`, the permission
- * `verifyAndParse` depends on to run the amount + PaidPartial cross-checks on
- * the granting transition.
+ *  1. `GET /stores/{storeId}/invoices?take=1` — validates the API URL, the key,
+ *     the store id, and `btcpay.store.canviewinvoices` (the permission
+ *     `verifyAndParse` needs for the amount + PaidPartial cross-checks) in one
+ *     call. `take=1` keeps it cheap on a long invoice history.
+ *  2. `POST /stores/{storeId}/invoices` with a DELIBERATELY UNBINDABLE body —
+ *     validates `btcpay.store.cancreateinvoice` without minting an invoice.
  *
- * Deliberately NOT `GET /api/v1/stores/{storeId}` as well: that endpoint needs
- * `btcpay.store.canviewstoresettings`, a THIRD permission the control plane
- * never uses at runtime. Probing it would force operators to over-grant the
- * control-plane key purely to satisfy a redundant call — the opposite of the
- * least-privilege split in docs/btcpay-server-runbook.md §4. The probe tests
- * exactly what the runtime uses, no more.
+ * Why (2) looks strange: there is no side-effect-free way to read a key's own
+ * permissions. `GET /api/v1/api-keys/current` needs
+ * `btcpay.server.canmanageusers` — a SERVER-level permission far beyond
+ * anything the control plane should hold — and archiving a throwaway invoice
+ * needs `canmodifyinvoices`, a fourth permission. Both would mean over-granting
+ * the key that lives on the public host, which is what
+ * docs/btcpay-server-runbook.md §4 exists to prevent.
  *
- * `take=1` keeps it cheap on a store with a long invoice history. Never captures
- * the key.
+ * So instead we exploit ordering: ASP.NET Core runs authorization BEFORE model
+ * binding, so a request whose body cannot bind still gets permission-checked
+ * first. A key without the permission answers 403; a key with it answers 400
+ * (the body is rejected as intended) and no invoice is created. `amount` is a
+ * decimal string in the Greenfield schema, so a non-numeric value fails binding
+ * outright — note it must NOT be an empty/None body, because an amount-less
+ * invoice is a VALID top-up invoice and would really be created.
+ *
+ * Only 403 is treated as failure here. Anything else passes: 400 proves the
+ * permission, and on an unexpected status we FAIL OPEN deliberately, because a
+ * missing create permission fails loudly and harmlessly at checkout (the member
+ * sees an error, nothing is granted) whereas a false red would block a
+ * correctly-configured operator from going live.
+ *
+ * Never captures the key.
  */
 export async function testConnection(
   cfg: BtcpayConfig,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const base = cfg.apiUrl.replace(/\/$/, '');
-  const path = `/api/v1/stores/${encodeURIComponent(cfg.storeId)}/invoices?take=1`;
+  const invoices = `/api/v1/stores/${encodeURIComponent(cfg.storeId)}/invoices`;
+  const headers = { authorization: `token ${cfg.apiKey}`, accept: 'application/json' };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(`${base}${path}`, {
-      headers: { authorization: `token ${cfg.apiKey}`, accept: 'application/json' },
+    // (1) Read: URL + key + store id + canviewinvoices.
+    const readRes = await fetch(`${base}${invoices}?take=1`, {
+      headers,
       signal: controller.signal,
     });
-    if (res.ok) return { ok: true };
-    if (res.status === 401) {
-      return { ok: false, error: 'BTCPay rejected the API key (HTTP 401)' };
+    if (!readRes.ok) {
+      if (readRes.status === 401) {
+        return { ok: false, error: 'BTCPay rejected the API key (HTTP 401)' };
+      }
+      // BTCPay answers 403 both for a key lacking the permission and for a key
+      // scoped to a DIFFERENT store, so name both rather than guess wrong.
+      if (readRes.status === 403) {
+        return {
+          ok: false,
+          error:
+            'BTCPay refused the invoice read (HTTP 403) — either the API key lacks ' +
+            'btcpay.store.canviewinvoices, or it is not scoped to this store id. ' +
+            'Without that permission a settled invoice grants without the amount and ' +
+            'partial-payment checks.',
+        };
+      }
+      if (readRes.status === 404) {
+        return { ok: false, error: 'BTCPay store not found (HTTP 404) — check the store id' };
+      }
+      return { ok: false, error: `BTCPay returned HTTP ${readRes.status}` };
     }
-    // BTCPay answers 403 both for a key lacking the permission and for a key
-    // scoped to a DIFFERENT store, so name both rather than guess wrong.
-    if (res.status === 403) {
+
+    // (2) Create permission, without creating an invoice. See the header comment
+    // for why the body is intentionally unbindable and why only 403 fails.
+    const createRes = await fetch(`${base}${invoices}`, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ amount: 'not-a-number', currency: 'USD' }),
+      signal: controller.signal,
+    });
+    if (createRes.status === 403) {
       return {
         ok: false,
         error:
-          'BTCPay refused the invoice read (HTTP 403) — either the API key lacks ' +
-          'btcpay.store.canviewinvoices, or it is not scoped to this store id. ' +
-          'Without that permission a settled invoice grants without the amount and ' +
-          'partial-payment checks.',
+          'API key can read invoices but not create them — add the ' +
+          'btcpay.store.cancreateinvoice permission. Checkout would fail for every member.',
       };
     }
-    if (res.status === 404) {
-      return { ok: false, error: 'BTCPay store not found (HTTP 404) — check the store id' };
-    }
-    return { ok: false, error: `BTCPay returned HTTP ${res.status}` };
+    return { ok: true };
   } catch {
     return { ok: false, error: 'Connection failed' };
   } finally {

@@ -365,17 +365,28 @@ address + Lightning invoice side by side).
    problem, that is the work to do — not flipping a percentage.
 
 9. **Verify before going live:** Admin → Billing → **Test connection** on the
-   BTCPay rail (`POST /api/v1/admin/billing/test-connection`) reads
-   `GET /api/v1/stores/{storeId}/invoices?take=1` — one call that validates the
-   API URL, the key, the store id **and** `canviewinvoices` together, so a key
-   scoped per an older runbook fails the probe instead of passing it and then
-   403-ing at settle time. Run it after any credential change.
+   BTCPay rail (`POST /api/v1/admin/billing/test-connection`) checks **both**
+   permissions from step 2, and creates nothing:
+   - `GET /stores/{storeId}/invoices?take=1` — the API URL, key, store id and
+     `canviewinvoices` in one call. A key scoped per an older runbook fails here
+     instead of passing and then 403-ing at settle time.
+   - `POST /stores/{storeId}/invoices` with a deliberately **unbindable** body —
+     `cancreateinvoice`, without minting an invoice. BTCPay authorizes before it
+     binds the body, so a key without the permission answers 403 while a key with
+     it answers 400 and nothing is created.
 
-   It deliberately does **not** also read `GET /api/v1/stores/{storeId}`: that
-   needs `btcpay.store.canviewstoresettings`, a third permission the control
-   plane never uses at runtime, and probing it would force you to over-grant the
-   key just to pass a check. The two permissions in step 2 are all this rail
+   Run it after any credential change. Two deliberate non-goals: it does not read
+   `GET /stores/{storeId}` (that needs `canviewstoresettings`, a third permission
+   the control plane never uses) and it does not read the key's own permission
+   list (`GET /api/v1/api-keys/current` needs the **server-level**
+   `btcpay.server.canmanageusers`). Either would mean over-granting the key that
+   lives on the public host. The two permissions in step 2 are all this rail
    needs — and all it should have.
+
+   On an unexpected status from the create probe the check **passes**: only a 403
+   proves the permission is absent, and a missing `cancreateinvoice` fails loudly
+   and harmlessly at checkout (the member sees an error, nothing is granted),
+   whereas a false failure would block a correctly-configured operator.
 
 10. **Redelivery:** BTCPay retries failed webhook deliveries and offers manual
     redelivery per event in the store's webhook UI — combined with the

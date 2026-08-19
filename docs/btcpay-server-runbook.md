@@ -98,12 +98,14 @@ Billing **Test connection** probe fails on an under-scoped key. If you see eithe
 is the cause. (Documentation before 2026-08 advised invoice-create only; installs built
 from it are under-scoped.)
 
-**Two permissions is the whole list — resist adding a third.** The probe reads
-`GET /stores/{storeId}/invoices?take=1`, which validates the URL, key, store id and
-`canviewinvoices` in one call, precisely so it tests what the runtime uses and nothing
-more. Reading `GET /stores/{storeId}` would need `canviewstoresettings` as well, which
-the control plane never uses — granting it just to satisfy a probe would widen the blast
-radius of the key that lives on the public host.
+**Two permissions is the whole list — resist adding a third.** The probe checks both of
+them and nothing else: a `GET /stores/{storeId}/invoices?take=1` for `canviewinvoices`,
+and a `POST` of a deliberately unbindable invoice body for `cancreateinvoice` (BTCPay
+authorizes before binding, so a key without the permission 403s and no invoice is
+created). It deliberately avoids `GET /stores/{storeId}` (needs
+`canviewstoresettings`) and `GET /api/v1/api-keys/current` (needs the **server-level**
+`btcpay.server.canmanageusers`) — granting either just to satisfy a probe would widen
+the blast radius of the key that lives on the public host.
 
 ## 5. Chains
 
