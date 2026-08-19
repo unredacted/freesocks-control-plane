@@ -71,7 +71,9 @@ domain** (not another subdomain) swapped in via `BTCPAY_API_URL` in Admin → Bi
    The trade-off is explicit: a watch-only store cannot run BTCPay's automated on-chain
    payout processor, so sweeps to the exchange stay manual. That is an acceptable price,
    and arguably the right default — an automated hot wallet on an internet-facing host is
-   exactly what the 2.4.2 advisory drained.
+   exactly what the 2.4.2 advisory drained. **In this posture BTCPay only ever holds the
+   xpub, which cannot spend — so the signing seed is backed up from the hardware device,
+   not from BTCPay. See §6.1; getting this wrong loses the funds.**
 4. Set the store's **Checkout Appearance** to match the invoice defaults FCP sends
    (Admin → Billing): 90-minute expiry, and whichever payment methods you enable in §5.
 
@@ -137,14 +139,42 @@ Two things to internalize:
 
 ## 6. Backups
 
-Back up, and test a restore before the store handles real money:
+Back up all four of these, and test a restore before the store handles real money.
 
-- The **wallet seed / xpub** — offline, off-host, on paper or metal. Nothing else here
-  matters if this is lost.
-- **Lightning channel state** (`static channel backup` for LND). Channel state is not
-  reconstructible from the seed.
-- The **BTCPay Postgres database** (invoices, store config, webhook secrets). Losing it
-  loses the audit trail even though the coins survive.
+> **A seed and an xpub are NOT alternatives.** An xpub (or wallet descriptor)
+> recreates a **watch-only** wallet: BTCPay can see balances and derive receive
+> addresses, but nobody can **spend**. Only the signing seed recovers spend access.
+> This matters most under the §3 watch-only posture that this runbook recommends,
+> because there BTCPay never holds the seed at all — so "back up what BTCPay has"
+> gets you the xpub and a wallet you can watch your own funds sit in, forever.
+
+1. **The signing wallet's recovery seed** — the hardware device's BIP39 phrase, or the
+   12 words BTCPay showed you if you let it generate a hot wallet. **Offline, off-host,
+   on paper or metal. Never on the server, never in the password manager the server can
+   reach.** This is the only artifact that recovers the ability to spend. Store
+   alongside it, because a seed alone may not be enough:
+   - the **BIP39 passphrase**, if the device uses one (a seed with a passphrase derives
+     a completely different wallet — a forgotten passphrase loses the funds as surely as
+     a lost seed);
+   - the **derivation path** BTCPay was configured with, if it is not the default.
+
+   Losing this while the hardware device still works is survivable — move the funds to a
+   new wallet immediately. Losing it _and_ the device is unrecoverable, and no BTCPay
+   backup changes that.
+
+2. **The wallet descriptor or xpub** — a separate artifact, and a BTCPay _recovery_
+   convenience rather than a fund backup. It restores the store's watching
+   configuration without re-deriving from the seed, which makes a rebuild faster and
+   avoids re-exposing the seed to a machine. Useful; not sufficient.
+
+3. **Lightning channel state** (`static channel backup` for LND). Not reconstructible
+   from the seed, and note what an SCB actually does: it lets you force-close channels
+   to recover your balance, not resume operating them. Re-export it whenever channels
+   change.
+
+4. **The BTCPay Postgres database** (invoices, store config, webhook secrets). Losing
+   it loses the audit trail and the store setup even though the coins survive — and for
+   a nonprofit the invoice history is an accounting record, not just convenience.
 
 ## 7. Upgrades
 
@@ -192,7 +222,10 @@ hand; the runbook for both will be `docs/finance-offramp.md`.
 - [ ] `BTCPAY_HOST` set; `BTCPAY_ROOTPATH` untouched; `X-Forwarded-Proto` forwarded if proxied
 - [ ] **An invoice's `checkoutLink` points at `pay.freesocks.org`**
 - [ ] Store created, wallet and/or Lightning node connected, wallet posture decided
-- [ ] Seed, channel backup, and database backups taken **and a restore tested**
+- [ ] **Signing seed** backed up offline (plus passphrase / derivation path if used) —
+      NOT just the xpub, which cannot spend
+- [ ] Wallet descriptor/xpub, Lightning channel backup, and Postgres backup taken
+- [ ] A restore actually **tested**, not just taken
 - [ ] Three separate API keys created with the permissions in §4
 - [ ] Store webhook registered → `https://<PUBLIC_BASE_URL host>/api/webhooks/btcpay`
 - [ ] FCP configured (Admin → Billing) and **Test connection** passes
