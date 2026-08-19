@@ -41,3 +41,17 @@ export function classifyAttestation(att: ConnectionAttestation): E2eeAttestation
   if (!att.reachable) return 'unreachable';
   return att.failure && TAMPER_FAILURES.includes(att.failure) ? 'warn' : 'stale';
 }
+
+/**
+ * Fold a fresh verdict into the one already on screen. `warn` is STICKY: once a
+ * swapped or revoked key has been observed, only a poll that positively attests
+ * may clear the alarm.
+ *
+ * Without this, re-attesting hands an active CDN an off switch - having been
+ * caught once, it clears the "don't enter your account number" banner just by
+ * making the next poll inconclusive (block it → `unreachable`, or strip/expire the
+ * epoch → `stale`). Inconclusive is not exculpatory, so it does not clear.
+ */
+export function nextAttestation(prev: E2eeAttestation, next: E2eeAttestation): E2eeAttestation {
+  return prev === 'warn' && next !== 'active' ? 'warn' : next;
+}

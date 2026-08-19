@@ -193,17 +193,19 @@ function applyRevocation(r: {
 }
 
 /**
- * Fetch the server-attested key material, ALWAYS from the origin.
+ * Fetch the server-attested key material, never accepting a cached body without
+ * asking the origin first.
  *
- * The response carries a short `max-age` so shared caches can absorb bursts, but
- * the browser's own HTTP cache must never answer this: an epoch is valid for 30
- * minutes, so a cache hit on a long-idle tab (a session-restore reload prefers the
- * disk cache over revalidating) hands back an EXPIRED epoch, which is
- * indistinguishable at the crypto layer from a tampered one. `cache: 'no-store'`
- * keeps the verdict about the live server instead of about our own cache.
+ * An epoch that has expired is indistinguishable at the crypto layer from one an
+ * attacker swapped in, so a cache that hands back a long-dead response corrupts the
+ * verdict (and silently keeps the seal path on the static key, losing the epoch's
+ * forward secrecy). `cache: 'no-cache'` rather than `'no-store'`: it forbids using a
+ * cached response unvalidated - the actual guarantee we need - while still letting
+ * the cache be populated and a cheap 304 answer the revalidation, so the endpoint's
+ * own `max-age` keeps working for shared caches.
  */
 function fetchKeys(): Promise<Response> {
-  return fetch('/api/v1/e2ee/keys', { credentials: 'omit', cache: 'no-store' });
+  return fetch('/api/v1/e2ee/keys', { credentials: 'omit', cache: 'no-cache' });
 }
 
 async function refreshEpoch(): Promise<void> {

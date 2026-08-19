@@ -11,7 +11,7 @@
  * lazy. `ensureAttestationChecked()` lazy-imports `e2ee.ts` only on demand, so a
  * dark build whose badge never renders the active branch never pulls the chunk.
  */
-import { classifyAttestation, type E2eeAttestation } from './e2ee-attestation';
+import { classifyAttestation, nextAttestation, type E2eeAttestation } from './e2ee-attestation';
 
 export { classifyAttestation };
 export type { E2eeAttestation };
@@ -59,9 +59,16 @@ async function runAttestation(): Promise<void> {
   const { verifyConnection } = await import('./e2ee');
   const att = await verifyConnection();
   lastCheckedAt = Date.now();
-  e2eeSession.epochKid = att.epochKid ?? null;
-  e2eeSession.notAfter = att.notAfter ?? null;
-  e2eeSession.attestation = classifyAttestation(att);
+  const verdict = classifyAttestation(att);
+  const held = nextAttestation(e2eeSession.attestation, verdict);
+  // A `warn` held over an inconclusive poll keeps the epoch fields from the
+  // observation that raised it: overwriting them would erase what tripped the alarm
+  // while the alarm is still showing.
+  if (held === verdict) {
+    e2eeSession.epochKid = att.epochKid ?? null;
+    e2eeSession.notAfter = att.notAfter ?? null;
+  }
+  e2eeSession.attestation = held;
 }
 
 /**

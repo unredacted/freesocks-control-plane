@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { classifyAttestation } from './e2ee-attestation';
+import { classifyAttestation, nextAttestation } from './e2ee-attestation';
 
 describe('classifyAttestation', () => {
   test('a verified epoch is active', () => {
@@ -44,5 +44,30 @@ describe('classifyAttestation', () => {
     expect(classifyAttestation({ reachable: false, attested: false, configured: false })).toBe(
       'unconfigured',
     );
+  });
+});
+
+describe('nextAttestation', () => {
+  // Re-attesting must not hand a caught CDN an off switch: having been detected, it
+  // could otherwise clear the banner by making the next poll inconclusive.
+  test('a raised warn survives every inconclusive later verdict', () => {
+    for (const later of ['stale', 'unreachable', 'pending'] as const) {
+      expect(nextAttestation('warn', later)).toBe('warn');
+    }
+  });
+
+  test('only a positive attestation clears a warn', () => {
+    expect(nextAttestation('warn', 'active')).toBe('active');
+  });
+
+  test('a warn still raises from any other state', () => {
+    expect(nextAttestation('active', 'warn')).toBe('warn');
+    expect(nextAttestation('stale', 'warn')).toBe('warn');
+  });
+
+  test('non-warn states track the fresh verdict', () => {
+    expect(nextAttestation('active', 'stale')).toBe('stale');
+    expect(nextAttestation('unreachable', 'active')).toBe('active');
+    expect(nextAttestation('pending', 'unreachable')).toBe('unreachable');
   });
 });

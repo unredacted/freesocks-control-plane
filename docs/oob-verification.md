@@ -114,12 +114,25 @@ fired at users over a wedged cron and taught them to dismiss the one alarm that 
 Neither state hands an attacker anything new either: a CDN that wants the static-key
 fallback can already force it by simply blocking the endpoint (`unreachable`).
 
+`warn`, by contrast, is **sticky**: once a swapped or revoked key has been seen, only a
+later poll that positively attests clears it. Otherwise re-attesting would hand a caught
+CDN an off switch, since blocking the next request (`unreachable`) or stripping the epoch
+(`stale`) would clear the banner. Inconclusive is not exculpatory.
+
 Because an expired epoch is indistinguishable from a tampered one at the crypto layer,
 both ends refuse to let a cache create that state: the client fetches the key endpoint
-with `cache: 'no-store'`, and the server clamps the response `max-age` to the epoch's
-own remaining validity (and sends `no-store` during a rotation gap). The client also
-re-attests a visible tab every 5 minutes and on tab refocus, so a long-lived tab's
-verdict is current rather than frozen at page load.
+with `cache: 'no-cache'` (never use a cached body without revalidating at the origin,
+while still letting caches be populated and answer with a 304), and the server clamps the
+response `max-age` to the epoch's own remaining validity, sending `no-store` during a
+rotation gap. The clamp is a guarantee rather than a hot path: rotation every 10 minutes
+against a 30-minute validity means the epoch on the wire normally has 20+ minutes left,
+so a conformant 60-second cache could not serve an expired one anyway.
+
+The client also re-attests every 5 minutes and on refocus or regained connectivity
+(throttled to one check per minute), so a long-lived tab's verdict is current rather than
+frozen at page load, and opening the verify panel forces a fresh check. The interval is
+deliberately not gated on `document.visibilityState`, because some embedded webviews
+report a displayed page as hidden forever.
 
 ## Reproducible build
 

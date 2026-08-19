@@ -492,10 +492,11 @@ http.route({
       200,
       // Cache for at most 60s, and NEVER past the epoch's own validity: a cache
       // (browser HTTP cache, Caddy, a CDN) that outlives the key hands clients an
-      // EXPIRED epoch, which the client cannot tell apart from a tampered one and
-      // used to surface as the loud "couldn't verify the encryption key" banner.
-      // A rotation gap (epoch null) is not cached at all, so it clears the moment
-      // the rotate cron catches up.
+      // EXPIRED epoch, which the client cannot tell apart from a tampered one.
+      // Rotation every 10 min against a 30-min validity means the served epoch
+      // normally has >=20 min left, so this clamp only ever bites if that ratio
+      // changes -- it is the guarantee, not a hot path. A rotation gap (epoch null)
+      // is not cached at all, so it clears the moment the rotate cron catches up.
       { 'cache-control': epochCacheControl(epoch?.notAfter) },
     );
   }),
