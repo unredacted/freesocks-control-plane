@@ -365,13 +365,18 @@ address + Lightning invoice side by side).
    problem, that is the work to do — not flipping a percentage.
 
 9. **Verify before going live:** Admin → Billing → **Test connection** on the
-   BTCPay rail (`POST /api/v1/admin/billing/test-connection`) makes **two** reads,
-   because the rail needs two distinct permissions and a probe proving only one
-   would report green on a key whose settle-time read-back 403s:
-   - `GET /api/v1/stores/{storeId}` — the API URL, store id, and key.
-   - `GET /api/v1/stores/{storeId}/invoices?take=1` — the read-back from step 2.
-     A 403 here is reported by name, so a key missing `canviewinvoices` fails the
-     probe instead of passing it. Run it after any credential change.
+   BTCPay rail (`POST /api/v1/admin/billing/test-connection`) reads
+   `GET /api/v1/stores/{storeId}/invoices?take=1` — one call that validates the
+   API URL, the key, the store id **and** `canviewinvoices` together, so a key
+   scoped per an older runbook fails the probe instead of passing it and then
+   403-ing at settle time. Run it after any credential change.
+
+   It deliberately does **not** also read `GET /api/v1/stores/{storeId}`: that
+   needs `btcpay.store.canviewstoresettings`, a third permission the control
+   plane never uses at runtime, and probing it would force you to over-grant the
+   key just to pass a check. The two permissions in step 2 are all this rail
+   needs — and all it should have.
+
 10. **Redelivery:** BTCPay retries failed webhook deliveries and offers manual
     redelivery per event in the store's webhook UI — combined with the
     per-(invoice, event-type) dedupe id, replays are safe.

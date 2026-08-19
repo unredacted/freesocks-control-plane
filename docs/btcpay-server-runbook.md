@@ -98,6 +98,13 @@ Billing **Test connection** probe fails on an under-scoped key. If you see eithe
 is the cause. (Documentation before 2026-08 advised invoice-create only; installs built
 from it are under-scoped.)
 
+**Two permissions is the whole list — resist adding a third.** The probe reads
+`GET /stores/{storeId}/invoices?take=1`, which validates the URL, key, store id and
+`canviewinvoices` in one call, precisely so it tests what the runtime uses and nothing
+more. Reading `GET /stores/{storeId}` would need `canviewstoresettings` as well, which
+the control plane never uses — granting it just to satisfy a probe would widen the blast
+radius of the key that lives on the public host.
+
 ## 5. Chains
 
 Enable these in waves, verifying each with a canary deposit before raising limits.

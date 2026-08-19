@@ -1280,10 +1280,11 @@ describe('nowpayments partial-settle guard', () => {
 describe('btcpay.testConnection', () => {
   const cfg = { apiUrl: 'https://pay.example.org', storeId: 'store_1', apiKey: 'token-abc' };
 
-  test('probes BOTH the store and the invoice read', async () => {
-    // A probe that only reads the store reports green on a key whose settle-time
-    // read-back will 403 — which silently disables the amount + PaidPartial
-    // guards on every grant. Both reads, or the probe is worse than useless.
+  test('probes ONLY the invoice read — the permission the runtime actually uses', async () => {
+    // Deliberately not also GET /stores/{id}: that needs canviewstoresettings, a
+    // third permission the control plane never uses, and probing it would force
+    // operators to over-grant the key just to pass the check. One call already
+    // validates the URL, key, store id and canviewinvoices.
     const urls: string[] = [];
     vi.stubGlobal(
       'fetch',
@@ -1293,31 +1294,36 @@ describe('btcpay.testConnection', () => {
       }),
     );
     expect(await btcpay.testConnection(cfg)).toEqual({ ok: true });
-    expect(urls).toEqual([
-      'https://pay.example.org/api/v1/stores/store_1',
-      'https://pay.example.org/api/v1/stores/store_1/invoices?take=1',
-    ]);
+    expect(urls).toEqual(['https://pay.example.org/api/v1/stores/store_1/invoices?take=1']);
   });
 
-  test('a 403 on the invoice read names the missing permission', async () => {
+  test('403 names the permission AND the store-scope possibility', async () => {
+    // BTCPay answers 403 for both causes, so the message must not assert one.
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string | URL) =>
-        String(url).includes('/invoices') ? res({}, { ok: false, status: 403 }) : res({}),
-      ),
+      vi.fn(async () => res({}, { ok: false, status: 403 })),
     );
     const out = await btcpay.testConnection(cfg);
     expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.error).toMatch(/canviewinvoices/);
+    if (!out.ok) {
+      expect(out.error).toMatch(/canviewinvoices/);
+      expect(out.error).toMatch(/store id/i);
+    }
   });
 
-  test('a failing store read short-circuits before the invoice read', async () => {
-    const fetchMock = vi.fn(async () => res({}, { ok: false, status: 401 }));
-    vi.stubGlobal('fetch', fetchMock);
-    const out = await btcpay.testConnection(cfg);
-    expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.error).toMatch(/401/);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+  test('401 and 404 are distinguished from a permission problem', async () => {
+    for (const [status, pattern] of [
+      [401, /api key/i],
+      [404, /store id/i],
+    ] as const) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => res({}, { ok: false, status })),
+      );
+      const out = await btcpay.testConnection(cfg);
+      expect(out.ok).toBe(false);
+      if (!out.ok) expect(out.error).toMatch(pattern);
+    }
   });
 
   test('never leaks the API key in an error', async () => {

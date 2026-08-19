@@ -289,50 +289,56 @@ export async function verifyAndParse(args: {
 }
 
 /**
- * Live credential probe (Admin → Billing). TWO reads, because the rail needs two
- * distinct permissions and a probe that only proves one is worse than none — it
- * reports green on a key whose settle-time read-back will 403, leaving grants
- * running without the amount + PaidPartial cross-checks:
+ * Live credential probe (Admin → Billing): ONE read of
+ * `GET /api/v1/stores/{storeId}/invoices?take=1`.
  *
- *  1. `GET /api/v1/stores/{storeId}` — the API key and the store id
- *     (`btcpay.store.canviewstoresettings`).
- *  2. `GET /api/v1/stores/{storeId}/invoices?take=1` — the invoice read-back
- *     `verifyAndParse` depends on (`btcpay.store.canviewinvoices`).
+ * That single call validates everything the rail actually needs — the API URL,
+ * the API key, the store id, AND `btcpay.store.canviewinvoices`, the permission
+ * `verifyAndParse` depends on to run the amount + PaidPartial cross-checks on
+ * the granting transition.
  *
- * Never captures the key. A 403 on the second read is called out by name so the
- * operator knows exactly which permission to add.
+ * Deliberately NOT `GET /api/v1/stores/{storeId}` as well: that endpoint needs
+ * `btcpay.store.canviewstoresettings`, a THIRD permission the control plane
+ * never uses at runtime. Probing it would force operators to over-grant the
+ * control-plane key purely to satisfy a redundant call — the opposite of the
+ * least-privilege split in docs/btcpay-server-runbook.md §4. The probe tests
+ * exactly what the runtime uses, no more.
+ *
+ * `take=1` keeps it cheap on a store with a long invoice history. Never captures
+ * the key.
  */
 export async function testConnection(
   cfg: BtcpayConfig,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const base = cfg.apiUrl.replace(/\/$/, '');
-  const store = `/api/v1/stores/${encodeURIComponent(cfg.storeId)}`;
-  const headers = { authorization: `token ${cfg.apiKey}`, accept: 'application/json' };
+  const path = `/api/v1/stores/${encodeURIComponent(cfg.storeId)}/invoices?take=1`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const storeRes = await fetch(`${base}${store}`, { headers, signal: controller.signal });
-    if (!storeRes.ok) {
-      return { ok: false, error: `BTCPay returned HTTP ${storeRes.status}` };
-    }
-    // The permission the grant path actually depends on. `take=1` keeps this a
-    // cheap read on a store with a long invoice history.
-    const invRes = await fetch(`${base}${store}/invoices?take=1`, {
-      headers,
+    const res = await fetch(`${base}${path}`, {
+      headers: { authorization: `token ${cfg.apiKey}`, accept: 'application/json' },
       signal: controller.signal,
     });
-    if (invRes.status === 403 || invRes.status === 401) {
+    if (res.ok) return { ok: true };
+    if (res.status === 401) {
+      return { ok: false, error: 'BTCPay rejected the API key (HTTP 401)' };
+    }
+    // BTCPay answers 403 both for a key lacking the permission and for a key
+    // scoped to a DIFFERENT store, so name both rather than guess wrong.
+    if (res.status === 403) {
       return {
         ok: false,
         error:
-          'API key cannot read invoices — add the btcpay.store.canviewinvoices permission. ' +
-          'Without it a settled invoice grants without the amount and partial-payment checks.',
+          'BTCPay refused the invoice read (HTTP 403) — either the API key lacks ' +
+          'btcpay.store.canviewinvoices, or it is not scoped to this store id. ' +
+          'Without that permission a settled invoice grants without the amount and ' +
+          'partial-payment checks.',
       };
     }
-    if (!invRes.ok) {
-      return { ok: false, error: `BTCPay returned HTTP ${invRes.status} on invoice read` };
+    if (res.status === 404) {
+      return { ok: false, error: 'BTCPay store not found (HTTP 404) — check the store id' };
     }
-    return { ok: true };
+    return { ok: false, error: `BTCPay returned HTTP ${res.status}` };
   } catch {
     return { ok: false, error: 'Connection failed' };
   } finally {
