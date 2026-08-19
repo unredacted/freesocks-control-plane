@@ -339,7 +339,7 @@ address + Lightning invoice side by side).
 7. **Minimum term:** `btcpayMinMonths` (Admin → Billing) defaults to **1** —
    Lightning has no meaningful floor. If you run on-chain-only, consider raising
    it (or your store's BTCPay policy) so fees don't dwarf small payments.
-8. **Checkout behavior** (Admin → Billing, all four admin-editable without a
+8. **Checkout behavior** (Admin → Billing, all three admin-editable without a
    deploy). BTCPay's own defaults are tuned for a payer who already holds
    bitcoin; ours are not, so these override them per invoice:
    - **Invoice expiry** — default **90 min** (BTCPay's own default is 15, which
@@ -347,20 +347,31 @@ address + Lightning invoice side by side).
    - **Late-payment monitoring** — default **1440 min**. How long past expiry
      BTCPay keeps watching, so a late payment isn't money the payer already sent
      into a dead invoice.
-   - **Payment tolerance** — default **0** (exact amount), capped at 10%. A payer
-     funding from an exchange has the withdrawal fee deducted from what arrives,
-     so 0 turns a good-faith full payment into a `PaidPartial`. Raising it also
-     widens what the underpayment guard above lets through — it is a deliberate
-     revenue trade, which is why it is not raised by default.
    - **Default payment method** — blank unless the store offers more than
      Bitcoin. Checkout v2 shows one unified BIP21 QR for on-chain + Lightning,
      but any non-Bitcoin chain reintroduces a payer-facing coin selector, and
      this decides where it lands (e.g. `BTC-LN`).
+
+   **Not exposed: `paymentTolerance`.** Setting it above 0 makes BTCPay settle a
+   short payment as `Settled` + `PaidPartial` — which the guard in step 6
+   downgrades to `confirming` and never grants. A tolerance would therefore be
+   inert _and_ misleading: the payer's money arrives, the order stays
+   non-terminal, and the operator believes they configured otherwise. Supporting
+   it means comparing the ACTUAL shortfall against the tolerance before
+   downgrading, which needs the paid amount (a second read of
+   `/invoices/{id}/payment-methods`, summed across methods via each one's rate)
+   plus currency and rounding care. That loosens a grant guard, so it is its own
+   change rather than a config default. If exchange-fee shortfalls become a real
+   problem, that is the work to do — not flipping a percentage.
+
 9. **Verify before going live:** Admin → Billing → **Test connection** on the
-   BTCPay rail (`POST /api/v1/admin/billing/test-connection`) reads
-   `GET /api/v1/stores/{storeId}` — it validates the API URL, store id, and key
-   in one call. Run it after any credential change. A key missing
-   `canviewinvoices` fails here, which is the cheapest way to catch step 2.
+   BTCPay rail (`POST /api/v1/admin/billing/test-connection`) makes **two** reads,
+   because the rail needs two distinct permissions and a probe proving only one
+   would report green on a key whose settle-time read-back 403s:
+   - `GET /api/v1/stores/{storeId}` — the API URL, store id, and key.
+   - `GET /api/v1/stores/{storeId}/invoices?take=1` — the read-back from step 2.
+     A 403 here is reported by name, so a key missing `canviewinvoices` fails the
+     probe instead of passing it. Run it after any credential change.
 10. **Redelivery:** BTCPay retries failed webhook deliveries and offers manual
     redelivery per event in the store's webhook UI — combined with the
     per-(invoice, event-type) dedupe id, replays are safe.

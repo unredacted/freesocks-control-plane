@@ -825,7 +825,6 @@ describe('btcpay.createCheckout', () => {
         ...cfg,
         expirationMinutes: 90,
         monitoringMinutes: 1440,
-        paymentTolerance: 1.5,
         defaultPaymentMethod: 'BTC-LN',
       },
       params,
@@ -835,29 +834,13 @@ describe('btcpay.createCheckout', () => {
       redirectURL: params.successUrl,
       expirationMinutes: 90,
       monitoringMinutes: 1440,
-      paymentTolerance: 1.5,
       defaultPaymentMethod: 'BTC-LN',
     });
     // Greenfield rejects these at top level — regression guard on the nesting.
     expect(body.expirationMinutes).toBeUndefined();
-    expect(body.paymentTolerance).toBeUndefined();
     expect(body.defaultPaymentMethod).toBeUndefined();
     // metadata stays top level.
     expect(body.metadata.orderId).toBe('order-1');
-  });
-
-  test('a zero paymentTolerance is sent, not dropped as falsy', async () => {
-    let captured: { url: string; init?: RequestInit } | null = null;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string | URL, init?: RequestInit) => {
-        captured = { url: String(url), init };
-        return res({ id: 'inv_z', checkoutLink: 'https://pay.example.org/i/inv_z' });
-      }),
-    );
-    await btcpay.createCheckout({ ...cfg, paymentTolerance: 0 }, params);
-    const checkout = JSON.parse(String(captured!.init!.body)).checkout;
-    expect(checkout.paymentTolerance).toBe(0);
   });
 
   test('throws when BTCPay returns a non-OK status', async () => {
@@ -1291,5 +1274,59 @@ describe('nowpayments partial-settle guard', () => {
     const r = await nowpayments.verifyAndParse({ rawBody: body, signature, ipnSecret: SECRET });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.underpaid).toBe(true);
+  });
+});
+
+describe('btcpay.testConnection', () => {
+  const cfg = { apiUrl: 'https://pay.example.org', storeId: 'store_1', apiKey: 'token-abc' };
+
+  test('probes BOTH the store and the invoice read', async () => {
+    // A probe that only reads the store reports green on a key whose settle-time
+    // read-back will 403 — which silently disables the amount + PaidPartial
+    // guards on every grant. Both reads, or the probe is worse than useless.
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        urls.push(String(url));
+        return res({});
+      }),
+    );
+    expect(await btcpay.testConnection(cfg)).toEqual({ ok: true });
+    expect(urls).toEqual([
+      'https://pay.example.org/api/v1/stores/store_1',
+      'https://pay.example.org/api/v1/stores/store_1/invoices?take=1',
+    ]);
+  });
+
+  test('a 403 on the invoice read names the missing permission', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) =>
+        String(url).includes('/invoices') ? res({}, { ok: false, status: 403 }) : res({}),
+      ),
+    );
+    const out = await btcpay.testConnection(cfg);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toMatch(/canviewinvoices/);
+  });
+
+  test('a failing store read short-circuits before the invoice read', async () => {
+    const fetchMock = vi.fn(async () => res({}, { ok: false, status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const out = await btcpay.testConnection(cfg);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toMatch(/401/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('never leaks the API key in an error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => res({}, { ok: false, status: 500 })),
+    );
+    const out = await btcpay.testConnection(cfg);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).not.toContain('token-abc');
   });
 });

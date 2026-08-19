@@ -29,14 +29,11 @@ describe('BillingConfigView deploy-skew defaults', () => {
     expect(parsed.btcpayCheckout).toEqual({
       expirationMinutes: 90,
       monitoringMinutes: 1440,
-      paymentTolerance: 0,
       defaultPaymentMethod: '',
     });
     // 15 minutes is BTCPay's own default and is too short for a payer who has to
     // go acquire crypto first; the fallback must not silently reintroduce it.
     expect(parsed.btcpayCheckout.expirationMinutes).toBeGreaterThan(15);
-    // Tolerance defaults to exact-amount: never forgo revenue by omission.
-    expect(parsed.btcpayCheckout.paymentTolerance).toBe(0);
   });
 
   test('the other nested blocks keep their skew defaults too', () => {
@@ -51,12 +48,10 @@ describe('BillingConfigView deploy-skew defaults', () => {
       btcpayCheckout: {
         expirationMinutes: 120,
         monitoringMinutes: 2880,
-        paymentTolerance: 1.5,
         defaultPaymentMethod: 'BTC-LN',
       },
     });
     expect(parsed.btcpayCheckout.expirationMinutes).toBe(120);
-    expect(parsed.btcpayCheckout.paymentTolerance).toBe(1.5);
     expect(parsed.btcpayCheckout.defaultPaymentMethod).toBe('BTC-LN');
   });
 
@@ -64,12 +59,7 @@ describe('BillingConfigView deploy-skew defaults', () => {
     // AdminBilling.svelte does `draft.btcpayCheckout.<field> = …` on input, so a
     // partial nested object would throw at edit time rather than at parse time.
     const parsed = BillingConfigView.parse(legacyConfig);
-    for (const key of [
-      'expirationMinutes',
-      'monitoringMinutes',
-      'paymentTolerance',
-      'defaultPaymentMethod',
-    ] as const) {
+    for (const key of ['expirationMinutes', 'monitoringMinutes', 'defaultPaymentMethod'] as const) {
       expect(parsed.btcpayCheckout[key]).toBeDefined();
     }
   });

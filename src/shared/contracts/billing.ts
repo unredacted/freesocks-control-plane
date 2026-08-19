@@ -96,8 +96,6 @@ export const BtcpayCheckoutView = z.object({
   expirationMinutes: z.number().int(),
   /** Minutes past expiry BTCPay keeps watching for a late payment. */
   monitoringMinutes: z.number().int(),
-  /** Percent under the invoiced amount that still settles. 0 = exact amount. */
-  paymentTolerance: z.number(),
   /** Preselected method on checkout (e.g. `BTC-LN`). Empty = let BTCPay choose. */
   defaultPaymentMethod: z.string(),
 });
@@ -106,7 +104,6 @@ export type BtcpayCheckoutView = z.infer<typeof BtcpayCheckoutView>;
 const BTCPAY_CHECKOUT_VIEW_DEFAULT: BtcpayCheckoutView = {
   expirationMinutes: 90,
   monitoringMinutes: 1440,
-  paymentTolerance: 0,
   defaultPaymentMethod: '',
 };
 

@@ -496,31 +496,6 @@
 
         <label class="block">
           <span class="mb-1 block text-xs font-medium text-muted-foreground"
-            >Payment tolerance (%)</span
-          >
-          <Input
-            type="number"
-            min={0}
-            max={10}
-            step="0.1"
-            class="min-h-9 w-28"
-            value={draft.btcpayCheckout.paymentTolerance}
-            oninput={(e) =>
-              draft &&
-              (draft.btcpayCheckout.paymentTolerance = Math.min(
-                10,
-                Math.max(0, Number((e.currentTarget as HTMLInputElement).value)),
-              ))}
-          />
-          <span class="mt-1 block text-xs text-muted-foreground">
-            How far under the invoice still counts as paid. A payer sending from an exchange has the
-            withdrawal fee deducted, so 0 turns a good-faith payment into a partial one. Raising it
-            also widens what the underpayment guard allows, so keep it small.
-          </span>
-        </label>
-
-        <label class="block">
-          <span class="mb-1 block text-xs font-medium text-muted-foreground"
             >Default payment method</span
           >
           <Input

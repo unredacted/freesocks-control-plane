@@ -24,11 +24,22 @@ export interface BtcpayConfig {
   apiKey: string;
   timeoutMs?: number;
   // --- per-invoice checkout overrides ---------------------------------------
-  // All four go under the Greenfield request's `checkout` object (NOT top level —
+  // All three go under the Greenfield request's `checkout` object (NOT top level —
   // only `amount`/`currency`/`metadata` live there). They're on the CONFIG rather
   // than on `CheckoutParams` because that struct is shared by all four rails and
   // none of these translate to the hosted ones. Each is omitted from the request
   // when unset, so BTCPay's own default applies.
+  //
+  // DELIBERATELY ABSENT: `checkout.paymentTolerance`. Setting it above 0 makes
+  // BTCPay settle a short payment as Settled + additionalStatus PaidPartial —
+  // which `verifyAndParse` below downgrades to `confirming` and never grants. So
+  // a tolerance would be inert: the payer's money arrives, the order stays
+  // non-terminal, and the operator believes they configured otherwise. Supporting
+  // it means comparing the ACTUAL shortfall against the tolerance before
+  // downgrading, which needs the paid amount (a second read of
+  // `/invoices/{id}/payment-methods`, summed across methods via each one's rate)
+  // plus currency + rounding care. That loosens a grant guard, so it belongs in
+  // its own change — not smuggled in as a config default.
   /**
    * How long the payer has to pay. BTCPay's default is 15 minutes — far too
    * short for someone who has to go acquire crypto first, which is the common
@@ -41,15 +52,6 @@ export interface BtcpayConfig {
    * payer already made.
    */
   monitoringMinutes?: number;
-  /**
-   * Percentage under the invoiced amount BTCPay still settles (default 0). A
-   * payer funding from an exchange has the withdrawal fee deducted from the
-   * amount that arrives, so an exact-amount requirement turns a good-faith full
-   * payment into a PaidPartial. Trades a little under-collection for materially
-   * fewer stuck payments. NOTE: raising this widens what the PaidPartial guard
-   * lets through, so keep it small.
-   */
-  paymentTolerance?: number;
   /**
    * Which payment method is preselected on the checkout page, e.g. `BTC-LN`.
    * Only meaningful once the store offers more than Bitcoin: Checkout v2 shows
@@ -129,7 +131,6 @@ export async function createCheckout(
           ...(cfg.monitoringMinutes !== undefined
             ? { monitoringMinutes: cfg.monitoringMinutes }
             : {}),
-          ...(cfg.paymentTolerance !== undefined ? { paymentTolerance: cfg.paymentTolerance } : {}),
           ...(cfg.defaultPaymentMethod ? { defaultPaymentMethod: cfg.defaultPaymentMethod } : {}),
         },
       }),
@@ -288,22 +289,50 @@ export async function verifyAndParse(args: {
 }
 
 /**
- * Live credential probe (Admin → Billing): `GET /api/v1/stores/{storeId}` —
- * validates the API key AND the store id in one read. Never captures the key.
+ * Live credential probe (Admin → Billing). TWO reads, because the rail needs two
+ * distinct permissions and a probe that only proves one is worse than none — it
+ * reports green on a key whose settle-time read-back will 403, leaving grants
+ * running without the amount + PaidPartial cross-checks:
+ *
+ *  1. `GET /api/v1/stores/{storeId}` — the API key and the store id
+ *     (`btcpay.store.canviewstoresettings`).
+ *  2. `GET /api/v1/stores/{storeId}/invoices?take=1` — the invoice read-back
+ *     `verifyAndParse` depends on (`btcpay.store.canviewinvoices`).
+ *
+ * Never captures the key. A 403 on the second read is called out by name so the
+ * operator knows exactly which permission to add.
  */
 export async function testConnection(
   cfg: BtcpayConfig,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const base = cfg.apiUrl.replace(/\/$/, '');
+  const store = `/api/v1/stores/${encodeURIComponent(cfg.storeId)}`;
+  const headers = { authorization: `token ${cfg.apiKey}`, accept: 'application/json' };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 10000);
   try {
-    const res = await fetch(`${base}/api/v1/stores/${encodeURIComponent(cfg.storeId)}`, {
-      headers: { authorization: `token ${cfg.apiKey}`, accept: 'application/json' },
+    const storeRes = await fetch(`${base}${store}`, { headers, signal: controller.signal });
+    if (!storeRes.ok) {
+      return { ok: false, error: `BTCPay returned HTTP ${storeRes.status}` };
+    }
+    // The permission the grant path actually depends on. `take=1` keeps this a
+    // cheap read on a store with a long invoice history.
+    const invRes = await fetch(`${base}${store}/invoices?take=1`, {
+      headers,
       signal: controller.signal,
     });
-    if (res.ok) return { ok: true };
-    return { ok: false, error: `BTCPay returned HTTP ${res.status}` };
+    if (invRes.status === 403 || invRes.status === 401) {
+      return {
+        ok: false,
+        error:
+          'API key cannot read invoices — add the btcpay.store.canviewinvoices permission. ' +
+          'Without it a settled invoice grants without the amount and partial-payment checks.',
+      };
+    }
+    if (!invRes.ok) {
+      return { ok: false, error: `BTCPay returned HTTP ${invRes.status} on invoice read` };
+    }
+    return { ok: true };
   } catch {
     return { ok: false, error: 'Connection failed' };
   } finally {

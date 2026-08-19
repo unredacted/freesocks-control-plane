@@ -23,8 +23,6 @@ const method = (v: unknown) =>
     { btcpayCheckout: { defaultPaymentMethod: v } },
     BILLING_KEYS.btcpay_defaultPaymentMethod,
   );
-const tolerance = (v: unknown) =>
-  written({ btcpayCheckout: { paymentTolerance: v } }, BILLING_KEYS.btcpay_paymentTolerance);
 const expiry = (v: unknown) =>
   written({ btcpayCheckout: { expirationMinutes: v } }, BILLING_KEYS.btcpay_expirationMinutes);
 
@@ -51,26 +49,6 @@ describe('btcpayCheckout.defaultPaymentMethod', () => {
     expect(method('a'.repeat(33))).toBe(def); // over the 32-char cap
     expect(method(42)).toBe(def);
     expect(method(null)).toBe(def);
-  });
-});
-
-describe('btcpayCheckout.paymentTolerance', () => {
-  test('zero is written, not treated as absent', () => {
-    // 0 is the meaningful "exact amount" setting; a falsy-check bug here would
-    // drop it and let BTCPay's own default stand instead.
-    expect(tolerance(0)).toBe(0);
-  });
-
-  test('accepts fractional percentages', () => {
-    expect(tolerance(1.5)).toBe(1.5);
-  });
-
-  test('clamps to the 10% ceiling — this is forgone revenue per invoice', () => {
-    const def = BILLING_DEFAULTS.btcpayCheckout.paymentTolerance;
-    expect(tolerance(10)).toBe(10);
-    expect(tolerance(11)).toBe(def); // a fat-fingered 90 must not settle at a tenth paid
-    expect(tolerance(-1)).toBe(def);
-    expect(tolerance('5')).toBe(def);
   });
 });
 

@@ -91,8 +91,6 @@ export interface BtcpayCheckoutConfig {
   expirationMinutes: number;
   /** Minutes past expiry BTCPay keeps watching for a late payment. */
   monitoringMinutes: number;
-  /** Percent under the invoiced amount that still settles. 0 = BTCPay default. */
-  paymentTolerance: number;
   /** Preselected method on checkout, e.g. `BTC-LN`. Empty = let BTCPay choose. */
   defaultPaymentMethod: string;
 }
@@ -117,10 +115,6 @@ export const BILLING_DEFAULTS: BillingConfig = {
     expirationMinutes: 90,
     // BTCPay's own default. Explicit so it's visible and tunable.
     monitoringMinutes: 1440,
-    // 0 preserves BTCPay's exact-amount behavior. Raising this reduces stuck
-    // exchange-funded payments but widens what the PaidPartial guard allows,
-    // so it's a deliberate operator decision, not a default.
-    paymentTolerance: 0,
     // Empty until the store offers more than Bitcoin (Checkout v2 shows one
     // unified BIP21 QR for on-chain + Lightning, so there's nothing to preselect).
     defaultPaymentMethod: '',
@@ -149,7 +143,6 @@ export const BILLING_KEYS = {
   btcpayMinMonths: 'billing.btcpay.minMonths',
   btcpay_expirationMinutes: 'billing.btcpay.expirationMinutes',
   btcpay_monitoringMinutes: 'billing.btcpay.monitoringMinutes',
-  btcpay_paymentTolerance: 'billing.btcpay.paymentTolerance',
   btcpay_defaultPaymentMethod: 'billing.btcpay.defaultPaymentMethod',
   donation_enabled: 'billing.donation.enabled',
   donation_suggestedAmounts: 'billing.donation.suggestedAmounts',
@@ -166,7 +159,6 @@ const MAX_BONUS_GB_PER_USD = 1000; // sanity ceiling on the donation→bandwidth
 const MAX_MONTHLY_CAP_GB = 100_000; // sanity ceiling on the shared monthly bonus.
 const MAX_BONUS_WINDOW_DAYS = 365; // a donation can fund the pool for at most a year.
 const MAX_CHECKOUT_MINUTES = 60 * 24 * 30; // 30 days — an upper bound on invoice expiry/monitoring.
-const MAX_PAYMENT_TOLERANCE_PCT = 10; // never silently forgo more than 10% of an invoice.
 
 /** Coerce a single duration entry; returns null if unusable (dropped by the caller). */
 function sanitizeDuration(raw: unknown): BillingDuration | null {
@@ -226,20 +218,6 @@ function asAmountCents(raw: unknown, fallback: number): number {
 /** A whole number of minutes in [1, MAX_CHECKOUT_MINUTES]; else the fallback. */
 function asMinutes(raw: unknown, fallback: number): number {
   return typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 && raw <= MAX_CHECKOUT_MINUTES
-    ? raw
-    : fallback;
-}
-
-/**
- * A settle tolerance percentage in [0, MAX_PAYMENT_TOLERANCE_PCT]. Capped well
- * below 100 on purpose: this is how much revenue the operator agrees to forgo
- * per invoice, and a fat-fingered 90 would settle invoices at a tenth paid.
- */
-function asTolerancePct(raw: unknown, fallback: number): number {
-  return typeof raw === 'number' &&
-    Number.isFinite(raw) &&
-    raw >= 0 &&
-    raw <= MAX_PAYMENT_TOLERANCE_PCT
     ? raw
     : fallback;
 }
@@ -317,7 +295,6 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     btcpayMin,
     bpExpiry,
     bpMonitor,
-    bpTolerance,
     bpDefaultMethod,
     dEnabled,
     dAmounts,
@@ -338,7 +315,6 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     readSetting(db, BILLING_KEYS.btcpayMinMonths),
     readSetting(db, BILLING_KEYS.btcpay_expirationMinutes),
     readSetting(db, BILLING_KEYS.btcpay_monitoringMinutes),
-    readSetting(db, BILLING_KEYS.btcpay_paymentTolerance),
     readSetting(db, BILLING_KEYS.btcpay_defaultPaymentMethod),
     readSetting(db, BILLING_KEYS.donation_enabled),
     readSetting(db, BILLING_KEYS.donation_suggestedAmounts),
@@ -365,7 +341,6 @@ export async function resolveBillingConfig(db: DatabaseReader): Promise<BillingC
     btcpayCheckout: {
       expirationMinutes: asMinutes(bpExpiry, bpc.expirationMinutes),
       monitoringMinutes: asMinutes(bpMonitor, bpc.monitoringMinutes),
-      paymentTolerance: asTolerancePct(bpTolerance, bpc.paymentTolerance),
       defaultPaymentMethod: asPaymentMethodId(bpDefaultMethod, bpc.defaultPaymentMethod),
     },
     donation: {
@@ -453,12 +428,6 @@ export function billingConfigWrites(patch: unknown): Array<{ key: string; value:
       put(
         BILLING_KEYS.btcpay_monitoringMinutes,
         asMinutes(bc.monitoringMinutes, def.monitoringMinutes),
-      );
-    }
-    if ('paymentTolerance' in bc) {
-      put(
-        BILLING_KEYS.btcpay_paymentTolerance,
-        asTolerancePct(bc.paymentTolerance, def.paymentTolerance),
       );
     }
     if ('defaultPaymentMethod' in bc) {
