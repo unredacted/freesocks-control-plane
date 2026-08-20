@@ -179,7 +179,12 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   identical output. The real active-CDN defense (a store-delivered verifier) is Phase 4. An in-app
   **E2EE banner + "Verify connection" panel** surface the active status + the same fingerprints (plus a
   live manifest-attestation check) so users can read them off the running page and compare off-CDN — a
-  convenience layer over this OOB trust root, never a substitute for it. See `docs/oob-verification.md`.
+  convenience layer over this OOB trust root, never a substitute for it. The live check's verdict is
+  split by which test failed: only a **signature failure or a revoked kid** (i.e. a swapped key) raises
+  the loud bar, while "no live epoch published / the one served had expired" and "endpoint unreachable"
+  stay quiet panel detail, since all of those leave the client sealing to the pinned static key and a
+  CDN can already force that fallback by blocking the endpoint. See `docs/oob-verification.md`
+  § "What the live attestation check reports".
 
 ## Documented residual limits
 

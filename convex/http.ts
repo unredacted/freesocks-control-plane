@@ -490,10 +490,25 @@ http.route({
           : null,
       },
       200,
-      { 'cache-control': 'public, max-age=60' },
+      // Cache for at most 60s, and NEVER past the epoch's own validity: a cache
+      // (browser HTTP cache, Caddy, a CDN) that outlives the key hands clients an
+      // EXPIRED epoch, which the client cannot tell apart from a tampered one.
+      // Rotation every 10 min against a 30-min validity means the served epoch
+      // normally has >=20 min left, so this clamp only ever bites if that ratio
+      // changes -- it is the guarantee, not a hot path. A rotation gap (epoch null)
+      // is not cached at all, so it clears the moment the rotate cron catches up.
+      { 'cache-control': epochCacheControl(epoch?.notAfter) },
     );
   }),
 });
+
+/** max-age for the key endpoint: 60s, clamped to the epoch's remaining validity. */
+function epochCacheControl(notAfter: number | undefined): string {
+  if (!notAfter) return 'no-store';
+  const remainingS = Math.floor((notAfter - Date.now()) / 1000);
+  const maxAge = Math.max(0, Math.min(60, remainingS));
+  return maxAge > 0 ? `public, max-age=${maxAge}` : 'no-store';
+}
 
 // --- account creation -------------------------------------------------------
 // Anonymous sign-up: Cap captcha -> mint a user + account number + member session.

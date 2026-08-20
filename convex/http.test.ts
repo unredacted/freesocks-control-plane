@@ -564,11 +564,53 @@ describe('cache-control defaults', () => {
     expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
-  test('the e2ee keys route keeps its public, max-age=60 override', async () => {
+  // A cache that outlives the epoch it holds hands clients an EXPIRED key, which
+  // the client cannot distinguish from a tampered one (it fired the loud
+  // "couldn't verify the encryption key" banner), so max-age is clamped to the
+  // remaining validity and a rotation gap is never cached.
+  test('the e2ee keys route caps max-age at the epoch validity', async () => {
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('keyEpochs', {
+        kid: 'kid-cache-cap',
+        publicKey: 'pk',
+        seed: 'seed',
+        manifestSig: 'sig',
+        notBefore: now - 1_000,
+        notAfter: now + 20_000, // 20s left: shorter than the 60s ceiling
+      });
+    });
+    const res = await t.fetch('/api/v1/e2ee/keys');
+    expect(res.status).toBe(200);
+    const maxAge = Number(/max-age=(\d+)/.exec(res.headers.get('cache-control') ?? '')?.[1]);
+    expect(maxAge).toBeGreaterThan(0);
+    expect(maxAge).toBeLessThanOrEqual(20);
+  });
+
+  test('the e2ee keys route keeps public, max-age=60 for a long-lived epoch', async () => {
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      await ctx.db.insert('keyEpochs', {
+        kid: 'kid-cache-full',
+        publicKey: 'pk',
+        seed: 'seed',
+        manifestSig: 'sig',
+        notBefore: now - 1_000,
+        notAfter: now + 30 * 60_000,
+      });
+    });
+    const res = await t.fetch('/api/v1/e2ee/keys');
+    expect(res.headers.get('cache-control')).toBe('public, max-age=60');
+  });
+
+  test('a rotation gap (no live epoch) is not cached at all', async () => {
     const t = convexTest(schema, modules);
     const res = await t.fetch('/api/v1/e2ee/keys');
     expect(res.status).toBe(200);
-    expect(res.headers.get('cache-control')).toBe('public, max-age=60');
+    expect(await res.json()).toMatchObject({ epoch: null });
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 });
 

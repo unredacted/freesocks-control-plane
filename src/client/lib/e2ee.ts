@@ -192,10 +192,31 @@ function applyRevocation(r: {
   }
 }
 
+/**
+ * Fetch the server-attested key material under NORMAL cache rules, deliberately.
+ *
+ * An expired epoch is indistinguishable at the crypto layer from one an attacker
+ * swapped in, and the fix for that lives on the server: the endpoint clamps its
+ * `max-age` to the epoch's own remaining validity (`no-store` during a rotation
+ * gap), so no conformant cache can hand back a dead key. That clamp is load-bearing
+ * - raising max-age past the validity would reintroduce the bug.
+ *
+ * Forcing revalidation from here instead (`no-store` / `no-cache`, both tried) is
+ * WORSE for the population this serves: the fetch-spec cache modes send
+ * `max-age=0`, which punches every request past the CDN to the origin, where the
+ * per-IP `e2ee.keys.fetch` policy lives. A per-browser cache saves nothing for many
+ * distinct clients behind one carrier-grade NAT - only the shared CDN cache does -
+ * so bypassing it trades a bounded, quiet staleness for 429s and a silent
+ * static-key fallback exactly where censorship makes NAT sharing the norm.
+ */
+function fetchKeys(): Promise<Response> {
+  return fetch('/api/v1/e2ee/keys', { credentials: 'omit' });
+}
+
 async function refreshEpoch(): Promise<void> {
   if (!MANIFEST_PK) return;
   try {
-    const res = await fetch('/api/v1/e2ee/keys', { credentials: 'omit' });
+    const res = await fetchKeys();
     if (!res.ok) return;
     const body = (await res.json()) as {
       epoch?: {
@@ -248,11 +269,22 @@ async function currentEpoch(): Promise<{ kid: string; pub: CryptoKey } | null> {
   return e ? { kid: e.kid, pub: e.pub } : null;
 }
 
+/**
+ * Why an attestation did not attest, when the endpoint DID answer. Only
+ * `signature` and `revoked` are tamper tells (a CDN swapping the key, or a key we
+ * were told to refuse); `absent` and `expired` mean the server has no live epoch
+ * to offer, so the client keeps sealing to the pinned static key. See
+ * `classifyAttestation` in ./e2ee-status.svelte.ts for how each maps to UI.
+ */
+export type AttestationFailure = 'absent' | 'expired' | 'signature' | 'revoked';
+
 export interface ConnectionAttestation {
   /** The /api/v1/e2ee/keys endpoint responded. */
   reachable: boolean;
   /** The current epoch key verified against the baked manifest key(s), unexpired + not revoked. */
   attested: boolean;
+  /** Set when `reachable` but not `attested`, saying WHICH check failed. */
+  failure?: AttestationFailure;
   /**
    * The live attestation is even possible on this build: false when the manifest
    * public key wasn't baked, so we CANNOT verify (distinct from "reachable but the
@@ -281,7 +313,7 @@ export async function verifyConnection(): Promise<ConnectionAttestation> {
     return { reachable: false, attested: false, configured: false };
   }
   try {
-    const res = await fetch('/api/v1/e2ee/keys', { credentials: 'omit' });
+    const res = await fetchKeys();
     if (!res.ok) return { reachable: false, attested: false };
     const body = (await res.json()) as {
       epoch?: {
@@ -316,16 +348,29 @@ export async function verifyConnection(): Promise<ConnectionAttestation> {
       revocationVersion = r.version;
     }
     const e = body.epoch;
-    if (!e) return { reachable: true, attested: false, revocationVersion };
-    const attested =
-      verifyManifestHybrid(
-        epochStatement({ kid: e.kid, publicKeyB64: e.publicKey, notAfter: e.notAfter }),
-        e.sig,
-        e.sigPq,
-      ) &&
-      e.notAfter > Date.now() &&
-      !isRevoked(e.kid);
-    return { reachable: true, attested, epochKid: e.kid, notAfter: e.notAfter, revocationVersion };
+    if (!e) return { reachable: true, attested: false, failure: 'absent', revocationVersion };
+    // Order matters: report the TAMPER tells (bad signature, revoked kid) ahead of
+    // "expired", so a benignly stale epoch is never reported as an attack and an
+    // attack is never excused as staleness.
+    const failure: AttestationFailure | undefined = !verifyManifestHybrid(
+      epochStatement({ kid: e.kid, publicKeyB64: e.publicKey, notAfter: e.notAfter }),
+      e.sig,
+      e.sigPq,
+    )
+      ? 'signature'
+      : isRevoked(e.kid)
+        ? 'revoked'
+        : e.notAfter <= Date.now()
+          ? 'expired'
+          : undefined;
+    return {
+      reachable: true,
+      attested: !failure,
+      ...(failure ? { failure } : {}),
+      epochKid: e.kid,
+      notAfter: e.notAfter,
+      revocationVersion,
+    };
   } catch {
     return { reachable: false, attested: false };
   }

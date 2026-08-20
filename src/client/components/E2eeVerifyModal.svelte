@@ -62,7 +62,9 @@
   // Attestation comes from the shared store (one fetch across badge + panel).
   $effect(() => {
     if (!open) return;
-    void ensureAttestationChecked();
+    // `force`: opening the panel is an explicit "check this now", so it bypasses the
+    // re-check throttle rather than showing a verdict from minutes ago.
+    void ensureAttestationChecked({ force: true });
     void import('../lib/e2ee').then(async (m) => {
       const p = m.e2eePins();
       pins = { hpkeKid: p.hpkeKid, suiteId: p.suiteId };
@@ -163,6 +165,8 @@
           <p class="inline-flex items-center gap-1.5 text-destructive">
             <ShieldAlert class="size-4 shrink-0" />{t('e2ee.attestationFail')}
           </p>
+        {:else if e2eeSession.attestation === 'stale'}
+          <p class="text-xs text-muted-foreground">{t('e2ee.attestationStale')}</p>
         {:else if e2eeSession.attestation === 'unconfigured'}
           <p class="text-xs text-muted-foreground">{t('e2ee.attestationUnconfigured')}</p>
         {:else}

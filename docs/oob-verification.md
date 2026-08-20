@@ -91,6 +91,54 @@ _convenience_, not the trust root: a tampered page could lie about its own statu
 the guarantee still comes from comparing through a channel the CDN doesn't control —
 the DNS lookup you run yourself, the signed release, or the `.onion` mirror.
 
+### What the live attestation check reports
+
+`/api/v1/e2ee/keys` publishes the current manifest-signed **epoch key** (rotated every
+10 minutes, valid 30). The panel verifies that signature in the browser against the
+baked manifest public key, and the verdict is deliberately split by _which_ check
+failed, because only some failures mean someone swapped a key:
+
+| Verdict       | Condition                                                                                  | Surface                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `active`      | signature verifies, unexpired, not revoked                                                 | green badge                                                                                     |
+| `warn`        | the endpoint answered and the key **fails signature verification**, or its kid is revoked  | green badge turns amber **and** the loud full-width bar ("don't enter your account number yet") |
+| `stale`       | the endpoint answered but has no live epoch: none published, or the one served had expired | panel detail only                                                                               |
+| `unreachable` | the endpoint could not be reached                                                          | panel detail only                                                                               |
+
+`stale` and `unreachable` are quiet on purpose. In both the client keeps sealing to the
+manifest-**pinned static key** baked into the bundle, so nothing is sent unprotected and
+neither state is evidence of tampering: they mean epoch rotation is behind (check the
+`epoch-key-rotate` heartbeat and the `e2ee.epoch_gap` audit action) or that a cache
+handed the client an old response. Escalating them to the loud bar was a real bug — it
+fired at users over a wedged cron and taught them to dismiss the one alarm that matters.
+Neither state hands an attacker anything new either: a CDN that wants the static-key
+fallback can already force it by simply blocking the endpoint (`unreachable`).
+
+`warn`, by contrast, is **sticky**: once a swapped or revoked key has been seen, only a
+later poll that positively attests clears it. Otherwise re-attesting would hand a caught
+CDN an off switch, since blocking the next request (`unreachable`) or stripping the epoch
+(`stale`) would clear the banner. Inconclusive is not exculpatory.
+
+Because an expired epoch is indistinguishable from a tampered one at the crypto layer,
+the **server** is what keeps a cache from creating that state: the key endpoint clamps its
+response `max-age` to the epoch's own remaining validity, and sends `no-store` during a
+rotation gap. That clamp is load-bearing — raising `max-age` past the epoch validity would
+reintroduce the bug — and it is why the client can then read the endpoint under normal
+cache rules.
+
+The client deliberately does **not** force revalidation. The fetch-spec cache modes
+(`no-store`, `no-cache`) send `max-age=0`, which punches every request past the CDN to the
+origin, where the per-IP `e2ee.keys.fetch` policy lives; and a per-browser cache saves
+nothing for many distinct clients sharing one carrier-grade NAT, which only the shared CDN
+cache can absorb. Bypassing it would trade a bounded, now-quiet staleness for 429s and a
+silent static-key fallback precisely where censorship makes NAT sharing the norm.
+
+The client also re-attests every 5 minutes and on refocus or regained connectivity
+(throttled to one check per minute), so a long-lived tab's verdict is current rather than
+frozen at page load, and opening the verify panel forces a fresh check. The interval is
+deliberately not gated on `document.visibilityState`, because some embedded webviews
+report a displayed page as hidden forever.
+
 ## Reproducible build
 
 The build is deterministic given a pinned toolchain. `scripts/verify-reproducible.sh`
