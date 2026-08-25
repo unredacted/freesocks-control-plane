@@ -37,9 +37,11 @@ updates:
   # See the comment on the `backend` service in docker-compose.stack.yml.
   #
   # Two of the remaining ones want a human, not a rubber stamp:
-  #  - `tiago2/cap:latest` is the accepted-risk image (docs/beta-deploy.md
-  #    § "Cap image provenance"), tracked by digest on a floating tag — the PR
-  #    tells you the image moved, not what changed in it.
+  #  - `tiago2/cap` is the accepted-risk image (docs/beta-deploy.md
+  #    § "Cap image provenance"). Pinned tag@digest on a real semver tag
+  #    (was `latest` until 2026-08-25), so the PR names the actual version
+  #    jump — check the upstream release notes (tiagorangel1/cap, releases
+  #    tagged `standalone@<version>`) before merging.
   #  - `remnawave/backend` is only the throwaway integration-test panel in
   #    docker-compose.remnawave-test.yml, whose whole job is to catch provider
   #    contract drift. Bumping it is in scope, but it should track whatever

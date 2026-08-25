@@ -215,8 +215,11 @@ services:
   # admin paths); the backend verifies tokens over the compose network
   # (CAP_API_ENDPOINT=http://cap:3000).
   cap:
-    # Pinned by digest (re-pin on upgrade: docker buildx imagetools inspect tiago2/cap:latest).
-    image: tiago2/cap:latest@sha256:97455d85b5517172397c7053837d377c72ded6250777928d5435c3eab2f58779
+    # Pinned tag@digest on a real semver tag (upstream release standalone@3.1.8),
+    # NOT `latest` — so a Dependabot bump names the actual version change instead
+    # of "latest moved". Re-pin by hand if needed:
+    # docker buildx imagetools inspect tiago2/cap:<version>.
+    image: tiago2/cap:3.1.8@sha256:56d402dc15e536b4c20e341a81bb9e78a0082b833e4337b9b05b242d96e0ffe5
     pids_limit: 256
     restart: unless-stopped
     logging: *log
