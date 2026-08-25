@@ -1,0 +1,370 @@
+# Monthly Convex self-hosted re-pin: opens a PR (never merges, never deploys)
+# moving the backend/dashboard/keygen pins in docker-compose.stack.yml to the
+# "anchor" build of the newest version announced on https://ship.convex.dev/.
+#
+# Why anchors: ship.convex.dev announces the `convex` npm releases (v1.45.0 and
+# friends) — the only Convex artifact with real release notes. Each maps to a
+# monorepo commit titled `npm release version X.Y.Z`; no precompiled image
+# exists at that exact commit, but the FIRST precompiled release whose commit
+# CONTAINS it is effectively the vX.Y.Z backend build (verified: the 1.45.0
+# anchor is 1 commit past the npm bump). Pinning anchors keeps the backend in
+# lockstep with the Dependabot-managed `convex` CLI in bun.lock and gives every
+# bump human-readable notes. The release-list is NOT in ancestry order (same-day
+# releases can predate the npm commit), so the containment check below is real.
+#
+# Companion: convex-release-watch.yml is the escalation watcher — it files an
+# issue only when the pin is older than its staleness threshold, i.e. when THIS
+# flow has stalled. Upgrade runbook: docs/beta-deploy.md § Upgrading the Convex
+# backend.
+#
+# The PR is opened with the default GITHUB_TOKEN, so GitHub does NOT run
+# pull_request CI on it (anti-recursion rule). To compensate, this job runs the
+# full test suite (which includes convex/deployPins.test.ts, the pin-shape
+# guard) and prettier on the exact commit before opening the PR; the PR body
+# says so and gives the close/reopen recipe for kicking full CI.
+#
+# NOTE: GitHub disables `schedule` triggers after 60 days without repo
+# activity. If both this workflow and the watcher go quiet at once, check the
+# Actions tab for a "workflow disabled" banner.
+name: Convex re-pin
+
+on:
+  schedule:
+    # Mondays 09:40 UTC (after Dependabot 09:00 + the watcher 09:15); the gate
+    # job below limits scheduled runs to the FIRST Monday of the month (cron
+    # cannot express that — day-of-month and day-of-week are OR'd).
+    - cron: '40 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Explicit npm version to anchor (e.g. 1.45.0). Empty = newest version at least min_age_days old.'
+        required: false
+        default: ''
+      release_tag:
+        description: 'Raw precompiled release tag (security escape hatch when a fix is not in any npm release yet; skips the anchor logic).'
+        required: false
+        default: ''
+      min_age_days:
+        description: 'Minimum age (days) of the npm release before it is eligible.'
+        required: false
+        default: '7'
+      dry_run:
+        description: 'Do everything except push/PR; upload the rewritten compose diff as an artifact.'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.gate.outputs.proceed }}
+    steps:
+      - id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          d="$(date -u +%-d)"
+          if [ "$d" -le 7 ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "day $d of the month — not the first Monday; skipping"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  repin:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM: get-convex/convex-backend
+      MIN_AGE_DAYS: ${{ inputs.min_age_days || '7' }}
+      INPUT_VERSION: ${{ inputs.version || '' }}
+      INPUT_RELEASE_TAG: ${{ inputs.release_tag || '' }}
+      DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve the target anchor and rewrite the pins
+        id: prepare
+        run: |
+          set -euo pipefail
+
+          skip() { echo "$1"; echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0; }
+
+          # Newest 100 releases are ~3 months of dailies — plenty; no --paginate.
+          # Convex marks EVERY precompiled daily `prerelease: true`, so do NOT
+          # filter on that flag (it would drop every real release). Filter on
+          # the tag shape instead — it also drops oddballs like
+          # `testing-precompiled-…`.
+          gh api "/repos/$UPSTREAM/releases?per_page=100" \
+            --jq '.[] | select((.draft | not) and (.tag_name | test("^precompiled-")))
+                  | [.tag_name, .published_at] | @tsv' > releases.tsv
+
+          # try_release: containment-check (unless raw) + resolve full sha +
+          # resolve BOTH image digests. Sets tag/new/bdig/ddig/ahead_by on
+          # success. GHCR image pushes LAG the releases (measured 2026-08-25:
+          # newest image was 6 days behind the newest release, and historically
+          # only ~half the releases ever get images), so "release exists" does
+          # NOT imply "image exists" — that is why this checks the images and
+          # why the callers fall forward/back on failure.
+          try_release() { # <release-tag> <npm-sha-or-empty>
+            local cand="$1" want="$2" sha7 cmp cmp_status full b d
+            sha7="${cand##*-}"
+            if [ -n "$want" ]; then
+              cmp="$(gh api "/repos/$UPSTREAM/compare/$want...$sha7" \
+                --jq '[.status, (.ahead_by | tostring)] | @tsv')" || return 1
+              # not `status`: that name is read-only in zsh, and operators
+              # paste these blocks into their shells.
+              cmp_status="$(printf '%s' "$cmp" | cut -f1)"
+              case "$cmp_status" in ahead | identical) ;; *) return 1 ;; esac
+              ahead_by="$(printf '%s' "$cmp" | cut -f2)"
+            fi
+            full="$(gh api "/repos/$UPSTREAM/commits/$sha7" --jq .sha)" || return 1
+            { [[ "$full" =~ ^[0-9a-f]{40}$ ]] && [[ "$full" == "$sha7"* ]]; } || return 1
+            # Multi-arch INDEX digest (matches the existing pin style). Fallback
+            # if buildx ever vanishes from the runner: GET ghcr.io/token
+            # (scope=repository:<image>:pull), then HEAD /v2/<image>/manifests/<tag>
+            # with BOTH index media types in Accept, and read docker-content-digest
+            # — a single Accept value silently returns a per-platform digest.
+            b="$(docker buildx imagetools inspect "ghcr.io/get-convex/convex-backend:$full" --format '{{.Manifest.Digest}}' 2>/dev/null)" \
+              || { echo "  $cand: backend image missing on GHCR"; return 1; }
+            d="$(docker buildx imagetools inspect "ghcr.io/get-convex/convex-dashboard:$full" --format '{{.Manifest.Digest}}' 2>/dev/null)" \
+              || { echo "  $cand: dashboard image missing on GHCR"; return 1; }
+            tag="$cand"
+            new="$full"
+            bdig="${b#sha256:}"
+            ddig="${d#sha256:}"
+          }
+
+          tag=''
+          new=''
+          bdig=''
+          ddig=''
+          ahead_by=''
+          ver=''
+          if [ -n "$INPUT_RELEASE_TAG" ]; then
+            # Security escape hatch: pin a raw precompiled release, no anchor.
+            [[ "$INPUT_RELEASE_TAG" =~ ^precompiled-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9a-f]{7}$ ]] \
+              || { echo "::error::release_tag must look like precompiled-YYYY-MM-DD-<sha7>"; exit 1; }
+            try_release "$INPUT_RELEASE_TAG" '' \
+              || { echo "::error::$INPUT_RELEASE_TAG has no resolvable backend+dashboard images on GHCR"; exit 1; }
+          else
+            # ship.convex.dev versions = `npm release version X.Y.Z` commits.
+            gh api "/repos/$UPSTREAM/commits?path=npm-packages/convex/package.json&per_page=50" \
+              --jq '.[] | [.sha, .commit.committer.date,
+                    (.commit.message | split("\n")[0])] | @tsv' > npm-commits.tsv
+
+            cutoff="$(date -u -d "-${MIN_AGE_DAYS} days" +%Y-%m-%dT%H:%M:%SZ)"
+            if [ -n "$INPUT_VERSION" ]; then
+              [[ "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+                || { echo "::error::version must look like X.Y.Z"; exit 1; }
+              # An explicit version is an explicit ask — no fallback to others.
+              awk -F'\t' -v v="$INPUT_VERSION" \
+                '$3 ~ ("^npm release version " v "( |$)") { print; exit }' npm-commits.tsv > npm-picks.tsv
+              [ -s npm-picks.tsv ] || { echo "::error::no 'npm release version $INPUT_VERSION' commit found in the newest 50 package.json commits"; exit 1; }
+            else
+              # Eligible npm releases, newest first, at least MIN_AGE_DAYS old
+              # (ISO-8601 Z strings compare lexicographically). Up to 3: the
+              # newest one's anchor images may not be on GHCR yet (pushes lag),
+              # in which case the previous version is the right target.
+              awk -F'\t' -v c="$cutoff" \
+                '$3 ~ /^npm release version [0-9]+\.[0-9]+\.[0-9]+/ && $2 <= c { print; n++ } n == 3 { exit }' \
+                npm-commits.tsv > npm-picks.tsv
+              [ -s npm-picks.tsv ] || skip "no npm release at least $MIN_AGE_DAYS days old found; nothing to do"
+            fi
+
+            while IFS=$'\t' read -r npm_sha npm_date subject; do
+              ver="$(printf '%s' "$subject" | sed -E 's/^npm release version ([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+              [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::could not parse version from: $subject"; exit 1; }
+              echo "trying npm $ver = $npm_sha ($npm_date)"
+
+              # Anchor candidates: releases published at/after the npm commit,
+              # OLDEST first. The list is not ancestry-ordered, so each
+              # candidate is containment-checked inside try_release.
+              attempts=0
+              while IFS= read -r cand; do
+                [ -n "$cand" ] || continue
+                attempts=$((attempts + 1))
+                [ "$attempts" -le 25 ] || break
+                if try_release "$cand" "$npm_sha"; then break; fi
+              done < <(awk -F'\t' -v d="$npm_date" '$2 >= d { a[++n] = $1 } END { for (i = n; i >= 1; i--) print a[i] }' releases.tsv)
+              [ -z "$tag" ] || break
+              echo "npm $ver has no image-bearing anchor release yet (GHCR pushes lag); trying the previous version"
+              ver=''
+            done < npm-picks.tsv
+          fi
+          [ -n "$tag" ] || { echo "::error::no usable anchor found — GHCR image pushes may be lagging badly; retry later, or pass an explicit release_tag whose images exist"; exit 1; }
+          [[ "$bdig" =~ ^[0-9a-f]{64}$ ]] && [[ "$ddig" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "::error::digest resolution returned an unexpected shape"; exit 1; }
+          echo "target: $tag ($new)"
+
+          if [ -n "$ver" ]; then
+            branch="convex-repin/npm-$ver"
+          else
+            branch="convex-repin/$tag"
+          fi
+
+          # Dedupe: a PR already open on this exact branch has nothing to
+          # refresh (digests for a fixed tag are immutable).
+          same="$(gh pr list --state open --head "$branch" --json number --jq '.[0].number // empty')"
+          [ -z "$same" ] || skip "PR #$same is already open on $branch; nothing to do"
+
+          old="$(bash scripts/convex-repin.sh "$new" "$bdig" "$ddig" "$tag" ${ver:+"$ver"})"
+          git diff --quiet docker-compose.stack.yml \
+            && skip "already pinned to $tag; nothing to do"
+
+          old_tag="$(awk -F'\t' -v s="${old:0:7}" '$1 ~ ("-" s "$") { print $1; exit }' releases.tsv)"
+          # A pin older than the newest 100 releases still compares by raw sha.
+          [ -n "$old_tag" ] || old_tag="$old"
+
+          {
+            echo "proceed=true"
+            echo "version=$ver"
+            echo "tag=$tag"
+            echo "new=$new"
+            echo "old=$old"
+            echo "old_tag=$old_tag"
+            echo "branch=$branch"
+            echo "ahead_by=$ahead_by"
+          } >> "$GITHUB_OUTPUT"
+
+      # Self-verification on the exact commit the PR will carry. This stands in
+      # for PR CI, which will NOT run (GITHUB_TOKEN-opened PR).
+      - uses: oven-sh/setup-bun@v2
+        if: steps.prepare.outputs.proceed == 'true'
+        with:
+          bun-version-file: package.json
+      - if: steps.prepare.outputs.proceed == 'true'
+        run: bun install --frozen-lockfile
+      - if: steps.prepare.outputs.proceed == 'true'
+        run: bun run test
+      - if: steps.prepare.outputs.proceed == 'true'
+        run: bunx prettier --check docker-compose.stack.yml
+
+      - name: Upload the diff (dry run)
+        if: steps.prepare.outputs.proceed == 'true' && env.DRY_RUN == 'true'
+        run: git diff docker-compose.stack.yml > repin.diff
+      - uses: actions/upload-artifact@v4
+        if: steps.prepare.outputs.proceed == 'true' && env.DRY_RUN == 'true'
+        with:
+          name: repin-diff
+          path: repin.diff
+
+      - name: Open the re-pin PR
+        if: steps.prepare.outputs.proceed == 'true' && env.DRY_RUN != 'true'
+        env:
+          VER: ${{ steps.prepare.outputs.version }}
+          TAG: ${{ steps.prepare.outputs.tag }}
+          NEW: ${{ steps.prepare.outputs.new }}
+          OLD: ${{ steps.prepare.outputs.old }}
+          OLD_TAG: ${{ steps.prepare.outputs.old_tag }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          AHEAD_BY: ${{ steps.prepare.outputs.ahead_by }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$VER" ]; then
+            title="chore(docker): re-pin Convex self-hosted to the npm $VER anchor ($TAG)"
+            what="the **npm $VER** anchor build"
+            notes="Release notes: [ship.convex.dev](https://ship.convex.dev/) · [npm CHANGELOG](https://github.com/$UPSTREAM/blob/main/npm-packages/convex/CHANGELOG.md) (§ $VER). The anchor is $AHEAD_BY commit(s) past the npm release commit."
+          else
+            title="chore(docker): re-pin Convex self-hosted to $TAG"
+            what="release \`$TAG\` (raw pin — NOT an npm anchor; escape-hatch dispatch)"
+            notes="No npm release notes apply to a raw pin; the compare link below is the only changelog."
+          fi
+
+          compare="https://github.com/$UPSTREAM/compare/$OLD_TAG...$TAG"
+
+          # Heuristic scan of commit subjects for operator-relevant keywords.
+          # The compare API caps at 250 commits; detect and say so rather than
+          # presenting a silently partial list as complete.
+          scan_note=''
+          total="$(gh api "/repos/$UPSTREAM/compare/$OLD_TAG...$TAG" --jq .total_commits || echo '')"
+          listed="$(gh api "/repos/$UPSTREAM/compare/$OLD_TAG...$TAG" \
+            --jq '.commits[].commit.message | split("\n")[0]' 2>/dev/null | tee subjects.txt | wc -l | tr -d ' ')"
+          if [ -n "$total" ] && [ "$total" != "$listed" ]; then
+            scan_note="⚠️ The compare API truncated at $listed of $total commits — the scan below is PARTIAL. Read the [web compare view]($compare)."
+          fi
+          scan="$(grep -iE 'migrat|breaking|rename|remove|deprecat|env var|_ENV' subjects.txt | head -20 || true)"
+          [ -n "$scan" ] || scan='(no commit subjects matched the keyword scan)'
+
+          prod_date="$(date -u -d '+3 days' +%Y-%m-%d)"
+
+          cat > body.md <<EOF
+          Re-pins \`convex-backend\` / \`convex-dashboard\` (and the \`keygen\` one-shot) to $what.
+
+          | | release | commit |
+          |---|---|---|
+          | old | \`$OLD_TAG\` | \`$OLD\` |
+          | new | \`$TAG\` | \`$NEW\` |
+
+          $notes
+
+          **Backend changelog**: $compare — release-to-release, deliberately not
+          \`...HEAD\`. The npm release notes cover the CLI/client surface; this
+          compare is the only changelog for backend internals.
+
+          $scan_note
+
+          Commit subjects matching \`migrat|breaking|rename|remove|deprecat|env\` (worth a second look, not a verdict):
+
+          \`\`\`
+          $scan
+          \`\`\`
+
+          ### Operator checklist ([runbook](https://github.com/${{ github.repository }}/blob/main/docs/beta-deploy.md#upgrading-the-convex-backend-image-re-pin))
+
+          - [ ] Skim the compare for env-var renames / migration notes
+          - [ ] Lockfile \`convex\` ≤ the anchored version (land any open Dependabot \`convex\` PR in this window)
+          - [ ] \`backup\` service healthy (fresh heartbeat) on beta
+          - [ ] Pre-upgrade \`convex export\` + env capture taken on beta
+          - [ ] Merge
+          - [ ] Deploy beta (\`pull\` + \`up -d --force-recreate backend dashboard keygen deployer\`), watch for \`MigrationComplete(N)\` — do NOT restart mid-migration
+          - [ ] Beta verified: \`/readyz\` 200, deployer \`[deploy] OK\`, dashboard loads, next backup cycle green
+          - [ ] Soaked ≥3 days on beta — earliest prod deploy: **$prod_date**
+          - [ ] Prod: fresh pre-flight (its OWN export), deploy, verify
+
+          > **CI note:** this PR was opened by \`GITHUB_TOKEN\`, so pull-request CI
+          > did not trigger. The workflow ran the FULL test suite (including
+          > \`convex/deployPins.test.ts\`) and prettier on this exact commit — see
+          > the [run log](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+          > To kick full PR CI anyway: close and reopen the PR.
+          >
+          > A newer re-pin PR automatically closes this one ("superseded"); don't
+          > push fixups onto this branch expecting them to survive that.
+
+          _Opened automatically by \`.github/workflows/convex-repin.yml\`._
+          EOF
+          sed -i 's/^          //' body.md
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b "$BRANCH"
+          git add docker-compose.stack.yml
+          git commit -m "$title"
+          git push origin "$BRANCH"
+
+          new_pr_url="$(gh pr create --base main --head "$BRANCH" --title "$title" \
+            --body-file body.md --label dependencies --label docker)"
+          echo "opened $new_pr_url"
+
+          # Exactly one open re-pin PR at a time: an older one is strictly
+          # dominated by this one.
+          gh pr list --state open --json number,headRefName \
+            --jq ".[] | select(.headRefName | startswith(\"convex-repin/\")) | select(.headRefName != \"$BRANCH\") | .number" \
+            | while read -r n; do
+                gh pr close "$n" --delete-branch \
+                  --comment "Superseded by the newer re-pin PR ($title)."
+                echo "closed superseded PR #$n"
+              done

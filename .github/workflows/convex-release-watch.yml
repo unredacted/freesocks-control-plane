@@ -6,10 +6,15 @@
 # keeping anyway: it names a GitHub release, and `git log <pinned>..<target>` is
 # the only changelog Convex still publishes for self-hosted.
 #
-# This job is the replacement notification. It files (and keeps updating) a
-# single issue while newer releases exist, and closes it once the pin catches
-# up — so the pin cannot quietly rot the way the backup sidecar's image did for
-# four weeks in Aug 2026.
+# This job is the ESCALATION detector for the monthly re-pin flow
+# (.github/workflows/convex-repin.yml opens the actual bump PR; runbook:
+# docs/beta-deploy.md § Upgrading the Convex backend). Convex ships near-daily,
+# so on a monthly cadence the pin is always some releases behind — that is
+# healthy and files nothing. Only a pin whose release is older than
+# STALE_AFTER_DAYS (7-day upstream buffer + a monthly cycle + merge/soak/prod
+# slack) means the flow has stalled; then this files (and keeps updating) a
+# single issue, and closes it once the pin is fresh again — so the pin cannot
+# quietly rot the way the backup sidecar's image did for four weeks in Aug 2026.
 name: Convex release watch
 
 on:
@@ -21,6 +26,8 @@ on:
 permissions:
   contents: read
   issues: write
+  # Read-only, for naming an open convex-repin/* PR in the issue body.
+  pull-requests: read
 
 jobs:
   watch:
@@ -28,11 +35,18 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       UPSTREAM: get-convex/convex-backend
-      ISSUE_TITLE: 'Convex self-hosted: pinned release is behind upstream'
+      ISSUE_TITLE: 'Convex self-hosted: pinned release is stale (monthly re-pin has stalled)'
+      # The pre-2026-08 title; searched as a fallback and retitled in place so
+      # the original issue's history survives the rename. Drop once no issue
+      # with this title can still exist.
+      LEGACY_ISSUE_TITLE: 'Convex self-hosted: pinned release is behind upstream'
+      # 7d upstream age buffer + ~31d monthly cycle + ~10d merge/soak/prod
+      # slack. A healthy flow never exceeds this; tune here if it cries wolf.
+      STALE_AFTER_DAYS: '49'
     steps:
       - uses: actions/checkout@v7
 
-      - name: Compare the pinned Convex release against upstream
+      - name: Check the pinned Convex release's age against the policy window
         run: |
           set -euo pipefail
 
@@ -46,30 +60,51 @@ jobs:
 
           # Releases are `precompiled-<date>-<sha7>`, newest first.
           gh api --paginate "/repos/$UPSTREAM/releases?per_page=100" \
-            --jq '.[].tag_name' > releases.txt
+            --jq '.[] | [.tag_name, .published_at] | @tsv' > releases.tsv
 
-          line="$(grep -nE -- "-${short}\$" releases.txt | head -1 | cut -d: -f1 || true)"
+          line="$(awk -F'\t' -v s="$short" '$1 ~ ("-" s "$") { print NR; exit }' releases.tsv)"
           if [ -z "$line" ]; then
             echo "::error::pinned sha $short matches no $UPSTREAM release — someone pinned an untagged build. Re-pin to a release."
             exit 1
           fi
           behind=$((line - 1))
-          pinned_tag="$(sed -n "${line}p" releases.txt)"
-          newest="$(head -1 releases.txt)"
-          echo "pinned $pinned_tag is $behind release(s) behind; newest is $newest"
+          pinned_tag="$(awk -F'\t' -v n="$line" 'NR == n { print $1 }' releases.tsv)"
+          pinned_published="$(awk -F'\t' -v n="$line" 'NR == n { print $2 }' releases.tsv)"
+          newest="$(head -1 releases.tsv | cut -f1)"
+          now_s="$(date -u +%s)"
+          pinned_s="$(date -u -d "$pinned_published" +%s)"
+          pin_age=$(((now_s - pinned_s) / 86400))
+          echo "pinned $pinned_tag is ${pin_age}d old ($behind release(s) behind; newest is $newest)"
 
           existing="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" \
             --json number --jq '.[0].number // empty')"
+          if [ -z "$existing" ]; then
+            existing="$(gh issue list --state open --search "\"$LEGACY_ISSUE_TITLE\" in:title" \
+              --json number --jq '.[0].number // empty')"
+          fi
 
-          if [ "$behind" -eq 0 ]; then
+          if [ "$pin_age" -lt "$STALE_AFTER_DAYS" ]; then
+            # Healthy: the monthly flow is working. Being some releases behind
+            # is expected — Convex ships near-daily and the cadence is monthly.
             if [ -n "$existing" ]; then
-              gh issue close "$existing" --comment "Pin is current again ($newest). Closing automatically."
+              gh issue close "$existing" --comment "Pin is \`$pinned_tag\`, published ${pin_age}d ago — inside the ${STALE_AFTER_DAYS}-day policy window ($behind release(s) behind is expected on a monthly cadence). Closing automatically."
             fi
             exit 0
           fi
 
+          # Stalled: name the unmerged re-pin PR if one exists, so the issue is
+          # a precise nudge rather than a generic alarm.
+          open_pr="$(gh pr list --state open --json number,headRefName,createdAt \
+            --jq '[.[] | select(.headRefName | startswith("convex-repin/"))][0] | if . == null then "" else "PR #\(.number) (\(.headRefName)) has been open since \(.createdAt[0:10]) — merge or close it." end')"
+          if [ -z "$open_pr" ]; then
+            open_pr="No convex-repin/* PR is open — check .github/workflows/convex-repin.yml for a failed or skipped run."
+          fi
+
           cat > body.md <<EOF
-          The stack pins Convex at \`$short\`; upstream is **$behind release(s)** ahead.
+          The stack pins Convex at \`$pinned_tag\`, published **${pin_age} days ago** —
+          past the ${STALE_AFTER_DAYS}-day policy window. The monthly re-pin flow has stalled.
+
+          $open_pr
 
           | | |
           |---|---|
@@ -79,27 +114,23 @@ jobs:
 
           Convex stopped maintaining \`self-hosted/CHANGELOG.md\` in 2025-09 ("check
           \`git log\` for a detailed listing of changes"), so that compare view **is** the
-          changelog. Read it before upgrading.
+          changelog. It is pinned release to newest release, deliberately — NOT
+          \`...HEAD\`: Convex ships most days, so HEAD is normally ahead of the newest
+          release and a \`...HEAD\` range would show commits that are not in the
+          upgrade you are being offered.
 
-          It is pinned release to newest release, deliberately — NOT \`...HEAD\`. Convex
-          ships most days, so HEAD is normally ahead of the newest release and a
-          \`...HEAD\` range would show commits that are not in the upgrade you are
-          being offered.
-
-          Upgrading (\`self-hosted/advanced/upgrading.md\`):
-
-          1. Take an export first — upgrades run in-place DB migrations.
-          2. Re-pin **both** \`convex-backend\` and \`convex-dashboard\` in
-             \`docker-compose.stack.yml\` to the same new git sha, with fresh digests.
-             They must match, and \`convex/deployPins.test.ts\` fails the build otherwise.
-          3. Deploy, then watch the backend log for \`MigrationComplete(N)\`.
+          Bump via \`gh workflow run convex-repin.yml\` (or wait for the first-Monday
+          run); the full procedure is
+          [docs/beta-deploy.md § Upgrading the Convex backend](https://github.com/${{ github.repository }}/blob/main/docs/beta-deploy.md#upgrading-the-convex-backend-image-re-pin).
 
           _Filed automatically by \`.github/workflows/convex-release-watch.yml\`._
           EOF
           sed -i 's/^          //' body.md
 
           if [ -n "$existing" ]; then
-            gh issue edit "$existing" --body-file body.md
+            # --title also migrates a legacy-titled issue in place, preserving
+            # its history instead of orphaning it and opening a duplicate.
+            gh issue edit "$existing" --title "$ISSUE_TITLE" --body-file body.md
             echo "updated issue #$existing"
           else
             gh issue create --title "$ISSUE_TITLE" --body-file body.md
