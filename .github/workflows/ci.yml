@@ -49,10 +49,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: shellcheck the docker scripts
+      - name: shellcheck the docker and repo scripts
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck -S error docker/*.sh
+          shellcheck -S error docker/*.sh scripts/*.sh
       - name: Build docker images (no cache)
         run: |
           docker build -f docker/web.Dockerfile .

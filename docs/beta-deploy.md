@@ -340,7 +340,9 @@ See `docs/threat-model-cdn-blinding.md`.
   digests 2026-07-07 (valkey 8→9, transparent — Cap uses it as a plain
   Redis-compatible store). Re-pin on intentional upgrades:
   `docker buildx imagetools inspect <image:tag>` (keep the backend/keygen pair
-  and the postgres compose/backup-Dockerfile pair matched).
+  and the postgres compose/backup-Dockerfile pair matched). For the Convex
+  images specifically, use the monthly flow instead — see
+  § Upgrading the Convex backend below.
 - **Privacy defaults.** The stack does not persist client IPs anywhere by
   default — Caddy access logs are explicitly discarded, the backend's request
   log is silenced, and Cap is configured not to surface a peer IP. The full
@@ -539,6 +541,119 @@ Run a **restore drill** before launch and periodically after:
 asserts core-table row counts, and drops it (set `AGE_KEY_FILE` for encrypted
 dumps). A backup that has never been restored is not a backup.
 
+### Upgrading the Convex backend (image re-pin)
+
+**Policy.** The `convex-backend`/`convex-dashboard`/`keygen` pins in
+`docker-compose.stack.yml` are bumped **monthly**:
+`.github/workflows/convex-repin.yml` opens a PR on the first Monday, anchored
+to the newest version announced on [ship.convex.dev](https://ship.convex.dev/)
+(the `convex` npm releases) that is **at least 7 days old**. An "anchor" is the
+first precompiled release whose commit contains the `npm release version X.Y.Z`
+commit — Convex publishes no notes for individual backend builds, so anchoring
+gives every bump real release notes and keeps the backend in lockstep with the
+Dependabot-managed `convex` CLI in `bun.lock` (land any open Dependabot
+`convex` PR in the same window; the deployer's pinned CLI is what pushes to the
+upgraded backend). Nothing auto-merges and nothing auto-deploys. A new pin
+soaks on **beta ≥3 days** before prod deploys the same commit.
+
+_Security exception:_ a fix for an actively exploited backend issue jumps the
+queue — `gh workflow run convex-repin.yml -f version=X.Y.Z` (or
+`-f release_tag=precompiled-…` when the fix is not in any npm release yet), and
+the soak collapses to "beta is green" at operator judgment.
+
+_Escalation:_ `convex-release-watch.yml` files an issue only when the pinned
+release is older than its staleness threshold — i.e. only when this flow has
+stalled. Being some releases behind is normal; Convex ships near-daily.
+
+Caveat to keep in mind while reviewing the PR: the npm release notes describe
+the CLI/client surface. The PR's release-to-release compare link is the
+**only** changelog for backend internals — skim it for renamed or
+newly-required backend env vars (the `backend` service sets a specific list in
+the compose file; `RUST_LOG=info,convex-cloud-http=warn` is the fragile one),
+Postgres schema changes, and changes to `generate_admin_key.sh` (the `keygen`
+one-shot parses its output).
+
+**Pre-upgrade checklist** (run on beta first; repeat on prod with `.env.prod`
+before the prod deploy — the beta export is not a prod backup):
+
+1. `backup` service healthy, heartbeat fresh:
+
+   ```sh
+   docker compose -f docker-compose.stack.yml --env-file .env.beta ps backup
+   docker compose -f docker-compose.stack.yml --env-file .env.beta exec backup ls -l /backups/.heartbeat
+   ```
+
+2. Take an on-demand snapshot export through the deployer container (the
+   "One-off functions" recipe with a host mount; `--no-deps` is right — the
+   backend is already running on the OLD image, which is exactly the state you
+   want the export to capture):
+
+   ```sh
+   mkdir -p snapshots
+   docker compose -f docker-compose.stack.yml --env-file .env.beta \
+     run --rm --no-deps -v "$PWD/snapshots:/snapshots" --entrypoint bash deployer -c '
+       export CONVEX_SELF_HOSTED_ADMIN_KEY="$(grep "|" /keys/admin_key | tail -n1 | tr -d "[:space:]")" \
+       && bunx convex export --path "/snapshots/pre-upgrade-$(date -u +%Y%m%dT%H%M%SZ).zip"'
+   ```
+
+3. Capture the deployment env alongside it (encrypted, same recipient as the
+   dumps — see § Backups & restore):
+
+   ```sh
+   docker compose -f docker-compose.stack.yml --env-file .env.beta \
+     run --rm --no-deps --entrypoint bash deployer -c '
+       export CONVEX_SELF_HOSTED_ADMIN_KEY="$(grep "|" /keys/admin_key | tail -n1 | tr -d "[:space:]")" \
+       && bunx convex env list' \
+     | age -r "$BACKUP_AGE_PUBLIC_KEY" -o "convex-env-$(date -u +%Y%m%d).txt.age"
+   ```
+
+   Note the export does **not** cover the backend's `data` volume (file blobs)
+   — see the coverage notes in § Backups & restore.
+
+**Deploy.** Different from the §6 recipe (which recreates `web deployer` only)
+— an image re-pin must recreate the three Convex containers:
+
+```sh
+git pull
+docker compose -f docker-compose.stack.yml --env-file .env.beta pull backend dashboard keygen
+docker compose -f docker-compose.stack.yml --env-file .env.beta \
+  up -d --force-recreate backend dashboard keygen deployer
+```
+
+`keygen` re-runs on the new binary (its `generate_admin_key.sh` ships in the
+backend image); the deployer re-push is idempotent insurance. Backend +
+dashboard restart, so there is a short API gap — fine on beta, announce it for
+prod.
+
+**Verify:**
+
+```sh
+docker compose -f docker-compose.stack.yml --env-file .env.beta logs backend | grep -i migration
+# expect MigrationComplete(N); a big jump may run several and take a while —
+# do NOT restart the backend mid-migration.
+docker compose -f docker-compose.stack.yml --env-file .env.beta logs --tail=40 deployer   # [deploy] OK
+curl -fsS https://beta.freesocks.org/readyz
+docker compose -f docker-compose.stack.yml --env-file .env.beta ps   # nothing unhealthy/restarting
+```
+
+Plus: the dashboard loads over the SSH tunnel, and the next backup cycle goes
+green (the sidecar talks to Postgres, not the backend, but a green cycle after
+the upgrade is the cheapest proof nothing wedged).
+
+**Prod promotion.** Same commit, ≥3 days later: rerun the full pre-upgrade
+checklist against `.env.prod` (including prod's own export), deploy, verify.
+
+**Rollback truth.** Re-pinning back to the old sha is **not** a rollback once
+migrations have run: upgrades apply in-place DB migrations, Convex documents no
+downgrade path, and an older binary against a migrated database is undefined
+behavior. The only real rollback is restore-from-backup — `bunx convex import
+--replace-all` of the pre-upgrade export (via the same deployer recipe), or the
+pg_dump restore above. This is why the export step is mandatory, not advisory.
+
+One more drift hazard: the **dev stack** (`docker-compose.yml`) deliberately
+runs `:latest`, so local dev can be _ahead_ of beta/prod — behavior that works
+locally may come from a build the stack does not have yet.
+
 ### Rollback (A4)
 
 Deploys are idempotent and the contract changes are kept additive (backend-first
@@ -553,6 +668,9 @@ is safe). To roll back:
    (`docker compose ... up -d --build web`) — it bakes the SPA from that checkout.
 3. **Schema:** Convex applies schema on deploy; a rollback that drops a field
    only affects new writes. Restore from a backup only if data was corrupted.
+4. **Convex backend image:** there is no image rollback once its in-place DB
+   migrations have run — restore the pre-upgrade export instead. See
+   § Upgrading the Convex backend above.
 
 ### Incident runbook (quick reference)
 

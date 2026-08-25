@@ -272,4 +272,32 @@ describe('cross-file image pins', () => {
       expect(digests.size, `${image} is pinned to ${digests.size} different digests`).toBe(1);
     }
   });
+
+  test('the compose comment names the release the Convex images are pinned to', () => {
+    // The `backend` service comment carries `<sha7> = precompiled-<date>-<sha7>`
+    // (optionally suffixed `(the npm X.Y.Z anchor)` — written by every
+    // scripts/convex-repin.sh run; pins predating the anchor policy lack it).
+    // scripts/convex-repin.sh rewrites that comment with a pattern
+    // substitution, and a reflow of the comment block would make the rewrite
+    // silently no-op — the script's own count assertion catches that at repin
+    // time, and this test catches a comment that already drifted from the pin.
+    const comment = stack.match(
+      /\b([0-9a-f]{7}) = (precompiled-\d{4}-\d{2}-\d{2}-\1)(?: \(the npm \d+\.\d+\.\d+ anchor\))?/,
+    );
+    expect(
+      comment,
+      'the backend service comment must name the pinned release as ' +
+        '`<sha7> = precompiled-<date>-<sha7>` — scripts/convex-repin.sh rewrites ' +
+        'exactly that shape, and convex-release-watch.yml relies on the tag being real.',
+    ).not.toBeNull();
+
+    const pinnedSha = stack.match(/image:\s*ghcr\.io\/get-convex\/convex-backend:([0-9a-f]{40})@/);
+    expect(pinnedSha).not.toBeNull();
+    expect(
+      comment![1],
+      `the comment says the pin is ${comment![1]} but the images are pinned to ` +
+        `${pinnedSha![1].slice(0, 7)} — the release-name comment drifted from the actual pin ` +
+        '(a hand-edit skipped scripts/convex-repin.sh, or the script rewrite broke).',
+    ).toBe(pinnedSha![1].slice(0, 7));
+  });
 });

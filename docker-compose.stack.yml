@@ -46,9 +46,13 @@ services:
     # tell you what you are on.
     #
     # Dependabot CANNOT bump these (a 40-hex tag fails its NAME_WITH_VERSION
-    # regex, so it is not version-comparable). That is the deliberate trade for
-    # the tag, and .github/workflows/convex-release-watch.yml replaces the
-    # notification — it files an issue when newer releases exist.
+    # regex, so it is not version-comparable). Instead,
+    # .github/workflows/convex-repin.yml opens a monthly re-pin PR anchored to
+    # the newest ship.convex.dev (npm) release, scripts/convex-repin.sh rewrites
+    # the three refs + the release-name comment above (which
+    # convex/deployPins.test.ts asserts matches the pin — don't hand-edit one
+    # without the other), and .github/workflows/convex-release-watch.yml files
+    # an issue only if that flow stalls.
     #
     # Backend and dashboard MUST share this tag: "Make sure to use the same
     # version of convex-backend and convex-dashboard. Different versions are not
@@ -57,6 +61,7 @@ services:
     #
     # Upgrading runs in-place DB migrations. Take an export first, then watch for
     # `MigrationComplete(N)` in the backend log (self-hosted/advanced/upgrading.md).
+    # Full procedure: docs/beta-deploy.md § Upgrading the Convex backend.
     image: ghcr.io/get-convex/convex-backend:1bd6910bc0b4066a918809912670d42afc8fdfb0@sha256:104b8bc70e29b31fa4a57551596090bfc9eedc3d1f27fd4b8cd8d0e782b9b070
     pids_limit: 512
     restart: unless-stopped
