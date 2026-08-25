@@ -37,7 +37,7 @@ services:
   backend:
     # Convex ships one image per commit, and EVERY image tag is a GitHub release
     # (`precompiled-<date>-<sha7>` in get-convex/convex-backend). So the tag here
-    # is the git sha of a release: 1bd6910 = precompiled-2026-07-06-1bd6910.
+    # is the git sha of a release: 0dda4d6 = precompiled-2026-08-14-0dda4d6 (the npm 1.44.0 anchor).
     #
     # The tag is what makes an upgrade auditable. Convex stopped maintaining
     # self-hosted/CHANGELOG.md in 2025-09 ("check `git log` for a detailed
@@ -62,7 +62,7 @@ services:
     # Upgrading runs in-place DB migrations. Take an export first, then watch for
     # `MigrationComplete(N)` in the backend log (self-hosted/advanced/upgrading.md).
     # Full procedure: docs/beta-deploy.md § Upgrading the Convex backend.
-    image: ghcr.io/get-convex/convex-backend:1bd6910bc0b4066a918809912670d42afc8fdfb0@sha256:104b8bc70e29b31fa4a57551596090bfc9eedc3d1f27fd4b8cd8d0e782b9b070
+    image: ghcr.io/get-convex/convex-backend:0dda4d6a68612c6ba49c755e410feca46f56f7ce@sha256:e6952cd9550fbc88bd09677b5c4f0fab5961dd0b870fca46822fb0b339ecd2bf
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -195,7 +195,7 @@ services:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
   dashboard:
     # Same release git sha as `backend` above — required, not cosmetic.
-    image: ghcr.io/get-convex/convex-dashboard:1bd6910bc0b4066a918809912670d42afc8fdfb0@sha256:60b04b339d6cd6623057b03e5275329a20011051907ec5e689a38a401cfdc409
+    image: ghcr.io/get-convex/convex-dashboard:0dda4d6a68612c6ba49c755e410feca46f56f7ce@sha256:36668f7a304b6a3fccd1a5ff28ad05a242c37944beab5f8a90f81a2d4e235de7
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -343,7 +343,7 @@ services:
   # running server needed) and write it to the shared `convexkey` volume for the
   # deployer. The key is accepted by the backend because it shares INSTANCE_SECRET.
   keygen:
-    image: ghcr.io/get-convex/convex-backend:1bd6910bc0b4066a918809912670d42afc8fdfb0@sha256:104b8bc70e29b31fa4a57551596090bfc9eedc3d1f27fd4b8cd8d0e782b9b070
+    image: ghcr.io/get-convex/convex-backend:0dda4d6a68612c6ba49c755e410feca46f56f7ce@sha256:e6952cd9550fbc88bd09677b5c4f0fab5961dd0b870fca46822fb0b339ecd2bf
     pids_limit: 128
     restart: 'no'
     logging: *log
