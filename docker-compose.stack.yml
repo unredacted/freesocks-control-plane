@@ -219,7 +219,7 @@ services:
     # NOT `latest` — so a Dependabot bump names the actual version change instead
     # of "latest moved". Re-pin by hand if needed:
     # docker buildx imagetools inspect tiago2/cap:<version>.
-    image: tiago2/cap:3.1.8@sha256:56d402dc15e536b4c20e341a81bb9e78a0082b833e4337b9b05b242d96e0ffe5
+    image: tiago2/cap:3.1.9@sha256:98fdaaf4ffe6bea18549484a431c601399f24dd561370e196970e6fc0e6b79d0
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -256,7 +256,7 @@ services:
     # Pinned by digest (re-pin: docker buildx imagetools inspect valkey/valkey:9-alpine).
     # Cap uses it purely as a Redis-compatible store (challenges/tokens), so the
     # 8→9 bump is transparent; the --save/--appendonly flags below are unchanged.
-    image: valkey/valkey:9-alpine@sha256:11dfc5d3ce9c570a516760935053687aea8e938be51b17cf112f71ab573e6f7b
+    image: valkey/valkey:9-alpine@sha256:de31910896150d5e754a07d57d227cfdde4e258ddd0d1aa4607f2d2f95843715
     pids_limit: 128
     restart: unless-stopped
     logging: *log
