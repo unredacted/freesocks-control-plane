@@ -26,7 +26,9 @@ const HOST = '{{placeholder "http.request.host"}}';
 const NON_INDEXABLE = ['/account', '/login'];
 
 // The actual route switch: every `router.pathname === '/x'` literal.
-const routerRoutes = [...appSvelte.matchAll(/router\.pathname === '([^']+)'/g)].map((m) => m[1]);
+const routerRoutes = [...appSvelte.matchAll(/router\.pathname === '([^']+)'/g)].map(
+  (m) => m[1] ?? '',
+);
 const indexableRoutes = routerRoutes.filter((route) => !NON_INDEXABLE.includes(route));
 
 describe('sitemap.xml', () => {
@@ -70,7 +72,7 @@ describe('robots.txt', () => {
     }
     // No disallow may prefix-shadow an indexable route (e.g. a hypothetical
     // `Disallow: /get` would block the public /get-account).
-    const disallows = [...robots.matchAll(/^Disallow: (\S+)/gm)].map((m) => m[1]);
+    const disallows = [...robots.matchAll(/^Disallow: (\S+)/gm)].map((m) => m[1] ?? '');
     for (const route of indexableRoutes.filter((r) => r !== '/')) {
       expect(disallows.some((d) => route.startsWith(d))).toBe(false);
     }
