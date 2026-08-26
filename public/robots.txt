@@ -7,7 +7,7 @@ User-agent: *
 Disallow: /account
 Disallow: /login
 Disallow: /admin
-Disallow: /api/
-Disallow: /cap/
+Disallow: /api
+Disallow: /cap
 
 Sitemap: https://{{placeholder "http.request.host"}}/sitemap.xml
