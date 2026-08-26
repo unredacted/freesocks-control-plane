@@ -1,0 +1,13 @@
+# Served through Caddy's `templates` directive (see the @seoFiles block in the
+# Caddyfile): the {{placeholder "http.request.host"}} token expands to the
+# request's Host, so the Sitemap URL stays same-host on every deployment.
+# The Vite dev server serves this file raw; it is a production artifact.
+
+User-agent: *
+Disallow: /account
+Disallow: /login
+Disallow: /admin
+Disallow: /api/
+Disallow: /cap/
+
+Sitemap: https://{{placeholder "http.request.host"}}/sitemap.xml
