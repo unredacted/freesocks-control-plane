@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Served through Caddy's `templates` directive (see the @seoFiles block in the
+  Caddyfile): each {{placeholder "http.request.host"}} token expands to the
+  request's Host, so the same file yields same-host canonical URLs on every
+  deployment (beta.freesocks.org and freesocks.org alike). The scheme is
+  hardcoded https because the public origin is always TLS even when Caddy
+  itself serves plain HTTP behind a terminating edge (CADDY_SCHEME=http).
+  The Vite dev server serves this file raw (placeholders unexpanded); it is a
+  production artifact.
+
+  Public, indexable SPA routes only. Auth-gated and non-content surfaces
+  (/account, /login, /admin, /api, /cap) are excluded here and disallowed in
+  robots.txt. Adding a public member-facing route means adding a <url> entry
+  here (pinned by src/client/lib/sitemap.test.ts) as well as a line in the
+  telemetry ROUTE_ALLOWLIST (convex/lib/umami.ts).
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://{{placeholder "http.request.host"}}/</loc>
+  </url>
+  <url>
+    <loc>https://{{placeholder "http.request.host"}}/get-account</loc>
+  </url>
+  <url>
+    <loc>https://{{placeholder "http.request.host"}}/status</loc>
+  </url>
+</urlset>

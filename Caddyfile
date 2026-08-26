@@ -243,6 +243,17 @@
 		templates {
 			mime text/html
 		}
+		# Expand {{placeholder "http.request.host"}} in robots.txt + sitemap.xml
+		# so their canonical URLs track the deployment host (beta vs prod) with a
+		# single committed file. Deliberately a SEPARATE, path-scoped instance
+		# rather than widening the block above: template execution on all
+		# text/plain would 500 on any future .txt that happens to contain `{{`.
+		# (.xml MIME varies by system table — match both text/xml and
+		# application/xml.)
+		@seoFiles path /robots.txt /sitemap.xml
+		templates @seoFiles {
+			mime text/plain text/xml application/xml
+		}
 		file_server
 	}
 }

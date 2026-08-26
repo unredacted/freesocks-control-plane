@@ -1,0 +1,20 @@
+# Served through Caddy's `templates` directive (see the @seoFiles block in the
+# Caddyfile): the {{placeholder "http.request.host"}} token expands to the
+# request's Host, so the Sitemap URL stays same-host on every deployment.
+# The Vite dev server serves this file raw; it is a production artifact.
+
+User-agent: *
+Disallow: /account
+Disallow: /login
+Disallow: /admin
+# Crawler renderers (e.g. Googlebot's headless Chromium) honor robots.txt for
+# the SPA's runtime fetches, so the two public read-only GETs that hydrate the
+# indexable pages stay allowed (longest-match wins over the /api disallow) —
+# without them /status renders as an empty skeleton in the index. Both are
+# per-IP rate-limited (status.fetch / config.fetch policies).
+Allow: /api/v1/status
+Allow: /api/v1/config
+Disallow: /api
+Disallow: /cap
+
+Sitemap: https://{{placeholder "http.request.host"}}/sitemap.xml
