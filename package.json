@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "FreeSocks Control Plane - self-hosted Convex backend + Svelte SPA, account-number member auth",
-  "license": "GPL-3.0-or-later",
+  "license": "AGPL-3.0-or-later",
   "homepage": "https://freesocks.org",
   "repository": {
     "type": "git",

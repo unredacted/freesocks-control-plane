@@ -1,7 +1,7 @@
 # FreeSocks Control Plane
 
 [![CI](https://github.com/unredacted/freesocks-control-plane/actions/workflows/ci.yml/badge.svg)](https://github.com/unredacted/freesocks-control-plane/actions/workflows/ci.yml)
-[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 [FreeSocks](https://freesocks.org) distributes free, open & uncensored proxy access to
 people in countries experiencing heavy Internet censorship. This repository is the
@@ -387,4 +387,6 @@ environments.
 
 ## License
 
-[GPL-3.0](LICENSE).
+[AGPL-3.0-or-later](LICENSE). If you run a modified version of this software as a
+network service, the AGPL requires you to offer its source code to the users of that
+service.
