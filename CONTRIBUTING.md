@@ -70,3 +70,8 @@ Keep PRs focused and describe what changed and why. If a change affects the secu
 posture or privacy guarantees (anything in `docs/privacy.md` or the threat-model docs),
 call that out explicitly. For vulnerabilities, use the private channel in
 [`SECURITY.md`](SECURITY.md) instead of a public PR or issue.
+
+## License
+
+This project is licensed under [AGPL-3.0-or-later](LICENSE). By contributing, you agree
+that your contributions are licensed under the same terms.
