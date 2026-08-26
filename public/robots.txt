@@ -7,6 +7,13 @@ User-agent: *
 Disallow: /account
 Disallow: /login
 Disallow: /admin
+# Crawler renderers (e.g. Googlebot's headless Chromium) honor robots.txt for
+# the SPA's runtime fetches, so the two public read-only GETs that hydrate the
+# indexable pages stay allowed (longest-match wins over the /api disallow) —
+# without them /status renders as an empty skeleton in the index. Both are
+# per-IP rate-limited (status.fetch / config.fetch policies).
+Allow: /api/v1/status
+Allow: /api/v1/config
 Disallow: /api
 Disallow: /cap
 

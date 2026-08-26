@@ -62,6 +62,14 @@ describe('robots.txt', () => {
     expect(robots).toContain(`Sitemap: https://${HOST}/sitemap.xml`);
   });
 
+  test('allows the render-critical public API GETs', () => {
+    // Crawler renderers honor robots.txt for the SPA's runtime fetches; these
+    // two hydrate the indexable pages (/status is entirely API-driven) and
+    // must out-match the /api disallow via the longest-match rule.
+    expect(robots).toContain('Allow: /api/v1/status\n');
+    expect(robots).toContain('Allow: /api/v1/config\n');
+  });
+
   test('disallows the non-content surfaces as bare prefixes', () => {
     // Bare prefixes (no trailing slash): robots exclusions are path-prefix
     // matches, and a slash-terminated `Disallow: /api/` would leave the exact
