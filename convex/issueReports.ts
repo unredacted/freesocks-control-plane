@@ -182,6 +182,7 @@ interface DimensionRow {
   key: string;
   count: number;
   topReason: string | null;
+  byReason: Record<string, number>;
 }
 
 function countBy<T>(rows: T[], keyOf: (r: T) => string | null): Map<string, number> {
@@ -192,6 +193,39 @@ function countBy<T>(rows: T[], keyOf: (r: T) => string | null): Map<string, numb
     m.set(k, (m.get(k) ?? 0) + 1);
   }
   return m;
+}
+
+/**
+ * Time-bucketed series for the charts: one bucket per hour (short ranges) or
+ * day, aligned to the range start, each carrying the kind split and per-reason
+ * counts. Bucket count is bounded by the span clamp (366d → at most 366 daily
+ * or 72 hourly buckets).
+ */
+function bucketize(
+  rows: Doc<'issueReports'>[],
+  since: number,
+  until: number,
+): {
+  bucketMs: number;
+  buckets: { start: number; switch: number; report: number; byReason: Record<string, number> }[];
+} {
+  const span = until - since;
+  const bucketMs = span <= 3 * DAY_MS ? 3_600_000 : DAY_MS;
+  const n = Math.ceil(span / bucketMs);
+  const buckets = Array.from({ length: n }, (_, i) => ({
+    start: since + i * bucketMs,
+    switch: 0,
+    report: 0,
+    byReason: {} as Record<string, number>,
+  }));
+  for (const r of rows) {
+    const i = Math.floor((r._creationTime - since) / bucketMs);
+    const b = buckets[i];
+    if (!b) continue;
+    b[r.kind === 'switch' ? 'switch' : 'report'] += 1;
+    b.byReason[r.reason] = (b.byReason[r.reason] ?? 0) + 1;
+  }
+  return { bucketMs, buckets };
 }
 
 /** Top-N of a dimension, each with its dominant reason (the "why" behind the
@@ -212,7 +246,13 @@ function dimension(
         (r) => r.reason,
       );
       const top = [...reasons.entries()].sort((a, b) => b[1] - a[1])[0];
-      return { key, count, topReason: top ? top[0] : null };
+      return {
+        key,
+        count,
+        topReason: top ? top[0] : null,
+        // Full per-reason split: feeds the stacked breakdown chart.
+        byReason: Object.fromEntries(reasons),
+      };
     });
 }
 
@@ -276,10 +316,14 @@ export const summary = internalQuery({
         (r.asn !== undefined && r.asn !== r.detectedAsn),
     ).length;
 
+    const series = bucketize(current, since, until);
+
     return {
       windowMs: w,
       sinceMs: since,
       untilMs: until,
+      bucketMs: series.bucketMs,
+      buckets: series.buckets,
       totals: {
         current: current.length,
         previous: previous.length,

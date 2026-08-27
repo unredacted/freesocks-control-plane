@@ -55,6 +55,8 @@ const DimensionRow = z.object({
   key: z.string(),
   count: z.number().int(),
   topReason: z.string().nullable(),
+  /** Per-reason split for the stacked breakdown chart. Defaulted for skew. */
+  byReason: z.record(z.string(), z.number().int()).optional().default({}),
 });
 
 /** GET /api/v1/admin/telemetry/summary?window=<ms> (or ?from=<ms>&to=<ms>). */
@@ -63,6 +65,20 @@ export const AdminTelemetrySummary = z.object({
   /** The resolved range the summary actually covers (server-clamped). */
   sinceMs: z.number().optional(),
   untilMs: z.number().optional(),
+  /** Time-bucketed series for the charts (hourly for short ranges, else daily),
+   *  aligned to the range start. Defaulted for skew. */
+  bucketMs: z.number().optional(),
+  buckets: z
+    .array(
+      z.object({
+        start: z.number(),
+        switch: z.number().int(),
+        report: z.number().int(),
+        byReason: z.record(z.string(), z.number().int()),
+      }),
+    )
+    .optional()
+    .default([]),
   totals: z.object({
     current: z.number().int(),
     previous: z.number().int(),
