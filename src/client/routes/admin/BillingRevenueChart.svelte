@@ -126,9 +126,9 @@
       {/if}
       {#if r.otherCurrencyOrders > 0}
         <p class="text-xs text-amber-600">
-          {r.otherCurrencyOrders} paid order{r.otherCurrencyOrders === 1 ? '' : 's'} in this range
-          settled in a different currency than the current {r.currency} setting and are not
-          included in these sums (mixed currencies never share a total).
+          {r.otherCurrencyOrders} paid order{r.otherCurrencyOrders === 1 ? '' : 's'} in this range settled
+          in a different currency than the current {r.currency} setting and are not included in these
+          sums (mixed currencies never share a total).
         </p>
       {/if}
       {#if r.truncated}
