@@ -39,7 +39,16 @@ import { ListTokensResponse } from '../../shared/contracts/tokens';
 import { AdminAuthStatus } from '../../shared/contracts/auth';
 import { RateLimitListResponse } from '../../shared/contracts/rateLimits';
 import { MembershipCodePage, PurchasedCodesResponse } from '../../shared/contracts/membershipCodes';
-import { AdminBillingOverview, OrderStatusResponse } from '../../shared/contracts/billing';
+import {
+  AdminBillingOverview,
+  AdminBillingRevenue,
+  OrderStatusResponse,
+} from '../../shared/contracts/billing';
+import {
+  AdminDiagnosticsConfig,
+  AdminTelemetrySummary,
+  TelemetryContextResponse,
+} from '../../shared/contracts/telemetry';
 import {
   AdminStatusIncidentsResponse,
   AdminStatusPageConfig,
@@ -75,6 +84,11 @@ export const queryKeys = {
   billingOrder: (ref: string) => ['billing', 'order', ref] as const,
   accountCodes: ['account', 'codes'] as const,
   accountUsage: ['account', 'usage'] as const,
+  telemetryContext: ['account', 'telemetry-context'] as const,
+  adminTelemetryConfig: ['admin', 'telemetry', 'config'] as const,
+  adminTelemetrySummary: (range: string) => ['admin', 'telemetry', 'summary', range] as const,
+  adminBillingRevenue: (range: string) => ['admin', 'billing-revenue', range] as const,
+  adminTelemetryEvents: ['admin', 'telemetry', 'events'] as const,
   nodeStatus: ['account', 'node-status'] as const,
   passkeys: ['account', 'passkeys'] as const,
   networkStatus: ['network-status'] as const,
@@ -245,6 +259,54 @@ export const adminAnalyticsQuery = () =>
     queryFn: () => apiClient.get('/api/v1/admin/analytics', AdminAnalyticsConfig),
     staleTime: 60_000,
   }));
+
+/**
+ * The telemetry consent block's context (which fields this deployment collects
+ * + the CDN's editable prefill). Fetched lazily - only while a switch-server /
+ * report-issue dialog is actually open.
+ */
+export const telemetryContextQuery = (enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.telemetryContext,
+    queryFn: () => apiClient.get('/api/v1/account/telemetry-context', TelemetryContextResponse),
+    staleTime: 60_000,
+    enabled: enabled(),
+  }));
+
+export const adminTelemetryConfigQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminTelemetryConfig,
+    queryFn: () => apiClient.get('/api/v1/admin/telemetry', AdminDiagnosticsConfig),
+    staleTime: 60_000,
+  }));
+
+/** Either a trailing window ending now, or an explicit custom date range. */
+export type TelemetryRange =
+  | { kind: 'window'; windowMs: number }
+  | { kind: 'range'; fromMs: number; toMs: number };
+
+const rangeQs = (r: TelemetryRange): string =>
+  r.kind === 'window' ? `window=${r.windowMs}` : `from=${r.fromMs}&to=${r.toMs}`;
+
+export const adminTelemetrySummaryQuery = (range: () => TelemetryRange) =>
+  createQuery(() => {
+    const qs = rangeQs(range());
+    return {
+      queryKey: queryKeys.adminTelemetrySummary(qs),
+      queryFn: () => apiClient.get(`/api/v1/admin/telemetry/summary?${qs}`, AdminTelemetrySummary),
+      staleTime: 30_000,
+    };
+  });
+
+export const adminBillingRevenueQuery = (range: () => TelemetryRange) =>
+  createQuery(() => {
+    const qs = rangeQs(range());
+    return {
+      queryKey: queryKeys.adminBillingRevenue(qs),
+      queryFn: () => apiClient.get(`/api/v1/admin/billing/revenue?${qs}`, AdminBillingRevenue),
+      staleTime: 30_000,
+    };
+  });
 
 /**
  * Poll a billing order after the payment redirect returns to /account?order=ref.

@@ -22,6 +22,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import type { DatabaseReader, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
+import { resolveRange } from './lib/timeRange';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
@@ -221,6 +222,8 @@ function mapBackendServer(s: Doc<'backendServers'>) {
     slug: s.slug,
     location: s.location ?? null,
     locationLabel: s.locationLabel ?? null,
+    locationLat: s.locationLat ?? null,
+    locationLng: s.locationLng ?? null,
     isActive: s.isActive,
     priority: s.priority,
     keyCount: s.keyCount,
@@ -1213,6 +1216,33 @@ function checkLocation(a: { location?: string | null; locationLabel?: string | n
 }
 
 /**
+ * Normalize the location's map coordinates (the dot on the member-facing
+ * globe). Pair semantics: both set (range-checked) or both null/absent to
+ * clear — a half-set pair would render a dot at a fabricated point.
+ * `touched` = the caller addressed the pair at all (patch semantics).
+ */
+function checkLocationCoords(a: { locationLat?: number | null; locationLng?: number | null }): {
+  touched: boolean;
+  locationLat?: number;
+  locationLng?: number;
+} {
+  if (a.locationLat === undefined && a.locationLng === undefined) return { touched: false };
+  const lat = a.locationLat ?? null;
+  const lng = a.locationLng ?? null;
+  if (lat === null && lng === null) return { touched: true };
+  if (lat === null || lng === null) {
+    throw new Error('locationLat and locationLng must be set together (or both null to clear)');
+  }
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+    throw new Error('locationLat must be between -90 and 90');
+  }
+  if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+    throw new Error('locationLng must be between -180 and 180');
+  }
+  return { touched: true, locationLat: lat, locationLng: lng };
+}
+
+/**
  * Build a fresh backend-server config from create/upsert args (validates the
  * required fields per backend). Shared by createBackendServer +
  * upsertBackendServerBySlug's create path. (Review P3: was inlined twice.)
@@ -1285,6 +1315,8 @@ export const createBackendServer = internalMutation({
     slug: v.string(),
     location: v.optional(v.union(v.string(), v.null())),
     locationLabel: v.optional(v.union(v.string(), v.null())),
+    locationLat: v.optional(v.union(v.number(), v.null())),
+    locationLng: v.optional(v.union(v.number(), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     maxKeys: v.optional(v.union(v.number(), v.null())),
@@ -1306,6 +1338,7 @@ export const createBackendServer = internalMutation({
     if (clash) throw new Error(`A backend server with slug "${a.slug}" already exists`);
     checkMaxKeys(a.maxKeys);
     const loc = checkLocation(a);
+    const coords = checkLocationCoords(a);
 
     const config = buildBackendServerConfig(a);
     const id = await ctx.db.insert('backendServers', {
@@ -1314,6 +1347,8 @@ export const createBackendServer = internalMutation({
       slug: a.slug,
       location: loc.location,
       locationLabel: loc.locationLabel,
+      locationLat: coords.locationLat,
+      locationLng: coords.locationLng,
       config,
       isActive: a.isActive ?? true,
       priority: a.priority ?? 0,
@@ -1340,6 +1375,8 @@ export const updateBackendServer = internalMutation({
     slug: v.optional(v.string()),
     location: v.optional(v.union(v.string(), v.null())),
     locationLabel: v.optional(v.union(v.string(), v.null())),
+    locationLat: v.optional(v.union(v.number(), v.null())),
+    locationLng: v.optional(v.union(v.number(), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     maxKeys: v.optional(v.union(v.number(), v.null())),
@@ -1374,6 +1411,11 @@ export const updateBackendServer = internalMutation({
     // null/blank clears the location fields the same way.
     if (patch.location !== undefined) fields.location = loc.location;
     if (patch.locationLabel !== undefined) fields.locationLabel = loc.locationLabel;
+    const coords = checkLocationCoords(patch);
+    if (coords.touched) {
+      fields.locationLat = coords.locationLat;
+      fields.locationLng = coords.locationLng;
+    }
 
     // The backend TYPE is immutable; a blank/absent secret keeps the stored one.
     fields.config = mergeBackendServerConfig(existing.config, patch);
@@ -1448,6 +1490,8 @@ export const upsertBackendServerBySlug = internalMutation({
     name: v.optional(v.string()),
     location: v.optional(v.union(v.string(), v.null())),
     locationLabel: v.optional(v.union(v.string(), v.null())),
+    locationLat: v.optional(v.union(v.number(), v.null())),
+    locationLng: v.optional(v.union(v.number(), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     maxKeys: v.optional(v.union(v.number(), v.null())),
@@ -1467,6 +1511,7 @@ export const upsertBackendServerBySlug = internalMutation({
 
     checkMaxKeys(a.maxKeys);
     const loc = checkLocation(a);
+    const coords = checkLocationCoords(a);
     if (!existing) {
       // CREATE path — shares the reshape with createBackendServer.
       const config = buildBackendServerConfig(a);
@@ -1476,6 +1521,8 @@ export const upsertBackendServerBySlug = internalMutation({
         slug: a.slug,
         location: loc.location,
         locationLabel: loc.locationLabel,
+        locationLat: coords.locationLat,
+        locationLng: coords.locationLng,
         config,
         isActive: a.isActive ?? true,
         priority: a.priority ?? 0,
@@ -1507,6 +1554,10 @@ export const upsertBackendServerBySlug = internalMutation({
     if (a.maxKeys !== undefined) fields.maxKeys = a.maxKeys ?? undefined;
     if (a.location !== undefined) fields.location = loc.location;
     if (a.locationLabel !== undefined) fields.locationLabel = loc.locationLabel;
+    if (coords.touched) {
+      fields.locationLat = coords.locationLat;
+      fields.locationLng = coords.locationLng;
+    }
     fields.config = mergeBackendServerConfig(existing.config, a);
     await ctx.db.patch(existing._id, fields);
     await writeAuditLog(ctx, {
@@ -1617,7 +1668,8 @@ function mapBillingOrder(o: Doc<'billingOrders'>) {
     id: o._id as string,
     processor: o.processor,
     refPrefix: o.opaqueRef.slice(0, 8),
-    userId: o.userId as string,
+    // Null = anonymous donation order (no account behind it).
+    userId: (o.userId as string | undefined) ?? null,
     status: o.status,
     amountCents: o.amountCents,
     donationCents: o.donationCents ?? 0,
@@ -1630,6 +1682,95 @@ function mapBillingOrder(o: Doc<'billingOrders'>) {
 }
 
 const BILLING_ORDER_STATUSES = new Set(['pending', 'confirming', 'paid', 'failed', 'expired']);
+
+// The most paid orders one revenue computation reads (current + previous range
+// combined); the response flags `truncated` past it instead of under-counting.
+const REVENUE_SCAN_CAP = 20_000;
+
+/**
+ * Revenue over time for the Admin → Billing chart: paid orders bucketed by
+ * `paidAt` (hourly ≤ 3 days, else daily, aligned to the range start), split
+ * into the three income kinds — membership (self), gift codes, and donations.
+ * A membership/gift order's optional donation add-on counts toward donations,
+ * not the membership line, so the donation series is the pool's actual income.
+ * Cents only; no user data (the orders list is the per-order view).
+ */
+export const billingRevenueSeries = internalQuery({
+  args: {
+    windowMs: v.optional(v.number()),
+    sinceMs: v.optional(v.number()),
+    untilMs: v.optional(v.number()),
+  },
+  handler: async (ctx, a) => {
+    const { since, until, prevSince, bucketMs } = resolveRange(a);
+    const config = await resolveBillingConfig(ctx.db);
+    // Paid orders inside [prevSince, until), scanned on the settle-time index
+    // so the cap bounds the SELECTED range: an old custom range still finds
+    // its orders even after the deployment accumulates more than the cap
+    // overall, and when `truncated` fires, narrowing the range genuinely
+    // helps. (Rows without paidAt sort below the range start and never match.)
+    const rows = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_status_paidAt', (q) =>
+        q.eq('status', 'paid').gte('paidAt', prevSince).lt('paidAt', until),
+      )
+      .order('desc')
+      .take(REVENUE_SCAN_CAP);
+    // One chart, one unit: only orders in the CONFIGURED currency are summed.
+    // Minor units of different currencies must never share a total, so orders
+    // settled under an older billing currency are counted out separately and
+    // surfaced instead of being silently mislabeled.
+    const inRange = rows.filter((o) => o.currency === config.currency);
+    const otherCurrencyOrders = rows.length - inRange.length;
+    const current = inRange.filter((o) => (o.paidAt as number) >= since);
+    const previous = inRange.filter((o) => (o.paidAt as number) < since);
+
+    const n = Math.ceil((until - since) / bucketMs);
+    const buckets = Array.from({ length: n }, (_, i) => ({
+      start: since + i * bucketMs,
+      membershipCents: 0,
+      giftCents: 0,
+      donationCents: 0,
+    }));
+    const split = (o: Doc<'billingOrders'>) => {
+      const donation = o.kind === 'donation' ? o.amountCents : (o.donationCents ?? 0);
+      const rest = Math.max(0, o.amountCents - donation);
+      return {
+        donation,
+        membership: o.kind === 'gift' || o.kind === 'donation' ? 0 : rest,
+        gift: o.kind === 'gift' ? rest : 0,
+      };
+    };
+    const totals = { membershipCents: 0, giftCents: 0, donationCents: 0, orders: current.length };
+    for (const o of current) {
+      const s = split(o);
+      totals.membershipCents += s.membership;
+      totals.giftCents += s.gift;
+      totals.donationCents += s.donation;
+      const b = buckets[Math.floor(((o.paidAt as number) - since) / bucketMs)];
+      if (!b) continue;
+      b.membershipCents += s.membership;
+      b.giftCents += s.gift;
+      b.donationCents += s.donation;
+    }
+    const previousTotalCents = previous.reduce((sum, o) => sum + o.amountCents, 0);
+
+    return {
+      sinceMs: since,
+      untilMs: until,
+      bucketMs,
+      currency: config.currency,
+      buckets,
+      totals: {
+        ...totals,
+        totalCents: totals.membershipCents + totals.giftCents + totals.donationCents,
+        previousTotalCents,
+      },
+      otherCurrencyOrders,
+      truncated: rows.length >= REVENUE_SCAN_CAP,
+    };
+  },
+});
 
 /** Admin billing overview: the resolved config + a keyset page of recent orders. */
 export const billingOverview = internalQuery({
@@ -1659,7 +1800,8 @@ export const billingOverview = internalQuery({
     // resolved per page (≤200 rows) — never the account number.
     const orders = await Promise.all(
       res.page.map(async (o) => {
-        const u = await ctx.db.get(o.userId);
+        // Anonymous donation orders have no buyer row (userHandle stays null).
+        const u = o.userId ? await ctx.db.get(o.userId) : null;
         return { ...mapBillingOrder(o), userHandle: u?.supportId ?? null };
       }),
     );

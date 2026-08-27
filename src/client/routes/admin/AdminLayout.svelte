@@ -28,6 +28,7 @@
   import Server from '@lucide/svelte/icons/server';
   import Settings from '@lucide/svelte/icons/settings';
   import Gauge from '@lucide/svelte/icons/gauge';
+  import Radar from '@lucide/svelte/icons/radar';
   import Ticket from '@lucide/svelte/icons/ticket';
   import CreditCard from '@lucide/svelte/icons/credit-card';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
@@ -90,6 +91,7 @@
     { to: '/admin/membership-codes', label: 'Membership codes', icon: Ticket },
     { to: '/admin/billing', label: 'Billing', icon: CreditCard },
     { to: '/admin/rate-limits', label: 'Rate limits', icon: Gauge },
+    { to: '/admin/telemetry', label: 'Telemetry', icon: Radar },
     { to: '/admin/audit', label: 'Audit log', icon: History },
     { to: '/admin/settings', label: 'Settings', icon: Settings },
     { to: '/admin/theme', label: 'Theme', icon: Palette },
@@ -234,3 +236,42 @@
     {#if children}{@render children()}{/if}
   </section>
 </div>
+
+<!-- Chart theming shared by every admin page (Telemetry, Billing, future
+     charts): the LayerChart surface mapping + the validated categorical
+     palette. Lives on the layout so each chart page doesn't re-declare it. -->
+<style>
+  /* LayerChart surface mapping (tooltips portal to <body>, so :root scope) +
+     the validated 8-slot categorical palette: the SAME hues re-stepped for the
+     dark surface, not an automatic flip. Ships only with the lazy admin chunk;
+     defining the variables globally after load is harmless (nothing outside
+     the charts reads --viz-*). Reason → slot assignment lives in
+     lib/telemetryViz.ts and is FIXED (color follows the entity). */
+  :global(.lc-root-container),
+  :global(.lc-tooltip-root) {
+    --color-primary: var(--primary);
+    --color-surface-100: var(--card);
+    --color-surface-200: var(--muted);
+    --color-surface-content: var(--card-foreground);
+  }
+  :global(:root) {
+    --viz-s1: #2a78d6;
+    --viz-s2: #eb6834;
+    --viz-s3: #1baf7a;
+    --viz-s4: #eda100;
+    --viz-s5: #e87ba4;
+    --viz-s6: #008300;
+    --viz-s7: #4a3aa7;
+    --viz-s8: #e34948;
+  }
+  :global(.dark) {
+    --viz-s1: #3987e5;
+    --viz-s2: #d95926;
+    --viz-s3: #199e70;
+    --viz-s4: #c98500;
+    --viz-s5: #d55181;
+    --viz-s6: #008300;
+    --viz-s7: #9085e9;
+    --viz-s8: #e66767;
+  }
+</style>

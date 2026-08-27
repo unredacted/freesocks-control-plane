@@ -20,6 +20,8 @@ import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sendUmamiEvent } from './lib/umami';
 import { sanitizeUmamiUrl } from './lib/analyticsConfig';
+import { detectedFromHeaders, sanitizeSubmitted } from './lib/issueTelemetry';
+import { isReportIssueReason } from '../src/shared/contracts/issueReasons';
 import { sha256Hex } from './lib/crypto';
 import { sealed } from './lib/e2ee';
 import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
@@ -1270,7 +1272,7 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const body = await readJson<{ reason?: string; confirm?: boolean }>(req);
+    const body = await readJson<{ reason?: string; confirm?: boolean; telemetry?: unknown }>(req);
     // A closed set: the reason is audited, and the audit log never stores
     // user-authored text.
     if (!isSwitchServerReason(body.reason)) {
@@ -1278,13 +1280,91 @@ http.route({
     }
     if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
     const reason = body.reason;
+    // Optional consented telemetry (absent/null = declined): sanitize the
+    // member-edited values + capture what the CDN edge detected, both narrowed
+    // to what the deployment's diagnostics config actually collects. Consent
+    // gates BOTH halves - declining promises a reason-only event, so the
+    // edge-detected values are not even read without a consented payload.
+    const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
+    const telemetry = sanitizeSubmitted(diagCfg, body.telemetry);
+    const detected = telemetry
+      ? detectedFromHeaders(diagCfg, req)
+      : { country: null, city: null, asn: null };
     return withIssuanceSaga(ctx, member.userId, 'account.switch-server', async (requestId) => {
       const result = await ctx.runAction(internal.account.switchServer, {
         userId: member.userId,
         reason,
+        telemetry: telemetry ?? undefined,
+        detected,
         requestId,
       });
       return sagaResult(result);
+    });
+  }),
+});
+
+// Member reports a connection problem: records the reason (+ optional consented
+// network context into the UNLINKED telemetry table) and changes NOTHING about
+// their key. Rate-limited per member so one frustrated user can't skew trends.
+http.route({
+  path: '/api/v1/account/report-issue',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.report-issue',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many reports. Please wait and try again.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
+    const body = await readJson<{ reason?: string; telemetry?: unknown }>(req);
+    if (!isReportIssueReason(body.reason)) {
+      return errorJson('validation', 'unknown reason', 400);
+    }
+    const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
+    const telemetry = sanitizeSubmitted(diagCfg, body.telemetry);
+    // Same consent gate as switch-server: no consented payload, no header reads.
+    const detected = telemetry
+      ? detectedFromHeaders(diagCfg, req)
+      : { country: null, city: null, asn: null };
+    const result = await ctx.runMutation(internal.issueReports.reportIssue, {
+      userId: member.userId,
+      reason: body.reason,
+      country: telemetry?.country ?? null,
+      city: telemetry?.city ?? null,
+      asn: telemetry?.asn ?? null,
+      detectedCountry: detected.country,
+      detectedCity: detected.city,
+      detectedAsn: detected.asn,
+    });
+    return json(result);
+  }),
+});
+
+// What the telemetry consent block should offer + prefill: which fields this
+// deployment collects, and the CDN edge's current view of the member's network
+// (their VPN exit when they browse through the key - which is exactly why the
+// values are member-editable before sending).
+http.route({
+  path: '/api/v1/account/telemetry-context',
+  method: 'GET',
+  handler: guard(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:read');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
+    const detected = detectedFromHeaders(diagCfg, req);
+    return json({
+      enabled: diagCfg.enabled,
+      fields: {
+        country: diagCfg.enabled && diagCfg.collectCountry,
+        city: diagCfg.enabled && diagCfg.collectCity,
+        asn: diagCfg.enabled && diagCfg.collectAsn,
+      },
+      detected,
     });
   }),
 });
@@ -1536,25 +1616,13 @@ http.route({
   method: 'POST',
   handler: guard(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:write');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'billing.checkout',
-      subject: member.userId,
-    });
-    if (!rl.allowed) {
-      return errorJson(
-        'rate_limit.exceeded',
-        'Too many checkout attempts. Please wait and try again.',
-        429,
-        { retryAfterMs: rl.retryAfterMs },
-      );
-    }
     const body = await readJson<{
       processor?: string;
       months?: number;
       kind?: string;
       quantity?: number;
       donationCents?: number;
+      captchaToken?: string;
     }>(req);
     if (
       body.processor !== 'nowpayments' &&
@@ -1569,6 +1637,56 @@ http.route({
       );
     }
     const kind = body.kind === 'gift' ? 'gift' : body.kind === 'donation' ? 'donation' : 'self';
+    if (member) {
+      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+        policyKey: 'billing.checkout',
+        subject: member.userId,
+      });
+      if (!rl.allowed) {
+        return errorJson(
+          'rate_limit.exceeded',
+          'Too many checkout attempts. Please wait and try again.',
+          429,
+          { retryAfterMs: rl.retryAfterMs },
+        );
+      }
+    } else {
+      // ANONYMOUS checkout: donations only — a membership/gift must bind to an
+      // account it can grant to. Each call mints a hosted invoice, so the spam
+      // guards mirror account creation: a per-IP throttle FIRST (so a flood
+      // can't drive outbound captcha-verify QPS), then the Cap proof-of-work.
+      if (kind !== 'donation') {
+        return errorJson('auth.unauthenticated', 'Authentication required', 401);
+      }
+      if (!body.captchaToken) {
+        return errorJson('validation', 'Captcha token required', 400);
+      }
+      const ip = resolveClientIp(req);
+      if (!ip) {
+        return errorJson(
+          'billing.ip_unresolved',
+          'Unable to establish your network address. Try again later.',
+          503,
+        );
+      }
+      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+        policyKey: 'billing.checkout-anon',
+        subject: await ipHashSubject(ip),
+      });
+      if (!rl.allowed) {
+        return errorJson(
+          'rate_limit.exceeded',
+          'Too many attempts from your network. Please wait a bit and try again.',
+          429,
+          { retryAfterMs: rl.retryAfterMs },
+        );
+      }
+      const cap = await verifyCaptcha(body.captchaToken);
+      if (!cap.configured) return errorJson('config', 'Captcha not configured', 503);
+      if (!cap.success) {
+        return errorJson('auth.captcha_failed', 'Captcha verification failed', 403);
+      }
+    }
     // A membership (self/gift) needs a term; a standalone donation does not.
     if (
       kind !== 'donation' &&
@@ -1608,7 +1726,7 @@ http.route({
     }
     try {
       const result = await ctx.runAction(internal.billing.createCheckout, {
-        userId: member.userId,
+        userId: member?.userId,
         processor: body.processor,
         months: kind === 'donation' ? undefined : body.months,
         kind,
@@ -1637,21 +1755,34 @@ http.route({
 });
 
 // Poll an order's status (the return page). Scoped to the requesting member —
-// a ref that isn't theirs (or doesn't exist) is a 404.
+// a ref that isn't theirs (or doesn't exist) is a 404. Without a session it
+// answers ONLY for anonymous donation orders (the unguessable 128-bit ref is
+// the capability there); a user-bound ref stays 401 until its owner signs in.
 http.route({
   pathPrefix: '/api/v1/billing/order/',
   method: 'GET',
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:read');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const opaqueRef = lastPathSegment(req);
     if (!opaqueRef) return errorJson('validation', 'order ref required', 400);
+    if (!member) {
+      const anon = await ctx.runQuery(internal.billing.getAnonOrderStatus, { opaqueRef });
+      if (anon) return json(anon);
+      return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    }
     const status = await ctx.runQuery(internal.billing.getOrderStatus, {
       opaqueRef,
       userId: member.userId,
     });
-    if (!status) return errorJson('not_found', 'order not found', 404);
-    return json(status);
+    if (status) return json(status);
+    // A signed-in browser can still hold an ANONYMOUS donation ref (donated
+    // before signing in, or signed in from another tab mid-checkout): the
+    // member-bound lookup misses those by design, so fall back to the
+    // deliberately narrow anon query - it answers only for donation orders
+    // bound to NO user, so it can never leak another member's order.
+    const anon = await ctx.runQuery(internal.billing.getAnonOrderStatus, { opaqueRef });
+    if (anon) return json(anon);
+    return errorJson('not_found', 'order not found', 404);
   }),
 });
 
@@ -2791,6 +2922,97 @@ http.route({
   }),
 });
 
+// --- admin: member issue telemetry (Admin → Telemetry) ------------------------
+// Config = admin:settings scopes (it changes what gets collected); the
+// aggregations + raw events read under admin:audit:read (it is event data,
+// like the audit log it sits beside).
+
+http.route({
+  path: '/api/v1/admin/telemetry',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.issueReports.getConfig, {}));
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/telemetry',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<{
+      enabled?: boolean;
+      cloudflareEnabled?: boolean;
+      collectCountry?: boolean;
+      collectCity?: boolean;
+      collectAsn?: boolean;
+      asnHeader?: string;
+      retentionDays?: number;
+    }>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.issueReports.setConfig, {
+          // Recording defaults ON (reasons are core diagnostics); the
+          // Cloudflare geo sourcing defaults OFF (must match the fronting).
+          enabled: body.enabled !== false,
+          cloudflareEnabled: body.cloudflareEnabled === true,
+          collectCountry: body.collectCountry !== false,
+          collectCity: body.collectCity !== false,
+          collectAsn: body.collectAsn !== false,
+          asnHeader: typeof body.asnHeader === 'string' ? body.asnHeader : '',
+          retentionDays: typeof body.retentionDays === 'number' ? body.retentionDays : 90,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/telemetry/summary',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:audit:read'))) return ADMIN_UNAUTH();
+    // Either a trailing ?window=<ms> ending now, or an explicit ?from=<ms>
+    // (+ optional ?to=<ms>) custom date range. The query clamps the span.
+    const params = new URL(req.url).searchParams;
+    const windowMs = Number(params.get('window') ?? '');
+    const fromMs = Number(params.get('from') ?? '');
+    const toMs = Number(params.get('to') ?? '');
+    return json(
+      await ctx.runQuery(internal.issueReports.summary, {
+        ...(Number.isFinite(fromMs) && fromMs > 0
+          ? {
+              sinceMs: fromMs,
+              ...(Number.isFinite(toMs) && toMs > 0 ? { untilMs: toMs } : {}),
+            }
+          : { windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 7 * 86_400_000 }),
+      }),
+    );
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/telemetry/events',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:audit:read'))) return ADMIN_UNAUTH();
+    const url = new URL(req.url);
+    const cursor = url.searchParams.get('cursor') ?? undefined;
+    const limit = Number(url.searchParams.get('limit') ?? '');
+    return json(
+      await ctx.runQuery(internal.issueReports.recent, {
+        cursor,
+        limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+      }),
+    );
+  }),
+});
+
 // --- admin: status page (incidents + censorship matrix + load thresholds) ---
 
 http.route({
@@ -3036,6 +3258,31 @@ http.route({
 });
 
 // --- admin: billing (self-service membership) -------------------------------
+
+// Revenue-over-time series for the Admin → Billing chart. Sums only, no user
+// data — but it still exposes income figures, so it stays on the same scope as
+// the overview it sits beside.
+http.route({
+  path: '/api/v1/admin/billing/revenue',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:users:read'))) return ADMIN_UNAUTH();
+    const params = new URL(req.url).searchParams;
+    const windowMs = Number(params.get('window') ?? '');
+    const fromMs = Number(params.get('from') ?? '');
+    const toMs = Number(params.get('to') ?? '');
+    return json(
+      await ctx.runQuery(internal.adminApi.billingRevenueSeries, {
+        ...(Number.isFinite(fromMs) && fromMs > 0
+          ? {
+              sinceMs: fromMs,
+              ...(Number.isFinite(toMs) && toMs > 0 ? { untilMs: toMs } : {}),
+            }
+          : { windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 30 * 86_400_000 }),
+      }),
+    );
+  }),
+});
 
 http.route({
   path: '/api/v1/admin/billing',

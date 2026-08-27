@@ -8,6 +8,7 @@ import {
   currentMonthDailyGb,
   effectiveBonusGb,
   readDonationState,
+  recentGiftsProjection,
   recordDonation,
   subtractDonation,
 } from './lib/donationBonus';
@@ -811,5 +812,48 @@ describe('donation pool windows (lib/donationBonus)', () => {
     const state = await readState(t);
     expect(state.buckets).toHaveLength(1);
     expect(state.buckets![0]!.c).toBe(100);
+  });
+});
+
+describe('recentGiftsProjection (lib/donationBonus)', () => {
+  const DAY = 86_400_000;
+  const NOW = Date.UTC(2026, 7, 20, 12); // 2026-08-20T12:00Z
+  const cfg = { bonusGbPerUsd: 1 };
+  const state = (buckets: { d: string; c: number; x: number }[]) => ({
+    monthKey: '2026-08',
+    donatedCents: 0,
+    appliedBonusGb: 0,
+    buckets,
+  });
+
+  test('projects live buckets only, GB-only, with each expiry', () => {
+    const gifts = recentGiftsProjection(
+      state([
+        { d: '2026-07-01', c: 2000, x: NOW - DAY }, // expired → dropped
+        { d: '2026-08-10', c: 1500, x: NOW + 20 * DAY },
+        { d: '2026-08-14', c: 500, x: NOW + 24 * DAY },
+      ]),
+      cfg,
+      NOW,
+    );
+    expect(gifts).toEqual([
+      { day: '2026-08-10', gb: 15, expiresAt: NOW + 20 * DAY },
+      { day: '2026-08-14', gb: 5, expiresAt: NOW + 24 * DAY },
+    ]);
+    // Cents never reach the projection (public no-dollar-figures rule).
+    expect(JSON.stringify(gifts)).not.toContain('"c"');
+  });
+
+  test('never rounds a real gift down to zero and honors the cap', () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      d: `2026-08-${String(i + 1).padStart(2, '0')}`,
+      c: 1, // 1¢ → 0.01 GB, rounds to 0 → clamped to the 0.1 floor
+      x: NOW + 5 * DAY,
+    }));
+    const gifts = recentGiftsProjection(state(many), cfg, NOW, 8);
+    expect(gifts).toHaveLength(8);
+    // Newest 8 survive the cap (oldest two dropped).
+    expect(gifts[0]!.day).toBe('2026-08-03');
+    expect(gifts.every((g) => g.gb === 0.1)).toBe(true);
   });
 });

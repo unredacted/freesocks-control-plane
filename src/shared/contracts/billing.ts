@@ -175,7 +175,8 @@ export const AdminBillingOrder = z.object({
   processor: BillingProcessor,
   /** Only a prefix of the opaque ref (the full ref is the member's poll token). */
   refPrefix: z.string(),
-  userId: z.string(),
+  /** Null = an anonymous donation order (no account behind it). */
+  userId: z.string().nullable(),
   /** The buyer's non-secret support id (FS-XXXX-XXXX), for the "who donated" column. */
   userHandle: z.string().nullable().default(null),
   status: BillingOrderStatus,
@@ -189,6 +190,37 @@ export const AdminBillingOrder = z.object({
   paidAt: z.string().datetime().nullable(),
 });
 export type AdminBillingOrder = z.infer<typeof AdminBillingOrder>;
+
+/** GET /api/v1/admin/billing/revenue: paid income over time, split by kind. */
+export const AdminBillingRevenue = z.object({
+  sinceMs: z.number(),
+  untilMs: z.number(),
+  bucketMs: z.number(),
+  currency: z.string(),
+  buckets: z.array(
+    z.object({
+      start: z.number(),
+      membershipCents: z.number().int(),
+      giftCents: z.number().int(),
+      donationCents: z.number().int(),
+    }),
+  ),
+  totals: z.object({
+    membershipCents: z.number().int(),
+    giftCents: z.number().int(),
+    donationCents: z.number().int(),
+    totalCents: z.number().int(),
+    orders: z.number().int(),
+    previousTotalCents: z.number().int(),
+  }),
+  /** Paid orders in the range whose stored currency differs from the current
+   *  billing currency: excluded from every sum (minor units of different
+   *  currencies must never share a total) and surfaced as a count instead.
+   *  Optional/defaulted for rolling-deploy compat. */
+  otherCurrencyOrders: z.number().int().optional().default(0),
+  truncated: z.boolean(),
+});
+export type AdminBillingRevenue = z.infer<typeof AdminBillingRevenue>;
 
 /** GET /api/v1/admin/billing and PATCH /api/v1/admin/billing/config responses. */
 export const AdminBillingOverview = z.object({

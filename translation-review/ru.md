@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**0 of 768 strings are missing** (the app currently shows English for
+**115 of 846 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -92,7 +92,7 @@ review.
 | `common.deviceCount [countPlural=one]` | 1 device | 1 устройство |
 | `common.deviceCount [countPlural=other]` | {count} devices | {count} устройств |
 
-## `nav` — The site header: navigation buttons, menu, language/theme controls.
+## `nav` — The site header: navigation buttons, menu, language/theme controls. *(2 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -102,6 +102,8 @@ review.
 | `nav.menu` | Menu | Меню |
 | `nav.theme` | Theme | Тема |
 | `nav.home` | FreeSocks home | Главная FreeSocks |
+| `nav.source` | Source | ⚠️ **MISSING** |
+| `nav.sourceTitle` | FreeSocks is open source. Read the code for yourself. | ⚠️ **MISSING** |
 
 ## `captcha` — The proof-of-work human check widget states.
 
@@ -192,7 +194,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | Не удалось войти с пасс-ключом |
 | `passkey.notNow` | Not now | Не сейчас |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs.
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(1 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -239,8 +241,7 @@ review.
 | `account.regenSuccessBody` | Re-import it on each of your devices. The old URL works for 24 more hours. | Импортируйте её заново на каждом устройстве. Старая ссылка работает ещё 24 часа. |
 | `account.regenFailedTitle` | Could not create a new key | Не удалось создать новый ключ |
 | `account.switchSuccessTitle` | Switched to {tier} | Вы перешли на {tier} |
-| `account.switchSuccessBodyGrace` | Re-import the new subscription URL on each device. The old subscription works for 24 more hours. | Импортируйте новую ссылку подписки на каждом устройстве. Старая подписка работает ещё 24 часа. |
-| `account.switchSuccessBody` | Re-import the new subscription URL on each device. | Импортируйте новую ссылку подписки на каждом устройстве. |
+| `account.switchSuccessBody` | Same subscription URL - your apps pick up the new configuration on their next refresh. | ⚠️ **MISSING** |
 | `account.switchFailedTitle` | Could not switch server type | Не удалось сменить тип сервера |
 | `account.refreshWelcome` | Welcome to {tier} | Добро пожаловать в {tier} |
 | `account.refreshNoneTitle` | No active membership found yet | Активное членство пока не найдено |
@@ -251,7 +252,6 @@ review.
 | `account.disabledTitle` | Your account is currently disabled | Аккаунт сейчас отключён |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | Новые ключи и изменения для этого аккаунта приостановлены. Активируйте код членства ниже, чтобы вернуть доступ, или напишите в поддержку, указав свой ID для поддержки. |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | Замените свой 32-значный номер счета, если произошла утечка данных. Старый номер перестанет работать немедленно. |
-| `account.keyActionsHint` | These change your VPN connection only - your 32-digit account number stays the same. | Эти изменения касаются только подключения к прокси-серверу - ваш 32-значный номер счета остается неизменным. |
 | `account.section.connection.title` | Your connection | Ваше соединение |
 | `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | Ваш прокси-ключ, справка по настройке и подключенные устройства. |
 | `account.section.membership.title` | Membership | Членство |
@@ -267,7 +267,7 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | Слот бесплатный. Это устройство потеряет доступ, пока не повторно не импортирует вашу подписку. |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | Не удалось отозвать устройство. |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts.
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(3 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -302,6 +302,9 @@ review.
 | `hero.nearlyOut` | Nearly out, only {amount} left this period. | Почти исчерпано - осталось всего {amount} в этом периоде. |
 | `hero.expires` | Expires | Истекает |
 | `hero.noExpiry` | No expiry | Бессрочно |
+| `hero.validityLabel` | Validity | ⚠️ **MISSING** |
+| `hero.staysActive` | Active while you use it | ⚠️ **MISSING** |
+| `hero.idleNote` | Paused after {days} days of no use - sign in to reactivate. | ⚠️ **MISSING** |
 | `hero.expiresToday` | Expires today | Истекает сегодня |
 | `hero.daysRemaining [countPlural=one]` | 1 day remaining | Осталось 1 день |
 | `hero.daysRemaining [countPlural=other]` | {count} days remaining | Осталось {count} дней |
@@ -328,7 +331,7 @@ review.
 | `location.offline` | offline | не в сети |
 | `location.pickerHint` | Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network. | Где находится сервер вашей конфигурации. Автоматический выбор берёт наименее загруженную локацию; выберите сами, если в вашей сети так работает лучше. |
 
-## `usage` — The 30-day usage trend under the traffic stats.
+## `usage` — The 30-day usage trend under the traffic stats. *(1 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -337,35 +340,35 @@ review.
 | `usage.total` | {amount} used in the last 30 days | {amount} использовано за последние 30 дней |
 | `usage.unavailable` | Usage isn't available right now. | В настоящий момент эта функция недоступна. |
 | `usage.none` | No usage recorded yet. | Пока не зафиксировано ни одного случая использования. |
+| `usage.panelTitle` | Usage & validity | ⚠️ **MISSING** |
 
-## `regen` — The regenerate-subscription confirmation dialog.
+## `regen` — The regenerate-subscription confirmation dialog. *(4 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
-| `regen.title` | Create a new subscription URL? | Пересоздать подписку? |
-| `regen.body` | Your current subscription URL (ending …{suffix}) will be replaced with a new one. The old URL becomes read-only for 24 hours, then is deleted. | Текущая ссылка подписки (оканчивается на …{suffix}) будет заменена новой. Старая ссылка станет доступна только для чтения на 24 часа, затем будет удалена. |
+| `regen.title` | Create a new key? | ⚠️ **MISSING** |
+| `regen.body` | For when your subscription URL itself is the problem - it stopped working everywhere, or you think someone else has it. Your current URL (ending …{suffix}) is replaced with a brand-new one; the old one keeps working for 24 hours, then is deleted. | ⚠️ **MISSING** |
 | `regen.point1` | Your current key remains usable for the next 24 hours | Текущий ключ продолжит работать ближайшие 24 часа |
 | `regen.point2` | You'll need to re-import the new URL in each of your devices | Новую ссылку нужно будет заново импортировать на каждом устройстве |
 | `regen.pointDevices [countPlural=one]` | You currently have 1 connected device - it will need the new URL | Сейчас подключено 1 устройство - всем понадобится новая ссылка |
 | `regen.pointDevices [countPlural=other]` | You currently have {count} connected devices - they will all need the new URL | Сейчас подключено {count} устройств - всем понадобится новая ссылка |
-| `regen.confirm` | Create new URL | Пересоздать |
+| `regen.confirm` | Create new key | ⚠️ **MISSING** |
 | `regen.working` | Creating… | Пересоздание… |
+| `regen.vsSwitch` | Just need a different server? Use "Switch server" instead - your URL stays the same and there is nothing to re-import. | ⚠️ **MISSING** |
 
-## `switch` — The switch-backend confirmation dialog.
+## `switch` — The switch-backend confirmation dialog. *(4 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `switch.title` | Switch to {to}? | Перейти на {to}? |
-| `switch.body` | Your current {from} subscription will be replaced with a new {to} one. The old subscription stays usable for 24 hours so you can re-import on every device before it stops working. | Текущая подписка {from} будет заменена новой подпиской {to}. Старая подписка работает ещё 24 часа, чтобы вы успели переимпортировать ссылку на всех устройствах. |
-| `switch.point1` | A new subscription URL is issued on the {to} backend | Новая ссылка подписки выпускается на сервере {to} |
-| `switch.point2` | The current {from} URL keeps working for 24 hours, then is deleted | Текущая ссылка {from} работает ещё 24 часа, затем удаляется |
-| `switch.point3` | You'll need to re-import the new URL in each VPN client you use | Новую ссылку нужно заново импортировать в каждом VPN-клиенте |
-| `switch.pointDevices [countPlural=one]` | You currently have 1 connected device - re-import on it | Сейчас подключено 1 устройство - переимпортируйте на всех |
-| `switch.pointDevices [countPlural=other]` | You currently have {count} connected devices - re-import on all of them | Сейчас подключено {count} устройств - переимпортируйте на всех |
+| `switch.body` | Your current {from} subscription is replaced with a new {to} one. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switch.point1` | A new key is issued on the {to} backend | ⚠️ **MISSING** |
+| `switch.point2` | Your subscription URL stays the same - apps pick up the new configuration on their next refresh | ⚠️ **MISSING** |
+| `switch.point3` | The old key keeps working for 24 hours while your apps refresh | ⚠️ **MISSING** |
 | `switch.confirm` | Switch to {to} | Перейти на {to} |
 | `switch.working` | Switching… | Переход… |
 
-## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2).
+## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2). *(5 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -381,8 +384,8 @@ review.
 | `get.backendMultiProtocol` | VLESS (Xray) | VLESS (Xray) |
 | `get.backendShadowsocks` | Shadowsocks via Outline | Shadowsocks через Outline |
 | `get.createAccount` | Create my account | Создать аккаунт |
-| `get.freeAccountNote` | Free accounts are valid for {days} days and limited to {devices}. No email or password. | Бесплатные аккаунты действуют {days} дней · {devices}. Без почты и пароля. |
-| `get.freeAccountNoteNoDevices` | Free accounts are valid for {days} days. No email or password. | Бесплатные аккаунты действуют {days} дней. Без почты и пароля. |
+| `get.freeAccountNote` | Free accounts stay active as long as you use them; after {days} days of no use they pause until you sign back in. Limited to {devices}. No email or password. | ⚠️ **MISSING** |
+| `get.freeAccountNoteNoDevices` | Free accounts stay active as long as you use them; after {days} days of no use they pause until you sign back in. No email or password. | ⚠️ **MISSING** |
 | `get.step3Title` | Get your key | Получите свой ключ |
 | `get.step3Intro` | Your key is what connects your app to the VPN. Create it, then add it to your app. | Ключ - это то, что связывает ваше приложение с VPN. Создайте его и добавьте в приложение. |
 | `get.manageHintPrefix` | Manage your key anytime from | Управляйте этой подпиской в любое время из |
@@ -396,9 +399,11 @@ review.
 | `get.haveAccountPrefix` | Already have an account? | Уже есть аккаунт? |
 | `get.lostNumberHint` | Lost your account number before saving it? You can switch to a new one - | Потеряли номер аккаунта, не успев сохранить? Можно получить новый - |
 | `get.lostNumberLinkLabel` | change it from your account page | смените его на странице аккаунта |
-| `get.redeemPrompt` | Have a gift code? Redeem it before creating your key. | Есть подарочный код? Активируйте его перед созданием ключа. |
 | `get.redeemTitle` | Got a gift code? | У вас есть подарочный код? |
 | `get.redeemBody` | Redeem it now to upgrade your new account instantly. | Активируйте сейчас, чтобы мгновенно обновить свою учетную запись. |
+| `get.createFreeSub` | Get my free key | ⚠️ **MISSING** |
+| `get.plansTitle` | What each plan includes | ⚠️ **MISSING** |
+| `get.plansSubtitle` | The free plan is yours already, and your key works either way. Membership is an optional upgrade that supports the network. | ⚠️ **MISSING** |
 
 ## `tiers` — The plan-comparison cards (Free vs Membership limits).
 
@@ -411,43 +416,46 @@ review.
 | `tiers.mirrors` | Mirror URLs | Резервные ссылки |
 | `tiers.upgradeCta` | Upgrade | Оформить |
 
-## `impact` — The donation-impact panel: bandwidth donated, free users helped, charts.
+## `impact` — The donation-impact panel: bandwidth donated, free users helped, charts. *(6 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `impact.title` | Donations support Unredacted | Пожертвования поддерживают Unredacted |
 | `impact.body` | Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site. | Unredacted - американская некоммерческая организация 501(c)(3). FreeSocks - один из её проектов. Работа финансируется пожертвованиями. Подробности - на сайте Unredacted. |
 | `impact.collectiveTitle` | Donation impact | Вклад пожертвований |
-| `impact.collectiveBody` | Donations made through FreeSocks raise every free user's monthly bandwidth for the month they're given. This is what the community's donations are doing right now. | Пожертвования, сделанные через FreeSocks, увеличивают месячный трафик каждого бесплатного пользователя в том месяце, в котором они сделаны. Вот что дают пожертвования сообщества прямо сейчас. |
-| `impact.bonusThisMonth` | GB added this month | ГБ добавлено в этом месяце |
+| `impact.collectiveBody` | Donations made through FreeSocks raise every free user's bandwidth for at least {days} days from the day they're given. This is what the community's donations are doing right now. | Пожертвования, сделанные через FreeSocks, увеличивают месячный трафик каждого бесплатного пользователя в том месяце, в котором они сделаны. Вот что дают пожертвования сообщества прямо сейчас. |
+| `impact.bonusThisMonth` | GB on every free account now | ГБ добавлено в этом месяце |
 | `impact.bonusThisMonthDetail` | on top of every free account's monthly allowance | сверх месячной нормы каждого бесплатного аккаунта |
 | `impact.usersHelped` | free accounts reached | охвачено бесплатных аккаунтов |
 | `impact.usersHelpedDetail` | active free users whose allowance the bonus raises | активные бесплатные пользователи, чью норму увеличивает бонус |
-| `impact.historyTitle` | Bandwidth added per month | Добавленный трафик по месяцам |
-| `impact.chartAria` | Bandwidth added to every free user by donations, month by month over the last {n} months | Трафик, добавленный каждому бесплатному пользователю за счёт пожертвований, по месяцам за последние {n} месяцев |
+| `impact.dailyTitle` | Bandwidth added this month | ⚠️ **MISSING** |
+| `impact.dailyChartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
 | `impact.yourContribution` | Your contribution | Ваш вклад |
 | `impact.yourGiven` | You've given {amount} | Вы пожертвовали {amount} |
 | `impact.yourGb` | That's about {gb} GB of extra bandwidth for free users | Это примерно {gb} ГБ дополнительного трафика для бесплатных пользователей |
 | `impact.yourCount [countPlural=one]` | across 1 donation | за 1 пожертвование |
 | `impact.yourCount [countPlural=other]` | across {count} donations | за {count} пожертвований |
 | `impact.empty` | No donations yet this month - the first one starts the counter. | В этом месяце пожертвований пока нет - первое запустит счётчик. |
-| `impact.externalNote` | This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here. | Этот счётчик учитывает только пожертвования, сделанные через FreeSocks. Пожертвования напрямую на unredacted.org/donate поддерживают более широкую работу Unredacted, но не добавляют трафик здесь. |
+| `impact.externalNote` | This counter tracks donations made through FreeSocks - they're the ones that raise free users' bandwidth. | ⚠️ **MISSING** |
 | `impact.aboutUnredacted` | About Unredacted | Об Unredacted |
+| `impact.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises the bandwidth every free user gets. | ⚠️ **MISSING** |
+| `impact.giftsTitle` | Recent donations | ⚠️ **MISSING** |
+| `impact.giftActiveUntil` | Boosting free users until {date} | ⚠️ **MISSING** |
 
-## `donate` — The donation card + amount picker (donations add bandwidth for all free users).
+## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(13 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `donate.addTitle` | Add a donation | Добавить пожертвование |
 | `donate.addSubtitle` | Chip in to help keep FreeSocks free for everyone. | Внесите вклад, чтобы FreeSocks оставался бесплатным для всех. |
 | `donate.standaloneTitle` | Donate to FreeSocks | Поддержать FreeSocks |
-| `donate.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises this month's bandwidth for every free user. | FreeSocks бесплатен для всех и существует на пожертвования. Поддержите любой суммой, чтобы он продолжал работать, - пожертвование также увеличивает трафик каждого бесплатного пользователя в этом месяце. |
+| `donate.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount - your gift raises every free user's bandwidth for the next {days} days. | ⚠️ **MISSING** |
 | `donate.amountLabel` | Amount | Сумма |
 | `donate.none` | No thanks | Нет, спасибо |
 | `donate.custom` | Custom | Своя сумма |
 | `donate.customPlaceholder` | Other amount | Другая сумма |
-| `donate.impact` | Adds about {gb} GB to every free user this month | Добавит примерно {gb} ГБ каждому бесплатному пользователю в этом месяце |
-| `donate.bonusActive` | Donations this month have added {gb} GB to every free user's monthly allowance. | Пожертвования этого месяца добавили {gb} ГБ к месячной норме каждого бесплатного пользователя. |
+| `donate.impact` | Adds about {gb} GB to every free user | Добавит примерно {gb} ГБ каждому бесплатному пользователю в этом месяце |
+| `donate.bonusActive` | Donations have added {gb} GB to every free user’s allowance right now. | Пожертвования этого месяца добавили {gb} ГБ к месячной норме каждого бесплатного пользователя. |
 | `donate.minNote` | Minimum {amount} | Минимум {amount} |
 | `donate.give` | Donate {amount} | Пожертвовать {amount} |
 | `donate.giving` | Starting… | Начинаем… |
@@ -456,6 +464,18 @@ review.
 | `donate.badgeTooltip` | Thank you for supporting FreeSocks | Спасибо за поддержку FreeSocks |
 | `donate.thanksTitle` | You're a FreeSocks donor | Вы - донор FreeSocks |
 | `donate.thanksBody` | Thank you - your support helps keep FreeSocks free for everyone. | Спасибо - ваша поддержка помогает FreeSocks оставаться бесплатным для всех. |
+| `donate.pageTitle` | Donate | ⚠️ **MISSING** |
+| `donate.pageIntro` | FreeSocks is free for everyone, funded by donations. Every gift raises every free user's bandwidth for the next {days} days. | ⚠️ **MISSING** |
+| `donate.signInTitle` | Sign in and donate | ⚠️ **MISSING** |
+| `donate.signInBody` | Your gift is recorded on your account: you earn the donor badge and can see your giving history. | ⚠️ **MISSING** |
+| `donate.signInInstead` | Have an account? Sign in to donate instead | ⚠️ **MISSING** |
+| `donate.anonTitle` | Donate anonymously | ⚠️ **MISSING** |
+| `donate.anonBody` | No account needed. Your gift funds the shared bandwidth pool just the same - it simply is not recorded anywhere. | ⚠️ **MISSING** |
+| `donate.anonNote` | Anonymous donation: not linked to any account, so no donor badge or giving history. Keep your receipt from the payment page - it is your only record. | ⚠️ **MISSING** |
+| `donate.paidTitle` | Thank you! | ⚠️ **MISSING** |
+| `donate.paidBody` | Your donation is in. Every free user's bandwidth is raised for the next {days} days because of it. | ⚠️ **MISSING** |
+| `donate.orderFailedBody` | The payment did not complete - nothing was charged, or the payment page expired. You can try again below. | ⚠️ **MISSING** |
+| `donate.unavailable` | Donations are not available right now. Please check back later. | ⚠️ **MISSING** |
 
 ## `referral` — Miscellaneous strings.
 
@@ -518,12 +538,13 @@ review.
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | Сейчас вы на бесплатном тарифе. Продлите ниже, чтобы восстановить членство. |
 | `renew.renewCta` | Renew membership | Продлить членство |
 
-## `upgrade` — The paid-membership purchase panel (payment method, duration, totals).
+## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(1 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
 | `upgrade.title` | Upgrade to a FreeSocks membership | Оформить членство FreeSocks |
 | `upgrade.extendTitle` | Extend your membership | Продлить членство |
+| `upgrade.extendStacks` | Time you add stacks on top of your current end date. | ⚠️ **MISSING** |
 | `upgrade.subtitle` | Unlimited bandwidth and devices. Choose a length and how to pay. | Безлимитный трафик и устройства. Выберите срок и способ оплаты. |
 | `upgrade.subtitleNoDevices` | Unlimited bandwidth. Choose a length and how to pay. | Безлимитный трафик. Выберите срок и способ оплаты. |
 | `upgrade.compareBandwidth` | Bandwidth per month | Трафик в месяц |
@@ -584,7 +605,7 @@ review.
 | `gift.reveal.saved` | I've saved them | Я их сохранил. |
 | `gift.reveal.leaveWarning` | Your codes are still on screen. If you leave now without saving them, you will not be able to see them again. | Ваши коды по-прежнему отображаются на экране. Если вы сейчас уйдете, не сохранив их, вы больше не сможете их увидеть. |
 
-## `error` — API error messages shown to members.
+## `error` — API error messages shown to members. *(2 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -609,6 +630,8 @@ review.
 | `error.billing` | The payment service couldn't process this. Please try again later. | Платежная система не смогла обработать этот платеж. Пожалуйста, попробуйте позже. |
 | `error.serverError` | The server had a problem handling this. Please try again in a few minutes. | Сервер столкнулся с проблемой при обработке этого запроса. Пожалуйста, попробуйте еще раз через несколько минут. |
 | `error.modeUnavailable` | Your current connection mode is no longer available. Switch to another mode first, then try again. | Ваш текущий режим подключения больше недоступен. Сначала переключитесь на другой режим, затем повторите. |
+| `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
+| `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
 ## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps.
 
@@ -655,7 +678,7 @@ review.
 | `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | Платное приложение для iOS с закрытым кодом, популярное и надёжное. Имеет смысл, если оно у вас уже есть; приложения с открытым кодом выше делают то же самое бесплатно. |
 | `setup.clientDesc.outline` | The simplest experience there is: paste your access key and connect. Only works with Outline (Shadowsocks) access keys. | Максимально простой вариант: вставьте ключ доступа и подключитесь. Работает только с ключами доступа Outline (Shadowsocks). |
 
-## `mirror` — The "trouble connecting? try a mirror" fallback flow.
+## `mirror` — The "trouble connecting? try a mirror" fallback flow. *(3 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -676,8 +699,11 @@ review.
 | `mirror.removeAll` | Remove all mirrors | Удалить все зеркала |
 | `mirror.errorToast` | Couldn't add a mirror | Не удалось добавить зеркало |
 | `mirror.removedToast` | Mirrors removed | Зеркала удалены |
+| `mirror.quickLabel` | First, try moving servers | ⚠️ **MISSING** |
+| `mirror.quickHint` | A blocked or overloaded server is the most common cause. Switching keeps your link the same; picking a new location creates a new key. | ⚠️ **MISSING** |
+| `mirror.pickLocation` | Pick a different location | ⚠️ **MISSING** |
 
-## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL).
+## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL). *(3 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -685,38 +711,49 @@ review.
 | `rawconfig.title` | Your configuration | Ваша конфигурация |
 | `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | Полная конфигурация вашего прокси, полученная по зашифрованному каналу - она никогда не проходит через CDN в открытом виде. Вставьте её в приложение вручную вместо ссылки-подписки. |
 | `rawconfig.addHint` | Paste these server entries into your VPN app manually. | Вставьте эти серверные записи в ваше прокси-приложение вручную. |
+| `rawconfig.confirmTitle` | Show the raw configuration? | ⚠️ **MISSING** |
+| `rawconfig.confirmBody` | These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change. | ⚠️ **MISSING** |
+| `rawconfig.confirmCta` | Show configuration | ⚠️ **MISSING** |
 
-## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog.
+## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(23 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
-| `delivery.title` | What matters most to you? | Что для вас важнее всего? |
-| `delivery.subtitle` | Pick a focus. It's saved on this device only, and you can change it anytime. | Выберите приоритет - сохраняется только на этом устройстве, изменить можно в любой момент. |
-| `delivery.subtitleServer` | Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same. | Выберите приоритет. Изменение приоритета приведет к повторной выдаче ключа для соответствующих серверов; ваш текущий ключ будет продолжать работать в течение 24 часов. |
-| `delivery.subtitleSignup` | Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime. | Выберите приоритет. Он сохраняется в вашем аккаунте, и ваш первый ключ будет его использовать - изменить можно в любой момент. |
-| `delivery.evadeTitle` | Internet Freedom Mode | Режим свободного интернета |
-| `delivery.evadeAudience` | For censored countries | Для стран с цензурой |
-| `delivery.evadeBody` | Pick this if websites, apps, or VPNs are blocked where you are. Built to keep working under censorship, with backup links that are harder to block. | Выберите это, если сайты, приложения или VPN заблокированы там, где вы находитесь. Создан, чтобы продолжать работать под цензурой, с резервными ссылками, которые сложнее заблокировать. |
-| `delivery.privacyTitle` | Privacy Mode | Режим приватности |
-| `delivery.privacyAudience` | For open internet | Для открытого интернета |
-| `delivery.privacyBody` | Pick this if the internet is mostly open where you are. The strongest confidentiality - your configuration stays off third-party servers - but it is easier for censors to block. | Выберите это, если интернет там, где вы находитесь, в основном открыт. Самая сильная конфиденциальность - ваша конфигурация не попадает на сторонние серверы, - но цензорам его проще заблокировать. |
+| `delivery.title` | Connection mode | ⚠️ **MISSING** |
+| `delivery.subtitle` | Pick what fits where you are. Saved on this device only - change it anytime. | ⚠️ **MISSING** |
+| `delivery.subtitleServer` | Switching moves your key to the matching servers. Your link stays the same. | ⚠️ **MISSING** |
+| `delivery.subtitleSignup` | Pick what fits where you are. Your first key uses it - change it anytime. | ⚠️ **MISSING** |
+| `delivery.freedomTitle` | Freedom Mode | ⚠️ **MISSING** |
+| `delivery.freedomAudience` | For places where sites or VPNs are blocked | ⚠️ **MISSING** |
+| `delivery.freedomBody` | Built to keep working under censorship, with backup links that are harder to block. | ⚠️ **MISSING** |
+| `delivery.freedomWsTitle` | WebSocket | ⚠️ **MISSING** |
+| `delivery.freedomWsBody` | The standard option - an auto-updating link that works in every app. | ⚠️ **MISSING** |
+| `delivery.freedomRealityTitle` | REALITY | ⚠️ **MISSING** |
+| `delivery.freedomRealityBody` | For the heaviest censorship, when WebSocket won't connect. Harder to block, but you copy the configuration in by hand. | ⚠️ **MISSING** |
+| `delivery.privacyTitle` | Privacy Mode | ⚠️ **MISSING** |
+| `delivery.privacyAudience` | For open internet - a traditional VPN | ⚠️ **MISSING** |
+| `delivery.privacyBody` | Your traffic mixes with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks. | ⚠️ **MISSING** |
+| `delivery.privacyRealityTitle` | REALITY | ⚠️ **MISSING** |
+| `delivery.privacyRealityBody` | A direct connection with no CDN in the path. | ⚠️ **MISSING** |
+| `delivery.transportLabel` | Connection method | ⚠️ **MISSING** |
 | `delivery.recommended` | Recommended | Рекомендуется |
 | `delivery.unavailable` | Not available yet | Пока недоступно |
+| `delivery.currentUnavailable` | Currently unavailable | ⚠️ **MISSING** |
 | `delivery.confirmTitle` | Switch to "{label}"? | Переключиться на " {label} "? |
-| `delivery.confirmBody` | This moves your existing key to the {label} servers, keeping the same subscription URL. Your apps keep working and pick up the new servers on their next refresh. | Это повторно выпустит ваш прокси-ключ для серверов {label} . Ваш текущий ключ будет работать в течение 24 часов, поэтому вы можете сначала повторно импортировать данные на каждом устройстве. |
-| `delivery.confirmPoint1` | Your key moves to the {label} servers - same subscription URL, nothing to re-import | Для серверов {label} выдан новый URL-адрес подписки. |
+| `delivery.confirmBody` | This moves your existing key to the {label} servers, keeping the same subscription URL. Your apps keep working and pick up the new servers on their next refresh. | ⚠️ **MISSING** |
+| `delivery.confirmPoint1` | Your key moves to the {label} servers - same subscription URL, nothing to re-import | ⚠️ **MISSING** |
 | `delivery.confirmPoint2` | Takes effect within a minute - reconnect in your app if it doesn't refresh on its own | Ваш текущий ключ продолжает работать в течение 24 часов, а затем удаляется. |
 | `delivery.confirmPoint3` | Using the raw config? Copy the new one after switching | Вам потребуется повторно импортировать новый URL-адрес в каждый используемый вами VPN-клиент. |
 | `delivery.confirmPointDevices [countPlural=one]` | Your 1 connected device will reconnect to the new servers | В данный момент у вас подключено 1 устройство; повторно импортируйте данные на него. |
 | `delivery.confirmPointDevices [countPlural=other]` | Your {count} connected devices will reconnect to the new servers | В данный момент к вам подключено {count} устройств; повторно импортируйте данные на всех из них. |
-| `delivery.confirm` | Switch focus | Переключить фокус |
+| `delivery.confirm` | Switch mode | ⚠️ **MISSING** |
 | `delivery.working` | Switching… | Переключение… |
 | `delivery.switchSuccessTitle` | Switched to "{label}" | Переключено на " {label} " |
-| `delivery.switchSuccessBodyGrace` | Re-import the new subscription URL on each device. Your old key works for 24 more hours. | Повторно импортируйте новый URL-адрес подписки на каждое устройство. Ваш старый ключ будет действовать еще 24 часа. |
 | `delivery.switchSuccessBody` | Same subscription URL - your apps will pick up the new servers on their next refresh. | Повторно импортируйте новый URL-адрес подписки на каждом устройстве. |
-| `delivery.switchFailedTitle` | Could not switch focus | Не удалось переключить фокус. |
+| `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
+| `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros.
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(3 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -810,15 +847,15 @@ review.
 | `home.globe.voices.uz.l2` | The world still heard what happened here. | Мир всё равно услышал, что здесь произошло. |
 | `home.globe.voices.uz.l3` | The squares are watched; the words still move. | Площади под наблюдением; слова всё равно движутся. |
 | `home.impact.title` | Donations at work | Пожертвования в деле |
-| `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | Каждое пожертвование через FreeSocks увеличивает месячный трафик каждого бесплатного аккаунта в том месяце. Вот что уже добавили доноры - и вы тоже можете внести вклад. |
+| `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | Каждое пожертвование через FreeSocks увеличивает месячный трафик каждого бесплатного аккаунта в том месяце. Вот что уже добавили доноры - и вы тоже можете внести вклад. |
 | `home.impact.cta` | Make a donation | Сделать пожертвование |
-| `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | Трафик, добавленный каждому бесплатному пользователю за счёт пожертвований, по месяцам |
-| `home.hero.variants.freedom` | A VPN for Internet Freedom | VPN для свободного интернета |
+| `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
+| `home.hero.variants.freedom` | A VPN for freedom | ⚠️ **MISSING** |
 | `home.hero.variants.dissidents` | A VPN for dissidents | VPN для инакомыслящих |
 | `home.hero.variants.privacy` | A VPN for privacy | VPN для приватности |
 | `home.hero.variants.world` | A VPN for the world | VPN для всего мира |
-| `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | FreeSocks создан для людей, чей интернет подвергается цензуре, а в остальных местах работает как VPN, уважающий приватность. Регистрация - одна быстрая проверка на человека. Мы никогда не просим почту или пароль. Ваша ссылка подписки работает в большинстве современных VPN-приложений, а членство даёт вам {limits}. |
-| `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | Пожертвования через FreeSocks напрямую поддерживают бесплатных пользователей: каждое пожертвование покупает реальный трафик для людей в странах с цензурой уже в том же месяце. |
+| `home.hero.subtitle` | FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}. | ⚠️ **MISSING** |
+| `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, right away. | Пожертвования через FreeSocks напрямую поддерживают бесплатных пользователей: каждое пожертвование покупает реальный трафик для людей в странах с цензурой уже в том же месяце. |
 | `home.hero.impactLink` | See the impact | Посмотреть вклад |
 | `home.cta.getMembership` | Get a membership | Оформите членство |
 | `home.freeCard.title` | Free tier | Бесплатный уровень |
@@ -875,7 +912,7 @@ review.
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | до 1 устройства |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | до {count} устройств |
 
-## `e2ee` — The HPKE/E2EE "encrypted to this server" badge + verification panel.
+## `e2ee` — The HPKE/E2EE "encrypted to this server" badge + verification panel. *(1 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -908,6 +945,7 @@ review.
 | `e2ee.attestationEpoch` | Current key {kid}, expires {expiry}. | Текущий ключ {kid} , истекает {expiry} . |
 | `e2ee.attestationFail` | Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing. | Не удалось проверить текущий ключ сервера - проблема в сети или CDN вмешивается в работу конечной точки ключа. Перед продолжением проверьте внеполосное соединение. |
 | `e2ee.attestationUnreachable` | The live key check is temporarily unavailable. Your connection still uses the verified key built into the app. | Функция проверки ключа в реальном времени временно недоступна. Ваше соединение по-прежнему использует проверенный ключ, встроенный в приложение. |
+| `e2ee.attestationStale` | The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering. | ⚠️ **MISSING** |
 | `e2ee.attestationUnconfigured` | Live key checking isn't set up on this build. | В этой сборке проверка работоспособности клавиатуры в реальном времени не настроена. |
 | `e2ee.compareHeading` | How to verify | Как проверить |
 | `e2ee.compareBody` | Compare the fingerprints above against the values published through a channel this server doesn't control. They must match. | Сравните приведенные выше отпечатки пальцев со значениями, опубликованными по каналу, который не контролируется этим сервером. Они должны совпадать. |
@@ -965,3 +1003,58 @@ review.
 | `status.incidentsGlobal` | All locations | Все локации |
 | `status.incidentsPast` | Past incidents | Прошлые инциденты |
 | `status.report` | Report a problem | Сообщить о проблеме |
+
+## `switchServer` — Miscellaneous strings. *(17 missing)*
+
+| Key | English | Russian (Русский) |
+| --- | --- | --- |
+| `switchServer.action` | Switch server | ⚠️ **MISSING** |
+| `switchServer.title` | Move to a different server? | ⚠️ **MISSING** |
+| `switchServer.body` | For when your current server is the problem - blocked, slow, or unreliable. We move your key to a different server; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.bodyWithServer` | For when your current server is the problem - blocked, slow, or unreliable. We move your key off {server} to a different server; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.reasonLegend` | What's wrong with your current server? | ⚠️ **MISSING** |
+| `switchServer.reasonSlow` | It's slow | ⚠️ **MISSING** |
+| `switchServer.reasonBlocked` | It's blocked where I am | ⚠️ **MISSING** |
+| `switchServer.reasonDisconnects` | It keeps disconnecting | ⚠️ **MISSING** |
+| `switchServer.reasonOther` | Something else | ⚠️ **MISSING** |
+| `switchServer.point1` | Your apps pick up the new server on their next refresh | ⚠️ **MISSING** |
+| `switchServer.point2` | Your account and the data you have left are unchanged | ⚠️ **MISSING** |
+| `switchServer.point3` | If your key has to move to another location, your devices reconnect and register again | ⚠️ **MISSING** |
+| `switchServer.confirm` | Move my key | ⚠️ **MISSING** |
+| `switchServer.working` | Moving… | ⚠️ **MISSING** |
+| `switchServer.done` | Your key has moved to a different server. | ⚠️ **MISSING** |
+| `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
+| `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |
+
+## `report` — Miscellaneous strings. *(16 missing)*
+
+| Key | English | Russian (Русский) |
+| --- | --- | --- |
+| `report.action` | Report issue | ⚠️ **MISSING** |
+| `report.title` | Report a connection problem | ⚠️ **MISSING** |
+| `report.body` | Tell us what's going wrong. Nothing about your key or account changes. | ⚠️ **MISSING** |
+| `report.reasonLegend` | What's the problem? | ⚠️ **MISSING** |
+| `report.reasonCantConnect` | I can't connect at all | ⚠️ **MISSING** |
+| `report.reasonSlow` | It connects, but it's very slow | ⚠️ **MISSING** |
+| `report.reasonDisconnects` | It keeps disconnecting | ⚠️ **MISSING** |
+| `report.reasonBlockedSite` | A site or app won't load through the VPN | ⚠️ **MISSING** |
+| `report.reasonAppProblem` | The VPN app itself is giving me trouble | ⚠️ **MISSING** |
+| `report.reasonOther` | Something else | ⚠️ **MISSING** |
+| `report.nothingChanges` | Reporting changes nothing on your account. If you need a fix right now, try "Switch server" or "Create a new key". | ⚠️ **MISSING** |
+| `report.confirm` | Send report | ⚠️ **MISSING** |
+| `report.working` | Sending… | ⚠️ **MISSING** |
+| `report.done` | Report sent | ⚠️ **MISSING** |
+| `report.doneBody` | Thank you. Reports like this show us where things are breaking. If you need a fix right now, try "Switch server". | ⚠️ **MISSING** |
+| `report.failed` | Could not send the report | ⚠️ **MISSING** |
+
+## `telemetry` — Miscellaneous strings. *(7 missing)*
+
+| Key | English | Russian (Русский) |
+| --- | --- | --- |
+| `telemetry.sendLabel` | Include connection details | ⚠️ **MISSING** |
+| `telemetry.sendExplainer` | Only the values shown below are sent. They are not tied to your account, and your IP address is never included. | ⚠️ **MISSING** |
+| `telemetry.countryLabel` | Country | ⚠️ **MISSING** |
+| `telemetry.cityLabel` | City | ⚠️ **MISSING** |
+| `telemetry.asnLabel` | Network provider (ASN) | ⚠️ **MISSING** |
+| `telemetry.notSet` | Not set | ⚠️ **MISSING** |
+| `telemetry.editHint` | Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it. | ⚠️ **MISSING** |

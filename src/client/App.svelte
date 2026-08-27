@@ -4,6 +4,7 @@
   import E2eeAlert from './components/E2eeAlert.svelte';
   import SiteBanner from './components/SiteBanner.svelte';
   import FooterRepoLink from './components/FooterRepoLink.svelte';
+  import FooterDonateLink from './components/FooterDonateLink.svelte';
   import E2eeVerifyModal from './components/E2eeVerifyModal.svelte';
   import { e2eeSession } from './lib/e2ee-status.svelte';
   import PopWarm from './components/PopWarm.svelte';
@@ -17,6 +18,7 @@
   import Account from './routes/Account.svelte';
   import Login from './routes/Login.svelte';
   import Status from './routes/Status.svelte';
+  import Donate from './routes/Donate.svelte';
   // The whole admin CMS is lazy-loaded (P1-18): public visitors never download it.
   const AdminRouter = () => import('./routes/admin/AdminRouter.svelte');
   import { router } from './stores/router.svelte';
@@ -61,6 +63,7 @@
     else if (path === '/account') title = `${t('nav.account')} · FreeSocks`;
     else if (path === '/login') title = `${t('nav.signIn')} · FreeSocks`;
     else if (path === '/status') title = `${t('status.title')} · FreeSocks`;
+    else if (path === '/donate') title = `${t('donate.pageTitle')} · FreeSocks`;
     else if (path.startsWith('/admin')) title = 'Admin · FreeSocks';
     else if (path !== '/') title = `${t('app.notFound')} · FreeSocks`;
     document.title = title;
@@ -144,6 +147,8 @@
               <Login />
             {:else if router.pathname === '/status'}
               <Status />
+            {:else if router.pathname === '/donate'}
+              <Donate />
             {:else if onAdminRoute}
               {#await AdminRouter() then mod}
                 {@const Admin = mod.default}
@@ -191,14 +196,9 @@
             </a>{t('footer.operatedSuffix')}
           </p>
           <nav class="flex flex-wrap items-center gap-4 text-xs">
-            <a
-              class="hover:text-foreground"
-              href="https://unredacted.org/donate"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {t('renew.donate')}
-            </a>
+            <!-- In-app donate route (never the external nonprofit donate page -
+                 in-app gifts are the ones that fund the bandwidth pool). -->
+            <FooterDonateLink />
             <FooterRepoLink />
           </nav>
         </div>

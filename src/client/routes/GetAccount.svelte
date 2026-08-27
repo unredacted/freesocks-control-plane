@@ -7,6 +7,7 @@
   import PasskeyManager from '../components/PasskeyManager.svelte';
   import { passkeysSupported } from '../lib/memberPasskey';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
+  import UsagePanel from '../components/UsagePanel.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
   import InlineError from '../components/InlineError.svelte';
@@ -647,19 +648,10 @@
         accessKeyOnly={backendEntry(config.data?.backends, subscription.backend)?.capabilities
           .accessKeyOnly}
         subscriptionUrl={subUrl}
-        expiresAt={subscription.expiresAt}
-        freeTier={!isCurrentMember}
-        idleDays={freeDays}
-        trafficLimitBytes={subscription.trafficLimitBytes}
-        trafficUsedBytes={subscription.trafficUsedBytes}
         status={subscription.status}
-        resetStrategy={subscription.resetStrategy}
-        lastResetAt={subscription.lastResetAt}
         tierName={account.data?.user.tier.name ?? accountTier?.name ?? ''}
         backend={subscription.backend}
         hideUrl={rawConfigFirst}
-        usagePoints={usage.data?.usage?.points}
-        usageTotal={usage.data?.usage?.total}
         nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
         nodeLocationLabel={nodeStatus.data?.node?.location?.label ??
           subscription.location?.label ??
@@ -669,6 +661,19 @@
           null}
         nodeLabel={nodeStatus.data?.node?.label ?? null}
         nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
+      />
+      <!-- Usage & validity beside the pass (extracted from it): what the key
+           includes and how long it stays active. -->
+      <UsagePanel
+        trafficLimitBytes={subscription.trafficLimitBytes}
+        trafficUsedBytes={subscription.trafficUsedBytes}
+        expiresAt={subscription.expiresAt}
+        freeTier={!isCurrentMember}
+        idleDays={freeDays}
+        resetStrategy={subscription.resetStrategy}
+        lastResetAt={subscription.lastResetAt}
+        usagePoints={usage.data?.usage?.points}
+        usageTotal={usage.data?.usage?.total}
       />
       {#if rawConfigFirst}
         <!-- rawConfig mode: raw config is the deliverable; CDN link hidden; no mirrors. -->

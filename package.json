@@ -58,6 +58,7 @@
     "clsx": "^2.1.1",
     "cobe": "^2.0.1",
     "convex": "^1.45.0",
+    "layerchart": "^2.3.0",
     "pako": "2.1.0",
     "qrcode": "^1.5.4",
     "tailwind-merge": "^3.6.0",

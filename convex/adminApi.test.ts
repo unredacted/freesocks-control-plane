@@ -622,6 +622,65 @@ describe('adminApi upsertBackendServerBySlug', () => {
     ).rejects.toThrow(/short code/i);
   });
 
+  test('map coordinates: pair round-trip, absent keeps, null clears, half-pair + range rejected', async () => {
+    const t = convexTest(schema, modules);
+    const created = await t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+      slug: 'node-map',
+      backend: 'remnawave',
+      baseUrl: 'https://panel.example',
+      apiToken: 'tok',
+      location: 'MCI',
+      locationLat: 39.1,
+      locationLng: -94.58,
+    });
+    expect(created.locationLat).toBe(39.1);
+    expect(created.locationLng).toBe(-94.58);
+
+    // Absent keeps the pair.
+    const kept = await t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+      slug: 'node-map',
+      backend: 'remnawave',
+    });
+    expect(kept.locationLat).toBe(39.1);
+
+    // A half-set pair is refused (it would place a dot at a fabricated point).
+    await expect(
+      t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+        slug: 'node-map',
+        backend: 'remnawave',
+        locationLat: 10,
+      }),
+    ).rejects.toThrow(/set together/i);
+
+    // Out-of-range values are refused.
+    await expect(
+      t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+        slug: 'node-map',
+        backend: 'remnawave',
+        locationLat: 91,
+        locationLng: 0,
+      }),
+    ).rejects.toThrow(/-90 and 90/);
+    await expect(
+      t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+        slug: 'node-map',
+        backend: 'remnawave',
+        locationLat: 0,
+        locationLng: 181,
+      }),
+    ).rejects.toThrow(/-180 and 180/);
+
+    // Null clears both.
+    const cleared = await t.mutation(internal.adminApi.upsertBackendServerBySlug, {
+      slug: 'node-map',
+      backend: 'remnawave',
+      locationLat: null,
+      locationLng: null,
+    });
+    expect(cleared.locationLat).toBeNull();
+    expect(cleared.locationLng).toBeNull();
+  });
+
   test('deleteBackendServerBySlug removes by slug; idempotent no-op when absent', async () => {
     const t = convexTest(schema, modules);
     await t.mutation(internal.adminApi.upsertBackendServerBySlug, {

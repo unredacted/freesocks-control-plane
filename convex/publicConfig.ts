@@ -15,6 +15,7 @@ import {
   effectiveBonusGb,
   currentMonthKey,
   currentMonthDailyGb,
+  recentGiftsProjection,
 } from './lib/donationBonus';
 import { readUserCounts } from './lib/statusCounters';
 import { resolveTheme } from './lib/themeConfig';
@@ -238,6 +239,13 @@ export const get = query({
           // underivable, exactly like `currentBonusGb`.
           currentMonthDaily: billing.donation.enabled
             ? currentMonthDailyGb(donationState, billing.donation, Date.now())
+            : [],
+          // The gifts still funding the pool (day + GB + when each stops),
+          // so members can see when donations landed and how long each lasts.
+          // GB only — same posture as `currentMonthDaily` (per-day GB is
+          // already derivable from its deltas, so nothing new leaks).
+          recentGifts: billing.donation.enabled
+            ? recentGiftsProjection(donationState, billing.donation, Date.now())
             : [],
         },
       },

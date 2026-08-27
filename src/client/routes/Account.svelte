@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { z } from 'zod';
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
   import * as Tabs from '@client/components/ui/tabs';
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
+  import UsagePanel from '../components/UsagePanel.svelte';
+  import KeyLocationGlobe from '../components/KeyLocationGlobe.svelte';
   import SectionHead from '../components/SectionHead.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
@@ -22,6 +25,7 @@
   import RevokeDeviceModal from '../components/RevokeDeviceModal.svelte';
   import SwitchBackendModal from '../components/SwitchBackendModal.svelte';
   import SwitchServerModal from '../components/SwitchServerModal.svelte';
+  import ReportIssueModal from '../components/ReportIssueModal.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import MemberImpact from '../components/MemberImpact.svelte';
   import DonateCard from '../components/DonateCard.svelte';
@@ -35,6 +39,7 @@
   import RedeemCode from '../components/RedeemCode.svelte';
   import ReferralsCard from '../components/ReferralsCard.svelte';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import LogOut from '@lucide/svelte/icons/log-out';
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
@@ -59,6 +64,7 @@
     billingOrderQuery,
     configQuery,
     nodeStatusQuery,
+    telemetryContextQuery,
     queryKeys,
   } from '../lib/queries';
   import { router } from '../stores/router.svelte';
@@ -72,6 +78,9 @@
     SwitchServerResponse,
   } from '../../shared/contracts/account';
   import type { SwitchServerReason } from '../../shared/contracts/switchServerReasons';
+  import type { ReportIssueReason } from '../../shared/contracts/issueReasons';
+  import { ReportIssueResponse, type TelemetryPayload } from '../../shared/contracts/telemetry';
+  import Flag from '@lucide/svelte/icons/flag';
 
   const account = accountQuery();
   const config = configQuery();
@@ -160,6 +169,13 @@
   // The member's stated reason for moving servers - required before confirming,
   // and reset per open so a previous answer is never resubmitted silently.
   let switchServerReason = $state<SwitchServerReason | null>(null);
+  // Report-issue dialog (records the problem, changes nothing about the key).
+  let reportIssueOpen = $state(false);
+  let reportIssueReason = $state<ReportIssueReason | null>(null);
+
+  // Consent-block context (which fields + the CDN's editable prefill): fetched
+  // only while one of the two dialogs that render it is open.
+  const telemetryContext = telemetryContextQuery(() => switchServerOpen || reportIssueOpen);
   // Which backend is the user about to switch TO when they confirm. Computed
   // at button-click time from `switchTargets` so the modal can render the
   // right "from X to Y" copy even after the mutation lands and the account
@@ -217,6 +233,22 @@
     if (activeTab === 'connection') url.searchParams.delete('tab');
     else url.searchParams.set('tab', activeTab);
     window.history.replaceState(history.state, '', url);
+  });
+  // Adopt a ?tab= arriving through the ROUTER while this page is already
+  // mounted (e.g. the footer Donate link navigating to /account?tab=membership
+  // from /account): the initial read above runs once, and the replaceState
+  // write-back deliberately bypasses the router store, so this only fires on
+  // a real navigation. untrack keeps activeTab out of the dependency set -
+  // otherwise a manual tab switch would re-run this with the stale router
+  // query and yank the user back.
+  $effect(() => {
+    const raw = new URLSearchParams(router.search).get('tab');
+    const wanted = raw === 'codes' ? 'gifts' : raw;
+    untrack(() => {
+      if (wanted && ACCOUNT_TABS.includes(wanted) && wanted !== activeTab) {
+        activeTab = wanted as AccountTab;
+      }
+    });
   });
   // Gift purchase: the buyer's OWN membership is untouched - instead the freshly
   // minted shareable codes are revealed ONCE here on return, then acknowledged.
@@ -326,11 +358,15 @@
   // survive) and only re-issues when it has to cross panels — either way the
   // saved subscription URL is unchanged, so there is nothing to re-import.
   const switchServer = createMutation(() => ({
-    mutationFn: () => {
+    mutationFn: (telemetry: TelemetryPayload | null) => {
       if (!switchServerReason) throw new Error('No reason selected');
       return apiClient.post(
         '/api/v1/account/switch-server',
-        { reason: switchServerReason, confirm: true },
+        {
+          reason: switchServerReason,
+          confirm: true,
+          ...(telemetry ? { telemetry } : {}),
+        },
         SwitchServerResponse,
       );
     },
@@ -349,6 +385,32 @@
     onError: (err) => {
       liveMessage = t('switchServer.failed');
       toast.error(t('switchServer.failed'), { description: apiErrorMessage(err) });
+    },
+  }));
+
+  // Mutation: report a connection problem. Records the reason (+ optional
+  // consented network context) and changes nothing about the key.
+  const reportIssue = createMutation(() => ({
+    mutationFn: (telemetry: TelemetryPayload | null) => {
+      if (!reportIssueReason) throw new Error('No reason selected');
+      return apiClient.post(
+        '/api/v1/account/report-issue',
+        {
+          reason: reportIssueReason,
+          ...(telemetry ? { telemetry } : {}),
+        },
+        ReportIssueResponse,
+      );
+    },
+    onSuccess: () => {
+      reportIssueOpen = false;
+      reportIssueReason = null;
+      liveMessage = t('report.done');
+      toast.success(t('report.done'), { description: t('report.doneBody') });
+    },
+    onError: (err) => {
+      liveMessage = t('report.failed');
+      toast.error(t('report.failed'), { description: apiErrorMessage(err) });
     },
   }));
 
@@ -890,97 +952,152 @@
             </button>
           {/if}
 
-          <!-- Delivery focus: a rawConfig mode promotes the raw E2EE config + warns the
-           subscription link is fetched through a CDN; url modes keep the link as the star. -->
-          <ConnectionModeSwitcher
-            modes={memberModes}
-            families={connectionModeFamilies}
-            currentMode={data.user.currentMode ?? null}
-            selected={effectiveModeId}
-            suggested={data.suggestedModeId ?? null}
-            serverBacked={profileServerBacked}
-            deviceCount={data.subscription?.devices.length ?? 0}
-            disabled={actionsDisabled}
-          />
-
           {#if data.subscription}
             {@const subUrl = subscriptionDisplayUrl(
               data.subscription.subToken,
               data.subscription.url,
             )}
-            <SubscriptionHero
-              backendLabel={backendEntry(config.data?.backends, data.subscription.backend)?.label}
-              accessKeyOnly={backendEntry(config.data?.backends, data.subscription.backend)
-                ?.capabilities.accessKeyOnly}
-              subscriptionUrl={subUrl}
-              expiresAt={data.subscription.expiresAt}
-              freeTier={!(data.user.membership?.isCurrent ?? false)}
-              idleDays={config.data?.freeTierDays ?? 90}
-              trafficLimitBytes={data.subscription.trafficLimitBytes}
-              trafficUsedBytes={data.subscription.trafficUsedBytes}
-              status={data.subscription.status}
-              resetStrategy={data.subscription.resetStrategy}
-              lastResetAt={data.subscription.lastResetAt}
-              tierName={data.user.tier.name}
-              backend={data.subscription.backend}
-              hideUrl={rawConfigFirst}
-              usagePoints={usage.data?.usage?.points}
-              usageTotal={usage.data?.usage?.total}
-              nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
-              nodeLocationLabel={nodeStatus.data?.node?.location?.label ??
-                data.subscription.location?.label ??
-                null}
-              nodeLocationCode={nodeStatus.data?.node?.location?.code ??
-                data.subscription.location?.code ??
-                null}
-              nodeLabel={nodeStatus.data?.node?.label ?? null}
-              nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
-              onSwitchServer={actionsDisabled || !canSwitchServer
-                ? undefined
-                : () => {
-                    switchServerReason = null;
-                    switchServerOpen = true;
-                  }}
+            <!-- Connection mode ABOVE the pass (it shapes what the pass shows);
+                 compact cards - the longer copy sits behind each card's
+                 "More details" disclosure. -->
+            <ConnectionModeSwitcher
+              modes={memberModes}
+              families={connectionModeFamilies}
+              currentMode={data.user.currentMode ?? null}
+              selected={effectiveModeId}
+              suggested={data.suggestedModeId ?? null}
+              serverBacked={profileServerBacked}
+              deviceCount={data.subscription.devices.length}
+              disabled={actionsDisabled}
+            />
+
+            {@const keyLocCode =
+              nodeStatus.data?.node?.location?.code ?? data.subscription.location?.code ?? null}
+            {@const keyLocLabel =
+              nodeStatus.data?.node?.location?.label ?? data.subscription.location?.label ?? null}
+            {@const mapLocations = config.data?.locations ?? []}
+            <!-- The pass, with the location globe beside it on wide screens
+                 (below it on mobile). The globe only renders once at least one
+                 location carries map coordinates - a deployment that never set
+                 them keeps the old single-column layout. -->
+            <div
+              class="grid gap-4 {mapLocations.some((l) => l.coords != null)
+                ? 'lg:grid-cols-[minmax(0,1fr)_280px] lg:items-stretch'
+                : ''}"
             >
-              {#snippet actions()}
-                <!-- Key actions live on the pass: regenerate, and switch backend
-                     when eligible. -->
-                <div class="flex flex-wrap items-center gap-2">
-                  <Button
-                    onclick={() => (regenerateOpen = true)}
-                    disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
-                    variant="outline"
-                    size="sm"
-                    class="min-h-11"
-                  >
-                    <RotateCcw class="size-4" />
-                    {regenerate.isPending ? t('common.working') : t('account.regenerate')}
-                  </Button>
-                  {#if canSwitchBackend}
-                    {#each switchTargets as target (target.id)}
+              <SubscriptionHero
+                backendLabel={backendEntry(config.data?.backends, data.subscription.backend)?.label}
+                accessKeyOnly={backendEntry(config.data?.backends, data.subscription.backend)
+                  ?.capabilities.accessKeyOnly}
+                subscriptionUrl={subUrl}
+                status={data.subscription.status}
+                tierName={data.user.tier.name}
+                backend={data.subscription.backend}
+                hideUrl={rawConfigFirst}
+                nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
+                nodeLocationLabel={keyLocLabel}
+                nodeLocationCode={keyLocCode}
+                nodeLabel={nodeStatus.data?.node?.label ?? null}
+                nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
+              >
+                {#snippet actions()}
+                  <!-- Key actions live on the pass: switch server (gentlest first -
+                     the URL survives), regenerate, and switch backend when
+                     eligible. No explainer text here: each action's modal
+                     carries its own when-to-use-this description. -->
+                  <div class="flex flex-wrap items-center gap-2">
+                    {#if canSwitchServer}
                       <Button
                         onclick={() => {
-                          pendingSwitchTarget = target.id;
-                          switchBackendOpen = true;
+                          switchServerReason = null;
+                          switchServerOpen = true;
                         }}
                         disabled={regenerate.isPending ||
+                          switchServer.isPending ||
                           switchBackend.isPending ||
                           actionsDisabled}
                         variant="outline"
                         size="sm"
                         class="min-h-11"
                       >
-                        <ArrowLeftRight class="size-4" />
-                        {switchBackend.isPending
-                          ? t('switch.working')
-                          : t('account.switchTo', { label: target.label })}
+                        <RefreshCw class="size-4" />
+                        {switchServer.isPending
+                          ? t('switchServer.working')
+                          : t('switchServer.action')}
                       </Button>
-                    {/each}
-                  {/if}
-                  <p class="w-full text-xs text-muted-foreground">{t('account.keyActionsHint')}</p>
-                </div>
-              {/snippet}
-            </SubscriptionHero>
+                    {/if}
+                    <Button
+                      onclick={() => (regenerateOpen = true)}
+                      disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
+                      variant="outline"
+                      size="sm"
+                      class="min-h-11"
+                    >
+                      <RotateCcw class="size-4" />
+                      {regenerate.isPending ? t('common.working') : t('account.regenerate')}
+                    </Button>
+                    <!-- Report issue: red-tinted outline (a flag, not a bomb - it
+                       sits beside two neutral actions and changes nothing). -->
+                    <Button
+                      onclick={() => {
+                        reportIssueReason = null;
+                        reportIssueOpen = true;
+                      }}
+                      disabled={reportIssue.isPending || actionsDisabled}
+                      variant="outline"
+                      size="sm"
+                      class="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Flag class="size-4" />
+                      {reportIssue.isPending ? t('report.working') : t('report.action')}
+                    </Button>
+                    {#if canSwitchBackend}
+                      {#each switchTargets as target (target.id)}
+                        <Button
+                          onclick={() => {
+                            pendingSwitchTarget = target.id;
+                            switchBackendOpen = true;
+                          }}
+                          disabled={regenerate.isPending ||
+                            switchBackend.isPending ||
+                            actionsDisabled}
+                          variant="outline"
+                          size="sm"
+                          class="min-h-11"
+                        >
+                          <ArrowLeftRight class="size-4" />
+                          {switchBackend.isPending
+                            ? t('switch.working')
+                            : t('account.switchTo', { label: target.label })}
+                        </Button>
+                      {/each}
+                    {/if}
+                  </div>
+                {/snippet}
+              </SubscriptionHero>
+              {#if mapLocations.some((l) => l.coords != null)}
+                <KeyLocationGlobe
+                  locations={mapLocations}
+                  currentCode={keyLocCode}
+                  currentLabel={keyLocLabel}
+                />
+              {/if}
+            </div>
+
+            <!-- Usage & validity: its own card (extracted from the pass so the
+                 pass carries only the key itself). -->
+            <UsagePanel
+              trafficLimitBytes={data.subscription.trafficLimitBytes}
+              trafficUsedBytes={data.subscription.trafficUsedBytes}
+              expiresAt={data.subscription.expiresAt}
+              freeTier={!(data.user.membership?.isCurrent ?? false)}
+              idleDays={config.data?.freeTierDays ?? 90}
+              resetStrategy={data.subscription.resetStrategy}
+              lastResetAt={data.subscription.lastResetAt}
+              usagePoints={usage.data?.usage?.points}
+              usageTotal={usage.data?.usage?.total}
+            />
+
             {#if rawConfigFirst}
               <!-- rawConfig mode: the raw config IS the deliverable (the CDN-fetched link
                is hidden above). No public mirrors - they'd expose the config to third parties. -->
@@ -1005,6 +1122,21 @@
                 geoCountry={data.geoCountry}
                 subscriptionUrl={subUrl}
                 available={config.data?.mirrorsEnabled ?? false}
+                onSwitchServer={actionsDisabled || !canSwitchServer
+                  ? undefined
+                  : () => {
+                      switchServerReason = null;
+                      switchServerOpen = true;
+                    }}
+                onPickLocation={actionsDisabled || locations.length < 2
+                  ? undefined
+                  : () => (regenerateOpen = true)}
+                onReportIssue={actionsDisabled
+                  ? undefined
+                  : () => {
+                      reportIssueReason = null;
+                      reportIssueOpen = true;
+                    }}
               />
               <RawConfig />
             {/if}
@@ -1063,6 +1195,18 @@
               </div>
             {/if}
           {:else}
+            <!-- No key yet: the mode pick shapes the FIRST key, so the picker
+                 stays above the create button here. -->
+            <ConnectionModeSwitcher
+              modes={memberModes}
+              families={connectionModeFamilies}
+              currentMode={data.user.currentMode ?? null}
+              selected={effectiveModeId}
+              suggested={data.suggestedModeId ?? null}
+              serverBacked={profileServerBacked}
+              deviceCount={0}
+              disabled={actionsDisabled}
+            />
             <!-- Empty state when the user has no key yet (the dither disc is
                  the brand-art variant of the empty state). -->
             <EmptyState dither title={t('account.noSubTitle')} body={t('account.noSubBody')}>
@@ -1300,12 +1444,24 @@
           null}
         deviceCount={data.subscription.devices.length}
         bind:reason={switchServerReason}
+        telemetryContext={telemetryContext.data}
         onCancel={() => {
           switchServerOpen = false;
           switchServerReason = null;
         }}
-        onConfirm={() => switchServer.mutate()}
+        onConfirm={(telemetry) => switchServer.mutate(telemetry)}
         busy={switchServer.isPending}
+      />
+      <ReportIssueModal
+        bind:open={reportIssueOpen}
+        bind:reason={reportIssueReason}
+        telemetryContext={telemetryContext.data}
+        onCancel={() => {
+          reportIssueOpen = false;
+          reportIssueReason = null;
+        }}
+        onConfirm={(telemetry) => reportIssue.mutate(telemetry)}
+        busy={reportIssue.isPending}
       />
       {#if pendingSwitchTarget && config.data}
         <SwitchBackendModal

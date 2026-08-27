@@ -65,6 +65,10 @@
     {#if locations.length >= 2}
       <LocationPicker {locations} bind:value={location} disabled={busy} id="regen-location" />
     {/if}
+    <!-- The gentler alternative: a member whose SERVER is the problem doesn't
+         need a new URL at all - steer them to "Switch server" before they take
+         the re-import-everywhere hit. -->
+    <p class="text-xs text-muted-foreground">{t('regen.vsSwitch')}</p>
     <Dialog.Footer>
       <Button variant="ghost" onclick={onCancel} disabled={busy}>{t('common.cancel')}</Button>
       <Button onclick={onConfirm} disabled={busy} variant="destructive">

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <!--
+    Source for public/og.png (the social-preview card, 1200x630). Not part of
+    the app build - open this file in a browser (the Vite dev server serves it
+    at /scripts/og-card.html, or file:// works too), wait for the fonts, and
+    click "Save PNG"; move the download to public/og.png.
+
+    Drawn on a canvas with the bundled brand fonts so the output carries the
+    site's real typography without any screenshot tooling. Colors are the dark
+    theme's tokens resolved to sRGB at draw time (see resolve()); the copy is
+    the hero title + the meta description - keep those three in sync with
+    index.html / Home.svelte when they change.
+  -->
+  <head>
+    <meta charset="UTF-8" />
+    <title>og.png source</title>
+    <style>
+      @font-face {
+        font-family: 'Inter Tight';
+        font-weight: 700;
+        src: url('../node_modules/@fontsource/inter-tight/files/inter-tight-latin-700-normal.woff2')
+          format('woff2');
+      }
+      @font-face {
+        font-family: 'Inter';
+        font-weight: 400;
+        src: url('../node_modules/@fontsource/inter/files/inter-latin-400-normal.woff2')
+          format('woff2');
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+        background: #111;
+        font-family: system-ui, sans-serif;
+        color: #eee;
+      }
+      canvas {
+        max-width: 100%;
+        border: 1px solid #444;
+      }
+    </style>
+  </head>
+  <body>
+    <p><button id="save">Save PNG</button> then move the download to <code>public/og.png</code></p>
+    <canvas id="card" width="1200" height="630"></canvas>
+    <script>
+      // Resolve a CSS color (the site's oklch tokens) to device sRGB via the
+      // browser instead of hand-converting.
+      function resolve(css) {
+        const el = document.createElement('span');
+        el.style.color = css;
+        document.body.append(el);
+        const out = getComputedStyle(el).color;
+        el.remove();
+        return out;
+      }
+
+      // The 8-point star from StarIcon.svelte / favicon.svg (24x24 box).
+      const STAR =
+        'M12 2l1.53 6.3 5.54-3.37-3.37 5.54L22 12l-6.3 1.53 3.37 5.54-5.54-3.37L12 22l-1.53-6.3-5.54 3.37 3.37-5.54L2 12l6.3-1.53L4.93 4.93l5.54 3.37L12 2Z';
+
+      async function draw() {
+        await Promise.all([
+          document.fonts.load('700 100px "Inter Tight"'),
+          document.fonts.load('400 34px "Inter"'),
+        ]);
+        const c = document.getElementById('card');
+        const ctx = c.getContext('2d');
+        // Dark-theme tokens (globals.css .dark): background + primary + inks.
+        const bg = resolve('oklch(0.268 0 0)');
+        const primary = resolve('oklch(0.72 0.13 158)');
+        const ink = resolve('oklch(0.985 0 0)');
+        const muted = resolve('oklch(0.78 0 0)');
+
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, 1200, 630);
+
+        // Brand row: green rounded square + white star, wordmark beside it.
+        const M = 96; // page margin
+        const LOGO = 92;
+        ctx.fillStyle = primary;
+        ctx.beginPath();
+        ctx.roundRect(M, M, LOGO, LOGO, 22);
+        ctx.fill();
+        ctx.save();
+        // Center the 24x24 star path in the logo box.
+        const starScale = (LOGO * 0.66) / 24;
+        ctx.translate(M + LOGO / 2 - 12 * starScale, M + LOGO / 2 - 12 * starScale);
+        ctx.scale(starScale, starScale);
+        ctx.fillStyle = ink;
+        ctx.fill(new Path2D(STAR));
+        ctx.restore();
+        ctx.fillStyle = ink;
+        ctx.font = '700 58px "Inter Tight"';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('FreeSocks', M + LOGO + 32, M + LOGO / 2 + 4);
+
+        // Headline = the hero title; accent bar under it (flat, no gradients).
+        ctx.font = '700 96px "Inter Tight"';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText('A VPN for freedom', M, 400);
+        ctx.fillStyle = primary;
+        ctx.fillRect(M, 430, 120, 8);
+
+        // Subline = the meta description.
+        ctx.fillStyle = muted;
+        ctx.font = '400 33px "Inter"';
+        ctx.fillText('Free, open & uncensored proxies for users', M, 502);
+        ctx.fillText('in heavily-censored regions.', M, 548);
+      }
+
+      document.getElementById('save').addEventListener('click', () => {
+        document.getElementById('card').toBlob((blob) => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'og.png';
+          a.click();
+        });
+      });
+      draw();
+    </script>
+  </body>
+</html>

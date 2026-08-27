@@ -190,7 +190,6 @@
         "desc": "您的支持 ID 和账号控制。"
       }
     },
-    "keyActionsHint": "这些更改只会改变您的代理连接--您的 32 位账号保持不变。",
     "deviceRevoke": "撤销",
     "deviceRevokedTitle": "设备被撤销",
     "deviceRevokedBody": "该插槽空闲。该设备将失去访问权限，直到重新导入您的订阅。",
@@ -371,8 +370,6 @@
     "pickerHint": "你的配置所在的服务器位置。“自动”会选择最不繁忙的位置；如果某个位置在你的网络上效果更好，也可以自行选择。"
   },
   "regen": {
-    "title": "重新生成订阅？",
-    "body": "你当前的订阅链接（结尾为 …{suffix}）将被新链接替换。旧链接将变为只读并保留 24 小时，之后删除。",
     "point1": "当前密钥在接下来的 24 小时内仍可使用",
     "point2": "你需要在每台设备上重新导入新链接",
     "pointDevices": [
@@ -390,7 +387,6 @@
         }
       }
     ],
-    "confirm": "重新生成",
     "working": "生成中…"
   },
   "switch": {
@@ -465,14 +461,12 @@
       }
     ],
     "empty": "本月还没有捐款--第一笔将启动计数。",
-    "externalNote": "此计数器仅统计通过 FreeSocks 进行的捐款。直接在 unredacted.org/donate 的捐赠支持 Unredacted 更广泛的工作，但不会增加这里的带宽。",
     "aboutUnredacted": "关于 Unredacted"
   },
   "donate": {
     "addTitle": "添加一笔捐款",
     "addSubtitle": "出一份力，让 FreeSocks 一直对所有人免费。",
     "standaloneTitle": "捐款支持 FreeSocks",
-    "standaloneSubtitle": "FreeSocks 对所有人免费，由捐款资助。捐出任意金额帮助它持续运行--捐款还会为当月每位免费用户提升带宽。",
     "amountLabel": "金额",
     "none": "不用了",
     "custom": "自定义",
@@ -604,10 +598,7 @@
     "addHint": "将这些服务器条目手动粘贴到你的代理应用中。"
   },
   "delivery": {
-    "title": "你最看重什么？",
-    "subtitle": "选择一个侧重点 - 仅保存在本设备，可随时更改。",
     "recommended": "推荐",
-    "subtitleSignup": "选择一个焦点。它会保存到你的账户，你的第一个密钥将使用它--可随时更改。",
     "unavailable": "暂无",
     "confirmTitle": "切换到“ {label} \"？",
     "confirmPoint2": "您当前的密钥将继续有效 24 小时，然后将被删除。",
@@ -627,11 +618,9 @@
         }
       }
     ],
-    "confirm": "切换焦点",
     "working": "交换…",
     "switchSuccessTitle": "切换到“ {label}",
-    "switchSuccessBody": "在每台设备上重新导入新的订阅网址。",
-    "switchFailedTitle": "无法切换焦点"
+    "switchSuccessBody": "在每台设备上重新导入新的订阅网址。"
   },
   "faq": {
     "title": "常见问题解答",
@@ -875,12 +864,10 @@
     },
     "hero": {
       "variants": {
-        "freedom": "为互联网自由打造的 VPN",
         "dissidents": "为异见人士打造的 VPN",
         "privacy": "为隐私打造的 VPN",
         "world": "为世界打造的 VPN"
       },
-      "subtitle": "FreeSocks 为网络受审查的人们打造，在其他地方也是一款尊重隐私的 VPN。注册只需一次快速的真人验证。我们从不要求邮箱或密码。你的订阅链接适用于大多数现代 VPN 应用，会员可享{limits}。",
       "impactNote": "通过 FreeSocks 的捐款直接支持免费用户：每一笔捐款都会在当月为受审查国家的人们购买真实带宽。",
       "impactLink": "查看成效"
     },

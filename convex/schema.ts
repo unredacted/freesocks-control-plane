@@ -520,7 +520,10 @@ export default defineSchema({
     processor: billingProcessor,
     opaqueRef: v.string(),
     processorRef: v.optional(v.string()),
-    userId: v.id('users'),
+    // Absent = an ANONYMOUS donation order (kind 'donation' only): no account
+    // involved, the opaque ref is the payer's only handle. Memberships and
+    // gifts are always user-bound.
+    userId: v.optional(v.id('users')),
     // Optional: a donation-only order (kind 'donation') carries no tier.
     tierId: v.optional(v.id('tiers')),
     durationDays: v.number(),
@@ -569,6 +572,10 @@ export default defineSchema({
     .index('by_processor_ref', ['processor', 'processorRef'])
     .index('by_user', ['userId'])
     .index('by_status', ['status'])
+    // Revenue chart: a range scan aligned with the settle time, so the scan
+    // cap bounds the SELECTED range instead of silently dropping old ranges
+    // once the newest N paid orders no longer reach back that far.
+    .index('by_status_paidAt', ['status', 'paidAt'])
     .index('by_gift_reveal_pending', ['giftRevealPending']),
 
   apiTokens: defineTable({
@@ -607,6 +614,12 @@ export default defineSchema({
     // member location picker. Non-secret (projected publicly by code+label).
     location: v.optional(v.string()),
     locationLabel: v.optional(v.string()),
+    // Coarse map coordinates for the location (city-level; the label already
+    // names the city publicly, so nothing new leaks). Set/cleared together;
+    // absent = the location gets no dot on the member map. Validated in the
+    // admin mutations (lat -90..90, lng -180..180).
+    locationLat: v.optional(v.number()),
+    locationLng: v.optional(v.number()),
     isActive: v.boolean(),
     priority: v.number(),
     lastHealthOkAt: v.optional(v.number()),
@@ -741,6 +754,32 @@ export default defineSchema({
     resolvedAt: v.optional(v.number()),
     updatedAt: v.number(),
   }).index('by_startedAt', ['startedAt']),
+
+  // Member issue telemetry (Admin → Telemetry): one row per switch-server /
+  // report-issue event. DELIBERATELY UNLINKED — no userId, no subscriptionId,
+  // never an IP (docs/privacy.md): the table answers "what is failing, where,
+  // on which networks", not "who". Geo fields are member-consented AND
+  // member-editable (a report sent through the VPN would otherwise carry the
+  // exit node's geo); `detected*` is what the CDN edge claimed at submit time,
+  // kept so edited values can be told apart from as-detected ones. Window scans
+  // + the retention sweep use the built-in by_creation_time index. Config +
+  // sanitizers: convex/lib/issueTelemetry.ts.
+  issueReports: defineTable({
+    kind: v.union(v.literal('switch'), v.literal('report')),
+    reason: v.string(),
+    backend: v.string(),
+    // Where the key lived when the event fired (server-resolved, not client-claimed).
+    locationCode: v.optional(v.string()),
+    nodeLabel: v.optional(v.string()),
+    connectionModeId: v.optional(v.string()),
+    // Consented, member-editable network context (null field = not shared).
+    country: v.optional(v.string()),
+    city: v.optional(v.string()),
+    asn: v.optional(v.number()),
+    detectedCountry: v.optional(v.string()),
+    detectedCity: v.optional(v.string()),
+    detectedAsn: v.optional(v.number()),
+  }),
 
   // Membership redemption codes (W4): admin-minted bearer codes a member redeems
   // to grant/extend a paid tier — no billing portal required. Codes are SECRETS:

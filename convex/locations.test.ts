@@ -22,6 +22,8 @@ async function seedServer(
     isActive?: boolean;
     healthAgeMs?: number | null;
     priority?: number;
+    locationLat?: number;
+    locationLng?: number;
   },
 ): Promise<Id<'backendServers'>> {
   return t.run((ctx) =>
@@ -31,6 +33,8 @@ async function seedServer(
       slug: o.slug,
       location: o.location,
       locationLabel: o.locationLabel,
+      locationLat: o.locationLat,
+      locationLng: o.locationLng,
       config:
         (o.backend ?? 'remnawave') === 'remnawave'
           ? { type: 'remnawave', baseUrl: `https://${o.slug}.example`, apiToken: 'tok' }
@@ -57,7 +61,7 @@ describe('resolveLocations', () => {
     await seedServer(t, { slug: 'ol', backend: 'outline', location: 'OL' }); // wrong backend
     const locations = await t.run((ctx) => resolveLocations(ctx.db));
     expect(locations).toEqual([
-      { code: 'MCI', label: 'Kansas City, MO', online: true, load: 'unknown' },
+      { code: 'MCI', label: 'Kansas City, MO', online: true, load: 'unknown', coords: null },
     ]);
   });
 
@@ -74,6 +78,18 @@ describe('resolveLocations', () => {
     const t = convexTest(schema, modules);
     await seedServer(t, { slug: 'ams', location: 'AMS', healthAgeMs: null }); // never probed
     const locations = await t.run((ctx) => resolveLocations(ctx.db));
-    expect(locations).toEqual([{ code: 'AMS', label: 'AMS', online: false, load: 'unknown' }]);
+    expect(locations).toEqual([
+      { code: 'AMS', label: 'AMS', online: false, load: 'unknown', coords: null },
+    ]);
+  });
+
+  test('coords come from any instance at the code that carries the full pair', async () => {
+    const t = convexTest(schema, modules);
+    await seedServer(t, { slug: 'mci-1', location: 'MCI' }); // no coords
+    await seedServer(t, { slug: 'mci-2', location: 'MCI', locationLat: 39.1, locationLng: -94.58 });
+    await seedServer(t, { slug: 'ams', location: 'AMS' }); // never set → null
+    const locations = await t.run((ctx) => resolveLocations(ctx.db));
+    expect(locations.find((l) => l.code === 'MCI')?.coords).toEqual({ lat: 39.1, lng: -94.58 });
+    expect(locations.find((l) => l.code === 'AMS')?.coords).toBeNull();
   });
 });

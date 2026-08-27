@@ -247,6 +247,35 @@ in Admin → Settings (the `analytics.*` appSettings namespace). The design is a
   (`telemetry.send`) caps the outbound amplification. Counts are therefore
   approximate by design — treat Umami numbers as trends, not truth.
 
+## 7. Issue telemetry (member-consented, unlinked)
+
+When a member switches servers or reports a connection problem, the dialog
+offers an optional "Include connection details" block (checked by default,
+one-click decline). What it does and does not do:
+
+- **What can be sent:** country, city, and network provider (ASN) — never an
+  IP. The dialog shows the exact values before sending and every field is
+  **member-editable**: the prefill comes from the CDN edge's view of the
+  request, which is the VPN exit's network (not the member's) whenever they
+  report from inside the tunnel, so members are told to correct it.
+- **Unlinked by design:** telemetry rows (`issueReports` table) carry no
+  userId, no subscriptionId, and no IP. They answer "what is failing, where,
+  on which networks" — never "who". The per-user audit log records only the
+  bounded reason enum, exactly as before. City-level geo exists **nowhere else
+  in the system** (the analytics relay deliberately never reads `cf-ipcity`);
+  here it exists only with the member's consent and the operator's opt-in.
+- **Operator gates (`diagnostics.*`, Admin → Telemetry):** a master switch,
+  a per-field allowlist (country / city / ASN), and `cloudflareEnabled` —
+  geo headers are read only when the operator affirms Cloudflare is in front
+  (off-CDN they are client-spoofable). Country/city come from `cf-ipcountry` /
+  `cf-ipcity` (the free "Add visitor location headers" Managed Transform);
+  ASN needs a Transform Rule that sets the configured header (default
+  `x-client-asn`) from `ip.src.asnum`.
+- **Bounded:** values are sanitized to narrow shapes (2-letter country,
+  numeric ASN, 64-char city), report submissions are rate-limited per member,
+  and rows are deleted by a daily sweep after the admin-tunable retention
+  window (default 90 days).
+
 ## Downstream-deployer checklist
 
 If you deploy or fork FCP, keep the posture:

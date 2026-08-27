@@ -2,8 +2,8 @@
   import Heart from '@lucide/svelte/icons/heart';
   import { t } from '../lib/i18n/index.svelte';
   import { formatMoney, formatDate } from '../lib/i18n/format';
-  import { configQuery, accountQuery } from '../lib/queries';
-  import { dailyImpactSeries, dailyImpactBounds, niceCeil } from '../lib/impact';
+  import { configQuery, accountQuery, meQuery } from '../lib/queries';
+  import { dailyImpactSeries, dailyImpactBounds, giftMarks, niceCeil } from '../lib/impact';
   import DitherChart from './DitherChart.svelte';
 
   /**
@@ -16,7 +16,10 @@
    * impact data yet, so the card never renders empty charts.
    */
   const config = configQuery();
-  const account = accountQuery();
+  // Gated on a session existing: the panel also renders on the public /donate
+  // page, where an unconditional account fetch would just 401 every mount.
+  const me = meQuery();
+  const account = accountQuery(() => !!me.data?.authenticated);
 
   const donation = $derived(config.data?.billing?.donation);
   // Renders whenever donations are live (a zero month is honest data - the
@@ -37,6 +40,13 @@
   // endcaps in local time renders "Jul 31 - Aug 30" for an August series.
   const dayLabel = (d: Date) => formatDate(d, { month: 'short', day: 'numeric', timeZone: 'UTC' });
   const dailyLabels = $derived(dailyImpactBounds().map(dayLabel));
+  // Live gifts (server projection): power the chart's donation-day marks and
+  // the per-gift "lasts until" rows below it.
+  const gifts = $derived(donation?.recentGifts ?? []);
+  const marks = $derived(giftMarks(gifts).map((m) => ({ frac: m.frac, label: dayLabel(m.date) })));
+  // A gift stops funding the pool AT `expiresAt` (a UTC midnight), so the last
+  // fully-funded day is the one before it.
+  const giftUntil = (expiresAt: number) => dayLabel(new Date(expiresAt - 1));
   const user = $derived(account.data?.user);
   const isDonor = $derived(!!user?.donorSince && (user?.donatedCentsTotal ?? 0) > 0);
   // Personal display framing: the member's lifetime giving in GB, computed
@@ -86,6 +96,7 @@
       <DitherChart
         values={dailyValues}
         labels={dailyLabels}
+        {marks}
         variant="area"
         step
         max={dailyMax}
@@ -96,6 +107,32 @@
         <p class="mt-2 text-xs text-muted-foreground">{t('impact.empty')}</p>
       {/if}
     </div>
+
+    <!-- The gifts currently funding the pool: when each landed, what it added,
+         and the day it stops - the concrete answer to "how long does a
+         donation last?". -->
+    {#if gifts.length > 0}
+      <div>
+        <div class="text-xs font-medium text-muted-foreground mb-2">
+          {t('impact.giftsTitle')}
+        </div>
+        <ul class="rounded-lg border border-border divide-y divide-border/60">
+          {#each gifts.slice().reverse() as g (g.day + ':' + g.expiresAt)}
+            <li
+              class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 px-3 py-2 text-sm"
+            >
+              <span class="tabular-nums">{dayLabel(new Date(`${g.day}T00:00:00Z`))}</span>
+              <span class="font-medium tabular-nums text-amber-600 dark:text-amber-300">
+                +{fmtGb(Math.round(g.gb * 10) / 10)} GB
+              </span>
+              <span class="text-xs text-muted-foreground tabular-nums">
+                {t('impact.giftActiveUntil', { date: giftUntil(g.expiresAt) })}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
 
     {#if isDonor && user}
       <div class="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">
@@ -123,14 +160,9 @@
     </p>
   {/if}
 
-  <div class="pt-1 flex flex-wrap gap-3">
-    <a href="https://unredacted.org/donate" target="_blank" rel="noopener noreferrer">
-      <span
-        class="inline-flex items-center gap-1.5 text-sm underline hover:text-foreground text-muted-foreground"
-      >
-        {t('renew.donate')}
-      </span>
-    </a>
+  <!-- No external donate link here: giving happens in-app (the donate card
+       right below this panel) so gifts actually feed the bandwidth pool. -->
+  <div class="pt-1">
     <a href="https://unredacted.org" target="_blank" rel="noopener noreferrer">
       <span
         class="inline-flex items-center gap-1.5 text-sm underline hover:text-foreground text-muted-foreground"

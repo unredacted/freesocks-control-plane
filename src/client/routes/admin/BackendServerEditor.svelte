@@ -43,6 +43,8 @@
       slug: s?.slug ?? '',
       location: s?.location ?? '',
       locationLabel: s?.locationLabel ?? '',
+      locationLat: s?.locationLat != null ? String(s.locationLat) : '',
+      locationLng: s?.locationLng != null ? String(s.locationLng) : '',
       isActive: s?.isActive ?? true,
       priority: s?.priority ?? 0,
       maxKeys: s?.maxKeys ?? null,
@@ -60,6 +62,9 @@
   let slug = $state(init.slug);
   let location = $state(init.location);
   let locationLabel = $state(init.locationLabel);
+  // Free-text so the fields can be blank (= no map dot); parsed on save.
+  let locationLatText = $state(init.locationLat);
+  let locationLngText = $state(init.locationLng);
   let isActive = $state(init.isActive);
   let priority = $state(init.priority);
   // Free-text so the field can be blank (= no cap); parsed on save.
@@ -150,6 +155,21 @@
     // Blank clears the location (the instance drops out of the member picker).
     common.location = location.trim() || null;
     common.locationLabel = locationLabel.trim() || null;
+    // Coordinates travel as a pair: both parsed, or both null (clears the map
+    // dot). A half-filled pair is a mistake — refuse it here with a clear
+    // message instead of relaying the server's validation error.
+    const latRaw = locationLatText.trim();
+    const lngRaw = locationLngText.trim();
+    if ((latRaw === '') !== (lngRaw === '')) {
+      throw new Error('Enter both map coordinates (or clear both)');
+    }
+    const lat = latRaw === '' ? null : Number(latRaw);
+    const lng = lngRaw === '' ? null : Number(lngRaw);
+    if ((lat != null && !Number.isFinite(lat)) || (lng != null && !Number.isFinite(lng))) {
+      throw new Error('Map coordinates must be decimal numbers (e.g. 39.1 and -94.6)');
+    }
+    common.locationLat = lat;
+    common.locationLng = lng;
     // Blank = clear the cap (null); a positive integer sets it.
     const parsedMax = parseInt(maxKeysText.trim(), 10);
     common.maxKeys = Number.isInteger(parsedMax) && parsedMax >= 1 ? parsedMax : null;
@@ -275,6 +295,34 @@
           <p class="mt-1 text-[11px] text-muted-foreground">
             What members see. Falls back to the code when blank.
           </p>
+        </div>
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location-lat"
+            >Map latitude</label
+          >
+          <Input
+            id="srv-location-lat"
+            bind:value={locationLatText}
+            placeholder="39.10"
+            autocomplete="off"
+            inputmode="decimal"
+          />
+          <p class="mt-1 text-[11px] text-muted-foreground">
+            Decimal degrees, city-level is enough. Blank = no dot on the member map.
+          </p>
+        </div>
+        <div>
+          <label class="text-xs text-muted-foreground mb-1 block" for="srv-location-lng"
+            >Map longitude</label
+          >
+          <Input
+            id="srv-location-lng"
+            bind:value={locationLngText}
+            placeholder="-94.58"
+            autocomplete="off"
+            inputmode="decimal"
+          />
+          <p class="mt-1 text-[11px] text-muted-foreground">Set together with the latitude.</p>
         </div>
       </div>
 

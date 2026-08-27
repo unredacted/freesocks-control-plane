@@ -113,7 +113,9 @@
     "account": "My account",
     "menu": "Menu",
     "theme": "Theme",
-    "home": "FreeSocks home"
+    "home": "FreeSocks home",
+    "source": "Source",
+    "sourceTitle": "FreeSocks is open source. Read the code for yourself."
   },
   "captcha": {
     "initial": "I'm human",
@@ -226,6 +228,11 @@
       "bodyNoDevices": "Unlimited bandwidth.",
       "cta": "View membership"
     },
+    "map": {
+      "title": "Where your key lives",
+      "network": "One of {count} FreeSocks locations",
+      "aria": "Globe of FreeSocks server locations, highlighting yours"
+    },
     "tab": {
       "connection": "Connection",
       "membership": "Membership",
@@ -248,7 +255,6 @@
     "disabledTitle": "Your account is currently disabled",
     "disabledBody": "New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID.",
     "rotateHint": "Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately.",
-    "keyActionsHint": "These change your VPN connection only - your 32-digit account number stays the same.",
     "section": {
       "connection": {
         "title": "Your connection",
@@ -378,11 +384,12 @@
     "title": "Usage (last 30 days)",
     "total": "{amount} used in the last 30 days",
     "unavailable": "Usage isn't available right now.",
-    "none": "No usage recorded yet."
+    "none": "No usage recorded yet.",
+    "panelTitle": "Usage & validity"
   },
   "regen": {
-    "title": "Create a new subscription URL?",
-    "body": "Your current subscription URL (ending …{suffix}) will be replaced with a new one. The old URL becomes read-only for 24 hours, then is deleted.",
+    "title": "Create a new key?",
+    "body": "For when your subscription URL itself is the problem - it stopped working everywhere, or you think someone else has it. Your current URL (ending …{suffix}) is replaced with a brand-new one; the old one keeps working for 24 hours, then is deleted.",
     "point1": "Your current key remains usable for the next 24 hours",
     "point2": "You'll need to re-import the new URL in each of your devices",
     "pointDevices": [
@@ -400,8 +407,9 @@
         }
       }
     ],
-    "confirm": "Create new URL",
-    "working": "Creating…"
+    "confirm": "Create new key",
+    "working": "Creating…",
+    "vsSwitch": "Just need a different server? Use \"Switch server\" instead - your URL stays the same and there is nothing to re-import."
   },
   "switch": {
     "title": "Switch to {to}?",
@@ -486,15 +494,17 @@
       }
     ],
     "empty": "No donations yet this month - the first one starts the counter.",
-    "externalNote": "This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here.",
+    "externalNote": "This counter tracks donations made through FreeSocks - they're the ones that raise free users' bandwidth.",
     "aboutUnredacted": "About Unredacted",
-    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises the bandwidth every free user gets."
+    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises the bandwidth every free user gets.",
+    "giftsTitle": "Recent donations",
+    "giftActiveUntil": "Boosting free users until {date}"
   },
   "donate": {
     "addTitle": "Add a donation",
     "addSubtitle": "Chip in to help keep FreeSocks free for everyone.",
     "standaloneTitle": "Donate to FreeSocks",
-    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises this month's bandwidth for every free user.",
+    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount - your gift raises every free user's bandwidth for the next {days} days.",
     "amountLabel": "Amount",
     "none": "No thanks",
     "custom": "Custom",
@@ -508,7 +518,19 @@
     "badge": "Donor",
     "badgeTooltip": "Thank you for supporting FreeSocks",
     "thanksTitle": "You're a FreeSocks donor",
-    "thanksBody": "Thank you - your support helps keep FreeSocks free for everyone."
+    "thanksBody": "Thank you - your support helps keep FreeSocks free for everyone.",
+    "pageTitle": "Donate",
+    "pageIntro": "FreeSocks is free for everyone, funded by donations. Every gift raises every free user's bandwidth for the next {days} days.",
+    "signInTitle": "Sign in and donate",
+    "signInBody": "Your gift is recorded on your account: you earn the donor badge and can see your giving history.",
+    "signInInstead": "Have an account? Sign in to donate instead",
+    "anonTitle": "Donate anonymously",
+    "anonBody": "No account needed. Your gift funds the shared bandwidth pool just the same - it simply is not recorded anywhere.",
+    "anonNote": "Anonymous donation: not linked to any account, so no donor badge or giving history. Keep your receipt from the payment page - it is your only record.",
+    "paidTitle": "Thank you!",
+    "paidBody": "Your donation is in. Every free user's bandwidth is raised for the next {days} days because of it.",
+    "orderFailedBody": "The payment did not complete - nothing was charged, or the payment page expired. You can try again below.",
+    "unavailable": "Donations are not available right now. Please check back later."
   },
   "referral": {
     "fieldLabel": "Referral code (optional)",
@@ -722,29 +744,35 @@
     "noSubscription": "Create your key first, then you can add a mirror.",
     "removeAll": "Remove all mirrors",
     "errorToast": "Couldn't add a mirror",
-    "removedToast": "Mirrors removed"
+    "removedToast": "Mirrors removed",
+    "quickLabel": "First, try moving servers",
+    "quickHint": "A blocked or overloaded server is the most common cause. Switching keeps your link the same; picking a new location creates a new key.",
+    "pickLocation": "Pick a different location"
   },
   "rawconfig": {
     "disclosure": "Show raw configuration",
     "title": "Your configuration",
     "explainer": "Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link.",
-    "addHint": "Paste these server entries into your VPN app manually."
+    "addHint": "Paste these server entries into your VPN app manually.",
+    "confirmTitle": "Show the raw configuration?",
+    "confirmBody": "These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change.",
+    "confirmCta": "Show configuration"
   },
   "delivery": {
-    "title": "What matters most to you?",
-    "subtitle": "Pick a focus. It's saved on this device only, and you can change it anytime.",
-    "subtitleServer": "Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same.",
-    "subtitleSignup": "Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime.",
+    "title": "Connection mode",
+    "subtitle": "Pick what fits where you are. Saved on this device only - change it anytime.",
+    "subtitleServer": "Switching moves your key to the matching servers. Your link stays the same.",
+    "subtitleSignup": "Pick what fits where you are. Your first key uses it - change it anytime.",
     "freedomTitle": "Freedom Mode",
-    "freedomAudience": "For censored countries",
-    "freedomBody": "Pick this if websites, apps, or VPNs are blocked where you are. Built to keep working under censorship, with backup links that are harder to block.",
+    "freedomAudience": "For places where sites or VPNs are blocked",
+    "freedomBody": "Built to keep working under censorship, with backup links that are harder to block.",
     "freedomWsTitle": "WebSocket",
-    "freedomWsBody": "The standard option. Your key arrives as an auto-updating link that works with every app.",
+    "freedomWsBody": "The standard option - an auto-updating link that works in every app.",
     "freedomRealityTitle": "REALITY",
-    "freedomRealityBody": "For the heaviest censorship, where the WebSocket option will not connect. Much harder to block, but you copy the configuration in by hand instead of using a link.",
+    "freedomRealityBody": "For the heaviest censorship, when WebSocket won't connect. Harder to block, but you copy the configuration in by hand.",
     "privacyTitle": "Privacy Mode",
-    "privacyAudience": "For open internet",
-    "privacyBody": "Pick this if the internet is open where you are and you want a traditional VPN. Your traffic mixes in with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks.",
+    "privacyAudience": "For open internet - a traditional VPN",
+    "privacyBody": "Your traffic mixes with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks.",
     "privacyRealityTitle": "REALITY",
     "privacyRealityBody": "A direct connection with no CDN in the path.",
     "transportLabel": "Connection method",
@@ -771,11 +799,12 @@
         }
       }
     ],
-    "confirm": "Switch focus",
+    "confirm": "Switch mode",
     "working": "Switching…",
     "switchSuccessTitle": "Switched to \"{label}\"",
     "switchSuccessBody": "Same subscription URL - your apps will pick up the new servers on their next refresh.",
-    "switchFailedTitle": "Could not switch focus"
+    "switchFailedTitle": "Could not switch mode",
+    "detailsToggle": "More details"
   },
   "home": {
     "trust": {
@@ -919,12 +948,12 @@
     },
     "hero": {
       "variants": {
-        "freedom": "A VPN for Internet Freedom",
+        "freedom": "A VPN for freedom",
         "dissidents": "A VPN for dissidents",
         "privacy": "A VPN for privacy",
         "world": "A VPN for the world"
       },
-      "subtitle": "FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}.",
+      "subtitle": "FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}.",
       "impactNote": "Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, right away.",
       "impactLink": "See the impact"
     },
@@ -1022,6 +1051,23 @@
           }
         }
       ]
+    },
+    "flow": {
+      "title": "Who sees what",
+      "subtitle": "Here is the path your traffic takes, and what each stop on the way can actually learn.",
+      "youName": "Your device",
+      "youSees": "Your apps and your data live here. Traffic is encrypted on the device before it goes anywhere.",
+      "ispName": "Your ISP",
+      "ispSees": "Sees encrypted data flowing to a busy CDN or a plain server. Not the sites you visit, and not what you send.",
+      "cdnName": "The CDN",
+      "cdnBadge": "Freedom Mode only",
+      "cdnSees": "Carries your traffic without being able to read it. It can tell you use FreeSocks, and nothing about what you do through it.",
+      "nodeName": "FreeSocks server",
+      "nodeSees": "Hands your traffic to the open internet. No logs are kept, and your key has no identity behind it.",
+      "webName": "Websites you visit",
+      "webSees": "See the FreeSocks server's address instead of yours.",
+      "captionFreedom": "Routes through a large CDN, so your connection looks like ordinary web traffic.",
+      "captionPrivacy": "Skips the CDN and connects you straight to the server."
     }
   },
   "e2ee": {
@@ -1110,8 +1156,8 @@
   "switchServer": {
     "action": "Switch server",
     "title": "Move to a different server?",
-    "body": "We will move your key to another server. Your subscription URL stays the same, so there is nothing to re-import.",
-    "bodyWithServer": "We will move your key off {server} to another server. Your subscription URL stays the same, so there is nothing to re-import.",
+    "body": "For when your current server is the problem - blocked, slow, or unreliable. We move your key to a different server; your subscription URL stays the same, so there is nothing to re-import.",
+    "bodyWithServer": "For when your current server is the problem - blocked, slow, or unreliable. We move your key off {server} to a different server; your subscription URL stays the same, so there is nothing to re-import.",
     "reasonLegend": "What's wrong with your current server?",
     "reasonSlow": "It's slow",
     "reasonBlocked": "It's blocked where I am",
@@ -1123,6 +1169,34 @@
     "confirm": "Move my key",
     "working": "Moving…",
     "done": "Your key has moved to a different server.",
-    "failed": "Could not move your key"
+    "failed": "Could not move your key",
+    "vsNewKey": "If the subscription URL itself stopped working everywhere, or you think someone else has it, use \"Create a new key\" instead - that replaces the URL."
+  },
+  "report": {
+    "action": "Report issue",
+    "title": "Report a connection problem",
+    "body": "Tell us what's going wrong. Nothing about your key or account changes.",
+    "reasonLegend": "What's the problem?",
+    "reasonCantConnect": "I can't connect at all",
+    "reasonSlow": "It connects, but it's very slow",
+    "reasonDisconnects": "It keeps disconnecting",
+    "reasonBlockedSite": "A site or app won't load through the VPN",
+    "reasonAppProblem": "The VPN app itself is giving me trouble",
+    "reasonOther": "Something else",
+    "nothingChanges": "Reporting changes nothing on your account. If you need a fix right now, try \"Switch server\" or \"Create a new key\".",
+    "confirm": "Send report",
+    "working": "Sending…",
+    "done": "Report sent",
+    "doneBody": "Thank you. Reports like this show us where things are breaking. If you need a fix right now, try \"Switch server\".",
+    "failed": "Could not send the report"
+  },
+  "telemetry": {
+    "sendLabel": "Include connection details",
+    "sendExplainer": "This helps us see patterns, like one network or region blocking us. Only the values shown below are sent. They are not tied to your account, and your IP address is never included.",
+    "countryLabel": "Country",
+    "cityLabel": "City",
+    "asnLabel": "Network (ASN)",
+    "notSet": "Not set",
+    "editHint": "Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it."
   }
 }
