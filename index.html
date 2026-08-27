@@ -16,10 +16,13 @@
     <!--
       Social preview card (Open Graph + Twitter). Crawlers don't run JS, so
       these live in the static HTML - one site-wide card for every route (the
-      SPA has no per-route SSR). og:image/og:url must be ABSOLUTE, so the host
-      rides the same Caddy templates pass as the CSP nonce below and tracks
-      the deployment host (beta vs prod) like robots.txt/sitemap.xml do; the
-      scheme is hardcoded https because the public origin is always TLS.
+      SPA has no per-route SSR). og:image must be ABSOLUTE, and it is
+      deliberately BUILD-STABLE (the canonical prod host hardcoded, never a
+      Caddy host placeholder): the E2EE verifier pins the served index.html's
+      bytes and normalizes ONLY the csp-nonce tag below, so any other
+      per-request template expansion would make every legitimate bundle hash
+      as tampered in the store-delivered extension. Beta therefore advertises
+      the prod image URL - same committed file either way.
       The image is public/og.png (1200x630); its committed source is
       scripts/og-card.html - regenerate there when the brand copy changes.
       og:url is deliberately omitted: crawlers fall back to the fetched URL,
@@ -33,7 +36,7 @@
       property="og:description"
       content="Free, open & uncensored proxies for users in heavily-censored regions."
     />
-    <meta property="og:image" content='https://{{placeholder "http.request.host"}}/og.png' />
+    <meta property="og:image" content="https://freesocks.org/og.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="FreeSocks - A VPN for freedom" />
@@ -49,11 +52,15 @@
       quoted so the inner quotes don't truncate the attribute.
 
       IMPORTANT: this whole file is run through Caddy templates, so it must
-      contain NO Go-template action sequences anywhere (comments included)
-      other than deliberate `placeholder` actions — currently this nonce and
-      the og:image host above. Served outside Caddy (vite dev / preview) the
-      attributes stay the literal placeholder text; main.ts ignores that, and
-      dev has no enforcing CSP anyway.
+      contain NO other Go-template action sequences anywhere (comments
+      included) — only the placeholder below. That is also a VERIFIER
+      constraint, not just hygiene: the E2EE verifier pins this file's served
+      bytes and normalizes exactly this one csp-nonce tag
+      (scripts/gen-verifier-pin.mjs + verifier-extension), so any additional
+      per-request expansion would flag every legitimate bundle as tampered.
+      Served outside Caddy (vite dev / preview) the attribute stays the
+      literal placeholder text; main.ts ignores that, and dev has no
+      enforcing CSP anyway.
     -->
     <meta name="csp-nonce" content='{{placeholder "http.request.uuid"}}' />
 

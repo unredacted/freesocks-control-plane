@@ -1704,16 +1704,24 @@ export const billingRevenueSeries = internalQuery({
   handler: async (ctx, a) => {
     const { since, until, prevSince, bucketMs } = resolveRange(a);
     const config = await resolveBillingConfig(ctx.db);
-    // Paid orders, newest first. paidAt trails _creationTime by the payment
-    // lag, so the time filter is on paidAt after an index scan by status.
+    // Paid orders inside [prevSince, until), scanned on the settle-time index
+    // so the cap bounds the SELECTED range: an old custom range still finds
+    // its orders even after the deployment accumulates more than the cap
+    // overall, and when `truncated` fires, narrowing the range genuinely
+    // helps. (Rows without paidAt sort below the range start and never match.)
     const rows = await ctx.db
       .query('billingOrders')
-      .withIndex('by_status', (q) => q.eq('status', 'paid'))
+      .withIndex('by_status_paidAt', (q) =>
+        q.eq('status', 'paid').gte('paidAt', prevSince).lt('paidAt', until),
+      )
       .order('desc')
       .take(REVENUE_SCAN_CAP);
-    const inRange = rows.filter(
-      (o) => o.paidAt !== undefined && o.paidAt >= prevSince && o.paidAt < until,
-    );
+    // One chart, one unit: only orders in the CONFIGURED currency are summed.
+    // Minor units of different currencies must never share a total, so orders
+    // settled under an older billing currency are counted out separately and
+    // surfaced instead of being silently mislabeled.
+    const inRange = rows.filter((o) => o.currency === config.currency);
+    const otherCurrencyOrders = rows.length - inRange.length;
     const current = inRange.filter((o) => (o.paidAt as number) >= since);
     const previous = inRange.filter((o) => (o.paidAt as number) < since);
 
@@ -1758,6 +1766,7 @@ export const billingRevenueSeries = internalQuery({
         totalCents: totals.membershipCents + totals.giftCents + totals.donationCents,
         previousTotalCents,
       },
+      otherCurrencyOrders,
       truncated: rows.length >= REVENUE_SCAN_CAP,
     };
   },

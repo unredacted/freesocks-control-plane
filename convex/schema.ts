@@ -572,6 +572,10 @@ export default defineSchema({
     .index('by_processor_ref', ['processor', 'processorRef'])
     .index('by_user', ['userId'])
     .index('by_status', ['status'])
+    // Revenue chart: a range scan aligned with the settle time, so the scan
+    // cap bounds the SELECTED range instead of silently dropping old ranges
+    // once the newest N paid orders no longer reach back that far.
+    .index('by_status_paidAt', ['status', 'paidAt'])
     .index('by_gift_reveal_pending', ['giftRevealPending']),
 
   apiTokens: defineTable({

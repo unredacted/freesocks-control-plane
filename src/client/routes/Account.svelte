@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { z } from 'zod';
   import { Card, CardHeader, CardTitle, CardContent } from '@client/components/ui/card';
   import * as Tabs from '@client/components/ui/tabs';
@@ -232,6 +233,22 @@
     if (activeTab === 'connection') url.searchParams.delete('tab');
     else url.searchParams.set('tab', activeTab);
     window.history.replaceState(history.state, '', url);
+  });
+  // Adopt a ?tab= arriving through the ROUTER while this page is already
+  // mounted (e.g. the footer Donate link navigating to /account?tab=membership
+  // from /account): the initial read above runs once, and the replaceState
+  // write-back deliberately bypasses the router store, so this only fires on
+  // a real navigation. untrack keeps activeTab out of the dependency set -
+  // otherwise a manual tab switch would re-run this with the stale router
+  // query and yank the user back.
+  $effect(() => {
+    const raw = new URLSearchParams(router.search).get('tab');
+    const wanted = raw === 'codes' ? 'gifts' : raw;
+    untrack(() => {
+      if (wanted && ACCOUNT_TABS.includes(wanted) && wanted !== activeTab) {
+        activeTab = wanted as AccountTab;
+      }
+    });
   });
   // Gift purchase: the buyer's OWN membership is untouched - instead the freshly
   // minted shareable codes are revealed ONCE here on return, then acknowledged.

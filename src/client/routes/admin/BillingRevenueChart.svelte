@@ -124,10 +124,17 @@
       {:else}
         <p class="text-muted-foreground">No paid orders in this range.</p>
       {/if}
+      {#if r.otherCurrencyOrders > 0}
+        <p class="text-xs text-amber-600">
+          {r.otherCurrencyOrders} paid order{r.otherCurrencyOrders === 1 ? '' : 's'} in this range
+          settled in a different currency than the current {r.currency} setting and are not
+          included in these sums (mixed currencies never share a total).
+        </p>
+      {/if}
       {#if r.truncated}
         <p class="text-xs text-amber-600">
-          More paid orders exist than one computation reads (20k). Narrow the range for exact
-          numbers.
+          This range holds more paid orders than one computation reads (20k). Narrow the range for
+          exact numbers.
         </p>
       {/if}
     {/if}

@@ -1282,10 +1282,14 @@ http.route({
     const reason = body.reason;
     // Optional consented telemetry (absent/null = declined): sanitize the
     // member-edited values + capture what the CDN edge detected, both narrowed
-    // to what the deployment's diagnostics config actually collects.
+    // to what the deployment's diagnostics config actually collects. Consent
+    // gates BOTH halves - declining promises a reason-only event, so the
+    // edge-detected values are not even read without a consented payload.
     const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
     const telemetry = sanitizeSubmitted(diagCfg, body.telemetry);
-    const detected = detectedFromHeaders(diagCfg, req);
+    const detected = telemetry
+      ? detectedFromHeaders(diagCfg, req)
+      : { country: null, city: null, asn: null };
     return withIssuanceSaga(ctx, member.userId, 'account.switch-server', async (requestId) => {
       const result = await ctx.runAction(internal.account.switchServer, {
         userId: member.userId,
@@ -1323,7 +1327,10 @@ http.route({
     }
     const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
     const telemetry = sanitizeSubmitted(diagCfg, body.telemetry);
-    const detected = detectedFromHeaders(diagCfg, req);
+    // Same consent gate as switch-server: no consented payload, no header reads.
+    const detected = telemetry
+      ? detectedFromHeaders(diagCfg, req)
+      : { country: null, city: null, asn: null };
     const result = await ctx.runMutation(internal.issueReports.reportIssue, {
       userId: member.userId,
       reason: body.reason,
@@ -1767,8 +1774,15 @@ http.route({
       opaqueRef,
       userId: member.userId,
     });
-    if (!status) return errorJson('not_found', 'order not found', 404);
-    return json(status);
+    if (status) return json(status);
+    // A signed-in browser can still hold an ANONYMOUS donation ref (donated
+    // before signing in, or signed in from another tab mid-checkout): the
+    // member-bound lookup misses those by design, so fall back to the
+    // deliberately narrow anon query - it answers only for donation orders
+    // bound to NO user, so it can never leak another member's order.
+    const anon = await ctx.runQuery(internal.billing.getAnonOrderStatus, { opaqueRef });
+    if (anon) return json(anon);
+    return errorJson('not_found', 'order not found', 404);
   }),
 });
 

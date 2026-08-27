@@ -2263,6 +2263,19 @@ describe('adminApi.billingRevenueSeries', () => {
         amountCents: 9999,
         status: 'pending',
       });
+      // Paid in a DIFFERENT currency (an older billing config): excluded from
+      // every sum - EUR cents in a USD total would be financially wrong - and
+      // surfaced as a count instead.
+      await ctx.db.insert('billingOrders', {
+        ...base,
+        currency: 'EUR',
+        opaqueRef: 'rev-eur',
+        tierId: memberTierId,
+        durationDays: 91,
+        amountCents: 7777,
+        status: 'paid',
+        paidAt: t0 + 3 * DAY,
+      });
     });
 
     const r = await t.query(internal.adminApi.billingRevenueSeries, {
@@ -2281,6 +2294,8 @@ describe('adminApi.billingRevenueSeries', () => {
     expect(r.buckets).toHaveLength(7);
     expect(r.buckets[1]).toMatchObject({ membershipCents: 1400, giftCents: 0, donationCents: 0 });
     expect(r.buckets[2]).toMatchObject({ membershipCents: 0, giftCents: 2500, donationCents: 800 });
+    expect(r.buckets[3]).toMatchObject({ membershipCents: 0, giftCents: 0, donationCents: 0 });
+    expect(r.otherCurrencyOrders).toBe(1);
     expect(r.truncated).toBe(false);
   });
 });

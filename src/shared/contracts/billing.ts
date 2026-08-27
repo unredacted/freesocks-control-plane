@@ -213,6 +213,11 @@ export const AdminBillingRevenue = z.object({
     orders: z.number().int(),
     previousTotalCents: z.number().int(),
   }),
+  /** Paid orders in the range whose stored currency differs from the current
+   *  billing currency: excluded from every sum (minor units of different
+   *  currencies must never share a total) and surfaced as a count instead.
+   *  Optional/defaulted for rolling-deploy compat. */
+  otherCurrencyOrders: z.number().int().optional().default(0),
   truncated: z.boolean(),
 });
 export type AdminBillingRevenue = z.infer<typeof AdminBillingRevenue>;
