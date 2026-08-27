@@ -95,6 +95,11 @@
       {/if}
     </ul>
 
+    <!-- The other tool, for the other problem: when the URL itself is the issue,
+         switching servers won't help - point at "Create a new key" so members
+         pick the right action instead of trying this one repeatedly. -->
+    <p class="text-xs text-muted-foreground">{t('switchServer.vsNewKey')}</p>
+
     <Dialog.Footer>
       <Button variant="ghost" onclick={onCancel} disabled={busy}>{t('common.cancel')}</Button>
       <Button onclick={onConfirm} disabled={busy || reason === null} variant="default">

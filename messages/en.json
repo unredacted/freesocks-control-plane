@@ -248,7 +248,6 @@
     "disabledTitle": "Your account is currently disabled",
     "disabledBody": "New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID.",
     "rotateHint": "Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately.",
-    "keyActionsHint": "These change your VPN connection only - your 32-digit account number stays the same.",
     "section": {
       "connection": {
         "title": "Your connection",
@@ -382,8 +381,8 @@
     "panelTitle": "Usage & validity"
   },
   "regen": {
-    "title": "Create a new subscription URL?",
-    "body": "Your current subscription URL (ending …{suffix}) will be replaced with a new one. The old URL becomes read-only for 24 hours, then is deleted.",
+    "title": "Create a new key?",
+    "body": "For when your subscription URL itself is the problem - it stopped working everywhere, or you think someone else has it. Your current URL (ending …{suffix}) is replaced with a brand-new one; the old one keeps working for 24 hours, then is deleted.",
     "point1": "Your current key remains usable for the next 24 hours",
     "point2": "You'll need to re-import the new URL in each of your devices",
     "pointDevices": [
@@ -401,8 +400,9 @@
         }
       }
     ],
-    "confirm": "Create new URL",
-    "working": "Creating…"
+    "confirm": "Create new key",
+    "working": "Creating…",
+    "vsSwitch": "Just need a different server? Use \"Switch server\" instead - your URL stays the same and there is nothing to re-import."
   },
   "switch": {
     "title": "Switch to {to}?",
@@ -1120,8 +1120,8 @@
   "switchServer": {
     "action": "Switch server",
     "title": "Move to a different server?",
-    "body": "We will move your key to another server. Your subscription URL stays the same, so there is nothing to re-import.",
-    "bodyWithServer": "We will move your key off {server} to another server. Your subscription URL stays the same, so there is nothing to re-import.",
+    "body": "For when your current server is the problem - blocked, slow, or unreliable. We move your key to a different server; your subscription URL stays the same, so there is nothing to re-import.",
+    "bodyWithServer": "For when your current server is the problem - blocked, slow, or unreliable. We move your key off {server} to a different server; your subscription URL stays the same, so there is nothing to re-import.",
     "reasonLegend": "What's wrong with your current server?",
     "reasonSlow": "It's slow",
     "reasonBlocked": "It's blocked where I am",
@@ -1133,6 +1133,7 @@
     "confirm": "Move my key",
     "working": "Moving…",
     "done": "Your key has moved to a different server.",
-    "failed": "Could not move your key"
+    "failed": "Could not move your key",
+    "vsNewKey": "If the subscription URL itself stopped working everywhere, or you think someone else has it, use \"Create a new key\" instead - that replaces the URL."
   }
 }

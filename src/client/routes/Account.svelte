@@ -36,6 +36,7 @@
   import RedeemCode from '../components/RedeemCode.svelte';
   import ReferralsCard from '../components/ReferralsCard.svelte';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import LogOut from '@lucide/svelte/icons/log-out';
   import Smartphone from '@lucide/svelte/icons/smartphone';
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
@@ -928,17 +929,33 @@
                 null}
               nodeLabel={nodeStatus.data?.node?.label ?? null}
               nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
-              onSwitchServer={actionsDisabled || !canSwitchServer
-                ? undefined
-                : () => {
-                    switchServerReason = null;
-                    switchServerOpen = true;
-                  }}
             >
               {#snippet actions()}
-                <!-- Key actions live on the pass: regenerate, and switch backend
-                     when eligible. -->
+                <!-- Key actions live on the pass: switch server (gentlest first -
+                     the URL survives), regenerate, and switch backend when
+                     eligible. No explainer text here: each action's modal
+                     carries its own when-to-use-this description. -->
                 <div class="flex flex-wrap items-center gap-2">
+                  {#if canSwitchServer}
+                    <Button
+                      onclick={() => {
+                        switchServerReason = null;
+                        switchServerOpen = true;
+                      }}
+                      disabled={regenerate.isPending ||
+                        switchServer.isPending ||
+                        switchBackend.isPending ||
+                        actionsDisabled}
+                      variant="outline"
+                      size="sm"
+                      class="min-h-11"
+                    >
+                      <RefreshCw class="size-4" />
+                      {switchServer.isPending
+                        ? t('switchServer.working')
+                        : t('switchServer.action')}
+                    </Button>
+                  {/if}
                   <Button
                     onclick={() => (regenerateOpen = true)}
                     disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
@@ -970,7 +987,6 @@
                       </Button>
                     {/each}
                   {/if}
-                  <p class="w-full text-xs text-muted-foreground">{t('account.keyActionsHint')}</p>
                 </div>
               {/snippet}
             </SubscriptionHero>
