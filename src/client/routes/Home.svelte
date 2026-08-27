@@ -39,6 +39,7 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import CodeXml from '@lucide/svelte/icons/code-xml';
   import DitherChart from '../components/DitherChart.svelte';
+  import PrivacyFlow from '../components/PrivacyFlow.svelte';
   import { dailyImpactSeries, dailyImpactBounds, giftMarks, niceCeil } from '../lib/impact';
   import { onMount } from 'svelte';
   import { fly, fade } from 'svelte/transition';
@@ -586,6 +587,10 @@
         </li>
       {/each}
     </ul>
+
+    <!-- Who sees what: the storage claims above, shown as the path traffic
+         actually takes (a plain-HTML pipeline; costs the bundle nothing). -->
+    <PrivacyFlow />
   </section>
 
   <!-- HOW IT WORKS -->

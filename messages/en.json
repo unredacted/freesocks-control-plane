@@ -1046,6 +1046,23 @@
           }
         }
       ]
+    },
+    "flow": {
+      "title": "Who sees what",
+      "subtitle": "Here is the path your traffic takes, and what each stop on the way can actually learn.",
+      "youName": "Your device",
+      "youSees": "Your apps and your data live here. Traffic is encrypted on the device before it goes anywhere.",
+      "ispName": "Your ISP",
+      "ispSees": "Sees encrypted data flowing to a busy CDN or a plain server. Not the sites you visit, and not what you send.",
+      "cdnName": "The CDN",
+      "cdnBadge": "Freedom Mode only",
+      "cdnSees": "Carries your traffic without being able to read it. It can tell you use FreeSocks, and nothing about what you do through it.",
+      "nodeName": "FreeSocks server",
+      "nodeSees": "Hands your traffic to the open internet. No logs are kept, and your key has no identity behind it.",
+      "webName": "Websites you visit",
+      "webSees": "See the FreeSocks server's address instead of yours.",
+      "captionFreedom": "Routes through a large CDN, so your connection looks like ordinary web traffic.",
+      "captionPrivacy": "Skips the CDN and connects you straight to the server."
     }
   },
   "e2ee": {
