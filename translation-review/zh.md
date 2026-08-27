@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**0 of 768 strings are missing** (the app currently shows English for
+**64 of 801 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -192,7 +192,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | 通行密钥登录失败 |
 | `passkey.notNow` | Not now | 暂不 |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs.
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(1 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -239,8 +239,7 @@ review.
 | `account.regenSuccessBody` | Re-import it on each of your devices. The old URL works for 24 more hours. | 请在每台设备上重新导入。旧链接还能用 24 小时。 |
 | `account.regenFailedTitle` | Could not create a new key | 无法创建新密钥 |
 | `account.switchSuccessTitle` | Switched to {tier} | 已切换到 {tier} |
-| `account.switchSuccessBodyGrace` | Re-import the new subscription URL on each device. The old subscription works for 24 more hours. | 请在每台设备上导入新订阅链接。旧订阅还能用 24 小时。 |
-| `account.switchSuccessBody` | Re-import the new subscription URL on each device. | 请在每台设备上导入新订阅链接。 |
+| `account.switchSuccessBody` | Same subscription URL - your apps pick up the new configuration on their next refresh. | ⚠️ **MISSING** |
 | `account.switchFailedTitle` | Could not switch server type | 无法切换服务器类型 |
 | `account.refreshWelcome` | Welcome to {tier} | 欢迎加入 {tier} |
 | `account.refreshNoneTitle` | No active membership found yet | 尚未找到有效会员 |
@@ -267,7 +266,7 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | 该插槽空闲。该设备将失去访问权限，直到重新导入您的订阅。 |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | 无法撤销该设备 |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts.
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(3 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -302,6 +301,9 @@ review.
 | `hero.nearlyOut` | Nearly out, only {amount} left this period. | 即将用尽--本周期仅剩 {amount}。 |
 | `hero.expires` | Expires | 到期 |
 | `hero.noExpiry` | No expiry | 永不过期 |
+| `hero.validityLabel` | Validity | ⚠️ **MISSING** |
+| `hero.staysActive` | Active while you use it | ⚠️ **MISSING** |
+| `hero.idleNote` | Paused after {days} days of no use - sign in to reactivate. | ⚠️ **MISSING** |
 | `hero.expiresToday` | Expires today | 今天到期 |
 | `hero.daysRemaining [countPlural=one]` | 1 day remaining | 剩余 1 天 |
 | `hero.daysRemaining [countPlural=other]` | {count} days remaining | 剩余 {count} 天 |
@@ -328,7 +330,7 @@ review.
 | `location.offline` | offline | 离线 |
 | `location.pickerHint` | Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network. | 你的配置所在的服务器位置。“自动”会选择最不繁忙的位置；如果某个位置在你的网络上效果更好，也可以自行选择。 |
 
-## `usage` — The 30-day usage trend under the traffic stats.
+## `usage` — The 30-day usage trend under the traffic stats. *(1 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -337,6 +339,7 @@ review.
 | `usage.total` | {amount} used in the last 30 days | 过去 30 天内使用的{amount} |
 | `usage.unavailable` | Usage isn't available right now. | 目前暂不支持使用。 |
 | `usage.none` | No usage recorded yet. | 尚未记录使用情况。 |
+| `usage.panelTitle` | Usage & validity | ⚠️ **MISSING** |
 
 ## `regen` — The regenerate-subscription confirmation dialog.
 
@@ -351,21 +354,19 @@ review.
 | `regen.confirm` | Create new URL | 重新生成 |
 | `regen.working` | Creating… | 生成中… |
 
-## `switch` — The switch-backend confirmation dialog.
+## `switch` — The switch-backend confirmation dialog. *(4 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `switch.title` | Switch to {to}? | 切换到 {to}？ |
-| `switch.body` | Your current {from} subscription will be replaced with a new {to} one. The old subscription stays usable for 24 hours so you can re-import on every device before it stops working. | 你当前的 {from} 订阅将被新的 {to} 订阅替换。旧订阅在 24 小时内仍可使用，方便你在所有设备上完成重新导入。 |
-| `switch.point1` | A new subscription URL is issued on the {to} backend | 将在 {to} 服务器上签发新的订阅链接 |
-| `switch.point2` | The current {from} URL keeps working for 24 hours, then is deleted | 当前 {from} 链接还能用 24 小时，之后删除 |
-| `switch.point3` | You'll need to re-import the new URL in each VPN client you use | 你需要在使用的每个 VPN 客户端中重新导入新链接 |
-| `switch.pointDevices [countPlural=one]` | You currently have 1 connected device - re-import on it | 你当前有 1 台已连接设备--请全部重新导入 |
-| `switch.pointDevices [countPlural=other]` | You currently have {count} connected devices - re-import on all of them | 你当前有 {count} 台已连接设备--请全部重新导入 |
+| `switch.body` | Your current {from} subscription is replaced with a new {to} one. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switch.point1` | A new key is issued on the {to} backend | ⚠️ **MISSING** |
+| `switch.point2` | Your subscription URL stays the same - apps pick up the new configuration on their next refresh | ⚠️ **MISSING** |
+| `switch.point3` | The old key keeps working for 24 hours while your apps refresh | ⚠️ **MISSING** |
 | `switch.confirm` | Switch to {to} | 切换到 {to} |
 | `switch.working` | Switching… | 切换中… |
 
-## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2).
+## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2). *(5 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -381,8 +382,8 @@ review.
 | `get.backendMultiProtocol` | VLESS (Xray) | VLESS (Xray) |
 | `get.backendShadowsocks` | Shadowsocks via Outline | 通过 Outline 的 Shadowsocks |
 | `get.createAccount` | Create my account | 创建我的账户 |
-| `get.freeAccountNote` | Free accounts are valid for {days} days and limited to {devices}. No email or password. | 免费账户有效期 {days} 天，限 {devices}。无需电子邮件或密码。 |
-| `get.freeAccountNoteNoDevices` | Free accounts are valid for {days} days. No email or password. | 免费账户有效期 {days} 天。无需电子邮件或密码。 |
+| `get.freeAccountNote` | Free accounts stay active as long as you use them; after {days} days of no use they pause until you sign back in. Limited to {devices}. No email or password. | ⚠️ **MISSING** |
+| `get.freeAccountNoteNoDevices` | Free accounts stay active as long as you use them; after {days} days of no use they pause until you sign back in. No email or password. | ⚠️ **MISSING** |
 | `get.step3Title` | Get your key | 获取你的密钥 |
 | `get.step3Intro` | Your key is what connects your app to the VPN. Create it, then add it to your app. | 密钥是让你的应用连接到 VPN 的凭证。创建它，然后添加到你的应用中。 |
 | `get.manageHintPrefix` | Manage your key anytime from | 随时管理此订阅，前往 |
@@ -396,9 +397,11 @@ review.
 | `get.haveAccountPrefix` | Already have an account? | 已有账户？ |
 | `get.lostNumberHint` | Lost your account number before saving it? You can switch to a new one - | 保存前丢失了账户号码？可以换一个新号码-- |
 | `get.lostNumberLinkLabel` | change it from your account page | 在账户页面更换 |
-| `get.redeemPrompt` | Have a gift code? Redeem it before creating your key. | 有礼品码？请在创建密钥前先兑换。 |
 | `get.redeemTitle` | Got a gift code? | 你有礼品码吗？ |
 | `get.redeemBody` | Redeem it now to upgrade your new account instantly. | 立即兑换，即可立即升级您的新账户。 |
+| `get.createFreeSub` | Get my free key | ⚠️ **MISSING** |
+| `get.plansTitle` | What each plan includes | ⚠️ **MISSING** |
+| `get.plansSubtitle` | The free plan is yours already, and your key works either way. Membership is an optional upgrade that supports the network. | ⚠️ **MISSING** |
 
 ## `tiers` — The plan-comparison cards (Free vs Membership limits).
 
@@ -411,43 +414,46 @@ review.
 | `tiers.mirrors` | Mirror URLs | 镜像链接 |
 | `tiers.upgradeCta` | Upgrade | 升级 |
 
-## `impact` — The donation-impact panel: bandwidth donated, free users helped, charts.
+## `impact` — The donation-impact panel: bandwidth donated, free users helped, charts. *(6 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `impact.title` | Donations support Unredacted | 捐款支持 Unredacted |
 | `impact.body` | Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site. | Unredacted 是美国 501(c)(3) 非营利组织，FreeSocks 是其运营的项目之一。捐款支持这项工作。详情请见 Unredacted 网站。 |
 | `impact.collectiveTitle` | Donation impact | 捐款成效 |
-| `impact.collectiveBody` | Donations made through FreeSocks raise every free user's monthly bandwidth for the month they're given. This is what the community's donations are doing right now. | 通过 FreeSocks 捐出的每一笔捐款，都会在其捐出的当月提升每位免费用户的每月带宽。以下是社区捐款当下正在产生的效果。 |
-| `impact.bonusThisMonth` | GB added this month | 本月增加的 GB |
+| `impact.collectiveBody` | Donations made through FreeSocks raise every free user's bandwidth for at least {days} days from the day they're given. This is what the community's donations are doing right now. | 通过 FreeSocks 捐出的每一笔捐款，都会在其捐出的当月提升每位免费用户的每月带宽。以下是社区捐款当下正在产生的效果。 |
+| `impact.bonusThisMonth` | GB on every free account now | 本月增加的 GB |
 | `impact.bonusThisMonthDetail` | on top of every free account's monthly allowance | 在每个免费账户每月额度之上额外增加 |
 | `impact.usersHelped` | free accounts reached | 惠及的免费账户 |
 | `impact.usersHelpedDetail` | active free users whose allowance the bonus raises | 额度被此奖励提升的活跃免费用户 |
-| `impact.historyTitle` | Bandwidth added per month | 每月增加的带宽 |
-| `impact.chartAria` | Bandwidth added to every free user by donations, month by month over the last {n} months | 过去 {n} 个月中，捐款为每位免费用户逐月增加的带宽 |
+| `impact.dailyTitle` | Bandwidth added this month | ⚠️ **MISSING** |
+| `impact.dailyChartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
 | `impact.yourContribution` | Your contribution | 你的贡献 |
 | `impact.yourGiven` | You've given {amount} | 你已捐出 {amount} |
 | `impact.yourGb` | That's about {gb} GB of extra bandwidth for free users | 约为免费用户增加了 {gb} GB 带宽 |
 | `impact.yourCount [countPlural=one]` | across 1 donation | 共 1 笔捐款 |
 | `impact.yourCount [countPlural=other]` | across {count} donations | 共 {count} 笔捐款 |
 | `impact.empty` | No donations yet this month - the first one starts the counter. | 本月还没有捐款--第一笔将启动计数。 |
-| `impact.externalNote` | This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here. | 此计数器仅统计通过 FreeSocks 进行的捐款。直接在 unredacted.org/donate 的捐赠支持 Unredacted 更广泛的工作，但不会增加这里的带宽。 |
+| `impact.externalNote` | This counter tracks donations made through FreeSocks - they're the ones that raise free users' bandwidth. | ⚠️ **MISSING** |
 | `impact.aboutUnredacted` | About Unredacted | 关于 Unredacted |
+| `impact.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises the bandwidth every free user gets. | ⚠️ **MISSING** |
+| `impact.giftsTitle` | Recent donations | ⚠️ **MISSING** |
+| `impact.giftActiveUntil` | Boosting free users until {date} | ⚠️ **MISSING** |
 
-## `donate` — The donation card + amount picker (donations add bandwidth for all free users).
+## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(1 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `donate.addTitle` | Add a donation | 添加一笔捐款 |
 | `donate.addSubtitle` | Chip in to help keep FreeSocks free for everyone. | 出一份力，让 FreeSocks 一直对所有人免费。 |
 | `donate.standaloneTitle` | Donate to FreeSocks | 捐款支持 FreeSocks |
-| `donate.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises this month's bandwidth for every free user. | FreeSocks 对所有人免费，由捐款资助。捐出任意金额帮助它持续运行--捐款还会为当月每位免费用户提升带宽。 |
+| `donate.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount - your gift raises every free user's bandwidth for the next {days} days. | ⚠️ **MISSING** |
 | `donate.amountLabel` | Amount | 金额 |
 | `donate.none` | No thanks | 不用了 |
 | `donate.custom` | Custom | 自定义 |
 | `donate.customPlaceholder` | Other amount | 其他金额 |
-| `donate.impact` | Adds about {gb} GB to every free user this month | 本月为每位免费用户增加约 {gb} GB |
-| `donate.bonusActive` | Donations this month have added {gb} GB to every free user's monthly allowance. | 本月捐款已为每位免费用户的每月额度增加 {gb} GB。 |
+| `donate.impact` | Adds about {gb} GB to every free user | 本月为每位免费用户增加约 {gb} GB |
+| `donate.bonusActive` | Donations have added {gb} GB to every free user’s allowance right now. | 本月捐款已为每位免费用户的每月额度增加 {gb} GB。 |
 | `donate.minNote` | Minimum {amount} | 最低 {amount} |
 | `donate.give` | Donate {amount} | 捐赠 {amount} |
 | `donate.giving` | Starting… | 正在开始… |
@@ -518,12 +524,13 @@ review.
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | 您当前使用的是免费套餐。在下方续订以恢复您的会员资格。 |
 | `renew.renewCta` | Renew membership | 续订会员 |
 
-## `upgrade` — The paid-membership purchase panel (payment method, duration, totals).
+## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(1 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `upgrade.title` | Upgrade to a FreeSocks membership | 升级到 FreeSocks 会员 |
 | `upgrade.extendTitle` | Extend your membership | 续订你的会员 |
+| `upgrade.extendStacks` | Time you add stacks on top of your current end date. | ⚠️ **MISSING** |
 | `upgrade.subtitle` | Unlimited bandwidth and devices. Choose a length and how to pay. | 无限流量与设备。选择时长和支付方式。 |
 | `upgrade.subtitleNoDevices` | Unlimited bandwidth. Choose a length and how to pay. | 无限带宽。选择时长和支付方式。 |
 | `upgrade.compareBandwidth` | Bandwidth per month | 每月带宽 |
@@ -584,7 +591,7 @@ review.
 | `gift.reveal.saved` | I've saved them | 我把它们保存下来了。 |
 | `gift.reveal.leaveWarning` | Your codes are still on screen. If you leave now without saving them, you will not be able to see them again. | 您的代码仍然显示在屏幕上。如果您现在不保存就离开，您将无法再次看到它们。 |
 
-## `error` — API error messages shown to members.
+## `error` — API error messages shown to members. *(2 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -609,6 +616,8 @@ review.
 | `error.billing` | The payment service couldn't process this. Please try again later. | 支付服务无法处理此笔交易。请稍后再试。 |
 | `error.serverError` | The server had a problem handling this. Please try again in a few minutes. | 服务器处理此请求时出现问题，请稍后再试。 |
 | `error.modeUnavailable` | Your current connection mode is no longer available. Switch to another mode first, then try again. | 你当前的连接模式已不可用。请先切换到其他模式，然后重试。 |
+| `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
+| `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
 ## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps.
 
@@ -686,37 +695,44 @@ review.
 | `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | 你的完整代理配置，通过加密通道获取，因此不会以明文经过 CDN。可手动复制到你的应用中，而无需使用订阅链接。 |
 | `rawconfig.addHint` | Paste these server entries into your VPN app manually. | 将这些服务器条目手动粘贴到你的代理应用中。 |
 
-## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog.
+## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(22 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
-| `delivery.title` | What matters most to you? | 你最看重什么？ |
-| `delivery.subtitle` | Pick a focus. It's saved on this device only, and you can change it anytime. | 选择一个侧重点 - 仅保存在本设备，可随时更改。 |
-| `delivery.subtitleServer` | Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same. | 选择一个焦点。更改焦点后，系统会重新颁发匹配服务器的密钥；您当前的密钥将继续有效 24 小时。 |
-| `delivery.subtitleSignup` | Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime. | 选择一个焦点。它会保存到你的账户，你的第一个密钥将使用它--可随时更改。 |
-| `delivery.evadeTitle` | Internet Freedom Mode | 互联网自由模式 |
-| `delivery.evadeAudience` | For censored countries | 适合受审查国家 |
-| `delivery.evadeBody` | Pick this if websites, apps, or VPNs are blocked where you are. Built to keep working under censorship, with backup links that are harder to block. | 如果你所在的地方网站、应用或 VPN 被封锁，请选择此项。专为在审查下持续可用而设计，并配有更难封锁的备用链接。 |
-| `delivery.privacyTitle` | Privacy Mode | 隐私模式 |
-| `delivery.privacyAudience` | For open internet | 适合开放网络 |
-| `delivery.privacyBody` | Pick this if the internet is mostly open where you are. The strongest confidentiality - your configuration stays off third-party servers - but it is easier for censors to block. | 如果你所在的地方网络基本开放，请选择此项。机密性最强--你的配置不经过第三方服务器--但也更容易被审查者封锁。 |
+| `delivery.title` | Connection mode | ⚠️ **MISSING** |
+| `delivery.subtitle` | Pick what fits where you are. Saved on this device only - change it anytime. | ⚠️ **MISSING** |
+| `delivery.subtitleServer` | Switching moves your key to the matching servers. Your link stays the same. | ⚠️ **MISSING** |
+| `delivery.subtitleSignup` | Pick what fits where you are. Your first key uses it - change it anytime. | ⚠️ **MISSING** |
+| `delivery.freedomTitle` | Freedom Mode | ⚠️ **MISSING** |
+| `delivery.freedomAudience` | For places where sites or VPNs are blocked | ⚠️ **MISSING** |
+| `delivery.freedomBody` | Built to keep working under censorship, with backup links that are harder to block. | ⚠️ **MISSING** |
+| `delivery.freedomWsTitle` | WebSocket | ⚠️ **MISSING** |
+| `delivery.freedomWsBody` | The standard option - an auto-updating link that works in every app. | ⚠️ **MISSING** |
+| `delivery.freedomRealityTitle` | REALITY | ⚠️ **MISSING** |
+| `delivery.freedomRealityBody` | For the heaviest censorship, when WebSocket won't connect. Harder to block, but you copy the configuration in by hand. | ⚠️ **MISSING** |
+| `delivery.privacyTitle` | Privacy Mode | ⚠️ **MISSING** |
+| `delivery.privacyAudience` | For open internet - a traditional VPN | ⚠️ **MISSING** |
+| `delivery.privacyBody` | Your traffic mixes with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks. | ⚠️ **MISSING** |
+| `delivery.privacyRealityTitle` | REALITY | ⚠️ **MISSING** |
+| `delivery.privacyRealityBody` | A direct connection with no CDN in the path. | ⚠️ **MISSING** |
+| `delivery.transportLabel` | Connection method | ⚠️ **MISSING** |
 | `delivery.recommended` | Recommended | 推荐 |
 | `delivery.unavailable` | Not available yet | 暂无 |
+| `delivery.currentUnavailable` | Currently unavailable | ⚠️ **MISSING** |
 | `delivery.confirmTitle` | Switch to "{label}"? | 切换到“ {label} "？ |
-| `delivery.confirmBody` | This moves your existing key to the {label} servers, keeping the same subscription URL. Your apps keep working and pick up the new servers on their next refresh. | 这将重新颁发您用于{label}服务器的代理密钥。您当前的密钥将继续有效 24 小时，因此您可以先在所有设备上重新导入。 |
-| `delivery.confirmPoint1` | Your key moves to the {label} servers - same subscription URL, nothing to re-import | 为{label}服务器颁发新的订阅 URL |
+| `delivery.confirmBody` | This moves your existing key to the {label} servers, keeping the same subscription URL. Your apps keep working and pick up the new servers on their next refresh. | ⚠️ **MISSING** |
+| `delivery.confirmPoint1` | Your key moves to the {label} servers - same subscription URL, nothing to re-import | ⚠️ **MISSING** |
 | `delivery.confirmPoint2` | Takes effect within a minute - reconnect in your app if it doesn't refresh on its own | 您当前的密钥将继续有效 24 小时，然后将被删除。 |
 | `delivery.confirmPoint3` | Using the raw config? Copy the new one after switching | 您需要在您使用的每个 VPN 客户端中重新导入新的 URL。 |
 | `delivery.confirmPointDevices [countPlural=one]` | Your 1 connected device will reconnect to the new servers | 您当前已连接 1 台设备；请重新导入到该设备。 |
 | `delivery.confirmPointDevices [countPlural=other]` | Your {count} connected devices will reconnect to the new servers | 您当前已连接{count}个设备；请重新导入所有设备。 |
-| `delivery.confirm` | Switch focus | 切换焦点 |
+| `delivery.confirm` | Switch mode | ⚠️ **MISSING** |
 | `delivery.working` | Switching… | 交换… |
 | `delivery.switchSuccessTitle` | Switched to "{label}" | 切换到“ {label} |
-| `delivery.switchSuccessBodyGrace` | Re-import the new subscription URL on each device. Your old key works for 24 more hours. | 在每台设备上重新导入新的订阅网址。您的旧密钥还能再用24小时。 |
 | `delivery.switchSuccessBody` | Same subscription URL - your apps will pick up the new servers on their next refresh. | 在每台设备上重新导入新的订阅网址。 |
-| `delivery.switchFailedTitle` | Could not switch focus | 无法切换焦点 |
+| `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros.
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(1 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -810,15 +826,15 @@ review.
 | `home.globe.voices.uz.l2` | The world still heard what happened here. | 世界依然听到了这里发生的事。 |
 | `home.globe.voices.uz.l3` | The squares are watched; the words still move. | 广场有人监视；文字仍在流动。 |
 | `home.impact.title` | Donations at work | 捐款在行动 |
-| `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | 通过 FreeSocks 捐出的每一笔捐款，都会提升当月每个免费账户的每月带宽。以下是捐赠者迄今增加的带宽--你也可以添一份力。 |
+| `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | 通过 FreeSocks 捐出的每一笔捐款，都会提升当月每个免费账户的每月带宽。以下是捐赠者迄今增加的带宽--你也可以添一份力。 |
 | `home.impact.cta` | Make a donation | 立即捐款 |
-| `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | 捐款为每位免费用户逐月增加的带宽 |
+| `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
 | `home.hero.variants.freedom` | A VPN for Internet Freedom | 为互联网自由打造的 VPN |
 | `home.hero.variants.dissidents` | A VPN for dissidents | 为异见人士打造的 VPN |
 | `home.hero.variants.privacy` | A VPN for privacy | 为隐私打造的 VPN |
 | `home.hero.variants.world` | A VPN for the world | 为世界打造的 VPN |
 | `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | FreeSocks 为网络受审查的人们打造，在其他地方也是一款尊重隐私的 VPN。注册只需一次快速的真人验证。我们从不要求邮箱或密码。你的订阅链接适用于大多数现代 VPN 应用，会员可享{limits}。 |
-| `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | 通过 FreeSocks 的捐款直接支持免费用户：每一笔捐款都会在当月为受审查国家的人们购买真实带宽。 |
+| `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, right away. | 通过 FreeSocks 的捐款直接支持免费用户：每一笔捐款都会在当月为受审查国家的人们购买真实带宽。 |
 | `home.hero.impactLink` | See the impact | 查看成效 |
 | `home.cta.getMembership` | Get a membership | 加入会员 |
 | `home.freeCard.title` | Free tier | 免费套餐 |
@@ -862,7 +878,7 @@ review.
 | `home.about.bodyPrefix` | FreeSocks is operated by | FreeSocks 由 |
 | `home.about.bodySuffix` | , a US 501(c)(3) nonprofit. | ，一家美国 501(c)(3) 非营利组织。 |
 | `home.about.body2` | Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it. | 大多数 VPN 默认你能付费订阅、并能放心交出邮箱地址。但在世界上许多地方，这两点都不成立，所以 FreeSocks 两者都不要求。任何人都能在一分钟左右拿到可用的密钥，并一直使用下去。 |
-| `home.about.siteLink` | unredacted.org | 未编辑的.org |
+| `home.about.siteLink` | unredacted.org | unredacted.org |
 | `home.about.openSource` | The code that runs this service is published for anyone to inspect, audit, or run themselves. | 运行此服务的代码已公开，任何人都可以检查、审计或自行部署。 |
 | `home.about.viewSourceCta` | View the source | 查看源码 |
 | `home.about.fact2Title` | Open source | 开源 |
@@ -875,7 +891,7 @@ review.
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | 最多 1 台设备 |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | 最多{count}设备 |
 
-## `e2ee` — The HPKE/E2EE "encrypted to this server" badge + verification panel.
+## `e2ee` — The HPKE/E2EE "encrypted to this server" badge + verification panel. *(1 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -908,6 +924,7 @@ review.
 | `e2ee.attestationEpoch` | Current key {kid}, expires {expiry}. | 当前键{kid} ，过期{expiry} 。 |
 | `e2ee.attestationFail` | Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing. | 无法验证服务器的当前密钥--可能是网络问题，或者 CDN 篡改了密钥端点。请在继续操作前进行带外验证。 |
 | `e2ee.attestationUnreachable` | The live key check is temporarily unavailable. Your connection still uses the verified key built into the app. | 实时密钥验证功能暂时不可用。您的连接仍使用应用内置的已验证密钥。 |
+| `e2ee.attestationStale` | The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering. | ⚠️ **MISSING** |
 | `e2ee.attestationUnconfigured` | Live key checking isn't set up on this build. | 此版本未启用实时密钥检查。 |
 | `e2ee.compareHeading` | How to verify | 如何验证 |
 | `e2ee.compareBody` | Compare the fingerprints above against the values published through a channel this server doesn't control. They must match. | 将上述指纹与通过此服务器无法控制的渠道发布的值进行比较。它们必须匹配。 |
@@ -965,3 +982,24 @@ review.
 | `status.incidentsGlobal` | All locations | 所有位置 |
 | `status.incidentsPast` | Past incidents | 历史故障 |
 | `status.report` | Report a problem | 报告问题 |
+
+## `switchServer` — Miscellaneous strings. *(16 missing)*
+
+| Key | English | Chinese (中文) |
+| --- | --- | --- |
+| `switchServer.action` | Switch server | ⚠️ **MISSING** |
+| `switchServer.title` | Move to a different server? | ⚠️ **MISSING** |
+| `switchServer.body` | We will move your key to another server. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.bodyWithServer` | We will move your key off {server} to another server. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.reasonLegend` | What's wrong with your current server? | ⚠️ **MISSING** |
+| `switchServer.reasonSlow` | It's slow | ⚠️ **MISSING** |
+| `switchServer.reasonBlocked` | It's blocked where I am | ⚠️ **MISSING** |
+| `switchServer.reasonDisconnects` | It keeps disconnecting | ⚠️ **MISSING** |
+| `switchServer.reasonOther` | Something else | ⚠️ **MISSING** |
+| `switchServer.point1` | Your apps pick up the new server on their next refresh | ⚠️ **MISSING** |
+| `switchServer.point2` | Your account and the data you have left are unchanged | ⚠️ **MISSING** |
+| `switchServer.point3` | If your key has to move to another location, your devices reconnect and register again | ⚠️ **MISSING** |
+| `switchServer.confirm` | Move my key | ⚠️ **MISSING** |
+| `switchServer.working` | Moving… | ⚠️ **MISSING** |
+| `switchServer.done` | Your key has moved to a different server. | ⚠️ **MISSING** |
+| `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |

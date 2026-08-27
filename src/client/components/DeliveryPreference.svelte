@@ -19,15 +19,18 @@
   import type { MemberCurrentMode } from '../../shared/contracts/connectionModes';
 
   /**
-   * "What matters most to you?" picker - the member-facing connection-mode
-   * choice, in TWO levels: a parent FAMILY card (Freedom Mode / Privacy Mode),
-   * and inside it a transport row (WebSocket / REALITY / ...).
+   * The connection-mode picker - the member-facing choice, in TWO levels: a
+   * parent FAMILY card (Freedom Mode / Privacy Mode), and inside it a
+   * transport row (WebSocket / REALITY / ...).
    *
-   * EVERY family shows its transport row, including one-transport families like
-   * Privacy Mode today: the member should always be able to see which method
-   * their key uses. With a single transport the row is a static chip; it turns
-   * into a keyboard-navigable radiogroup on its own as soon as a second
-   * transport is enabled, with no change here.
+   * Deliberately terse (2026-08 unclutter pass): an unselected card is just
+   * icon + name + one audience line, so the choice reads at a glance; the
+   * description and the transport row render ONLY on the selected card. The
+   * SELECTED family always shows its transport row, including one-transport
+   * families like Privacy Mode today: the member should always be able to see
+   * which method their own key uses. With a single transport the row is a
+   * static name; it turns into a keyboard-navigable radiogroup on its own as
+   * soon as a second transport is enabled, with no change here.
    *
    * The hierarchy is presentation only: what `onChoose` emits, and what the
    * server stores, is always a flat LEAF id.
@@ -206,23 +209,28 @@
             {/if}
           </div>
           {#if g.family && familyAudience(g.family)}
-            <span
-              class="mt-1.5 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-            >
+            <!-- The one always-visible line: who this mode is for. -->
+            <p class="mt-1 text-xs font-medium text-muted-foreground">
               {familyAudience(g.family)}
-            </span>
+            </p>
           {/if}
-          <p class="mt-1 text-xs text-muted-foreground">{body}</p>
+          {#if isSelectedGroup && body}
+            <!-- The longer description only on the selected card - unselected
+                 cards stay a one-glance choice. -->
+            <p class="mt-1.5 text-xs text-muted-foreground">{body}</p>
+          {/if}
         </button>
 
-        <!-- Transport row. Shown for EVERY family, including one-transport ones:
-             a member should always be able to see which method their key uses,
-             and a family that hides its only transport gives no hint that more
-             can be added. With one option it is a static chip rather than a
-             pointless single-item radiogroup; it becomes interactive on its own
-             the moment a second transport is enabled. Skipped for an orphan leaf
-             (family === null), where the card head already IS the mode. -->
-        {#if g.family}
+        <!-- Transport row, on the SELECTED family only (an unselected card stays
+             compact; selecting it reveals the row). Includes one-transport
+             families like Privacy Mode today: the member should always see
+             which method their own key uses, and a family that hides its only
+             transport gives no hint that more can be added. With one option it
+             is a static name rather than a pointless single-item radiogroup; it
+             becomes interactive on its own the moment a second transport is
+             enabled. Skipped for an orphan leaf (family === null), where the
+             card head already IS the mode. -->
+        {#if g.family && isSelectedGroup}
           {@const interactive = g.children.length > 1}
           <!-- Describe whichever transport the row is highlighting: the single one
                when static, otherwise the selected chip (nothing, when this family

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { dailyImpactSeries, dailyImpactBounds, daysInMonth, niceCeil } from './impact';
+import { dailyImpactSeries, dailyImpactBounds, daysInMonth, giftMarks, niceCeil } from './impact';
 
 const JULY_12 = Date.UTC(2026, 6, 12); // 31-day month
 const JUNE_10 = Date.UTC(2026, 5, 10); // 30-day month
@@ -70,5 +70,39 @@ describe('niceCeil', () => {
     expect(niceCeil(0)).toBe(1);
     expect(niceCeil(-5)).toBe(1);
     expect(niceCeil(Number.NaN)).toBe(1);
+  });
+});
+
+describe('giftMarks', () => {
+  const gifts = (days: string[]) =>
+    days.map((day) => ({ day, gb: 5, expiresAt: Date.UTC(2026, 8, 1) }));
+
+  test('marks current-month gifts at their day-slot centers, merging same days', () => {
+    const marks = giftMarks(
+      [
+        { day: '2026-06-30', gb: 3, expiresAt: Date.UTC(2026, 7, 1) }, // last month → no mark
+        { day: '2026-07-10', gb: 2, expiresAt: Date.UTC(2026, 7, 10) },
+        { day: '2026-07-10', gb: 4, expiresAt: Date.UTC(2026, 8, 10) }, // same day, merged
+        { day: '2026-07-20', gb: 1, expiresAt: Date.UTC(2026, 8, 20) },
+      ],
+      JULY_12,
+    );
+    expect(marks).toHaveLength(2);
+    expect(marks[0]).toMatchObject({ frac: 9.5 / 31, gb: 6 });
+    expect(marks[0]!.date.toISOString().slice(0, 10)).toBe('2026-07-10');
+    expect(marks[1]).toMatchObject({ frac: 19.5 / 31, gb: 1 });
+  });
+
+  test('caps to the newest N so labels cannot crowd the axis', () => {
+    const days = Array.from({ length: 10 }, (_, i) => `2026-07-${String(i + 1).padStart(2, '0')}`);
+    const marks = giftMarks(gifts(days), JULY_12, 6);
+    expect(marks).toHaveLength(6);
+    expect(marks[0]!.date.getUTCDate()).toBe(5);
+    expect(marks[5]!.date.getUTCDate()).toBe(10);
+  });
+
+  test('empty in a month with no gifts', () => {
+    expect(giftMarks(gifts(['2026-05-01']), JULY_12)).toEqual([]);
+    expect(giftMarks([], JULY_12)).toEqual([]);
   });
 });

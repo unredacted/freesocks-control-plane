@@ -465,14 +465,12 @@
       }
     ],
     "empty": "本月还没有捐款--第一笔将启动计数。",
-    "externalNote": "此计数器仅统计通过 FreeSocks 进行的捐款。直接在 unredacted.org/donate 的捐赠支持 Unredacted 更广泛的工作，但不会增加这里的带宽。",
     "aboutUnredacted": "关于 Unredacted"
   },
   "donate": {
     "addTitle": "添加一笔捐款",
     "addSubtitle": "出一份力，让 FreeSocks 一直对所有人免费。",
     "standaloneTitle": "捐款支持 FreeSocks",
-    "standaloneSubtitle": "FreeSocks 对所有人免费，由捐款资助。捐出任意金额帮助它持续运行--捐款还会为当月每位免费用户提升带宽。",
     "amountLabel": "金额",
     "none": "不用了",
     "custom": "自定义",
@@ -604,10 +602,7 @@
     "addHint": "将这些服务器条目手动粘贴到你的代理应用中。"
   },
   "delivery": {
-    "title": "你最看重什么？",
-    "subtitle": "选择一个侧重点 - 仅保存在本设备，可随时更改。",
     "recommended": "推荐",
-    "subtitleSignup": "选择一个焦点。它会保存到你的账户，你的第一个密钥将使用它--可随时更改。",
     "unavailable": "暂无",
     "confirmTitle": "切换到“ {label} \"？",
     "confirmPoint2": "您当前的密钥将继续有效 24 小时，然后将被删除。",
@@ -627,11 +622,9 @@
         }
       }
     ],
-    "confirm": "切换焦点",
     "working": "交换…",
     "switchSuccessTitle": "切换到“ {label}",
-    "switchSuccessBody": "在每台设备上重新导入新的订阅网址。",
-    "switchFailedTitle": "无法切换焦点"
+    "switchSuccessBody": "在每台设备上重新导入新的订阅网址。"
   },
   "faq": {
     "title": "常见问题解答",

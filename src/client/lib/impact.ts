@@ -59,6 +59,43 @@ export function dailyImpactBounds(now = Date.now()): [Date, Date] {
   ];
 }
 
+/** A live gift from `billing.donation.recentGifts` (public projection). */
+export interface GiftEntry {
+  /** UTC day the donation landed, 'YYYY-MM-DD'. */
+  day: string;
+  /** Bonus GB the gift adds to every free user. */
+  gb: number;
+  /** Epoch ms after which the gift stops funding the pool. */
+  expiresAt: number;
+}
+
+/**
+ * Chart marks for the gifts that landed in the CURRENT UTC month: one per
+ * donation day (same-day gifts merge), positioned at that day's slot center on
+ * the month-long step chart (`frac` ∈ (0,1)). Capped to the newest `cap` so
+ * labels can't crowd the axis.
+ */
+export function giftMarks(
+  gifts: GiftEntry[],
+  now = Date.now(),
+  cap = 6,
+): { frac: number; date: Date; gb: number }[] {
+  const d = new Date(now);
+  const mk = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  const len = daysInMonth(now);
+  const byDay = new Map<string, number>();
+  for (const g of gifts) {
+    if (g.day.startsWith(`${mk}-`)) byDay.set(g.day, (byDay.get(g.day) ?? 0) + g.gb);
+  }
+  const marks = [...byDay.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([day, gb]) => {
+      const dayNum = Number(day.slice(8));
+      return { frac: (dayNum - 0.5) / len, date: new Date(`${day}T00:00:00Z`), gb };
+    });
+  return marks.slice(-cap);
+}
+
 const NICE_STEPS = [1, 1.5, 2, 3, 5, 7.5, 10];
 
 /**

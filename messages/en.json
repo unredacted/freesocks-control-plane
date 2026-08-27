@@ -378,7 +378,8 @@
     "title": "Usage (last 30 days)",
     "total": "{amount} used in the last 30 days",
     "unavailable": "Usage isn't available right now.",
-    "none": "No usage recorded yet."
+    "none": "No usage recorded yet.",
+    "panelTitle": "Usage & validity"
   },
   "regen": {
     "title": "Create a new subscription URL?",
@@ -486,15 +487,17 @@
       }
     ],
     "empty": "No donations yet this month - the first one starts the counter.",
-    "externalNote": "This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here.",
+    "externalNote": "This counter tracks donations made through FreeSocks - they're the ones that raise free users' bandwidth.",
     "aboutUnredacted": "About Unredacted",
-    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises the bandwidth every free user gets."
+    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises the bandwidth every free user gets.",
+    "giftsTitle": "Recent donations",
+    "giftActiveUntil": "Boosting free users until {date}"
   },
   "donate": {
     "addTitle": "Add a donation",
     "addSubtitle": "Chip in to help keep FreeSocks free for everyone.",
     "standaloneTitle": "Donate to FreeSocks",
-    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises this month's bandwidth for every free user.",
+    "standaloneSubtitle": "FreeSocks is free for everyone, funded by donations. Give any amount - your gift raises every free user's bandwidth for the next {days} days.",
     "amountLabel": "Amount",
     "none": "No thanks",
     "custom": "Custom",
@@ -731,20 +734,20 @@
     "addHint": "Paste these server entries into your VPN app manually."
   },
   "delivery": {
-    "title": "What matters most to you?",
-    "subtitle": "Pick a focus. It's saved on this device only, and you can change it anytime.",
-    "subtitleServer": "Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same.",
-    "subtitleSignup": "Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime.",
+    "title": "Connection mode",
+    "subtitle": "Pick what fits where you are. Saved on this device only - change it anytime.",
+    "subtitleServer": "Switching moves your key to the matching servers. Your link stays the same.",
+    "subtitleSignup": "Pick what fits where you are. Your first key uses it - change it anytime.",
     "freedomTitle": "Freedom Mode",
-    "freedomAudience": "For censored countries",
-    "freedomBody": "Pick this if websites, apps, or VPNs are blocked where you are. Built to keep working under censorship, with backup links that are harder to block.",
+    "freedomAudience": "For places where sites or VPNs are blocked",
+    "freedomBody": "Built to keep working under censorship, with backup links that are harder to block.",
     "freedomWsTitle": "WebSocket",
-    "freedomWsBody": "The standard option. Your key arrives as an auto-updating link that works with every app.",
+    "freedomWsBody": "The standard option - an auto-updating link that works in every app.",
     "freedomRealityTitle": "REALITY",
-    "freedomRealityBody": "For the heaviest censorship, where the WebSocket option will not connect. Much harder to block, but you copy the configuration in by hand instead of using a link.",
+    "freedomRealityBody": "For the heaviest censorship, when WebSocket won't connect. Harder to block, but you copy the configuration in by hand.",
     "privacyTitle": "Privacy Mode",
-    "privacyAudience": "For open internet",
-    "privacyBody": "Pick this if the internet is open where you are and you want a traditional VPN. Your traffic mixes in with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks.",
+    "privacyAudience": "For open internet - a traditional VPN",
+    "privacyBody": "Your traffic mixes with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks.",
     "privacyRealityTitle": "REALITY",
     "privacyRealityBody": "A direct connection with no CDN in the path.",
     "transportLabel": "Connection method",
@@ -771,11 +774,11 @@
         }
       }
     ],
-    "confirm": "Switch focus",
+    "confirm": "Switch mode",
     "working": "Switching…",
     "switchSuccessTitle": "Switched to \"{label}\"",
     "switchSuccessBody": "Same subscription URL - your apps will pick up the new servers on their next refresh.",
-    "switchFailedTitle": "Could not switch focus"
+    "switchFailedTitle": "Could not switch mode"
   },
   "home": {
     "trust": {

@@ -39,7 +39,7 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import CodeXml from '@lucide/svelte/icons/code-xml';
   import DitherChart from '../components/DitherChart.svelte';
-  import { dailyImpactSeries, dailyImpactBounds, niceCeil } from '../lib/impact';
+  import { dailyImpactSeries, dailyImpactBounds, giftMarks, niceCeil } from '../lib/impact';
   import { onMount } from 'svelte';
   import { fly, fade } from 'svelte/transition';
 
@@ -98,6 +98,13 @@
     dailyImpactBounds().map((d) =>
       formatDate(d, { month: 'short', day: 'numeric', timeZone: 'UTC' }),
     ),
+  );
+  // Donation-day marks on the chart: when each gift landed this month.
+  const impactMarks = $derived(
+    giftMarks(donation?.recentGifts ?? []).map((m) => ({
+      frac: m.frac,
+      label: formatDate(m.date, { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+    })),
   );
   function goDonate() {
     router.navigate(me.data?.authenticated ? '/account?tab=membership' : '/get-account');
@@ -688,6 +695,7 @@
           <DitherChart
             values={impactDaily}
             labels={impactLabels}
+            marks={impactMarks}
             variant="area"
             step
             max={impactMax}
@@ -769,19 +777,22 @@
           {t('home.about.body2')}
         </p>
         <!-- Text links, not buttons: the page's two button CTAs (hero + how it
-             works) stay unchallenged. Donations fund free accounts (hosted on
-             unredacted.org); when billing is live the membership link routes to
-             the in-app upgrade panel (authed → /account, else /get-account). -->
+             works) stay unchallenged. Donations happen IN-APP (they fund the
+             free-user bandwidth pool) - never the external nonprofit donate
+             page, which reads as a second, confusing destination; when billing
+             is live the membership link routes to the in-app upgrade panel
+             (authed → /account, else /get-account). -->
         <div class="flex flex-wrap gap-x-5 gap-y-2 pt-2 text-sm">
-          <a
-            href="https://unredacted.org/donate"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="inline-flex items-center gap-1.5 font-medium text-primary underline-offset-4 hover:underline"
-          >
-            <Heart class="size-3.5" aria-hidden="true" />
-            {t('renew.donate')}
-          </a>
+          {#if billingEnabled && donation?.enabled}
+            <button
+              type="button"
+              onclick={goDonate}
+              class="inline-flex items-center gap-1.5 rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Heart class="size-3.5" aria-hidden="true" />
+              {t('renew.donate')}
+            </button>
+          {/if}
           <a
             href="https://unredacted.org"
             target="_blank"

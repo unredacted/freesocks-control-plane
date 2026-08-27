@@ -4,6 +4,7 @@
   import E2eeAlert from './components/E2eeAlert.svelte';
   import SiteBanner from './components/SiteBanner.svelte';
   import FooterRepoLink from './components/FooterRepoLink.svelte';
+  import FooterDonateLink from './components/FooterDonateLink.svelte';
   import E2eeVerifyModal from './components/E2eeVerifyModal.svelte';
   import { e2eeSession } from './lib/e2ee-status.svelte';
   import PopWarm from './components/PopWarm.svelte';
@@ -191,14 +192,9 @@
             </a>{t('footer.operatedSuffix')}
           </p>
           <nav class="flex flex-wrap items-center gap-4 text-xs">
-            <a
-              class="hover:text-foreground"
-              href="https://unredacted.org/donate"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {t('renew.donate')}
-            </a>
+            <!-- In-app donate route (never the external nonprofit donate page -
+                 in-app gifts are the ones that fund the bandwidth pool). -->
+            <FooterDonateLink />
             <FooterRepoLink />
           </nav>
         </div>

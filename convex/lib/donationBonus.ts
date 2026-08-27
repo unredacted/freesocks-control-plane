@@ -487,6 +487,30 @@ export async function resolveCurrentBonusGb(db: DatabaseReader, now: number): Pr
 }
 
 /**
+ * Public projection of the gifts still funding the pool: one entry per live
+ * bucket (a UTC day's donations under one expiry), oldest first, GB only —
+ * cents are never projected (the public no-dollar-figures rule; per-day GB is
+ * already derivable from {@link currentMonthDailyGb}, so this leaks nothing
+ * new). `expiresAt` is the instant the gift stops funding the pool, so the
+ * member UI can say exactly how long each donation lasts. Capped to the
+ * newest `cap` entries so the projection stays small however long the window.
+ */
+export function recentGiftsProjection(
+  state: DonationState,
+  cfg: Pick<DonationConfig, 'bonusGbPerUsd'>,
+  now: number,
+  cap = 8,
+): { day: string; gb: number; expiresAt: number }[] {
+  const live = (state.buckets ?? []).filter((b) => b.x > now && b.c > 0);
+  return live.slice(-cap).map((b) => ({
+    day: b.d,
+    // Round to 0.1 GB for display, but never round a real gift down to zero.
+    gb: Math.max(0.1, Math.round((b.c / 100) * cfg.bonusGbPerUsd * 10) / 10),
+    expiresAt: b.x,
+  }));
+}
+
+/**
  * The impact graph's series: one GB value per UTC day for the WHOLE current month
  * (1st → last day), cumulative — each day adds that day's donations to the running
  * total, so the line only ever steps up. Days after today hold today's total flat,

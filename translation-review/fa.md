@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**0 of 768 strings are missing** (the app currently shows English for
+**64 of 801 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -193,7 +193,7 @@ review.
 | `passkey.signInFailed` | Passkey sign-in failed | ورود با کلید عبور ناموفق بود |
 | `passkey.notNow` | Not now | فعلاً نه |
 
-## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs.
+## `account` — The signed-in /account dashboard: connection, membership, codes, security tabs. *(1 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -240,8 +240,7 @@ review.
 | `account.regenSuccessBody` | Re-import it on each of your devices. The old URL works for 24 more hours. | آن را دوباره در همهٔ دستگاه‌هایتان وارد کنید. لینک قبلی تا ۲۴ ساعت دیگر کار می‌کند. |
 | `account.regenFailedTitle` | Could not create a new key | ساخت کلید جدید ناموفق بود |
 | `account.switchSuccessTitle` | Switched to {tier} | به {tier} تغییر کرد |
-| `account.switchSuccessBodyGrace` | Re-import the new subscription URL on each device. The old subscription works for 24 more hours. | لینک اشتراک جدید را در همهٔ دستگاه‌ها وارد کنید. اشتراک قبلی تا ۲۴ ساعت دیگر کار می‌کند. |
-| `account.switchSuccessBody` | Re-import the new subscription URL on each device. | لینک اشتراک جدید را در همهٔ دستگاه‌ها وارد کنید. |
+| `account.switchSuccessBody` | Same subscription URL - your apps pick up the new configuration on their next refresh. | ⚠️ **MISSING** |
 | `account.switchFailedTitle` | Could not switch server type | تغییر نوع سرور ناموفق بود |
 | `account.refreshWelcome` | Welcome to {tier} | به {tier} خوش آمدید |
 | `account.refreshNoneTitle` | No active membership found yet | هنوز عضویت فعالی یافت نشد |
@@ -268,7 +267,7 @@ review.
 | `account.deviceRevokedBody` | The slot is free. That device loses access until it re-imports your subscription. | اسلات خالی است. آن دستگاه تا زمانی که اشتراک شما را دوباره وارد نکند، دسترسی خود را از دست می‌دهد. |
 | `account.deviceRevokeFailedTitle` | Couldn't revoke the device | نتوانستم دستگاه را باطل کنم |
 
-## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts.
+## `hero` — The subscription panel: the key/URL block, traffic + expiry stats, QR, status callouts. *(3 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -303,6 +302,9 @@ review.
 | `hero.nearlyOut` | Nearly out, only {amount} left this period. | رو به اتمام - فقط {amount} از این دوره باقی مانده. |
 | `hero.expires` | Expires | انقضا |
 | `hero.noExpiry` | No expiry | بدون انقضا |
+| `hero.validityLabel` | Validity | ⚠️ **MISSING** |
+| `hero.staysActive` | Active while you use it | ⚠️ **MISSING** |
+| `hero.idleNote` | Paused after {days} days of no use - sign in to reactivate. | ⚠️ **MISSING** |
 | `hero.expiresToday` | Expires today | امروز منقضی می‌شود |
 | `hero.daysRemaining [countPlural=one]` | 1 day remaining | 1 روز باقی مانده |
 | `hero.daysRemaining [countPlural=other]` | {count} days remaining | {count} روز باقی مانده |
@@ -329,7 +331,7 @@ review.
 | `location.offline` | offline | آفلاین |
 | `location.pickerHint` | Where your config's server is. Automatic picks the least busy location; pick one yourself if it works better on your network. | محل سرور پیکربندی شما. حالت خودکار خلوت‌ترین مکان را انتخاب می‌کند؛ اگر مکان دیگری روی شبکهٔ شما بهتر کار می‌کند، خودتان انتخابش کنید. |
 
-## `usage` — The 30-day usage trend under the traffic stats.
+## `usage` — The 30-day usage trend under the traffic stats. *(1 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -338,6 +340,7 @@ review.
 | `usage.total` | {amount} used in the last 30 days | {amount} در 30 روز گذشته استفاده شده است |
 | `usage.unavailable` | Usage isn't available right now. | امکان استفاده در حال حاضر وجود ندارد. |
 | `usage.none` | No usage recorded yet. | هنوز هیچ استفاده‌ای ثبت نشده است. |
+| `usage.panelTitle` | Usage & validity | ⚠️ **MISSING** |
 
 ## `regen` — The regenerate-subscription confirmation dialog.
 
@@ -352,21 +355,19 @@ review.
 | `regen.confirm` | Create new URL | ساخت دوباره |
 | `regen.working` | Creating… | در حال ساخت… |
 
-## `switch` — The switch-backend confirmation dialog.
+## `switch` — The switch-backend confirmation dialog. *(4 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `switch.title` | Switch to {to}? | تغییر به {to}؟ |
-| `switch.body` | Your current {from} subscription will be replaced with a new {to} one. The old subscription stays usable for 24 hours so you can re-import on every device before it stops working. | اشتراک فعلی {from} شما با اشتراک جدید {to} جایگزین می‌شود. اشتراک قبلی ۲۴ ساعت قابل استفاده می‌ماند تا پیش از قطع شدن، لینک جدید را روی همهٔ دستگاه‌ها وارد کنید. |
-| `switch.point1` | A new subscription URL is issued on the {to} backend | یک لینک اشتراک جدید روی بک‌اند {to} صادر می‌شود |
-| `switch.point2` | The current {from} URL keeps working for 24 hours, then is deleted | لینک فعلی {from} تا ۲۴ ساعت کار می‌کند و سپس حذف می‌شود |
-| `switch.point3` | You'll need to re-import the new URL in each VPN client you use | باید لینک جدید را در هر برنامهٔ VPN که استفاده می‌کنید دوباره وارد کنید |
-| `switch.pointDevices [countPlural=one]` | You currently have 1 connected device - re-import on it | اکنون 1 دستگاه متصل دارید - روی همهٔ آن‌ها دوباره وارد کنید |
-| `switch.pointDevices [countPlural=other]` | You currently have {count} connected devices - re-import on all of them | اکنون {count} دستگاه متصل دارید - روی همهٔ آن‌ها دوباره وارد کنید |
+| `switch.body` | Your current {from} subscription is replaced with a new {to} one. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switch.point1` | A new key is issued on the {to} backend | ⚠️ **MISSING** |
+| `switch.point2` | Your subscription URL stays the same - apps pick up the new configuration on their next refresh | ⚠️ **MISSING** |
+| `switch.point3` | The old key keeps working for 24 hours while your apps refresh | ⚠️ **MISSING** |
 | `switch.confirm` | Switch to {to} | تغییر به {to} |
 | `switch.working` | Switching… | در حال تغییر… |
 
-## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2).
+## `get` — The /get-account sign-up flow: create account (step 1) and create subscription (step 2). *(5 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -382,8 +383,8 @@ review.
 | `get.backendMultiProtocol` | VLESS (Xray) | VLESS (Xray) |
 | `get.backendShadowsocks` | Shadowsocks via Outline | Shadowsocks از طریق Outline |
 | `get.createAccount` | Create my account | ساخت حساب من |
-| `get.freeAccountNote` | Free accounts are valid for {days} days and limited to {devices}. No email or password. | حساب‌های رایگان {days} روز اعتبار دارند و به {devices} محدودند. بدون ایمیل یا رمز عبور. |
-| `get.freeAccountNoteNoDevices` | Free accounts are valid for {days} days. No email or password. | حساب‌های رایگان {days} روز اعتبار دارند. بدون ایمیل یا رمز عبور. |
+| `get.freeAccountNote` | Free accounts stay active as long as you use them; after {days} days of no use they pause until you sign back in. Limited to {devices}. No email or password. | ⚠️ **MISSING** |
+| `get.freeAccountNoteNoDevices` | Free accounts stay active as long as you use them; after {days} days of no use they pause until you sign back in. No email or password. | ⚠️ **MISSING** |
 | `get.step3Title` | Get your key | کلید خود را دریافت کنید |
 | `get.step3Intro` | Your key is what connects your app to the VPN. Create it, then add it to your app. | کلید شما چیزی است که برنامه‌تان را به VPN وصل می‌کند. آن را بسازید، سپس به برنامه‌تان اضافه‌اش کنید. |
 | `get.manageHintPrefix` | Manage your key anytime from | این اشتراک را هر زمان مدیریت کنید از |
@@ -397,9 +398,11 @@ review.
 | `get.haveAccountPrefix` | Already have an account? | از قبل حساب دارید؟ |
 | `get.lostNumberHint` | Lost your account number before saving it? You can switch to a new one - | شمارهٔ حساب را پیش از ذخیره گم کردید؟ می‌توانید شمارهٔ جدیدی بگیرید - |
 | `get.lostNumberLinkLabel` | change it from your account page | از صفحهٔ حساب خود آن را تغییر دهید |
-| `get.redeemPrompt` | Have a gift code? Redeem it before creating your key. | کد هدیه دارید؟ پیش از ساخت کلید آن را بازخرید کنید. |
 | `get.redeemTitle` | Got a gift code? | کد هدیه گرفتی؟ |
 | `get.redeemBody` | Redeem it now to upgrade your new account instantly. | همین حالا آن را بازخرید کنید تا فوراً حساب جدید خود را ارتقا دهید. |
+| `get.createFreeSub` | Get my free key | ⚠️ **MISSING** |
+| `get.plansTitle` | What each plan includes | ⚠️ **MISSING** |
+| `get.plansSubtitle` | The free plan is yours already, and your key works either way. Membership is an optional upgrade that supports the network. | ⚠️ **MISSING** |
 
 ## `tiers` — The plan-comparison cards (Free vs Membership limits).
 
@@ -412,43 +415,46 @@ review.
 | `tiers.mirrors` | Mirror URLs | لینک‌های آینه |
 | `tiers.upgradeCta` | Upgrade | ارتقا |
 
-## `impact` — The donation-impact panel: bandwidth donated, free users helped, charts.
+## `impact` — The donation-impact panel: bandwidth donated, free users helped, charts. *(6 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `impact.title` | Donations support Unredacted | کمک‌های مالی از Unredacted پشتیبانی می‌کنند |
 | `impact.body` | Unredacted is a US 501(c)(3) nonprofit. FreeSocks is one of the projects it runs. Donations fund the work. See what that work is on the Unredacted site. | Unredacted یک سازمان غیرانتفاعی 501(c)(3) آمریکایی است. فری‌ساکس یکی از پروژه‌های آن است. کمک‌های مالی هزینهٔ این کار را تأمین می‌کنند. جزئیات را در سایت Unredacted ببینید. |
 | `impact.collectiveTitle` | Donation impact | اثر کمک‌های مالی |
-| `impact.collectiveBody` | Donations made through FreeSocks raise every free user's monthly bandwidth for the month they're given. This is what the community's donations are doing right now. | کمک‌های مالی که از طریق فری‌ساکس انجام می‌شود، پهنای باند ماهانهٔ هر کاربر رایگان را برای همان ماه افزایش می‌دهد. این همان کاری است که کمک‌های جامعه همین حالا دارد انجام می‌دهد. |
-| `impact.bonusThisMonth` | GB added this month | گیگابایت اضافه‌شده این ماه |
+| `impact.collectiveBody` | Donations made through FreeSocks raise every free user's bandwidth for at least {days} days from the day they're given. This is what the community's donations are doing right now. | کمک‌های مالی که از طریق فری‌ساکس انجام می‌شود، پهنای باند ماهانهٔ هر کاربر رایگان را برای همان ماه افزایش می‌دهد. این همان کاری است که کمک‌های جامعه همین حالا دارد انجام می‌دهد. |
+| `impact.bonusThisMonth` | GB on every free account now | گیگابایت اضافه‌شده این ماه |
 | `impact.bonusThisMonthDetail` | on top of every free account's monthly allowance | علاوه بر سهمیهٔ ماهانهٔ هر حساب رایگان |
 | `impact.usersHelped` | free accounts reached | حساب‌های رایگان تحت پوشش |
 | `impact.usersHelpedDetail` | active free users whose allowance the bonus raises | کاربران فعال رایگان که سهمیه‌شان با این پاداش افزایش می‌یابد |
-| `impact.historyTitle` | Bandwidth added per month | پهنای باند اضافه‌شده در هر ماه |
-| `impact.chartAria` | Bandwidth added to every free user by donations, month by month over the last {n} months | پهنای باندی که کمک‌های مالی در {n} ماه گذشته ماه‌به‌ماه به هر کاربر رایگان اضافه کرده است |
+| `impact.dailyTitle` | Bandwidth added this month | ⚠️ **MISSING** |
+| `impact.dailyChartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
 | `impact.yourContribution` | Your contribution | سهم شما |
 | `impact.yourGiven` | You've given {amount} | شما {amount} کمک کرده‌اید |
 | `impact.yourGb` | That's about {gb} GB of extra bandwidth for free users | یعنی حدود {gb} گیگابایت پهنای باند اضافی برای کاربران رایگان |
 | `impact.yourCount [countPlural=one]` | across 1 donation | در 1 کمک مالی |
 | `impact.yourCount [countPlural=other]` | across {count} donations | در {count} کمک مالی |
 | `impact.empty` | No donations yet this month - the first one starts the counter. | هنوز این ماه کمکی نشده است - اولین کمک شمارنده را روشن می‌کند. |
-| `impact.externalNote` | This counter tracks donations made through FreeSocks only. Gifts made directly at unredacted.org/donate support Unredacted's wider work, but don't add bandwidth here. | این شمارنده فقط کمک‌هایی را دنبال می‌کند که از طریق فری‌ساکس انجام می‌شود. هدیه‌هایی که مستقیماً در unredacted.org/donate داده می‌شوند از کار گسترده‌تر Unredacted حمایت می‌کنند، اما اینجا پهنای باندی اضافه نمی‌کنند. |
+| `impact.externalNote` | This counter tracks donations made through FreeSocks - they're the ones that raise free users' bandwidth. | ⚠️ **MISSING** |
 | `impact.aboutUnredacted` | About Unredacted | دربارهٔ Unredacted |
+| `impact.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises the bandwidth every free user gets. | ⚠️ **MISSING** |
+| `impact.giftsTitle` | Recent donations | ⚠️ **MISSING** |
+| `impact.giftActiveUntil` | Boosting free users until {date} | ⚠️ **MISSING** |
 
-## `donate` — The donation card + amount picker (donations add bandwidth for all free users).
+## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(1 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `donate.addTitle` | Add a donation | افزودن کمک مالی |
 | `donate.addSubtitle` | Chip in to help keep FreeSocks free for everyone. | کمک کنید تا فری‌ساکس برای همه رایگان بماند. |
 | `donate.standaloneTitle` | Donate to FreeSocks | کمک مالی به فری‌ساکس |
-| `donate.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount to help keep it running - a donation also raises this month's bandwidth for every free user. | فری‌ساکس برای همه رایگان است و با کمک‌های مالی اداره می‌شود. هر مبلغی بدهید تا به ادامهٔ کارش کمک کنید - یک کمک مالی، پهنای باند این ماه هر کاربر رایگان را هم افزایش می‌دهد. |
+| `donate.standaloneSubtitle` | FreeSocks is free for everyone, funded by donations. Give any amount - your gift raises every free user's bandwidth for the next {days} days. | ⚠️ **MISSING** |
 | `donate.amountLabel` | Amount | مبلغ |
 | `donate.none` | No thanks | نه، ممنون |
 | `donate.custom` | Custom | دلخواه |
 | `donate.customPlaceholder` | Other amount | مبلغ دیگر |
-| `donate.impact` | Adds about {gb} GB to every free user this month | این ماه حدود {gb} گیگابایت به سهمیهٔ هر کاربر رایگان اضافه می‌کند |
-| `donate.bonusActive` | Donations this month have added {gb} GB to every free user's monthly allowance. | کمک‌های این ماه {gb} گیگابایت به سهمیهٔ ماهانهٔ هر کاربر رایگان اضافه کرده است. |
+| `donate.impact` | Adds about {gb} GB to every free user | این ماه حدود {gb} گیگابایت به سهمیهٔ هر کاربر رایگان اضافه می‌کند |
+| `donate.bonusActive` | Donations have added {gb} GB to every free user’s allowance right now. | کمک‌های این ماه {gb} گیگابایت به سهمیهٔ ماهانهٔ هر کاربر رایگان اضافه کرده است. |
 | `donate.minNote` | Minimum {amount} | حداقل {amount} |
 | `donate.give` | Donate {amount} | کمک {amount} |
 | `donate.giving` | Starting… | در حال شروع… |
@@ -519,12 +525,13 @@ review.
 | `renew.lapsedBody` | You're on the free tier now. Renew below to restore your membership. | اکنون در طرح رایگان هستید. برای بازگرداندن عضویت خود، از پایین تمدید کنید. |
 | `renew.renewCta` | Renew membership | تمدید عضویت |
 
-## `upgrade` — The paid-membership purchase panel (payment method, duration, totals).
+## `upgrade` — The paid-membership purchase panel (payment method, duration, totals). *(1 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `upgrade.title` | Upgrade to a FreeSocks membership | به عضویت FreeSocks ارتقا دهید |
 | `upgrade.extendTitle` | Extend your membership | عضویت خود را تمدید کنید |
+| `upgrade.extendStacks` | Time you add stacks on top of your current end date. | ⚠️ **MISSING** |
 | `upgrade.subtitle` | Unlimited bandwidth and devices. Choose a length and how to pay. | پهنای باند و دستگاه‌های نامحدود. مدت و روش پرداخت را انتخاب کنید. |
 | `upgrade.subtitleNoDevices` | Unlimited bandwidth. Choose a length and how to pay. | پهنای باند نامحدود. مدت و روش پرداخت را انتخاب کنید. |
 | `upgrade.compareBandwidth` | Bandwidth per month | پهنای باند در ماه |
@@ -585,7 +592,7 @@ review.
 | `gift.reveal.saved` | I've saved them | من آنها را ذخیره کرده‌ام |
 | `gift.reveal.leaveWarning` | Your codes are still on screen. If you leave now without saving them, you will not be able to see them again. | کدهای شما هنوز روی صفحه هستند. اگر بدون ذخیره کردن آنها از صفحه خارج شوید، دیگر نمی‌توانید آنها را ببینید. |
 
-## `error` — API error messages shown to members.
+## `error` — API error messages shown to members. *(2 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -610,6 +617,8 @@ review.
 | `error.billing` | The payment service couldn't process this. Please try again later. | سرویس پرداخت نتوانست این را پردازش کند. لطفاً بعداً دوباره امتحان کنید. |
 | `error.serverError` | The server had a problem handling this. Please try again in a few minutes. | سرور در مدیریت این مشکل داشت. لطفاً چند دقیقه دیگر دوباره امتحان کنید. |
 | `error.modeUnavailable` | Your current connection mode is no longer available. Switch to another mode first, then try again. | حالت اتصال فعلی شما دیگر در دسترس نیست. ابتدا به حالت دیگری تغییر دهید، سپس دوباره امتحان کنید. |
+| `error.noOtherServer` | There is no other server available right now. Please try again later. | ⚠️ **MISSING** |
+| `error.switchServerUnsupported` | Switching servers is not available for this key. | ⚠️ **MISSING** |
 
 ## `setup` — The "set up your app" section: recommended VPN clients per platform, install steps.
 
@@ -687,37 +696,44 @@ review.
 | `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | پیکربندی کامل پروکسی شما، که از طریق یک کانال رمزگذاری‌شده دریافت می‌شود تا هرگز به‌صورت متن ساده از CDN عبور نکند. به‌جای استفاده از لینک اشتراک، آن را دستی در برنامه‌تان وارد کنید. |
 | `rawconfig.addHint` | Paste these server entries into your VPN app manually. | این ورودی‌های سرور را به‌صورت دستی در برنامهٔ پروکسی خود وارد کنید. |
 
-## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog.
+## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(22 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
-| `delivery.title` | What matters most to you? | چه چیزی برایتان مهم‌تر است؟ |
-| `delivery.subtitle` | Pick a focus. It's saved on this device only, and you can change it anytime. | یک اولویت انتخاب کنید - فقط روی همین دستگاه ذخیره می‌شود و هر زمان می‌توانید تغییرش دهید. |
-| `delivery.subtitleServer` | Pick a focus. Changing it moves your existing key to the matching servers - your subscription URL stays the same. | یک نقطه تمرکز انتخاب کنید. تغییر آن، کلید شما را برای سرورهای منطبق دوباره صادر می‌کند؛ کلید فعلی شما به مدت ۲۴ ساعت کار می‌کند. |
-| `delivery.subtitleSignup` | Pick a focus. It's saved to your account, and your first key uses it - you can change it anytime. | یک نقطه تمرکز انتخاب کنید. در حساب شما ذخیره می‌شود و اولین کلید شما از آن استفاده می‌کند - هر زمان می‌توانید تغییرش دهید. |
-| `delivery.evadeTitle` | Internet Freedom Mode | حالت آزادی اینترنت |
-| `delivery.evadeAudience` | For censored countries | برای کشورهای سانسورشده |
-| `delivery.evadeBody` | Pick this if websites, apps, or VPNs are blocked where you are. Built to keep working under censorship, with backup links that are harder to block. | اگر سایت‌ها، برنامه‌ها یا VPNها در جایی که هستید مسدودند، این را انتخاب کنید. برای این ساخته شده که زیر سانسور به کار ادامه دهد، با لینک‌های پشتیبانی که مسدود کردنشان سخت‌تر است. |
-| `delivery.privacyTitle` | Privacy Mode | حالت حریم خصوصی |
-| `delivery.privacyAudience` | For open internet | برای اینترنت آزاد |
-| `delivery.privacyBody` | Pick this if the internet is mostly open where you are. The strongest confidentiality - your configuration stays off third-party servers - but it is easier for censors to block. | اگر اینترنت در جایی که هستید بیشتر آزاد است، این را انتخاب کنید. قوی‌ترین محرمانگی - پیکربندی شما از سرورهای شخص ثالث دور می‌ماند - اما مسدود کردنش برای سانسورکنندگان آسان‌تر است. |
+| `delivery.title` | Connection mode | ⚠️ **MISSING** |
+| `delivery.subtitle` | Pick what fits where you are. Saved on this device only - change it anytime. | ⚠️ **MISSING** |
+| `delivery.subtitleServer` | Switching moves your key to the matching servers. Your link stays the same. | ⚠️ **MISSING** |
+| `delivery.subtitleSignup` | Pick what fits where you are. Your first key uses it - change it anytime. | ⚠️ **MISSING** |
+| `delivery.freedomTitle` | Freedom Mode | ⚠️ **MISSING** |
+| `delivery.freedomAudience` | For places where sites or VPNs are blocked | ⚠️ **MISSING** |
+| `delivery.freedomBody` | Built to keep working under censorship, with backup links that are harder to block. | ⚠️ **MISSING** |
+| `delivery.freedomWsTitle` | WebSocket | ⚠️ **MISSING** |
+| `delivery.freedomWsBody` | The standard option - an auto-updating link that works in every app. | ⚠️ **MISSING** |
+| `delivery.freedomRealityTitle` | REALITY | ⚠️ **MISSING** |
+| `delivery.freedomRealityBody` | For the heaviest censorship, when WebSocket won't connect. Harder to block, but you copy the configuration in by hand. | ⚠️ **MISSING** |
+| `delivery.privacyTitle` | Privacy Mode | ⚠️ **MISSING** |
+| `delivery.privacyAudience` | For open internet - a traditional VPN | ⚠️ **MISSING** |
+| `delivery.privacyBody` | Your traffic mixes with everyone else's on a shared address, and your configuration stays off third-party servers. Not built for censored networks. | ⚠️ **MISSING** |
+| `delivery.privacyRealityTitle` | REALITY | ⚠️ **MISSING** |
+| `delivery.privacyRealityBody` | A direct connection with no CDN in the path. | ⚠️ **MISSING** |
+| `delivery.transportLabel` | Connection method | ⚠️ **MISSING** |
 | `delivery.recommended` | Recommended | پیشنهادی |
 | `delivery.unavailable` | Not available yet | هنوز موجود نیست |
+| `delivery.currentUnavailable` | Currently unavailable | ⚠️ **MISSING** |
 | `delivery.confirmTitle` | Switch to "{label}"? | به " {label} "تغییر دهید؟ |
-| `delivery.confirmBody` | This moves your existing key to the {label} servers, keeping the same subscription URL. Your apps keep working and pick up the new servers on their next refresh. | این کلید پروکسی شما را برای سرورهای {label} دوباره صادر می‌کند. کلید فعلی شما به مدت ۲۴ ساعت کار می‌کند، بنابراین می‌توانید ابتدا در هر دستگاه دوباره وارد کنید. |
-| `delivery.confirmPoint1` | Your key moves to the {label} servers - same subscription URL, nothing to re-import | یک URL اشتراک جدید برای سرورهای {label} صادر می‌شود. |
+| `delivery.confirmBody` | This moves your existing key to the {label} servers, keeping the same subscription URL. Your apps keep working and pick up the new servers on their next refresh. | ⚠️ **MISSING** |
+| `delivery.confirmPoint1` | Your key moves to the {label} servers - same subscription URL, nothing to re-import | ⚠️ **MISSING** |
 | `delivery.confirmPoint2` | Takes effect within a minute - reconnect in your app if it doesn't refresh on its own | کلید فعلی شما به مدت ۲۴ ساعت کار می‌کند، سپس حذف می‌شود |
 | `delivery.confirmPoint3` | Using the raw config? Copy the new one after switching | شما باید URL جدید را در هر کلاینت VPN که استفاده می‌کنید، دوباره وارد کنید. |
 | `delivery.confirmPointDevices [countPlural=one]` | Your 1 connected device will reconnect to the new servers | شما در حال حاضر یک دستگاه متصل دارید؛ دوباره آن را وارد کنید |
 | `delivery.confirmPointDevices [countPlural=other]` | Your {count} connected devices will reconnect to the new servers | شما در حال حاضر {count} دستگاه متصل دارید؛ همه آنها را دوباره وارد کنید |
-| `delivery.confirm` | Switch focus | تغییر فوکوس |
+| `delivery.confirm` | Switch mode | ⚠️ **MISSING** |
 | `delivery.working` | Switching… | سوئیچینگ… |
 | `delivery.switchSuccessTitle` | Switched to "{label}" | به " {label} " تغییر یافت. |
-| `delivery.switchSuccessBodyGrace` | Re-import the new subscription URL on each device. Your old key works for 24 more hours. | آدرس اینترنتی اشتراک جدید را در هر دستگاه دوباره وارد کنید. کلید قدیمی شما 24 ساعت دیگر کار می‌کند. |
 | `delivery.switchSuccessBody` | Same subscription URL - your apps will pick up the new servers on their next refresh. | آدرس اینترنتی اشتراک جدید را در هر دستگاه دوباره وارد کنید. |
-| `delivery.switchFailedTitle` | Could not switch focus | نتوانستم فوکوس را تغییر دهم |
+| `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros.
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(1 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -811,15 +827,15 @@ review.
 | `home.globe.voices.uz.l2` | The world still heard what happened here. | جهان باز هم شنید که این‌جا چه گذشت. |
 | `home.globe.voices.uz.l3` | The squares are watched; the words still move. | میدان‌ها تحت نظرند؛ کلمات با این حال می‌گردند. |
 | `home.impact.title` | Donations at work | کمک‌های مالی در حال کار |
-| `home.impact.body` | Every donation made through FreeSocks raises the monthly bandwidth of every free account for that month. This is what donors have added so far - you could add to it too. | هر کمک مالی که از طریق فری‌ساکس انجام شود، پهنای باند ماهانهٔ هر حساب رایگان را برای همان ماه افزایش می‌دهد. این چیزی است که اهداکنندگان تا الان اضافه کرده‌اند - شما هم می‌توانید به آن اضافه کنید. |
+| `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | هر کمک مالی که از طریق فری‌ساکس انجام شود، پهنای باند ماهانهٔ هر حساب رایگان را برای همان ماه افزایش می‌دهد. این چیزی است که اهداکنندگان تا الان اضافه کرده‌اند - شما هم می‌توانید به آن اضافه کنید. |
 | `home.impact.cta` | Make a donation | کمک مالی کنید |
-| `home.impact.chartAria` | Bandwidth added to every free user by donations, month by month | پهنای باندی که کمک‌های مالی ماه‌به‌ماه به هر کاربر رایگان اضافه می‌کند |
+| `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
 | `home.hero.variants.freedom` | A VPN for Internet Freedom | یک VPN برای آزادی اینترنت |
 | `home.hero.variants.dissidents` | A VPN for dissidents | یک VPN برای مخالفان |
 | `home.hero.variants.privacy` | A VPN for privacy | یک VPN برای حریم خصوصی |
 | `home.hero.variants.world` | A VPN for the world | یک VPN برای جهان |
 | `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | فری‌ساکس برای کسانی ساخته شده که اینترنتشان سانسور می‌شود، و در هر جای دیگر هم به‌عنوان یک VPN محترم به حریم خصوصی کار می‌کند. ثبت‌نام فقط یک بررسی سریع انسانی می‌خواهد. ما هرگز ایمیل یا رمز عبور نمی‌خواهیم. لینک اشتراک شما در بیشتر برنامه‌های مدرن VPN کار می‌کند، و یک عضویت به شما {limits} می‌دهد. |
-| `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, that same month. | کمک‌هایی که از طریق فری‌ساکس انجام می‌شود مستقیماً کاربران رایگان را تقویت می‌کند: هر کمک، همان ماه برای مردم در کشورهای سانسورشده پهنای باند واقعی می‌خرد. |
+| `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, right away. | کمک‌هایی که از طریق فری‌ساکس انجام می‌شود مستقیماً کاربران رایگان را تقویت می‌کند: هر کمک، همان ماه برای مردم در کشورهای سانسورشده پهنای باند واقعی می‌خرد. |
 | `home.hero.impactLink` | See the impact | اثرش را ببینید |
 | `home.cta.getMembership` | Get a membership | عضویت بگیرید |
 | `home.freeCard.title` | Free tier | سطح رایگان |
@@ -876,7 +892,7 @@ review.
 | `home.limits.upToDevices [countPlural=one]` | up to 1 device | تا ۱ دستگاه |
 | `home.limits.upToDevices [countPlural=other]` | up to {count} devices | تا {count} دستگاه |
 
-## `e2ee` — The HPKE/E2EE "encrypted to this server" badge + verification panel.
+## `e2ee` — The HPKE/E2EE "encrypted to this server" badge + verification panel. *(1 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -909,6 +925,7 @@ review.
 | `e2ee.attestationEpoch` | Current key {kid}, expires {expiry}. | کلید فعلی {kid} , منقضی می‌شود {expiry} . |
 | `e2ee.attestationFail` | Could not verify the server's current key - a network problem, or a CDN tampering with the key endpoint. Verify out-of-band before continuing. | کلید فعلی سرور تأیید نشد - مشکل شبکه یا دستکاری CDN در نقطه پایانی کلید. قبل از ادامه، خارج از باند تأیید کنید. |
 | `e2ee.attestationUnreachable` | The live key check is temporarily unavailable. Your connection still uses the verified key built into the app. | بررسی کلید زنده موقتاً در دسترس نیست. اتصال شما هنوز از کلید تأیید شده‌ی داخلی برنامه استفاده می‌کند. |
+| `e2ee.attestationStale` | The server isn't publishing a current rotating key right now, so your connection is using the verified key built into the app. Nothing here suggests tampering. | ⚠️ **MISSING** |
 | `e2ee.attestationUnconfigured` | Live key checking isn't set up on this build. | بررسی کلید زنده در این نسخه راه‌اندازی نشده است. |
 | `e2ee.compareHeading` | How to verify | نحوه تأیید |
 | `e2ee.compareBody` | Compare the fingerprints above against the values published through a channel this server doesn't control. They must match. | اثر انگشت‌های بالا را با مقادیر منتشر شده از طریق کانالی که این سرور کنترل نمی‌کند مقایسه کنید. آنها باید مطابقت داشته باشند. |
@@ -966,3 +983,24 @@ review.
 | `status.incidentsGlobal` | All locations | همهٔ مکان‌ها |
 | `status.incidentsPast` | Past incidents | حوادث گذشته |
 | `status.report` | Report a problem | گزارش مشکل |
+
+## `switchServer` — Miscellaneous strings. *(16 missing)*
+
+| Key | English | Persian (فارسی) |
+| --- | --- | --- |
+| `switchServer.action` | Switch server | ⚠️ **MISSING** |
+| `switchServer.title` | Move to a different server? | ⚠️ **MISSING** |
+| `switchServer.body` | We will move your key to another server. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.bodyWithServer` | We will move your key off {server} to another server. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.reasonLegend` | What's wrong with your current server? | ⚠️ **MISSING** |
+| `switchServer.reasonSlow` | It's slow | ⚠️ **MISSING** |
+| `switchServer.reasonBlocked` | It's blocked where I am | ⚠️ **MISSING** |
+| `switchServer.reasonDisconnects` | It keeps disconnecting | ⚠️ **MISSING** |
+| `switchServer.reasonOther` | Something else | ⚠️ **MISSING** |
+| `switchServer.point1` | Your apps pick up the new server on their next refresh | ⚠️ **MISSING** |
+| `switchServer.point2` | Your account and the data you have left are unchanged | ⚠️ **MISSING** |
+| `switchServer.point3` | If your key has to move to another location, your devices reconnect and register again | ⚠️ **MISSING** |
+| `switchServer.confirm` | Move my key | ⚠️ **MISSING** |
+| `switchServer.working` | Moving… | ⚠️ **MISSING** |
+| `switchServer.done` | Your key has moved to a different server. | ⚠️ **MISSING** |
+| `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |

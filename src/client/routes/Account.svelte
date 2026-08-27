@@ -5,6 +5,7 @@
   import { Button } from '@client/components/ui/button';
   import { Skeleton } from '@client/components/ui/skeleton';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
+  import UsagePanel from '../components/UsagePanel.svelte';
   import SectionHead from '../components/SectionHead.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
@@ -890,19 +891,6 @@
             </button>
           {/if}
 
-          <!-- Delivery focus: a rawConfig mode promotes the raw E2EE config + warns the
-           subscription link is fetched through a CDN; url modes keep the link as the star. -->
-          <ConnectionModeSwitcher
-            modes={memberModes}
-            families={connectionModeFamilies}
-            currentMode={data.user.currentMode ?? null}
-            selected={effectiveModeId}
-            suggested={data.suggestedModeId ?? null}
-            serverBacked={profileServerBacked}
-            deviceCount={data.subscription?.devices.length ?? 0}
-            disabled={actionsDisabled}
-          />
-
           {#if data.subscription}
             {@const subUrl = subscriptionDisplayUrl(
               data.subscription.subToken,
@@ -913,19 +901,10 @@
               accessKeyOnly={backendEntry(config.data?.backends, data.subscription.backend)
                 ?.capabilities.accessKeyOnly}
               subscriptionUrl={subUrl}
-              expiresAt={data.subscription.expiresAt}
-              freeTier={!(data.user.membership?.isCurrent ?? false)}
-              idleDays={config.data?.freeTierDays ?? 90}
-              trafficLimitBytes={data.subscription.trafficLimitBytes}
-              trafficUsedBytes={data.subscription.trafficUsedBytes}
               status={data.subscription.status}
-              resetStrategy={data.subscription.resetStrategy}
-              lastResetAt={data.subscription.lastResetAt}
               tierName={data.user.tier.name}
               backend={data.subscription.backend}
               hideUrl={rawConfigFirst}
-              usagePoints={usage.data?.usage?.points}
-              usageTotal={usage.data?.usage?.total}
               nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
               nodeLocationLabel={nodeStatus.data?.node?.location?.label ??
                 data.subscription.location?.label ??
@@ -981,6 +960,21 @@
                 </div>
               {/snippet}
             </SubscriptionHero>
+
+            <!-- Usage & validity: its own card (extracted from the pass so the
+                 pass carries only the key itself). -->
+            <UsagePanel
+              trafficLimitBytes={data.subscription.trafficLimitBytes}
+              trafficUsedBytes={data.subscription.trafficUsedBytes}
+              expiresAt={data.subscription.expiresAt}
+              freeTier={!(data.user.membership?.isCurrent ?? false)}
+              idleDays={config.data?.freeTierDays ?? 90}
+              resetStrategy={data.subscription.resetStrategy}
+              lastResetAt={data.subscription.lastResetAt}
+              usagePoints={usage.data?.usage?.points}
+              usageTotal={usage.data?.usage?.total}
+            />
+
             {#if rawConfigFirst}
               <!-- rawConfig mode: the raw config IS the deliverable (the CDN-fetched link
                is hidden above). No public mirrors - they'd expose the config to third parties. -->
@@ -1008,6 +1002,23 @@
               />
               <RawConfig />
             {/if}
+
+            <!-- Connection mode: below the pass + setup (the key is the star;
+                 switching modes is an occasional preference). A rawConfig mode
+                 promotes the raw E2EE config above; url modes keep the link
+                 as the star. -->
+            <div class="border-t border-border pt-6">
+              <ConnectionModeSwitcher
+                modes={memberModes}
+                families={connectionModeFamilies}
+                currentMode={data.user.currentMode ?? null}
+                selected={effectiveModeId}
+                suggested={data.suggestedModeId ?? null}
+                serverBacked={profileServerBacked}
+                deviceCount={data.subscription.devices.length}
+                disabled={actionsDisabled}
+              />
+            </div>
 
             {#if deviceLimitsShown(config.data) && data.subscription.devices.length > 0}
               <div class="space-y-3 border-t border-border pt-6">
@@ -1063,6 +1074,18 @@
               </div>
             {/if}
           {:else}
+            <!-- No key yet: the mode pick shapes the FIRST key, so the picker
+                 stays above the create button here. -->
+            <ConnectionModeSwitcher
+              modes={memberModes}
+              families={connectionModeFamilies}
+              currentMode={data.user.currentMode ?? null}
+              selected={effectiveModeId}
+              suggested={data.suggestedModeId ?? null}
+              serverBacked={profileServerBacked}
+              deviceCount={0}
+              disabled={actionsDisabled}
+            />
             <!-- Empty state when the user has no key yet (the dither disc is
                  the brand-art variant of the empty state). -->
             <EmptyState dither title={t('account.noSubTitle')} body={t('account.noSubBody')}>

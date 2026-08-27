@@ -35,6 +35,10 @@
     color?: string;
     /** Explicit scale ceiling; defaults to max(values, 1). */
     max?: number;
+    /** Event marks: a subtle vertical rule over the chart at `frac` ∈ (0,1) of
+     *  its width with a date-ish label beneath (e.g. the day a donation
+     *  landed). Physical (LTR) coordinates, matching the canvas time axis. */
+    marks?: { frac: number; label: string }[];
     ariaLabel: string;
     class?: string;
   }
@@ -47,6 +51,7 @@
     height = 96,
     color = '#e3b34d',
     max,
+    marks = [],
     ariaLabel,
     class: klass = '',
   }: Props = $props();
@@ -168,15 +173,48 @@
 
 {#if values.length > 0}
   <div class={klass}>
-    <canvas
-      bind:this={canvas}
-      class="block w-full rounded-md"
-      style="height: {height}px; image-rendering: pixelated;"
-      role="img"
-      aria-label={ariaLabel}
-    ></canvas>
+    <!-- dir="ltr" pins the mark overlay to the canvas' physical time axis
+         (left→right) — the canvas itself never flips in RTL locales. -->
+    <div class="relative" dir="ltr">
+      <canvas
+        bind:this={canvas}
+        class="block w-full rounded-md"
+        style="height: {height}px; image-rendering: pixelated;"
+        role="img"
+        aria-label={ariaLabel}
+      ></canvas>
+      {#each marks as m (m.frac)}
+        <span
+          class="pointer-events-none absolute bottom-0 top-0 w-px bg-foreground/25"
+          style="left: {m.frac * 100}%"
+          aria-hidden="true"
+        ></span>
+      {/each}
+    </div>
+    {#if marks.length > 0}
+      <!-- Mark labels on their own positioned row; the endcaps below keep the
+           month bounds legible even when marks sit near an edge. -->
+      <div
+        dir="ltr"
+        class="relative mt-0.5 h-3.5 text-[10px] text-muted-foreground"
+        aria-hidden="true"
+      >
+        {#each marks as m (m.frac)}
+          <span
+            class="absolute -translate-x-1/2 whitespace-nowrap font-medium text-foreground/80"
+            style="left: {Math.min(0.94, Math.max(0.06, m.frac)) * 100}%"
+          >
+            {m.label}
+          </span>
+        {/each}
+      </div>
+    {/if}
     {#if labels.length > 1}
-      <div class="mt-1 flex justify-between text-[10px] text-muted-foreground" aria-hidden="true">
+      <div
+        dir="ltr"
+        class="mt-1 flex justify-between text-[10px] text-muted-foreground"
+        aria-hidden="true"
+      >
         <span>{labels[0]}</span>
         <span>{labels[labels.length - 1]}</span>
       </div>

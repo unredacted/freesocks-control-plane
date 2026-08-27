@@ -200,6 +200,14 @@ export const PublicConfig = z.object({
          *  UTC day, 1st → last day; days after today repeat today's total). GB
          *  only. Defaulted for deploy skew (older backends omit it). */
         currentMonthDaily: z.array(z.number()).optional().default([]),
+        /** Gifts still funding the pool: UTC day ('YYYY-MM-DD'), GB added, and
+         *  the epoch-ms instant each stops funding it — powers the graph's
+         *  donation dates + the "lasts until" rows. GB only; defaulted for
+         *  deploy skew. */
+        recentGifts: z
+          .array(z.object({ day: z.string(), gb: z.number(), expiresAt: z.number() }))
+          .optional()
+          .default([]),
       })
       .default({
         enabled: false,
@@ -211,6 +219,7 @@ export const PublicConfig = z.object({
         freeUsersHelped: 0,
         history: [],
         currentMonthDaily: [],
+        recentGifts: [],
       }),
   }),
   /** Whether the opt-in "trouble connecting? try a mirror" affordance is available

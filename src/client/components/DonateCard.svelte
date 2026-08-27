@@ -43,6 +43,9 @@
 
   let minCents = $derived(donation?.minAmountCents ?? 0);
   let belowMin = $derived(cents < minCents);
+  // How long one gift funds the shared free-user pool (operator-tunable), so
+  // the ask states exactly what a donation buys and for how long.
+  let windowDays = $derived(donation?.bonusWindowDays ?? 30);
 
   // Accordion open state - collapsed by default so the ask stays condensed.
   let open = $state(false);
@@ -136,7 +139,9 @@
             <div class="font-display text-base font-semibold">
               {t('donate.standaloneTitle')}
             </div>
-            <div class="text-sm text-muted-foreground">{t('donate.standaloneSubtitle')}</div>
+            <div class="text-sm text-muted-foreground">
+              {t('donate.standaloneSubtitle', { days: windowDays })}
+            </div>
           </div>
           <ChevronDown
             class="size-5 shrink-0 text-muted-foreground transition-transform {open
@@ -161,7 +166,9 @@
           <Heart class="size-4 shrink-0 text-amber-500" aria-hidden="true" />
           {t('donate.standaloneTitle')}
         </h2>
-        <p class="text-sm text-muted-foreground">{t('donate.standaloneSubtitle')}</p>
+        <p class="text-sm text-muted-foreground">
+          {t('donate.standaloneSubtitle', { days: windowDays })}
+        </p>
       </div>
       {@render formBody()}
     </section>
