@@ -79,16 +79,20 @@
 
   // Grabbable globe: a horizontal drag spins it by hand (vertical stays with
   // the page scroll - touch-action: pan-y). The auto-rotation pauses while
-  // held and resumes from wherever the visitor left it; with reduced motion
-  // there is no rAF loop, so the drag renders each move directly.
+  // held; a release hands the flick's velocity to the rotation loop, which
+  // glides back down to the base spin from wherever the visitor left it. With
+  // reduced motion there is no rAF loop, so the drag renders each move
+  // directly (and there is no momentum - motion the visitor didn't make).
   let globe: { update: (s: Record<string, unknown>) => void; destroy: () => void } | undefined;
   let phi = 2.35; // start facing the censored bloc (Europe→Asia)
   let dragging = $state(false);
   let dragX = 0;
+  let momentum = 0;
   function onPointerDown(e: PointerEvent) {
     if (!globe) return;
     dragging = true;
     dragX = e.clientX;
+    momentum = 0;
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -98,10 +102,19 @@
   }
   function onPointerMove(e: PointerEvent) {
     if (!dragging || !globe) return;
+    // A move with no button held means the release happened where we couldn't
+    // see it (capture refused, browser quirk) - never spin an unpressed hover.
+    if (e.buttons === 0) {
+      endDrag();
+      return;
+    }
     const dx = e.clientX - dragX;
     dragX = e.clientX;
-    phi += dx / 160;
+    const dphi = dx / 160;
+    phi += dphi;
+    momentum = Math.max(-0.08, Math.min(0.08, dphi));
     if (reducedMotion) {
+      momentum = 0;
       globe.update({ phi });
       layoutPass();
     }
@@ -304,10 +317,15 @@
           // Time-based (NOT per-frame): a 120Hz display must not spin the globe
           // twice as fast as a 60Hz one. dt is capped so a backgrounded tab
           // doesn't jump. ~97s per revolution at every refresh rate. A held
-          // pointer parks the auto-advance; the drag handler moves phi itself.
+          // pointer parks the auto-advance (the drag handler moves phi itself);
+          // after release the flick's momentum decays back into the base spin.
           const dt = Math.min(100, now - last);
           last = now;
-          if (!dragging) phi += 0.0018 * (dt / 16.667);
+          const dtn = dt / 16.667;
+          if (!dragging) {
+            momentum *= Math.exp(-0.035 * dtn);
+            phi += (0.0018 + momentum) * dtn;
+          }
           globe?.update({ phi });
           // Collision-check against the freshly-moved anchors: a label drops
           // the frame it would start overlapping, not up to 600ms later.
@@ -339,6 +357,7 @@
     onpointermove={onPointerMove}
     onpointerup={endDrag}
     onpointercancel={endDrag}
+    onlostpointercapture={endDrag}
   ></canvas>
 
   <!-- Voice labels, pinned to their markers (left/top set by layoutPass).

@@ -4,20 +4,21 @@
 
   /**
    * The account page's location globe: every FreeSocks location with map
-   * coordinates as a dot, the member's own key as a larger bright marker, and
-   * the globe turned so that marker faces the camera. When the key moves (a
-   * server/location switch, a regenerate to another node) the globe eases its
-   * rotation over to the new point - the visible payoff of the switch.
+   * coordinates as a dot, the member's own key as a larger bright marker. It
+   * arrives facing the key's location, then keeps a slow steady spin; when the
+   * key moves (a server/location switch, a regenerate to another node) it
+   * eases its rotation over to the new point - the visible payoff of the
+   * switch - and resumes spinning from there.
    *
-   * Shares the dynamically-imported `cobe` chunk with the Home globe. Unlike
-   * that one this globe does NOT spin: it renders once facing the key and only
-   * animates while traveling to a new focus (reduced motion jumps instead), so
-   * an open account tab costs nothing.
+   * Shares the dynamically-imported `cobe` chunk with the Home globe. One rAF
+   * loop drives everything (spin, the travel ease, drag momentum); browsers
+   * park rAF in hidden tabs, so a background account tab costs nothing.
+   * Reduced motion: no loop at all - a static globe facing the key, updated
+   * only by an explicit drag or a location change (which jumps).
    *
-   * The globe is grabbable: a horizontal drag spins it freely (vertical stays
-   * with the page scroll - touch-action: pan-y), and a few seconds after the
-   * member lets go it drifts back home to the key's location. Reduced motion
-   * skips the automatic return; the caption still names the location.
+   * The globe is grabbable: a horizontal drag spins it by hand (vertical
+   * stays with the page scroll - touch-action: pan-y) and a release hands the
+   * flick's velocity to the loop, which glides it back down to the base spin.
    */
   interface MapLocation {
     code: string;
@@ -33,7 +34,7 @@
     currentLabel: string | null;
     size?: number;
   }
-  let { locations, currentCode, currentLabel, size = 230 }: Props = $props();
+  let { locations, currentCode, currentLabel, size = 240 }: Props = $props();
 
   const dotted = $derived(locations.filter((l) => l.coords != null));
   // Focus = the key's location when it has coordinates; otherwise the first
@@ -42,11 +43,14 @@
   const focus = $derived(dotted.find((l) => l.code === currentCode) ?? dotted[0] ?? null);
   const highlighted = $derived(focus != null && focus.code === currentCode);
 
-  // cobe's own example formula: the (phi, theta) that puts a lat/lng at the
-  // center of the visible face.
+  // cobe's own example formula for the phi that centers a longitude; theta is
+  // SOFTENED (over half the latitude, capped) rather than matched exactly - a
+  // full-latitude tilt for a northern city pitched the whole globe over and
+  // read as off-center. The marker lands slightly above center instead, and
+  // the sphere keeps a level, centered look while it spins.
   const anglesFor = (lat: number, lng: number): [number, number] => [
     Math.PI - ((lng * Math.PI) / 180 - Math.PI / 2),
-    (lat * Math.PI) / 180,
+    Math.max(-0.5, Math.min(0.5, (lat * Math.PI) / 180 / 2)),
   ];
 
   // Marker palette (0..1 RGB triples, resolved from the theme at mount when
@@ -79,18 +83,54 @@
   let theta = 0.3;
   let raf = 0;
 
-  // Pointer spin. While a drag is live every travel animation stands down;
-  // on release a timer eases the globe back home to the key.
+  // One loop, three regimes: a live drag renders from the pointer handler,
+  // a travel target eases toward a location, otherwise the base spin plus
+  // whatever momentum the last flick left behind (decaying toward zero).
+  const BASE_SPIN = 0.0015; // rad per 60Hz-normalized frame (~70s/revolution)
+  let travel: [number, number] | null = null;
+  let momentum = 0;
   let dragging = $state(false);
   let dragX = 0;
-  let returnTimer = 0;
+
+  function startLoop() {
+    if (reducedMotion) return;
+    cancelAnimationFrame(raf);
+    let last = performance.now();
+    const step = (now: number) => {
+      if (!globe) return;
+      // Time-based, like the Home globe: identical speed at 60Hz and 120Hz.
+      const dtn = Math.min(100, now - last) / 16.667;
+      last = now;
+      if (!dragging) {
+        if (travel) {
+          // Shortest way around for phi (never the long way past the antimeridian).
+          const dp =
+            ((((travel[0] - phi) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+          const dt = travel[1] - theta;
+          if (Math.abs(dp) < 0.002 && Math.abs(dt) < 0.002) {
+            [phi, theta] = travel;
+            travel = null;
+          } else {
+            phi += dp * 0.07 * dtn;
+            theta += dt * 0.07 * dtn;
+          }
+        } else {
+          momentum *= Math.exp(-0.035 * dtn);
+          phi += (BASE_SPIN + momentum) * dtn;
+        }
+        globe.update({ phi, theta });
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+  }
 
   function onPointerDown(e: PointerEvent) {
     if (!globe) return;
     dragging = true;
     dragX = e.clientX;
-    cancelAnimationFrame(raf);
-    window.clearTimeout(returnTimer);
+    momentum = 0;
+    travel = null; // the hand wins over an in-flight travel
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -100,59 +140,51 @@
   }
   function onPointerMove(e: PointerEvent) {
     if (!dragging || !globe) return;
+    // A move with no button held means the release happened where we couldn't
+    // see it (capture refused, browser quirk) - never spin an unpressed hover.
+    if (e.buttons === 0) {
+      endDrag();
+      return;
+    }
     const dx = e.clientX - dragX;
     dragX = e.clientX;
-    phi += dx / 110;
+    const dphi = dx / 110;
+    phi += dphi;
+    // The flick's velocity (clamped) carries past the release and glides back
+    // down to the base spin.
+    momentum = Math.max(-0.08, Math.min(0.08, dphi));
     globe.update({ phi, theta });
   }
   function endDrag() {
-    if (!dragging) return;
     dragging = false;
-    const f = focus;
-    if (reducedMotion || !f?.coords) return;
-    const [tp, tt] = anglesFor(f.coords.lat, f.coords.lng);
-    returnTimer = window.setTimeout(() => animateTo(tp, tt), 3000);
   }
 
-  function animateTo(tp: number, tt: number) {
-    cancelAnimationFrame(raf);
-    if (!globe || dragging) return;
+  function faceLocation(lat: number, lng: number) {
+    const target = anglesFor(lat, lng);
     if (reducedMotion) {
-      phi = tp;
-      theta = tt;
-      globe.update({ phi, theta });
+      [phi, theta] = target;
+      globe?.update({ phi, theta });
       return;
     }
-    const step = () => {
-      if (!globe) return;
-      // Shortest way around for phi (never the long way past the antimeridian).
-      const dp = ((((tp - phi) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
-      const dt = tt - theta;
-      if (Math.abs(dp) < 0.002 && Math.abs(dt) < 0.002) {
-        phi = tp;
-        theta = tt;
-        globe.update({ phi, theta });
-        return; // settled - no idle frames
-      }
-      phi += dp * 0.07;
-      theta += dt * 0.07;
-      globe.update({ phi, theta });
-      raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
+    momentum = 0;
+    travel = target;
   }
 
-  // React to the key moving (or the catalog changing): repaint the markers and
-  // travel to the new focus. First run happens before the globe exists and is
-  // a no-op; the creation path below applies the same state itself.
+  // React to the key moving (or the catalog changing): repaint the markers on
+  // every run, but only travel when the focus CODE actually changed - the
+  // config query refetches periodically and hands us fresh objects for the
+  // same location, and re-centering on each of those would yank the spin.
+  // First run happens before the globe exists and is a no-op; the creation
+  // path below applies the same state itself.
+  let lastFocusCode: string | null = null;
   $effect(() => {
     const f = focus;
     const markers = buildMarkers(highlighted ? f!.code : null);
     if (!globe) return;
     globe.update({ markers });
-    if (f?.coords) {
-      const [tp, tt] = anglesFor(f.coords.lat, f.coords.lng);
-      animateTo(tp, tt);
+    if (f?.coords && f.code !== lastFocusCode) {
+      lastFocusCode = f.code;
+      faceLocation(f.coords.lat, f.coords.lng);
     }
   });
 
@@ -183,14 +215,14 @@
     let introPhi = 0;
     let introTheta = 0.3;
     if (focus?.coords) {
+      lastFocusCode = focus.code;
       [introPhi, introTheta] = anglesFor(focus.coords.lat, focus.coords.lng);
     }
     // Arrive at the key's location instead of starting on it: a short eased
-    // approach from just west. Beyond the welcome, this also repaints past the
-    // async map-texture load (this globe is otherwise static, and a single
-    // creation-time render happens before the texture is ready).
+    // approach from just west, after which the loop settles into the base spin.
     phi = reducedMotion ? introPhi : introPhi - 0.55;
     theta = introTheta;
+    if (!reducedMotion) travel = [introPhi, introTheta];
     let destroyed = false;
     const timers: number[] = [];
     void import('cobe').then(({ default: createGlobe }) => {
@@ -211,21 +243,22 @@
         markers: buildMarkers(highlighted ? focus!.code : null),
         scale: 1.02,
       });
-      if (!reducedMotion) animateTo(introPhi, introTheta);
-      // Belt-and-braces repaints in case the texture beats/loses every other
-      // render (reduced motion has no animation frames at all).
-      for (const delay of [150, 600]) {
-        timers.push(
-          window.setTimeout(() => {
-            globe?.update({ phi, theta });
-          }, delay),
-        );
+      startLoop();
+      // Reduced motion has no loop, so its single creation-time render can
+      // beat the async map-texture load - schedule two static repaints.
+      if (reducedMotion) {
+        for (const delay of [150, 600]) {
+          timers.push(
+            window.setTimeout(() => {
+              globe?.update({ phi, theta });
+            }, delay),
+          );
+        }
       }
     });
     return () => {
       destroyed = true;
       cancelAnimationFrame(raf);
-      window.clearTimeout(returnTimer);
       for (const id of timers) window.clearTimeout(id);
       globe?.destroy();
       globe = null;
@@ -246,6 +279,7 @@
       onpointermove={onPointerMove}
       onpointerup={endDrag}
       onpointercancel={endDrag}
+      onlostpointercapture={endDrag}
     ></canvas>
   </div>
   <div class="space-y-0.5 text-center">
