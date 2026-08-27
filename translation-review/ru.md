@@ -1,7 +1,7 @@
 # FreeSocks translation review — Russian (Русский)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ru.json`.
-**88 of 821 strings are missing** (the app currently shows English for
+**92 of 823 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -92,7 +92,7 @@ review.
 | `common.deviceCount [countPlural=one]` | 1 device | 1 устройство |
 | `common.deviceCount [countPlural=other]` | {count} devices | {count} устройств |
 
-## `nav` — The site header: navigation buttons, menu, language/theme controls.
+## `nav` — The site header: navigation buttons, menu, language/theme controls. *(2 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -102,6 +102,8 @@ review.
 | `nav.menu` | Menu | Меню |
 | `nav.theme` | Theme | Тема |
 | `nav.home` | FreeSocks home | Главная FreeSocks |
+| `nav.source` | Source | ⚠️ **MISSING** |
+| `nav.sourceTitle` | FreeSocks is open source. Read the code for yourself. | ⚠️ **MISSING** |
 
 ## `captcha` — The proof-of-work human check widget states.
 
@@ -751,7 +753,7 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(1 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(3 missing)*
 
 | Key | English | Russian (Русский) |
 | --- | --- | --- |
@@ -848,11 +850,11 @@ review.
 | `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | Каждое пожертвование через FreeSocks увеличивает месячный трафик каждого бесплатного аккаунта в том месяце. Вот что уже добавили доноры - и вы тоже можете внести вклад. |
 | `home.impact.cta` | Make a donation | Сделать пожертвование |
 | `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
-| `home.hero.variants.freedom` | A VPN for Internet Freedom | VPN для свободного интернета |
+| `home.hero.variants.freedom` | A VPN for Freedom | ⚠️ **MISSING** |
 | `home.hero.variants.dissidents` | A VPN for dissidents | VPN для инакомыслящих |
 | `home.hero.variants.privacy` | A VPN for privacy | VPN для приватности |
 | `home.hero.variants.world` | A VPN for the world | VPN для всего мира |
-| `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | FreeSocks создан для людей, чей интернет подвергается цензуре, а в остальных местах работает как VPN, уважающий приватность. Регистрация - одна быстрая проверка на человека. Мы никогда не просим почту или пароль. Ваша ссылка подписки работает в большинстве современных VPN-приложений, а членство даёт вам {limits}. |
+| `home.hero.subtitle` | FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}. | ⚠️ **MISSING** |
 | `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, right away. | Пожертвования через FreeSocks напрямую поддерживают бесплатных пользователей: каждое пожертвование покупает реальный трафик для людей в странах с цензурой уже в том же месяце. |
 | `home.hero.impactLink` | See the impact | Посмотреть вклад |
 | `home.cta.getMembership` | Get a membership | Оформите членство |

@@ -4,6 +4,7 @@
   import ThemeToggle from './ThemeToggle.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
   import E2eeBadge from './E2eeBadge.svelte';
+  import SourceBadge from './SourceBadge.svelte';
   import { Button } from '@client/components/ui/button';
   import { meQuery } from '../lib/queries';
   import { t } from '../lib/i18n/index.svelte';
@@ -51,6 +52,7 @@
     <!-- Desktop: the inline nav, unchanged. -->
     <nav class="hidden sm:flex items-center gap-2">
       <E2eeBadge />
+      <SourceBadge />
       {#if me.isPending}
         <!-- Neutral placeholder while the auth check resolves: rendering the
              signed-out CTAs here flashed "Sign in" at authenticated users on
@@ -84,9 +86,10 @@
       <ThemeToggle />
     </nav>
 
-    <!-- Mobile: keep the E2EE badge visible; the rest folds into the panel. -->
+    <!-- Mobile: keep the E2EE + Source badges visible; the rest folds into the panel. -->
     <div class="flex sm:hidden items-center gap-2">
       <E2eeBadge />
+      <SourceBadge />
       <Button
         variant="outline"
         size="sm"

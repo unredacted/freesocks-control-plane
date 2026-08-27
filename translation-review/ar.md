@@ -1,7 +1,7 @@
 # FreeSocks translation review — Arabic (العربية)
 
 Generated from `messages/en.json` (source of truth) vs `messages/ar.json`.
-**88 of 821 strings are missing** (the app currently shows English for
+**92 of 823 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -93,7 +93,7 @@ review.
 | `common.deviceCount [countPlural=one]` | 1 device | جهاز واحد |
 | `common.deviceCount [countPlural=other]` | {count} devices | {count} أجهزة |
 
-## `nav` — The site header: navigation buttons, menu, language/theme controls.
+## `nav` — The site header: navigation buttons, menu, language/theme controls. *(2 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -103,6 +103,8 @@ review.
 | `nav.menu` | Menu | القائمة |
 | `nav.theme` | Theme | المظهر |
 | `nav.home` | FreeSocks home | الصفحة الرئيسية لـ FreeSocks |
+| `nav.source` | Source | ⚠️ **MISSING** |
+| `nav.sourceTitle` | FreeSocks is open source. Read the code for yourself. | ⚠️ **MISSING** |
 
 ## `captcha` — The proof-of-work human check widget states.
 
@@ -752,7 +754,7 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(1 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(3 missing)*
 
 | Key | English | Arabic (العربية) |
 | --- | --- | --- |
@@ -849,11 +851,11 @@ review.
 | `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | كل تبرع عبر FreeSocks يرفع النطاق الترددي الشهري لكل حساب مجاني في ذلك الشهر. هذا ما أضافه المتبرعون حتى الآن - ويمكنك الإضافة إليه أيضًا. |
 | `home.impact.cta` | Make a donation | قدّم تبرعًا |
 | `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
-| `home.hero.variants.freedom` | A VPN for Internet Freedom | شبكة VPN من أجل حرية الإنترنت |
+| `home.hero.variants.freedom` | A VPN for Freedom | ⚠️ **MISSING** |
 | `home.hero.variants.dissidents` | A VPN for dissidents | شبكة VPN للمعارضين |
 | `home.hero.variants.privacy` | A VPN for privacy | شبكة VPN للخصوصية |
 | `home.hero.variants.world` | A VPN for the world | شبكة VPN للعالم |
-| `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | صُمّم FreeSocks للأشخاص الذين يخضع إنترنتهم للرقابة، ويعمل كشبكة VPN تحترم الخصوصية في أي مكان آخر. إنشاء الحساب يتطلب تحققًا بشريًا سريعًا واحدًا. لا نطلب أبدًا بريدًا إلكترونيًا أو كلمة مرور. يعمل رابط اشتراكك في معظم تطبيقات VPN الحديثة، وتمنحك العضوية {limits}. |
+| `home.hero.subtitle` | FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}. | ⚠️ **MISSING** |
 | `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, right away. | التبرعات عبر FreeSocks تدعم المستخدمين المجانيين مباشرة: كل تبرع يشتري نطاقًا تردديًا حقيقيًا للناس في البلدان الخاضعة للرقابة، في الشهر نفسه. |
 | `home.hero.impactLink` | See the impact | اطّلع على الأثر |
 | `home.cta.getMembership` | Get a membership | احصل على عضوية |

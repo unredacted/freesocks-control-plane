@@ -864,12 +864,10 @@
     },
     "hero": {
       "variants": {
-        "freedom": "为互联网自由打造的 VPN",
         "dissidents": "为异见人士打造的 VPN",
         "privacy": "为隐私打造的 VPN",
         "world": "为世界打造的 VPN"
       },
-      "subtitle": "FreeSocks 为网络受审查的人们打造，在其他地方也是一款尊重隐私的 VPN。注册只需一次快速的真人验证。我们从不要求邮箱或密码。你的订阅链接适用于大多数现代 VPN 应用，会员可享{limits}。",
       "impactNote": "通过 FreeSocks 的捐款直接支持免费用户：每一笔捐款都会在当月为受审查国家的人们购买真实带宽。",
       "impactLink": "查看成效"
     },

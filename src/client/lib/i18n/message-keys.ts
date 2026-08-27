@@ -578,6 +578,8 @@ export type MessageKey =
   | "nav.home"
   | "nav.menu"
   | "nav.signIn"
+  | "nav.source"
+  | "nav.sourceTitle"
   | "nav.theme"
   | "passkey.add"
   | "passkey.addFailed"

@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**88 of 821 strings are missing** (the app currently shows English for
+**92 of 823 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -93,7 +93,7 @@ review.
 | `common.deviceCount [countPlural=one]` | 1 device | 1 دستگاه |
 | `common.deviceCount [countPlural=other]` | {count} devices | {count} دستگاه |
 
-## `nav` — The site header: navigation buttons, menu, language/theme controls.
+## `nav` — The site header: navigation buttons, menu, language/theme controls. *(2 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -103,6 +103,8 @@ review.
 | `nav.menu` | Menu | منو |
 | `nav.theme` | Theme | پوسته |
 | `nav.home` | FreeSocks home | خانهٔ فری‌ساکس |
+| `nav.source` | Source | ⚠️ **MISSING** |
+| `nav.sourceTitle` | FreeSocks is open source. Read the code for yourself. | ⚠️ **MISSING** |
 
 ## `captcha` — The proof-of-work human check widget states.
 
@@ -752,7 +754,7 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(1 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(3 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -849,11 +851,11 @@ review.
 | `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | هر کمک مالی که از طریق فری‌ساکس انجام شود، پهنای باند ماهانهٔ هر حساب رایگان را برای همان ماه افزایش می‌دهد. این چیزی است که اهداکنندگان تا الان اضافه کرده‌اند - شما هم می‌توانید به آن اضافه کنید. |
 | `home.impact.cta` | Make a donation | کمک مالی کنید |
 | `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
-| `home.hero.variants.freedom` | A VPN for Internet Freedom | یک VPN برای آزادی اینترنت |
+| `home.hero.variants.freedom` | A VPN for Freedom | ⚠️ **MISSING** |
 | `home.hero.variants.dissidents` | A VPN for dissidents | یک VPN برای مخالفان |
 | `home.hero.variants.privacy` | A VPN for privacy | یک VPN برای حریم خصوصی |
 | `home.hero.variants.world` | A VPN for the world | یک VPN برای جهان |
-| `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | فری‌ساکس برای کسانی ساخته شده که اینترنتشان سانسور می‌شود، و در هر جای دیگر هم به‌عنوان یک VPN محترم به حریم خصوصی کار می‌کند. ثبت‌نام فقط یک بررسی سریع انسانی می‌خواهد. ما هرگز ایمیل یا رمز عبور نمی‌خواهیم. لینک اشتراک شما در بیشتر برنامه‌های مدرن VPN کار می‌کند، و یک عضویت به شما {limits} می‌دهد. |
+| `home.hero.subtitle` | FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}. | ⚠️ **MISSING** |
 | `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, right away. | کمک‌هایی که از طریق فری‌ساکس انجام می‌شود مستقیماً کاربران رایگان را تقویت می‌کند: هر کمک، همان ماه برای مردم در کشورهای سانسورشده پهنای باند واقعی می‌خرد. |
 | `home.hero.impactLink` | See the impact | اثرش را ببینید |
 | `home.cta.getMembership` | Get a membership | عضویت بگیرید |

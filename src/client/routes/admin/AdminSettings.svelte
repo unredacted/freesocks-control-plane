@@ -162,6 +162,20 @@
     heroSubtitle: '',
     heroTitles: '',
   });
+  // Placeholders = the ACTUAL built-in (English) defaults the SPA falls back to
+  // when these overrides are blank, so the operator sees what "blank" means.
+  // Keep in sync with messages/en.json `home.hero.*` (the admin CMS is
+  // deliberately English-only). A JS string, not an &#10; entity, so the
+  // textarea placeholder really renders one title per line.
+  const HERO_TITLE_DEFAULT = 'A VPN for Freedom';
+  const HERO_TITLES_DEFAULT = [
+    'A VPN for Freedom',
+    'A VPN for dissidents',
+    'A VPN for privacy',
+    'A VPN for the world',
+  ].join('\n');
+  const HERO_SUBTITLE_DEFAULT =
+    'FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}.';
   let sInit = $state(false);
   $effect(() => {
     const s = cfg.data?.site;
@@ -825,7 +839,7 @@
             </label>
             <Input
               id="site-hero-title"
-              placeholder="A VPN for people in censored countries & around the world"
+              placeholder={HERO_TITLE_DEFAULT}
               value={sDraft.heroTitle}
               oninput={(e) =>
                 (sDraft = { ...sDraft, heroTitle: (e.target as HTMLInputElement).value })}
@@ -837,7 +851,7 @@
             </label>
             <Input
               id="site-hero-subtitle"
-              placeholder="Leave blank to use the built-in translated subtitle"
+              placeholder={HERO_SUBTITLE_DEFAULT}
               value={sDraft.heroSubtitle}
               oninput={(e) =>
                 (sDraft = { ...sDraft, heroSubtitle: (e.target as HTMLInputElement).value })}
@@ -855,7 +869,7 @@
             <textarea
               id="site-hero-titles"
               class="flex min-h-24 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-              placeholder="A VPN for people in censored countries &amp; around the world&#10;A VPN for people who seek privacy&#10;A VPN for journalists&#10;A VPN for activists"
+              placeholder={HERO_TITLES_DEFAULT}
               value={sDraft.heroTitles}
               oninput={(e) =>
                 (sDraft = { ...sDraft, heroTitles: (e.target as HTMLTextAreaElement).value })}

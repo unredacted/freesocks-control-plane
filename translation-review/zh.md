@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**88 of 821 strings are missing** (the app currently shows English for
+**92 of 823 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -92,7 +92,7 @@ review.
 | `common.deviceCount [countPlural=one]` | 1 device | 1 台设备 |
 | `common.deviceCount [countPlural=other]` | {count} devices | {count} 台设备 |
 
-## `nav` — The site header: navigation buttons, menu, language/theme controls.
+## `nav` — The site header: navigation buttons, menu, language/theme controls. *(2 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -102,6 +102,8 @@ review.
 | `nav.menu` | Menu | 菜单 |
 | `nav.theme` | Theme | 主题 |
 | `nav.home` | FreeSocks home | FreeSocks 首页 |
+| `nav.source` | Source | ⚠️ **MISSING** |
+| `nav.sourceTitle` | FreeSocks is open source. Read the code for yourself. | ⚠️ **MISSING** |
 
 ## `captcha` — The proof-of-work human check widget states.
 
@@ -751,7 +753,7 @@ review.
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
 | `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
-## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(1 missing)*
+## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(3 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -848,11 +850,11 @@ review.
 | `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | 通过 FreeSocks 捐出的每一笔捐款，都会提升当月每个免费账户的每月带宽。以下是捐赠者迄今增加的带宽--你也可以添一份力。 |
 | `home.impact.cta` | Make a donation | 立即捐款 |
 | `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
-| `home.hero.variants.freedom` | A VPN for Internet Freedom | 为互联网自由打造的 VPN |
+| `home.hero.variants.freedom` | A VPN for Freedom | ⚠️ **MISSING** |
 | `home.hero.variants.dissidents` | A VPN for dissidents | 为异见人士打造的 VPN |
 | `home.hero.variants.privacy` | A VPN for privacy | 为隐私打造的 VPN |
 | `home.hero.variants.world` | A VPN for the world | 为世界打造的 VPN |
-| `home.hero.subtitle` | FreeSocks is made for people whose internet is censored, and works as a privacy-respecting VPN anywhere else. Signing up takes one quick human check. We never ask for an email or a password. Your subscription URL works in most modern VPN apps, and a membership gets you {limits}. | FreeSocks 为网络受审查的人们打造，在其他地方也是一款尊重隐私的 VPN。注册只需一次快速的真人验证。我们从不要求邮箱或密码。你的订阅链接适用于大多数现代 VPN 应用，会员可享{limits}。 |
+| `home.hero.subtitle` | FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}. | ⚠️ **MISSING** |
 | `home.hero.impactNote` | Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, right away. | 通过 FreeSocks 的捐款直接支持免费用户：每一笔捐款都会在当月为受审查国家的人们购买真实带宽。 |
 | `home.hero.impactLink` | See the impact | 查看成效 |
 | `home.cta.getMembership` | Get a membership | 加入会员 |
