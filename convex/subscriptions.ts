@@ -55,7 +55,7 @@ export const bySubToken = internalQuery({
  * window — else the newest active row. Plain fn so both resolveCurrentOrActive and
  * mirrorContextForUser share ONE copy of the rule.
  */
-async function currentOrActiveSub(
+export async function currentOrActiveSub(
   db: DatabaseReader,
   user: Doc<'users'>,
 ): Promise<Doc<'subscriptions'> | null> {

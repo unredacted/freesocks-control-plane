@@ -24,6 +24,7 @@
   import AdminMembershipCodes from './AdminMembershipCodes.svelte';
   import AdminBilling from './AdminBilling.svelte';
   import AdminRateLimits from './AdminRateLimits.svelte';
+  import AdminTelemetry from './AdminTelemetry.svelte';
   import AdminTheme from './AdminTheme.svelte';
   import Link from '../../components/Link.svelte';
   import { adminAuthStatusQuery, adminStatusQuery } from '../../lib/queries';
@@ -102,6 +103,8 @@
   <AdminBilling />
 {:else if router.pathname === '/admin/rate-limits'}
   <AdminRateLimits />
+{:else if router.pathname === '/admin/telemetry'}
+  <AdminTelemetry />
 {:else if router.pathname === '/admin/audit'}
   <AdminAudit />
 {:else if router.pathname === '/admin/settings'}

@@ -1149,5 +1149,32 @@
     "done": "Your key has moved to a different server.",
     "failed": "Could not move your key",
     "vsNewKey": "If the subscription URL itself stopped working everywhere, or you think someone else has it, use \"Create a new key\" instead - that replaces the URL."
+  },
+  "report": {
+    "action": "Report issue",
+    "title": "Report a connection problem",
+    "body": "Tell us what's going wrong. Nothing about your key or account changes.",
+    "reasonLegend": "What's the problem?",
+    "reasonCantConnect": "I can't connect at all",
+    "reasonSlow": "It connects, but it's very slow",
+    "reasonDisconnects": "It keeps disconnecting",
+    "reasonBlockedSite": "A site or app won't load through the VPN",
+    "reasonAppProblem": "The VPN app itself is giving me trouble",
+    "reasonOther": "Something else",
+    "nothingChanges": "Reporting changes nothing on your account. If you need a fix right now, try \"Switch server\" or \"Create a new key\".",
+    "confirm": "Send report",
+    "working": "Sending…",
+    "done": "Report sent",
+    "doneBody": "Thank you. Reports like this show us where things are breaking. If you need a fix right now, try \"Switch server\".",
+    "failed": "Could not send the report"
+  },
+  "telemetry": {
+    "sendLabel": "Include connection details",
+    "sendExplainer": "Only the values shown below are sent. They are not tied to your account, and your IP address is never included.",
+    "countryLabel": "Country",
+    "cityLabel": "City",
+    "asnLabel": "Network provider (ASN)",
+    "notSet": "Not set",
+    "editHint": "Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it."
   }
 }

@@ -23,6 +23,7 @@
   import RevokeDeviceModal from '../components/RevokeDeviceModal.svelte';
   import SwitchBackendModal from '../components/SwitchBackendModal.svelte';
   import SwitchServerModal from '../components/SwitchServerModal.svelte';
+  import ReportIssueModal from '../components/ReportIssueModal.svelte';
   import UpgradeMembership from '../components/UpgradeMembership.svelte';
   import MemberImpact from '../components/MemberImpact.svelte';
   import DonateCard from '../components/DonateCard.svelte';
@@ -61,6 +62,7 @@
     billingOrderQuery,
     configQuery,
     nodeStatusQuery,
+    telemetryContextQuery,
     queryKeys,
   } from '../lib/queries';
   import { router } from '../stores/router.svelte';
@@ -74,6 +76,9 @@
     SwitchServerResponse,
   } from '../../shared/contracts/account';
   import type { SwitchServerReason } from '../../shared/contracts/switchServerReasons';
+  import type { ReportIssueReason } from '../../shared/contracts/issueReasons';
+  import { ReportIssueResponse, type TelemetryPayload } from '../../shared/contracts/telemetry';
+  import Flag from '@lucide/svelte/icons/flag';
 
   const account = accountQuery();
   const config = configQuery();
@@ -162,6 +167,13 @@
   // The member's stated reason for moving servers - required before confirming,
   // and reset per open so a previous answer is never resubmitted silently.
   let switchServerReason = $state<SwitchServerReason | null>(null);
+  // Report-issue dialog (records the problem, changes nothing about the key).
+  let reportIssueOpen = $state(false);
+  let reportIssueReason = $state<ReportIssueReason | null>(null);
+
+  // Consent-block context (which fields + the CDN's editable prefill): fetched
+  // only while one of the two dialogs that render it is open.
+  const telemetryContext = telemetryContextQuery(() => switchServerOpen || reportIssueOpen);
   // Which backend is the user about to switch TO when they confirm. Computed
   // at button-click time from `switchTargets` so the modal can render the
   // right "from X to Y" copy even after the mutation lands and the account
@@ -328,11 +340,15 @@
   // survive) and only re-issues when it has to cross panels — either way the
   // saved subscription URL is unchanged, so there is nothing to re-import.
   const switchServer = createMutation(() => ({
-    mutationFn: () => {
+    mutationFn: (telemetry: TelemetryPayload | null) => {
       if (!switchServerReason) throw new Error('No reason selected');
       return apiClient.post(
         '/api/v1/account/switch-server',
-        { reason: switchServerReason, confirm: true },
+        {
+          reason: switchServerReason,
+          confirm: true,
+          ...(telemetry ? { telemetry } : {}),
+        },
         SwitchServerResponse,
       );
     },
@@ -351,6 +367,32 @@
     onError: (err) => {
       liveMessage = t('switchServer.failed');
       toast.error(t('switchServer.failed'), { description: apiErrorMessage(err) });
+    },
+  }));
+
+  // Mutation: report a connection problem. Records the reason (+ optional
+  // consented network context) and changes nothing about the key.
+  const reportIssue = createMutation(() => ({
+    mutationFn: (telemetry: TelemetryPayload | null) => {
+      if (!reportIssueReason) throw new Error('No reason selected');
+      return apiClient.post(
+        '/api/v1/account/report-issue',
+        {
+          reason: reportIssueReason,
+          ...(telemetry ? { telemetry } : {}),
+        },
+        ReportIssueResponse,
+      );
+    },
+    onSuccess: () => {
+      reportIssueOpen = false;
+      reportIssueReason = null;
+      liveMessage = t('report.done');
+      toast.success(t('report.done'), { description: t('report.doneBody') });
+    },
+    onError: (err) => {
+      liveMessage = t('report.failed');
+      toast.error(t('report.failed'), { description: apiErrorMessage(err) });
     },
   }));
 
@@ -966,6 +1008,21 @@
                     <RotateCcw class="size-4" />
                     {regenerate.isPending ? t('common.working') : t('account.regenerate')}
                   </Button>
+                  <!-- Report issue: red-tinted outline (a flag, not a bomb - it
+                       sits beside two neutral actions and changes nothing). -->
+                  <Button
+                    onclick={() => {
+                      reportIssueReason = null;
+                      reportIssueOpen = true;
+                    }}
+                    disabled={reportIssue.isPending || actionsDisabled}
+                    variant="outline"
+                    size="sm"
+                    class="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    <Flag class="size-4" />
+                    {reportIssue.isPending ? t('report.working') : t('report.action')}
+                  </Button>
                   {#if canSwitchBackend}
                     {#each switchTargets as target (target.id)}
                       <Button
@@ -1345,12 +1402,24 @@
           null}
         deviceCount={data.subscription.devices.length}
         bind:reason={switchServerReason}
+        telemetryContext={telemetryContext.data}
         onCancel={() => {
           switchServerOpen = false;
           switchServerReason = null;
         }}
-        onConfirm={() => switchServer.mutate()}
+        onConfirm={(telemetry) => switchServer.mutate(telemetry)}
         busy={switchServer.isPending}
+      />
+      <ReportIssueModal
+        bind:open={reportIssueOpen}
+        bind:reason={reportIssueReason}
+        telemetryContext={telemetryContext.data}
+        onCancel={() => {
+          reportIssueOpen = false;
+          reportIssueReason = null;
+        }}
+        onConfirm={(telemetry) => reportIssue.mutate(telemetry)}
+        busy={reportIssue.isPending}
       />
       {#if pendingSwitchTarget && config.data}
         <SwitchBackendModal

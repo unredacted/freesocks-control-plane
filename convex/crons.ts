@@ -71,6 +71,15 @@ crons.daily(
 crons.interval('epoch-key-rotate', { minutes: 10 }, internal.keyEpochs.maybeRotate, {});
 crons.daily('epoch-key-sweep', { hourUTC: 3, minuteUTC: 50 }, internal.keyEpochs.sweepExpired, {});
 
+// Member issue telemetry: bounded daily delete of rows past the admin-tunable
+// diagnostics.retentionDays window (default 90).
+crons.daily(
+  'issue-telemetry-retention',
+  { hourUTC: 3, minuteUTC: 40 },
+  internal.issueReports.sweep,
+  {},
+);
+
 // P2: retention sweeps for the append-only tables (bounded daily deletes past a
 // per-table window) so storage doesn't grow without bound.
 crons.daily('retention-audit', { hourUTC: 4, minuteUTC: 0 }, internal.retention.sweepAuditLog, {});

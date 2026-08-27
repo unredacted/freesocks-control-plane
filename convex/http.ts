@@ -20,6 +20,8 @@ import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sendUmamiEvent } from './lib/umami';
 import { sanitizeUmamiUrl } from './lib/analyticsConfig';
+import { detectedFromHeaders, sanitizeSubmitted } from './lib/issueTelemetry';
+import { isReportIssueReason } from '../src/shared/contracts/issueReasons';
 import { sha256Hex } from './lib/crypto';
 import { sealed } from './lib/e2ee';
 import { POP_ALG_FIELD, POP_PUBKEY_FIELD } from '../src/shared/crypto/pop';
@@ -1270,7 +1272,7 @@ http.route({
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'subscription:write');
     if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const body = await readJson<{ reason?: string; confirm?: boolean }>(req);
+    const body = await readJson<{ reason?: string; confirm?: boolean; telemetry?: unknown }>(req);
     // A closed set: the reason is audited, and the audit log never stores
     // user-authored text.
     if (!isSwitchServerReason(body.reason)) {
@@ -1278,13 +1280,84 @@ http.route({
     }
     if (body.confirm !== true) return errorJson('validation', 'confirm:true required', 400);
     const reason = body.reason;
+    // Optional consented telemetry (absent/null = declined): sanitize the
+    // member-edited values + capture what the CDN edge detected, both narrowed
+    // to what the deployment's diagnostics config actually collects.
+    const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
+    const telemetry = sanitizeSubmitted(diagCfg, body.telemetry);
+    const detected = detectedFromHeaders(diagCfg, req);
     return withIssuanceSaga(ctx, member.userId, 'account.switch-server', async (requestId) => {
       const result = await ctx.runAction(internal.account.switchServer, {
         userId: member.userId,
         reason,
+        telemetry: telemetry ?? undefined,
+        detected,
         requestId,
       });
       return sagaResult(result);
+    });
+  }),
+});
+
+// Member reports a connection problem: records the reason (+ optional consented
+// network context into the UNLINKED telemetry table) and changes NOTHING about
+// their key. Rate-limited per member so one frustrated user can't skew trends.
+http.route({
+  path: '/api/v1/account/report-issue',
+  method: 'POST',
+  handler: guard(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:write');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+      policyKey: 'account.report-issue',
+      subject: member.userId,
+    });
+    if (!rl.allowed) {
+      return errorJson('rate_limit.exceeded', 'Too many reports. Please wait and try again.', 429, {
+        retryAfterMs: rl.retryAfterMs,
+      });
+    }
+    const body = await readJson<{ reason?: string; telemetry?: unknown }>(req);
+    if (!isReportIssueReason(body.reason)) {
+      return errorJson('validation', 'unknown reason', 400);
+    }
+    const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
+    const telemetry = sanitizeSubmitted(diagCfg, body.telemetry);
+    const detected = detectedFromHeaders(diagCfg, req);
+    const result = await ctx.runMutation(internal.issueReports.reportIssue, {
+      userId: member.userId,
+      reason: body.reason,
+      country: telemetry?.country ?? null,
+      city: telemetry?.city ?? null,
+      asn: telemetry?.asn ?? null,
+      detectedCountry: detected.country,
+      detectedCity: detected.city,
+      detectedAsn: detected.asn,
+    });
+    return json(result);
+  }),
+});
+
+// What the telemetry consent block should offer + prefill: which fields this
+// deployment collects, and the CDN edge's current view of the member's network
+// (their VPN exit when they browse through the key - which is exactly why the
+// values are member-editable before sending).
+http.route({
+  path: '/api/v1/account/telemetry-context',
+  method: 'GET',
+  handler: guard(async (ctx, req) => {
+    const member = await resolveMember(ctx, req, 'account:read');
+    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
+    const detected = detectedFromHeaders(diagCfg, req);
+    return json({
+      enabled: diagCfg.enabled,
+      fields: {
+        country: diagCfg.enabled && diagCfg.collectCountry,
+        city: diagCfg.enabled && diagCfg.collectCity,
+        asn: diagCfg.enabled && diagCfg.collectAsn,
+      },
+      detected,
     });
   }),
 });
@@ -2832,6 +2905,87 @@ http.route({
     } catch (err) {
       return adminError(err);
     }
+  }),
+});
+
+// --- admin: member issue telemetry (Admin → Telemetry) ------------------------
+// Config = admin:settings scopes (it changes what gets collected); the
+// aggregations + raw events read under admin:audit:read (it is event data,
+// like the audit log it sits beside).
+
+http.route({
+  path: '/api/v1/admin/telemetry',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:settings:read'))) return ADMIN_UNAUTH();
+    return json(await ctx.runQuery(internal.issueReports.getConfig, {}));
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/telemetry',
+  method: 'PATCH',
+  handler: guard(async (ctx, req) => {
+    const admin = await resolveAdmin(ctx, req, 'admin:settings:write');
+    if (!admin) return ADMIN_UNAUTH();
+    const body = await readJson<{
+      enabled?: boolean;
+      cloudflareEnabled?: boolean;
+      collectCountry?: boolean;
+      collectCity?: boolean;
+      collectAsn?: boolean;
+      asnHeader?: string;
+      retentionDays?: number;
+    }>(req);
+    try {
+      return json(
+        await ctx.runMutation(internal.issueReports.setConfig, {
+          // Recording defaults ON (reasons are core diagnostics); the
+          // Cloudflare geo sourcing defaults OFF (must match the fronting).
+          enabled: body.enabled !== false,
+          cloudflareEnabled: body.cloudflareEnabled === true,
+          collectCountry: body.collectCountry !== false,
+          collectCity: body.collectCity !== false,
+          collectAsn: body.collectAsn !== false,
+          asnHeader: typeof body.asnHeader === 'string' ? body.asnHeader : '',
+          retentionDays: typeof body.retentionDays === 'number' ? body.retentionDays : 90,
+          actorAdminId: admin.adminUserId,
+        }),
+      );
+    } catch (err) {
+      return adminError(err);
+    }
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/telemetry/summary',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:audit:read'))) return ADMIN_UNAUTH();
+    const windowMs = Number(new URL(req.url).searchParams.get('window') ?? '');
+    return json(
+      await ctx.runQuery(internal.issueReports.summary, {
+        windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 7 * 86_400_000,
+      }),
+    );
+  }),
+});
+
+http.route({
+  path: '/api/v1/admin/telemetry/events',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:audit:read'))) return ADMIN_UNAUTH();
+    const url = new URL(req.url);
+    const cursor = url.searchParams.get('cursor') ?? undefined;
+    const limit = Number(url.searchParams.get('limit') ?? '');
+    return json(
+      await ctx.runQuery(internal.issueReports.recent, {
+        cursor,
+        limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+      }),
+    );
   }),
 });
 

@@ -47,6 +47,10 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   // name they left — operator infrastructure, already shown to the member, and
   // the whole point of the record. Never a placement/squad uuid.
   'subscription.switch_server': ['reason', 'inPlace', 'movedPlacement', 'movedNodePin', 'fromNode'],
+  // Member reported a connection problem (nothing changed about their key).
+  // Reason enum + backend only — the consented geo lives in the UNLINKED
+  // issueReports table, never against the user here.
+  'subscription.issue_reported': ['reason', 'backend'],
   // Member revokes one HWID device (truncated identifier only, never the full hwid).
   'subscription.device_revoke': ['hwidPrefix'],
   // A key was issued with no placement (no Remnawave pool bound anywhere) — a
@@ -114,6 +118,18 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
     'geoMode',
     'umamiUrlHash',
     'hasWebsiteId',
+  ],
+  // Diagnostics (member issue telemetry) config change: all knobs are
+  // non-secret booleans + a header NAME + a retention number, so the full new
+  // state goes in the trail (a collection-posture change should be visible).
+  'admin.diagnostics.change': [
+    'enabled',
+    'cloudflareEnabled',
+    'collectCountry',
+    'collectCity',
+    'collectAsn',
+    'asnHeader',
+    'retentionDays',
   ],
   // Member opt-in passkeys: enroll / revoke (device label is a non-secret display
   // string; the credential id / public key are never logged). Login is audited as

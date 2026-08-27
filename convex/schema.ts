@@ -745,6 +745,32 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('by_startedAt', ['startedAt']),
 
+  // Member issue telemetry (Admin → Telemetry): one row per switch-server /
+  // report-issue event. DELIBERATELY UNLINKED — no userId, no subscriptionId,
+  // never an IP (docs/privacy.md): the table answers "what is failing, where,
+  // on which networks", not "who". Geo fields are member-consented AND
+  // member-editable (a report sent through the VPN would otherwise carry the
+  // exit node's geo); `detected*` is what the CDN edge claimed at submit time,
+  // kept so edited values can be told apart from as-detected ones. Window scans
+  // + the retention sweep use the built-in by_creation_time index. Config +
+  // sanitizers: convex/lib/issueTelemetry.ts.
+  issueReports: defineTable({
+    kind: v.union(v.literal('switch'), v.literal('report')),
+    reason: v.string(),
+    backend: v.string(),
+    // Where the key lived when the event fired (server-resolved, not client-claimed).
+    locationCode: v.optional(v.string()),
+    nodeLabel: v.optional(v.string()),
+    connectionModeId: v.optional(v.string()),
+    // Consented, member-editable network context (null field = not shared).
+    country: v.optional(v.string()),
+    city: v.optional(v.string()),
+    asn: v.optional(v.number()),
+    detectedCountry: v.optional(v.string()),
+    detectedCity: v.optional(v.string()),
+    detectedAsn: v.optional(v.number()),
+  }),
+
   // Membership redemption codes (W4): admin-minted bearer codes a member redeems
   // to grant/extend a paid tier — no billing portal required. Codes are SECRETS:
   // only the SHA-256 `codeHash` is stored (never plaintext), plus a short

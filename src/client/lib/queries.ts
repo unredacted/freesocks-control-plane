@@ -41,6 +41,11 @@ import { RateLimitListResponse } from '../../shared/contracts/rateLimits';
 import { MembershipCodePage, PurchasedCodesResponse } from '../../shared/contracts/membershipCodes';
 import { AdminBillingOverview, OrderStatusResponse } from '../../shared/contracts/billing';
 import {
+  AdminDiagnosticsConfig,
+  AdminTelemetrySummary,
+  TelemetryContextResponse,
+} from '../../shared/contracts/telemetry';
+import {
   AdminStatusIncidentsResponse,
   AdminStatusPageConfig,
   PublicStatusResponse,
@@ -75,6 +80,10 @@ export const queryKeys = {
   billingOrder: (ref: string) => ['billing', 'order', ref] as const,
   accountCodes: ['account', 'codes'] as const,
   accountUsage: ['account', 'usage'] as const,
+  telemetryContext: ['account', 'telemetry-context'] as const,
+  adminTelemetryConfig: ['admin', 'telemetry', 'config'] as const,
+  adminTelemetrySummary: (windowMs: number) => ['admin', 'telemetry', 'summary', windowMs] as const,
+  adminTelemetryEvents: ['admin', 'telemetry', 'events'] as const,
   nodeStatus: ['account', 'node-status'] as const,
   passkeys: ['account', 'passkeys'] as const,
   networkStatus: ['network-status'] as const,
@@ -244,6 +253,34 @@ export const adminAnalyticsQuery = () =>
     queryKey: queryKeys.adminAnalytics,
     queryFn: () => apiClient.get('/api/v1/admin/analytics', AdminAnalyticsConfig),
     staleTime: 60_000,
+  }));
+
+/**
+ * The telemetry consent block's context (which fields this deployment collects
+ * + the CDN's editable prefill). Fetched lazily - only while a switch-server /
+ * report-issue dialog is actually open.
+ */
+export const telemetryContextQuery = (enabled: () => boolean) =>
+  createQuery(() => ({
+    queryKey: queryKeys.telemetryContext,
+    queryFn: () => apiClient.get('/api/v1/account/telemetry-context', TelemetryContextResponse),
+    staleTime: 60_000,
+    enabled: enabled(),
+  }));
+
+export const adminTelemetryConfigQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminTelemetryConfig,
+    queryFn: () => apiClient.get('/api/v1/admin/telemetry', AdminDiagnosticsConfig),
+    staleTime: 60_000,
+  }));
+
+export const adminTelemetrySummaryQuery = (windowMs: () => number) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminTelemetrySummary(windowMs()),
+    queryFn: () =>
+      apiClient.get(`/api/v1/admin/telemetry/summary?window=${windowMs()}`, AdminTelemetrySummary),
+    staleTime: 30_000,
   }));
 
 /**

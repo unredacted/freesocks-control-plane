@@ -57,6 +57,9 @@ export const RATE_LIMIT_DEFAULTS = {
   'account.refresh-membership': { max: 1, windowMs: 30_000, enabled: true },
   // Account-number rotation mints a fresh credential; throttle hard vs. churn.
   'account.rotate': { max: 5, windowMs: HOUR, enabled: true },
+  // Member issue reports (per member): enough for a genuinely bad day, low
+  // enough that one frustrated user can't dominate the telemetry trends.
+  'account.report-issue': { max: 5, windowMs: DAY, enabled: true },
   // Member device (HWID) revocation: cheap backend call, but cap the churn.
   'account.device-revoke': { max: 10, windowMs: HOUR, enabled: true },
   // Member node-status poll (per user): the SPA polls ~every 30s while the

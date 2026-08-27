@@ -85,6 +85,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
   },
   { name: 'admin-invite-sweep', everyMs: DAY, description: 'Drop expired admin invite tokens' },
   { name: 'epoch-key-sweep', everyMs: DAY, description: 'Destroy long-expired HPKE epoch seeds' },
+  {
+    name: 'issue-telemetry-retention',
+    everyMs: DAY,
+    description: 'Prune issue-telemetry rows past the diagnostics retention window',
+  },
   { name: 'retention-audit', everyMs: DAY, description: 'Prune the audit log past its window' },
   { name: 'retention-webhooks', everyMs: DAY, description: 'Prune webhook dedupe records' },
   { name: 'retention-tier-history', everyMs: DAY, description: 'Prune tier-change history' },

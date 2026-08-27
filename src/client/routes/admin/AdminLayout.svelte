@@ -28,6 +28,7 @@
   import Server from '@lucide/svelte/icons/server';
   import Settings from '@lucide/svelte/icons/settings';
   import Gauge from '@lucide/svelte/icons/gauge';
+  import Radar from '@lucide/svelte/icons/radar';
   import Ticket from '@lucide/svelte/icons/ticket';
   import CreditCard from '@lucide/svelte/icons/credit-card';
   import ShieldCheck from '@lucide/svelte/icons/shield-check';
@@ -90,6 +91,7 @@
     { to: '/admin/membership-codes', label: 'Membership codes', icon: Ticket },
     { to: '/admin/billing', label: 'Billing', icon: CreditCard },
     { to: '/admin/rate-limits', label: 'Rate limits', icon: Gauge },
+    { to: '/admin/telemetry', label: 'Telemetry', icon: Radar },
     { to: '/admin/audit', label: 'Audit log', icon: History },
     { to: '/admin/settings', label: 'Settings', icon: Settings },
     { to: '/admin/theme', label: 'Theme', icon: Palette },

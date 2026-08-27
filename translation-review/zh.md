@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**92 of 823 strings are missing** (the app currently shows English for
+**115 of 846 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -1025,3 +1025,36 @@ review.
 | `switchServer.done` | Your key has moved to a different server. | ⚠️ **MISSING** |
 | `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
 | `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |
+
+## `report` — Miscellaneous strings. *(16 missing)*
+
+| Key | English | Chinese (中文) |
+| --- | --- | --- |
+| `report.action` | Report issue | ⚠️ **MISSING** |
+| `report.title` | Report a connection problem | ⚠️ **MISSING** |
+| `report.body` | Tell us what's going wrong. Nothing about your key or account changes. | ⚠️ **MISSING** |
+| `report.reasonLegend` | What's the problem? | ⚠️ **MISSING** |
+| `report.reasonCantConnect` | I can't connect at all | ⚠️ **MISSING** |
+| `report.reasonSlow` | It connects, but it's very slow | ⚠️ **MISSING** |
+| `report.reasonDisconnects` | It keeps disconnecting | ⚠️ **MISSING** |
+| `report.reasonBlockedSite` | A site or app won't load through the VPN | ⚠️ **MISSING** |
+| `report.reasonAppProblem` | The VPN app itself is giving me trouble | ⚠️ **MISSING** |
+| `report.reasonOther` | Something else | ⚠️ **MISSING** |
+| `report.nothingChanges` | Reporting changes nothing on your account. If you need a fix right now, try "Switch server" or "Create a new key". | ⚠️ **MISSING** |
+| `report.confirm` | Send report | ⚠️ **MISSING** |
+| `report.working` | Sending… | ⚠️ **MISSING** |
+| `report.done` | Report sent | ⚠️ **MISSING** |
+| `report.doneBody` | Thank you. Reports like this show us where things are breaking. If you need a fix right now, try "Switch server". | ⚠️ **MISSING** |
+| `report.failed` | Could not send the report | ⚠️ **MISSING** |
+
+## `telemetry` — Miscellaneous strings. *(7 missing)*
+
+| Key | English | Chinese (中文) |
+| --- | --- | --- |
+| `telemetry.sendLabel` | Include connection details | ⚠️ **MISSING** |
+| `telemetry.sendExplainer` | Only the values shown below are sent. They are not tied to your account, and your IP address is never included. | ⚠️ **MISSING** |
+| `telemetry.countryLabel` | Country | ⚠️ **MISSING** |
+| `telemetry.cityLabel` | City | ⚠️ **MISSING** |
+| `telemetry.asnLabel` | Network provider (ASN) | ⚠️ **MISSING** |
+| `telemetry.notSet` | Not set | ⚠️ **MISSING** |
+| `telemetry.editHint` | Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it. | ⚠️ **MISSING** |

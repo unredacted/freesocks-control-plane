@@ -1,11 +1,13 @@
 <script lang="ts">
   import { Button } from '@client/components/ui/button';
   import * as Dialog from '@client/components/ui/dialog';
+  import TelemetryConsent from './TelemetryConsent.svelte';
   import { t } from '../lib/i18n/index.svelte';
   import {
     SWITCH_SERVER_REASONS,
     type SwitchServerReason,
   } from '@shared/contracts/switchServerReasons';
+  import type { TelemetryContextResponse, TelemetryPayload } from '@shared/contracts/telemetry';
 
   /**
    * Confirm dialog for `/api/v1/account/switch-server` - move this key to a
@@ -23,8 +25,11 @@
      *  matters to someone who HAS devices registered. */
     deviceCount?: number;
     reason: SwitchServerReason | null;
+    /** From telemetryContextQuery; drives the optional consent block. */
+    telemetryContext?: TelemetryContextResponse | undefined;
     onCancel: () => void;
-    onConfirm: () => void;
+    /** `telemetry` is the consent block's outcome (null = declined/unavailable). */
+    onConfirm: (telemetry: TelemetryPayload | null) => void;
     busy: boolean;
   }
 
@@ -33,10 +38,13 @@
     currentServer = null,
     deviceCount = 0,
     reason = $bindable(),
+    telemetryContext = undefined,
     onCancel,
     onConfirm,
     busy,
   }: Props = $props();
+
+  let consent = $state<ReturnType<typeof TelemetryConsent>>();
 
   const REASON_LABELS: Record<SwitchServerReason, () => string> = {
     slow: () => t('switchServer.reasonSlow'),
@@ -95,6 +103,8 @@
       {/if}
     </ul>
 
+    <TelemetryConsent bind:this={consent} context={telemetryContext} {busy} />
+
     <!-- The other tool, for the other problem: when the URL itself is the issue,
          switching servers won't help - point at "Create a new key" so members
          pick the right action instead of trying this one repeatedly. -->
@@ -102,7 +112,11 @@
 
     <Dialog.Footer>
       <Button variant="ghost" onclick={onCancel} disabled={busy}>{t('common.cancel')}</Button>
-      <Button onclick={onConfirm} disabled={busy || reason === null} variant="default">
+      <Button
+        onclick={() => onConfirm(consent?.payload() ?? null)}
+        disabled={busy || reason === null}
+        variant="default"
+      >
         {busy ? t('switchServer.working') : t('switchServer.confirm')}
       </Button>
     </Dialog.Footer>

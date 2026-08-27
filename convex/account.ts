@@ -1162,9 +1162,29 @@ export const switchServer = internalAction({
   args: {
     userId: v.id('users'),
     reason: v.string(),
+    // Consented, member-editable network context + what the CDN edge detected —
+    // both pre-sanitized by the HTTP layer (lib/issueTelemetry). Recorded ONLY
+    // into the unlinked issueReports table, never the per-user audit trail.
+    telemetry: v.optional(
+      v.object({
+        country: v.union(v.string(), v.null()),
+        city: v.union(v.string(), v.null()),
+        asn: v.union(v.number(), v.null()),
+      }),
+    ),
+    detected: v.optional(
+      v.object({
+        country: v.union(v.string(), v.null()),
+        city: v.union(v.string(), v.null()),
+        asn: v.union(v.number(), v.null()),
+      }),
+    ),
     requestId: v.optional(v.string()),
   },
-  handler: async (ctx, { userId, reason, requestId }): Promise<SwitchServerResult> => {
+  handler: async (
+    ctx,
+    { userId, reason, telemetry, detected, requestId },
+  ): Promise<SwitchServerResult> => {
     const user = await ctx.runQuery(internal.users.get, { id: userId });
     if (!user) return { ok: false, code: 'not_found', message: 'user not found', status: 404 };
     const tier = await ctx.runQuery(internal.tiers.get, { id: user.tierId });
@@ -1246,6 +1266,26 @@ export const switchServer = internalAction({
           fromNode: payload.fromNode,
         },
         requestId,
+      });
+      // Telemetry row for Admin → Telemetry: unlinked (no user/sub), so it
+      // rides the same choke point as the audit but stores only the what/where.
+      // Reason-only rows still count (declined telemetry = null geo fields).
+      const server = oldSub.backendServerId
+        ? await ctx.runQuery(internal.backendServers.getById, { id: oldSub.backendServerId })
+        : null;
+      await ctx.runMutation(internal.issueReports.record, {
+        kind: 'switch',
+        reason,
+        backend: oldSub.backend,
+        locationCode: server?.location ?? payload.fromNode,
+        nodeLabel: payload.fromNode,
+        connectionModeId: modeId,
+        country: telemetry?.country ?? null,
+        city: telemetry?.city ?? null,
+        asn: telemetry?.asn ?? null,
+        detectedCountry: detected?.country ?? null,
+        detectedCity: detected?.city ?? null,
+        detectedAsn: detected?.asn ?? null,
       });
     };
 
