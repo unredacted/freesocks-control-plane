@@ -107,7 +107,9 @@
     })),
   );
   function goDonate() {
-    router.navigate(me.data?.authenticated ? '/account?tab=membership' : '/get-account');
+    // Anonymous visitors get the public donate page (sign in OR give
+    // anonymously) - not the account-creation funnel.
+    router.navigate(me.data?.authenticated ? '/account?tab=membership' : '/donate');
   }
   // In-page anchors (hero callout + quick-nav chips). Smooth only when the user
   // hasn't asked for reduced motion (JS scrolls bypass the CSS clamp).

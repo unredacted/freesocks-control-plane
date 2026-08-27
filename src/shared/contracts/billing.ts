@@ -175,7 +175,8 @@ export const AdminBillingOrder = z.object({
   processor: BillingProcessor,
   /** Only a prefix of the opaque ref (the full ref is the member's poll token). */
   refPrefix: z.string(),
-  userId: z.string(),
+  /** Null = an anonymous donation order (no account behind it). */
+  userId: z.string().nullable(),
   /** The buyer's non-secret support id (FS-XXXX-XXXX), for the "who donated" column. */
   userHandle: z.string().nullable().default(null),
   status: BillingOrderStatus,

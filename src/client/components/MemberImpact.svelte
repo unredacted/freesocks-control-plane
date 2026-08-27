@@ -2,7 +2,7 @@
   import Heart from '@lucide/svelte/icons/heart';
   import { t } from '../lib/i18n/index.svelte';
   import { formatMoney, formatDate } from '../lib/i18n/format';
-  import { configQuery, accountQuery } from '../lib/queries';
+  import { configQuery, accountQuery, meQuery } from '../lib/queries';
   import { dailyImpactSeries, dailyImpactBounds, giftMarks, niceCeil } from '../lib/impact';
   import DitherChart from './DitherChart.svelte';
 
@@ -16,7 +16,10 @@
    * impact data yet, so the card never renders empty charts.
    */
   const config = configQuery();
-  const account = accountQuery();
+  // Gated on a session existing: the panel also renders on the public /donate
+  // page, where an unconditional account fetch would just 401 every mount.
+  const me = meQuery();
+  const account = accountQuery(() => !!me.data?.authenticated);
 
   const donation = $derived(config.data?.billing?.donation);
   // Renders whenever donations are live (a zero month is honest data - the

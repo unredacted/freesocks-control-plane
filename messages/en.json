@@ -511,7 +511,19 @@
     "badge": "Donor",
     "badgeTooltip": "Thank you for supporting FreeSocks",
     "thanksTitle": "You're a FreeSocks donor",
-    "thanksBody": "Thank you - your support helps keep FreeSocks free for everyone."
+    "thanksBody": "Thank you - your support helps keep FreeSocks free for everyone.",
+    "pageTitle": "Donate",
+    "pageIntro": "FreeSocks is free for everyone, funded by donations. Every gift raises every free user's bandwidth for the next {days} days.",
+    "signInTitle": "Sign in and donate",
+    "signInBody": "Your gift is recorded on your account: you earn the donor badge and can see your giving history.",
+    "signInInstead": "Have an account? Sign in to donate instead",
+    "anonTitle": "Donate anonymously",
+    "anonBody": "No account needed. Your gift funds the shared bandwidth pool just the same - it simply is not recorded anywhere.",
+    "anonNote": "Anonymous donation: not linked to any account, so no donor badge or giving history. Keep your receipt from the payment page - it is your only record.",
+    "paidTitle": "Thank you!",
+    "paidBody": "Your donation is in. Every free user's bandwidth is raised for the next {days} days because of it.",
+    "orderFailedBody": "The payment did not complete - nothing was charged, or the payment page expired. You can try again below.",
+    "unavailable": "Donations are not available right now. Please check back later."
   },
   "referral": {
     "fieldLabel": "Referral code (optional)",

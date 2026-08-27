@@ -10,6 +10,7 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { hmacSha256Hex, hmacSha512Hex } from './lib/crypto';
+import { readDonationState } from './lib/donationBonus';
 import { ConvexError } from 'convex/values';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -2039,5 +2040,160 @@ describe('billing.testProcessorConnection (live credential probe)', () => {
     const res = await t.action(internal.billing.testProcessorConnection, { processor: 'paypal' });
     expect(res).toEqual({ ok: true, error: null });
     expect(JSON.stringify(res)).not.toContain('sec');
+  });
+});
+
+describe('anonymous donations', () => {
+  beforeEach(() => {
+    vi.stubEnv('NOWPAYMENTS_API_KEY', 'np-key');
+    vi.stubEnv('NOWPAYMENTS_API_URL', 'https://api.nowpayments.example');
+    vi.stubEnv('PUBLIC_BASE_URL', 'https://beta.freesocks.example');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  /** A pending ANONYMOUS donation order (no userId — the /donate flow's shape). */
+  const insertAnonDonation = (t: ReturnType<typeof convexTest>, opaqueRef: string, cents = 500) =>
+    t.run((ctx) =>
+      ctx.db.insert('billingOrders', {
+        processor: 'nowpayments',
+        opaqueRef,
+        userId: undefined,
+        durationDays: 0,
+        amountCents: cents,
+        donationCents: cents,
+        currency: 'USD',
+        status: 'pending',
+        kind: 'donation',
+        updatedAt: Date.now(),
+      }),
+    );
+
+  test('checkout without a user mints an anonymous donation order returning to /donate', async () => {
+    const t = convexTest(schema, modules);
+    await seedTiersAndUser(t);
+    await enableBilling(t);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ id: 'inv_a', invoice_url: 'https://pay.example/i/inv_a' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await t.action(internal.billing.createCheckout, {
+      processor: 'nowpayments',
+      kind: 'donation',
+      donationCents: 500,
+    });
+    expect(res.redirectUrl).toBe('https://pay.example/i/inv_a');
+
+    // The invoice's return URLs point at the public /donate page (no /account
+    // to land a session-less payer on).
+    const invoiceInit = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    const invoiceBody = JSON.parse(invoiceInit.body as string) as {
+      success_url: string;
+      cancel_url: string;
+    };
+    expect(invoiceBody.success_url).toBe(
+      `https://beta.freesocks.example/donate?order=${res.orderRef}`,
+    );
+    expect(invoiceBody.cancel_url).toContain('/donate?order=');
+
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', res.orderRef))
+        .unique();
+      expect(order?.userId).toBeUndefined();
+      expect(order?.kind).toBe('donation');
+      expect(order?.amountCents).toBe(500);
+    });
+  });
+
+  test('an anonymous MEMBERSHIP checkout is refused (donation-only)', async () => {
+    const t = convexTest(schema, modules);
+    await seedTiersAndUser(t);
+    await enableBilling(t);
+    await expect(
+      t.action(internal.billing.createCheckout, { processor: 'nowpayments', months: 3 }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  test('a paid anonymous donation funds the shared pool with no user to stamp', async () => {
+    const t = convexTest(schema, modules);
+    await enableBilling(t);
+    await insertAnonDonation(t, 'ref-anon-1');
+
+    const res = await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-anon-1',
+      status: 'paid',
+      processorRef: 'pay-anon-1',
+      amountMinor: 500,
+      amountCurrency: 'USD',
+    });
+    expect(res).toEqual({ applied: true, granted: true });
+
+    await t.run(async (ctx) => {
+      const order = await ctx.db
+        .query('billingOrders')
+        .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', 'ref-anon-1'))
+        .unique();
+      expect(order?.status).toBe('paid');
+      // $5 at the default 1 GB/USD rate reaches the live pool.
+      const state = await readDonationState(ctx.db);
+      expect(state.buckets?.reduce((s, b) => s + b.c, 0)).toBe(500);
+    });
+  });
+
+  test('a refund on a paid anonymous donation unwinds the pool without a donor row', async () => {
+    const t = convexTest(schema, modules);
+    await enableBilling(t);
+    await insertAnonDonation(t, 'ref-anon-2');
+    await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-anon-2',
+      status: 'paid',
+      processorRef: 'pay-anon-2',
+    });
+    const res = await t.mutation(internal.billing.applyEvent, {
+      processor: 'nowpayments',
+      orderRef: 'ref-anon-2',
+      status: 'failed',
+      processorRef: 'refund-anon-2',
+    });
+    expect(res).toEqual({ applied: false, granted: false });
+    await t.run(async (ctx) => {
+      const state = await readDonationState(ctx.db);
+      expect(state.buckets?.reduce((s, b) => s + b.c, 0) ?? 0).toBe(0);
+    });
+  });
+
+  test('getAnonOrderStatus answers ONLY for anonymous donation orders', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    await insertAnonDonation(t, 'ref-anon-3');
+    await insertPendingOrder(t, userId, memberTierId, 'ref-bound');
+
+    const anon = await t.query(internal.billing.getAnonOrderStatus, { opaqueRef: 'ref-anon-3' });
+    expect(anon).toEqual({
+      status: 'pending',
+      membershipExpiresAt: null,
+      kind: 'donation',
+      giftCodes: [],
+    });
+
+    // A user-bound ref through the anonymous path stays invisible (sign in).
+    expect(
+      await t.query(internal.billing.getAnonOrderStatus, { opaqueRef: 'ref-bound' }),
+    ).toBeNull();
+    // And the member-scoped poll can't claim an anonymous order either.
+    expect(
+      await t.query(internal.billing.getOrderStatus, { opaqueRef: 'ref-anon-3', userId }),
+    ).toBeNull();
   });
 });

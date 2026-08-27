@@ -5,9 +5,16 @@
    * (redirect-to-processor; the CSP forbids an embedded SDK); the amount + live
    * impact come from the shared DonationAmountPicker. Submits a kind:'donation'
    * checkout. Renders only when billing + donations are enabled and a rail is live.
+   *
+   * `anonymous` (the /donate page's signed-out mode): the checkout runs with no
+   * session, so the server demands a Cap proof-of-work token — the widget
+   * renders in the form and the token rides the checkout body. A failed
+   * checkout remounts the widget (the server verify CONSUMES the token; the
+   * GetAccount pattern).
    */
   import { Button } from '@client/components/ui/button';
   import * as Collapsible from '@client/components/ui/collapsible';
+  import CapWidget from './CapWidget.svelte';
   import { configQuery } from '../lib/queries';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
@@ -26,8 +33,11 @@
      *  the title + subtitle, expanding reveals the method/amount form. Default
      *  (false) is the prominent, always-expanded card used on /account. */
     collapsible?: boolean;
+    /** No-session checkout (donations only, server-enforced): render the Cap
+     *  captcha and send its token with the checkout. */
+    anonymous?: boolean;
   }
-  let { collapsible = false }: Props = $props();
+  let { collapsible = false, anonymous = false }: Props = $props();
 
   const config = configQuery();
   let billing = $derived(config.data?.billing);
@@ -47,6 +57,13 @@
   // the ask states exactly what a donation buys and for how long.
   let windowDays = $derived(donation?.bonusWindowDays ?? 30);
 
+  // Anonymous checkout: the Cap token + a widget instance ref so a failed
+  // checkout can remount the (consumed) challenge.
+  let captchaToken = $state<string | null>(null);
+  let capWidget = $state<ReturnType<typeof CapWidget>>();
+  let captchaEndpoint = $derived(config.data?.captcha.apiEndpoint ?? '/cap');
+  let captchaSiteKey = $derived(config.data?.captcha.siteKey ?? '');
+
   // Accordion open state - collapsed by default so the ask stays condensed.
   let open = $state(false);
 
@@ -62,14 +79,31 @@
 
   const checkout = createMutation(() => ({
     mutationFn: (vars: { processor: BillingProcessor; donationCents: number }) =>
-      apiClient.post('/api/v1/billing/checkout', { ...vars, kind: 'donation' }, CheckoutResponse),
+      apiClient.post(
+        '/api/v1/billing/checkout',
+        {
+          ...vars,
+          kind: 'donation',
+          ...(anonymous && captchaToken ? { captchaToken } : {}),
+        },
+        CheckoutResponse,
+      ),
     onSuccess: (res) => {
       window.location.href = res.redirectUrl;
     },
-    onError: (err) => toast.error(t('donate.startFailed'), { description: apiErrorMessage(err) }),
+    onError: (err) => {
+      toast.error(t('donate.startFailed'), { description: apiErrorMessage(err) });
+      // The server verify consumed the token: remount the challenge or every
+      // retry fails with a stale-captcha error (the GetAccount pattern).
+      if (anonymous) {
+        captchaToken = null;
+        capWidget?.reset();
+      }
+    },
   }));
 
   function submit() {
+    if (anonymous && !captchaToken) return;
     if (selectedProcessor && cents > 0 && !belowMin) {
       checkout.mutate({ processor: selectedProcessor, donationCents: cents });
     }
@@ -110,10 +144,28 @@
     {/if}
   </fieldset>
 
+  {#if anonymous}
+    <!-- No session to rate-limit against, so the server demands a Cap
+         proof-of-work token with the checkout. Same-origin, no third parties. -->
+    <div class="space-y-1.5">
+      <CapWidget
+        bind:this={capWidget}
+        apiEndpoint={captchaEndpoint}
+        siteKey={captchaSiteKey}
+        onVerify={(token) => (captchaToken = token || null)}
+      />
+      <p class="text-xs text-muted-foreground">{t('donate.anonNote')}</p>
+    </div>
+  {/if}
+
   <div class="flex justify-end">
     <Button
       onclick={submit}
-      disabled={!selectedProcessor || cents <= 0 || belowMin || checkout.isPending}
+      disabled={!selectedProcessor ||
+        cents <= 0 ||
+        belowMin ||
+        checkout.isPending ||
+        (anonymous && !captchaToken)}
       class="min-h-11 w-full sm:w-auto"
     >
       {checkout.isPending

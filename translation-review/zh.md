@@ -1,7 +1,7 @@
 # FreeSocks translation review — Chinese (中文)
 
 Generated from `messages/en.json` (source of truth) vs `messages/zh.json`.
-**64 of 801 strings are missing** (the app currently shows English for
+**88 of 821 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -250,7 +250,6 @@ review.
 | `account.disabledTitle` | Your account is currently disabled | 你的账户当前已停用 |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | 此账户的新密钥与更改已暂停。请在下方兑换会员码以重新激活，或联系支持并提供你的支持 ID。 |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | 如果您的32位账号可能已泄露，请立即更换。旧账号将立即失效。 |
-| `account.keyActionsHint` | These change your VPN connection only - your 32-digit account number stays the same. | 这些更改只会改变您的代理连接--您的 32 位账号保持不变。 |
 | `account.section.connection.title` | Your connection | 您的连接 |
 | `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | 您的代理密钥、设置帮助和已连接的设备。 |
 | `account.section.membership.title` | Membership | 会员资格 |
@@ -341,18 +340,19 @@ review.
 | `usage.none` | No usage recorded yet. | 尚未记录使用情况。 |
 | `usage.panelTitle` | Usage & validity | ⚠️ **MISSING** |
 
-## `regen` — The regenerate-subscription confirmation dialog.
+## `regen` — The regenerate-subscription confirmation dialog. *(4 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
-| `regen.title` | Create a new subscription URL? | 重新生成订阅？ |
-| `regen.body` | Your current subscription URL (ending …{suffix}) will be replaced with a new one. The old URL becomes read-only for 24 hours, then is deleted. | 你当前的订阅链接（结尾为 …{suffix}）将被新链接替换。旧链接将变为只读并保留 24 小时，之后删除。 |
+| `regen.title` | Create a new key? | ⚠️ **MISSING** |
+| `regen.body` | For when your subscription URL itself is the problem - it stopped working everywhere, or you think someone else has it. Your current URL (ending …{suffix}) is replaced with a brand-new one; the old one keeps working for 24 hours, then is deleted. | ⚠️ **MISSING** |
 | `regen.point1` | Your current key remains usable for the next 24 hours | 当前密钥在接下来的 24 小时内仍可使用 |
 | `regen.point2` | You'll need to re-import the new URL in each of your devices | 你需要在每台设备上重新导入新链接 |
 | `regen.pointDevices [countPlural=one]` | You currently have 1 connected device - it will need the new URL | 你当前有 1 台已连接设备--都需要导入新链接 |
 | `regen.pointDevices [countPlural=other]` | You currently have {count} connected devices - they will all need the new URL | 你当前有 {count} 台已连接设备--都需要导入新链接 |
-| `regen.confirm` | Create new URL | 重新生成 |
+| `regen.confirm` | Create new key | ⚠️ **MISSING** |
 | `regen.working` | Creating… | 生成中… |
+| `regen.vsSwitch` | Just need a different server? Use "Switch server" instead - your URL stays the same and there is nothing to re-import. | ⚠️ **MISSING** |
 
 ## `switch` — The switch-backend confirmation dialog. *(4 missing)*
 
@@ -440,7 +440,7 @@ review.
 | `impact.giftsTitle` | Recent donations | ⚠️ **MISSING** |
 | `impact.giftActiveUntil` | Boosting free users until {date} | ⚠️ **MISSING** |
 
-## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(1 missing)*
+## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(13 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -462,6 +462,18 @@ review.
 | `donate.badgeTooltip` | Thank you for supporting FreeSocks | 感谢你支持 FreeSocks |
 | `donate.thanksTitle` | You're a FreeSocks donor | 你已是 FreeSocks 捐赠者 |
 | `donate.thanksBody` | Thank you - your support helps keep FreeSocks free for everyone. | 谢谢--你的支持让 FreeSocks 一直对所有人免费。 |
+| `donate.pageTitle` | Donate | ⚠️ **MISSING** |
+| `donate.pageIntro` | FreeSocks is free for everyone, funded by donations. Every gift raises every free user's bandwidth for the next {days} days. | ⚠️ **MISSING** |
+| `donate.signInTitle` | Sign in and donate | ⚠️ **MISSING** |
+| `donate.signInBody` | Your gift is recorded on your account: you earn the donor badge and can see your giving history. | ⚠️ **MISSING** |
+| `donate.signInInstead` | Have an account? Sign in to donate instead | ⚠️ **MISSING** |
+| `donate.anonTitle` | Donate anonymously | ⚠️ **MISSING** |
+| `donate.anonBody` | No account needed. Your gift funds the shared bandwidth pool just the same - it simply is not recorded anywhere. | ⚠️ **MISSING** |
+| `donate.anonNote` | Anonymous donation: not linked to any account, so no donor badge or giving history. Keep your receipt from the payment page - it is your only record. | ⚠️ **MISSING** |
+| `donate.paidTitle` | Thank you! | ⚠️ **MISSING** |
+| `donate.paidBody` | Your donation is in. Every free user's bandwidth is raised for the next {days} days because of it. | ⚠️ **MISSING** |
+| `donate.orderFailedBody` | The payment did not complete - nothing was charged, or the payment page expired. You can try again below. | ⚠️ **MISSING** |
+| `donate.unavailable` | Donations are not available right now. Please check back later. | ⚠️ **MISSING** |
 
 ## `referral` — Miscellaneous strings.
 
@@ -664,7 +676,7 @@ review.
 | `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | 一款付费、闭源的 iOS 应用，流行且可靠。如果你已购买，值得使用；上面的开源应用可以免费完成同样的工作。 |
 | `setup.clientDesc.outline` | The simplest experience there is: paste your access key and connect. Only works with Outline (Shadowsocks) access keys. | 体验最简单：粘贴访问密钥即可连接。仅适用于 Outline（Shadowsocks）访问密钥。 |
 
-## `mirror` — The "trouble connecting? try a mirror" fallback flow.
+## `mirror` — The "trouble connecting? try a mirror" fallback flow. *(3 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -685,8 +697,11 @@ review.
 | `mirror.removeAll` | Remove all mirrors | 移除所有镜像 |
 | `mirror.errorToast` | Couldn't add a mirror | 无法添加镜像 |
 | `mirror.removedToast` | Mirrors removed | 镜像已移除 |
+| `mirror.quickLabel` | First, try moving servers | ⚠️ **MISSING** |
+| `mirror.quickHint` | A blocked or overloaded server is the most common cause. Switching keeps your link the same; picking a new location creates a new key. | ⚠️ **MISSING** |
+| `mirror.pickLocation` | Pick a different location | ⚠️ **MISSING** |
 
-## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL).
+## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL). *(3 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -694,8 +709,11 @@ review.
 | `rawconfig.title` | Your configuration | 你的配置 |
 | `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | 你的完整代理配置，通过加密通道获取，因此不会以明文经过 CDN。可手动复制到你的应用中，而无需使用订阅链接。 |
 | `rawconfig.addHint` | Paste these server entries into your VPN app manually. | 将这些服务器条目手动粘贴到你的代理应用中。 |
+| `rawconfig.confirmTitle` | Show the raw configuration? | ⚠️ **MISSING** |
+| `rawconfig.confirmBody` | These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change. | ⚠️ **MISSING** |
+| `rawconfig.confirmCta` | Show configuration | ⚠️ **MISSING** |
 
-## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(22 missing)*
+## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(23 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
@@ -731,6 +749,7 @@ review.
 | `delivery.switchSuccessTitle` | Switched to "{label}" | 切换到“ {label} |
 | `delivery.switchSuccessBody` | Same subscription URL - your apps will pick up the new servers on their next refresh. | 在每台设备上重新导入新的订阅网址。 |
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
+| `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
 ## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(1 missing)*
 
@@ -983,14 +1002,14 @@ review.
 | `status.incidentsPast` | Past incidents | 历史故障 |
 | `status.report` | Report a problem | 报告问题 |
 
-## `switchServer` — Miscellaneous strings. *(16 missing)*
+## `switchServer` — Miscellaneous strings. *(17 missing)*
 
 | Key | English | Chinese (中文) |
 | --- | --- | --- |
 | `switchServer.action` | Switch server | ⚠️ **MISSING** |
 | `switchServer.title` | Move to a different server? | ⚠️ **MISSING** |
-| `switchServer.body` | We will move your key to another server. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
-| `switchServer.bodyWithServer` | We will move your key off {server} to another server. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.body` | For when your current server is the problem - blocked, slow, or unreliable. We move your key to a different server; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.bodyWithServer` | For when your current server is the problem - blocked, slow, or unreliable. We move your key off {server} to a different server; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
 | `switchServer.reasonLegend` | What's wrong with your current server? | ⚠️ **MISSING** |
 | `switchServer.reasonSlow` | It's slow | ⚠️ **MISSING** |
 | `switchServer.reasonBlocked` | It's blocked where I am | ⚠️ **MISSING** |
@@ -1003,3 +1022,4 @@ review.
 | `switchServer.working` | Moving… | ⚠️ **MISSING** |
 | `switchServer.done` | Your key has moved to a different server. | ⚠️ **MISSING** |
 | `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
+| `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |

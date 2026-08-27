@@ -20,6 +20,9 @@
     <loc>https://{{placeholder "http.request.host"}}/</loc>
   </url>
   <url>
+    <loc>https://{{placeholder "http.request.host"}}/donate</loc>
+  </url>
+  <url>
     <loc>https://{{placeholder "http.request.host"}}/get-account</loc>
   </url>
   <url>

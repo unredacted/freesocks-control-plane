@@ -1536,25 +1536,13 @@ http.route({
   method: 'POST',
   handler: guard(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:write');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
-    const rl = await ctx.runMutation(internal.rateLimits.enforce, {
-      policyKey: 'billing.checkout',
-      subject: member.userId,
-    });
-    if (!rl.allowed) {
-      return errorJson(
-        'rate_limit.exceeded',
-        'Too many checkout attempts. Please wait and try again.',
-        429,
-        { retryAfterMs: rl.retryAfterMs },
-      );
-    }
     const body = await readJson<{
       processor?: string;
       months?: number;
       kind?: string;
       quantity?: number;
       donationCents?: number;
+      captchaToken?: string;
     }>(req);
     if (
       body.processor !== 'nowpayments' &&
@@ -1569,6 +1557,56 @@ http.route({
       );
     }
     const kind = body.kind === 'gift' ? 'gift' : body.kind === 'donation' ? 'donation' : 'self';
+    if (member) {
+      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+        policyKey: 'billing.checkout',
+        subject: member.userId,
+      });
+      if (!rl.allowed) {
+        return errorJson(
+          'rate_limit.exceeded',
+          'Too many checkout attempts. Please wait and try again.',
+          429,
+          { retryAfterMs: rl.retryAfterMs },
+        );
+      }
+    } else {
+      // ANONYMOUS checkout: donations only — a membership/gift must bind to an
+      // account it can grant to. Each call mints a hosted invoice, so the spam
+      // guards mirror account creation: a per-IP throttle FIRST (so a flood
+      // can't drive outbound captcha-verify QPS), then the Cap proof-of-work.
+      if (kind !== 'donation') {
+        return errorJson('auth.unauthenticated', 'Authentication required', 401);
+      }
+      if (!body.captchaToken) {
+        return errorJson('validation', 'Captcha token required', 400);
+      }
+      const ip = resolveClientIp(req);
+      if (!ip) {
+        return errorJson(
+          'billing.ip_unresolved',
+          'Unable to establish your network address. Try again later.',
+          503,
+        );
+      }
+      const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+        policyKey: 'billing.checkout-anon',
+        subject: await ipHashSubject(ip),
+      });
+      if (!rl.allowed) {
+        return errorJson(
+          'rate_limit.exceeded',
+          'Too many attempts from your network. Please wait a bit and try again.',
+          429,
+          { retryAfterMs: rl.retryAfterMs },
+        );
+      }
+      const cap = await verifyCaptcha(body.captchaToken);
+      if (!cap.configured) return errorJson('config', 'Captcha not configured', 503);
+      if (!cap.success) {
+        return errorJson('auth.captcha_failed', 'Captcha verification failed', 403);
+      }
+    }
     // A membership (self/gift) needs a term; a standalone donation does not.
     if (
       kind !== 'donation' &&
@@ -1608,7 +1646,7 @@ http.route({
     }
     try {
       const result = await ctx.runAction(internal.billing.createCheckout, {
-        userId: member.userId,
+        userId: member?.userId,
         processor: body.processor,
         months: kind === 'donation' ? undefined : body.months,
         kind,
@@ -1637,15 +1675,21 @@ http.route({
 });
 
 // Poll an order's status (the return page). Scoped to the requesting member —
-// a ref that isn't theirs (or doesn't exist) is a 404.
+// a ref that isn't theirs (or doesn't exist) is a 404. Without a session it
+// answers ONLY for anonymous donation orders (the unguessable 128-bit ref is
+// the capability there); a user-bound ref stays 401 until its owner signs in.
 http.route({
   pathPrefix: '/api/v1/billing/order/',
   method: 'GET',
   handler: sealed(async (ctx, req) => {
     const member = await resolveMember(ctx, req, 'account:read');
-    if (!member) return errorJson('auth.unauthenticated', 'Authentication required', 401);
     const opaqueRef = lastPathSegment(req);
     if (!opaqueRef) return errorJson('validation', 'order ref required', 400);
+    if (!member) {
+      const anon = await ctx.runQuery(internal.billing.getAnonOrderStatus, { opaqueRef });
+      if (anon) return json(anon);
+      return errorJson('auth.unauthenticated', 'Authentication required', 401);
+    }
     const status = await ctx.runQuery(internal.billing.getOrderStatus, {
       opaqueRef,
       userId: member.userId,

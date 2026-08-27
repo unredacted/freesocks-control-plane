@@ -1617,7 +1617,8 @@ function mapBillingOrder(o: Doc<'billingOrders'>) {
     id: o._id as string,
     processor: o.processor,
     refPrefix: o.opaqueRef.slice(0, 8),
-    userId: o.userId as string,
+    // Null = anonymous donation order (no account behind it).
+    userId: (o.userId as string | undefined) ?? null,
     status: o.status,
     amountCents: o.amountCents,
     donationCents: o.donationCents ?? 0,
@@ -1659,7 +1660,8 @@ export const billingOverview = internalQuery({
     // resolved per page (≤200 rows) — never the account number.
     const orders = await Promise.all(
       res.page.map(async (o) => {
-        const u = await ctx.db.get(o.userId);
+        // Anonymous donation orders have no buyer row (userHandle stays null).
+        const u = o.userId ? await ctx.db.get(o.userId) : null;
         return { ...mapBillingOrder(o), userHandle: u?.supportId ?? null };
       }),
     );

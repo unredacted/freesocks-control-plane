@@ -27,7 +27,17 @@
   // The ONLY member sign-in path post-migration: the random account number
   // (no OIDC, no password). A Cap proof-of-work check gates every attempt; we just
   // collect the token + number and POST. On success the server sets the signed
-  // fs_session cookie and we bounce to /account.
+  // fs_session cookie and we bounce to /account (or an allowlisted ?returnTo=).
+
+  // Post-login destination: a strict ALLOWLIST, not a free redirect — an
+  // attacker-crafted /login?returnTo=… must never steer a fresh session to an
+  // arbitrary path (let alone another origin). Today only the donate flow
+  // round-trips through sign-in; everything else lands on /account as always.
+  const RETURN_TO_ALLOWLIST = ['/donate'];
+  function postLoginTarget(): string {
+    const rt = router.searchParams.get('returnTo');
+    return rt && RETURN_TO_ALLOWLIST.includes(rt) ? rt : '/account';
+  }
   const config = configQuery();
   let token = $state<string | null>(null);
   // Instance ref so we can remount the captcha after a failed submit - the server
@@ -67,7 +77,7 @@
       await queryClient.invalidateQueries({ queryKey: queryKeys.me });
       await queryClient.invalidateQueries({ queryKey: queryKeys.account });
       toast.success(t('login.success'));
-      router.navigate('/account');
+      router.navigate(postLoginTarget());
     },
     onError: () => {
       // The verify consumed the token; drop it + remount for a fresh challenge so
@@ -122,7 +132,7 @@
       await queryClient.invalidateQueries({ queryKey: queryKeys.me });
       await queryClient.invalidateQueries({ queryKey: queryKeys.account });
       toast.success(t('login.success'));
-      router.navigate('/account');
+      router.navigate(postLoginTarget());
     } catch (err) {
       if (err instanceof PasskeyCancelledError) return;
       passkeyError = apiErrorMessage(err);

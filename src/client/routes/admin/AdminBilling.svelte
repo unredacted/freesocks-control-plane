@@ -977,6 +977,9 @@
             <code class="font-mono text-xs text-muted-foreground">{o.refPrefix}…</code>
             {#if o.userHandle}
               <code class="font-mono text-xs text-muted-foreground">{o.userHandle}</code>
+            {:else if o.userId === null}
+              <!-- No account behind this order: an anonymous donation. -->
+              <span class="text-[11px] text-muted-foreground">anonymous</span>
             {/if}
             <span class="capitalize">{o.processor}</span>
             <span class="tabular-nums">{formatMoney(o.amountCents, o.currency)}</span>

@@ -18,6 +18,7 @@
   import Account from './routes/Account.svelte';
   import Login from './routes/Login.svelte';
   import Status from './routes/Status.svelte';
+  import Donate from './routes/Donate.svelte';
   // The whole admin CMS is lazy-loaded (P1-18): public visitors never download it.
   const AdminRouter = () => import('./routes/admin/AdminRouter.svelte');
   import { router } from './stores/router.svelte';
@@ -62,6 +63,7 @@
     else if (path === '/account') title = `${t('nav.account')} · FreeSocks`;
     else if (path === '/login') title = `${t('nav.signIn')} · FreeSocks`;
     else if (path === '/status') title = `${t('status.title')} · FreeSocks`;
+    else if (path === '/donate') title = `${t('donate.pageTitle')} · FreeSocks`;
     else if (path.startsWith('/admin')) title = 'Admin · FreeSocks';
     else if (path !== '/') title = `${t('app.notFound')} · FreeSocks`;
     document.title = title;
@@ -145,6 +147,8 @@
               <Login />
             {:else if router.pathname === '/status'}
               <Status />
+            {:else if router.pathname === '/donate'}
+              <Donate />
             {:else if onAdminRoute}
               {#await AdminRouter() then mod}
                 {@const Admin = mod.default}

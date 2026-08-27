@@ -92,6 +92,11 @@ export const RATE_LIMIT_DEFAULTS = {
   // Self-service membership checkout (per member): each call creates a hosted
   // invoice + a pending order, so cap the churn without blocking real retries.
   'billing.checkout': { max: 10, windowMs: HOUR, enabled: true },
+  // Anonymous donation checkout (per IP): captcha-gated too, but the throttle
+  // is the first line — every call mints a processor-hosted invoice, and
+  // invoice spam can get the operator's processor account flagged. Tighter
+  // than the per-member cap; a real donor rarely needs more than a retry or two.
+  'billing.checkout-anon': { max: 5, windowMs: HOUR, enabled: true },
   // Per-IP throttle on the crypto IPN (a single payment fires several status
   // callbacks: waiting → confirming → finished — so this is generous).
   'webhook.nowpayments.ip': { max: 120, windowMs: MINUTE, enabled: true },

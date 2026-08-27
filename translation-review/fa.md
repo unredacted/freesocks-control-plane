@@ -1,7 +1,7 @@
 # FreeSocks translation review — Persian (فارسی)
 
 Generated from `messages/en.json` (source of truth) vs `messages/fa.json`.
-**64 of 801 strings are missing** (the app currently shows English for
+**88 of 821 strings are missing** (the app currently shows English for
 those); the rest are first-pass machine translations that need a native speaker's
 review.
 
@@ -251,7 +251,6 @@ review.
 | `account.disabledTitle` | Your account is currently disabled | حساب شما در حال حاضر غیرفعال است |
 | `account.disabledBody` | New keys and changes are paused on this account. Redeem a membership code below to reactivate it, or contact support and share your Support ID. | ساخت کلید جدید و تغییرات در این حساب متوقف شده است. برای فعال‌سازی دوباره، کد عضویت را در پایین وارد کنید یا با پشتیبانی تماس بگیرید و شناسهٔ پشتیبانی خود را اعلام کنید. |
 | `account.rotateHint` | Replace your 32-digit account number if it may have leaked - or, if you never saved it, rotate now to get a fresh one you can save. The old one stops working immediately. | اگر شماره حساب ۳۲ رقمی شما لو رفته باشد، آن را تغییر دهید. شماره قبلی فوراً از کار می‌افتد. |
-| `account.keyActionsHint` | These change your VPN connection only - your 32-digit account number stays the same. | این‌ها فقط اتصال پروکسی شما را تغییر می‌دهند - شماره حساب ۳۲ رقمی شما ثابت می‌ماند. |
 | `account.section.connection.title` | Your connection | ارتباط شما |
 | `account.section.connection.desc` | Your VPN key, setup help, and connected devices. | کلید پروکسی شما، راهنمای راه‌اندازی و دستگاه‌های متصل. |
 | `account.section.membership.title` | Membership | عضویت |
@@ -342,18 +341,19 @@ review.
 | `usage.none` | No usage recorded yet. | هنوز هیچ استفاده‌ای ثبت نشده است. |
 | `usage.panelTitle` | Usage & validity | ⚠️ **MISSING** |
 
-## `regen` — The regenerate-subscription confirmation dialog.
+## `regen` — The regenerate-subscription confirmation dialog. *(4 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
-| `regen.title` | Create a new subscription URL? | اشتراک از نو ساخته شود؟ |
-| `regen.body` | Your current subscription URL (ending …{suffix}) will be replaced with a new one. The old URL becomes read-only for 24 hours, then is deleted. | لینک اشتراک فعلی شما (با پایان …{suffix}) با لینک جدیدی جایگزین می‌شود. لینک قبلی ۲۴ ساعت فقط‌خواندنی می‌ماند و سپس حذف می‌شود. |
+| `regen.title` | Create a new key? | ⚠️ **MISSING** |
+| `regen.body` | For when your subscription URL itself is the problem - it stopped working everywhere, or you think someone else has it. Your current URL (ending …{suffix}) is replaced with a brand-new one; the old one keeps working for 24 hours, then is deleted. | ⚠️ **MISSING** |
 | `regen.point1` | Your current key remains usable for the next 24 hours | کلید فعلی شما تا ۲۴ ساعت آینده قابل استفاده می‌ماند |
 | `regen.point2` | You'll need to re-import the new URL in each of your devices | باید لینک جدید را در هر یک از دستگاه‌هایتان دوباره وارد کنید |
 | `regen.pointDevices [countPlural=one]` | You currently have 1 connected device - it will need the new URL | اکنون 1 دستگاه متصل دارید - همگی به لینک جدید نیاز دارند |
 | `regen.pointDevices [countPlural=other]` | You currently have {count} connected devices - they will all need the new URL | اکنون {count} دستگاه متصل دارید - همگی به لینک جدید نیاز دارند |
-| `regen.confirm` | Create new URL | ساخت دوباره |
+| `regen.confirm` | Create new key | ⚠️ **MISSING** |
 | `regen.working` | Creating… | در حال ساخت… |
+| `regen.vsSwitch` | Just need a different server? Use "Switch server" instead - your URL stays the same and there is nothing to re-import. | ⚠️ **MISSING** |
 
 ## `switch` — The switch-backend confirmation dialog. *(4 missing)*
 
@@ -441,7 +441,7 @@ review.
 | `impact.giftsTitle` | Recent donations | ⚠️ **MISSING** |
 | `impact.giftActiveUntil` | Boosting free users until {date} | ⚠️ **MISSING** |
 
-## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(1 missing)*
+## `donate` — The donation card + amount picker (donations add bandwidth for all free users). *(13 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -463,6 +463,18 @@ review.
 | `donate.badgeTooltip` | Thank you for supporting FreeSocks | از حمایت شما از فری‌ساکس سپاسگزاریم |
 | `donate.thanksTitle` | You're a FreeSocks donor | شما یک اهداکنندهٔ فری‌ساکس هستید |
 | `donate.thanksBody` | Thank you - your support helps keep FreeSocks free for everyone. | سپاسگزاریم - حمایت شما کمک می‌کند فری‌ساکس برای همه رایگان بماند. |
+| `donate.pageTitle` | Donate | ⚠️ **MISSING** |
+| `donate.pageIntro` | FreeSocks is free for everyone, funded by donations. Every gift raises every free user's bandwidth for the next {days} days. | ⚠️ **MISSING** |
+| `donate.signInTitle` | Sign in and donate | ⚠️ **MISSING** |
+| `donate.signInBody` | Your gift is recorded on your account: you earn the donor badge and can see your giving history. | ⚠️ **MISSING** |
+| `donate.signInInstead` | Have an account? Sign in to donate instead | ⚠️ **MISSING** |
+| `donate.anonTitle` | Donate anonymously | ⚠️ **MISSING** |
+| `donate.anonBody` | No account needed. Your gift funds the shared bandwidth pool just the same - it simply is not recorded anywhere. | ⚠️ **MISSING** |
+| `donate.anonNote` | Anonymous donation: not linked to any account, so no donor badge or giving history. Keep your receipt from the payment page - it is your only record. | ⚠️ **MISSING** |
+| `donate.paidTitle` | Thank you! | ⚠️ **MISSING** |
+| `donate.paidBody` | Your donation is in. Every free user's bandwidth is raised for the next {days} days because of it. | ⚠️ **MISSING** |
+| `donate.orderFailedBody` | The payment did not complete - nothing was charged, or the payment page expired. You can try again below. | ⚠️ **MISSING** |
+| `donate.unavailable` | Donations are not available right now. Please check back later. | ⚠️ **MISSING** |
 
 ## `referral` — Miscellaneous strings.
 
@@ -665,7 +677,7 @@ review.
 | `setup.clientDesc.shadowrocket` | A paid, closed-source iOS app that is popular and reliable. Worth using if you already own it; the open-source apps above do the same job for free. | برنامهٔ iOS پولی و بسته‌متنی که محبوب و قابل اعتماد است. اگر از قبل آن را دارید ارزش استفاده دارد؛ برنامه‌های متن‌باز بالا همان کار را رایگان انجام می‌دهند. |
 | `setup.clientDesc.outline` | The simplest experience there is: paste your access key and connect. Only works with Outline (Shadowsocks) access keys. | ساده‌ترین تجربه‌ای که هست: کلید دسترسی خود را جای‌گذاری کنید و وصل شوید. فقط با کلیدهای دسترسی Outline (Shadowsocks) کار می‌کند. |
 
-## `mirror` — The "trouble connecting? try a mirror" fallback flow.
+## `mirror` — The "trouble connecting? try a mirror" fallback flow. *(3 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -686,8 +698,11 @@ review.
 | `mirror.removeAll` | Remove all mirrors | حذف همهٔ آینه‌ها |
 | `mirror.errorToast` | Couldn't add a mirror | افزودن آینه ممکن نشد |
 | `mirror.removedToast` | Mirrors removed | آینه‌ها حذف شدند |
+| `mirror.quickLabel` | First, try moving servers | ⚠️ **MISSING** |
+| `mirror.quickHint` | A blocked or overloaded server is the most common cause. Switching keeps your link the same; picking a new location creates a new key. | ⚠️ **MISSING** |
+| `mirror.pickLocation` | Pick a different location | ⚠️ **MISSING** |
 
-## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL).
+## `rawconfig` — The raw-configuration viewer (privacy mode delivers config text, not a URL). *(3 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -695,8 +710,11 @@ review.
 | `rawconfig.title` | Your configuration | پیکربندی شما |
 | `rawconfig.explainer` | Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link. | پیکربندی کامل پروکسی شما، که از طریق یک کانال رمزگذاری‌شده دریافت می‌شود تا هرگز به‌صورت متن ساده از CDN عبور نکند. به‌جای استفاده از لینک اشتراک، آن را دستی در برنامه‌تان وارد کنید. |
 | `rawconfig.addHint` | Paste these server entries into your VPN app manually. | این ورودی‌های سرور را به‌صورت دستی در برنامهٔ پروکسی خود وارد کنید. |
+| `rawconfig.confirmTitle` | Show the raw configuration? | ⚠️ **MISSING** |
+| `rawconfig.confirmBody` | These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change. | ⚠️ **MISSING** |
+| `rawconfig.confirmCta` | Show configuration | ⚠️ **MISSING** |
 
-## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(22 missing)*
+## `delivery` — The connection-mode picker: "Beat censorship" (for censored countries) vs "Maximum privacy" (for open internet), plus the switch-confirmation dialog. *(23 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
@@ -732,6 +750,7 @@ review.
 | `delivery.switchSuccessTitle` | Switched to "{label}" | به " {label} " تغییر یافت. |
 | `delivery.switchSuccessBody` | Same subscription URL - your apps will pick up the new servers on their next refresh. | آدرس اینترنتی اشتراک جدید را در هر دستگاه دوباره وارد کنید. |
 | `delivery.switchFailedTitle` | Could not switch mode | ⚠️ **MISSING** |
+| `delivery.detailsToggle` | More details | ⚠️ **MISSING** |
 
 ## `home` — The public landing page: hero, feature sections, impact section, FAQ intros. *(1 missing)*
 
@@ -984,14 +1003,14 @@ review.
 | `status.incidentsPast` | Past incidents | حوادث گذشته |
 | `status.report` | Report a problem | گزارش مشکل |
 
-## `switchServer` — Miscellaneous strings. *(16 missing)*
+## `switchServer` — Miscellaneous strings. *(17 missing)*
 
 | Key | English | Persian (فارسی) |
 | --- | --- | --- |
 | `switchServer.action` | Switch server | ⚠️ **MISSING** |
 | `switchServer.title` | Move to a different server? | ⚠️ **MISSING** |
-| `switchServer.body` | We will move your key to another server. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
-| `switchServer.bodyWithServer` | We will move your key off {server} to another server. Your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.body` | For when your current server is the problem - blocked, slow, or unreliable. We move your key to a different server; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
+| `switchServer.bodyWithServer` | For when your current server is the problem - blocked, slow, or unreliable. We move your key off {server} to a different server; your subscription URL stays the same, so there is nothing to re-import. | ⚠️ **MISSING** |
 | `switchServer.reasonLegend` | What's wrong with your current server? | ⚠️ **MISSING** |
 | `switchServer.reasonSlow` | It's slow | ⚠️ **MISSING** |
 | `switchServer.reasonBlocked` | It's blocked where I am | ⚠️ **MISSING** |
@@ -1004,3 +1023,4 @@ review.
 | `switchServer.working` | Moving… | ⚠️ **MISSING** |
 | `switchServer.done` | Your key has moved to a different server. | ⚠️ **MISSING** |
 | `switchServer.failed` | Could not move your key | ⚠️ **MISSING** |
+| `switchServer.vsNewKey` | If the subscription URL itself stopped working everywhere, or you think someone else has it, use "Create a new key" instead - that replaces the URL. | ⚠️ **MISSING** |

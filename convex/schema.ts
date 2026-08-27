@@ -520,7 +520,10 @@ export default defineSchema({
     processor: billingProcessor,
     opaqueRef: v.string(),
     processorRef: v.optional(v.string()),
-    userId: v.id('users'),
+    // Absent = an ANONYMOUS donation order (kind 'donation' only): no account
+    // involved, the opaque ref is the payer's only handle. Memberships and
+    // gifts are always user-bound.
+    userId: v.optional(v.id('users')),
     // Optional: a donation-only order (kind 'donation') carries no tier.
     tierId: v.optional(v.id('tiers')),
     durationDays: v.number(),

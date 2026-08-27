@@ -34,6 +34,7 @@ export const ROUTE_ALLOWLIST: Record<string, string> = {
   '/': 'Home',
   '/get-account': 'Get account',
   '/account': 'Account',
+  '/donate': 'Donate',
   '/login': 'Sign in',
   '/status': 'Network status',
 };

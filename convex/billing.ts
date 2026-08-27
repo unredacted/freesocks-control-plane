@@ -208,15 +208,16 @@ export const checkoutContext = internalQuery({
 });
 
 /**
- * Persist a pending order bound to the member's userId AFTER the hosted invoice
- * was created (so a failed create never leaves an orphan); audit the checkout.
+ * Persist a pending order AFTER the hosted invoice was created (so a failed
+ * create never leaves an orphan); audit the checkout. `userId` absent = an
+ * anonymous donation order (the checkout action enforces kind==='donation').
  */
 export const insertOrder = internalMutation({
   args: {
     processor: processorValidator,
     opaqueRef: v.string(),
     processorRef: v.string(),
-    userId: v.id('users'),
+    userId: v.optional(v.id('users')),
     // Absent for a donation-only order (no membership tier).
     tierId: v.optional(v.id('tiers')),
     durationDays: v.number(),
@@ -246,7 +247,7 @@ export const insertOrder = internalMutation({
       updatedAt: now,
     });
     await writeAuditLog(ctx, {
-      actorType: 'member',
+      actorType: a.userId ? 'member' : 'anonymous',
       actorId: a.userId,
       action: 'billing.checkout.created',
       targetType: 'billing_order',
@@ -272,7 +273,9 @@ export const insertOrder = internalMutation({
  */
 export const createCheckout = internalAction({
   args: {
-    userId: v.id('users'),
+    // Absent = anonymous checkout: allowed for kind 'donation' ONLY (enforced
+    // below) — memberships and gifts always bind to an account.
+    userId: v.optional(v.id('users')),
     processor: processorValidator,
     // Required for a membership (self/gift); omitted for a standalone donation.
     months: v.optional(v.number()),
@@ -300,6 +303,15 @@ export const createCheckout = internalAction({
     }
 
     const kind = a.kind ?? 'self';
+    if (!a.userId && kind !== 'donation') {
+      // Belt-and-braces: the HTTP route already 401s unauthenticated
+      // non-donation checkouts; a membership/gift order without a user to
+      // grant to must never exist.
+      throw new ConvexError({
+        code: 'auth.unauthenticated',
+        message: 'Sign in to buy a membership',
+      });
+    }
     const donationCents = Math.max(0, Math.floor(a.donationCents ?? 0));
 
     // Resolve the charge amount, tier/duration, and label per kind. A donation-only
@@ -390,8 +402,10 @@ export const createCheckout = internalAction({
       currency: config.currency,
       description,
       ipnUrl: `${base}/api/webhooks/${a.processor}`,
-      successUrl: `${base}/account?order=${opaqueRef}`,
-      cancelUrl: `${base}/account?order=${opaqueRef}&cancel=1`,
+      // Anonymous donors have no /account to return to: they land on the
+      // public /donate page, whose ?order= poll works without a session.
+      successUrl: `${base}${a.userId ? '/account' : '/donate'}?order=${opaqueRef}`,
+      cancelUrl: `${base}${a.userId ? '/account' : '/donate'}?order=${opaqueRef}&cancel=1`,
     };
 
     // Create the invoice FIRST. On failure, nothing is persisted (no orphaned
@@ -457,7 +471,7 @@ const STATUS_RANK: Record<OrderStatus, number> = {
  */
 async function fundDonation(
   ctx: MutationCtx,
-  userId: Id<'users'>,
+  userId: Id<'users'> | undefined,
   donationCents: number | undefined,
   now: number,
   orderId?: Id<'billingOrders'>,
@@ -471,8 +485,10 @@ async function fundDonation(
   if (orderId && bucketExpiresAt !== null) {
     await ctx.db.patch(orderId, { donationBucketExpiresAt: bucketExpiresAt });
   }
-  const u = await ctx.db.get(userId);
-  if (u) {
+  // Anonymous donation (no userId): the pool funding above is the whole story —
+  // there is no account to stamp a badge or lifetime totals on.
+  const u = userId ? await ctx.db.get(userId) : null;
+  if (userId && u) {
     // Lifetime aggregates on the user row (billing-order retention pruning must
     // never shrink the donor's displayed totals), plus the first-donor badge.
     await ctx.db.patch(userId, {
@@ -606,8 +622,9 @@ export const applyEvent = internalMutation({
           // Re-cap the fleet NOW (symmetric with fundDonation): without this the
           // refunded bonus bandwidth lingered until the next hourly reconcile.
           await ctx.scheduler.runAfter(0, internal.donations.applyFreeBonus, {});
-          const donor = await ctx.db.get(order.userId);
-          if (donor) {
+          // Anonymous donation: no donor row to unwind aggregates on.
+          const donor = order.userId ? await ctx.db.get(order.userId) : null;
+          if (order.userId && donor) {
             const count = Math.max(0, (donor.donationCount ?? 0) - 1);
             await ctx.db.patch(order.userId, {
               donatedCentsTotal: Math.max(0, (donor.donatedCentsTotal ?? 0) - donated),
@@ -619,11 +636,14 @@ export const applyEvent = internalMutation({
         }
         // 2. Referral rewards the refunded purchase triggered never vest (only
         //    pending/converted rows — an already-rewarded row stays, same
-        //    not-auto-revoked posture as the membership).
-        const refs = await ctx.db
-          .query('referrals')
-          .withIndex('by_referee', (q) => q.eq('refereeUserId', order.userId))
-          .collect();
+        //    not-auto-revoked posture as the membership). Anonymous orders have
+        //    no referee to look up.
+        const refs = order.userId
+          ? await ctx.db
+              .query('referrals')
+              .withIndex('by_referee', (q) => q.eq('refereeUserId', order.userId!))
+              .collect()
+          : [];
         for (const r of refs) {
           if (r.status !== 'pending' && r.status !== 'converted') continue;
           await ctx.db.patch(r._id, {
@@ -758,6 +778,12 @@ export const applyEvent = internalMutation({
         return { applied: true, granted: true };
       }
 
+      // Membership orders (self/gift) are always user-bound — anonymous
+      // checkout is donation-only, so a userId-less row here would be corrupt.
+      // Refuse to grant rather than guessing an owner.
+      const buyerId = order.userId;
+      if (!buyerId) return { applied: false, granted: false };
+
       // Membership orders (self/gift) always carry a tier.
       const tierId = order.tierId;
       if (!tierId) return { applied: false, granted: false };
@@ -792,12 +818,12 @@ export const applyEvent = internalMutation({
             tierId,
             durationDays: order.durationDays,
             status: 'active',
-            purchasedByUserId: order.userId,
+            purchasedByUserId: buyerId,
             updatedAt: now,
           });
         }
         // A donation may ride a gift purchase too.
-        await fundDonation(ctx, order.userId, order.donationCents, now, order._id);
+        await fundDonation(ctx, buyerId, order.donationCents, now, order._id);
         await writeAuditLog(ctx, {
           actorType: 'webhook',
           actorId: order.userId,
@@ -817,7 +843,7 @@ export const applyEvent = internalMutation({
         return { applied: true, granted: true };
       }
 
-      const user = await ctx.db.get(order.userId);
+      const user = await ctx.db.get(buyerId);
       if (!user) return { applied: false, granted: false };
       await ctx.db.patch(order._id, {
         status: 'paid',
@@ -828,14 +854,14 @@ export const applyEvent = internalMutation({
       const expiresAtMs =
         Math.max(now, user.membershipExpiresAt ?? 0) + order.durationDays * DAY_MS;
       await applyMembership(ctx, {
-        userId: order.userId,
+        userId: buyerId,
         tierId,
         expiresAtMs,
         reason: `billing.${a.processor}`,
         triggeredBy: 'webhook',
       });
       // Apply any optional donation that rode on the membership charge.
-      await fundDonation(ctx, order.userId, order.donationCents, now, order._id);
+      await fundDonation(ctx, buyerId, order.donationCents, now, order._id);
       await writeAuditLog(ctx, {
         actorType: 'webhook',
         actorId: order.userId,
@@ -1055,6 +1081,34 @@ export const getOrderStatus = internalQuery({
       kind: order.kind ?? 'self',
       giftCodes: order.kind === 'gift' && !order.giftRevealAck ? (order.giftReveal ?? []) : [],
     };
+  },
+});
+
+/**
+ * Status poll for an ANONYMOUS donation order: no session, the unguessable
+ * 128-bit opaque ref is the capability. Deliberately narrow — it answers ONLY
+ * for orders that are both anonymous (no userId) and kind 'donation', and
+ * returns the same shape as getOrderStatus with the member-only fields blanked,
+ * so the SPA's one order-status contract covers both. A user-bound ref through
+ * this path is a 404 (sign in to see it), never a data leak.
+ */
+export const getAnonOrderStatus = internalQuery({
+  args: { opaqueRef: v.string() },
+  handler: async (
+    ctx,
+    { opaqueRef },
+  ): Promise<{
+    status: OrderStatus;
+    membershipExpiresAt: string | null;
+    kind: 'self' | 'gift' | 'donation';
+    giftCodes: string[];
+  } | null> => {
+    const order = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_opaque_ref', (q) => q.eq('opaqueRef', opaqueRef))
+      .unique();
+    if (!order || order.userId !== undefined || order.kind !== 'donation') return null;
+    return { status: order.status, membershipExpiresAt: null, kind: 'donation', giftCodes: [] };
   },
 });
 
