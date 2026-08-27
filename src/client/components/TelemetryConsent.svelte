@@ -84,7 +84,10 @@
       <div class="grid gap-2 sm:grid-cols-3">
         {#if context.fields.country}
           <div>
-            <label class="mb-1 block text-xs text-muted-foreground" for="telemetry-country">
+            <label
+              class="mb-1 block truncate text-xs text-muted-foreground"
+              for="telemetry-country"
+            >
               {t('telemetry.countryLabel')}
             </label>
             <Select.Root
@@ -105,7 +108,7 @@
         {/if}
         {#if context.fields.city}
           <div>
-            <label class="mb-1 block text-xs text-muted-foreground" for="telemetry-city">
+            <label class="mb-1 block truncate text-xs text-muted-foreground" for="telemetry-city">
               {t('telemetry.cityLabel')}
             </label>
             <Input
@@ -119,7 +122,7 @@
         {/if}
         {#if context.fields.asn}
           <div>
-            <label class="mb-1 block text-xs text-muted-foreground" for="telemetry-asn">
+            <label class="mb-1 block truncate text-xs text-muted-foreground" for="telemetry-asn">
               {t('telemetry.asnLabel')}
             </label>
             <Input

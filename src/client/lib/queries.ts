@@ -82,7 +82,7 @@ export const queryKeys = {
   accountUsage: ['account', 'usage'] as const,
   telemetryContext: ['account', 'telemetry-context'] as const,
   adminTelemetryConfig: ['admin', 'telemetry', 'config'] as const,
-  adminTelemetrySummary: (windowMs: number) => ['admin', 'telemetry', 'summary', windowMs] as const,
+  adminTelemetrySummary: (range: string) => ['admin', 'telemetry', 'summary', range] as const,
   adminTelemetryEvents: ['admin', 'telemetry', 'events'] as const,
   nodeStatus: ['account', 'node-status'] as const,
   passkeys: ['account', 'passkeys'] as const,
@@ -275,13 +275,21 @@ export const adminTelemetryConfigQuery = () =>
     staleTime: 60_000,
   }));
 
-export const adminTelemetrySummaryQuery = (windowMs: () => number) =>
-  createQuery(() => ({
-    queryKey: queryKeys.adminTelemetrySummary(windowMs()),
-    queryFn: () =>
-      apiClient.get(`/api/v1/admin/telemetry/summary?window=${windowMs()}`, AdminTelemetrySummary),
-    staleTime: 30_000,
-  }));
+/** Either a trailing window ending now, or an explicit custom date range. */
+export type TelemetryRange =
+  | { kind: 'window'; windowMs: number }
+  | { kind: 'range'; fromMs: number; toMs: number };
+
+export const adminTelemetrySummaryQuery = (range: () => TelemetryRange) =>
+  createQuery(() => {
+    const r = range();
+    const qs = r.kind === 'window' ? `window=${r.windowMs}` : `from=${r.fromMs}&to=${r.toMs}`;
+    return {
+      queryKey: queryKeys.adminTelemetrySummary(qs),
+      queryFn: () => apiClient.get(`/api/v1/admin/telemetry/summary?${qs}`, AdminTelemetrySummary),
+      staleTime: 30_000,
+    };
+  });
 
 /**
  * Poll a billing order after the payment redirect returns to /account?order=ref.

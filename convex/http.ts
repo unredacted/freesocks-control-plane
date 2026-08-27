@@ -2963,10 +2963,20 @@ http.route({
   method: 'GET',
   handler: httpAction(async (ctx, req) => {
     if (!(await resolveAdmin(ctx, req, 'admin:audit:read'))) return ADMIN_UNAUTH();
-    const windowMs = Number(new URL(req.url).searchParams.get('window') ?? '');
+    // Either a trailing ?window=<ms> ending now, or an explicit ?from=<ms>
+    // (+ optional ?to=<ms>) custom date range. The query clamps the span.
+    const params = new URL(req.url).searchParams;
+    const windowMs = Number(params.get('window') ?? '');
+    const fromMs = Number(params.get('from') ?? '');
+    const toMs = Number(params.get('to') ?? '');
     return json(
       await ctx.runQuery(internal.issueReports.summary, {
-        windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 7 * 86_400_000,
+        ...(Number.isFinite(fromMs) && fromMs > 0
+          ? {
+              sinceMs: fromMs,
+              ...(Number.isFinite(toMs) && toMs > 0 ? { untilMs: toMs } : {}),
+            }
+          : { windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 7 * 86_400_000 }),
       }),
     );
   }),

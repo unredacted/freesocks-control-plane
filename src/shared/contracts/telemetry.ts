@@ -57,9 +57,12 @@ const DimensionRow = z.object({
   topReason: z.string().nullable(),
 });
 
-/** GET /api/v1/admin/telemetry/summary?window=<ms>. */
+/** GET /api/v1/admin/telemetry/summary?window=<ms> (or ?from=<ms>&to=<ms>). */
 export const AdminTelemetrySummary = z.object({
   windowMs: z.number(),
+  /** The resolved range the summary actually covers (server-clamped). */
+  sinceMs: z.number().optional(),
+  untilMs: z.number().optional(),
   totals: z.object({
     current: z.number().int(),
     previous: z.number().int(),

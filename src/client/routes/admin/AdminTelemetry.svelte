@@ -18,6 +18,7 @@
     adminTelemetryConfigQuery,
     adminTelemetrySummaryQuery,
     queryKeys,
+    type TelemetryRange,
   } from '../../lib/queries';
   import {
     AdminDiagnosticsConfig,
@@ -65,15 +66,31 @@
     onError: (err) => toast.error('Save failed', { description: apiErrorMessage(err) }),
   }));
 
-  // --- summary window ----------------------------------------------------------
+  // --- summary window / custom range ---------------------------------------
   const DAY = 86_400_000;
   const WINDOWS = [
     { label: '24 hours', ms: DAY },
     { label: '7 days', ms: 7 * DAY },
     { label: '30 days', ms: 30 * DAY },
+    { label: '90 days', ms: 90 * DAY },
   ];
-  let windowMs = $state(7 * DAY);
-  const summary = adminTelemetrySummaryQuery(() => windowMs);
+  let range = $state<TelemetryRange>({ kind: 'window', windowMs: 7 * DAY });
+  // Custom date range (local dates, inclusive): "to" runs to the END of the
+  // picked day so today's events are included.
+  let customFrom = $state('');
+  let customTo = $state('');
+  function applyCustomRange() {
+    const from = new Date(`${customFrom}T00:00:00`).getTime();
+    const to = new Date(`${customTo}T23:59:59.999`).getTime();
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+      toast.error('Pick a valid date range (from before to)');
+      return;
+    }
+    range = { kind: 'range', fromMs: from, toMs: to };
+  }
+  const summary = adminTelemetrySummaryQuery(() => range);
+  const fmtDay = (ms: number) =>
+    new Date(ms).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 
   /** Trend arrow for a reason: current vs the previous equal window. */
   function trend(s: AdminTelemetrySummary, reason: string): string {
@@ -142,16 +159,45 @@
               before sending.
             </CardDescription>
           </div>
-          <div class="flex gap-1">
-            {#each WINDOWS as w (w.ms)}
+          <div class="space-y-2">
+            <div class="flex flex-wrap gap-1">
+              {#each WINDOWS as w (w.ms)}
+                <Button
+                  size="sm"
+                  variant={range.kind === 'window' && range.windowMs === w.ms
+                    ? 'default'
+                    : 'outline'}
+                  onclick={() => (range = { kind: 'window', windowMs: w.ms })}
+                >
+                  {w.label}
+                </Button>
+              {/each}
+            </div>
+            <!-- Custom date range (inclusive days). The retention window bounds
+                 how far back rows still exist. -->
+            <div class="flex flex-wrap items-center gap-1.5">
+              <Input
+                type="date"
+                class="h-8 w-36 text-xs"
+                value={customFrom}
+                oninput={(e) => (customFrom = (e.target as HTMLInputElement).value)}
+              />
+              <span class="text-xs text-muted-foreground">to</span>
+              <Input
+                type="date"
+                class="h-8 w-36 text-xs"
+                value={customTo}
+                oninput={(e) => (customTo = (e.target as HTMLInputElement).value)}
+              />
               <Button
                 size="sm"
-                variant={windowMs === w.ms ? 'default' : 'outline'}
-                onclick={() => (windowMs = w.ms)}
+                variant={range.kind === 'range' ? 'default' : 'outline'}
+                onclick={applyCustomRange}
+                disabled={!customFrom || !customTo}
               >
-                {w.label}
+                Apply
               </Button>
-            {/each}
+            </div>
           </div>
         </div>
       </CardHeader>
@@ -162,6 +208,12 @@
           <InlineError message={apiErrorMessage(summary.error)} />
         {:else if summary.data}
           {@const s = summary.data}
+          {#if s.sinceMs !== undefined && s.untilMs !== undefined}
+            <p class="text-xs text-muted-foreground">
+              Covering {fmtDay(s.sinceMs)} to {fmtDay(s.untilMs)} (trend compares the equal range before
+              it).
+            </p>
+          {/if}
           <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div class="rounded-lg border border-border p-3">
               <div class="text-2xl font-display font-bold tabular-nums">{s.totals.current}</div>

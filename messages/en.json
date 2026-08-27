@@ -1170,10 +1170,10 @@
   },
   "telemetry": {
     "sendLabel": "Include connection details",
-    "sendExplainer": "Only the values shown below are sent. They are not tied to your account, and your IP address is never included.",
+    "sendExplainer": "This helps us see patterns, like one network or region blocking us. Only the values shown below are sent. They are not tied to your account, and your IP address is never included.",
     "countryLabel": "Country",
     "cityLabel": "City",
-    "asnLabel": "Network provider (ASN)",
+    "asnLabel": "Network (ASN)",
     "notSet": "Not set",
     "editHint": "Check these before sending. If you are connected to FreeSocks right now, they may show our server's network instead of yours. Fix anything that looks wrong, or clear it."
   }

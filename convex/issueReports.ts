@@ -217,25 +217,46 @@ function dimension(
 }
 
 /**
- * The Admin → Telemetry aggregation: totals by reason for the CURRENT window,
- * the same for the PREVIOUS equal window (trending = the client renders the
- * delta), and top-N breakdowns by node location, country, ASN, connection mode,
- * and backend. One bounded index scan over 2×window, all math in JS — at this
- * table's realistic volume that is far cheaper than maintaining counters.
+ * The Admin → Telemetry aggregation: totals by reason for the CURRENT range,
+ * the same for the PREVIOUS equal-length range (trending = the client renders
+ * the delta), and top-N breakdowns by node location, country, ASN, connection
+ * mode, and backend. One bounded index scan over 2×range, all math in JS — at
+ * this table's realistic volume that is far cheaper than maintaining counters.
+ *
+ * Range selection: an explicit [sinceMs, untilMs) pair when given (the admin's
+ * custom date range), else the trailing `windowMs` ending now. Span clamped to
+ * [1h, 366d] — the retention sweep bounds how far back data exists anyway.
  */
 export const summary = internalQuery({
-  args: { windowMs: v.number() },
-  handler: async (ctx, { windowMs }) => {
-    const w = Math.min(Math.max(windowMs, 3_600_000), 90 * DAY_MS);
+  args: {
+    windowMs: v.optional(v.number()),
+    sinceMs: v.optional(v.number()),
+    untilMs: v.optional(v.number()),
+  },
+  handler: async (ctx, a) => {
     const now = Date.now();
-    const since = now - w;
-    const prevSince = now - 2 * w;
+    const MIN_SPAN = 3_600_000;
+    const MAX_SPAN = 366 * DAY_MS;
+    let since: number;
+    let until: number;
+    if (a.sinceMs !== undefined && Number.isFinite(a.sinceMs)) {
+      since = a.sinceMs;
+      until = a.untilMs !== undefined && Number.isFinite(a.untilMs) ? a.untilMs : now;
+      if (until <= since) until = since + MIN_SPAN;
+      if (until - since > MAX_SPAN) until = since + MAX_SPAN;
+    } else {
+      const w = Math.min(Math.max(a.windowMs ?? 7 * DAY_MS, MIN_SPAN), MAX_SPAN);
+      until = now;
+      since = now - w;
+    }
+    const w = until - since;
+    const prevSince = since - w;
     const rows = await ctx.db
       .query('issueReports')
       .withIndex('by_creation_time', (q) => q.gte('_creationTime', prevSince))
       .order('desc')
       .take(SUMMARY_SCAN_CAP);
-    const current = rows.filter((r) => r._creationTime >= since);
+    const current = rows.filter((r) => r._creationTime >= since && r._creationTime < until);
     const previous = rows.filter((r) => r._creationTime < since);
 
     const reasonRows = (set: Doc<'issueReports'>[]): ReasonCount[] =>
@@ -257,6 +278,8 @@ export const summary = internalQuery({
 
     return {
       windowMs: w,
+      sinceMs: since,
+      untilMs: until,
       totals: {
         current: current.length,
         previous: previous.length,
