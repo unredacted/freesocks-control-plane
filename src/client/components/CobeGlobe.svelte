@@ -76,6 +76,39 @@
   let tick = $state(0);
   let visibleIds = $state<string[]>([]);
   let reducedMotion = $state(false);
+
+  // Grabbable globe: a horizontal drag spins it by hand (vertical stays with
+  // the page scroll - touch-action: pan-y). The auto-rotation pauses while
+  // held and resumes from wherever the visitor left it; with reduced motion
+  // there is no rAF loop, so the drag renders each move directly.
+  let globe: { update: (s: Record<string, unknown>) => void; destroy: () => void } | undefined;
+  let phi = 2.35; // start facing the censored bloc (Europe→Asia)
+  let dragging = $state(false);
+  let dragX = 0;
+  function onPointerDown(e: PointerEvent) {
+    if (!globe) return;
+    dragging = true;
+    dragX = e.clientX;
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // capture is a nicety (drag keeps tracking outside the canvas); a
+      // browser that refuses it still gets the in-bounds drag
+    }
+  }
+  function onPointerMove(e: PointerEvent) {
+    if (!dragging || !globe) return;
+    const dx = e.clientX - dragX;
+    dragX = e.clientX;
+    phi += dx / 160;
+    if (reducedMotion) {
+      globe.update({ phi });
+      layoutPass();
+    }
+  }
+  function endDrag() {
+    dragging = false;
+  }
   const MAX_VISIBLE = 3;
   // Anti-blink cooldown: a label dropped (collision, edge, limb) may not be
   // re-admitted for this long — without it a label that collides one frame
@@ -236,7 +269,6 @@
         window.removeEventListener('resize', onResize);
       };
     }
-    let globe: { update: (s: Record<string, unknown>) => void; destroy: () => void } | undefined;
     let raf = 0;
     let destroyed = false;
     const dark = document.documentElement.classList.contains('dark');
@@ -247,7 +279,7 @@
         devicePixelRatio: 2,
         width: size * 2,
         height: size * 2,
-        phi: 2.35, // start facing the censored bloc (Europe→Asia)
+        phi,
         theta: 0.25,
         dark: dark ? 1 : 0,
         diffuse: 1.2,
@@ -267,15 +299,15 @@
       // Anchors exist after the first render — run the first layout pass.
       layoutPass();
       if (!reducedMotion) {
-        let phi = 2.35;
         let last = performance.now();
         const tickGlobe = (now: number) => {
           // Time-based (NOT per-frame): a 120Hz display must not spin the globe
           // twice as fast as a 60Hz one. dt is capped so a backgrounded tab
-          // doesn't jump. ~97s per revolution at every refresh rate.
+          // doesn't jump. ~97s per revolution at every refresh rate. A held
+          // pointer parks the auto-advance; the drag handler moves phi itself.
           const dt = Math.min(100, now - last);
           last = now;
-          phi += 0.0018 * (dt / 16.667);
+          if (!dragging) phi += 0.0018 * (dt / 16.667);
           globe?.update({ phi });
           // Collision-check against the freshly-moved anchors: a label drops
           // the frame it would start overlapping, not up to 600ms later.
@@ -291,6 +323,7 @@
       window.removeEventListener('resize', onResize);
       cancelAnimationFrame(raf);
       globe?.destroy();
+      globe = undefined;
     };
   });
 </script>
@@ -298,10 +331,14 @@
 <div class="voice-stage" bind:this={stageEl}>
   <canvas
     bind:this={canvas}
-    class={className}
-    style="width:{size}px;max-width:100%;aspect-ratio:1"
+    class="{className} {dragging ? 'cursor-grabbing' : 'cursor-grab'}"
+    style="width:{size}px;max-width:100%;aspect-ratio:1;touch-action:pan-y"
     role="img"
     aria-label={t('home.globe.aria')}
+    onpointerdown={onPointerDown}
+    onpointermove={onPointerMove}
+    onpointerup={endDrag}
+    onpointercancel={endDrag}
   ></canvas>
 
   <!-- Voice labels, pinned to their markers (left/top set by layoutPass).

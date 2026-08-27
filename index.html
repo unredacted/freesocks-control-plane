@@ -14,6 +14,32 @@
     <title>FreeSocks</title>
 
     <!--
+      Social preview card (Open Graph + Twitter). Crawlers don't run JS, so
+      these live in the static HTML - one site-wide card for every route (the
+      SPA has no per-route SSR). og:image/og:url must be ABSOLUTE, so the host
+      rides the same Caddy templates pass as the CSP nonce below and tracks
+      the deployment host (beta vs prod) like robots.txt/sitemap.xml do; the
+      scheme is hardcoded https because the public origin is always TLS.
+      The image is public/og.png (1200x630); its committed source is
+      scripts/og-card.html - regenerate there when the brand copy changes.
+      og:url is deliberately omitted: crawlers fall back to the fetched URL,
+      which is per-route correct, while a hardcoded value would canonicalize
+      every share to one page.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="FreeSocks" />
+    <meta property="og:title" content="FreeSocks - A VPN for freedom" />
+    <meta
+      property="og:description"
+      content="Free, open & uncensored proxies for users in heavily-censored regions."
+    />
+    <meta property="og:image" content='https://{{placeholder "http.request.host"}}/og.png' />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="FreeSocks - A VPN for freedom" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!--
       Per-request CSP script nonce. Caddy's templates module expands the
       http.request.uuid placeholder below to the SAME UUID it puts in the
       response's script-src nonce header, so this value matches the enforcing
@@ -23,10 +49,11 @@
       quoted so the inner quotes don't truncate the attribute.
 
       IMPORTANT: this whole file is run through Caddy templates, so it must
-      contain NO other Go-template action sequences anywhere (comments
-      included) — only the placeholder below. Served outside Caddy (vite dev /
-      preview) the attribute stays the literal placeholder text; main.ts
-      ignores that, and dev has no enforcing CSP anyway.
+      contain NO Go-template action sequences anywhere (comments included)
+      other than deliberate `placeholder` actions — currently this nonce and
+      the og:image host above. Served outside Caddy (vite dev / preview) the
+      attributes stay the literal placeholder text; main.ts ignores that, and
+      dev has no enforcing CSP anyway.
     -->
     <meta name="csp-nonce" content='{{placeholder "http.request.uuid"}}' />
 

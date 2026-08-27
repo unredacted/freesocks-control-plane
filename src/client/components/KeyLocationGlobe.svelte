@@ -13,6 +13,11 @@
    * that one this globe does NOT spin: it renders once facing the key and only
    * animates while traveling to a new focus (reduced motion jumps instead), so
    * an open account tab costs nothing.
+   *
+   * The globe is grabbable: a horizontal drag spins it freely (vertical stays
+   * with the page scroll - touch-action: pan-y), and a few seconds after the
+   * member lets go it drifts back home to the key's location. Reduced motion
+   * skips the automatic return; the caption still names the location.
    */
   interface MapLocation {
     code: string;
@@ -74,9 +79,44 @@
   let theta = 0.3;
   let raf = 0;
 
+  // Pointer spin. While a drag is live every travel animation stands down;
+  // on release a timer eases the globe back home to the key.
+  let dragging = $state(false);
+  let dragX = 0;
+  let returnTimer = 0;
+
+  function onPointerDown(e: PointerEvent) {
+    if (!globe) return;
+    dragging = true;
+    dragX = e.clientX;
+    cancelAnimationFrame(raf);
+    window.clearTimeout(returnTimer);
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // capture is a nicety (drag keeps tracking outside the canvas); a
+      // browser that refuses it still gets the in-bounds drag
+    }
+  }
+  function onPointerMove(e: PointerEvent) {
+    if (!dragging || !globe) return;
+    const dx = e.clientX - dragX;
+    dragX = e.clientX;
+    phi += dx / 110;
+    globe.update({ phi, theta });
+  }
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    const f = focus;
+    if (reducedMotion || !f?.coords) return;
+    const [tp, tt] = anglesFor(f.coords.lat, f.coords.lng);
+    returnTimer = window.setTimeout(() => animateTo(tp, tt), 3000);
+  }
+
   function animateTo(tp: number, tt: number) {
     cancelAnimationFrame(raf);
-    if (!globe) return;
+    if (!globe || dragging) return;
     if (reducedMotion) {
       phi = tp;
       theta = tt;
@@ -185,6 +225,7 @@
     return () => {
       destroyed = true;
       cancelAnimationFrame(raf);
+      window.clearTimeout(returnTimer);
       for (const id of timers) window.clearTimeout(id);
       globe?.destroy();
       globe = null;
@@ -197,9 +238,14 @@
   <div class="flex flex-1 items-center justify-center py-3">
     <canvas
       bind:this={canvas}
-      style="width:{size}px;max-width:100%;aspect-ratio:1"
+      style="width:{size}px;max-width:100%;aspect-ratio:1;touch-action:pan-y"
+      class={dragging ? 'cursor-grabbing' : 'cursor-grab'}
       role="img"
       aria-label={t('account.map.aria')}
+      onpointerdown={onPointerDown}
+      onpointermove={onPointerMove}
+      onpointerup={endDrag}
+      onpointercancel={endDrag}
     ></canvas>
   </div>
   <div class="space-y-0.5 text-center">
