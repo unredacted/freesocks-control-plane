@@ -2,6 +2,7 @@
   import AdminLayout from './AdminLayout.svelte';
   import TelemetryTimeChart from './TelemetryTimeChart.svelte';
   import TelemetryDimensionChart from './TelemetryDimensionChart.svelte';
+  import AdminRangePicker from './AdminRangePicker.svelte';
   // Cascade-layer order for LayerChart's component styles (redundant under
   // Tailwind, harmless; ships with the lazy admin chunk only).
   import 'layerchart/core.css';
@@ -71,28 +72,8 @@
     onError: (err) => toast.error('Save failed', { description: apiErrorMessage(err) }),
   }));
 
-  // --- summary window / custom range ---------------------------------------
-  const DAY = 86_400_000;
-  const WINDOWS = [
-    { label: '24 hours', ms: DAY },
-    { label: '7 days', ms: 7 * DAY },
-    { label: '30 days', ms: 30 * DAY },
-    { label: '90 days', ms: 90 * DAY },
-  ];
-  let range = $state<TelemetryRange>({ kind: 'window', windowMs: 7 * DAY });
-  // Custom date range (local dates, inclusive): "to" runs to the END of the
-  // picked day so today's events are included.
-  let customFrom = $state('');
-  let customTo = $state('');
-  function applyCustomRange() {
-    const from = new Date(`${customFrom}T00:00:00`).getTime();
-    const to = new Date(`${customTo}T23:59:59.999`).getTime();
-    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
-      toast.error('Pick a valid date range (from before to)');
-      return;
-    }
-    range = { kind: 'range', fromMs: from, toMs: to };
-  }
+  // --- summary range (shared picker: presets + custom from/to) --------------
+  let range = $state<TelemetryRange>({ kind: 'window', windowMs: 7 * 86_400_000 });
   const summary = adminTelemetrySummaryQuery(() => range);
   const fmtDay = (ms: number) =>
     new Date(ms).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -164,46 +145,7 @@
               before sending.
             </CardDescription>
           </div>
-          <div class="space-y-2">
-            <div class="flex flex-wrap gap-1">
-              {#each WINDOWS as w (w.ms)}
-                <Button
-                  size="sm"
-                  variant={range.kind === 'window' && range.windowMs === w.ms
-                    ? 'default'
-                    : 'outline'}
-                  onclick={() => (range = { kind: 'window', windowMs: w.ms })}
-                >
-                  {w.label}
-                </Button>
-              {/each}
-            </div>
-            <!-- Custom date range (inclusive days). The retention window bounds
-                 how far back rows still exist. -->
-            <div class="flex flex-wrap items-center gap-1.5">
-              <Input
-                type="date"
-                class="h-8 w-36 text-xs"
-                value={customFrom}
-                oninput={(e) => (customFrom = (e.target as HTMLInputElement).value)}
-              />
-              <span class="text-xs text-muted-foreground">to</span>
-              <Input
-                type="date"
-                class="h-8 w-36 text-xs"
-                value={customTo}
-                oninput={(e) => (customTo = (e.target as HTMLInputElement).value)}
-              />
-              <Button
-                size="sm"
-                variant={range.kind === 'range' ? 'default' : 'outline'}
-                onclick={applyCustomRange}
-                disabled={!customFrom || !customTo}
-              >
-                Apply
-              </Button>
-            </div>
-          </div>
+          <AdminRangePicker bind:range />
         </div>
       </CardHeader>
       <CardContent class="space-y-5 text-sm">
@@ -491,39 +433,3 @@
     </Card>
   </div>
 </AdminLayout>
-
-<style>
-  /* LayerChart surface mapping (tooltips portal to <body>, so :root scope) +
-     the validated 8-slot categorical palette: the SAME hues re-stepped for the
-     dark surface, not an automatic flip. Ships only with the lazy admin chunk;
-     defining the variables globally after load is harmless (nothing outside
-     the charts reads --viz-*). Reason → slot assignment lives in
-     lib/telemetryViz.ts and is FIXED (color follows the entity). */
-  :global(.lc-root-container),
-  :global(.lc-tooltip-root) {
-    --color-primary: var(--primary);
-    --color-surface-100: var(--card);
-    --color-surface-200: var(--muted);
-    --color-surface-content: var(--card-foreground);
-  }
-  :global(:root) {
-    --viz-s1: #2a78d6;
-    --viz-s2: #eb6834;
-    --viz-s3: #1baf7a;
-    --viz-s4: #eda100;
-    --viz-s5: #e87ba4;
-    --viz-s6: #008300;
-    --viz-s7: #4a3aa7;
-    --viz-s8: #e34948;
-  }
-  :global(.dark) {
-    --viz-s1: #3987e5;
-    --viz-s2: #d95926;
-    --viz-s3: #199e70;
-    --viz-s4: #c98500;
-    --viz-s5: #d55181;
-    --viz-s6: #008300;
-    --viz-s7: #9085e9;
-    --viz-s8: #e66767;
-  }
-</style>

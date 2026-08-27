@@ -22,6 +22,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import type { DatabaseReader, MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
+import { resolveRange } from './lib/timeRange';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
@@ -1631,6 +1632,86 @@ function mapBillingOrder(o: Doc<'billingOrders'>) {
 }
 
 const BILLING_ORDER_STATUSES = new Set(['pending', 'confirming', 'paid', 'failed', 'expired']);
+
+// The most paid orders one revenue computation reads (current + previous range
+// combined); the response flags `truncated` past it instead of under-counting.
+const REVENUE_SCAN_CAP = 20_000;
+
+/**
+ * Revenue over time for the Admin → Billing chart: paid orders bucketed by
+ * `paidAt` (hourly ≤ 3 days, else daily, aligned to the range start), split
+ * into the three income kinds — membership (self), gift codes, and donations.
+ * A membership/gift order's optional donation add-on counts toward donations,
+ * not the membership line, so the donation series is the pool's actual income.
+ * Cents only; no user data (the orders list is the per-order view).
+ */
+export const billingRevenueSeries = internalQuery({
+  args: {
+    windowMs: v.optional(v.number()),
+    sinceMs: v.optional(v.number()),
+    untilMs: v.optional(v.number()),
+  },
+  handler: async (ctx, a) => {
+    const { since, until, prevSince, bucketMs } = resolveRange(a);
+    const config = await resolveBillingConfig(ctx.db);
+    // Paid orders, newest first. paidAt trails _creationTime by the payment
+    // lag, so the time filter is on paidAt after an index scan by status.
+    const rows = await ctx.db
+      .query('billingOrders')
+      .withIndex('by_status', (q) => q.eq('status', 'paid'))
+      .order('desc')
+      .take(REVENUE_SCAN_CAP);
+    const inRange = rows.filter(
+      (o) => o.paidAt !== undefined && o.paidAt >= prevSince && o.paidAt < until,
+    );
+    const current = inRange.filter((o) => (o.paidAt as number) >= since);
+    const previous = inRange.filter((o) => (o.paidAt as number) < since);
+
+    const n = Math.ceil((until - since) / bucketMs);
+    const buckets = Array.from({ length: n }, (_, i) => ({
+      start: since + i * bucketMs,
+      membershipCents: 0,
+      giftCents: 0,
+      donationCents: 0,
+    }));
+    const split = (o: Doc<'billingOrders'>) => {
+      const donation = o.kind === 'donation' ? o.amountCents : (o.donationCents ?? 0);
+      const rest = Math.max(0, o.amountCents - donation);
+      return {
+        donation,
+        membership: o.kind === 'gift' || o.kind === 'donation' ? 0 : rest,
+        gift: o.kind === 'gift' ? rest : 0,
+      };
+    };
+    const totals = { membershipCents: 0, giftCents: 0, donationCents: 0, orders: current.length };
+    for (const o of current) {
+      const s = split(o);
+      totals.membershipCents += s.membership;
+      totals.giftCents += s.gift;
+      totals.donationCents += s.donation;
+      const b = buckets[Math.floor(((o.paidAt as number) - since) / bucketMs)];
+      if (!b) continue;
+      b.membershipCents += s.membership;
+      b.giftCents += s.gift;
+      b.donationCents += s.donation;
+    }
+    const previousTotalCents = previous.reduce((sum, o) => sum + o.amountCents, 0);
+
+    return {
+      sinceMs: since,
+      untilMs: until,
+      bucketMs,
+      currency: config.currency,
+      buckets,
+      totals: {
+        ...totals,
+        totalCents: totals.membershipCents + totals.giftCents + totals.donationCents,
+        previousTotalCents,
+      },
+      truncated: rows.length >= REVENUE_SCAN_CAP,
+    };
+  },
+});
 
 /** Admin billing overview: the resolved config + a keyset page of recent orders. */
 export const billingOverview = internalQuery({

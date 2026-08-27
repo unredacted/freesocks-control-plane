@@ -39,7 +39,11 @@ import { ListTokensResponse } from '../../shared/contracts/tokens';
 import { AdminAuthStatus } from '../../shared/contracts/auth';
 import { RateLimitListResponse } from '../../shared/contracts/rateLimits';
 import { MembershipCodePage, PurchasedCodesResponse } from '../../shared/contracts/membershipCodes';
-import { AdminBillingOverview, OrderStatusResponse } from '../../shared/contracts/billing';
+import {
+  AdminBillingOverview,
+  AdminBillingRevenue,
+  OrderStatusResponse,
+} from '../../shared/contracts/billing';
 import {
   AdminDiagnosticsConfig,
   AdminTelemetrySummary,
@@ -83,6 +87,7 @@ export const queryKeys = {
   telemetryContext: ['account', 'telemetry-context'] as const,
   adminTelemetryConfig: ['admin', 'telemetry', 'config'] as const,
   adminTelemetrySummary: (range: string) => ['admin', 'telemetry', 'summary', range] as const,
+  adminBillingRevenue: (range: string) => ['admin', 'billing-revenue', range] as const,
   adminTelemetryEvents: ['admin', 'telemetry', 'events'] as const,
   nodeStatus: ['account', 'node-status'] as const,
   passkeys: ['account', 'passkeys'] as const,
@@ -280,13 +285,25 @@ export type TelemetryRange =
   | { kind: 'window'; windowMs: number }
   | { kind: 'range'; fromMs: number; toMs: number };
 
+const rangeQs = (r: TelemetryRange): string =>
+  r.kind === 'window' ? `window=${r.windowMs}` : `from=${r.fromMs}&to=${r.toMs}`;
+
 export const adminTelemetrySummaryQuery = (range: () => TelemetryRange) =>
   createQuery(() => {
-    const r = range();
-    const qs = r.kind === 'window' ? `window=${r.windowMs}` : `from=${r.fromMs}&to=${r.toMs}`;
+    const qs = rangeQs(range());
     return {
       queryKey: queryKeys.adminTelemetrySummary(qs),
       queryFn: () => apiClient.get(`/api/v1/admin/telemetry/summary?${qs}`, AdminTelemetrySummary),
+      staleTime: 30_000,
+    };
+  });
+
+export const adminBillingRevenueQuery = (range: () => TelemetryRange) =>
+  createQuery(() => {
+    const qs = rangeQs(range());
+    return {
+      queryKey: queryKeys.adminBillingRevenue(qs),
+      queryFn: () => apiClient.get(`/api/v1/admin/billing/revenue?${qs}`, AdminBillingRevenue),
       staleTime: 30_000,
     };
   });

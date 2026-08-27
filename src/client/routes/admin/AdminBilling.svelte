@@ -5,6 +5,7 @@
   import { Checkbox } from '@client/components/ui/checkbox';
   import { Input } from '@client/components/ui/input';
   import AdminLayout from './AdminLayout.svelte';
+  import BillingRevenueChart from './BillingRevenueChart.svelte';
   import AdminListState from './AdminListState.svelte';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
@@ -254,6 +255,12 @@
     deploy) - set a rail's credentials below, or its checkout/webhook returns 503. Turn
     <code class="font-mono">enabled</code> on only once prices are set and a rail is live.
   </p>
+
+  <!-- Revenue over time (LayerChart; the orders list below stays the
+       per-order view). Independent of the config editor's load state. -->
+  <div class="mb-8">
+    <BillingRevenueChart />
+  </div>
 
   {#if billing.isPending && !draft}
     <Skeleton class="mb-6 h-64 w-full" />

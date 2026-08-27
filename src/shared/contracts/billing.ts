@@ -191,6 +191,32 @@ export const AdminBillingOrder = z.object({
 });
 export type AdminBillingOrder = z.infer<typeof AdminBillingOrder>;
 
+/** GET /api/v1/admin/billing/revenue: paid income over time, split by kind. */
+export const AdminBillingRevenue = z.object({
+  sinceMs: z.number(),
+  untilMs: z.number(),
+  bucketMs: z.number(),
+  currency: z.string(),
+  buckets: z.array(
+    z.object({
+      start: z.number(),
+      membershipCents: z.number().int(),
+      giftCents: z.number().int(),
+      donationCents: z.number().int(),
+    }),
+  ),
+  totals: z.object({
+    membershipCents: z.number().int(),
+    giftCents: z.number().int(),
+    donationCents: z.number().int(),
+    totalCents: z.number().int(),
+    orders: z.number().int(),
+    previousTotalCents: z.number().int(),
+  }),
+  truncated: z.boolean(),
+});
+export type AdminBillingRevenue = z.infer<typeof AdminBillingRevenue>;
+
 /** GET /api/v1/admin/billing and PATCH /api/v1/admin/billing/config responses. */
 export const AdminBillingOverview = z.object({
   config: BillingConfigView,

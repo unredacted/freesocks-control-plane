@@ -16,6 +16,7 @@ import {
   sanitizeRetentionDays,
   type DiagnosticsConfig,
 } from './lib/issueTelemetry';
+import { resolveRange } from './lib/timeRange';
 
 const DAY_MS = 86_400_000;
 
@@ -274,23 +275,7 @@ export const summary = internalQuery({
     untilMs: v.optional(v.number()),
   },
   handler: async (ctx, a) => {
-    const now = Date.now();
-    const MIN_SPAN = 3_600_000;
-    const MAX_SPAN = 366 * DAY_MS;
-    let since: number;
-    let until: number;
-    if (a.sinceMs !== undefined && Number.isFinite(a.sinceMs)) {
-      since = a.sinceMs;
-      until = a.untilMs !== undefined && Number.isFinite(a.untilMs) ? a.untilMs : now;
-      if (until <= since) until = since + MIN_SPAN;
-      if (until - since > MAX_SPAN) until = since + MAX_SPAN;
-    } else {
-      const w = Math.min(Math.max(a.windowMs ?? 7 * DAY_MS, MIN_SPAN), MAX_SPAN);
-      until = now;
-      since = now - w;
-    }
-    const w = until - since;
-    const prevSince = since - w;
+    const { since, until, spanMs: w, prevSince } = resolveRange(a);
     const rows = await ctx.db
       .query('issueReports')
       .withIndex('by_creation_time', (q) => q.gte('_creationTime', prevSince))

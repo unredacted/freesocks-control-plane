@@ -35,6 +35,7 @@ import type * as lib_accountId from "../lib/accountId.js";
 import type * as lib_analyticsConfig from "../lib/analyticsConfig.js";
 import type * as lib_audit from "../lib/audit.js";
 import type * as lib_issueTelemetry from "../lib/issueTelemetry.js";
+import type * as lib_timeRange from "../lib/timeRange.js";
 import type * as lib_backendIds from "../lib/backendIds.js";
 import type * as lib_backends_capabilities from "../lib/backends/capabilities.js";
 import type * as lib_backends_mock from "../lib/backends/mock.js";
@@ -133,6 +134,7 @@ declare const fullApi: ApiFromModules<{
   "lib/analyticsConfig": typeof lib_analyticsConfig;
   "lib/audit": typeof lib_audit;
   "lib/issueTelemetry": typeof lib_issueTelemetry;
+  "lib/timeRange": typeof lib_timeRange;
   "lib/backendIds": typeof lib_backendIds;
   "lib/backends/capabilities": typeof lib_backends_capabilities;
   "lib/backends/mock": typeof lib_backends_mock;

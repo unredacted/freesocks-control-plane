@@ -3245,6 +3245,31 @@ http.route({
 
 // --- admin: billing (self-service membership) -------------------------------
 
+// Revenue-over-time series for the Admin → Billing chart. Sums only, no user
+// data — but it still exposes income figures, so it stays on the same scope as
+// the overview it sits beside.
+http.route({
+  path: '/api/v1/admin/billing/revenue',
+  method: 'GET',
+  handler: httpAction(async (ctx, req) => {
+    if (!(await resolveAdmin(ctx, req, 'admin:users:read'))) return ADMIN_UNAUTH();
+    const params = new URL(req.url).searchParams;
+    const windowMs = Number(params.get('window') ?? '');
+    const fromMs = Number(params.get('from') ?? '');
+    const toMs = Number(params.get('to') ?? '');
+    return json(
+      await ctx.runQuery(internal.adminApi.billingRevenueSeries, {
+        ...(Number.isFinite(fromMs) && fromMs > 0
+          ? {
+              sinceMs: fromMs,
+              ...(Number.isFinite(toMs) && toMs > 0 ? { untilMs: toMs } : {}),
+            }
+          : { windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 30 * 86_400_000 }),
+      }),
+    );
+  }),
+});
+
 http.route({
   path: '/api/v1/admin/billing',
   method: 'GET',

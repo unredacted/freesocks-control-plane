@@ -2197,3 +2197,90 @@ describe('anonymous donations', () => {
     ).toBeNull();
   });
 });
+
+describe('adminApi.billingRevenueSeries', () => {
+  test('buckets paid income by settle time, split into membership / gift / donation', async () => {
+    const t = convexTest(schema, modules);
+    const { userId, memberTierId } = await seedTiersAndUser(t);
+    const DAY = 86_400_000;
+    const t0 = Date.UTC(2026, 7, 1);
+    await t.run(async (ctx) => {
+      const base = {
+        processor: 'nowpayments' as const,
+        userId,
+        currency: 'USD',
+        updatedAt: t0,
+      };
+      // Membership, day 1 of the range.
+      await ctx.db.insert('billingOrders', {
+        ...base,
+        opaqueRef: 'rev-self',
+        tierId: memberTierId,
+        durationDays: 91,
+        amountCents: 1400,
+        status: 'paid',
+        paidAt: t0 + 1 * DAY + 3_600_000,
+      });
+      // Gift with a donation add-on, day 2.
+      await ctx.db.insert('billingOrders', {
+        ...base,
+        opaqueRef: 'rev-gift',
+        tierId: memberTierId,
+        durationDays: 91,
+        amountCents: 2800,
+        donationCents: 300,
+        kind: 'gift',
+        status: 'paid',
+        paidAt: t0 + 2 * DAY,
+      });
+      // Standalone donation, day 2.
+      await ctx.db.insert('billingOrders', {
+        ...base,
+        opaqueRef: 'rev-donation',
+        durationDays: 0,
+        amountCents: 500,
+        donationCents: 500,
+        kind: 'donation',
+        status: 'paid',
+        paidAt: t0 + 2 * DAY + 7_200_000,
+      });
+      // Previous range (feeds the compare, not the buckets).
+      await ctx.db.insert('billingOrders', {
+        ...base,
+        opaqueRef: 'rev-prev',
+        tierId: memberTierId,
+        durationDays: 91,
+        amountCents: 1000,
+        status: 'paid',
+        paidAt: t0 - 2 * DAY,
+      });
+      // Unpaid: never counted.
+      await ctx.db.insert('billingOrders', {
+        ...base,
+        opaqueRef: 'rev-pending',
+        tierId: memberTierId,
+        durationDays: 91,
+        amountCents: 9999,
+        status: 'pending',
+      });
+    });
+
+    const r = await t.query(internal.adminApi.billingRevenueSeries, {
+      sinceMs: t0,
+      untilMs: t0 + 7 * DAY,
+    });
+    expect(r.totals).toEqual({
+      membershipCents: 1400,
+      giftCents: 2500,
+      donationCents: 800,
+      totalCents: 4700,
+      orders: 3,
+      previousTotalCents: 1000,
+    });
+    expect(r.bucketMs).toBe(DAY);
+    expect(r.buckets).toHaveLength(7);
+    expect(r.buckets[1]).toMatchObject({ membershipCents: 1400, giftCents: 0, donationCents: 0 });
+    expect(r.buckets[2]).toMatchObject({ membershipCents: 0, giftCents: 2500, donationCents: 800 });
+    expect(r.truncated).toBe(false);
+  });
+});
