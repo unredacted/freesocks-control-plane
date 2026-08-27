@@ -222,6 +222,8 @@ function mapBackendServer(s: Doc<'backendServers'>) {
     slug: s.slug,
     location: s.location ?? null,
     locationLabel: s.locationLabel ?? null,
+    locationLat: s.locationLat ?? null,
+    locationLng: s.locationLng ?? null,
     isActive: s.isActive,
     priority: s.priority,
     keyCount: s.keyCount,
@@ -1214,6 +1216,33 @@ function checkLocation(a: { location?: string | null; locationLabel?: string | n
 }
 
 /**
+ * Normalize the location's map coordinates (the dot on the member-facing
+ * globe). Pair semantics: both set (range-checked) or both null/absent to
+ * clear — a half-set pair would render a dot at a fabricated point.
+ * `touched` = the caller addressed the pair at all (patch semantics).
+ */
+function checkLocationCoords(a: { locationLat?: number | null; locationLng?: number | null }): {
+  touched: boolean;
+  locationLat?: number;
+  locationLng?: number;
+} {
+  if (a.locationLat === undefined && a.locationLng === undefined) return { touched: false };
+  const lat = a.locationLat ?? null;
+  const lng = a.locationLng ?? null;
+  if (lat === null && lng === null) return { touched: true };
+  if (lat === null || lng === null) {
+    throw new Error('locationLat and locationLng must be set together (or both null to clear)');
+  }
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+    throw new Error('locationLat must be between -90 and 90');
+  }
+  if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+    throw new Error('locationLng must be between -180 and 180');
+  }
+  return { touched: true, locationLat: lat, locationLng: lng };
+}
+
+/**
  * Build a fresh backend-server config from create/upsert args (validates the
  * required fields per backend). Shared by createBackendServer +
  * upsertBackendServerBySlug's create path. (Review P3: was inlined twice.)
@@ -1286,6 +1315,8 @@ export const createBackendServer = internalMutation({
     slug: v.string(),
     location: v.optional(v.union(v.string(), v.null())),
     locationLabel: v.optional(v.union(v.string(), v.null())),
+    locationLat: v.optional(v.union(v.number(), v.null())),
+    locationLng: v.optional(v.union(v.number(), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     maxKeys: v.optional(v.union(v.number(), v.null())),
@@ -1307,6 +1338,7 @@ export const createBackendServer = internalMutation({
     if (clash) throw new Error(`A backend server with slug "${a.slug}" already exists`);
     checkMaxKeys(a.maxKeys);
     const loc = checkLocation(a);
+    const coords = checkLocationCoords(a);
 
     const config = buildBackendServerConfig(a);
     const id = await ctx.db.insert('backendServers', {
@@ -1315,6 +1347,8 @@ export const createBackendServer = internalMutation({
       slug: a.slug,
       location: loc.location,
       locationLabel: loc.locationLabel,
+      locationLat: coords.locationLat,
+      locationLng: coords.locationLng,
       config,
       isActive: a.isActive ?? true,
       priority: a.priority ?? 0,
@@ -1341,6 +1375,8 @@ export const updateBackendServer = internalMutation({
     slug: v.optional(v.string()),
     location: v.optional(v.union(v.string(), v.null())),
     locationLabel: v.optional(v.union(v.string(), v.null())),
+    locationLat: v.optional(v.union(v.number(), v.null())),
+    locationLng: v.optional(v.union(v.number(), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     maxKeys: v.optional(v.union(v.number(), v.null())),
@@ -1375,6 +1411,11 @@ export const updateBackendServer = internalMutation({
     // null/blank clears the location fields the same way.
     if (patch.location !== undefined) fields.location = loc.location;
     if (patch.locationLabel !== undefined) fields.locationLabel = loc.locationLabel;
+    const coords = checkLocationCoords(patch);
+    if (coords.touched) {
+      fields.locationLat = coords.locationLat;
+      fields.locationLng = coords.locationLng;
+    }
 
     // The backend TYPE is immutable; a blank/absent secret keeps the stored one.
     fields.config = mergeBackendServerConfig(existing.config, patch);
@@ -1449,6 +1490,8 @@ export const upsertBackendServerBySlug = internalMutation({
     name: v.optional(v.string()),
     location: v.optional(v.union(v.string(), v.null())),
     locationLabel: v.optional(v.union(v.string(), v.null())),
+    locationLat: v.optional(v.union(v.number(), v.null())),
+    locationLng: v.optional(v.union(v.number(), v.null())),
     isActive: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     maxKeys: v.optional(v.union(v.number(), v.null())),
@@ -1468,6 +1511,7 @@ export const upsertBackendServerBySlug = internalMutation({
 
     checkMaxKeys(a.maxKeys);
     const loc = checkLocation(a);
+    const coords = checkLocationCoords(a);
     if (!existing) {
       // CREATE path — shares the reshape with createBackendServer.
       const config = buildBackendServerConfig(a);
@@ -1477,6 +1521,8 @@ export const upsertBackendServerBySlug = internalMutation({
         slug: a.slug,
         location: loc.location,
         locationLabel: loc.locationLabel,
+        locationLat: coords.locationLat,
+        locationLng: coords.locationLng,
         config,
         isActive: a.isActive ?? true,
         priority: a.priority ?? 0,
@@ -1508,6 +1554,10 @@ export const upsertBackendServerBySlug = internalMutation({
     if (a.maxKeys !== undefined) fields.maxKeys = a.maxKeys ?? undefined;
     if (a.location !== undefined) fields.location = loc.location;
     if (a.locationLabel !== undefined) fields.locationLabel = loc.locationLabel;
+    if (coords.touched) {
+      fields.locationLat = coords.locationLat;
+      fields.locationLng = coords.locationLng;
+    }
     fields.config = mergeBackendServerConfig(existing.config, a);
     await ctx.db.patch(existing._id, fields);
     await writeAuditLog(ctx, {

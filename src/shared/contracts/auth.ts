@@ -335,6 +335,9 @@ export const PublicConfig = z.object({
         label: z.string(),
         online: z.boolean(),
         load: z.enum(['quiet', 'busy', 'crowded', 'unknown']).optional(),
+        // Coarse city coordinates for the account-page map (null until the
+        // operator sets them; the label already names the city publicly).
+        coords: z.object({ lat: z.number(), lng: z.number() }).nullable().optional().default(null),
       }),
     )
     .optional()

@@ -25,6 +25,10 @@ export interface LocationEntry {
   label: string;
   online: boolean;
   load: LoadBand;
+  /** Coarse city coordinates for the member map (null until the operator sets
+   *  them on an instance at this location). City-level only — the label
+   *  already names the city, so the pair discloses nothing new. */
+  coords: { lat: number; lng: number } | null;
 }
 
 /** Active instances of every backend type that participates in the location
@@ -90,10 +94,14 @@ export async function resolveLocations(db: DatabaseReader): Promise<LocationEntr
     const online = instances.some(
       (s) => s.lastHealthOkAt != null && now - s.lastHealthOkAt < HEALTH_FRESH_MS,
     );
+    // First instance at the code with a full coordinate pair (same convention
+    // as the label: any panel at the location may carry it).
+    const located = instances.find((s) => s.locationLat != null && s.locationLng != null);
     out.push({
       code,
       label: instances.find((s) => s.locationLabel)?.locationLabel ?? code,
       online,
+      coords: located ? { lat: located.locationLat!, lng: located.locationLng! } : null,
       load: computeLocationLoad(
         instances,
         statsRows,

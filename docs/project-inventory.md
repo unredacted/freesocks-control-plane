@@ -360,6 +360,16 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   deep-links to `/status#loc-<code>` (`account.getNodeStatus` gained `load`); the
   location picker shows per-location load hints (`LocationEntry.load` on
   `publicConfig.locations`). **Live.**
+- **Account-page location globe** (`KeyLocationGlobe.svelte`, beside the Access Pass):
+  a small cobe globe (same dynamically-imported chunk as the Home globe) showing every
+  location that carries **map coordinates** as a dot, with the member's own key as the
+  bright marker facing the camera; a server/location switch animates the rotation over
+  to the new point. Coordinates are operator-entered per instance
+  (`backendServers.locationLat/Lng`, city-level, set/cleared as a pair — the label
+  already names the city publicly), editable in the CMS server form and the by-slug
+  upsert (Ansible can set them), projected as `coords` on `publicConfig.locations`.
+  Fail-soft: no coords anywhere → the panel doesn't render (old single-column layout).
+  **Live.**
 - **Referral program** (`convex/referrals.ts` + `convex/lib/{referralCode,referralConfig}.ts`):
   word-of-mouth growth. Every member gets a shareable `FSR-XXXX-XXXX` code
   (`users.referralCode`, lazily backfilled, non-secret); `?ref=` links captured into

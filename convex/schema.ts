@@ -610,6 +610,12 @@ export default defineSchema({
     // member location picker. Non-secret (projected publicly by code+label).
     location: v.optional(v.string()),
     locationLabel: v.optional(v.string()),
+    // Coarse map coordinates for the location (city-level; the label already
+    // names the city publicly, so nothing new leaks). Set/cleared together;
+    // absent = the location gets no dot on the member map. Validated in the
+    // admin mutations (lat -90..90, lng -180..180).
+    locationLat: v.optional(v.number()),
+    locationLng: v.optional(v.number()),
     isActive: v.boolean(),
     priority: v.number(),
     lastHealthOkAt: v.optional(v.number()),

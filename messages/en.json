@@ -228,6 +228,11 @@
       "bodyNoDevices": "Unlimited bandwidth.",
       "cta": "View membership"
     },
+    "map": {
+      "title": "Where your key lives",
+      "network": "One of {count} FreeSocks locations",
+      "aria": "Globe of FreeSocks server locations, highlighting yours"
+    },
     "tab": {
       "connection": "Connection",
       "membership": "Membership",

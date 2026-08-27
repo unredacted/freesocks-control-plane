@@ -6,6 +6,7 @@
   import { Skeleton } from '@client/components/ui/skeleton';
   import SubscriptionHero from '../components/SubscriptionHero.svelte';
   import UsagePanel from '../components/UsagePanel.svelte';
+  import KeyLocationGlobe from '../components/KeyLocationGlobe.svelte';
   import SectionHead from '../components/SectionHead.svelte';
   import MirrorHelp from '../components/MirrorHelp.svelte';
   import RawConfig from '../components/RawConfig.svelte';
@@ -953,100 +954,118 @@
               disabled={actionsDisabled}
             />
 
-            <SubscriptionHero
-              backendLabel={backendEntry(config.data?.backends, data.subscription.backend)?.label}
-              accessKeyOnly={backendEntry(config.data?.backends, data.subscription.backend)
-                ?.capabilities.accessKeyOnly}
-              subscriptionUrl={subUrl}
-              status={data.subscription.status}
-              tierName={data.user.tier.name}
-              backend={data.subscription.backend}
-              hideUrl={rawConfigFirst}
-              nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
-              nodeLocationLabel={nodeStatus.data?.node?.location?.label ??
-                data.subscription.location?.label ??
-                null}
-              nodeLocationCode={nodeStatus.data?.node?.location?.code ??
-                data.subscription.location?.code ??
-                null}
-              nodeLabel={nodeStatus.data?.node?.label ?? null}
-              nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
+            {@const keyLocCode =
+              nodeStatus.data?.node?.location?.code ?? data.subscription.location?.code ?? null}
+            {@const keyLocLabel =
+              nodeStatus.data?.node?.location?.label ?? data.subscription.location?.label ?? null}
+            {@const mapLocations = config.data?.locations ?? []}
+            <!-- The pass, with the location globe beside it on wide screens
+                 (below it on mobile). The globe only renders once at least one
+                 location carries map coordinates - a deployment that never set
+                 them keeps the old single-column layout. -->
+            <div
+              class="grid gap-4 {mapLocations.some((l) => l.coords != null)
+                ? 'lg:grid-cols-[minmax(0,1fr)_280px] lg:items-stretch'
+                : ''}"
             >
-              {#snippet actions()}
-                <!-- Key actions live on the pass: switch server (gentlest first -
+              <SubscriptionHero
+                backendLabel={backendEntry(config.data?.backends, data.subscription.backend)?.label}
+                accessKeyOnly={backendEntry(config.data?.backends, data.subscription.backend)
+                  ?.capabilities.accessKeyOnly}
+                subscriptionUrl={subUrl}
+                status={data.subscription.status}
+                tierName={data.user.tier.name}
+                backend={data.subscription.backend}
+                hideUrl={rawConfigFirst}
+                nodeOnline={nodeStatus.data ? (nodeStatus.data.node?.online ?? null) : undefined}
+                nodeLocationLabel={keyLocLabel}
+                nodeLocationCode={keyLocCode}
+                nodeLabel={nodeStatus.data?.node?.label ?? null}
+                nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
+              >
+                {#snippet actions()}
+                  <!-- Key actions live on the pass: switch server (gentlest first -
                      the URL survives), regenerate, and switch backend when
                      eligible. No explainer text here: each action's modal
                      carries its own when-to-use-this description. -->
-                <div class="flex flex-wrap items-center gap-2">
-                  {#if canSwitchServer}
-                    <Button
-                      onclick={() => {
-                        switchServerReason = null;
-                        switchServerOpen = true;
-                      }}
-                      disabled={regenerate.isPending ||
-                        switchServer.isPending ||
-                        switchBackend.isPending ||
-                        actionsDisabled}
-                      variant="outline"
-                      size="sm"
-                      class="min-h-11"
-                    >
-                      <RefreshCw class="size-4" />
-                      {switchServer.isPending
-                        ? t('switchServer.working')
-                        : t('switchServer.action')}
-                    </Button>
-                  {/if}
-                  <Button
-                    onclick={() => (regenerateOpen = true)}
-                    disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
-                    variant="outline"
-                    size="sm"
-                    class="min-h-11"
-                  >
-                    <RotateCcw class="size-4" />
-                    {regenerate.isPending ? t('common.working') : t('account.regenerate')}
-                  </Button>
-                  <!-- Report issue: red-tinted outline (a flag, not a bomb - it
-                       sits beside two neutral actions and changes nothing). -->
-                  <Button
-                    onclick={() => {
-                      reportIssueReason = null;
-                      reportIssueOpen = true;
-                    }}
-                    disabled={reportIssue.isPending || actionsDisabled}
-                    variant="outline"
-                    size="sm"
-                    class="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  >
-                    <Flag class="size-4" />
-                    {reportIssue.isPending ? t('report.working') : t('report.action')}
-                  </Button>
-                  {#if canSwitchBackend}
-                    {#each switchTargets as target (target.id)}
+                  <div class="flex flex-wrap items-center gap-2">
+                    {#if canSwitchServer}
                       <Button
                         onclick={() => {
-                          pendingSwitchTarget = target.id;
-                          switchBackendOpen = true;
+                          switchServerReason = null;
+                          switchServerOpen = true;
                         }}
                         disabled={regenerate.isPending ||
+                          switchServer.isPending ||
                           switchBackend.isPending ||
                           actionsDisabled}
                         variant="outline"
                         size="sm"
                         class="min-h-11"
                       >
-                        <ArrowLeftRight class="size-4" />
-                        {switchBackend.isPending
-                          ? t('switch.working')
-                          : t('account.switchTo', { label: target.label })}
+                        <RefreshCw class="size-4" />
+                        {switchServer.isPending
+                          ? t('switchServer.working')
+                          : t('switchServer.action')}
                       </Button>
-                    {/each}
-                  {/if}
-                </div>
-              {/snippet}
-            </SubscriptionHero>
+                    {/if}
+                    <Button
+                      onclick={() => (regenerateOpen = true)}
+                      disabled={regenerate.isPending || switchBackend.isPending || actionsDisabled}
+                      variant="outline"
+                      size="sm"
+                      class="min-h-11"
+                    >
+                      <RotateCcw class="size-4" />
+                      {regenerate.isPending ? t('common.working') : t('account.regenerate')}
+                    </Button>
+                    <!-- Report issue: red-tinted outline (a flag, not a bomb - it
+                       sits beside two neutral actions and changes nothing). -->
+                    <Button
+                      onclick={() => {
+                        reportIssueReason = null;
+                        reportIssueOpen = true;
+                      }}
+                      disabled={reportIssue.isPending || actionsDisabled}
+                      variant="outline"
+                      size="sm"
+                      class="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Flag class="size-4" />
+                      {reportIssue.isPending ? t('report.working') : t('report.action')}
+                    </Button>
+                    {#if canSwitchBackend}
+                      {#each switchTargets as target (target.id)}
+                        <Button
+                          onclick={() => {
+                            pendingSwitchTarget = target.id;
+                            switchBackendOpen = true;
+                          }}
+                          disabled={regenerate.isPending ||
+                            switchBackend.isPending ||
+                            actionsDisabled}
+                          variant="outline"
+                          size="sm"
+                          class="min-h-11"
+                        >
+                          <ArrowLeftRight class="size-4" />
+                          {switchBackend.isPending
+                            ? t('switch.working')
+                            : t('account.switchTo', { label: target.label })}
+                        </Button>
+                      {/each}
+                    {/if}
+                  </div>
+                {/snippet}
+              </SubscriptionHero>
+              {#if mapLocations.some((l) => l.coords != null)}
+                <KeyLocationGlobe
+                  locations={mapLocations}
+                  currentCode={keyLocCode}
+                  currentLabel={keyLocLabel}
+                />
+              {/if}
+            </div>
 
             <!-- Usage & validity: its own card (extracted from the pass so the
                  pass carries only the key itself). -->

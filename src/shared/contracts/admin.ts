@@ -171,6 +171,10 @@ export const BackendServerAdmin = z.object({
   // Optional/defaulted for forward-compat with older servers.
   location: z.string().nullable().optional().default(null),
   locationLabel: z.string().nullable().optional().default(null),
+  // Coarse map coordinates for the location's dot on the member map. Set and
+  // cleared as a pair; null = no dot. Optional for forward-compat.
+  locationLat: z.number().nullable().optional().default(null),
+  locationLng: z.number().nullable().optional().default(null),
   isActive: z.boolean(),
   priority: z.number().int(),
   keyCount: z.number().int().nonnegative(),
@@ -197,6 +201,9 @@ export const BackendServerUpsert = z.object({
   // Node location code + label; null/blank clears, absent keeps the current.
   location: z.string().max(16).nullable().optional(),
   locationLabel: z.string().max(64).nullable().optional(),
+  // Map coordinates: both set (city-level is enough) or both null to clear.
+  locationLat: z.number().min(-90).max(90).nullable().optional(),
+  locationLng: z.number().min(-180).max(180).nullable().optional(),
   isActive: z.boolean().default(true),
   priority: z.number().int().default(0),
   // Capacity cap: positive integer; null clears, absent keeps the current cap.
