@@ -167,9 +167,9 @@
   // Keep in sync with messages/en.json `home.hero.*` (the admin CMS is
   // deliberately English-only). A JS string, not an &#10; entity, so the
   // textarea placeholder really renders one title per line.
-  const HERO_TITLE_DEFAULT = 'A VPN for Freedom';
+  const HERO_TITLE_DEFAULT = 'A VPN for freedom';
   const HERO_TITLES_DEFAULT = [
-    'A VPN for Freedom',
+    'A VPN for freedom',
     'A VPN for dissidents',
     'A VPN for privacy',
     'A VPN for the world',

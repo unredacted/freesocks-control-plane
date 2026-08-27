@@ -851,7 +851,7 @@ review.
 | `home.impact.body` | Every donation made through FreeSocks raises the bandwidth of every free account for at least the next {days} days. This is what donors have added so far - you could add to it too. | كل تبرع عبر FreeSocks يرفع النطاق الترددي الشهري لكل حساب مجاني في ذلك الشهر. هذا ما أضافه المتبرعون حتى الآن - ويمكنك الإضافة إليه أيضًا. |
 | `home.impact.cta` | Make a donation | قدّم تبرعًا |
 | `home.impact.chartAria` | Bandwidth added to every free user by donations, day by day this month | ⚠️ **MISSING** |
-| `home.hero.variants.freedom` | A VPN for Freedom | ⚠️ **MISSING** |
+| `home.hero.variants.freedom` | A VPN for freedom | ⚠️ **MISSING** |
 | `home.hero.variants.dissidents` | A VPN for dissidents | شبكة VPN للمعارضين |
 | `home.hero.variants.privacy` | A VPN for privacy | شبكة VPN للخصوصية |
 | `home.hero.variants.world` | A VPN for the world | شبكة VPN للعالم |
