@@ -1095,6 +1095,12 @@
                 onPickLocation={actionsDisabled || locations.length < 2
                   ? undefined
                   : () => (regenerateOpen = true)}
+                onReportIssue={actionsDisabled
+                  ? undefined
+                  : () => {
+                      reportIssueReason = null;
+                      reportIssueOpen = true;
+                    }}
               />
               <RawConfig />
             {/if}

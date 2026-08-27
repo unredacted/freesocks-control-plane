@@ -8,6 +8,7 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import MapPin from '@lucide/svelte/icons/map-pin';
+  import Flag from '@lucide/svelte/icons/flag';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { t, getLocale } from '../lib/i18n/index.svelte';
@@ -43,6 +44,9 @@
     /** Quick fix #2: open the new-key flow with the location picker (the
      *  regenerate modal). Omitted = not offered (single-location deploys). */
     onPickLocation?: () => void;
+    /** Open the report-issue dialog (same handler as the pass's red button) -
+     *  a member stuck in this panel is exactly who should tell us why. */
+    onReportIssue?: () => void;
   }
   let {
     mirrors,
@@ -51,6 +55,7 @@
     available = true,
     onSwitchServer = undefined,
     onPickLocation = undefined,
+    onReportIssue = undefined,
   }: Props = $props();
 
   const qc = useQueryClient();
@@ -163,7 +168,7 @@
       <!-- Quick fixes first: a blocked/overloaded server is the most common
            cause, and moving the key (same handlers as the pass) fixes it
            without any new URLs to import. Mirrors follow as the deeper tool. -->
-      {#if onSwitchServer || onPickLocation}
+      {#if onSwitchServer || onPickLocation || onReportIssue}
         <div class="space-y-2">
           <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             {t('mirror.quickLabel')}
@@ -180,6 +185,17 @@
               <Button variant="outline" size="sm" class="min-h-11" onclick={onPickLocation}>
                 <MapPin class="size-4" />
                 {t('mirror.pickLocation')}
+              </Button>
+            {/if}
+            {#if onReportIssue}
+              <Button
+                variant="outline"
+                size="sm"
+                class="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onclick={onReportIssue}
+              >
+                <Flag class="size-4" />
+                {t('report.action')}
               </Button>
             {/if}
           </div>
