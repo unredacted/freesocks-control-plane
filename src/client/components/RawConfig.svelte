@@ -1,6 +1,7 @@
 <script lang="ts">
   import { slide } from 'svelte/transition';
   import { Button } from '@client/components/ui/button';
+  import * as Dialog from '@client/components/ui/dialog';
   import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
   import FileCode from '@lucide/svelte/icons/file-code';
@@ -17,6 +18,13 @@
    * ciphertext), so a member can copy it by hand WITHOUT their proxy client
    * pulling the subscription URL through a CDN in plaintext. Fetched only while
    * the panel is open - a deliberate, on-demand reveal, not auto-loaded.
+   *
+   * The COLLAPSED variant (url-delivery modes, e.g. Freedom Mode) gates the
+   * first expand behind a confirm dialog: the raw config is a snapshot that can
+   * change at any time, and on those modes the auto-updating link is the right
+   * way to connect - members should opt into the footgun knowingly. Confirmed
+   * once per mount; the PROMINENT variant (rawConfig-delivery modes, where the
+   * config IS the deliverable) never warns.
    */
   interface Props {
     /** Open on mount + auto-open when promoted (privacy mode makes this the
@@ -34,7 +42,31 @@
   // (no toggle) so the content actually fetches.
   let open = $state(startOpen || prominent);
   let copied = $state(false);
+  // First-expand confirm gate (collapsed variant only). Prominent/startOpen
+  // contexts count as already acknowledged - there the config is the point.
+  // svelte-ignore state_referenced_locally -- deliberate mount-time snapshot,
+  // same as `open` above.
+  let acknowledged = $state(startOpen || prominent);
+  let confirmOpen = $state(false);
   const content = subscriptionContentQuery(() => open);
+
+  function toggle() {
+    if (open) {
+      open = false;
+      return;
+    }
+    if (!acknowledged) {
+      confirmOpen = true;
+      return;
+    }
+    open = true;
+  }
+
+  function confirmReveal() {
+    acknowledged = true;
+    confirmOpen = false;
+    open = true;
+  }
   // Expand when the parent promotes us (e.g. the member switches to privacy);
   // never force-collapse, so a manual collapse sticks.
   $effect(() => {
@@ -77,7 +109,7 @@
     <button
       type="button"
       class="flex w-full items-center justify-between gap-2 rounded-xl px-4 py-3 text-start text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-      onclick={() => (open = !open)}
+      onclick={toggle}
       aria-expanded={open}
     >
       <span class="flex items-center gap-2 text-muted-foreground">
@@ -118,3 +150,18 @@
     </div>
   {/if}
 </div>
+
+<!-- First-expand confirm (collapsed variant): the snapshot caveat + the
+     "on this mode, the link is the better way" steer, acknowledged explicitly. -->
+<Dialog.Root bind:open={confirmOpen}>
+  <Dialog.Content class="sm:max-w-md">
+    <Dialog.Header>
+      <Dialog.Title>{t('rawconfig.confirmTitle')}</Dialog.Title>
+      <Dialog.Description>{t('rawconfig.confirmBody')}</Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Button variant="ghost" onclick={() => (confirmOpen = false)}>{t('common.cancel')}</Button>
+      <Button onclick={confirmReveal}>{t('rawconfig.confirmCta')}</Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>

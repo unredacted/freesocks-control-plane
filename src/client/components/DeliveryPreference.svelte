@@ -1,5 +1,7 @@
 <script lang="ts">
   import Check from '@lucide/svelte/icons/check';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import { slide } from 'svelte/transition';
   import { t } from '../lib/i18n/index.svelte';
   import {
     familyAudience,
@@ -23,12 +25,12 @@
    * parent FAMILY card (Freedom Mode / Privacy Mode), and inside it a
    * transport row (WebSocket / REALITY / ...).
    *
-   * Deliberately terse (2026-08 unclutter pass): an unselected card is just
-   * icon + name + one audience line, so the choice reads at a glance; the
-   * description and the transport row render ONLY on the selected card. The
-   * SELECTED family always shows its transport row, including one-transport
-   * families like Privacy Mode today: the member should always be able to see
-   * which method their own key uses. With a single transport the row is a
+   * Deliberately terse (2026-08 unclutter pass): EVERY card - selected or not -
+   * is just icon + name + one audience line, so the choice reads at a glance
+   * for non-technical members. The description and the transport chooser sit
+   * behind each card's own "More details" disclosure for those who want them.
+   * An expanded family always shows its transport row, including one-transport
+   * families like Privacy Mode today. With a single transport the row is a
    * static name; it turns into a keyboard-navigable radiogroup on its own as
    * soon as a second transport is enabled, with no change here.
    *
@@ -94,6 +96,10 @@
   // orphan handling are all easy to get subtly wrong by eye.
   let visibleModes = $derived(withCurrentMode(modes, selected, currentMode));
   let groups = $derived(groupModesByFamily(visibleModes, families));
+  // Per-card "More details" disclosure state, keyed by the group's stable key
+  // (family id, or the orphan leaf's id). Independent of selection: expanding
+  // a card is reading, not choosing.
+  let detailsOpen = $state<Record<string, boolean>>({});
   let selectedGroupIndex = $derived(
     groups.findIndex((g) => g.children.some((m) => m.id === selected)),
   );
@@ -154,7 +160,9 @@
     </p>
   </div>
 
-  <div class="grid gap-3 {groups.length === 1 ? '' : 'sm:grid-cols-2'}">
+  <!-- items-start: an expanded "More details" on one card must not stretch its
+       sibling into an empty-bottomed box. -->
+  <div class="grid items-start gap-3 {groups.length === 1 ? '' : 'sm:grid-cols-2'}">
     {#each groups as g, gi (g.family?.id ?? g.children[0]!.id)}
       {@const isSelectedGroup = gi === selectedGroupIndex}
       {@const Icon = g.family ? familyIcon(g.family) : undefined}
@@ -214,76 +222,108 @@
               {familyAudience(g.family)}
             </p>
           {/if}
-          {#if isSelectedGroup && body}
-            <!-- The longer description only on the selected card - unselected
-                 cards stay a one-glance choice. -->
-            <p class="mt-1.5 text-xs text-muted-foreground">{body}</p>
-          {/if}
         </button>
 
-        <!-- Transport row, on the SELECTED family only (an unselected card stays
-             compact; selecting it reveals the row). Includes one-transport
-             families like Privacy Mode today: the member should always see
-             which method their own key uses, and a family that hides its only
-             transport gives no hint that more can be added. With one option it
-             is a static name rather than a pointless single-item radiogroup; it
-             becomes interactive on its own the moment a second transport is
-             enabled. Skipped for an orphan leaf (family === null), where the
-             card head already IS the mode. -->
-        {#if g.family && isSelectedGroup}
-          {@const interactive = g.children.length > 1}
-          <!-- Describe whichever transport the row is highlighting: the single one
-               when static, otherwise the selected chip (nothing, when this family
-               is not the selected one and so no chip is active). -->
-          {@const described = interactive
-            ? g.children.find((c) => c.id === selected)
-            : g.children[0]}
-          <div class="border-t border-border/60 px-4 pb-4 pt-3">
-            <p class="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              {t('delivery.transportLabel')}
-            </p>
-            {#if interactive}
-              <div
-                role="radiogroup"
-                aria-label={`${title} - ${t('delivery.transportLabel')}`}
-                class="flex flex-wrap gap-2"
-                onkeydown={(e) => onTransportKeydown(e, g.children)}
-              >
-                {#each g.children as child (child.id)}
-                  {@const disabled = isDisabled(child)}
-                  {@const active = selected === child.id}
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    tabindex={active ? 0 : -1}
-                    {disabled}
-                    onclick={(e) => {
-                      // Don't let a transport pick bubble up and re-select the
-                      // family (which would snap back to the family default).
-                      e.stopPropagation();
-                      choose(child);
-                    }}
-                    title={disabled && !active ? t('delivery.unavailable') : undefined}
-                    class="rounded-md border px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 {active
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border text-muted-foreground hover:border-primary/40'}"
-                  >
-                    {modeTitle(child)}
-                  </button>
-                {/each}
+        <!-- "More details" disclosure, identical on EVERY card (selected or not):
+             non-technical members get a one-glance choice; the description and
+             the transport chooser wait behind the toggle for those who want
+             them. stopPropagation so expanding never also selects the family. -->
+        {#if body || g.family}
+          {@const key = g.family?.id ?? g.children[0]!.id}
+          {@const expanded = !!detailsOpen[key]}
+          <div class="border-t border-border/60 px-4 pb-3 pt-1.5">
+            <button
+              type="button"
+              aria-expanded={expanded}
+              onclick={(e) => {
+                e.stopPropagation();
+                detailsOpen[key] = !expanded;
+              }}
+              class="flex min-h-9 w-full items-center justify-between gap-2 rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {t('delivery.detailsToggle')}
+              <ChevronDown
+                class="size-3.5 shrink-0 transition-transform {expanded ? 'rotate-180' : ''}"
+                aria-hidden="true"
+              />
+            </button>
+
+            {#if expanded}
+              <div class="space-y-3 pb-1 pt-1.5" transition:slide={{ duration: 150 }}>
+                {#if body}
+                  <p class="text-xs text-muted-foreground">{body}</p>
+                {/if}
+
+                <!-- Transport row. Shown for every family, including one-transport
+                     ones like Privacy Mode today: the member should be able to see
+                     which method a family uses, and hiding the only transport gives
+                     no hint that more can be added. With one option it is a static
+                     name rather than a pointless single-item radiogroup; it becomes
+                     interactive on its own the moment a second transport is enabled.
+                     Skipped for an orphan leaf (family === null), where the card
+                     head already IS the mode. -->
+                {#if g.family}
+                  {@const interactive = g.children.length > 1}
+                  {@const activeInGroup = g.children.some((c) => c.id === selected)}
+                  <!-- Describe whichever transport the row is highlighting: the
+                       single one when static, the selected chip when this family
+                       is the selected one, else the family default. -->
+                  {@const described = interactive
+                    ? (g.children.find((c) => c.id === selected) ?? familyTargetMode(g.children))
+                    : g.children[0]}
+                  <div>
+                    <p
+                      class="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+                    >
+                      {t('delivery.transportLabel')}
+                    </p>
+                    {#if interactive}
+                      <div
+                        role="radiogroup"
+                        aria-label={`${title} - ${t('delivery.transportLabel')}`}
+                        class="flex flex-wrap gap-2"
+                        onkeydown={(e) => onTransportKeydown(e, g.children)}
+                      >
+                        {#each g.children as child, ci (child.id)}
+                          {@const disabled = isDisabled(child)}
+                          {@const active = selected === child.id}
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={active}
+                            tabindex={active || (!activeInGroup && ci === 0) ? 0 : -1}
+                            {disabled}
+                            onclick={(e) => {
+                              // Don't let a transport pick bubble up and re-select
+                              // the family (which would snap back to the default).
+                              e.stopPropagation();
+                              choose(child);
+                            }}
+                            title={disabled && !active ? t('delivery.unavailable') : undefined}
+                            class="rounded-md border px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 {active
+                              ? 'border-primary bg-primary/10 text-primary'
+                              : 'border-border text-muted-foreground hover:border-primary/40'}"
+                          >
+                            {modeTitle(child)}
+                          </button>
+                        {/each}
+                      </div>
+                    {:else}
+                      <!-- One transport: render the NAME, not a chip. A bordered
+                           muted chip was indistinguishable from the disabled state
+                           of the interactive chips, so Privacy Mode's REALITY read
+                           as greyed out / unsupported when it is simply the only
+                           method. -->
+                      <p class="text-sm font-medium text-foreground">
+                        {modeTitle(g.children[0]!)}
+                      </p>
+                    {/if}
+                    {#if described && modeBody(described)}
+                      <p class="mt-2 text-xs text-muted-foreground">{modeBody(described)}</p>
+                    {/if}
+                  </div>
+                {/if}
               </div>
-            {:else}
-              <!-- One transport: render the NAME, not a chip. A bordered muted
-                   chip was indistinguishable from the disabled state of the
-                   interactive chips, so Privacy Mode's REALITY read as greyed
-                   out / unsupported when it is simply the only method. -->
-              <p class="text-sm font-medium text-foreground">
-                {modeTitle(g.children[0]!)}
-              </p>
-            {/if}
-            {#if described && modeBody(described)}
-              <p class="mt-2 text-xs text-muted-foreground">{modeBody(described)}</p>
             {/if}
           </div>
         {/if}

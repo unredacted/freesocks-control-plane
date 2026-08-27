@@ -6,6 +6,8 @@
   import Check from '@lucide/svelte/icons/check';
   import LifeBuoy from '@lucide/svelte/icons/life-buoy';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
+  import MapPin from '@lucide/svelte/icons/map-pin';
   import { apiClient } from '../lib/api';
   import { apiErrorMessage } from '../lib/errors';
   import { t, getLocale } from '../lib/i18n/index.svelte';
@@ -34,8 +36,22 @@
     /** Whether the deployment has any active mirror provider (publicConfig
      *  mirrorsEnabled). */
     available?: boolean;
+    /** Quick fix #1: open the "move me to a different server" flow (same
+     *  handler as the pass's node line). Omitted = the action isn't offered
+     *  here (no key to move / backend can't move one / caller has no modal). */
+    onSwitchServer?: () => void;
+    /** Quick fix #2: open the new-key flow with the location picker (the
+     *  regenerate modal). Omitted = not offered (single-location deploys). */
+    onPickLocation?: () => void;
   }
-  let { mirrors, geoCountry = null, subscriptionUrl, available = true }: Props = $props();
+  let {
+    mirrors,
+    geoCountry = null,
+    subscriptionUrl,
+    available = true,
+    onSwitchServer = undefined,
+    onPickLocation = undefined,
+  }: Props = $props();
 
   const qc = useQueryClient();
   const locale = getLocale();
@@ -144,6 +160,33 @@
 
   {#if open}
     <div class="space-y-4 px-4 pb-4 text-sm" transition:slide={{ duration: 180 }}>
+      <!-- Quick fixes first: a blocked/overloaded server is the most common
+           cause, and moving the key (same handlers as the pass) fixes it
+           without any new URLs to import. Mirrors follow as the deeper tool. -->
+      {#if onSwitchServer || onPickLocation}
+        <div class="space-y-2">
+          <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {t('mirror.quickLabel')}
+          </p>
+          <p class="text-muted-foreground">{t('mirror.quickHint')}</p>
+          <div class="flex flex-wrap gap-2">
+            {#if onSwitchServer}
+              <Button variant="outline" size="sm" class="min-h-11" onclick={onSwitchServer}>
+                <RefreshCw class="size-4" />
+                {t('switchServer.action')}
+              </Button>
+            {/if}
+            {#if onPickLocation}
+              <Button variant="outline" size="sm" class="min-h-11" onclick={onPickLocation}>
+                <MapPin class="size-4" />
+                {t('mirror.pickLocation')}
+              </Button>
+            {/if}
+          </div>
+        </div>
+        <div class="border-t border-border/60"></div>
+      {/if}
+
       <p class="text-muted-foreground">{t('mirror.explainer')}</p>
 
       {#if !available}

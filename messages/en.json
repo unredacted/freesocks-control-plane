@@ -725,13 +725,19 @@
     "noSubscription": "Create your key first, then you can add a mirror.",
     "removeAll": "Remove all mirrors",
     "errorToast": "Couldn't add a mirror",
-    "removedToast": "Mirrors removed"
+    "removedToast": "Mirrors removed",
+    "quickLabel": "First, try moving servers",
+    "quickHint": "A blocked or overloaded server is the most common cause. Switching keeps your link the same; picking a new location creates a new key.",
+    "pickLocation": "Pick a different location"
   },
   "rawconfig": {
     "disclosure": "Show raw configuration",
     "title": "Your configuration",
     "explainer": "Your full VPN configuration, fetched over an encrypted channel so it never crosses a CDN in plain text. Copy it into your app by hand instead of using a subscription link.",
-    "addHint": "Paste these server entries into your VPN app manually."
+    "addHint": "Paste these server entries into your VPN app manually.",
+    "confirmTitle": "Show the raw configuration?",
+    "confirmBody": "These connection details are a snapshot and can change at any time, so a copied configuration may stop working without warning. In Freedom Mode, your subscription link is the best way to connect - it updates automatically when servers change.",
+    "confirmCta": "Show configuration"
   },
   "delivery": {
     "title": "Connection mode",
@@ -778,7 +784,8 @@
     "working": "Switching…",
     "switchSuccessTitle": "Switched to \"{label}\"",
     "switchSuccessBody": "Same subscription URL - your apps will pick up the new servers on their next refresh.",
-    "switchFailedTitle": "Could not switch mode"
+    "switchFailedTitle": "Could not switch mode",
+    "detailsToggle": "More details"
   },
   "home": {
     "trust": {

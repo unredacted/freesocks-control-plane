@@ -896,6 +896,20 @@
               data.subscription.subToken,
               data.subscription.url,
             )}
+            <!-- Connection mode ABOVE the pass (it shapes what the pass shows);
+                 compact cards - the longer copy sits behind each card's
+                 "More details" disclosure. -->
+            <ConnectionModeSwitcher
+              modes={memberModes}
+              families={connectionModeFamilies}
+              currentMode={data.user.currentMode ?? null}
+              selected={effectiveModeId}
+              suggested={data.suggestedModeId ?? null}
+              serverBacked={profileServerBacked}
+              deviceCount={data.subscription.devices.length}
+              disabled={actionsDisabled}
+            />
+
             <SubscriptionHero
               backendLabel={backendEntry(config.data?.backends, data.subscription.backend)?.label}
               accessKeyOnly={backendEntry(config.data?.backends, data.subscription.backend)
@@ -999,26 +1013,18 @@
                 geoCountry={data.geoCountry}
                 subscriptionUrl={subUrl}
                 available={config.data?.mirrorsEnabled ?? false}
+                onSwitchServer={actionsDisabled || !canSwitchServer
+                  ? undefined
+                  : () => {
+                      switchServerReason = null;
+                      switchServerOpen = true;
+                    }}
+                onPickLocation={actionsDisabled || locations.length < 2
+                  ? undefined
+                  : () => (regenerateOpen = true)}
               />
               <RawConfig />
             {/if}
-
-            <!-- Connection mode: below the pass + setup (the key is the star;
-                 switching modes is an occasional preference). A rawConfig mode
-                 promotes the raw E2EE config above; url modes keep the link
-                 as the star. -->
-            <div class="border-t border-border pt-6">
-              <ConnectionModeSwitcher
-                modes={memberModes}
-                families={connectionModeFamilies}
-                currentMode={data.user.currentMode ?? null}
-                selected={effectiveModeId}
-                suggested={data.suggestedModeId ?? null}
-                serverBacked={profileServerBacked}
-                deviceCount={data.subscription.devices.length}
-                disabled={actionsDisabled}
-              />
-            </div>
 
             {#if deviceLimitsShown(config.data) && data.subscription.devices.length > 0}
               <div class="space-y-3 border-t border-border pt-6">
