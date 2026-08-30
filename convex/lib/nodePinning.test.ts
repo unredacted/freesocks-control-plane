@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { nodeNameFromLink, pickNode, pinSubscriptionToNode } from './nodePinning';
+import { nodeNameFromLink, nodeNameFromTag, pickNode, pinSubscriptionToNode } from './nodePinning';
 
 const NODE_A = 'xray1-front-mci1-beta-fs-ce';
 const NODE_B = 'xray2-front-mci1-beta-fs-ce';
@@ -128,5 +128,126 @@ describe('pinSubscriptionToNode', () => {
     );
     const out = pinSubscriptionToNode(body, 'k');
     expect(out.content).toContain('legacy.example.org');
+  });
+});
+
+// --- sing-box JSON configs -------------------------------------------------------
+
+const TAG_A1 = `${NODE_A}-ws-a1a1a1`;
+const TAG_A2 = `${NODE_A}-ws-b2b2b2`;
+const TAG_B1 = `${NODE_B}-ws-c3c3c3`;
+const TAG_B2 = `${NODE_B}-ws-d4d4d4`;
+const TAG_C = `${NODE_C}-ws`;
+const ALL_TAGS = [TAG_A1, TAG_A2, TAG_B1, TAG_B2, TAG_C];
+
+function singboxConfig(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    log: { level: 'info' },
+    outbounds: [
+      { type: 'selector', tag: 'proxy', outbounds: ['auto', ...ALL_TAGS], default: 'auto' },
+      { type: 'urltest', tag: 'auto', outbounds: ALL_TAGS },
+      ...ALL_TAGS.map((tag) => ({
+        type: 'vless',
+        tag,
+        server: `${tag}.example.org`,
+        server_port: 443,
+      })),
+      { type: 'direct', tag: 'direct' },
+    ],
+    route: { final: 'proxy', rules: [{ protocol: 'dns', outbound: 'direct' }] },
+    ...overrides,
+  });
+}
+
+describe('nodeNameFromTag', () => {
+  test('strips transport (+hash) suffixes, rejects group tags', () => {
+    expect(nodeNameFromTag(TAG_A1)).toBe(NODE_A);
+    expect(nodeNameFromTag(TAG_C)).toBe(NODE_C);
+    expect(nodeNameFromTag('proxy')).toBeNull();
+    expect(nodeNameFromTag('auto')).toBeNull();
+    expect(nodeNameFromTag('direct')).toBeNull();
+  });
+});
+
+describe('pinSubscriptionToNode: sing-box JSON', () => {
+  test('keeps one node, prunes groups, stays valid JSON, matches the link-list pick', () => {
+    const out = pinSubscriptionToNode(singboxConfig(), 'short-id-1');
+    expect(out.node).toBe(pinSubscriptionToNode(LINES.join('\n'), 'short-id-1').node);
+    const cfg = JSON.parse(out.content) as {
+      outbounds: { tag: string; outbounds?: string[]; server?: string }[];
+      route: unknown;
+    };
+    const keptNodeTags = cfg.outbounds.map((o) => o.tag).filter((t) => nodeNameFromTag(t) !== null);
+    // All of the chosen node's edges kept, no other node's.
+    expect(keptNodeTags.length).toBeGreaterThan(0);
+    expect(keptNodeTags.every((t) => nodeNameFromTag(t) === out.node)).toBe(true);
+    // Groups list only surviving tags (plus the nested group reference).
+    const selector = cfg.outbounds.find((o) => o.tag === 'proxy')!;
+    expect(selector.outbounds).toEqual(['auto', ...keptNodeTags]);
+    const auto = cfg.outbounds.find((o) => o.tag === 'auto')!;
+    expect(auto.outbounds).toEqual(keptNodeTags);
+    // Non-node outbounds and the rest of the config survive untouched.
+    expect(cfg.outbounds.some((o) => o.tag === 'direct')).toBe(true);
+    expect(cfg.route).toEqual({ final: 'proxy', rules: [{ protocol: 'dns', outbound: 'direct' }] });
+  });
+
+  test('is deterministic and honors excludeNode', () => {
+    const body = singboxConfig();
+    const first = pinSubscriptionToNode(body, 'k7');
+    expect(pinSubscriptionToNode(body, 'k7').content).toBe(first.content);
+    const moved = pinSubscriptionToNode(body, 'k7', first.node!);
+    expect(moved.node).not.toBe(first.node);
+  });
+
+  test('rewrites a group default that pointed at a dropped node', () => {
+    // Pick a key that does NOT land on NODE_B, then make B the default.
+    const nodes = [NODE_A, NODE_B, NODE_C];
+    const key = ['k1', 'k2', 'k3', 'k4', 'k5'].find((k) => pickNode(k, nodes) !== NODE_B)!;
+    const body = JSON.stringify({
+      outbounds: [
+        { type: 'selector', tag: 'proxy', outbounds: ALL_TAGS, default: TAG_B1 },
+        ...ALL_TAGS.map((tag) => ({ type: 'vless', tag, server: 'x', server_port: 443 })),
+      ],
+    });
+    const out = pinSubscriptionToNode(body, key);
+    const cfg = JSON.parse(out.content) as {
+      outbounds: { tag: string; outbounds?: string[]; default?: string }[];
+    };
+    const selector = cfg.outbounds.find((o) => o.tag === 'proxy')!;
+    expect(selector.outbounds).toContain(selector.default);
+  });
+
+  test('fails open when a group would be emptied or a route rule targets a node tag', () => {
+    const nodes = [NODE_A, NODE_B, NODE_C];
+    const key = ['k1', 'k2', 'k3', 'k4', 'k5'].find((k) => pickNode(k, nodes) !== NODE_B)!;
+    // A group holding ONLY node-B tags empties when B is dropped → verbatim.
+    const emptied = JSON.stringify({
+      outbounds: [
+        { type: 'selector', tag: 'proxy', outbounds: ALL_TAGS },
+        { type: 'urltest', tag: 'b-only', outbounds: [TAG_B1, TAG_B2] },
+        ...ALL_TAGS.map((tag) => ({ type: 'vless', tag, server: 'x', server_port: 443 })),
+      ],
+    });
+    expect(pinSubscriptionToNode(emptied, key).content).toBe(emptied);
+    // A route rule pinned to a node tag we would drop → verbatim.
+    const routed = singboxConfig({
+      route: { final: 'proxy', rules: [{ domain: ['x.org'], outbound: TAG_B1 }] },
+    });
+    const out = pinSubscriptionToNode(routed, key);
+    expect(out.content).toBe(routed);
+    expect(out.node).toBeNull();
+  });
+
+  test('single-node and non-config JSON pass through verbatim', () => {
+    const single = JSON.stringify({
+      outbounds: [
+        { type: 'selector', tag: 'proxy', outbounds: [TAG_A1, TAG_A2] },
+        { type: 'vless', tag: TAG_A1, server: 'x', server_port: 443 },
+        { type: 'vless', tag: TAG_A2, server: 'x', server_port: 443 },
+      ],
+    });
+    expect(pinSubscriptionToNode(single, 'k').content).toBe(single);
+    const envelope = '{"error":{"code":"not_found"}}';
+    expect(pinSubscriptionToNode(envelope, 'k').content).toBe(envelope);
   });
 });
