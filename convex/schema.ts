@@ -726,6 +726,9 @@ export default defineSchema({
     // Ease-of-use rating: within each open-source group, easier apps rank first
     // (missing = treated as 'moderate'). 'easy'/'advanced' also get a badge.
     easeOfUse: v.optional(v.union(v.literal('easy'), v.literal('moderate'), v.literal('advanced'))),
+    // Verified IPv6-through-tunnel behavior: true works / false IPv4-only /
+    // absent untested (tri-state; see lib/clientCatalog.ts).
+    ipv6: v.optional(v.boolean()),
     enabled: v.boolean(),
     priority: v.number(),
     updatedAt: v.number(),

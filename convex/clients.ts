@@ -68,6 +68,7 @@ function mapClient(r: Doc<'clients'>) {
     license: r.license ?? null,
     sourceUrl: r.sourceUrl ?? null,
     easeOfUse: r.easeOfUse ?? null,
+    ipv6: r.ipv6 ?? null,
     description: r.description ?? null,
     enabled: r.enabled,
     priority: r.priority,
@@ -108,6 +109,8 @@ export const create = internalMutation({
     license: v.optional(v.union(v.string(), v.null())),
     sourceUrl: v.optional(v.union(v.string(), v.null())),
     easeOfUse: v.optional(v.union(easeOfUse, v.null())),
+    // Tri-state: true / false / null = untested (clears the flag).
+    ipv6: v.optional(v.union(v.boolean(), v.null())),
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
@@ -143,6 +146,7 @@ export const create = internalMutation({
       license: a.license?.trim() || undefined,
       sourceUrl: optionalHttpsUrl(a.sourceUrl, 'The source URL'),
       easeOfUse: a.easeOfUse ?? undefined,
+      ipv6: a.ipv6 ?? undefined,
       description: normalizeDescription(a.description),
       enabled: a.enabled ?? true,
       priority: a.priority ?? 0,
@@ -174,6 +178,8 @@ export const update = internalMutation({
     license: v.optional(v.union(v.string(), v.null())),
     sourceUrl: v.optional(v.union(v.string(), v.null())),
     easeOfUse: v.optional(v.union(easeOfUse, v.null())),
+    // Tri-state: true / false / null = untested (clears the flag).
+    ipv6: v.optional(v.union(v.boolean(), v.null())),
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
@@ -213,6 +219,7 @@ export const update = internalMutation({
     if (patch.sourceUrl !== undefined)
       fields.sourceUrl = optionalHttpsUrl(patch.sourceUrl, 'The source URL');
     if (patch.easeOfUse !== undefined) fields.easeOfUse = patch.easeOfUse ?? undefined;
+    if (patch.ipv6 !== undefined) fields.ipv6 = patch.ipv6 ?? undefined;
     if (patch.description !== undefined)
       fields.description = normalizeDescription(patch.description);
     if (patch.enabled !== undefined) fields.enabled = patch.enabled;
@@ -264,6 +271,8 @@ export const upsertByName = internalMutation({
     license: v.optional(v.union(v.string(), v.null())),
     sourceUrl: v.optional(v.union(v.string(), v.null())),
     easeOfUse: v.optional(v.union(easeOfUse, v.null())),
+    // Tri-state: true / false / null = untested (clears the flag).
+    ipv6: v.optional(v.union(v.boolean(), v.null())),
     description: v.optional(v.union(v.string(), v.null())),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
@@ -294,6 +303,7 @@ export const upsertByName = internalMutation({
         license: a.license?.trim() || undefined,
         sourceUrl: optionalHttpsUrl(a.sourceUrl, 'The source URL'),
         easeOfUse: a.easeOfUse ?? undefined,
+        ipv6: a.ipv6 ?? undefined,
         description: normalizeDescription(a.description),
         enabled: a.enabled ?? true,
         priority: a.priority ?? 0,
@@ -321,6 +331,7 @@ export const upsertByName = internalMutation({
     if (a.sourceUrl !== undefined)
       fields.sourceUrl = optionalHttpsUrl(a.sourceUrl, 'The source URL');
     if (a.easeOfUse !== undefined) fields.easeOfUse = a.easeOfUse ?? undefined;
+    if (a.ipv6 !== undefined) fields.ipv6 = a.ipv6 ?? undefined;
     if (a.description !== undefined) fields.description = normalizeDescription(a.description);
     if (a.enabled !== undefined) fields.enabled = a.enabled;
     if (a.priority !== undefined) fields.priority = a.priority;

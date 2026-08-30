@@ -712,6 +712,8 @@ export type MessageKey =
   | "setup.install"
   | "setup.intro"
   | "setup.ios"
+  | "setup.ipv4Only"
+  | "setup.ipv6Works"
   | "setup.linkKind.apk"
   | "setup.linkKind.appStore"
   | "setup.linkKind.github"

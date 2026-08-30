@@ -684,6 +684,8 @@
     "install": "Install",
     "noApps": "No recommended apps for this platform yet - use any compatible client and add your subscription manually.",
     "openSource": "Open source",
+    "ipv6Works": "IPv6 ready",
+    "ipv4Only": "IPv4 only",
     "recommended": "Recommended",
     "proprietary": "Proprietary",
     "easeEasy": "Easy to use",

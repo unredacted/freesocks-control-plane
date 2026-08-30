@@ -282,6 +282,9 @@ export const ClientAdmin = z.object({
   /** Ease-of-use rating: sorts within each OSS group (easier first) + drives a
    *  badge. null = unrated (treated as 'moderate'). */
   easeOfUse: z.enum(['easy', 'moderate', 'advanced']).nullable().optional().default(null),
+  /** Verified IPv6-through-tunnel behavior: true works / false IPv4-only /
+   *  null untested. Defaulted for skew. */
+  ipv6: z.boolean().nullable().optional().default(null),
   /** Admin-set member-facing blurb (verbatim in every locale); null = the SPA's
    *  built-in translated copy for known default apps. */
   description: z.string().nullable().optional().default(null),
@@ -304,6 +307,7 @@ export const ClientUpsert = z.object({
   license: z.string().nullable().optional(),
   sourceUrl: z.string().nullable().optional(),
   easeOfUse: z.enum(['easy', 'moderate', 'advanced']).nullable().optional(),
+  ipv6: z.boolean().nullable().optional(),
   description: z.string().max(280).nullable().optional(),
   enabled: z.boolean().default(true),
   priority: z.number().int().default(0),
