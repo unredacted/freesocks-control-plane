@@ -737,19 +737,10 @@
       "note": "每 10 分钟检查一次",
       "link": "实时状态"
     },
-    "quicknav": {
-      "label": "跳转到某一节",
-      "privacy": "我们存储什么",
-      "threat": "威胁模型",
-      "faq": "常见问题",
-      "impact": "捐款成效"
-    },
     "sections": {
-      "features": "功能",
       "privacy": "隐私",
       "how": "快速上手",
       "membership": "会员",
-      "impact": "成效",
       "faq": "常见问题",
       "about": "关于",
       "globe": "地图"
@@ -863,13 +854,7 @@
       "cta": "立即捐款"
     },
     "hero": {
-      "variants": {
-        "dissidents": "为异见人士打造的 VPN",
-        "privacy": "为隐私打造的 VPN",
-        "world": "为世界打造的 VPN"
-      },
-      "impactNote": "通过 FreeSocks 的捐款直接支持免费用户：每一笔捐款都会在当月为受审查国家的人们购买真实带宽。",
-      "impactLink": "查看成效"
+      "title": "A VPN for freedom"
     },
     "cta": {
       "getMembership": "加入会员"
@@ -882,26 +867,7 @@
       "membershipLine": "FreeSocks 会员资格为您提供{limits} 。",
       "noAuthTitle": "无需电子邮件或密码",
       "noAuthBody": "一次人工验证。保存您的账号即可登录。不收集邮箱地址。",
-      "footnote": "此处显示的数字反映的是当前免费套餐的配置。完成验证即可获取您的套餐配置。",
-      "upsellTitle": "想要无限量供应？",
-      "upsellBody": "获取{limits} - 并帮助 FreeSocks 继续免费供他人使用。",
-      "fromPerMonth": "来自{price} /月",
-      "cryptoNote": "支持加密货币--比特币、门罗币、Zcash 等"
-    },
-    "features": {
-      "title": "FreeSocks是什么",
-      "noAuth": {
-        "title": "无需电子邮件或密码",
-        "body": "只需一次人工验证即可登录。我们会生成一个32位数的账号，您可以保存该账号以便下次登录。我们不会收集您的邮箱地址。"
-      },
-      "mirrors": {
-        "title": "镜像网址",
-        "body": "订阅服务在多个提供商之间是同步的，因此单个服务中断不会导致您的服务中断。"
-      },
-      "protocols": {
-        "title": "标准协议",
-        "body": "Xray-powered VLESS. Works in most VPN clients."
-      }
+      "footnote": "此处显示的数字反映的是当前免费套餐的配置。完成验证即可获取您的套餐配置。"
     },
     "privacy": {
       "title": "我们储存",
@@ -939,11 +905,7 @@
       "bodySuffix": "，一家美国 501(c)(3) 非营利组织。",
       "body2": "大多数 VPN 默认你能付费订阅、并能放心交出邮箱地址。但在世界上许多地方，这两点都不成立，所以 FreeSocks 两者都不要求。任何人都能在一分钟左右拿到可用的密钥，并一直使用下去。",
       "siteLink": "unredacted.org",
-      "openSource": "运行此服务的代码已公开，任何人都可以检查、审计或自行部署。",
-      "viewSourceCta": "查看源码",
-      "fact2Title": "开源",
-      "fact3Title": "捐款资助",
-      "fact3Body": "免费账户由捐款和会员付费支持。没有广告，也不出售任何东西。"
+      "viewSourceCta": "查看源码"
     },
     "limits": {
       "unlimitedBoth": "无限带宽和设备",

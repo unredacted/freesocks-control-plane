@@ -820,19 +820,10 @@
       "note": "Checked every 10 minutes",
       "link": "Live status"
     },
-    "quicknav": {
-      "label": "Jump to a section",
-      "privacy": "What we store",
-      "threat": "Threat model",
-      "faq": "FAQ",
-      "impact": "Donation impact"
-    },
     "sections": {
-      "features": "Features",
       "privacy": "Privacy",
       "how": "Getting started",
       "membership": "Membership",
-      "impact": "Impact",
       "faq": "FAQ",
       "about": "About",
       "globe": "The map"
@@ -947,15 +938,8 @@
       "chartAria": "Bandwidth added to every free user by donations, day by day this month"
     },
     "hero": {
-      "variants": {
-        "freedom": "A VPN for freedom",
-        "dissidents": "A VPN for dissidents",
-        "privacy": "A VPN for privacy",
-        "world": "A VPN for the world"
-      },
-      "subtitle": "FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}.",
-      "impactNote": "Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, right away.",
-      "impactLink": "See the impact"
+      "title": "A VPN for freedom",
+      "subtitle": "FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}."
     },
     "cta": {
       "getMembership": "Get a membership"
@@ -968,26 +952,7 @@
       "membershipLine": "A FreeSocks membership gives you {limits}.",
       "noAuthTitle": "No email or password",
       "noAuthBody": "One human-check. Save your account number to sign in. No email collected.",
-      "footnote": "Numbers reflect the current free-tier configuration. Solve the check to get yours.",
-      "upsellTitle": "Want unlimited?",
-      "upsellBody": "Get {limits} - and help keep FreeSocks free for others.",
-      "fromPerMonth": "from {price}/mo",
-      "cryptoNote": "Crypto accepted - Bitcoin, Monero, Zcash and more"
-    },
-    "features": {
-      "title": "What FreeSocks is",
-      "noAuth": {
-        "title": "No email or password",
-        "body": "One human-check and you are in. We mint a 32-digit account number you save to sign back in. No email collected."
-      },
-      "mirrors": {
-        "title": "Mirror URLs",
-        "body": "Subscriptions are mirrored across multiple providers so a single block does not cut you off."
-      },
-      "protocols": {
-        "title": "Standard protocols",
-        "body": "Xray-powered VLESS. Works in most VPN clients."
-      }
+      "footnote": "Numbers reflect the current free-tier configuration. Solve the check to get yours."
     },
     "privacy": {
       "title": "What we store",
@@ -1025,11 +990,7 @@
       "bodySuffix": ", a US 501(c)(3) nonprofit.",
       "body2": "Most VPNs assume you can pay for a subscription and safely hand over an email address. In much of the world neither is true, so FreeSocks asks for neither. Anyone can get a working key in about a minute and keep it for as long as they use it.",
       "siteLink": "unredacted.org",
-      "openSource": "The code that runs this service is published for anyone to inspect, audit, or run themselves.",
-      "viewSourceCta": "View the source",
-      "fact2Title": "Open source",
-      "fact3Title": "Donation funded",
-      "fact3Body": "Free accounts are paid for by donations and memberships. There are no ads and nothing is sold."
+      "viewSourceCta": "View the source"
     },
     "limits": {
       "unlimitedBoth": "unlimited bandwidth and devices",
