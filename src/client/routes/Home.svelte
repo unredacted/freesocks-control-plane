@@ -26,7 +26,7 @@
   import TierComparison from '../components/TierComparison.svelte';
   import NetworkStatus from '../components/NetworkStatus.svelte';
   import CountUp from '../components/CountUp.svelte';
-  import CobeGlobe from '../components/CobeGlobe.svelte';
+  import NetworkGlobe from '../components/NetworkGlobe.svelte';
   import { meQuery, configQuery } from '../lib/queries';
   import { membershipTier, tierLimits, deviceLimitsShown, type TierLimits } from '../lib/tiers';
   import { t, type MessageKey } from '../lib/i18n/index.svelte';
@@ -58,6 +58,12 @@
   function goUpgrade() {
     router.navigate(me.data?.authenticated ? '/account' : '/get-account');
   }
+
+  // The live-network globe needs at least one operator-mapped location
+  // (coords set in the CMS); with none the section hides entirely rather
+  // than make a "real servers" claim with nothing to show.
+  const globeLocations = $derived(config.data?.locations ?? []);
+  const hasMappedLocations = $derived(globeLocations.some((l) => l.coords != null));
 
   // Static hero title: the operator's DB override wins (heroTitles list first
   // entry, then heroTitle), else the built-in translated line. The earlier
@@ -462,18 +468,22 @@
     </div>
   </section>
 
-  <!-- THE MAP: censored countries speaking out. Illustrative, not live data —
-       labels on censored regions carrying the voices. -->
-  <section class="grid gap-10 md:grid-cols-[1fr_auto] items-center">
-    <div class="space-y-4 max-w-xl">
-      {@render eyebrow('globe')}
-      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
-        {t('home.globe.title')}
-      </h2>
-      <p class="text-muted-foreground leading-relaxed">{t('home.globe.body')}</p>
-    </div>
-    <CobeGlobe class="mx-auto md:mx-0" size={560} />
-  </section>
+  <!-- THE NETWORK: the live-network globe. Green markers are real server
+       locations from publicConfig.locations (DB-driven, same feed as the
+       status strip); amber dots mark censored regions as static context.
+       Hidden until the operator maps at least one location in the CMS. -->
+  {#if hasMappedLocations}
+    <section class="grid gap-10 md:grid-cols-[1fr_auto] items-center">
+      <div class="space-y-4 max-w-xl">
+        {@render eyebrow('globe')}
+        <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+          {t('home.globe.title')}
+        </h2>
+        <p class="text-muted-foreground leading-relaxed">{t('home.globe.body')}</p>
+      </div>
+      <NetworkGlobe class="mx-auto md:mx-0" size={560} locations={globeLocations} />
+    </section>
+  {/if}
 
   <!-- MEMBERSHIP + DONATIONS: the whole "who pays for this" story in one
        place - the tier comparison, then what donors' giving is doing for
