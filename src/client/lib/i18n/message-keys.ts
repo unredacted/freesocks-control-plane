@@ -399,6 +399,8 @@ export type MessageKey =
   | "home.globe.legendRegions"
   | "home.globe.legendServers"
   | "home.globe.title"
+  | "home.hero.impactLink"
+  | "home.hero.impactNote"
   | "home.hero.subtitle"
   | "home.hero.variants.dissidents"
   | "home.hero.variants.freedom"

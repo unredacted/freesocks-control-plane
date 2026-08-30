@@ -754,7 +754,9 @@
         "dissidents": "为异见人士打造的 VPN",
         "privacy": "为隐私打造的 VPN",
         "world": "为世界打造的 VPN"
-      }
+      },
+      "impactNote": "通过 FreeSocks 的捐款直接支持免费用户：每一笔捐款都会在当月为受审查国家的人们购买真实带宽。",
+      "impactLink": "查看成效"
     },
     "cta": {
       "getMembership": "加入会员"

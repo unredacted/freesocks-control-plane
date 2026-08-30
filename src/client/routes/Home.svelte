@@ -123,6 +123,13 @@
     // anonymously) - not the account-creation funnel.
     router.navigate(me.data?.authenticated ? '/account?tab=membership' : '/donate');
   }
+  // In-page anchor for the hero donation teaser's "See the impact" link.
+  // Smooth only when the user hasn't asked for reduced motion (JS scrolls
+  // bypass the CSS clamp).
+  function scrollToId(id: string) {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.getElementById(id)?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
+  }
 
   // Compose a localized limits phrase from the structured (DB-driven) tier
   // limits: the numbers come from config, the words from the catalog. Reading
@@ -428,6 +435,55 @@
             {t('home.freeCard.footnote')}
           </p>
         </div>
+
+        <!-- Donation teaser, right under the free-tier summary: the free tier
+             above IS what donations fund, so the pitch sits where that
+             connection is visible. Live GB/reach numbers (never dollar
+             figures) + a donate CTA; "See the impact" deep-links the full
+             story in the membership section. Renders only while donations
+             are live. -->
+        {#if billingEnabled && donation?.enabled}
+          <div
+            class="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/[0.05] p-5 space-y-3"
+          >
+            <p class="text-sm leading-relaxed">
+              <Heart
+                class="inline size-3.5 -mt-0.5 me-1.5 text-amber-600 dark:text-amber-300"
+                aria-hidden="true"
+              />{t('home.hero.impactNote')}
+            </p>
+            {#if donation.currentBonusGb > 0 || donation.freeUsersHelped > 0}
+              <div class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+                <span>
+                  <span
+                    class="text-sm font-display font-bold tabular-nums text-amber-600 dark:text-amber-300"
+                    >+<CountUp value={donation.currentBonusGb} start /></span
+                  >
+                  {t('impact.bonusThisMonth')}
+                </span>
+                <span>
+                  <span class="text-sm font-display font-bold tabular-nums text-foreground"
+                    ><CountUp value={donation.freeUsersHelped} start /></span
+                  >
+                  {t('impact.usersHelped')}
+                </span>
+              </div>
+            {/if}
+            <div class="flex flex-wrap items-center gap-3 pt-1">
+              <Button size="sm" onclick={goDonate}>
+                <Heart class="size-4" />
+                {t('home.impact.cta')}
+              </Button>
+              <button
+                type="button"
+                class="rounded-sm text-xs font-medium underline text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onclick={() => scrollToId('impact')}
+              >
+                {t('home.hero.impactLink')}
+              </button>
+            </div>
+          </div>
+        {/if}
       </div>
     </div>
 

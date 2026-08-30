@@ -848,7 +848,9 @@
         "privacy": "A VPN for privacy",
         "world": "A VPN for the world"
       },
-      "subtitle": "FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}."
+      "subtitle": "FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}.",
+      "impactNote": "Donations made through FreeSocks directly power free users: every donation buys real bandwidth for people in censored countries, right away.",
+      "impactLink": "See the impact"
     },
     "cta": {
       "getMembership": "Get a membership"
