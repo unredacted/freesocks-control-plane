@@ -236,6 +236,18 @@ describe('pinSubscriptionToNode: sing-box JSON', () => {
     const out = pinSubscriptionToNode(routed, key);
     expect(out.content).toBe(routed);
     expect(out.node).toBeNull();
+    // A KEPT outbound whose detour chains through a dropped node tag would be
+    // a dangling reference after pinning → verbatim (Review PR#38).
+    const detoured = JSON.stringify({
+      outbounds: [
+        { type: 'selector', tag: 'proxy', outbounds: ALL_TAGS },
+        ...ALL_TAGS.map((tag) => ({ type: 'vless', tag, server: 'x', server_port: 443 })),
+        { type: 'http', tag: 'chained-helper', server: 'y', server_port: 8080, detour: TAG_B1 },
+      ],
+    });
+    const out2 = pinSubscriptionToNode(detoured, key);
+    expect(out2.content).toBe(detoured);
+    expect(out2.node).toBeNull();
   });
 
   test('single-node and non-config JSON pass through verbatim', () => {

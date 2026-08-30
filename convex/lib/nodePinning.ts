@@ -227,15 +227,15 @@ function pinSingboxConfig(
     kept.push(next);
   }
 
-  // A dropped tag referenced anywhere OUTSIDE the outbounds (route/dns rules)
-  // means this template wires nodes in a way we don't understand — verbatim.
-  const rest = JSON.stringify({ ...(cfg as Record<string, unknown>), outbounds: [] });
+  // A dropped tag surviving ANYWHERE in the pinned config — route/dns rules,
+  // a kept outbound's `detour`, anything — would be a dangling reference, so
+  // scan the FINAL config (kept groups were pruned above, so no legitimate
+  // mention remains) and serve verbatim on any hit. A coincidental substring
+  // match in unrelated text only fail-opens, never breaks.
+  const content = JSON.stringify({ ...(cfg as Record<string, unknown>), outbounds: kept });
   for (const t of dropped) {
-    if (rest.includes(JSON.stringify(t))) return null;
+    if (content.includes(JSON.stringify(t))) return null;
   }
 
-  return {
-    content: JSON.stringify({ ...(cfg as Record<string, unknown>), outbounds: kept }),
-    node: chosen,
-  };
+  return { content, node: chosen };
 }

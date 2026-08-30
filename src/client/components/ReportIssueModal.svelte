@@ -46,13 +46,18 @@
     other: () => t('report.reasonOther'),
   };
 
+  // Clear the free text on EVERY close, not just dialog-initiated ones: the
+  // parent flips `open` directly on cancel and on submit success, paths that
+  // never invoke onOpenChange — without this, reopening after an "other"
+  // report would resurface (and risk resubmitting) the previous text.
+  $effect(() => {
+    if (!open) detail = '';
+  });
+
   function onOpenChange(next: boolean) {
     if (!next && busy) return;
     open = next;
-    if (!next) {
-      detail = '';
-      onCancel();
-    }
+    if (!next) onCancel();
   }
 </script>
 
