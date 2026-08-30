@@ -294,7 +294,8 @@
                   <th class="py-1.5 pe-4 text-start font-medium">Mode</th>
                   <th class="py-1.5 pe-4 text-start font-medium">Country</th>
                   <th class="py-1.5 pe-4 text-start font-medium">City</th>
-                  <th class="py-1.5 text-start font-medium">ASN</th>
+                  <th class="py-1.5 pe-4 text-start font-medium">ASN</th>
+                  <th class="py-1.5 text-start font-medium">Detail</th>
                 </tr>
               </thead>
               <tbody>
@@ -308,11 +309,16 @@
                     <td class="py-1.5 pe-4 tabular-nums">{geoCell(e.country, e.detectedCountry)}</td
                     >
                     <td class="py-1.5 pe-4">{geoCell(e.city, e.detectedCity)}</td>
-                    <td class="py-1.5 tabular-nums">
+                    <td class="py-1.5 pe-4 tabular-nums">
                       {geoCell(
                         e.asn !== null ? `AS${e.asn}` : null,
                         e.detectedAsn !== null ? `AS${e.detectedAsn}` : null,
                       )}
+                    </td>
+                    <!-- Member-typed text ("other" reports): truncated in the row,
+                         full text on hover. -->
+                    <td class="max-w-[18rem] truncate py-1.5" title={e.detail ?? undefined}>
+                      {e.detail ?? '·'}
                     </td>
                   </tr>
                 {/each}

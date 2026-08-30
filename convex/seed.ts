@@ -181,6 +181,7 @@ export const seedClients = internalMutation({
         license: c.license ?? undefined,
         sourceUrl: c.sourceUrl ?? undefined,
         easeOfUse: c.easeOfUse ?? undefined,
+        ipv6: c.ipv6 ?? undefined,
         enabled: c.enabled,
         priority: c.priority,
         updatedAt: Date.now(),
@@ -225,6 +226,7 @@ export const refreshDefaultClients = internalMutation({
         license: c.license ?? undefined,
         sourceUrl: c.sourceUrl ?? undefined,
         easeOfUse: c.easeOfUse ?? undefined,
+        ipv6: c.ipv6 ?? undefined,
         priority: c.priority,
         updatedAt: Date.now(),
       };

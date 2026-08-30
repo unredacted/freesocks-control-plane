@@ -36,6 +36,10 @@ export interface CatalogClient {
   license?: string; // short label, e.g. 'GPL-3.0', 'Apache-2.0', 'Proprietary'
   sourceUrl?: string; // public source repo (OSS only)
   easeOfUse?: ClientEase; // easy/moderate/advanced; missing = moderate
+  // IPv6 through the tunnel, as VERIFIED behavior: true = works, false = the
+  // app is IPv4-only (e.g. its own tun has no inet6), missing = untested.
+  // Tri-state on purpose — only claim what was actually observed.
+  ipv6?: boolean;
   // Admin-set member-facing blurb, shown verbatim in every locale. The defaults
   // deliberately DON'T set it: their copy lives in the SPA's i18n catalog
   // (setup.clientDesc.*) so it translates; an admin value overrides that.
@@ -56,6 +60,7 @@ export interface PublicClient {
   license?: string;
   sourceUrl?: string;
   easeOfUse?: ClientEase;
+  ipv6?: boolean;
   description?: string;
 }
 
@@ -109,6 +114,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/NodePassProject/Anywhere',
     easeOfUse: 'easy',
+    ipv6: false, // v4-only tun (verified 2026-08-30); v6 sites unreachable through it
     enabled: true,
     priority: 25,
   },
@@ -123,6 +129,7 @@ export const DEFAULT_CLIENTS: CatalogClient[] = [
     license: 'GPL-3.0',
     sourceUrl: 'https://github.com/SagerNet/sing-box',
     easeOfUse: 'advanced',
+    ipv6: true, // dual-stack tun from the panel template (verified live 2026-08-30)
     enabled: true,
     priority: 30,
   },
@@ -266,6 +273,7 @@ export async function resolveClients(db: DatabaseReader): Promise<CatalogClient[
     license: r.license ?? undefined,
     sourceUrl: r.sourceUrl ?? undefined,
     easeOfUse: r.easeOfUse ?? undefined,
+    ipv6: r.ipv6 ?? undefined,
     description: r.description ?? undefined,
     enabled: r.enabled,
     priority: r.priority,
@@ -296,6 +304,7 @@ export function publicClients(clients: CatalogClient[]): PublicClient[] {
       license: c.license,
       sourceUrl: c.sourceUrl,
       easeOfUse: c.easeOfUse,
+      ipv6: c.ipv6,
       description: c.description,
     }));
 }

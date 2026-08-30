@@ -41,6 +41,8 @@
     license: c?.license ?? '',
     sourceUrl: c?.sourceUrl ?? '',
     easeOfUse: c?.easeOfUse ?? '',
+    // Tri-state select value: '' untested, 'yes' works, 'no' IPv4-only.
+    ipv6: c?.ipv6 === true ? 'yes' : c?.ipv6 === false ? 'no' : '',
     description: c?.description ?? '',
     enabled: c?.enabled ?? true,
     priority: c?.priority ?? 0,
@@ -56,6 +58,7 @@
   let license = $state(init.license);
   let sourceUrl = $state(init.sourceUrl);
   let easeOfUse = $state(init.easeOfUse);
+  let ipv6 = $state(init.ipv6);
   let description = $state(init.description);
   let enabled = $state(init.enabled);
   let priority = $state(init.priority);
@@ -79,6 +82,7 @@
       license: license || null,
       sourceUrl: sourceUrl || null,
       easeOfUse: easeOfUse || null,
+      ipv6: ipv6 === 'yes' ? true : ipv6 === 'no' ? false : null,
       description: description.trim() || null,
       enabled,
       priority,
@@ -189,6 +193,22 @@
         <p class="text-xs text-muted-foreground/80 mt-1">
           Within each open-source group, easier apps rank first in the member list. "Easy" and
           "Advanced" also show a badge.
+        </p>
+      </div>
+      <div>
+        <label class="text-xs text-muted-foreground mb-1 block" for="cl-ipv6">IPv6 support</label>
+        <select
+          id="cl-ipv6"
+          bind:value={ipv6}
+          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        >
+          <option value="">Untested (no badge)</option>
+          <option value="yes">Works (verified)</option>
+          <option value="no">IPv4 only</option>
+        </select>
+        <p class="text-xs text-muted-foreground/80 mt-1">
+          Verified IPv6-through-tunnel behavior only. "IPv4 only" shows members a badge so v6 users
+          pick a different app; leave untested apps blank rather than guessing.
         </p>
       </div>
       <div>

@@ -213,6 +213,20 @@
                 {t('setup.easeAdvanced')}
               </span>
             {/if}
+            <!-- IPv6 badge: only VERIFIED states (true/false); untested apps show nothing. -->
+            {#if c.ipv6 === true}
+              <span
+                class="ms-2 inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400"
+              >
+                {t('setup.ipv6Works')}
+              </span>
+            {:else if c.ipv6 === false}
+              <span
+                class="ms-2 inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+              >
+                {t('setup.ipv4Only')}
+              </span>
+            {/if}
             {#if c.sourceUrl}
               <a
                 href={c.sourceUrl}

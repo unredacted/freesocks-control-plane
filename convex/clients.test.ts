@@ -136,6 +136,27 @@ describe('clients CRUD', () => {
     expect(c.easeOfUse).toBeNull(); // null clears the rating
   });
 
+  test('ipv6 tri-state round-trips: true / false / null clears to untested', async () => {
+    const t = convexTest(schema, modules);
+    const a = await t.mutation(internal.clients.upsertByName, {
+      name: 'V6App',
+      homepageUrl: 'https://v6.example',
+      backends: ['remnawave'],
+      platforms: ['android'],
+      ipv6: true,
+    });
+    expect(a.ipv6).toBe(true);
+    // Unspecified → preserved.
+    const b = await t.mutation(internal.clients.upsertByName, { name: 'V6App', priority: 3 });
+    expect(b.ipv6).toBe(true);
+    // Explicit false = verified IPv4-only (distinct from untested).
+    const c = await t.mutation(internal.clients.upsertByName, { name: 'V6App', ipv6: false });
+    expect(c.ipv6).toBe(false);
+    // Null clears back to untested.
+    const d = await t.mutation(internal.clients.upsertByName, { name: 'V6App', ipv6: null });
+    expect(d.ipv6).toBeNull();
+  });
+
   test('description round-trips (trimmed + capped), null clears it', async () => {
     const t = convexTest(schema, modules);
     const created = await t.mutation(internal.clients.create, {
@@ -267,6 +288,18 @@ describe('clientCatalog resolve + project', () => {
     expect(anywhere.platforms).not.toContain('android');
     expect(anywhere.platforms).toContain('ios');
     expect(anywhere.homepageUrl).toMatch(/^https:\/\/apps\.apple\.com\//);
+  });
+
+  test('ipv6 defaults carry only VERIFIED states and reach the public projection', () => {
+    const find = (name: string) => DEFAULT_CLIENTS.find((c) => c.name === name);
+    // Verified live 2026-08-30: sing-box gets the dual-stack tun template;
+    // Anywhere's own tun is IPv4-only. Everything else stays untested (unset).
+    expect(find('sing-box')?.ipv6).toBe(true);
+    expect(find('Anywhere')?.ipv6).toBe(false);
+    expect(find('Hiddify')?.ipv6).toBeUndefined();
+    const projected = publicClients(DEFAULT_CLIENTS);
+    expect(projected.find((c) => c.name === 'sing-box')?.ipv6).toBe(true);
+    expect(projected.find((c) => c.name === 'Anywhere')?.ipv6).toBe(false);
   });
 
   test('DEFAULT_CLIENTS carry open-source metadata (labels + source repos)', () => {
