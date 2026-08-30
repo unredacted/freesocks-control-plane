@@ -8,6 +8,12 @@
    * flourishes, no claims about Unredacted's other programs (we link to
    * unredacted.org for that; they own that copy, not us).
    *
+   * Structure principle (2026-08 restructure): one message per section, no
+   * repeats. The page answers, in order: can I trust this (hero trust row +
+   * live status + privacy), how do I start (steps), what is the network
+   * (globe), who pays for it (membership + donations, one section), then FAQ
+   * and a short about. Each claim appears exactly once.
+   *
    * Fully localized: every visible string resolves through t() so the
    * censored-region (mostly non-English) audience gets the page in their
    * language. DB-driven values (tier name/description, prices) stay dynamic
@@ -20,12 +26,11 @@
   import TierComparison from '../components/TierComparison.svelte';
   import NetworkStatus from '../components/NetworkStatus.svelte';
   import CountUp from '../components/CountUp.svelte';
-  import CobeGlobe from '../components/CobeGlobe.svelte';
+  import NetworkGlobe from '../components/NetworkGlobe.svelte';
   import { meQuery, configQuery } from '../lib/queries';
   import { membershipTier, tierLimits, deviceLimitsShown, type TierLimits } from '../lib/tiers';
-  import { baselinePerMonth } from '../lib/billing';
   import { t, type MessageKey } from '../lib/i18n/index.svelte';
-  import { formatMoney, formatDate } from '../lib/i18n/format';
+  import { formatDate } from '../lib/i18n/format';
   import { router } from '../stores/router.svelte';
   import { slide } from 'svelte/transition';
   import StarIcon from '../components/StarIcon.svelte';
@@ -50,12 +55,17 @@
   // The membership upgrade entry point: an authed member goes straight to their
   // account (the upgrade panel); an anon visitor creates a free account first.
   const billingEnabled = $derived(config.data?.billing?.enabled ?? false);
-  // Admin-configured site chrome; the ABOUT open-source callout renders only when
-  // the footer "View source" repo link is enabled (same toggle + URL).
+  // Admin-configured site chrome (hero overrides, repo link, support email).
   const site = $derived(config.data?.site);
   function goUpgrade() {
     router.navigate(me.data?.authenticated ? '/account' : '/get-account');
   }
+
+  // The live-network globe needs at least one operator-mapped location
+  // (coords set in the CMS); with none the section hides entirely rather
+  // than make a "real servers" claim with nothing to show.
+  const globeLocations = $derived(config.data?.locations ?? []);
+  const hasMappedLocations = $derived(globeLocations.some((l) => l.coords != null));
 
   // Animated hero title: the operator's DB list wins (verbatim, like heroTitle);
   // a single heroTitle is a static override; else the built-in translated set.
@@ -83,8 +93,9 @@
   });
 
   // Donation impact (GB + user counts only - no dollar figures on the public
-  // page). The in-app donate controls live on the account Membership tab; an
-  // anon visitor creates a free account first.
+  // page). Lives inside the membership section: one "who pays for this"
+  // story. The in-app donate controls live on the account Membership tab; an
+  // anon visitor gets the public donate page.
   const donation = $derived(config.data?.billing?.donation);
   // The chart always renders: the month's cumulative daily series, or a flat
   // zero baseline while there is none yet (the note under it explains).
@@ -112,8 +123,9 @@
     // anonymously) - not the account-creation funnel.
     router.navigate(me.data?.authenticated ? '/account?tab=membership' : '/donate');
   }
-  // In-page anchors (hero callout + quick-nav chips). Smooth only when the user
-  // hasn't asked for reduced motion (JS scrolls bypass the CSS clamp).
+  // In-page anchor for the hero donation teaser's "See the impact" link.
+  // Smooth only when the user hasn't asked for reduced motion (JS scrolls
+  // bypass the CSS clamp).
   function scrollToId(id: string) {
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     document.getElementById(id)?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
@@ -159,28 +171,6 @@
   const membershipLimits = $derived(
     limitsText(tierLimits(memberTier), deviceLimitsShown(config.data)),
   );
-
-  // Headline membership price = the shortest term's per-month rate (the standard
-  // monthly), DB-driven + locale-formatted - mirrors TierComparison's "from $X/mo".
-  // Null until the billing config loads.
-  const membershipFromPrice = $derived.by(() => {
-    const cents = baselinePerMonth(config.data?.billing?.durations ?? []);
-    return cents !== null
-      ? formatMoney(Math.round(cents), config.data?.billing?.currency ?? 'USD')
-      : null;
-  });
-
-  // Data arrays carry message *keys* (the FAQ pattern) so the markup just t()s
-  // them. `as const` keeps the keys literal so they type-check as MessageKeys.
-  const features = [
-    { icon: Lock, title: 'home.features.noAuth.title', body: 'home.features.noAuth.body' },
-    { icon: Globe, title: 'home.features.mirrors.title', body: 'home.features.mirrors.body' },
-    {
-      icon: Smartphone,
-      title: 'home.features.protocols.title',
-      body: 'home.features.protocols.body',
-    },
-  ] as const;
 
   const steps = [
     { n: 1, title: 'home.how.s1.title', body: 'home.how.s1.body' },
@@ -235,11 +225,9 @@
   // Section kickers: a small quiet label above each heading (no accent bar -
   // the accent color is reserved for actions and live data).
   const SECTION_LABELS = {
-    features: 'home.sections.features',
     privacy: 'home.sections.privacy',
     how: 'home.sections.how',
     membership: 'home.sections.membership',
-    impact: 'home.sections.impact',
     faq: 'home.sections.faq',
     about: 'home.sections.about',
     globe: 'home.sections.globe',
@@ -295,7 +283,9 @@
 {/snippet}
 
 <div class="space-y-20 md:space-y-28 pb-12">
-  <!-- HERO -->
+  <!-- HERO: one headline, one primary CTA, the trust row, and the free-tier
+       summary card. Everything else (donations, jump-nav, upsell) moved to
+       its own single home further down. -->
   <section class="relative pt-8 md:pt-16 space-y-10 md:space-y-14">
     <div class="grid gap-10 md:grid-cols-[1.2fr_1fr] md:gap-16 items-center">
       <div class="space-y-6 md:space-y-8">
@@ -327,27 +317,6 @@
         <p class="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
           {site?.heroSubtitle?.trim() || t('home.hero.subtitle', { limits: membershipLimits })}
         </p>
-
-        <!-- Social-impact callout: what makes this VPN different - donations made
-           in-app buy bandwidth for every free user that month. Links down to the
-           live impact section. Renders only while donations are live. -->
-        {#if billingEnabled && donation?.enabled}
-          <div
-            class="max-w-xl rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-sm leading-relaxed"
-          >
-            <Heart
-              class="inline size-3.5 -mt-0.5 me-1.5 text-amber-600 dark:text-amber-300"
-              aria-hidden="true"
-            />{t('home.hero.impactNote')}
-            <button
-              type="button"
-              class="ms-1.5 rounded-sm font-medium underline text-amber-700 dark:text-amber-300 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onclick={() => scrollToId('impact')}
-            >
-              {t('home.hero.impactLink')}
-            </button>
-          </div>
-        {/if}
 
         <div class="flex flex-wrap gap-3">
           {#if !me.isPending && me.data?.authenticated}
@@ -400,44 +369,6 @@
             {t('home.trust.noLogs')}
           </li>
         </ul>
-
-        <!-- Quick-nav: the page is long and the content a cautious visitor needs
-           most (threat model, privacy) is many viewports down. -->
-        <nav class="flex flex-wrap gap-2" aria-label={t('home.quicknav.label')}>
-          <button
-            type="button"
-            class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onclick={() => scrollToId('privacy')}
-          >
-            {t('home.quicknav.privacy')}
-          </button>
-          <button
-            type="button"
-            class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onclick={() => {
-              faqTab = 'threat';
-              scrollToId('threat-model');
-            }}
-          >
-            {t('home.quicknav.threat')}
-          </button>
-          <button
-            type="button"
-            class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onclick={() => scrollToId('faq')}
-          >
-            {t('home.quicknav.faq')}
-          </button>
-          {#if billingEnabled && donation?.enabled}
-            <button
-              type="button"
-              class="rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onclick={() => scrollToId('impact')}
-            >
-              {t('home.quicknav.impact')}
-            </button>
-          {/if}
-        </nav>
       </div>
 
       <!--
@@ -503,28 +434,56 @@
           <p class="text-[11px] text-muted-foreground leading-snug border-t border-border/60 pt-3">
             {t('home.freeCard.footnote')}
           </p>
-          {#if billingEnabled}
-            <!-- Upgrade nudge: the free summary stays primary; this footer offers the
-               paid tier with a DB-derived price + the existing goUpgrade entry point. -->
-            <div class="space-y-2 rounded-xl border border-primary/30 bg-primary/5 p-3">
-              <div class="flex items-baseline justify-between gap-2">
-                <p class="text-sm font-semibold">{t('home.freeCard.upsellTitle')}</p>
-                {#if membershipFromPrice}
-                  <span class="text-xs font-semibold tabular-nums text-primary">
-                    {t('home.freeCard.fromPerMonth', { price: membershipFromPrice })}
-                  </span>
-                {/if}
-              </div>
-              <p class="text-[11px] text-muted-foreground">{t('home.freeCard.cryptoNote')}</p>
-              <p class="text-xs text-muted-foreground leading-snug">
-                {t('home.freeCard.upsellBody', { limits: membershipLimits })}
-              </p>
-              <Button size="sm" class="w-full" onclick={goUpgrade}>
-                {t('home.cta.getMembership')}
-              </Button>
-            </div>
-          {/if}
         </div>
+
+        <!-- Donation teaser, right under the free-tier summary: the free tier
+             above IS what donations fund, so the pitch sits where that
+             connection is visible. Live GB/reach numbers (never dollar
+             figures) + a donate CTA; "See the impact" deep-links the full
+             story in the membership section. Renders only while donations
+             are live. -->
+        {#if billingEnabled && donation?.enabled}
+          <div
+            class="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/[0.05] p-5 space-y-3"
+          >
+            <p class="text-sm leading-relaxed">
+              <Heart
+                class="inline size-3.5 -mt-0.5 me-1.5 text-amber-600 dark:text-amber-300"
+                aria-hidden="true"
+              />{t('home.hero.impactNote')}
+            </p>
+            {#if donation.currentBonusGb > 0 || donation.freeUsersHelped > 0}
+              <div class="flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+                <span>
+                  <span
+                    class="text-sm font-display font-bold tabular-nums text-amber-600 dark:text-amber-300"
+                    >+<CountUp value={donation.currentBonusGb} start /></span
+                  >
+                  {t('impact.bonusThisMonth')}
+                </span>
+                <span>
+                  <span class="text-sm font-display font-bold tabular-nums text-foreground"
+                    ><CountUp value={donation.freeUsersHelped} start /></span
+                  >
+                  {t('impact.usersHelped')}
+                </span>
+              </div>
+            {/if}
+            <div class="flex flex-wrap items-center gap-3 pt-1">
+              <Button size="sm" onclick={goDonate}>
+                <Heart class="size-4" />
+                {t('home.impact.cta')}
+              </Button>
+              <button
+                type="button"
+                class="rounded-sm text-xs font-medium underline text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onclick={() => scrollToId('impact')}
+              >
+                {t('home.hero.impactLink')}
+              </button>
+            </div>
+          </div>
+        {/if}
       </div>
     </div>
 
@@ -536,39 +495,9 @@
     </div>
   </section>
 
-  <!-- THE MAP: censored countries speaking out. Illustrative, not live data —
-       labels on censored regions carrying the voices. -->
-  <section class="grid gap-10 md:grid-cols-[1fr_auto] items-center">
-    <div class="space-y-4 max-w-xl">
-      {@render eyebrow('globe')}
-      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
-        {t('home.globe.title')}
-      </h2>
-      <p class="text-muted-foreground leading-relaxed">{t('home.globe.body')}</p>
-    </div>
-    <CobeGlobe class="mx-auto md:mx-0" size={560} />
-  </section>
-
-  <!-- FEATURES -->
-  <section class="space-y-8">
-    <div class="max-w-2xl space-y-2">
-      {@render eyebrow('features')}
-      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
-        {t('home.features.title')}
-      </h2>
-    </div>
-    <div class="grid gap-x-8 gap-y-6 md:grid-cols-3">
-      {#each features as f (f.title)}
-        <div class="space-y-2">
-          <f.icon class="size-5 text-muted-foreground" aria-hidden="true" />
-          <h3 class="text-base font-semibold">{t(f.title)}</h3>
-          <p class="text-sm text-muted-foreground leading-relaxed">{t(f.body)}</p>
-        </div>
-      {/each}
-    </div>
-  </section>
-
-  <!-- WHAT WE STORE: the privacy reassurance this audience needs, stated plainly. -->
+  <!-- WHAT WE STORE + WHO SEES WHAT: the privacy case, directly after the
+       hero. For a surveillance-wary visitor this is the real pitch, so it
+       comes before anything about steps, pricing, or the network. -->
   <section id="privacy" class="scroll-mt-24 space-y-8">
     <div class="max-w-2xl space-y-2">
       {@render eyebrow('privacy')}
@@ -632,10 +561,29 @@
     </div>
   </section>
 
-  <!-- MEMBERSHIP / pricing - only when billing is live (reuses the comparison
-       card, which shows "from <price>/mo" + an Upgrade CTA). -->
+  <!-- THE NETWORK: the live-network globe. Green markers are real server
+       locations from publicConfig.locations (DB-driven, same feed as the
+       status strip); amber dots mark censored regions as static context.
+       Hidden until the operator maps at least one location in the CMS. -->
+  {#if hasMappedLocations}
+    <section class="grid gap-10 md:grid-cols-[1fr_auto] items-center">
+      <div class="space-y-4 max-w-xl">
+        {@render eyebrow('globe')}
+        <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+          {t('home.globe.title')}
+        </h2>
+        <p class="text-muted-foreground leading-relaxed">{t('home.globe.body')}</p>
+      </div>
+      <NetworkGlobe class="mx-auto md:mx-0" size={560} locations={globeLocations} />
+    </section>
+  {/if}
+
+  <!-- MEMBERSHIP + DONATIONS: the whole "who pays for this" story in one
+       place - the tier comparison, then what donors' giving is doing for
+       free users right now (live bonus + reach + the per-month history as a
+       dithered chart; GB and user counts only, never dollar figures). -->
   {#if billingEnabled}
-    <section class="space-y-6">
+    <section class="space-y-8">
       <div class="max-w-2xl space-y-2">
         {@render eyebrow('membership')}
         <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
@@ -648,72 +596,68 @@
         </p>
       </div>
       <TierComparison currentTierSlug="" onUpgrade={goUpgrade} />
-    </section>
-  {/if}
 
-  <!-- DONATION IMPACT: what donors' giving is doing for free users right now
-       (live bonus + reach + the per-month history as a dithered chart). Renders
-       whenever donations are live; before the first donation the chart shows a
-       flat zero baseline with the "first one starts the counter" note. All
-       numbers are GB / user counts (no dollar figures). -->
-  {#if billingEnabled && donation?.enabled}
-    <!-- Full-bleed warm band (breaks out of the container's px-4): a flat amber
-         tint marking the donor-facing interlude between the service sections. -->
-    <section
-      id="impact"
-      class="scroll-mt-24 -mx-4 px-4 py-10 md:py-12 border-y border-amber-500/20 bg-amber-500/[0.04]"
-    >
-      <div class="grid gap-8 md:grid-cols-2 md:items-center">
-        <div class="max-w-xl space-y-3">
-          {@render eyebrow('impact')}
-          <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
-            {t('home.impact.title')}
-          </h2>
-          <p class="text-muted-foreground leading-relaxed">
-            {t('home.impact.body', { days: impactWindowDays })}
-          </p>
-          <div class="flex flex-wrap gap-x-6 gap-y-2 pt-1">
-            <div>
-              <span
-                class="text-xl font-display font-bold tabular-nums text-amber-600 dark:text-amber-300"
-                >+<CountUp value={donation.currentBonusGb} start /></span
-              >
-              <span class="text-sm text-muted-foreground"> {t('impact.bonusThisMonth')}</span>
+      {#if donation?.enabled}
+        <!-- The donor-facing interlude keeps its warm amber tint, but as a
+             card inside this section instead of a second full-bleed section
+             of its own. Before the first donation the chart shows a flat
+             zero baseline with the "first one starts the counter" note. -->
+        <div
+          id="impact"
+          class="scroll-mt-24 rounded-2xl border border-amber-500/25 bg-amber-500/[0.04] p-6 md:p-8"
+        >
+          <div class="grid gap-8 md:grid-cols-2 md:items-center">
+            <div class="max-w-xl space-y-3">
+              <h3 class="text-xl md:text-2xl font-display font-bold tracking-tight">
+                {t('home.impact.title')}
+              </h3>
+              <p class="text-muted-foreground leading-relaxed">
+                {t('home.impact.body', { days: impactWindowDays })}
+              </p>
+              <div class="flex flex-wrap gap-x-6 gap-y-2 pt-1">
+                <div>
+                  <span
+                    class="text-xl font-display font-bold tabular-nums text-amber-600 dark:text-amber-300"
+                    >+<CountUp value={donation.currentBonusGb} start /></span
+                  >
+                  <span class="text-sm text-muted-foreground"> {t('impact.bonusThisMonth')}</span>
+                </div>
+                <div>
+                  <span class="text-xl font-display font-bold tabular-nums"
+                    ><CountUp value={donation.freeUsersHelped} start /></span
+                  >
+                  <span class="text-sm text-muted-foreground"> {t('impact.usersHelped')}</span>
+                </div>
+              </div>
+              <div class="pt-2">
+                <Button onclick={goDonate}>
+                  <Heart class="size-4" />
+                  {t('home.impact.cta')}
+                </Button>
+              </div>
+              <!-- Only in-app donations feed the counter; direct nonprofit gifts don't. -->
+              <p class="text-xs text-muted-foreground leading-relaxed">
+                {t('impact.externalNote')}
+              </p>
             </div>
-            <div>
-              <span class="text-xl font-display font-bold tabular-nums"
-                ><CountUp value={donation.freeUsersHelped} start /></span
-              >
-              <span class="text-sm text-muted-foreground"> {t('impact.usersHelped')}</span>
+            <div class="rounded-xl border border-amber-500/30 bg-background/60 p-4">
+              <DitherChart
+                values={impactDaily}
+                labels={impactLabels}
+                marks={impactMarks}
+                variant="area"
+                step
+                max={impactMax}
+                height={120}
+                ariaLabel={t('home.impact.chartAria')}
+              />
+              {#if impactEmpty}
+                <p class="mt-2 text-xs text-muted-foreground text-center">{t('impact.empty')}</p>
+              {/if}
             </div>
           </div>
-          <div class="pt-2">
-            <Button onclick={goDonate}>
-              <Heart class="size-4" />
-              {t('home.impact.cta')}
-            </Button>
-          </div>
-          <!-- Only in-app donations feed the counter; direct nonprofit gifts don't. -->
-          <p class="text-xs text-muted-foreground leading-relaxed">
-            {t('impact.externalNote')}
-          </p>
         </div>
-        <div class="rounded-xl border border-amber-500/30 bg-background/60 p-4">
-          <DitherChart
-            values={impactDaily}
-            labels={impactLabels}
-            marks={impactMarks}
-            variant="area"
-            step
-            max={impactMax}
-            height={120}
-            ariaLabel={t('home.impact.chartAria')}
-          />
-          {#if impactEmpty}
-            <p class="mt-2 text-xs text-muted-foreground text-center">{t('impact.empty')}</p>
-          {/if}
-        </div>
-      </div>
+      {/if}
     </section>
   {/if}
 
@@ -721,7 +665,7 @@
        this service can and cannot protect against; deliberately honest, since
        overclaiming security gets people hurt). Both tabs are single-open
        accordions with separate state + id prefix. A #threat-model deep link
-       (or the hero quick-nav chip) lands on the threat tab. -->
+       lands on the threat tab. -->
   <section id="faq" class="scroll-mt-24 space-y-8">
     <div id="threat-model" class="scroll-mt-24 max-w-2xl space-y-2">
       {@render eyebrow('faq')}
@@ -761,97 +705,73 @@
     {/if}
   </section>
 
-  <!-- ABOUT: short, factual, no invented programs. Two columns: the story +
-       text links on the left, fact rows on the right. The operator/nonprofit
-       line appears once (the body); the fact rows carry what the body doesn't. -->
+  <!-- ABOUT: short and factual - two paragraphs and a link row. The trust
+       row already carries nonprofit/open-source/no-logs, and the membership
+       section carries the funding story, so nothing repeats here. -->
   <section class="border-t border-border pt-10 md:pt-12">
-    <div class="grid gap-8 md:grid-cols-[1.2fr_1fr] md:items-center">
-      <div class="max-w-2xl space-y-3">
-        {@render eyebrow('about')}
-        <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
-          {t('home.about.title')}
-        </h2>
-        <p class="text-muted-foreground leading-relaxed">
-          {t('home.about.bodyPrefix')}{' '}
+    <div class="max-w-2xl space-y-3">
+      {@render eyebrow('about')}
+      <h2 class="text-2xl md:text-3xl font-display font-bold tracking-tight">
+        {t('home.about.title')}
+      </h2>
+      <p class="text-muted-foreground leading-relaxed">
+        {t('home.about.bodyPrefix')}{' '}
+        <a
+          href="https://unredacted.org"
+          class="underline hover:text-foreground"
+          target="_blank"
+          rel="noopener noreferrer">Unredacted</a
+        >{t('home.about.bodySuffix')}
+      </p>
+      <p class="text-muted-foreground leading-relaxed">
+        {t('home.about.body2')}
+      </p>
+      <!-- Text links, not buttons: the page's button CTAs (hero, steps,
+           donate) stay unchallenged. Donations happen IN-APP (they fund the
+           free-user bandwidth pool) - never the external nonprofit donate
+           page, which reads as a second, confusing destination; when billing
+           is live the membership link routes to the in-app upgrade panel
+           (authed → /account, else /get-account). -->
+      <div class="flex flex-wrap gap-x-5 gap-y-2 pt-2 text-sm">
+        {#if billingEnabled && donation?.enabled}
+          <button
+            type="button"
+            onclick={goDonate}
+            class="inline-flex items-center gap-1.5 rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Heart class="size-3.5" aria-hidden="true" />
+            {t('renew.donate')}
+          </button>
+        {/if}
+        <a
+          href="https://unredacted.org"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="inline-flex items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+        >
+          {t('home.about.siteLink')}
+        </a>
+        {#if site?.repoEnabled && site.repoUrl}
           <a
-            href="https://unredacted.org"
-            class="underline hover:text-foreground"
-            target="_blank"
-            rel="noopener noreferrer">Unredacted</a
-          >{t('home.about.bodySuffix')}
-        </p>
-        <p class="text-muted-foreground leading-relaxed">
-          {t('home.about.body2')}
-        </p>
-        <!-- Text links, not buttons: the page's two button CTAs (hero + how it
-             works) stay unchallenged. Donations happen IN-APP (they fund the
-             free-user bandwidth pool) - never the external nonprofit donate
-             page, which reads as a second, confusing destination; when billing
-             is live the membership link routes to the in-app upgrade panel
-             (authed → /account, else /get-account). -->
-        <div class="flex flex-wrap gap-x-5 gap-y-2 pt-2 text-sm">
-          {#if billingEnabled && donation?.enabled}
-            <button
-              type="button"
-              onclick={goDonate}
-              class="inline-flex items-center gap-1.5 rounded-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Heart class="size-3.5" aria-hidden="true" />
-              {t('renew.donate')}
-            </button>
-          {/if}
-          <a
-            href="https://unredacted.org"
+            href={site.repoUrl}
             target="_blank"
             rel="noopener noreferrer"
             class="inline-flex items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
           >
-            {t('home.about.siteLink')}
+            <CodeXml class="size-3.5" aria-hidden="true" />
+            {t('home.about.viewSourceCta')}
           </a>
-          {#if site?.repoEnabled && site.repoUrl}
-            <a
-              href={site.repoUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="inline-flex items-center gap-1.5 text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-            >
-              <CodeXml class="size-3.5" aria-hidden="true" />
-              {t('home.about.viewSourceCta')}
-            </a>
-          {/if}
-          {#if billingEnabled}
-            <button
-              type="button"
-              onclick={goUpgrade}
-              class="rounded-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {t('home.cta.getMembership')}
-            </button>
-          {/if}
-        </div>
-      </div>
-      <ul class="space-y-5 md:border-s md:border-border md:ps-8">
-        {#if site?.repoEnabled && site.repoUrl}
-          <li class="flex items-start gap-3">
-            <CodeXml class="size-4 text-muted-foreground mt-0.5 shrink-0" aria-hidden="true" />
-            <div>
-              <p class="text-sm font-semibold">{t('home.about.fact2Title')}</p>
-              <p class="text-sm text-muted-foreground leading-relaxed">
-                {t('home.about.openSource')}
-              </p>
-            </div>
-          </li>
         {/if}
-        <li class="flex items-start gap-3">
-          <Heart class="size-4 text-muted-foreground mt-0.5 shrink-0" aria-hidden="true" />
-          <div>
-            <p class="text-sm font-semibold">{t('home.about.fact3Title')}</p>
-            <p class="text-sm text-muted-foreground leading-relaxed">
-              {t('home.about.fact3Body')}
-            </p>
-          </div>
-        </li>
-      </ul>
+        {#if billingEnabled}
+          <button
+            type="button"
+            onclick={goUpgrade}
+            class="rounded-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {t('home.cta.getMembership')}
+          </button>
+        {/if}
+      </div>
     </div>
   </section>
 </div>
