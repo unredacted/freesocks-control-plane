@@ -757,7 +757,11 @@
       "cta": "Сделать пожертвование"
     },
     "hero": {
-      "title": "A VPN for freedom"
+      "variants": {
+        "dissidents": "VPN для инакомыслящих",
+        "privacy": "VPN для приватности",
+        "world": "VPN для всего мира"
+      }
     },
     "cta": {
       "getMembership": "Оформите членство"

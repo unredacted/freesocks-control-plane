@@ -842,7 +842,12 @@
       "chartAria": "Bandwidth added to every free user by donations, day by day this month"
     },
     "hero": {
-      "title": "A VPN for freedom",
+      "variants": {
+        "freedom": "A VPN for freedom",
+        "dissidents": "A VPN for dissidents",
+        "privacy": "A VPN for privacy",
+        "world": "A VPN for the world"
+      },
       "subtitle": "FreeSocks is built to defeat Internet censorship. No email or password is required to sign up, just an account ID. Your subscription URL works in most VPN clients, and memberships come with {limits}."
     },
     "cta": {

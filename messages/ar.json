@@ -750,7 +750,11 @@
       "cta": "قدّم تبرعًا"
     },
     "hero": {
-      "title": "A VPN for freedom"
+      "variants": {
+        "dissidents": "شبكة VPN للمعارضين",
+        "privacy": "شبكة VPN للخصوصية",
+        "world": "شبكة VPN للعالم"
+      }
     },
     "cta": {
       "getMembership": "احصل على عضوية"

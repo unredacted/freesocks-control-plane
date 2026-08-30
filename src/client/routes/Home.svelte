@@ -46,6 +46,8 @@
   import DitherChart from '../components/DitherChart.svelte';
   import PrivacyFlow from '../components/PrivacyFlow.svelte';
   import { dailyImpactSeries, dailyImpactBounds, giftMarks, niceCeil } from '../lib/impact';
+  import { onMount } from 'svelte';
+  import { fly, fade } from 'svelte/transition';
 
   const me = meQuery();
   const config = configQuery();
@@ -65,15 +67,29 @@
   const globeLocations = $derived(config.data?.locations ?? []);
   const hasMappedLocations = $derived(globeLocations.some((l) => l.coords != null));
 
-  // Static hero title: the operator's DB override wins (heroTitles list first
-  // entry, then heroTitle), else the built-in translated line. The earlier
-  // rotating-variants animation was deliberately removed: one strong line,
-  // no motion competing with the CTA.
-  const heroTitle = $derived.by(() => {
-    const fromList = (site?.heroTitles ?? []).map((s) => s.trim()).filter(Boolean);
-    if (fromList.length > 0) return fromList[0]!;
-    if (site?.heroTitle?.trim()) return site.heroTitle.trim();
-    return t('home.hero.title');
+  // Animated hero title: the operator's DB list wins (verbatim, like heroTitle);
+  // a single heroTitle is a static override; else the built-in translated set.
+  // 2+ variants rotate on a 4s cadence (paused for reduced-motion users).
+  const heroVariants = $derived.by(() => {
+    const fromDb = (site?.heroTitles ?? []).map((s) => s.trim()).filter(Boolean);
+    if (fromDb.length > 0) return fromDb;
+    if (site?.heroTitle?.trim()) return [site.heroTitle.trim()];
+    return [
+      t('home.hero.variants.freedom'),
+      t('home.hero.variants.dissidents'),
+      t('home.hero.variants.privacy'),
+      t('home.hero.variants.world'),
+    ];
+  });
+  let heroIdx = $state(0);
+  let reducedMotion = $state(false);
+  onMount(() => {
+    reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reducedMotion) return;
+    const id = window.setInterval(() => {
+      if (!document.hidden) heroIdx = heroIdx + 1;
+    }, 4000);
+    return () => window.clearInterval(id);
   });
 
   // Donation impact (GB + user counts only - no dollar figures on the public
@@ -267,7 +283,28 @@
     <div class="grid gap-10 md:grid-cols-[1.2fr_1fr] md:gap-16 items-center">
       <div class="space-y-6 md:space-y-8">
         <h1 class="text-4xl md:text-6xl font-display font-bold tracking-tight leading-[1.05]">
-          {heroTitle}
+          {#if heroVariants.length > 1 && !reducedMotion}
+            {@const shown = heroVariants[heroIdx % heroVariants.length]!}
+            <!-- Zero layout shift: invisible copies of EVERY variant stack in
+                 one grid cell, so the tallest one pins the h1's box constant
+                 while only the visible text transitions on top of it. -->
+            <span class="grid">
+              {#each heroVariants as v (v)}
+                <span class="invisible [grid-area:1/1]" aria-hidden="true">{v}</span>
+              {/each}
+              {#key shown}
+                <span
+                  class="[grid-area:1/1] self-start"
+                  in:fly={{ y: '0.35em', duration: 320 }}
+                  out:fade={{ duration: 120 }}
+                >
+                  {shown}
+                </span>
+              {/key}
+            </span>
+          {:else}
+            {heroVariants[heroIdx % heroVariants.length]}
+          {/if}
         </h1>
 
         <p class="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
