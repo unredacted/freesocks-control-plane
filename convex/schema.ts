@@ -726,6 +726,9 @@ export default defineSchema({
     // Ease-of-use rating: within each open-source group, easier apps rank first
     // (missing = treated as 'moderate'). 'easy'/'advanced' also get a badge.
     easeOfUse: v.optional(v.union(v.literal('easy'), v.literal('moderate'), v.literal('advanced'))),
+    // Verified IPv6-through-tunnel behavior: true works / false IPv4-only /
+    // absent untested (tri-state; see lib/clientCatalog.ts).
+    ipv6: v.optional(v.boolean()),
     enabled: v.boolean(),
     priority: v.number(),
     updatedAt: v.number(),
@@ -767,6 +770,10 @@ export default defineSchema({
   issueReports: defineTable({
     kind: v.union(v.literal('switch'), v.literal('report')),
     reason: v.string(),
+    // Member-typed problem description (the "other" report reason offers a text
+    // box). Free text, so it follows the same privacy rule as `city`: sanitized
+    // + length-capped, stored only on this UNLINKED row, never the audit log.
+    detail: v.optional(v.string()),
     backend: v.string(),
     // Where the key lived when the event fired (server-resolved, not client-claimed).
     locationCode: v.optional(v.string()),

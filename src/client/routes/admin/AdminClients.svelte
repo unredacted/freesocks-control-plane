@@ -123,6 +123,10 @@
               Device limit (HWID): <strong class="text-foreground">{c.hwid ? 'yes' : 'no'}</strong>
               · Priority: <strong class="text-foreground tabular-nums">{c.priority}</strong>
               · Ease of use: <strong class="text-foreground">{c.easeOfUse ?? 'unrated'}</strong>
+              · IPv6:
+              <strong class="text-foreground"
+                >{c.ipv6 === true ? 'works' : c.ipv6 === false ? 'IPv4 only' : 'untested'}</strong
+              >
             </div>
             <div class="text-muted-foreground">
               License:

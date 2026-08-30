@@ -20,7 +20,7 @@ import { buildSetCookie, parseCookies, verifySignedValue } from './lib/cookies';
 import { verifyCaptcha } from './lib/captcha';
 import { sendUmamiEvent } from './lib/umami';
 import { sanitizeUmamiUrl } from './lib/analyticsConfig';
-import { detectedFromHeaders, sanitizeSubmitted } from './lib/issueTelemetry';
+import { detectedFromHeaders, sanitizeDetail, sanitizeSubmitted } from './lib/issueTelemetry';
 import { isReportIssueReason } from '../src/shared/contracts/issueReasons';
 import { sha256Hex } from './lib/crypto';
 import { sealed } from './lib/e2ee';
@@ -1321,7 +1321,7 @@ http.route({
         retryAfterMs: rl.retryAfterMs,
       });
     }
-    const body = await readJson<{ reason?: string; telemetry?: unknown }>(req);
+    const body = await readJson<{ reason?: string; detail?: unknown; telemetry?: unknown }>(req);
     if (!isReportIssueReason(body.reason)) {
       return errorJson('validation', 'unknown reason', 400);
     }
@@ -1334,6 +1334,10 @@ http.route({
     const result = await ctx.runMutation(internal.issueReports.reportIssue, {
       userId: member.userId,
       reason: body.reason,
+      // Free-text description (the UI offers it for "other"). Accepted for any
+      // reason so a future UI change needs no server change; sanitizeDetail
+      // caps + scrubs it, and it never reaches the audit log.
+      detail: sanitizeDetail(body.detail),
       country: telemetry?.country ?? null,
       city: telemetry?.city ?? null,
       asn: telemetry?.asn ?? null,

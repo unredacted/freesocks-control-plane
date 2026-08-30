@@ -78,6 +78,9 @@ export const reportIssue = internalMutation({
   args: {
     userId: v.id('users'),
     reason: v.string(),
+    // Pre-sanitized free text (lib/issueTelemetry.sanitizeDetail in the HTTP
+    // layer). Lands only on the unlinked row below — never in the audit log.
+    detail: v.optional(v.union(v.string(), v.null())),
     ...telemetryFields,
     detectedCountry: v.optional(v.union(v.string(), v.null())),
     detectedCity: v.optional(v.union(v.string(), v.null())),
@@ -98,6 +101,7 @@ export const reportIssue = internalMutation({
       await ctx.db.insert('issueReports', {
         kind: 'report',
         reason: a.reason,
+        detail: opt(a.detail),
         backend: sub?.backend ?? 'none',
         locationCode: server?.location ?? undefined,
         nodeLabel: undefined,
@@ -348,6 +352,7 @@ export const recent = internalQuery({
         at: new Date(r._creationTime).toISOString(),
         kind: r.kind,
         reason: r.reason,
+        detail: r.detail ?? null,
         backend: r.backend,
         locationCode: r.locationCode ?? null,
         connectionModeId: r.connectionModeId ?? null,

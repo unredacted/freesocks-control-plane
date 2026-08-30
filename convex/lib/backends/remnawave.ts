@@ -850,6 +850,29 @@ export async function remnawaveDeleteUser(
   }
 }
 
+/**
+ * Remnawave picks the subscription FORMAT by User-Agent, keying on the client
+ * app's UA prefix. Probed live against the production panel (2026-08-30):
+ * "SFA/…" → sing-box JSON, but the newer official sing-box shells fall through
+ * to the base64 default — which sing-box then fails to import ("decode config:
+ * invalid character 'd'…", base64 of vless://). Until the panel recognizes
+ * them, rewrite a UA that IS sing-box but lacks a recognized prefix to a
+ * canonical SFA one, carrying the core version through (the panel may pick the
+ * legacy vs modern template by it). Deliberately narrow — only UAs that START
+ * with "SFL/" or "sing-box" — so sing-box-CORED third-party apps with their own
+ * panel templates (Karing, Happ, …) are never touched.
+ */
+const SINGBOX_RECOGNIZED_UA_RE = /^SF[AIMT]\//;
+const SINGBOX_UNRECOGNIZED_UA_RE = /^(?:SFL\/|sing-?box)/i;
+export function normalizeSubscriptionUserAgent(ua: string | undefined): string | undefined {
+  if (!ua || SINGBOX_RECOGNIZED_UA_RE.test(ua) || !SINGBOX_UNRECOGNIZED_UA_RE.test(ua)) return ua;
+  const ver =
+    /sing-?box[/ ]v?(\d+(?:\.\d+){1,2})/i.exec(ua)?.[1] ??
+    /^SFL\/v?(\d+(?:\.\d+){1,2})/i.exec(ua)?.[1] ??
+    '1.12.0';
+  return `SFA/${ver} (sing-box ${ver})`;
+}
+
 export async function remnawaveFetchSubscription(
   cfg: RemnawaveConfig,
   backendShortId: string,
@@ -868,7 +891,8 @@ export async function remnawaveFetchSubscription(
     ? pinnedSubscriptionUrl(cfg, subscriptionUrl, backendShortId)
     : joinUrl(cfg.baseUrl, `/api/sub/${backendShortId}`);
   const headers: Record<string, string> = {};
-  if (userAgent) headers['user-agent'] = userAgent;
+  const ua = normalizeSubscriptionUserAgent(userAgent);
+  if (ua) headers['user-agent'] = ua;
   // Forward the client's HWID identification headers so the panel registers the
   // device + enforces the limit (with HWID_DEVICE_LIMIT_ENABLED on, a fetch
   // without x-hwid is rejected 404 — the caller passes that through).

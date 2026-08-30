@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
+  normalizeSubscriptionUserAgent,
   remnawaveDeleteUser,
   remnawaveFetchSubscription,
   remnawaveGetUser,
@@ -422,6 +423,39 @@ describe('remnawaveResetTraffic / remnawaveDeleteUser', () => {
   });
 });
 
+describe('normalizeSubscriptionUserAgent', () => {
+  test('rewrites SFL and bare sing-box UAs to a recognized SFA UA, keeping the core version', () => {
+    // The exact broken/working matrix from the 2026-08-30 live probe.
+    expect(normalizeSubscriptionUserAgent('SFL/1.14.0-beta.17 sing-box 1.13.0')).toBe(
+      'SFA/1.13.0 (sing-box 1.13.0)',
+    );
+    expect(normalizeSubscriptionUserAgent('sing-box 1.12.0')).toBe('SFA/1.12.0 (sing-box 1.12.0)');
+    expect(normalizeSubscriptionUserAgent('sing-box/v1.13.0-beta.2')).toBe(
+      'SFA/1.13.0 (sing-box 1.13.0)',
+    );
+    // No parseable core version → SFL's own version, then the modern-era default.
+    expect(normalizeSubscriptionUserAgent('SFL/1.14.0')).toBe('SFA/1.14.0 (sing-box 1.14.0)');
+    expect(normalizeSubscriptionUserAgent('SingBox pro')).toBe('SFA/1.12.0 (sing-box 1.12.0)');
+  });
+
+  test('leaves recognized sing-box clients and every other UA untouched', () => {
+    for (const ua of [
+      'SFA/1.12.0 sing-box',
+      'SFI/1.11.0 (sing-box 1.11.0)',
+      'SFM/1.11.0',
+      'SFT/1.11.0',
+      'v2rayNG/1.8.29',
+      'Karing/1.0 (sing-box 1.12.0)', // sing-box-cored but has its own template
+      'Happ/2.0',
+      'Clash/1.0',
+    ]) {
+      expect(normalizeSubscriptionUserAgent(ua)).toBe(ua);
+    }
+    expect(normalizeSubscriptionUserAgent(undefined)).toBeUndefined();
+    expect(normalizeSubscriptionUserAgent('')).toBe('');
+  });
+});
+
 describe('remnawaveFetchSubscription', () => {
   test('fetches the panel-provided public subscription URL (no admin token), forwards UA', async () => {
     mockFetch(
@@ -439,6 +473,17 @@ describe('remnawaveFetchSubscription', () => {
     // The subscription URL is a public capability — the admin Bearer is NOT sent.
     expect(calls[0]!.headers.authorization).toBeUndefined();
     expect(calls[0]!.headers['user-agent']).toBe('Clash/1.0');
+  });
+
+  test('forwards the NORMALIZED UA for unrecognized sing-box clients (SFL)', async () => {
+    mockFetch(() => new Response('{"outbounds":[]}', { status: 200 }));
+    await remnawaveFetchSubscription(
+      cfg,
+      'short123',
+      'SFL/1.14.0-beta.17 sing-box 1.13.0',
+      'https://panel.internal/s/short123',
+    );
+    expect(calls[0]!.headers['user-agent']).toBe('SFA/1.13.0 (sing-box 1.13.0)');
   });
 
   test('captures the allowlisted subscription metadata headers (userinfo + update interval)', async () => {
