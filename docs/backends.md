@@ -108,7 +108,8 @@ Higher-level code never calls `fetch` directly; it runs the dispatch actions:
   `internal.backends.fetchSubscriptionContent` to serve the member's config from our own origin
   instead of the backend panel URL. Public + unauthenticated (the opaque per-sub `subToken` is the
   capability), with a short server-side TTL cache on `subscriptions.subCache` keyed by User-Agent
-  (Remnawave formats config by UA). It forwards the caller's UA and re-emits the allowlisted
+  (Remnawave formats config by UA). It forwards the caller's UA (with one sing-box normalization
+  exception — see "Subscription formats" below) and re-emits the allowlisted
   `subscription-userinfo` / `profile-*` headers `fetchContent` returns (`SubscriptionContent.headers`),
   so the fronted URL is a faithful stand-in. `getAccountView` returns the raw backend URL + the opaque
   `subToken` (both in the sealed reveal-leg); the SPA builds the fronted `<origin>/api/v1/sub/<token>`
@@ -450,7 +451,7 @@ are Remnawave-only; Outline has no device concept and returns a typed 409.
 Remnawave emits the subscription in **different formats chosen by the requesting
 client's `User-Agent`** (raw v2ray/base64, sing-box JSON, Clash / Clash.Meta YAML).
 FCP's fronted URL is **format-agnostic and transparent**: `GET /api/v1/sub/<token>`
-forwards the caller's exact `User-Agent` upstream (`http.ts` →
+forwards the caller's `User-Agent` upstream (`http.ts` →
 `backends.fetchSubscriptionContent` → `remnawave.ts`), sends no `Accept` / format
 override, passes Remnawave's `Content-Type` + body straight back, and caches
 per-exact-UA. So a **Clash-family client** (Clash Verge Rev, FlClash, Mihomo Party,
@@ -459,6 +460,20 @@ panel is configured to emit Clash output for that UA** — a **panel / Ansible
 subscription-template** concern, _not_ an FCP code change. If Clash clients get
 base64 instead of YAML, fix the panel's subscription templates; the FCP front
 already does the right thing.
+
+**The ONE exception to exact-UA forwarding** (`normalizeSubscriptionUserAgent`,
+`convex/lib/backends/remnawave.ts`): a UA that starts with `SFL/` or `sing-box`
+is rewritten to a canonical `SFA/<ver> (sing-box <ver>)` before the panel fetch,
+carrying the client's core version through. The panel keys its sing-box output
+on the app prefix and (probed live 2026-08-30) recognizes `SFA/SFI/SFM/SFT` but
+not the newer SFL client or the bare CLI — those fell through to the base64
+default, which sing-box rejects on import (`decode config: invalid character
+'d'`). Only those two UA shapes are rewritten; recognized prefixes and
+sing-box-cored apps with their own panel templates (Karing, Happ) pass through
+verbatim. The fronted route's cache stays keyed by the **original** UA, so the
+rewrite never changes which cache bucket a client hits. If a future panel
+version learns the SFL prefix and serves it something SFL-specific, this
+normalization masks that — remove it then.
 
 Constraints to know:
 
