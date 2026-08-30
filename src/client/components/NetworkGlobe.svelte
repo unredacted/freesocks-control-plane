@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { t } from '../lib/i18n/index.svelte';
+  import { resolvePrimaryRgb } from '../lib/oklch';
 
   /**
    * The home page's live-network globe. Two kinds of marks:
@@ -77,6 +78,13 @@
   let ACTIVE: [number, number, number] = [0.15, 0.62, 0.41];
   const OFFLINE: [number, number, number] = [0.55, 0.55, 0.55];
 
+  // Marker/anchor id for a server. Namespaced so an operator-chosen location
+  // code can never collide with a region marker id (a location literally
+  // coded "r0" would otherwise share `r0` with the first region dot, and the
+  // chip would pin itself to the wrong marker). Region ids stay `r<i>`, which
+  // no `s-<code>` can equal.
+  const sid = (code: string) => `s-${code}`;
+
   function buildMarkers() {
     return [
       ...REGIONS.map((loc, i) => ({
@@ -86,7 +94,7 @@
         color: SIGNAL,
       })),
       ...servers.map((s) => ({
-        id: s.code,
+        id: sid(s.code),
         location: [s.coords!.lat, s.coords!.lng] as [number, number],
         size: 0.08,
         color: s.online ? ACTIVE : OFFLINE,
@@ -165,13 +173,24 @@
     const cobeFront = (id: string) =>
       rootStyle.getPropertyValue(`--cobe-visible-${id}`).trim() !== '';
     const z = canvas?.parentElement; // cobe's anchor wrapper
-    const anchorDiv = (id: string) =>
-      z?.querySelector<HTMLElement>(`div[style*="anchor-name: --cobe-${id}"]`) ?? null;
+    // Anchor lookup by EXACT marker id: a substring selector on the style
+    // attribute (`[style*="--cobe-US"]`) would also match `--cobe-US-EAST`,
+    // so parse each anchor's full name out of the raw attribute instead (the
+    // attribute string, not CSSStyleDeclaration - browsers without CSS anchor
+    // positioning don't reflect the unknown property).
+    const anchors = new Map<string, HTMLElement>();
+    if (z) {
+      for (const div of z.querySelectorAll<HTMLElement>('div[style*="anchor-name: --cobe-"]')) {
+        const m = /anchor-name:\s*--cobe-([^;]+)/.exec(div.getAttribute('style') ?? '');
+        if (m) anchors.set(m[1]!.trim(), div);
+      }
+    }
+    const anchorDiv = (id: string) => anchors.get(id) ?? null;
     // Pin every chip to its marker (positioned even while hidden, so the
     // admission pass measures each box exactly where it would appear).
     for (const s of servers) {
-      const el = labelEls.get(s.code);
-      const div = anchorDiv(s.code);
+      const el = labelEls.get(sid(s.code));
+      const div = anchorDiv(sid(s.code));
       if (!el || !div) continue;
       const r = div.getBoundingClientRect();
       el.style.left = `${r.left + r.width / 2 - srect.left}px`;
@@ -217,11 +236,12 @@
     // Server count is small, so there's no visible-count budget or rotation:
     // every chip that fits is shown.
     for (const s of servers) {
-      if (kept.some((k) => k.id === s.code)) continue;
-      if (!onFrontFace(s.code)) continue;
-      const r = rectOf(s.code);
+      const id = sid(s.code);
+      if (kept.some((k) => k.id === id)) continue;
+      if (!onFrontFace(id)) continue;
+      const r = rectOf(id);
       if (!r || !inStage(r, 0) || kept.some((k) => hits(k.r, r))) continue;
-      kept.push({ id: s.code, r });
+      kept.push({ id, r });
     }
     // Assign only on change (a fresh array every frame would re-render needlessly).
     const next = kept.map((k) => k.id);
@@ -238,25 +258,13 @@
 
   onMount(() => {
     reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    // Theme-accurate marker green: resolve --primary to device RGB (falls back
-    // to the hardcoded triple on any parse miss, e.g. exotic color spaces).
-    try {
-      const probe = document.createElement('span');
-      probe.style.color = 'var(--primary)';
-      probe.style.display = 'none';
-      document.body.append(probe);
-      const resolved = getComputedStyle(probe).color;
-      probe.remove();
-      const m =
-        resolved.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/) ??
-        resolved.match(/color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-      if (m) {
-        const scale = resolved.startsWith('color(') ? 1 : 255;
-        ACTIVE = [Number(m[1]) / scale, Number(m[2]) / scale, Number(m[3]) / scale];
-      }
-    } catch {
-      // keep the fallback triple
-    }
+    // Theme-accurate marker green: the theme declares --primary as oklch(),
+    // which computed styles can hand back verbatim (the brand-preset tokens
+    // do exactly that), so use the repo's oklch resolver rather than probing
+    // for an rgb() serialization. Falls back to the hardcoded triple when the
+    // token is unavailable or unparseable.
+    const rgb = resolvePrimaryRgb();
+    if (rgb) ACTIVE = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255];
     const onResize = () => layoutPass();
     window.addEventListener('resize', onResize);
     if (!canvas) {
@@ -355,9 +363,9 @@
     {#each servers as s (s.code)}
       <div
         class="loc-float"
-        class:off={!visibleIds.includes(s.code)}
+        class:off={!visibleIds.includes(sid(s.code))}
         aria-hidden="true"
-        use:registerLabel={s.code}
+        use:registerLabel={sid(s.code)}
       >
         <span class="dot" class:on={s.online}></span>
         <span class="code">{s.code}</span>
