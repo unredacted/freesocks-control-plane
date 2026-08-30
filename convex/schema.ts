@@ -767,6 +767,10 @@ export default defineSchema({
   issueReports: defineTable({
     kind: v.union(v.literal('switch'), v.literal('report')),
     reason: v.string(),
+    // Member-typed problem description (the "other" report reason offers a text
+    // box). Free text, so it follows the same privacy rule as `city`: sanitized
+    // + length-capped, stored only on this UNLINKED row, never the audit log.
+    detail: v.optional(v.string()),
     backend: v.string(),
     // Where the key lived when the event fired (server-resolved, not client-claimed).
     locationCode: v.optional(v.string()),

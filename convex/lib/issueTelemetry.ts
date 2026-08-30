@@ -79,6 +79,18 @@ export function sanitizeCity(v: unknown): string | null {
   return s.slice(0, 64);
 }
 
+/** Free-text problem description (the "something else" report): control chars
+ *  stripped (newlines kept — people write multi-line), trimmed, capped at 500.
+ *  Same privacy rule as city — it lives ONLY in the unlinked issueReports
+ *  table, never the per-user audit log (curated scalars only). */
+export function sanitizeDetail(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  const s = v.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, '').trim();
+  if (!s) return null;
+  return s.slice(0, 500);
+}
+
 /** AS number: a positive integer in the 32-bit ASN space. Accepts "AS44244"
  *  style strings too (people paste them like that). Null = absent/invalid. */
 export function sanitizeAsn(v: unknown): number | null {

@@ -110,6 +110,8 @@ export const AdminTelemetryEvents = z.object({
       at: z.string(),
       kind: z.enum(['switch', 'report']),
       reason: z.string(),
+      /** Member-typed free text (report kind, "other" reason). Defaulted for skew. */
+      detail: z.string().nullable().optional().default(null),
       backend: z.string(),
       locationCode: z.string().nullable(),
       connectionModeId: z.string().nullable(),
