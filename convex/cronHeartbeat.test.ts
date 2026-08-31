@@ -81,22 +81,32 @@ describe('cronHeartbeat', () => {
 
   // Name-registry agreement (above) is not enough: a cron whose TARGET never
   // stamps shows `pending` on the dashboard forever even though it runs fine
-  // (the issue-telemetry-retention launch bug). Every target module must
-  // mention its own cron name — via recordHeartbeat(ctx, '<name>') for
-  // mutation targets or runWithCronOutcome(ctx, '<name>', ...) for actions.
-  test('every cron target module stamps its own heartbeat name', () => {
+  // (the issue-telemetry-retention launch bug). For each registration this
+  // slices the REGISTERED handler's own `export const <fn> = ...` block and
+  // requires an actual stamp call with the exact cron name inside it — a name
+  // in a comment, or a stamp in a different handler of the same module,
+  // doesn't count.
+  test('every registered cron handler stamps its own heartbeat name', () => {
     const src = readFileSync(new URL('./crons.ts', import.meta.url), 'utf8');
     const jobs = [
       ...src.matchAll(
-        /crons\.(?:interval|daily)\(\s*'([a-z-]+)',\s*\{[^}]*\},\s*internal\.([A-Za-z0-9_]+)\./g,
+        /crons\.(?:interval|daily)\(\s*'([a-z-]+)',\s*\{[^}]*\},\s*internal\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)/g,
       ),
-    ].map((m) => ({ name: m[1]!, module: m[2]! }));
+    ].map((m) => ({ name: m[1]!, module: m[2]!, fn: m[3]! }));
     expect(jobs).toHaveLength(CRON_META.length); // the regex parsed every registration
     for (const job of jobs) {
       const target = readFileSync(new URL(`./${job.module}.ts`, import.meta.url), 'utf8');
-      expect(target, `${job.module}.ts must stamp the '${job.name}' heartbeat`).toContain(
-        `'${job.name}'`,
+      const start = target.indexOf(`export const ${job.fn} `);
+      expect(start, `${job.module}.ts must export the cron target '${job.fn}'`).toBeGreaterThan(-1);
+      const end = target.indexOf('\nexport ', start + 1);
+      const body = target.slice(start, end === -1 ? undefined : end);
+      const stamp = new RegExp(
+        `(?:recordHeartbeat|runWithCronOutcome|heartbeatFromAction)\\(\\s*ctx,\\s*'${job.name}'`,
       );
+      expect(
+        stamp.test(body),
+        `${job.module}.${job.fn} must stamp the '${job.name}' heartbeat inside its own handler`,
+      ).toBe(true);
     }
   });
 });
