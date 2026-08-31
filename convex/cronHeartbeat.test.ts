@@ -78,4 +78,25 @@ describe('cronHeartbeat', () => {
     expect(new Set(registered).size).toBe(registered.length); // no dup names in crons.ts
     expect(registered.slice().sort()).toEqual(CRON_META.map((c) => c.name).sort());
   });
+
+  // Name-registry agreement (above) is not enough: a cron whose TARGET never
+  // stamps shows `pending` on the dashboard forever even though it runs fine
+  // (the issue-telemetry-retention launch bug). Every target module must
+  // mention its own cron name — via recordHeartbeat(ctx, '<name>') for
+  // mutation targets or runWithCronOutcome(ctx, '<name>', ...) for actions.
+  test('every cron target module stamps its own heartbeat name', () => {
+    const src = readFileSync(new URL('./crons.ts', import.meta.url), 'utf8');
+    const jobs = [
+      ...src.matchAll(
+        /crons\.(?:interval|daily)\(\s*'([a-z-]+)',\s*\{[^}]*\},\s*internal\.([A-Za-z0-9_]+)\./g,
+      ),
+    ].map((m) => ({ name: m[1]!, module: m[2]! }));
+    expect(jobs).toHaveLength(CRON_META.length); // the regex parsed every registration
+    for (const job of jobs) {
+      const target = readFileSync(new URL(`./${job.module}.ts`, import.meta.url), 'utf8');
+      expect(target, `${job.module}.ts must stamp the '${job.name}' heartbeat`).toContain(
+        `'${job.name}'`,
+      );
+    }
+  });
 });
