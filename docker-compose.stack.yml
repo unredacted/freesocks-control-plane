@@ -118,7 +118,7 @@ services:
   postgres:
     # Pinned by digest like every other image (re-pin on upgrade:
     # docker buildx imagetools inspect postgres:18).
-    image: postgres:18@sha256:06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941
+    image: postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -224,7 +224,7 @@ services:
     # NOT `latest` — so a Dependabot bump names the actual version change instead
     # of "latest moved". Re-pin by hand if needed:
     # docker buildx imagetools inspect tiago2/cap:<version>.
-    image: tiago2/cap:3.1.9@sha256:98fdaaf4ffe6bea18549484a431c601399f24dd561370e196970e6fc0e6b79d0
+    image: tiago2/cap:3.1.10@sha256:d785f851d6b09f8df575bd2a9630e7da1363a48fdaa0d0ec1097ad70afac0b0a
     pids_limit: 256
     restart: unless-stopped
     logging: *log
