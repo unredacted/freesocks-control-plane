@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { t } from '../lib/i18n/index.svelte';
+  import { resolvePrimaryRgb } from '../lib/oklch';
 
   /**
    * The account page's location globe: every FreeSocks location with map
@@ -190,25 +191,15 @@
 
   onMount(() => {
     reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    // Theme-accurate marker green: resolve --primary to device RGB (falls back
-    // to the hardcoded triple on any parse miss, e.g. exotic color spaces).
-    try {
-      const probe = document.createElement('span');
-      probe.style.color = 'var(--primary)';
-      probe.style.display = 'none';
-      document.body.append(probe);
-      const resolved = getComputedStyle(probe).color;
-      probe.remove();
-      const m =
-        resolved.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/) ??
-        resolved.match(/color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-      if (m) {
-        const scale = resolved.startsWith('color(') ? 1 : 255;
-        ACTIVE = [Number(m[1]) / scale, Number(m[2]) / scale, Number(m[3]) / scale];
-      }
-    } catch {
-      // keep the fallback triple
-    }
+    // Theme-accurate marker green: the theme declares --primary as oklch(),
+    // which computed styles can hand back verbatim (the brand-preset tokens
+    // do exactly that), so use the repo's oklch resolver rather than probing
+    // for an rgb() serialization - the old probe silently left the marker on
+    // the hardcoded emerald under a non-default brand preset (the same
+    // NetworkGlobe review finding, fixed there in e93c182). Falls back to the
+    // hardcoded triple when the token is unavailable or unparseable.
+    const rgb = resolvePrimaryRgb();
+    if (rgb) ACTIVE = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255];
     if (!canvas) return;
     const el = canvas;
     const dark = document.documentElement.classList.contains('dark');
