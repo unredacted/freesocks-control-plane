@@ -199,7 +199,13 @@ capabilities.
 
 The Remnawave provider (`convex/lib/backends/remnawave.ts`) targets these exact routes, verified
 against the upstream contract in `remnawave/backend` (`libs/contract/api/{routes,controllers}.ts` +
-the NestJS controllers) on the **2.x** line. If you self-host a different panel version, confirm
+the NestJS controllers) on the **2.x** line. **Remnawave 3.x is NOT supported**: 3.0.0 dropped the
+user `uuid` (users are addressed by a numeric `id` + `shortUuid`, so every `/api/users/{uuid}` route
+below 400s) and removed `GET /api/bandwidth-stats/nodes/realtime`; 2.8.1 also made `APP_SECRET` a
+required env. Keep the real panels on 2.8.x until the provider is ported (the identifier change
+reaches `subscriptions.backendUserId`, the HWID routes and the bandwidth-stats routes), and keep the
+integration-test panel (`docker-compose.remnawave-test.yml`) on the same line — Dependabot ignores
+`remnawave/backend` majors for that reason. If you self-host a different 2.x panel version, confirm
 these still match. The provider tests assert the paths, so a drift here fails CI — this is the guard
 that was missing when the `PATCH /api/users/{uuid}` / `/api/hwid-devices` mismatches shipped (they
 "passed" only because the tests mocked the wrong paths too).

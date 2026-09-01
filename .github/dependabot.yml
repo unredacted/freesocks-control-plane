@@ -47,6 +47,11 @@ updates:
   #    contract drift. Bumping it is in scope, but it should track whatever
   #    version the REAL panels run (the separate Ansible repo), or the
   #    integration test starts asserting a contract production does not have.
+  #    MAJORS ARE IGNORED (below): Remnawave 3.0 dropped the user `uuid` that
+  #    the provider keys everything on, so a 3.x panel fails the provider test
+  #    outright (the 2.8.0->3.3.2 group bump of 2026-08-25 silently broke the
+  #    opt-in harness; reverted 2026-09-01). Lift the ignore when the 3.x port
+  #    (uuid -> numeric id + shortUuid, APP_SECRET in the test env) ships.
   - package-ecosystem: docker-compose
     directory: /
     schedule:
@@ -58,6 +63,11 @@ updates:
     labels: [dependencies, docker]
     commit-message:
       prefix: chore(docker)
+    ignore:
+      # See the `remnawave/backend` note above — 3.x is a breaking contract for
+      # the provider; minors/patches within 2.x still flow.
+      - dependency-name: remnawave/backend
+        update-types: ['version-update:semver-major']
     groups:
       compose-images:
         # NO `update-types` filter, deliberately. It looks like a way to keep
