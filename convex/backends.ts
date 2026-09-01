@@ -16,6 +16,14 @@
  *    the saga where the subscription row does not exist yet (issuance compensation
  *    + the S3 mirror fetch).
  *
+ *  - `backendUserId` crosses this layer in two forms: the STORED form (what the
+ *    subscription row, audit payloads and every caller hold — globally unique)
+ *    and the PROVIDER form (the bare id the panel speaks). A per-instance numeric
+ *    id (Remnawave 3.x, Outline) is scoped `<backendServerId>:<id>` on the way in
+ *    (right after `issue`) and stripped on the way out (right before every
+ *    provider call) — see convex/lib/backendUserId.ts. Nothing outside this file
+ *    converts.
+ *
  * The dev mock backend (double-gated, DEV_MOCK_BACKEND + ENVIRONMENT=development)
  * still short-circuits every op so the full flow works without a real instance.
  */
@@ -43,6 +51,7 @@ import {
   mockIssueUser,
 } from './lib/backends/mock';
 import { isRemnawaveNotFound } from './lib/backends/remnawave';
+import { scopedServerId, toProviderUserId, toStoredBackendUserId } from './lib/backendUserId';
 
 const backendId = backendIdValidator;
 const trafficStrategy = v.union(
@@ -149,7 +158,13 @@ export const issueUser = internalAction({
       }
       throw err;
     }
-    return { ...issued, backendServerId: server._id };
+    // Persist the globally-unique form (a per-panel integer gets scoped to this
+    // instance); the provider only ever saw/needs the bare id above.
+    return {
+      ...issued,
+      backendUserId: toStoredBackendUserId(server._id, issued.backendUserId),
+      backendServerId: server._id,
+    };
   },
 });
 
@@ -169,7 +184,10 @@ export const getUser = internalAction({
         devices: [],
       };
     }
-    return PROVIDERS[server.backend].get(server.config as BackendConfig, backendUserId);
+    return PROVIDERS[server.backend].get(
+      server.config as BackendConfig,
+      toProviderUserId(backendUserId),
+    );
   },
 });
 
@@ -181,7 +199,7 @@ export const updateUser = internalAction({
     if (!server) throw new Error('Subscription key not resolvable to a backend instance');
     await PROVIDERS[server.backend].update(
       server.config as BackendConfig,
-      backendUserId,
+      toProviderUserId(backendUserId),
       patch as UpdateUserPatch,
     );
     return null;
@@ -194,7 +212,10 @@ export const resetUserTraffic = internalAction({
     if (mockBackendEnabled()) return null;
     const server = await resolveInstanceByKey(ctx, backendUserId);
     if (!server) return null;
-    await PROVIDERS[server.backend].resetTraffic(server.config as BackendConfig, backendUserId);
+    await PROVIDERS[server.backend].resetTraffic(
+      server.config as BackendConfig,
+      toProviderUserId(backendUserId),
+    );
     return null;
   },
 });
@@ -220,12 +241,18 @@ export const deleteUser = internalAction({
           `Backend instance ${backendServerId} not found for key teardown (possible orphan)`,
         );
       }
-      await PROVIDERS[hinted.backend].remove(hinted.config as BackendConfig, backendUserId);
+      await PROVIDERS[hinted.backend].remove(
+        hinted.config as BackendConfig,
+        toProviderUserId(backendUserId),
+      );
       return null;
     }
     const server = await resolveInstanceByKey(ctx, backendUserId);
     if (!server) return null; // already gone / no instance recorded
-    await PROVIDERS[server.backend].remove(server.config as BackendConfig, backendUserId);
+    await PROVIDERS[server.backend].remove(
+      server.config as BackendConfig,
+      toProviderUserId(backendUserId),
+    );
     return null;
   },
 });
@@ -242,12 +269,20 @@ export const locateKeyInstance = internalAction({
   args: { backend: backendId, backendUserId: v.string() },
   handler: async (ctx, { backend, backendUserId }): Promise<string | null> => {
     if (mockBackendEnabled()) return null;
+    // A scoped (per-instance integer) id is only meaningful on the instance it
+    // names — the same integer on another panel is a DIFFERENT user, so a fleet
+    // probe would "find" a stranger's key and repoint the sub at it. Probe only
+    // the named instance; if that row is gone, the key cannot be relocated.
+    const scope = scopedServerId(backendUserId);
     const servers = (await ctx.runQuery(internal.backendServers.listActiveWithSecret, {})).filter(
-      (s) => s.backend === backend,
+      (s) => s.backend === backend && (scope === null || (s._id as string) === scope),
     );
     for (const server of servers) {
       try {
-        await PROVIDERS[server.backend].get(server.config as BackendConfig, backendUserId);
+        await PROVIDERS[server.backend].get(
+          server.config as BackendConfig,
+          toProviderUserId(backendUserId),
+        );
         return server._id as string;
       } catch {
         continue; // not on this panel (404) or unreachable — try the next
@@ -267,7 +302,11 @@ export const revokeDevice = internalAction({
     if (!provider.removeDevice) {
       throw new Error(`${server.backend} does not support device management`);
     }
-    await provider.removeDevice(server.config as BackendConfig, backendUserId, hwid);
+    await provider.removeDevice(
+      server.config as BackendConfig,
+      toProviderUserId(backendUserId),
+      hwid,
+    );
     return null;
   },
 });
@@ -284,7 +323,11 @@ export const setUserStatus = internalAction({
     if (!provider.setStatus) {
       throw new Error(`${server.backend} does not support status changes`);
     }
-    await provider.setStatus(server.config as BackendConfig, backendUserId, active);
+    await provider.setStatus(
+      server.config as BackendConfig,
+      toProviderUserId(backendUserId),
+      active,
+    );
     return null;
   },
 });
@@ -308,7 +351,7 @@ export const bulkUpdateTrafficLimit = internalAction({
     if (!provider.bulkUpdateTrafficLimit) return null; // no bulk primitive (Outline)
     await provider.bulkUpdateTrafficLimit(
       server.config as BackendConfig,
-      backendUserIds,
+      backendUserIds.map(toProviderUserId),
       trafficLimitBytes,
     );
     return null;
@@ -327,7 +370,11 @@ export const getUserUsage = internalAction({
     const provider = PROVIDERS[server.backend];
     if (!provider.getUserUsage) return null;
     try {
-      return await provider.getUserUsage(server.config as BackendConfig, backendUserId, days ?? 30);
+      return await provider.getUserUsage(
+        server.config as BackendConfig,
+        toProviderUserId(backendUserId),
+        days ?? 30,
+      );
     } catch {
       return null;
     }

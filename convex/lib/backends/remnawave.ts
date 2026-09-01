@@ -3,6 +3,18 @@
  * config-based functions callable from a Convex action (V8 runtime: `fetch`
  * only, no Node deps). The native client + adapter were merged here; response
  * shapes are still validated with zod.
+ *
+ * CONTRACT VERSIONS. Remnawave 2.x addresses a user by `uuid`; 3.0 dropped the
+ * user uuid and addresses users by their per-panel numeric `id` (path params,
+ * `PATCH /api/users` body `id`, hwid `userId`, bulk `userIds`). Everything else
+ * FCP touches (shortUuid + the public subscription URL, internal squads, nodes,
+ * config profiles, system stats) is unchanged. The provider speaks BOTH: the
+ * contract is inferred from the shape of the RAW id it is handed (a UUID → 2.x,
+ * an integer → 3.x), so a mixed fleet keeps working while panels are upgraded
+ * one at a time, and a freshly issued key simply carries whichever id the panel
+ * returned. Numeric ids are only unique per panel — the dispatch scopes them to
+ * the instance before storing (convex/lib/backendUserId.ts); this module always
+ * sees the bare id. See docs/backends.md "Remnawave API contract".
  */
 import { z } from 'zod';
 import type {
@@ -32,45 +44,85 @@ export interface RemnawaveConfig {
 const TrafficLimitStrategy = z.enum(['NO_RESET', 'DAY', 'WEEK', 'MONTH']).catch('NO_RESET');
 const RemnawaveUserStatus = z.string();
 
-const RemnawaveUser = z.object({
-  uuid: z.string().uuid(),
-  shortUuid: z.string(),
-  username: z.string(),
-  status: RemnawaveUserStatus,
-  trafficLimitBytes: z.number().int().nonnegative().nullable(),
-  trafficLimitStrategy: TrafficLimitStrategy,
-  // The reset anchor for the member's "resets in N days" hint. Display-only
-  // string; nullish on NO_RESET tiers / older panels (kept lenient like the
-  // device dates so a format change can't fail-parse the whole user).
-  lastTrafficResetAt: z.string().nullish(),
-  // LEGACY / CREATE-response fallback. Remnawave omits used traffic on the CREATE
-  // response (a brand-new user has used nothing) → default to 0 so issuance parses.
-  // Older panels also carried it here on GET. Newer panels moved it under
-  // `userTraffic` (below); toState prefers that and only falls back to this.
-  usedTrafficBytes: z
-    .number()
-    .int()
-    .nonnegative()
-    .nullish()
-    .transform((v) => v ?? 0),
-  // Remnawave 2.x nests per-user used traffic here on GET /api/users/{uuid}
-  // (the flat top-level `usedTrafficBytes` no longer exists on GET). Kept lenient
-  // like the device dates — a panel shape change must never fail-parse the whole
-  // user (that silent-0 masking is exactly what broke the account traffic counter).
-  // Extra siblings (lifetimeUsedTrafficBytes/…) are stripped by z.object.
-  userTraffic: z.object({ usedTrafficBytes: z.number().int().nonnegative().nullish() }).nullish(),
-  // Panel-side "last seen online" stamp — the closest per-user liveness signal
-  // Remnawave exposes (there is no live-connection list). Display-only string,
-  // kept lenient like the device dates; surfaced on the admin Live-details
-  // expander. Older panels omit it.
-  onlineAt: z.string().nullish(),
-  expireAt: z.string().datetime().nullable(),
-  hwidDeviceLimit: z.number().int().nonnegative().nullable(),
-  // Plain string, matching the panel contract (z.string(), not .url()) — a
-  // relative or scheme-odd subscription URL must not fail-parse the user.
-  subscriptionUrl: z.string(),
-});
+const RemnawaveUser = z
+  .object({
+    // Identity: 2.x panels return `uuid` (+ a numeric `id` nobody used); 3.x
+    // panels return ONLY the numeric `id`. At least one must be present
+    // (refined below) — `panelUserId()` picks the one the panel addresses by.
+    uuid: z.string().uuid().optional(),
+    id: z.number().int().nonnegative().optional(),
+    shortUuid: z.string(),
+    username: z.string(),
+    status: RemnawaveUserStatus,
+    trafficLimitBytes: z.number().int().nonnegative().nullable(),
+    trafficLimitStrategy: TrafficLimitStrategy,
+    // The reset anchor for the member's "resets in N days" hint. Display-only
+    // string; nullish on NO_RESET tiers / older panels (kept lenient like the
+    // device dates so a format change can't fail-parse the whole user).
+    lastTrafficResetAt: z.string().nullish(),
+    // LEGACY / CREATE-response fallback. Remnawave omits used traffic on the CREATE
+    // response (a brand-new user has used nothing) → default to 0 so issuance parses.
+    // Older panels also carried it here on GET. Newer panels moved it under
+    // `userTraffic` (below); toState prefers that and only falls back to this.
+    usedTrafficBytes: z
+      .number()
+      .int()
+      .nonnegative()
+      .nullish()
+      .transform((v) => v ?? 0),
+    // Remnawave 2.x nests per-user used traffic here on GET /api/users/{uuid}
+    // (the flat top-level `usedTrafficBytes` no longer exists on GET). Kept lenient
+    // like the device dates — a panel shape change must never fail-parse the whole
+    // user (that silent-0 masking is exactly what broke the account traffic counter).
+    // Extra siblings (lifetimeUsedTrafficBytes/…) are stripped by z.object.
+    // `onlineAt` lives here too (2.x and 3.x both nest it under userTraffic);
+    // the flat top-level `onlineAt` below is the legacy location.
+    userTraffic: z
+      .object({
+        usedTrafficBytes: z.number().int().nonnegative().nullish(),
+        onlineAt: z.string().nullish(),
+      })
+      .nullish(),
+    // Panel-side "last seen online" stamp — the closest per-user liveness signal
+    // Remnawave exposes (there is no live-connection list). Display-only string,
+    // kept lenient like the device dates; surfaced on the admin Live-details
+    // expander. Legacy flat location; toState prefers `userTraffic.onlineAt`.
+    onlineAt: z.string().nullish(),
+    expireAt: z.string().datetime().nullable(),
+    hwidDeviceLimit: z.number().int().nonnegative().nullable(),
+    // Plain string, matching the panel contract (z.string(), not .url()) — a
+    // relative or scheme-odd subscription URL must not fail-parse the user.
+    subscriptionUrl: z.string(),
+  })
+  .refine((u) => u.uuid != null || u.id != null, {
+    message: 'user carries neither uuid (Remnawave 2.x) nor id (Remnawave 3.x)',
+  });
 type RemnawaveUser = z.infer<typeof RemnawaveUser>;
+
+/**
+ * The id this panel addresses the user by: the 2.x `uuid` when present, else
+ * the 3.x numeric `id` as a decimal string. This is the RAW provider id (the
+ * dispatch scopes numeric ones to the instance before persisting).
+ */
+function panelUserId(user: { uuid?: string | null; id?: number | null }): string {
+  if (user.uuid) return user.uuid;
+  if (user.id != null) return String(user.id);
+  // Unreachable after the schema refine; kept as a hard failure, never a guess.
+  throw new RemnawaveApiError('Remnawave user carries no id');
+}
+
+/**
+ * Contract inference from the raw id: an INTEGER is a 3.x numeric id; anything
+ * else (a 2.x uuid) goes out on the 2.x shapes verbatim — the panel validates
+ * it, so a malformed value fails loudly there rather than being guessed here.
+ */
+function isNumericId(rawId: string): boolean {
+  return /^\d+$/.test(rawId);
+}
+/** The 3.x numeric id as a JSON number (the DTOs take `z.number()`, not a string). */
+function numericId(rawId: string): number {
+  return Number(rawId);
+}
 
 // The device object Remnawave returns. Extra fields (userId/osVersion/
 // userAgent/requestIp) are stripped by Zod — we deliberately do NOT surface the
@@ -162,7 +214,23 @@ async function call<T>(
       signal: controller.signal,
     });
     if (!res.ok) throw await RemnawaveApiError.fromResponse(res, args.path);
-    const parsed = args.schema.safeParse(unwrap(await res.json()));
+    // 3.x answers some writes with NO body (bulk/update → 202, DELETE → 204;
+    // 2.x returned `{ response: {...} }` for both). An empty 2xx parses as
+    // `undefined` — the callers of those routes use `z.unknown()` — while a
+    // non-empty body that is not JSON is still a hard error, never a guess.
+    const text = await res.text();
+    let json: unknown = undefined;
+    if (text.trim().length > 0) {
+      try {
+        json = JSON.parse(text);
+      } catch {
+        throw new RemnawaveApiError(`Remnawave non-JSON ${res.status} body on ${args.path}`, {
+          status: res.status,
+          path: args.path,
+        });
+      }
+    }
+    const parsed = args.schema.safeParse(unwrap(json));
     if (!parsed.success) {
       // Name the offending FIELDS (paths only, never values) so a Remnawave
       // version/shape difference is diagnosable from the logs — the most common
@@ -342,7 +410,7 @@ function toState(user: RemnawaveUser, devices: BackendDevice[]): UserState {
     usedTrafficBytes: user.userTraffic?.usedTrafficBytes ?? user.usedTrafficBytes,
     trafficLimitStrategy: user.trafficLimitStrategy,
     lastTrafficResetAt: user.lastTrafficResetAt ?? undefined,
-    onlineAt: user.onlineAt ?? undefined,
+    onlineAt: user.userTraffic?.onlineAt ?? user.onlineAt ?? undefined,
     // The far-future write sentinel reads back as "no expiry" — free keys carry
     // it (they never expire on the panel's clock), and members shouldn't see a
     // 10-year countdown.
@@ -391,9 +459,9 @@ async function cleanupAmbiguousCreate(cfg: RemnawaveConfig, username: string): P
     const found = await call(cfg, {
       method: 'GET',
       path: `/api/users/by-username/${encodeURIComponent(username)}`,
-      schema: z.object({ uuid: z.string().uuid() }),
+      schema: z.object({ uuid: z.string().uuid().optional(), id: z.number().int().optional() }),
     });
-    await remnawaveDeleteUser(cfg, found.uuid);
+    await remnawaveDeleteUser(cfg, panelUserId(found));
     console.warn(`[remnawave] cleaned up user after ambiguous create failure (${username})`);
   } catch (cleanupErr) {
     console.warn(
@@ -453,21 +521,22 @@ export async function remnawaveIssueUser(
     throw err;
   }
   return {
-    backendUserId: user.uuid,
+    // uuid on a 2.x panel, the numeric id on 3.x — see the header note.
+    backendUserId: panelUserId(user),
     backendShortId: user.shortUuid,
     subscriptionUrl: pinnedSubscriptionUrl(cfg, user.subscriptionUrl, user.shortUuid),
     raw: user,
   };
 }
 
-async function listDevices(cfg: RemnawaveConfig, userUuid: string): Promise<BackendDevice[]> {
+async function listDevices(cfg: RemnawaveConfig, backendUserId: string): Promise<BackendDevice[]> {
   try {
     const result = await call(cfg, {
       method: 'GET',
       // Remnawave HWID controller is `/api/hwid`; a user's devices live at
-      // `devices/{userUuid}` (path param, NOT a `?userUuid=` query). See the
-      // contract table in docs/backends.md.
-      path: `/api/hwid/devices/${encodeURIComponent(userUuid)}`,
+      // `devices/{user}` (path param, NOT a query) — the uuid on 2.x, the
+      // numeric id on 3.x; the path template is the same. See docs/backends.md.
+      path: `/api/hwid/devices/${encodeURIComponent(backendUserId)}`,
       schema: HwidDevicesResponse,
     });
     return result.devices.map((d) => ({
@@ -499,9 +568,12 @@ export async function remnawaveDeleteDevice(
   await call(cfg, {
     method: 'POST',
     // `/api/hwid/devices/delete` (the HWID controller is `/api/hwid`); the body
-    // carries the ids. Response echoes the remaining list, deliberately unparsed.
+    // carries the ids — `userUuid` on 2.x, numeric `userId` on 3.x. Response
+    // echoes the remaining list, deliberately unparsed.
     path: '/api/hwid/devices/delete',
-    body: { userUuid: backendUserId, hwid },
+    body: isNumericId(backendUserId)
+      ? { userId: numericId(backendUserId), hwid }
+      : { userUuid: backendUserId, hwid },
     schema: z.unknown(),
   });
 }
@@ -711,9 +783,12 @@ export async function remnawaveUpdateUser(
   backendUserId: string,
   patch: UpdateUserPatch,
 ): Promise<void> {
-  // Remnawave's update is `PATCH /api/users` with the target `uuid` IN THE BODY
-  // (the route has no path param; the DTO requires uuid or username). Seed it here.
-  const body: Record<string, unknown> = { uuid: backendUserId };
+  // Remnawave's update is `PATCH /api/users` with the target IN THE BODY (the
+  // route has no path param; the DTO requires an id or username): `uuid` on a
+  // 2.x panel, the numeric `id` on 3.x. Seed it here.
+  const body: Record<string, unknown> = isNumericId(backendUserId)
+    ? { id: numericId(backendUserId) }
+    : { uuid: backendUserId };
   // The panel's UPDATE DTO takes `.optional()` NOT `.nullable()` here: a null
   // 400s and the WHOLE PATCH is rejected (re-enable + expiry + placement +
   // limits all lost). null means unlimited in FCP (resolveTrafficLimitBytes),
@@ -758,23 +833,59 @@ export async function remnawaveUpdateUser(
 
 /**
  * Bulk-set `trafficLimitBytes` on many users in ONE call — Remnawave
- * `POST /api/users/bulk/update` (`{ uuids, fields }`, uuids capped at 500 by the
- * panel). Used by the donation free-bandwidth bonus to re-cap the whole free
- * fleet efficiently instead of a PATCH per user. The caller chunks to ≤500 and
- * passes only Remnawave user uuids.
+ * `POST /api/users/bulk/update` (`{ uuids, fields }` on 2.x, `{ userIds, fields }`
+ * with JSON numbers on 3.x; 500 ids per call max, panel-side). Used by the
+ * donation free-bandwidth bonus to re-cap the whole free fleet efficiently
+ * instead of a PATCH per user. The caller chunks to ≤500 Remnawave ids of ONE
+ * instance; mid-migration a chunk can still mix uuid- and id-shaped keys, so the
+ * two shapes go out as two calls (each ≤ the chunk size).
  */
 export async function remnawaveBulkUpdateTrafficLimit(
   cfg: RemnawaveConfig,
   backendUserIds: string[],
   trafficLimitBytes: number,
 ): Promise<void> {
-  if (backendUserIds.length === 0) return;
-  await call(cfg, {
-    method: 'POST',
-    path: '/api/users/bulk/update',
-    body: { uuids: backendUserIds, fields: { trafficLimitBytes } },
-    schema: z.unknown(),
-  });
+  const uuids = backendUserIds.filter((id) => !isNumericId(id));
+  const userIds = backendUserIds.filter((id) => isNumericId(id)).map(numericId);
+  for (const body of [
+    uuids.length > 0 ? { uuids, fields: { trafficLimitBytes } } : null,
+    userIds.length > 0 ? { userIds, fields: { trafficLimitBytes } } : null,
+  ]) {
+    if (!body) continue;
+    await call(cfg, { method: 'POST', path: '/api/users/bulk/update', body, schema: z.unknown() });
+  }
+}
+
+/**
+ * Resolve the id a panel CURRENTLY addresses a user by, from the key's stable
+ * `shortUuid` (`GET /api/users/by-short-uuid/{shortUuid}` — same route on 2.x
+ * and 3.x). Returns the 2.x uuid on a 2.x panel and the numeric id (as a decimal
+ * string) on 3.x; null when the panel no longer knows the user. This is the
+ * remap primitive for the 2.x→3.x key migration (backendServers.migrateRemnawaveUserIds):
+ * a 2.x-era key's uuid is GONE from the panel after the upgrade, but its
+ * shortUuid survives.
+ */
+export async function remnawaveResolveUserIdByShortUuid(
+  cfg: RemnawaveConfig,
+  shortUuid: string,
+): Promise<string | null> {
+  try {
+    const found = await call(cfg, {
+      method: 'GET',
+      path: `/api/users/by-short-uuid/${encodeURIComponent(shortUuid)}`,
+      schema: z.object({ uuid: z.string().uuid().optional(), id: z.number().int().optional() }),
+    });
+    return panelUserId(found);
+  } catch (err) {
+    if (err instanceof RemnawaveApiError && err.meta?.status === 404) return null;
+    throw err;
+  }
+}
+
+/** Major version of the panel's reported semver (`3.4.2` → 3); null if unparseable. */
+export function remnawaveMajorVersion(panelVersion: string): number | null {
+  const m = /^v?(\d+)\./.exec(panelVersion.trim());
+  return m ? Number(m[1]) : null;
 }
 
 /**
@@ -925,9 +1036,13 @@ export async function remnawaveFetchSubscription(
   }
 }
 
-// A well-formed but absent user id: the panel answers 404 (reachable + token
-// accepted) rather than 200, which is exactly what a health probe wants.
-const HEALTH_PROBE_UUID = '00000000-0000-4000-8000-000000000000';
+// A well-formed but absent username: the panel answers 404 (reachable + token
+// accepted) rather than 200, which is exactly what a health probe wants. The
+// by-username route is the same on 2.x and 3.x, whereas `/api/users/{id}` wants
+// a uuid on 2.x and an integer on 3.x (the other shape 400s — and a 400 is NOT
+// "healthy"). Issuance usernames are `freesocks-<slug>-<hex>`, so this can never
+// collide with a real key.
+const HEALTH_PROBE_USERNAME = 'fcp-health-probe-absent';
 
 /**
  * Reachability + auth probe for the healthcheck cron + the admin
@@ -941,7 +1056,7 @@ const HEALTH_PROBE_UUID = '00000000-0000-4000-8000-000000000000';
 export async function remnawaveHealth(
   cfg: RemnawaveConfig,
 ): Promise<{ keyCount: number | null; rttMs: number }> {
-  const url = joinUrl(cfg.baseUrl, `/api/users/${HEALTH_PROBE_UUID}`);
+  const url = joinUrl(cfg.baseUrl, `/api/users/by-username/${HEALTH_PROBE_USERNAME}`);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs ?? 8000);
   const started = Date.now();
@@ -952,9 +1067,9 @@ export async function remnawaveHealth(
     });
     const rttMs = Date.now() - started;
     if (res.ok || res.status === 404) return { keyCount: null, rttMs };
-    throw new RemnawaveApiError(`Remnawave ${res.status} on /api/users/{id}`, {
+    throw new RemnawaveApiError(`Remnawave ${res.status} on /api/users/by-username/{probe}`, {
       status: res.status,
-      path: '/api/users/{id}',
+      path: '/api/users/by-username/{probe}',
     });
   } finally {
     clearTimeout(timer);

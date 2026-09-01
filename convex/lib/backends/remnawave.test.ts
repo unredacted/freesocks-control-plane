@@ -1,12 +1,16 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   normalizeSubscriptionUserAgent,
+  remnawaveBulkUpdateTrafficLimit,
+  remnawaveDeleteDevice,
   remnawaveDeleteUser,
   remnawaveFetchSubscription,
   remnawaveGetUser,
   remnawaveHealth,
   remnawaveIssueUser,
+  remnawaveMajorVersion,
   remnawaveResetTraffic,
+  remnawaveResolveUserIdByShortUuid,
   remnawaveSetStatus,
   remnawaveTestConnection,
   remnawaveUpdateUser,
@@ -552,9 +556,11 @@ describe('remnawaveFetchSubscription', () => {
 });
 
 describe('remnawaveHealth / remnawaveTestConnection', () => {
-  const PROBE = '/api/users/00000000-0000-4000-8000-000000000000';
+  // Version-neutral: the by-username route is identical on 2.x and 3.x, while
+  // `/api/users/{id}` 400s on whichever version the id shape doesn't match.
+  const PROBE = '/api/users/by-username/fcp-health-probe-absent';
 
-  test('treats 404 (well-formed but absent id) as reachable + authed', async () => {
+  test('treats 404 (well-formed but absent username) as reachable + authed', async () => {
     mockFetch(() => new Response(null, { status: 404 }));
     const h = await remnawaveHealth(cfg);
     // P2: Remnawave has no cheap key count, so health returns null (the
@@ -583,6 +589,178 @@ describe('remnawaveHealth / remnawaveTestConnection', () => {
       ok: false,
       error: 'Remnawave returned HTTP 401',
     });
+  });
+});
+
+/**
+ * Remnawave 3.x: the user uuid is gone; users are addressed by their numeric
+ * `id`. The provider infers the contract from the raw id's shape — an integer
+ * string is 3.x, anything else goes out on the 2.x (uuid) shapes — so both
+ * panel generations are driven by the same code (docs/backends.md).
+ */
+describe('Remnawave 3.x contract (numeric user ids)', () => {
+  /** A 3.x user: numeric id, NO uuid, onlineAt nested under userTraffic. */
+  function user3(over: Record<string, unknown> = {}): Record<string, unknown> {
+    const { uuid: _drop, ...rest } = userObj();
+    void _drop;
+    return {
+      ...rest,
+      id: 42,
+      userTraffic: { usedTrafficBytes: 512, onlineAt: '2026-09-01T00:00:00.000Z' },
+      ...over,
+    };
+  }
+
+  test('issue maps the numeric id (as a string) when the response has no uuid', async () => {
+    mockFetch(() => jsonRes({ response: user3() }));
+    const issued = await remnawaveIssueUser(cfg, {
+      username: 'fs_user',
+      trafficLimitBytes: 1000,
+      expireAt: null,
+      tag: 'free',
+    });
+    expect(issued.backendUserId).toBe('42');
+    expect(issued.backendShortId).toBe('short123');
+  });
+
+  test('issue still prefers the uuid on a 2.x response that also carries an id', async () => {
+    mockFetch(() => jsonRes({ response: userObj({ id: 7 }) }));
+    const issued = await remnawaveIssueUser(cfg, {
+      username: 'fs_user',
+      trafficLimitBytes: 1000,
+      expireAt: null,
+      tag: 'free',
+    });
+    expect(issued.backendUserId).toBe(UUID);
+  });
+
+  test('a user with neither uuid nor id is a schema mismatch (never a guess)', async () => {
+    mockFetch(() => jsonRes({ response: user3({ id: undefined }) }));
+    await expect(
+      remnawaveIssueUser(cfg, {
+        username: 'fs_user',
+        trafficLimitBytes: 1,
+        expireAt: null,
+        tag: 'x',
+      }),
+    ).rejects.toThrow(/schema mismatch/);
+  });
+
+  test('get uses the numeric id on both the user and the hwid path, reads nested onlineAt', async () => {
+    mockFetch((path) =>
+      path.startsWith('/api/hwid/')
+        ? jsonRes({ response: { devices: [] } })
+        : jsonRes({ response: user3() }),
+    );
+    const state = await remnawaveGetUser(cfg, '42');
+    expect(calls.map((c) => c.path)).toEqual(['/api/users/42', '/api/hwid/devices/42']);
+    expect(state.usedTrafficBytes).toBe(512);
+    expect(state.onlineAt).toBe('2026-09-01T00:00:00.000Z');
+  });
+
+  test('update seeds the body with a JSON-number `id`, not `uuid`', async () => {
+    mockFetch(() => jsonRes({ response: user3() }));
+    await remnawaveUpdateUser(cfg, '42', { trafficLimitBytes: 5 });
+    expect(calls[0]!.method).toBe('PATCH');
+    expect(calls[0]!.path).toBe('/api/users');
+    expect(calls[0]!.body).toMatchObject({ id: 42, trafficLimitBytes: 5 });
+    expect(calls[0]!.body).not.toHaveProperty('uuid');
+  });
+
+  test('a 2.x uuid key still seeds `uuid` (mixed fleets mid-upgrade)', async () => {
+    mockFetch(() => jsonRes({ response: userObj() }));
+    await remnawaveUpdateUser(cfg, UUID, { trafficLimitBytes: 5 });
+    expect(calls[0]!.body).toMatchObject({ uuid: UUID });
+    expect(calls[0]!.body).not.toHaveProperty('id');
+  });
+
+  test('status / reset / delete take the numeric id in the path', async () => {
+    mockFetch(() => jsonRes({ response: user3() }));
+    await remnawaveSetStatus(cfg, '42', false);
+    await remnawaveResetTraffic(cfg, '42');
+    await remnawaveDeleteUser(cfg, '42');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      'POST /api/users/42/actions/disable',
+      'POST /api/users/42/actions/reset-traffic',
+      'DELETE /api/users/42',
+    ]);
+  });
+
+  test('device revoke sends `userId` (number) on 3.x and `userUuid` on 2.x', async () => {
+    mockFetch(() => jsonRes({ response: { devices: [] } }));
+    await remnawaveDeleteDevice(cfg, '42', 'hw-1');
+    expect(calls[0]!.body).toEqual({ userId: 42, hwid: 'hw-1' });
+    await remnawaveDeleteDevice(cfg, UUID, 'hw-1');
+    expect(calls[1]!.body).toEqual({ userUuid: UUID, hwid: 'hw-1' });
+  });
+
+  test('bulk update splits a mixed chunk into a `uuids` call and a `userIds` call', async () => {
+    mockFetch(() => jsonRes({ response: { affectedRows: 2 } }));
+    await remnawaveBulkUpdateTrafficLimit(cfg, [UUID, '42', '7'], 999);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.body).toEqual({ uuids: [UUID], fields: { trafficLimitBytes: 999 } });
+    expect(calls[1]!.body).toEqual({ userIds: [42, 7], fields: { trafficLimitBytes: 999 } });
+  });
+
+  test('bulk update with only one shape makes exactly one call; empty makes none', async () => {
+    mockFetch(() => jsonRes({ response: { affectedRows: 1 } }));
+    await remnawaveBulkUpdateTrafficLimit(cfg, ['42'], 1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.body).toEqual({ userIds: [42], fields: { trafficLimitBytes: 1 } });
+    await remnawaveBulkUpdateTrafficLimit(cfg, [], 1);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('resolve-by-shortUuid returns the numeric id on 3.x, the uuid on 2.x, null on 404', async () => {
+    mockFetch(() => jsonRes({ response: user3() }));
+    expect(await remnawaveResolveUserIdByShortUuid(cfg, 'short123')).toBe('42');
+    expect(calls[0]!.path).toBe('/api/users/by-short-uuid/short123');
+    mockFetch(() => jsonRes({ response: userObj() }));
+    expect(await remnawaveResolveUserIdByShortUuid(cfg, 'short123')).toBe(UUID);
+    mockFetch(() => new Response(null, { status: 404 }));
+    expect(await remnawaveResolveUserIdByShortUuid(cfg, 'gone')).toBeNull();
+    mockFetch(() => new Response(null, { status: 500 }));
+    await expect(remnawaveResolveUserIdByShortUuid(cfg, 'x')).rejects.toThrow();
+  });
+
+  test('orphan cleanup after an ambiguous create deletes by the 3.x id', async () => {
+    mockFetch((path, method) => {
+      if (method === 'POST' && path === '/api/users') return new Response('boom', { status: 502 });
+      if (path.startsWith('/api/users/by-username/')) return jsonRes({ response: user3() });
+      return jsonRes({});
+    });
+    await expect(
+      remnawaveIssueUser(cfg, {
+        username: 'fs_user',
+        trafficLimitBytes: 1,
+        expireAt: null,
+        tag: 'x',
+      }),
+    ).rejects.toThrow();
+    expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/users/42')).toBe(true);
+  });
+
+  test('an empty 2xx body (3.x bulk/update 202, DELETE 204) is success, not a JSON error', async () => {
+    mockFetch((path, method) =>
+      method === 'DELETE'
+        ? new Response(null, { status: 204 })
+        : path.endsWith('/bulk/update')
+          ? new Response('', { status: 202 })
+          : jsonRes({ response: user3() }),
+    );
+    await expect(remnawaveDeleteUser(cfg, '42')).resolves.toBeUndefined();
+    await expect(remnawaveBulkUpdateTrafficLimit(cfg, ['42'], 1)).resolves.toBeUndefined();
+  });
+
+  test('a non-empty 2xx body that is not JSON is a hard error (never a guess)', async () => {
+    mockFetch(() => new Response('<html>login</html>', { status: 200 }));
+    await expect(remnawaveGetUser(cfg, '42')).rejects.toThrow(/non-JSON/);
+  });
+
+  test('remnawaveMajorVersion parses the recap semver', () => {
+    expect(remnawaveMajorVersion('3.4.2')).toBe(3);
+    expect(remnawaveMajorVersion('v2.8.1')).toBe(2);
+    expect(remnawaveMajorVersion('dev')).toBeNull();
   });
 });
 

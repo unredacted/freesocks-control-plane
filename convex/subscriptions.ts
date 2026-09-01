@@ -674,3 +674,53 @@ export const tombstoneWithGraceAction = internalAction({
     }
   },
 });
+
+// --- Remnawave 2.x → 3.x key-id migration primitives (see backendServers.
+// migrateRemnawaveUserIds). Both are internal: rows carry the live key. -----
+
+/** One page of an instance's subscriptions (any state), for the id migration scan. */
+export const listByServerPage = internalQuery({
+  args: {
+    backendServerId: v.id('backendServers'),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+  },
+  handler: async (ctx, { backendServerId, cursor, numItems }) => {
+    const res = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_backend_server', (q) => q.eq('backendServerId', backendServerId))
+      .paginate({ cursor, numItems });
+    return {
+      page: res.page.map((s) => ({
+        _id: s._id,
+        backendUserId: s.backendUserId,
+        backendShortId: s.backendShortId,
+        state: s.state,
+      })),
+      isDone: res.isDone,
+      continueCursor: res.continueCursor,
+    };
+  },
+});
+
+/**
+ * Rewrite one subscription's `backendUserId` (2.x uuid → the instance-scoped
+ * 3.x id). Compare-and-set on the current value so a concurrent re-issue or a
+ * rerun never clobbers a row that already moved on, and refuses a `next` that
+ * another row already holds (the `by_backend_user_id` index must stay unique —
+ * `.unique()` readers would throw forever otherwise).
+ */
+export const remapBackendUserId = internalMutation({
+  args: { id: v.id('subscriptions'), expect: v.string(), next: v.string() },
+  handler: async (ctx, { id, expect, next }) => {
+    const sub = await ctx.db.get(id);
+    if (!sub || sub.backendUserId !== expect) return 'stale' as const;
+    const taken = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_backend_user_id', (q) => q.eq('backendUserId', next))
+      .first();
+    if (taken && taken._id !== id) return 'conflict' as const;
+    await ctx.db.patch(id, { backendUserId: next, updatedAt: Date.now() });
+    return 'remapped' as const;
+  },
+});

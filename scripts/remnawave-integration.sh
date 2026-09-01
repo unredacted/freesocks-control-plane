@@ -4,17 +4,29 @@
 # test against it, then tear the panel down (always, even on failure).
 #
 #   bun run test:integration:remnawave
+#   REMNAWAVE_TEST_IMAGE=remnawave/backend:2.8.0 bun run test:integration:remnawave
 #
-# Requires Docker. The panel is pinned to the latest Remnawave release in
-# docker-compose.remnawave-test.yml. Safe to run repeatedly (fresh state each time).
+# Requires Docker. The panel is pinned in docker-compose.remnawave-test.yml (a
+# 3.x release); REMNAWAVE_TEST_IMAGE overrides the image for one run so the
+# provider's 2.x contract paths can be proven against a real 2.x panel as well
+# (the override is a generated compose file, so the Dependabot-tracked pin stays
+# a plain literal). Safe to run repeatedly (fresh state each time).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 COMPOSE=(docker compose -f docker-compose.remnawave-test.yml)
+OVERRIDE=""
+if [ -n "${REMNAWAVE_TEST_IMAGE:-}" ]; then
+  OVERRIDE="$(mktemp -t rw-test-override.XXXXXX.yml)"
+  printf 'services:\n  rw-test-backend:\n    image: %s\n' "$REMNAWAVE_TEST_IMAGE" > "$OVERRIDE"
+  COMPOSE+=(-f "$OVERRIDE")
+  echo "[integration] panel image override: $REMNAWAVE_TEST_IMAGE"
+fi
 
 cleanup() {
   echo "[integration] tearing down the Remnawave test panel"
   "${COMPOSE[@]}" down -v >/dev/null 2>&1 || true
+  [ -n "$OVERRIDE" ] && rm -f "$OVERRIDE"
 }
 trap cleanup EXIT
 

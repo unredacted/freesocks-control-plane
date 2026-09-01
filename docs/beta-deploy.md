@@ -318,6 +318,11 @@ Swap the final command for whatever you need — the common ones:
 Everything the deployer applies on `up` (deploy, env, seed) stays the normal path
 (§6) — this recipe is only for ad-hoc operator runs.
 
+Operator-run one-offs that live in the code (all safe to rerun): `seed:seedCutover`,
+`userStats:reconcileUserCounts`, `lifecycle:purgeInactiveFree`, and
+`backendServers:migrateRemnawaveUserIds` (the 2.x → 3.x panel re-key — runbook in
+`docs/backends.md` § "Upgrading a panel to Remnawave 3.x"; dry-run with `{"dryRun": true}` first).
+
 ## 7. Turning on app-layer encryption later
 
 1. Generate the keypairs: `node scripts/gen-e2ee-keys.mjs` (prints the Ed25519 +

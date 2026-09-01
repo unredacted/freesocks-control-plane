@@ -189,6 +189,122 @@ describe('backends dispatch', () => {
     });
   });
 
+  test('a Remnawave 3.x numeric id is STORED scoped to its instance and STRIPPED for the provider', async () => {
+    // 3.x panels return a per-panel integer `id` and no uuid. Two panels both
+    // mint user 42, so the stored form must carry the instance (the
+    // by_backend_user_id index is read with .unique()), while the panel only
+    // ever sees the bare integer in paths/bodies.
+    const user3 = {
+      id: 42,
+      shortUuid: 'short-3x',
+      username: SPEC.username,
+      status: 'ACTIVE',
+      trafficLimitBytes: null,
+      trafficLimitStrategy: 'MONTH',
+      expireAt: null,
+      hwidDeviceLimit: null,
+      subscriptionUrl: 'https://panel.test.example/api/sub/short-3x',
+      userTraffic: { usedTrafficBytes: 0 },
+    };
+    const seen: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init: RequestInit = {}) => {
+        const u = new URL(String(input));
+        seen.push(`${(init.method ?? 'GET').toUpperCase()} ${u.pathname}`);
+        if (u.pathname.startsWith('/api/hwid/'))
+          return new Response(JSON.stringify({ response: { devices: [] } }), { status: 200 });
+        if (init.body && (init.method ?? 'GET').toUpperCase() === 'PATCH') {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          expect(body.id).toBe(42);
+          expect(body).not.toHaveProperty('uuid');
+        }
+        return new Response(JSON.stringify({ response: user3 }), { status: 200 });
+      }),
+    );
+    const t = convexTest(schema, modules);
+    const serverId = await seedServer(t);
+
+    const issued = await t.action(internal.backends.issueUser, {
+      backend: 'remnawave',
+      spec: SPEC,
+    });
+    expect(issued.backendUserId).toBe(`${serverId}:42`);
+    expect(issued.backendShortId).toBe('short-3x');
+
+    // Persist the sub the way the issuance saga does, so key→instance resolves.
+    await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 1,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: false,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: issued.backendUserId,
+        backendShortId: issued.backendShortId,
+        backendServerId: serverId,
+        subscriptionUrl: issued.subscriptionUrl,
+        subscriptionMirrors: [],
+        state: 'active',
+        updatedAt: Date.now(),
+      });
+    });
+
+    seen.length = 0;
+    await t.action(internal.backends.getUser, {
+      backend: 'remnawave',
+      backendUserId: issued.backendUserId,
+    });
+    await t.action(internal.backends.updateUser, {
+      backend: 'remnawave',
+      backendUserId: issued.backendUserId,
+      patch: { trafficLimitBytes: 5 },
+    });
+    await t.action(internal.backends.setUserStatus, {
+      backend: 'remnawave',
+      backendUserId: issued.backendUserId,
+      active: false,
+    });
+    await t.action(internal.backends.deleteUser, {
+      backend: 'remnawave',
+      backendUserId: issued.backendUserId,
+    });
+    expect(seen).toEqual([
+      'GET /api/users/42',
+      'GET /api/hwid/devices/42',
+      'PATCH /api/users',
+      'POST /api/users/42/actions/disable',
+      'DELETE /api/users/42',
+    ]);
+
+    // The fleet locate/repair path must NOT probe other panels with a scoped
+    // id: the same integer on another panel is a different user.
+    seen.length = 0;
+    const located = await t.action(internal.backends.locateKeyInstance, {
+      backend: 'remnawave',
+      backendUserId: 'someOtherServerId:42',
+    });
+    expect(located).toBeNull();
+    expect(seen).toEqual([]);
+  });
+
   test('issueUser sends a Remnawave-safe body: uppercased tag + non-null expireAt', async () => {
     const user = {
       uuid: '7b51b8a0-7a4c-4f0b-9e76-0d6a4c1f2a3b',
