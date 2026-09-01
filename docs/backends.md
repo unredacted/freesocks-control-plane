@@ -264,9 +264,16 @@ are untouched (the migration skips any panel that reports a 2.x version).
 1. **Deploy FCP** at a release that includes the dual-contract provider (2026-09-01 or later).
    Nothing changes for 2.x panels; new keys on a 3.x panel are stored scoped from the start.
 2. **Upgrade the panel.** Remnawave 2.8.1+ requires `APP_SECRET` (not `change_me`) in the panel
-   env and 3.x additionally requires `I_UNDERSTAND_REST_API_BREAKING_CHANGES=true` — the
-   container exits at startup without them. Existing panel users keep their `id` and
-   `shortUuid` across the upgrade; the `uuid` column is dropped.
+   env — the container exits at startup without it. **Set `APP_SECRET` to the panel's current
+   `JWT_AUTH_SECRET` value**: it is the JWT signing secret and it signs the panel's **API
+   tokens** too (FCP's, the Ansible role's), which are verified by signature and then looked up
+   by uuid — a different value invalidates every API token and every admin session at once, so
+   you would have to mint a new token and update the FCP backend-server config before anything
+   works again. `JWT_API_TOKENS_SECRET` was never read by the code and can be dropped;
+   `JWT_AUTH_SECRET` is ignored from 3.0 on. (The `I_UNDERSTAND_REST_API_BREAKING_CHANGES`
+   gate seen in 3.0 dev builds was removed before the 3.0.0 release; no released 3.x reads it.)
+   Existing panel users keep their `id` and `shortUuid` across the upgrade; the `uuid` column
+   is dropped.
 3. **Re-key that panel's subscriptions** from the deployer container (bare `bunx convex run`
    does not work on the operator host — see `docs/beta-deploy.md` § One-off functions). Dry-run
    first; the report is per panel (`scanned` / `legacy` / `remapped` / `missing` / `failed` /
@@ -288,7 +295,7 @@ are untouched (the migration skips any panel that reports a 2.x version).
    healthcheck cron stays green, and an affected member's account page loads live usage.
 
 The integration harness pins a 3.x panel (`docker-compose.remnawave-test.yml`); its env file
-(`docker/remnawave-test/.env`) already carries both required variables.
+(`docker/remnawave-test/.env`) already carries `APP_SECRET`.
 
 ## Xray logging privacy harden (Config Profiles)
 

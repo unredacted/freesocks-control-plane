@@ -14,8 +14,7 @@
 # API contract". The pin below is the 3.x panel the integration test runs
 # against by default; to prove the 2.x paths against a real panel too, run the
 # harness with REMNAWAVE_TEST_IMAGE=remnawave/backend:2.8.0 (the last release
-# that boots without APP_SECRET — 2.8.1+ requires it; the env file sets it, and
-# 3.x additionally requires I_UNDERSTAND_REST_API_BREAKING_CHANGES=true).
+# that boots without APP_SECRET — 2.8.1+ requires it; the env file sets it).
 #
 # Fresh state every `up` (no persistent DB volume) so the bootstrap can always
 # register the first admin. Bring the whole thing up + test + tear down with:
