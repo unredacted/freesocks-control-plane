@@ -8,6 +8,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
+import { recordHeartbeat } from './cronHeartbeat';
 import { currentOrActiveSub } from './subscriptions';
 import {
   DIAGNOSTICS_KEYS,
@@ -372,6 +373,7 @@ export const recent = internalQuery({
 export const sweep = internalMutation({
   args: {},
   handler: async (ctx): Promise<{ deleted: number }> => {
+    await recordHeartbeat(ctx, 'issue-telemetry-retention');
     const cfg = await resolveDiagnosticsConfig(ctx.db);
     const cutoff = Date.now() - cfg.retentionDays * DAY_MS;
     const stale = await ctx.db
