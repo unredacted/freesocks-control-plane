@@ -9,6 +9,14 @@
 # aligned with what the REAL panels run, or this test asserts a contract
 # production does not have.
 #
+# The provider speaks the Remnawave 2.x contract ONLY. 3.0 dropped the user
+# `uuid` (users are addressed by a numeric `id` + `shortUuid`, every
+# `/api/users/{uuid}` route changed) and 2.8.1 made `APP_SECRET` mandatory, so a
+# panel >= 2.8.1 does not even boot with docker/remnawave-test/.env and a 3.x
+# panel fails the provider test outright (verified 2026-09-01 against 3.4.2).
+# Dependabot is told to ignore remnawave/backend majors until a 3.x port lands
+# (.github/dependabot.yml); see docs/backends.md "Remnawave API contract".
+#
 # Fresh state every `up` (no persistent DB volume) so the bootstrap can always
 # register the first admin. Bring the whole thing up + test + tear down with:
 #   bun run test:integration:remnawave
@@ -20,7 +28,7 @@ name: rw-test
 
 services:
   rw-test-backend:
-    image: remnawave/backend:3.3.2
+    image: remnawave/backend:2.8.0
     container_name: rw-test-backend
     hostname: rw-test-backend
     restart: 'no'
@@ -59,7 +67,7 @@ services:
         condition: service_started
 
   rw-test-db:
-    image: postgres:18.4
+    image: postgres:18.6
     container_name: rw-test-db
     hostname: rw-test-db
     shm_size: 512mb
