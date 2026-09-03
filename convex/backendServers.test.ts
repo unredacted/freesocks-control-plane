@@ -484,6 +484,41 @@ describe('migrateRemnawaveUserIds (2.x uuid → instance-scoped 3.x id)', () => 
     expect(again.servers[0]).toMatchObject({ legacy: 1, remapped: 0, missing: 1 });
   });
 
+  test('an incomplete run reports a cursor and the next run RESUMES from it', async () => {
+    const t = convexTest(schema, modules);
+    const instanceId = await seedInstance(t, { slug: 'rw-big' });
+    const subs = await seedSubs(t, instanceId);
+    stubPanel('3.4.2', { sA: 5, sGone: 6 });
+    // pageSize 1 × maxPages 2: the first run cannot reach all 4 rows.
+    const first = await t.action(internal.backendServers.migrateRemnawaveUserIds, {
+      pageSize: 1,
+      maxPages: 2,
+    });
+    expect(first.servers[0]!.complete).toBe(false);
+    expect(first.servers[0]!.scanned).toBe(2);
+    expect(first.servers[0]!.continueCursor).toEqual(expect.any(String));
+    // Resume: the second run starts AFTER the rows already walked.
+    const second = await t.action(internal.backendServers.migrateRemnawaveUserIds, {
+      serverId: instanceId,
+      cursor: first.servers[0]!.continueCursor!,
+      pageSize: 1,
+      maxPages: 10,
+    });
+    expect(second.servers[0]!.complete).toBe(true);
+    expect(second.servers[0]!.continueCursor).toBeNull();
+    expect(first.servers[0]!.scanned + second.servers[0]!.scanned).toBe(4);
+    // Between the two runs every legacy row the panel knows got remapped.
+    expect(first.servers[0]!.remapped + second.servers[0]!.remapped).toBe(2);
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subs.legacy))!.backendUserId).toBe(`${instanceId}:5`);
+      expect((await ctx.db.get(subs.gone))!.backendUserId).toBe(`${instanceId}:6`);
+    });
+    // A cursor without its panel is refused (it belongs to one row sequence).
+    await expect(
+      t.action(internal.backendServers.migrateRemnawaveUserIds, { cursor: 'abc' }),
+    ).rejects.toThrow(/cursor requires serverId/);
+  });
+
   test('a panel still on 2.x is skipped: its uuids are correct as they are', async () => {
     const t = convexTest(schema, modules);
     const instanceId = await seedInstance(t, { slug: 'rw-2x' });
