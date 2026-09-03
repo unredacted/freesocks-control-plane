@@ -13,17 +13,30 @@
  */
 import { describe, expect, test } from 'vitest';
 import {
+  remnawaveBulkUpdateTrafficLimit,
   remnawaveDeleteUser,
   remnawaveFleetStats,
   remnawaveGetUser,
   remnawaveGetUserUsage,
   remnawaveIssueUser,
+  remnawaveMajorVersion,
   remnawaveResetTraffic,
+  remnawaveResolveUserIdByShortUuid,
   remnawaveSetStatus,
   remnawaveTestConnection,
   remnawaveUpdateUser,
   type RemnawaveConfig,
 } from './remnawave';
+
+/** Poll `read` until it yields `want` (≤ ~5s), then assert — for eventually-consistent panel writes. */
+async function eventually<T>(read: () => Promise<T>, want: T): Promise<void> {
+  let got: T = await read();
+  for (let i = 0; i < 25 && got !== want; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    got = await read();
+  }
+  expect(got).toBe(want);
+}
 
 const BASE_URL = process.env.REMNAWAVE_TEST_URL;
 const API_TOKEN = process.env.REMNAWAVE_TEST_TOKEN;
@@ -47,10 +60,14 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave provider — real panel (int
       expireAt: null, // → far-future sentinel; FCP owns lifecycle
       tag: 'member',
     });
-    expect(issued.backendUserId).toMatch(/^[0-9a-f-]{36}$/i);
+    // A 2.x panel hands back the user uuid, a 3.x panel the numeric id — the
+    // provider speaks both (docs/backends.md); the rest of this test is
+    // shape-agnostic on purpose so it runs against either panel generation.
+    expect(issued.backendUserId).toMatch(/^(?:[0-9a-f-]{36}|\d+)$/i);
     expect(issued.backendShortId).toBeTruthy();
     expect(issued.subscriptionUrl).toMatch(/^https?:\/\//);
     const uuid = issued.backendUserId;
+    const is3x = /^\d+$/.test(uuid);
 
     // 2) Get — GET /api/users/{uuid}; asserts the Phase-1 enriched fields parse,
     //    and that the HWID list path (GET /api/hwid/devices/{uuid}) returns [].
@@ -76,6 +93,22 @@ describe.skipIf(!BASE_URL || !API_TOKEN)('remnawave provider — real panel (int
     expect(typeof fleet.onlineNow).toBe('number');
     expect(typeof fleet.nodesTotal).toBe('number');
     expect(fleet.panelVersion).toBeTruthy();
+    // The id shape the panel handed out must agree with the version it reports:
+    // this is the invariant the 2.x→3.x key migration relies on.
+    const major = remnawaveMajorVersion(fleet.panelVersion);
+    expect(major).not.toBeNull();
+    expect(is3x).toBe(major! >= 3);
+
+    // 2d) Resolve by shortUuid — the migration join; must give back the same id.
+    expect(await remnawaveResolveUserIdByShortUuid(cfg, issued.backendShortId)).toBe(uuid);
+    expect(await remnawaveResolveUserIdByShortUuid(cfg, 'nosuchshortuuid0')).toBeNull();
+
+    // 2e) Bulk update (the donation re-cap primitive) — `uuids` on 2.x, `userIds` on 3.x.
+    //     Eventually consistent on BOTH generations (3.x answers 202 Accepted; a
+    //     read right after the write can still show the old value), so poll —
+    //     the donation re-cap never reads back synchronously either.
+    await remnawaveBulkUpdateTrafficLimit(cfg, [uuid], 15 * GIB);
+    await eventually(async () => (await remnawaveGetUser(cfg, uuid)).trafficLimitBytes, 15 * GIB);
 
     // 3) Update — PATCH /api/users with uuid in the BODY (the headline bug we
     //    fixed). Prove it landed by reading the changed limit back.

@@ -13,7 +13,10 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['**/*.integration.test.ts'],
+    include: ['convex/**/*.integration.test.ts'],
+    // Only THIS checkout: `.claude/worktrees/*` are sibling checkouts of the repo
+    // living inside it, and a bare `**` glob would run their (older) copies too.
+    exclude: ['**/node_modules/**', '**/.claude/**', '**/dist/**'],
     testTimeout: 60_000,
     hookTimeout: 60_000,
     // Real panel state is shared across the lifecycle assertions — run serially.

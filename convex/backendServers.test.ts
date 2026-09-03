@@ -355,3 +355,159 @@ describe('generic dispatch (convex/backends.ts via the provider registry)', () =
     expect(state.status).toBe('limited');
   });
 });
+
+describe('migrateRemnawaveUserIds (2.x uuid → instance-scoped 3.x id)', () => {
+  async function seedSubs(t: T, instanceId: Id<'backendServers'>) {
+    return t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: false,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const mk = async (
+        backendUserId: string,
+        backendShortId: string,
+        state: 'active' | 'deleted',
+      ) => {
+        const userId = await ctx.db.insert('users', {
+          tierId,
+          status: 'active',
+          updatedAt: Date.now(),
+        });
+        return ctx.db.insert('subscriptions', {
+          userId,
+          backend: 'remnawave',
+          backendUserId,
+          backendShortId,
+          backendServerId: instanceId,
+          subscriptionUrl: `https://panel.test/sub/${backendShortId}`,
+          subscriptionMirrors: [],
+          state,
+          updatedAt: Date.now(),
+        });
+      };
+      return {
+        legacy: await mk(UUID, 'sA', 'active'),
+        scoped: await mk(`${instanceId}:9`, 'sB', 'active'),
+        gone: await mk('550e8400-e29b-41d4-a716-446655440001', 'sGone', 'active'),
+        deleted: await mk('550e8400-e29b-41d4-a716-446655440002', 'sDel', 'deleted'),
+      };
+    });
+  }
+
+  /** A panel stub: reports `version`, answers by-short-uuid from `byShort`. */
+  function stubPanel(version: string, byShort: Record<string, number>) {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const path = new URL(String(input)).pathname;
+        seen.push(path);
+        if (path === '/api/system/stats')
+          return jsonRes({
+            response: {
+              onlineStats: { onlineNow: 0 },
+              nodes: { totalOnline: 0, totalBytesLifetime: '0' },
+            },
+          });
+        if (path === '/api/system/stats/recap')
+          return jsonRes({
+            response: {
+              thisMonth: { traffic: '0' },
+              total: { nodes: 0, traffic: '0', distinctCountries: 0 },
+              version,
+            },
+          });
+        const m = /^\/api\/users\/by-short-uuid\/(.+)$/.exec(path);
+        if (m && byShort[m[1]!] != null) {
+          const { uuid: _u, ...rest } = remnaUser({ shortUuid: m[1] });
+          void _u;
+          return jsonRes({ response: { ...rest, id: byShort[m[1]!] } });
+        }
+        return new Response(null, { status: 404 });
+      }),
+    );
+    return seen;
+  }
+
+  test('remaps legacy uuid keys on a 3.x panel, skips scoped/deleted rows, counts the missing', async () => {
+    const t = convexTest(schema, modules);
+    const instanceId = await seedInstance(t, { slug: 'rw-3x' });
+    const subs = await seedSubs(t, instanceId);
+    stubPanel('3.4.2', { sA: 5 });
+
+    // Dry run: full report, nothing written.
+    const dry = await t.action(internal.backendServers.migrateRemnawaveUserIds, { dryRun: true });
+    expect(dry.dryRun).toBe(true);
+    expect(dry.servers).toHaveLength(1);
+    expect(dry.servers[0]).toMatchObject({
+      panelVersion: '3.4.2',
+      scanned: 4,
+      legacy: 2, // uuid + gone (the deleted row and the scoped row are skipped)
+      remapped: 1,
+      missing: 1,
+      failed: 0,
+      complete: true,
+    });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subs.legacy))!.backendUserId).toBe(UUID);
+    });
+
+    // Real run: the legacy key is re-keyed to the instance-scoped numeric id.
+    const real = await t.action(internal.backendServers.migrateRemnawaveUserIds, {});
+    expect(real.servers[0]).toMatchObject({ remapped: 1, missing: 1, conflicts: 0 });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subs.legacy))!.backendUserId).toBe(`${instanceId}:5`);
+      expect((await ctx.db.get(subs.scoped))!.backendUserId).toBe(`${instanceId}:9`);
+      // The panel-unknown key is left for the operator, untouched.
+      expect((await ctx.db.get(subs.gone))!.backendUserId).toBe(
+        '550e8400-e29b-41d4-a716-446655440001',
+      );
+      const audit = await ctx.db.query('auditLog').collect();
+      const row = audit.find((a) => a.action === 'admin.remnawave.user_ids_migrated');
+      expect(row).toBeTruthy();
+      expect(row!.payload).toMatchObject({ remapped: 1, missing: 1 });
+    });
+
+    // Rerun is a no-op for the migrated row (only the missing one is still legacy).
+    const again = await t.action(internal.backendServers.migrateRemnawaveUserIds, {});
+    expect(again.servers[0]).toMatchObject({ legacy: 1, remapped: 0, missing: 1 });
+  });
+
+  test('a panel still on 2.x is skipped: its uuids are correct as they are', async () => {
+    const t = convexTest(schema, modules);
+    const instanceId = await seedInstance(t, { slug: 'rw-2x' });
+    const subs = await seedSubs(t, instanceId);
+    const seen = stubPanel('2.8.1', { sA: 5 });
+    const res = await t.action(internal.backendServers.migrateRemnawaveUserIds, {});
+    expect(res.servers[0]!.skipped).toMatch(/not 3\.x/);
+    expect(seen.some((p) => p.includes('by-short-uuid'))).toBe(false);
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subs.legacy))!.backendUserId).toBe(UUID);
+    });
+  });
+
+  test('refuses to remap onto an id another row already holds (index stays unique)', async () => {
+    const t = convexTest(schema, modules);
+    const instanceId = await seedInstance(t, { slug: 'rw-dup' });
+    const subs = await seedSubs(t, instanceId);
+    // The panel claims the legacy key is user 9 — but `${instanceId}:9` is already
+    // held by another row. Never clobber: report a conflict.
+    stubPanel('3.4.2', { sA: 9 });
+    const res = await t.action(internal.backendServers.migrateRemnawaveUserIds, {});
+    expect(res.servers[0]).toMatchObject({ remapped: 0, conflicts: 1 });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subs.legacy))!.backendUserId).toBe(UUID);
+    });
+  });
+});

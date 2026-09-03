@@ -12,8 +12,15 @@ import { internal } from './_generated/api';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { v } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
-import type { BackendConfig } from './lib/backends/registry';
+import type { Id } from './_generated/dataModel';
+import type { BackendConfig, RemnawaveServerConfig } from './lib/backends/registry';
 import { PROVIDERS } from './lib/backends/registry';
+import {
+  remnawaveFleetStats,
+  remnawaveMajorVersion,
+  remnawaveResolveUserIdByShortUuid,
+} from './lib/backends/remnawave';
+import { isNumericBackendUserId, scopedServerId, toStoredBackendUserId } from './lib/backendUserId';
 import { resolveLocations } from './lib/locations';
 import { backendIdValidator } from './lib/backendIds';
 
@@ -339,5 +346,158 @@ export const hardenRemnawaveLogging = internalAction({
       }
     }
     return { instances };
+  },
+});
+
+/**
+ * OPERATOR-RUN, one panel upgrade at a time: re-key every subscription on a
+ * Remnawave panel that has been upgraded to 3.x from its 2.x `uuid` to the
+ * instance-scoped numeric id (`<backendServerId>:<id>`). Remnawave 3.0 dropped
+ * the user uuid, so every per-user call on a 2.x-era key 400s on the upgraded
+ * panel until it is remapped; the key's `shortUuid` survives the upgrade and is
+ * the join (`GET /api/users/by-short-uuid`). Runbook: docs/backends.md
+ * "Upgrading a panel to Remnawave 3.x".
+ *
+ * Safe to rerun: already-scoped rows are skipped, the remap is compare-and-set,
+ * and `dryRun` reports without writing. A panel that still reports a 2.x
+ * version is skipped outright (its keys are correct as they are). A key the
+ * panel no longer knows is counted as `missing` and left alone for the operator
+ * (its tombstone/regenerate path will surface it). Bounded per run by
+ * `maxPages` (100 rows each); the report says whether a rerun is needed.
+ */
+/** Per-instance report row of `migrateRemnawaveUserIds`. */
+interface UserIdMigrationRow {
+  serverId: string;
+  name: string;
+  panelVersion: string | null;
+  skipped?: string;
+  scanned: number;
+  legacy: number;
+  remapped: number;
+  missing: number;
+  failed: number;
+  conflicts: number;
+  complete: boolean;
+}
+
+export const migrateRemnawaveUserIds = internalAction({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    serverId: v.optional(v.id('backendServers')),
+    maxPages: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    { dryRun = false, serverId, maxPages = 50 },
+  ): Promise<{ dryRun: boolean; servers: UserIdMigrationRow[] }> => {
+    const all = serverId
+      ? [await ctx.runQuery(internal.backendServers.getById, { id: serverId })]
+      : await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
+    const servers = all.filter((s) => s != null && s.backend === 'remnawave');
+    const out: UserIdMigrationRow[] = [];
+    for (const s of servers) {
+      const cfg = s!.config as RemnawaveServerConfig;
+      const row: UserIdMigrationRow = {
+        serverId: s!._id as string,
+        name: s!.name,
+        panelVersion: null as string | null,
+        scanned: 0,
+        legacy: 0,
+        remapped: 0,
+        missing: 0,
+        failed: 0,
+        conflicts: 0,
+        complete: true,
+      };
+      let major: number | null = null;
+      try {
+        row.panelVersion = (await remnawaveFleetStats(cfg)).panelVersion;
+        major = remnawaveMajorVersion(row.panelVersion);
+      } catch {
+        out.push({ ...row, skipped: 'panel unreachable (version unknown) — nothing changed' });
+        continue;
+      }
+      if (major === null || major < 3) {
+        out.push({ ...row, skipped: 'panel is not 3.x — its 2.x uuids are still correct' });
+        continue;
+      }
+      let cursor: string | null = null;
+      let pages = 0;
+      do {
+        const page: {
+          page: Array<{
+            _id: Id<'subscriptions'>;
+            backendUserId: string;
+            backendShortId: string;
+            state: string;
+          }>;
+          isDone: boolean;
+          continueCursor: string;
+        } = await ctx.runQuery(internal.subscriptions.listByServerPage, {
+          backendServerId: s!._id,
+          cursor,
+          numItems: 100,
+        });
+        for (const sub of page.page) {
+          row.scanned++;
+          // Already scoped (issued on / migrated to 3.x) → nothing to do.
+          if (scopedServerId(sub.backendUserId) !== null) continue;
+          if (sub.state === 'deleted') continue; // hard-deleted rows never hit the panel again
+          row.legacy++;
+          let resolved: string | null;
+          try {
+            resolved = await remnawaveResolveUserIdByShortUuid(cfg, sub.backendShortId);
+          } catch {
+            row.failed++;
+            continue;
+          }
+          if (resolved === null) {
+            row.missing++;
+            continue;
+          }
+          if (!isNumericBackendUserId(resolved)) {
+            // A 3.x panel answering with a uuid would contradict its version;
+            // never write a guess.
+            row.failed++;
+            continue;
+          }
+          if (dryRun) {
+            row.remapped++;
+            continue;
+          }
+          const res: 'remapped' | 'stale' | 'conflict' = await ctx.runMutation(
+            internal.subscriptions.remapBackendUserId,
+            {
+              id: sub._id,
+              expect: sub.backendUserId,
+              next: toStoredBackendUserId(s!._id as string, resolved),
+            },
+          );
+          if (res === 'remapped') row.remapped++;
+          else if (res === 'conflict') row.conflicts++;
+          // 'stale': the row moved on concurrently (re-issued) — nothing to count.
+        }
+        cursor = page.isDone ? null : page.continueCursor;
+        pages++;
+      } while (cursor !== null && pages < maxPages);
+      row.complete = cursor === null;
+      if (!dryRun && row.remapped > 0) {
+        await ctx.runMutation(internal.audit.record, {
+          actorType: 'system',
+          action: 'admin.remnawave.user_ids_migrated',
+          targetType: 'backendServer',
+          targetId: s!._id as string,
+          payload: {
+            panelVersion: row.panelVersion,
+            remapped: row.remapped,
+            missing: row.missing,
+            failed: row.failed,
+            conflicts: row.conflicts,
+          },
+        });
+      }
+      out.push(row);
+    }
+    return { dryRun, servers: out };
   },
 });
