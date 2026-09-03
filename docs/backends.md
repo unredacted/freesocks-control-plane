@@ -284,8 +284,11 @@ are untouched (the migration skips any panel that reports a 2.x version).
    bunx convex run backendServers:migrateRemnawaveUserIds '{}'
    ```
 
-   Pass `"serverId": "<backendServers _id>"` to limit it to one panel, and rerun while
-   `complete` is false (each run walks up to 50 pages of 100 rows per panel). The remap is
+   Each run walks up to 50 pages of 100 rows per panel (one action's time budget). While
+   `complete` is false the report carries `continueCursor`: rerun with
+   `{"serverId": "<that panel's serverId>", "cursor": "<continueCursor>"}` to RESUME from there
+   (a run without a cursor starts over from the panel's first row, so on a large fleet it would
+   never get past the first 5,000). `serverId` alone limits a run to one panel. The remap is
    compare-and-set and skips rows that are already scoped, so reruns are safe; every write
    run audits `admin.remnawave.user_ids_migrated` with the counts. `missing` rows are keys the
    panel no longer knows (the member's next regenerate re-issues them); `conflicts` means the

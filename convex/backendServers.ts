@@ -363,7 +363,12 @@ export const hardenRemnawaveLogging = internalAction({
  * version is skipped outright (its keys are correct as they are). A key the
  * panel no longer knows is counted as `missing` and left alone for the operator
  * (its tombstone/regenerate path will surface it). Bounded per run by
- * `maxPages` (100 rows each); the report says whether a rerun is needed.
+ * `maxPages` × `pageSize` rows (50 × 100 by default, to stay inside one
+ * action's time budget); an incomplete run reports `continueCursor`, which the
+ * next run takes as `cursor` (+ `serverId`) to RESUME — a run without a cursor
+ * starts from the panel's first row again (cheap for already-scoped rows, but
+ * it never gets past `maxPages` on a large fleet, which is how prod stalled on
+ * 2026-09-03 before this arg existed).
  */
 /** Per-instance report row of `migrateRemnawaveUserIds`. */
 interface UserIdMigrationRow {
@@ -378,6 +383,10 @@ interface UserIdMigrationRow {
   failed: number;
   conflicts: number;
   complete: boolean;
+  // Where this run stopped when `complete` is false: pass it back as `cursor`
+  // (with the same `serverId`) so the next run RESUMES instead of re-walking
+  // the rows already done. Null once the panel's rows are exhausted.
+  continueCursor: string | null;
 }
 
 export const migrateRemnawaveUserIds = internalAction({
@@ -385,11 +394,17 @@ export const migrateRemnawaveUserIds = internalAction({
     dryRun: v.optional(v.boolean()),
     serverId: v.optional(v.id('backendServers')),
     maxPages: v.optional(v.number()),
+    pageSize: v.optional(v.number()),
+    // Resume point from a previous run's `continueCursor` (requires `serverId`:
+    // a cursor is only meaningful within one panel's row sequence).
+    cursor: v.optional(v.string()),
   },
   handler: async (
     ctx,
-    { dryRun = false, serverId, maxPages = 50 },
+    { dryRun = false, serverId, maxPages = 50, pageSize = 100, cursor: startCursor },
   ): Promise<{ dryRun: boolean; servers: UserIdMigrationRow[] }> => {
+    if (startCursor !== undefined && !serverId)
+      throw new Error('cursor requires serverId (a cursor belongs to one panel)');
     const all = serverId
       ? [await ctx.runQuery(internal.backendServers.getById, { id: serverId })]
       : await ctx.runQuery(internal.backendServers.listActiveWithSecret, {});
@@ -408,6 +423,7 @@ export const migrateRemnawaveUserIds = internalAction({
         failed: 0,
         conflicts: 0,
         complete: true,
+        continueCursor: null,
       };
       let major: number | null = null;
       try {
@@ -421,7 +437,7 @@ export const migrateRemnawaveUserIds = internalAction({
         out.push({ ...row, skipped: 'panel is not 3.x — its 2.x uuids are still correct' });
         continue;
       }
-      let cursor: string | null = null;
+      let cursor: string | null = startCursor ?? null;
       let pages = 0;
       do {
         const page: {
@@ -436,7 +452,7 @@ export const migrateRemnawaveUserIds = internalAction({
         } = await ctx.runQuery(internal.subscriptions.listByServerPage, {
           backendServerId: s!._id,
           cursor,
-          numItems: 100,
+          numItems: pageSize,
         });
         for (const sub of page.page) {
           row.scanned++;
@@ -481,6 +497,7 @@ export const migrateRemnawaveUserIds = internalAction({
         pages++;
       } while (cursor !== null && pages < maxPages);
       row.complete = cursor === null;
+      row.continueCursor = cursor;
       if (!dryRun && row.remapped > 0) {
         await ctx.runMutation(internal.audit.record, {
           actorType: 'system',
