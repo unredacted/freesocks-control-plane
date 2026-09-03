@@ -27,7 +27,7 @@ name: rw-test
 
 services:
   rw-test-backend:
-    image: remnawave/backend:3.4.2
+    image: remnawave/backend:3.4.3
     container_name: rw-test-backend
     hostname: rw-test-backend
     restart: 'no'
