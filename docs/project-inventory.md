@@ -581,5 +581,9 @@ Traffic-scaled tables (never `collect()` them without a selective index range): 
 Patterns that are safe: `take(page)` + drain-chain (the sweeps), `paginate()` (admin lists,
 reconciles), `first()` on a compound index (`assertBackendServerUnused`), or a **maintained
 counter** in `appState` bumped at every transition + a daily paginated reconcile
-(`stats:userCounts`, `stats:sessionCounts` in `convex/lib/statusCounters.ts`). Two incidents
+(`stats:userCounts`, `stats:sessionCounts` in `convex/lib/statusCounters.ts`). The session
+reconcile is exact under concurrent writes: `begin` pins the scan boundary at the newest
+visible `_creationTime` and opens a delta journal for rows newer than it, `finish` writes
+scanned + journal; the row also carries `initialized`, and `statusSummary` reports PoP
+readiness as unknown (never "safe") until the first reconcile has completed. Two incidents
 so far: the users tally (2026-06, M2/WS3) and the live-sessions PoP tally (2026-09-04).

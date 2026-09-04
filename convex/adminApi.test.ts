@@ -855,6 +855,9 @@ describe('adminApi statusSummary', () => {
   // session write path — so NO reconcile is needed for rows created the real way.
   test('pop readiness is live: session create/delete/sweep bump the counter', async () => {
     const t = convexTest(schema, modules);
+    // The counter row is born by the first reconcile (deploy entrypoint); bumps
+    // before that are deliberate no-ops (fail-closed, see the P2 test below).
+    await t.action(internal.userStats.reconcileSessionCounts, {});
     const edKey = 'A'.repeat(43); // 32 zero bytes base64url = a length-valid Ed25519 key
     const ttl = 3_600_000;
     await t.mutation(internal.sessions.create, {
@@ -893,7 +896,7 @@ describe('adminApi statusSummary', () => {
     expect((await t.query(internal.adminApi.statusSummary, {})).pop.activeSessions).toBe(1);
   });
 
-  test('statusSummary stays O(1) in session rows (no per-session read)', async () => {
+  test('statusSummary stays O(1) in session rows and fails closed before the first reconcile', async () => {
     // Pin the shape rather than the limit itself: seed more rows than a single
     // bounded page and confirm the query never reads them (counter only).
     const t = convexTest(schema, modules);
@@ -903,11 +906,23 @@ describe('adminApi statusSummary', () => {
         await ctx.db.insert('sessions', { sid: `s-${i}`, kind: 'member', expiresAt: future });
       }
     });
-    // Nothing bumped the counter, so the query reports zero — proof it read the
-    // counter, not the table. The reconcile then catches the table up.
-    expect((await t.query(internal.adminApi.statusSummary, {})).pop.activeSessions).toBe(0);
+    // No counter row yet: the query reports UNKNOWN (not "0 unbound → safe") —
+    // the first-rollout window between `convex deploy` and the entrypoint's
+    // reconcile must never read as ready (review P2).
+    let s = await t.query(internal.adminApi.statusSummary, {});
+    expect(s.pop.initialized).toBe(false);
+    expect(s.pop.activeSessions).toBe(0);
+    expect(s.pop.readyToEnable).toBe(false);
+    // Bumps before the row exists are no-ops (the reconcile overwrites anyway).
+    await t.mutation(internal.sessions.create, { sid: 'pre-init', kind: 'member', ttlMs: 60_000 });
+    expect((await t.query(internal.adminApi.statusSummary, {})).pop.initialized).toBe(false);
+    // The reconcile builds the row from the table (600 seeded + 1 created).
     await t.action(internal.userStats.reconcileSessionCounts, {});
-    expect((await t.query(internal.adminApi.statusSummary, {})).pop.activeSessions).toBe(600);
+    s = await t.query(internal.adminApi.statusSummary, {});
+    expect(s.pop.initialized).toBe(true);
+    expect(s.pop.activeSessions).toBe(601);
+    expect(s.pop.unboundMember).toBe(601);
+    expect(s.pop.readyToEnable).toBe(false);
   });
 
   test('pop readiness: readyToEnable once every active session is key-bound', async () => {

@@ -515,6 +515,10 @@ export const AdminStatusSummary = z.object({
       unboundMember: z.number().int().nonnegative(),
       unboundAdmin: z.number().int().nonnegative(),
       readyToEnable: z.boolean(),
+      /** False until the session counter's first reconcile has run: the counts
+       *  are unknown and readyToEnable is forced false. Additive default true
+       *  (a pre-counter backend computed exact figures). */
+      initialized: z.boolean().default(true),
     })
     .default({
       required: false,
@@ -524,6 +528,7 @@ export const AdminStatusSummary = z.object({
       unboundMember: 0,
       unboundAdmin: 0,
       readyToEnable: false,
+      initialized: true,
     }),
   // CDN-blinding E2EE posture: FS_E2EE_REQUIRED rejects unsealed member
   // requests on seal/reveal routes. Additive default for a pre-deploy backend.

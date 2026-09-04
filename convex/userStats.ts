@@ -10,10 +10,11 @@ import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { runWithCronOutcome } from './cronHeartbeat';
 import {
+  beginSessionReconcile,
+  finishSessionReconcile,
   readSessionCounts,
   readUserCounts,
   sessionBucket,
-  writeSessionCounts,
   writeUserCounts,
   type SessionCounts,
   type UserCounts,
@@ -189,10 +190,12 @@ export const reconcileUserCounts = internalAction({
 });
 
 // === Session counter reconcile (2026-09-04) ==================================
-// Same shape as the user-counts reconcile: paginated full scan → delta write
-// against the live row so logins/logouts landing mid-scan are preserved. Counts
-// rows PRESENT (expired-but-unswept included) to match what the per-write bumps
-// track; the daily session-sweep decrements as it deletes.
+// Exact under concurrency (see the statusCounters.ts header): `begin` pins the
+// scan boundary (newest visible _creationTime) and opens a delta journal; the
+// scan pages over the FIXED set of rows at or before that boundary; `finish`
+// writes scanned + journal. Counts rows PRESENT (expired-but-unswept included)
+// to match what the per-write bumps track; the daily session-sweep decrements
+// as it deletes.
 
 const SESSION_COUNTS_VALIDATOR = v.object({
   bound: v.number(),
@@ -200,56 +203,66 @@ const SESSION_COUNTS_VALIDATOR = v.object({
   unboundAdmin: v.number(),
 });
 
-/** Tally one page of sessions (bounded read). */
+export const beginSessionCountsReconcile = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<number> => beginSessionReconcile(ctx),
+});
+
+/** Tally one page of the sessions created at or before the pinned boundary. */
 export const tallySessionCountsPage = internalQuery({
-  args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
-  handler: async (ctx, { cursor, numItems }) => {
-    const res = await ctx.db.query('sessions').paginate({ cursor, numItems });
+  args: { startTs: v.number(), cursor: v.union(v.string(), v.null()), numItems: v.number() },
+  handler: async (ctx, { startTs, cursor, numItems }) => {
+    const res = await ctx.db
+      .query('sessions')
+      .withIndex('by_creation_time', (q) => q.lte('_creationTime', startTs))
+      .paginate({ cursor, numItems });
     const counts: SessionCounts = { bound: 0, unboundMember: 0, unboundAdmin: 0 };
     for (const row of res.page) counts[sessionBucket(row)] += 1;
     return { counts, isDone: res.isDone, continueCursor: res.continueCursor };
   },
 });
 
-export const getSessionCounts = internalQuery({
-  args: {},
-  handler: async (ctx): Promise<SessionCounts> => readSessionCounts(ctx.db),
+export const finishSessionCountsReconcile = internalMutation({
+  args: { startTs: v.number(), scanned: SESSION_COUNTS_VALIDATOR },
+  handler: async (ctx, { startTs, scanned }): Promise<boolean> =>
+    finishSessionReconcile(ctx, startTs, scanned),
 });
 
-export const applySessionReconcileDelta = internalMutation({
-  args: { baseline: SESSION_COUNTS_VALIDATOR, scanned: SESSION_COUNTS_VALIDATOR },
-  handler: async (ctx, { baseline, scanned }) => {
-    const live = await readSessionCounts(ctx.db);
-    const next = { ...live };
-    for (const k of Object.keys(scanned) as (keyof SessionCounts)[]) {
-      next[k] = Math.max(0, live[k] + (scanned[k] - baseline[k]));
-    }
-    await writeSessionCounts(ctx, next);
-    return null;
-  },
+export const getSessionCounts = internalQuery({
+  args: {},
+  handler: async (ctx) => readSessionCounts(ctx.db),
 });
 
 /** Recompute the session counter row from scratch (idempotent, self-healing).
  *  Daily cron + once post-deploy (the deploy entrypoint); the row is built from
- *  nothing on the first run after this shipped. */
+ *  nothing on the first run after this shipped, and `statusSummary` reports the
+ *  readiness flag as NOT ready until that first run completes. */
 export const reconcileSessionCounts = internalAction({
   args: {},
   handler: async (ctx): Promise<SessionCounts> =>
     runWithCronOutcome(ctx, 'session-counts-reconcile', async () => {
-      const baseline: SessionCounts = await ctx.runQuery(internal.userStats.getSessionCounts, {});
+      const startTs: number = await ctx.runMutation(
+        internal.userStats.beginSessionCountsReconcile,
+        {},
+      );
       const total: SessionCounts = { bound: 0, unboundMember: 0, unboundAdmin: 0 };
       let cursor: string | null = null;
       for (let i = 0; i < 100_000; i++) {
         const res: { counts: SessionCounts; isDone: boolean; continueCursor: string } =
-          await ctx.runQuery(internal.userStats.tallySessionCountsPage, { cursor, numItems: 500 });
+          await ctx.runQuery(internal.userStats.tallySessionCountsPage, {
+            startTs,
+            cursor,
+            numItems: 500,
+          });
         for (const k of Object.keys(total) as (keyof SessionCounts)[]) total[k] += res.counts[k];
         if (res.isDone) break;
         cursor = res.continueCursor;
       }
-      await ctx.runMutation(internal.userStats.applySessionReconcileDelta, {
-        baseline,
-        scanned: total,
-      });
+      const applied: boolean = await ctx.runMutation(
+        internal.userStats.finishSessionCountsReconcile,
+        { startTs, scanned: total },
+      );
+      if (!applied) console.warn('[session-counts-reconcile] superseded by a newer run; skipped');
       return total;
     }),
 });

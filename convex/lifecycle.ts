@@ -27,9 +27,9 @@ import { SETTINGS_DEFAULTS } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import {
   applyCountsDelta,
-  applySessionDelta,
+  bumpSessionCounts,
   sessionBucket,
-  type SessionBucket,
+  type SessionBump,
 } from './lib/statusCounters';
 import { resolvePlacementTarget } from './lib/remnawavePlacement';
 import { resolveDefaultFreeTier } from './tiers';
@@ -1116,13 +1116,12 @@ export const deleteInactiveUser = internalMutation({
         .query('sessions')
         .withIndex('by_user', (q) => q.eq('userId', userId))
         .collect();
-      const deltas: Partial<Record<SessionBucket, number>> = {};
+      const bumps: SessionBump[] = [];
       for (const r of rows) {
         await ctx.db.delete(r._id);
-        const b = sessionBucket(r);
-        deltas[b] = (deltas[b] ?? 0) - 1;
+        bumps.push({ bucket: sessionBucket(r), creationTime: r._creationTime });
       }
-      await applySessionDelta(ctx, deltas);
+      await bumpSessionCounts(ctx, bumps, -1);
     }
     // User-scoped fsv1_ tokens (subjectUserId): they resolve to null once the
     // user is gone (fail-closed), but don't leave the residue behind.

@@ -239,3 +239,94 @@ describe('userStats counters (WS3)', () => {
     expect((await counts(t)).backendDrift).toBe(0);
   });
 });
+
+describe('session counter reconcile (2026-09-04)', () => {
+  const live = async (t: ReturnType<typeof convexTest>) =>
+    (await t.query(internal.userStats.getSessionCounts, {})).counts;
+
+  test('a delete racing the scan is applied exactly once (review P1 scenario)', async () => {
+    // Two unbound sessions; the reconcile begins; one is deleted BEFORE its page
+    // is scanned. The old live+(scanned−baseline) formula wrote 0 here (live=1,
+    // scanned=1, baseline=2) and statusSummary would have reported "safe to
+    // enable". Correct answer: 1.
+    const t = convexTest(schema, modules);
+    await t.action(internal.userStats.reconcileSessionCounts, {}); // initialize
+    await t.mutation(internal.sessions.create, { sid: 'a', kind: 'member', ttlMs: 60_000 });
+    await t.mutation(internal.sessions.create, { sid: 'b', kind: 'member', ttlMs: 60_000 });
+    expect((await live(t)).unboundMember).toBe(2);
+
+    const startTs = await t.mutation(internal.userStats.beginSessionCountsReconcile, {});
+    await t.mutation(internal.sessions.deleteBySid, { sid: 'a' }); // before the scan reads it
+    const page = await t.query(internal.userStats.tallySessionCountsPage, {
+      startTs,
+      cursor: null,
+      numItems: 500,
+    });
+    expect(page.counts.unboundMember).toBe(1); // scan sees the post-delete table
+    await t.mutation(internal.userStats.finishSessionCountsReconcile, {
+      startTs,
+      scanned: page.counts,
+    });
+    expect((await live(t)).unboundMember).toBe(1);
+  });
+
+  test('creates (and deletes of those creates) during the scan are journaled, not lost', async () => {
+    const t = convexTest(schema, modules);
+    await t.action(internal.userStats.reconcileSessionCounts, {});
+    await t.mutation(internal.sessions.create, { sid: 'old', kind: 'member', ttlMs: 60_000 });
+
+    const startTs = await t.mutation(internal.userStats.beginSessionCountsReconcile, {});
+    // Land after the boundary: excluded from the scan, carried by the journal.
+    await t.mutation(internal.sessions.create, { sid: 'new-1', kind: 'admin', ttlMs: 60_000 });
+    await t.mutation(internal.sessions.create, { sid: 'new-2', kind: 'admin', ttlMs: 60_000 });
+    await t.mutation(internal.sessions.deleteBySid, { sid: 'new-2' }); // journal nets to +1 admin
+    const page = await t.query(internal.userStats.tallySessionCountsPage, {
+      startTs,
+      cursor: null,
+      numItems: 500,
+    });
+    expect(page.counts).toEqual({ bound: 0, unboundMember: 1, unboundAdmin: 0 }); // only 'old'
+    await t.mutation(internal.userStats.finishSessionCountsReconcile, {
+      startTs,
+      scanned: page.counts,
+    });
+    expect(await live(t)).toEqual({ bound: 0, unboundMember: 1, unboundAdmin: 1 });
+  });
+
+  test('a superseded reconcile does not write', async () => {
+    const t = convexTest(schema, modules);
+    await t.action(internal.userStats.reconcileSessionCounts, {});
+    await t.mutation(internal.sessions.create, { sid: 'x', kind: 'member', ttlMs: 60_000 });
+    const stale = await t.mutation(internal.userStats.beginSessionCountsReconcile, {});
+    await t.mutation(internal.sessions.create, { sid: 'y', kind: 'member', ttlMs: 60_000 });
+    await t.mutation(internal.userStats.beginSessionCountsReconcile, {}); // newer run
+    const applied = await t.mutation(internal.userStats.finishSessionCountsReconcile, {
+      startTs: stale,
+      scanned: { bound: 0, unboundMember: 0, unboundAdmin: 0 },
+    });
+    expect(applied).toBe(false);
+    expect((await live(t)).unboundMember).toBe(2); // live bumps untouched
+  });
+
+  test('full reconcile is exact + idempotent and flips initialized', async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 7; i++) {
+        await ctx.db.insert('sessions', {
+          sid: `s-${i}`,
+          kind: i % 2 ? 'admin' : 'member',
+          expiresAt: Date.now() + 60_000,
+          ...(i === 0 ? { popPublicKey: 'A'.repeat(43), popAlg: 'EdDSA' } : {}),
+        });
+      }
+    });
+    expect((await t.query(internal.userStats.getSessionCounts, {})).initialized).toBe(false);
+    const total = await t.action(internal.userStats.reconcileSessionCounts, {});
+    expect(total).toEqual({ bound: 1, unboundMember: 3, unboundAdmin: 3 });
+    const again = await t.action(internal.userStats.reconcileSessionCounts, {});
+    expect(again).toEqual(total);
+    const st = await t.query(internal.userStats.getSessionCounts, {});
+    expect(st.initialized).toBe(true);
+    expect(st.counts).toEqual(total);
+  });
+});

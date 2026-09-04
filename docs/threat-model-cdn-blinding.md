@@ -119,8 +119,10 @@ sessions that predate PoP or that belong to a client which could not enroll a ke
   (`adminApi.statusSummary.pop`) reports `bound / activeSessions` and the remaining cookie-only
   count, split member vs admin. The tally is read from the maintained `stats:sessionCounts`
   counter (`convex/lib/statusCounters.ts`, bumped by every session insert/delete, rebuilt daily
-  by `userStats.reconcileSessionCounts`) — an unbounded scan of live sessions 500-ed the endpoint
-  on prod once they passed Convex's 32k-document read limit (2026-09-04). It reads
+  by `userStats.reconcileSessionCounts` with a pinned scan boundary + delta journal so racing
+  writes are applied exactly once) — an unbounded scan of live sessions 500-ed the endpoint
+  on prod once they passed Convex's 32k-document read limit (2026-09-04). Until the first
+  reconcile has run (`pop.initialized`), readiness reads as unknown, never "safe". It reads
   **"Safe to enable"** exactly when `readyToEnable` is true
   (zero unbound active sessions) — nothing would be logged out. Watch it until it stays at zero
   across a full session-TTL window. A count that never reaches zero means a real client keeps

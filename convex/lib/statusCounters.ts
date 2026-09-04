@@ -86,6 +86,22 @@ export async function applyCountsDelta(
 // `userStats.reconcileSessionCounts`. The counter tracks rows PRESENT, so a
 // session that silently ages past its TTL is counted until the (daily) sweep
 // deletes it — a conservative, bounded overstatement (≈ one day of expiries).
+//
+// Exactness under concurrency (review P1): a reconcile scan spans many
+// transactions, so a write landing mid-scan is ambiguous — is it already in the
+// scanned total or not? We remove the ambiguity by construction:
+//   • `begin` pins startTs = the newest session's _creationTime visible to it.
+//     Every later commit gets a larger _creationTime, so the scan (≤ startTs)
+//     covers a FIXED set of rows and a create during the scan is never in it.
+//   • While a reconcile is open, bumps for rows with _creationTime > startTs
+//     (all creates, and deletes of those creates) are ALSO recorded in a
+//     `journal`. Deletes of rows ≤ startTs are not journaled: the scan already
+//     accounts for them (absent if deleted before the page was read; present
+//     — a one-off overcount in the safe direction — if deleted after).
+//   • `finish` writes scanned + journal, replacing the live figures.
+// The row also carries `initialized` (review P2): until the first successful
+// reconcile the counts are unknown, statusSummary reports NOT ready, and bumps
+// on a missing row are no-ops (finish overwrites whatever they'd have built).
 
 export const SESSION_COUNTS_KEY = 'stats:sessionCounts';
 
@@ -100,6 +116,14 @@ export interface SessionCounts {
 
 export const ZERO_SESSION_COUNTS: SessionCounts = { bound: 0, unboundMember: 0, unboundAdmin: 0 };
 
+/** Persisted shape of the `stats:sessionCounts` row's JSON value. */
+interface SessionCounterState extends SessionCounts {
+  /** False until the first reconcile finished (counts are meaningless before). */
+  initialized: boolean;
+  /** Present only while a reconcile is in flight (begin → finish). */
+  reconcile?: { startTs: number; journal: SessionCounts };
+}
+
 /** Which counter bucket a session row belongs to. */
 export function sessionBucket(row: {
   kind: 'member' | 'admin';
@@ -109,38 +133,119 @@ export function sessionBucket(row: {
   return row.kind === 'admin' ? 'unboundAdmin' : 'unboundMember';
 }
 
-export async function readSessionCounts(db: DatabaseReader): Promise<SessionCounts> {
-  const row = await db
-    .query('appState')
-    .withIndex('by_key', (q) => q.eq('key', SESSION_COUNTS_KEY))
-    .unique();
-  if (!row) return { ...ZERO_SESSION_COUNTS };
+function parseState(value: string): SessionCounterState {
   try {
-    return { ...ZERO_SESSION_COUNTS, ...(JSON.parse(row.value) as Partial<SessionCounts>) };
+    const raw = JSON.parse(value) as Partial<SessionCounterState>;
+    return {
+      ...ZERO_SESSION_COUNTS,
+      initialized: raw.initialized === true,
+      ...(raw.reconcile
+        ? {
+            reconcile: {
+              startTs: raw.reconcile.startTs,
+              journal: { ...ZERO_SESSION_COUNTS, ...raw.reconcile.journal },
+            },
+          }
+        : {}),
+      bound: raw.bound ?? 0,
+      unboundMember: raw.unboundMember ?? 0,
+      unboundAdmin: raw.unboundAdmin ?? 0,
+    };
   } catch {
-    return { ...ZERO_SESSION_COUNTS };
+    return { ...ZERO_SESSION_COUNTS, initialized: false };
   }
 }
 
-export async function writeSessionCounts(ctx: MutationCtx, counts: SessionCounts): Promise<void> {
-  const row = await ctx.db
+async function readRow(db: DatabaseReader) {
+  return db
     .query('appState')
     .withIndex('by_key', (q) => q.eq('key', SESSION_COUNTS_KEY))
     .unique();
-  const value = JSON.stringify(counts);
+}
+
+async function writeState(ctx: MutationCtx, state: SessionCounterState): Promise<void> {
+  const row = await readRow(ctx.db);
+  const value = JSON.stringify(state);
   if (row) await ctx.db.patch(row._id, { value, updatedAt: Date.now() });
   else await ctx.db.insert('appState', { key: SESSION_COUNTS_KEY, value, updatedAt: Date.now() });
 }
 
-/** Bump buckets by signed deltas inside the caller's transaction (clamped ≥ 0 so
- *  a pre-reconcile deployment never goes negative). A no-op for all-zero deltas. */
-export async function applySessionDelta(
+/** The live counts + whether they mean anything yet. Missing row ⇒ uninitialized
+ *  zeros (statusSummary fails CLOSED on readiness until the first reconcile). */
+export async function readSessionCounts(
+  db: DatabaseReader,
+): Promise<{ counts: SessionCounts; initialized: boolean }> {
+  const row = await readRow(db);
+  if (!row) return { counts: { ...ZERO_SESSION_COUNTS }, initialized: false };
+  const st = parseState(row.value);
+  return {
+    counts: { bound: st.bound, unboundMember: st.unboundMember, unboundAdmin: st.unboundAdmin },
+    initialized: st.initialized,
+  };
+}
+
+/** One session row's contribution: its bucket + its _creationTime (the journal
+ *  boundary test). `sign` = +1 for an insert, −1 for a delete. */
+export interface SessionBump {
+  bucket: SessionBucket;
+  creationTime: number;
+}
+
+/** Apply inserts/deletes to the live counter inside the caller's transaction
+ *  (clamped ≥ 0). No-op while the row doesn't exist yet — the first reconcile
+ *  creates it. While a reconcile is open, rows newer than its startTs are also
+ *  journaled (see the header). */
+export async function bumpSessionCounts(
   ctx: MutationCtx,
-  deltas: Partial<Record<SessionBucket, number>>,
+  rows: readonly SessionBump[],
+  sign: 1 | -1,
 ): Promise<void> {
-  const entries = Object.entries(deltas).filter(([, d]) => d !== 0) as [SessionBucket, number][];
-  if (entries.length === 0) return;
-  const counts = await readSessionCounts(ctx.db);
-  for (const [bucket, d] of entries) counts[bucket] = Math.max(0, counts[bucket] + d);
-  await writeSessionCounts(ctx, counts);
+  if (rows.length === 0) return;
+  const row = await readRow(ctx.db);
+  if (!row) return;
+  const st = parseState(row.value);
+  for (const r of rows) {
+    st[r.bucket] = Math.max(0, st[r.bucket] + sign);
+    if (st.reconcile && r.creationTime > st.reconcile.startTs) {
+      st.reconcile.journal[r.bucket] += sign;
+    }
+  }
+  await ctx.db.patch(row._id, { value: JSON.stringify(st), updatedAt: Date.now() });
+}
+
+/** Open a reconcile: pin the scan boundary + a fresh journal. Creates the row
+ *  (uninitialized) when absent. Returns the boundary the scan must use
+ *  (`_creationTime <= startTs`). A second `begin` while one is open simply
+ *  supersedes it — the stale `finish` then sees a mismatched startTs and skips. */
+export async function beginSessionReconcile(ctx: MutationCtx): Promise<number> {
+  const newest = await ctx.db.query('sessions').order('desc').first();
+  const startTs = newest?._creationTime ?? 0;
+  const row = await readRow(ctx.db);
+  const st: SessionCounterState = row
+    ? parseState(row.value)
+    : { ...ZERO_SESSION_COUNTS, initialized: false };
+  st.reconcile = { startTs, journal: { ...ZERO_SESSION_COUNTS } };
+  await writeState(ctx, st);
+  return startTs;
+}
+
+/** Close the reconcile opened with `startTs`: live = scanned + journal, mark
+ *  initialized. Returns false (no write) if another reconcile superseded it. */
+export async function finishSessionReconcile(
+  ctx: MutationCtx,
+  startTs: number,
+  scanned: SessionCounts,
+): Promise<boolean> {
+  const row = await readRow(ctx.db);
+  if (!row) return false;
+  const st = parseState(row.value);
+  if (!st.reconcile || st.reconcile.startTs !== startTs) return false;
+  const next: SessionCounterState = {
+    bound: Math.max(0, scanned.bound + st.reconcile.journal.bound),
+    unboundMember: Math.max(0, scanned.unboundMember + st.reconcile.journal.unboundMember),
+    unboundAdmin: Math.max(0, scanned.unboundAdmin + st.reconcile.journal.unboundAdmin),
+    initialized: true,
+  };
+  await ctx.db.patch(row._id, { value: JSON.stringify(next), updatedAt: Date.now() });
+  return true;
 }

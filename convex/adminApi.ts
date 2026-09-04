@@ -1848,18 +1848,22 @@ export const statusSummary = internalQuery({
     // per-execution read limit (2026-09-04). Live to the last login/logout;
     // sessions that silently age past their TTL stay counted until the daily
     // sweep deletes them (bounded overstatement, conservative for readiness).
-    const sessionCounts = await readSessionCounts(ctx.db);
+    // `initialized` is false until the first reconcile has run (first deploy of
+    // the counter, or a failed post-deploy reconcile): the figures are then
+    // unknown, so readiness fails CLOSED instead of reading zeros as "safe".
+    const { counts: sessionCounts, initialized } = await readSessionCounts(ctx.db);
     const unboundMember = sessionCounts.unboundMember;
     const unboundAdmin = sessionCounts.unboundAdmin;
     const pop = {
       required: process.env.POP_REQUIRED === 'true',
+      initialized,
       activeSessions: sessionCounts.bound + unboundMember + unboundAdmin,
       bound: sessionCounts.bound,
       unbound: unboundMember + unboundAdmin,
       unboundMember,
       unboundAdmin,
       // Nothing relies on cookie-only auth → enabling POP_REQUIRED logs no one out.
-      readyToEnable: unboundMember + unboundAdmin === 0,
+      readyToEnable: initialized && unboundMember + unboundAdmin === 0,
     };
     // CDN-blinding E2EE posture (H1): FS_E2EE_REQUIRED rejects unsealed member
     // requests on seal/reveal routes. `required` is the server flag; the SPA
