@@ -117,7 +117,11 @@ sessions that predate PoP or that belong to a client which could not enroll a ke
 
 - **Readiness is observed, not timed.** The admin dashboard's _Session protection_ card
   (`adminApi.statusSummary.pop`) reports `bound / activeSessions` and the remaining cookie-only
-  count, split member vs admin. It reads **"Safe to enable"** exactly when `readyToEnable` is true
+  count, split member vs admin. The tally is read from the maintained `stats:sessionCounts`
+  counter (`convex/lib/statusCounters.ts`, bumped by every session insert/delete, rebuilt daily
+  by `userStats.reconcileSessionCounts`) — an unbounded scan of live sessions 500-ed the endpoint
+  on prod once they passed Convex's 32k-document read limit (2026-09-04). It reads
+  **"Safe to enable"** exactly when `readyToEnable` is true
   (zero unbound active sessions) — nothing would be logged out. Watch it until it stays at zero
   across a full session-TTL window. A count that never reaches zero means a real client keeps
   logging in without enrolling a key (no WebCrypto / IndexedDB) — those clients **will** be locked

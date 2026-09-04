@@ -469,6 +469,8 @@ Convex runs these natively (no Workers triggers, no node-cron):
 - `deactivate-idle-free` (daily 03:00 UTC): deactivate + RETAIN idle free users (reclaim key →
   `status:'inactive'`; paginated over `by_tier_status_freekey`). Never deletes.
 - `user-counts-reconcile` (daily 04:00 UTC): recompute the `appState` user-status counter (self-heal).
+- `session-counts-reconcile` (daily 04:10 UTC): recompute the `appState` session counter behind
+  the admin dashboard's PoP readiness tally (self-heal; bumped live on every session write).
 - `session-sweep` / `rate-limit-sweep` / `replay-guard-sweep` (daily): drop expired
   `sessions` / `rateLimits` / `replayGuard` rows.
 - `epoch-key-rotate` (10 min) / `epoch-key-sweep` (daily): CDN-blinding HPKE epoch keys.
@@ -563,3 +565,21 @@ When you flip something Deferred/Dormant → Live, enable a dormant feature, or 
 retire a scaffold, update the relevant row here in the same change, and record resolved
 security/bug items in the operator's private audit tracker. The companion docs hold
 the detail; this file is the index.
+
+## Read-limit rule (Convex per-execution cap)
+
+A single query/mutation execution can read at most **32,000 documents / 8 MiB** on the
+pinned self-hosted backend, and there is no knob to raise it. Any `.collect()` (or
+filter-then-first) over a table that grows with traffic eventually throws, and because
+`REDACT_LOGS_TO_CLIENT` is on, the caller only sees `Server Error` — even the admin CLI
+(`bunx convex run`). Read the real message with `bunx convex logs --history 30` via the
+deployer container (`docs/beta-deploy.md` § One-off functions).
+
+Traffic-scaled tables (never `collect()` them without a selective index range): `users`,
+`sessions`, `subscriptions`, `tierHistory`, `auditLog`, `billingOrders`, `webhookEvents`,
+`redemptionCodes`, `referrals`, `rateLimits`, `replayGuard`, the WebAuthn challenge tables.
+Patterns that are safe: `take(page)` + drain-chain (the sweeps), `paginate()` (admin lists,
+reconciles), `first()` on a compound index (`assertBackendServerUnused`), or a **maintained
+counter** in `appState` bumped at every transition + a daily paginated reconcile
+(`stats:userCounts`, `stats:sessionCounts` in `convex/lib/statusCounters.ts`). Two incidents
+so far: the users tally (2026-06, M2/WS3) and the live-sessions PoP tally (2026-09-04).

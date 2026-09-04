@@ -25,7 +25,12 @@ import {
 import { resolveCurrentBonusGb } from './lib/donationBonus';
 import { SETTINGS_DEFAULTS } from './appSettings';
 import { writeAuditLog } from './lib/audit';
-import { applyCountsDelta } from './lib/statusCounters';
+import {
+  applyCountsDelta,
+  applySessionDelta,
+  sessionBucket,
+  type SessionBucket,
+} from './lib/statusCounters';
 import { resolvePlacementTarget } from './lib/remnawavePlacement';
 import { resolveDefaultFreeTier } from './tiers';
 import type { BackendId } from './lib/backendIds';
@@ -1092,12 +1097,7 @@ export const deleteInactiveUser = internalMutation({
     const u = await ctx.db.get(userId);
     if (!u || u.status !== 'inactive') return null;
     const deleteByUser = async (
-      table:
-        | 'subscriptions'
-        | 'tierHistory'
-        | 'billingOrders'
-        | 'memberPasskeyCredentials'
-        | 'sessions',
+      table: 'subscriptions' | 'tierHistory' | 'billingOrders' | 'memberPasskeyCredentials',
     ) => {
       const rows = await ctx.db
         .query(table)
@@ -1109,7 +1109,21 @@ export const deleteInactiveUser = internalMutation({
     await deleteByUser('tierHistory');
     await deleteByUser('billingOrders');
     await deleteByUser('memberPasskeyCredentials');
-    await deleteByUser('sessions');
+    // Sessions also feed the `stats:sessionCounts` counter (statusSummary's PoP
+    // tally) — decrement per deleted row like sessions.ts does.
+    {
+      const rows = await ctx.db
+        .query('sessions')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect();
+      const deltas: Partial<Record<SessionBucket, number>> = {};
+      for (const r of rows) {
+        await ctx.db.delete(r._id);
+        const b = sessionBucket(r);
+        deltas[b] = (deltas[b] ?? 0) - 1;
+      }
+      await applySessionDelta(ctx, deltas);
+    }
     // User-scoped fsv1_ tokens (subjectUserId): they resolve to null once the
     // user is gone (fail-closed), but don't leave the residue behind.
     const tokens = await ctx.db

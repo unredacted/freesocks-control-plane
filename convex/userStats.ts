@@ -9,7 +9,15 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { runWithCronOutcome } from './cronHeartbeat';
-import { readUserCounts, writeUserCounts, type UserCounts } from './lib/statusCounters';
+import {
+  readSessionCounts,
+  readUserCounts,
+  sessionBucket,
+  writeSessionCounts,
+  writeUserCounts,
+  type SessionCounts,
+  type UserCounts,
+} from './lib/statusCounters';
 
 const COUNTS_VALIDATOR = v.object({
   active: v.number(),
@@ -173,6 +181,72 @@ export const reconcileUserCounts = internalAction({
         cursor = res.continueCursor;
       }
       await ctx.runMutation(internal.userStats.applyReconcileDelta, {
+        baseline,
+        scanned: total,
+      });
+      return total;
+    }),
+});
+
+// === Session counter reconcile (2026-09-04) ==================================
+// Same shape as the user-counts reconcile: paginated full scan → delta write
+// against the live row so logins/logouts landing mid-scan are preserved. Counts
+// rows PRESENT (expired-but-unswept included) to match what the per-write bumps
+// track; the daily session-sweep decrements as it deletes.
+
+const SESSION_COUNTS_VALIDATOR = v.object({
+  bound: v.number(),
+  unboundMember: v.number(),
+  unboundAdmin: v.number(),
+});
+
+/** Tally one page of sessions (bounded read). */
+export const tallySessionCountsPage = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
+  handler: async (ctx, { cursor, numItems }) => {
+    const res = await ctx.db.query('sessions').paginate({ cursor, numItems });
+    const counts: SessionCounts = { bound: 0, unboundMember: 0, unboundAdmin: 0 };
+    for (const row of res.page) counts[sessionBucket(row)] += 1;
+    return { counts, isDone: res.isDone, continueCursor: res.continueCursor };
+  },
+});
+
+export const getSessionCounts = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<SessionCounts> => readSessionCounts(ctx.db),
+});
+
+export const applySessionReconcileDelta = internalMutation({
+  args: { baseline: SESSION_COUNTS_VALIDATOR, scanned: SESSION_COUNTS_VALIDATOR },
+  handler: async (ctx, { baseline, scanned }) => {
+    const live = await readSessionCounts(ctx.db);
+    const next = { ...live };
+    for (const k of Object.keys(scanned) as (keyof SessionCounts)[]) {
+      next[k] = Math.max(0, live[k] + (scanned[k] - baseline[k]));
+    }
+    await writeSessionCounts(ctx, next);
+    return null;
+  },
+});
+
+/** Recompute the session counter row from scratch (idempotent, self-healing).
+ *  Daily cron + once post-deploy (the deploy entrypoint); the row is built from
+ *  nothing on the first run after this shipped. */
+export const reconcileSessionCounts = internalAction({
+  args: {},
+  handler: async (ctx): Promise<SessionCounts> =>
+    runWithCronOutcome(ctx, 'session-counts-reconcile', async () => {
+      const baseline: SessionCounts = await ctx.runQuery(internal.userStats.getSessionCounts, {});
+      const total: SessionCounts = { bound: 0, unboundMember: 0, unboundAdmin: 0 };
+      let cursor: string | null = null;
+      for (let i = 0; i < 100_000; i++) {
+        const res: { counts: SessionCounts; isDone: boolean; continueCursor: string } =
+          await ctx.runQuery(internal.userStats.tallySessionCountsPage, { cursor, numItems: 500 });
+        for (const k of Object.keys(total) as (keyof SessionCounts)[]) total[k] += res.counts[k];
+        if (res.isDone) break;
+        cursor = res.continueCursor;
+      }
+      await ctx.runMutation(internal.userStats.applySessionReconcileDelta, {
         baseline,
         scanned: total,
       });

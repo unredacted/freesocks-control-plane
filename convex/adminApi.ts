@@ -25,7 +25,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { ConvexError, v } from 'convex/values';
 import { writeAuditLog } from './lib/audit';
 import { backendIdValidator, type BackendId } from './lib/backendIds';
-import { applyCountsDelta, readUserCounts } from './lib/statusCounters';
+import { applyCountsDelta, readSessionCounts, readUserCounts } from './lib/statusCounters';
 // One shared by-key upsert (Review P3): the local upsertSetting + setBillingConfig's
 // inline copy both delegate here (also appSettings.set/setMany use it).
 import { upsertSettingRow as upsertSetting } from './appSettings';
@@ -1390,6 +1390,32 @@ export const updateBackendServer = internalMutation({
   },
 });
 
+/**
+ * Throw `server.in_use` while any non-deleted subscription still points at the
+ * instance. ONE bounded read per live state via the (backendServerId, state)
+ * index — the former `.collect()` of every subscription on the panel would trip
+ * Convex's per-execution read limit (8 MiB / 32k docs; sub docs carry subCache)
+ * on any real panel and 500 instead of rejecting (2026-09-04 audit).
+ */
+async function assertBackendServerUnused(
+  db: DatabaseReader,
+  id: Id<'backendServers'>,
+): Promise<void> {
+  for (const state of ['active', 'disabled'] as const) {
+    const live = await db
+      .query('subscriptions')
+      .withIndex('by_backend_server_state', (q) => q.eq('backendServerId', id).eq('state', state))
+      .first();
+    if (live) {
+      throw new ConvexError({
+        code: 'server.in_use',
+        message:
+          'Cannot delete an instance that still has keys on it. Migrate or tombstone them first.',
+      });
+    }
+  }
+}
+
 export const deleteBackendServer = internalMutation({
   args: { id: v.id('backendServers'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
@@ -1397,17 +1423,7 @@ export const deleteBackendServer = internalMutation({
     // Refuse while live keys point at the instance (they'd be unresolvable
     // orphans for reads/updates/teardowns). Convex has no FK enforcement.
     // Tombstoned/deleted rows don't count (the retention sweep reclaims them).
-    const referencing = await ctx.db
-      .query('subscriptions')
-      .withIndex('by_backend_server', (q) => q.eq('backendServerId', id))
-      .collect();
-    if (referencing.some((s) => s.state !== 'deleted')) {
-      throw new ConvexError({
-        code: 'server.in_use',
-        message:
-          'Cannot delete an instance that still has keys on it. Migrate or tombstone them first.',
-      });
-    }
+    await assertBackendServerUnused(ctx.db, id);
     await ctx.db.delete(id);
     // Its node-stats cache rows dangle otherwise (the picker would keep
     // attributing squads to a gone panel).
@@ -1534,6 +1550,9 @@ export const deleteBackendServerBySlug = internalMutation({
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
     if (!row) return { ok: true as const, deleted: false };
+    // Same in-use guard as the by-id path (this is the Ansible route; it used
+    // to delete unconditionally and orphan every key on the panel).
+    await assertBackendServerUnused(ctx.db, row._id);
     await ctx.db.delete(row._id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -1821,23 +1840,21 @@ export const statusSummary = internalQuery({
     // flip an observed decision instead of a timed guess, and it also surfaces
     // clients that log in but cannot enroll a key (they show as persistent
     // unbound sessions and would be locked out by the flip).
-    // NOTE: O(active sessions) — bounded by live logins; fine at beta scale.
-    const liveSessions = await ctx.db
-      .query('sessions')
-      .withIndex('by_expires', (q) => q.gt('expiresAt', now))
-      .collect();
-    let popBound = 0;
-    let unboundMember = 0;
-    let unboundAdmin = 0;
-    for (const row of liveSessions) {
-      if (row.popPublicKey != null) popBound += 1;
-      else if (row.kind === 'admin') unboundAdmin += 1;
-      else unboundMember += 1;
-    }
+    //
+    // Read from the maintained `stats:sessionCounts` counter (statusCounters.ts,
+    // bumped at every session insert/delete, rebuilt daily by
+    // userStats.reconcileSessionCounts) — the former `.collect()` over live
+    // sessions 500-ed this endpoint on prod once it crossed Convex's 32k-document
+    // per-execution read limit (2026-09-04). Live to the last login/logout;
+    // sessions that silently age past their TTL stay counted until the daily
+    // sweep deletes them (bounded overstatement, conservative for readiness).
+    const sessionCounts = await readSessionCounts(ctx.db);
+    const unboundMember = sessionCounts.unboundMember;
+    const unboundAdmin = sessionCounts.unboundAdmin;
     const pop = {
       required: process.env.POP_REQUIRED === 'true',
-      activeSessions: liveSessions.length,
-      bound: popBound,
+      activeSessions: sessionCounts.bound + unboundMember + unboundAdmin,
+      bound: sessionCounts.bound,
       unbound: unboundMember + unboundAdmin,
       unboundMember,
       unboundAdmin,

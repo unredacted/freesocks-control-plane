@@ -6,10 +6,16 @@
  *
  * `bySid` treats an expired row as absent (defence-in-depth alongside the daily
  * sweep), so a stale-but-unswept cookie never authenticates.
+ *
+ * Every insert/delete here ALSO bumps the `stats:sessionCounts` counter
+ * (lib/statusCounters.ts) that `adminApi.statusSummary` reads for the PoP
+ * readiness tally — keep that invariant when adding a write path (the only
+ * other one is the lifecycle hard-delete cascade).
  */
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { recordHeartbeat } from './cronHeartbeat';
+import { applySessionDelta, sessionBucket, type SessionBucket } from './lib/statusCounters';
 import { ConvexError } from 'convex/values';
 import { v } from 'convex/values';
 import { b64UrlToBytes } from '../src/shared/crypto/envelope';
@@ -80,6 +86,7 @@ export const create = internalMutation({
       expiresAt: Date.now() + ttlMs,
       ...(bound ? { popPublicKey, popAlg: boundAlg, popSessionToken } : {}),
     });
+    await applySessionDelta(ctx, { [sessionBucket({ kind, popPublicKey })]: 1 });
     return null;
   },
 });
@@ -103,7 +110,10 @@ export const deleteBySid = internalMutation({
       .query('sessions')
       .withIndex('by_sid', (q) => q.eq('sid', sid))
       .unique();
-    if (row) await ctx.db.delete(row._id);
+    if (row) {
+      await ctx.db.delete(row._id);
+      await applySessionDelta(ctx, { [sessionBucket(row)]: -1 });
+    }
     return null;
   },
 });
@@ -123,11 +133,15 @@ export const deleteAllForUserExcept = internalMutation({
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .collect();
     let removed = 0;
+    const deltas: Partial<Record<SessionBucket, number>> = {};
     for (const row of rows) {
       if (keepSid !== undefined && row.sid === keepSid) continue;
       await ctx.db.delete(row._id);
+      const b = sessionBucket(row);
+      deltas[b] = (deltas[b] ?? 0) - 1;
       removed++;
     }
+    await applySessionDelta(ctx, deltas);
     return { removed };
   },
 });
@@ -145,7 +159,13 @@ export const sweepExpired = internalMutation({
       .query('sessions')
       .withIndex('by_expires', (q) => q.lt('expiresAt', now))
       .take(page);
-    for (const row of expired) await ctx.db.delete(row._id);
+    const deltas: Partial<Record<SessionBucket, number>> = {};
+    for (const row of expired) {
+      await ctx.db.delete(row._id);
+      const b = sessionBucket(row);
+      deltas[b] = (deltas[b] ?? 0) - 1;
+    }
+    await applySessionDelta(ctx, deltas);
     if (expired.length === page) {
       const n = rounds ?? 0;
       if (n >= MAX_DRAIN_ROUNDS) console.warn('[session-sweep] drain cap hit; remainder next run');

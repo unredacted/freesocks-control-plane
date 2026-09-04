@@ -331,6 +331,8 @@ export default defineSchema({
     // Instance→subs reference check before a backend-server delete (refuse
     // while keys still point at it).
     .index('by_backend_server', ['backendServerId'])
+    // Bounded "any live key on this panel?" probe for the instance-delete guard.
+    .index('by_backend_server_state', ['backendServerId', 'state'])
     // The FCP-fronted subscription route resolves the sub by its opaque token.
     .index('by_sub_token', ['subToken']),
 

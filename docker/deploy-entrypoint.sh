@@ -117,6 +117,10 @@ bunx convex run seed:seedCutover '{}'
 # Idempotent; also self-healed by a daily cron.
 echo "[deploy] reconciling the user-status counter"
 bunx convex run userStats:reconcileUserCounts '{}'
+# Same for the session counter (statusSummary's PoP readiness tally): builds the
+# row from nothing on the first deploy that ships it, self-heals after.
+echo "[deploy] reconciling the session counter"
+bunx convex run userStats:reconcileSessionCounts '{}'
 
 echo "[deploy] OK"
 # First-run reminder: the first admin registers a passkey at /admin using the
