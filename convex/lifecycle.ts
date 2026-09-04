@@ -110,7 +110,11 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
         updatedAt: Date.now(),
       });
       if (statusLifted)
-        await applyCountsDelta(ctx, { statusFrom: user.status, statusTo: 'active' });
+        await applyCountsDelta(ctx, {
+          statusFrom: user.status,
+          statusTo: 'active',
+          creationTime: user._creationTime,
+        });
       // Re-push so a same-tier renewal re-enables the backend key (the grace sweep
       // disabled it via setUserStatus(false)) and extends its expiry. Previously
       // this branch returned without a push, so the common monthly re-up left the
@@ -144,7 +148,11 @@ export async function applyMembership(ctx: MutationCtx, a: SetMembershipArgs): P
     updatedAt: Date.now(),
   });
   if (tierChangeLifts) {
-    await applyCountsDelta(ctx, { statusFrom: user.status, statusTo: 'active' });
+    await applyCountsDelta(ctx, {
+      statusFrom: user.status,
+      statusTo: 'active',
+      creationTime: user._creationTime,
+    });
   }
   await ctx.db.insert('tierHistory', {
     userId: a.userId,
@@ -437,7 +445,8 @@ export const recordPushFailure = internalMutation({
     const u = await ctx.db.get(userId);
     await ctx.db.patch(userId, { backendPushFailedAt: Date.now() });
     // Bump the drift tally only on the null→set transition (never double-count).
-    if (u && u.backendPushFailedAt == null) await applyCountsDelta(ctx, { driftDelta: 1 });
+    if (u && u.backendPushFailedAt == null)
+      await applyCountsDelta(ctx, { driftDelta: 1, creationTime: u._creationTime });
     return null;
   },
 });
@@ -454,11 +463,12 @@ export const setBackendDrift = internalMutation({
     const user = await ctx.db.get(userId);
     if (!user) return null;
     if (failed) {
-      if (user.backendPushFailedAt == null) await applyCountsDelta(ctx, { driftDelta: 1 });
+      if (user.backendPushFailedAt == null)
+        await applyCountsDelta(ctx, { driftDelta: 1, creationTime: user._creationTime });
       await ctx.db.patch(userId, { backendPushFailedAt: Date.now() });
     } else if (user.backendPushFailedAt != null) {
       await ctx.db.patch(userId, { backendPushFailedAt: undefined });
-      await applyCountsDelta(ctx, { driftDelta: -1 });
+      await applyCountsDelta(ctx, { driftDelta: -1, creationTime: user._creationTime });
     }
     return null;
   },
@@ -541,7 +551,11 @@ export const applyGraceTransition = internalMutation({
       return null;
     }
     await ctx.db.patch(userId, { status: 'grace', updatedAt: Date.now() });
-    await applyCountsDelta(ctx, { statusFrom: u.status, statusTo: 'grace' });
+    await applyCountsDelta(ctx, {
+      statusFrom: u.status,
+      statusTo: 'grace',
+      creationTime: u._creationTime,
+    });
     await writeAuditLog(ctx, {
       actorType: 'system',
       action: 'membership.transition.grace',
@@ -571,7 +585,11 @@ export const applyDisableTransition = internalMutation({
       suspendedAt: Date.now(),
       updatedAt: Date.now(),
     });
-    await applyCountsDelta(ctx, { statusFrom: u.status, statusTo: 'disabled' });
+    await applyCountsDelta(ctx, {
+      statusFrom: u.status,
+      statusTo: 'disabled',
+      creationTime: u._creationTime,
+    });
     await writeAuditLog(ctx, {
       actorType: 'system',
       action: 'membership.transition.disabled',
@@ -898,7 +916,11 @@ export const markUserInactive = internalMutation({
       suspendedAt: Date.now(),
       updatedAt: Date.now(),
     });
-    await applyCountsDelta(ctx, { statusFrom: 'active', statusTo: 'inactive' });
+    await applyCountsDelta(ctx, {
+      statusFrom: 'active',
+      statusTo: 'inactive',
+      creationTime: u._creationTime,
+    });
     await writeAuditLog(ctx, {
       actorType: 'system',
       action: 'membership.transition.inactive',
@@ -930,7 +952,11 @@ export const refreshFreeWindow = internalMutation({
     }
     await ctx.db.patch(userId, patch);
     if (reactivating) {
-      await applyCountsDelta(ctx, { statusFrom: 'inactive', statusTo: 'active' });
+      await applyCountsDelta(ctx, {
+        statusFrom: 'inactive',
+        statusTo: 'active',
+        creationTime: u._creationTime,
+      });
       await writeAuditLog(ctx, {
         actorType: 'system',
         action: 'account.reactivate',
@@ -1143,6 +1169,7 @@ export const deleteInactiveUser = internalMutation({
     await applyCountsDelta(ctx, {
       statusFrom: 'inactive',
       driftDelta: u.backendPushFailedAt != null ? -1 : 0,
+      creationTime: u._creationTime,
     });
     await ctx.db.delete(userId);
     return null;

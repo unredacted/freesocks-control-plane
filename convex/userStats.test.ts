@@ -8,7 +8,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
-import { readUserCounts, applyCountsDelta } from './lib/statusCounters';
+import { readUserCounts } from './lib/statusCounters';
 import type { Id } from './_generated/dataModel';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -71,34 +71,95 @@ describe('userStats counters (WS3)', () => {
     expect(await t.action(internal.userStats.reconcileUserCounts, {})).toEqual(c1);
   });
 
-  test('the delta write preserves transitions that landed mid-scan', async () => {
+  // The old live+(scanned−baseline) delta write double-applied a change that
+  // landed before the scan reached its row (review P1 on the session counter;
+  // the user counter had the same flaw). The begin/scan/finish protocol is
+  // exact in every ordering — pinned here with a 1-row page so the scan can be
+  // interleaved with transitions deterministically.
+  test('reconcile is exact when a transition races the scan (either side of scanPos)', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedFreeTier(t);
+    const [u1, u2, u3] = await t.run(async (ctx) => {
+      const mk = () => ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+      return [await mk(), await mk(), await mk()];
+    });
+    await t.action(internal.userStats.reconcileUserCounts, {});
+    expect(await counts(t)).toMatchObject({ active: 3, grace: 0, disabled: 0 });
+    const freeTierIds = [tierId];
+
+    const startTs = await t.mutation(internal.userStats.beginUserCountsReconcile, {});
+    // Page 1 scans u1 (oldest) → scanPos = u1. Then u1 transitions: the scan saw
+    // it ACTIVE, so the change must be journaled (c ≤ scanPos).
+    expect(
+      (await t.mutation(internal.userStats.scanUserCountsPage, { freeTierIds, pageSize: 1 })).done,
+    ).toBe(false);
+    await t.mutation(internal.adminApi.disableUser, { userId: u1! });
+    // u3 (not yet scanned) transitions: the scan will see it DISABLED, so the
+    // change must NOT be journaled (c > scanPos).
+    await t.mutation(internal.adminApi.disableUser, { userId: u3! });
+    // A user created mid-scan (c > startTs): outside the scan set → journaled.
+    await t.mutation(internal.freeTier.createFreeUser, { tierId });
+    for (let i = 0; i < 10; i++) {
+      const r = await t.mutation(internal.userStats.scanUserCountsPage, {
+        freeTierIds,
+        pageSize: 1,
+      });
+      if (r.done) break;
+    }
+    expect(await t.mutation(internal.userStats.finishUserCountsReconcile, { token: startTs })).toBe(
+      true,
+    );
+    // u2 + the new user active, u1 + u3 disabled — every change applied exactly once.
+    expect(await counts(t)).toMatchObject({ active: 2, disabled: 2, grace: 0 });
+    // And a fresh reconcile agrees (no drift was introduced).
+    expect(await t.action(internal.userStats.reconcileUserCounts, {})).toMatchObject({
+      active: 2,
+      disabled: 2,
+    });
+    void u2;
+  });
+
+  test('a superseded user reconcile does not write', async () => {
     const t = convexTest(schema, modules);
     const tierId = await seedFreeTier(t);
     await t.run((ctx) =>
       ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }),
     );
     await t.action(internal.userStats.reconcileUserCounts, {});
-    const live = await counts(t);
-    expect(live.active).toBe(1);
+    const stale = await t.mutation(internal.userStats.beginUserCountsReconcile, {});
+    await t.mutation(internal.userStats.beginUserCountsReconcile, {}); // newer run
+    expect(await t.mutation(internal.userStats.finishUserCountsReconcile, { token: stale })).toBe(
+      false,
+    );
+    expect((await counts(t)).active).toBe(1);
+  });
 
-    // Simulate a mid-scan race: the baseline was taken at live=1, the scan's
-    // exact total also reads 1 (it raced BEFORE the transitioning row), but a
-    // transition bumped the live row to 2 meanwhile. next = live + (scan − base)
-    // = 2 + (1 − 1) = 2 — the bump survives; an absolute write would lose it.
-    await t.run((ctx) => applyCountsDelta(ctx, { statusTo: 'active' }));
-    expect((await counts(t)).active).toBe(2);
-    await t.mutation(internal.userStats.applyReconcileDelta, {
-      baseline: { ...live },
-      scanned: { ...live },
+  test('a page boundary never splits a shared _creationTime', async () => {
+    // Rows inserted in ONE transaction share _creationTime. With pageSize=2 the
+    // first page would end inside that group; the scan must pull the rest of
+    // the timestamp in so scanPos stays exact.
+    const t = convexTest(schema, modules);
+    const tierId = await seedFreeTier(t);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 5; i++) {
+        await ctx.db.insert('users', { tierId, status: 'grace', updatedAt: Date.now() });
+      }
     });
-    expect((await counts(t)).active).toBe(2);
-
-    // And the ≥0 clamp holds when a decrement races BOTH the scan and the write.
-    await t.mutation(internal.userStats.applyReconcileDelta, {
-      baseline: { ...live, active: 50 },
-      scanned: { ...live, active: 0 },
-    });
-    expect((await counts(t)).active).toBeGreaterThanOrEqual(0);
+    const startTs = await t.mutation(internal.userStats.beginUserCountsReconcile, {});
+    let pages = 0;
+    for (let i = 0; i < 10; i++) {
+      pages++;
+      const r = await t.mutation(internal.userStats.scanUserCountsPage, {
+        freeTierIds: [tierId],
+        pageSize: 2,
+      });
+      if (r.done) break;
+    }
+    expect(await t.mutation(internal.userStats.finishUserCountsReconcile, { token: startTs })).toBe(
+      true,
+    );
+    expect((await counts(t)).grace).toBe(5);
+    expect(pages).toBeLessThanOrEqual(5);
   });
 
   test('grace/disable transitions move the buckets', async () => {
@@ -243,6 +304,13 @@ describe('userStats counters (WS3)', () => {
 describe('session counter reconcile (2026-09-04)', () => {
   const live = async (t: ReturnType<typeof convexTest>) =>
     (await t.query(internal.userStats.getSessionCounts, {})).counts;
+  const scanAll = async (t: ReturnType<typeof convexTest>, pageSize = 500) => {
+    for (let i = 0; i < 50; i++) {
+      const r = await t.mutation(internal.userStats.scanSessionCountsPage, { pageSize });
+      if (r.done) return;
+    }
+    throw new Error('scan did not finish');
+  };
 
   test('a delete racing the scan is applied exactly once (review P1 scenario)', async () => {
     // Two unbound sessions; the reconcile begins; one is deleted BEFORE its page
@@ -257,16 +325,28 @@ describe('session counter reconcile (2026-09-04)', () => {
 
     const startTs = await t.mutation(internal.userStats.beginSessionCountsReconcile, {});
     await t.mutation(internal.sessions.deleteBySid, { sid: 'a' }); // before the scan reads it
-    const page = await t.query(internal.userStats.tallySessionCountsPage, {
-      startTs,
-      cursor: null,
-      numItems: 500,
-    });
-    expect(page.counts.unboundMember).toBe(1); // scan sees the post-delete table
-    await t.mutation(internal.userStats.finishSessionCountsReconcile, {
-      startTs,
-      scanned: page.counts,
-    });
+    await scanAll(t);
+    expect(
+      await t.mutation(internal.userStats.finishSessionCountsReconcile, { token: startTs }),
+    ).toBe(true);
+    expect((await live(t)).unboundMember).toBe(1);
+  });
+
+  test('a delete of an ALREADY-scanned row is journaled (exact, not an overcount)', async () => {
+    const t = convexTest(schema, modules);
+    await t.action(internal.userStats.reconcileSessionCounts, {});
+    await t.mutation(internal.sessions.create, { sid: 'a', kind: 'member', ttlMs: 60_000 });
+    await t.mutation(internal.sessions.create, { sid: 'b', kind: 'member', ttlMs: 60_000 });
+    const startTs = await t.mutation(internal.userStats.beginSessionCountsReconcile, {});
+    // Page of 1 scans 'a' (oldest); then 'a' is deleted → journal −1.
+    expect((await t.mutation(internal.userStats.scanSessionCountsPage, { pageSize: 1 })).done).toBe(
+      false,
+    );
+    await t.mutation(internal.sessions.deleteBySid, { sid: 'a' });
+    await scanAll(t, 1);
+    expect(
+      await t.mutation(internal.userStats.finishSessionCountsReconcile, { token: startTs }),
+    ).toBe(true);
     expect((await live(t)).unboundMember).toBe(1);
   });
 
@@ -280,16 +360,10 @@ describe('session counter reconcile (2026-09-04)', () => {
     await t.mutation(internal.sessions.create, { sid: 'new-1', kind: 'admin', ttlMs: 60_000 });
     await t.mutation(internal.sessions.create, { sid: 'new-2', kind: 'admin', ttlMs: 60_000 });
     await t.mutation(internal.sessions.deleteBySid, { sid: 'new-2' }); // journal nets to +1 admin
-    const page = await t.query(internal.userStats.tallySessionCountsPage, {
-      startTs,
-      cursor: null,
-      numItems: 500,
-    });
-    expect(page.counts).toEqual({ bound: 0, unboundMember: 1, unboundAdmin: 0 }); // only 'old'
-    await t.mutation(internal.userStats.finishSessionCountsReconcile, {
-      startTs,
-      scanned: page.counts,
-    });
+    await scanAll(t);
+    expect(
+      await t.mutation(internal.userStats.finishSessionCountsReconcile, { token: startTs }),
+    ).toBe(true);
     expect(await live(t)).toEqual({ bound: 0, unboundMember: 1, unboundAdmin: 1 });
   });
 
@@ -300,11 +374,9 @@ describe('session counter reconcile (2026-09-04)', () => {
     const stale = await t.mutation(internal.userStats.beginSessionCountsReconcile, {});
     await t.mutation(internal.sessions.create, { sid: 'y', kind: 'member', ttlMs: 60_000 });
     await t.mutation(internal.userStats.beginSessionCountsReconcile, {}); // newer run
-    const applied = await t.mutation(internal.userStats.finishSessionCountsReconcile, {
-      startTs: stale,
-      scanned: { bound: 0, unboundMember: 0, unboundAdmin: 0 },
-    });
-    expect(applied).toBe(false);
+    expect(
+      await t.mutation(internal.userStats.finishSessionCountsReconcile, { token: stale }),
+    ).toBe(false);
     expect((await live(t)).unboundMember).toBe(2); // live bumps untouched
   });
 

@@ -689,7 +689,11 @@ export const disableUser = internalMutation({
       suspendedAt: Date.now(),
       updatedAt: Date.now(),
     });
-    await applyCountsDelta(ctx, { statusFrom: user.status, statusTo: 'disabled' });
+    await applyCountsDelta(ctx, {
+      statusFrom: user.status,
+      statusTo: 'disabled',
+      creationTime: user._creationTime,
+    });
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -721,7 +725,11 @@ export const reEnableUser = internalMutation({
       suspendedAt: undefined,
       updatedAt: Date.now(),
     });
-    await applyCountsDelta(ctx, { statusFrom: 'disabled', statusTo: 'active' });
+    await applyCountsDelta(ctx, {
+      statusFrom: 'disabled',
+      statusTo: 'active',
+      creationTime: user._creationTime,
+    });
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
