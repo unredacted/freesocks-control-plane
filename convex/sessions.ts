@@ -6,10 +6,16 @@
  *
  * `bySid` treats an expired row as absent (defence-in-depth alongside the daily
  * sweep), so a stale-but-unswept cookie never authenticates.
+ *
+ * Every insert/delete here ALSO bumps the `stats:sessionCounts` counter
+ * (lib/statusCounters.ts) that `adminApi.statusSummary` reads for the PoP
+ * readiness tally — keep that invariant when adding a write path (the only
+ * other one is the lifecycle hard-delete cascade).
  */
 import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import { recordHeartbeat } from './cronHeartbeat';
+import { bumpSessionCounts, sessionBucket, type SessionBump } from './lib/statusCounters';
 import { ConvexError } from 'convex/values';
 import { v } from 'convex/values';
 import { b64UrlToBytes } from '../src/shared/crypto/envelope';
@@ -72,7 +78,7 @@ export const create = internalMutation({
       .withIndex('by_sid', (q) => q.eq('sid', sid))
       .unique();
     if (clash) throw new Error('session sid collision');
-    await ctx.db.insert('sessions', {
+    const id = await ctx.db.insert('sessions', {
       sid,
       kind,
       userId,
@@ -80,6 +86,14 @@ export const create = internalMutation({
       expiresAt: Date.now() + ttlMs,
       ...(bound ? { popPublicKey, popAlg: boundAlg, popSessionToken } : {}),
     });
+    // Counter bump keyed on the row's own _creationTime (the reconcile journal
+    // boundary) — read it back rather than assume Date.now() matches.
+    const inserted = await ctx.db.get(id);
+    await bumpSessionCounts(
+      ctx,
+      [{ bucket: sessionBucket({ kind, popPublicKey }), creationTime: inserted!._creationTime }],
+      1,
+    );
     return null;
   },
 });
@@ -103,7 +117,14 @@ export const deleteBySid = internalMutation({
       .query('sessions')
       .withIndex('by_sid', (q) => q.eq('sid', sid))
       .unique();
-    if (row) await ctx.db.delete(row._id);
+    if (row) {
+      await ctx.db.delete(row._id);
+      await bumpSessionCounts(
+        ctx,
+        [{ bucket: sessionBucket(row), creationTime: row._creationTime }],
+        -1,
+      );
+    }
     return null;
   },
 });
@@ -123,11 +144,14 @@ export const deleteAllForUserExcept = internalMutation({
       .withIndex('by_user', (q) => q.eq('userId', userId))
       .collect();
     let removed = 0;
+    const bumps: SessionBump[] = [];
     for (const row of rows) {
       if (keepSid !== undefined && row.sid === keepSid) continue;
       await ctx.db.delete(row._id);
+      bumps.push({ bucket: sessionBucket(row), creationTime: row._creationTime });
       removed++;
     }
+    await bumpSessionCounts(ctx, bumps, -1);
     return { removed };
   },
 });
@@ -145,7 +169,12 @@ export const sweepExpired = internalMutation({
       .query('sessions')
       .withIndex('by_expires', (q) => q.lt('expiresAt', now))
       .take(page);
-    for (const row of expired) await ctx.db.delete(row._id);
+    const bumps: SessionBump[] = [];
+    for (const row of expired) {
+      await ctx.db.delete(row._id);
+      bumps.push({ bucket: sessionBucket(row), creationTime: row._creationTime });
+    }
+    await bumpSessionCounts(ctx, bumps, -1);
     if (expired.length === page) {
       const n = rounds ?? 0;
       if (n >= MAX_DRAIN_ROUNDS) console.warn('[session-sweep] drain cap hit; remainder next run');

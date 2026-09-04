@@ -166,5 +166,13 @@ crons.daily(
   internal.userStats.reconcileUserCounts,
   {},
 );
+// Same self-heal for the session counter behind statusSummary's PoP tally
+// (bumped live on every session insert/delete; this corrects any missed bump).
+crons.daily(
+  'session-counts-reconcile',
+  { hourUTC: 4, minuteUTC: 10 },
+  internal.userStats.reconcileSessionCounts,
+  {},
+);
 
 export default crons;

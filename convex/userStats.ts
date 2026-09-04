@@ -1,83 +1,68 @@
 /**
- * User-status counter reconcile (M2 / WS3). `reconcileUserCounts` recomputes the
- * `appState` counter row (statusCounters.ts) exactly by a paginated full scan —
- * bounded per page so it never trips the per-query read limit — and self-heals any
- * drift from a missed transition bump. Run daily by cron + once post-deploy.
+ * Counter reconciles (M2 / WS3 + 2026-09-04). Both `appState` counters that feed
+ * `adminApi.statusSummary` — `stats:userCounts` and `stats:sessionCounts` — are
+ * rebuilt exactly by the begin → scan pages → finish protocol in
+ * lib/statusCounters.ts (bounded per page so it never trips the per-execution
+ * read limit; exact under concurrent writes via the pinned boundary + journal).
+ * Run daily by cron + once post-deploy.
  */
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
 import { runWithCronOutcome } from './cronHeartbeat';
-import { readUserCounts, writeUserCounts, type UserCounts } from './lib/statusCounters';
+import {
+  SESSION_COUNTER,
+  USER_COUNTER,
+  beginCounterReconcile,
+  finishCounterReconcile,
+  patchCounterCounts,
+  readSessionCounts,
+  readUserCounts,
+  scanCounterPage,
+  sessionBucket,
+  type SessionCounts,
+  type UserCounts,
+} from './lib/statusCounters';
 
-const COUNTS_VALIDATOR = v.object({
-  active: v.number(),
-  grace: v.number(),
-  disabled: v.number(),
-  deleted: v.number(),
-  inactive: v.number(),
-  backendDrift: v.number(),
-  freeActive: v.number(),
+const PAGE = 500;
+
+// === Users ===================================================================
+
+export const beginUserCountsReconcile = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<number> => beginCounterReconcile(ctx, USER_COUNTER),
 });
 
-/** Tally one page of users (bounded read) → partial counts + the paginate cursor.
- *  `freeTierIds` = the default-free tier set; active users on one count toward
- *  `freeActive` (the "free users helped" impact stat). */
-export const tallyUserCountsPage = internalQuery({
-  args: {
-    cursor: v.union(v.string(), v.null()),
-    numItems: v.number(),
-    freeTierIds: v.array(v.id('tiers')),
-  },
-  handler: async (ctx, { cursor, numItems, freeTierIds }) => {
-    const res = await ctx.db.query('users').paginate({ cursor, numItems });
+/** Scan one page of users (bounded read) into the open reconcile. `freeTierIds`
+ *  = the default-free tier set; active users on one count toward `freeActive`. */
+export const scanUserCountsPage = internalMutation({
+  args: { freeTierIds: v.array(v.id('tiers')), pageSize: v.optional(v.number()) },
+  handler: async (ctx, { freeTierIds, pageSize }) => {
     const freeIdSet = new Set<string>(freeTierIds);
-    const counts: UserCounts = {
-      active: 0,
-      grace: 0,
-      disabled: 0,
-      deleted: 0,
-      inactive: 0,
-      backendDrift: 0,
-      freeActive: 0,
-    };
-    for (const u of res.page) {
-      counts[u.status] += 1;
-      if (u.backendPushFailedAt != null) counts.backendDrift += 1;
-      if (u.status === 'active' && freeIdSet.has(u.tierId)) counts.freeActive += 1;
-    }
-    return { counts, isDone: res.isDone, continueCursor: res.continueCursor };
+    return scanCounterPage(
+      ctx,
+      USER_COUNTER,
+      (u) => ({
+        [u.status]: 1,
+        ...(u.backendPushFailedAt != null ? { backendDrift: 1 } : {}),
+        ...(u.status === 'active' && freeIdSet.has(u.tierId) ? { freeActive: 1 } : {}),
+      }),
+      pageSize ?? PAGE,
+    );
   },
 });
 
-/** The counter row as it currently stands (the reconcile baseline). */
+export const finishUserCountsReconcile = internalMutation({
+  args: { token: v.number() },
+  handler: async (ctx, { token }): Promise<boolean> =>
+    finishCounterReconcile(ctx, USER_COUNTER, token),
+});
+
+/** The counter row as it currently stands. */
 export const getUserCounts = internalQuery({
   args: {},
   handler: async (ctx): Promise<UserCounts> => readUserCounts(ctx.db),
-});
-
-/**
- * Apply the reconcile result as a DELTA against the live row, not an absolute
- * write: status transitions landing mid-scan bump the live counter via
- * applyCountsDelta, and an absolute overwrite would silently discard those
- * bumps (up to 24h of drift from the daily "self-heal" itself). next =
- * live + (scanned − baseline); when nothing changed mid-scan this equals the
- * exact scanned total, and the residual error is bounded to transitions that
- * raced the scan rather than compounding them. Clamped ≥ 0 (a transition can
- * legitimately race both the scan AND this write).
- */
-export const applyReconcileDelta = internalMutation({
-  args: { baseline: COUNTS_VALIDATOR, scanned: COUNTS_VALIDATOR },
-  handler: async (ctx, { baseline, scanned }) => {
-    const live = await readUserCounts(ctx.db);
-    const next = { ...live };
-    for (const k of Object.keys(scanned) as (keyof UserCounts)[]) {
-      next[k] = Math.max(0, live[k] + (scanned[k] - baseline[k]));
-    }
-    await writeUserCounts(ctx, next);
-    return null;
-  },
 });
 
 /** One page of ACTIVE users on a free tier (index prefix scan) — the targeted
@@ -97,13 +82,12 @@ export const countFreeActivePage = internalQuery({
   },
 });
 
-/** Overwrite ONLY the freeActive field of the live counter row (read-full/
- *  write-full, so concurrent status-transition bumps to other fields are kept). */
+/** Overwrite ONLY the freeActive field of the live counter row (the other
+ *  fields + any open reconcile's state are preserved). */
 export const setFreeActive = internalMutation({
   args: { freeActive: v.number() },
   handler: async (ctx, { freeActive }) => {
-    const live = await readUserCounts(ctx.db);
-    await writeUserCounts(ctx, { ...live, freeActive: Math.max(0, freeActive) });
+    await patchCounterCounts(ctx, USER_COUNTER, { freeActive: Math.max(0, freeActive) });
     return null;
   },
 });
@@ -115,9 +99,8 @@ export const setFreeActive = internalMutation({
  * — freeActive is otherwise maintained only by the DAILY full reconcile (a
  * status transition can't bump it: it doesn't know tier membership), which
  * stays as the self-healing backstop. Deliberately not the full
- * reconcileUserCounts: this scan is bounded to free users, touches no other
- * counter field, and two concurrent runs converge on the same exact value
- * (the full reconcile's delta-write can transiently corrupt under a race).
+ * reconcileUserCounts: this scan is bounded to free users and touches no other
+ * counter field.
  */
 export const refreshFreeActive = internalAction({
   args: {},
@@ -129,7 +112,7 @@ export const refreshFreeActive = internalAction({
       for (let i = 0; i < 100_000; i++) {
         const res: { count: number; isDone: boolean; continueCursor: string } = await ctx.runQuery(
           internal.userStats.countFreeActivePage,
-          { tierId, cursor, numItems: 500 },
+          { tierId, cursor, numItems: PAGE },
         );
         freeActive += res.count;
         if (res.isDone) break;
@@ -141,41 +124,82 @@ export const refreshFreeActive = internalAction({
   },
 });
 
-/** Recompute the counter row from scratch (idempotent, self-healing). */
+/** Recompute the user counter row from scratch (idempotent, self-healing). */
 export const reconcileUserCounts = internalAction({
   args: {},
   handler: async (ctx): Promise<UserCounts> =>
     runWithCronOutcome(ctx, 'user-counts-reconcile', async () => {
       const freeTierIds: Id<'tiers'>[] = await ctx.runQuery(internal.tiers.defaultFreeTierIds, {});
-      // Baseline BEFORE the scan: transitions after this point bump the live row
-      // and are preserved by the delta write (see applyReconcileDelta).
-      const baseline = await ctx.runQuery(internal.userStats.getUserCounts, {});
-      const total: UserCounts = {
-        active: 0,
-        grace: 0,
-        disabled: 0,
-        deleted: 0,
-        inactive: 0,
-        backendDrift: 0,
-        freeActive: 0,
-      };
-      let cursor: string | null = null;
+      const token: number = await ctx.runMutation(internal.userStats.beginUserCountsReconcile, {});
       for (let i = 0; i < 100_000; i++) {
-        // Annotated to break the same-module self-referential inference.
-        const res: { counts: UserCounts; isDone: boolean; continueCursor: string } =
-          await ctx.runQuery(internal.userStats.tallyUserCountsPage, {
-            cursor,
-            numItems: 500,
-            freeTierIds,
-          });
-        for (const k of Object.keys(total) as (keyof UserCounts)[]) total[k] += res.counts[k];
-        if (res.isDone) break;
-        cursor = res.continueCursor;
+        const res: { done: boolean; rows: number } = await ctx.runMutation(
+          internal.userStats.scanUserCountsPage,
+          { freeTierIds },
+        );
+        if (res.done) break;
       }
-      await ctx.runMutation(internal.userStats.applyReconcileDelta, {
-        baseline,
-        scanned: total,
+      const applied: boolean = await ctx.runMutation(internal.userStats.finishUserCountsReconcile, {
+        token,
       });
-      return total;
+      if (!applied) console.warn('[user-counts-reconcile] superseded by a newer run; skipped');
+      return await ctx.runQuery(internal.userStats.getUserCounts, {});
+    }),
+});
+
+// === Sessions ================================================================
+// Counts rows PRESENT (expired-but-unswept included) to match what the per-write
+// bumps track; the daily session-sweep decrements as it deletes.
+
+export const beginSessionCountsReconcile = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<number> => beginCounterReconcile(ctx, SESSION_COUNTER),
+});
+
+export const scanSessionCountsPage = internalMutation({
+  args: { pageSize: v.optional(v.number()) },
+  handler: async (ctx, { pageSize }) =>
+    scanCounterPage(ctx, SESSION_COUNTER, (row) => ({ [sessionBucket(row)]: 1 }), pageSize ?? PAGE),
+});
+
+export const finishSessionCountsReconcile = internalMutation({
+  args: { token: v.number() },
+  handler: async (ctx, { token }): Promise<boolean> =>
+    finishCounterReconcile(ctx, SESSION_COUNTER, token),
+});
+
+export const getSessionCounts = internalQuery({
+  args: {},
+  handler: async (ctx) => readSessionCounts(ctx.db),
+});
+
+/** Recompute the session counter row from scratch (idempotent, self-healing).
+ *  Daily cron + once post-deploy (the deploy entrypoint); the row is built from
+ *  nothing on the first run after this shipped, and `statusSummary` reports the
+ *  readiness flag as NOT ready until that first run completes. */
+export const reconcileSessionCounts = internalAction({
+  args: {},
+  handler: async (ctx): Promise<SessionCounts> =>
+    runWithCronOutcome(ctx, 'session-counts-reconcile', async () => {
+      const token: number = await ctx.runMutation(
+        internal.userStats.beginSessionCountsReconcile,
+        {},
+      );
+      for (let i = 0; i < 100_000; i++) {
+        const res: { done: boolean; rows: number } = await ctx.runMutation(
+          internal.userStats.scanSessionCountsPage,
+          {},
+        );
+        if (res.done) break;
+      }
+      const applied: boolean = await ctx.runMutation(
+        internal.userStats.finishSessionCountsReconcile,
+        { token },
+      );
+      if (!applied) console.warn('[session-counts-reconcile] superseded by a newer run; skipped');
+      const st: { counts: SessionCounts; initialized: boolean } = await ctx.runQuery(
+        internal.userStats.getSessionCounts,
+        {},
+      );
+      return st.counts;
     }),
 });

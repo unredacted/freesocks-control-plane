@@ -196,10 +196,18 @@
         <CardTitle class="text-lg">Session protection (proof-of-possession)</CardTitle>
       </CardHeader>
       <CardContent class="space-y-2 text-sm">
-        <p class="text-muted-foreground">
-          {s.pop.bound}/{s.pop.activeSessions} active sessions are key-bound - a captured cookie alone
-          cannot be replayed.
-        </p>
+        {#if !s.pop.initialized}
+          <p class="text-muted-foreground">
+            Session figures are not available yet: the session counter is built by the post-deploy
+            reconcile (or the daily <code class="font-mono">session-counts-reconcile</code> job). Readiness
+            is reported as unknown until it has run once.
+          </p>
+        {:else}
+          <p class="text-muted-foreground">
+            {s.pop.bound}/{s.pop.activeSessions} active sessions are key-bound - a captured cookie alone
+            cannot be replayed.
+          </p>
+        {/if}
         {#if s.pop.required}
           <div
             class="flex items-center gap-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-emerald-700 dark:text-emerald-300"
@@ -207,6 +215,11 @@
             <CheckCircle class="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
             <span>Enforced - cookie-only sessions are rejected (POP_REQUIRED is on).</span>
           </div>
+        {:else if !s.pop.initialized}
+          <p class="text-muted-foreground">
+            Cannot judge whether <code class="font-mono">POP_REQUIRED</code> is safe to enable until the
+            counter exists.
+          </p>
         {:else if s.pop.readyToEnable}
           <div
             class="flex items-center gap-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-emerald-700 dark:text-emerald-300"

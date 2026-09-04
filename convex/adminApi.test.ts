@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import { maskApiUrl } from './adminApi';
+import { POP_ALG_ED } from '../src/shared/crypto/pop';
 import { resolveTheme } from './lib/themeConfig';
 import { resolveModeSquadPool } from './lib/remnawavePlacement';
 import { UserAdmin, AdminStatusSummary } from '../src/shared/contracts/admin';
@@ -892,6 +893,11 @@ describe('adminApi statusSummary', () => {
       });
     });
 
+    // Rows seeded directly bypass the per-write counter bumps: run the sweep
+    // (deletes the expired row, as the daily cron does) and rebuild the counter
+    // from the table, the same way the deploy entrypoint does.
+    await t.mutation(internal.sessions.sweepExpired, {});
+    await t.action(internal.userStats.reconcileSessionCounts, {});
     const s = await t.query(internal.adminApi.statusSummary, {});
     expect(s.pop.activeSessions).toBe(3); // the expired row is not counted
     expect(s.pop.bound).toBe(1);
@@ -900,6 +906,82 @@ describe('adminApi statusSummary', () => {
     expect(s.pop.unboundAdmin).toBe(1);
     expect(s.pop.readyToEnable).toBe(false); // cookie-only sessions would be locked out
     expect(s.pop.required).toBe(false); // POP_REQUIRED unset in tests
+  });
+
+  // 2026-09-04 prod incident: the tally used to `.collect()` every live session
+  // and 500-ed the whole status endpoint once prod crossed Convex's per-execution
+  // read limit. It now reads the `stats:sessionCounts` counter, bumped by every
+  // session write path — so NO reconcile is needed for rows created the real way.
+  test('pop readiness is live: session create/delete/sweep bump the counter', async () => {
+    const t = convexTest(schema, modules);
+    // The counter row is born by the first reconcile (deploy entrypoint); bumps
+    // before that are deliberate no-ops (fail-closed, see the P2 test below).
+    await t.action(internal.userStats.reconcileSessionCounts, {});
+    const edKey = 'A'.repeat(43); // 32 zero bytes base64url = a length-valid Ed25519 key
+    const ttl = 3_600_000;
+    await t.mutation(internal.sessions.create, {
+      sid: 'bound-1',
+      kind: 'member',
+      ttlMs: ttl,
+      popPublicKey: edKey,
+      popAlg: POP_ALG_ED,
+      popSessionToken: 'tok',
+    });
+    await t.mutation(internal.sessions.create, { sid: 'cookie-m', kind: 'member', ttlMs: ttl });
+    await t.mutation(internal.sessions.create, { sid: 'cookie-a', kind: 'admin', ttlMs: ttl });
+    await t.mutation(internal.sessions.create, { sid: 'short', kind: 'member', ttlMs: -1 }); // already expired
+
+    let s = await t.query(internal.adminApi.statusSummary, {});
+    expect(s.pop).toMatchObject({
+      activeSessions: 4, // present rows; the expired one stays counted until swept
+      bound: 1,
+      unboundMember: 2,
+      unboundAdmin: 1,
+      unbound: 3,
+      readyToEnable: false,
+    });
+
+    await t.mutation(internal.sessions.sweepExpired, {}); // drops 'short'
+    await t.mutation(internal.sessions.deleteBySid, { sid: 'cookie-a' });
+    s = await t.query(internal.adminApi.statusSummary, {});
+    expect(s.pop).toMatchObject({ activeSessions: 2, bound: 1, unboundMember: 1, unboundAdmin: 0 });
+
+    await t.mutation(internal.sessions.deleteBySid, { sid: 'cookie-m' });
+    s = await t.query(internal.adminApi.statusSummary, {});
+    expect(s.pop).toMatchObject({ activeSessions: 1, bound: 1, unbound: 0, readyToEnable: true });
+
+    // Reconcile agrees with the live bumps (no drift) and is idempotent.
+    await t.action(internal.userStats.reconcileSessionCounts, {});
+    expect((await t.query(internal.adminApi.statusSummary, {})).pop.activeSessions).toBe(1);
+  });
+
+  test('statusSummary stays O(1) in session rows and fails closed before the first reconcile', async () => {
+    // Pin the shape rather than the limit itself: seed more rows than a single
+    // bounded page and confirm the query never reads them (counter only).
+    const t = convexTest(schema, modules);
+    const future = Date.now() + 3_600_000;
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 600; i++) {
+        await ctx.db.insert('sessions', { sid: `s-${i}`, kind: 'member', expiresAt: future });
+      }
+    });
+    // No counter row yet: the query reports UNKNOWN (not "0 unbound → safe") —
+    // the first-rollout window between `convex deploy` and the entrypoint's
+    // reconcile must never read as ready (review P2).
+    let s = await t.query(internal.adminApi.statusSummary, {});
+    expect(s.pop.initialized).toBe(false);
+    expect(s.pop.activeSessions).toBe(0);
+    expect(s.pop.readyToEnable).toBe(false);
+    // Bumps before the row exists are no-ops (the reconcile overwrites anyway).
+    await t.mutation(internal.sessions.create, { sid: 'pre-init', kind: 'member', ttlMs: 60_000 });
+    expect((await t.query(internal.adminApi.statusSummary, {})).pop.initialized).toBe(false);
+    // The reconcile builds the row from the table (600 seeded + 1 created).
+    await t.action(internal.userStats.reconcileSessionCounts, {});
+    s = await t.query(internal.adminApi.statusSummary, {});
+    expect(s.pop.initialized).toBe(true);
+    expect(s.pop.activeSessions).toBe(601);
+    expect(s.pop.unboundMember).toBe(601);
+    expect(s.pop.readyToEnable).toBe(false);
   });
 
   test('pop readiness: readyToEnable once every active session is key-bound', async () => {
@@ -943,6 +1025,7 @@ describe('adminApi statusSummary', () => {
       });
     });
 
+    await t.action(internal.userStats.reconcileSessionCounts, {});
     const s = await t.query(internal.adminApi.statusSummary, {});
     expect(s.pop.unbound).toBe(0);
     expect(s.pop.bound).toBe(2);
@@ -1293,6 +1376,65 @@ describe('admin mutation audit coverage', () => {
     ]);
     expect(JSON.stringify(rows)).not.toContain('SECRET-NEVER-AUDIT');
     expect(JSON.stringify(rows)).not.toContain('panel.example');
+  });
+
+  test('deleting a backend server refuses while a live key points at it (both paths)', async () => {
+    const t = convexTest(schema, modules);
+    const created = await t.mutation(internal.adminApi.createBackendServer, {
+      backend: 'remnawave',
+      name: 'RW Busy',
+      slug: 'rw-busy',
+      baseUrl: 'https://panel.example',
+      apiToken: 'tok',
+    });
+    const serverId = created.id as never as import('./_generated/dataModel').Id<'backendServers'>;
+    const subId = await t.run(async (ctx) => {
+      const tierId = await ctx.db.insert('tiers', {
+        slug: 'free',
+        name: 'Free',
+        backend: 'remnawave',
+        monthlyTrafficGb: 50,
+        deviceLimit: 1,
+        hwidLimit: 1,
+        hwidEnabled: true,
+        trafficStrategy: 'MONTH',
+        isDefaultFree: true,
+        isActive: true,
+        priority: 0,
+        expirationDaysAfterMembershipLapse: 0,
+        updatedAt: Date.now(),
+      });
+      const userId = await ctx.db.insert('users', {
+        tierId,
+        status: 'active',
+        updatedAt: Date.now(),
+      });
+      return ctx.db.insert('subscriptions', {
+        userId,
+        backend: 'remnawave',
+        backendUserId: 'u-1',
+        backendShortId: 'short-1',
+        subscriptionUrl: 'https://panel.example/sub/short-1',
+        subscriptionMirrors: [],
+        backendServerId: serverId,
+        state: 'disabled', // tombstoned-but-not-yet-reclaimed still counts as live
+        updatedAt: Date.now(),
+      });
+    });
+
+    await expect(
+      t.mutation(internal.adminApi.deleteBackendServer, { id: serverId }),
+    ).rejects.toMatchObject({ data: { code: 'server.in_use' } });
+    await expect(
+      t.mutation(internal.adminApi.deleteBackendServerBySlug, { slug: 'rw-busy' }),
+    ).rejects.toMatchObject({ data: { code: 'server.in_use' } });
+
+    // A fully deleted (retention-pending) key no longer blocks the delete.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(subId, { state: 'deleted', deletedAt: Date.now() });
+    });
+    const del = await t.mutation(internal.adminApi.deleteBackendServerBySlug, { slug: 'rw-busy' });
+    expect(del).toEqual({ ok: true, deleted: true });
   });
 
   test('mirror-provider create/update/upsert/remove audit (name only, never the secret)', async () => {

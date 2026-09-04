@@ -365,6 +365,9 @@ export const adminStatusQuery = () =>
     queryKey: queryKeys.adminStatus,
     queryFn: () => apiClient.get('/api/v1/admin/status', AdminStatusSummary),
     staleTime: 15_000,
+    // The user/session figures are maintained counters (live to the last
+    // transition), so polling is cheap: O(1) reads + the small admin tables.
+    refetchInterval: 30_000,
   }));
 
 export const adminTiersQuery = () =>

@@ -69,7 +69,8 @@ export const createFreeUser = internalMutation({
       freeKeyExpiresAt: await freeWindowExpiryMs(ctx.db),
       updatedAt: now,
     });
-    await applyCountsDelta(ctx, { statusTo: 'active' });
+    const created = await ctx.db.get(userId);
+    await applyCountsDelta(ctx, { statusTo: 'active', creationTime: created!._creationTime });
     return { userId };
   },
 });
@@ -85,6 +86,7 @@ export const deleteFreeUser = internalMutation({
     await applyCountsDelta(ctx, {
       statusFrom: u.status,
       driftDelta: u.backendPushFailedAt != null ? -1 : 0,
+      creationTime: u._creationTime,
     });
     return null;
   },
