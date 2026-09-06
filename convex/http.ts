@@ -12,6 +12,8 @@ import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
+import { classifyClient } from './lib/relays/clientFamilies';
+import { applyRelayRender } from './lib/relays/renderPipeline';
 import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
@@ -248,6 +250,12 @@ interface SubCacheEntry {
   headers?: Record<string, string>;
   ua: string;
   at: number;
+  // Relay-render cache token (relayRender.epochFor): the pinned node's
+  // publication epoch when the body was rendered with relay endpoints, null
+  // when it was served as the panel sent it. A hit is only valid while the
+  // current token is identical, so a pool/switch change re-renders within one
+  // request instead of one TTL.
+  relay?: number | null;
 }
 
 /** The RAW subscription Response a proxy app consumes (not the JSON envelope):
@@ -1040,7 +1048,19 @@ http.route({
     }
     const hasHwid = 'x-hwid' in hwidHeaders;
     const cached = hasHwid ? [] : parseSubCache(sub.subCache);
-    const fresh = cached.find((e) => e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS);
+    // Relay rendering (docs/relays.md): the cache token for this key's pinned
+    // node, compared against the token stored on the entry.
+    const relayToken =
+      sub.backendServerId && sub.pinnedNode
+        ? await ctx.runQuery(internal.relayRender.epochFor, {
+            backendServerId: sub.backendServerId,
+            nodeHostname: sub.pinnedNode,
+          })
+        : null;
+    const fresh = cached.find(
+      (e) =>
+        e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS && (e.relay ?? null) === relayToken,
+    );
     if (fresh) {
       // Cache hit: the served body was generated at the entry's fetch time.
       await ctx.runMutation(internal.subscriptions.markDelivered, {
@@ -1068,12 +1088,40 @@ http.route({
           node: fetched.pinnedNode,
         });
       }
+      // Relay rendering: replace the pinned node's template entries with this
+      // subscriber's assigned primary/backup edges (one SNI each). Fail-open:
+      // any unknown shape passes through unchanged.
+      let content = fetched.content;
+      let relay: number | null = null;
+      const node = fetched.pinnedNode ?? sub.pinnedNode;
+      if (node && sub.backendServerId) {
+        const rctx = await ctx.runQuery(internal.relayRender.contextForSubscription, {
+          subscriptionId: sub._id,
+          family: classifyClient(ua).family,
+          nodeHostname: node,
+        });
+        if (rctx) {
+          const renderKey =
+            rctx.renderKey ??
+            (await ctx.runMutation(internal.subscriptions.ensureRenderKey, {
+              subscriptionId: sub._id,
+            }));
+          if (renderKey) {
+            content = applyRelayRender(rctx, content, renderKey, {
+              now,
+              lastContentAt: rctx.lastContentAt,
+            }).body;
+            relay = rctx.epoch;
+          }
+        }
+      }
       const entry: SubCacheEntry = {
-        content: fetched.content,
+        content,
         contentType: fetched.contentType ?? 'text/plain',
         headers: fetched.headers,
         ua,
         at: now,
+        relay,
       };
       // Don't cache an hwid'd response — the next device (different hwid, same
       // UA) must reach the panel too, for its own registration + enforcement.
