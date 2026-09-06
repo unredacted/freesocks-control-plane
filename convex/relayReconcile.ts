@@ -330,6 +330,9 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
     claimMs: relayMs.opClaim(cfg),
   });
   if (!cl.ok) return;
+  // Discovery attempts live on the step, not the claim: every pass settles and
+  // clears the claim, and adapters need ≥2 quiet looks before `confirmed_absent`.
+  const discoverAttempt = (pending.discoverAttempts ?? 0) + 1;
   let disc: Discovery;
   try {
     disc = await ctx.runAction(internal.relayProviderOps.discover, {
@@ -337,7 +340,7 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
       spec: specOf(edge),
       step: stepOf(pending),
       ledger: ledgerOf(edge),
-      attempt: cl.attempt,
+      attempt: discoverAttempt,
     });
   } catch (err) {
     await ctx.runMutation(internal.relayEdges.settleOp, { edgeId: edge._id, opId: cl.opId });
@@ -378,7 +381,15 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
       status: 'needs_operator',
     });
   } else {
-    await ctx.runMutation(internal.relayEdges.settleOp, { edgeId: edge._id, opId: cl.opId });
+    await ctx.runMutation(internal.relayEdges.settleOp, {
+      edgeId: edge._id,
+      opId: cl.opId,
+      stepPatch: {
+        stepId: pending.stepId,
+        state: pending.state,
+        discoverAttempts: discoverAttempt,
+      },
+    });
     if ((pending.startedAt ?? edge._creationTime) + relayMs.discoveryTimeout(cfg) < now) {
       await ctx.runMutation(internal.relayEdges.patchEdge, {
         edgeId: edge._id,

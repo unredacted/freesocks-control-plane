@@ -47,13 +47,16 @@ export const originWindow = internalQuery({
     for (const r of reports) {
       if (r.kind !== 'report') continue;
       window.reports += 1;
-      window.distinctReporters += r.detectorWeight ?? 1;
+      // detectorWeight 0 = a repeat by the same member inside the window (the
+      // peppered dedupe mark); it never adds a reporter, at origin OR edge level.
+      const weight = r.detectorWeight ?? 1;
+      window.distinctReporters += weight;
       const c = r.country ?? r.detectedCountry;
       if (c) window.countries[c] = (window.countries[c] ?? 0) + 1;
-      if (r.relayEdgeId) {
+      if (r.relayEdgeId && weight > 0) {
         const e = (window.byEdge[r.relayEdgeId] ??= { count: 0, countries: {} });
-        e.count += 1;
-        if (c) e.countries[c] = (e.countries[c] ?? 0) + 1;
+        e.count += weight;
+        if (c) e.countries[c] = (e.countries[c] ?? 0) + weight;
       }
     }
     const samples = await ctx.db

@@ -9,8 +9,9 @@
  * subscriber holding a retired name keeps working through the drain.
  */
 import { ConvexError, v } from 'convex/values';
-import { internalMutation, internalQuery } from './_generated/server';
-import type { Doc } from './_generated/dataModel';
+import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
+import { internal } from './_generated/api';
+import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { relayProviderIdValidator } from './lib/relayProviderIds';
 import { resolveRelayConfig, relayMs } from './lib/relayConfig';
@@ -22,6 +23,28 @@ export function normalizeSni(s: unknown): string | null {
   if (typeof s !== 'string') return null;
   const t = s.trim().toLowerCase().replace(/\.$/, '');
   return HOSTNAME_RE.test(t) ? t : null;
+}
+
+/**
+ * A profile edit changes what renders for every origin whose slots use it
+ * (active SNI set, enabled flag, target): bump those origins' publication
+ * epoch (the /sub cache token + assignment) and refresh stored mirrors once.
+ */
+async function invalidateOrigins(ctx: MutationCtx, profileId: Id<'relayCamouflageProfiles'>) {
+  const slots = await ctx.db
+    .query('relayOriginSlots')
+    .withIndex('by_profile', (q) => q.eq('profileId', profileId))
+    .collect();
+  const originIds = [...new Set(slots.map((s) => s.originId))];
+  if (originIds.length === 0) return 0;
+  const now = Date.now();
+  for (const originId of originIds) {
+    const origin = await ctx.db.get(originId);
+    if (!origin) continue;
+    await ctx.db.patch(originId, { publicationEpoch: origin.publicationEpoch + 1, updatedAt: now });
+  }
+  await ctx.scheduler.runAfter(0, internal.storage.refreshActiveMirrors, {});
+  return originIds.length;
 }
 
 export function mapProfileAdmin(r: Doc<'relayCamouflageProfiles'>) {
@@ -235,6 +258,13 @@ export const update = internalMutation({
     if (a.enabled !== undefined) patch.enabled = a.enabled;
     if (a.notes !== undefined) patch.notes = a.notes.slice(0, 500);
     await ctx.db.patch(a.id, patch);
+    const affectsRender =
+      (patch.enabled !== undefined && patch.enabled !== row.enabled) ||
+      (patch.serverNames !== undefined &&
+        JSON.stringify(patch.serverNames) !== JSON.stringify(row.serverNames)) ||
+      (patch.targetAddress !== undefined &&
+        (patch.targetAddress !== row.targetAddress || patch.targetPort !== row.targetPort));
+    if (affectsRender) await invalidateOrigins(ctx, a.id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
@@ -279,6 +309,7 @@ export const retireSni = internalMutation({
       });
     }
     await ctx.db.patch(id, { serverNames: next, updatedAt: now });
+    if (count > 0) await invalidateOrigins(ctx, id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -287,7 +318,7 @@ export const retireSni = internalMutation({
       targetId: id,
       payload: { profileSlug: row.slug, count },
     });
-    return { retired: count };
+    return { ok: true as const, retired: count };
   },
 });
 
@@ -310,6 +341,7 @@ export const reactivateSni = internalMutation({
       return s;
     });
     await ctx.db.patch(id, { serverNames: next, updatedAt: Date.now() });
+    if (count > 0) await invalidateOrigins(ctx, id);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -318,7 +350,7 @@ export const reactivateSni = internalMutation({
       targetId: id,
       payload: { profileSlug: row.slug, count },
     });
-    return { reactivated: count };
+    return { ok: true as const, reactivated: count };
   },
 });
 

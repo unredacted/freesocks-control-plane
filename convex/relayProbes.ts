@@ -16,7 +16,7 @@ import type { MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { runWithCronOutcome } from './cronHeartbeat';
+import { recordHeartbeat, runWithCronOutcome } from './cronHeartbeat';
 import { resolveRelayConfig, resolveRelaySecrets, type RelayConfig } from './lib/relayConfig';
 import {
   countryVerdict,
@@ -27,6 +27,9 @@ import {
 import type { ProbeResult, ProbeSource } from './lib/relays/probes/types';
 
 const MIN = 60_000;
+/** Settled probe runs are evidence history, not a ledger: 14 days is plenty for the admin view. */
+const PROBE_RUN_RETENTION_MS = 14 * 24 * 60 * 60_000;
+const MAX_SWEEP_ROUNDS = 20;
 const RUN_TIMEOUT_MS = 10 * MIN;
 
 const probeSource = v.union(
@@ -230,7 +233,12 @@ export const finishRun = internalMutation({
               failNetworks: rs.some((r) => !r.ok) ? ['internal'] : [],
             }
           : sourceVerdict(run.source, rs, cfg.probe.agreementVantages);
-      const row = existing.find((x) => x.country === country && x.source === run.source);
+      // One rollup row per (country, source, address family): a dual-stack edge's
+      // v6 result must never overwrite its v4 verdict or vice versa.
+      const row = existing.find(
+        (x) =>
+          x.country === country && x.source === run.source && (x.ipVersion ?? 4) === run.ipVersion,
+      );
       const patch = {
         okCount: summary.okVantages,
         failCount: summary.failVantages,
@@ -245,6 +253,7 @@ export const finishRun = internalMutation({
           edgeId: run.edgeId,
           country,
           source: run.source,
+          ipVersion: run.ipVersion,
           ...patch,
         });
       if (!row || row.verdict !== summary.verdict) {
@@ -271,9 +280,15 @@ async function refreshEdgeSummary(ctx: MutationCtx, edgeId: Id<'relayEdges'>, no
   const staleBefore = now - 6 * 60 * MIN;
   const countries = [...new Set(rows.map((r) => r.country))].sort();
   const byCountry = countries.map((country) => {
-    const perSource: SourceSummary[] = rows
-      .filter((r) => r.country === country && r.updatedAt >= staleBefore)
-      .map((r) => ({
+    const fresh = rows.filter((r) => r.country === country && r.updatedAt >= staleBefore);
+    // The country verdict follows the IPv4 path (what every member receives);
+    // IPv6 rows summarise separately as `v6Verdict` and only stand in for the
+    // verdict when the edge was probed over v6 alone.
+    const v4Rows = fresh.filter((r) => (r.ipVersion ?? 4) === 4);
+    const v6Rows = fresh.filter((r) => r.ipVersion === 6);
+    const primaryRows = v4Rows.length > 0 ? v4Rows : v6Rows;
+    const summarise = (subset: typeof fresh): SourceSummary[] =>
+      subset.map((r) => ({
         source: r.source,
         verdict: r.verdict as Verdict,
         okVantages: r.okCount,
@@ -287,11 +302,14 @@ async function refreshEdgeSummary(ctx: MutationCtx, edgeId: Id<'relayEdges'>, no
               ? [`${r.source}:0`]
               : [],
       }));
-    const verdict: Verdict =
+    const verdictOf = (perSource: SourceSummary[]): Verdict =>
       country === 'XX' ? internalVerdict(perSource) : countryVerdict(perSource);
+    const perSource = summarise(primaryRows);
+    const v6 = v4Rows.length > 0 && v6Rows.length > 0 ? verdictOf(summarise(v6Rows)) : undefined;
     return {
       country,
-      verdict,
+      verdict: verdictOf(perSource),
+      ...(v6 ? { v6Verdict: v6 } : {}),
       okVantages: perSource.reduce((a, s) => a + s.okVantages, 0),
       failVantages: perSource.reduce((a, s) => a + s.failVantages, 0),
       lastAt: Math.max(0, ...rows.filter((r) => r.country === country).map((r) => r.updatedAt)),
@@ -426,6 +444,41 @@ export const sweepStuck = internalMutation({
       }
     }
     return { timedOut: n };
+  },
+});
+
+/** Settled runs (finished / failed / timeout) older than the retention window are deleted in bounded pages. */
+export const sweepFinished = internalMutation({
+  args: {
+    now: v.optional(v.number()),
+    limit: v.optional(v.number()),
+    rounds: v.optional(v.number()),
+  },
+  handler: async (ctx, { now: nowArg, limit, rounds }) => {
+    const now = nowArg ?? Date.now();
+    if ((rounds ?? 0) === 0) await recordHeartbeat(ctx, 'retention-relay-probes');
+    const cutoff = now - PROBE_RUN_RETENTION_MS;
+    const page = limit ?? 200;
+    let removed = 0;
+    for (const status of ['finished', 'failed', 'timeout'] as const) {
+      const rows = await ctx.db
+        .query('relayProbeRuns')
+        .withIndex('by_status_requested', (q) => q.eq('status', status).lt('requestedAt', cutoff))
+        .take(page);
+      for (const r of rows) await ctx.db.delete(r._id);
+      removed += rows.length;
+      if (rows.length === page) {
+        const n = rounds ?? 0;
+        if (n < MAX_SWEEP_ROUNDS)
+          await ctx.scheduler.runAfter(0, internal.relayProbes.sweepFinished, {
+            now,
+            limit: page,
+            rounds: n + 1,
+          });
+        break;
+      }
+    }
+    return { removed };
   },
 });
 

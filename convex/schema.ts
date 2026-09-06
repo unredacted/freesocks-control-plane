@@ -1020,6 +1020,9 @@ export default defineSchema({
         state: relayStepState,
         opRef: v.optional(v.string()),
         attempt: v.number(),
+        // Consecutive `unresolved` discovery passes for this step (adapters
+        // need ≥2 quiet looks before `confirmed_absent`); reset when settled.
+        discoverAttempts: v.optional(v.number()),
         startedAt: v.optional(v.number()),
         finishedAt: v.optional(v.number()),
       }),
@@ -1053,7 +1056,10 @@ export default defineSchema({
         byCountry: v.array(
           v.object({
             country: v.string(),
+            // The IPv4 path (what every member receives); IPv6 rows only when no v4 row exists.
             verdict: relayReachVerdict,
+            // The IPv6 path, when the edge has one and it was probed.
+            v6Verdict: v.optional(relayReachVerdict),
             okVantages: v.number(),
             failVantages: v.number(),
             lastAt: v.number(),
@@ -1175,13 +1181,16 @@ export default defineSchema({
     ),
   })
     .index('by_edge_requested', ['edgeId', 'requestedAt'])
-    .index('by_status', ['status']),
+    .index('by_status', ['status'])
+    .index('by_status_requested', ['status', 'requestedAt']),
 
   // Rolled-up per-edge, per-country, per-source reachability counts.
   relayEdgeReachability: defineTable({
     edgeId: v.id('relayEdges'),
     country: v.string(),
     source: relayProbeSource,
+    // Address family probed; absent = 4 (rows written before dual-stack rollups).
+    ipVersion: v.optional(v.union(v.literal(4), v.literal(6))),
     okCount: v.number(),
     failCount: v.number(),
     lastOkAt: v.optional(v.number()),

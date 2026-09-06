@@ -286,4 +286,88 @@ describe('relayProbes', () => {
     expect(r.timedOut).toBe(1);
     expect((await t.run((ctx) => ctx.db.get(runId)))!.status).toBe('timeout');
   });
+
+  test('dual-stack rollups stay per address family: a failing v6 path never overwrites the v4 verdict', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, edgeId } = await seed();
+    await t.run((ctx) => ctx.db.patch(edgeId, { addresses: { v4: EDGE, v6: '2001:db8::9' } }));
+    const insertRun = (ipVersion: 4 | 6) =>
+      t.run((ctx) =>
+        ctx.db.insert('relayProbeRuns', {
+          edgeId,
+          source: 'globalping',
+          target: ipVersion === 4 ? `${EDGE}:443` : '[2001:db8::9]:443',
+          ipVersion,
+          status: 'running',
+          trigger: 'manual',
+          requestedAt: Date.now(),
+          results: [],
+        }),
+      );
+    const results = (ok: boolean) =>
+      [1, 2].map((k) => ({
+        country: 'IR',
+        asn: `AS${1000 + k}`,
+        network: `net-${k}`,
+        vantageClass: 'eyeball' as const,
+        ok,
+      }));
+    await t.mutation(internal.relayProbes.finishRun, {
+      runId: await insertRun(4),
+      results: results(true),
+    });
+    await t.mutation(internal.relayProbes.finishRun, {
+      runId: await insertRun(6),
+      results: results(false),
+    });
+    const rows = await t.run((ctx) => ctx.db.query('relayEdgeReachability').collect());
+    expect(rows.map((r) => [r.ipVersion, r.verdict]).sort()).toEqual([
+      [4, 'reachable'],
+      [6, 'unreachable'],
+    ]);
+    const edge = (await t.query(internal.relayEdges.get, { id: edgeId }))!;
+    const ir = edge.reachability!.byCountry.find((c) => c.country === 'IR')!;
+    expect(ir.verdict).toBe('reachable');
+    expect(ir.v6Verdict).toBe('unreachable');
+    // A later v6 run does not touch the v4 verdict either.
+    await t.mutation(internal.relayProbes.finishRun, {
+      runId: await insertRun(6),
+      results: results(false),
+    });
+    const again = (await t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(again.reachability!.byCountry.find((c) => c.country === 'IR')!.verdict).toBe(
+      'reachable',
+    );
+  });
+
+  test('retention: settled runs past two weeks are deleted, fresh and in-flight ones kept', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, edgeId } = await seed();
+    const now = Date.now();
+    const insert = (status: 'finished' | 'failed' | 'timeout' | 'running', ageMs: number) =>
+      t.run((ctx) =>
+        ctx.db.insert('relayProbeRuns', {
+          edgeId,
+          source: 'checkhost',
+          target: `${EDGE}:443`,
+          ipVersion: 4,
+          status,
+          trigger: 'cron',
+          requestedAt: now - ageMs,
+          finishedAt: status === 'running' ? undefined : now - ageMs,
+          results: [],
+        }),
+      );
+    const DAY = 24 * 60 * 60_000;
+    const old1 = await insert('finished', 20 * DAY);
+    const old2 = await insert('timeout', 15 * DAY);
+    const fresh = await insert('failed', 3 * DAY);
+    const running = await insert('running', 20 * DAY);
+    const r = await t.mutation(internal.relayProbes.sweepFinished, { now });
+    expect(r.removed).toBe(2);
+    expect(await t.run((ctx) => ctx.db.get(old1))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(old2))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(fresh))).not.toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(running))).not.toBeNull();
+  });
 });

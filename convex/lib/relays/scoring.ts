@@ -16,7 +16,7 @@ export interface WindowReports {
   /** Σ detectorWeight: deduplicated member contributions. */
   distinctReporters: number;
   countries: Record<string, number>;
-  /** Reports whose member said which connection failed, per edge. */
+  /** Deduplicated (Σ detectorWeight) reports whose member said which connection failed, per edge. */
   byEdge: Record<string, { count: number; countries: Record<string, number> }>;
 }
 

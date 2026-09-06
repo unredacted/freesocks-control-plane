@@ -325,4 +325,83 @@ describe('relayOrigins + slots + profiles', () => {
     expect(await t.query(internal.relayOrigins.get, { id: originId })).toBeNull();
     expect(await t.run((ctx) => ctx.db.get(slotId))).toBeNull();
   });
+
+  test('originAddress is locked while the origin has live edges; one origin per backend node', async () => {
+    const { t, originId, slotId } = await seed();
+    const e = await t.mutation(internal.relayOrigins.adoptEdge, {
+      originId,
+      slotId,
+      ipv4: '198.51.100.1',
+    });
+    await expect(
+      t.mutation(internal.relayOrigins.update, { id: originId, originAddress: '203.0.113.99' }),
+    ).rejects.toThrow(/origin_address_locked/);
+    await expect(
+      t.mutation(internal.relayOrigins.upsertBySlug, {
+        slug: 'node-one',
+        backendServerSlug: 'panel-a',
+        nodeHostname: 'node-one',
+        originAddress: '203.0.113.99',
+      }),
+    ).rejects.toThrow(/origin_address_locked/);
+    // The same address (or an unrelated field) is fine.
+    await t.mutation(internal.relayOrigins.update, {
+      id: originId,
+      originAddress: '203.0.113.10',
+      drainMinutes: 30,
+    });
+    await t.mutation(internal.relayEdges.patchEdge, { edgeId: e.edgeId, status: 'destroyed' });
+    await t.mutation(internal.relayOrigins.update, { id: originId, originAddress: '203.0.113.99' });
+    expect((await t.query(internal.relayOrigins.get, { id: originId }))!.originAddress).toBe(
+      '203.0.113.99',
+    );
+    // A second slug for the same node on the same panel is refused (create + upsert).
+    await expect(
+      t.mutation(internal.relayOrigins.upsertBySlug, {
+        slug: 'node-one-b',
+        backendServerSlug: 'panel-a',
+        nodeHostname: 'node-one',
+        originAddress: '203.0.113.20',
+      }),
+    ).rejects.toThrow(/node_already_bound/);
+    const { id: two } = await t.mutation(internal.relayOrigins.upsertBySlug, {
+      slug: 'node-two',
+      backendServerSlug: 'panel-a',
+      nodeHostname: 'node-two',
+      originAddress: '203.0.113.21',
+    });
+    await expect(
+      t.mutation(internal.relayOrigins.update, { id: two, nodeHostname: 'node-one' }),
+    ).rejects.toThrow(/node_already_bound/);
+  });
+
+  test("profile edits that change what renders bump every using origin's epoch; cosmetic ones do not", async () => {
+    const { t, originId, profileId } = await seed();
+    const epoch = async () =>
+      (await t.query(internal.relayOrigins.get, { id: originId }))!.publicationEpoch;
+    const e0 = await epoch();
+    expect(
+      await t.mutation(internal.relayProfiles.retireSni, { id: profileId, snis: ['a.example'] }),
+    ).toEqual({ ok: true, retired: 1 });
+    expect(await epoch()).toBe(e0 + 1);
+    expect(
+      await t.mutation(internal.relayProfiles.reactivateSni, {
+        id: profileId,
+        snis: ['a.example'],
+      }),
+    ).toEqual({ ok: true, reactivated: 1 });
+    expect(await epoch()).toBe(e0 + 2);
+    // Retiring a name that is not active changes nothing.
+    await t.mutation(internal.relayProfiles.reactivateSni, { id: profileId, snis: ['a.example'] });
+    expect(await epoch()).toBe(e0 + 2);
+    await t.mutation(internal.relayProfiles.update, { id: profileId, notes: 'cosmetic' });
+    expect(await epoch()).toBe(e0 + 2);
+    await t.mutation(internal.relayProfiles.update, { id: profileId, enabled: false });
+    expect(await epoch()).toBe(e0 + 3);
+    await t.mutation(internal.relayProfiles.update, {
+      id: profileId,
+      serverNames: ['a.example', 'b.example', 'c.example'],
+    });
+    expect(await epoch()).toBe(e0 + 4);
+  });
 });

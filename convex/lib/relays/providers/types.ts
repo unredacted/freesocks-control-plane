@@ -106,6 +106,8 @@ export interface LedgerStep {
   state: StepState;
   opRef?: string;
   attempt: number;
+  /** Consecutive unresolved discovery passes for this step. */
+  discoverAttempts?: number;
   startedAt?: number;
   finishedAt?: number;
 }
@@ -277,6 +279,12 @@ export interface RelayProvider<
   /** Ledger resources in destroy order (reverse of creation), skipping gone ones. */
   planDestroy(cfg: Cfg, ledger: Ledger): LedgerResource[];
   runDestroy(cfg: Cfg, resource: LedgerResource, ledger: Ledger): Promise<DestroyOutcome>;
+  /**
+   * Async-delete providers: read the resource back after `delete_requested`
+   * (404 → `confirmed_gone`, present → `unresolved`). Providers WITHOUT this
+   * method delete synchronously; the dispatcher re-runs their idempotent
+   * `runDestroy` to confirm instead of assuming the delete landed.
+   */
   confirmDestroyed?(cfg: Cfg, resource: LedgerResource, ledger: Ledger): Promise<DestroyOutcome>;
 }
 

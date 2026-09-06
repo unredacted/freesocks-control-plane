@@ -240,7 +240,10 @@ export const RelayEdgeStep = z.object({
 });
 export const RelayReachabilityCountry = z.object({
   country: z.string(),
+  /** The IPv4 path's verdict (IPv6 only when the edge was probed over v6 alone). */
   verdict: z.enum(['reachable', 'unreachable', 'mixed', 'unknown']),
+  /** The IPv6 path, when the edge has one and it was probed. */
+  v6Verdict: z.enum(['reachable', 'unreachable', 'mixed', 'unknown']).optional(),
   okVantages: z.number(),
   failVantages: z.number(),
   lastAt: iso,

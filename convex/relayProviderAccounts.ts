@@ -136,13 +136,24 @@ export const getForAdmin = internalQuery({
   },
 });
 
-/** The stored inventory snapshot (JSON string, admin-only; addresses are public client-facing data). */
+/** The stored inventory snapshot, decoded for the admin contract (addresses are public client-facing data). */
 export const getInventory = internalQuery({
   args: { id: v.id('relayProviderAccounts') },
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
     if (!r) return null;
-    return { inventory: r.inventorySnapshot ?? null, inventoryAt: r.inventoryAt ?? null };
+    let inventory: unknown = null;
+    if (r.inventorySnapshot) {
+      try {
+        inventory = JSON.parse(r.inventorySnapshot);
+      } catch {
+        inventory = null;
+      }
+    }
+    return {
+      inventory,
+      inventoryAt: r.inventoryAt ? new Date(r.inventoryAt).toISOString() : null,
+    };
   },
 });
 

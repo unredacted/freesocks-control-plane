@@ -78,6 +78,7 @@ const ledger = v.object({
       state: v.string(),
       opRef: v.optional(v.string()),
       attempt: v.number(),
+      discoverAttempts: v.optional(v.number()),
       startedAt: v.optional(v.number()),
       finishedAt: v.optional(v.number()),
     }),
@@ -270,7 +271,10 @@ export const confirmDestroyed = internalAction({
   args: { accountId: v.id('relayProviderAccounts'), resource: ledgerResource, ledger },
   handler: async (ctx, a): Promise<DestroyOutcome> => {
     const { provider, cfg } = await loadAdapter(ctx, a.accountId);
-    if (!provider.confirmDestroyed) return { status: 'confirmed_gone' };
+    // A provider without an async-delete confirmation deletes synchronously, so
+    // the delete is idempotent: re-issue it. 404 → gone; still present → deleted
+    // now; a throw stays `delete_requested` for the next pass. Never assume gone.
+    if (!provider.confirmDestroyed) return provider.runDestroy(cfg, a.resource, a.ledger as Ledger);
     return provider.confirmDestroyed(cfg, a.resource, a.ledger as Ledger);
   },
 });

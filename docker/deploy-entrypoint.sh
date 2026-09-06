@@ -107,25 +107,46 @@ else
   echo "[deploy] WARNING: could not list deployment env; skipping secret auto-generation" >&2
 fi
 
-echo "[deploy] pushing functions to ${CONVEX_SELF_HOSTED_URL}"
-bunx convex deploy -y
-
 # Node-runtime guard for the "use node" actions: the backend image decides which
 # Node runs them (its .nvmrc), and the npm packages those actions import declare
 # a floor (scripts/node-floor.mjs derives the highest one). A backend below the
-# floor would fail at the first provider/probe call in production; refuse here
-# instead, loudly. DEPLOY_SKIP_NODE_FLOOR=true bypasses in an emergency.
+# floor would fail at the first provider/probe call in production, so refuse
+# loudly — and BEFORE the push whenever the running deployment already exposes
+# the probe function (every release after the one that introduced it), so
+# incompatible code is never published first. The very first deploy of the guard
+# can only check after its own push. DEPLOY_SKIP_NODE_FLOOR=true bypasses.
+read_backend_node() {
+  bunx convex run relayProviderOps:runtimeInfo '{}' 2>/dev/null |
+    bun -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).nodeVersion??"")}catch{console.log("")}})' || true
+}
+check_node_floor() {
+  # $1 = observed version, $2 = stage label
+  if ! bun scripts/node-floor.mjs --check "$1"; then
+    echo "[deploy] ERROR ($2): backend Node $1 is below the action-dependency floor; update the convex-backend image pin" >&2
+    exit 1
+  fi
+}
+if [ "${DEPLOY_SKIP_NODE_FLOOR:-false}" != "true" ]; then
+  echo "[deploy] pre-push check of the backend's Node runtime for \"use node\" actions"
+  node_version="$(read_backend_node)"
+  if [ -n "${node_version}" ]; then
+    check_node_floor "${node_version}" "before push"
+  else
+    echo "[deploy]   runtime probe not available yet on this deployment; checking after the push"
+  fi
+fi
+
+echo "[deploy] pushing functions to ${CONVEX_SELF_HOSTED_URL}"
+bunx convex deploy -y
+
 if [ "${DEPLOY_SKIP_NODE_FLOOR:-false}" != "true" ]; then
   echo "[deploy] checking the backend's Node runtime for \"use node\" actions"
-  node_version="$(bunx convex run relayProviderOps:runtimeInfo '{}' 2>/dev/null | bun -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).nodeVersion??"")}catch{console.log("")}})' || true)"
+  node_version="$(read_backend_node)"
   if [ -z "${node_version}" ]; then
     echo "[deploy] ERROR: could not read the backend Node version (relayProviderOps:runtimeInfo)" >&2
     exit 1
   fi
-  if ! bun scripts/node-floor.mjs --check "${node_version}"; then
-    echo "[deploy] ERROR: backend Node ${node_version} is below the action-dependency floor; update the convex-backend image pin" >&2
-    exit 1
-  fi
+  check_node_floor "${node_version}" "after push"
 fi
 
 echo "[deploy] seeding tiers + settings (+ Remnawave instance if REMNAWAVE_* is set)"

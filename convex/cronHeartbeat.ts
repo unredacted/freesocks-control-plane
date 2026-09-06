@@ -140,6 +140,11 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     everyMs: 5 * MIN,
     description: 'Relay edges: score reports + load + probes per origin; opt-in auto-rotate',
   },
+  {
+    name: 'retention-relay-probes',
+    everyMs: DAY,
+    description: 'Prune settled relay probe runs past the retention window',
+  },
 ];
 
 /**

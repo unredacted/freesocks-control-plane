@@ -248,4 +248,87 @@ describe('relayEdgeTemplates', () => {
     });
     expect(val.ok).toBe(false);
   });
+
+  test("changing a template's parameters clears the qualification of accounts qualified with it or defaulting to it", async () => {
+    const t = convexTest(schema, modules);
+    const { id: tplId, paramsHash } = await t.mutation(internal.relayEdgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Tpl',
+      params: { flavor: 'lb1-2-4' },
+    });
+    const mk = (name: string) =>
+      t.mutation(internal.relayProviderAccounts.create, {
+        provider: 'gcore',
+        name,
+        settings: { projectId: 11, regionId: 22 },
+        credentials: { apiKey: 'k' },
+      });
+    const byHash = (await mk('by-hash')).id;
+    const byDefault = (await mk('by-default')).id;
+    const other = (await mk('other')).id;
+    await t.mutation(internal.relayProviderAccounts.setQualified, {
+      id: byHash,
+      qualified: true,
+      templateHash: paramsHash,
+    });
+    await t.mutation(internal.relayProviderAccounts.update, {
+      id: byDefault,
+      defaultTemplateId: tplId,
+    });
+    await t.mutation(internal.relayProviderAccounts.setQualified, {
+      id: byDefault,
+      qualified: true,
+    });
+    await t.mutation(internal.relayProviderAccounts.setQualified, {
+      id: other,
+      qualified: true,
+      templateHash: 'unrelated',
+    });
+    // A rename does not touch anyone.
+    await t.mutation(internal.relayEdgeTemplates.update, { id: tplId, name: 'Tpl2' });
+    // A parameter change does.
+    const upd = await t.mutation(internal.relayEdgeTemplates.update, {
+      id: tplId,
+      params: { flavor: 'lb1-4-8' },
+    });
+    expect(upd.requalify).toBe(2);
+    const q = async (id: typeof byHash) =>
+      (await t.query(internal.relayProviderAccounts.getForAdmin, { id }))!.qualified;
+    expect(await q(byHash)).toBe(false);
+    expect(await q(byDefault)).toBe(false);
+    expect(await q(other)).toBe(true);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(
+      audit.filter(
+        (a) => a.action === 'relay.provider_account.qualified' && a.payload?.qualified === false,
+      ),
+    ).toHaveLength(2);
+  });
+
+  test('getInventory decodes the stored snapshot into the admin contract shape', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.relayProviderAccounts.create, {
+      provider: 'gcore',
+      name: 'inv',
+      settings: { projectId: 11, regionId: 22 },
+      credentials: { apiKey: 'k' },
+    });
+    expect(await t.query(internal.relayProviderAccounts.getInventory, { id })).toEqual({
+      inventory: null,
+      inventoryAt: null,
+    });
+    const snapshot = {
+      loadBalancers: [{ id: 'lb-1', name: 'x', addresses: { v4: '198.51.100.2' }, unowned: true }],
+      ips: [],
+      flavors: [{ id: 'f', label: 'F' }],
+    };
+    await t.mutation(internal.relayProviderAccounts.recordInventory, {
+      id,
+      inventory: JSON.stringify(snapshot),
+    });
+    const view = (await t.query(internal.relayProviderAccounts.getInventory, { id }))!;
+    expect(view.inventory).toEqual(snapshot);
+    expect(typeof view.inventoryAt).toBe('string');
+    expect(new Date(view.inventoryAt as string).getTime()).toBeGreaterThan(0);
+  });
 });

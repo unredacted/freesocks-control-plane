@@ -155,8 +155,13 @@ export function pickAccount(
   if (ofProvider.length === 0) return { ok: false, code: 'no_account_for_provider' };
   const qualified = ofProvider.filter((a) => a.qualified);
   if (qualified.length === 0) return { ok: false, code: 'no_qualified_account' };
+  // dailyAllocationBudget 0 = unlimited (the same rule `reserveAllocation` applies).
   const usable = qualified
-    .filter((a) => a.liveEdges < a.maxLiveEdges && a.allocationsToday < a.dailyAllocationBudget)
+    .filter(
+      (a) =>
+        a.liveEdges < a.maxLiveEdges &&
+        (a.dailyAllocationBudget === 0 || a.allocationsToday < a.dailyAllocationBudget),
+    )
     .sort((a, b) => a.priority - b.priority || a.liveEdges - b.liveEdges);
   if (usable.length === 0) return { ok: false, code: 'accounts_exhausted' };
   return { ok: true, account: usable[0] };

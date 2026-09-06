@@ -358,6 +358,8 @@ export const settleOp = internalMutation({
         state: v.string(),
         opRef: v.optional(v.union(v.string(), v.null())),
         attempt: v.optional(v.number()),
+        /** Consecutive unresolved discovery passes; `finished`/`done` resets it. */
+        discoverAttempts: v.optional(v.number()),
         started: v.optional(v.boolean()),
         finished: v.optional(v.boolean()),
       }),
@@ -387,6 +389,11 @@ export const settleOp = internalMutation({
               state: a.stepPatch!.state as Step['state'],
               opRef: a.stepPatch!.opRef === null ? undefined : (a.stepPatch!.opRef ?? s.opRef),
               attempt: a.stepPatch!.attempt ?? s.attempt,
+              discoverAttempts:
+                a.stepPatch!.discoverAttempts ??
+                (a.stepPatch!.state === 'done' || a.stepPatch!.state === 'pending'
+                  ? undefined
+                  : s.discoverAttempts),
               startedAt: a.stepPatch!.started ? (s.startedAt ?? now) : s.startedAt,
               finishedAt: a.stepPatch!.finished ? now : s.finishedAt,
             }

@@ -1798,6 +1798,9 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         });
         return;
       }
+      // Attempts live on the step (each pass settles the claim; adapters need
+      // ≥2 quiet looks before `confirmed_absent`).
+      const discoverAttempt = (pending.discoverAttempts ?? 0) + 1;
       let disc: Discovery;
       try {
         disc = await ctx.runAction(internal.relayProviderOps.discover, {
@@ -1805,7 +1808,7 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
           spec,
           step,
           ledger,
-          attempt: cl.attempt,
+          attempt: discoverAttempt,
         });
       } catch (err) {
         const { code, detail } = errCode(err);
@@ -1871,7 +1874,13 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
         return;
       }
       // unresolved
-      await settle(cl.opId, {});
+      await settle(cl.opId, {
+        stepPatch: {
+          stepId: pending.stepId,
+          state: pending.state,
+          discoverAttempts: discoverAttempt,
+        },
+      });
       if ((pending.startedAt ?? edge._creationTime) + relayMs.discoveryTimeout(cfg) < now) {
         await ctx.runMutation(internal.relayEdges.patchEdge, {
           edgeId: edge._id,
@@ -1916,6 +1925,7 @@ async function settleEdgeOp(
       state: string;
       opRef?: string | null;
       attempt?: number;
+      discoverAttempts?: number;
       started?: boolean;
       finished?: boolean;
     };
@@ -2194,12 +2204,22 @@ async function phaseConfirming(ctx: ActionCtx, c: Ctx) {
   try {
     hosts = await listHosts(ctx, origin);
   } catch (err) {
-    const { code } = errCode(err);
-    await advanceCall(ctx, r._id, sv, {
-      type: 'progress',
-      delayMs: relayMs.poll(cfg),
+    // The panel is down after the Host write: bounded like the flip itself.
+    // Past the cap the rotation rolls back (itself bounded → quarantine).
+    const { code, detail } = errCode(err);
+    if (r.flipAttempts + 1 > cfg.maxFlipAttempts) {
+      await advanceCall(ctx, r._id, sv, {
+        type: 'fail',
+        code: 'panel_unreachable',
+        detail: `confirm: ${code} ${detail}`.trim(),
+        rollback: true,
+      });
+      return;
+    }
+    await ctx.runMutation(internal.relayRotations.bumpFlipAttempts, {
+      rotationId: r._id,
+      stepVersion: sv,
       detail: `confirm: list hosts failed: ${code}`,
-      countPoll: true,
     });
     return;
   }

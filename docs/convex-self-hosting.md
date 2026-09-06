@@ -168,10 +168,10 @@ Actions that use npm SDKs (`convex/relayProviderOps.ts`, `convex/relayProbeOps.t
 (`ghcr.io/get-convex/convex-backend`, pinned by that repo's `.nvmrc`; the backend accepts
 v20/v22/v24 only). There is no per-deployment override on self-hosted; a newer Node arrives
 with the monthly image re-pin. The deploy entrypoint runs
-`bunx convex run relayProviderOps:runtimeInfo` after `convex deploy` and fails when the
-runtime is below the highest `engines.node` floor among the node-action dependencies
-(`scripts/node-floor.mjs`; `DEPLOY_SKIP_NODE_FLOOR=true` bypasses). The observed version is
-shown on the admin dashboard.
+`bunx convex run relayProviderOps:runtimeInfo` before `convex deploy` (when the running
+deployment already has it) and again after, and fails when the runtime is below the highest
+`engines.node` floor among the node-action dependencies (`scripts/node-floor.mjs`;
+`DEPLOY_SKIP_NODE_FLOOR=true` bypasses). The observed version is shown on the admin dashboard.
 
 ## 6. Cutover to Convex (P11, start fresh)
 

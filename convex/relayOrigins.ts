@@ -15,6 +15,51 @@ import { isPublicIpLiteral, addressFamily } from './lib/relays/ip';
 import { sameAddress } from './lib/relays/hosts';
 import { nextFreePoolIndex, withEdgeAt, withoutEdge, publishedCount } from './lib/relays/pool';
 
+type Db = import('./_generated/server').DatabaseReader;
+
+/**
+ * One origin per backend node: rendering and report attribution resolve the
+ * origin from (backendServerId, nodeHostname) and take the first match.
+ */
+async function assertNodeUnbound(
+  db: Db,
+  backendServerId: Id<'backendServers'>,
+  nodeHostname: string,
+  selfId: Id<'relayOrigins'> | null,
+) {
+  const rows = await db
+    .query('relayOrigins')
+    .withIndex('by_node_hostname', (q) => q.eq('nodeHostname', nodeHostname))
+    .collect();
+  const other = rows.find((r) => r.backendServerId === backendServerId && r._id !== selfId);
+  if (other) {
+    throw new ConvexError({
+      code: 'relay.node_already_bound',
+      message: `Origin ${other.slug} already covers this node on this backend`,
+    });
+  }
+}
+
+/**
+ * `originAddress` is baked into every provisioned edge's listener members; FCP
+ * has no member-update operation, so a change while edges exist would leave the
+ * balancers dialing the old target while FCP reports the new one. Refuse until
+ * the origin's edges are drained/destroyed (or the origin is recreated).
+ */
+async function assertAddressChangeAllowed(db: Db, origin: Doc<'relayOrigins'>, next?: string) {
+  if (next === undefined || sameAddress(next, origin.originAddress)) return;
+  const edges = await db
+    .query('relayEdges')
+    .withIndex('by_origin_status', (q) => q.eq('originId', origin._id))
+    .collect();
+  if (edges.some((e) => e.status !== 'destroyed')) {
+    throw new ConvexError({
+      code: 'relay.origin_address_locked',
+      message: 'Drain or destroy every edge of this origin before changing originAddress',
+    });
+  }
+}
+
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const HOSTNAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -256,6 +301,7 @@ async function insertOrigin(
   }
   const cfg = await resolveRelayConfig(ctx.db);
   const p = patchFrom(a);
+  await assertNodeUnbound(ctx.db, backendServerId, p.nodeHostname!, null);
   const now = Date.now();
   return ctx.db.insert('relayOrigins', {
     slug,
@@ -315,6 +361,9 @@ export const update = internalMutation({
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const p = patchFrom(a);
+    await assertAddressChangeAllowed(ctx.db, row, p.originAddress);
+    if (p.nodeHostname !== undefined && p.nodeHostname !== row.nodeHostname)
+      await assertNodeUnbound(ctx.db, row.backendServerId, p.nodeHostname, id);
     // Publication-affecting edits bump the epoch (render cache + assignment).
     const affects =
       p.desiredPublished !== undefined || p.modeSlugs !== undefined || p.enabled !== undefined;
@@ -356,6 +405,10 @@ export const upsertBySlug = internalMutation({
       const p = patchFrom(a);
       // The role must not silently flip operator-owned automation knobs.
       delete p.autoRotate;
+      await assertAddressChangeAllowed(ctx.db, existing, p.originAddress);
+      const host = p.nodeHostname ?? existing.nodeHostname;
+      if (host !== existing.nodeHostname || server._id !== existing.backendServerId)
+        await assertNodeUnbound(ctx.db, server._id, host, id);
       await ctx.db.patch(id, { ...p, backendServerId: server._id, updatedAt: Date.now() });
     } else {
       id = await insertOrigin(ctx, slug, server._id, a);

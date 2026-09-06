@@ -236,12 +236,25 @@ export const update = internalMutation({
         throw new ConvexError({ code: 'validation', message: 'invalid template name' });
       patch.name = a.name;
     }
+    let requalify: Doc<'relayProviderAccounts'>[] = [];
     if (a.params !== undefined) {
       const parsed = validateTemplateParams(row.provider, a.params);
       if (!parsed.ok)
         throw new ConvexError({ code: 'validation', message: parsed.issues.join('; ') });
       patch.params = JSON.stringify(parsed.params);
       patch.paramsHash = templateHashOf(parsed.params);
+      if (patch.paramsHash !== row.paramsHash) {
+        // The REALITY qualification was run with the OLD parameters: every
+        // qualified account that was qualified with them, or that would provision
+        // from this template next, must be re-qualified before automation uses it.
+        const accounts = await ctx.db.query('relayProviderAccounts').collect();
+        requalify = accounts.filter(
+          (acct) =>
+            acct.provider === row.provider &&
+            acct.qualified &&
+            (acct.defaultTemplateId === a.id || acct.qualifiedTemplateHash === row.paramsHash),
+        );
+      }
     }
     if (a.isDefault === true) {
       await clearDefault(ctx, row.provider);
@@ -250,6 +263,21 @@ export const update = internalMutation({
       patch.isDefault = false;
     }
     await ctx.db.patch(a.id, patch);
+    for (const acct of requalify) {
+      await ctx.db.patch(acct._id, {
+        qualified: false,
+        qualifiedTemplateHash: undefined,
+        updatedAt: Date.now(),
+      });
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: a.actorAdminId ?? undefined,
+        action: 'relay.provider_account.qualified',
+        targetType: 'relay_provider_account',
+        targetId: acct._id,
+        payload: { name: acct.name, provider: acct.provider, qualified: false },
+      });
+    }
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
@@ -258,7 +286,11 @@ export const update = internalMutation({
       targetId: a.id,
       payload: { provider: row.provider, name: patch.name ?? row.name },
     });
-    return { ok: true as const, paramsHash: patch.paramsHash ?? row.paramsHash };
+    return {
+      ok: true as const,
+      paramsHash: patch.paramsHash ?? row.paramsHash,
+      requalify: requalify.length,
+    };
   },
 });
 

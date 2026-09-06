@@ -407,4 +407,114 @@ describe('relayReconcile', () => {
     const hb = await s.t.run((ctx) => ctx.db.query('cronHeartbeats').collect());
     expect(hb.some((h) => h.name === 'relay-edge-reconcile')).toBe(true);
   });
+
+  test('discovery attempts persist on the step: an adapter needing two quiet looks reaches confirmed_absent on the second pass', async () => {
+    // Gcore's discover says `unresolved` on the first miss (a create may still be
+    // registering) and `confirmed_absent` from attempt 2. Each pass settles its
+    // claim, so the count has to live on the step, not the claim.
+    const stub = mockFetch((c) => {
+      if (new URL(c.url).hostname === 'panel.example') return jsonRes({ response: [] });
+      if (c.path === '/cloud/v1/loadbalancers/11/22' && c.method === 'GET')
+        return jsonRes({ results: [] });
+      throw new Error(`unexpected ${c.method} ${c.url}`);
+    });
+    const s = await seed();
+    const { id: accountId } = await s.t.mutation(internal.relayProviderAccounts.create, {
+      provider: 'gcore',
+      name: 'acct-g',
+      settings: { projectId: 11, regionId: 22 },
+      credentials: { apiKey: 'k' },
+    });
+    await s.t.mutation(internal.relayProviderAccounts.setQualified, {
+      id: accountId,
+      qualified: true,
+    });
+    await s.t.mutation(internal.relayProfiles.create, {
+      slug: 'prof-g',
+      name: 'Profile G',
+      provider: 'gcore',
+      targetAddress: 'target-g.example',
+      serverNames: ['g.example'],
+    });
+    const { id: slotId } = await s.t.mutation(internal.relaySlots.upsert, {
+      originId: s.originId,
+      slotKey: 'g',
+      profileSlug: 'prof-g',
+      inboundTag: 'VLESS_RELAY_G',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '33333333-3333-4333-8333-333333333333',
+      originPort: 8443,
+    });
+    const { id: edgeId } = await s.t.mutation(internal.relayEdges.insertPlanned, {
+      originId: s.originId,
+      slotId,
+      accountId,
+      templateHash: 'h',
+      listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 8443 }],
+      steps: [{ id: 'lb', kind: 'create_lb', resourceName: 'x', discoverability: 'by_name' }],
+    });
+    await s.t.mutation(internal.relayEdges.patchEdge, {
+      edgeId,
+      status: 'failed',
+      stepStates: [{ stepId: 'lb', state: 'unresolved' }],
+    });
+    const r1 = await run(s.t);
+    expect(r1.settled).toBe(1);
+    let edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(edge.steps[0]).toMatchObject({ state: 'unresolved', discoverAttempts: 1 });
+    expect(edge.currentOp).toBeUndefined();
+    const r2 = await run(s.t);
+    expect(r2.settled).toBe(1);
+    edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(edge.steps[0].state).toBe('done');
+    expect(edge.steps[0].discoverAttempts).toBeUndefined();
+    // Two LISTs, never a POST.
+    expect(stub.calls.filter((c) => c.path.startsWith('/cloud/')).map((c) => c.method)).toEqual([
+      'GET',
+      'GET',
+    ]);
+  });
+
+  test('a sync-delete provider is confirmed by re-issuing the delete, never by assuming it landed', async () => {
+    const lbs = new Map([['lb-1', { uuid: 'lb-1', name: 'x', operational_state: 'running' }]]);
+    const deletes: string[] = [];
+    let failNext = true;
+    mockFetch((c) => {
+      if (new URL(c.url).hostname === 'panel.example') return jsonRes({ response: [] });
+      const one = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)$/);
+      if (one && c.method === 'GET') {
+        const lb = lbs.get(one[1]);
+        return lb ? jsonRes(lb) : jsonRes({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
+      }
+      if (one && c.method === 'DELETE') {
+        deletes.push(one[1]);
+        if (failNext) {
+          failNext = false;
+          return jsonRes({ error: { error_code: 'INTERNAL' } }, 500); // unknown outcome; LB stays
+        }
+        lbs.delete(one[1]);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`unexpected ${c.method} ${c.url}`);
+    });
+    const s = await seed();
+    const edgeId = await managedEdge(s, 'lb-1', {
+      status: 'draining',
+      publication: 'draining',
+      drainUntil: Date.now() - 1,
+    });
+    await run(s.t); // → destroying
+    const r2 = await run(s.t); // DELETE throws → delete_requested
+    expect(r2.errors).toBe(1);
+    let edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(edge.resources[0].deleteState).toBe('delete_requested');
+    expect(edge.status).toBe('destroying');
+    // Confirmation re-runs the idempotent DELETE; the LB is really gone only now.
+    const r3 = await run(s.t);
+    expect(r3.destroyed).toBe(1);
+    edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(edge.status).toBe('destroyed');
+    expect(deletes).toEqual(['lb-1', 'lb-1']);
+    expect(lbs.size).toBe(0);
+  });
 });

@@ -213,6 +213,32 @@ describe('relay attribution on member reports', () => {
 describe('relay block detector', () => {
   const NOW = 1_800_000_000_000;
 
+  test('edge evidence counts deduplicated reporters: repeats by one member (weight 0) add nothing', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await seed();
+    await s.t.run(async (ctx) => {
+      for (let i = 0; i < 5; i++) {
+        await ctx.db.insert('issueReports', {
+          kind: 'report',
+          reason: 'cant-connect',
+          backend: 'remnawave',
+          relaySlug: 'node-one',
+          relayEdgeId: s.edgeA,
+          connectionChoice: 'primary',
+          country: 'IR',
+          detectorWeight: i === 0 ? 1 : 0,
+        });
+      }
+    });
+    const w = (await s.t.query(internal.relayDetector.originWindow, {
+      originId: s.originId,
+      now: NOW,
+    }))!;
+    expect(w.window.reports).toBe(5);
+    expect(w.window.distinctReporters).toBe(1);
+    expect(w.window.byEdge[s.edgeA]).toEqual({ count: 1, countries: { IR: 1 } });
+  });
+
   async function warmBaseline(
     t: ReturnType<typeof convexTest>,
     originId: Id<'relayOrigins'>,

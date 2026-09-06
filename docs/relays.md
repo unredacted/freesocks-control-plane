@@ -90,14 +90,18 @@ Recovery contract:
   went stale (a crashed action).
 - **Resource-step ledger.** `planProvision` yields the ordered steps; every child resource an
   adapter creates is recorded on the edge before anything else happens, including on partial
-  failures. Destroy walks the ledger in reverse (`present → delete_requested → confirmed_gone`).
+  failures. Destroy walks the ledger in reverse (`present → delete_requested → confirmed_gone`);
+  a provider without an async-delete confirmation is confirmed by re-issuing its idempotent
+  delete, never by assuming the delete landed.
 - **Operation claims.** Every external write (a provider step, a Host PATCH) is bracketed by a
   claim with an expiry. An expired, unsettled claim blocks any further allocating or destroying
   call until the outcome is re-observed.
 - **Four-outcome discovery.** After an unknown outcome the adapter reports `found` (adopt the
   resource), `confirmed_absent` (safe to run the step again), `unresolved` (keep waiting, up to
   `discoveryTimeoutMinutes`) or `ambiguous` (candidates whose ownership cannot be proven: an
-  operator decides; nothing is destroyed automatically).
+  operator decides; nothing is destroyed automatically). The count of consecutive unresolved
+  looks is kept on the step (`discoverAttempts`), so adapters that want two quiet looks before
+  `confirmed_absent` get them even though each pass settles its claim.
 - **Observe-then-write Hosts.** The flip captures its plan from the live Host list first. A planned
   Host that later disappears or changes inbound is `hosts_changed`: the run rolls back the
   **complete previous binding** (edge, slot, profile, pool index, Host address) and never
@@ -137,7 +141,10 @@ configured countries. No member data is involved (see `docs/privacy.md`). Source
 Verdicts need agreement: within a source, `unreachable` requires `probe.agreementVantages`
 distinct failing networks and no success; across sources, a second source or a second network.
 `reachable` needs one residential success or two datacenter successes. Runs are budgeted per hour;
-suspected origins are probed at `suspectedIntervalMinutes`.
+suspected origins are probed at `suspectedIntervalMinutes`. A dual-stack edge is probed per
+address family and rolled up per family: the country verdict follows the IPv4 path (what every
+member receives) and the IPv6 path is reported alongside as `v6Verdict`. Settled runs are kept
+two weeks (`retention-relay-probes`, daily).
 
 ### Attribution
 
@@ -155,7 +162,8 @@ Per origin: attributed reports in the window (deduplicated), the node's live use
 its own baseline, and probe verdicts. Origin-level evidence can only **hint** (the dashboard
 strip and the origin badge). An **automatic rotation** needs, in order: `relay.enabled`,
 `relay.autoRotate`, the origin's `autoRotate`, a suspected state, edge-level evidence (probes,
-or members naming the connection with enough share), the edge not being an outage (internal
+or members naming the connection with enough share, counted after the per-member dedupe), the
+edge not being an outage (internal
 probe and provider health say the edge itself is up), no quarantine, no running rotation,
 cooldown and daily cap not reached, and a manageable Host when the target holds index 0. The
 resulting rotation is a **burn** (short drain). Every refusal is recorded on the origin as the
@@ -185,7 +193,11 @@ template Host, and registers both with FCP using an `fsv1_` token with `admin:se
 
 1. `PUT /api/v1/admin/relays/origins/by-slug/{hostname}` with
    `{ backendServerSlug, nodeHostname, originAddress, locationCode?, modeSlugs? }`
-   (idempotent; never flips `autoRotate`). The response carries `publishedEndpoints`.
+   (idempotent; never flips `autoRotate`). The response carries `publishedEndpoints`. One origin
+   per (backend server, node) is enforced (`relay.node_already_bound`), and `originAddress`
+   cannot change while the origin has live edges (`relay.origin_address_locked`): edges carry
+   the address in their listener members, so a moved node means draining or destroying its
+   edges first (or registering a new origin).
 2. `PUT /api/v1/admin/relays/origins/by-slug/{hostname}/slots/{slotKey}` with
    `{ profileSlug, inboundTag, configProfileUuid, configProfileInboundUuid, originPort }`
    per inbound. Changing the inbound uuid re-binds the slot (the template Host must be recreated).
@@ -206,7 +218,9 @@ templates pin with the node like its other Hosts.
 **Qualify a provider account.** Add the account and test its credentials; provision a test edge
 on an origin (unpublished); open an authenticated REALITY session through the edge with a real
 client and hold it idle for several minutes; pull the live view; then "Mark qualified". Changing
-the account's credentials or settings, or the template it uses, clears the qualification.
+the account's credentials or settings clears the qualification; so does changing the parameters
+of a template the account was qualified with or uses as its default (audited as
+`relay.provider_account.qualified` with `qualified:false`).
 
 **Bootstrap an origin.** Register via the role (or create it here), adopt the hand-made edge at
 index 0 (publish), provision a second edge (published at index 1), enable rendering, preview each
@@ -225,5 +239,7 @@ ledger and delete), "Reactivate" (the resource is fine) or "Forget" (you cleaned
 The `"use node"` actions (provider SDKs, probes) run on the Node version baked into the
 self-hosted Convex backend image. `scripts/node-floor.mjs` derives the highest `engines.node`
 floor among those dependencies and `docker/deploy-entrypoint.sh` fails the deploy when the
-runtime is below it (`DEPLOY_SKIP_NODE_FLOOR=true` bypasses). The observed version shows on the
-admin dashboard.
+runtime is below it (`DEPLOY_SKIP_NODE_FLOOR=true` bypasses). The check runs BEFORE the push when
+the running deployment already exposes the runtime probe (so incompatible code is never
+published first) and again after it; only the first deploy of the guard checks after its own
+push. The observed version shows on the admin dashboard.
