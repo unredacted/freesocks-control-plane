@@ -696,3 +696,63 @@ describe('subscriptions.appendMirror — a superseded row is refused', () => {
     });
   });
 });
+
+describe('subscriptions — relay render key + delivery stamps', () => {
+  test('insertSubscription mints a renderKey; ensureRenderKey backfills and is idempotent', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }),
+    );
+    const id = await t.mutation(internal.subscriptions.insertSubscription, {
+      userId,
+      backend: 'remnawave',
+      backendUserId: 'u-rk',
+      backendShortId: 'short-rk',
+      subscriptionUrl: 'https://sub.example/rk',
+      subscriptionMirrors: [],
+    });
+    const row = await t.run((ctx) => ctx.db.get(id));
+    expect(row?.renderKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(row?.renderKey).not.toBe(row?.subToken);
+    // A legacy row without a key gets one exactly once.
+    const legacy = await t.run((ctx) =>
+      ctx.db.insert('subscriptions', subFields(userId, 'legacy', 'active')),
+    );
+    const k1 = await t.mutation(internal.subscriptions.ensureRenderKey, { subscriptionId: legacy });
+    const k2 = await t.mutation(internal.subscriptions.ensureRenderKey, { subscriptionId: legacy });
+    expect(k1).toMatch(/^[0-9a-f]{64}$/);
+    expect(k2).toBe(k1);
+  });
+
+  test('markDelivered stamps now + content time, advances content time, throttles repeats', async () => {
+    const t = convexTest(schema, modules);
+    const tierId = await seedTier(t);
+    const userId = await t.run((ctx) =>
+      ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() }),
+    );
+    const id = await t.run((ctx) =>
+      ctx.db.insert('subscriptions', subFields(userId, 'd', 'active')),
+    );
+    const t0 = Date.now() - 5_000;
+    await t.mutation(internal.subscriptions.markDelivered, { subscriptionId: id, contentAt: t0 });
+    const a = await t.run((ctx) => ctx.db.get(id));
+    expect(a?.lastDeliveredContentAt).toBe(t0);
+    expect(a?.lastDeliveredAt).toBeGreaterThanOrEqual(t0);
+    // Same (older) content within the throttle window: no write.
+    await t.mutation(internal.subscriptions.markDelivered, {
+      subscriptionId: id,
+      contentAt: t0 - 1,
+    });
+    const b = await t.run((ctx) => ctx.db.get(id));
+    expect(b?.lastDeliveredAt).toBe(a?.lastDeliveredAt);
+    expect(b?.lastDeliveredContentAt).toBe(t0);
+    // Newer content always advances the content stamp.
+    await t.mutation(internal.subscriptions.markDelivered, {
+      subscriptionId: id,
+      contentAt: t0 + 1000,
+    });
+    const c = await t.run((ctx) => ctx.db.get(id));
+    expect(c?.lastDeliveredContentAt).toBe(t0 + 1000);
+  });
+});
