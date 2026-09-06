@@ -117,7 +117,12 @@ const relayProviderSettings = v.union(
     subnetId: v.optional(v.string()),
   }),
   v.object({ type: v.literal('upcloud'), zone: v.string() }),
-  v.object({ type: v.literal('scaleway'), projectId: v.string(), zone: v.string() }),
+  v.object({
+    type: v.literal('scaleway'),
+    accessKey: v.string(), // public key id (the SDK pairs it with the secret); not a secret
+    projectId: v.string(),
+    zone: v.string(),
+  }),
   v.object({
     type: v.literal('ovh'),
     applicationKey: v.string(), // public app identifier, not a secret
