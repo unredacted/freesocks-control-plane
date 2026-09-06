@@ -204,7 +204,7 @@
             </Collapsible.Content>
           </Collapsible.Root>
         {:else}
-          {@const active = item.to === router.pathname}
+          {@const active = item.to === router.pathname || router.pathname.startsWith(`${item.to}/`)}
           <Link
             href={item.to}
             onclick={() => (mobileOpen = false)}

@@ -235,11 +235,12 @@ Highlights:
   (country × connection mode), and operator-published **incidents** — all edited in
   the CMS (**Admin → Status**) with no redeploy. The member's Access Pass shows which
   node its key is on and deep-links to that location's card.
-- **Relay edges**: Freedom Mode REALITY nodes sit behind provider-managed TCP load
-  balancers that FCP provisions, publishes as a per-origin pool (primary + backup),
-  renders into each member's subscription with a stable assignment and one server name
-  per connection, probes from the countries that matter, and rotates when blocked, all
-  with a recovery-first ledger and a sealed admin surface. Ships dormant
+- **Relays and edges**: nodes whose protocols need an L4 front (REALITY, or any TCP
+  inbound) sit behind provider-managed load balancers ("edges") that FCP provisions,
+  publishes as a per-relay pool (primary + backup), renders into each member's
+  subscription with a stable assignment (one server name per REALITY connection), probes
+  from the countries that matter, and rotates when blocked, all with a recovery-first
+  ledger, per-rotation audit trails and a sealed admin surface. Ships dormant
   ([`docs/relays.md`](docs/relays.md)).
 - **Referral program**: every member has a shareable `FSR-…` code; a sign-up through
   it binds the new account. Rewards vest only on the referee's **first paid

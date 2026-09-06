@@ -102,6 +102,7 @@ import type * as relayAdmin from "../relayAdmin.js";
 import type * as relayDetector from "../relayDetector.js";
 import type * as probeOps from "../probeOps.js";
 import type * as probes from "../probes.js";
+import type * as probeTargets from "../probeTargets.js";
 import type * as edgeProviderAccounts from "../edgeProviderAccounts.js";
 import type * as edgeProviderOps from "../edgeProviderOps.js";
 import type * as remnawaveNodes from "../remnawaveNodes.js";
@@ -220,6 +221,7 @@ declare const fullApi: ApiFromModules<{
   relayDetector: typeof relayDetector;
   probeOps: typeof probeOps;
   probes: typeof probes;
+  probeTargets: typeof probeTargets;
   edgeProviderAccounts: typeof edgeProviderAccounts;
   edgeProviderOps: typeof edgeProviderOps;
   remnawaveNodes: typeof remnawaveNodes;

@@ -5,6 +5,7 @@
  * HPKE-sealed by verb class (src/shared/crypto/envelope.ts).
  */
 import { z } from 'zod';
+import { AuditEntry } from './admin';
 import { EDGE_PROVIDER_IDS } from './edgeProviderIds';
 
 export { EDGE_PROVIDER_IDS, isRelayProviderId } from './edgeProviderIds';
@@ -188,6 +189,11 @@ export const RelayAdmin = z.object({
   enabled: z.boolean(),
   autoRotate: z.boolean(),
   hostManaged: z.boolean(),
+  probeNode: z.boolean().default(false),
+  reachability: z
+    .object({ byCountry: z.array(z.unknown()), updatedAt: isoN })
+    .nullable()
+    .default(null),
   providerAffinity: z.enum(['rotate', 'sticky']),
   providerPreference: EdgeProviderId.nullable(),
   desiredPublished: z.number(),
@@ -388,12 +394,28 @@ export const EdgeRotationAdmin = z.object({
   updatedAt: iso,
 });
 export type EdgeRotationAdmin = z.infer<typeof EdgeRotationAdmin>;
+/** One rotation with its merged audit trail (rotation-, relay- and edge-targeted rows). */
+export const EdgeRotationDetail = EdgeRotationAdmin.extend({
+  audit: z.array(AuditEntry).default([]),
+});
+export type EdgeRotationDetail = z.infer<typeof EdgeRotationDetail>;
 
 // --- probes -------------------------------------------------------------------------------------
 
+export const PROBE_TARGET_KINDS = ['edge', 'relay', 'custom'] as const;
+export const ProbeTargetKind = z.enum(PROBE_TARGET_KINDS);
+export type ProbeTargetKind = z.infer<typeof ProbeTargetKind>;
+export const ProbeTargetRef = z.object({ kind: ProbeTargetKind, ref: z.string(), key: z.string() });
+
+export const ProbeReachabilitySummary = z.object({
+  byCountry: z.array(ProbeReachabilityCountry),
+  updatedAt: isoN,
+});
+export type ProbeReachabilitySummary = z.infer<typeof ProbeReachabilitySummary>;
+
 export const ProbeRunAdmin = z.object({
   id: z.string(),
-  edgeId: z.string(),
+  target: ProbeTargetRef,
   source: z.enum(['globalping', 'checkhost', 'ripeatlas', 'internal']),
   ipVersion: z.union([z.literal(4), z.literal(6)]),
   status: z.enum(['requested', 'running', 'finished', 'failed', 'timeout']),
@@ -416,20 +438,51 @@ export const ProbeRunAdmin = z.object({
 });
 export type ProbeRunAdmin = z.infer<typeof ProbeRunAdmin>;
 
+export const ProbeMatrixTarget = z.object({
+  key: z.string(),
+  kind: ProbeTargetKind,
+  ref: z.string(),
+  label: z.string(),
+  detail: z.string(),
+  /** Scheduled by the cron (published edge, opted-in relay node, enabled custom target). */
+  enabled: z.boolean(),
+  reachability: ProbeReachabilitySummary,
+});
+export type ProbeMatrixTarget = z.infer<typeof ProbeMatrixTarget>;
 export const ProbeReachabilityMatrix = z.object({
   countries: z.array(z.string()),
-  edges: z.array(
-    z.object({
-      edgeId: z.string(),
-      publication: z.string(),
-      poolIndex: z.number().nullable(),
-      provider: EdgeProviderId.nullable(),
-      byCountry: z.array(ProbeReachabilityCountry),
-      updatedAt: isoN,
-    }),
-  ),
+  targets: z.array(ProbeMatrixTarget),
 });
 export type ProbeReachabilityMatrix = z.infer<typeof ProbeReachabilityMatrix>;
+
+export const ProbeRunsResponse = z.object({ runs: z.array(ProbeRunAdmin) });
+export type ProbeRunsResponse = z.infer<typeof ProbeRunsResponse>;
+
+export const ProbeTargetAdmin = z.object({
+  id: z.string(),
+  key: z.string(),
+  label: z.string(),
+  address: z.string(),
+  port: z.number(),
+  display: z.string(),
+  enabled: z.boolean(),
+  notes: z.string().nullable(),
+  reachability: ProbeReachabilitySummary,
+  updatedAt: iso,
+});
+export type ProbeTargetAdmin = z.infer<typeof ProbeTargetAdmin>;
+export const ProbeTargetsResponse = z.object({ targets: z.array(ProbeTargetAdmin) });
+export type ProbeTargetsResponse = z.infer<typeof ProbeTargetsResponse>;
+export const ProbeTargetCreatedResponse = z.object({ id: z.string(), key: z.string() });
+
+export const ProbeAuditResponse = z.object({ entries: z.array(AuditEntry) });
+export type ProbeAuditResponse = z.infer<typeof ProbeAuditResponse>;
+
+export const ProbeManyRequestedResponse = z.object({
+  runIds: z.array(z.string()),
+  skipped: z.array(z.string()),
+});
+export type ProbeManyRequestedResponse = z.infer<typeof ProbeManyRequestedResponse>;
 
 // --- summary / endpoints / preview / config -------------------------------------------------------
 

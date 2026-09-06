@@ -62,7 +62,11 @@ import {
   RelayEndpointsResponse,
   RealityProfileList,
   ProbeReachabilityMatrix,
+  ProbeRunsResponse,
+  ProbeTargetsResponse,
+  ProbeAuditResponse,
   EdgeRotationAdmin,
+  EdgeRotationDetail,
   RelaySlotAdmin,
   RelaySummary,
   EdgeTemplatesResponse,
@@ -120,8 +124,10 @@ export const queryKeys = {
   adminRelaySlots: (relayId: string) => ['admin', 'relays', 'slots', relayId] as const,
   adminRelayRotations: (relayId: string) => ['admin', 'relays', 'rotations', relayId] as const,
   adminRelayRotation: (id: string) => ['admin', 'relays', 'rotation', id] as const,
-  adminRelayReachability: (relayId: string) =>
-    ['admin', 'relays', 'reachability', relayId] as const,
+  adminProbeMatrix: ['admin', 'relays', 'probes', 'matrix'] as const,
+  adminProbeTargets: ['admin', 'relays', 'probes', 'targets'] as const,
+  adminProbeRuns: (targetKey: string) => ['admin', 'relays', 'probes', 'runs', targetKey] as const,
+  adminProbeAudit: ['admin', 'relays', 'probes', 'audit'] as const,
   adminRelayEndpoints: (relayId: string) => ['admin', 'relays', 'endpoints', relayId] as const,
 };
 
@@ -771,22 +777,46 @@ export const adminRelayRotationQuery = (id: () => string | null) =>
     queryFn: () =>
       apiClient.get(
         `/api/v1/admin/relay/rotations/${encodeURIComponent(id() ?? '')}`,
-        EdgeRotationAdmin,
+        EdgeRotationDetail,
       ),
     enabled: id() !== null,
     refetchInterval: (q) => (q.state.data && !q.state.data.terminal ? 2_000 : false),
   }));
 
-export const adminRelayReachabilityQuery = (relayId: () => string | null) =>
+export const adminProbeMatrixQuery = () =>
   createQuery(() => ({
-    queryKey: queryKeys.adminRelayReachability(relayId() ?? ''),
+    queryKey: queryKeys.adminProbeMatrix,
+    queryFn: () => apiClient.get('/api/v1/admin/relay/probes/matrix', ProbeReachabilityMatrix),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  }));
+
+export const adminProbeTargetsQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminProbeTargets,
+    queryFn: () => apiClient.get('/api/v1/admin/relay/probes/targets', ProbeTargetsResponse),
+    staleTime: 30_000,
+  }));
+
+export const adminProbeRunsQuery = (targetKey: () => string | null) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminProbeRuns(targetKey() ?? ''),
+    enabled: !!targetKey(),
     queryFn: () =>
       apiClient.get(
-        `/api/v1/admin/relay/reachability?relayId=${encodeURIComponent(relayId() ?? '')}`,
-        ProbeReachabilityMatrix,
+        `/api/v1/admin/relay/probes?target=${encodeURIComponent(targetKey() ?? '')}&take=50`,
+        ProbeRunsResponse,
       ),
-    enabled: relayId() !== null,
-    staleTime: 30_000,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+  }));
+
+export const adminProbeAuditQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminProbeAudit,
+    queryFn: () => apiClient.get('/api/v1/admin/relay/probes/audit?take=100', ProbeAuditResponse),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
   }));
 
 export const adminRelayEndpointsQuery = (relayId: () => string | null) =>

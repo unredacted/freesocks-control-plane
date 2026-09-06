@@ -357,7 +357,7 @@ export const run = internalAction({
             for (const p of w.published) {
               try {
                 const r = await ctx.runMutation(internal.probes.requestProbes, {
-                  edgeId: p.edgeId as Id<'edges'>,
+                  target: { kind: 'edge', ref: p.edgeId },
                   trigger: 'detector',
                 });
                 report.probesRequested += r.runIds.length;

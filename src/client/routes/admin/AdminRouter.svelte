@@ -107,7 +107,9 @@
 {:else if router.pathname === '/admin/rate-limits'}
   <AdminRateLimits />
 {:else if router.pathname === '/admin/telemetry'}
-  <AdminTelemetry />
+  <AdminTelemetry view="reports" />
+{:else if router.pathname === '/admin/telemetry/probes'}
+  <AdminTelemetry view="probes" />
 {:else if router.pathname === '/admin/audit'}
   <AdminAudit />
 {:else if router.pathname === '/admin/settings'}

@@ -178,6 +178,24 @@ const relayReachVerdict = v.union(
   v.literal('mixed'),
   v.literal('unknown'),
 );
+/** Cross-source reachability summary kept on a probed target (edge, relay node, custom). */
+const probeReachabilitySummary = v.object({
+  byCountry: v.array(
+    v.object({
+      country: v.string(),
+      // The IPv4 path (what every member receives); IPv6 rows only when no v4 row exists.
+      verdict: relayReachVerdict,
+      // The IPv6 path, when the target has one and it was probed.
+      v6Verdict: v.optional(relayReachVerdict),
+      okVantages: v.number(),
+      failVantages: v.number(),
+      lastAt: v.number(),
+    }),
+  ),
+  updatedAt: v.number(),
+});
+const probeTargetKind = v.union(v.literal('edge'), v.literal('relay'), v.literal('custom'));
+
 const relayProbeSource = v.union(
   v.literal('globalping'),
   v.literal('checkhost'),
@@ -966,6 +984,9 @@ export default defineSchema({
       }),
     ),
     driftHash: v.optional(v.string()),
+    // Probe the node's own address too (a direct block signal, operator evidence only).
+    probeNode: v.optional(v.boolean()),
+    reachability: v.optional(probeReachabilitySummary),
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])
@@ -1060,23 +1081,7 @@ export default defineSchema({
     lastHealthAt: v.optional(v.number()),
     liveSnapshot: v.optional(v.string()), // JSON from the adapter's inspect()
     liveAt: v.optional(v.number()),
-    reachability: v.optional(
-      v.object({
-        byCountry: v.array(
-          v.object({
-            country: v.string(),
-            // The IPv4 path (what every member receives); IPv6 rows only when no v4 row exists.
-            verdict: relayReachVerdict,
-            // The IPv6 path, when the edge has one and it was probed.
-            v6Verdict: v.optional(relayReachVerdict),
-            okVantages: v.number(),
-            failVantages: v.number(),
-            lastAt: v.number(),
-          }),
-        ),
-        updatedAt: v.number(),
-      }),
-    ),
+    reachability: v.optional(probeReachabilitySummary),
     destroyAttempts: v.number(),
     failure: v.optional(
       v.object({ step: v.string(), code: v.optional(v.string()), status: v.optional(v.number()) }),
@@ -1157,8 +1162,23 @@ export default defineSchema({
     .index('by_phase', ['phase', 'nextStepAt']),
 
   // External / internal reachability probe requests against one edge.
+  // Operator-entered probe targets (any host:port), alongside the derived ones
+  // (edge addresses, relay nodes). Operator evidence only: never fed to the detector.
+  probeTargets: defineTable({
+    label: v.string(),
+    address: v.string(), // IP literal or hostname
+    port: v.number(),
+    enabled: v.boolean(),
+    notes: v.optional(v.string()),
+    reachability: v.optional(probeReachabilitySummary),
+    updatedAt: v.number(),
+  }).index('by_enabled', ['enabled']),
+
   probeRuns: defineTable({
-    edgeId: v.id('edges'),
+    // What was probed: an edge (its address), a relay node (its origin address)
+    // or a custom target. `targetRef` is the row id of that kind.
+    targetKind: probeTargetKind,
+    targetRef: v.string(),
     source: relayProbeSource,
     target: v.string(), // "ip:port" as probed
     ipVersion: v.union(v.literal(4), v.literal(6)),
@@ -1190,13 +1210,14 @@ export default defineSchema({
       }),
     ),
   })
-    .index('by_edge_requested', ['edgeId', 'requestedAt'])
+    .index('by_target_requested', ['targetKind', 'targetRef', 'requestedAt'])
     .index('by_status', ['status'])
     .index('by_status_requested', ['status', 'requestedAt']),
 
-  // Rolled-up per-edge, per-country, per-source reachability counts.
+  // Rolled-up per-target, per-country, per-source (per address family) reachability counts.
   probeReachability: defineTable({
-    edgeId: v.id('edges'),
+    targetKind: probeTargetKind,
+    targetRef: v.string(),
     country: v.string(),
     source: relayProbeSource,
     // Address family probed; absent = 4 (rows written before dual-stack rollups).
@@ -1207,7 +1228,7 @@ export default defineSchema({
     lastFailAt: v.optional(v.number()),
     verdict: relayReachVerdict,
     updatedAt: v.number(),
-  }).index('by_edge_country', ['edgeId', 'country']),
+  }).index('by_target_country', ['targetKind', 'targetRef', 'country']),
 
   // Detector ring buffer: one row per origin per evaluation (7-day retention).
   relaySamples: defineTable({

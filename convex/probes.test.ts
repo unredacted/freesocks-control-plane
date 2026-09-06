@@ -141,12 +141,14 @@ describe('relayProbes', () => {
     __setGlobalpingFactory(() => gp);
     const { t, edgeId } = await seed();
     const { runIds } = await t.mutation(internal.probes.requestProbes, {
-      edgeId,
+      target: { kind: 'edge', ref: edgeId },
       trigger: 'manual',
     });
     expect(runIds).toHaveLength(2); // globalping + internal, v4 only
     await drainRuns(t);
-    const runs = await t.query(internal.probes.listByEdge, { edgeId });
+    const runs = await t.query(internal.probes.listRuns, {
+      target: { kind: 'edge', ref: edgeId },
+    });
     expect(runs.map((r) => [r.source, r.status]).sort()).toEqual([
       ['globalping', 'finished'],
       ['internal', 'finished'],
@@ -177,11 +179,11 @@ describe('relayProbes', () => {
     const verdicts = audit.filter((a) => a.action === 'relay.probe.verdict');
     expect(verdicts.length).toBeGreaterThan(0);
     expect(JSON.stringify(audit)).not.toContain(EDGE);
-    const matrix = await t.query(internal.probes.reachabilityForRelay, {
-      relayId: edge.relayId,
-    });
+    const matrix = await t.query(internal.probes.matrix, {});
     expect(matrix.countries).toEqual(['IR', 'RU']);
-    expect(matrix.edges[0].byCountry.find((c) => c.country === 'IR')?.verdict).toBe('unreachable');
+    const row = matrix.targets.find((x) => x.key === `edge:${edgeId}`)!;
+    expect(row.kind).toBe('edge');
+    expect(row.reachability.byCountry.find((c) => c.country === 'IR')?.verdict).toBe('unreachable');
   });
 
   test('one failing network is not agreement: the country stays unknown, not unreachable', async () => {
@@ -208,7 +210,7 @@ describe('relayProbes', () => {
     __setGlobalpingFactory(() => gp);
     const { t, edgeId } = await seed({ countries: ['IR'] });
     await t.mutation(internal.probes.requestProbes, {
-      edgeId,
+      target: { kind: 'edge', ref: edgeId },
       trigger: 'manual',
       sources: ['globalping'],
     });
@@ -229,9 +231,14 @@ describe('relayProbes', () => {
       },
     }));
     const { t, edgeId } = await seed({ internalOk: false });
-    await t.mutation(internal.probes.requestProbes, { edgeId, trigger: 'manual' });
+    await t.mutation(internal.probes.requestProbes, {
+      target: { kind: 'edge', ref: edgeId },
+      trigger: 'manual',
+    });
     await drainRuns(t);
-    const runs = await t.query(internal.probes.listByEdge, { edgeId });
+    const runs = await t.query(internal.probes.listRuns, {
+      target: { kind: 'edge', ref: edgeId },
+    });
     expect(runs.find((r) => r.source === 'globalping')?.status).toBe('failed');
     expect(runs.find((r) => r.source === 'internal')?.status).toBe('finished');
     const edge = (await t.query(internal.edges.get, { id: edgeId }))!;
@@ -272,7 +279,8 @@ describe('relayProbes', () => {
     const { t, edgeId } = await seed();
     const runId = await t.run((ctx) =>
       ctx.db.insert('probeRuns', {
-        edgeId,
+        targetKind: 'edge',
+        targetRef: edgeId,
         source: 'checkhost',
         target: `${EDGE}:443`,
         ipVersion: 4,
@@ -294,7 +302,8 @@ describe('relayProbes', () => {
     const insertRun = (ipVersion: 4 | 6) =>
       t.run((ctx) =>
         ctx.db.insert('probeRuns', {
-          edgeId,
+          targetKind: 'edge',
+          targetRef: edgeId,
           source: 'globalping',
           target: ipVersion === 4 ? `${EDGE}:443` : '[2001:db8::9]:443',
           ipVersion,
@@ -347,7 +356,8 @@ describe('relayProbes', () => {
     const insert = (status: 'finished' | 'failed' | 'timeout' | 'running', ageMs: number) =>
       t.run((ctx) =>
         ctx.db.insert('probeRuns', {
-          edgeId,
+          targetKind: 'edge',
+          targetRef: edgeId,
           source: 'checkhost',
           target: `${EDGE}:443`,
           ipVersion: 4,
@@ -369,5 +379,85 @@ describe('relayProbes', () => {
     expect(await t.run((ctx) => ctx.db.get(old2))).toBeNull();
     expect(await t.run((ctx) => ctx.db.get(fresh))).not.toBeNull();
     expect(await t.run((ctx) => ctx.db.get(running))).not.toBeNull();
+  });
+
+  test('custom targets and relay nodes are probed like edges: CRUD, matrix rows, run history, audit feed', async () => {
+    const gp = fakeGlobalping(() => 'ok');
+    __setGlobalpingFactory(() => gp);
+    const { t, relayId, edgeId } = await seed();
+    // A custom target (hostname) and the relay node opting in.
+    const created = await t.mutation(internal.probeTargets.create, {
+      label: 'Decoy A',
+      address: 'decoy.example',
+      port: 8443,
+    });
+    expect(created.key).toBe(`custom:${created.id}`);
+    await t.mutation(internal.relays.update, { id: relayId, probeNode: true });
+    await expect(
+      t.mutation(internal.probeTargets.create, { label: 'bad', address: 'not a host!' }),
+    ).rejects.toThrow(/address/);
+    const r = await t.mutation(internal.probes.requestMany, {
+      targets: [
+        { kind: 'custom', ref: created.id },
+        { kind: 'relay', ref: relayId },
+        { kind: 'edge', ref: edgeId },
+      ],
+    });
+    expect(r.runIds).toHaveLength(6); // 3 targets × (globalping + internal)
+    expect(r.skipped).toEqual([]);
+    await drainRuns(t);
+    // The custom target was probed at its own port; the node at its origin address.
+    expect(gp.requests.map((q) => (q as { target: string }).target).sort()).toEqual(
+      ['198.51.100.9', '203.0.113.10', 'decoy.example'].sort(),
+    );
+    const runs = await t.query(internal.probes.listRuns, {
+      target: { kind: 'custom', ref: created.id },
+    });
+    expect(runs.map((x) => x.source).sort()).toEqual(['globalping', 'internal']);
+    expect(runs[0].target).toEqual({
+      kind: 'custom',
+      ref: created.id,
+      key: `custom:${created.id}`,
+    });
+    const matrix = await t.query(internal.probes.matrix, {});
+    expect(matrix.targets.map((x) => x.kind).sort()).toEqual(['custom', 'edge', 'relay']);
+    const custom = matrix.targets.find((x) => x.kind === 'custom')!;
+    expect(custom.detail).toBe('decoy.example:8443');
+    expect(custom.reachability.byCountry.find((c) => c.country === 'IR')?.verdict).toBe(
+      'reachable',
+    );
+    const node = matrix.targets.find((x) => x.kind === 'relay')!;
+    expect(node.enabled).toBe(true);
+    expect((await t.query(internal.relays.get, { id: relayId }))!.reachability).toBeDefined();
+    // Cron scheduling covers all three kinds.
+    const plan = await t.query(internal.probes.due, { now: Date.now() + 60 * 60_000 });
+    expect(plan.dueTargets.map((d) => d.target.kind).sort()).toEqual(['custom', 'edge', 'relay']);
+    // Address change resets the custom target's history; delete removes its rollups.
+    await t.mutation(internal.probeTargets.update, { id: created.id, address: 'decoy-b.example' });
+    expect((await t.query(internal.probeTargets.list, {}))[0].reachability.updatedAt).toBeNull();
+    await t.mutation(internal.probeTargets.remove, { id: created.id });
+    const rows = await t.run((ctx) =>
+      ctx.db
+        .query('probeReachability')
+        .withIndex('by_target_country', (q) =>
+          q.eq('targetKind', 'custom').eq('targetRef', created.id),
+        )
+        .collect(),
+    );
+    expect(rows).toEqual([]);
+    // The audit feed carries the request, runs, verdicts and target edits, keys only.
+    const feed = await t.query(internal.probes.auditFeed, {});
+    const actions = new Set(feed.map((e) => e.action));
+    for (const a of [
+      'relay.probe.requested',
+      'relay.probe.run',
+      'relay.probe.verdict',
+      'relay.probe.target.create',
+      'relay.probe.target.update',
+      'relay.probe.target.delete',
+    ])
+      expect(actions.has(a)).toBe(true);
+    expect(JSON.stringify(feed)).not.toContain('decoy.example');
+    expect(JSON.stringify(feed)).not.toContain('198.51.100.9');
   });
 });

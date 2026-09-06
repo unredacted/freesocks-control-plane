@@ -318,7 +318,9 @@ export const edgeDetail = internalQuery({
     if (!e) return null;
     const probes = await ctx.db
       .query('probeRuns')
-      .withIndex('by_edge_requested', (q) => q.eq('edgeId', edgeId))
+      .withIndex('by_target_requested', (q) =>
+        q.eq('targetKind', 'edge').eq('targetRef', edgeId as string),
+      )
       .order('desc')
       .take(10);
     return {

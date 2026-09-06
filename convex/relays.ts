@@ -77,6 +77,16 @@ export function mapRelayAdmin(r: Doc<'relays'>) {
     enabled: r.enabled,
     autoRotate: r.autoRotate,
     hostManaged: r.hostManaged,
+    probeNode: r.probeNode ?? false,
+    reachability: r.reachability
+      ? {
+          byCountry: r.reachability.byCountry.map((c) => ({
+            ...c,
+            lastAt: new Date(c.lastAt).toISOString(),
+          })),
+          updatedAt: new Date(r.reachability.updatedAt).toISOString(),
+        }
+      : null,
     providerAffinity: r.providerAffinity,
     providerPreference: r.providerPreference ?? null,
     desiredPublished: r.desiredPublished,
@@ -238,6 +248,7 @@ const originWriteArgs = {
   enabled: v.optional(v.boolean()),
   autoRotate: v.optional(v.boolean()),
   hostManaged: v.optional(v.boolean()),
+  probeNode: v.optional(v.boolean()),
   providerAffinity: v.optional(v.union(v.literal('rotate'), v.literal('sticky'))),
   providerPreference: v.optional(v.union(edgeProviderIdValidator, v.null())),
   desiredPublished: v.optional(v.number()),
@@ -257,6 +268,7 @@ type OriginWrite = {
   enabled?: boolean;
   autoRotate?: boolean;
   hostManaged?: boolean;
+  probeNode?: boolean;
   providerAffinity?: 'rotate' | 'sticky';
   providerPreference?: Doc<'relays'>['providerPreference'] | null;
   desiredPublished?: number;
@@ -277,6 +289,7 @@ function patchFrom(a: OriginWrite): Partial<Doc<'relays'>> {
   if (a.enabled !== undefined) p.enabled = a.enabled;
   if (a.autoRotate !== undefined) p.autoRotate = a.autoRotate;
   if (a.hostManaged !== undefined) p.hostManaged = a.hostManaged;
+  if (a.probeNode !== undefined) p.probeNode = a.probeNode;
   if (a.providerAffinity !== undefined) p.providerAffinity = a.providerAffinity;
   if (a.providerPreference !== undefined) p.providerPreference = a.providerPreference ?? undefined;
   if (a.desiredPublished !== undefined) p.desiredPublished = a.desiredPublished;
@@ -315,6 +328,7 @@ async function insertOrigin(
     enabled: p.enabled ?? true,
     autoRotate: p.autoRotate ?? false,
     hostManaged: p.hostManaged ?? true,
+    probeNode: p.probeNode ?? false,
     providerAffinity: p.providerAffinity ?? cfg.providerAffinity,
     providerPreference: p.providerPreference,
     desiredPublished: p.desiredPublished ?? cfg.desiredPublishedDefault,

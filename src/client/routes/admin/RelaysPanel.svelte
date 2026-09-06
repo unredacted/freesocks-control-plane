@@ -63,6 +63,7 @@
     enabled: boolean;
     autoRotate: boolean;
     hostManaged: boolean;
+    probeNode: boolean;
     providerAffinity: 'rotate' | 'sticky';
     desiredPublished: number;
     standbyPerRelay: number;
@@ -83,6 +84,7 @@
       enabled: true,
       autoRotate: false,
       hostManaged: true,
+      probeNode: false,
       providerAffinity: 'rotate',
       desiredPublished: 2,
       standbyPerRelay: 0,
@@ -103,6 +105,7 @@
       enabled: o.enabled,
       autoRotate: o.autoRotate,
       hostManaged: o.hostManaged,
+      probeNode: o.probeNode,
       providerAffinity: o.providerAffinity,
       desiredPublished: o.desiredPublished,
       standbyPerRelay: o.standbyPerRelay,
@@ -125,6 +128,7 @@
         enabled: d.enabled,
         autoRotate: d.autoRotate,
         hostManaged: d.hostManaged,
+        probeNode: d.probeNode,
         providerAffinity: d.providerAffinity,
         desiredPublished: Number(d.desiredPublished),
         standbyPerRelay: Number(d.standbyPerRelay),
@@ -734,6 +738,10 @@
           ><Checkbox bind:checked={editor.hostManaged} /> FCP manages the template Host</label
         >
         <label class="flex items-center gap-2 text-sm"
+          ><Checkbox bind:checked={editor.probeNode} /> Probe the node's own address too (Telemetry →
+          Probes)</label
+        >
+        <label class="flex items-center gap-2 text-sm"
           ><Checkbox bind:checked={editor.autoRotate} /> Automatic rotation (also needs the global switch)</label
         >
       </div>
@@ -864,6 +872,33 @@
               </li>
             {/each}
           </ul>
+        </div>
+        <div>
+          <h4 class="mb-1 text-xs font-semibold">Audit trail</h4>
+          <p class="mb-1 text-[11px] text-muted-foreground">
+            Every audit row this rotation produced: the operator's request, publish and unpublish,
+            Host flips, the outcome, quarantine and its resolution.
+          </p>
+          {#if r.audit.length === 0}
+            <p class="text-xs text-muted-foreground">No audit rows yet.</p>
+          {:else}
+            <ul class="max-h-64 space-y-0.5 overflow-auto rounded border p-2 text-[11px]">
+              {#each r.audit as a (a.id)}
+                <li class="flex flex-wrap gap-x-2">
+                  <span class="tabular-nums text-muted-foreground"
+                    >{formatDateTime(a.createdAt)}</span
+                  >
+                  <span class="font-mono">{a.action}</span>
+                  <span class="text-muted-foreground">{a.actorType}</span>
+                  <span
+                    class="truncate font-mono text-muted-foreground"
+                    title={JSON.stringify(a.payload)}
+                    >{a.payload ? JSON.stringify(a.payload) : ''}</span
+                  >
+                </li>
+              {/each}
+            </ul>
+          {/if}
         </div>
         {#if !r.terminal}
           <div class="flex justify-end">

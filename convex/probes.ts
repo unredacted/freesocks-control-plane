@@ -1,23 +1,30 @@
 /**
- * Reachability probes, DB half: probe runs (`relayProbeRuns`), the per-edge
- * per-country per-source rollup (`relayEdgeReachability`), the edge's
- * cross-source summary (`relayEdges.reachability`), scheduling (the
- * `relay-probe` cron + manual "probe now"), and the admin reads.
+ * Reachability probes, DB half: probe runs (`probeRuns`), the per-target
+ * per-country per-source rollup (`probeReachability`), each target's
+ * cross-source summary (`edges.reachability`, `relays.reachability`,
+ * `probeTargets.reachability`), scheduling (the `relay-probe` cron + manual
+ * "probe now"), and the admin reads (Telemetry → Probes).
+ *
+ * A TARGET is one of: an edge (its public address, per family), a relay node
+ * (its origin address, when the relay opts in with `probeNode`), or an
+ * operator-entered custom host:port (`probeTargets`). Only EDGE evidence feeds
+ * the block detector; the other kinds are operator evidence.
  *
  * A run is started by a mutation that also schedules the "use node" executor
- * (relayProbeOps.execute), so the request and its work are one transaction.
- * Rollup semantics: a reachability row describes the LAST finished run for its
- * (edge, country, source); the edge summary combines the sources per country
- * with the agreement rules in lib/relays/probes/verdict.ts.
+ * (probeOps.execute), so the request and its work are one transaction. Rollup
+ * semantics: a reachability row describes the LAST finished run for its
+ * (target, country, source, address family); the summary combines the sources
+ * per country with the agreement rules in lib/relays/probes/verdict.ts.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
-import type { MutationCtx } from './_generated/server';
+import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { recordHeartbeat, runWithCronOutcome } from './cronHeartbeat';
 import { resolveRelayConfig, resolveRelaySecrets, type RelayConfig } from './lib/relayConfig';
+import { addressFamily, bracketIfV6 } from './lib/relays/ip';
 import {
   countryVerdict,
   sourceVerdict,
@@ -32,6 +39,13 @@ const PROBE_RUN_RETENTION_MS = 14 * 24 * 60 * 60_000;
 const MAX_SWEEP_ROUNDS = 20;
 const RUN_TIMEOUT_MS = 10 * MIN;
 
+export const PROBE_TARGET_KINDS = ['edge', 'relay', 'custom'] as const;
+export type ProbeTargetKind = (typeof PROBE_TARGET_KINDS)[number];
+export interface ProbeTargetRef {
+  kind: ProbeTargetKind;
+  ref: string;
+}
+
 const probeSource = v.union(
   v.literal('globalping'),
   v.literal('checkhost'),
@@ -44,6 +58,10 @@ const probeTrigger = v.union(
   v.literal('detector'),
   v.literal('qualification'),
 );
+const probeTargetRef = v.object({
+  kind: v.union(v.literal('edge'), v.literal('relay'), v.literal('custom')),
+  ref: v.string(),
+});
 const probeResult = v.object({
   country: v.string(),
   asn: v.optional(v.string()),
@@ -54,10 +72,23 @@ const probeResult = v.object({
   error: v.optional(v.string()),
 });
 
+/** `<kind>:<ref>`: the stable string form used by the routes, the audit log and the client. */
+export function targetKeyOf(t: ProbeTargetRef): string {
+  return `${t.kind}:${t.ref}`;
+}
+export function parseTargetKey(key: string): ProbeTargetRef | null {
+  const i = key.indexOf(':');
+  if (i < 0) return null;
+  const kind = key.slice(0, i);
+  const ref = key.slice(i + 1);
+  if (!(PROBE_TARGET_KINDS as readonly string[]).includes(kind) || !ref) return null;
+  return { kind: kind as ProbeTargetKind, ref };
+}
+
 export function mapRunAdmin(r: Doc<'probeRuns'>) {
   return {
     id: r._id as string,
-    edgeId: r.edgeId as string,
+    target: { kind: r.targetKind, ref: r.targetRef, key: `${r.targetKind}:${r.targetRef}` },
     source: r.source,
     ipVersion: r.ipVersion,
     status: r.status,
@@ -78,6 +109,19 @@ export function mapRunAdmin(r: Doc<'probeRuns'>) {
   };
 }
 
+type Summary = NonNullable<Doc<'edges'>['reachability']>;
+
+export function mapSummaryAdmin(s: Summary | undefined) {
+  return {
+    byCountry: (s?.byCountry ?? []).map((c) => ({
+      ...c,
+      v6Verdict: c.v6Verdict ?? undefined,
+      lastAt: new Date(c.lastAt).toISOString(),
+    })),
+    updatedAt: s ? new Date(s.updatedAt).toISOString() : null,
+  };
+}
+
 /** Sources enabled by config and usable (a key-requiring source needs its key). */
 export function enabledSources(
   cfg: RelayConfig,
@@ -91,23 +135,73 @@ export function enabledSources(
   return out;
 }
 
+// --- targets -----------------------------------------------------------------------------------
+
+interface ResolvedTarget {
+  label: string;
+  /** Address per family; a hostname counts as the v4 path (the resolver decides). */
+  addresses: { v4?: string; v6?: string };
+  port: number;
+}
+
+/** Resolve what a target ref points at right now, or null when it is gone. */
+async function resolveTarget(
+  ctx: { db: QueryCtx['db'] },
+  t: ProbeTargetRef,
+): Promise<ResolvedTarget | null> {
+  if (t.kind === 'edge') {
+    const edge = await ctx.db.get(t.ref as Id<'edges'>);
+    if (!edge) return null;
+    const relay = await ctx.db.get(edge.relayId);
+    return {
+      label: `${relay?.slug ?? 'relay'} edge${edge.poolIndex !== undefined ? ` #${edge.poolIndex}` : ''}${edge.provider ? ` (${edge.provider})` : ''}`,
+      addresses: { v4: edge.addresses.v4, v6: edge.addresses.v6 },
+      port: edge.listeners[0]?.edgePort ?? 443,
+    };
+  }
+  if (t.kind === 'relay') {
+    const relay = await ctx.db.get(t.ref as Id<'relays'>);
+    if (!relay) return null;
+    const slots = await ctx.db
+      .query('relaySlots')
+      .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
+      .collect();
+    const deployed = slots.filter((s) => s.deployed && !s.retired);
+    const port = deployed.sort((a, b) => a.slotKey.localeCompare(b.slotKey))[0]?.originPort ?? 443;
+    return {
+      label: `${relay.slug} node`,
+      addresses: splitByFamily(relay.originAddress),
+      port,
+    };
+  }
+  const row = await ctx.db.get(t.ref as Id<'probeTargets'>);
+  if (!row) return null;
+  return { label: row.label, addresses: splitByFamily(row.address), port: row.port };
+}
+
+function splitByFamily(address: string): { v4?: string; v6?: string } {
+  return addressFamily(address) === 'v6' ? { v6: address } : { v4: address };
+}
+
 // --- runs ---------------------------------------------------------------------------------------
 
 async function insertRun(
   ctx: MutationCtx,
   a: {
-    edgeId: Id<'edges'>;
+    target: ProbeTargetRef;
     source: ProbeSource;
-    target: string;
+    address: string;
+    port: number;
     ipVersion: 4 | 6;
     trigger: 'cron' | 'manual' | 'detector' | 'qualification';
   },
 ): Promise<Id<'probeRuns'>> {
   const now = Date.now();
   const runId = await ctx.db.insert('probeRuns', {
-    edgeId: a.edgeId,
+    targetKind: a.target.kind,
+    targetRef: a.target.ref,
     source: a.source,
-    target: a.target,
+    target: `${bracketIfV6(a.address)}:${a.port}`,
     ipVersion: a.ipVersion,
     status: 'requested',
     trigger: a.trigger,
@@ -118,60 +212,109 @@ async function insertRun(
   await writeAuditLog(ctx, {
     actorType: 'system',
     action: 'relay.probe.run',
-    targetType: 'relay_edge',
-    targetId: a.edgeId,
-    payload: { edgeId: a.edgeId, source: a.source, trigger: a.trigger },
+    targetType: 'probe_target',
+    targetId: targetKeyOf(a.target),
+    payload: { targetKey: targetKeyOf(a.target), source: a.source, trigger: a.trigger },
   });
   return runId;
 }
 
 /**
- * Request probes for one edge from every enabled source (v4 always; v6 when the
- * edge has one and IPv6 rendering is not off). Used by the cron, the detector
- * and the admin "Probe now".
+ * Start one probe round for one target from every enabled source (v4 always;
+ * v6 when the target has one and IPv6 rendering is not off).
  */
+export async function requestProbesFor(
+  ctx: MutationCtx,
+  target: ProbeTargetRef,
+  trigger: 'cron' | 'manual' | 'detector' | 'qualification',
+  sources?: ProbeSource[],
+): Promise<Id<'probeRuns'>[]> {
+  const resolved = await resolveTarget(ctx, target);
+  if (!resolved) throw new ConvexError({ code: 'not_found', message: 'Probe target not found' });
+  if (!resolved.addresses.v4 && !resolved.addresses.v6) {
+    throw new ConvexError({ code: 'relay.no_address', message: 'The target has no address yet' });
+  }
+  const cfg = await resolveRelayConfig(ctx.db);
+  const secrets = await resolveRelaySecrets(ctx.db);
+  const use = sources ?? enabledSources(cfg, secrets);
+  const runIds: Id<'probeRuns'>[] = [];
+  for (const source of use) {
+    if (resolved.addresses.v4) {
+      runIds.push(
+        await insertRun(ctx, {
+          target,
+          source,
+          address: resolved.addresses.v4,
+          port: resolved.port,
+          ipVersion: 4,
+          trigger,
+        }),
+      );
+    }
+    if (resolved.addresses.v6 && (cfg.render.ipv6Mode !== 'off' || !resolved.addresses.v4)) {
+      runIds.push(
+        await insertRun(ctx, {
+          target,
+          source,
+          address: resolved.addresses.v6,
+          port: resolved.port,
+          ipVersion: 6,
+          trigger,
+        }),
+      );
+    }
+  }
+  return runIds;
+}
+
+/** One target (the cron, the detector, the per-edge admin button). */
 export const requestProbes = internalMutation({
   args: {
-    edgeId: v.id('edges'),
+    target: probeTargetRef,
     trigger: probeTrigger,
     sources: v.optional(v.array(probeSource)),
   },
-  handler: async (ctx, { edgeId, trigger, sources }) => {
-    const edge = await ctx.db.get(edgeId);
-    if (!edge) throw new ConvexError({ code: 'not_found', message: 'Edge not found' });
-    if (!edge.addresses.v4 && !edge.addresses.v6) {
-      throw new ConvexError({ code: 'relay.no_address', message: 'Edge has no address yet' });
-    }
-    const cfg = await resolveRelayConfig(ctx.db);
-    const secrets = await resolveRelaySecrets(ctx.db);
-    const use = sources ?? enabledSources(cfg, secrets);
-    const port = edge.listeners[0]?.edgePort ?? 443;
+  handler: async (ctx, { target, trigger, sources }) => ({
+    runIds: await requestProbesFor(ctx, target, trigger, sources),
+  }),
+});
+
+/**
+ * Several targets at once (Telemetry → Probes "Probe now"). Audited once as the
+ * operator's request; every run still writes its own `relay.probe.run` row.
+ */
+export const requestMany = internalMutation({
+  args: {
+    targets: v.array(probeTargetRef),
+    sources: v.optional(v.array(probeSource)),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { targets, sources, actorAdminId }) => {
+    if (targets.length === 0 || targets.length > 50)
+      throw new ConvexError({ code: 'validation', message: 'targets must hold 1..50 entries' });
     const runIds: Id<'probeRuns'>[] = [];
-    for (const source of use) {
-      if (edge.addresses.v4) {
-        runIds.push(
-          await insertRun(ctx, {
-            edgeId,
-            source,
-            target: `${edge.addresses.v4}:${port}`,
-            ipVersion: 4,
-            trigger,
-          }),
-        );
-      }
-      if (edge.addresses.v6 && cfg.render.ipv6Mode !== 'off') {
-        runIds.push(
-          await insertRun(ctx, {
-            edgeId,
-            source,
-            target: `[${edge.addresses.v6}]:${port}`,
-            ipVersion: 6,
-            trigger,
-          }),
+    const skipped: string[] = [];
+    for (const t of targets) {
+      try {
+        runIds.push(...(await requestProbesFor(ctx, t, 'manual', sources)));
+      } catch (err) {
+        skipped.push(
+          `${targetKeyOf(t)}: ${err instanceof ConvexError ? String((err.data as { code?: string }).code ?? 'error') : 'error'}`,
         );
       }
     }
-    return { runIds };
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'relay.probe.requested',
+      targetType: 'probe_target',
+      payload: {
+        targets: targets.length,
+        runs: runIds.length,
+        sources: sources ?? null,
+      },
+    });
+    return { runIds, skipped };
   },
 });
 
@@ -198,7 +341,7 @@ export const failRun = internalMutation({
   },
 });
 
-/** Record results, roll them up per country for this source, and refresh the edge summary. */
+/** Record results, roll them up per country for this source, and refresh the target summary. */
 export const finishRun = internalMutation({
   args: { runId: v.id('probeRuns'), results: v.array(probeResult) },
   handler: async (ctx, { runId, results }) => {
@@ -207,14 +350,15 @@ export const finishRun = internalMutation({
     const now = Date.now();
     await ctx.db.patch(runId, { status: 'finished', finishedAt: now, results });
     const cfg = await resolveRelayConfig(ctx.db);
-    const edge = await ctx.db.get(run.edgeId);
-    if (!edge) return null;
+    const target: ProbeTargetRef = { kind: run.targetKind, ref: run.targetRef };
     // Per-country rollup for THIS source.
     const byCountry = new Map<string, ProbeResult[]>();
     for (const r of results) byCountry.set(r.country, [...(byCountry.get(r.country) ?? []), r]);
     const existing = await ctx.db
       .query('probeReachability')
-      .withIndex('by_edge_country', (q) => q.eq('edgeId', run.edgeId))
+      .withIndex('by_target_country', (q) =>
+        q.eq('targetKind', run.targetKind).eq('targetRef', run.targetRef),
+      )
       .collect();
     for (const [country, rs] of byCountry) {
       // The internal probe is one authoritative vantage (FCP's own host); the
@@ -233,8 +377,8 @@ export const finishRun = internalMutation({
               failNetworks: rs.some((r) => !r.ok) ? ['internal'] : [],
             }
           : sourceVerdict(run.source, rs, cfg.probe.agreementVantages);
-      // One rollup row per (country, source, address family): a dual-stack edge's
-      // v6 result must never overwrite its v4 verdict or vice versa.
+      // One rollup row per (country, source, address family): a dual-stack
+      // target's v6 result must never overwrite its v4 verdict or vice versa.
       const row = existing.find(
         (x) =>
           x.country === country && x.source === run.source && (x.ipVersion ?? 4) === run.ipVersion,
@@ -250,7 +394,8 @@ export const finishRun = internalMutation({
       if (row) await ctx.db.patch(row._id, patch);
       else
         await ctx.db.insert('probeReachability', {
-          edgeId: run.edgeId,
+          targetKind: run.targetKind,
+          targetRef: run.targetRef,
           country,
           source: run.source,
           ipVersion: run.ipVersion,
@@ -260,22 +405,30 @@ export const finishRun = internalMutation({
         await writeAuditLog(ctx, {
           actorType: 'system',
           action: 'relay.probe.verdict',
-          targetType: 'relay_edge',
-          targetId: run.edgeId,
-          payload: { edgeId: run.edgeId, source: run.source, country, verdict: summary.verdict },
+          targetType: 'probe_target',
+          targetId: targetKeyOf(target),
+          payload: {
+            targetKey: targetKeyOf(target),
+            source: run.source,
+            country,
+            ipVersion: run.ipVersion,
+            verdict: summary.verdict,
+          },
         });
       }
     }
-    await refreshEdgeSummary(ctx, run.edgeId, now);
+    await refreshTargetSummary(ctx, target, now);
     return null;
   },
 });
 
-/** Cross-source summary per country onto the edge row (what the detector + admin read). */
-async function refreshEdgeSummary(ctx: MutationCtx, edgeId: Id<'edges'>, now: number) {
+/** Cross-source summary per country onto the target's own row (what the detector + admin read). */
+async function refreshTargetSummary(ctx: MutationCtx, target: ProbeTargetRef, now: number) {
   const rows = await ctx.db
     .query('probeReachability')
-    .withIndex('by_edge_country', (q) => q.eq('edgeId', edgeId))
+    .withIndex('by_target_country', (q) =>
+      q.eq('targetKind', target.kind).eq('targetRef', target.ref),
+    )
     .collect();
   const staleBefore = now - 6 * 60 * MIN;
   const countries = [...new Set(rows.map((r) => r.country))].sort();
@@ -283,7 +436,7 @@ async function refreshEdgeSummary(ctx: MutationCtx, edgeId: Id<'edges'>, now: nu
     const fresh = rows.filter((r) => r.country === country && r.updatedAt >= staleBefore);
     // The country verdict follows the IPv4 path (what every member receives);
     // IPv6 rows summarise separately as `v6Verdict` and only stand in for the
-    // verdict when the edge was probed over v6 alone.
+    // verdict when the target was probed over v6 alone.
     const v4Rows = fresh.filter((r) => (r.ipVersion ?? 4) === 4);
     const v6Rows = fresh.filter((r) => r.ipVersion === 6);
     const primaryRows = v4Rows.length > 0 ? v4Rows : v6Rows;
@@ -315,7 +468,16 @@ async function refreshEdgeSummary(ctx: MutationCtx, edgeId: Id<'edges'>, now: nu
       lastAt: Math.max(0, ...rows.filter((r) => r.country === country).map((r) => r.updatedAt)),
     };
   });
-  await ctx.db.patch(edgeId, { reachability: { byCountry, updatedAt: now }, updatedAt: now });
+  const reachability = { byCountry, updatedAt: now };
+  if (target.kind === 'edge') {
+    if (await ctx.db.get(target.ref as Id<'edges'>))
+      await ctx.db.patch(target.ref as Id<'edges'>, { reachability, updatedAt: now });
+  } else if (target.kind === 'relay') {
+    if (await ctx.db.get(target.ref as Id<'relays'>))
+      await ctx.db.patch(target.ref as Id<'relays'>, { reachability, updatedAt: now });
+  } else if (await ctx.db.get(target.ref as Id<'probeTargets'>)) {
+    await ctx.db.patch(target.ref as Id<'probeTargets'>, { reachability, updatedAt: now });
+  }
 }
 
 /** The internal probe is a single vantage: its own result IS the verdict. */
@@ -340,88 +502,172 @@ export const runContext = internalQuery({
   },
 });
 
-export const listByEdge = internalQuery({
-  args: { edgeId: v.id('edges'), take: v.optional(v.number()) },
-  handler: async (ctx, { edgeId, take }) =>
+/** Run history of one target, newest first. */
+export const listRuns = internalQuery({
+  args: { target: probeTargetRef, take: v.optional(v.number()) },
+  handler: async (ctx, { target, take }) =>
     (
       await ctx.db
         .query('probeRuns')
-        .withIndex('by_edge_requested', (q) => q.eq('edgeId', edgeId))
+        .withIndex('by_target_requested', (q) =>
+          q.eq('targetKind', target.kind).eq('targetRef', target.ref),
+        )
         .order('desc')
         .take(Math.min(take ?? 20, 100))
     ).map(mapRunAdmin),
 });
 
-/** Per-edge, per-country verdict matrix for one origin's live edges (admin). */
-export const reachabilityForRelay = internalQuery({
-  args: { relayId: v.id('relays') },
-  handler: async (ctx, { relayId }) => {
-    const edges = await ctx.db
-      .query('edges')
-      .withIndex('by_relay_status', (q) => q.eq('relayId', relayId))
-      .collect();
+/**
+ * The reachability matrix over every probe target: live edges of every relay,
+ * relay nodes that opted in (or were ever probed), and custom targets. Small by
+ * construction (operator-scale tables).
+ */
+export const matrix = internalQuery({
+  args: {},
+  handler: async (ctx) => {
     const cfg = await resolveRelayConfig(ctx.db);
-    return {
-      countries: cfg.probe.countries,
-      edges: edges
-        .filter((e) => e.status !== 'destroyed')
-        .map((e) => ({
-          edgeId: e._id as string,
-          publication: e.publication,
-          poolIndex: e.poolIndex ?? null,
-          provider: e.provider ?? null,
-          byCountry: (e.reachability?.byCountry ?? []).map((c) => ({
-            ...c,
-            lastAt: new Date(c.lastAt).toISOString(),
-          })),
-          updatedAt: e.reachability ? new Date(e.reachability.updatedAt).toISOString() : null,
-        })),
-    };
+    const relays = (await ctx.db.query('relays').collect()).sort((a, b) =>
+      a.slug.localeCompare(b.slug),
+    );
+    const targets = [];
+    for (const relay of relays) {
+      if (relay.probeNode || relay.reachability) {
+        targets.push({
+          key: `relay:${relay._id}`,
+          kind: 'relay' as const,
+          ref: relay._id as string,
+          label: `${relay.slug} node`,
+          detail: relay.probeNode ? 'scheduled' : 'manual only',
+          enabled: relay.probeNode ?? false,
+          reachability: mapSummaryAdmin(relay.reachability),
+        });
+      }
+      const edges = await ctx.db
+        .query('edges')
+        .withIndex('by_relay_status', (q) => q.eq('relayId', relay._id))
+        .collect();
+      for (const e of edges.filter((x) => x.status !== 'destroyed')) {
+        targets.push({
+          key: `edge:${e._id}`,
+          kind: 'edge' as const,
+          ref: e._id as string,
+          label: `${relay.slug} edge${e.poolIndex !== undefined ? ` #${e.poolIndex}` : ''}`,
+          detail: `${e.publication} · ${e.provider ?? 'adopted'}`,
+          enabled: e.publication === 'published' && e.status === 'active',
+          reachability: mapSummaryAdmin(e.reachability),
+        });
+      }
+    }
+    for (const t of await ctx.db.query('probeTargets').collect()) {
+      targets.push({
+        key: `custom:${t._id}`,
+        kind: 'custom' as const,
+        ref: t._id as string,
+        label: t.label,
+        detail: `${bracketIfV6(t.address)}:${t.port}`,
+        enabled: t.enabled,
+        reachability: mapSummaryAdmin(t.reachability),
+      });
+    }
+    return { countries: cfg.probe.countries, targets };
+  },
+});
+
+/** Recent probe-related audit rows (the Telemetry → Probes feed), newest first. */
+export const auditFeed = internalQuery({
+  args: { take: v.optional(v.number()) },
+  handler: async (ctx, { take }) => {
+    const n = Math.min(take ?? 50, 200);
+    const actions = [
+      'relay.probe.requested',
+      'relay.probe.run',
+      'relay.probe.verdict',
+      'relay.probe.target.create',
+      'relay.probe.target.update',
+      'relay.probe.target.delete',
+      'admin.relay.probe.change',
+    ];
+    const rows = [];
+    for (const action of actions) {
+      rows.push(
+        ...(await ctx.db
+          .query('auditLog')
+          .withIndex('by_action', (q) => q.eq('action', action))
+          .order('desc')
+          .take(n)),
+      );
+    }
+    rows.sort((a, b) => b._creationTime - a._creationTime);
+    return rows.slice(0, n).map((r) => ({
+      id: r._id as string,
+      actorType: r.actorType,
+      actorId: r.actorId ?? null,
+      action: r.action,
+      targetType: r.targetType ?? null,
+      targetId: r.targetId ?? null,
+      payload: r.payload ?? null,
+      requestId: r.requestId ?? null,
+      createdAt: new Date(r._creationTime).toISOString(),
+    }));
   },
 });
 
 // --- scheduling ----------------------------------------------------------------------------------
 
-/** Published edges due for a probe round, with the hour's spend so the cron can budget. */
+/**
+ * Targets due for a probe round, with the hour's spend so the cron can budget:
+ * published edges of enabled relays (suspected relays first), relay nodes that
+ * opted in, and enabled custom targets.
+ */
 export const due = internalQuery({
   args: { now: v.number() },
   handler: async (ctx, { now }) => {
     const cfg = await resolveRelayConfig(ctx.db);
     const secrets = await resolveRelaySecrets(ctx.db);
-    const origins = await ctx.db
+    const relays = await ctx.db
       .query('relays')
       .withIndex('by_enabled', (q) => q.eq('enabled', true))
       .collect();
-    const dueEdges: Array<{ edgeId: Id<'edges'>; suspected: boolean }> = [];
+    const dueTargets: Array<{ target: ProbeTargetRef; suspected: boolean }> = [];
     let spentThisHour = 0;
     const hourStart = now - 60 * MIN;
-    for (const origin of origins) {
-      const suspected = origin.suspicion?.state === 'suspected';
-      const interval =
-        (suspected ? cfg.probe.suspectedIntervalMinutes : cfg.probe.intervalMinutes) * MIN;
-      for (const edgeId of origin.publishedEdgeIds) {
+    const consider = async (target: ProbeTargetRef, interval: number, suspected: boolean) => {
+      const recent = await ctx.db
+        .query('probeRuns')
+        .withIndex('by_target_requested', (q) =>
+          q.eq('targetKind', target.kind).eq('targetRef', target.ref).gte('requestedAt', hourStart),
+        )
+        .collect();
+      spentThisHour += recent.length;
+      const last = recent.reduce((m, r) => Math.max(m, r.requestedAt), 0);
+      if (last === 0 || now - last >= interval) dueTargets.push({ target, suspected });
+    };
+    const baseInterval = cfg.probe.intervalMinutes * MIN;
+    for (const relay of relays) {
+      const suspected = relay.suspicion?.state === 'suspected';
+      const interval = suspected ? cfg.probe.suspectedIntervalMinutes * MIN : baseInterval;
+      for (const edgeId of relay.publishedEdgeIds) {
         if (!edgeId) continue;
         const edge = await ctx.db.get(edgeId);
         if (!edge || edge.status !== 'active' || !edge.addresses.v4) continue;
-        const recent = await ctx.db
-          .query('probeRuns')
-          .withIndex('by_edge_requested', (q) =>
-            q.eq('edgeId', edgeId).gte('requestedAt', hourStart),
-          )
-          .collect();
-        spentThisHour += recent.length;
-        const last = recent.reduce((m, r) => Math.max(m, r.requestedAt), 0);
-        if (last === 0 || now - last >= interval) dueEdges.push({ edgeId, suspected });
+        await consider({ kind: 'edge', ref: edgeId }, interval, suspected);
       }
+      if (relay.probeNode) await consider({ kind: 'relay', ref: relay._id }, baseInterval, false);
     }
-    // Suspected origins first so a tight budget goes where it matters.
-    dueEdges.sort((a, b) => Number(b.suspected) - Number(a.suspected));
+    for (const t of await ctx.db
+      .query('probeTargets')
+      .withIndex('by_enabled', (q) => q.eq('enabled', true))
+      .collect()) {
+      await consider({ kind: 'custom', ref: t._id }, baseInterval, false);
+    }
+    // Suspected relays' edges first so a tight budget goes where it matters.
+    dueTargets.sort((a, b) => Number(b.suspected) - Number(a.suspected));
     return {
       enabled: cfg.probe.enabled,
       sources: enabledSources(cfg, secrets),
       hourlyBudget: cfg.probe.hourlyBudget,
       spentThisHour,
-      dueEdges,
+      dueTargets,
     };
   },
 });
@@ -482,7 +728,7 @@ export const sweepFinished = internalMutation({
   },
 });
 
-/** The `relay-probe` cron tick: budget-aware round for every due published edge. */
+/** The `relay-probe` cron tick: budget-aware round for every due target. */
 export const run = internalAction({
   args: {},
   handler: async (ctx): Promise<{ requested: number; skipped: number; timedOut: number }> =>
@@ -494,20 +740,24 @@ export const run = internalAction({
       let spent = plan.spentThisHour;
       let requested = 0;
       let skipped = 0;
-      for (const d of plan.dueEdges) {
+      for (const d of plan.dueTargets) {
         // Each source is one run (two with IPv6); reserve the worst case.
         const cost = plan.sources.length * 2;
         if (spent + cost > plan.hourlyBudget) {
           skipped++;
           continue;
         }
-        const res = await ctx.runMutation(internal.probes.requestProbes, {
-          edgeId: d.edgeId,
-          trigger: 'cron',
-          sources: plan.sources,
-        });
-        spent += res.runIds.length;
-        requested += res.runIds.length;
+        try {
+          const res = await ctx.runMutation(internal.probes.requestProbes, {
+            target: d.target,
+            trigger: 'cron',
+            sources: plan.sources,
+          });
+          spent += res.runIds.length;
+          requested += res.runIds.length;
+        } catch {
+          skipped++; // a target that vanished between the plan and the request
+        }
       }
       return { requested, skipped, timedOut };
     }),

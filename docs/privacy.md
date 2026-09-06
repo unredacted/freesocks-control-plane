@@ -289,7 +289,8 @@ The relay-edge layer (`docs/relays.md`) adds two flows that touch third parties 
 member reports. Neither adds member data anywhere.
 
 - **Reachability probes** ask measurement services (Globalping, check-host.net,
-  optionally RIPE Atlas) to open TCP connections to **FCP's own edge addresses**
+  optionally RIPE Atlas) to open TCP connections to **FCP's own addresses** (edges, opted-in relay nodes, and
+  operator-entered targets)
   from the configured countries, so the operator learns whether an edge is
   blocked where it matters. The request carries an operator-owned address and a
   country list; no member identifier, subscription, IP or traffic ever leaves

@@ -268,6 +268,16 @@ describe('relayRotations: replace', () => {
     const admin = (await t.query(internal.edgeRotations.getForAdmin, { id: rotationId }))!;
     expect(admin.progress).toEqual({ done: 3, total: 3, percent: 100 });
     expect(admin.terminal).toBe(true);
+    // The rotation's own audit trail: the request, publish/unpublish and the outcome, oldest
+    // first, every row tagged with this rotation's id, addresses absent.
+    const trail = admin.audit.map((a) => a.action);
+    expect(trail[0]).toBe('admin.relay.rotate');
+    for (const a of ['relay.edge.published', 'relay.edge.unpublished', 'relay.rotated'])
+      expect(trail).toContain(a);
+    expect(trail.indexOf('relay.rotated')).toBeGreaterThan(trail.indexOf('relay.edge.published'));
+    for (const row of admin.audit)
+      expect((row.payload as { rotationId?: string }).rotationId ?? rotationId).toBe(rotationId);
+    expect(JSON.stringify(admin.audit)).not.toContain(NEW_EDGE);
   });
 
   test('burn: the old edge is marked burned with the shorter drain', async () => {

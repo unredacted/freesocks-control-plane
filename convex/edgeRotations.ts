@@ -139,9 +139,50 @@ export const getForAdmin = internalQuery({
     const r = await ctx.db.get(id);
     if (!r) return null;
     const edge = r.toEdgeId ? await ctx.db.get(r.toEdgeId) : null;
-    return mapRotationAdmin(r, edge);
+    return { ...mapRotationAdmin(r, edge), audit: await rotationAuditTrail(ctx, r) };
   },
 });
+
+/**
+ * Every audit row this rotation produced, oldest first: rows targeting the
+ * rotation itself, plus relay- and edge-targeted rows that carry its id in
+ * their payload (start, cancel, publish/unpublish, rotated, burned, quarantine).
+ * Bounded reads: a relay or edge accumulates few audit rows per rotation.
+ */
+async function rotationAuditTrail(ctx: QueryCtx, r: Rotation) {
+  const id = r._id as string;
+  const own = await ctx.db
+    .query('auditLog')
+    .withIndex('by_target', (q) => q.eq('targetType', 'relay_rotation').eq('targetId', id))
+    .order('desc')
+    .take(100);
+  const related: Array<Doc<'auditLog'>> = [];
+  const scan = async (targetType: string, targetId: string, take: number) => {
+    const rows = await ctx.db
+      .query('auditLog')
+      .withIndex('by_target', (q) => q.eq('targetType', targetType).eq('targetId', targetId))
+      .order('desc')
+      .take(take);
+    for (const row of rows) {
+      const p = row.payload as { rotationId?: unknown } | undefined;
+      if (p && typeof p === 'object' && p.rotationId === id) related.push(row);
+    }
+  };
+  await scan('relay', r.relayId as string, 300);
+  for (const e of [r.toEdgeId, r.targetEdgeId]) if (e) await scan('relay_edge', e as string, 100);
+  const all = [...own, ...related].sort((a, b) => a._creationTime - b._creationTime);
+  return all.map((row) => ({
+    id: row._id as string,
+    actorType: row.actorType,
+    actorId: row.actorId ?? null,
+    action: row.action,
+    targetType: row.targetType ?? null,
+    targetId: row.targetId ?? null,
+    payload: row.payload ?? null,
+    requestId: row.requestId ?? null,
+    createdAt: new Date(row._creationTime).toISOString(),
+  }));
+}
 
 export const listByRelay = internalQuery({
   args: { relayId: v.id('relays'), take: v.optional(v.number()) },
@@ -351,7 +392,7 @@ export const start = internalMutation({
           : 'admin.relay.provision',
       targetType: 'relay',
       targetId: a.relayId,
-      payload: { slug: origin.slug, trigger: a.trigger, force },
+      payload: { slug: origin.slug, trigger: a.trigger, force, rotationId: id },
     });
     await scheduleStep(ctx, id, 0);
     return { rotationId: id };
@@ -399,7 +440,7 @@ export const requestCancel = internalMutation({
       action: 'admin.relay.cancel',
       targetType: 'relay',
       targetId: r.relayId,
-      payload: { slug: origin?.slug ?? '' },
+      payload: { slug: origin?.slug ?? '', rotationId },
     });
     await scheduleStep(ctx, rotationId, 0);
     return { ok: true as const, phase: r.phase };
@@ -872,7 +913,7 @@ export const applyPublish = internalMutation({
       action: 'relay.edge.published',
       targetType: 'relay_edge',
       targetId: to._id,
-      payload: { relaySlug: origin.slug, edgeId: to._id, poolIndex, epoch },
+      payload: { relaySlug: origin.slug, edgeId: to._id, poolIndex, epoch, rotationId },
     });
     if (previousBinding) {
       await writeAuditLog(ctx, {
@@ -880,7 +921,13 @@ export const applyPublish = internalMutation({
         action: 'relay.edge.unpublished',
         targetType: 'relay_edge',
         targetId: previousBinding.edgeId,
-        payload: { relaySlug: origin.slug, edgeId: previousBinding.edgeId, poolIndex, epoch },
+        payload: {
+          relaySlug: origin.slug,
+          edgeId: previousBinding.edgeId,
+          poolIndex,
+          epoch,
+          rotationId,
+        },
       });
     }
     const needsHostFlip = poolIndex === 0 && origin.hostManaged;
@@ -1125,6 +1172,7 @@ export const finalize = internalMutation({
           poolIndex: to?.poolIndex ?? null,
           hostsFlipped: r.hostPlan.length,
           durationMs: now - r.startedAt,
+          rotationId: r._id,
         },
       });
       if (r.burn && from) {
@@ -1133,7 +1181,12 @@ export const finalize = internalMutation({
           action: 'relay.burned',
           targetType: 'relay_edge',
           targetId: from._id,
-          payload: { relaySlug: origin.slug, trigger: r.trigger, edgeId: from._id },
+          payload: {
+            relaySlug: origin.slug,
+            trigger: r.trigger,
+            edgeId: from._id,
+            rotationId: r._id,
+          },
         });
       }
     }
@@ -1214,7 +1267,7 @@ export const resolveQuarantine = internalMutation({
       action: 'relay.quarantine_resolved',
       targetType: 'relay',
       targetId: relayId,
-      payload: { relaySlug: origin.slug, keep },
+      payload: { relaySlug: origin.slug, keep, rotationId: rotation?._id ?? null },
     });
     return { ok: true as const };
   },

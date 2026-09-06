@@ -14,7 +14,7 @@
   import { toast } from 'svelte-sonner';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
-  import { adminRelayConfigQuery, adminRelayReachabilityQuery, queryKeys } from '../../lib/queries';
+  import { adminRelayConfigQuery, queryKeys } from '../../lib/queries';
   import {
     RENDER_CLIENT_FAMILY_IDS,
     RelayConfigPatchResponse,
@@ -26,9 +26,9 @@
 
   /**
    * The `relay.*` namespace: master switches, pool defaults and rotation limits,
-   * how each client family's subscription is rendered (with a live preview),
-   * probe sources / countries / budget (tokens write-only) and the detector
-   * knobs. Saves send only the fields the operator touched.
+   * how each client family's subscription is rendered (with a live preview) and
+   * the detector knobs. Probe sources / countries / budget / tokens live under
+   * Telemetry → Probes. Saves send only the fields the operator touched.
    */
   interface Props {
     relays: RelayAdmin[];
@@ -41,7 +41,6 @@
 
   // A shallow patch accumulator: nested paths like 'render.clients.singbox.enabled'.
   let patch = $state<Record<string, unknown>>({});
-  let secrets = $state({ globalpingToken: '', ripeAtlasKey: '' });
   function set(path: string, value: unknown) {
     patch = { ...patch, [path]: value };
   }
@@ -69,19 +68,14 @@
       }
       cur[parts[parts.length - 1] ?? path] = value;
     }
-    const s = Object.fromEntries(Object.entries(secrets).filter(([, v]) => v.trim() !== ''));
-    if (Object.keys(s).length > 0) out.secrets = s;
     return out;
   }
-  const dirty = $derived(
-    Object.keys(patch).length > 0 || secrets.globalpingToken !== '' || secrets.ripeAtlasKey !== '',
-  );
+  const dirty = $derived(Object.keys(patch).length > 0);
   const save = createMutation(() => ({
     mutationFn: () =>
       apiClient.patch('/api/v1/admin/relay/config', nested(), RelayConfigPatchResponse),
     onSuccess: (r) => {
       patch = {};
-      secrets = { globalpingToken: '', ripeAtlasKey: '' };
       void qc.invalidateQueries({ queryKey: queryKeys.adminRelayConfig });
       void qc.invalidateQueries({ queryKey: ['admin', 'relays'] });
       toast.success(
@@ -107,7 +101,6 @@
     onSuccess: (r) => (preview = r),
     onError: onError('Preview failed'),
   }));
-  const reach = adminRelayReachabilityQuery(() => previewOrigin || relays[0]?.id || null);
 
   const ipv6Modes = ['off', 'auto-group-only', 'both'] as const;
   const ruleModes = ['inherit', ...ipv6Modes] as const;
@@ -434,166 +427,6 @@
 
     <Card>
       <CardHeader class="pb-2">
-        <CardTitle class="text-base">Reachability probes</CardTitle>
-        <CardDescription
-          >Measurement services open TCP connections to FCP's own edge addresses from the configured
-          countries. No member data is involved. Tokens are write-only.</CardDescription
-        >
-      </CardHeader>
-      <CardContent class="space-y-4">
-        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <label class="flex items-center gap-2 text-sm"
-            ><Checkbox
-              checked={get('probe.enabled', false)}
-              onCheckedChange={(v) => set('probe.enabled', Boolean(v))}
-            /> Probes enabled</label
-          >
-          <label class="flex items-center gap-2 text-sm"
-            ><Checkbox
-              checked={get('probe.sources.globalping', true)}
-              onCheckedChange={(v) => set('probe.sources.globalping', Boolean(v))}
-            /> Globalping</label
-          >
-          <label class="flex items-center gap-2 text-sm"
-            ><Checkbox
-              checked={get('probe.sources.checkhost', true)}
-              onCheckedChange={(v) => set('probe.sources.checkhost', Boolean(v))}
-            /> check-host.net</label
-          >
-          <label class="flex items-center gap-2 text-sm"
-            ><Checkbox
-              checked={get('probe.sources.ripeatlas', false)}
-              onCheckedChange={(v) => set('probe.sources.ripeatlas', Boolean(v))}
-            /> RIPE Atlas (needs a key)</label
-          >
-          <label class="flex items-center gap-2 text-sm"
-            ><Checkbox
-              checked={get('probe.sources.internal', true)}
-              onCheckedChange={(v) => set('probe.sources.internal', Boolean(v))}
-            /> Internal connect check (outage vs block)</label
-          >
-          <label class="flex items-center gap-2 text-sm"
-            ><Checkbox
-              checked={get('probe.preferEyeball', true)}
-              onCheckedChange={(v) => set('probe.preferEyeball', Boolean(v))}
-            /> Prefer residential (eyeball) vantages</label
-          >
-          <label class="text-xs"
-            >Countries (comma separated)<Input
-              class="mt-1"
-              value={(get('probe.countries', []) as string[]).join(', ')}
-              oninput={(e) =>
-                set(
-                  'probe.countries',
-                  e.currentTarget.value
-                    .split(/[,\s]+/)
-                    .map((s) => s.trim())
-                    .filter(Boolean),
-                )}
-            /></label
-          >
-          <label class="text-xs"
-            >Interval minutes<Input
-              class="mt-1"
-              type="number"
-              value={num('probe.intervalMinutes', 15)}
-              oninput={(e) => set('probe.intervalMinutes', Number(e.currentTarget.value))}
-            /></label
-          >
-          <label class="text-xs"
-            >Interval while suspected<Input
-              class="mt-1"
-              type="number"
-              value={num('probe.suspectedIntervalMinutes', 5)}
-              oninput={(e) => set('probe.suspectedIntervalMinutes', Number(e.currentTarget.value))}
-            /></label
-          >
-          <label class="text-xs"
-            >Vantages per country<Input
-              class="mt-1"
-              type="number"
-              value={num('probe.perCountryLimit', 3)}
-              oninput={(e) => set('probe.perCountryLimit', Number(e.currentTarget.value))}
-            /></label
-          >
-          <label class="text-xs"
-            >Hourly budget (runs)<Input
-              class="mt-1"
-              type="number"
-              value={num('probe.hourlyBudget', 200)}
-              oninput={(e) => set('probe.hourlyBudget', Number(e.currentTarget.value))}
-            /></label
-          >
-          <label class="text-xs"
-            >Agreement vantages<Input
-              class="mt-1"
-              type="number"
-              value={num('probe.agreementVantages', 2)}
-              oninput={(e) => set('probe.agreementVantages', Number(e.currentTarget.value))}
-            /></label
-          >
-          <label class="text-xs"
-            >Globalping token {cfg.data.secrets.globalpingToken ? '(set)' : '(not set)'}<Input
-              class="mt-1 font-mono"
-              type="password"
-              autocomplete="off"
-              bind:value={secrets.globalpingToken}
-              placeholder="leave blank to keep"
-            /></label
-          >
-          <label class="text-xs"
-            >RIPE Atlas key {cfg.data.secrets.ripeAtlasKey ? '(set)' : '(not set)'}<Input
-              class="mt-1 font-mono"
-              type="password"
-              autocomplete="off"
-              bind:value={secrets.ripeAtlasKey}
-              placeholder="leave blank to keep"
-            /></label
-          >
-        </div>
-        {#if reach.data && reach.data.edges.length > 0}
-          <div class="overflow-x-auto">
-            <table class="w-full text-xs">
-              <thead class="text-left text-muted-foreground"
-                ><tr
-                  ><th class="py-1 pr-3">Edge</th>{#each reach.data.countries as c (c)}<th
-                      class="pr-3">{c}</th
-                    >{/each}<th class="pr-3">FCP</th></tr
-                ></thead
-              >
-              <tbody>
-                {#each reach.data.edges as e (e.edgeId)}
-                  <tr class="border-t">
-                    <td class="py-1 pr-3"
-                      >{e.publication}{e.poolIndex !== null ? ` #${e.poolIndex}` : ''} · {e.provider ??
-                        'adopted'}</td
-                    >
-                    {#each reach.data.countries as c (c)}
-                      {@const v = e.byCountry.find((x) => x.country === c)?.verdict ?? 'unknown'}
-                      <td
-                        class="pr-3 {v === 'unreachable'
-                          ? 'text-destructive'
-                          : v === 'reachable'
-                            ? 'text-emerald-600'
-                            : v === 'mixed'
-                              ? 'text-amber-600'
-                              : 'text-muted-foreground'}">{v}</td
-                      >
-                    {/each}
-                    <td class="pr-3"
-                      >{e.byCountry.find((x) => x.country === 'XX')?.verdict ?? 'unknown'}</td
-                    >
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        {/if}
-      </CardContent>
-    </Card>
-
-    <Card>
-      <CardHeader class="pb-2">
         <CardTitle class="text-base">Block detector</CardTitle>
         <CardDescription
           >Origin-level evidence (reports, load) only hints; edge-level evidence (probes, members
@@ -686,14 +519,7 @@
 
     <div class="flex items-center justify-end gap-2">
       {#if dirty}<span class="text-xs text-muted-foreground">Unsaved changes</span>{/if}
-      <Button
-        variant="outline"
-        disabled={!dirty}
-        onclick={() => {
-          patch = {};
-          secrets = { globalpingToken: '', ripeAtlasKey: '' };
-        }}>Discard</Button
-      >
+      <Button variant="outline" disabled={!dirty} onclick={() => (patch = {})}>Discard</Button>
       <Button disabled={!dirty || save.isPending} onclick={() => save.mutate()}
         >Save relay settings</Button
       >

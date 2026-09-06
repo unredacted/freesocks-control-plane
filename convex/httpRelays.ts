@@ -15,6 +15,7 @@ import type { Id, TableNames } from './_generated/dataModel';
 import { sealed } from './lib/e2ee';
 import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/http';
 import type { InspectResult, Inventory } from './lib/relays/providers/types';
+import { parseTargetKey } from './probes';
 
 const PREFIX = '/api/v1/admin/relay/';
 
@@ -188,24 +189,28 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     });
     return r ? json(r) : notFound();
   }
-  if (a === 'probes' && !b) {
-    const edgeId = query.get('edgeId');
-    if (!edgeId) return errorJson('validation', 'edgeId is required', 400);
-    return json(
-      await ctx.runQuery(internal.probes.listByEdge, {
-        edgeId: id<'edges'>(edgeId),
-        take: Number(query.get('take') ?? 20) || 20,
-      }),
-    );
-  }
-  if (a === 'reachability' && !b) {
-    const relayId = query.get('relayId');
-    if (!relayId) return errorJson('validation', 'relayId is required', 400);
-    return json(
-      await ctx.runQuery(internal.probes.reachabilityForRelay, {
-        relayId: id<'relays'>(relayId),
-      }),
-    );
+  if (a === 'probes') {
+    if (!b) {
+      // Run history of one target: ?target=<kind>:<ref>
+      const target = parseTargetKey(query.get('target') ?? '');
+      if (!target) return errorJson('validation', 'target (<kind>:<ref>) is required', 400);
+      return json({
+        runs: await ctx.runQuery(internal.probes.listRuns, {
+          target,
+          take: Number(query.get('take') ?? 20) || 20,
+        }),
+      });
+    }
+    if (b === 'matrix' && !c) return json(await ctx.runQuery(internal.probes.matrix, {}));
+    if (b === 'targets' && !c)
+      return json({ targets: await ctx.runQuery(internal.probeTargets.list, {}) });
+    if (b === 'audit' && !c)
+      return json({
+        entries: await ctx.runQuery(internal.probes.auditFeed, {
+          take: Number(query.get('take') ?? 50) || 50,
+        }),
+      });
+    return notFound();
   }
   return notFound();
 };
@@ -375,16 +380,16 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           }),
         );
       case 'probe': {
+        // Every published edge of the relay (+ the node itself when it opted in).
+        const relay = await ctx.runQuery(internal.relays.get, { id: relayId });
+        if (!relay) return notFound();
         const edges = await ctx.runQuery(internal.relayAdmin.publishedEdgeIdsOf, { relayId });
-        const runIds: string[] = [];
-        for (const edgeId of edges) {
-          const r = await ctx.runMutation(internal.probes.requestProbes, {
-            edgeId,
-            trigger: 'manual',
-          });
-          runIds.push(...r.runIds);
-        }
-        return json({ runIds });
+        const targets: Array<{ kind: 'edge' | 'relay' | 'custom'; ref: string }> = edges.map(
+          (e) => ({ kind: 'edge', ref: e as string }),
+        );
+        if (relay.probeNode) targets.push({ kind: 'relay', ref: relayId as string });
+        if (targets.length === 0) return json({ runIds: [], skipped: [] });
+        return json(await ctx.runMutation(internal.probes.requestMany, { targets, ...act }));
       }
       default:
         return notFound();
@@ -457,11 +462,39 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       }
       case 'probe':
         return json(
-          await ctx.runMutation(internal.probes.requestProbes, { edgeId, trigger: 'manual' }),
+          await ctx.runMutation(internal.probes.requestProbes, {
+            target: { kind: 'edge', ref: edgeId as string },
+            trigger: 'manual',
+          }),
         );
       default:
         return notFound();
     }
+  }
+  if (a === 'probes') {
+    if (!b) {
+      // Probe several targets now: { targets: ["edge:<id>", ...] | [{kind, ref}], sources? }
+      const raw = Array.isArray(body.targets) ? body.targets : [];
+      const targets = raw
+        .map((t) => (typeof t === 'string' ? parseTargetKey(t) : t))
+        .filter(
+          (t): t is { kind: 'edge' | 'relay' | 'custom'; ref: string } =>
+            !!t && typeof t === 'object' && 'kind' in t && 'ref' in t,
+        );
+      if (targets.length === 0) return errorJson('validation', 'targets is required', 400);
+      return json(
+        await ctx.runMutation(internal.probes.requestMany, {
+          targets,
+          sources: Array.isArray(body.sources) ? (body.sources as never) : undefined,
+          ...act,
+        }),
+      );
+    }
+    if (b === 'targets' && !c)
+      return json(
+        await ctx.runMutation(internal.probeTargets.create, { ...body, ...act } as never),
+      );
+    return notFound();
   }
   if (a === 'render' && b === 'preview') {
     return json(
@@ -488,6 +521,14 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
   const act = actor(admin);
   if (a === 'config' && !b)
     return json(await ctx.runMutation(internal.relayAdmin.patchConfig, { patch: body, ...act }));
+  if (a === 'probes' && b === 'targets' && c && !parts[3])
+    return json(
+      await ctx.runMutation(internal.probeTargets.update, {
+        ...body,
+        id: id<'probeTargets'>(c),
+        ...act,
+      } as never),
+    );
   if (c) return notFound();
   if (a === 'providers' && b)
     return json(
@@ -586,6 +627,10 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin) => {
         edgeId: id<'edges'>(b),
         ...act,
       }),
+    );
+  if (a === 'probes' && b === 'targets' && c && !d)
+    return json(
+      await ctx.runMutation(internal.probeTargets.remove, { id: id<'probeTargets'>(c), ...act }),
     );
   if (a === 'relays' && b) {
     if (b === 'by-slug' && c) {
