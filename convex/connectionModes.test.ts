@@ -273,14 +273,15 @@ describe('public projections', () => {
 describe('memberMode', () => {
   test('projects the member’s mode even when DISABLED (deliveryStyle + family survive)', async () => {
     const t = convexTest(schema, modules);
-    // freedom-reality ships dark; a member left on it must still resolve it.
+    // freedom-reality ships dark; a member left on it must still resolve it
+    // (URL delivery, so a relay-edge address change reaches them on refresh).
     const out = await t.query(internal.connectionModes.memberMode, {
       modeId: 'freedom-reality',
       backend: 'remnawave',
     });
     expect(out).toMatchObject({
       id: 'freedom-reality',
-      deliveryStyle: 'rawConfig',
+      deliveryStyle: 'url',
       family: { id: 'freedom', label: null },
       available: false,
     });
