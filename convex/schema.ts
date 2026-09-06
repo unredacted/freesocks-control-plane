@@ -1086,6 +1086,8 @@ export default defineSchema({
     ),
     burn: v.boolean(),
     force: v.boolean(),
+    // provision kind: publish the new edge when it verifies (bootstrap / pool fill).
+    publishOnDone: v.optional(v.boolean()),
     targetEdgeId: v.optional(v.id('relayEdges')), // the edge being replaced
     toEdgeId: v.optional(v.id('relayEdges')),
     phase: relayRotationPhase,
