@@ -87,6 +87,8 @@ import type * as mirrorProviders from "../mirrorProviders.js";
 import type * as publicConfig from "../publicConfig.js";
 import type * as rateLimits from "../rateLimits.js";
 import type * as referrals from "../referrals.js";
+import type * as relayEdgeTemplates from "../relayEdgeTemplates.js";
+import type * as relayProviderAccounts from "../relayProviderAccounts.js";
 import type * as relayProviderOps from "../relayProviderOps.js";
 import type * as remnawaveNodes from "../remnawaveNodes.js";
 import type * as replayGuard from "../replayGuard.js";
@@ -189,6 +191,8 @@ declare const fullApi: ApiFromModules<{
   publicConfig: typeof publicConfig;
   rateLimits: typeof rateLimits;
   referrals: typeof referrals;
+  relayEdgeTemplates: typeof relayEdgeTemplates;
+  relayProviderAccounts: typeof relayProviderAccounts;
   relayProviderOps: typeof relayProviderOps;
   remnawaveNodes: typeof remnawaveNodes;
   replayGuard: typeof replayGuard;

@@ -35,79 +35,12 @@ import type {
 import { firstResource, metaOf, reverseLiveResources, stepOf } from './types';
 import { isProviderNotFound, providerFetch, RelayProviderError } from './http';
 import { addressFamily } from '../ip';
+import { GcoreTemplate, GCORE_TEMPLATE_FIELDS, type GcoreTemplateParams } from './templates';
 
 const BASE = 'https://api.gcore.com';
 
-export const GcoreTemplate = z.object({
-  flavor: z.string().min(1).max(64).default('lb1-1-2'),
-  /** public = the provider assigns a public VIP directly; private = private VIP + floating IP. */
-  vipMode: z.enum(['public', 'private']).default('public'),
-  ipFamily: z.enum(['dual', 'ipv4', 'ipv6']).default('dual'),
-  lbAlgorithm: z.enum(['ROUND_ROBIN', 'LEAST_CONNECTIONS', 'SOURCE_IP']).default('ROUND_ROBIN'),
-  timeoutClientDataMs: z.number().int().min(1_000).max(3_600_000).default(300_000),
-  timeoutMemberConnectMs: z.number().int().min(1_000).max(60_000).default(5_000),
-  timeoutMemberDataMs: z.number().int().min(1_000).max(3_600_000).default(300_000),
-  /** 0 = provider default (field omitted). */
-  connectionLimit: z.number().int().min(0).max(1_000_000).default(0),
-  allowedCidrs: z.array(z.string().min(1)).max(50).default([]),
-  healthMonitor: z
-    .object({
-      delay: z.number().int().min(1).max(600).default(10),
-      timeout: z.number().int().min(1).max(600).default(5),
-      maxRetries: z.number().int().min(1).max(10).default(3),
-      maxRetriesDown: z.number().int().min(1).max(10).default(3),
-    })
-    .default({ delay: 10, timeout: 5, maxRetries: 3, maxRetriesDown: 3 }),
-  tags: z.record(z.string().min(1).max(64), z.string().max(128)).default({}),
-});
-export type GcoreTemplateParams = z.infer<typeof GcoreTemplate>;
-
-export const GCORE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
-  {
-    key: 'flavor',
-    label: 'Flavor',
-    type: 'string',
-    help: 'Load balancer flavor name for the region.',
-  },
-  {
-    key: 'vipMode',
-    label: 'VIP mode',
-    type: 'select',
-    options: [
-      { value: 'public', label: 'Public VIP' },
-      { value: 'private', label: 'Private VIP + floating IP (needs network + subnet)' },
-    ],
-  },
-  {
-    key: 'ipFamily',
-    label: 'IP family',
-    type: 'select',
-    options: [
-      { value: 'dual', label: 'IPv4 + IPv6' },
-      { value: 'ipv4', label: 'IPv4 only' },
-      { value: 'ipv6', label: 'IPv6 only' },
-    ],
-  },
-  {
-    key: 'lbAlgorithm',
-    label: 'Algorithm',
-    type: 'select',
-    options: [
-      { value: 'ROUND_ROBIN', label: 'Round robin' },
-      { value: 'LEAST_CONNECTIONS', label: 'Least connections' },
-      { value: 'SOURCE_IP', label: 'Source IP' },
-    ],
-  },
-  { key: 'timeoutClientDataMs', label: 'Client idle timeout (ms)', type: 'number' },
-  { key: 'timeoutMemberConnectMs', label: 'Origin connect timeout (ms)', type: 'number' },
-  { key: 'timeoutMemberDataMs', label: 'Origin idle timeout (ms)', type: 'number' },
-  { key: 'connectionLimit', label: 'Connection limit (0 = default)', type: 'number' },
-  { key: 'allowedCidrs', label: 'Allowed client CIDRs', type: 'string-list' },
-  { key: 'healthMonitor.delay', label: 'Health check delay (s)', type: 'number' },
-  { key: 'healthMonitor.timeout', label: 'Health check timeout (s)', type: 'number' },
-  { key: 'healthMonitor.maxRetries', label: 'Health check retries up', type: 'number' },
-  { key: 'healthMonitor.maxRetriesDown', label: 'Health check retries down', type: 'number' },
-];
+export { GcoreTemplate, GCORE_TEMPLATE_FIELDS } from './templates';
+export type { GcoreTemplateParams } from './templates';
 
 // --- schemas (lenient: only the fields we read) ---------------------------------
 

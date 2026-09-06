@@ -29,50 +29,14 @@ import type {
 import { firstResource, resourcesOfKind, reverseLiveResources } from './types';
 import { RelayProviderError, toProviderError } from './http';
 import { addressFamily } from '../ip';
+import {
+  ScalewayTemplate,
+  SCALEWAY_TEMPLATE_FIELDS,
+  type ScalewayTemplateParams,
+} from './templates';
 
-const DURATION = /^\d{1,7}(ms|s|m|h)$/;
-
-export const ScalewayTemplate = z.object({
-  type: z.string().min(1).max(32).default('LB-S'),
-  ipv6: z.boolean().default(true),
-  forwardPortAlgorithm: z.enum(['roundrobin', 'leastconn', 'first']).default('roundrobin'),
-  timeoutClient: z.string().regex(DURATION).default('600s'),
-  timeoutServer: z.string().regex(DURATION).default('600s'),
-  timeoutTunnel: z.string().regex(DURATION).default('3600s'),
-  timeoutConnect: z.string().regex(DURATION).default('5s'),
-  healthCheck: z
-    .object({
-      checkDelay: z.string().regex(DURATION).default('5s'),
-      checkTimeout: z.string().regex(DURATION).default('3s'),
-      checkMaxRetries: z.number().int().min(1).max(20).default(3),
-    })
-    .default({ checkDelay: '5s', checkTimeout: '3s', checkMaxRetries: 3 }),
-  tags: z.array(z.string().min(1).max(64)).max(10).default([]),
-});
-export type ScalewayTemplateParams = z.infer<typeof ScalewayTemplate>;
-
-export const SCALEWAY_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
-  { key: 'type', label: 'Offer type', type: 'string', help: 'LB-S, LB-GP-M, LB-GP-L, …' },
-  { key: 'ipv6', label: 'Also allocate a flexible IPv6', type: 'boolean' },
-  {
-    key: 'forwardPortAlgorithm',
-    label: 'Algorithm',
-    type: 'select',
-    options: [
-      { value: 'roundrobin', label: 'Round robin' },
-      { value: 'leastconn', label: 'Least connections' },
-      { value: 'first', label: 'First available' },
-    ],
-  },
-  { key: 'timeoutClient', label: 'Client idle timeout', type: 'string', help: 'e.g. 600s' },
-  { key: 'timeoutServer', label: 'Origin idle timeout', type: 'string' },
-  { key: 'timeoutTunnel', label: 'Tunnel timeout', type: 'string' },
-  { key: 'timeoutConnect', label: 'Origin connect timeout', type: 'string' },
-  { key: 'healthCheck.checkDelay', label: 'Health check delay', type: 'string' },
-  { key: 'healthCheck.checkTimeout', label: 'Health check timeout', type: 'string' },
-  { key: 'healthCheck.checkMaxRetries', label: 'Health check retries', type: 'number' },
-  { key: 'tags', label: 'Extra tags', type: 'string-list' },
-];
+export { ScalewayTemplate, SCALEWAY_TEMPLATE_FIELDS } from './templates';
+export type { ScalewayTemplateParams } from './templates';
 
 export const SCALEWAY_ZONES = [
   'fr-par-1',

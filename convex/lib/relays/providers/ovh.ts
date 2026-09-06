@@ -29,60 +29,10 @@ import type {
 import { firstResource, reverseLiveResources, stepOf } from './types';
 import { isProviderNotFound, providerFetch, RelayProviderError } from './http';
 import { OVH_ENDPOINTS, ovhSignedHeaders } from './ovhSign';
+import { OvhTemplate, OVH_TEMPLATE_FIELDS, type OvhTemplateParams } from './templates';
 
-export const OvhTemplate = z.object({
-  /** Required: the regional LB flavor id (see inventory.flavors). */
-  flavorId: z.string().max(64).default(''),
-  gatewayModel: z.enum(['s', 'm', 'l']).default('s'),
-  algorithm: z.enum(['roundRobin', 'leastConnections', 'sourceIp']).default('roundRobin'),
-  healthMonitor: z
-    .object({
-      delay: z.number().int().min(1).max(600).default(5),
-      timeout: z.number().int().min(1).max(600).default(3),
-      maxRetries: z.number().int().min(1).max(10).default(3),
-    })
-    .default({ delay: 5, timeout: 3, maxRetries: 3 }),
-  timeoutClientDataMs: z.number().int().min(1000).max(3_600_000).default(300_000),
-  timeoutMemberDataMs: z.number().int().min(1000).max(3_600_000).default(300_000),
-  allowedCidrs: z.array(z.string().min(1)).max(50).default([]),
-});
-export type OvhTemplateParams = z.infer<typeof OvhTemplate>;
-
-export const OVH_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
-  {
-    key: 'flavorId',
-    label: 'Flavor id',
-    type: 'string',
-    required: true,
-    help: 'From the account inventory (Pull live).',
-  },
-  {
-    key: 'gatewayModel',
-    label: 'Gateway model (only when no gateway id is set)',
-    type: 'select',
-    options: [
-      { value: 's', label: 'S' },
-      { value: 'm', label: 'M' },
-      { value: 'l', label: 'L' },
-    ],
-  },
-  {
-    key: 'algorithm',
-    label: 'Algorithm',
-    type: 'select',
-    options: [
-      { value: 'roundRobin', label: 'Round robin' },
-      { value: 'leastConnections', label: 'Least connections' },
-      { value: 'sourceIp', label: 'Source IP' },
-    ],
-  },
-  { key: 'healthMonitor.delay', label: 'Health check delay (s)', type: 'number' },
-  { key: 'healthMonitor.timeout', label: 'Health check timeout (s)', type: 'number' },
-  { key: 'healthMonitor.maxRetries', label: 'Health check retries', type: 'number' },
-  { key: 'timeoutClientDataMs', label: 'Client idle timeout (ms)', type: 'number' },
-  { key: 'timeoutMemberDataMs', label: 'Origin idle timeout (ms)', type: 'number' },
-  { key: 'allowedCidrs', label: 'Allowed client CIDRs', type: 'string-list' },
-];
+export { OvhTemplate, OVH_TEMPLATE_FIELDS } from './templates';
+export type { OvhTemplateParams } from './templates';
 
 // --- schemas ---------------------------------------------------------------------
 

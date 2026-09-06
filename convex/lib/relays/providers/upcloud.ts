@@ -28,46 +28,12 @@ import type {
 } from './types';
 import { firstResource, metaOf, reverseLiveResources } from './types';
 import { isProviderNotFound, providerFetch, RelayProviderError } from './http';
+import { UpcloudTemplate, UPCLOUD_TEMPLATE_FIELDS, type UpcloudTemplateParams } from './templates';
 
 const BASE = 'https://api.upcloud.com/1.3';
 
-export const UpcloudTemplate = z.object({
-  plan: z.string().min(1).max(64).default('development'),
-  delegateFloatingIp: z.boolean().default(true),
-  timeoutClient: z.number().int().min(10).max(86_400).default(300),
-  timeoutServer: z.number().int().min(10).max(86_400).default(300),
-  timeoutTunnel: z.number().int().min(10).max(86_400).default(3600),
-  healthCheck: z
-    .object({
-      interval: z.number().int().min(1).max(3600).default(10),
-      timeout: z.number().int().min(1).max(600).default(10),
-      fall: z.number().int().min(1).max(100).default(3),
-      rise: z.number().int().min(1).max(100).default(3),
-    })
-    .default({ interval: 10, timeout: 10, fall: 3, rise: 3 }),
-  labels: z
-    .array(z.object({ key: z.string().min(1).max(32), value: z.string().max(255) }))
-    .max(10)
-    .default([]),
-});
-export type UpcloudTemplateParams = z.infer<typeof UpcloudTemplate>;
-
-export const UPCLOUD_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
-  { key: 'plan', label: 'Plan', type: 'string', help: 'development, production-small, …' },
-  {
-    key: 'delegateFloatingIp',
-    label: 'Delegate a floating IPv4',
-    type: 'boolean',
-    help: 'The service address is not stable without one.',
-  },
-  { key: 'timeoutClient', label: 'Client idle timeout (s)', type: 'number' },
-  { key: 'timeoutServer', label: 'Origin idle timeout (s)', type: 'number' },
-  { key: 'timeoutTunnel', label: 'Tunnel timeout (s)', type: 'number' },
-  { key: 'healthCheck.interval', label: 'Health check interval (s)', type: 'number' },
-  { key: 'healthCheck.timeout', label: 'Health check timeout (s)', type: 'number' },
-  { key: 'healthCheck.fall', label: 'Unhealthy threshold', type: 'number' },
-  { key: 'healthCheck.rise', label: 'Healthy threshold', type: 'number' },
-];
+export { UpcloudTemplate, UPCLOUD_TEMPLATE_FIELDS } from './templates';
+export type { UpcloudTemplateParams } from './templates';
 
 // --- schemas ------------------------------------------------------------------------
 
