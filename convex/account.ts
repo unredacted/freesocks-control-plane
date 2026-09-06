@@ -540,6 +540,13 @@ interface NodeStatusView {
   load: 'quiet' | 'busy' | 'crowded' | 'unknown' | null;
   /** When the signal was last observed (ISO), null when never. */
   checkedAt: string | null;
+  /** Relay edges (docs/relays.md): a refresh nudge + the labels of the
+   *  connections this key's subscription carries. Null when the key is not
+   *  behind a rendered relay origin. Labels only, never addresses. */
+  relay: {
+    refreshSuggested: boolean;
+    connections: Array<{ label: string; role: 'primary' | 'backup'; family: 'v4' | 'v6' }>;
+  } | null;
 }
 
 const NODE_STATUS_FRESH_MS = 60_000;
@@ -566,6 +573,7 @@ export const getNodeStatus = internalAction({
     const load = location
       ? await ctx.runQuery(internal.statusPage.locationLoad, { code: location.code })
       : null;
+    const relay = await ctx.runQuery(internal.relayRender.memberView, { subscriptionId: sub._id });
 
     if (capabilitiesOf(sub.backend).nodeStats && sub.backendPlacement) {
       let stats = await ctx.runQuery(internal.remnawaveNodes.getPlacementStats, {
@@ -594,6 +602,7 @@ export const getNodeStatus = internalAction({
             location,
             load,
             checkedAt: new Date(stats.lastStatsAt).toISOString(),
+            relay,
           },
         };
       }
@@ -610,6 +619,7 @@ export const getNodeStatus = internalAction({
           location,
           load,
           checkedAt: okAt != null ? new Date(okAt).toISOString() : null,
+          relay,
         },
       };
     }

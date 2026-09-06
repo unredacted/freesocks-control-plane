@@ -82,6 +82,11 @@
     nodeLabel?: string | null;
     /** The location's coarse public load band (quiet/busy/crowded). */
     nodeLoad?: 'quiet' | 'busy' | 'crowded' | 'unknown' | null;
+    /** Relay edges: refresh nudge + connection labels (labels only). */
+    nodeRelay?: {
+      refreshSuggested: boolean;
+      connections: Array<{ label: string; role: string; family: string }>;
+    } | null;
     /** Optional key-management actions (switch server / regenerate / switch
      *  backend), rendered in a hairline-separated footer of the pass - the
      *  pass owns its actions, and each action's modal owns its explanation. */
@@ -104,6 +109,7 @@
     nodeLocationCode,
     nodeLabel,
     nodeLoad,
+    nodeRelay = null,
     actions,
   }: Props = $props();
 
@@ -246,6 +252,22 @@
               {t('hero.nodeStatusLink')} →
             </Link>
           {/if}
+        </p>
+      {/if}
+      {#if nodeRelay?.refreshSuggested}
+        <p
+          class="mt-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200"
+          role="status"
+        >
+          {t('hero.relayRefreshSuggested')}
+        </p>
+      {/if}
+      {#if nodeRelay && nodeRelay.connections.length > 0}
+        <p class="text-xs text-muted-foreground flex flex-wrap items-center gap-1.5">
+          <span>{t('hero.relayConnections')}</span>
+          {#each nodeRelay.connections as c, i (i)}
+            <span class="rounded-full border px-2 py-0.5">{c.label}</span>
+          {/each}
         </p>
       {/if}
     </div>

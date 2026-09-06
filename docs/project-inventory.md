@@ -305,6 +305,18 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   field — the old tier-level `remnawaveSquadUuid` bind was removed in Phase 5b; node placement
   is per connection mode.)
 
+- **Relay edges** (`/admin/relays`, `docs/relays.md`; scopes `admin:servers:*` for
+  infrastructure, `admin:settings:*` for the `relay.*` config): provider accounts (write-only
+  credentials, qualification gate, live inventory), edge templates (form from the adapter's
+  field descriptors + raw JSON, server-validated), camouflage profiles (REALITY target +
+  server names with retire/drain), origins with their published pool, adoption, provision /
+  rotate / burn with a polled live progress view, edge detail with a live provider snapshot,
+  the per-family render preview, and the probe / detector settings. **Every route under
+  `/api/v1/admin/relays/` is HPKE-sealed by verb** (GET reveal, POST seal both legs, PATCH/PUT
+  seal). IaC: `PUT/GET/DELETE …/relays/origins/by-slug/{slug}` (+ `/slots/{slotKey}`), the
+  response carrying `publishedEndpoints` for the node role. **Dormant by default** (every
+  `relay.*` switch ships off).
+
 ### 1.7 Integrations & runtime
 
 - **Self-service membership billing** (`convex/billing.ts`, `convex/lib/processors/*`,
@@ -462,6 +474,18 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 - **Automated backups** (A3, `docker/backup.sh` + the `backup` compose service): scheduled
   `pg_dump` shipped offsite to S3-compatible storage. **Live when `BACKUP_S3_*` is set** (else
   local-only with a loud warning).
+- **Relay-edge providers + probes** (`convex/lib/relays/providers/*`, `convex/relayProviderOps.ts`;
+  `convex/lib/relays/probes/*`, `convex/relayProbeOps.ts`; `docs/relays.md`): TCP load-balancer
+  adapters for the supported providers (`src/shared/contracts/relayProviderIds.ts`), a
+  resource-step ledger with four-outcome discovery and operation claims, and reachability probes
+  via the official `globalping` SDK, check-host.net and optional RIPE Atlas. Pinned deps (verified
+  against the registry at install): `yaml` 2.9.0 (Clash rendering), `@scaleway/sdk-lb` 2.13.1 +
+  `@scaleway/sdk-client` 2.7.0, `globalping` 0.4.0. **Action runtime floor:** the `"use node"`
+  actions run on the Node baked into the self-hosted backend image (22.22.2 at the pinned
+  release); `scripts/node-floor.mjs` derives the highest `engines.node` among those deps and
+  `docker/deploy-entrypoint.sh` fails the deploy below it (`DEPLOY_SKIP_NODE_FLOOR=true` to
+  bypass); the dashboard shows the observed version. **Dormant** until the operator adds
+  accounts and flips the `relay.*` switches.
 - **Email / notifications**: **intentionally absent.** Accounts are anonymous: no contact
   details are collected and the control plane sends nothing. Lifecycle transitions (grace,
   disabled) are recorded to the audit log only. There is no email subsystem, and adding one
@@ -499,6 +523,13 @@ Convex runs these natively (no Workers triggers, no node-cron):
   codes stay hash-only in `redemptionCodes`).
 - `mirror-refresh` (6h): re-fetch + re-upload active subscription mirrors (no-op unless S3
   mirroring is configured).
+- `relay-edge-reconcile` (5 min): relay edges — re-kick stale rotations, settle edges with an
+  unknown provider outcome by discovery, refresh provider health, drain → destroy with a
+  claimed reverse-order ledger walk, pool upkeep (config-gated), finish origin deletes.
+- `relay-probe` (5 min): budgeted reachability probes of published edges from the configured
+  countries (no-op unless `relay.probe.enabled`).
+- `relay-block-detector` (5 min): per-origin scoring of attributed reports, node load and probe
+  verdicts; automatic rotation only with edge-level evidence and every gate open.
 
 Every sweep stamps a per-cron heartbeat (`convex/cronHeartbeat.ts`, `cronHeartbeats` table,
 stamped at start) surfaced as a freshness panel on the admin dashboard.
@@ -589,6 +620,10 @@ deployer container (`docs/beta-deploy.md` § One-off functions).
 Traffic-scaled tables (never `collect()` them without a selective index range): `users`,
 `sessions`, `subscriptions`, `tierHistory`, `auditLog`, `billingOrders`, `webhookEvents`,
 `redemptionCodes`, `referrals`, `rateLimits`, `replayGuard`, the WebAuthn challenge tables.
+Relay tables (`relayOrigins`, `relayEdges`, `relayRotations`, …) are operator-scale and may be
+collected; `relayProbeRuns` grows with the probe budget and `relayOriginSamples` with the 5-min
+detector cadence, so both are read through indexed ranges (`by_edge_requested`, `by_origin_at`)
+and pruned (probe runs by status sweep, samples after 7 days).
 Patterns that are safe: `take(page)` + drain-chain (the sweeps), `paginate()` (admin lists,
 reconciles), `first()` on a compound index (`assertBackendServerUnused`), or a **maintained
 counter** in `appState` bumped at every transition + a daily paginated reconcile

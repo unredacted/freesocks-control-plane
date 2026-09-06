@@ -661,6 +661,7 @@
           null}
         nodeLabel={nodeStatus.data?.node?.label ?? null}
         nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
+        nodeRelay={nodeStatus.data?.node?.relay ?? null}
       />
       <!-- Usage & validity beside the pass (extracted from it): what the key
            includes and how long it stays active. -->

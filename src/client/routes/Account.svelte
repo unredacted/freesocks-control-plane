@@ -1006,6 +1006,7 @@
                 nodeLocationCode={keyLocCode}
                 nodeLabel={nodeStatus.data?.node?.label ?? null}
                 nodeLoad={nodeStatus.data ? (nodeStatus.data.node?.load ?? null) : undefined}
+                nodeRelay={nodeStatus.data?.node?.relay ?? null}
               >
                 {#snippet actions()}
                   <!-- Key actions live on the pass: switch server (gentlest first -

@@ -19,7 +19,8 @@ import {
   RENDER_CLIENT_FAMILIES,
   type RenderClientFamily,
 } from './lib/relayConfig';
-import { effectiveRule } from './lib/relays/render';
+import { effectiveRule, renderEntries } from './lib/relays/render';
+import { assignEndpoints } from './lib/relays/assignment';
 import type { PublishedEdge } from './lib/relays/assignment';
 import type { RelayRenderContext } from './lib/relays/renderPipeline';
 
@@ -170,5 +171,49 @@ export const contextForOrigin = internalQuery({
       rule: effectiveRule(cfg.render, cfg.render.clients[family]),
       preferDistinctProviders: cfg.render.preferDistinctProviders,
     };
+  },
+});
+
+/**
+ * The member-facing nudge (account node status): whether this key has fetched
+ * content since its origin last rotated, and the LABELS of the connections its
+ * current subscription carries (roles + address family only, never addresses).
+ */
+export const memberView = internalQuery({
+  args: { subscriptionId: v.id('subscriptions') },
+  handler: async (
+    ctx,
+    { subscriptionId },
+  ): Promise<{
+    refreshSuggested: boolean;
+    connections: Array<{ label: string; role: 'primary' | 'backup'; family: 'v4' | 'v6' }>;
+  } | null> => {
+    const sub = await ctx.db.get(subscriptionId);
+    if (!sub || !sub.backendServerId || !sub.pinnedNode) return null;
+    if (!(await renderEnabled(ctx))) return null;
+    const origin = await originFor(ctx, sub.backendServerId, sub.pinnedNode);
+    if (!origin || !origin.enabled) return null;
+    const cfg = await resolveRelayConfig(ctx.db);
+    const { published } = await publishedEdgesOf(ctx, origin);
+    if (published.length === 0) return null;
+    const refreshSuggested =
+      origin.lastRotatedAt !== undefined &&
+      (sub.lastDeliveredContentAt ?? 0) < origin.lastRotatedAt;
+    let connections: Array<{ label: string; role: 'primary' | 'backup'; family: 'v4' | 'v6' }> = [];
+    if (sub.renderKey) {
+      const rule = effectiveRule(cfg.render, cfg.render.clients.other);
+      const assigned = assignEndpoints(sub.renderKey, published, {
+        now: Date.now(),
+        preferDistinctProviders: cfg.render.preferDistinctProviders,
+        includeBackup: rule.includeBackup,
+        subscriberLastContentAt: sub.lastDeliveredContentAt ?? null,
+      });
+      connections = renderEntries(assigned, rule, false).map((e) => ({
+        label: e.label,
+        role: e.role,
+        family: e.family,
+      }));
+    }
+    return { refreshSuggested, connections };
   },
 });

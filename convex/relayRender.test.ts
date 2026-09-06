@@ -290,4 +290,28 @@ describe('relayRender: fronted route', () => {
       }),
     ).toBeNull();
   });
+
+  test('memberView: connection labels only, and a refresh nudge once the origin rotated after the last delivery', async () => {
+    stubPanel();
+    const { t, subId, originId } = await seed();
+    // Not fetched yet: no render key → labels absent, no nudge (never rotated).
+    let view = await t.query(internal.relayRender.memberView, { subscriptionId: subId });
+    expect(view).toEqual({ refreshSuggested: false, connections: [] });
+    await get(t); // delivers + mints the render key + stamps lastDeliveredContentAt
+    view = await t.query(internal.relayRender.memberView, { subscriptionId: subId });
+    expect(view?.refreshSuggested).toBe(false);
+    expect(view?.connections.map((c) => [c.role, c.family])).toEqual([
+      ['primary', 'v4'],
+      ['primary', 'v6'],
+    ]);
+    expect(view?.connections[0].label).toContain('FreeSocks Primary');
+    expect(JSON.stringify(view)).not.toContain(EDGE_A);
+    // The origin rotates after this key's last delivery → nudge.
+    await t.run((ctx) => ctx.db.patch(originId, { lastRotatedAt: Date.now() + 1 }));
+    view = await t.query(internal.relayRender.memberView, { subscriptionId: subId });
+    expect(view?.refreshSuggested).toBe(true);
+    // A key not behind a rendered origin gets null.
+    await t.run((ctx) => upsertSettingRow(ctx, 'relay.render.enabled', 'false'));
+    expect(await t.query(internal.relayRender.memberView, { subscriptionId: subId })).toBeNull();
+  });
 });
