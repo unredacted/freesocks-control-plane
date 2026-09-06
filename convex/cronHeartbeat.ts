@@ -130,6 +130,16 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     description:
       'Relay edges: re-kick rotations, settle ledgers, health, drain → destroy, pool upkeep',
   },
+  {
+    name: 'relay-probe',
+    everyMs: 5 * MIN,
+    description: 'Relay edges: budgeted reachability probes of published edges',
+  },
+  {
+    name: 'relay-block-detector',
+    everyMs: 5 * MIN,
+    description: 'Relay edges: score reports + load + probes per origin; opt-in auto-rotate',
+  },
 ];
 
 /**

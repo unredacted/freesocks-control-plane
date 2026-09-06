@@ -12,6 +12,9 @@ import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
+import { hmacSha256Hex } from './lib/crypto';
+import { markBucket, sanitizeConnectionChoice } from './relayAttribution';
+import { relayMs } from './lib/relayConfig';
 import { classifyClient } from './lib/relays/clientFamilies';
 import { applyRelayRender } from './lib/relays/renderPipeline';
 import type { Id } from './_generated/dataModel';
@@ -1388,10 +1391,25 @@ http.route({
         retryAfterMs: rl.retryAfterMs,
       });
     }
-    const body = await readJson<{ reason?: string; detail?: unknown; telemetry?: unknown }>(req);
+    const body = await readJson<{
+      reason?: string;
+      detail?: unknown;
+      telemetry?: unknown;
+      connection?: unknown;
+    }>(req);
     if (!isReportIssueReason(body.reason)) {
       return errorJson('validation', 'unknown reason', 400);
     }
+    // Relay detector dedupe mark: HMAC(pepper, member + window bucket). The
+    // member id never reaches the mark row or the telemetry row.
+    const relayCfg = await ctx.runQuery(internal.relayReconcileMutations.configSnapshot, {});
+    const markPepper = process.env.RELAY_MARK_PEPPER ?? process.env.IP_HASH_SALT ?? '';
+    const markKey = markPepper
+      ? await hmacSha256Hex(
+          markPepper,
+          `relay-mark:${member.userId}:${markBucket(Date.now(), relayMs.detectWindow(relayCfg))}`,
+        )
+      : null;
     const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
     const telemetry = sanitizeSubmitted(diagCfg, body.telemetry);
     // Same consent gate as switch-server: no consented payload, no header reads.
@@ -1411,6 +1429,8 @@ http.route({
       detectedCountry: detected.country,
       detectedCity: detected.city,
       detectedAsn: detected.asn,
+      connectionChoice: sanitizeConnectionChoice(body.connection),
+      markKey,
     });
     return json(result);
   }),

@@ -56,8 +56,8 @@ async function renderEnabled(ctx: QueryCtx): Promise<boolean> {
 }
 
 /** Published edges with an eligible slot + profile, in pool order. */
-async function publishedEdgesOf(
-  ctx: QueryCtx,
+export async function publishedEdgesOf(
+  ctx: QueryCtx | { db: import('./_generated/server').DatabaseReader },
   origin: Doc<'relayOrigins'>,
 ): Promise<{ published: PublishedEdge[]; templateRemarks: string[] }> {
   const slots = await ctx.db

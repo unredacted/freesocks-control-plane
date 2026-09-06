@@ -180,5 +180,11 @@ crons.daily(
 // refresh provider health, turn drained edges into destroy runs, top the
 // published pool / standbys up (config-gated), and finish origin deletes.
 crons.interval('relay-edge-reconcile', { minutes: 5 }, internal.relayReconcile.run, {});
+// Reachability probes of FCP's own edge addresses from the configured countries
+// (Globalping / check-host.net / RIPE Atlas / internal), within an hourly budget.
+crons.interval('relay-probe', { minutes: 5 }, internal.relayProbes.run, {});
+// The block detector: per-origin scoring of attributed reports, node load and
+// probe verdicts; automatic rotation only with edge-level evidence + opt-in.
+crons.interval('relay-block-detector', { minutes: 5 }, internal.relayDetector.run, {});
 
 export default crons;
