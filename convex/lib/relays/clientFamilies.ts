@@ -60,3 +60,15 @@ export function detectBodyFormat(body: string): SubscriptionFormat | 'html' | 'u
   if (/^proxies:/m.test(t) || /^proxy-groups:/m.test(t)) return 'clash-yaml';
   return 'links';
 }
+
+/** The base format each family receives (the body still decides at render time). */
+export const CLIENT_FAMILY_FORMATS: Record<RenderClientFamily, SubscriptionFormat> = {
+  singbox: 'singbox-json',
+  mihomo: 'clash-yaml',
+  'xray-links': 'links',
+  happ: 'links',
+  hiddify: 'links',
+  streisand: 'links',
+  v2rayng: 'links',
+  other: 'links',
+};

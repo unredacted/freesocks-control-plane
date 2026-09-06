@@ -12,6 +12,7 @@ import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
+import { registerRelayRoutes } from './httpRelays';
 import { hmacSha256Hex } from './lib/crypto';
 import { markBucket, sanitizeConnectionChoice } from './relayAttribution';
 import { relayMs } from './lib/relayConfig';
@@ -4095,5 +4096,9 @@ http.route({
     }
   }),
 });
+
+// Relay edges admin surface (docs/relays.md): one prefix route per verb, sealed by
+// verb class (envelope.ts), dispatched in httpRelays.ts.
+registerRelayRoutes(http);
 
 export default http;

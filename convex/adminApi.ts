@@ -2022,6 +2022,47 @@ export const statusSummary = internalQuery({
     const e2ee = {
       required: process.env.FS_E2EE_REQUIRED === 'true',
     };
+    // Relay edges (docs/relays.md): the dashboard mini-card figures, plus the
+    // Node runtime the "use node" actions run on (recorded by the reconcile
+    // cron; the deploy entrypoint enforces the dependency floor).
+    const relayOrigins = await ctx.db.query('relayOrigins').collect();
+    let relayRotating = 0;
+    for (const o of relayOrigins) {
+      if (!o.activeRotationId) continue;
+      const r = await ctx.db.get(o.activeRotationId);
+      if (r && !['done', 'failed', 'rolled_back', 'quarantined', 'cancelled'].includes(r.phase)) {
+        relayRotating++;
+      }
+    }
+    const relays = {
+      origins: relayOrigins.length,
+      published: relayOrigins.reduce(
+        (n, o) => n + o.publishedEdgeIds.filter((e) => e !== null).length,
+        0,
+      ),
+      suspected: relayOrigins.filter((o) => o.suspicion?.state === 'suspected').length,
+      quarantined: relayOrigins.filter((o) => !!o.quarantine).length,
+      rotating: relayRotating,
+    };
+    const runtimeRow = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', 'relay:runtime'))
+      .unique();
+    let runtime: { nodeVersion: string | null; checkedAt: string | null } = {
+      nodeVersion: null,
+      checkedAt: null,
+    };
+    if (runtimeRow) {
+      try {
+        const parsed = JSON.parse(runtimeRow.value) as { nodeVersion?: string; at?: number };
+        runtime = {
+          nodeVersion: parsed.nodeVersion ?? null,
+          checkedAt: parsed.at ? iso(parsed.at) : null,
+        };
+      } catch {
+        /* keep nulls */
+      }
+    }
 
     return {
       users: usersByStatus,
@@ -2042,6 +2083,8 @@ export const statusSummary = internalQuery({
       cronsStale,
       pop,
       e2ee,
+      relays,
+      runtime,
       generatedAt: iso(now),
     };
   },

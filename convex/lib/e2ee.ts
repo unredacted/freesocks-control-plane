@@ -98,7 +98,37 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
   let handlerReq = req;
   let respEphPubB64: string | undefined;
 
-  if (policy.response === 'reveal') {
+  // Order matters for a seal+reveal policy: the response ephemeral rides INSIDE
+  // the sealed request body (channel.clientPrepareRequest), so open first, then
+  // extract it. A request-only or reveal-only policy degrades to the old paths.
+  if (policy.request === 'seal') {
+    const raw = await readBodyTextCapped(req);
+    let parsed: unknown;
+    try {
+      parsed = raw ? JSON.parse(raw) : undefined;
+    } catch {
+      parsed = undefined;
+    }
+    let bodyObj: Record<string, unknown>;
+    if (isSealedWire(parsed)) {
+      const opened = await ctx.runAction(internal.lib.e2eeCrypto.openRequest, {
+        method,
+        path,
+        wireBody: parsed,
+      });
+      bodyObj = (opened.plaintext ?? {}) as Record<string, unknown>;
+    } else {
+      // The account number rides the REQUEST on the login route.
+      if (e2eeRequired) return sealedRequired();
+      bodyObj = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+    }
+    if (policy.response === 'reveal') {
+      const eph = bodyObj[RESP_EPH_FIELD];
+      if (typeof eph === 'string') respEphPubB64 = eph;
+      delete bodyObj[RESP_EPH_FIELD];
+    }
+    handlerReq = proxyReq(req, bodyObj, raw);
+  } else if (policy.response === 'reveal') {
     if (method === 'GET' || method === 'HEAD') {
       respEphPubB64 = req.headers.get('x-fs-resp-eph') ?? undefined;
     } else {
@@ -121,26 +151,6 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
     // The account number (account create/rotate) rides the RESPONSE on these
     // routes; with no response ephemeral it would go out in plaintext.
     if (e2eeRequired && !respEphPubB64) return sealedRequired();
-  } else if (policy.request === 'seal') {
-    const raw = await readBodyTextCapped(req);
-    let parsed: unknown;
-    try {
-      parsed = raw ? JSON.parse(raw) : undefined;
-    } catch {
-      parsed = undefined;
-    }
-    if (isSealedWire(parsed)) {
-      const opened = await ctx.runAction(internal.lib.e2eeCrypto.openRequest, {
-        method,
-        path,
-        wireBody: parsed,
-      });
-      handlerReq = proxyReq(req, opened.plaintext ?? {}, raw);
-    } else {
-      // The account number rides the REQUEST on the login route.
-      if (e2eeRequired) return sealedRequired();
-      handlerReq = proxyReq(req, parsed ?? {}, raw);
-    }
   }
 
   const res = await handler(ctx, handlerReq);

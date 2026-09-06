@@ -197,3 +197,19 @@ export const configSnapshot = internalQuery({
   args: {},
   handler: (ctx) => resolveRelayConfig(ctx.db),
 });
+
+/** The Node version the "use node" actions run on, for the admin dashboard. */
+export const recordRuntime = internalMutation({
+  args: { nodeVersion: v.string() },
+  handler: async (ctx, { nodeVersion }) => {
+    const now = Date.now();
+    const row = await ctx.db
+      .query('appState')
+      .withIndex('by_key', (q) => q.eq('key', 'relay:runtime'))
+      .unique();
+    const value = JSON.stringify({ nodeVersion: nodeVersion.slice(0, 32), at: now });
+    if (row) await ctx.db.patch(row._id, { value, updatedAt: now });
+    else await ctx.db.insert('appState', { key: 'relay:runtime', value, updatedAt: now });
+    return null;
+  },
+});

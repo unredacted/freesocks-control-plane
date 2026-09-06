@@ -54,6 +54,19 @@ import {
   AdminStatusPageConfig,
   PublicStatusResponse,
 } from '../../shared/contracts/status';
+import {
+  RelayAccountsResponse,
+  RelayConfigView,
+  RelayEdgeAdmin,
+  RelayEdgeDetail,
+  RelayEndpointsResponse,
+  RelayProfileList,
+  RelayReachabilityMatrix,
+  RelayRotationAdmin,
+  RelaySlotAdmin,
+  RelaySummary,
+  RelayTemplatesResponse,
+} from '../../shared/contracts/relays';
 
 // --- Cache keys --------------------------------------------------------------
 
@@ -97,6 +110,19 @@ export const queryKeys = {
   accountReferrals: ['account', 'referrals'] as const,
   adminReferralConfig: ['admin', 'referral-config'] as const,
   adminAnalytics: ['admin', 'analytics'] as const,
+  adminRelaySummary: ['admin', 'relays', 'summary'] as const,
+  adminRelayConfig: ['admin', 'relays', 'config'] as const,
+  adminRelayProviders: ['admin', 'relays', 'providers'] as const,
+  adminRelayTemplates: ['admin', 'relays', 'templates'] as const,
+  adminRelayProfiles: ['admin', 'relays', 'profiles'] as const,
+  adminRelayEdges: (originId: string) => ['admin', 'relays', 'edges', originId] as const,
+  adminRelayEdgeDetail: (edgeId: string) => ['admin', 'relays', 'edge', edgeId] as const,
+  adminRelaySlots: (originId: string) => ['admin', 'relays', 'slots', originId] as const,
+  adminRelayRotations: (originId: string) => ['admin', 'relays', 'rotations', originId] as const,
+  adminRelayRotation: (id: string) => ['admin', 'relays', 'rotation', id] as const,
+  adminRelayReachability: (originId: string) =>
+    ['admin', 'relays', 'reachability', originId] as const,
+  adminRelayEndpoints: (originId: string) => ['admin', 'relays', 'endpoints', originId] as const,
 };
 
 // --- Public surface ----------------------------------------------------------
@@ -651,3 +677,129 @@ export const adminMembershipCodesQuery = (statusRef: () => string) =>
       staleTime: 30_000,
     };
   });
+
+// --- Relay edges (Admin → Relay edges; docs/relays.md) ---------------------------
+// Every route under /api/v1/admin/relays/ is HPKE-sealed by verb class; the
+// apiClient seals/opens per the shared route policy, so these are plain calls.
+
+export const adminRelaySummaryQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelaySummary,
+    queryFn: () => apiClient.get('/api/v1/admin/relays/summary', RelaySummary),
+    staleTime: 10_000,
+    // Rotations in flight update every few seconds; poll while any is running.
+    refetchInterval: (q) => ((q.state.data?.counts.rotating ?? 0) > 0 ? 3_000 : 30_000),
+  }));
+
+export const adminRelayConfigQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelayConfig,
+    queryFn: () => apiClient.get('/api/v1/admin/relays/config', RelayConfigView),
+    staleTime: 60_000,
+  }));
+
+export const adminRelayProvidersQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelayProviders,
+    queryFn: () => apiClient.get('/api/v1/admin/relays/providers', RelayAccountsResponse),
+    staleTime: 30_000,
+  }));
+
+export const adminRelayTemplatesQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelayTemplates,
+    queryFn: () => apiClient.get('/api/v1/admin/relays/templates', RelayTemplatesResponse),
+    staleTime: 60_000,
+  }));
+
+export const adminRelayProfilesQuery = () =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelayProfiles,
+    queryFn: () => apiClient.get('/api/v1/admin/relays/profiles', RelayProfileList),
+    staleTime: 30_000,
+  }));
+
+export const adminRelayEdgesQuery = (originId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelayEdges(originId() ?? ''),
+    queryFn: () =>
+      apiClient.get(
+        `/api/v1/admin/relays/edges?originId=${encodeURIComponent(originId() ?? '')}`,
+        z.array(RelayEdgeAdmin),
+      ),
+    enabled: originId() !== null,
+    staleTime: 5_000,
+  }));
+
+export const adminRelayEdgeDetailQuery = (edgeId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelayEdgeDetail(edgeId() ?? ''),
+    queryFn: () =>
+      apiClient.get(
+        `/api/v1/admin/relays/edges/${encodeURIComponent(edgeId() ?? '')}`,
+        RelayEdgeDetail,
+      ),
+    enabled: edgeId() !== null,
+    staleTime: 5_000,
+  }));
+
+export const adminRelaySlotsQuery = (originId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelaySlots(originId() ?? ''),
+    queryFn: () =>
+      apiClient.get(
+        `/api/v1/admin/relays/origins/${encodeURIComponent(originId() ?? '')}/slots`,
+        z.array(RelaySlotAdmin),
+      ),
+    enabled: originId() !== null,
+    staleTime: 30_000,
+  }));
+
+export const adminRelayRotationsQuery = (originId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelayRotations(originId() ?? ''),
+    queryFn: () =>
+      apiClient.get(
+        `/api/v1/admin/relays/rotations?originId=${encodeURIComponent(originId() ?? '')}`,
+        z.array(RelayRotationAdmin),
+      ),
+    enabled: originId() !== null,
+    staleTime: 5_000,
+  }));
+
+/** One rotation, polled every 2s until it reaches a terminal phase (the live progress bar). */
+export const adminRelayRotationQuery = (id: () => string | null) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelayRotation(id() ?? ''),
+    queryFn: () =>
+      apiClient.get(
+        `/api/v1/admin/relays/rotations/${encodeURIComponent(id() ?? '')}`,
+        RelayRotationAdmin,
+      ),
+    enabled: id() !== null,
+    refetchInterval: (q) => (q.state.data && !q.state.data.terminal ? 2_000 : false),
+  }));
+
+export const adminRelayReachabilityQuery = (originId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelayReachability(originId() ?? ''),
+    queryFn: () =>
+      apiClient.get(
+        `/api/v1/admin/relays/reachability?originId=${encodeURIComponent(originId() ?? '')}`,
+        RelayReachabilityMatrix,
+      ),
+    enabled: originId() !== null,
+    staleTime: 30_000,
+  }));
+
+export const adminRelayEndpointsQuery = (originId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelayEndpoints(originId() ?? ''),
+    queryFn: () =>
+      apiClient.get(
+        `/api/v1/admin/relays/origins/${encodeURIComponent(originId() ?? '')}/endpoints`,
+        RelayEndpointsResponse,
+      ),
+    enabled: originId() !== null,
+    staleTime: 10_000,
+  }));

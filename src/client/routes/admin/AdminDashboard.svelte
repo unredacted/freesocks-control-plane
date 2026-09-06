@@ -127,6 +127,33 @@
       </a>
     {/if}
 
+    <!-- Relay edges (docs/relays.md): a one-line status when any origin exists. -->
+    {#if s.relays.origins > 0}
+      <a
+        href="/admin/relays"
+        class="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border px-4 py-3 text-sm hover:bg-muted/40 {s
+          .relays.quarantined > 0
+          ? 'border-destructive/40 bg-destructive/10'
+          : s.relays.suspected > 0
+            ? 'border-amber-500/40 bg-amber-500/10'
+            : ''}"
+      >
+        <span class="font-medium">Relay edges</span>
+        <span>{s.relays.origins} {s.relays.origins === 1 ? 'origin' : 'origins'}</span>
+        <span>{s.relays.published} published</span>
+        {#if s.relays.rotating > 0}<span>{s.relays.rotating} rotating</span>{/if}
+        {#if s.relays.suspected > 0}<span class="text-amber-700 dark:text-amber-300"
+            >{s.relays.suspected} suspected</span
+          >{/if}
+        {#if s.relays.quarantined > 0}<span class="text-destructive"
+            >{s.relays.quarantined} quarantined</span
+          >{/if}
+        {#if s.runtime.nodeVersion}<span class="ml-auto text-xs text-muted-foreground"
+            >actions runtime {s.runtime.nodeVersion}</span
+          >{/if}
+      </a>
+    {/if}
+
     <!-- Cron liveness: a loud strip when any scheduled job is overdue past its
          cadence (the scheduler or a job may be wedged). Detail is in the card below. -->
     {#if s.cronsStale > 0}

@@ -101,6 +101,16 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   const cfg = await ctx.runQuery(internal.relayReconcileMutations.configSnapshot, {});
   const now = Date.now();
 
+  // 0. Record the action runtime's Node version (dashboard; the deploy guard enforces the floor).
+  try {
+    const info = await ctx.runAction(internal.relayProviderOps.runtimeInfo, {});
+    await ctx.runMutation(internal.relayReconcileMutations.recordRuntime, {
+      nodeVersion: info.nodeVersion,
+    });
+  } catch (err) {
+    console.warn(`[relay-reconcile] runtimeInfo unavailable: ${errText(err)}`);
+  }
+
   // 1. Re-kick stale rotations.
   const stale = await ctx.runQuery(internal.relayRotations.listStale, { now });
   for (const rotationId of stale) {

@@ -18,6 +18,7 @@
   import { apiClient } from '../../lib/api';
   import { clearSessionKey } from '../../lib/pop';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
+  import Network from '@lucide/svelte/icons/network';
   import Palette from '@lucide/svelte/icons/palette';
   import Layers from '@lucide/svelte/icons/layers';
   import UsersIcon from '@lucide/svelte/icons/users';
@@ -83,6 +84,7 @@
         { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
         { to: '/admin/connection-modes', label: 'Connection modes', icon: GitBranch },
         { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
+        { to: '/admin/relays', label: 'Relay edges', icon: Network },
         { to: '/admin/status', label: 'Status page', icon: HeartPulse },
       ],
     },
