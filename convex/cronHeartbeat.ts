@@ -124,6 +124,12 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     everyMs: DAY,
     description: 'Prune member passkey registration challenges',
   },
+  {
+    name: 'relay-edge-reconcile',
+    everyMs: 5 * MIN,
+    description:
+      'Relay edges: re-kick rotations, settle ledgers, health, drain → destroy, pool upkeep',
+  },
 ];
 
 /**

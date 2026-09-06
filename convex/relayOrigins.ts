@@ -96,6 +96,12 @@ export const getBySlug = internalQuery({
       .unique(),
 });
 
+/** Every origin (small, operator-managed table) for the reconcile cron. */
+export const listAll = internalQuery({
+  args: {},
+  handler: (ctx) => ctx.db.query('relayOrigins').collect(),
+});
+
 export const listEnabled = internalQuery({
   args: {},
   handler: (ctx) =>
@@ -711,6 +717,61 @@ export const unpublishEdge = internalMutation({
       payload: { originSlug: origin.slug, edgeId, poolIndex, epoch },
     });
     return { ok: true as const, epoch };
+  },
+});
+
+/**
+ * A published edge that vanished at the provider (describe → gone) or was
+ * destroyed by an operator: remove it from the pool without a drain (there is
+ * nothing left to drain to) and bump the epoch so renders stop emitting it.
+ */
+export const dropFromPool = internalMutation({
+  args: { originId: v.id('relayOrigins'), edgeId: v.id('relayEdges'), reason: v.string() },
+  handler: async (ctx, { originId, edgeId, reason }) => {
+    const origin = await ctx.db.get(originId);
+    if (!origin) return { ok: false as const };
+    const now = Date.now();
+    const inPool = origin.publishedEdgeIds.includes(edgeId);
+    const inStandby = origin.standbyEdgeIds.includes(edgeId);
+    if (!inPool && !inStandby) return { ok: true as const, dropped: false };
+    const edge = await ctx.db.get(edgeId);
+    if (edge && edge.publication !== 'unpublished') {
+      await ctx.db.patch(edgeId, {
+        publication: 'unpublished',
+        poolIndex: undefined,
+        updatedAt: now,
+      });
+    }
+    const epoch = origin.publicationEpoch + 1;
+    await ctx.db.patch(originId, {
+      publishedEdgeIds: withoutEdge(origin.publishedEdgeIds, edgeId),
+      standbyEdgeIds: origin.standbyEdgeIds.filter((e) => e !== edgeId),
+      publicationEpoch: epoch,
+      updatedAt: now,
+    });
+    if (inPool) {
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'relay.edge.unpublished',
+        targetType: 'relay_edge',
+        targetId: edgeId,
+        payload: { originSlug: origin.slug, edgeId, poolIndex: edge?.poolIndex ?? null, epoch },
+      });
+      await writeAuditLog(ctx, {
+        actorType: 'system',
+        action: 'relay.drift',
+        targetType: 'relay_origin',
+        targetId: originId,
+        payload: {
+          originSlug: origin.slug,
+          edgeId,
+          mismatched: 1,
+          total: publishedCount(origin.publishedEdgeIds),
+        },
+      });
+    }
+    void reason;
+    return { ok: true as const, dropped: true };
   },
 });
 

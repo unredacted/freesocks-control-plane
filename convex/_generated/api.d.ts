@@ -91,6 +91,8 @@ import type * as relayEdges from "../relayEdges.js";
 import type * as relayOrigins from "../relayOrigins.js";
 import type * as relayEdgeTemplates from "../relayEdgeTemplates.js";
 import type * as relayProfiles from "../relayProfiles.js";
+import type * as relayReconcile from "../relayReconcile.js";
+import type * as relayReconcileMutations from "../relayReconcileMutations.js";
 import type * as relayRotations from "../relayRotations.js";
 import type * as relaySlots from "../relaySlots.js";
 import type * as relayProviderAccounts from "../relayProviderAccounts.js";
@@ -200,6 +202,8 @@ declare const fullApi: ApiFromModules<{
   relayOrigins: typeof relayOrigins;
   relayEdgeTemplates: typeof relayEdgeTemplates;
   relayProfiles: typeof relayProfiles;
+  relayReconcile: typeof relayReconcile;
+  relayReconcileMutations: typeof relayReconcileMutations;
   relayRotations: typeof relayRotations;
   relaySlots: typeof relaySlots;
   relayProviderAccounts: typeof relayProviderAccounts;

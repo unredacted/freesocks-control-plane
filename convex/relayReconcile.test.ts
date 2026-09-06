@@ -1,0 +1,410 @@
+/// <reference types="vite/client" />
+import { convexTest } from 'convex-test';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import schema from './schema';
+import { internal } from './_generated/api';
+
+import { jsonRes, mockFetch } from './lib/relays/testing/mockFetch';
+import { upsertSettingRow } from './appSettings';
+
+const modules = import.meta.glob('./**/*.*s');
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+const ORIGIN = '203.0.113.10';
+
+/** Fake UpCloud with a mutable LB table; records DELETEs. */
+function fakeUpcloud(initial: Array<{ uuid: string; name: string }>) {
+  const lbs = new Map(initial.map((l) => [l.uuid, { ...l, operational_state: 'running' }]));
+  const deletes: string[] = [];
+  const stub = mockFetch((c) => {
+    if (new URL(c.url).hostname === 'panel.example') return jsonRes({ response: [] });
+    if (c.path === '/1.3/load-balancer' && c.method === 'GET') return jsonRes([...lbs.values()]);
+    const one = c.path.match(/^\/1\.3\/load-balancer\/([^/]+)$/);
+    if (one && c.method === 'GET') {
+      const lb = lbs.get(one[1]);
+      return lb ? jsonRes(lb) : jsonRes({ error: { error_code: 'LB_NOT_FOUND' } }, 404);
+    }
+    if (one && c.method === 'DELETE') {
+      deletes.push(one[1]);
+      lbs.delete(one[1]);
+      return new Response(null, { status: 204 });
+    }
+    if (c.path === '/1.3/ip_address' && c.method === 'GET')
+      return jsonRes({ ip_addresses: { ip_address: [] } });
+    throw new Error(`unexpected ${c.method} ${c.url}`);
+  });
+  return { stub, lbs, deletes };
+}
+
+async function seed() {
+  const t = convexTest(schema, modules);
+  await t.run((ctx) =>
+    ctx.db.insert('backendServers', {
+      backend: 'remnawave',
+      name: 'panel-a',
+      slug: 'panel-a',
+      config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+      isActive: true,
+      priority: 0,
+      keyCount: 0,
+      updatedAt: Date.now(),
+    }),
+  );
+  const { id: accountId } = await t.mutation(internal.relayProviderAccounts.create, {
+    provider: 'upcloud',
+    name: 'acct-u',
+    settings: { zone: 'de-fra1' },
+    credentials: { token: 'ucl_x' },
+  });
+  await t.mutation(internal.relayProviderAccounts.setQualified, { id: accountId, qualified: true });
+  await t.mutation(internal.relayProfiles.create, {
+    slug: 'prof-u',
+    name: 'Profile U',
+    provider: 'upcloud',
+    targetAddress: 'target.example',
+    serverNames: ['a.example'],
+  });
+  const { id: originId } = await t.mutation(internal.relayOrigins.upsertBySlug, {
+    slug: 'node-one',
+    backendServerSlug: 'panel-a',
+    nodeHostname: 'node-one',
+    originAddress: ORIGIN,
+  });
+  const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
+    originId,
+    slotKey: 'u',
+    profileSlug: 'prof-u',
+    inboundTag: 'VLESS_RELAY_U',
+    configProfileUuid: '11111111-1111-4111-8111-111111111111',
+    configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+    originPort: 443,
+  });
+  return { t, accountId, originId, slotId };
+}
+
+/** A managed edge whose single `lb` step is done with one lb resource, in the given status. */
+async function managedEdge(
+  s: Awaited<ReturnType<typeof seed>>,
+  lbId: string,
+  patch: Record<string, unknown>,
+) {
+  const { id } = await s.t.mutation(internal.relayEdges.insertPlanned, {
+    originId: s.originId,
+    slotId: s.slotId,
+    accountId: s.accountId,
+    templateHash: 'h',
+    listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+    steps: [{ id: 'lb', kind: 'create_lb', resourceName: 'x', discoverability: 'by_name' }],
+  });
+  await s.t.run(async (ctx) => {
+    const e = (await ctx.db.get(id))!;
+    await ctx.db.patch(id, {
+      steps: e.steps.map((st) => ({ ...st, state: 'done' as const, finishedAt: Date.now() })),
+      resources: [
+        {
+          stepId: 'lb',
+          kind: 'lb',
+          resourceId: lbId,
+          ownership: 'created' as const,
+          deleteState: 'present' as const,
+        },
+      ],
+      addresses: { v4: '198.51.100.9' },
+      health: 'online',
+      lastHealthAt: Date.now(),
+      status: 'active',
+      ...patch,
+      updatedAt: Date.now(),
+    });
+  });
+  return id;
+}
+
+const run = (t: ReturnType<typeof convexTest>) => t.action(internal.relayReconcile.run, {});
+
+describe('relayReconcile', () => {
+  test('drained edge → destroying → every child confirmed gone → destroyed (audited, no addresses)', async () => {
+    const world = fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
+    const s = await seed();
+    const edgeId = await managedEdge(s, 'lb-1', {
+      status: 'draining',
+      publication: 'draining',
+      drainUntil: Date.now() - 1,
+    });
+    const r1 = await run(s.t);
+    expect(r1.destroying).toBe(1);
+    expect((await s.t.query(internal.relayEdges.get, { id: edgeId }))!.status).toBe('destroying');
+    const r2 = await run(s.t);
+    expect(r2.destroyed).toBe(1);
+    expect(world.deletes).toEqual(['lb-1']);
+    const edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(edge.status).toBe('destroyed');
+    expect(edge.resources[0].deleteState).toBe('confirmed_gone');
+    expect(edge.currentOp).toBeUndefined();
+    expect(edge.destroyAttempts).toBe(1);
+    const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((a) => a.action === 'relay.edge.destroyed')?.payload).toMatchObject({
+      originSlug: 'node-one',
+      provider: 'upcloud',
+    });
+    expect(JSON.stringify(audit)).not.toContain('198.51.100.9');
+    // A third pass is a no-op.
+    const r3 = await run(s.t);
+    expect(r3.destroyed + r3.destroying + r3.errors).toBe(0);
+  });
+
+  test('a not-yet-drained edge is left alone; draining still gets its health refreshed', async () => {
+    fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
+    const s = await seed();
+    const edgeId = await managedEdge(s, 'lb-1', {
+      status: 'draining',
+      publication: 'draining',
+      drainUntil: Date.now() + 60_000,
+      lastHealthAt: undefined,
+    });
+    const r = await run(s.t);
+    expect(r.destroying).toBe(0);
+    expect(r.described).toBe(1);
+    expect((await s.t.query(internal.relayEdges.get, { id: edgeId }))!.status).toBe('draining');
+  });
+
+  test('a published edge the provider no longer has is dropped from the pool with a drift audit', async () => {
+    fakeUpcloud([]); // lb-1 does not exist any more
+    const s = await seed();
+    const edgeId = await managedEdge(s, 'lb-1', { lastHealthAt: undefined });
+    await s.t.mutation(internal.relayOrigins.publishEdge, { originId: s.originId, edgeId });
+    const before = (await s.t.query(internal.relayOrigins.get, { id: s.originId }))!;
+    expect(before.publishedEdgeIds).toEqual([edgeId]);
+    const r = await run(s.t);
+    expect(r.described).toBe(1);
+    expect(r.dropped).toBe(1);
+    const origin = (await s.t.query(internal.relayOrigins.get, { id: s.originId }))!;
+    expect(origin.publishedEdgeIds).toEqual([]);
+    expect(origin.publicationEpoch).toBe(before.publicationEpoch + 1);
+    const edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(edge.status).toBe('destroyed');
+    expect(edge.publication).toBe('unpublished');
+    const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.some((a) => a.action === 'relay.drift')).toBe(true);
+  });
+
+  test('failed edge with an unresolved step is DISCOVERED (never re-run): absent → settled → destroyed', async () => {
+    const world = fakeUpcloud([]);
+    const s = await seed();
+    const { id: edgeId } = await s.t.mutation(internal.relayEdges.insertPlanned, {
+      originId: s.originId,
+      slotId: s.slotId,
+      accountId: s.accountId,
+      templateHash: 'h',
+      listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+      steps: [
+        {
+          id: 'lb',
+          kind: 'create_lb',
+          resourceName: 'fcp-relay-node-one-00000000',
+          discoverability: 'by_name',
+        },
+      ],
+    });
+    await s.t.mutation(internal.relayEdges.patchEdge, {
+      edgeId,
+      status: 'failed',
+      stepStates: [{ stepId: 'lb', state: 'unresolved' }],
+    });
+    const r1 = await run(s.t);
+    expect(r1.settled).toBe(1);
+    let edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(edge.steps[0].state).toBe('done');
+    expect(edge.status).toBe('failed');
+    // Only the LIST (discovery) was called; never a POST.
+    expect(world.stub.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      'GET /1.3/load-balancer',
+    ]);
+    const r2 = await run(s.t);
+    expect(r2.destroying).toBe(1);
+    const r3 = await run(s.t);
+    expect(r3.destroyed).toBe(1);
+    edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(edge.status).toBe('destroyed');
+    expect(world.deletes).toEqual([]);
+  });
+
+  test('failed edge whose step actually created the LB: discovery FINDS it and the destroy then deletes it', async () => {
+    const world = fakeUpcloud([]);
+    const s = await seed();
+    const { id: edgeId, name } = await s.t.mutation(internal.relayEdges.insertPlanned, {
+      originId: s.originId,
+      slotId: s.slotId,
+      accountId: s.accountId,
+      templateHash: 'h',
+      listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 443 }],
+      steps: [
+        {
+          id: 'lb',
+          kind: 'create_lb',
+          resourceName: 'fcp-relay-node-one-00000000',
+          discoverability: 'by_name',
+        },
+      ],
+    });
+    // The provider DID create the LB under the edge's name before the run died.
+    world.lbs.set('lb-7', { uuid: 'lb-7', name, operational_state: 'running' });
+    await s.t.mutation(internal.relayEdges.patchEdge, {
+      edgeId,
+      status: 'failed',
+      stepStates: [{ stepId: 'lb', state: 'unresolved' }],
+    });
+    await run(s.t);
+    let edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(edge.resources).toEqual([
+      expect.objectContaining({
+        kind: 'lb',
+        resourceId: 'lb-7',
+        ownership: 'adopted',
+        deleteState: 'present',
+      }),
+    ]);
+    await run(s.t); // → destroying
+    await run(s.t); // → destroy pass
+    edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(edge.status).toBe('destroyed');
+    expect(world.deletes).toEqual(['lb-7']);
+  });
+
+  test('destroy attempts cap parks the edge as needs_operator; retryDestroy resumes it', async () => {
+    fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
+    const s = await seed();
+    const edgeId = await managedEdge(s, 'lb-1', {
+      status: 'destroying',
+      publication: 'unpublished',
+      destroyAttempts: 48,
+    });
+    await run(s.t);
+    const edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    expect(edge.status).toBe('needs_operator');
+    const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((a) => a.action === 'relay.edge.destroy_failed')?.payload).toMatchObject({
+      attempts: 48,
+    });
+    expect(await s.t.mutation(internal.relayReconcileMutations.retryDestroy, { edgeId })).toEqual({
+      ok: true,
+    });
+    const r = await run(s.t);
+    expect(r.destroyed).toBe(1);
+  });
+
+  test('stale rotation is re-kicked', async () => {
+    vi.useFakeTimers();
+    fakeUpcloud([]);
+    const s = await seed();
+    const { rotationId } = await s.t.mutation(internal.relayRotations.start, {
+      originId: s.originId,
+      kind: 'provision',
+      trigger: 'manual',
+    });
+    await s.t.run((ctx) => ctx.db.patch(rotationId, { nextStepAt: Date.now() - 120_000 }));
+    const r = await run(s.t);
+    expect(r.rekicked).toBe(1);
+    const rot = (await s.t.query(internal.relayRotations.get, { id: rotationId }))!;
+    expect(rot.events.map((e) => e.code)).toContain('rekicked');
+    expect(rot.nextStepAt).toBeGreaterThan(Date.now() - 1000);
+  });
+
+  test('pool upkeep: a publishable standby fills a free non-zero index directly', async () => {
+    fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
+    const s = await seed();
+    await s.t.mutation(internal.relayOrigins.adoptEdge, {
+      originId: s.originId,
+      slotId: s.slotId,
+      ipv4: '198.51.100.1',
+      publish: true,
+    });
+    const standby = await managedEdge(s, 'lb-1', {});
+    const r = await run(s.t);
+    expect(r.published).toBe(1);
+    expect(r.started).toBe(0);
+    const origin = (await s.t.query(internal.relayOrigins.get, { id: s.originId }))!;
+    expect(origin.publishedEdgeIds[1]).toBe(standby);
+    expect(origin.activeRotationId).toBeUndefined();
+  });
+
+  test('pool upkeep: index 0 on a Host-managed origin goes through a publish rotation, not a direct write', async () => {
+    fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
+    const s = await seed();
+    await managedEdge(s, 'lb-1', {});
+    const r = await run(s.t);
+    expect(r.published).toBe(0);
+    expect(r.started).toBe(1);
+    const origin = (await s.t.query(internal.relayOrigins.get, { id: s.originId }))!;
+    expect(origin.activeRotationId).toBeDefined();
+    expect(origin.publishedEdgeIds).toEqual([]);
+    const rot = (await s.t.query(internal.relayRotations.get, { id: origin.activeRotationId! }))!;
+    expect(rot.kind).toBe('publish');
+    // Next tick: the origin is busy → nothing else starts.
+    const r2 = await run(s.t);
+    expect(r2.started + r2.published).toBe(0);
+  });
+
+  test('pool upkeep: autoProvisionToDesired starts at most maxReconcileStartsPerTick provisions', async () => {
+    fakeUpcloud([]);
+    const s = await seed();
+    await s.t.run((ctx) => upsertSettingRow(ctx, 'relay.autoProvisionToDesired', 'true'));
+    await s.t.mutation(internal.relayOrigins.upsertBySlug, {
+      slug: 'node-two',
+      backendServerSlug: 'panel-a',
+      nodeHostname: 'node-two',
+      originAddress: '203.0.113.11',
+    });
+    const two = (await s.t.query(internal.relayOrigins.getBySlug, { slug: 'node-two' }))!;
+    await s.t.mutation(internal.relaySlots.upsert, {
+      originId: two._id,
+      slotKey: 'u',
+      profileSlug: 'prof-u',
+      inboundTag: 'VLESS_RELAY_U',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '33333333-3333-4333-8333-333333333333',
+      originPort: 443,
+    });
+    const r = await run(s.t);
+    expect(r.started).toBe(1);
+    const origins = await s.t.query(internal.relayOrigins.listAll, {});
+    expect(origins.filter((o) => o.activeRotationId).length).toBe(1);
+    // Off by default: with the setting removed nothing starts for the other origin.
+    await s.t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('appSettings')
+        .withIndex('by_key', (q) => q.eq('key', 'relay.autoProvisionToDesired'))
+        .unique();
+      if (row) await ctx.db.delete(row._id);
+    });
+    const r2 = await run(s.t);
+    expect(r2.started).toBe(0);
+  });
+
+  test('deleting origin is finalized once nothing managed remains', async () => {
+    fakeUpcloud([]);
+    const s = await seed();
+    await s.t.mutation(internal.relayOrigins.adoptEdge, {
+      originId: s.originId,
+      slotId: s.slotId,
+      ipv4: '198.51.100.1',
+      publish: true,
+    });
+    await s.t.mutation(internal.relayOrigins.requestDelete, { id: s.originId });
+    const r = await run(s.t);
+    expect(r.finalizedDeletes).toBe(1);
+    expect(await s.t.query(internal.relayOrigins.get, { id: s.originId })).toBeNull();
+  });
+
+  test('the cron stamps a heartbeat outcome', async () => {
+    fakeUpcloud([]);
+    const s = await seed();
+    await run(s.t);
+    const hb = await s.t.run((ctx) => ctx.db.query('cronHeartbeats').collect());
+    expect(hb.some((h) => h.name === 'relay-edge-reconcile')).toBe(true);
+  });
+});

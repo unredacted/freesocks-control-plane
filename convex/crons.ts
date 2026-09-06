@@ -175,4 +175,10 @@ crons.daily(
   {},
 );
 
+// Relay edges (docs/relays.md): re-kick stale rotations, settle edges with an
+// unknown external outcome (discover before anything allocating runs again),
+// refresh provider health, turn drained edges into destroy runs, top the
+// published pool / standbys up (config-gated), and finish origin deletes.
+crons.interval('relay-edge-reconcile', { minutes: 5 }, internal.relayReconcile.run, {});
+
 export default crons;

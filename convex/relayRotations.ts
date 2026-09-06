@@ -356,6 +356,22 @@ export const start = internalMutation({
   },
 });
 
+/** Reconcile: a non-terminal rotation whose next step never ran (crashed action). */
+export const rekick = internalMutation({
+  args: { rotationId: v.id('relayRotations') },
+  handler: async (ctx, { rotationId }) => {
+    const r = await ctx.db.get(rotationId);
+    if (!r || isTerminalPhase(r.phase)) return null;
+    const now = Date.now();
+    await ctx.db.patch(rotationId, {
+      events: appendEvent(r.events, { at: now, level: 'warn', code: 'rekicked' }),
+      updatedAt: now,
+    });
+    await scheduleStep(ctx, rotationId, 0);
+    return null;
+  },
+});
+
 export const requestCancel = internalMutation({
   args: { rotationId: v.id('relayRotations'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { rotationId, actorAdminId }) => {
