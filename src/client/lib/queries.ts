@@ -55,17 +55,17 @@ import {
   PublicStatusResponse,
 } from '../../shared/contracts/status';
 import {
-  RelayAccountsResponse,
+  EdgeProviderAccountsResponse,
   RelayConfigView,
-  RelayEdgeAdmin,
-  RelayEdgeDetail,
+  EdgeAdmin,
+  EdgeDetail,
   RelayEndpointsResponse,
-  RelayProfileList,
-  RelayReachabilityMatrix,
-  RelayRotationAdmin,
+  RealityProfileList,
+  ProbeReachabilityMatrix,
+  EdgeRotationAdmin,
   RelaySlotAdmin,
   RelaySummary,
-  RelayTemplatesResponse,
+  EdgeTemplatesResponse,
 } from '../../shared/contracts/relays';
 
 // --- Cache keys --------------------------------------------------------------
@@ -112,17 +112,17 @@ export const queryKeys = {
   adminAnalytics: ['admin', 'analytics'] as const,
   adminRelaySummary: ['admin', 'relays', 'summary'] as const,
   adminRelayConfig: ['admin', 'relays', 'config'] as const,
-  adminRelayProviders: ['admin', 'relays', 'providers'] as const,
-  adminRelayTemplates: ['admin', 'relays', 'templates'] as const,
-  adminRelayProfiles: ['admin', 'relays', 'profiles'] as const,
-  adminRelayEdges: (originId: string) => ['admin', 'relays', 'edges', originId] as const,
+  adminEdgeProviders: ['admin', 'relays', 'providers'] as const,
+  adminEdgeTemplates: ['admin', 'relays', 'templates'] as const,
+  adminRealityProfiles: ['admin', 'relays', 'profiles'] as const,
+  adminRelayEdges: (relayId: string) => ['admin', 'relays', 'edges', relayId] as const,
   adminRelayEdgeDetail: (edgeId: string) => ['admin', 'relays', 'edge', edgeId] as const,
-  adminRelaySlots: (originId: string) => ['admin', 'relays', 'slots', originId] as const,
-  adminRelayRotations: (originId: string) => ['admin', 'relays', 'rotations', originId] as const,
+  adminRelaySlots: (relayId: string) => ['admin', 'relays', 'slots', relayId] as const,
+  adminRelayRotations: (relayId: string) => ['admin', 'relays', 'rotations', relayId] as const,
   adminRelayRotation: (id: string) => ['admin', 'relays', 'rotation', id] as const,
-  adminRelayReachability: (originId: string) =>
-    ['admin', 'relays', 'reachability', originId] as const,
-  adminRelayEndpoints: (originId: string) => ['admin', 'relays', 'endpoints', originId] as const,
+  adminRelayReachability: (relayId: string) =>
+    ['admin', 'relays', 'reachability', relayId] as const,
+  adminRelayEndpoints: (relayId: string) => ['admin', 'relays', 'endpoints', relayId] as const,
 };
 
 // --- Public surface ----------------------------------------------------------
@@ -679,13 +679,13 @@ export const adminMembershipCodesQuery = (statusRef: () => string) =>
   });
 
 // --- Relay edges (Admin → Relay edges; docs/relays.md) ---------------------------
-// Every route under /api/v1/admin/relays/ is HPKE-sealed by verb class; the
+// Every route under /api/v1/admin/relay/ is HPKE-sealed by verb class; the
 // apiClient seals/opens per the shared route policy, so these are plain calls.
 
 export const adminRelaySummaryQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.adminRelaySummary,
-    queryFn: () => apiClient.get('/api/v1/admin/relays/summary', RelaySummary),
+    queryFn: () => apiClient.get('/api/v1/admin/relay/summary', RelaySummary),
     staleTime: 10_000,
     // Rotations in flight update every few seconds; poll while any is running.
     refetchInterval: (q) => ((q.state.data?.counts.rotating ?? 0) > 0 ? 3_000 : 30_000),
@@ -694,40 +694,40 @@ export const adminRelaySummaryQuery = () =>
 export const adminRelayConfigQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.adminRelayConfig,
-    queryFn: () => apiClient.get('/api/v1/admin/relays/config', RelayConfigView),
+    queryFn: () => apiClient.get('/api/v1/admin/relay/config', RelayConfigView),
     staleTime: 60_000,
   }));
 
-export const adminRelayProvidersQuery = () =>
+export const adminEdgeProvidersQuery = () =>
   createQuery(() => ({
-    queryKey: queryKeys.adminRelayProviders,
-    queryFn: () => apiClient.get('/api/v1/admin/relays/providers', RelayAccountsResponse),
+    queryKey: queryKeys.adminEdgeProviders,
+    queryFn: () => apiClient.get('/api/v1/admin/relay/providers', EdgeProviderAccountsResponse),
     staleTime: 30_000,
   }));
 
-export const adminRelayTemplatesQuery = () =>
+export const adminEdgeTemplatesQuery = () =>
   createQuery(() => ({
-    queryKey: queryKeys.adminRelayTemplates,
-    queryFn: () => apiClient.get('/api/v1/admin/relays/templates', RelayTemplatesResponse),
+    queryKey: queryKeys.adminEdgeTemplates,
+    queryFn: () => apiClient.get('/api/v1/admin/relay/templates', EdgeTemplatesResponse),
     staleTime: 60_000,
   }));
 
-export const adminRelayProfilesQuery = () =>
+export const adminRealityProfilesQuery = () =>
   createQuery(() => ({
-    queryKey: queryKeys.adminRelayProfiles,
-    queryFn: () => apiClient.get('/api/v1/admin/relays/profiles', RelayProfileList),
+    queryKey: queryKeys.adminRealityProfiles,
+    queryFn: () => apiClient.get('/api/v1/admin/relay/reality-profiles', RealityProfileList),
     staleTime: 30_000,
   }));
 
-export const adminRelayEdgesQuery = (originId: () => string | null) =>
+export const adminRelayEdgesQuery = (relayId: () => string | null) =>
   createQuery(() => ({
-    queryKey: queryKeys.adminRelayEdges(originId() ?? ''),
+    queryKey: queryKeys.adminRelayEdges(relayId() ?? ''),
     queryFn: () =>
       apiClient.get(
-        `/api/v1/admin/relays/edges?originId=${encodeURIComponent(originId() ?? '')}`,
-        z.array(RelayEdgeAdmin),
+        `/api/v1/admin/relay/edges?relayId=${encodeURIComponent(relayId() ?? '')}`,
+        z.array(EdgeAdmin),
       ),
-    enabled: originId() !== null,
+    enabled: relayId() !== null,
     staleTime: 5_000,
   }));
 
@@ -735,35 +735,32 @@ export const adminRelayEdgeDetailQuery = (edgeId: () => string | null) =>
   createQuery(() => ({
     queryKey: queryKeys.adminRelayEdgeDetail(edgeId() ?? ''),
     queryFn: () =>
-      apiClient.get(
-        `/api/v1/admin/relays/edges/${encodeURIComponent(edgeId() ?? '')}`,
-        RelayEdgeDetail,
-      ),
+      apiClient.get(`/api/v1/admin/relay/edges/${encodeURIComponent(edgeId() ?? '')}`, EdgeDetail),
     enabled: edgeId() !== null,
     staleTime: 5_000,
   }));
 
-export const adminRelaySlotsQuery = (originId: () => string | null) =>
+export const adminRelaySlotsQuery = (relayId: () => string | null) =>
   createQuery(() => ({
-    queryKey: queryKeys.adminRelaySlots(originId() ?? ''),
+    queryKey: queryKeys.adminRelaySlots(relayId() ?? ''),
     queryFn: () =>
       apiClient.get(
-        `/api/v1/admin/relays/origins/${encodeURIComponent(originId() ?? '')}/slots`,
+        `/api/v1/admin/relay/relays/${encodeURIComponent(relayId() ?? '')}/slots`,
         z.array(RelaySlotAdmin),
       ),
-    enabled: originId() !== null,
+    enabled: relayId() !== null,
     staleTime: 30_000,
   }));
 
-export const adminRelayRotationsQuery = (originId: () => string | null) =>
+export const adminRelayRotationsQuery = (relayId: () => string | null) =>
   createQuery(() => ({
-    queryKey: queryKeys.adminRelayRotations(originId() ?? ''),
+    queryKey: queryKeys.adminRelayRotations(relayId() ?? ''),
     queryFn: () =>
       apiClient.get(
-        `/api/v1/admin/relays/rotations?originId=${encodeURIComponent(originId() ?? '')}`,
-        z.array(RelayRotationAdmin),
+        `/api/v1/admin/relay/rotations?relayId=${encodeURIComponent(relayId() ?? '')}`,
+        z.array(EdgeRotationAdmin),
       ),
-    enabled: originId() !== null,
+    enabled: relayId() !== null,
     staleTime: 5_000,
   }));
 
@@ -773,33 +770,33 @@ export const adminRelayRotationQuery = (id: () => string | null) =>
     queryKey: queryKeys.adminRelayRotation(id() ?? ''),
     queryFn: () =>
       apiClient.get(
-        `/api/v1/admin/relays/rotations/${encodeURIComponent(id() ?? '')}`,
-        RelayRotationAdmin,
+        `/api/v1/admin/relay/rotations/${encodeURIComponent(id() ?? '')}`,
+        EdgeRotationAdmin,
       ),
     enabled: id() !== null,
     refetchInterval: (q) => (q.state.data && !q.state.data.terminal ? 2_000 : false),
   }));
 
-export const adminRelayReachabilityQuery = (originId: () => string | null) =>
+export const adminRelayReachabilityQuery = (relayId: () => string | null) =>
   createQuery(() => ({
-    queryKey: queryKeys.adminRelayReachability(originId() ?? ''),
+    queryKey: queryKeys.adminRelayReachability(relayId() ?? ''),
     queryFn: () =>
       apiClient.get(
-        `/api/v1/admin/relays/reachability?originId=${encodeURIComponent(originId() ?? '')}`,
-        RelayReachabilityMatrix,
+        `/api/v1/admin/relay/reachability?relayId=${encodeURIComponent(relayId() ?? '')}`,
+        ProbeReachabilityMatrix,
       ),
-    enabled: originId() !== null,
+    enabled: relayId() !== null,
     staleTime: 30_000,
   }));
 
-export const adminRelayEndpointsQuery = (originId: () => string | null) =>
+export const adminRelayEndpointsQuery = (relayId: () => string | null) =>
   createQuery(() => ({
-    queryKey: queryKeys.adminRelayEndpoints(originId() ?? ''),
+    queryKey: queryKeys.adminRelayEndpoints(relayId() ?? ''),
     queryFn: () =>
       apiClient.get(
-        `/api/v1/admin/relays/origins/${encodeURIComponent(originId() ?? '')}/endpoints`,
+        `/api/v1/admin/relay/relays/${encodeURIComponent(relayId() ?? '')}/endpoints`,
         RelayEndpointsResponse,
       ),
-    enabled: originId() !== null,
+    enabled: relayId() !== null,
     staleTime: 10_000,
   }));

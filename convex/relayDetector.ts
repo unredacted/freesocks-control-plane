@@ -13,7 +13,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { resolveRelayConfig, relayMs } from './lib/relayConfig';
-import { todayKey } from './relayOrigins';
+import { todayKey } from './relays';
 import {
   autoRotateDecision,
   evaluate,
@@ -29,13 +29,13 @@ const DAY = 24 * 60 * MIN;
 const SAMPLE_RETENTION_MS = 7 * DAY;
 const LOAD_STALE_MS = 20 * MIN;
 
-type Origin = Doc<'relayOrigins'>;
+type Origin = Doc<'relays'>;
 
 /** Everything one evaluation needs, read in one query. */
-export const originWindow = internalQuery({
-  args: { originId: v.id('relayOrigins'), now: v.number() },
-  handler: async (ctx, { originId, now }) => {
-    const origin = await ctx.db.get(originId);
+export const relayWindow = internalQuery({
+  args: { relayId: v.id('relays'), now: v.number() },
+  handler: async (ctx, { relayId, now }) => {
+    const origin = await ctx.db.get(relayId);
     if (!origin) return null;
     const cfg = await resolveRelayConfig(ctx.db);
     const since = now - relayMs.detectWindow(cfg);
@@ -60,9 +60,9 @@ export const originWindow = internalQuery({
       }
     }
     const samples = await ctx.db
-      .query('relayOriginSamples')
-      .withIndex('by_origin_at', (q) =>
-        q.eq('originId', originId).gte('at', now - SAMPLE_RETENTION_MS),
+      .query('relaySamples')
+      .withIndex('by_relay_at', (q) =>
+        q.eq('relayId', relayId).gte('at', now - SAMPLE_RETENTION_MS),
       )
       .collect();
     const baseline: BaselineSample[] = samples.map((s) => ({
@@ -119,7 +119,7 @@ export const originWindow = internalQuery({
 /** Persist one evaluation: suspicion state, a baseline sample, transition audits, sample retention. */
 export const recordEvaluation = internalMutation({
   args: {
-    originId: v.id('relayOrigins'),
+    relayId: v.id('relays'),
     now: v.number(),
     evaluation: v.any(),
     usersOnline: v.union(v.number(), v.null()),
@@ -127,11 +127,11 @@ export const recordEvaluation = internalMutation({
     lastRotateError: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, a) => {
-    const origin = await ctx.db.get(a.originId);
+    const origin = await ctx.db.get(a.relayId);
     if (!origin) return null;
     const ev = a.evaluation as Evaluation;
     const prev = origin.suspicion;
-    await ctx.db.patch(a.originId, {
+    await ctx.db.patch(a.relayId, {
       suspicion: {
         state: ev.state,
         hintLevel: ev.hintLevel,
@@ -142,7 +142,7 @@ export const recordEvaluation = internalMutation({
         scope: ev.scope,
         countries: ev.countries.slice(0, 10),
         edgeEvidence: ev.edgeEvidence.map((e) => ({
-          edgeId: e.edgeId as Id<'relayEdges'>,
+          edgeId: e.edgeId as Id<'edges'>,
           source: e.source,
           countries: e.countries.slice(0, 10),
         })),
@@ -159,8 +159,8 @@ export const recordEvaluation = internalMutation({
       },
       updatedAt: a.now,
     });
-    await ctx.db.insert('relayOriginSamples', {
-      originId: a.originId,
+    await ctx.db.insert('relaySamples', {
+      relayId: a.relayId,
       at: a.now,
       reports: ev.countries.reduce((acc, c) => acc + c.count, 0),
       distinctReporters: 0,
@@ -168,9 +168,9 @@ export const recordEvaluation = internalMutation({
     });
     // Retention: drop the oldest samples past 7 days (bounded per tick).
     const old = await ctx.db
-      .query('relayOriginSamples')
-      .withIndex('by_origin_at', (q) =>
-        q.eq('originId', a.originId).lt('at', a.now - SAMPLE_RETENTION_MS),
+      .query('relaySamples')
+      .withIndex('by_relay_at', (q) =>
+        q.eq('relayId', a.relayId).lt('at', a.now - SAMPLE_RETENTION_MS),
       )
       .take(50);
     for (const s of old) await ctx.db.delete(s._id);
@@ -178,10 +178,10 @@ export const recordEvaluation = internalMutation({
       await writeAuditLog(ctx, {
         actorType: 'system',
         action: 'relay.block_suspected',
-        targetType: 'relay_origin',
-        targetId: a.originId,
+        targetType: 'relay',
+        targetId: a.relayId,
         payload: {
-          originSlug: origin.slug,
+          relaySlug: origin.slug,
           hintLevel: ev.hintLevel,
           score: round3(ev.score),
           reporters: Math.round(ev.countries.reduce((acc, c) => acc + c.count, 0)),
@@ -194,9 +194,9 @@ export const recordEvaluation = internalMutation({
       await writeAuditLog(ctx, {
         actorType: 'system',
         action: 'relay.block_cleared',
-        targetType: 'relay_origin',
-        targetId: a.originId,
-        payload: { originSlug: origin.slug, reason: 'score_below_threshold' },
+        targetType: 'relay',
+        targetId: a.relayId,
+        payload: { relaySlug: origin.slug, reason: 'score_below_threshold' },
       });
     }
     return null;
@@ -206,15 +206,15 @@ export const recordEvaluation = internalMutation({
 /** The real sample counts come from the window (the evaluation only carries country totals). */
 export const recordSampleCounts = internalMutation({
   args: {
-    originId: v.id('relayOrigins'),
+    relayId: v.id('relays'),
     at: v.number(),
     reports: v.number(),
     distinctReporters: v.number(),
   },
   handler: async (ctx, a) => {
     const row = await ctx.db
-      .query('relayOriginSamples')
-      .withIndex('by_origin_at', (q) => q.eq('originId', a.originId).eq('at', a.at))
+      .query('relaySamples')
+      .withIndex('by_relay_at', (q) => q.eq('relayId', a.relayId).eq('at', a.at))
       .unique();
     if (row)
       await ctx.db.patch(row._id, { reports: a.reports, distinctReporters: a.distinctReporters });
@@ -274,12 +274,12 @@ export const run = internalAction({
       };
       const now = Date.now();
       await ctx.runMutation(internal.relayDetector.sweepMarks, { now });
-      const origins: Origin[] = await ctx.runQuery(internal.relayOrigins.listEnabled, {});
+      const origins: Origin[] = await ctx.runQuery(internal.relays.listEnabled, {});
       for (const o of origins) {
         if (o.deleting) continue;
         try {
-          const w = await ctx.runQuery(internal.relayDetector.originWindow, {
-            originId: o._id,
+          const w = await ctx.runQuery(internal.relayDetector.relayWindow, {
+            relayId: o._id,
             now,
           });
           if (!w) continue;
@@ -321,12 +321,12 @@ export const run = internalAction({
           let lastRotateError: string | null | undefined = undefined;
           if (!('veto' in decision)) {
             try {
-              await ctx.runMutation(internal.relayRotations.start, {
-                originId: o._id,
+              await ctx.runMutation(internal.edgeRotations.start, {
+                relayId: o._id,
                 kind: 'replace',
                 trigger: 'detector',
                 burn: true,
-                targetEdgeId: decision.edgeId as Id<'relayEdges'>,
+                targetEdgeId: decision.edgeId as Id<'edges'>,
                 reason: `detector:${decision.source}`,
               });
               report.rotated++;
@@ -339,7 +339,7 @@ export const run = internalAction({
             }
           }
           await ctx.runMutation(internal.relayDetector.recordEvaluation, {
-            originId: o._id,
+            relayId: o._id,
             now,
             evaluation: ev,
             usersOnline: w.usersOnline,
@@ -347,7 +347,7 @@ export const run = internalAction({
             ...(lastRotateError !== undefined ? { lastRotateError } : {}),
           });
           await ctx.runMutation(internal.relayDetector.recordSampleCounts, {
-            originId: o._id,
+            relayId: o._id,
             at: now,
             reports: w.window.reports,
             distinctReporters: w.window.distinctReporters,
@@ -356,8 +356,8 @@ export const run = internalAction({
           if (ev.transition === 'suspected' && ev.hintLevel === 'reports' && w.cfg.probe.enabled) {
             for (const p of w.published) {
               try {
-                const r = await ctx.runMutation(internal.relayProbes.requestProbes, {
-                  edgeId: p.edgeId as Id<'relayEdges'>,
+                const r = await ctx.runMutation(internal.probes.requestProbes, {
+                  edgeId: p.edgeId as Id<'edges'>,
                   trigger: 'detector',
                 });
                 report.probesRequested += r.runIds.length;

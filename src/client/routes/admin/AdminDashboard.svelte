@@ -128,7 +128,7 @@
     {/if}
 
     <!-- Relay edges (docs/relays.md): a one-line status when any origin exists. -->
-    {#if s.relays.origins > 0}
+    {#if s.relays.total > 0}
       <a
         href="/admin/relays"
         class="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border px-4 py-3 text-sm hover:bg-muted/40 {s
@@ -139,7 +139,7 @@
             : ''}"
       >
         <span class="font-medium">Relay edges</span>
-        <span>{s.relays.origins} {s.relays.origins === 1 ? 'origin' : 'origins'}</span>
+        <span>{s.relays.total} {s.relays.total === 1 ? 'relay' : 'relays'}</span>
         <span>{s.relays.published} published</span>
         {#if s.relays.rotating > 0}<span>{s.relays.rotating} rotating</span>{/if}
         {#if s.relays.suspected > 0}<span class="text-amber-700 dark:text-amber-300"

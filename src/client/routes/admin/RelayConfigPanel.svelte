@@ -19,7 +19,7 @@
     RENDER_CLIENT_FAMILY_IDS,
     RelayConfigPatchResponse,
     RelayRenderPreviewResponse,
-    type RelayOriginAdmin,
+    type RelayAdmin,
     type RelayRenderPreviewResponse as Preview,
   } from '../../../shared/contracts/relays';
   import AdminListState from './AdminListState.svelte';
@@ -31,9 +31,9 @@
    * knobs. Saves send only the fields the operator touched.
    */
   interface Props {
-    origins: RelayOriginAdmin[];
+    relays: RelayAdmin[];
   }
-  let { origins }: Props = $props();
+  let { relays }: Props = $props();
   const cfg = adminRelayConfigQuery();
   const qc = useQueryClient();
   const onError = (title: string) => (err: unknown) =>
@@ -78,7 +78,7 @@
   );
   const save = createMutation(() => ({
     mutationFn: () =>
-      apiClient.patch('/api/v1/admin/relays/config', nested(), RelayConfigPatchResponse),
+      apiClient.patch('/api/v1/admin/relay/config', nested(), RelayConfigPatchResponse),
     onSuccess: (r) => {
       patch = {};
       secrets = { globalpingToken: '', ripeAtlasKey: '' };
@@ -100,14 +100,14 @@
   const runPreview = createMutation(() => ({
     mutationFn: () =>
       apiClient.post(
-        '/api/v1/admin/relays/render/preview',
-        { originId: previewOrigin || origins[0]?.id, family: previewFamily },
+        '/api/v1/admin/relay/render/preview',
+        { relayId: previewOrigin || relays[0]?.id, family: previewFamily },
         RelayRenderPreviewResponse,
       ),
     onSuccess: (r) => (preview = r),
     onError: onError('Preview failed'),
   }));
-  const reach = adminRelayReachabilityQuery(() => previewOrigin || origins[0]?.id || null);
+  const reach = adminRelayReachabilityQuery(() => previewOrigin || relays[0]?.id || null);
 
   const ipv6Modes = ['off', 'auto-group-only', 'both'] as const;
   const ruleModes = ['inherit', ...ipv6Modes] as const;
@@ -175,8 +175,8 @@
           >Standby edges per origin (default)<Input
             class="mt-1"
             type="number"
-            value={num('standbyPerOrigin', 0)}
-            oninput={(e) => set('standbyPerOrigin', Number(e.currentTarget.value))}
+            value={num('standbyPerRelay', 0)}
+            oninput={(e) => set('standbyPerRelay', Number(e.currentTarget.value))}
           /></label
         >
         <label class="text-xs"
@@ -215,8 +215,8 @@
           >Max rotations per origin per day<Input
             class="mt-1"
             type="number"
-            value={num('maxRotationsPerOriginPerDay', 3)}
-            oninput={(e) => set('maxRotationsPerOriginPerDay', Number(e.currentTarget.value))}
+            value={num('maxRotationsPerRelayPerDay', 3)}
+            oninput={(e) => set('maxRotationsPerRelayPerDay', Number(e.currentTarget.value))}
           /></label
         >
         <label class="text-xs"
@@ -385,15 +385,15 @@
               >Origin
               <Select.Root
                 type="single"
-                value={previewOrigin || origins[0]?.id || ''}
+                value={previewOrigin || relays[0]?.id || ''}
                 onValueChange={(v) => (previewOrigin = v)}
               >
                 <Select.Trigger class="mt-1 w-56"
-                  >{origins.find((o) => o.id === (previewOrigin || origins[0]?.id))?.slug ??
-                    'No origins'}</Select.Trigger
+                  >{relays.find((o) => o.id === (previewOrigin || relays[0]?.id))?.slug ??
+                    'No relays'}</Select.Trigger
                 >
                 <Select.Content
-                  >{#each origins as o (o.id)}<Select.Item value={o.id}>{o.slug}</Select.Item
+                  >{#each relays as o (o.id)}<Select.Item value={o.id}>{o.slug}</Select.Item
                     >{/each}</Select.Content
                 >
               </Select.Root>
@@ -415,7 +415,7 @@
             <Button
               size="sm"
               variant="outline"
-              disabled={origins.length === 0 || runPreview.isPending}
+              disabled={relays.length === 0 || runPreview.isPending}
               onclick={() => runPreview.mutate()}>Preview (saved settings)</Button
             >
           </div>

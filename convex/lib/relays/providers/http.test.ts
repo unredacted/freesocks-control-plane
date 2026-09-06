@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
-import { extractErrorCode, providerFetch, RelayProviderError, toProviderError } from './http';
+import { extractErrorCode, providerFetch, EdgeProviderError, toProviderError } from './http';
 import { errorBlob, jsonRes, mockFetch } from '../testing/mockFetch';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -29,8 +29,8 @@ describe('providerFetch', () => {
     } catch (e) {
       err = e;
     }
-    expect(err).toBeInstanceOf(RelayProviderError);
-    const m = (err as RelayProviderError).meta;
+    expect(err).toBeInstanceOf(EdgeProviderError);
+    const m = (err as EdgeProviderError).meta;
     expect(m.status).toBe(400);
     expect(m.code).toBe('quota_exceeded');
     expect(m.retryable).toBe(false);

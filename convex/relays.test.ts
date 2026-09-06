@@ -21,27 +21,27 @@ async function seed() {
       updatedAt: Date.now(),
     }),
   );
-  const { id: accountId } = await t.mutation(internal.relayProviderAccounts.create, {
+  const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
     provider: 'gcore',
     name: 'acct-a',
     settings: { projectId: 11, regionId: 22 },
     credentials: { apiKey: 'k' },
   });
-  const { id: profileId } = await t.mutation(internal.relayProfiles.create, {
+  const { id: profileId } = await t.mutation(internal.realityProfiles.create, {
     slug: 'prof-a',
     name: 'Profile A',
     provider: 'gcore',
     targetAddress: 'target.example',
     serverNames: ['a.example', 'b.example'],
   });
-  const { id: originId } = await t.mutation(internal.relayOrigins.upsertBySlug, {
+  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
     slug: 'node-one',
     backendServerSlug: 'panel-a',
     nodeHostname: 'node-one',
     originAddress: '203.0.113.10',
   });
   const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    originId,
+    relayId,
     slotKey: 'a',
     profileSlug: 'prof-a',
     inboundTag: 'VLESS_RELAY_A',
@@ -49,26 +49,26 @@ async function seed() {
     configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
     originPort: 443,
   });
-  return { t, serverId, accountId, profileId, originId, slotId };
+  return { t, serverId, accountId, profileId, relayId, slotId };
 }
 
 describe('relayOrigins + slots + profiles', () => {
   test('upsertBySlug is idempotent, resolves the panel by slug and never flips autoRotate', async () => {
-    const { t, originId, serverId } = await seed();
-    const again = await t.mutation(internal.relayOrigins.upsertBySlug, {
+    const { t, relayId, serverId } = await seed();
+    const again = await t.mutation(internal.relays.upsertBySlug, {
       slug: 'node-one',
       backendServerSlug: 'panel-a',
       nodeHostname: 'node-one',
       originAddress: '203.0.113.10',
       autoRotate: true,
     });
-    expect(again).toEqual({ id: originId, created: false });
-    const row = await t.query(internal.relayOrigins.get, { id: originId });
+    expect(again).toEqual({ id: relayId, created: false });
+    const row = await t.query(internal.relays.get, { id: relayId });
     expect(row?.backendServerId).toBe(serverId);
     expect(row?.autoRotate).toBe(false);
     expect(row?.hostManaged).toBe(true);
     await expect(
-      t.mutation(internal.relayOrigins.upsertBySlug, {
+      t.mutation(internal.relays.upsertBySlug, {
         slug: 'node-two',
         backendServerSlug: 'missing',
         nodeHostname: 'node-two',
@@ -78,8 +78,8 @@ describe('relayOrigins + slots + profiles', () => {
   });
 
   test('slot upsert derives the template remark and bumps the epoch; retire refuses while published', async () => {
-    const { t, originId, slotId } = await seed();
-    const slots = await t.query(internal.relaySlots.listByOrigin, { originId });
+    const { t, relayId, slotId } = await seed();
+    const slots = await t.query(internal.relaySlots.listByRelay, { relayId });
     expect(slots).toHaveLength(1);
     expect(slots[0]).toMatchObject({
       slotKey: 'a',
@@ -87,14 +87,14 @@ describe('relayOrigins + slots + profiles', () => {
       provider: 'gcore',
       profileSlug: 'prof-a',
     });
-    const before = (await t.query(internal.relayOrigins.get, { id: originId }))!.publicationEpoch;
+    const before = (await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch;
     // Same values → no rebind; changed inbound → rebind clears the template Host uuid.
     await t.mutation(internal.relaySlots.setTemplateHost, {
       slotId,
       templateHostUuid: '33333333-3333-4333-8333-333333333333',
     });
     await t.mutation(internal.relaySlots.upsert, {
-      originId,
+      relayId,
       slotKey: 'a',
       profileSlug: 'prof-a',
       inboundTag: 'VLESS_RELAY_A',
@@ -104,7 +104,7 @@ describe('relayOrigins + slots + profiles', () => {
     });
     expect((await t.run((ctx) => ctx.db.get(slotId)))!.templateHostUuid).toBeDefined();
     await t.mutation(internal.relaySlots.upsert, {
-      originId,
+      relayId,
       slotKey: 'a',
       profileSlug: 'prof-a',
       inboundTag: 'VLESS_RELAY_A',
@@ -113,48 +113,48 @@ describe('relayOrigins + slots + profiles', () => {
       originPort: 443,
     });
     expect((await t.run((ctx) => ctx.db.get(slotId)))!.templateHostUuid).toBeUndefined();
-    const after = (await t.query(internal.relayOrigins.get, { id: originId }))!.publicationEpoch;
+    const after = (await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch;
     expect(after).toBeGreaterThan(before);
 
-    const { edgeId } = await t.mutation(internal.relayOrigins.adoptEdge, {
-      originId,
+    const { edgeId } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
       slotId,
       ipv4: '198.51.100.7',
       publish: true,
     });
-    await expect(
-      t.mutation(internal.relaySlots.retire, { originId, slotKey: 'a' }),
-    ).rejects.toThrow(/published edge/);
-    await t.mutation(internal.relayOrigins.unpublishEdge, { originId, edgeId, keepActive: true });
-    await t.mutation(internal.relaySlots.retire, { originId, slotKey: 'a' });
+    await expect(t.mutation(internal.relaySlots.retire, { relayId, slotKey: 'a' })).rejects.toThrow(
+      /published edge/,
+    );
+    await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId, keepActive: true });
+    await t.mutation(internal.relaySlots.retire, { relayId, slotKey: 'a' });
     expect((await t.run((ctx) => ctx.db.get(slotId)))!.retired).toBe(true);
   });
 
   test('adopt validates addresses (public, not the origin) and publishes at the next free pool index', async () => {
-    const { t, originId, slotId } = await seed();
+    const { t, relayId, slotId } = await seed();
     await expect(
-      t.mutation(internal.relayOrigins.adoptEdge, { originId, slotId, ipv4: '10.0.0.1' }),
+      t.mutation(internal.relays.adoptEdge, { relayId, slotId, ipv4: '10.0.0.1' }),
     ).rejects.toThrow(/public IPv4/);
     await expect(
-      t.mutation(internal.relayOrigins.adoptEdge, { originId, slotId, ipv4: '203.0.113.10' }),
+      t.mutation(internal.relays.adoptEdge, { relayId, slotId, ipv4: '203.0.113.10' }),
     ).rejects.toThrow(/anti-leak/);
     await expect(
-      t.mutation(internal.relayOrigins.adoptEdge, {
-        originId,
+      t.mutation(internal.relays.adoptEdge, {
+        relayId,
         slotId,
         ipv4: '198.51.100.1',
         ipv6: '198.51.100.2',
       }),
     ).rejects.toThrow(/IPv6/);
-    const a = await t.mutation(internal.relayOrigins.adoptEdge, {
-      originId,
+    const a = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
       slotId,
       ipv4: '198.51.100.1',
       ipv6: '2001:db8::1',
       publish: true,
     });
-    const b = await t.mutation(internal.relayOrigins.adoptEdge, {
-      originId,
+    const b = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
       slotId,
       ipv4: '198.51.100.2',
       publish: true,
@@ -163,18 +163,18 @@ describe('relayOrigins + slots + profiles', () => {
     expect(b.poolIndex).toBe(1);
     // desiredPublished defaults to 2 → pool is full.
     await expect(
-      t.mutation(internal.relayOrigins.adoptEdge, {
-        originId,
+      t.mutation(internal.relays.adoptEdge, {
+        relayId,
         slotId,
         ipv4: '198.51.100.3',
         publish: true,
       }),
     ).rejects.toThrow(/pool is full/);
-    const origin = (await t.query(internal.relayOrigins.listForAdmin, {}))[0];
+    const origin = (await t.query(internal.relays.listForAdmin, {}))[0];
     expect(origin.publishedEdgeIds).toEqual([a.edgeId, b.edgeId]);
     expect(origin.publishedCount).toBe(2);
-    const edge = await t.query(internal.relayEdges.getForAdmin, {
-      id: a.edgeId as Id<'relayEdges'>,
+    const edge = await t.query(internal.edges.getForAdmin, {
+      id: a.edgeId as Id<'edges'>,
     });
     expect(edge).toMatchObject({
       managed: false,
@@ -188,72 +188,72 @@ describe('relayOrigins + slots + profiles', () => {
   });
 
   test('unpublish leaves a gap that the next publish inherits; epoch bumps each time', async () => {
-    const { t, originId, slotId } = await seed();
-    const a = await t.mutation(internal.relayOrigins.adoptEdge, {
-      originId,
+    const { t, relayId, slotId } = await seed();
+    const a = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
       slotId,
       ipv4: '198.51.100.1',
       publish: true,
     });
-    const b = await t.mutation(internal.relayOrigins.adoptEdge, {
-      originId,
+    const b = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
       slotId,
       ipv4: '198.51.100.2',
       publish: true,
     });
-    const c = await t.mutation(internal.relayOrigins.adoptEdge, {
-      originId,
+    const c = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
       slotId,
       ipv4: '198.51.100.3',
     });
-    const e0 = (await t.query(internal.relayOrigins.get, { id: originId }))!.publicationEpoch;
-    await t.mutation(internal.relayOrigins.unpublishEdge, {
-      originId,
+    const e0 = (await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch;
+    await t.mutation(internal.relays.unpublishEdge, {
+      relayId,
       edgeId: a.edgeId,
       drainMs: 1000,
     });
-    let origin = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    let origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.publishedEdgeIds).toEqual([null, b.edgeId]);
     expect(origin.publicationEpoch).toBe(e0 + 1);
-    const drained = await t.query(internal.relayEdges.get, { id: a.edgeId });
+    const drained = await t.query(internal.edges.get, { id: a.edgeId });
     expect(drained).toMatchObject({ status: 'draining', publication: 'draining' });
     expect(drained?.poolIndex).toBeUndefined();
-    const pub = await t.mutation(internal.relayOrigins.publishEdge, { originId, edgeId: c.edgeId });
+    const pub = await t.mutation(internal.relays.publishEdge, { relayId, edgeId: c.edgeId });
     expect(pub.poolIndex).toBe(0);
-    origin = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.publishedEdgeIds).toEqual([c.edgeId, b.edgeId]);
     expect(origin.publicationEpoch).toBe(e0 + 2);
     // A draining edge can't be re-published; an occupied index is refused.
     await expect(
-      t.mutation(internal.relayOrigins.publishEdge, { originId, edgeId: a.edgeId }),
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: a.edgeId }),
     ).rejects.toThrow(/edge_not_active/);
-    const d = await t.mutation(internal.relayOrigins.adoptEdge, {
-      originId,
+    const d = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
       slotId,
       ipv4: '198.51.100.4',
     });
     await expect(
-      t.mutation(internal.relayOrigins.publishEdge, { originId, edgeId: d.edgeId, poolIndex: 1 }),
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: d.edgeId, poolIndex: 1 }),
     ).rejects.toThrow(/occupied/);
   });
 
   test('publish preconditions: disabled profile / no active SNI / retired slot block publication', async () => {
-    const { t, originId, slotId, profileId } = await seed();
-    const e = await t.mutation(internal.relayOrigins.adoptEdge, {
-      originId,
+    const { t, relayId, slotId, profileId } = await seed();
+    const e = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
       slotId,
       ipv4: '198.51.100.1',
     });
-    await t.mutation(internal.relayProfiles.update, { id: profileId, enabled: false });
+    await t.mutation(internal.realityProfiles.update, { id: profileId, enabled: false });
     await expect(
-      t.mutation(internal.relayOrigins.publishEdge, { originId, edgeId: e.edgeId }),
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: e.edgeId }),
     ).rejects.toThrow(/profile_disabled/);
-    await t.mutation(internal.relayProfiles.update, { id: profileId, enabled: true });
-    await t.mutation(internal.relayProfiles.retireSni, { id: profileId, snis: ['a.example'] });
+    await t.mutation(internal.realityProfiles.update, { id: profileId, enabled: true });
+    await t.mutation(internal.realityProfiles.retireSni, { id: profileId, snis: ['a.example'] });
     // The mutation keeps ≥1 active name; force the all-retired state the way a
     // drained profile would look after an operator edit on the panel side.
     await expect(
-      t.mutation(internal.relayProfiles.retireSni, { id: profileId, snis: ['b.example'] }),
+      t.mutation(internal.realityProfiles.retireSni, { id: profileId, snis: ['b.example'] }),
     ).rejects.toThrow(/at least one active/);
     await t.run(async (ctx) => {
       const p = (await ctx.db.get(profileId))!;
@@ -262,18 +262,21 @@ describe('relayOrigins + slots + profiles', () => {
       });
     });
     await expect(
-      t.mutation(internal.relayOrigins.publishEdge, { originId, edgeId: e.edgeId }),
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: e.edgeId }),
     ).rejects.toThrow(/profile_no_active_sni/);
-    await t.mutation(internal.relayProfiles.reactivateSni, { id: profileId, snis: ['a.example'] });
-    await t.mutation(internal.relaySlots.retire, { originId, slotKey: 'a' });
+    await t.mutation(internal.realityProfiles.reactivateSni, {
+      id: profileId,
+      snis: ['a.example'],
+    });
+    await t.mutation(internal.relaySlots.retire, { relayId, slotKey: 'a' });
     await expect(
-      t.mutation(internal.relayOrigins.publishEdge, { originId, edgeId: e.edgeId }),
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: e.edgeId }),
     ).rejects.toThrow(/slot_not_deployed/);
   });
 
   test('profile update replaces the active set, retiring absent names with a drain window', async () => {
     const { t, profileId } = await seed();
-    await t.mutation(internal.relayProfiles.update, {
+    await t.mutation(internal.realityProfiles.update, {
       id: profileId,
       serverNames: ['b.example', 'c.example'],
     });
@@ -286,58 +289,56 @@ describe('relayOrigins + slots + profiles', () => {
     // Ordering is preserved for the PRF: existing names keep their position.
     expect(p.serverNames.map((s) => s.sni)).toEqual(['a.example', 'b.example', 'c.example']);
     // Removing a profile still bound to a slot is refused.
-    await expect(t.mutation(internal.relayProfiles.remove, { id: profileId })).rejects.toThrow();
+    await expect(t.mutation(internal.realityProfiles.remove, { id: profileId })).rejects.toThrow();
   });
 
   test('requestDelete drains managed edges, forgets unmanaged ones, and finalizeDelete waits for teardown', async () => {
-    const { t, originId, slotId, accountId } = await seed();
-    const adopted = await t.mutation(internal.relayOrigins.adoptEdge, {
-      originId,
+    const { t, relayId, slotId, accountId } = await seed();
+    const adopted = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
       slotId,
       ipv4: '198.51.100.1',
       publish: true,
     });
-    const planned = await t.mutation(internal.relayEdges.insertPlanned, {
-      originId,
+    const planned = await t.mutation(internal.edges.insertPlanned, {
+      relayId,
       slotId,
       accountId,
       templateHash: 'h',
       listeners: [{ edgePort: 443, originAddress: '203.0.113.10', originPort: 443 }],
       steps: [{ id: 'lb', kind: 'loadbalancer', resourceName: 'x' }],
     });
-    await t.mutation(internal.relayEdges.patchEdge, { edgeId: planned.id, status: 'active' });
-    const r = await t.mutation(internal.relayOrigins.requestDelete, { id: originId });
+    await t.mutation(internal.edges.patchEdge, { edgeId: planned.id, status: 'active' });
+    const r = await t.mutation(internal.relays.requestDelete, { id: relayId });
     expect(r).toEqual({ ok: true, deleted: false });
-    expect((await t.query(internal.relayEdges.get, { id: adopted.edgeId }))?.status).toBe(
-      'destroyed',
-    );
-    expect((await t.query(internal.relayEdges.get, { id: planned.id }))?.status).toBe('draining');
-    let origin = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    expect((await t.query(internal.edges.get, { id: adopted.edgeId }))?.status).toBe('destroyed');
+    expect((await t.query(internal.edges.get, { id: planned.id }))?.status).toBe('draining');
+    let origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.deleting).toBe(true);
     expect(origin.publishedEdgeIds).toEqual([]);
-    expect(await t.mutation(internal.relayOrigins.finalizeDelete, { id: originId })).toEqual({
+    expect(await t.mutation(internal.relays.finalizeDelete, { id: relayId })).toEqual({
       removed: false,
     });
-    await t.mutation(internal.relayEdges.patchEdge, { edgeId: planned.id, status: 'destroyed' });
-    expect(await t.mutation(internal.relayOrigins.finalizeDelete, { id: originId })).toEqual({
+    await t.mutation(internal.edges.patchEdge, { edgeId: planned.id, status: 'destroyed' });
+    expect(await t.mutation(internal.relays.finalizeDelete, { id: relayId })).toEqual({
       removed: true,
     });
-    expect(await t.query(internal.relayOrigins.get, { id: originId })).toBeNull();
+    expect(await t.query(internal.relays.get, { id: relayId })).toBeNull();
     expect(await t.run((ctx) => ctx.db.get(slotId))).toBeNull();
   });
 
   test('originAddress is locked while the origin has live edges; one origin per backend node', async () => {
-    const { t, originId, slotId } = await seed();
-    const e = await t.mutation(internal.relayOrigins.adoptEdge, {
-      originId,
+    const { t, relayId, slotId } = await seed();
+    const e = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
       slotId,
       ipv4: '198.51.100.1',
     });
     await expect(
-      t.mutation(internal.relayOrigins.update, { id: originId, originAddress: '203.0.113.99' }),
+      t.mutation(internal.relays.update, { id: relayId, originAddress: '203.0.113.99' }),
     ).rejects.toThrow(/origin_address_locked/);
     await expect(
-      t.mutation(internal.relayOrigins.upsertBySlug, {
+      t.mutation(internal.relays.upsertBySlug, {
         slug: 'node-one',
         backendServerSlug: 'panel-a',
         nodeHostname: 'node-one',
@@ -345,60 +346,63 @@ describe('relayOrigins + slots + profiles', () => {
       }),
     ).rejects.toThrow(/origin_address_locked/);
     // The same address (or an unrelated field) is fine.
-    await t.mutation(internal.relayOrigins.update, {
-      id: originId,
+    await t.mutation(internal.relays.update, {
+      id: relayId,
       originAddress: '203.0.113.10',
       drainMinutes: 30,
     });
-    await t.mutation(internal.relayEdges.patchEdge, { edgeId: e.edgeId, status: 'destroyed' });
-    await t.mutation(internal.relayOrigins.update, { id: originId, originAddress: '203.0.113.99' });
-    expect((await t.query(internal.relayOrigins.get, { id: originId }))!.originAddress).toBe(
+    await t.mutation(internal.edges.patchEdge, { edgeId: e.edgeId, status: 'destroyed' });
+    await t.mutation(internal.relays.update, { id: relayId, originAddress: '203.0.113.99' });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.originAddress).toBe(
       '203.0.113.99',
     );
     // A second slug for the same node on the same panel is refused (create + upsert).
     await expect(
-      t.mutation(internal.relayOrigins.upsertBySlug, {
+      t.mutation(internal.relays.upsertBySlug, {
         slug: 'node-one-b',
         backendServerSlug: 'panel-a',
         nodeHostname: 'node-one',
         originAddress: '203.0.113.20',
       }),
     ).rejects.toThrow(/node_already_bound/);
-    const { id: two } = await t.mutation(internal.relayOrigins.upsertBySlug, {
+    const { id: two } = await t.mutation(internal.relays.upsertBySlug, {
       slug: 'node-two',
       backendServerSlug: 'panel-a',
       nodeHostname: 'node-two',
       originAddress: '203.0.113.21',
     });
     await expect(
-      t.mutation(internal.relayOrigins.update, { id: two, nodeHostname: 'node-one' }),
+      t.mutation(internal.relays.update, { id: two, nodeHostname: 'node-one' }),
     ).rejects.toThrow(/node_already_bound/);
   });
 
   test("profile edits that change what renders bump every using origin's epoch; cosmetic ones do not", async () => {
-    const { t, originId, profileId } = await seed();
+    const { t, relayId, profileId } = await seed();
     const epoch = async () =>
-      (await t.query(internal.relayOrigins.get, { id: originId }))!.publicationEpoch;
+      (await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch;
     const e0 = await epoch();
     expect(
-      await t.mutation(internal.relayProfiles.retireSni, { id: profileId, snis: ['a.example'] }),
+      await t.mutation(internal.realityProfiles.retireSni, { id: profileId, snis: ['a.example'] }),
     ).toEqual({ ok: true, retired: 1 });
     expect(await epoch()).toBe(e0 + 1);
     expect(
-      await t.mutation(internal.relayProfiles.reactivateSni, {
+      await t.mutation(internal.realityProfiles.reactivateSni, {
         id: profileId,
         snis: ['a.example'],
       }),
     ).toEqual({ ok: true, reactivated: 1 });
     expect(await epoch()).toBe(e0 + 2);
     // Retiring a name that is not active changes nothing.
-    await t.mutation(internal.relayProfiles.reactivateSni, { id: profileId, snis: ['a.example'] });
+    await t.mutation(internal.realityProfiles.reactivateSni, {
+      id: profileId,
+      snis: ['a.example'],
+    });
     expect(await epoch()).toBe(e0 + 2);
-    await t.mutation(internal.relayProfiles.update, { id: profileId, notes: 'cosmetic' });
+    await t.mutation(internal.realityProfiles.update, { id: profileId, notes: 'cosmetic' });
     expect(await epoch()).toBe(e0 + 2);
-    await t.mutation(internal.relayProfiles.update, { id: profileId, enabled: false });
+    await t.mutation(internal.realityProfiles.update, { id: profileId, enabled: false });
     expect(await epoch()).toBe(e0 + 3);
-    await t.mutation(internal.relayProfiles.update, {
+    await t.mutation(internal.realityProfiles.update, {
       id: profileId,
       serverNames: ['a.example', 'b.example', 'c.example'],
     });

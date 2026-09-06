@@ -13,7 +13,7 @@ import { internalMutation, internalQuery, type MutationCtx } from './_generated/
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { relayProviderIdValidator } from './lib/relayProviderIds';
+import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { resolveRelayConfig, relayMs } from './lib/relayConfig';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
@@ -30,24 +30,24 @@ export function normalizeSni(s: unknown): string | null {
  * (active SNI set, enabled flag, target): bump those origins' publication
  * epoch (the /sub cache token + assignment) and refresh stored mirrors once.
  */
-async function invalidateOrigins(ctx: MutationCtx, profileId: Id<'relayCamouflageProfiles'>) {
+async function invalidateOrigins(ctx: MutationCtx, profileId: Id<'realityProfiles'>) {
   const slots = await ctx.db
-    .query('relayOriginSlots')
+    .query('relaySlots')
     .withIndex('by_profile', (q) => q.eq('profileId', profileId))
     .collect();
-  const originIds = [...new Set(slots.map((s) => s.originId))];
+  const originIds = [...new Set(slots.map((s) => s.relayId))];
   if (originIds.length === 0) return 0;
   const now = Date.now();
-  for (const originId of originIds) {
-    const origin = await ctx.db.get(originId);
+  for (const relayId of originIds) {
+    const origin = await ctx.db.get(relayId);
     if (!origin) continue;
-    await ctx.db.patch(originId, { publicationEpoch: origin.publicationEpoch + 1, updatedAt: now });
+    await ctx.db.patch(relayId, { publicationEpoch: origin.publicationEpoch + 1, updatedAt: now });
   }
   await ctx.scheduler.runAfter(0, internal.storage.refreshActiveMirrors, {});
   return originIds.length;
 }
 
-export function mapProfileAdmin(r: Doc<'relayCamouflageProfiles'>) {
+export function mapProfileAdmin(r: Doc<'realityProfiles'>) {
   return {
     id: r._id as string,
     slug: r.slug,
@@ -81,13 +81,13 @@ export function mapProfileAdmin(r: Doc<'relayCamouflageProfiles'>) {
 export const list = internalQuery({
   args: {},
   handler: async (ctx) =>
-    (await ctx.db.query('relayCamouflageProfiles').collect())
+    (await ctx.db.query('realityProfiles').collect())
       .sort((a, b) => a.provider.localeCompare(b.provider) || a.slug.localeCompare(b.slug))
       .map(mapProfileAdmin),
 });
 
 export const get = internalQuery({
-  args: { id: v.id('relayCamouflageProfiles') },
+  args: { id: v.id('realityProfiles') },
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
     return r ? mapProfileAdmin(r) : null;
@@ -98,7 +98,7 @@ export const getBySlug = internalQuery({
   args: { slug: v.string() },
   handler: (ctx, { slug }) =>
     ctx.db
-      .query('relayCamouflageProfiles')
+      .query('realityProfiles')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique(),
 });
@@ -144,8 +144,8 @@ export const create = internalMutation({
   args: {
     slug: v.string(),
     name: v.string(),
-    provider: relayProviderIdValidator,
-    accountId: v.optional(v.union(v.id('relayProviderAccounts'), v.null())),
+    provider: edgeProviderIdValidator,
+    accountId: v.optional(v.union(v.id('edgeProviderAccounts'), v.null())),
     targetAddress: v.string(),
     targetPort: v.optional(v.number()),
     serverNames: v.any(),
@@ -159,7 +159,7 @@ export const create = internalMutation({
     if (!a.name.trim() || a.name.length > 64)
       throw new ConvexError({ code: 'validation', message: 'invalid name' });
     const dup = await ctx.db
-      .query('relayCamouflageProfiles')
+      .query('realityProfiles')
       .withIndex('by_slug', (q) => q.eq('slug', a.slug))
       .unique();
     if (dup)
@@ -172,7 +172,7 @@ export const create = internalMutation({
     const target = checkTarget(a.targetAddress, a.targetPort);
     const snis = parseSnis(a.serverNames);
     const now = Date.now();
-    const id = await ctx.db.insert('relayCamouflageProfiles', {
+    const id = await ctx.db.insert('realityProfiles', {
       slug: a.slug,
       name: a.name.trim(),
       provider: a.provider,
@@ -197,9 +197,9 @@ export const create = internalMutation({
 
 export const update = internalMutation({
   args: {
-    id: v.id('relayCamouflageProfiles'),
+    id: v.id('realityProfiles'),
     name: v.optional(v.string()),
-    accountId: v.optional(v.union(v.id('relayProviderAccounts'), v.null())),
+    accountId: v.optional(v.union(v.id('edgeProviderAccounts'), v.null())),
     targetAddress: v.optional(v.string()),
     targetPort: v.optional(v.number()),
     /** Full replacement of the ACTIVE set: new names are added active, absent
@@ -212,7 +212,7 @@ export const update = internalMutation({
   handler: async (ctx, a) => {
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Profile not found' });
-    const patch: Partial<Doc<'relayCamouflageProfiles'>> = { updatedAt: Date.now() };
+    const patch: Partial<Doc<'realityProfiles'>> = { updatedAt: Date.now() };
     if (a.name !== undefined) {
       if (!a.name.trim() || a.name.length > 64)
         throw new ConvexError({ code: 'validation', message: 'invalid name' });
@@ -279,7 +279,7 @@ export const update = internalMutation({
 
 export const retireSni = internalMutation({
   args: {
-    id: v.id('relayCamouflageProfiles'),
+    id: v.id('realityProfiles'),
     snis: v.array(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
@@ -324,7 +324,7 @@ export const retireSni = internalMutation({
 
 export const reactivateSni = internalMutation({
   args: {
-    id: v.id('relayCamouflageProfiles'),
+    id: v.id('realityProfiles'),
     snis: v.array(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
@@ -356,12 +356,12 @@ export const reactivateSni = internalMutation({
 
 export const recordQualification = internalMutation({
   args: {
-    id: v.id('relayCamouflageProfiles'),
+    id: v.id('realityProfiles'),
     tlsOk: v.boolean(),
     authOk: v.boolean(),
     edgeAsn: v.optional(v.string()),
     targetAsn: v.optional(v.string()),
-    checkedFromEdgeId: v.optional(v.id('relayEdges')),
+    checkedFromEdgeId: v.optional(v.id('edges')),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
@@ -392,12 +392,12 @@ export const recordQualification = internalMutation({
 });
 
 export const remove = internalMutation({
-  args: { id: v.id('relayCamouflageProfiles'), actorAdminId: v.optional(v.id('adminUsers')) },
+  args: { id: v.id('realityProfiles'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
     const row = await ctx.db.get(id);
     if (!row) return { ok: true as const };
     const slot = await ctx.db
-      .query('relayOriginSlots')
+      .query('relaySlots')
       .withIndex('by_profile', (q) => q.eq('profileId', id))
       .first();
     if (slot) throw new ConvexError({ code: 'conflict', message: 'Slots still use this profile' });

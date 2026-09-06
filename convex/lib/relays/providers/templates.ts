@@ -5,7 +5,7 @@
  * adapters re-export their own schema from here.
  */
 import { z } from 'zod';
-import type { RelayProviderId } from '../../relayProviderIds';
+import type { EdgeProviderId } from '../../edgeProviderIds';
 import type { TemplateFieldDescriptor } from './types';
 
 // --- Gcore -------------------------------------------------------------------------
@@ -231,7 +231,7 @@ export interface TemplateDefinition {
   defaults: Record<string, unknown>;
 }
 
-export const RELAY_TEMPLATES: Record<RelayProviderId, TemplateDefinition> = {
+export const EDGE_TEMPLATES: Record<EdgeProviderId, TemplateDefinition> = {
   gcore: {
     schema: GcoreTemplate as unknown as z.ZodType<Record<string, unknown>>,
     fields: GCORE_TEMPLATE_FIELDS,
@@ -256,10 +256,10 @@ export const RELAY_TEMPLATES: Record<RelayProviderId, TemplateDefinition> = {
 
 /** Validate raw params for a provider; returns the parsed params or a short issue list. */
 export function validateTemplateParams(
-  provider: RelayProviderId,
+  provider: EdgeProviderId,
   raw: unknown,
 ): { ok: true; params: Record<string, unknown> } | { ok: false; issues: string[] } {
-  const res = RELAY_TEMPLATES[provider].schema.safeParse(raw ?? {});
+  const res = EDGE_TEMPLATES[provider].schema.safeParse(raw ?? {});
   if (res.success) return { ok: true, params: res.data };
   return {
     ok: false,

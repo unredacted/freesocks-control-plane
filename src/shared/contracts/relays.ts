@@ -1,24 +1,24 @@
 /**
- * Relay-edge contracts (admin surface `/api/v1/admin/relays/*`): the zod shapes
- * the SPA parses. The provider id enum derives from RELAY_PROVIDER_IDS so it can
+ * Relay-edge contracts (admin surface `/api/v1/admin/relay/*`): the zod shapes
+ * the SPA parses. The provider id enum derives from EDGE_PROVIDER_IDS so it can
  * never drift from the Convex validator. Every route under the prefix is
  * HPKE-sealed by verb class (src/shared/crypto/envelope.ts).
  */
 import { z } from 'zod';
-import { RELAY_PROVIDER_IDS } from './relayProviderIds';
+import { EDGE_PROVIDER_IDS } from './edgeProviderIds';
 
-export { RELAY_PROVIDER_IDS, isRelayProviderId } from './relayProviderIds';
-export type RelayProviderId = import('./relayProviderIds').RelayProviderId;
-export const RelayProviderId = z.enum(RELAY_PROVIDER_IDS);
+export { EDGE_PROVIDER_IDS, isRelayProviderId } from './edgeProviderIds';
+export type EdgeProviderId = import('./edgeProviderIds').EdgeProviderId;
+export const EdgeProviderId = z.enum(EDGE_PROVIDER_IDS);
 
 const iso = z.string();
 const isoN = z.string().nullable();
 
 // --- provider accounts ------------------------------------------------------------
 
-export const RelayAccountAdmin = z.object({
+export const EdgeProviderAccountAdmin = z.object({
   id: z.string(),
-  provider: RelayProviderId,
+  provider: EdgeProviderId,
   name: z.string(),
   settings: z.record(z.string(), z.unknown()),
   credentialsSet: z.record(z.string(), z.boolean()),
@@ -36,24 +36,24 @@ export const RelayAccountAdmin = z.object({
   createdAt: iso,
   updatedAt: iso,
 });
-export type RelayAccountAdmin = z.infer<typeof RelayAccountAdmin>;
-export const RelayAccountList = z.array(RelayAccountAdmin);
+export type EdgeProviderAccountAdmin = z.infer<typeof EdgeProviderAccountAdmin>;
+export const EdgeProviderAccountList = z.array(EdgeProviderAccountAdmin);
 
-export const RelayCredentialFields = z.record(z.string(), z.array(z.string()));
-export const RelayAccountsResponse = z.object({
-  accounts: RelayAccountList,
-  credentialFields: RelayCredentialFields,
+export const EdgeCredentialFields = z.record(z.string(), z.array(z.string()));
+export const EdgeProviderAccountsResponse = z.object({
+  accounts: EdgeProviderAccountList,
+  credentialFields: EdgeCredentialFields,
 });
-export type RelayAccountsResponse = z.infer<typeof RelayAccountsResponse>;
+export type EdgeProviderAccountsResponse = z.infer<typeof EdgeProviderAccountsResponse>;
 
-export const RelayTestCredentialsResponse = z.object({
+export const EdgeTestCredentialsResponse = z.object({
   ok: z.boolean(),
   code: z.string().nullable(),
   regions: z.array(z.object({ id: z.string(), label: z.string() })),
 });
-export type RelayTestCredentialsResponse = z.infer<typeof RelayTestCredentialsResponse>;
+export type EdgeTestCredentialsResponse = z.infer<typeof EdgeTestCredentialsResponse>;
 
-export const RelayInventory = z.object({
+export const EdgeInventory = z.object({
   loadBalancers: z.array(
     z.object({
       id: z.string(),
@@ -70,15 +70,15 @@ export const RelayInventory = z.object({
   ),
   flavors: z.array(z.object({ id: z.string(), label: z.string() })),
 });
-export const RelayInventoryResponse = z.object({
-  inventory: RelayInventory.nullable(),
+export const EdgeInventoryResponse = z.object({
+  inventory: EdgeInventory.nullable(),
   inventoryAt: isoN,
 });
-export type RelayInventoryResponse = z.infer<typeof RelayInventoryResponse>;
+export type EdgeInventoryResponse = z.infer<typeof EdgeInventoryResponse>;
 
 // --- templates --------------------------------------------------------------------------
 
-export const RelayTemplateField = z.object({
+export const EdgeTemplateField = z.object({
   key: z.string(),
   label: z.string(),
   type: z.enum(['string', 'number', 'boolean', 'select', 'string-list']),
@@ -86,11 +86,11 @@ export const RelayTemplateField = z.object({
   options: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
   required: z.boolean().optional(),
 });
-export type RelayTemplateField = z.infer<typeof RelayTemplateField>;
+export type EdgeTemplateField = z.infer<typeof EdgeTemplateField>;
 
-export const RelayTemplateAdmin = z.object({
+export const EdgeTemplateAdmin = z.object({
   id: z.string(),
-  provider: RelayProviderId,
+  provider: EdgeProviderId,
   accountId: z.string().nullable(),
   name: z.string(),
   params: z.unknown(),
@@ -98,40 +98,40 @@ export const RelayTemplateAdmin = z.object({
   isDefault: z.boolean(),
   updatedAt: iso,
 });
-export type RelayTemplateAdmin = z.infer<typeof RelayTemplateAdmin>;
+export type EdgeTemplateAdmin = z.infer<typeof EdgeTemplateAdmin>;
 
-export const RelayTemplatesResponse = z.object({
-  templates: z.array(RelayTemplateAdmin),
+export const EdgeTemplatesResponse = z.object({
+  templates: z.array(EdgeTemplateAdmin),
   schemas: z.record(
     z.string(),
-    z.object({ fields: z.array(RelayTemplateField), defaults: z.record(z.string(), z.unknown()) }),
+    z.object({ fields: z.array(EdgeTemplateField), defaults: z.record(z.string(), z.unknown()) }),
   ),
 });
-export type RelayTemplatesResponse = z.infer<typeof RelayTemplatesResponse>;
+export type EdgeTemplatesResponse = z.infer<typeof EdgeTemplatesResponse>;
 
-export const RelayTemplateValidateResponse = z.union([
+export const EdgeTemplateValidateResponse = z.union([
   z.object({ ok: z.literal(true), params: z.unknown(), paramsHash: z.string() }),
   z.object({ ok: z.literal(false), issues: z.array(z.string()) }),
 ]);
-export type RelayTemplateValidateResponse = z.infer<typeof RelayTemplateValidateResponse>;
+export type EdgeTemplateValidateResponse = z.infer<typeof EdgeTemplateValidateResponse>;
 
 // --- camouflage profiles ------------------------------------------------------------------
 
-export const RelayServerName = z.object({
+export const RealityServerName = z.object({
   sni: z.string(),
   status: z.enum(['active', 'retired']),
   retiredAt: isoN,
   drainUntil: isoN,
 });
-export const RelayProfileAdmin = z.object({
+export const RealityProfileAdmin = z.object({
   id: z.string(),
   slug: z.string(),
   name: z.string(),
-  provider: RelayProviderId,
+  provider: EdgeProviderId,
   accountId: z.string().nullable(),
   targetAddress: z.string(),
   targetPort: z.number(),
-  serverNames: z.array(RelayServerName),
+  serverNames: z.array(RealityServerName),
   enabled: z.boolean(),
   qualification: z
     .object({
@@ -146,8 +146,8 @@ export const RelayProfileAdmin = z.object({
   notes: z.string().nullable(),
   updatedAt: iso,
 });
-export type RelayProfileAdmin = z.infer<typeof RelayProfileAdmin>;
-export const RelayProfileList = z.array(RelayProfileAdmin);
+export type RealityProfileAdmin = z.infer<typeof RealityProfileAdmin>;
+export const RealityProfileList = z.array(RealityProfileAdmin);
 
 // --- origins / slots / edges / rotations -----------------------------------------------------
 
@@ -176,7 +176,7 @@ export const RelaySuspicion = z.object({
   lastRotateError: z.string().optional(),
 });
 
-export const RelayOriginAdmin = z.object({
+export const RelayAdmin = z.object({
   id: z.string(),
   slug: z.string(),
   backendServerId: z.string(),
@@ -189,9 +189,9 @@ export const RelayOriginAdmin = z.object({
   autoRotate: z.boolean(),
   hostManaged: z.boolean(),
   providerAffinity: z.enum(['rotate', 'sticky']),
-  providerPreference: RelayProviderId.nullable(),
+  providerPreference: EdgeProviderId.nullable(),
   desiredPublished: z.number(),
-  standbyPerOrigin: z.number(),
+  standbyPerRelay: z.number(),
   cooldownMinutes: z.number(),
   maxRotationsPerDay: z.number(),
   drainMinutes: z.number(),
@@ -208,15 +208,15 @@ export const RelayOriginAdmin = z.object({
   suspicion: RelaySuspicion.nullable(),
   updatedAt: iso,
 });
-export type RelayOriginAdmin = z.infer<typeof RelayOriginAdmin>;
+export type RelayAdmin = z.infer<typeof RelayAdmin>;
 
 export const RelaySlotAdmin = z.object({
   id: z.string(),
-  originId: z.string(),
+  relayId: z.string(),
   slotKey: z.string(),
   profileId: z.string(),
   profileSlug: z.string().nullable(),
-  provider: RelayProviderId.nullable(),
+  provider: EdgeProviderId.nullable(),
   inboundTag: z.string(),
   configProfileUuid: z.string(),
   configProfileInboundUuid: z.string(),
@@ -230,7 +230,7 @@ export const RelaySlotAdmin = z.object({
 });
 export type RelaySlotAdmin = z.infer<typeof RelaySlotAdmin>;
 
-export const RelayEdgeStep = z.object({
+export const EdgeStep = z.object({
   stepId: z.string(),
   kind: z.string(),
   state: z.string(),
@@ -238,7 +238,7 @@ export const RelayEdgeStep = z.object({
   startedAt: isoN,
   finishedAt: isoN,
 });
-export const RelayReachabilityCountry = z.object({
+export const ProbeReachabilityCountry = z.object({
   country: z.string(),
   /** The IPv4 path's verdict (IPv6 only when the edge was probed over v6 alone). */
   verdict: z.enum(['reachable', 'unreachable', 'mixed', 'unknown']),
@@ -248,17 +248,17 @@ export const RelayReachabilityCountry = z.object({
   failVantages: z.number(),
   lastAt: iso,
 });
-export const RelayEdgeAdmin = z.object({
+export const EdgeAdmin = z.object({
   id: z.string(),
-  originId: z.string(),
+  relayId: z.string(),
   slotId: z.string(),
   accountId: z.string().nullable(),
   templateId: z.string().nullable(),
   templateHash: z.string().nullable(),
-  provider: RelayProviderId.nullable(),
+  provider: EdgeProviderId.nullable(),
   managed: z.boolean(),
   name: z.string(),
-  steps: z.array(RelayEdgeStep),
+  steps: z.array(EdgeStep),
   resources: z.array(
     z.object({
       stepId: z.string(),
@@ -291,7 +291,7 @@ export const RelayEdgeAdmin = z.object({
   lastHealthAt: isoN,
   liveAt: isoN,
   reachability: z
-    .object({ byCountry: z.array(RelayReachabilityCountry), updatedAt: iso })
+    .object({ byCountry: z.array(ProbeReachabilityCountry), updatedAt: iso })
     .nullable(),
   destroyAttempts: z.number(),
   failure: z
@@ -304,9 +304,9 @@ export const RelayEdgeAdmin = z.object({
   createdAt: iso,
   updatedAt: iso,
 });
-export type RelayEdgeAdmin = z.infer<typeof RelayEdgeAdmin>;
+export type EdgeAdmin = z.infer<typeof EdgeAdmin>;
 
-export const RelayEdgeLive = z.object({
+export const EdgeLive = z.object({
   summary: z
     .object({
       status: z.string().optional(),
@@ -331,17 +331,17 @@ export const RelayEdgeLive = z.object({
   raw: z.unknown(),
   liveAt: iso,
 });
-export const RelayEdgeDetail = z.object({
-  edge: RelayEdgeAdmin,
-  live: RelayEdgeLive.nullable(),
+export const EdgeDetail = z.object({
+  edge: EdgeAdmin,
+  live: EdgeLive.nullable(),
   probes: z.array(z.unknown()),
 });
-export type RelayEdgeDetail = z.infer<typeof RelayEdgeDetail>;
-export const RelayEdgeLiveResponse = z.object({ live: RelayEdgeLive.nullable() });
+export type EdgeDetail = z.infer<typeof EdgeDetail>;
+export const EdgeLiveResponse = z.object({ live: EdgeLive.nullable() });
 
-export const RelayRotationAdmin = z.object({
+export const EdgeRotationAdmin = z.object({
   id: z.string(),
-  originId: z.string(),
+  relayId: z.string(),
   kind: z.enum(['provision', 'publish', 'replace']),
   trigger: z.enum(['manual', 'detector', 'api', 'reconcile']),
   burn: z.boolean(),
@@ -354,7 +354,7 @@ export const RelayRotationAdmin = z.object({
   cancelRequested: z.boolean(),
   outcome: z.string().nullable(),
   reason: z.string().nullable(),
-  steps: z.array(RelayEdgeStep),
+  steps: z.array(EdgeStep),
   progress: z.object({ done: z.number(), total: z.number(), percent: z.number() }),
   events: z.array(
     z.object({
@@ -367,7 +367,7 @@ export const RelayRotationAdmin = z.object({
   edge: z
     .object({
       id: z.string(),
-      provider: RelayProviderId.nullable(),
+      provider: EdgeProviderId.nullable(),
       addresses: z.object({ v4: z.string().nullable(), v6: z.string().nullable() }),
       health: z.string(),
       status: z.string(),
@@ -382,11 +382,11 @@ export const RelayRotationAdmin = z.object({
   finishedAt: isoN,
   updatedAt: iso,
 });
-export type RelayRotationAdmin = z.infer<typeof RelayRotationAdmin>;
+export type EdgeRotationAdmin = z.infer<typeof EdgeRotationAdmin>;
 
 // --- probes -------------------------------------------------------------------------------------
 
-export const RelayProbeRunAdmin = z.object({
+export const ProbeRunAdmin = z.object({
   id: z.string(),
   edgeId: z.string(),
   source: z.enum(['globalping', 'checkhost', 'ripeatlas', 'internal']),
@@ -409,29 +409,29 @@ export const RelayProbeRunAdmin = z.object({
     }),
   ),
 });
-export type RelayProbeRunAdmin = z.infer<typeof RelayProbeRunAdmin>;
+export type ProbeRunAdmin = z.infer<typeof ProbeRunAdmin>;
 
-export const RelayReachabilityMatrix = z.object({
+export const ProbeReachabilityMatrix = z.object({
   countries: z.array(z.string()),
   edges: z.array(
     z.object({
       edgeId: z.string(),
       publication: z.string(),
       poolIndex: z.number().nullable(),
-      provider: RelayProviderId.nullable(),
-      byCountry: z.array(RelayReachabilityCountry),
+      provider: EdgeProviderId.nullable(),
+      byCountry: z.array(ProbeReachabilityCountry),
       updatedAt: isoN,
     }),
   ),
 });
-export type RelayReachabilityMatrix = z.infer<typeof RelayReachabilityMatrix>;
+export type ProbeReachabilityMatrix = z.infer<typeof ProbeReachabilityMatrix>;
 
 // --- summary / endpoints / preview / config -------------------------------------------------------
 
 export const RelayPoolEntry = z.object({
   poolIndex: z.number(),
   edgeId: z.string(),
-  provider: RelayProviderId.nullable(),
+  provider: EdgeProviderId.nullable(),
   managed: z.boolean(),
   addresses: z.object({ v4: z.string().nullable(), v6: z.string().nullable() }),
   health: z.string(),
@@ -439,8 +439,8 @@ export const RelayPoolEntry = z.object({
   unreachableIn: z.array(z.string()),
   mixedIn: z.array(z.string()),
 });
-export const RelayOriginSummary = z.object({
-  origin: RelayOriginAdmin,
+export const RelayPoolSummary = z.object({
+  relay: RelayAdmin,
   pool: z.array(RelayPoolEntry),
   standbys: z.number(),
   draining: z.number(),
@@ -451,7 +451,7 @@ export const RelayOriginSummary = z.object({
 });
 export const RelaySummary = z.object({
   counts: z.object({
-    origins: z.number(),
+    relays: z.number(),
     published: z.number(),
     suspected: z.number(),
     rotating: z.number(),
@@ -459,7 +459,7 @@ export const RelaySummary = z.object({
     unreachableEdges: z.number(),
     needsOperator: z.number(),
   }),
-  origins: z.array(RelayOriginSummary),
+  relays: z.array(RelayPoolSummary),
   generatedAt: iso,
 });
 export type RelaySummary = z.infer<typeof RelaySummary>;
@@ -475,7 +475,7 @@ export const RelayPublishedEndpoint = z.object({
   activeServerNames: z.array(z.string()),
 });
 export const RelayEndpointsResponse = z.object({
-  originSlug: z.string(),
+  relaySlug: z.string(),
   epoch: z.number(),
   published: z.array(RelayPublishedEndpoint),
   /** An anonymous sample assignment (a fixed sample key), so the operator sees one rendering. */
@@ -487,12 +487,12 @@ export const RelayEndpointsResponse = z.object({
 export type RelayEndpointsResponse = z.infer<typeof RelayEndpointsResponse>;
 
 /** The IaC (Ansible) view of an origin: origin + slots + what is published. */
-export const RelayOriginBySlugResponse = z.object({
-  origin: RelayOriginAdmin,
+export const RelayBySlugResponse = z.object({
+  relay: RelayAdmin,
   slots: z.array(RelaySlotAdmin),
   publishedEndpoints: z.array(RelayPublishedEndpoint),
 });
-export type RelayOriginBySlugResponse = z.infer<typeof RelayOriginBySlugResponse>;
+export type RelayBySlugResponse = z.infer<typeof RelayBySlugResponse>;
 
 export const RENDER_CLIENT_FAMILY_IDS = [
   'singbox',
@@ -543,12 +543,12 @@ export const RelayConfigView = z.object({
       autoRotate: z.boolean(),
       providerAffinity: z.enum(['rotate', 'sticky']),
       desiredPublishedDefault: z.number(),
-      standbyPerOrigin: z.number(),
+      standbyPerRelay: z.number(),
       drainMinutes: z.number(),
       burnedDrainMinutes: z.number(),
       sniDrainMinutes: z.number(),
       cooldownMinutes: z.number(),
-      maxRotationsPerOriginPerDay: z.number(),
+      maxRotationsPerRelayPerDay: z.number(),
       maxConcurrentRotations: z.number(),
       autoPublishStandby: z.boolean(),
       autoProvisionToDesired: z.boolean(),
@@ -598,12 +598,12 @@ export const RelayConfigPatchResponse = z.object({ changedKeys: z.array(z.string
 
 export const RelayOkResponse = z.object({ ok: z.boolean() }).passthrough();
 export const RelayIdResponse = z.object({ id: z.string() }).passthrough();
-export const RelayRotationStartedResponse = z.object({ rotationId: z.string() });
+export const EdgeRotationStartedResponse = z.object({ rotationId: z.string() });
 export const RelayAdoptResponse = z.object({
   edgeId: z.string(),
   poolIndex: z.number().nullable(),
 });
-export const RelayProbeRequestedResponse = z.object({ runIds: z.array(z.string()) });
+export const ProbeRequestedResponse = z.object({ runIds: z.array(z.string()) });
 export const RelaySlotUpsertResponse = z.object({
   id: z.string(),
   created: z.boolean(),

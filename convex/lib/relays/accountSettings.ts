@@ -5,7 +5,7 @@
  * merge. Isolate-safe (no SDK imports).
  */
 import { z } from 'zod';
-import type { RelayProviderId } from '../relayProviderIds';
+import type { EdgeProviderId } from '../edgeProviderIds';
 
 export const RELAY_SETTINGS_SCHEMAS = {
   gcore: z.object({
@@ -37,23 +37,23 @@ export const RELAY_SETTINGS_SCHEMAS = {
   }),
 } as const;
 
-export type RelaySettingsFor<P extends RelayProviderId> = z.infer<
+export type RelaySettingsFor<P extends EdgeProviderId> = z.infer<
   (typeof RELAY_SETTINGS_SCHEMAS)[P]
 >;
-export type RelaySettings = RelaySettingsFor<RelayProviderId>;
+export type RelaySettings = RelaySettingsFor<EdgeProviderId>;
 
 /** Secret credential field names per provider (everything else on the row is non-secret). */
-export const RELAY_CREDENTIAL_FIELDS: Record<RelayProviderId, readonly string[]> = {
+export const EDGE_CREDENTIAL_FIELDS: Record<EdgeProviderId, readonly string[]> = {
   gcore: ['apiKey'],
   upcloud: ['token'],
   scaleway: ['secretKey'],
   ovh: ['applicationSecret', 'consumerKey'],
 };
 
-export type RelayCredentials = { type: RelayProviderId } & Record<string, string>;
+export type RelayCredentials = { type: EdgeProviderId } & Record<string, string>;
 
 export function validateSettings(
-  provider: RelayProviderId,
+  provider: EdgeProviderId,
   raw: unknown,
 ): { ok: true; settings: RelaySettings } | { ok: false; issues: string[] } {
   const res = RELAY_SETTINGS_SCHEMAS[provider].safeParse({
@@ -85,13 +85,13 @@ export function maskCredentials(creds: Record<string, unknown>): Record<string, 
  * stored value (the UI never round-trips secrets). Unknown fields are dropped.
  */
 export function buildCredentials(
-  provider: RelayProviderId,
+  provider: EdgeProviderId,
   incoming: Record<string, unknown> | undefined,
   existing?: Record<string, unknown>,
 ): { ok: true; credentials: RelayCredentials } | { ok: false; missing: string[] } {
   const out: Record<string, string> = {};
   const missing: string[] = [];
-  for (const field of RELAY_CREDENTIAL_FIELDS[provider]) {
+  for (const field of EDGE_CREDENTIAL_FIELDS[provider]) {
     const raw = incoming?.[field];
     const val = typeof raw === 'string' ? raw.trim() : '';
     if (val.length > 0) out[field] = val;
@@ -108,8 +108,8 @@ export function buildCredentials(
 }
 
 /** Deterministic provider-side name for a new edge (the discovery key). */
-export function edgeResourceName(originSlug: string, nonceHex8: string): string {
-  const slug = originSlug
+export function edgeResourceName(relaySlug: string, nonceHex8: string): string {
+  const slug = relaySlug
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '-')
     .slice(0, 24);

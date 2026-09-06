@@ -25,7 +25,7 @@ import type {
   InspectResult,
   Ledger,
   LedgerResource,
-  RelayProvider,
+  EdgeProvider,
   ResourceStep,
   StepOutcome,
   DestroyOutcome,
@@ -33,7 +33,7 @@ import type {
   TemplateFieldDescriptor,
 } from './types';
 import { firstResource, metaOf, reverseLiveResources, stepOf } from './types';
-import { isProviderNotFound, providerFetch, RelayProviderError } from './http';
+import { isProviderNotFound, providerFetch, EdgeProviderError } from './http';
 import { addressFamily } from '../ip';
 import { GcoreTemplate, GCORE_TEMPLATE_FIELDS, type GcoreTemplateParams } from './templates';
 
@@ -132,7 +132,7 @@ async function gcore<T>(
 /** The create-LB request body (exported for tests). */
 export function gcoreLbBody(cfg: GcoreConfig, spec: EdgeSpec, tpl: GcoreTemplateParams) {
   if (tpl.vipMode === 'private' && !(cfg.networkId && cfg.subnetId)) {
-    throw new RelayProviderError('gcore private VIP mode needs networkId + subnetId', {
+    throw new EdgeProviderError('gcore private VIP mode needs networkId + subnetId', {
       provider: 'gcore',
       step: 'plan',
       code: 'template_network_required',
@@ -238,7 +238,7 @@ async function pollTask(cfg: GcoreConfig, step: string, taskId: string): Promise
 
 // --- the adapter -------------------------------------------------------------------
 
-export const gcoreProvider: RelayProvider<GcoreConfig, GcoreTemplateParams> = {
+export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
   id: 'gcore',
   templateSchema: GcoreTemplate,
   templateFields: GCORE_TEMPLATE_FIELDS,
@@ -252,7 +252,7 @@ export const gcoreProvider: RelayProvider<GcoreConfig, GcoreTemplateParams> = {
       return {
         ok: false,
         code:
-          e instanceof RelayProviderError
+          e instanceof EdgeProviderError
             ? (e.meta.code ?? String(e.meta.status ?? 'error'))
             : 'error',
       };
@@ -338,7 +338,7 @@ export const gcoreProvider: RelayProvider<GcoreConfig, GcoreTemplateParams> = {
   async inspect(cfg, ledger) {
     const lb = firstResource(ledger, 'lb');
     if (!lb)
-      throw new RelayProviderError('gcore inspect: no lb in ledger', {
+      throw new EdgeProviderError('gcore inspect: no lb in ledger', {
         provider: 'gcore',
         step: 'inspect',
         code: 'no_lb',
@@ -448,8 +448,8 @@ export const gcoreProvider: RelayProvider<GcoreConfig, GcoreTemplateParams> = {
   },
 };
 
-function unknownStep(step: ResourceStep): RelayProviderError {
-  return new RelayProviderError(`gcore: unknown step kind ${step.kind}`, {
+function unknownStep(step: ResourceStep): EdgeProviderError {
+  return new EdgeProviderError(`gcore: unknown step kind ${step.kind}`, {
     provider: 'gcore',
     step: step.id,
     code: 'unknown_step',

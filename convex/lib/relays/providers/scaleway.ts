@@ -20,14 +20,14 @@ import type {
   EdgeDescription,
   EdgeSpec,
   Ledger,
-  RelayProvider,
+  EdgeProvider,
   ResourceStep,
   ScalewayConfig,
   StepOutcome,
   TemplateFieldDescriptor,
 } from './types';
 import { firstResource, resourcesOfKind, reverseLiveResources } from './types';
-import { RelayProviderError, toProviderError } from './http';
+import { EdgeProviderError, toProviderError } from './http';
 import { addressFamily } from '../ip';
 import {
   ScalewayTemplate,
@@ -80,7 +80,7 @@ async function sdk<T>(step: string, fn: () => Promise<T>): Promise<T> {
 }
 
 function isNotFound(e: unknown): boolean {
-  return e instanceof RelayProviderError && e.meta.status === 404;
+  return e instanceof EdgeProviderError && e.meta.status === 404;
 }
 
 function addressesOf(ips: Array<{ ipAddress: string }>): Addresses {
@@ -106,7 +106,7 @@ function lbState(status: string): EdgeDescription['state'] {
   }
 }
 
-export const scalewayProvider: RelayProvider<ScalewayConfig, ScalewayTemplateParams> = {
+export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplateParams> = {
   id: 'scaleway',
   templateSchema: ScalewayTemplate,
   templateFields: SCALEWAY_TEMPLATE_FIELDS,
@@ -120,7 +120,7 @@ export const scalewayProvider: RelayProvider<ScalewayConfig, ScalewayTemplatePar
       return {
         ok: false,
         code:
-          e instanceof RelayProviderError
+          e instanceof EdgeProviderError
             ? (e.meta.code ?? String(e.meta.status ?? 'error'))
             : 'error',
       };
@@ -167,7 +167,7 @@ export const scalewayProvider: RelayProvider<ScalewayConfig, ScalewayTemplatePar
     const api = apiFactory(cfg);
     const listener = spec.listeners[0];
     if (!listener)
-      throw new RelayProviderError('scaleway: spec has no listener', {
+      throw new EdgeProviderError('scaleway: spec has no listener', {
         provider: 'scaleway',
         step: step.id,
         code: 'spec_invalid',
@@ -269,7 +269,7 @@ export const scalewayProvider: RelayProvider<ScalewayConfig, ScalewayTemplatePar
         };
       }
       default:
-        throw new RelayProviderError(`scaleway: unknown step kind ${step.kind}`, {
+        throw new EdgeProviderError(`scaleway: unknown step kind ${step.kind}`, {
           provider: 'scaleway',
           step: step.id,
           code: 'unknown_step',
@@ -398,7 +398,7 @@ export const scalewayProvider: RelayProvider<ScalewayConfig, ScalewayTemplatePar
   async inspect(cfg, ledger) {
     const lb = firstResource(ledger, 'lb');
     if (!lb)
-      throw new RelayProviderError('scaleway inspect: no lb in ledger', {
+      throw new EdgeProviderError('scaleway inspect: no lb in ledger', {
         provider: 'scaleway',
         step: 'inspect',
         code: 'no_lb',
@@ -493,8 +493,8 @@ export const scalewayProvider: RelayProvider<ScalewayConfig, ScalewayTemplatePar
   },
 };
 
-function ledgerIncomplete(step: ResourceStep): RelayProviderError {
-  return new RelayProviderError(`scaleway ${step.id}: ledger missing a prerequisite resource`, {
+function ledgerIncomplete(step: ResourceStep): EdgeProviderError {
+  return new EdgeProviderError(`scaleway ${step.id}: ledger missing a prerequisite resource`, {
     provider: 'scaleway',
     step: step.id,
     code: 'ledger_incomplete',

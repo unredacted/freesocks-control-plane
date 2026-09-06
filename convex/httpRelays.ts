@@ -1,5 +1,5 @@
 /**
- * Admin HTTP surface for relay edges: `/api/v1/admin/relays/*`. One prefix
+ * Admin HTTP surface for relay edges: `/api/v1/admin/relay/*`. One prefix
  * route per verb feeds a small dispatcher, so the HPKE policy is a clean
  * per-verb prefix rule (envelope.ts): GET reveals, POST seals both legs,
  * PATCH/PUT seal the body, DELETE carries nothing. Scopes: `admin:settings:*`
@@ -16,7 +16,7 @@ import { sealed } from './lib/e2ee';
 import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/http';
 import type { InspectResult, Inventory } from './lib/relays/providers/types';
 
-const PREFIX = '/api/v1/admin/relays/';
+const PREFIX = '/api/v1/admin/relay/';
 
 type Handler = (
   ctx: ActionCtx,
@@ -92,20 +92,20 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   if (a === 'providers') {
     if (!b) {
       const [accounts, credentialFields] = await Promise.all([
-        ctx.runQuery(internal.relayProviderAccounts.listForAdmin, {}),
+        ctx.runQuery(internal.edgeProviderAccounts.listForAdmin, {}),
         ctx.runQuery(internal.relayAdmin.credentialFields, {}),
       ]);
       return json({ accounts, credentialFields });
     }
     if (c === 'inventory') {
-      const inv = await ctx.runQuery(internal.relayProviderAccounts.getInventory, {
-        id: id<'relayProviderAccounts'>(b),
+      const inv = await ctx.runQuery(internal.edgeProviderAccounts.getInventory, {
+        id: id<'edgeProviderAccounts'>(b),
       });
       return json(inv ?? { inventory: null, inventoryAt: null });
     }
     if (!c) {
-      const acct = await ctx.runQuery(internal.relayProviderAccounts.getForAdmin, {
-        id: id<'relayProviderAccounts'>(b),
+      const acct = await ctx.runQuery(internal.edgeProviderAccounts.getForAdmin, {
+        id: id<'edgeProviderAccounts'>(b),
       });
       return acct ? json(acct) : notFound();
     }
@@ -113,16 +113,17 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   }
   if (a === 'templates' && !b) {
     const [templates, schemas] = await Promise.all([
-      ctx.runQuery(internal.relayEdgeTemplates.list, {}),
-      ctx.runQuery(internal.relayEdgeTemplates.describeSchemas, {}),
+      ctx.runQuery(internal.edgeTemplates.list, {}),
+      ctx.runQuery(internal.edgeTemplates.describeSchemas, {}),
     ]);
     return json({ templates, schemas });
   }
-  if (a === 'profiles' && !b) return json(await ctx.runQuery(internal.relayProfiles.list, {}));
-  if (a === 'origins') {
-    if (!b) return json(await ctx.runQuery(internal.relayOrigins.listForAdmin, {}));
+  if (a === 'reality-profiles' && !b)
+    return json(await ctx.runQuery(internal.realityProfiles.list, {}));
+  if (a === 'relays') {
+    if (!b) return json(await ctx.runQuery(internal.relays.listForAdmin, {}));
     if (b === 'by-slug' && c) {
-      const view = await ctx.runQuery(internal.relayAdmin.originBySlugView, { slug: c });
+      const view = await ctx.runQuery(internal.relayAdmin.relayBySlugView, { slug: c });
       if (!view) return notFound();
       if (d === 'slots' && e) {
         const slot = view.slots.find((s) => s.slotKey === e);
@@ -133,19 +134,19 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     }
     if (c === 'endpoints') {
       const r = await ctx.runQuery(internal.relayAdmin.endpoints, {
-        originId: id<'relayOrigins'>(b),
+        relayId: id<'relays'>(b),
       });
       return r ? json(r) : notFound();
     }
     if (c === 'slots') {
       return json(
-        await ctx.runQuery(internal.relaySlots.listByOrigin, { originId: id<'relayOrigins'>(b) }),
+        await ctx.runQuery(internal.relaySlots.listByRelay, { relayId: id<'relays'>(b) }),
       );
     }
     if (c === 'rotations') {
       return json(
-        await ctx.runQuery(internal.relayRotations.listByOrigin, {
-          originId: id<'relayOrigins'>(b),
+        await ctx.runQuery(internal.edgeRotations.listByRelay, {
+          relayId: id<'relays'>(b),
         }),
       );
     }
@@ -153,21 +154,19 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   }
   if (a === 'edges') {
     if (!b) {
-      const originId = query.get('originId');
-      if (!originId) return errorJson('validation', 'originId is required', 400);
+      const relayId = query.get('relayId');
+      if (!relayId) return errorJson('validation', 'relayId is required', 400);
       return json(
-        await ctx.runQuery(internal.relayEdges.listByOriginForAdmin, {
-          originId: id<'relayOrigins'>(originId),
+        await ctx.runQuery(internal.edges.listByRelayForAdmin, {
+          relayId: id<'relays'>(relayId),
         }),
       );
     }
     if (c === 'live')
-      return json(
-        await ctx.runQuery(internal.relayAdmin.liveView, { edgeId: id<'relayEdges'>(b) }),
-      );
+      return json(await ctx.runQuery(internal.relayAdmin.liveView, { edgeId: id<'edges'>(b) }));
     if (!c) {
       const detail = await ctx.runQuery(internal.relayAdmin.edgeDetail, {
-        edgeId: id<'relayEdges'>(b),
+        edgeId: id<'edges'>(b),
       });
       return detail ? json(detail) : notFound();
     }
@@ -175,17 +174,17 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   }
   if (a === 'rotations') {
     if (!b) {
-      const originId = query.get('originId');
-      if (!originId) return errorJson('validation', 'originId is required', 400);
+      const relayId = query.get('relayId');
+      if (!relayId) return errorJson('validation', 'relayId is required', 400);
       return json(
-        await ctx.runQuery(internal.relayRotations.listByOrigin, {
-          originId: id<'relayOrigins'>(originId),
+        await ctx.runQuery(internal.edgeRotations.listByRelay, {
+          relayId: id<'relays'>(relayId),
           take: Number(query.get('take') ?? 20) || 20,
         }),
       );
     }
-    const r = await ctx.runQuery(internal.relayRotations.getForAdmin, {
-      id: id<'relayRotations'>(b),
+    const r = await ctx.runQuery(internal.edgeRotations.getForAdmin, {
+      id: id<'edgeRotations'>(b),
     });
     return r ? json(r) : notFound();
   }
@@ -193,18 +192,18 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     const edgeId = query.get('edgeId');
     if (!edgeId) return errorJson('validation', 'edgeId is required', 400);
     return json(
-      await ctx.runQuery(internal.relayProbes.listByEdge, {
-        edgeId: id<'relayEdges'>(edgeId),
+      await ctx.runQuery(internal.probes.listByEdge, {
+        edgeId: id<'edges'>(edgeId),
         take: Number(query.get('take') ?? 20) || 20,
       }),
     );
   }
   if (a === 'reachability' && !b) {
-    const originId = query.get('originId');
-    if (!originId) return errorJson('validation', 'originId is required', 400);
+    const relayId = query.get('relayId');
+    if (!relayId) return errorJson('validation', 'relayId is required', 400);
     return json(
-      await ctx.runQuery(internal.relayProbes.reachabilityForOrigin, {
-        originId: id<'relayOrigins'>(originId),
+      await ctx.runQuery(internal.probes.reachabilityForRelay, {
+        relayId: id<'relays'>(relayId),
       }),
     );
   }
@@ -215,16 +214,16 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
 
 async function refreshInventory(
   ctx: ActionCtx,
-  accountId: Id<'relayProviderAccounts'>,
+  accountId: Id<'edgeProviderAccounts'>,
 ): Promise<Response> {
-  const inventory: Inventory = await ctx.runAction(internal.relayProviderOps.inventory, {
+  const inventory: Inventory = await ctx.runAction(internal.edgeProviderOps.inventory, {
     accountId,
   });
-  await ctx.runMutation(internal.relayProviderAccounts.recordInventory, {
+  await ctx.runMutation(internal.edgeProviderAccounts.recordInventory, {
     id: accountId,
     inventory: JSON.stringify(inventory),
   });
-  const view = await ctx.runQuery(internal.relayProviderAccounts.getInventory, { id: accountId });
+  const view = await ctx.runQuery(internal.edgeProviderAccounts.getInventory, { id: accountId });
   return json(view ?? { inventory, inventoryAt: new Date().toISOString() });
 }
 
@@ -234,12 +233,12 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   if (a === 'providers') {
     if (!b)
       return json(
-        await ctx.runMutation(internal.relayProviderAccounts.create, { ...body, ...act } as never),
+        await ctx.runMutation(internal.edgeProviderAccounts.create, { ...body, ...act } as never),
       );
     if (b === 'test-credentials') {
-      const accountId = id<'relayProviderAccounts'>(String(body.accountId ?? ''));
-      const res = await ctx.runAction(internal.relayProviderOps.testCredentials, { accountId });
-      await ctx.runMutation(internal.relayProviderAccounts.recordTest, {
+      const accountId = id<'edgeProviderAccounts'>(String(body.accountId ?? ''));
+      const res = await ctx.runAction(internal.edgeProviderOps.testCredentials, { accountId });
+      await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
         id: accountId,
         ok: res.ok,
         code: res.code,
@@ -247,7 +246,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       let regions: Array<{ id: string; label: string }> = [];
       if (res.ok) {
         try {
-          regions = await ctx.runAction(internal.relayProviderOps.listRegions, { accountId });
+          regions = await ctx.runAction(internal.edgeProviderOps.listRegions, { accountId });
         } catch {
           regions = [];
         }
@@ -255,11 +254,11 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       return json({ ok: res.ok, code: res.code ?? null, regions });
     }
     if (c === 'inventory' && d === 'refresh')
-      return refreshInventory(ctx, id<'relayProviderAccounts'>(b));
+      return refreshInventory(ctx, id<'edgeProviderAccounts'>(b));
     if (c === 'qualify') {
       return json(
-        await ctx.runMutation(internal.relayProviderAccounts.setQualified, {
-          id: id<'relayProviderAccounts'>(b),
+        await ctx.runMutation(internal.edgeProviderAccounts.setQualified, {
+          id: id<'edgeProviderAccounts'>(b),
           qualified: body.qualified !== false,
           templateHash: typeof body.templateHash === 'string' ? body.templateHash : undefined,
           ...act,
@@ -271,21 +270,21 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   if (a === 'templates') {
     if (!b)
       return json(
-        await ctx.runMutation(internal.relayEdgeTemplates.create, { ...body, ...act } as never),
+        await ctx.runMutation(internal.edgeTemplates.create, { ...body, ...act } as never),
       );
     if (b === 'validate')
-      return json(await ctx.runQuery(internal.relayEdgeTemplates.validate, body as never));
+      return json(await ctx.runQuery(internal.edgeTemplates.validate, body as never));
     return notFound();
   }
-  if (a === 'profiles') {
+  if (a === 'reality-profiles') {
     if (!b)
       return json(
-        await ctx.runMutation(internal.relayProfiles.create, { ...body, ...act } as never),
+        await ctx.runMutation(internal.realityProfiles.create, { ...body, ...act } as never),
       );
-    const pid = id<'relayCamouflageProfiles'>(b);
+    const pid = id<'realityProfiles'>(b);
     if (c === 'qualify')
       return json(
-        await ctx.runMutation(internal.relayProfiles.recordQualification, {
+        await ctx.runMutation(internal.realityProfiles.recordQualification, {
           ...body,
           id: pid,
           ...act,
@@ -293,7 +292,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       );
     if (c === 'retire-sni')
       return json(
-        await ctx.runMutation(internal.relayProfiles.retireSni, {
+        await ctx.runMutation(internal.realityProfiles.retireSni, {
           id: pid,
           snis: snis(body),
           ...act,
@@ -301,7 +300,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       );
     if (c === 'reactivate-sni')
       return json(
-        await ctx.runMutation(internal.relayProfiles.reactivateSni, {
+        await ctx.runMutation(internal.realityProfiles.reactivateSni, {
           id: pid,
           snis: snis(body),
           ...act,
@@ -309,62 +308,59 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       );
     return notFound();
   }
-  if (a === 'origins') {
+  if (a === 'relays') {
     if (!b)
-      return json(
-        await ctx.runMutation(internal.relayOrigins.create, { ...body, ...act } as never),
-      );
-    const originId = id<'relayOrigins'>(b);
+      return json(await ctx.runMutation(internal.relays.create, { ...body, ...act } as never));
+    const relayId = id<'relays'>(b);
     switch (c) {
       case 'adopt':
         return json(
-          await ctx.runMutation(internal.relayOrigins.adoptEdge, {
+          await ctx.runMutation(internal.relays.adoptEdge, {
             ...body,
-            originId,
+            relayId,
             ...act,
           } as never),
         );
       case 'provision':
         return json(
-          await ctx.runMutation(internal.relayRotations.start, {
-            originId,
+          await ctx.runMutation(internal.edgeRotations.start, {
+            relayId,
             kind: 'provision',
             trigger: 'manual',
             publishOnDone: body.publish !== false,
-            slotId:
-              typeof body.slotId === 'string' ? id<'relayOriginSlots'>(body.slotId) : undefined,
+            slotId: typeof body.slotId === 'string' ? id<'relaySlots'>(body.slotId) : undefined,
             ...act,
           }),
         );
       case 'rotate':
       case 'burn':
         return json(
-          await ctx.runMutation(internal.relayRotations.start, {
-            originId,
+          await ctx.runMutation(internal.edgeRotations.start, {
+            relayId,
             kind: 'replace',
             trigger: 'manual',
             burn: c === 'burn',
             force: body.force === true,
-            targetEdgeId: id<'relayEdges'>(String(body.edgeId ?? '')),
+            targetEdgeId: id<'edges'>(String(body.edgeId ?? '')),
             ...act,
           }),
         );
       case 'publish':
         return json(
-          await ctx.runMutation(internal.relayRotations.start, {
-            originId,
+          await ctx.runMutation(internal.edgeRotations.start, {
+            relayId,
             kind: 'publish',
             trigger: 'manual',
-            toEdgeId: id<'relayEdges'>(String(body.edgeId ?? '')),
+            toEdgeId: id<'edges'>(String(body.edgeId ?? '')),
             ...act,
           }),
         );
       case 'cancel': {
-        const origin = await ctx.runQuery(internal.relayOrigins.get, { id: originId });
+        const origin = await ctx.runQuery(internal.relays.get, { id: relayId });
         if (!origin?.activeRotationId)
           return errorJson('relay.no_rotation', 'No rotation is running', 409);
         return json(
-          await ctx.runMutation(internal.relayRotations.requestCancel, {
+          await ctx.runMutation(internal.edgeRotations.requestCancel, {
             rotationId: origin.activeRotationId,
             ...act,
           }),
@@ -372,17 +368,17 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       }
       case 'resolve-quarantine':
         return json(
-          await ctx.runMutation(internal.relayRotations.resolveQuarantine, {
-            originId,
+          await ctx.runMutation(internal.edgeRotations.resolveQuarantine, {
+            relayId,
             keep: body.keep === 'previous' ? 'previous' : 'current',
             ...act,
           }),
         );
       case 'probe': {
-        const edges = await ctx.runQuery(internal.relayAdmin.publishedEdgeIds, { originId });
+        const edges = await ctx.runQuery(internal.relayAdmin.publishedEdgeIdsOf, { relayId });
         const runIds: string[] = [];
         for (const edgeId of edges) {
-          const r = await ctx.runMutation(internal.relayProbes.requestProbes, {
+          const r = await ctx.runMutation(internal.probes.requestProbes, {
             edgeId,
             trigger: 'manual',
           });
@@ -395,9 +391,9 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     }
   }
   if (a === 'edges' && b) {
-    const edgeId = id<'relayEdges'>(b);
+    const edgeId = id<'edges'>(b);
     if (c === 'live' && d === 'refresh') {
-      const edge = await ctx.runQuery(internal.relayEdges.get, { id: edgeId });
+      const edge = await ctx.runQuery(internal.edges.get, { id: edgeId });
       if (!edge) return notFound();
       if (!edge.accountId)
         return errorJson(
@@ -405,7 +401,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           'An adopted edge has no provider account to inspect',
           409,
         );
-      const res: InspectResult = await ctx.runAction(internal.relayProviderOps.inspect, {
+      const res: InspectResult = await ctx.runAction(internal.edgeProviderOps.inspect, {
         accountId: edge.accountId,
         ledger: { steps: edge.steps, resources: edge.resources },
       });
@@ -416,21 +412,21 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       });
       return json(await ctx.runQuery(internal.relayAdmin.liveView, { edgeId }));
     }
-    const edge = await ctx.runQuery(internal.relayEdges.get, { id: edgeId });
+    const edge = await ctx.runQuery(internal.edges.get, { id: edgeId });
     if (!edge) return notFound();
     switch (c) {
       case 'publish':
         // Pool index 0 on a Host-managed origin needs the flip → rotation machine.
         return json(
           body.direct === true
-            ? await ctx.runMutation(internal.relayOrigins.publishEdge, {
-                originId: edge.originId,
+            ? await ctx.runMutation(internal.relays.publishEdge, {
+                relayId: edge.relayId,
                 edgeId,
                 poolIndex: typeof body.poolIndex === 'number' ? body.poolIndex : undefined,
                 ...act,
               })
-            : await ctx.runMutation(internal.relayRotations.start, {
-                originId: edge.originId,
+            : await ctx.runMutation(internal.edgeRotations.start, {
+                relayId: edge.relayId,
                 kind: 'publish',
                 trigger: 'manual',
                 toEdgeId: edgeId,
@@ -439,8 +435,8 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         );
       case 'unpublish':
         return json(
-          await ctx.runMutation(internal.relayOrigins.unpublishEdge, {
-            originId: edge.originId,
+          await ctx.runMutation(internal.relays.unpublishEdge, {
+            relayId: edge.relayId,
             edgeId,
             keepActive: body.keepActive === true,
             ...act,
@@ -448,7 +444,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         );
       case 'retry-destroy':
         return json(
-          await ctx.runMutation(internal.relayReconcileMutations.retryDestroy, { edgeId, ...act }),
+          await ctx.runMutation(internal.edgeReconcileMutations.retryDestroy, { edgeId, ...act }),
         );
       case 'resolve-operator': {
         const action = body.action;
@@ -461,7 +457,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       }
       case 'probe':
         return json(
-          await ctx.runMutation(internal.relayProbes.requestProbes, { edgeId, trigger: 'manual' }),
+          await ctx.runMutation(internal.probes.requestProbes, { edgeId, trigger: 'manual' }),
         );
       default:
         return notFound();
@@ -470,7 +466,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   if (a === 'render' && b === 'preview') {
     return json(
       await ctx.runQuery(internal.relayAdmin.renderPreview, {
-        originId: id<'relayOrigins'>(String(body.originId ?? '')),
+        relayId: id<'relays'>(String(body.relayId ?? '')),
         family: String(body.family ?? 'other'),
         sampleKey: typeof body.sampleKey === 'string' ? body.sampleKey : undefined,
       }),
@@ -495,33 +491,33 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
   if (c) return notFound();
   if (a === 'providers' && b)
     return json(
-      await ctx.runMutation(internal.relayProviderAccounts.update, {
+      await ctx.runMutation(internal.edgeProviderAccounts.update, {
         ...body,
-        id: id<'relayProviderAccounts'>(b),
+        id: id<'edgeProviderAccounts'>(b),
         ...act,
       } as never),
     );
   if (a === 'templates' && b)
     return json(
-      await ctx.runMutation(internal.relayEdgeTemplates.update, {
+      await ctx.runMutation(internal.edgeTemplates.update, {
         ...body,
-        id: id<'relayEdgeTemplates'>(b),
+        id: id<'edgeTemplates'>(b),
         ...act,
       } as never),
     );
-  if (a === 'profiles' && b)
+  if (a === 'reality-profiles' && b)
     return json(
-      await ctx.runMutation(internal.relayProfiles.update, {
+      await ctx.runMutation(internal.realityProfiles.update, {
         ...body,
-        id: id<'relayCamouflageProfiles'>(b),
+        id: id<'realityProfiles'>(b),
         ...act,
       } as never),
     );
-  if (a === 'origins' && b)
+  if (a === 'relays' && b)
     return json(
-      await ctx.runMutation(internal.relayOrigins.update, {
+      await ctx.runMutation(internal.relays.update, {
         ...body,
-        id: id<'relayOrigins'>(b),
+        id: id<'relays'>(b),
         ...act,
       } as never),
     );
@@ -533,23 +529,23 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
 const putHandler: Handler = async (ctx, _req, parts, admin, body) => {
   const [a, b, c, d, e] = parts;
   const act = actor(admin);
-  if (a !== 'origins' || b !== 'by-slug' || !c) return notFound();
+  if (a !== 'relays' || b !== 'by-slug' || !c) return notFound();
   if (!d) {
-    await ctx.runMutation(internal.relayOrigins.upsertBySlug, {
+    await ctx.runMutation(internal.relays.upsertBySlug, {
       ...body,
       slug: c,
       ...act,
     } as never);
-    const view = await ctx.runQuery(internal.relayAdmin.originBySlugView, { slug: c });
+    const view = await ctx.runQuery(internal.relayAdmin.relayBySlugView, { slug: c });
     return view ? json(view) : notFound();
   }
   if (d === 'slots' && e) {
-    const origin = await ctx.runQuery(internal.relayOrigins.getBySlug, { slug: c });
+    const origin = await ctx.runQuery(internal.relays.getBySlug, { slug: c });
     if (!origin) return notFound();
     return json(
       await ctx.runMutation(internal.relaySlots.upsert, {
         ...body,
-        originId: origin._id,
+        relayId: origin._id,
         slotKey: e,
         ...act,
       } as never),
@@ -565,54 +561,54 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin) => {
   const act = actor(admin);
   if (a === 'providers' && b && !c)
     return json(
-      await ctx.runMutation(internal.relayProviderAccounts.remove, {
-        id: id<'relayProviderAccounts'>(b),
+      await ctx.runMutation(internal.edgeProviderAccounts.remove, {
+        id: id<'edgeProviderAccounts'>(b),
         ...act,
       }),
     );
   if (a === 'templates' && b && !c)
     return json(
-      await ctx.runMutation(internal.relayEdgeTemplates.remove, {
-        id: id<'relayEdgeTemplates'>(b),
+      await ctx.runMutation(internal.edgeTemplates.remove, {
+        id: id<'edgeTemplates'>(b),
         ...act,
       }),
     );
-  if (a === 'profiles' && b && !c)
+  if (a === 'reality-profiles' && b && !c)
     return json(
-      await ctx.runMutation(internal.relayProfiles.remove, {
-        id: id<'relayCamouflageProfiles'>(b),
+      await ctx.runMutation(internal.realityProfiles.remove, {
+        id: id<'realityProfiles'>(b),
         ...act,
       }),
     );
   if (a === 'edges' && b && !c)
     return json(
       await ctx.runMutation(internal.relayAdmin.deleteEdge, {
-        edgeId: id<'relayEdges'>(b),
+        edgeId: id<'edges'>(b),
         ...act,
       }),
     );
-  if (a === 'origins' && b) {
+  if (a === 'relays' && b) {
     if (b === 'by-slug' && c) {
-      const origin = await ctx.runQuery(internal.relayOrigins.getBySlug, { slug: c });
+      const origin = await ctx.runQuery(internal.relays.getBySlug, { slug: c });
       if (!origin) return json({ ok: true, deleted: true });
       if (d === 'slots' && e)
         return json(
           await ctx.runMutation(internal.relaySlots.retire, {
-            originId: origin._id,
+            relayId: origin._id,
             slotKey: e,
             ...act,
           }),
         );
       if (!d)
         return json(
-          await ctx.runMutation(internal.relayOrigins.requestDelete, { id: origin._id, ...act }),
+          await ctx.runMutation(internal.relays.requestDelete, { id: origin._id, ...act }),
         );
       return notFound();
     }
     if (!c)
       return json(
-        await ctx.runMutation(internal.relayOrigins.requestDelete, {
-          id: id<'relayOrigins'>(b),
+        await ctx.runMutation(internal.relays.requestDelete, {
+          id: id<'relays'>(b),
           ...act,
         }),
       );

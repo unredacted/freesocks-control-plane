@@ -1403,7 +1403,7 @@ http.route({
     }
     // Relay detector dedupe mark: HMAC(pepper, member + window bucket). The
     // member id never reaches the mark row or the telemetry row.
-    const relayCfg = await ctx.runQuery(internal.relayReconcileMutations.configSnapshot, {});
+    const relayCfg = await ctx.runQuery(internal.edgeReconcileMutations.configSnapshot, {});
     const markPepper = process.env.RELAY_MARK_PEPPER ?? process.env.IP_HASH_SALT ?? '';
     const markKey = markPepper
       ? await hmacSha256Hex(

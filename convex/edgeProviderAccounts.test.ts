@@ -8,11 +8,11 @@ const modules = import.meta.glob('./**/*.*s');
 
 const gcoreSettings = { projectId: 11, regionId: 22 };
 
-describe('relayProviderAccounts', () => {
+describe('edgeProviderAccounts', () => {
   test('create validates settings + credentials, masks secrets, audits name/provider only', async () => {
     const t = convexTest(schema, modules);
     await expect(
-      t.mutation(internal.relayProviderAccounts.create, {
+      t.mutation(internal.edgeProviderAccounts.create, {
         provider: 'gcore',
         name: 'acct-a',
         settings: { projectId: 'x' },
@@ -20,20 +20,20 @@ describe('relayProviderAccounts', () => {
       }),
     ).rejects.toThrow(/projectId/);
     await expect(
-      t.mutation(internal.relayProviderAccounts.create, {
+      t.mutation(internal.edgeProviderAccounts.create, {
         provider: 'gcore',
         name: 'acct-a',
         settings: gcoreSettings,
         credentials: {},
       }),
     ).rejects.toThrow(/missing credentials: apiKey/);
-    const { id } = await t.mutation(internal.relayProviderAccounts.create, {
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'gcore',
       name: 'acct-a',
       settings: gcoreSettings,
       credentials: { apiKey: 'SECRET_KEY' },
     });
-    const list = await t.query(internal.relayProviderAccounts.listForAdmin, {});
+    const list = await t.query(internal.edgeProviderAccounts.listForAdmin, {});
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({
       name: 'acct-a',
@@ -49,7 +49,7 @@ describe('relayProviderAccounts', () => {
     expect(JSON.stringify(audit)).not.toContain('SECRET_KEY');
     // Duplicate name refused.
     await expect(
-      t.mutation(internal.relayProviderAccounts.create, {
+      t.mutation(internal.edgeProviderAccounts.create, {
         provider: 'gcore',
         name: 'acct-a',
         settings: gcoreSettings,
@@ -57,13 +57,13 @@ describe('relayProviderAccounts', () => {
       }),
     ).rejects.toThrow(/exists/);
     // The secret is readable only through the internal getter.
-    const secret = await t.query(internal.relayProviderAccounts.getWithSecret, { id });
+    const secret = await t.query(internal.edgeProviderAccounts.getWithSecret, { id });
     expect(secret?.credentials).toEqual({ type: 'gcore', apiKey: 'SECRET_KEY' });
   });
 
   test('update keeps the secret on blank, replaces on value, and drops qualification on credential/settings change', async () => {
     const t = convexTest(schema, modules);
-    const { id } = await t.mutation(internal.relayProviderAccounts.create, {
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'ovh',
       name: 'acct-o',
       settings: {
@@ -76,41 +76,41 @@ describe('relayProviderAccounts', () => {
       },
       credentials: { applicationSecret: 'AS1', consumerKey: 'CK1' },
     });
-    await t.mutation(internal.relayProviderAccounts.setQualified, {
+    await t.mutation(internal.edgeProviderAccounts.setQualified, {
       id,
       qualified: true,
       templateHash: 'h1',
     });
-    expect((await t.query(internal.relayProviderAccounts.getForAdmin, { id }))?.qualified).toBe(
+    expect((await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))?.qualified).toBe(
       true,
     );
     // Blank + one new value: CK kept, AS replaced.
-    await t.mutation(internal.relayProviderAccounts.update, {
+    await t.mutation(internal.edgeProviderAccounts.update, {
       id,
       credentials: { applicationSecret: 'AS2', consumerKey: '' },
     });
-    const secret = await t.query(internal.relayProviderAccounts.getWithSecret, { id });
+    const secret = await t.query(internal.edgeProviderAccounts.getWithSecret, { id });
     expect(secret?.credentials).toEqual({
       type: 'ovh',
       applicationSecret: 'AS2',
       consumerKey: 'CK1',
     });
-    const view = await t.query(internal.relayProviderAccounts.getForAdmin, { id });
+    const view = await t.query(internal.edgeProviderAccounts.getForAdmin, { id });
     expect(view?.qualified).toBe(false);
     // A pure flag edit does not touch qualification.
-    await t.mutation(internal.relayProviderAccounts.setQualified, {
+    await t.mutation(internal.edgeProviderAccounts.setQualified, {
       id,
       qualified: true,
       templateHash: 'h1',
     });
-    await t.mutation(internal.relayProviderAccounts.update, { id, enabled: false, priority: 5 });
-    const after = await t.query(internal.relayProviderAccounts.getForAdmin, { id });
+    await t.mutation(internal.edgeProviderAccounts.update, { id, enabled: false, priority: 5 });
+    const after = await t.query(internal.edgeProviderAccounts.getForAdmin, { id });
     expect(after).toMatchObject({ enabled: false, priority: 5, qualified: true });
   });
 
   test('remove refuses while an edge references the account', async () => {
     const t = convexTest(schema, modules);
-    const { id } = await t.mutation(internal.relayProviderAccounts.create, {
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'upcloud',
       name: 'acct-u',
       settings: { zone: 'de-fra1' },
@@ -129,8 +129,8 @@ describe('relayProviderAccounts', () => {
         updatedAt: now,
       }),
     );
-    const originId = await t.run((ctx) =>
-      ctx.db.insert('relayOrigins', {
+    const relayId = await t.run((ctx) =>
+      ctx.db.insert('relays', {
         slug: 'o1',
         backendServerId: serverId,
         nodeHostname: 'node-a',
@@ -141,7 +141,7 @@ describe('relayProviderAccounts', () => {
         hostManaged: true,
         providerAffinity: 'rotate',
         desiredPublished: 2,
-        standbyPerOrigin: 0,
+        standbyPerRelay: 0,
         cooldownMs: 1,
         maxRotationsPerDay: 3,
         drainMs: 1,
@@ -153,7 +153,7 @@ describe('relayProviderAccounts', () => {
       }),
     );
     const profileId = await t.run((ctx) =>
-      ctx.db.insert('relayCamouflageProfiles', {
+      ctx.db.insert('realityProfiles', {
         slug: 'pf',
         name: 'pf',
         provider: 'upcloud',
@@ -165,8 +165,8 @@ describe('relayProviderAccounts', () => {
       }),
     );
     const slotId = await t.run((ctx) =>
-      ctx.db.insert('relayOriginSlots', {
-        originId,
+      ctx.db.insert('relaySlots', {
+        relayId,
         slotKey: 'a1',
         profileId,
         inboundTag: 'T',
@@ -180,8 +180,8 @@ describe('relayProviderAccounts', () => {
       }),
     );
     await t.run((ctx) =>
-      ctx.db.insert('relayEdges', {
-        originId,
+      ctx.db.insert('edges', {
+        relayId,
         slotId,
         accountId: id,
         provider: 'upcloud',
@@ -199,50 +199,50 @@ describe('relayProviderAccounts', () => {
         updatedAt: now,
       }),
     );
-    await expect(t.mutation(internal.relayProviderAccounts.remove, { id })).rejects.toThrow(
+    await expect(t.mutation(internal.edgeProviderAccounts.remove, { id })).rejects.toThrow(
       /Edges still reference/,
     );
   });
 });
 
-describe('relayEdgeTemplates', () => {
+describe('edgeTemplates', () => {
   test('ensureDefaults seeds one default per provider; create/update validate through the adapter schema', async () => {
     const t = convexTest(schema, modules);
-    const seeded = await t.mutation(internal.relayEdgeTemplates.ensureDefaults, {});
+    const seeded = await t.mutation(internal.edgeTemplates.ensureDefaults, {});
     expect(seeded.created).toBe(4);
-    expect((await t.mutation(internal.relayEdgeTemplates.ensureDefaults, {})).created).toBe(0);
-    const all = await t.query(internal.relayEdgeTemplates.list, {});
+    expect((await t.mutation(internal.edgeTemplates.ensureDefaults, {})).created).toBe(0);
+    const all = await t.query(internal.edgeTemplates.list, {});
     expect(all.filter((x) => x.isDefault)).toHaveLength(4);
     await expect(
-      t.mutation(internal.relayEdgeTemplates.create, {
+      t.mutation(internal.edgeTemplates.create, {
         provider: 'gcore',
         name: 'Bad',
         params: { flavor: '' },
       }),
     ).rejects.toThrow(/flavor/);
-    const { id, paramsHash } = await t.mutation(internal.relayEdgeTemplates.create, {
+    const { id, paramsHash } = await t.mutation(internal.edgeTemplates.create, {
       provider: 'gcore',
       name: 'Big',
       params: { flavor: 'lb1-2-4' },
       isDefault: true,
     });
-    const gcore = await t.query(internal.relayEdgeTemplates.list, { provider: 'gcore' });
+    const gcore = await t.query(internal.edgeTemplates.list, { provider: 'gcore' });
     expect(gcore.filter((x) => x.isDefault).map((x) => x.name)).toEqual(['Big']);
-    const upd = await t.mutation(internal.relayEdgeTemplates.update, {
+    const upd = await t.mutation(internal.edgeTemplates.update, {
       id,
       params: { flavor: 'lb1-4-8' },
     });
     expect(upd.paramsHash).not.toBe(paramsHash);
-    const resolved = await t.query(internal.relayEdgeTemplates.resolveForProvision, {
+    const resolved = await t.query(internal.edgeTemplates.resolveForProvision, {
       provider: 'gcore',
     });
     expect(resolved.params).toMatchObject({ flavor: 'lb1-4-8' });
     // The last template of a provider cannot be removed.
-    const only = await t.query(internal.relayEdgeTemplates.list, { provider: 'ovh' });
+    const only = await t.query(internal.edgeTemplates.list, { provider: 'ovh' });
     await expect(
-      t.mutation(internal.relayEdgeTemplates.remove, { id: only[0].id as never }),
+      t.mutation(internal.edgeTemplates.remove, { id: only[0].id as never }),
     ).rejects.toThrow(/at least one/);
-    const val = await t.query(internal.relayEdgeTemplates.validate, {
+    const val = await t.query(internal.edgeTemplates.validate, {
       provider: 'scaleway',
       params: { timeoutClient: 'nope' },
     });
@@ -251,13 +251,13 @@ describe('relayEdgeTemplates', () => {
 
   test("changing a template's parameters clears the qualification of accounts qualified with it or defaulting to it", async () => {
     const t = convexTest(schema, modules);
-    const { id: tplId, paramsHash } = await t.mutation(internal.relayEdgeTemplates.create, {
+    const { id: tplId, paramsHash } = await t.mutation(internal.edgeTemplates.create, {
       provider: 'gcore',
       name: 'Tpl',
       params: { flavor: 'lb1-2-4' },
     });
     const mk = (name: string) =>
-      t.mutation(internal.relayProviderAccounts.create, {
+      t.mutation(internal.edgeProviderAccounts.create, {
         provider: 'gcore',
         name,
         settings: { projectId: 11, regionId: 22 },
@@ -266,34 +266,34 @@ describe('relayEdgeTemplates', () => {
     const byHash = (await mk('by-hash')).id;
     const byDefault = (await mk('by-default')).id;
     const other = (await mk('other')).id;
-    await t.mutation(internal.relayProviderAccounts.setQualified, {
+    await t.mutation(internal.edgeProviderAccounts.setQualified, {
       id: byHash,
       qualified: true,
       templateHash: paramsHash,
     });
-    await t.mutation(internal.relayProviderAccounts.update, {
+    await t.mutation(internal.edgeProviderAccounts.update, {
       id: byDefault,
       defaultTemplateId: tplId,
     });
-    await t.mutation(internal.relayProviderAccounts.setQualified, {
+    await t.mutation(internal.edgeProviderAccounts.setQualified, {
       id: byDefault,
       qualified: true,
     });
-    await t.mutation(internal.relayProviderAccounts.setQualified, {
+    await t.mutation(internal.edgeProviderAccounts.setQualified, {
       id: other,
       qualified: true,
       templateHash: 'unrelated',
     });
     // A rename does not touch anyone.
-    await t.mutation(internal.relayEdgeTemplates.update, { id: tplId, name: 'Tpl2' });
+    await t.mutation(internal.edgeTemplates.update, { id: tplId, name: 'Tpl2' });
     // A parameter change does.
-    const upd = await t.mutation(internal.relayEdgeTemplates.update, {
+    const upd = await t.mutation(internal.edgeTemplates.update, {
       id: tplId,
       params: { flavor: 'lb1-4-8' },
     });
     expect(upd.requalify).toBe(2);
     const q = async (id: typeof byHash) =>
-      (await t.query(internal.relayProviderAccounts.getForAdmin, { id }))!.qualified;
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))!.qualified;
     expect(await q(byHash)).toBe(false);
     expect(await q(byDefault)).toBe(false);
     expect(await q(other)).toBe(true);
@@ -307,13 +307,13 @@ describe('relayEdgeTemplates', () => {
 
   test('getInventory decodes the stored snapshot into the admin contract shape', async () => {
     const t = convexTest(schema, modules);
-    const { id } = await t.mutation(internal.relayProviderAccounts.create, {
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'gcore',
       name: 'inv',
       settings: { projectId: 11, regionId: 22 },
       credentials: { apiKey: 'k' },
     });
-    expect(await t.query(internal.relayProviderAccounts.getInventory, { id })).toEqual({
+    expect(await t.query(internal.edgeProviderAccounts.getInventory, { id })).toEqual({
       inventory: null,
       inventoryAt: null,
     });
@@ -322,11 +322,11 @@ describe('relayEdgeTemplates', () => {
       ips: [],
       flavors: [{ id: 'f', label: 'F' }],
     };
-    await t.mutation(internal.relayProviderAccounts.recordInventory, {
+    await t.mutation(internal.edgeProviderAccounts.recordInventory, {
       id,
       inventory: JSON.stringify(snapshot),
     });
-    const view = (await t.query(internal.relayProviderAccounts.getInventory, { id }))!;
+    const view = (await t.query(internal.edgeProviderAccounts.getInventory, { id }))!;
     expect(view.inventory).toEqual(snapshot);
     expect(typeof view.inventoryAt).toBe('string');
     expect(new Date(view.inventoryAt as string).getTime()).toBeGreaterThan(0);

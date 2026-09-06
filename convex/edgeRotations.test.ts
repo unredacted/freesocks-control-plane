@@ -102,28 +102,28 @@ async function seed() {
       updatedAt: Date.now(),
     }),
   );
-  const { id: accountId } = await t.mutation(internal.relayProviderAccounts.create, {
+  const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
     provider: 'upcloud',
     name: 'acct-u',
     settings: { zone: 'de-fra1' },
     credentials: { token: 'ucl_x' },
   });
-  await t.mutation(internal.relayProviderAccounts.setQualified, { id: accountId, qualified: true });
-  const { id: profileId } = await t.mutation(internal.relayProfiles.create, {
+  await t.mutation(internal.edgeProviderAccounts.setQualified, { id: accountId, qualified: true });
+  const { id: profileId } = await t.mutation(internal.realityProfiles.create, {
     slug: 'prof-u',
     name: 'Profile U',
     provider: 'upcloud',
     targetAddress: 'target.example',
     serverNames: ['a.example'],
   });
-  const { id: originId } = await t.mutation(internal.relayOrigins.upsertBySlug, {
+  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
     slug: 'node-one',
     backendServerSlug: 'panel-a',
     nodeHostname: 'node-one',
     originAddress: ORIGIN,
   });
   const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    originId,
+    relayId,
     slotKey: 'u',
     profileSlug: 'prof-u',
     inboundTag: 'VLESS_RELAY_U',
@@ -132,13 +132,13 @@ async function seed() {
     originPort: 443,
   });
   // The hand-made edge FCP adopts (observe-only) and publishes at index 0.
-  const { edgeId: oldEdgeId } = await t.mutation(internal.relayOrigins.adoptEdge, {
-    originId,
+  const { edgeId: oldEdgeId } = await t.mutation(internal.relays.adoptEdge, {
+    relayId,
     slotId,
     ipv4: OLD_EDGE,
     publish: true,
   });
-  return { t, accountId, profileId, originId, slotId, oldEdgeId: oldEdgeId as Id<'relayEdges'> };
+  return { t, accountId, profileId, relayId, slotId, oldEdgeId: oldEdgeId as Id<'edges'> };
 }
 
 /**
@@ -147,11 +147,11 @@ async function seed() {
  * one unbroken chain of runAfter(0) steps, so the all-at-once helper's pump
  * cap is not a fit here.
  */
-async function drain(t: ReturnType<typeof convexTest>, rotationId: Id<'relayRotations'>) {
+async function drain(t: ReturnType<typeof convexTest>, rotationId: Id<'edgeRotations'>) {
   for (let i = 0; i < 400; i++) {
     await vi.runAllTimersAsync();
     await t.finishInProgressScheduledFunctions();
-    const r = await t.query(internal.relayRotations.get, { id: rotationId });
+    const r = await t.query(internal.edgeRotations.get, { id: rotationId });
     if (r && ['done', 'failed', 'rolled_back', 'quarantined', 'cancelled'].includes(r.phase)) {
       await vi.runAllTimersAsync();
       await t.finishInProgressScheduledFunctions();
@@ -165,22 +165,22 @@ describe('relayRotations: replace', () => {
   test('full replace: provisions, verifies, publishes at index 0, flips the template Host, drains the old edge', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
-    const { t, originId, oldEdgeId, accountId } = await seed();
-    const { rotationId } = await t.mutation(internal.relayRotations.start, {
-      originId,
+    const { t, relayId, oldEdgeId, accountId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
       kind: 'replace',
       trigger: 'manual',
       targetEdgeId: oldEdgeId,
     });
-    const started = (await t.query(internal.relayRotations.get, { id: rotationId }))!;
+    const started = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(started.phase).toBe('select');
-    const originBusy = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    const originBusy = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(originBusy.activeRotationId).toBe(rotationId);
     expect(originBusy.rotationsToday).toBe(1);
     // A second start is refused while one is running.
     await expect(
-      t.mutation(internal.relayRotations.start, {
-        originId,
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
         kind: 'replace',
         trigger: 'manual',
         targetEdgeId: oldEdgeId,
@@ -189,7 +189,7 @@ describe('relayRotations: replace', () => {
 
     await drain(t, rotationId);
 
-    const r = (await t.query(internal.relayRotations.get, { id: rotationId }))!;
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(r.phase).toBe('done');
     expect(r.outcome).toBe('published');
     expect(r.hostPlan).toEqual([
@@ -213,13 +213,13 @@ describe('relayRotations: replace', () => {
     );
     expect(codes).not.toContain('rolled_back');
 
-    const origin = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.activeRotationId).toBeUndefined();
     expect(origin.publishedEdgeIds).toEqual([r.toEdgeId]);
     expect(origin.cooldownUntil).toBeGreaterThan(Date.now());
     expect(origin.lastRotatedAt).toBeDefined();
 
-    const newEdge = (await t.query(internal.relayEdges.get, { id: r.toEdgeId! }))!;
+    const newEdge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
     expect(newEdge).toMatchObject({
       status: 'active',
       publication: 'published',
@@ -236,7 +236,7 @@ describe('relayRotations: replace', () => {
     // The provider saw the LB created under that exact name (discovery key).
     expect([...world.lbs.values()][0].name).toBe(newEdge.name);
 
-    const oldEdge = (await t.query(internal.relayEdges.get, { id: oldEdgeId }))!;
+    const oldEdge = (await t.query(internal.edges.get, { id: oldEdgeId }))!;
     expect(oldEdge).toMatchObject({ status: 'draining', publication: 'draining' });
     expect(oldEdge.poolIndex).toBeUndefined();
     expect(oldEdge.drainUntil).toBeGreaterThan(Date.now());
@@ -247,7 +247,7 @@ describe('relayRotations: replace', () => {
     expect(world.panelHosts[0]).toMatchObject({ address: NEW_EDGE, port: 443 });
     expect(world.panelHosts[0].address).not.toBe(ORIGIN);
     // The slot remembers its template Host uuid.
-    const slot = (await t.query(internal.relaySlots.listByOrigin, { originId }))[0];
+    const slot = (await t.query(internal.relaySlots.listByRelay, { relayId }))[0];
     expect(slot.templateHostUuid).toBe(HOST_UUID);
     // Budget consumed exactly once.
     const acct = (await t.run((ctx) => ctx.db.get(accountId)))!;
@@ -256,7 +256,7 @@ describe('relayRotations: replace', () => {
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     const rotated = audit.find((a) => a.action === 'relay.rotated');
     expect(rotated?.payload).toMatchObject({
-      originSlug: 'node-one',
+      relaySlug: 'node-one',
       kind: 'replace',
       toProvider: 'upcloud',
       poolIndex: 0,
@@ -265,7 +265,7 @@ describe('relayRotations: replace', () => {
     expect(JSON.stringify(audit)).not.toContain(NEW_EDGE);
     expect(JSON.stringify(audit)).not.toContain(OLD_EDGE);
     // Admin progress view.
-    const admin = (await t.query(internal.relayRotations.getForAdmin, { id: rotationId }))!;
+    const admin = (await t.query(internal.edgeRotations.getForAdmin, { id: rotationId }))!;
     expect(admin.progress).toEqual({ done: 3, total: 3, percent: 100 });
     expect(admin.terminal).toBe(true);
   });
@@ -273,68 +273,68 @@ describe('relayRotations: replace', () => {
   test('burn: the old edge is marked burned with the shorter drain', async () => {
     vi.useFakeTimers();
     fakeWorld();
-    const { t, originId, oldEdgeId } = await seed();
-    const { rotationId } = await t.mutation(internal.relayRotations.start, {
-      originId,
+    const { t, relayId, oldEdgeId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
       kind: 'replace',
       trigger: 'manual',
       targetEdgeId: oldEdgeId,
       burn: true,
     });
     await drain(t, rotationId);
-    expect((await t.query(internal.relayRotations.get, { id: rotationId }))!.phase).toBe('done');
-    const oldEdge = (await t.query(internal.relayEdges.get, { id: oldEdgeId }))!;
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe('done');
+    const oldEdge = (await t.query(internal.edges.get, { id: oldEdgeId }))!;
     expect(oldEdge.burnedAt).toBeDefined();
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.some((a) => a.action === 'relay.burned')).toBe(true);
-    expect(audit.some((a) => a.action === 'admin.relay.origin.burn')).toBe(true);
+    expect(audit.some((a) => a.action === 'admin.relay.burn')).toBe(true);
   });
 
   test('hosts_changed during the flip rolls back the complete binding; the new edge stays as a standby', async () => {
     vi.useFakeTimers();
     const world = fakeWorld({ vanishAfterFirstPatch: true });
-    const { t, originId, oldEdgeId } = await seed();
-    const { rotationId } = await t.mutation(internal.relayRotations.start, {
-      originId,
+    const { t, relayId, oldEdgeId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
       kind: 'replace',
       trigger: 'manual',
       targetEdgeId: oldEdgeId,
     });
     await drain(t, rotationId);
-    const r = (await t.query(internal.relayRotations.get, { id: rotationId }))!;
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     // The Host vanished after our write: the plan is missing → hosts_changed → rollback.
     // With the Host gone, the rollback itself cannot re-observe it → quarantine.
     expect(r.phase).toBe('quarantined');
     expect(r.outcome).toBe('hosts_changed');
-    const origin = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.quarantine).toMatchObject({ rotationId });
     expect(origin.activeRotationId).toBeUndefined();
     // The DB half of the rollback happened before the quarantine: the old edge is published again.
     expect(origin.publishedEdgeIds).toEqual([oldEdgeId]);
-    const oldEdge = (await t.query(internal.relayEdges.get, { id: oldEdgeId }))!;
+    const oldEdge = (await t.query(internal.edges.get, { id: oldEdgeId }))!;
     expect(oldEdge).toMatchObject({ status: 'active', publication: 'published', poolIndex: 0 });
-    const newEdge = (await t.query(internal.relayEdges.get, { id: r.toEdgeId! }))!;
+    const newEdge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
     expect(newEdge).toMatchObject({ status: 'quarantined', publication: 'unpublished' });
     expect(world.patches()).toBe(1);
     // Nothing bypasses the quarantine.
     await expect(
-      t.mutation(internal.relayRotations.start, {
-        originId,
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
         kind: 'replace',
         trigger: 'manual',
         targetEdgeId: oldEdgeId,
         force: true,
       }),
     ).rejects.toThrow(/quarantined/);
-    await expect(t.mutation(internal.relayOrigins.requestDelete, { id: originId })).rejects.toThrow(
+    await expect(t.mutation(internal.relays.requestDelete, { id: relayId })).rejects.toThrow(
       /quarantine/,
     );
     // Operator resolves keeping the previous binding.
-    await t.mutation(internal.relayRotations.resolveQuarantine, { originId, keep: 'previous' });
-    const after = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    await t.mutation(internal.edgeRotations.resolveQuarantine, { relayId, keep: 'previous' });
+    const after = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(after.quarantine).toBeUndefined();
     expect(after.publishedEdgeIds).toEqual([oldEdgeId]);
-    expect((await t.query(internal.relayEdges.get, { id: r.toEdgeId! }))!.status).toBe('active');
+    expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!.status).toBe('active');
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.map((a) => a.action)).toEqual(
       expect.arrayContaining(['relay.quarantined', 'relay.quarantine_resolved']),
@@ -344,23 +344,23 @@ describe('relayRotations: replace', () => {
   test('panel down during the flip: attempts are capped, then a rollback restores the binding without Host writes', async () => {
     vi.useFakeTimers();
     const world = fakeWorld({ panelDown: true });
-    const { t, originId, oldEdgeId } = await seed();
-    const { rotationId } = await t.mutation(internal.relayRotations.start, {
-      originId,
+    const { t, relayId, oldEdgeId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
       kind: 'replace',
       trigger: 'manual',
       targetEdgeId: oldEdgeId,
     });
     await drain(t, rotationId);
-    const r = (await t.query(internal.relayRotations.get, { id: rotationId }))!;
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(r.phase).toBe('rolled_back');
     expect(r.outcome).toBe('panel_unreachable');
     expect(world.patches()).toBe(0);
-    const origin = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.publishedEdgeIds).toEqual([oldEdgeId]);
     expect(origin.quarantine).toBeUndefined();
     expect(origin.activeRotationId).toBeUndefined();
-    const newEdge = (await t.query(internal.relayEdges.get, { id: r.toEdgeId! }))!;
+    const newEdge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
     expect(newEdge).toMatchObject({ status: 'active', publication: 'unpublished' });
     expect(origin.standbyEdgeIds).toEqual([newEdge._id]);
   });
@@ -368,15 +368,15 @@ describe('relayRotations: replace', () => {
   test('no template Host on the panel: publish proceeds without a flip (bootstrap)', async () => {
     vi.useFakeTimers();
     const world = fakeWorld({ hostPresent: false });
-    const { t, originId, oldEdgeId } = await seed();
-    const { rotationId } = await t.mutation(internal.relayRotations.start, {
-      originId,
+    const { t, relayId, oldEdgeId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
       kind: 'replace',
       trigger: 'manual',
       targetEdgeId: oldEdgeId,
     });
     await drain(t, rotationId);
-    const r = (await t.query(internal.relayRotations.get, { id: rotationId }))!;
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(r.phase).toBe('done');
     expect(r.hostPlan).toEqual([]);
     expect(world.patches()).toBe(0);
@@ -384,43 +384,43 @@ describe('relayRotations: replace', () => {
 
   test('start guards: hostManaged=false at index 0, cooldown, daily cap (force bypasses the last two only)', async () => {
     fakeWorld();
-    const { t, originId, oldEdgeId } = await seed();
-    await t.mutation(internal.relayOrigins.update, { id: originId, hostManaged: false });
+    const { t, relayId, oldEdgeId } = await seed();
+    await t.mutation(internal.relays.update, { id: relayId, hostManaged: false });
     await expect(
-      t.mutation(internal.relayRotations.start, {
-        originId,
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
         kind: 'replace',
         trigger: 'manual',
         targetEdgeId: oldEdgeId,
       }),
     ).rejects.toThrow(/template Host/);
-    await t.mutation(internal.relayOrigins.update, { id: originId, hostManaged: true });
-    await t.run((ctx) => ctx.db.patch(originId, { cooldownUntil: Date.now() + 60_000 }));
+    await t.mutation(internal.relays.update, { id: relayId, hostManaged: true });
+    await t.run((ctx) => ctx.db.patch(relayId, { cooldownUntil: Date.now() + 60_000 }));
     await expect(
-      t.mutation(internal.relayRotations.start, {
-        originId,
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
         kind: 'replace',
         trigger: 'manual',
         targetEdgeId: oldEdgeId,
       }),
     ).rejects.toThrow(/cooling down/);
     await t.run((ctx) =>
-      ctx.db.patch(originId, {
+      ctx.db.patch(relayId, {
         cooldownUntil: undefined,
         rotationsDayKey: new Date().toISOString().slice(0, 10),
         rotationsToday: 99,
       }),
     );
     await expect(
-      t.mutation(internal.relayRotations.start, {
-        originId,
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
         kind: 'replace',
         trigger: 'manual',
         targetEdgeId: oldEdgeId,
       }),
     ).rejects.toThrow(/Daily rotation cap/);
-    const { rotationId } = await t.mutation(internal.relayRotations.start, {
-      originId,
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
       kind: 'replace',
       trigger: 'manual',
       targetEdgeId: oldEdgeId,
@@ -428,10 +428,10 @@ describe('relayRotations: replace', () => {
     });
     expect(rotationId).toBeDefined();
     // Detector-triggered starts need the global + per-origin opt-in.
-    await t.mutation(internal.relayRotations.requestCancel, { rotationId });
+    await t.mutation(internal.edgeRotations.requestCancel, { rotationId });
     await expect(
-      t.mutation(internal.relayRotations.start, {
-        originId,
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
         kind: 'replace',
         trigger: 'detector',
         targetEdgeId: oldEdgeId,
@@ -442,9 +442,9 @@ describe('relayRotations: replace', () => {
   test('cancel during provisioning stops the run and marks the new edge cancelled', async () => {
     vi.useFakeTimers();
     fakeWorld();
-    const { t, originId, oldEdgeId } = await seed();
-    const { rotationId } = await t.mutation(internal.relayRotations.start, {
-      originId,
+    const { t, relayId, oldEdgeId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
       kind: 'replace',
       trigger: 'manual',
       targetEdgeId: oldEdgeId,
@@ -453,17 +453,17 @@ describe('relayRotations: replace', () => {
     await t.finishInProgressScheduledFunctions();
     await vi.advanceTimersByTimeAsync(1);
     await t.finishInProgressScheduledFunctions();
-    const mid = (await t.query(internal.relayRotations.get, { id: rotationId }))!;
+    const mid = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(['provisioning', 'select']).toContain(mid.phase);
-    await t.mutation(internal.relayRotations.requestCancel, { rotationId });
+    await t.mutation(internal.edgeRotations.requestCancel, { rotationId });
     await drain(t, rotationId);
-    const r = (await t.query(internal.relayRotations.get, { id: rotationId }))!;
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(r.phase).toBe('cancelled');
-    const origin = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.activeRotationId).toBeUndefined();
     expect(origin.publishedEdgeIds).toEqual([oldEdgeId]);
     if (r.toEdgeId) {
-      const e = (await t.query(internal.relayEdges.get, { id: r.toEdgeId }))!;
+      const e = (await t.query(internal.edges.get, { id: r.toEdgeId }))!;
       expect(e.status).toBe('cancelled');
     }
   });
@@ -473,18 +473,18 @@ describe('relayRotations: provision + publish kinds', () => {
   test('provision with publishOnDone fills the next free pool index (index 1: no Host flip)', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
-    const { t, originId } = await seed();
-    const { rotationId } = await t.mutation(internal.relayRotations.start, {
-      originId,
+    const { t, relayId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
       kind: 'provision',
       trigger: 'manual',
       publishOnDone: true,
     });
     await drain(t, rotationId);
-    const r = (await t.query(internal.relayRotations.get, { id: rotationId }))!;
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(r.phase).toBe('done');
     expect(r.outcome).toBe('published');
-    const origin = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.publishedEdgeIds).toHaveLength(2);
     expect(origin.publishedEdgeIds[1]).toBe(r.toEdgeId);
     expect(origin.cooldownUntil).toBeUndefined(); // not a rotation
@@ -494,33 +494,33 @@ describe('relayRotations: provision + publish kinds', () => {
   test('provision without publish leaves a standby; a later replace uses it instead of allocating', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
-    const { t, originId, oldEdgeId, accountId } = await seed();
-    const first = await t.mutation(internal.relayRotations.start, {
-      originId,
+    const { t, relayId, oldEdgeId, accountId } = await seed();
+    const first = await t.mutation(internal.edgeRotations.start, {
+      relayId,
       kind: 'provision',
       trigger: 'manual',
       publishOnDone: false,
     });
     await drain(t, first.rotationId);
-    const r1 = (await t.query(internal.relayRotations.get, { id: first.rotationId }))!;
+    const r1 = (await t.query(internal.edgeRotations.get, { id: first.rotationId }))!;
     expect(r1.phase).toBe('done');
     expect(r1.outcome).toBe('standby');
-    let origin = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    let origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.standbyEdgeIds).toEqual([r1.toEdgeId]);
     expect(origin.publishedEdgeIds).toEqual([oldEdgeId]);
 
-    const second = await t.mutation(internal.relayRotations.start, {
-      originId,
+    const second = await t.mutation(internal.edgeRotations.start, {
+      relayId,
       kind: 'replace',
       trigger: 'manual',
       targetEdgeId: oldEdgeId,
     });
     await drain(t, second.rotationId);
-    const r2 = (await t.query(internal.relayRotations.get, { id: second.rotationId }))!;
+    const r2 = (await t.query(internal.edgeRotations.get, { id: second.rotationId }))!;
     expect(r2.phase).toBe('done');
     expect(r2.toEdgeId).toBe(r1.toEdgeId);
     expect(r2.events.map((e) => e.code)).toContain('selected_standby');
-    origin = (await t.query(internal.relayOrigins.get, { id: originId }))!;
+    origin = (await t.query(internal.relays.get, { id: relayId }))!;
     expect(origin.publishedEdgeIds).toEqual([r1.toEdgeId]);
     expect(origin.standbyEdgeIds).toEqual([]);
     // Only the first run allocated.
@@ -532,25 +532,25 @@ describe('relayRotations: provision + publish kinds', () => {
   test('selection fails cleanly when no qualified account exists for the slot provider', async () => {
     vi.useFakeTimers();
     fakeWorld();
-    const { t, originId, accountId } = await seed();
-    await t.mutation(internal.relayProviderAccounts.setQualified, {
+    const { t, relayId, accountId } = await seed();
+    await t.mutation(internal.edgeProviderAccounts.setQualified, {
       id: accountId,
       qualified: false,
     });
-    const { rotationId } = await t.mutation(internal.relayRotations.start, {
-      originId,
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
       kind: 'provision',
       trigger: 'manual',
       publishOnDone: true,
     });
     await drain(t, rotationId);
-    const r = (await t.query(internal.relayRotations.get, { id: rotationId }))!;
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(r.phase).toBe('failed');
     expect(r.outcome).toBe('no_qualified_account');
     expect(r.toEdgeId).toBeUndefined();
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.find((a) => a.action === 'relay.rotation_failed')?.payload).toMatchObject({
-      originSlug: 'node-one',
+      relaySlug: 'node-one',
       code: 'no_qualified_account',
     });
   });

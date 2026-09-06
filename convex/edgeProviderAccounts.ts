@@ -13,7 +13,7 @@ import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { relayProviderIdValidator, type RelayProviderId } from './lib/relayProviderIds';
+import { edgeProviderIdValidator, type EdgeProviderId } from './lib/edgeProviderIds';
 import {
   buildCredentials,
   maskCredentials,
@@ -34,7 +34,7 @@ function checkName(name: string): void {
 }
 
 /** Admin-safe view of one account. */
-export function mapAccountAdmin(r: Doc<'relayProviderAccounts'>) {
+export function mapAccountAdmin(r: Doc<'edgeProviderAccounts'>) {
   const { type: _t, ...settings } = r.settings as { type: string } & Record<string, unknown>;
   return {
     id: r._id as string,
@@ -64,17 +64,17 @@ export function dayKey(now = Date.now()): string {
 
 /** The full config the provider actions need (credentials + settings merged). */
 export interface RelayAccountWithSecret {
-  id: Id<'relayProviderAccounts'>;
-  provider: RelayProviderId;
+  id: Id<'edgeProviderAccounts'>;
+  provider: EdgeProviderId;
   name: string;
   credentials: RelayCredentials;
   settings: RelaySettings;
   enabled: boolean;
   qualified: boolean;
-  defaultTemplateId: Id<'relayEdgeTemplates'> | null;
+  defaultTemplateId: Id<'edgeTemplates'> | null;
 }
 
-function toWithSecret(r: Doc<'relayProviderAccounts'>): RelayAccountWithSecret {
+function toWithSecret(r: Doc<'edgeProviderAccounts'>): RelayAccountWithSecret {
   return {
     id: r._id,
     provider: r.provider,
@@ -90,7 +90,7 @@ function toWithSecret(r: Doc<'relayProviderAccounts'>): RelayAccountWithSecret {
 // --- reads -------------------------------------------------------------------------
 
 export const getWithSecret = internalQuery({
-  args: { id: v.id('relayProviderAccounts') },
+  args: { id: v.id('edgeProviderAccounts') },
   handler: async (ctx, { id }): Promise<RelayAccountWithSecret | null> => {
     const r = await ctx.db.get(id);
     return r ? toWithSecret(r) : null;
@@ -101,7 +101,7 @@ export const getWithSecret = internalQuery({
 export const listEnabledForSelection = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db.query('relayProviderAccounts').collect();
+    const rows = await ctx.db.query('edgeProviderAccounts').collect();
     return rows
       .filter((r) => r.enabled)
       .map((r) => ({
@@ -121,7 +121,7 @@ export const listEnabledForSelection = internalQuery({
 export const listForAdmin = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const rows = await ctx.db.query('relayProviderAccounts').collect();
+    const rows = await ctx.db.query('edgeProviderAccounts').collect();
     return rows
       .sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
       .map(mapAccountAdmin);
@@ -129,7 +129,7 @@ export const listForAdmin = internalQuery({
 });
 
 export const getForAdmin = internalQuery({
-  args: { id: v.id('relayProviderAccounts') },
+  args: { id: v.id('edgeProviderAccounts') },
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
     return r ? mapAccountAdmin(r) : null;
@@ -138,7 +138,7 @@ export const getForAdmin = internalQuery({
 
 /** The stored inventory snapshot, decoded for the admin contract (addresses are public client-facing data). */
 export const getInventory = internalQuery({
-  args: { id: v.id('relayProviderAccounts') },
+  args: { id: v.id('edgeProviderAccounts') },
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
     if (!r) return null;
@@ -160,7 +160,7 @@ export const getInventory = internalQuery({
 // --- writes ------------------------------------------------------------------------
 
 const upsertArgs = {
-  provider: relayProviderIdValidator,
+  provider: edgeProviderIdValidator,
   name: v.string(),
   settings: v.any(),
   credentials: v.optional(v.any()),
@@ -168,7 +168,7 @@ const upsertArgs = {
   priority: v.optional(v.number()),
   dailyAllocationBudget: v.optional(v.number()),
   maxLiveEdges: v.optional(v.number()),
-  defaultTemplateId: v.optional(v.union(v.id('relayEdgeTemplates'), v.null())),
+  defaultTemplateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
   actorAdminId: v.optional(v.id('adminUsers')),
 };
 
@@ -197,7 +197,7 @@ export const create = internalMutation({
     checkName(a.name);
     checkLimits(a);
     const dup = await ctx.db
-      .query('relayProviderAccounts')
+      .query('edgeProviderAccounts')
       .withIndex('by_name', (q) => q.eq('name', a.name))
       .unique();
     if (dup)
@@ -216,7 +216,7 @@ export const create = internalMutation({
       });
     }
     const now = Date.now();
-    const id = await ctx.db.insert('relayProviderAccounts', {
+    const id = await ctx.db.insert('edgeProviderAccounts', {
       provider: a.provider,
       name: a.name,
       credentials: creds.credentials as never,
@@ -244,21 +244,21 @@ export const create = internalMutation({
 
 export const update = internalMutation({
   args: {
-    id: v.id('relayProviderAccounts'),
+    id: v.id('edgeProviderAccounts'),
     settings: v.optional(v.any()),
     credentials: v.optional(v.any()),
     enabled: v.optional(v.boolean()),
     priority: v.optional(v.number()),
     dailyAllocationBudget: v.optional(v.number()),
     maxLiveEdges: v.optional(v.number()),
-    defaultTemplateId: v.optional(v.union(v.id('relayEdgeTemplates'), v.null())),
+    defaultTemplateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
     checkLimits(a);
-    const patch: Partial<Doc<'relayProviderAccounts'>> = { updatedAt: Date.now() };
+    const patch: Partial<Doc<'edgeProviderAccounts'>> = { updatedAt: Date.now() };
     let credentialsChanged = false;
     if (a.settings !== undefined) {
       const settings = validateSettings(row.provider, a.settings);
@@ -309,14 +309,14 @@ export const update = internalMutation({
 });
 
 export const remove = internalMutation({
-  args: { id: v.id('relayProviderAccounts'), actorAdminId: v.optional(v.id('adminUsers')) },
+  args: { id: v.id('edgeProviderAccounts'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
     const row = await ctx.db.get(id);
     if (!row) return { ok: true as const };
     // Refuse while any edge still references the account (its resources would
     // become undeletable); the caller destroys edges first.
     const live = await ctx.db
-      .query('relayEdges')
+      .query('edges')
       .withIndex('by_account_status', (q) => q.eq('accountId', id))
       .filter((q) => q.neq(q.field('status'), 'destroyed'))
       .first();
@@ -338,7 +338,7 @@ export const remove = internalMutation({
 
 export const setQualified = internalMutation({
   args: {
-    id: v.id('relayProviderAccounts'),
+    id: v.id('edgeProviderAccounts'),
     qualified: v.boolean(),
     templateHash: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
@@ -365,7 +365,7 @@ export const setQualified = internalMutation({
 
 /** Stamp a credential test outcome (code only, never a body). */
 export const recordTest = internalMutation({
-  args: { id: v.id('relayProviderAccounts'), ok: v.boolean(), code: v.optional(v.string()) },
+  args: { id: v.id('edgeProviderAccounts'), ok: v.boolean(), code: v.optional(v.string()) },
   handler: async (ctx, { id, ok, code }) => {
     const row = await ctx.db.get(id);
     if (!row) return null;
@@ -381,7 +381,7 @@ export const recordTest = internalMutation({
 
 /** Store the latest provider inventory pull (admin-only JSON). */
 export const recordInventory = internalMutation({
-  args: { id: v.id('relayProviderAccounts'), inventory: v.string() },
+  args: { id: v.id('edgeProviderAccounts'), inventory: v.string() },
   handler: async (ctx, { id, inventory }) => {
     const row = await ctx.db.get(id);
     if (!row) return null;
@@ -402,14 +402,14 @@ export const recordInventory = internalMutation({
 export async function reserveAllocation(
   ctx: {
     db: {
-      get: (id: Id<'relayProviderAccounts'>) => Promise<Doc<'relayProviderAccounts'> | null>;
+      get: (id: Id<'edgeProviderAccounts'>) => Promise<Doc<'edgeProviderAccounts'> | null>;
       patch: (
-        id: Id<'relayProviderAccounts'>,
-        p: Partial<Doc<'relayProviderAccounts'>>,
+        id: Id<'edgeProviderAccounts'>,
+        p: Partial<Doc<'edgeProviderAccounts'>>,
       ) => Promise<void>;
     };
   },
-  id: Id<'relayProviderAccounts'>,
+  id: Id<'edgeProviderAccounts'>,
 ): Promise<boolean> {
   const row = await ctx.db.get(id);
   if (!row) return false;

@@ -3,16 +3,16 @@
   import * as Tabs from '@client/components/ui/tabs';
   import { Skeleton } from '@client/components/ui/skeleton';
   import AdminListState from './AdminListState.svelte';
-  import RelayOriginsPanel from './RelayOriginsPanel.svelte';
-  import RelayProvidersPanel from './RelayProvidersPanel.svelte';
-  import RelayTemplatesPanel from './RelayTemplatesPanel.svelte';
-  import RelayProfilesPanel from './RelayProfilesPanel.svelte';
+  import RelaysPanel from './RelaysPanel.svelte';
+  import EdgeProvidersPanel from './EdgeProvidersPanel.svelte';
+  import EdgeTemplatesPanel from './EdgeTemplatesPanel.svelte';
+  import RealityProfilesPanel from './RealityProfilesPanel.svelte';
   import RelayConfigPanel from './RelayConfigPanel.svelte';
   import { adminRelaySummaryQuery } from '../../lib/queries';
 
   /**
-   * Admin → Relay edges (docs/relays.md): provider-managed TCP load balancers in
-   * front of REALITY origins. Origins (published pool, rotations, edges),
+   * Admin → Relays (docs/relays.md): provider-managed L4 load balancers (edges) in
+   * front of relay nodes. Relays (published pool, rotations, edges),
    * provider accounts, edge templates, camouflage profiles, and the rendering /
    * probe / detector configuration. Every request on this page is HPKE-sealed
    * by the shared route policy. English-only (admin CMS convention).
@@ -24,16 +24,16 @@
 <AdminLayout>
   <div class="mb-6 flex flex-wrap items-end justify-between gap-3">
     <div>
-      <h1 class="text-2xl font-bold">Relay edges</h1>
+      <h1 class="text-2xl font-bold">Relays and edges</h1>
       <p class="mt-1 text-sm text-muted-foreground">
-        Provider load balancers in front of REALITY nodes: published pools, rotations, camouflage
-        profiles, probes and the block detector.
+        Provider-managed L4 edges in front of relay nodes: published pools, rotations, REALITY
+        profiles and the block detector. Probe telemetry lives under Telemetry.
       </p>
     </div>
     {#if summary.data}
       {@const c = summary.data.counts}
       <div class="flex flex-wrap gap-2 text-xs">
-        <span class="rounded-full border px-2.5 py-1">{c.origins} origins</span>
+        <span class="rounded-full border px-2.5 py-1">{c.relays} relays</span>
         <span class="rounded-full border px-2.5 py-1">{c.published} published</span>
         {#if c.rotating > 0}
           <span class="rounded-full border border-sky-500/40 bg-sky-500/10 px-2.5 py-1"
@@ -71,20 +71,20 @@
   {:else}
     <Tabs.Root bind:value={tab} class="gap-6">
       <Tabs.List class="w-full min-w-max sm:w-fit">
-        <Tabs.Trigger value="origins">Origins</Tabs.Trigger>
+        <Tabs.Trigger value="origins">Relays</Tabs.Trigger>
         <Tabs.Trigger value="providers">Providers</Tabs.Trigger>
         <Tabs.Trigger value="templates">Templates</Tabs.Trigger>
-        <Tabs.Trigger value="profiles">Camouflage profiles</Tabs.Trigger>
-        <Tabs.Trigger value="config">Rendering, probes and detector</Tabs.Trigger>
+        <Tabs.Trigger value="profiles">REALITY profiles</Tabs.Trigger>
+        <Tabs.Trigger value="config">Rendering and detector</Tabs.Trigger>
       </Tabs.List>
       <Tabs.Content value="origins">
-        <RelayOriginsPanel summary={summary.data ?? null} />
+        <RelaysPanel summary={summary.data ?? null} />
       </Tabs.Content>
-      <Tabs.Content value="providers"><RelayProvidersPanel /></Tabs.Content>
-      <Tabs.Content value="templates"><RelayTemplatesPanel /></Tabs.Content>
-      <Tabs.Content value="profiles"><RelayProfilesPanel /></Tabs.Content>
+      <Tabs.Content value="providers"><EdgeProvidersPanel /></Tabs.Content>
+      <Tabs.Content value="templates"><EdgeTemplatesPanel /></Tabs.Content>
+      <Tabs.Content value="profiles"><RealityProfilesPanel /></Tabs.Content>
       <Tabs.Content value="config">
-        <RelayConfigPanel origins={(summary.data?.origins ?? []).map((o) => o.origin)} />
+        <RelayConfigPanel relays={(summary.data?.relays ?? []).map((o) => o.relay)} />
       </Tabs.Content>
     </Tabs.Root>
   {/if}

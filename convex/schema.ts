@@ -1,7 +1,7 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
 import { backendIdValidator } from './lib/backendIds';
-import { relayProviderIdValidator } from './lib/relayProviderIds';
+import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 
 /**
  * Convex schema for FreeSocks Control Plane: the migration target. Ported from
@@ -99,8 +99,8 @@ const billingOrderStatus = v.union(
 
 // Relay edges (provider-managed load balancers in front of REALITY nodes):
 // shared validators for the relay* tables below. Credentials and settings are
-// discriminated by provider `type` so RELAY_PROVIDER_IDS drift is a test failure.
-const relayProviderId = relayProviderIdValidator;
+// discriminated by provider `type` so EDGE_PROVIDER_IDS drift is a test failure.
+const relayProviderId = edgeProviderIdValidator;
 const relayProviderCredentials = v.union(
   v.object({ type: v.literal('gcore'), apiKey: v.string() }),
   v.object({ type: v.literal('upcloud'), token: v.string() }),
@@ -813,12 +813,12 @@ export default defineSchema({
   // ===========================================================================
 
   // One cloud account (+ region/zone/network) FCP may provision edges in.
-  relayProviderAccounts: defineTable({
+  edgeProviderAccounts: defineTable({
     provider: relayProviderId,
     name: v.string(), // unique (read-check in the create mutation); the IaC key
     credentials: relayProviderCredentials,
     settings: relayProviderSettings,
-    defaultTemplateId: v.optional(v.id('relayEdgeTemplates')),
+    defaultTemplateId: v.optional(v.id('edgeTemplates')),
     enabled: v.boolean(),
     // Set by the operator after the qualification runbook (authenticated
     // REALITY session through an edge from this account + template). Automatic
@@ -846,9 +846,9 @@ export default defineSchema({
   // timeouts, allowed CIDRs, tags, IP-family options). `params` is JSON validated
   // by the adapter's templateSchema; placeholders {{name}} {{originAddress}}
   // {{originPort}} {{edgePort}} are substituted at provision time.
-  relayEdgeTemplates: defineTable({
+  edgeTemplates: defineTable({
     provider: relayProviderId,
-    accountId: v.optional(v.id('relayProviderAccounts')),
+    accountId: v.optional(v.id('edgeProviderAccounts')),
     name: v.string(),
     params: v.string(),
     paramsHash: v.string(),
@@ -861,11 +861,11 @@ export default defineSchema({
   // A REALITY camouflage profile: the target the origin inbound impersonates and
   // the client SNIs approved for it. Provider-scoped because the target should
   // sit in the edge's network neighbourhood; operator data, never adapter code.
-  relayCamouflageProfiles: defineTable({
+  realityProfiles: defineTable({
     slug: v.string(), // unique
     name: v.string(),
     provider: relayProviderId,
-    accountId: v.optional(v.id('relayProviderAccounts')),
+    accountId: v.optional(v.id('edgeProviderAccounts')),
     targetAddress: v.string(),
     targetPort: v.number(),
     serverNames: v.array(
@@ -886,7 +886,7 @@ export default defineSchema({
         sameAsn: v.optional(v.boolean()),
         tlsOk: v.boolean(),
         authOk: v.boolean(),
-        checkedFromEdgeId: v.optional(v.id('relayEdges')),
+        checkedFromEdgeId: v.optional(v.id('edges')),
       }),
     ),
     notes: v.optional(v.string()),
@@ -897,7 +897,7 @@ export default defineSchema({
 
   // One REALITY node fronted by edges. `nodeHostname` is the panel node name ==
   // the Host remark prefix == subscriptions.pinnedNode (the attribution key).
-  relayOrigins: defineTable({
+  relays: defineTable({
     slug: v.string(), // unique; the IaC key
     backendServerId: v.id('backendServers'),
     nodeHostname: v.string(),
@@ -912,7 +912,7 @@ export default defineSchema({
     providerAffinity: v.union(v.literal('rotate'), v.literal('sticky')),
     providerPreference: v.optional(relayProviderId),
     desiredPublished: v.number(),
-    standbyPerOrigin: v.number(),
+    standbyPerRelay: v.number(),
     cooldownMs: v.number(),
     maxRotationsPerDay: v.number(),
     drainMs: v.number(),
@@ -920,9 +920,9 @@ export default defineSchema({
     // subscription render cache key.
     publicationEpoch: v.number(),
     // Published edges by pool index (a gap is a null); assignments hash into it.
-    publishedEdgeIds: v.array(v.union(v.id('relayEdges'), v.null())),
-    standbyEdgeIds: v.array(v.id('relayEdges')),
-    activeRotationId: v.optional(v.id('relayRotations')),
+    publishedEdgeIds: v.array(v.union(v.id('edges'), v.null())),
+    standbyEdgeIds: v.array(v.id('edges')),
+    activeRotationId: v.optional(v.id('edgeRotations')),
     cooldownUntil: v.optional(v.number()),
     rotationsDayKey: v.optional(v.string()),
     rotationsToday: v.number(),
@@ -930,7 +930,7 @@ export default defineSchema({
     // A rotation whose rollback could not converge parks the origin here; nothing
     // bypasses it (resolveQuarantine is the only exit).
     quarantine: v.optional(
-      v.object({ rotationId: v.id('relayRotations'), since: v.number(), reason: v.string() }),
+      v.object({ rotationId: v.id('edgeRotations'), since: v.number(), reason: v.string() }),
     ),
     deleting: v.optional(v.boolean()),
     // Block-detector state (convex/relayDetector.ts).
@@ -951,7 +951,7 @@ export default defineSchema({
         countries: v.array(v.object({ code: v.string(), count: v.number() })),
         edgeEvidence: v.array(
           v.object({
-            edgeId: v.id('relayEdges'),
+            edgeId: v.id('edges'),
             source: v.union(v.literal('reports'), v.literal('probes')),
             countries: v.array(v.string()),
           }),
@@ -976,10 +976,10 @@ export default defineSchema({
   // One origin inbound deployed (by Ansible) for one camouflage profile, with
   // its single template Host (remark `<node>-relay-<slotKey>`). Edges bind to a
   // slot; their listener forwards 443 → originPort.
-  relayOriginSlots: defineTable({
-    originId: v.id('relayOrigins'),
+  relaySlots: defineTable({
+    relayId: v.id('relays'),
     slotKey: v.string(),
-    profileId: v.id('relayCamouflageProfiles'),
+    profileId: v.id('realityProfiles'),
     inboundTag: v.string(),
     configProfileUuid: v.string(),
     configProfileInboundUuid: v.string(),
@@ -991,7 +991,7 @@ export default defineSchema({
     retired: v.boolean(),
     updatedAt: v.number(),
   })
-    .index('by_origin', ['originId'])
+    .index('by_relay', ['relayId'])
     .index('by_profile', ['profileId']),
 
   // One provider load balancer. `steps` is the provisioning plan; `resources` the
@@ -999,11 +999,11 @@ export default defineSchema({
   // them, partial results included). An edge is discoverable (the reconcile cron
   // must settle it) whenever it has an open currentOp or a step still
   // requested/unresolved, whatever its status.
-  relayEdges: defineTable({
-    originId: v.id('relayOrigins'),
-    slotId: v.id('relayOriginSlots'),
-    accountId: v.optional(v.id('relayProviderAccounts')),
-    templateId: v.optional(v.id('relayEdgeTemplates')),
+  edges: defineTable({
+    relayId: v.id('relays'),
+    slotId: v.id('relaySlots'),
+    accountId: v.optional(v.id('edgeProviderAccounts')),
+    templateId: v.optional(v.id('edgeTemplates')),
     templateHash: v.optional(v.string()),
     provider: v.optional(relayProviderId),
     managed: v.boolean(), // false = adopted, observe-only, never destroyed
@@ -1077,16 +1077,16 @@ export default defineSchema({
     destroyedAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
-    .index('by_origin_status', ['originId', 'status'])
-    .index('by_origin_publication', ['originId', 'publication'])
+    .index('by_relay_status', ['relayId', 'status'])
+    .index('by_relay_publication', ['relayId', 'publication'])
     .index('by_status', ['status', 'statusChangedAt'])
     .index('by_account_status', ['accountId', 'status'])
     .index('by_name', ['name']),
 
   // The rotation ledger + saga state. Advanced ONLY through relayRotations.advance
   // (step version) and the claimOp/settleOp pair (external writes).
-  relayRotations: defineTable({
-    originId: v.id('relayOrigins'),
+  edgeRotations: defineTable({
+    relayId: v.id('relays'),
     kind: v.union(v.literal('provision'), v.literal('publish'), v.literal('replace')),
     trigger: v.union(
       v.literal('manual'),
@@ -1098,8 +1098,8 @@ export default defineSchema({
     force: v.boolean(),
     // provision kind: publish the new edge when it verifies (bootstrap / pool fill).
     publishOnDone: v.optional(v.boolean()),
-    targetEdgeId: v.optional(v.id('relayEdges')), // the edge being replaced
-    toEdgeId: v.optional(v.id('relayEdges')),
+    targetEdgeId: v.optional(v.id('edges')), // the edge being replaced
+    toEdgeId: v.optional(v.id('edges')),
     phase: relayRotationPhase,
     stepVersion: v.number(),
     cancelRequested: v.boolean(),
@@ -1117,9 +1117,9 @@ export default defineSchema({
     // The complete binding before a replace, for a complete rollback.
     previousBinding: v.optional(
       v.object({
-        edgeId: v.id('relayEdges'),
-        slotId: v.id('relayOriginSlots'),
-        profileId: v.id('relayCamouflageProfiles'),
+        edgeId: v.id('edges'),
+        slotId: v.id('relaySlots'),
+        profileId: v.id('realityProfiles'),
         poolIndex: v.number(),
       }),
     ),
@@ -1143,12 +1143,12 @@ export default defineSchema({
     finishedAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
-    .index('by_origin', ['originId', 'startedAt'])
+    .index('by_relay', ['relayId', 'startedAt'])
     .index('by_phase', ['phase', 'nextStepAt']),
 
   // External / internal reachability probe requests against one edge.
-  relayProbeRuns: defineTable({
-    edgeId: v.id('relayEdges'),
+  probeRuns: defineTable({
+    edgeId: v.id('edges'),
     source: relayProbeSource,
     target: v.string(), // "ip:port" as probed
     ipVersion: v.union(v.literal(4), v.literal(6)),
@@ -1185,8 +1185,8 @@ export default defineSchema({
     .index('by_status_requested', ['status', 'requestedAt']),
 
   // Rolled-up per-edge, per-country, per-source reachability counts.
-  relayEdgeReachability: defineTable({
-    edgeId: v.id('relayEdges'),
+  probeReachability: defineTable({
+    edgeId: v.id('edges'),
     country: v.string(),
     source: relayProbeSource,
     // Address family probed; absent = 4 (rows written before dual-stack rollups).
@@ -1200,13 +1200,13 @@ export default defineSchema({
   }).index('by_edge_country', ['edgeId', 'country']),
 
   // Detector ring buffer: one row per origin per evaluation (7-day retention).
-  relayOriginSamples: defineTable({
-    originId: v.id('relayOrigins'),
+  relaySamples: defineTable({
+    relayId: v.id('relays'),
     at: v.number(),
     reports: v.number(),
     distinctReporters: v.number(),
     usersOnline: v.union(v.number(), v.null()),
-  }).index('by_origin_at', ['originId', 'at']),
+  }).index('by_relay_at', ['relayId', 'at']),
 
   // Per-NODE stats from the panel (the relay squad is shared, so per-squad
   // remnawaveNodeStats cannot isolate one node). Refreshed by the healthcheck cron.

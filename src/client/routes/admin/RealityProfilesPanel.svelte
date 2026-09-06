@@ -15,13 +15,13 @@
   import { toast } from 'svelte-sonner';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
-  import { adminRelayProfilesQuery } from '../../lib/queries';
+  import { adminRealityProfilesQuery } from '../../lib/queries';
   import {
-    RELAY_PROVIDER_IDS,
+    EDGE_PROVIDER_IDS,
     RelayIdResponse,
     RelayOkResponse,
-    type RelayProfileAdmin,
-    type RelayProviderId,
+    type RealityProfileAdmin,
+    type EdgeProviderId,
   } from '../../../shared/contracts/relays';
   import { formatDateTime } from '../../lib/i18n/format';
   import AdminListState from './AdminListState.svelte';
@@ -33,7 +33,7 @@
    * drain (the node keeps accepting it until the drain ends). The node role
    * deploys one origin inbound per profile (a slot) and one template Host.
    */
-  const profiles = adminRelayProfilesQuery();
+  const profiles = adminRealityProfilesQuery();
   const qc = useQueryClient();
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'relays'] });
   const onError = (title: string) => (err: unknown) =>
@@ -43,7 +43,7 @@
     id: string | null;
     slug: string;
     name: string;
-    provider: RelayProviderId;
+    provider: EdgeProviderId;
     targetAddress: string;
     targetPort: number;
     serverNames: string;
@@ -62,7 +62,7 @@
     enabled: true,
     notes: '',
   });
-  const editDraft = (p: RelayProfileAdmin): Draft => ({
+  const editDraft = (p: RealityProfileAdmin): Draft => ({
     id: p.id,
     slug: p.slug,
     name: p.name,
@@ -94,9 +94,13 @@
         notes: d.notes.trim(),
       };
       if (d.id)
-        return apiClient.patch(`/api/v1/admin/relays/profiles/${d.id}`, body, RelayOkResponse);
+        return apiClient.patch(
+          `/api/v1/admin/relay/reality-profiles/${d.id}`,
+          body,
+          RelayOkResponse,
+        );
       return apiClient.post(
-        '/api/v1/admin/relays/profiles',
+        '/api/v1/admin/relay/reality-profiles',
         { ...body, slug: d.slug.trim(), provider: d.provider },
         RelayIdResponse,
       );
@@ -118,7 +122,11 @@
       op: 'retire-sni' | 'reactivate-sni';
       sni: string;
     }) =>
-      apiClient.post(`/api/v1/admin/relays/profiles/${id}/${op}`, { snis: [sni] }, RelayOkResponse),
+      apiClient.post(
+        `/api/v1/admin/relay/reality-profiles/${id}/${op}`,
+        { snis: [sni] },
+        RelayOkResponse,
+      ),
     onSuccess: () => {
       invalidate();
       toast.success('Server names updated');
@@ -127,7 +135,7 @@
   }));
   const remove = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/relays/profiles/${id}`, RelayOkResponse),
+      apiClient.delete(`/api/v1/admin/relay/reality-profiles/${id}`, RelayOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Profile removed');
@@ -241,11 +249,11 @@
               <Select.Root
                 type="single"
                 value={editor.provider}
-                onValueChange={(v) => (editor!.provider = v as RelayProviderId)}
+                onValueChange={(v) => (editor!.provider = v as EdgeProviderId)}
               >
                 <Select.Trigger class="mt-1 w-full">{editor.provider}</Select.Trigger>
                 <Select.Content
-                  >{#each RELAY_PROVIDER_IDS as p (p)}<Select.Item value={p}>{p}</Select.Item
+                  >{#each EDGE_PROVIDER_IDS as p (p)}<Select.Item value={p}>{p}</Select.Item
                     >{/each}</Select.Content
                 >
               </Select.Root>

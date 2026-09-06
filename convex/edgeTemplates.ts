@@ -13,11 +13,11 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import {
-  relayProviderIdValidator,
-  RELAY_PROVIDER_IDS,
-  type RelayProviderId,
-} from './lib/relayProviderIds';
-import { RELAY_TEMPLATES, validateTemplateParams } from './lib/relays/providers/templates';
+  edgeProviderIdValidator,
+  EDGE_PROVIDER_IDS,
+  type EdgeProviderId,
+} from './lib/edgeProviderIds';
+import { EDGE_TEMPLATES, validateTemplateParams } from './lib/relays/providers/templates';
 import { canonicalJson } from './lib/relays/providers/template';
 
 /** FNV-1a 64-bit as 16 hex chars (isolate-safe, no WebCrypto needed). */
@@ -35,7 +35,7 @@ export function templateHashOf(params: unknown): string {
   return fnv1a64Hex(canonicalJson(params));
 }
 
-export function mapTemplateAdmin(r: Doc<'relayEdgeTemplates'>) {
+export function mapTemplateAdmin(r: Doc<'edgeTemplates'>) {
   let params: unknown = {};
   try {
     params = JSON.parse(r.params);
@@ -57,14 +57,14 @@ export function mapTemplateAdmin(r: Doc<'relayEdgeTemplates'>) {
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,62}$/;
 
 export const list = internalQuery({
-  args: { provider: v.optional(relayProviderIdValidator) },
+  args: { provider: v.optional(edgeProviderIdValidator) },
   handler: async (ctx, { provider }) => {
     const rows = provider
       ? await ctx.db
-          .query('relayEdgeTemplates')
+          .query('edgeTemplates')
           .withIndex('by_provider', (q) => q.eq('provider', provider))
           .collect()
-      : await ctx.db.query('relayEdgeTemplates').collect();
+      : await ctx.db.query('edgeTemplates').collect();
     return rows
       .sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name))
       .map(mapTemplateAdmin);
@@ -72,7 +72,7 @@ export const list = internalQuery({
 });
 
 export const get = internalQuery({
-  args: { id: v.id('relayEdgeTemplates') },
+  args: { id: v.id('edgeTemplates') },
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
     return r ? mapTemplateAdmin(r) : null;
@@ -84,9 +84,9 @@ export const describeSchemas = internalQuery({
   args: {},
   handler: async () =>
     Object.fromEntries(
-      RELAY_PROVIDER_IDS.map((id) => [
+      EDGE_PROVIDER_IDS.map((id) => [
         id,
-        { fields: RELAY_TEMPLATES[id].fields, defaults: RELAY_TEMPLATES[id].defaults },
+        { fields: EDGE_TEMPLATES[id].fields, defaults: EDGE_TEMPLATES[id].defaults },
       ]),
     ),
 });
@@ -98,16 +98,16 @@ export const describeSchemas = internalQuery({
  */
 export async function resolveTemplateFor(
   ctx: { db: import('./_generated/server').DatabaseReader },
-  provider: RelayProviderId,
-  explicitId: Doc<'relayEdgeTemplates'>['_id'] | null | undefined,
-  accountDefaultId: Doc<'relayEdgeTemplates'>['_id'] | null | undefined,
+  provider: EdgeProviderId,
+  explicitId: Doc<'edgeTemplates'>['_id'] | null | undefined,
+  accountDefaultId: Doc<'edgeTemplates'>['_id'] | null | undefined,
 ): Promise<{
-  id: Doc<'relayEdgeTemplates'>['_id'] | null;
+  id: Doc<'edgeTemplates'>['_id'] | null;
   params: Record<string, unknown>;
   hash: string;
 }> {
   const candidates = [explicitId, accountDefaultId].filter(
-    (x): x is Doc<'relayEdgeTemplates'>['_id'] => !!x,
+    (x): x is Doc<'edgeTemplates'>['_id'] => !!x,
   );
   for (const id of candidates) {
     const row = await ctx.db.get(id);
@@ -117,7 +117,7 @@ export async function resolveTemplateFor(
     }
   }
   const rows = await ctx.db
-    .query('relayEdgeTemplates')
+    .query('edgeTemplates')
     .withIndex('by_provider', (q) => q.eq('provider', provider))
     .collect();
   const dflt = rows.find((r) => r.isDefault) ?? rows[0];
@@ -125,15 +125,15 @@ export async function resolveTemplateFor(
     const parsed = validateTemplateParams(provider, JSON.parse(dflt.params));
     if (parsed.ok) return { id: dflt._id, params: parsed.params, hash: dflt.paramsHash };
   }
-  const params = RELAY_TEMPLATES[provider].defaults;
+  const params = EDGE_TEMPLATES[provider].defaults;
   return { id: null, params, hash: templateHashOf(params) };
 }
 
 export const resolveForProvision = internalQuery({
   args: {
-    provider: relayProviderIdValidator,
-    templateId: v.optional(v.union(v.id('relayEdgeTemplates'), v.null())),
-    accountDefaultId: v.optional(v.union(v.id('relayEdgeTemplates'), v.null())),
+    provider: edgeProviderIdValidator,
+    templateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
+    accountDefaultId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
   },
   handler: (ctx, a) =>
     resolveTemplateFor(ctx, a.provider, a.templateId ?? null, a.accountDefaultId ?? null),
@@ -144,14 +144,14 @@ export const ensureDefaults = internalMutation({
   args: {},
   handler: async (ctx) => {
     let created = 0;
-    for (const provider of RELAY_PROVIDER_IDS) {
+    for (const provider of EDGE_PROVIDER_IDS) {
       const existing = await ctx.db
-        .query('relayEdgeTemplates')
+        .query('edgeTemplates')
         .withIndex('by_provider', (q) => q.eq('provider', provider))
         .first();
       if (existing) continue;
-      const params = RELAY_TEMPLATES[provider].defaults;
-      await ctx.db.insert('relayEdgeTemplates', {
+      const params = EDGE_TEMPLATES[provider].defaults;
+      await ctx.db.insert('edgeTemplates', {
         provider,
         name: 'Default',
         params: JSON.stringify(params),
@@ -167,10 +167,10 @@ export const ensureDefaults = internalMutation({
 
 export const create = internalMutation({
   args: {
-    provider: relayProviderIdValidator,
+    provider: edgeProviderIdValidator,
     name: v.string(),
     params: v.any(),
-    accountId: v.optional(v.union(v.id('relayProviderAccounts'), v.null())),
+    accountId: v.optional(v.union(v.id('edgeProviderAccounts'), v.null())),
     isDefault: v.optional(v.boolean()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
@@ -187,7 +187,7 @@ export const create = internalMutation({
     }
     const now = Date.now();
     if (a.isDefault) await clearDefault(ctx, a.provider);
-    const id = await ctx.db.insert('relayEdgeTemplates', {
+    const id = await ctx.db.insert('edgeTemplates', {
       provider: a.provider,
       accountId: a.accountId ?? undefined,
       name: a.name,
@@ -210,10 +210,10 @@ export const create = internalMutation({
 
 async function clearDefault(
   ctx: { db: import('./_generated/server').DatabaseWriter },
-  provider: RelayProviderId,
+  provider: EdgeProviderId,
 ) {
   const rows = await ctx.db
-    .query('relayEdgeTemplates')
+    .query('edgeTemplates')
     .withIndex('by_provider', (q) => q.eq('provider', provider))
     .collect();
   for (const r of rows) if (r.isDefault) await ctx.db.patch(r._id, { isDefault: false });
@@ -221,7 +221,7 @@ async function clearDefault(
 
 export const update = internalMutation({
   args: {
-    id: v.id('relayEdgeTemplates'),
+    id: v.id('edgeTemplates'),
     name: v.optional(v.string()),
     params: v.optional(v.any()),
     isDefault: v.optional(v.boolean()),
@@ -230,13 +230,13 @@ export const update = internalMutation({
   handler: async (ctx, a) => {
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Template not found' });
-    const patch: Partial<Doc<'relayEdgeTemplates'>> = { updatedAt: Date.now() };
+    const patch: Partial<Doc<'edgeTemplates'>> = { updatedAt: Date.now() };
     if (a.name !== undefined) {
       if (!NAME_RE.test(a.name))
         throw new ConvexError({ code: 'validation', message: 'invalid template name' });
       patch.name = a.name;
     }
-    let requalify: Doc<'relayProviderAccounts'>[] = [];
+    let requalify: Doc<'edgeProviderAccounts'>[] = [];
     if (a.params !== undefined) {
       const parsed = validateTemplateParams(row.provider, a.params);
       if (!parsed.ok)
@@ -247,7 +247,7 @@ export const update = internalMutation({
         // The REALITY qualification was run with the OLD parameters: every
         // qualified account that was qualified with them, or that would provision
         // from this template next, must be re-qualified before automation uses it.
-        const accounts = await ctx.db.query('relayProviderAccounts').collect();
+        const accounts = await ctx.db.query('edgeProviderAccounts').collect();
         requalify = accounts.filter(
           (acct) =>
             acct.provider === row.provider &&
@@ -295,12 +295,12 @@ export const update = internalMutation({
 });
 
 export const remove = internalMutation({
-  args: { id: v.id('relayEdgeTemplates'), actorAdminId: v.optional(v.id('adminUsers')) },
+  args: { id: v.id('edgeTemplates'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
     const row = await ctx.db.get(id);
     if (!row) return { ok: true as const };
     const siblings = await ctx.db
-      .query('relayEdgeTemplates')
+      .query('edgeTemplates')
       .withIndex('by_provider', (q) => q.eq('provider', row.provider))
       .collect();
     if (siblings.length <= 1) {
@@ -309,7 +309,7 @@ export const remove = internalMutation({
         message: 'A provider keeps at least one template',
       });
     }
-    const referencing = await ctx.db.query('relayProviderAccounts').collect();
+    const referencing = await ctx.db.query('edgeProviderAccounts').collect();
     for (const acct of referencing) {
       if (acct.defaultTemplateId === id)
         await ctx.db.patch(acct._id, { defaultTemplateId: undefined, updatedAt: Date.now() });
@@ -333,7 +333,7 @@ export const remove = internalMutation({
 
 /** Pure validation for the CMS "Validate" button (no write). */
 export const validate = internalQuery({
-  args: { provider: relayProviderIdValidator, params: v.any() },
+  args: { provider: edgeProviderIdValidator, params: v.any() },
   handler: async (_ctx, { provider, params }) => {
     const parsed = validateTemplateParams(provider, params);
     return parsed.ok

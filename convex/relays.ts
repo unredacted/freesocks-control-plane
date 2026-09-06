@@ -9,7 +9,7 @@ import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { relayProviderIdValidator } from './lib/relayProviderIds';
+import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { resolveRelayConfig, relayMs } from './lib/relayConfig';
 import { isPublicIpLiteral, addressFamily } from './lib/relays/ip';
 import { sameAddress } from './lib/relays/hosts';
@@ -25,10 +25,10 @@ async function assertNodeUnbound(
   db: Db,
   backendServerId: Id<'backendServers'>,
   nodeHostname: string,
-  selfId: Id<'relayOrigins'> | null,
+  selfId: Id<'relays'> | null,
 ) {
   const rows = await db
-    .query('relayOrigins')
+    .query('relays')
     .withIndex('by_node_hostname', (q) => q.eq('nodeHostname', nodeHostname))
     .collect();
   const other = rows.find((r) => r.backendServerId === backendServerId && r._id !== selfId);
@@ -46,11 +46,11 @@ async function assertNodeUnbound(
  * balancers dialing the old target while FCP reports the new one. Refuse until
  * the origin's edges are drained/destroyed (or the origin is recreated).
  */
-async function assertAddressChangeAllowed(db: Db, origin: Doc<'relayOrigins'>, next?: string) {
+async function assertAddressChangeAllowed(db: Db, origin: Doc<'relays'>, next?: string) {
   if (next === undefined || sameAddress(next, origin.originAddress)) return;
   const edges = await db
-    .query('relayEdges')
-    .withIndex('by_origin_status', (q) => q.eq('originId', origin._id))
+    .query('edges')
+    .withIndex('by_relay_status', (q) => q.eq('relayId', origin._id))
     .collect();
   if (edges.some((e) => e.status !== 'destroyed')) {
     throw new ConvexError({
@@ -63,7 +63,7 @@ async function assertAddressChangeAllowed(db: Db, origin: Doc<'relayOrigins'>, n
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const HOSTNAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
-export function mapOriginAdmin(r: Doc<'relayOrigins'>) {
+export function mapRelayAdmin(r: Doc<'relays'>) {
   return {
     id: r._id as string,
     slug: r.slug,
@@ -79,7 +79,7 @@ export function mapOriginAdmin(r: Doc<'relayOrigins'>) {
     providerAffinity: r.providerAffinity,
     providerPreference: r.providerPreference ?? null,
     desiredPublished: r.desiredPublished,
-    standbyPerOrigin: r.standbyPerOrigin,
+    standbyPerRelay: r.standbyPerRelay,
     cooldownMinutes: Math.round(r.cooldownMs / 60_000),
     maxRotationsPerDay: r.maxRotationsPerDay,
     drainMinutes: Math.round(r.drainMs / 60_000),
@@ -122,13 +122,13 @@ export function todayKey(now = Date.now()): string {
 export const listForAdmin = internalQuery({
   args: {},
   handler: async (ctx) =>
-    (await ctx.db.query('relayOrigins').collect())
+    (await ctx.db.query('relays').collect())
       .sort((a, b) => a.slug.localeCompare(b.slug))
-      .map(mapOriginAdmin),
+      .map(mapRelayAdmin),
 });
 
 export const get = internalQuery({
-  args: { id: v.id('relayOrigins') },
+  args: { id: v.id('relays') },
   handler: (ctx, { id }) => ctx.db.get(id),
 });
 
@@ -136,7 +136,7 @@ export const getBySlug = internalQuery({
   args: { slug: v.string() },
   handler: (ctx, { slug }) =>
     ctx.db
-      .query('relayOrigins')
+      .query('relays')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique(),
 });
@@ -144,14 +144,14 @@ export const getBySlug = internalQuery({
 /** Every origin (small, operator-managed table) for the reconcile cron. */
 export const listAll = internalQuery({
   args: {},
-  handler: (ctx) => ctx.db.query('relayOrigins').collect(),
+  handler: (ctx) => ctx.db.query('relays').collect(),
 });
 
 export const listEnabled = internalQuery({
   args: {},
   handler: (ctx) =>
     ctx.db
-      .query('relayOrigins')
+      .query('relays')
       .withIndex('by_enabled', (q) => q.eq('enabled', true))
       .collect(),
 });
@@ -161,7 +161,7 @@ export const forNode = internalQuery({
   args: { backendServerId: v.id('backendServers'), nodeHostname: v.string() },
   handler: async (ctx, { backendServerId, nodeHostname }) => {
     const rows = await ctx.db
-      .query('relayOrigins')
+      .query('relays')
       .withIndex('by_node_hostname', (q) => q.eq('nodeHostname', nodeHostname))
       .collect();
     return rows.find((r) => r.backendServerId === backendServerId) ?? null;
@@ -175,7 +175,7 @@ function checkOriginFields(a: {
   originAddress?: string;
   modeSlugs?: string[];
   desiredPublished?: number;
-  standbyPerOrigin?: number;
+  standbyPerRelay?: number;
   cooldownMinutes?: number;
   maxRotationsPerDay?: number;
   drainMinutes?: number;
@@ -204,8 +204,8 @@ function checkOriginFields(a: {
   if (a.desiredPublished !== undefined && (a.desiredPublished < 1 || a.desiredPublished > 4)) {
     throw new ConvexError({ code: 'validation', message: 'desiredPublished must be 1..4' });
   }
-  if (a.standbyPerOrigin !== undefined && (a.standbyPerOrigin < 0 || a.standbyPerOrigin > 2)) {
-    throw new ConvexError({ code: 'validation', message: 'standbyPerOrigin must be 0..2' });
+  if (a.standbyPerRelay !== undefined && (a.standbyPerRelay < 0 || a.standbyPerRelay > 2)) {
+    throw new ConvexError({ code: 'validation', message: 'standbyPerRelay must be 0..2' });
   }
   if (a.cooldownMinutes !== undefined && (a.cooldownMinutes < 10 || a.cooldownMinutes > 1440)) {
     throw new ConvexError({ code: 'validation', message: 'cooldownMinutes must be 10..1440' });
@@ -238,9 +238,9 @@ const originWriteArgs = {
   autoRotate: v.optional(v.boolean()),
   hostManaged: v.optional(v.boolean()),
   providerAffinity: v.optional(v.union(v.literal('rotate'), v.literal('sticky'))),
-  providerPreference: v.optional(v.union(relayProviderIdValidator, v.null())),
+  providerPreference: v.optional(v.union(edgeProviderIdValidator, v.null())),
   desiredPublished: v.optional(v.number()),
-  standbyPerOrigin: v.optional(v.number()),
+  standbyPerRelay: v.optional(v.number()),
   cooldownMinutes: v.optional(v.number()),
   maxRotationsPerDay: v.optional(v.number()),
   drainMinutes: v.optional(v.number()),
@@ -257,17 +257,17 @@ type OriginWrite = {
   autoRotate?: boolean;
   hostManaged?: boolean;
   providerAffinity?: 'rotate' | 'sticky';
-  providerPreference?: Doc<'relayOrigins'>['providerPreference'] | null;
+  providerPreference?: Doc<'relays'>['providerPreference'] | null;
   desiredPublished?: number;
-  standbyPerOrigin?: number;
+  standbyPerRelay?: number;
   cooldownMinutes?: number;
   maxRotationsPerDay?: number;
   drainMinutes?: number;
 };
 
-function patchFrom(a: OriginWrite): Partial<Doc<'relayOrigins'>> {
+function patchFrom(a: OriginWrite): Partial<Doc<'relays'>> {
   checkOriginFields(a);
-  const p: Partial<Doc<'relayOrigins'>> = {};
+  const p: Partial<Doc<'relays'>> = {};
   if (a.nodeHostname !== undefined) p.nodeHostname = a.nodeHostname;
   if (a.nodeUuid !== undefined) p.nodeUuid = a.nodeUuid ?? undefined;
   if (a.originAddress !== undefined) p.originAddress = a.originAddress;
@@ -279,7 +279,7 @@ function patchFrom(a: OriginWrite): Partial<Doc<'relayOrigins'>> {
   if (a.providerAffinity !== undefined) p.providerAffinity = a.providerAffinity;
   if (a.providerPreference !== undefined) p.providerPreference = a.providerPreference ?? undefined;
   if (a.desiredPublished !== undefined) p.desiredPublished = a.desiredPublished;
-  if (a.standbyPerOrigin !== undefined) p.standbyPerOrigin = a.standbyPerOrigin;
+  if (a.standbyPerRelay !== undefined) p.standbyPerRelay = a.standbyPerRelay;
   if (a.cooldownMinutes !== undefined) p.cooldownMs = a.cooldownMinutes * 60_000;
   if (a.maxRotationsPerDay !== undefined) p.maxRotationsPerDay = a.maxRotationsPerDay;
   if (a.drainMinutes !== undefined) p.drainMs = a.drainMinutes * 60_000;
@@ -291,7 +291,7 @@ async function insertOrigin(
   slug: string,
   backendServerId: Id<'backendServers'>,
   a: OriginWrite,
-): Promise<Id<'relayOrigins'>> {
+): Promise<Id<'relays'>> {
   if (!SLUG_RE.test(slug)) throw new ConvexError({ code: 'validation', message: 'invalid slug' });
   if (!a.nodeHostname || !a.originAddress) {
     throw new ConvexError({
@@ -303,7 +303,7 @@ async function insertOrigin(
   const p = patchFrom(a);
   await assertNodeUnbound(ctx.db, backendServerId, p.nodeHostname!, null);
   const now = Date.now();
-  return ctx.db.insert('relayOrigins', {
+  return ctx.db.insert('relays', {
     slug,
     backendServerId,
     nodeHostname: p.nodeHostname!,
@@ -317,9 +317,9 @@ async function insertOrigin(
     providerAffinity: p.providerAffinity ?? cfg.providerAffinity,
     providerPreference: p.providerPreference,
     desiredPublished: p.desiredPublished ?? cfg.desiredPublishedDefault,
-    standbyPerOrigin: p.standbyPerOrigin ?? cfg.standbyPerOrigin,
+    standbyPerRelay: p.standbyPerRelay ?? cfg.standbyPerRelay,
     cooldownMs: p.cooldownMs ?? relayMs.cooldown(cfg),
-    maxRotationsPerDay: p.maxRotationsPerDay ?? cfg.maxRotationsPerOriginPerDay,
+    maxRotationsPerDay: p.maxRotationsPerDay ?? cfg.maxRotationsPerRelayPerDay,
     drainMs: p.drainMs ?? relayMs.drain(cfg),
     publicationEpoch: 0,
     publishedEdgeIds: [],
@@ -335,7 +335,7 @@ export const create = internalMutation({
   args: { slug: v.string(), backendServerId: v.id('backendServers'), ...originWriteArgs },
   handler: async (ctx, { slug, backendServerId, actorAdminId, ...a }) => {
     const dup = await ctx.db
-      .query('relayOrigins')
+      .query('relays')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
     if (dup)
@@ -346,8 +346,8 @@ export const create = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.origin.create',
-      targetType: 'relay_origin',
+      action: 'relay.create',
+      targetType: 'relay',
       targetId: id,
       payload: { slug },
     });
@@ -356,7 +356,7 @@ export const create = internalMutation({
 });
 
 export const update = internalMutation({
-  args: { id: v.id('relayOrigins'), ...originWriteArgs },
+  args: { id: v.id('relays'), ...originWriteArgs },
   handler: async (ctx, { id, actorAdminId, ...a }) => {
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
@@ -375,8 +375,8 @@ export const update = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.origin.update',
-      targetType: 'relay_origin',
+      action: 'relay.update',
+      targetType: 'relay',
       targetId: id,
       payload: { slug: row.slug },
     });
@@ -395,10 +395,10 @@ export const upsertBySlug = internalMutation({
     if (!server)
       throw new ConvexError({ code: 'validation', message: 'unknown backendServerSlug' });
     const existing = await ctx.db
-      .query('relayOrigins')
+      .query('relays')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
-    let id: Id<'relayOrigins'>;
+    let id: Id<'relays'>;
     let created = false;
     if (existing) {
       id = existing._id;
@@ -417,8 +417,8 @@ export const upsertBySlug = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.origin.upsert',
-      targetType: 'relay_origin',
+      action: 'relay.upsert',
+      targetType: 'relay',
       targetId: id,
       payload: { slug, created },
     });
@@ -428,7 +428,7 @@ export const upsertBySlug = internalMutation({
 
 /** Mark an origin for teardown; relayEdges.reconcile drains/destroys and removes it. */
 export const requestDelete = internalMutation({
-  args: { id: v.id('relayOrigins'), actorAdminId: v.optional(v.id('adminUsers')) },
+  args: { id: v.id('relays'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
     const row = await ctx.db.get(id);
     if (!row) return { ok: true as const, deleted: true };
@@ -454,8 +454,8 @@ export const requestDelete = internalMutation({
     }
     const now = Date.now();
     const edges = await ctx.db
-      .query('relayEdges')
-      .withIndex('by_origin_status', (q) => q.eq('originId', id))
+      .query('edges')
+      .withIndex('by_relay_status', (q) => q.eq('relayId', id))
       .collect();
     for (const e of edges) {
       if (e.status === 'destroyed') continue;
@@ -490,8 +490,8 @@ export const requestDelete = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.origin.delete',
-      targetType: 'relay_origin',
+      action: 'relay.delete',
+      targetType: 'relay',
       targetId: id,
       payload: { slug: row.slug },
     });
@@ -501,18 +501,18 @@ export const requestDelete = internalMutation({
 
 /** Reconcile removes the row once every managed edge is destroyed. */
 export const finalizeDelete = internalMutation({
-  args: { id: v.id('relayOrigins') },
+  args: { id: v.id('relays') },
   handler: async (ctx, { id }) => {
     const row = await ctx.db.get(id);
     if (!row?.deleting) return { removed: false };
     const edges = await ctx.db
-      .query('relayEdges')
-      .withIndex('by_origin_status', (q) => q.eq('originId', id))
+      .query('edges')
+      .withIndex('by_relay_status', (q) => q.eq('relayId', id))
       .collect();
     if (edges.some((e) => e.status !== 'destroyed')) return { removed: false };
     const slots = await ctx.db
-      .query('relayOriginSlots')
-      .withIndex('by_origin', (q) => q.eq('originId', id))
+      .query('relaySlots')
+      .withIndex('by_relay', (q) => q.eq('relayId', id))
       .collect();
     for (const s of slots) await ctx.db.delete(s._id);
     for (const e of edges) await ctx.db.delete(e._id);
@@ -530,21 +530,21 @@ export const finalizeDelete = internalMutation({
  */
 export const adoptEdge = internalMutation({
   args: {
-    originId: v.id('relayOrigins'),
-    slotId: v.id('relayOriginSlots'),
+    relayId: v.id('relays'),
+    slotId: v.id('relaySlots'),
     ipv4: v.string(),
     ipv6: v.optional(v.union(v.string(), v.null())),
     port: v.optional(v.number()),
-    accountId: v.optional(v.union(v.id('relayProviderAccounts'), v.null())),
+    accountId: v.optional(v.union(v.id('edgeProviderAccounts'), v.null())),
     resources: v.optional(v.array(v.object({ kind: v.string(), resourceId: v.string() }))),
     publish: v.optional(v.boolean()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
-    const origin = await ctx.db.get(a.originId);
+    const origin = await ctx.db.get(a.relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const slot = await ctx.db.get(a.slotId);
-    if (!slot || slot.originId !== a.originId)
+    if (!slot || slot.relayId !== a.relayId)
       throw new ConvexError({ code: 'validation', message: 'slot does not belong to the origin' });
     if (!isPublicIpLiteral(a.ipv4) || addressFamily(a.ipv4) !== 'v4')
       throw new ConvexError({ code: 'validation', message: 'ipv4 must be a public IPv4 literal' });
@@ -558,7 +558,7 @@ export const adoptEdge = internalMutation({
     const port = a.port ?? 443;
     if (!Number.isInteger(port) || port < 1 || port > 65535)
       throw new ConvexError({ code: 'validation', message: 'port out of range' });
-    let accountRow: Doc<'relayProviderAccounts'> | null = null;
+    let accountRow: Doc<'edgeProviderAccounts'> | null = null;
     if (a.accountId) {
       accountRow = await ctx.db.get(a.accountId);
       if (!accountRow) throw new ConvexError({ code: 'validation', message: 'unknown account' });
@@ -571,8 +571,8 @@ export const adoptEdge = internalMutation({
     }
     const managed = !!accountRow && (a.resources?.length ?? 0) > 0;
     const now = Date.now();
-    const edgeId = await ctx.db.insert('relayEdges', {
-      originId: a.originId,
+    const edgeId = await ctx.db.insert('edges', {
+      relayId: a.relayId,
       slotId: a.slotId,
       accountId: accountRow?._id,
       provider: accountRow?.provider,
@@ -609,7 +609,7 @@ export const adoptEdge = internalMutation({
         publishedAt: now,
         updatedAt: now,
       });
-      await ctx.db.patch(a.originId, {
+      await ctx.db.patch(a.relayId, {
         publishedEdgeIds: withEdgeAt(origin.publishedEdgeIds, idx, edgeId),
         publicationEpoch: origin.publicationEpoch + 1,
         updatedAt: now,
@@ -618,9 +618,9 @@ export const adoptEdge = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
-      action: 'relay.origin.adopt',
-      targetType: 'relay_origin',
-      targetId: a.originId,
+      action: 'relay.edge.adopted',
+      targetType: 'relay',
+      targetId: a.relayId,
       payload: {
         slug: origin.slug,
         edgeId,
@@ -646,7 +646,7 @@ export interface PublishCheck {
  */
 export async function checkPublishable(
   ctx: { db: import('./_generated/server').DatabaseReader },
-  edge: Doc<'relayEdges'>,
+  edge: Doc<'edges'>,
   requireHealth: boolean,
 ): Promise<PublishCheck> {
   if (edge.status !== 'active') return { ok: false, code: 'edge_not_active' };
@@ -667,15 +667,15 @@ export async function checkPublishable(
 
 export const publishEdge = internalMutation({
   args: {
-    originId: v.id('relayOrigins'),
-    edgeId: v.id('relayEdges'),
+    relayId: v.id('relays'),
+    edgeId: v.id('edges'),
     poolIndex: v.optional(v.number()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { originId, edgeId, poolIndex, actorAdminId }) => {
-    const origin = await ctx.db.get(originId);
+  handler: async (ctx, { relayId, edgeId, poolIndex, actorAdminId }) => {
+    const origin = await ctx.db.get(relayId);
     const edge = await ctx.db.get(edgeId);
-    if (!origin || !edge || edge.originId !== originId)
+    if (!origin || !edge || edge.relayId !== relayId)
       throw new ConvexError({ code: 'not_found', message: 'Origin/edge not found' });
     const cfg = await resolveRelayConfig(ctx.db);
     const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth);
@@ -700,7 +700,7 @@ export const publishEdge = internalMutation({
       updatedAt: now,
     });
     const epoch = origin.publicationEpoch + 1;
-    await ctx.db.patch(originId, {
+    await ctx.db.patch(relayId, {
       publishedEdgeIds: withEdgeAt(origin.publishedEdgeIds, idx, edgeId),
       standbyEdgeIds: origin.standbyEdgeIds.filter((e) => e !== edgeId),
       publicationEpoch: epoch,
@@ -712,7 +712,7 @@ export const publishEdge = internalMutation({
       action: 'relay.edge.published',
       targetType: 'relay_edge',
       targetId: edgeId,
-      payload: { originSlug: origin.slug, edgeId, poolIndex: idx, epoch },
+      payload: { relaySlug: origin.slug, edgeId, poolIndex: idx, epoch },
     });
     return { poolIndex: idx, epoch };
   },
@@ -720,16 +720,16 @@ export const publishEdge = internalMutation({
 
 export const unpublishEdge = internalMutation({
   args: {
-    originId: v.id('relayOrigins'),
-    edgeId: v.id('relayEdges'),
+    relayId: v.id('relays'),
+    edgeId: v.id('edges'),
     drainMs: v.optional(v.number()),
     keepActive: v.optional(v.boolean()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { originId, edgeId, drainMs, keepActive, actorAdminId }) => {
-    const origin = await ctx.db.get(originId);
+  handler: async (ctx, { relayId, edgeId, drainMs, keepActive, actorAdminId }) => {
+    const origin = await ctx.db.get(relayId);
     const edge = await ctx.db.get(edgeId);
-    if (!origin || !edge || edge.originId !== originId)
+    if (!origin || !edge || edge.relayId !== relayId)
       throw new ConvexError({ code: 'not_found', message: 'Origin/edge not found' });
     if (edge.publication !== 'published')
       return { ok: true as const, epoch: origin.publicationEpoch };
@@ -753,7 +753,7 @@ export const unpublishEdge = internalMutation({
       });
     }
     const epoch = origin.publicationEpoch + 1;
-    await ctx.db.patch(originId, {
+    await ctx.db.patch(relayId, {
       publishedEdgeIds: withoutEdge(origin.publishedEdgeIds, edgeId),
       standbyEdgeIds: keepActive
         ? [...origin.standbyEdgeIds.filter((e) => e !== edgeId), edgeId]
@@ -767,7 +767,7 @@ export const unpublishEdge = internalMutation({
       action: 'relay.edge.unpublished',
       targetType: 'relay_edge',
       targetId: edgeId,
-      payload: { originSlug: origin.slug, edgeId, poolIndex, epoch },
+      payload: { relaySlug: origin.slug, edgeId, poolIndex, epoch },
     });
     return { ok: true as const, epoch };
   },
@@ -779,9 +779,9 @@ export const unpublishEdge = internalMutation({
  * nothing left to drain to) and bump the epoch so renders stop emitting it.
  */
 export const dropFromPool = internalMutation({
-  args: { originId: v.id('relayOrigins'), edgeId: v.id('relayEdges'), reason: v.string() },
-  handler: async (ctx, { originId, edgeId, reason }) => {
-    const origin = await ctx.db.get(originId);
+  args: { relayId: v.id('relays'), edgeId: v.id('edges'), reason: v.string() },
+  handler: async (ctx, { relayId, edgeId, reason }) => {
+    const origin = await ctx.db.get(relayId);
     if (!origin) return { ok: false as const };
     const now = Date.now();
     const inPool = origin.publishedEdgeIds.includes(edgeId);
@@ -796,7 +796,7 @@ export const dropFromPool = internalMutation({
       });
     }
     const epoch = origin.publicationEpoch + 1;
-    await ctx.db.patch(originId, {
+    await ctx.db.patch(relayId, {
       publishedEdgeIds: withoutEdge(origin.publishedEdgeIds, edgeId),
       standbyEdgeIds: origin.standbyEdgeIds.filter((e) => e !== edgeId),
       publicationEpoch: epoch,
@@ -808,15 +808,15 @@ export const dropFromPool = internalMutation({
         action: 'relay.edge.unpublished',
         targetType: 'relay_edge',
         targetId: edgeId,
-        payload: { originSlug: origin.slug, edgeId, poolIndex: edge?.poolIndex ?? null, epoch },
+        payload: { relaySlug: origin.slug, edgeId, poolIndex: edge?.poolIndex ?? null, epoch },
       });
       await writeAuditLog(ctx, {
         actorType: 'system',
         action: 'relay.drift',
-        targetType: 'relay_origin',
-        targetId: originId,
+        targetType: 'relay',
+        targetId: relayId,
         payload: {
-          originSlug: origin.slug,
+          relaySlug: origin.slug,
           edgeId,
           mismatched: 1,
           total: publishedCount(origin.publishedEdgeIds),
@@ -829,11 +829,11 @@ export const dropFromPool = internalMutation({
 });
 
 export const bumpEpoch = internalMutation({
-  args: { originId: v.id('relayOrigins') },
-  handler: async (ctx, { originId }) => {
-    const origin = await ctx.db.get(originId);
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }) => {
+    const origin = await ctx.db.get(relayId);
     if (!origin) return null;
-    await ctx.db.patch(originId, {
+    await ctx.db.patch(relayId, {
       publicationEpoch: origin.publicationEpoch + 1,
       updatedAt: Date.now(),
     });

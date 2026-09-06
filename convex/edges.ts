@@ -18,10 +18,10 @@ import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { randomHex } from './lib/crypto';
-import { reserveAllocation } from './relayProviderAccounts';
+import { reserveAllocation } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/relays/accountSettings';
 
-type Edge = Doc<'relayEdges'>;
+type Edge = Doc<'edges'>;
 type Step = Edge['steps'][number];
 type Resource = Edge['resources'][number];
 
@@ -68,7 +68,7 @@ export function edgeProgress(edge: Edge): { done: number; total: number; percent
 export function mapEdgeAdmin(e: Edge) {
   return {
     id: e._id as string,
-    originId: e.originId as string,
+    relayId: e.relayId as string,
     slotId: e.slotId as string,
     accountId: (e.accountId as string | undefined) ?? null,
     templateId: (e.templateId as string | undefined) ?? null,
@@ -134,26 +134,26 @@ export function mapEdgeAdmin(e: Edge) {
 // --- reads ----------------------------------------------------------------------------
 
 export const get = internalQuery({
-  args: { id: v.id('relayEdges') },
+  args: { id: v.id('edges') },
   handler: (ctx, { id }) => ctx.db.get(id),
 });
 
-export const listByOrigin = internalQuery({
-  args: { originId: v.id('relayOrigins') },
-  handler: (ctx, { originId }) =>
+export const listByRelay = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: (ctx, { relayId }) =>
     ctx.db
-      .query('relayEdges')
-      .withIndex('by_origin_status', (q) => q.eq('originId', originId))
+      .query('edges')
+      .withIndex('by_relay_status', (q) => q.eq('relayId', relayId))
       .collect(),
 });
 
-export const listByOriginForAdmin = internalQuery({
-  args: { originId: v.id('relayOrigins') },
-  handler: async (ctx, { originId }) =>
+export const listByRelayForAdmin = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }) =>
     (
       await ctx.db
-        .query('relayEdges')
-        .withIndex('by_origin_status', (q) => q.eq('originId', originId))
+        .query('edges')
+        .withIndex('by_relay_status', (q) => q.eq('relayId', relayId))
         .collect()
     )
       .sort(
@@ -163,7 +163,7 @@ export const listByOriginForAdmin = internalQuery({
 });
 
 export const getForAdmin = internalQuery({
-  args: { id: v.id('relayEdges') },
+  args: { id: v.id('edges') },
   handler: async (ctx, { id }) => {
     const e = await ctx.db.get(id);
     return e ? mapEdgeAdmin(e) : null;
@@ -175,7 +175,7 @@ export const listByStatus = internalQuery({
   args: { status: v.string(), take: v.number() },
   handler: (ctx, { status, take }) =>
     ctx.db
-      .query('relayEdges')
+      .query('edges')
       .withIndex('by_status', (q) => q.eq('status', status as Edge['status']))
       .take(take),
 });
@@ -187,7 +187,7 @@ export const listLive = internalQuery({
     const out: Edge[] = [];
     for (const status of LIVE_STATUSES) {
       const rows = await ctx.db
-        .query('relayEdges')
+        .query('edges')
         .withIndex('by_status', (q) => q.eq('status', status))
         .take(500);
       out.push(...rows);
@@ -199,10 +199,10 @@ export const listLive = internalQuery({
 /** Live edge count per account (capacity), excluding destroyed. */
 async function liveCountForAccount(
   ctx: { db: import('./_generated/server').DatabaseReader },
-  accountId: Id<'relayProviderAccounts'>,
+  accountId: Id<'edgeProviderAccounts'>,
 ): Promise<number> {
   const rows = await ctx.db
-    .query('relayEdges')
+    .query('edges')
     .withIndex('by_account_status', (q) => q.eq('accountId', accountId))
     .collect();
   return rows.filter((e) => e.status !== 'destroyed').length;
@@ -211,10 +211,10 @@ async function liveCountForAccount(
 // --- writes ---------------------------------------------------------------------------
 
 export interface PlannedEdgeInput {
-  originId: Id<'relayOrigins'>;
-  slotId: Id<'relayOriginSlots'>;
-  accountId: Id<'relayProviderAccounts'>;
-  templateId?: Id<'relayEdgeTemplates'> | null;
+  relayId: Id<'relays'>;
+  slotId: Id<'relaySlots'>;
+  accountId: Id<'edgeProviderAccounts'>;
+  templateId?: Id<'edgeTemplates'> | null;
   templateHash: string;
   listeners: Array<{ edgePort: number; originAddress: string; originPort: number }>;
   steps: Array<{
@@ -234,8 +234,8 @@ export interface PlannedEdgeInput {
 export async function insertPlannedEdge(
   ctx: { db: import('./_generated/server').DatabaseWriter },
   a: PlannedEdgeInput,
-): Promise<{ id: Id<'relayEdges'>; name: string }> {
-  const [origin, account] = await Promise.all([ctx.db.get(a.originId), ctx.db.get(a.accountId)]);
+): Promise<{ id: Id<'edges'>; name: string }> {
+  const [origin, account] = await Promise.all([ctx.db.get(a.relayId), ctx.db.get(a.accountId)]);
   if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
   if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
   const live = await liveCountForAccount(ctx, a.accountId);
@@ -250,8 +250,8 @@ export async function insertPlannedEdge(
   }
   const now = Date.now();
   const name = edgeResourceName(origin.slug, a.nameNonce ?? randomHex(4));
-  const id = await ctx.db.insert('relayEdges', {
-    originId: a.originId,
+  const id = await ctx.db.insert('edges', {
+    relayId: a.relayId,
     slotId: a.slotId,
     accountId: a.accountId,
     templateId: a.templateId ?? undefined,
@@ -282,10 +282,10 @@ export async function insertPlannedEdge(
 
 export const insertPlanned = internalMutation({
   args: {
-    originId: v.id('relayOrigins'),
-    slotId: v.id('relayOriginSlots'),
-    accountId: v.id('relayProviderAccounts'),
-    templateId: v.optional(v.union(v.id('relayEdgeTemplates'), v.null())),
+    relayId: v.id('relays'),
+    slotId: v.id('relaySlots'),
+    accountId: v.id('edgeProviderAccounts'),
+    templateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
     templateHash: v.string(),
     listeners: v.array(
       v.object({ edgePort: v.number(), originAddress: v.string(), originPort: v.number() }),
@@ -313,7 +313,7 @@ export const insertPlanned = internalMutation({
  */
 export const claimOp = internalMutation({
   args: {
-    edgeId: v.id('relayEdges'),
+    edgeId: v.id('edges'),
     kind: v.union(
       v.literal('provision_step'),
       v.literal('poll_step'),
@@ -350,7 +350,7 @@ export const claimOp = internalMutation({
 /** Release the op (only by its holder) and apply the observed outcome. */
 export const settleOp = internalMutation({
   args: {
-    edgeId: v.id('relayEdges'),
+    edgeId: v.id('edges'),
     opId: v.string(),
     stepPatch: v.optional(
       v.object({
@@ -450,7 +450,7 @@ export const settleOp = internalMutation({
 /** Status / publication changes outside an op (the rotation machine's advance path). */
 export const patchEdge = internalMutation({
   args: {
-    edgeId: v.id('relayEdges'),
+    edgeId: v.id('edges'),
     status: v.optional(v.string()),
     publication: v.optional(v.string()),
     poolIndex: v.optional(v.union(v.number(), v.null())),
@@ -500,7 +500,7 @@ export const patchEdge = internalMutation({
 /** Record a describe() result: addresses, health, and any newly visible child resources. */
 export const recordDescribe = internalMutation({
   args: {
-    edgeId: v.id('relayEdges'),
+    edgeId: v.id('edges'),
     state: v.string(),
     addresses,
     health: v.string(),

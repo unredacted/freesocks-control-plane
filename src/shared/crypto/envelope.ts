@@ -294,10 +294,10 @@ const SEALED_PREFIXES: { method: string; prefix: string; policy: RoutePolicy }[]
   // the whole surface is sealed by verb class — GET reveals, POST seals both
   // legs, PATCH/PUT seal the uploaded body. DELETE carries nothing. Dual-mode
   // (plaintext accepted) stays for `fsv1_` IaC callers, as on backend-servers.
-  { method: 'GET', prefix: '/api/v1/admin/relays/', policy: REVEAL },
-  { method: 'POST', prefix: '/api/v1/admin/relays/', policy: SEAL_BOTH },
-  { method: 'PATCH', prefix: '/api/v1/admin/relays/', policy: SEAL_REQ },
-  { method: 'PUT', prefix: '/api/v1/admin/relays/', policy: SEAL_REQ },
+  { method: 'GET', prefix: '/api/v1/admin/relay/', policy: REVEAL },
+  { method: 'POST', prefix: '/api/v1/admin/relay/', policy: SEAL_BOTH },
+  { method: 'PATCH', prefix: '/api/v1/admin/relay/', policy: SEAL_REQ },
+  { method: 'PUT', prefix: '/api/v1/admin/relay/', policy: SEAL_REQ },
 ];
 
 export function routePolicy(path: string, method: string): RoutePolicy | undefined {

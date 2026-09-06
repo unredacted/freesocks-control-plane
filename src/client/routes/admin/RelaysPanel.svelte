@@ -28,10 +28,10 @@
     RelayAdoptResponse,
     RelayIdResponse,
     RelayOkResponse,
-    RelayProbeRequestedResponse,
-    RelayRotationStartedResponse,
-    RelayEdgeLiveResponse,
-    type RelayOriginAdmin,
+    ProbeRequestedResponse,
+    EdgeRotationStartedResponse,
+    EdgeLiveResponse,
+    type RelayAdmin,
     type RelaySummary,
   } from '../../../shared/contracts/relays';
   import { formatDateTime } from '../../lib/i18n/format';
@@ -51,7 +51,7 @@
   const onError = (title: string) => (err: unknown) =>
     toast.error(title, { description: apiErrorMessage(err) });
 
-  // --- origin editor -------------------------------------------------------------
+  // --- relay editor -------------------------------------------------------------
   type OriginDraft = {
     id: string | null;
     slug: string;
@@ -65,7 +65,7 @@
     hostManaged: boolean;
     providerAffinity: 'rotate' | 'sticky';
     desiredPublished: number;
-    standbyPerOrigin: number;
+    standbyPerRelay: number;
     cooldownMinutes: number;
     maxRotationsPerDay: number;
     drainMinutes: number;
@@ -85,13 +85,13 @@
       hostManaged: true,
       providerAffinity: 'rotate',
       desiredPublished: 2,
-      standbyPerOrigin: 0,
+      standbyPerRelay: 0,
       cooldownMinutes: 120,
       maxRotationsPerDay: 3,
       drainMinutes: 1440,
     };
   }
-  function editDraft(o: RelayOriginAdmin): OriginDraft {
+  function editDraft(o: RelayAdmin): OriginDraft {
     return {
       id: o.id,
       slug: o.slug,
@@ -105,7 +105,7 @@
       hostManaged: o.hostManaged,
       providerAffinity: o.providerAffinity,
       desiredPublished: o.desiredPublished,
-      standbyPerOrigin: o.standbyPerOrigin,
+      standbyPerRelay: o.standbyPerRelay,
       cooldownMinutes: o.cooldownMinutes,
       maxRotationsPerDay: o.maxRotationsPerDay,
       drainMinutes: o.drainMinutes,
@@ -127,15 +127,14 @@
         hostManaged: d.hostManaged,
         providerAffinity: d.providerAffinity,
         desiredPublished: Number(d.desiredPublished),
-        standbyPerOrigin: Number(d.standbyPerOrigin),
+        standbyPerRelay: Number(d.standbyPerRelay),
         cooldownMinutes: Number(d.cooldownMinutes),
         maxRotationsPerDay: Number(d.maxRotationsPerDay),
         drainMinutes: Number(d.drainMinutes),
       };
-      if (d.id)
-        return apiClient.patch(`/api/v1/admin/relays/origins/${d.id}`, body, RelayOkResponse);
+      if (d.id) return apiClient.patch(`/api/v1/admin/relay/relays/${d.id}`, body, RelayOkResponse);
       return apiClient.post(
-        '/api/v1/admin/relays/origins',
+        '/api/v1/admin/relay/relays',
         { ...body, slug: d.slug.trim(), backendServerId: d.backendServerId },
         RelayIdResponse,
       );
@@ -143,27 +142,27 @@
     onSuccess: () => {
       editor = null;
       invalidate();
-      toast.success('Origin saved');
+      toast.success('Relay saved');
     },
-    onError: onError('Could not save the origin'),
+    onError: onError('Could not save the relay'),
   }));
   const deleteOrigin = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/relays/origins/${id}`, RelayOkResponse),
+      apiClient.delete(`/api/v1/admin/relay/relays/${id}`, RelayOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Teardown requested; edges drain and destroy in the background');
     },
-    onError: onError('Could not delete the origin'),
+    onError: onError('Could not delete the relay'),
   }));
 
-  // --- origin actions ---------------------------------------------------------------
+  // --- relay actions ---------------------------------------------------------------
   const act = createMutation(() => ({
     mutationFn: ({ id, op, body }: { id: string; op: string; body?: Record<string, unknown> }) =>
       apiClient.post(
-        `/api/v1/admin/relays/origins/${id}/${op}`,
+        `/api/v1/admin/relay/relays/${id}/${op}`,
         body ?? {},
-        RelayRotationStartedResponse.or(RelayOkResponse).or(RelayProbeRequestedResponse),
+        EdgeRotationStartedResponse.or(RelayOkResponse).or(ProbeRequestedResponse),
       ),
     onSuccess: (r, vars) => {
       invalidate();
@@ -186,7 +185,7 @@
   const adoptEdge = createMutation(() => ({
     mutationFn: () =>
       apiClient.post(
-        `/api/v1/admin/relays/origins/${adoptFor}/adopt`,
+        `/api/v1/admin/relay/relays/${adoptFor}/adopt`,
         {
           slotId: adopt.slotId,
           ipv4: adopt.ipv4.trim(),
@@ -217,9 +216,9 @@
   const edgeAct = createMutation(() => ({
     mutationFn: ({ id, op, body }: { id: string; op: string; body?: Record<string, unknown> }) =>
       apiClient.post(
-        `/api/v1/admin/relays/edges/${id}/${op}`,
+        `/api/v1/admin/relay/edges/${id}/${op}`,
         body ?? {},
-        RelayOkResponse.or(RelayRotationStartedResponse).or(RelayProbeRequestedResponse),
+        RelayOkResponse.or(EdgeRotationStartedResponse).or(ProbeRequestedResponse),
       ),
     onSuccess: (r) => {
       invalidate();
@@ -230,7 +229,7 @@
   }));
   const edgeDelete = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/relays/edges/${id}`, RelayOkResponse),
+      apiClient.delete(`/api/v1/admin/relay/edges/${id}`, RelayOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Edge scheduled for destruction');
@@ -239,7 +238,7 @@
   }));
   const pullLive = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.post(`/api/v1/admin/relays/edges/${id}/live/refresh`, {}, RelayEdgeLiveResponse),
+      apiClient.post(`/api/v1/admin/relay/edges/${id}/live/refresh`, {}, EdgeLiveResponse),
     onSuccess: (r, id) => {
       liveFor = id;
       live = (r.live as Record<string, unknown> | null) ?? null;
@@ -248,7 +247,7 @@
     onError: onError('Could not pull live data'),
   }));
 
-  function suspicionBadge(o: RelayOriginAdmin): { text: string; cls: string } | null {
+  function suspicionBadge(o: RelayAdmin): { text: string; cls: string } | null {
     if (o.quarantine)
       return {
         text: 'quarantined',
@@ -266,17 +265,17 @@
 
 <div class="space-y-4">
   <div class="flex justify-end">
-    <Button onclick={() => (editor = newDraft())}>New origin</Button>
+    <Button onclick={() => (editor = newDraft())}>New relay</Button>
   </div>
 
-  {#if !summary || summary.origins.length === 0}
+  {#if !summary || summary.relays.length === 0}
     <AdminListState
-      emptyText="No relay origins yet. The node role registers one per REALITY node (PUT /api/v1/admin/relays/origins/by-slug/<slug>), or create one here."
+      emptyText="No relays yet. The node role registers one per relay node (PUT /api/v1/admin/relay/relays/by-slug/<slug>), or create one here."
     />
   {/if}
 
-  {#each summary?.origins ?? [] as row (row.origin.id)}
-    {@const o = row.origin}
+  {#each summary?.relays ?? [] as row (row.relay.id)}
+    {@const o = row.relay}
     {@const badge = suspicionBadge(o)}
     <Card>
       <CardHeader class="pb-2">
@@ -298,7 +297,7 @@
             </CardTitle>
             <CardDescription class="mt-1">
               node <span class="font-mono">{o.nodeHostname}</span> · origin
-              <span class="font-mono">{o.originAddress}</span> · pool {row.origin
+              <span class="font-mono">{o.originAddress}</span> · pool {row.relay
                 .publishedCount}/{o.desiredPublished}
               · {row.standbys} standby · {row.draining} draining · epoch {o.publicationEpoch}
               {#if o.cooldownUntil}· cooling down until {formatDateTime(o.cooldownUntil)}{/if}
@@ -618,7 +617,7 @@
             </div>
             <div class="flex justify-end">
               <Button size="sm" variant="destructive" onclick={() => deleteOrigin.mutate(o.id)}
-                >Delete origin</Button
+                >Delete relay</Button
               >
             </div>
           </div>
@@ -632,8 +631,9 @@
 <Dialog.Root open={editor !== null} onOpenChange={(v) => !v && (editor = null)}>
   <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
     <Dialog.Header>
-      <Dialog.Title>{editor?.id ? 'Edit origin' : 'New origin'}</Dialog.Title>
-      <Dialog.Description>One REALITY node fronted by a pool of published edges.</Dialog.Description
+      <Dialog.Title>{editor?.id ? 'Edit relay' : 'New relay'}</Dialog.Title>
+      <Dialog.Description
+        >One node fronted by a pool of published edges; each slot declares the protocol it speaks.</Dialog.Description
       >
     </Dialog.Header>
     {#if editor}
@@ -686,7 +686,7 @@
           >Standby edges (0-2)<Input
             class="mt-1"
             type="number"
-            bind:value={editor.standbyPerOrigin}
+            bind:value={editor.standbyPerRelay}
           /></label
         >
         <label class="text-xs"
@@ -868,7 +868,7 @@
             <Button
               size="sm"
               variant="outline"
-              onclick={() => act.mutate({ id: r.originId, op: 'cancel' })}>Cancel rotation</Button
+              onclick={() => act.mutate({ id: r.relayId, op: 'cancel' })}>Cancel rotation</Button
             >
           </div>
         {/if}

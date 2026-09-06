@@ -12,7 +12,7 @@
  *     claim, reverse allocation order; the edge is `destroyed` only when every
  *     child is confirmed gone; the attempt cap parks it as `needs_operator`;
  *  5. pool upkeep (config-gated): publish a compatible standby into a free pool
- *     slot, or start a provision to reach `desiredPublished` / `standbyPerOrigin`;
+ *     slot, or start a provision to reach `desiredPublished` / `standbyPerRelay`;
  *  6. finish origin deletes once every managed edge is destroyed.
  *
  * Every provider call runs under an edge op claim; every DB change is a
@@ -25,7 +25,7 @@ import { internal } from './_generated/api';
 import type { Doc } from './_generated/dataModel';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { relayMs, type RelayConfig } from './lib/relayConfig';
-import { isDiscoverable } from './relayEdges';
+import { isDiscoverable } from './edges';
 import { publishedCount } from './lib/relays/pool';
 import type {
   Discovery,
@@ -34,7 +34,7 @@ import type {
   ResourceStep,
 } from './lib/relays/providers/types';
 
-type Edge = Doc<'relayEdges'>;
+type Edge = Doc<'edges'>;
 
 const MAX_DISCOVER_ATTEMPTS = 3;
 
@@ -98,13 +98,13 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     finalizedDeletes: 0,
     errors: 0,
   };
-  const cfg = await ctx.runQuery(internal.relayReconcileMutations.configSnapshot, {});
+  const cfg = await ctx.runQuery(internal.edgeReconcileMutations.configSnapshot, {});
   const now = Date.now();
 
   // 0. Record the action runtime's Node version (dashboard; the deploy guard enforces the floor).
   try {
-    const info = await ctx.runAction(internal.relayProviderOps.runtimeInfo, {});
-    await ctx.runMutation(internal.relayReconcileMutations.recordRuntime, {
+    const info = await ctx.runAction(internal.edgeProviderOps.runtimeInfo, {});
+    await ctx.runMutation(internal.edgeReconcileMutations.recordRuntime, {
       nodeVersion: info.nodeVersion,
     });
   } catch (err) {
@@ -112,14 +112,14 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   }
 
   // 1. Re-kick stale rotations.
-  const stale = await ctx.runQuery(internal.relayRotations.listStale, { now });
+  const stale = await ctx.runQuery(internal.edgeRotations.listStale, { now });
   for (const rotationId of stale) {
-    await ctx.runMutation(internal.relayRotations.rekick, { rotationId });
+    await ctx.runMutation(internal.edgeRotations.rekick, { rotationId });
     report.rekicked++;
   }
 
-  const edges = await ctx.runQuery(internal.relayEdges.listLive, {});
-  const origins = await ctx.runQuery(internal.relayOrigins.listAll, {});
+  const edges = await ctx.runQuery(internal.edges.listLive, {});
+  const origins = await ctx.runQuery(internal.relays.listAll, {});
   const rotatingOrigins = new Set(
     origins.filter((o) => o.activeRotationId).map((o) => o._id as string),
   );
@@ -129,7 +129,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       // Observe-only edges: nothing to discover, describe or destroy. A failed/
       // cancelled adopted row is simply forgotten.
       if (['failed', 'cancelled', 'destroying'].includes(edge.status)) {
-        await ctx.runMutation(internal.relayEdges.patchEdge, {
+        await ctx.runMutation(internal.edges.patchEdge, {
           edgeId: edge._id,
           status: 'destroyed',
         });
@@ -137,7 +137,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       }
       continue;
     }
-    const inRotation = rotatingOrigins.has(edge.originId as string);
+    const inRotation = rotatingOrigins.has(edge.relayId as string);
     try {
       // 2. Settle unknown outcomes (outside a running rotation, which does this itself).
       if (!inRotation && isDiscoverable(edge, now)) {
@@ -150,7 +150,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         continue;
       }
       if (edge.status === 'draining' && edge.drainUntil !== undefined && edge.drainUntil <= now) {
-        await ctx.runMutation(internal.relayEdges.patchEdge, {
+        await ctx.runMutation(internal.edges.patchEdge, {
           edgeId: edge._id,
           status: 'destroying',
         });
@@ -165,7 +165,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
             ['requested', 'unresolved', 'ambiguous', 'needs_operator'].includes(s.state),
           )
         ) {
-          await ctx.runMutation(internal.relayEdges.patchEdge, {
+          await ctx.runMutation(internal.edges.patchEdge, {
             edgeId: edge._id,
             status: 'destroying',
           });
@@ -177,11 +177,11 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       if (['active', 'standby', 'draining'].includes(edge.status) && !inRotation) {
         const staleHealth = (edge.lastHealthAt ?? 0) + relayMs.poll(cfg) * 10 <= now;
         if (!staleHealth) continue;
-        const desc: EdgeDescription = await ctx.runAction(internal.relayProviderOps.describe, {
+        const desc: EdgeDescription = await ctx.runAction(internal.edgeProviderOps.describe, {
           accountId: edge.accountId,
           ledger: ledgerOf(edge),
         });
-        await ctx.runMutation(internal.relayEdges.recordDescribe, {
+        await ctx.runMutation(internal.edges.recordDescribe, {
           edgeId: edge._id,
           state: desc.state,
           addresses: desc.addresses,
@@ -190,8 +190,8 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         });
         report.described++;
         if (desc.state === 'gone' && edge.publication !== 'unpublished') {
-          const r = await ctx.runMutation(internal.relayOrigins.dropFromPool, {
-            originId: edge.originId,
+          const r = await ctx.runMutation(internal.relays.dropFromPool, {
+            relayId: edge.relayId,
             edgeId: edge._id,
             reason: 'provider_gone',
           });
@@ -209,21 +209,21 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   for (const origin of origins) {
     try {
       if (origin.deleting) {
-        const r = await ctx.runMutation(internal.relayOrigins.finalizeDelete, { id: origin._id });
+        const r = await ctx.runMutation(internal.relays.finalizeDelete, { id: origin._id });
         if (r.removed) report.finalizedDeletes++;
         continue;
       }
       if (!origin.enabled || origin.quarantine || origin.activeRotationId) continue;
       if (starts >= cfg.maxReconcileStartsPerTick) continue;
-      const originEdges = edges.filter((e) => e.originId === origin._id);
+      const originEdges = edges.filter((e) => e.relayId === origin._id);
       const publishedNow = publishedCount(origin.publishedEdgeIds);
       const standbys = originEdges.filter(
         (e) => e.status === 'active' && e.publication === 'unpublished' && !!e.addresses.v4,
       );
       if (publishedNow < origin.desiredPublished) {
         if (cfg.autoPublishStandby && standbys.length > 0) {
-          const res = await ctx.runMutation(internal.relayReconcileMutations.publishStandby, {
-            originId: origin._id,
+          const res = await ctx.runMutation(internal.edgeReconcileMutations.publishStandby, {
+            relayId: origin._id,
             candidates: standbys.map((e) => e._id),
           });
           if (res.published) {
@@ -237,8 +237,8 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           }
         }
         if (cfg.autoProvisionToDesired) {
-          await ctx.runMutation(internal.relayRotations.start, {
-            originId: origin._id,
+          await ctx.runMutation(internal.edgeRotations.start, {
+            relayId: origin._id,
             kind: 'provision',
             trigger: 'reconcile',
             publishOnDone: true,
@@ -247,9 +247,9 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           starts++;
           continue;
         }
-      } else if (cfg.autoProvisionToDesired && standbys.length < origin.standbyPerOrigin) {
-        await ctx.runMutation(internal.relayRotations.start, {
-          originId: origin._id,
+      } else if (cfg.autoProvisionToDesired && standbys.length < origin.standbyPerRelay) {
+        await ctx.runMutation(internal.edgeRotations.start, {
+          relayId: origin._id,
           kind: 'provision',
           trigger: 'reconcile',
           publishOnDone: false,
@@ -272,7 +272,7 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
   // An expired claim on a destroy step: the delete may or may not have landed → confirm.
   if (edge.currentOp && edge.currentOp.expiresAt < now && edge.currentOp.kind === 'destroy_step') {
     const target = edge.resources.find((r) => r.resourceId === edge.currentOp!.target);
-    const cl = await ctx.runMutation(internal.relayEdges.claimOp, {
+    const cl = await ctx.runMutation(internal.edges.claimOp, {
       edgeId: edge._id,
       kind: 'discover',
       target: edge.currentOp.target,
@@ -280,15 +280,15 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
     });
     if (!cl.ok) return;
     if (!target) {
-      await ctx.runMutation(internal.relayEdges.settleOp, { edgeId: edge._id, opId: cl.opId });
+      await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
       return;
     }
-    const out: DestroyOutcome = await ctx.runAction(internal.relayProviderOps.confirmDestroyed, {
+    const out: DestroyOutcome = await ctx.runAction(internal.edgeProviderOps.confirmDestroyed, {
       accountId,
       resource: target,
       ledger: ledgerOf(edge),
     });
-    await ctx.runMutation(internal.relayEdges.settleOp, {
+    await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
       opId: cl.opId,
       resourceDeleteState: [
@@ -312,18 +312,18 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
   if (!pending) {
     // Only an expired non-destroy op with nothing pending: release it.
     if (edge.currentOp) {
-      const cl = await ctx.runMutation(internal.relayEdges.claimOp, {
+      const cl = await ctx.runMutation(internal.edges.claimOp, {
         edgeId: edge._id,
         kind: 'discover',
         target: edge.currentOp.target,
         claimMs: relayMs.opClaim(cfg),
       });
       if (cl.ok)
-        await ctx.runMutation(internal.relayEdges.settleOp, { edgeId: edge._id, opId: cl.opId });
+        await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
     }
     return;
   }
-  const cl = await ctx.runMutation(internal.relayEdges.claimOp, {
+  const cl = await ctx.runMutation(internal.edges.claimOp, {
     edgeId: edge._id,
     kind: 'discover',
     target: pending.stepId,
@@ -335,7 +335,7 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
   const discoverAttempt = (pending.discoverAttempts ?? 0) + 1;
   let disc: Discovery;
   try {
-    disc = await ctx.runAction(internal.relayProviderOps.discover, {
+    disc = await ctx.runAction(internal.edgeProviderOps.discover, {
       accountId,
       spec: specOf(edge),
       step: stepOf(pending),
@@ -343,12 +343,12 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
       attempt: discoverAttempt,
     });
   } catch (err) {
-    await ctx.runMutation(internal.relayEdges.settleOp, { edgeId: edge._id, opId: cl.opId });
+    await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
     throw err;
   }
   const failedRun = edge.status === 'failed' || edge.status === 'cancelled';
   if (disc.status === 'found') {
-    await ctx.runMutation(internal.relayEdges.settleOp, {
+    await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
       opId: cl.opId,
       stepPatch: { stepId: pending.stepId, state: 'done', opRef: null, finished: true },
@@ -358,7 +358,7 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
   } else if (disc.status === 'confirmed_absent') {
     // Nothing exists for this step. A failed run marks it done-with-nothing so the
     // destroy can proceed; a live run may retry (the rotation machine owns retries).
-    await ctx.runMutation(internal.relayEdges.settleOp, {
+    await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
       opId: cl.opId,
       stepPatch: failedRun
@@ -366,14 +366,14 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
         : { stepId: pending.stepId, state: 'pending', opRef: null, attempt: pending.attempt + 1 },
     });
     if (!failedRun && pending.attempt + 1 > MAX_DISCOVER_ATTEMPTS) {
-      await ctx.runMutation(internal.relayEdges.patchEdge, {
+      await ctx.runMutation(internal.edges.patchEdge, {
         edgeId: edge._id,
         status: 'failed',
         failure: { step: pending.stepId, code: 'step_retries_exhausted' },
       });
     }
   } else if (disc.status === 'ambiguous') {
-    await ctx.runMutation(internal.relayEdges.settleOp, {
+    await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
       opId: cl.opId,
       stepPatch: { stepId: pending.stepId, state: 'ambiguous' },
@@ -381,7 +381,7 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
       status: 'needs_operator',
     });
   } else {
-    await ctx.runMutation(internal.relayEdges.settleOp, {
+    await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
       opId: cl.opId,
       stepPatch: {
@@ -391,7 +391,7 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
       },
     });
     if ((pending.startedAt ?? edge._creationTime) + relayMs.discoveryTimeout(cfg) < now) {
-      await ctx.runMutation(internal.relayEdges.patchEdge, {
+      await ctx.runMutation(internal.edges.patchEdge, {
         edgeId: edge._id,
         status: 'needs_operator',
         stepStates: [{ stepId: pending.stepId, state: 'needs_operator' }],
@@ -405,25 +405,25 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
 async function destroyStep(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: ReconcileReport) {
   const accountId = edge.accountId!;
   if (edge.destroyAttempts >= cfg.maxDestroyAttempts) {
-    await ctx.runMutation(internal.relayReconcileMutations.destroyExhausted, { edgeId: edge._id });
+    await ctx.runMutation(internal.edgeReconcileMutations.destroyExhausted, { edgeId: edge._id });
     return;
   }
   const ledger = ledgerOf(edge);
   const plan =
     edge.resources.length > 0
-      ? ((await ctx.runAction(internal.relayProviderOps.planDestroy, {
+      ? ((await ctx.runAction(internal.edgeProviderOps.planDestroy, {
           accountId,
           ledger,
         })) as Edge['resources'])
       : [];
   const remaining = plan.filter((r) => r.deleteState !== 'confirmed_gone');
   if (remaining.length === 0) {
-    await ctx.runMutation(internal.relayReconcileMutations.markDestroyed, { edgeId: edge._id });
+    await ctx.runMutation(internal.edgeReconcileMutations.markDestroyed, { edgeId: edge._id });
     report.destroyed++;
     return;
   }
   const target = remaining[0];
-  const cl = await ctx.runMutation(internal.relayEdges.claimOp, {
+  const cl = await ctx.runMutation(internal.edges.claimOp, {
     edgeId: edge._id,
     kind: 'destroy_step',
     target: target.resourceId,
@@ -434,31 +434,31 @@ async function destroyStep(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report:
   try {
     out =
       target.deleteState === 'delete_requested'
-        ? await ctx.runAction(internal.relayProviderOps.confirmDestroyed, {
+        ? await ctx.runAction(internal.edgeProviderOps.confirmDestroyed, {
             accountId,
             resource: target,
             ledger,
           })
-        : await ctx.runAction(internal.relayProviderOps.runDestroy, {
+        : await ctx.runAction(internal.edgeProviderOps.runDestroy, {
             accountId,
             resource: target,
             ledger,
           });
   } catch (err) {
     // Unknown outcome: keep the claim's target; the next pass confirms (not re-deletes).
-    await ctx.runMutation(internal.relayEdges.settleOp, {
+    await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
       opId: cl.opId,
       resourceDeleteState: [{ resourceId: target.resourceId, deleteState: 'delete_requested' }],
       failure: { step: 'destroy', code: errText(err) },
     });
-    await ctx.runMutation(internal.relayEdges.patchEdge, {
+    await ctx.runMutation(internal.edges.patchEdge, {
       edgeId: edge._id,
       destroyAttemptsDelta: 1,
     });
     throw err;
   }
-  await ctx.runMutation(internal.relayEdges.settleOp, {
+  await ctx.runMutation(internal.edges.settleOp, {
     edgeId: edge._id,
     opId: cl.opId,
     resourceDeleteState: [
@@ -468,12 +468,12 @@ async function destroyStep(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report:
       },
     ],
   });
-  await ctx.runMutation(internal.relayEdges.patchEdge, {
+  await ctx.runMutation(internal.edges.patchEdge, {
     edgeId: edge._id,
     destroyAttemptsDelta: 1,
   });
   if (out.status === 'confirmed_gone' && remaining.length === 1) {
-    await ctx.runMutation(internal.relayReconcileMutations.markDestroyed, { edgeId: edge._id });
+    await ctx.runMutation(internal.edgeReconcileMutations.markDestroyed, { edgeId: edge._id });
     report.destroyed++;
   }
 }

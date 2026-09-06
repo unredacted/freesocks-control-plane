@@ -1,7 +1,7 @@
 /**
  * Pure helpers for an origin's PUBLISHED pool (`relayOrigins.publishedEdgeIds`,
  * ordered by pool index, nulls are gaps). Generic over the id type so the
- * `Id<'relayEdges'>` brand survives a round trip.
+ * `Id<'edges'>` brand survives a round trip.
  */
 
 export function nextFreePoolIndex(

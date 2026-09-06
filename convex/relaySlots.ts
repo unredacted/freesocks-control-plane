@@ -11,13 +11,10 @@ import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { isSlotKey, templateHostRemark } from './lib/relays/hosts';
 
-export function mapSlotAdmin(
-  r: Doc<'relayOriginSlots'>,
-  profile?: Doc<'relayCamouflageProfiles'> | null,
-) {
+export function mapSlotAdmin(r: Doc<'relaySlots'>, profile?: Doc<'realityProfiles'> | null) {
   return {
     id: r._id as string,
-    originId: r.originId as string,
+    relayId: r.relayId as string,
     slotKey: r.slotKey,
     profileId: r.profileId as string,
     profileSlug: profile?.slug ?? null,
@@ -35,12 +32,12 @@ export function mapSlotAdmin(
   };
 }
 
-export const listByOrigin = internalQuery({
-  args: { originId: v.id('relayOrigins') },
-  handler: async (ctx, { originId }) => {
+export const listByRelay = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }) => {
     const rows = await ctx.db
-      .query('relayOriginSlots')
-      .withIndex('by_origin', (q) => q.eq('originId', originId))
+      .query('relaySlots')
+      .withIndex('by_relay', (q) => q.eq('relayId', relayId))
       .collect();
     const out = [];
     for (const r of rows) out.push(mapSlotAdmin(r, await ctx.db.get(r.profileId)));
@@ -51,13 +48,11 @@ export const listByOrigin = internalQuery({
 /** Slots with their profile rows (the eligibility view the pool/renderer needs). */
 export async function slotsWithProfiles(
   ctx: { db: import('./_generated/server').DatabaseReader },
-  originId: Id<'relayOrigins'>,
-): Promise<
-  Array<{ slot: Doc<'relayOriginSlots'>; profile: Doc<'relayCamouflageProfiles'> | null }>
-> {
+  relayId: Id<'relays'>,
+): Promise<Array<{ slot: Doc<'relaySlots'>; profile: Doc<'realityProfiles'> | null }>> {
   const rows = await ctx.db
-    .query('relayOriginSlots')
-    .withIndex('by_origin', (q) => q.eq('originId', originId))
+    .query('relaySlots')
+    .withIndex('by_relay', (q) => q.eq('relayId', relayId))
     .collect();
   const out = [];
   for (const slot of rows) out.push({ slot, profile: await ctx.db.get(slot.profileId) });
@@ -74,7 +69,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  */
 export const upsert = internalMutation({
   args: {
-    originId: v.id('relayOrigins'),
+    relayId: v.id('relays'),
     slotKey: v.string(),
     profileSlug: v.string(),
     inboundTag: v.string(),
@@ -101,17 +96,17 @@ export const upsert = internalMutation({
     }
     if (!/^[A-Z0-9_]{1,64}$/.test(a.inboundTag))
       throw new ConvexError({ code: 'validation', message: 'inboundTag must be [A-Z0-9_]' });
-    const origin = await ctx.db.get(a.originId);
+    const origin = await ctx.db.get(a.relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const profile = await ctx.db
-      .query('relayCamouflageProfiles')
+      .query('realityProfiles')
       .withIndex('by_slug', (q) => q.eq('slug', a.profileSlug))
       .unique();
     if (!profile) throw new ConvexError({ code: 'validation', message: 'unknown profile slug' });
     const existing = (
       await ctx.db
-        .query('relayOriginSlots')
-        .withIndex('by_origin', (q) => q.eq('originId', a.originId))
+        .query('relaySlots')
+        .withIndex('by_relay', (q) => q.eq('relayId', a.relayId))
         .collect()
     ).find((s) => s.slotKey === a.slotKey);
     const now = Date.now();
@@ -127,7 +122,7 @@ export const upsert = internalMutation({
       retired: false,
       updatedAt: now,
     };
-    let id: Id<'relayOriginSlots'>;
+    let id: Id<'relaySlots'>;
     let created = false;
     if (existing) {
       id = existing._id;
@@ -141,15 +136,15 @@ export const upsert = internalMutation({
         templateHostUuid: rebound ? undefined : existing.templateHostUuid,
       });
     } else {
-      id = await ctx.db.insert('relayOriginSlots', {
-        originId: a.originId,
+      id = await ctx.db.insert('relaySlots', {
+        relayId: a.relayId,
         slotKey: a.slotKey,
         ...fields,
         deployedAt: now,
       });
       created = true;
     }
-    await ctx.db.patch(a.originId, {
+    await ctx.db.patch(a.relayId, {
       publicationEpoch: origin.publicationEpoch + 1,
       updatedAt: now,
     });
@@ -159,7 +154,7 @@ export const upsert = internalMutation({
       action: 'relay.slot.upsert',
       targetType: 'relay_slot',
       targetId: id,
-      payload: { originSlug: origin.slug, slotKey: a.slotKey, created },
+      payload: { relaySlug: origin.slug, slotKey: a.slotKey, created },
     });
     return { id, created, templateHostRemark: remark };
   },
@@ -167,24 +162,24 @@ export const upsert = internalMutation({
 
 export const retire = internalMutation({
   args: {
-    originId: v.id('relayOrigins'),
+    relayId: v.id('relays'),
     slotKey: v.string(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { originId, slotKey, actorAdminId }) => {
-    const origin = await ctx.db.get(originId);
+  handler: async (ctx, { relayId, slotKey, actorAdminId }) => {
+    const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const slot = (
       await ctx.db
-        .query('relayOriginSlots')
-        .withIndex('by_origin', (q) => q.eq('originId', originId))
+        .query('relaySlots')
+        .withIndex('by_relay', (q) => q.eq('relayId', relayId))
         .collect()
     ).find((s) => s.slotKey === slotKey);
     if (!slot) return { ok: true as const };
     const live = await ctx.db
-      .query('relayEdges')
-      .withIndex('by_origin_publication', (q) =>
-        q.eq('originId', originId).eq('publication', 'published'),
+      .query('edges')
+      .withIndex('by_relay_publication', (q) =>
+        q.eq('relayId', relayId).eq('publication', 'published'),
       )
       .collect();
     if (live.some((e) => e.slotId === slot._id)) {
@@ -194,7 +189,7 @@ export const retire = internalMutation({
       });
     }
     await ctx.db.patch(slot._id, { retired: true, deployed: false, updatedAt: Date.now() });
-    await ctx.db.patch(originId, {
+    await ctx.db.patch(relayId, {
       publicationEpoch: origin.publicationEpoch + 1,
       updatedAt: Date.now(),
     });
@@ -204,7 +199,7 @@ export const retire = internalMutation({
       action: 'relay.slot.retire',
       targetType: 'relay_slot',
       targetId: slot._id,
-      payload: { originSlug: origin.slug, slotKey },
+      payload: { relaySlug: origin.slug, slotKey },
     });
     return { ok: true as const };
   },
@@ -212,7 +207,7 @@ export const retire = internalMutation({
 
 /** Record the template Host uuid once discovered on the panel (drift/flip bookkeeping). */
 export const setTemplateHost = internalMutation({
-  args: { slotId: v.id('relayOriginSlots'), templateHostUuid: v.union(v.string(), v.null()) },
+  args: { slotId: v.id('relaySlots'), templateHostUuid: v.union(v.string(), v.null()) },
   handler: async (ctx, { slotId, templateHostUuid }) => {
     const slot = await ctx.db.get(slotId);
     if (!slot) return null;

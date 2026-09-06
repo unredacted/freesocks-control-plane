@@ -15,15 +15,15 @@
   import { toast } from 'svelte-sonner';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
-  import { adminRelayTemplatesQuery } from '../../lib/queries';
+  import { adminEdgeTemplatesQuery } from '../../lib/queries';
   import {
-    RELAY_PROVIDER_IDS,
+    EDGE_PROVIDER_IDS,
     RelayIdResponse,
     RelayOkResponse,
-    RelayTemplateValidateResponse,
-    type RelayProviderId,
-    type RelayTemplateAdmin,
-    type RelayTemplateField,
+    EdgeTemplateValidateResponse,
+    type EdgeProviderId,
+    type EdgeTemplateAdmin,
+    type EdgeTemplateField,
   } from '../../../shared/contracts/relays';
   import AdminListState from './AdminListState.svelte';
 
@@ -36,7 +36,7 @@
    * needs re-qualification. Placeholders: {'{{name}}'} {'{{originAddress}}'}
    * {'{{originPort}}'} {'{{edgePort}}'}.
    */
-  const templates = adminRelayTemplatesQuery();
+  const templates = adminEdgeTemplatesQuery();
   const qc = useQueryClient();
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'relays'] });
   const onError = (title: string) => (err: unknown) =>
@@ -44,7 +44,7 @@
 
   type Draft = {
     id: string | null;
-    provider: RelayProviderId;
+    provider: EdgeProviderId;
     name: string;
     params: Record<string, unknown>;
     raw: string;
@@ -72,7 +72,7 @@
     }
     cur[parts[parts.length - 1] ?? key] = value;
   }
-  function newDraft(provider: RelayProviderId = 'gcore'): Draft {
+  function newDraft(provider: EdgeProviderId = 'gcore'): Draft {
     const defaults = (templates.data?.schemas[provider]?.defaults ?? {}) as Record<string, unknown>;
     const params = JSON.parse(JSON.stringify(defaults)) as Record<string, unknown>;
     return {
@@ -85,7 +85,7 @@
       isDefault: false,
     };
   }
-  function editDraft(t: RelayTemplateAdmin): Draft {
+  function editDraft(t: EdgeTemplateAdmin): Draft {
     const params = JSON.parse(JSON.stringify(t.params ?? {})) as Record<string, unknown>;
     return {
       id: t.id,
@@ -108,12 +108,12 @@
     }
     return editor.params;
   }
-  function fieldValue(f: RelayTemplateField): string {
+  function fieldValue(f: EdgeTemplateField): string {
     const v = getPath(editor!.params, f.key);
     if (f.type === 'string-list') return Array.isArray(v) ? v.join('\n') : '';
     return v === undefined || v === null ? '' : String(v);
   }
-  function setField(f: RelayTemplateField, raw: string | boolean) {
+  function setField(f: EdgeTemplateField, raw: string | boolean) {
     if (!editor) return;
     let v: unknown = raw;
     if (f.type === 'number') v = raw === '' ? undefined : Number(raw);
@@ -130,9 +130,9 @@
   const validate = createMutation(() => ({
     mutationFn: () =>
       apiClient.post(
-        '/api/v1/admin/relays/templates/validate',
+        '/api/v1/admin/relay/templates/validate',
         { provider: editor!.provider, params: currentParams() },
-        RelayTemplateValidateResponse,
+        EdgeTemplateValidateResponse,
       ),
     onSuccess: (r) => {
       issues = r.ok ? [] : r.issues;
@@ -146,12 +146,12 @@
       const params = currentParams();
       if (d.id)
         return apiClient.patch(
-          `/api/v1/admin/relays/templates/${d.id}`,
+          `/api/v1/admin/relay/templates/${d.id}`,
           { name: d.name.trim(), params, isDefault: d.isDefault },
           RelayOkResponse,
         );
       return apiClient.post(
-        '/api/v1/admin/relays/templates',
+        '/api/v1/admin/relay/templates',
         { provider: d.provider, name: d.name.trim(), params, isDefault: d.isDefault },
         RelayIdResponse,
       );
@@ -169,7 +169,7 @@
   }));
   const remove = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/relays/templates/${id}`, RelayOkResponse),
+      apiClient.delete(`/api/v1/admin/relay/templates/${id}`, RelayOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Template removed');
@@ -187,7 +187,7 @@
       error={templates.error}
       onRetry={() => void templates.refetch()}
     />{/if}
-  {#each RELAY_PROVIDER_IDS as provider (provider)}
+  {#each EDGE_PROVIDER_IDS as provider (provider)}
     {@const rows = (templates.data?.templates ?? []).filter((t) => t.provider === provider)}
     <Card>
       <CardHeader class="pb-2">
@@ -256,11 +256,11 @@
               <Select.Root
                 type="single"
                 value={editor.provider}
-                onValueChange={(v) => (editor = newDraft(v as RelayProviderId))}
+                onValueChange={(v) => (editor = newDraft(v as EdgeProviderId))}
               >
                 <Select.Trigger class="mt-1 w-full">{editor.provider}</Select.Trigger>
                 <Select.Content
-                  >{#each RELAY_PROVIDER_IDS as p (p)}<Select.Item value={p}>{p}</Select.Item
+                  >{#each EDGE_PROVIDER_IDS as p (p)}<Select.Item value={p}>{p}</Select.Item
                     >{/each}</Select.Content
                 >
               </Select.Root>

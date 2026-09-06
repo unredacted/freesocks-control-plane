@@ -21,13 +21,13 @@ import type {
   EdgeSpec,
   Ledger,
   OvhConfig,
-  RelayProvider,
+  EdgeProvider,
   ResourceStep,
   StepOutcome,
   TemplateFieldDescriptor,
 } from './types';
 import { firstResource, reverseLiveResources, stepOf } from './types';
-import { isProviderNotFound, providerFetch, RelayProviderError } from './http';
+import { isProviderNotFound, providerFetch, EdgeProviderError } from './http';
 import { OVH_ENDPOINTS, ovhSignedHeaders } from './ovhSign';
 import { OvhTemplate, OVH_TEMPLATE_FIELDS, type OvhTemplateParams } from './templates';
 
@@ -125,7 +125,7 @@ const base = (cfg: OvhConfig) =>
 /** The create-LB request body (exported for tests). */
 export function ovhLbBody(cfg: OvhConfig, spec: EdgeSpec, tpl: OvhTemplateParams) {
   if (!tpl.flavorId) {
-    throw new RelayProviderError('ovh template needs flavorId', {
+    throw new EdgeProviderError('ovh template needs flavorId', {
       provider: 'ovh',
       step: 'plan',
       code: 'template_flavor_required',
@@ -211,7 +211,7 @@ async function pollOperation(cfg: OvhConfig, step: string, opId: string): Promis
 const getLb = (cfg: OvhConfig, step: string, id: string) =>
   ovh(cfg, step, 'GET', `${base(cfg)}/loadbalancing/loadbalancer/${encodeURIComponent(id)}`, Lb);
 
-export const ovhProvider: RelayProvider<OvhConfig, OvhTemplateParams> = {
+export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
   id: 'ovh',
   templateSchema: OvhTemplate,
   templateFields: OVH_TEMPLATE_FIELDS,
@@ -231,7 +231,7 @@ export const ovhProvider: RelayProvider<OvhConfig, OvhTemplateParams> = {
       return {
         ok: false,
         code:
-          e instanceof RelayProviderError
+          e instanceof EdgeProviderError
             ? (e.meta.code ?? String(e.meta.status ?? 'error'))
             : 'error',
       };
@@ -255,7 +255,7 @@ export const ovhProvider: RelayProvider<OvhConfig, OvhTemplateParams> = {
 
   async runStep(cfg, step, spec, tpl) {
     if (step.kind !== 'create_lb')
-      throw new RelayProviderError(`ovh: unknown step kind ${step.kind}`, {
+      throw new EdgeProviderError(`ovh: unknown step kind ${step.kind}`, {
         provider: 'ovh',
         step: step.id,
         code: 'unknown_step',
@@ -328,7 +328,7 @@ export const ovhProvider: RelayProvider<OvhConfig, OvhTemplateParams> = {
   async inspect(cfg, ledger) {
     const lb = firstResource(ledger, 'lb');
     if (!lb)
-      throw new RelayProviderError('ovh inspect: no lb in ledger', {
+      throw new EdgeProviderError('ovh inspect: no lb in ledger', {
         provider: 'ovh',
         step: 'inspect',
         code: 'no_lb',

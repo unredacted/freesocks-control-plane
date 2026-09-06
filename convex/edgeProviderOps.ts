@@ -10,7 +10,7 @@
  * performs exactly the requested operation and returns plain data. Every state
  * change goes back through the isolate mutations (relayRotations / relayEdges),
  * which are the sole writers of relay state. Errors thrown here are
- * RelayProviderError (status + short code, never a body/URL/credential); the
+ * EdgeProviderError (status + short code, never a body/URL/credential); the
  * callers map them to ledger outcomes.
  *
  * The Node version that executes this file is decided by the self-hosted Convex
@@ -23,8 +23,8 @@ import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { ActionCtx } from './_generated/server';
-import { relayProviderFor, relayConfigFrom } from './lib/relays/providers/registry';
-import { RelayProviderError } from './lib/relays/providers/http';
+import { edgeProviderFor, relayConfigFrom } from './lib/relays/providers/registry';
+import { EdgeProviderError } from './lib/relays/providers/http';
 import { renderTemplateValue } from './lib/relays/providers/template';
 import type {
   Discovery,
@@ -34,7 +34,7 @@ import type {
   Inventory,
   InspectResult,
   Ledger,
-  RelayProvider,
+  EdgeProvider,
   RelayProviderConfig,
   ResourceStep,
   StepOutcome,
@@ -114,11 +114,11 @@ const ledgerResource = v.object({
 
 async function loadAdapter(
   ctx: ActionCtx,
-  accountId: Id<'relayProviderAccounts'>,
-): Promise<{ provider: RelayProvider; cfg: RelayProviderConfig; providerId: string }> {
-  const acct = await ctx.runQuery(internal.relayProviderAccounts.getWithSecret, { id: accountId });
+  accountId: Id<'edgeProviderAccounts'>,
+): Promise<{ provider: EdgeProvider; cfg: RelayProviderConfig; providerId: string }> {
+  const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, { id: accountId });
   if (!acct) {
-    throw new RelayProviderError('relay account not found', {
+    throw new EdgeProviderError('relay account not found', {
       provider: 'gcore',
       step: 'load',
       code: 'account_missing',
@@ -130,12 +130,12 @@ async function loadAdapter(
     acct.credentials as Record<string, unknown> & { type: typeof acct.provider },
     acct.settings as Record<string, unknown> & { type: typeof acct.provider },
   );
-  return { provider: relayProviderFor(acct.provider), cfg, providerId: acct.provider };
+  return { provider: edgeProviderFor(acct.provider), cfg, providerId: acct.provider };
 }
 
 /** Template params are validated by the adapter schema, then placeholders rendered. */
 function renderedTemplate(
-  provider: RelayProvider,
+  provider: EdgeProvider,
   params: unknown,
   spec: EdgeSpec,
 ): Record<string, unknown> {
@@ -146,11 +146,11 @@ function renderedTemplate(
 // --- credentials / discovery of provider metadata ---------------------------------
 
 export const testCredentials = internalAction({
-  args: { accountId: v.id('relayProviderAccounts') },
+  args: { accountId: v.id('edgeProviderAccounts') },
   handler: async (ctx, { accountId }): Promise<{ ok: boolean; code?: string }> => {
     const { provider, cfg } = await loadAdapter(ctx, accountId);
     const res = await provider.testCredentials(cfg);
-    await ctx.runMutation(internal.relayProviderAccounts.recordTest, {
+    await ctx.runMutation(internal.edgeProviderAccounts.recordTest, {
       id: accountId,
       ok: res.ok,
       code: res.code,
@@ -160,7 +160,7 @@ export const testCredentials = internalAction({
 });
 
 export const listRegions = internalAction({
-  args: { accountId: v.id('relayProviderAccounts') },
+  args: { accountId: v.id('edgeProviderAccounts') },
   handler: async (ctx, { accountId }): Promise<Array<{ id: string; label: string }>> => {
     const { provider, cfg } = await loadAdapter(ctx, accountId);
     return provider.listRegions ? provider.listRegions(cfg) : [];
@@ -168,11 +168,11 @@ export const listRegions = internalAction({
 });
 
 export const inventory = internalAction({
-  args: { accountId: v.id('relayProviderAccounts') },
+  args: { accountId: v.id('edgeProviderAccounts') },
   handler: async (ctx, { accountId }): Promise<Inventory> => {
     const { provider, cfg } = await loadAdapter(ctx, accountId);
     const inv = await provider.inventory(cfg);
-    await ctx.runMutation(internal.relayProviderAccounts.recordInventory, {
+    await ctx.runMutation(internal.edgeProviderAccounts.recordInventory, {
       id: accountId,
       inventory: JSON.stringify(inv),
     });
@@ -183,7 +183,7 @@ export const inventory = internalAction({
 // --- provisioning steps ------------------------------------------------------------
 
 export const planProvision = internalAction({
-  args: { accountId: v.id('relayProviderAccounts'), spec: edgeSpec, templateParams: v.any() },
+  args: { accountId: v.id('edgeProviderAccounts'), spec: edgeSpec, templateParams: v.any() },
   handler: async (ctx, { accountId, spec, templateParams }): Promise<ResourceStep[]> => {
     const { provider, cfg } = await loadAdapter(ctx, accountId);
     return provider.planProvision(cfg, spec, renderedTemplate(provider, templateParams, spec));
@@ -192,7 +192,7 @@ export const planProvision = internalAction({
 
 export const runStep = internalAction({
   args: {
-    accountId: v.id('relayProviderAccounts'),
+    accountId: v.id('edgeProviderAccounts'),
     spec: edgeSpec,
     templateParams: v.any(),
     step: resourceStep,
@@ -211,7 +211,7 @@ export const runStep = internalAction({
 });
 
 export const pollStep = internalAction({
-  args: { accountId: v.id('relayProviderAccounts'), step: resourceStep, opRef: v.string(), ledger },
+  args: { accountId: v.id('edgeProviderAccounts'), step: resourceStep, opRef: v.string(), ledger },
   handler: async (ctx, a): Promise<StepOutcome> => {
     const { provider, cfg } = await loadAdapter(ctx, a.accountId);
     if (!provider.pollStep) return { status: 'done', resources: [] };
@@ -221,7 +221,7 @@ export const pollStep = internalAction({
 
 export const discover = internalAction({
   args: {
-    accountId: v.id('relayProviderAccounts'),
+    accountId: v.id('edgeProviderAccounts'),
     spec: edgeSpec,
     step: resourceStep,
     ledger,
@@ -234,7 +234,7 @@ export const discover = internalAction({
 });
 
 export const describe = internalAction({
-  args: { accountId: v.id('relayProviderAccounts'), ledger },
+  args: { accountId: v.id('edgeProviderAccounts'), ledger },
   handler: async (ctx, a): Promise<EdgeDescription> => {
     const { provider, cfg } = await loadAdapter(ctx, a.accountId);
     return provider.describe(cfg, a.ledger as Ledger);
@@ -242,7 +242,7 @@ export const describe = internalAction({
 });
 
 export const inspect = internalAction({
-  args: { accountId: v.id('relayProviderAccounts'), ledger },
+  args: { accountId: v.id('edgeProviderAccounts'), ledger },
   handler: async (ctx, a): Promise<InspectResult> => {
     const { provider, cfg } = await loadAdapter(ctx, a.accountId);
     return provider.inspect(cfg, a.ledger as Ledger);
@@ -252,7 +252,7 @@ export const inspect = internalAction({
 // --- destroy -------------------------------------------------------------------------
 
 export const planDestroy = internalAction({
-  args: { accountId: v.id('relayProviderAccounts'), ledger },
+  args: { accountId: v.id('edgeProviderAccounts'), ledger },
   handler: async (ctx, a) => {
     const { provider, cfg } = await loadAdapter(ctx, a.accountId);
     return provider.planDestroy(cfg, a.ledger as Ledger);
@@ -260,7 +260,7 @@ export const planDestroy = internalAction({
 });
 
 export const runDestroy = internalAction({
-  args: { accountId: v.id('relayProviderAccounts'), resource: ledgerResource, ledger },
+  args: { accountId: v.id('edgeProviderAccounts'), resource: ledgerResource, ledger },
   handler: async (ctx, a): Promise<DestroyOutcome> => {
     const { provider, cfg } = await loadAdapter(ctx, a.accountId);
     return provider.runDestroy(cfg, a.resource, a.ledger as Ledger);
@@ -268,7 +268,7 @@ export const runDestroy = internalAction({
 });
 
 export const confirmDestroyed = internalAction({
-  args: { accountId: v.id('relayProviderAccounts'), resource: ledgerResource, ledger },
+  args: { accountId: v.id('edgeProviderAccounts'), resource: ledgerResource, ledger },
   handler: async (ctx, a): Promise<DestroyOutcome> => {
     const { provider, cfg } = await loadAdapter(ctx, a.accountId);
     // A provider without an async-delete confirmation deletes synchronously, so

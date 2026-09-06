@@ -102,21 +102,21 @@ async function seed(opts: { renderEnabled?: boolean } = {}) {
     if (opts.renderEnabled !== false) await upsertSettingRow(ctx, 'relay.render.enabled', 'true');
     return { serverId, subId };
   });
-  await t.mutation(internal.relayProfiles.create, {
+  await t.mutation(internal.realityProfiles.create, {
     slug: 'prof-u',
     name: 'Profile U',
     provider: 'upcloud',
     targetAddress: 'target.example',
     serverNames: ['a.example', 'b.example', 'c.example'],
   });
-  const { id: originId } = await t.mutation(internal.relayOrigins.upsertBySlug, {
+  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
     slug: NODE,
     backendServerSlug: 'panel-a',
     nodeHostname: NODE,
     originAddress: ORIGIN,
   });
   const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    originId,
+    relayId,
     slotKey: 'u',
     profileSlug: 'prof-u',
     inboundTag: 'VLESS_RELAY_U',
@@ -124,14 +124,14 @@ async function seed(opts: { renderEnabled?: boolean } = {}) {
     configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
     originPort: 443,
   });
-  const a = await t.mutation(internal.relayOrigins.adoptEdge, {
-    originId,
+  const a = await t.mutation(internal.relays.adoptEdge, {
+    relayId,
     slotId,
     ipv4: EDGE_A,
     ipv6: EDGE_A6,
     publish: true,
   });
-  return { t, serverId, subId, originId, slotId, edgeA: a.edgeId as Id<'relayEdges'> };
+  return { t, serverId, subId, relayId, slotId, edgeA: a.edgeId as Id<'edges'> };
 }
 
 const get = (t: ReturnType<typeof convexTest>, ua = 'v2rayNG/1.9.0') =>
@@ -199,13 +199,13 @@ describe('relayRender: fronted route', () => {
 
   test('a pool change invalidates the cache within one request and adds the backup entry', async () => {
     stubPanel();
-    const { t, originId, slotId } = await seed();
+    const { t, relayId, slotId } = await seed();
     const first = await (await get(t)).text();
     expect(first).not.toContain('FreeSocks%20Backup');
     expect(fetchCalls).toBe(1);
     // Publish a second edge (epoch bump) → the fresh cache entry is no longer valid.
-    await t.mutation(internal.relayOrigins.adoptEdge, {
-      originId,
+    await t.mutation(internal.relays.adoptEdge, {
+      relayId,
       slotId,
       ipv4: EDGE_B,
       publish: true,
@@ -257,7 +257,7 @@ describe('relayRender: fronted route', () => {
 
   test('contextForSubscription is null without a pin, an origin, or a published edge', async () => {
     stubPanel();
-    const { t, subId, originId, edgeA } = await seed();
+    const { t, subId, relayId, edgeA } = await seed();
     expect(
       await t.query(internal.relayRender.contextForSubscription, {
         subscriptionId: subId,
@@ -272,8 +272,8 @@ describe('relayRender: fronted route', () => {
     expect(ctx1?.published.map((p) => p.edgeId)).toEqual([edgeA]);
     expect(ctx1?.templateRemarks).toEqual([`${NODE}-relay-u`]);
     expect(ctx1?.rule.autoGroup).toBe(true);
-    await t.mutation(internal.relayOrigins.unpublishEdge, {
-      originId,
+    await t.mutation(internal.relays.unpublishEdge, {
+      relayId,
       edgeId: edgeA,
       keepActive: true,
     });
@@ -293,7 +293,7 @@ describe('relayRender: fronted route', () => {
 
   test('memberView: connection labels only, and a refresh nudge once the origin rotated after the last delivery', async () => {
     stubPanel();
-    const { t, subId, originId } = await seed();
+    const { t, subId, relayId } = await seed();
     // Not fetched yet: no render key → labels absent, no nudge (never rotated).
     let view = await t.query(internal.relayRender.memberView, { subscriptionId: subId });
     expect(view).toEqual({ refreshSuggested: false, connections: [] });
@@ -307,7 +307,7 @@ describe('relayRender: fronted route', () => {
     expect(view?.connections[0].label).toContain('FreeSocks Primary');
     expect(JSON.stringify(view)).not.toContain(EDGE_A);
     // The origin rotates after this key's last delivery → nudge.
-    await t.run((ctx) => ctx.db.patch(originId, { lastRotatedAt: Date.now() + 1 }));
+    await t.run((ctx) => ctx.db.patch(relayId, { lastRotatedAt: Date.now() + 1 }));
     view = await t.query(internal.relayRender.memberView, { subscriptionId: subId });
     expect(view?.refreshSuggested).toBe(true);
     // A key not behind a rendered origin gets null.

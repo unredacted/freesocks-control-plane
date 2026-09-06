@@ -3,9 +3,9 @@
  * pattern). Generic code branches on these, never on provider ids. Kept from
  * drifting against the adapters by capabilities.test.ts.
  */
-import type { RelayProviderId } from '../../relayProviderIds';
+import type { EdgeProviderId } from '../../edgeProviderIds';
 
-export interface RelayProviderCapabilities {
+export interface EdgeProviderCapabilities {
   /** Mutations return a task/operation the adapter polls (`pollStep` present). */
   asyncOps: boolean;
   /** Async deletes: `confirmDestroyed` present. */
@@ -22,7 +22,7 @@ export interface RelayProviderCapabilities {
 
 const MIN = 60_000;
 
-export const RELAY_CAPABILITIES: Record<RelayProviderId, RelayProviderCapabilities> = {
+export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapabilities> = {
   gcore: {
     asyncOps: true,
     asyncDelete: true,
@@ -57,6 +57,6 @@ export const RELAY_CAPABILITIES: Record<RelayProviderId, RelayProviderCapabiliti
   },
 };
 
-export function relayCapabilitiesOf(id: RelayProviderId): RelayProviderCapabilities {
-  return RELAY_CAPABILITIES[id];
+export function edgeCapabilitiesOf(id: EdgeProviderId): EdgeProviderCapabilities {
+  return EDGE_PROVIDER_CAPABILITIES[id];
 }

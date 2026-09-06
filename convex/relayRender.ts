@@ -31,13 +31,13 @@ const familyValidator = v.union(
   ]),
 );
 
-async function originFor(
+async function relayFor(
   ctx: QueryCtx,
   backendServerId: Id<'backendServers'>,
   nodeHostname: string,
-): Promise<Doc<'relayOrigins'> | null> {
+): Promise<Doc<'relays'> | null> {
   const rows = await ctx.db
-    .query('relayOrigins')
+    .query('relays')
     .withIndex('by_node_hostname', (q) => q.eq('nodeHostname', nodeHostname))
     .collect();
   return rows.find((r) => r.backendServerId === backendServerId) ?? null;
@@ -59,11 +59,11 @@ async function renderEnabled(ctx: QueryCtx): Promise<boolean> {
 /** Published edges with an eligible slot + profile, in pool order. */
 export async function publishedEdgesOf(
   ctx: QueryCtx | { db: import('./_generated/server').DatabaseReader },
-  origin: Doc<'relayOrigins'>,
+  origin: Doc<'relays'>,
 ): Promise<{ published: PublishedEdge[]; templateRemarks: string[] }> {
   const slots = await ctx.db
-    .query('relayOriginSlots')
-    .withIndex('by_origin', (q) => q.eq('originId', origin._id))
+    .query('relaySlots')
+    .withIndex('by_relay', (q) => q.eq('relayId', origin._id))
     .collect();
   const templateRemarks = slots.map((s) => s.templateHostRemark);
   const published: PublishedEdge[] = [];
@@ -104,7 +104,7 @@ export const epochFor = internalQuery({
   args: { backendServerId: v.id('backendServers'), nodeHostname: v.string() },
   handler: async (ctx, { backendServerId, nodeHostname }): Promise<number | null> => {
     if (!(await renderEnabled(ctx))) return null;
-    const origin = await originFor(ctx, backendServerId, nodeHostname);
+    const origin = await relayFor(ctx, backendServerId, nodeHostname);
     if (!origin || !origin.enabled) return null;
     const { published } = await publishedEdgesOf(ctx, origin);
     return published.length > 0 ? origin.publicationEpoch : null;
@@ -112,7 +112,7 @@ export const epochFor = internalQuery({
 });
 
 export interface SubscriptionRenderContext extends RelayRenderContext {
-  originId: Id<'relayOrigins'>;
+  relayId: Id<'relays'>;
   renderKey: string | null;
   lastContentAt: number | null;
 }
@@ -135,7 +135,7 @@ export const contextForSubscription = internalQuery({
     const node = a.nodeHostname ?? sub.pinnedNode;
     if (!node) return null;
     if (!(await renderEnabled(ctx))) return null;
-    const origin = await originFor(ctx, sub.backendServerId, node);
+    const origin = await relayFor(ctx, sub.backendServerId, node);
     if (!origin || !origin.enabled) return null;
     const cfg = await resolveRelayConfig(ctx.db);
     if (!cfg.render.enabled) return null;
@@ -143,7 +143,7 @@ export const contextForSubscription = internalQuery({
     if (published.length === 0) return null;
     const family = a.family as RenderClientFamily;
     return {
-      originId: origin._id,
+      relayId: origin._id,
       epoch: origin.publicationEpoch,
       templateRemarks,
       published,
@@ -156,10 +156,10 @@ export const contextForSubscription = internalQuery({
 });
 
 /** Admin preview / endpoint view: the published pool of one origin as the renderer sees it. */
-export const contextForOrigin = internalQuery({
-  args: { originId: v.id('relayOrigins'), family: familyValidator },
+export const contextForRelay = internalQuery({
+  args: { relayId: v.id('relays'), family: familyValidator },
   handler: async (ctx, a): Promise<RelayRenderContext | null> => {
-    const origin = await ctx.db.get(a.originId);
+    const origin = await ctx.db.get(a.relayId);
     if (!origin) return null;
     const cfg = await resolveRelayConfig(ctx.db);
     const { published, templateRemarks } = await publishedEdgesOf(ctx, origin);
@@ -191,7 +191,7 @@ export const memberView = internalQuery({
     const sub = await ctx.db.get(subscriptionId);
     if (!sub || !sub.backendServerId || !sub.pinnedNode) return null;
     if (!(await renderEnabled(ctx))) return null;
-    const origin = await originFor(ctx, sub.backendServerId, sub.pinnedNode);
+    const origin = await relayFor(ctx, sub.backendServerId, sub.pinnedNode);
     if (!origin || !origin.enabled) return null;
     const cfg = await resolveRelayConfig(ctx.db);
     const { published } = await publishedEdgesOf(ctx, origin);

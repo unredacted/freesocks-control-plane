@@ -54,28 +54,28 @@ async function seed() {
       updatedAt: Date.now(),
     }),
   );
-  const { id: accountId } = await t.mutation(internal.relayProviderAccounts.create, {
+  const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
     provider: 'upcloud',
     name: 'acct-u',
     settings: { zone: 'de-fra1' },
     credentials: { token: 'ucl_x' },
   });
-  await t.mutation(internal.relayProviderAccounts.setQualified, { id: accountId, qualified: true });
-  await t.mutation(internal.relayProfiles.create, {
+  await t.mutation(internal.edgeProviderAccounts.setQualified, { id: accountId, qualified: true });
+  await t.mutation(internal.realityProfiles.create, {
     slug: 'prof-u',
     name: 'Profile U',
     provider: 'upcloud',
     targetAddress: 'target.example',
     serverNames: ['a.example'],
   });
-  const { id: originId } = await t.mutation(internal.relayOrigins.upsertBySlug, {
+  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
     slug: 'node-one',
     backendServerSlug: 'panel-a',
     nodeHostname: 'node-one',
     originAddress: ORIGIN,
   });
   const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
-    originId,
+    relayId,
     slotKey: 'u',
     profileSlug: 'prof-u',
     inboundTag: 'VLESS_RELAY_U',
@@ -83,7 +83,7 @@ async function seed() {
     configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
     originPort: 443,
   });
-  return { t, accountId, originId, slotId };
+  return { t, accountId, relayId, slotId };
 }
 
 /** A managed edge whose single `lb` step is done with one lb resource, in the given status. */
@@ -92,8 +92,8 @@ async function managedEdge(
   lbId: string,
   patch: Record<string, unknown>,
 ) {
-  const { id } = await s.t.mutation(internal.relayEdges.insertPlanned, {
-    originId: s.originId,
+  const { id } = await s.t.mutation(internal.edges.insertPlanned, {
+    relayId: s.relayId,
     slotId: s.slotId,
     accountId: s.accountId,
     templateHash: 'h',
@@ -124,7 +124,7 @@ async function managedEdge(
   return id;
 }
 
-const run = (t: ReturnType<typeof convexTest>) => t.action(internal.relayReconcile.run, {});
+const run = (t: ReturnType<typeof convexTest>) => t.action(internal.edgeReconcile.run, {});
 
 describe('relayReconcile', () => {
   test('drained edge → destroying → every child confirmed gone → destroyed (audited, no addresses)', async () => {
@@ -137,18 +137,18 @@ describe('relayReconcile', () => {
     });
     const r1 = await run(s.t);
     expect(r1.destroying).toBe(1);
-    expect((await s.t.query(internal.relayEdges.get, { id: edgeId }))!.status).toBe('destroying');
+    expect((await s.t.query(internal.edges.get, { id: edgeId }))!.status).toBe('destroying');
     const r2 = await run(s.t);
     expect(r2.destroyed).toBe(1);
     expect(world.deletes).toEqual(['lb-1']);
-    const edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    const edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('destroyed');
     expect(edge.resources[0].deleteState).toBe('confirmed_gone');
     expect(edge.currentOp).toBeUndefined();
     expect(edge.destroyAttempts).toBe(1);
     const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.find((a) => a.action === 'relay.edge.destroyed')?.payload).toMatchObject({
-      originSlug: 'node-one',
+      relaySlug: 'node-one',
       provider: 'upcloud',
     });
     expect(JSON.stringify(audit)).not.toContain('198.51.100.9');
@@ -169,23 +169,23 @@ describe('relayReconcile', () => {
     const r = await run(s.t);
     expect(r.destroying).toBe(0);
     expect(r.described).toBe(1);
-    expect((await s.t.query(internal.relayEdges.get, { id: edgeId }))!.status).toBe('draining');
+    expect((await s.t.query(internal.edges.get, { id: edgeId }))!.status).toBe('draining');
   });
 
   test('a published edge the provider no longer has is dropped from the pool with a drift audit', async () => {
     fakeUpcloud([]); // lb-1 does not exist any more
     const s = await seed();
     const edgeId = await managedEdge(s, 'lb-1', { lastHealthAt: undefined });
-    await s.t.mutation(internal.relayOrigins.publishEdge, { originId: s.originId, edgeId });
-    const before = (await s.t.query(internal.relayOrigins.get, { id: s.originId }))!;
+    await s.t.mutation(internal.relays.publishEdge, { relayId: s.relayId, edgeId });
+    const before = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(before.publishedEdgeIds).toEqual([edgeId]);
     const r = await run(s.t);
     expect(r.described).toBe(1);
     expect(r.dropped).toBe(1);
-    const origin = (await s.t.query(internal.relayOrigins.get, { id: s.originId }))!;
+    const origin = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(origin.publishedEdgeIds).toEqual([]);
     expect(origin.publicationEpoch).toBe(before.publicationEpoch + 1);
-    const edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    const edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('destroyed');
     expect(edge.publication).toBe('unpublished');
     const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
@@ -195,8 +195,8 @@ describe('relayReconcile', () => {
   test('failed edge with an unresolved step is DISCOVERED (never re-run): absent → settled → destroyed', async () => {
     const world = fakeUpcloud([]);
     const s = await seed();
-    const { id: edgeId } = await s.t.mutation(internal.relayEdges.insertPlanned, {
-      originId: s.originId,
+    const { id: edgeId } = await s.t.mutation(internal.edges.insertPlanned, {
+      relayId: s.relayId,
       slotId: s.slotId,
       accountId: s.accountId,
       templateHash: 'h',
@@ -210,14 +210,14 @@ describe('relayReconcile', () => {
         },
       ],
     });
-    await s.t.mutation(internal.relayEdges.patchEdge, {
+    await s.t.mutation(internal.edges.patchEdge, {
       edgeId,
       status: 'failed',
       stepStates: [{ stepId: 'lb', state: 'unresolved' }],
     });
     const r1 = await run(s.t);
     expect(r1.settled).toBe(1);
-    let edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    let edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.steps[0].state).toBe('done');
     expect(edge.status).toBe('failed');
     // Only the LIST (discovery) was called; never a POST.
@@ -228,7 +228,7 @@ describe('relayReconcile', () => {
     expect(r2.destroying).toBe(1);
     const r3 = await run(s.t);
     expect(r3.destroyed).toBe(1);
-    edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('destroyed');
     expect(world.deletes).toEqual([]);
   });
@@ -236,8 +236,8 @@ describe('relayReconcile', () => {
   test('failed edge whose step actually created the LB: discovery FINDS it and the destroy then deletes it', async () => {
     const world = fakeUpcloud([]);
     const s = await seed();
-    const { id: edgeId, name } = await s.t.mutation(internal.relayEdges.insertPlanned, {
-      originId: s.originId,
+    const { id: edgeId, name } = await s.t.mutation(internal.edges.insertPlanned, {
+      relayId: s.relayId,
       slotId: s.slotId,
       accountId: s.accountId,
       templateHash: 'h',
@@ -253,13 +253,13 @@ describe('relayReconcile', () => {
     });
     // The provider DID create the LB under the edge's name before the run died.
     world.lbs.set('lb-7', { uuid: 'lb-7', name, operational_state: 'running' });
-    await s.t.mutation(internal.relayEdges.patchEdge, {
+    await s.t.mutation(internal.edges.patchEdge, {
       edgeId,
       status: 'failed',
       stepStates: [{ stepId: 'lb', state: 'unresolved' }],
     });
     await run(s.t);
-    let edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    let edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.resources).toEqual([
       expect.objectContaining({
         kind: 'lb',
@@ -270,7 +270,7 @@ describe('relayReconcile', () => {
     ]);
     await run(s.t); // → destroying
     await run(s.t); // → destroy pass
-    edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('destroyed');
     expect(world.deletes).toEqual(['lb-7']);
   });
@@ -284,13 +284,13 @@ describe('relayReconcile', () => {
       destroyAttempts: 48,
     });
     await run(s.t);
-    const edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    const edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('needs_operator');
     const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.find((a) => a.action === 'relay.edge.destroy_failed')?.payload).toMatchObject({
       attempts: 48,
     });
-    expect(await s.t.mutation(internal.relayReconcileMutations.retryDestroy, { edgeId })).toEqual({
+    expect(await s.t.mutation(internal.edgeReconcileMutations.retryDestroy, { edgeId })).toEqual({
       ok: true,
     });
     const r = await run(s.t);
@@ -301,15 +301,15 @@ describe('relayReconcile', () => {
     vi.useFakeTimers();
     fakeUpcloud([]);
     const s = await seed();
-    const { rotationId } = await s.t.mutation(internal.relayRotations.start, {
-      originId: s.originId,
+    const { rotationId } = await s.t.mutation(internal.edgeRotations.start, {
+      relayId: s.relayId,
       kind: 'provision',
       trigger: 'manual',
     });
     await s.t.run((ctx) => ctx.db.patch(rotationId, { nextStepAt: Date.now() - 120_000 }));
     const r = await run(s.t);
     expect(r.rekicked).toBe(1);
-    const rot = (await s.t.query(internal.relayRotations.get, { id: rotationId }))!;
+    const rot = (await s.t.query(internal.edgeRotations.get, { id: rotationId }))!;
     expect(rot.events.map((e) => e.code)).toContain('rekicked');
     expect(rot.nextStepAt).toBeGreaterThan(Date.now() - 1000);
   });
@@ -317,8 +317,8 @@ describe('relayReconcile', () => {
   test('pool upkeep: a publishable standby fills a free non-zero index directly', async () => {
     fakeUpcloud([{ uuid: 'lb-1', name: 'x' }]);
     const s = await seed();
-    await s.t.mutation(internal.relayOrigins.adoptEdge, {
-      originId: s.originId,
+    await s.t.mutation(internal.relays.adoptEdge, {
+      relayId: s.relayId,
       slotId: s.slotId,
       ipv4: '198.51.100.1',
       publish: true,
@@ -327,7 +327,7 @@ describe('relayReconcile', () => {
     const r = await run(s.t);
     expect(r.published).toBe(1);
     expect(r.started).toBe(0);
-    const origin = (await s.t.query(internal.relayOrigins.get, { id: s.originId }))!;
+    const origin = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(origin.publishedEdgeIds[1]).toBe(standby);
     expect(origin.activeRotationId).toBeUndefined();
   });
@@ -339,10 +339,10 @@ describe('relayReconcile', () => {
     const r = await run(s.t);
     expect(r.published).toBe(0);
     expect(r.started).toBe(1);
-    const origin = (await s.t.query(internal.relayOrigins.get, { id: s.originId }))!;
+    const origin = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(origin.activeRotationId).toBeDefined();
     expect(origin.publishedEdgeIds).toEqual([]);
-    const rot = (await s.t.query(internal.relayRotations.get, { id: origin.activeRotationId! }))!;
+    const rot = (await s.t.query(internal.edgeRotations.get, { id: origin.activeRotationId! }))!;
     expect(rot.kind).toBe('publish');
     // Next tick: the origin is busy → nothing else starts.
     const r2 = await run(s.t);
@@ -353,15 +353,15 @@ describe('relayReconcile', () => {
     fakeUpcloud([]);
     const s = await seed();
     await s.t.run((ctx) => upsertSettingRow(ctx, 'relay.autoProvisionToDesired', 'true'));
-    await s.t.mutation(internal.relayOrigins.upsertBySlug, {
+    await s.t.mutation(internal.relays.upsertBySlug, {
       slug: 'node-two',
       backendServerSlug: 'panel-a',
       nodeHostname: 'node-two',
       originAddress: '203.0.113.11',
     });
-    const two = (await s.t.query(internal.relayOrigins.getBySlug, { slug: 'node-two' }))!;
+    const two = (await s.t.query(internal.relays.getBySlug, { slug: 'node-two' }))!;
     await s.t.mutation(internal.relaySlots.upsert, {
-      originId: two._id,
+      relayId: two._id,
       slotKey: 'u',
       profileSlug: 'prof-u',
       inboundTag: 'VLESS_RELAY_U',
@@ -371,7 +371,7 @@ describe('relayReconcile', () => {
     });
     const r = await run(s.t);
     expect(r.started).toBe(1);
-    const origins = await s.t.query(internal.relayOrigins.listAll, {});
+    const origins = await s.t.query(internal.relays.listAll, {});
     expect(origins.filter((o) => o.activeRotationId).length).toBe(1);
     // Off by default: with the setting removed nothing starts for the other origin.
     await s.t.run(async (ctx) => {
@@ -388,16 +388,16 @@ describe('relayReconcile', () => {
   test('deleting origin is finalized once nothing managed remains', async () => {
     fakeUpcloud([]);
     const s = await seed();
-    await s.t.mutation(internal.relayOrigins.adoptEdge, {
-      originId: s.originId,
+    await s.t.mutation(internal.relays.adoptEdge, {
+      relayId: s.relayId,
       slotId: s.slotId,
       ipv4: '198.51.100.1',
       publish: true,
     });
-    await s.t.mutation(internal.relayOrigins.requestDelete, { id: s.originId });
+    await s.t.mutation(internal.relays.requestDelete, { id: s.relayId });
     const r = await run(s.t);
     expect(r.finalizedDeletes).toBe(1);
-    expect(await s.t.query(internal.relayOrigins.get, { id: s.originId })).toBeNull();
+    expect(await s.t.query(internal.relays.get, { id: s.relayId })).toBeNull();
   });
 
   test('the cron stamps a heartbeat outcome', async () => {
@@ -419,17 +419,17 @@ describe('relayReconcile', () => {
       throw new Error(`unexpected ${c.method} ${c.url}`);
     });
     const s = await seed();
-    const { id: accountId } = await s.t.mutation(internal.relayProviderAccounts.create, {
+    const { id: accountId } = await s.t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'gcore',
       name: 'acct-g',
       settings: { projectId: 11, regionId: 22 },
       credentials: { apiKey: 'k' },
     });
-    await s.t.mutation(internal.relayProviderAccounts.setQualified, {
+    await s.t.mutation(internal.edgeProviderAccounts.setQualified, {
       id: accountId,
       qualified: true,
     });
-    await s.t.mutation(internal.relayProfiles.create, {
+    await s.t.mutation(internal.realityProfiles.create, {
       slug: 'prof-g',
       name: 'Profile G',
       provider: 'gcore',
@@ -437,7 +437,7 @@ describe('relayReconcile', () => {
       serverNames: ['g.example'],
     });
     const { id: slotId } = await s.t.mutation(internal.relaySlots.upsert, {
-      originId: s.originId,
+      relayId: s.relayId,
       slotKey: 'g',
       profileSlug: 'prof-g',
       inboundTag: 'VLESS_RELAY_G',
@@ -445,27 +445,27 @@ describe('relayReconcile', () => {
       configProfileInboundUuid: '33333333-3333-4333-8333-333333333333',
       originPort: 8443,
     });
-    const { id: edgeId } = await s.t.mutation(internal.relayEdges.insertPlanned, {
-      originId: s.originId,
+    const { id: edgeId } = await s.t.mutation(internal.edges.insertPlanned, {
+      relayId: s.relayId,
       slotId,
       accountId,
       templateHash: 'h',
       listeners: [{ edgePort: 443, originAddress: ORIGIN, originPort: 8443 }],
       steps: [{ id: 'lb', kind: 'create_lb', resourceName: 'x', discoverability: 'by_name' }],
     });
-    await s.t.mutation(internal.relayEdges.patchEdge, {
+    await s.t.mutation(internal.edges.patchEdge, {
       edgeId,
       status: 'failed',
       stepStates: [{ stepId: 'lb', state: 'unresolved' }],
     });
     const r1 = await run(s.t);
     expect(r1.settled).toBe(1);
-    let edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    let edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.steps[0]).toMatchObject({ state: 'unresolved', discoverAttempts: 1 });
     expect(edge.currentOp).toBeUndefined();
     const r2 = await run(s.t);
     expect(r2.settled).toBe(1);
-    edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.steps[0].state).toBe('done');
     expect(edge.steps[0].discoverAttempts).toBeUndefined();
     // Two LISTs, never a POST.
@@ -506,13 +506,13 @@ describe('relayReconcile', () => {
     await run(s.t); // → destroying
     const r2 = await run(s.t); // DELETE throws → delete_requested
     expect(r2.errors).toBe(1);
-    let edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    let edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.resources[0].deleteState).toBe('delete_requested');
     expect(edge.status).toBe('destroying');
     // Confirmation re-runs the idempotent DELETE; the LB is really gone only now.
     const r3 = await run(s.t);
     expect(r3.destroyed).toBe(1);
-    edge = (await s.t.query(internal.relayEdges.get, { id: edgeId }))!;
+    edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('destroyed');
     expect(deletes).toEqual(['lb-1', 'lb-1']);
     expect(lbs.size).toBe(0);

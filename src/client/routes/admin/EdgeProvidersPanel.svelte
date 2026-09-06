@@ -15,15 +15,15 @@
   import { toast } from 'svelte-sonner';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
-  import { adminRelayProvidersQuery, adminRelayTemplatesQuery } from '../../lib/queries';
+  import { adminEdgeProvidersQuery, adminEdgeTemplatesQuery } from '../../lib/queries';
   import {
-    RELAY_PROVIDER_IDS,
+    EDGE_PROVIDER_IDS,
     RelayIdResponse,
-    RelayInventoryResponse,
+    EdgeInventoryResponse,
     RelayOkResponse,
-    RelayTestCredentialsResponse,
-    type RelayAccountAdmin,
-    type RelayProviderId,
+    EdgeTestCredentialsResponse,
+    type EdgeProviderAccountAdmin,
+    type EdgeProviderId,
   } from '../../../shared/contracts/relays';
   import { formatDateTime } from '../../lib/i18n/format';
   import AdminListState from './AdminListState.svelte';
@@ -33,15 +33,15 @@
    * settings (project/region/zone/network), the qualification gate, and a live
    * inventory pull (load balancers + IPs the account holds, unowned ones flagged).
    */
-  const providers = adminRelayProvidersQuery();
-  const templates = adminRelayTemplatesQuery();
+  const providers = adminEdgeProvidersQuery();
+  const templates = adminEdgeTemplatesQuery();
   const qc = useQueryClient();
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'relays'] });
   const onError = (title: string) => (err: unknown) =>
     toast.error(title, { description: apiErrorMessage(err) });
 
   // Settings the adapters need per provider (the server validates the exact shape).
-  const SETTINGS_HINT: Record<RelayProviderId, string> = {
+  const SETTINGS_HINT: Record<EdgeProviderId, string> = {
     gcore: '{ "projectId": 123, "regionId": 45, "networkId": "optional", "subnetId": "optional" }',
     upcloud: '{ "zone": "de-fra1" }',
     scaleway: '{ "accessKey": "SCW…", "projectId": "uuid", "zone": "fr-par-1" }',
@@ -50,7 +50,7 @@
 
   type Draft = {
     id: string | null;
-    provider: RelayProviderId;
+    provider: EdgeProviderId;
     name: string;
     settings: string;
     credentials: Record<string, string>;
@@ -75,7 +75,7 @@
       defaultTemplateId: '',
     };
   }
-  function editDraft(a: RelayAccountAdmin): Draft {
+  function editDraft(a: EdgeProviderAccountAdmin): Draft {
     return {
       id: a.id,
       provider: a.provider,
@@ -113,9 +113,9 @@
         defaultTemplateId: d.defaultTemplateId || null,
       };
       if (d.id)
-        return apiClient.patch(`/api/v1/admin/relays/providers/${d.id}`, body, RelayOkResponse);
+        return apiClient.patch(`/api/v1/admin/relay/providers/${d.id}`, body, RelayOkResponse);
       return apiClient.post(
-        '/api/v1/admin/relays/providers',
+        '/api/v1/admin/relay/providers',
         { ...body, provider: d.provider, name: d.name.trim(), credentials: creds },
         RelayIdResponse,
       );
@@ -129,7 +129,7 @@
   }));
   const remove = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/relays/providers/${id}`, RelayOkResponse),
+      apiClient.delete(`/api/v1/admin/relay/providers/${id}`, RelayOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Account removed');
@@ -142,9 +142,9 @@
   const test = createMutation(() => ({
     mutationFn: (accountId: string) =>
       apiClient.post(
-        '/api/v1/admin/relays/providers/test-credentials',
+        '/api/v1/admin/relay/providers/test-credentials',
         { accountId },
-        RelayTestCredentialsResponse,
+        EdgeTestCredentialsResponse,
       ),
     onSuccess: (r, accountId) => {
       testResult = {
@@ -159,11 +159,7 @@
   }));
   const qualify = createMutation(() => ({
     mutationFn: ({ id, qualified }: { id: string; qualified: boolean }) =>
-      apiClient.post(
-        `/api/v1/admin/relays/providers/${id}/qualify`,
-        { qualified },
-        RelayOkResponse,
-      ),
+      apiClient.post(`/api/v1/admin/relay/providers/${id}/qualify`, { qualified }, RelayOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Qualification updated');
@@ -176,9 +172,9 @@
   const pullInventory = createMutation(() => ({
     mutationFn: (id: string) =>
       apiClient.post(
-        `/api/v1/admin/relays/providers/${id}/inventory/refresh`,
+        `/api/v1/admin/relay/providers/${id}/inventory/refresh`,
         {},
-        RelayInventoryResponse,
+        EdgeInventoryResponse,
       ),
     onSuccess: (r, id) => {
       const inv = r.inventory;
@@ -314,13 +310,13 @@
               type="single"
               value={editor.provider}
               onValueChange={(v) => {
-                editor!.provider = v as RelayProviderId;
-                editor!.settings = SETTINGS_HINT[v as RelayProviderId];
+                editor!.provider = v as EdgeProviderId;
+                editor!.settings = SETTINGS_HINT[v as EdgeProviderId];
               }}
             >
               <Select.Trigger class="mt-1 w-full">{editor.provider}</Select.Trigger>
               <Select.Content
-                >{#each RELAY_PROVIDER_IDS as p (p)}<Select.Item value={p}>{p}</Select.Item
+                >{#each EDGE_PROVIDER_IDS as p (p)}<Select.Item value={p}>{p}</Select.Item
                   >{/each}</Select.Content
               >
             </Select.Root>

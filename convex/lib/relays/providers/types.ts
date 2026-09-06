@@ -16,7 +16,7 @@
  *    and the isolate mutations own all state.
  */
 import type { z } from 'zod';
-import type { RelayProviderId } from '../../relayProviderIds';
+import type { EdgeProviderId } from '../../edgeProviderIds';
 
 // --- per-provider config (credentials + settings merged, as the actions see it) ---
 
@@ -237,11 +237,11 @@ export interface CredentialTestResult {
 
 // --- the adapter -----------------------------------------------------------------------------
 
-export interface RelayProvider<
+export interface EdgeProvider<
   Cfg extends RelayProviderConfig = RelayProviderConfig,
   Tpl = Record<string, unknown>,
 > {
-  id: RelayProviderId;
+  id: EdgeProviderId;
   /** Validates + defaults a template's params (the CMS + provisioning both use it). */
   templateSchema: z.ZodType<Tpl>;
   templateFields: TemplateFieldDescriptor[];

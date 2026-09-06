@@ -39,7 +39,7 @@ export async function resolveRelayAttribution(
 ): Promise<RelayAttribution | null> {
   if (!sub || !sub.backendServerId || !sub.pinnedNode) return null;
   const origins = await db
-    .query('relayOrigins')
+    .query('relays')
     .withIndex('by_node_hostname', (q) => q.eq('nodeHostname', sub.pinnedNode!))
     .collect();
   const origin = origins.find((o) => o.backendServerId === sub.backendServerId);

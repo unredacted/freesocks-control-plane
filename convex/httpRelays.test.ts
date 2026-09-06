@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * The relay admin surface (`/api/v1/admin/relays/*`): auth + scopes, the IaC
+ * The relay admin surface (`/api/v1/admin/relay/*`): auth + scopes, the IaC
  * by-slug upsert round trip (origin → slot → adopted edge → publishedEndpoints),
  * account creation without secret echo, the render preview, config patches,
  * and the sealing policy coverage of every verb under the prefix.
@@ -20,9 +20,9 @@ import {
 import { serializePublicKey, serverKeyPairFromSeed } from '../src/shared/crypto/hpke';
 import { clientOpenResponse, clientPrepareRequest } from '../src/shared/crypto/channel';
 import {
-  RelayAccountsResponse,
+  EdgeProviderAccountsResponse,
   RelayConfigView,
-  RelayOriginBySlugResponse,
+  RelayBySlugResponse,
   RelayRenderPreviewResponse,
   RelaySummary,
 } from '../src/shared/contracts/relays';
@@ -99,7 +99,7 @@ async function seed() {
     body?: unknown,
     headers: Record<string, string> = {},
   ) =>
-    t.fetch(`/api/v1/admin/relays/${path}`, {
+    t.fetch(`/api/v1/admin/relay/${path}`, {
       method,
       headers: { cookie, 'content-type': 'application/json', ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -117,19 +117,19 @@ const SLOT = {
 
 describe('relay admin routes', () => {
   test('sealing policy: every verb under the prefix is covered (GET reveal, POST both, PATCH/PUT seal, DELETE plain)', () => {
-    const p = '/api/v1/admin/relays/origins/by-slug/x';
+    const p = '/api/v1/admin/relay/relays/by-slug/x';
     expect(routePolicy(p, 'GET')).toEqual({ request: 'plain', response: 'reveal' });
-    expect(routePolicy('/api/v1/admin/relays/render/preview', 'POST')).toEqual({
+    expect(routePolicy('/api/v1/admin/relay/render/preview', 'POST')).toEqual({
       request: 'seal',
       response: 'reveal',
     });
-    expect(routePolicy('/api/v1/admin/relays/config', 'PATCH')).toEqual({
+    expect(routePolicy('/api/v1/admin/relay/config', 'PATCH')).toEqual({
       request: 'seal',
       response: 'plain',
     });
     expect(routePolicy(p, 'PUT')).toEqual({ request: 'seal', response: 'plain' });
     expect(routePolicy(p, 'DELETE')).toBeUndefined();
-    expect(routePolicy('/api/v1/admin/relays/summary', 'GET')).toEqual({
+    expect(routePolicy('/api/v1/admin/relay/summary', 'GET')).toEqual({
       request: 'plain',
       response: 'reveal',
     });
@@ -137,25 +137,25 @@ describe('relay admin routes', () => {
 
   test('auth: anonymous 401; a servers:read token reads but cannot write; config needs the settings scope', async () => {
     const { t } = await seed();
-    const anon = await t.fetch('/api/v1/admin/relays/summary');
+    const anon = await t.fetch('/api/v1/admin/relay/summary');
     expect(anon.status).toBe(401);
     const reader = await token(t, ['admin:servers:read']);
-    const ok = await t.fetch('/api/v1/admin/relays/summary', {
+    const ok = await t.fetch('/api/v1/admin/relay/summary', {
       headers: { authorization: `Bearer ${reader}` },
     });
     expect(ok.status).toBe(200);
-    const denied = await t.fetch('/api/v1/admin/relays/origins', {
+    const denied = await t.fetch('/api/v1/admin/relay/relays', {
       method: 'POST',
       headers: { authorization: `Bearer ${reader}`, 'content-type': 'application/json' },
       body: JSON.stringify({ slug: 'x' }),
     });
     expect([401, 403]).toContain(denied.status);
-    const cfgDenied = await t.fetch('/api/v1/admin/relays/config', {
+    const cfgDenied = await t.fetch('/api/v1/admin/relay/config', {
       headers: { authorization: `Bearer ${reader}` },
     });
     expect([401, 403]).toContain(cfgDenied.status);
     const settings = await token(t, ['admin:settings:read']);
-    const cfgOk = await t.fetch('/api/v1/admin/relays/config', {
+    const cfgOk = await t.fetch('/api/v1/admin/relay/config', {
       headers: { authorization: `Bearer ${settings}` },
     });
     expect(cfgOk.status).toBe(200);
@@ -171,12 +171,12 @@ describe('relay admin routes', () => {
       credentials: { token: 'SECRET_TOKEN_VALUE' },
     });
     expect(acct.status).toBe(200);
-    const list = RelayAccountsResponse.parse(await (await call('GET', 'providers')).json());
+    const list = EdgeProviderAccountsResponse.parse(await (await call('GET', 'providers')).json());
     expect(list.accounts).toHaveLength(1);
     expect(list.accounts[0].credentialsSet).toEqual({ token: true });
     expect(list.credentialFields.upcloud).toEqual(['token']);
     expect(JSON.stringify(list)).not.toContain('SECRET_TOKEN_VALUE');
-    const prof = await call('POST', 'profiles', {
+    const prof = await call('POST', 'reality-profiles', {
       slug: 'prof-u',
       name: 'Profile U',
       provider: 'upcloud',
@@ -186,24 +186,24 @@ describe('relay admin routes', () => {
     expect(prof.status).toBe(200);
 
     // Origin by slug (idempotent), then the slot by key.
-    const put1 = await call('PUT', 'origins/by-slug/node-one', {
+    const put1 = await call('PUT', 'relays/by-slug/node-one', {
       backendServerSlug: 'panel-a',
       nodeHostname: 'node-one',
       originAddress: '203.0.113.10',
     });
     expect(put1.status).toBe(200);
-    const view1 = RelayOriginBySlugResponse.parse(await put1.json());
-    expect(view1.origin.slug).toBe('node-one');
+    const view1 = RelayBySlugResponse.parse(await put1.json());
+    expect(view1.relay.slug).toBe('node-one');
     expect(view1.publishedEndpoints).toEqual([]);
-    const slot = await call('PUT', 'origins/by-slug/node-one/slots/u', SLOT);
+    const slot = await call('PUT', 'relays/by-slug/node-one/slots/u', SLOT);
     expect(slot.status).toBe(200);
     expect(await slot.json()).toMatchObject({
       created: true,
       templateHostRemark: 'node-one-relay-u',
     });
-    const slotAgain = await call('PUT', 'origins/by-slug/node-one/slots/u', SLOT);
+    const slotAgain = await call('PUT', 'relays/by-slug/node-one/slots/u', SLOT);
     expect(await slotAgain.json()).toMatchObject({ created: false });
-    const slotGet = await call('GET', 'origins/by-slug/node-one/slots/u');
+    const slotGet = await call('GET', 'relays/by-slug/node-one/slots/u');
     expect(slotGet.status).toBe(200);
     expect(await slotGet.json()).toMatchObject({
       slotKey: 'u',
@@ -212,11 +212,11 @@ describe('relay admin routes', () => {
     });
 
     // Adopt the hand-made edge and publish it at index 0.
-    const view2 = RelayOriginBySlugResponse.parse(
-      await (await call('GET', 'origins/by-slug/node-one')).json(),
+    const view2 = RelayBySlugResponse.parse(
+      await (await call('GET', 'relays/by-slug/node-one')).json(),
     );
     const slotId = view2.slots[0].id;
-    const adopt = await call('POST', `origins/${view2.origin.id}/adopt`, {
+    const adopt = await call('POST', `relays/${view2.relay.id}/adopt`, {
       slotId,
       ipv4: '198.51.100.7',
       ipv6: '2001:db8::7',
@@ -224,8 +224,8 @@ describe('relay admin routes', () => {
     });
     expect(adopt.status).toBe(200);
     expect(await adopt.json()).toMatchObject({ poolIndex: 0 });
-    const view3 = RelayOriginBySlugResponse.parse(
-      await (await call('GET', 'origins/by-slug/node-one')).json(),
+    const view3 = RelayBySlugResponse.parse(
+      await (await call('GET', 'relays/by-slug/node-one')).json(),
     );
     expect(view3.publishedEndpoints).toHaveLength(1);
     expect(view3.publishedEndpoints[0]).toMatchObject({
@@ -237,22 +237,22 @@ describe('relay admin routes', () => {
       activeServerNames: ['a.example', 'b.example'],
     });
     // Edges + summary + endpoints views.
-    const edges = await (await call('GET', `edges?originId=${view2.origin.id}`)).json();
+    const edges = await (await call('GET', `edges?relayId=${view2.relay.id}`)).json();
     expect(edges).toHaveLength(1);
     expect(edges[0]).toMatchObject({ managed: false, publication: 'published', poolIndex: 0 });
     const summary = RelaySummary.parse(await (await call('GET', 'summary')).json());
-    expect(summary.counts).toMatchObject({ origins: 1, published: 1, suspected: 0, rotating: 0 });
-    expect(summary.origins[0].pool[0]).toMatchObject({
+    expect(summary.counts).toMatchObject({ relays: 1, published: 1, suspected: 0, rotating: 0 });
+    expect(summary.relays[0].pool[0]).toMatchObject({
       poolIndex: 0,
       addresses: { v4: '198.51.100.7' },
     });
-    const endpoints = await (await call('GET', `origins/${view2.origin.id}/endpoints`)).json();
+    const endpoints = await (await call('GET', `relays/${view2.relay.id}/endpoints`)).json();
     expect(endpoints.sample.primary).toMatchObject({ edgeId: edges[0].id });
     expect(['a.example', 'b.example']).toContain(endpoints.sample.primary.sni);
 
     // Render preview: per-family synthetic body, the edge replaces the template, never the origin.
     const prev = await call('POST', 'render/preview', {
-      originId: view2.origin.id,
+      relayId: view2.relay.id,
       family: 'v2rayng',
     });
     expect(prev.status).toBe(200);
@@ -265,7 +265,7 @@ describe('relay admin routes', () => {
     expect(await patched.json()).toEqual({ changedKeys: ['render.enabled'] });
     const preview2 = RelayRenderPreviewResponse.parse(
       await (
-        await call('POST', 'render/preview', { originId: view2.origin.id, family: 'v2rayng' })
+        await call('POST', 'render/preview', { relayId: view2.relay.id, family: 'v2rayng' })
       ).json(),
     );
     expect(preview2.applied).toBe(true);
@@ -274,7 +274,7 @@ describe('relay admin routes', () => {
     expect(preview2.body).not.toContain('node-one-relay-u');
     const singbox = RelayRenderPreviewResponse.parse(
       await (
-        await call('POST', 'render/preview', { originId: view2.origin.id, family: 'singbox' })
+        await call('POST', 'render/preview', { relayId: view2.relay.id, family: 'singbox' })
       ).json(),
     );
     expect(singbox.format).toBe('singbox-json');
@@ -283,10 +283,10 @@ describe('relay admin routes', () => {
     ).toBe(true);
 
     // Delete by slug → teardown request; unmanaged edges are forgotten by reconcile.
-    const del = await call('DELETE', 'origins/by-slug/node-one');
+    const del = await call('DELETE', 'relays/by-slug/node-one');
     expect(del.status).toBe(200);
     expect(await del.json()).toMatchObject({ ok: true });
-    const gone = await call('GET', 'origins/by-slug/missing');
+    const gone = await call('GET', 'relays/by-slug/missing');
     expect(gone.status).toBe(404);
   });
 
@@ -325,7 +325,7 @@ describe('relay admin routes', () => {
 
   test('validation errors come back as the JSON envelope, not 500s', async () => {
     const { call } = await seed();
-    const bad = await call('PUT', 'origins/by-slug/node-two', {
+    const bad = await call('PUT', 'relays/by-slug/node-two', {
       backendServerSlug: 'missing',
       nodeHostname: 'node-two',
       originAddress: 'x',
@@ -344,30 +344,30 @@ describe('relay admin routes', () => {
     const kp = await serverKeyPairFromSeed(SERVER_SEED);
     const kid = await kidFromPublicKey(await serializePublicKey(kp.publicKey));
     const { t, call, cookie } = await seed();
-    await call('POST', 'profiles', {
+    await call('POST', 'reality-profiles', {
       slug: 'prof-u',
       name: 'Profile U',
       provider: 'upcloud',
       targetAddress: 'target.example',
       serverNames: ['a.example'],
     });
-    const put = RelayOriginBySlugResponse.parse(
+    const put = RelayBySlugResponse.parse(
       await (
-        await call('PUT', 'origins/by-slug/node-one', {
+        await call('PUT', 'relays/by-slug/node-one', {
           backendServerSlug: 'panel-a',
           nodeHostname: 'node-one',
           originAddress: '203.0.113.10',
         })
       ).json(),
     );
-    const path = '/api/v1/admin/relays/render/preview';
+    const path = '/api/v1/admin/relay/render/preview';
     const prep = await clientPrepareRequest({
       serverPub: kp.publicKey,
       serverKid: kid,
       method: 'POST',
       path,
       policy: routePolicy(path, 'POST')!,
-      bodyObj: { originId: put.origin.id, family: 'v2rayng' },
+      bodyObj: { relayId: put.relay.id, family: 'v2rayng' },
     });
     expect(isSealedWire(prep.body)).toBe(true);
     const res = await t.fetch(path, {

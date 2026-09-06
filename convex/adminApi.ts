@@ -2025,7 +2025,7 @@ export const statusSummary = internalQuery({
     // Relay edges (docs/relays.md): the dashboard mini-card figures, plus the
     // Node runtime the "use node" actions run on (recorded by the reconcile
     // cron; the deploy entrypoint enforces the dependency floor).
-    const relayOrigins = await ctx.db.query('relayOrigins').collect();
+    const relayOrigins = await ctx.db.query('relays').collect();
     let relayRotating = 0;
     for (const o of relayOrigins) {
       if (!o.activeRotationId) continue;
@@ -2035,7 +2035,7 @@ export const statusSummary = internalQuery({
       }
     }
     const relays = {
-      origins: relayOrigins.length,
+      total: relayOrigins.length,
       published: relayOrigins.reduce(
         (n, o) => n + o.publishedEdgeIds.filter((e) => e !== null).length,
         0,

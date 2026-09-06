@@ -54,7 +54,7 @@ const probeResult = v.object({
   error: v.optional(v.string()),
 });
 
-export function mapRunAdmin(r: Doc<'relayProbeRuns'>) {
+export function mapRunAdmin(r: Doc<'probeRuns'>) {
   return {
     id: r._id as string,
     edgeId: r.edgeId as string,
@@ -96,15 +96,15 @@ export function enabledSources(
 async function insertRun(
   ctx: MutationCtx,
   a: {
-    edgeId: Id<'relayEdges'>;
+    edgeId: Id<'edges'>;
     source: ProbeSource;
     target: string;
     ipVersion: 4 | 6;
     trigger: 'cron' | 'manual' | 'detector' | 'qualification';
   },
-): Promise<Id<'relayProbeRuns'>> {
+): Promise<Id<'probeRuns'>> {
   const now = Date.now();
-  const runId = await ctx.db.insert('relayProbeRuns', {
+  const runId = await ctx.db.insert('probeRuns', {
     edgeId: a.edgeId,
     source: a.source,
     target: a.target,
@@ -114,7 +114,7 @@ async function insertRun(
     requestedAt: now,
     results: [],
   });
-  await ctx.scheduler.runAfter(0, internal.relayProbeOps.execute, { runId });
+  await ctx.scheduler.runAfter(0, internal.probeOps.execute, { runId });
   await writeAuditLog(ctx, {
     actorType: 'system',
     action: 'relay.probe.run',
@@ -132,7 +132,7 @@ async function insertRun(
  */
 export const requestProbes = internalMutation({
   args: {
-    edgeId: v.id('relayEdges'),
+    edgeId: v.id('edges'),
     trigger: probeTrigger,
     sources: v.optional(v.array(probeSource)),
   },
@@ -146,7 +146,7 @@ export const requestProbes = internalMutation({
     const secrets = await resolveRelaySecrets(ctx.db);
     const use = sources ?? enabledSources(cfg, secrets);
     const port = edge.listeners[0]?.edgePort ?? 443;
-    const runIds: Id<'relayProbeRuns'>[] = [];
+    const runIds: Id<'probeRuns'>[] = [];
     for (const source of use) {
       if (edge.addresses.v4) {
         runIds.push(
@@ -176,7 +176,7 @@ export const requestProbes = internalMutation({
 });
 
 export const markRunning = internalMutation({
-  args: { runId: v.id('relayProbeRuns'), externalId: v.optional(v.string()) },
+  args: { runId: v.id('probeRuns'), externalId: v.optional(v.string()) },
   handler: async (ctx, { runId, externalId }) => {
     const run = await ctx.db.get(runId);
     if (!run || run.status !== 'requested') return null;
@@ -186,7 +186,7 @@ export const markRunning = internalMutation({
 });
 
 export const failRun = internalMutation({
-  args: { runId: v.id('relayProbeRuns'), error: v.string(), timeout: v.optional(v.boolean()) },
+  args: { runId: v.id('probeRuns'), error: v.string(), timeout: v.optional(v.boolean()) },
   handler: async (ctx, { runId, error, timeout }) => {
     const run = await ctx.db.get(runId);
     if (!run || run.status === 'finished' || run.status === 'failed' || run.status === 'timeout')
@@ -200,7 +200,7 @@ export const failRun = internalMutation({
 
 /** Record results, roll them up per country for this source, and refresh the edge summary. */
 export const finishRun = internalMutation({
-  args: { runId: v.id('relayProbeRuns'), results: v.array(probeResult) },
+  args: { runId: v.id('probeRuns'), results: v.array(probeResult) },
   handler: async (ctx, { runId, results }) => {
     const run = await ctx.db.get(runId);
     if (!run || run.status === 'finished') return null;
@@ -213,7 +213,7 @@ export const finishRun = internalMutation({
     const byCountry = new Map<string, ProbeResult[]>();
     for (const r of results) byCountry.set(r.country, [...(byCountry.get(r.country) ?? []), r]);
     const existing = await ctx.db
-      .query('relayEdgeReachability')
+      .query('probeReachability')
       .withIndex('by_edge_country', (q) => q.eq('edgeId', run.edgeId))
       .collect();
     for (const [country, rs] of byCountry) {
@@ -249,7 +249,7 @@ export const finishRun = internalMutation({
       };
       if (row) await ctx.db.patch(row._id, patch);
       else
-        await ctx.db.insert('relayEdgeReachability', {
+        await ctx.db.insert('probeReachability', {
           edgeId: run.edgeId,
           country,
           source: run.source,
@@ -272,9 +272,9 @@ export const finishRun = internalMutation({
 });
 
 /** Cross-source summary per country onto the edge row (what the detector + admin read). */
-async function refreshEdgeSummary(ctx: MutationCtx, edgeId: Id<'relayEdges'>, now: number) {
+async function refreshEdgeSummary(ctx: MutationCtx, edgeId: Id<'edges'>, now: number) {
   const rows = await ctx.db
-    .query('relayEdgeReachability')
+    .query('probeReachability')
     .withIndex('by_edge_country', (q) => q.eq('edgeId', edgeId))
     .collect();
   const staleBefore = now - 6 * 60 * MIN;
@@ -330,7 +330,7 @@ function internalVerdict(perSource: SourceSummary[]): Verdict {
 // --- reads -------------------------------------------------------------------------------------
 
 export const runContext = internalQuery({
-  args: { runId: v.id('relayProbeRuns') },
+  args: { runId: v.id('probeRuns') },
   handler: async (ctx, { runId }) => {
     const run = await ctx.db.get(runId);
     if (!run) return null;
@@ -341,11 +341,11 @@ export const runContext = internalQuery({
 });
 
 export const listByEdge = internalQuery({
-  args: { edgeId: v.id('relayEdges'), take: v.optional(v.number()) },
+  args: { edgeId: v.id('edges'), take: v.optional(v.number()) },
   handler: async (ctx, { edgeId, take }) =>
     (
       await ctx.db
-        .query('relayProbeRuns')
+        .query('probeRuns')
         .withIndex('by_edge_requested', (q) => q.eq('edgeId', edgeId))
         .order('desc')
         .take(Math.min(take ?? 20, 100))
@@ -353,12 +353,12 @@ export const listByEdge = internalQuery({
 });
 
 /** Per-edge, per-country verdict matrix for one origin's live edges (admin). */
-export const reachabilityForOrigin = internalQuery({
-  args: { originId: v.id('relayOrigins') },
-  handler: async (ctx, { originId }) => {
+export const reachabilityForRelay = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }) => {
     const edges = await ctx.db
-      .query('relayEdges')
-      .withIndex('by_origin_status', (q) => q.eq('originId', originId))
+      .query('edges')
+      .withIndex('by_relay_status', (q) => q.eq('relayId', relayId))
       .collect();
     const cfg = await resolveRelayConfig(ctx.db);
     return {
@@ -389,10 +389,10 @@ export const due = internalQuery({
     const cfg = await resolveRelayConfig(ctx.db);
     const secrets = await resolveRelaySecrets(ctx.db);
     const origins = await ctx.db
-      .query('relayOrigins')
+      .query('relays')
       .withIndex('by_enabled', (q) => q.eq('enabled', true))
       .collect();
-    const dueEdges: Array<{ edgeId: Id<'relayEdges'>; suspected: boolean }> = [];
+    const dueEdges: Array<{ edgeId: Id<'edges'>; suspected: boolean }> = [];
     let spentThisHour = 0;
     const hourStart = now - 60 * MIN;
     for (const origin of origins) {
@@ -404,7 +404,7 @@ export const due = internalQuery({
         const edge = await ctx.db.get(edgeId);
         if (!edge || edge.status !== 'active' || !edge.addresses.v4) continue;
         const recent = await ctx.db
-          .query('relayProbeRuns')
+          .query('probeRuns')
           .withIndex('by_edge_requested', (q) =>
             q.eq('edgeId', edgeId).gte('requestedAt', hourStart),
           )
@@ -433,7 +433,7 @@ export const sweepStuck = internalMutation({
     let n = 0;
     for (const status of ['requested', 'running'] as const) {
       const rows = await ctx.db
-        .query('relayProbeRuns')
+        .query('probeRuns')
         .withIndex('by_status', (q) => q.eq('status', status))
         .take(200);
       for (const r of rows) {
@@ -462,7 +462,7 @@ export const sweepFinished = internalMutation({
     let removed = 0;
     for (const status of ['finished', 'failed', 'timeout'] as const) {
       const rows = await ctx.db
-        .query('relayProbeRuns')
+        .query('probeRuns')
         .withIndex('by_status_requested', (q) => q.eq('status', status).lt('requestedAt', cutoff))
         .take(page);
       for (const r of rows) await ctx.db.delete(r._id);
@@ -470,7 +470,7 @@ export const sweepFinished = internalMutation({
       if (rows.length === page) {
         const n = rounds ?? 0;
         if (n < MAX_SWEEP_ROUNDS)
-          await ctx.scheduler.runAfter(0, internal.relayProbes.sweepFinished, {
+          await ctx.scheduler.runAfter(0, internal.probes.sweepFinished, {
             now,
             limit: page,
             rounds: n + 1,
@@ -488,8 +488,8 @@ export const run = internalAction({
   handler: async (ctx): Promise<{ requested: number; skipped: number; timedOut: number }> =>
     runWithCronOutcome(ctx, 'relay-probe', async () => {
       const now = Date.now();
-      const { timedOut } = await ctx.runMutation(internal.relayProbes.sweepStuck, { now });
-      const plan = await ctx.runQuery(internal.relayProbes.due, { now });
+      const { timedOut } = await ctx.runMutation(internal.probes.sweepStuck, { now });
+      const plan = await ctx.runQuery(internal.probes.due, { now });
       if (!plan.enabled || plan.sources.length === 0) return { requested: 0, skipped: 0, timedOut };
       let spent = plan.spentThisHour;
       let requested = 0;
@@ -501,7 +501,7 @@ export const run = internalAction({
           skipped++;
           continue;
         }
-        const res = await ctx.runMutation(internal.relayProbes.requestProbes, {
+        const res = await ctx.runMutation(internal.probes.requestProbes, {
           edgeId: d.edgeId,
           trigger: 'cron',
           sources: plan.sources,

@@ -27,11 +27,11 @@ import { applyRelayRender } from './lib/relays/renderPipeline';
 import { effectiveRule } from './lib/relays/render';
 import { publishedCount } from './lib/relays/pool';
 import { isTerminalPhase, progressPercent } from './lib/relays/rotation';
-import { mapOriginAdmin } from './relayOrigins';
+import { mapRelayAdmin } from './relays';
 import { mapSlotAdmin } from './relaySlots';
-import { mapEdgeAdmin } from './relayEdges';
+import { mapEdgeAdmin } from './edges';
 import { publishedEdgesOf } from './relayRender';
-import { RELAY_CREDENTIAL_FIELDS } from './lib/relays/accountSettings';
+import { EDGE_CREDENTIAL_FIELDS } from './lib/relays/accountSettings';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 
@@ -40,12 +40,12 @@ const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 export const summary = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const origins = (await ctx.db.query('relayOrigins').collect()).sort((a, b) =>
+    const origins = (await ctx.db.query('relays').collect()).sort((a, b) =>
       a.slug.localeCompare(b.slug),
     );
     const out = [];
     const counts = {
-      origins: origins.length,
+      relays: origins.length,
       published: 0,
       suspected: 0,
       rotating: 0,
@@ -55,8 +55,8 @@ export const summary = internalQuery({
     };
     for (const o of origins) {
       const edges = await ctx.db
-        .query('relayEdges')
-        .withIndex('by_origin_status', (q) => q.eq('originId', o._id))
+        .query('edges')
+        .withIndex('by_relay_status', (q) => q.eq('relayId', o._id))
         .collect();
       const pool = [];
       for (let i = 0; i < o.publishedEdgeIds.length; i++) {
@@ -107,7 +107,7 @@ export const summary = internalQuery({
         }
       }
       out.push({
-        origin: mapOriginAdmin(o),
+        relay: mapRelayAdmin(o),
         pool,
         standbys: edges.filter((e) => e.status === 'active' && e.publication === 'unpublished')
           .length,
@@ -116,7 +116,7 @@ export const summary = internalQuery({
         rotation,
       });
     }
-    return { counts, origins: out, generatedAt: new Date().toISOString() };
+    return { counts, relays: out, generatedAt: new Date().toISOString() };
   },
 });
 
@@ -124,7 +124,7 @@ export const summary = internalQuery({
 export const dashboardCounts = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const origins = await ctx.db.query('relayOrigins').collect();
+    const origins = await ctx.db.query('relays').collect();
     let published = 0;
     let suspected = 0;
     let quarantined = 0;
@@ -138,7 +138,7 @@ export const dashboardCounts = internalQuery({
         if (r && !isTerminalPhase(r.phase)) rotating++;
       }
     }
-    return { origins: origins.length, published, suspected, quarantined, rotating };
+    return { relays: origins.length, published, suspected, quarantined, rotating };
   },
 });
 
@@ -198,12 +198,12 @@ export const patchConfig = internalMutation({
 
 async function publishedEndpoints(
   ctx: { db: import('./_generated/server').DatabaseReader },
-  origin: Doc<'relayOrigins'>,
+  origin: Doc<'relays'>,
 ) {
   const { published } = await publishedEdgesOf(ctx, origin);
   const slots = await ctx.db
-    .query('relayOriginSlots')
-    .withIndex('by_origin', (q) => q.eq('originId', origin._id))
+    .query('relaySlots')
+    .withIndex('by_relay', (q) => q.eq('relayId', origin._id))
     .collect();
   return published.map((p) => ({
     poolIndex: p.poolIndex,
@@ -217,22 +217,22 @@ async function publishedEndpoints(
   }));
 }
 
-export const originBySlugView = internalQuery({
+export const relayBySlugView = internalQuery({
   args: { slug: v.string() },
   handler: async (ctx, { slug }) => {
     const origin = await ctx.db
-      .query('relayOrigins')
+      .query('relays')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique();
     if (!origin) return null;
     const slots = await ctx.db
-      .query('relayOriginSlots')
-      .withIndex('by_origin', (q) => q.eq('originId', origin._id))
+      .query('relaySlots')
+      .withIndex('by_relay', (q) => q.eq('relayId', origin._id))
       .collect();
     const mapped = [];
     for (const s of slots) mapped.push(mapSlotAdmin(s, await ctx.db.get(s.profileId)));
     return {
-      origin: mapOriginAdmin(origin),
+      relay: mapRelayAdmin(origin),
       slots: mapped.sort((a, b) => a.slotKey.localeCompare(b.slotKey)),
       publishedEndpoints: await publishedEndpoints(ctx, origin),
     };
@@ -240,9 +240,9 @@ export const originBySlugView = internalQuery({
 });
 
 export const endpoints = internalQuery({
-  args: { originId: v.id('relayOrigins') },
-  handler: async (ctx, { originId }) => {
-    const origin = await ctx.db.get(originId);
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }) => {
+    const origin = await ctx.db.get(relayId);
     if (!origin) return null;
     const cfg = await resolveRelayConfig(ctx.db);
     const { published } = await publishedEdgesOf(ctx, origin);
@@ -253,7 +253,7 @@ export const endpoints = internalQuery({
       subscriberLastContentAt: null,
     });
     return {
-      originSlug: origin.slug,
+      relaySlug: origin.slug,
       epoch: origin.publicationEpoch,
       published: await publishedEndpoints(ctx, origin),
       sample: {
@@ -271,13 +271,13 @@ export const endpoints = internalQuery({
 // --- render preview ---------------------------------------------------------------------------------
 
 export const renderPreview = internalQuery({
-  args: { originId: v.id('relayOrigins'), family: v.string(), sampleKey: v.optional(v.string()) },
-  handler: async (ctx, { originId, family, sampleKey }) => {
+  args: { relayId: v.id('relays'), family: v.string(), sampleKey: v.optional(v.string()) },
+  handler: async (ctx, { relayId, family, sampleKey }) => {
     if (!(RENDER_CLIENT_FAMILIES as readonly string[]).includes(family)) {
       throw new ConvexError({ code: 'validation', message: 'unknown client family' });
     }
     const fam = family as RenderClientFamily;
-    const origin = await ctx.db.get(originId);
+    const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const cfg = await resolveRelayConfig(ctx.db);
     const { published, templateRemarks } = await publishedEdgesOf(ctx, origin);
@@ -310,12 +310,12 @@ export const renderPreview = internalQuery({
 // --- edges: detail, live, operator resolutions ---------------------------------------------------------
 
 export const edgeDetail = internalQuery({
-  args: { edgeId: v.id('relayEdges') },
+  args: { edgeId: v.id('edges') },
   handler: async (ctx, { edgeId }) => {
     const e = await ctx.db.get(edgeId);
     if (!e) return null;
     const probes = await ctx.db
-      .query('relayProbeRuns')
+      .query('probeRuns')
       .withIndex('by_edge_requested', (q) => q.eq('edgeId', edgeId))
       .order('desc')
       .take(10);
@@ -334,7 +334,7 @@ export const edgeDetail = internalQuery({
   },
 });
 
-function parseLive(e: Doc<'relayEdges'>) {
+function parseLive(e: Doc<'edges'>) {
   if (!e.liveSnapshot || !e.liveAt) return null;
   try {
     const parsed = JSON.parse(e.liveSnapshot) as { summary?: unknown; raw?: unknown };
@@ -349,7 +349,7 @@ function parseLive(e: Doc<'relayEdges'>) {
 }
 
 export const liveView = internalQuery({
-  args: { edgeId: v.id('relayEdges') },
+  args: { edgeId: v.id('edges') },
   handler: async (ctx, { edgeId }) => {
     const e = await ctx.db.get(edgeId);
     return { live: e ? parseLive(e) : null };
@@ -358,7 +358,7 @@ export const liveView = internalQuery({
 
 export const recordLive = internalMutation({
   args: {
-    edgeId: v.id('relayEdges'),
+    edgeId: v.id('edges'),
     snapshot: v.string(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
@@ -391,7 +391,7 @@ export const recordLive = internalMutation({
  */
 export const resolveOperator = internalMutation({
   args: {
-    edgeId: v.id('relayEdges'),
+    edgeId: v.id('edges'),
     action: v.union(v.literal('destroy'), v.literal('forget'), v.literal('reactivate')),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
@@ -402,7 +402,7 @@ export const resolveOperator = internalMutation({
       throw new ConvexError({ code: 'conflict', message: 'Unpublish the edge first' });
     }
     const now = Date.now();
-    const origin = await ctx.db.get(e.originId);
+    const origin = await ctx.db.get(e.relayId);
     if (action === 'destroy') {
       await ctx.db.patch(edgeId, {
         status: 'destroying',
@@ -450,7 +450,7 @@ export const resolveOperator = internalMutation({
       action: 'relay.edge.delete',
       targetType: 'relay_edge',
       targetId: edgeId,
-      payload: { originSlug: origin?.slug ?? '', edgeId, force: action === 'forget' },
+      payload: { relaySlug: origin?.slug ?? '', edgeId, force: action === 'forget' },
     });
     return { ok: true as const };
   },
@@ -458,7 +458,7 @@ export const resolveOperator = internalMutation({
 
 /** DELETE an edge: refuses while published; unmanaged rows are forgotten, managed ones destroyed. */
 export const deleteEdge = internalMutation({
-  args: { edgeId: v.id('relayEdges'), actorAdminId: v.optional(v.id('adminUsers')) },
+  args: { edgeId: v.id('edges'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { edgeId, actorAdminId }) => {
     const e = await ctx.db.get(edgeId);
     if (!e) return { ok: true as const };
@@ -466,7 +466,7 @@ export const deleteEdge = internalMutation({
       throw new ConvexError({ code: 'conflict', message: 'Unpublish the edge first' });
     }
     const now = Date.now();
-    const origin = await ctx.db.get(e.originId);
+    const origin = await ctx.db.get(e.relayId);
     if (!e.managed || e.status === 'destroyed') {
       await ctx.db.patch(edgeId, {
         status: 'destroyed',
@@ -497,22 +497,22 @@ export const deleteEdge = internalMutation({
       action: 'relay.edge.delete',
       targetType: 'relay_edge',
       targetId: edgeId,
-      payload: { originSlug: origin?.slug ?? '', edgeId, force: false },
+      payload: { relaySlug: origin?.slug ?? '', edgeId, force: false },
     });
     return { ok: true as const };
   },
 });
 
 /** Every published edge of an origin gets a probe round (admin "Probe now"). */
-export const publishedEdgeIds = internalQuery({
-  args: { originId: v.id('relayOrigins') },
-  handler: async (ctx, { originId }): Promise<Id<'relayEdges'>[]> => {
-    const o = await ctx.db.get(originId);
-    return (o?.publishedEdgeIds ?? []).filter((x): x is Id<'relayEdges'> => x !== null);
+export const publishedEdgeIdsOf = internalQuery({
+  args: { relayId: v.id('relays') },
+  handler: async (ctx, { relayId }): Promise<Id<'edges'>[]> => {
+    const o = await ctx.db.get(relayId);
+    return (o?.publishedEdgeIds ?? []).filter((x): x is Id<'edges'> => x !== null);
   },
 });
 
 export const credentialFields = internalQuery({
   args: {},
-  handler: async () => RELAY_CREDENTIAL_FIELDS,
+  handler: async () => EDGE_CREDENTIAL_FIELDS,
 });

@@ -547,13 +547,13 @@ export const AdminStatusSummary = z.object({
   // Relay edges (docs/relays.md): dashboard mini-card figures. Additive default.
   relays: z
     .object({
-      origins: z.number().int().nonnegative(),
+      total: z.number().int().nonnegative(),
       published: z.number().int().nonnegative(),
       suspected: z.number().int().nonnegative(),
       quarantined: z.number().int().nonnegative(),
       rotating: z.number().int().nonnegative(),
     })
-    .default({ origins: 0, published: 0, suspected: 0, quarantined: 0, rotating: 0 }),
+    .default({ total: 0, published: 0, suspected: 0, quarantined: 0, rotating: 0 }),
   // The Node runtime the "use node" actions run on (self-hosted backend image),
   // as last observed by the relay reconcile cron. Additive default.
   runtime: z

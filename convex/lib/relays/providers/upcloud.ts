@@ -20,14 +20,14 @@ import type {
   EdgeDescription,
   EdgeSpec,
   Ledger,
-  RelayProvider,
+  EdgeProvider,
   ResourceStep,
   StepOutcome,
   TemplateFieldDescriptor,
   UpcloudConfig,
 } from './types';
 import { firstResource, metaOf, reverseLiveResources } from './types';
-import { isProviderNotFound, providerFetch, RelayProviderError } from './http';
+import { isProviderNotFound, providerFetch, EdgeProviderError } from './http';
 import { UpcloudTemplate, UPCLOUD_TEMPLATE_FIELDS, type UpcloudTemplateParams } from './templates';
 
 const BASE = 'https://api.upcloud.com/1.3';
@@ -212,7 +212,7 @@ function getLb(cfg: UpcloudConfig, step: string, uuid: string) {
 
 // --- the adapter -------------------------------------------------------------------------
 
-export const upcloudProvider: RelayProvider<UpcloudConfig, UpcloudTemplateParams> = {
+export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams> = {
   id: 'upcloud',
   templateSchema: UpcloudTemplate,
   templateFields: UPCLOUD_TEMPLATE_FIELDS,
@@ -226,7 +226,7 @@ export const upcloudProvider: RelayProvider<UpcloudConfig, UpcloudTemplateParams
       return {
         ok: false,
         code:
-          e instanceof RelayProviderError
+          e instanceof EdgeProviderError
             ? (e.meta.code ?? String(e.meta.status ?? 'error'))
             : 'error',
       };
@@ -292,7 +292,7 @@ export const upcloudProvider: RelayProvider<UpcloudConfig, UpcloudTemplateParams
         const lb = firstResource(ledger, 'lb');
         const ip = firstResource(ledger, 'floating_ip');
         if (!lb || !ip)
-          throw new RelayProviderError('upcloud attach_ip: missing lb or floating ip', {
+          throw new EdgeProviderError('upcloud attach_ip: missing lb or floating ip', {
             provider: 'upcloud',
             step: step.id,
             code: 'ledger_incomplete',
@@ -312,7 +312,7 @@ export const upcloudProvider: RelayProvider<UpcloudConfig, UpcloudTemplateParams
         return { status: 'done', resources: [], addresses: { v4: ip.resourceId } };
       }
       default:
-        throw new RelayProviderError(`upcloud: unknown step kind ${step.kind}`, {
+        throw new EdgeProviderError(`upcloud: unknown step kind ${step.kind}`, {
           provider: 'upcloud',
           step: step.id,
           code: 'unknown_step',
@@ -401,7 +401,7 @@ export const upcloudProvider: RelayProvider<UpcloudConfig, UpcloudTemplateParams
   async inspect(cfg, ledger) {
     const lb = firstResource(ledger, 'lb');
     if (!lb)
-      throw new RelayProviderError('upcloud inspect: no lb in ledger', {
+      throw new EdgeProviderError('upcloud inspect: no lb in ledger', {
         provider: 'upcloud',
         step: 'inspect',
         code: 'no_lb',

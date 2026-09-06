@@ -43,18 +43,18 @@ function parseTarget(target: string, ipVersion: 4 | 6): ProbeTarget {
   return { address: m[1], port: Number(m[2]), ipVersion };
 }
 
-async function finish(ctx: ActionCtx, runId: Id<'relayProbeRuns'>, results: ProbeResult[]) {
-  await ctx.runMutation(internal.relayProbes.finishRun, { runId, results });
+async function finish(ctx: ActionCtx, runId: Id<'probeRuns'>, results: ProbeResult[]) {
+  await ctx.runMutation(internal.probes.finishRun, { runId, results });
 }
 
-async function fail(ctx: ActionCtx, runId: Id<'relayProbeRuns'>, err: unknown, timeout = false) {
-  await ctx.runMutation(internal.relayProbes.failRun, { runId, error: shortError(err), timeout });
+async function fail(ctx: ActionCtx, runId: Id<'probeRuns'>, err: unknown, timeout = false) {
+  await ctx.runMutation(internal.probes.failRun, { runId, error: shortError(err), timeout });
 }
 
 export const execute = internalAction({
-  args: { runId: v.id('relayProbeRuns') },
+  args: { runId: v.id('probeRuns') },
   handler: async (ctx, { runId }): Promise<null> => {
-    const c = await ctx.runQuery(internal.relayProbes.runContext, { runId });
+    const c = await ctx.runQuery(internal.probes.runContext, { runId });
     if (!c || c.run.status !== 'requested') return null;
     const { run, cfg, secrets } = c;
     const target = parseTarget(run.target, run.ipVersion);
@@ -66,7 +66,7 @@ export const execute = internalAction({
     try {
       switch (run.source) {
         case 'internal': {
-          await ctx.runMutation(internal.relayProbes.markRunning, { runId });
+          await ctx.runMutation(internal.probes.markRunning, { runId });
           const r = await internalProbe(fetch, target);
           await finish(ctx, runId, [r]);
           return null;
@@ -74,7 +74,7 @@ export const execute = internalAction({
         case 'globalping': {
           const client = globalpingFactory(secrets.globalpingToken);
           const started = await globalpingStart(client, target, opts);
-          await ctx.runMutation(internal.relayProbes.markRunning, {
+          await ctx.runMutation(internal.probes.markRunning, {
             runId,
             externalId: started.externalId,
           });
@@ -93,7 +93,7 @@ export const execute = internalAction({
         case 'checkhost': {
           const nodes = await checkhostNodes(fetch);
           const started = await checkhostStart(fetch, target, opts, nodes);
-          await ctx.runMutation(internal.relayProbes.markRunning, {
+          await ctx.runMutation(internal.probes.markRunning, {
             runId,
             externalId: started.externalId,
           });
@@ -126,7 +126,7 @@ export const execute = internalAction({
             target,
             opts,
           );
-          await ctx.runMutation(internal.relayProbes.markRunning, {
+          await ctx.runMutation(internal.probes.markRunning, {
             runId,
             externalId: JSON.stringify(started.measurements).slice(0, 200),
           });

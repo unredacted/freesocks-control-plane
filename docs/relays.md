@@ -7,7 +7,7 @@ publishes, rotates and observes those edges, and the contract the node role (Ans
 follows. It is provider-neutral on purpose: nothing here says which providers, regions,
 targets or names a given deployment uses.
 
-Admin surface: **Admin → Relay edges** (`/admin/relays`) and `/api/v1/admin/relays/*`.
+Admin surface: **Admin → Relay edges** (`/admin/relays`) and `/api/v1/admin/relay/*`.
 Every request under that prefix is HPKE-sealed by verb class (see [Sealing](#sealing)).
 
 ## Model
@@ -24,9 +24,9 @@ Every request under that prefix is HPKE-sealed by verb class (see [Sealing](#sea
 | Probe run          | `relayProbeRuns`          | One reachability measurement of one edge address from one source.                                                                                            |
 | Reachability       | `relayEdgeReachability`   | Per edge, per country, per source: the last run's vantage counts and verdict.                                                                                |
 
-The supported providers are listed in `src/shared/contracts/relayProviderIds.ts`; each has an
-adapter under `convex/lib/relays/providers/` implementing `RelayProvider`. Generic code never
-branches on a provider id; it reads `RELAY_CAPABILITIES` and the adapter's template schema.
+The supported providers are listed in `src/shared/contracts/edgeProviderIds.ts`; each has an
+adapter under `convex/lib/relays/providers/` implementing `EdgeProvider`. Generic code never
+branches on a provider id; it reads `EDGE_PROVIDER_CAPABILITIES` and the adapter's template schema.
 
 ### Publication
 
@@ -111,7 +111,7 @@ Recovery contract:
   the panel by hand, resolves it keeping either the previous or the current binding.
 
 Live progress: the rotation row carries `events[]` (bounded) and the admin route
-`GET /api/v1/admin/relays/rotations/{id}` returns steps + weighted percent; the CMS polls it every
+`GET /api/v1/admin/relay/rotations/{id}` returns steps + weighted percent; the CMS polls it every
 2 s while the run is not terminal.
 
 ### Reconcile cron (`relay-edge-reconcile`, 5 min)
@@ -120,7 +120,7 @@ Re-kicks stale rotations; settles edges with unknown outcomes by discovery; refr
 health (a published edge the provider no longer has is dropped from the pool with a
 `relay.drift` audit); turns drained / failed / cancelled edges into destroy runs (the attempt
 cap parks an edge as `needs_operator`); publishes standbys into free pool indexes
-(`autoPublishStandby`) or provisions up to `desiredPublished` / `standbyPerOrigin`
+(`autoPublishStandby`) or provisions up to `desiredPublished` / `standbyPerRelay`
 (`autoProvisionToDesired`, off by default); finishes origin deletes.
 
 ## Probes and the block detector
@@ -172,14 +172,14 @@ veto so the operator sees why nothing happened.
 ## Configuration
 
 `relay.*` in `appSettings` (Admin → Relay edges → the config tab; `GET/PATCH
-/api/v1/admin/relays/config`). Ships fully dormant: `enabled=false`, `autoRotate=false`,
+/api/v1/admin/relay/config`). Ships fully dormant: `enabled=false`, `autoRotate=false`,
 `render.enabled=false`, `probe.enabled=false`. Probe credentials are write-only
 (`relay.secret.probe.*`, env fallback `RELAY_PROBE_GLOBALPING_TOKEN` /
 `RELAY_PROBE_RIPEATLAS_KEY`). Defaults and bounds: `convex/lib/relayConfig.ts`.
 
 ## Sealing
 
-Every route under `/api/v1/admin/relays/` carries credentials, addresses, provider handles or
+Every route under `/api/v1/admin/relay/` carries credentials, addresses, provider handles or
 live LB data, so the whole prefix is sealed by verb in `src/shared/crypto/envelope.ts`: GET
 reveals the response to the caller's ephemeral key, POST seals the request AND reveals the
 response (the response ephemeral rides inside the sealed body), PATCH/PUT seal the request,
@@ -191,23 +191,23 @@ backend servers. `convex/httpRelays.test.ts` pins the policy and a seal-both rou
 The role deploys, per relay node and per camouflage profile, one origin inbound and one
 template Host, and registers both with FCP using an `fsv1_` token with `admin:servers:write`:
 
-1. `PUT /api/v1/admin/relays/origins/by-slug/{hostname}` with
+1. `PUT /api/v1/admin/relay/relays/by-slug/{hostname}` with
    `{ backendServerSlug, nodeHostname, originAddress, locationCode?, modeSlugs? }`
    (idempotent; never flips `autoRotate`). The response carries `publishedEndpoints`. One origin
    per (backend server, node) is enforced (`relay.node_already_bound`), and `originAddress`
    cannot change while the origin has live edges (`relay.origin_address_locked`): edges carry
    the address in their listener members, so a moved node means draining or destroying its
    edges first (or registering a new origin).
-2. `PUT /api/v1/admin/relays/origins/by-slug/{hostname}/slots/{slotKey}` with
+2. `PUT /api/v1/admin/relay/relays/by-slug/{hostname}/slots/{slotKey}` with
    `{ profileSlug, inboundTag, configProfileUuid, configProfileInboundUuid, originPort }`
    per inbound. Changing the inbound uuid re-binds the slot (the template Host must be recreated).
-3. Poll `GET /api/v1/admin/relays/origins/by-slug/{hostname}` until `publishedEndpoints[0]`
+3. Poll `GET /api/v1/admin/relay/relays/by-slug/{hostname}` until `publishedEndpoints[0]`
    exists, then create ONE template Host per slot: remark `<hostname>-relay-<slotKey>`, address =
    the index-0 IPv4, port = its port, SNI = the first active server name,
    `overrideSniFromAddress:false`.
 4. Re-runs read FCP state first and never rewrite an FCP-owned Host address; server names are
    removed from the node only after their `drainUntil`.
-5. Teardown: `DELETE /api/v1/admin/relays/origins/by-slug/{hostname}`, then Host cleanup by the
+5. Teardown: `DELETE /api/v1/admin/relay/relays/by-slug/{hostname}`, then Host cleanup by the
    `<hostname>-relay-*` remark pattern.
 
 Node pinning understands the relay remark (`convex/lib/nodePinning.ts`), so a node's relay

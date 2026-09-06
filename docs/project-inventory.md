@@ -312,8 +312,8 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   server names with retire/drain), origins with their published pool, adoption, provision /
   rotate / burn with a polled live progress view, edge detail with a live provider snapshot,
   the per-family render preview, and the probe / detector settings. **Every route under
-  `/api/v1/admin/relays/` is HPKE-sealed by verb** (GET reveal, POST seal both legs, PATCH/PUT
-  seal). IaC: `PUT/GET/DELETE …/relays/origins/by-slug/{slug}` (+ `/slots/{slotKey}`), the
+  `/api/v1/admin/relay/` is HPKE-sealed by verb** (GET reveal, POST seal both legs, PATCH/PUT
+  seal). IaC: `PUT/GET/DELETE …/relay/relays/by-slug/{slug}` (+ `/slots/{slotKey}`), the
   response carrying `publishedEndpoints` for the node role. **Dormant by default** (every
   `relay.*` switch ships off).
 
@@ -476,7 +476,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   local-only with a loud warning).
 - **Relay-edge providers + probes** (`convex/lib/relays/providers/*`, `convex/relayProviderOps.ts`;
   `convex/lib/relays/probes/*`, `convex/relayProbeOps.ts`; `docs/relays.md`): TCP load-balancer
-  adapters for the supported providers (`src/shared/contracts/relayProviderIds.ts`), a
+  adapters for the supported providers (`src/shared/contracts/edgeProviderIds.ts`), a
   resource-step ledger with four-outcome discovery and operation claims, and reachability probes
   via the official `globalping` SDK, check-host.net and optional RIPE Atlas. Pinned deps (verified
   against the registry at install): `yaml` 2.9.0 (Clash rendering), `@scaleway/sdk-lb` 2.13.1 +
@@ -622,7 +622,7 @@ Traffic-scaled tables (never `collect()` them without a selective index range): 
 `redemptionCodes`, `referrals`, `rateLimits`, `replayGuard`, the WebAuthn challenge tables.
 Relay tables (`relayOrigins`, `relayEdges`, `relayRotations`, …) are operator-scale and may be
 collected; `relayProbeRuns` grows with the probe budget and `relayOriginSamples` with the 5-min
-detector cadence, so both are read through indexed ranges (`by_edge_requested`, `by_origin_at`)
+detector cadence, so both are read through indexed ranges (`by_edge_requested`, `by_relay_at`)
 and pruned (probe runs by status sweep, samples after 7 days).
 Patterns that are safe: `take(page)` + drain-chain (the sweeps), `paginate()` (admin lists,
 reconciles), `first()` on a compound index (`assertBackendServerUnused`), or a **maintained
