@@ -210,11 +210,16 @@ export const RelayAdmin = z.object({
 });
 export type RelayAdmin = z.infer<typeof RelayAdmin>;
 
+export const SLOT_PROTOCOL_IDS = ['reality', 'tcp'] as const;
+export const SlotProtocol = z.enum(SLOT_PROTOCOL_IDS);
+export type SlotProtocol = z.infer<typeof SlotProtocol>;
+
 export const RelaySlotAdmin = z.object({
   id: z.string(),
   relayId: z.string(),
   slotKey: z.string(),
-  profileId: z.string(),
+  protocol: SlotProtocol,
+  profileId: z.string().nullable(),
   profileSlug: z.string().nullable(),
   provider: EdgeProviderId.nullable(),
   inboundTag: z.string(),
@@ -470,8 +475,10 @@ export const RelayPublishedEndpoint = z.object({
   provider: z.string(),
   slotKey: z.string(),
   slotRemark: z.string(),
+  protocol: SlotProtocol,
   port: z.number(),
   addresses: z.object({ v4: z.string().nullable(), v6: z.string().nullable() }),
+  /** Empty for a non-REALITY slot. */
   activeServerNames: z.array(z.string()),
 });
 export const RelayEndpointsResponse = z.object({
@@ -480,8 +487,8 @@ export const RelayEndpointsResponse = z.object({
   published: z.array(RelayPublishedEndpoint),
   /** An anonymous sample assignment (a fixed sample key), so the operator sees one rendering. */
   sample: z.object({
-    primary: z.object({ edgeId: z.string(), sni: z.string() }).nullable(),
-    backup: z.object({ edgeId: z.string(), sni: z.string() }).nullable(),
+    primary: z.object({ edgeId: z.string(), sni: z.string().nullable() }).nullable(),
+    backup: z.object({ edgeId: z.string(), sni: z.string().nullable() }).nullable(),
   }),
 });
 export type RelayEndpointsResponse = z.infer<typeof RelayEndpointsResponse>;

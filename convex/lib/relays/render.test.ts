@@ -22,6 +22,7 @@ const edgeA: PublishedEdge = {
   slotRemark: TEMPLATE,
   edgePort: 443,
   addresses: { v4: '203.0.113.10', v6: '2001:db8::10' },
+  protocol: 'reality',
   serverNames: [{ sni: 'cdn-a.example', status: 'active' }],
 };
 const edgeB: PublishedEdge = {
@@ -59,9 +60,32 @@ describe('rewriteVlessLine', () => {
     expect(qs.get('flow')).toBe('xtls-rprx-vision');
     expect(qs.get('security')).toBe('reality');
     expect(decodeURIComponent(out.slice(out.indexOf('#') + 1))).toBe('FreeSocks Primary (IPv6)');
+    // Trojan / Shadowsocks lines are rewritable too (passthrough slots); vmess blobs are not.
     expect(
-      rewriteVlessLine('trojan://x@y:1#z', { address: 'a', port: 1, sni: 's', label: 'l' }),
+      rewriteVlessLine('trojan://x@y:1?security=tls&sni=node.example#z', {
+        address: 'a',
+        port: 1,
+        sni: null,
+        label: 'l',
+      }),
+    ).toBe('trojan://x@a:1?security=tls&sni=node.example#l');
+    expect(
+      rewriteVlessLine('vmess://eyJhZGQiOiJ4In0=', { address: 'a', port: 1, sni: 's', label: 'l' }),
     ).toBeNull();
+  });
+
+  test('a null sni (passthrough slot) swaps address/port only and leaves the TLS name alone', () => {
+    const tls = `vless://11111111-2222-3333-4444-555555555555@192.0.2.10:443?encryption=none&security=tls&sni=node.example&type=tcp#${encodeURIComponent(TEMPLATE)}`;
+    const out = rewriteVlessLine(tls, {
+      address: '203.0.113.10',
+      port: 443,
+      sni: null,
+      label: 'P',
+    })!;
+    const qs = new URLSearchParams(out.slice(out.indexOf('?') + 1, out.indexOf('#')));
+    expect(out).toContain('@203.0.113.10:443?');
+    expect(qs.get('sni')).toBe('node.example');
+    expect(qs.get('security')).toBe('tls');
   });
 });
 
@@ -109,6 +133,46 @@ describe('link-list rendering', () => {
     // Credentials preserved byte-for-byte.
     expect(primary).toContain('11111111-2222-3333-4444-555555555555@');
     expect(primary).toContain('pbk=PUBKEY_BASE64');
+  });
+
+  test('a tcp passthrough slot renders address/port and keeps the template SNI in every format', () => {
+    const tcpTemplate = `vless://11111111-2222-3333-4444-555555555555@192.0.2.10:443?encryption=none&security=tls&sni=node.example&type=tcp#${encodeURIComponent(TEMPLATE)}`;
+    const tcpEdge: PublishedEdge = { ...edgeA, protocol: 'tcp', serverNames: [] };
+    const tcpAssigned = {
+      primary: { role: 'primary' as const, edge: tcpEdge, sni: null },
+      backup: null,
+    };
+    const links = renderRelayEndpoints({
+      body: tcpTemplate,
+      templateRemarks: [TEMPLATE],
+      assigned: tcpAssigned,
+      rule: linksRule,
+    });
+    expect(links.applied).toBe(true);
+    const line = links.body.split('\n')[0];
+    expect(line).toContain('@203.0.113.10:443?');
+    expect(line).toContain('sni=node.example');
+    const sb = renderRelayEndpoints({
+      body: JSON.stringify({
+        outbounds: [
+          {
+            type: 'vless',
+            tag: TEMPLATE,
+            server: '192.0.2.10',
+            server_port: 443,
+            tls: { enabled: true, server_name: 'node.example' },
+          },
+          { type: 'selector', tag: 'proxy', outbounds: [TEMPLATE] },
+        ],
+      }),
+      templateRemarks: [TEMPLATE],
+      assigned: tcpAssigned,
+      rule: autoRule,
+    });
+    expect(sb.applied).toBe(true);
+    const doc = JSON.parse(sb.body) as { outbounds: Array<Record<string, unknown>> };
+    const emitted = doc.outbounds.find((o) => o.server === '203.0.113.10')!;
+    expect((emitted.tls as { server_name: string }).server_name).toBe('node.example');
   });
 
   test('base64-wrapped list stays base64 and renders identically for the same input', () => {

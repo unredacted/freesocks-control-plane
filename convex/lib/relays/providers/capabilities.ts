@@ -14,6 +14,8 @@ export interface EdgeProviderCapabilities {
   needsPrivateNetwork: boolean;
   /** The public side can carry an IPv6 address. */
   ipv6: boolean;
+  /** UDP listeners are supported (none of the adapters implement them yet). */
+  udp: boolean;
   /** Client idle timeouts are template-configurable. */
   idleTimeoutConfigurable: boolean;
   /** Typical wall clock from create to active, for the poll budget. */
@@ -28,6 +30,7 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     asyncDelete: true,
     needsPrivateNetwork: false,
     ipv6: true,
+    udp: false,
     idleTimeoutConfigurable: true,
     typicalProvisionMs: 2 * MIN,
   },
@@ -36,6 +39,7 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     asyncDelete: false,
     needsPrivateNetwork: false,
     ipv6: false,
+    udp: false,
     idleTimeoutConfigurable: true,
     typicalProvisionMs: 5 * MIN,
   },
@@ -44,6 +48,7 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     asyncDelete: true,
     needsPrivateNetwork: false,
     ipv6: true,
+    udp: false,
     idleTimeoutConfigurable: true,
     typicalProvisionMs: 3 * MIN,
   },
@@ -52,6 +57,7 @@ export const EDGE_PROVIDER_CAPABILITIES: Record<EdgeProviderId, EdgeProviderCapa
     asyncDelete: true,
     needsPrivateNetwork: true,
     ipv6: false,
+    udp: false,
     idleTimeoutConfigurable: true,
     typicalProvisionMs: 10 * MIN,
   },

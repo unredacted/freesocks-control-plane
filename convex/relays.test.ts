@@ -408,4 +408,47 @@ describe('relayOrigins + slots + profiles', () => {
     });
     expect(await epoch()).toBe(e0 + 4);
   });
+
+  test('a tcp passthrough slot needs no profile and publishes without one; a REALITY slot without profileSlug is refused', async () => {
+    const { t, relayId, slotId } = await seed();
+    await expect(
+      t.mutation(internal.relaySlots.upsert, {
+        relayId,
+        slotKey: 'r2',
+        inboundTag: 'VLESS_TLS',
+        configProfileUuid: '11111111-1111-4111-8111-111111111111',
+        configProfileInboundUuid: '44444444-4444-4444-8444-444444444444',
+        originPort: 8443,
+      }),
+    ).rejects.toThrow(/profileSlug/);
+    const tcp = await t.mutation(internal.relaySlots.upsert, {
+      relayId,
+      slotKey: 't',
+      protocol: 'tcp',
+      inboundTag: 'TROJAN_TLS',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '44444444-4444-4444-8444-444444444444',
+      originPort: 8443,
+    });
+    const slots = await t.query(internal.relaySlots.listByRelay, { relayId });
+    expect(slots.find((s) => s.slotKey === 't')).toMatchObject({
+      protocol: 'tcp',
+      profileId: null,
+      profileSlug: null,
+      provider: null,
+    });
+    expect(slots.find((s) => s.id === slotId)?.protocol).toBe('reality');
+    const e = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId: tcp.id,
+      ipv4: '198.51.100.7',
+      publish: true,
+    });
+    expect(e.poolIndex).toBe(0);
+    const edge = (await t.query(internal.edges.get, { id: e.edgeId }))!;
+    expect(edge.listeners[0]).toMatchObject({ originPort: 8443, transport: 'tcp' });
+    const view = (await t.query(internal.relayAdmin.endpoints, { relayId }))!;
+    expect(view.published[0]).toMatchObject({ protocol: 'tcp', activeServerNames: [] });
+    expect(view.sample.primary).toEqual({ edgeId: e.edgeId, sni: null });
+  });
 });

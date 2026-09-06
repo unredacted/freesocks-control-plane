@@ -42,8 +42,10 @@ export function renderClash(input: RenderInput): RenderOutput {
     clone.name = ep.label;
     clone.server = ep.address;
     clone.port = ep.port;
-    if ('servername' in clone) clone.servername = ep.sni;
-    if ('sni' in clone) clone.sni = ep.sni;
+    if (ep.sni !== null) {
+      if ('servername' in clone) clone.servername = ep.sni;
+      if ('sni' in clone) clone.sni = ep.sni;
+    }
     emitted.push(clone);
   }
   if (emitted.length === 0)

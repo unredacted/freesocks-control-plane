@@ -13,6 +13,7 @@ import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { resolveRelayConfig, relayMs } from './lib/relayConfig';
 import { isPublicIpLiteral, addressFamily } from './lib/relays/ip';
 import { sameAddress } from './lib/relays/hosts';
+import { PROTOCOL_TRANSPORT, protocolNeedsProfile } from './lib/relays/protocols';
 import { nextFreePoolIndex, withEdgeAt, withoutEdge, publishedCount } from './lib/relays/pool';
 
 type Db = import('./_generated/server').DatabaseReader;
@@ -562,7 +563,7 @@ export const adoptEdge = internalMutation({
     if (a.accountId) {
       accountRow = await ctx.db.get(a.accountId);
       if (!accountRow) throw new ConvexError({ code: 'validation', message: 'unknown account' });
-      const profile = await ctx.db.get(slot.profileId);
+      const profile = slot.profileId ? await ctx.db.get(slot.profileId) : null;
       if (profile && profile.provider !== accountRow.provider)
         throw new ConvexError({
           code: 'validation',
@@ -587,7 +588,12 @@ export const adoptEdge = internalMutation({
         deleteState: 'present' as const,
       })),
       listeners: [
-        { edgePort: port, originAddress: origin.originAddress, originPort: slot.originPort },
+        {
+          edgePort: port,
+          originAddress: origin.originAddress,
+          originPort: slot.originPort,
+          transport: PROTOCOL_TRANSPORT[slot.protocol],
+        },
       ],
       addresses: { v4: a.ipv4, v6: a.ipv6 ?? undefined },
       publication: 'unpublished',
@@ -654,12 +660,16 @@ export async function checkPublishable(
   if (!edge.addresses.v4) return { ok: false, code: 'no_ipv4' };
   const slot = await ctx.db.get(edge.slotId);
   if (!slot || !slot.deployed || slot.retired) return { ok: false, code: 'slot_not_deployed' };
-  const profile = await ctx.db.get(slot.profileId);
-  if (!profile || !profile.enabled) return { ok: false, code: 'profile_disabled' };
-  if (!profile.serverNames.some((s) => s.status === 'active'))
-    return { ok: false, code: 'profile_no_active_sni' };
-  if (edge.provider && profile.provider !== edge.provider)
-    return { ok: false, code: 'provider_mismatch' };
+  if (protocolNeedsProfile(slot.protocol)) {
+    // A REALITY slot publishes only with an enabled profile that still has a
+    // selectable server name, behind the profile's own provider network.
+    const profile = slot.profileId ? await ctx.db.get(slot.profileId) : null;
+    if (!profile || !profile.enabled) return { ok: false, code: 'profile_disabled' };
+    if (!profile.serverNames.some((s) => s.status === 'active'))
+      return { ok: false, code: 'profile_no_active_sni' };
+    if (edge.provider && profile.provider !== edge.provider)
+      return { ok: false, code: 'provider_mismatch' };
+  }
   if (requireHealth && edge.managed && edge.health !== 'online')
     return { ok: false, code: 'edge_unhealthy' };
   return { ok: true };

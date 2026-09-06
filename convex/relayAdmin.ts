@@ -211,6 +211,7 @@ async function publishedEndpoints(
     provider: p.provider,
     slotKey: slots.find((s) => (s._id as string) === p.slotId)?.slotKey ?? '',
     slotRemark: p.slotRemark,
+    protocol: p.protocol,
     port: p.edgePort,
     addresses: { v4: p.addresses.v4 ?? null, v6: p.addresses.v6 ?? null },
     activeServerNames: p.serverNames.filter((s) => s.status === 'active').map((s) => s.sni),
@@ -230,7 +231,8 @@ export const relayBySlugView = internalQuery({
       .withIndex('by_relay', (q) => q.eq('relayId', origin._id))
       .collect();
     const mapped = [];
-    for (const s of slots) mapped.push(mapSlotAdmin(s, await ctx.db.get(s.profileId)));
+    for (const s of slots)
+      mapped.push(mapSlotAdmin(s, s.profileId ? await ctx.db.get(s.profileId) : null));
     return {
       relay: mapRelayAdmin(origin),
       slots: mapped.sort((a, b) => a.slotKey.localeCompare(b.slotKey)),

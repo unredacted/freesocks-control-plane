@@ -22,6 +22,7 @@ import {
 import { effectiveRule, renderEntries } from './lib/relays/render';
 import { assignEndpoints } from './lib/relays/assignment';
 import type { PublishedEdge } from './lib/relays/assignment';
+import { protocolNeedsProfile } from './lib/relays/protocols';
 import type { RelayRenderContext } from './lib/relays/renderPipeline';
 
 const familyValidator = v.union(
@@ -75,22 +76,27 @@ export async function publishedEdgesOf(
     if (!edge.addresses.v4 && !edge.addresses.v6) continue;
     const slot = slots.find((s) => s._id === edge.slotId);
     if (!slot || slot.retired || !slot.deployed) continue;
-    const profile = await ctx.db.get(slot.profileId);
-    if (!profile || !profile.enabled) continue;
+    // A REALITY slot renders only with an enabled profile; a passthrough slot has none.
+    const profile = slot.profileId ? await ctx.db.get(slot.profileId) : null;
+    if (protocolNeedsProfile(slot.protocol) && (!profile || !profile.enabled)) continue;
     published.push({
       edgeId: edge._id,
       poolIndex: edge.poolIndex ?? i,
       provider: edge.provider ?? 'adopted',
       slotId: slot._id,
       slotRemark: slot.templateHostRemark,
+      protocol: slot.protocol,
       edgePort: edge.listeners[0]?.edgePort ?? 443,
       addresses: { v4: edge.addresses.v4, v6: edge.addresses.v6 },
-      serverNames: profile.serverNames.map((s) => ({
-        sni: s.sni,
-        status: s.status,
-        retiredAt: s.retiredAt,
-        drainUntil: s.drainUntil,
-      })),
+      serverNames:
+        profile && protocolNeedsProfile(slot.protocol)
+          ? profile.serverNames.map((s) => ({
+              sni: s.sni,
+              status: s.status,
+              retiredAt: s.retiredAt,
+              drainUntil: s.drainUntil,
+            }))
+          : [],
     });
   }
   return { published, templateRemarks };

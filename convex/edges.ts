@@ -216,7 +216,12 @@ export interface PlannedEdgeInput {
   accountId: Id<'edgeProviderAccounts'>;
   templateId?: Id<'edgeTemplates'> | null;
   templateHash: string;
-  listeners: Array<{ edgePort: number; originAddress: string; originPort: number }>;
+  listeners: Array<{
+    edgePort: number;
+    originAddress: string;
+    originPort: number;
+    transport?: 'tcp' | 'udp';
+  }>;
   steps: Array<{
     id: string;
     kind: string;
@@ -288,7 +293,12 @@ export const insertPlanned = internalMutation({
     templateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
     templateHash: v.string(),
     listeners: v.array(
-      v.object({ edgePort: v.number(), originAddress: v.string(), originPort: v.number() }),
+      v.object({
+        edgePort: v.number(),
+        originAddress: v.string(),
+        originPort: v.number(),
+        transport: v.optional(v.union(v.literal('tcp'), v.literal('udp'))),
+      }),
     ),
     steps: v.array(
       v.object({

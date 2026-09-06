@@ -61,10 +61,12 @@ export interface EdgeListenerSpec {
   edgePort: number;
   /** Origin members the listener forwards to (v1: exactly one). */
   members: Array<{ address: string; port: number }>;
+  /** Absent = tcp. Adapters forward TCP; a udp listener is refused unless the capability says otherwise. */
+  transport?: 'tcp' | 'udp';
 }
 
 export interface EdgeSpec {
-  /** Provider-side resource name == relayEdges.name; the discovery key. */
+  /** Provider-side resource name == edges.name; the discovery key. */
   name: string;
   listeners: EdgeListenerSpec[];
 }

@@ -31,15 +31,36 @@ export interface PublishedEdge {
   provider: string;
   slotId: string;
   slotRemark: string;
+  /** The slot's protocol: `reality` selects an SNI per connection, `tcp` rewrites address/port only. */
+  protocol: 'reality' | 'tcp';
   edgePort: number;
   addresses: { v4?: string; v6?: string };
+  /** Empty for a non-REALITY slot. */
   serverNames: AssignableSni[];
 }
 
 export interface AssignedEndpoint {
   role: 'primary' | 'backup';
   edge: PublishedEdge;
-  sni: string;
+  /** The selected server name; null for a slot whose protocol carries none. */
+  sni: string | null;
+}
+
+/** An edge can be assigned when it has an address and, for REALITY, an active server name. */
+export function edgeAssignable(e: PublishedEdge): boolean {
+  if (!e.addresses.v4 && !e.addresses.v6) return false;
+  return e.protocol !== 'reality' || e.serverNames.some((s) => s.status === 'active');
+}
+
+function sniFor(
+  subscriberHash: string,
+  edge: PublishedEdge,
+  now: number,
+  lastContentAt: number | null | undefined,
+): { ok: true; sni: string | null } | { ok: false } {
+  if (edge.protocol !== 'reality') return { ok: true, sni: null };
+  const sni = pickSni(subscriberHash, edge.edgeId, edge.serverNames, now, lastContentAt);
+  return sni ? { ok: true, sni } : { ok: false };
 }
 
 export interface Assignment {
@@ -104,23 +125,13 @@ export function assignEndpoints(
   published: readonly PublishedEdge[],
   opts: AssignOptions,
 ): Assignment {
-  const edges = [...published]
-    .filter(
-      (e) => e.serverNames.some((s) => s.status === 'active') && (e.addresses.v4 || e.addresses.v6),
-    )
-    .sort((a, b) => a.poolIndex - b.poolIndex);
+  const edges = [...published].filter(edgeAssignable).sort((a, b) => a.poolIndex - b.poolIndex);
   if (edges.length === 0) return { primary: null, backup: null };
   const pIdx = poolSeed(subscriberHash) % edges.length;
   const primaryEdge = edges[pIdx];
-  const primarySni = pickSni(
-    subscriberHash,
-    primaryEdge.edgeId,
-    primaryEdge.serverNames,
-    opts.now,
-    opts.subscriberLastContentAt,
-  );
-  if (!primarySni) return { primary: null, backup: null };
-  const primary: AssignedEndpoint = { role: 'primary', edge: primaryEdge, sni: primarySni };
+  const primarySni = sniFor(subscriberHash, primaryEdge, opts.now, opts.subscriberLastContentAt);
+  if (!primarySni.ok) return { primary: null, backup: null };
+  const primary: AssignedEndpoint = { role: 'primary', edge: primaryEdge, sni: primarySni.sni };
   if (!opts.includeBackup || edges.length < 2) return { primary, backup: null };
   // Backup: the next edge by pool order, preferring a different provider.
   const rest = edges.filter((_, i) => i !== pIdx);
@@ -129,15 +140,9 @@ export function assignEndpoints(
     (opts.preferDistinctProviders
       ? ordered.find((e) => e.provider !== primaryEdge.provider)
       : undefined) ?? ordered[0];
-  const backupSni = pickSni(
-    subscriberHash,
-    backupEdge.edgeId,
-    backupEdge.serverNames,
-    opts.now,
-    opts.subscriberLastContentAt,
-  );
+  const backupSni = sniFor(subscriberHash, backupEdge, opts.now, opts.subscriberLastContentAt);
   return {
     primary,
-    backup: backupSni ? { role: 'backup', edge: backupEdge, sni: backupSni } : null,
+    backup: backupSni.ok ? { role: 'backup', edge: backupEdge, sni: backupSni.sni } : null,
   };
 }

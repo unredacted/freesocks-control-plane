@@ -16,7 +16,8 @@ export interface RenderEndpoint {
   address: string;
   family: 'v4' | 'v6';
   port: number;
-  sni: string;
+  /** Selected server name; null when the slot's protocol carries none (address/port swap only). */
+  sni: string | null;
 }
 
 export interface RenderRuleInput {

@@ -168,6 +168,7 @@ describe('edgeProviderAccounts', () => {
       ctx.db.insert('relaySlots', {
         relayId,
         slotKey: 'a1',
+        protocol: 'reality' as const,
         profileId,
         inboundTag: 'T',
         configProfileUuid: 'cp',

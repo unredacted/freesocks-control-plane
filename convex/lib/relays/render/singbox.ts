@@ -49,7 +49,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
     clone.tag = ep.label;
     clone.server = ep.address;
     clone.server_port = ep.port;
-    if (isObj(clone.tls)) clone.tls = { ...clone.tls, server_name: ep.sni };
+    if (ep.sni !== null && isObj(clone.tls)) clone.tls = { ...clone.tls, server_name: ep.sni };
     emitted.push(clone);
   }
   if (emitted.length === 0)

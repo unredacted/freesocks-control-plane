@@ -14,6 +14,7 @@ const edge = (
   slotRemark: 'node-a-relay-a1',
   edgePort: 443,
   addresses: { v4: `203.0.113.${over.poolIndex + 1}` },
+  protocol: 'reality',
   serverNames: snis('a.example', 'b.example', 'c.example'),
   ...over,
 });
@@ -32,7 +33,8 @@ describe('assignEndpoints', () => {
     for (let i = 0; i < 10_000; i++) {
       const a = assignEndpoints(sha(i), edges, opts);
       counts.set(a.primary!.edge.edgeId, (counts.get(a.primary!.edge.edgeId) ?? 0) + 1);
-      sniCounts.set(a.primary!.sni, (sniCounts.get(a.primary!.sni) ?? 0) + 1);
+      const sni = a.primary!.sni!;
+      sniCounts.set(sni, (sniCounts.get(sni) ?? 0) + 1);
       expect(a.backup!.edge.edgeId).not.toBe(a.primary!.edge.edgeId);
       expect(a.backup!.edge.provider).not.toBe(a.primary!.edge.provider);
       // Stable across repeated renders.
@@ -139,5 +141,14 @@ describe('pickSni', () => {
   test('no active names → null', () => {
     expect(pickSni(sha(1), 'e0', [{ sni: 'x', status: 'retired' }], NOW)).toBeNull();
     expect(pickSni(sha(1), 'e0', [], NOW)).toBeNull();
+  });
+
+  test('a tcp passthrough edge is assignable without server names and carries a null sni', () => {
+    const tcp = edge({ edgeId: 't1', poolIndex: 0, protocol: 'tcp', serverNames: [] });
+    const a = assignEndpoints(sha(1), [tcp], opts);
+    expect(a.primary).toMatchObject({ edge: { edgeId: 't1' }, sni: null });
+    // A REALITY edge without an active name stays unassignable.
+    const bare = edge({ edgeId: 'r1', poolIndex: 0, serverNames: [] });
+    expect(assignEndpoints(sha(1), [bare], opts).primary).toBeNull();
   });
 });

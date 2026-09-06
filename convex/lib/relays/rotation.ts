@@ -170,11 +170,20 @@ export function pickAccount(
 export interface SlotCandidate {
   slotId: string;
   slotKey: string;
+  /** The slot's protocol; only `reality` slots need a profile with active names. */
+  protocol: 'reality' | 'tcp';
+  /** Provider the slot is bound to ('' = any provider, e.g. a tcp passthrough slot). */
   provider: string;
   deployed: boolean;
   retired: boolean;
   profileEnabled: boolean;
   activeSnis: number;
+}
+
+/** A slot is publishable when deployed and, for REALITY, its profile is usable. */
+export function slotEligible(s: SlotCandidate): boolean {
+  if (!s.deployed || s.retired) return false;
+  return s.protocol !== 'reality' || (s.profileEnabled && s.activeSnis > 0);
 }
 
 /**
@@ -188,15 +197,47 @@ export function pickSlot(
   preferDistinct: boolean,
   providerPreference: string | null,
 ): SlotCandidate | null {
-  const eligible = slots
-    .filter((s) => s.deployed && !s.retired && s.profileEnabled && s.activeSnis > 0)
-    .sort((a, b) => a.slotKey.localeCompare(b.slotKey));
+  const eligible = slots.filter(slotEligible).sort((a, b) => a.slotKey.localeCompare(b.slotKey));
   if (eligible.length === 0) return null;
   if (preferDistinct) {
-    const fresh = eligible.filter((s) => !publishedProviders.includes(s.provider));
+    // A provider-free slot ('') can always host a distinct provider.
+    const fresh = eligible.filter(
+      (s) => s.provider === '' || !publishedProviders.includes(s.provider),
+    );
     if (fresh.length > 0) {
       return fresh.find((s) => s.provider === providerPreference) ?? fresh[0];
     }
   }
   return eligible.find((s) => s.provider === providerPreference) ?? eligible[0];
+}
+
+/**
+ * Account pick for a slot that is not bound to one provider: the best qualified
+ * account across providers, preferring one not yet published on the relay
+ * (when distinct providers are preferred), then the relay's preference.
+ */
+export function pickAccountAny(
+  accounts: readonly AccountCandidate[],
+  publishedProviders: readonly string[],
+  preferDistinct: boolean,
+  providerPreference: string | null,
+): { ok: true; account: AccountCandidate } | { ok: false; code: AccountPickFailure } {
+  const providers = [...new Set(accounts.map((a) => a.provider))];
+  if (providers.length === 0) return { ok: false, code: 'no_account_for_provider' };
+  const ranked = [...providers].sort((a, b) => {
+    const pa =
+      (preferDistinct && publishedProviders.includes(a) ? 2 : 0) +
+      (a === providerPreference ? 0 : 1);
+    const pb =
+      (preferDistinct && publishedProviders.includes(b) ? 2 : 0) +
+      (b === providerPreference ? 0 : 1);
+    return pa - pb || a.localeCompare(b);
+  });
+  let failure: AccountPickFailure = 'no_qualified_account';
+  for (const p of ranked) {
+    const r = pickAccount(accounts, p);
+    if (r.ok) return r;
+    if (r.code === 'accounts_exhausted') failure = 'accounts_exhausted';
+  }
+  return { ok: false, code: failure };
 }

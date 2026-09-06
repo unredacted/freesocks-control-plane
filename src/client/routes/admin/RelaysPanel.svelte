@@ -582,7 +582,9 @@
                     <li class="font-mono">
                       #{p.poolIndex}
                       {p.addresses.v4 ?? '-'}{p.addresses.v6 ? ` [${p.addresses.v6}]` : ''}:{p.port} ·
-                      slot {p.slotKey} · {p.provider} · SNIs: {p.activeServerNames.join(', ')}
+                      slot {p.slotKey} ({p.protocol}) · {p.provider}{p.protocol === 'reality'
+                        ? ` · SNIs: ${p.activeServerNames.join(', ')}`
+                        : ''}
                     </li>
                   {/each}
                 </ul>
@@ -763,7 +765,7 @@
           >
           <Select.Content>
             {#each slotsForAdopt.data ?? [] as s (s.id)}<Select.Item value={s.id}
-                >{s.slotKey} · {s.provider} · {s.templateHostRemark}</Select.Item
+                >{s.slotKey} · {s.protocol} · {s.provider ?? 'any provider'} · {s.templateHostRemark}</Select.Item
               >{/each}
           </Select.Content>
         </Select.Root>

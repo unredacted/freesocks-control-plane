@@ -24,21 +24,26 @@ export function remarkOf(line: string): string | null {
   }
 }
 
-/** Rewrite one vless:// line's host, port, sni and remark. Returns null if unparseable. */
+/**
+ * Rewrite one proxy line's host, port, remark and (when given) SNI. Returns
+ * null if unparseable. A null `sni` leaves the line's own TLS parameters alone
+ * (a non-REALITY slot terminates TLS on the node with its real name).
+ */
 export function rewriteVlessLine(
   line: string,
-  target: { address: string; port: number; sni: string; label: string },
+  target: { address: string; port: number; sni: string | null; label: string },
 ): string | null {
   const hashIdx = line.indexOf('#');
   const main = hashIdx >= 0 ? line.slice(0, hashIdx) : line;
-  const m = /^(vless:\/\/)([^@]+)@(\[[^\]]+\]|[^:/?#]+):(\d+)(\?[^#]*)?$/i.exec(main);
+  const m = /^((?:vless|trojan|ss):\/\/)([^@]+)@(\[[^\]]+\]|[^:/?#]+):(\d+)(\?[^#]*)?$/i.exec(main);
   if (!m) return null;
   const [, scheme, user, , , query] = m;
   const params = new URLSearchParams(query ? query.slice(1) : '');
-  if (params.has('sni')) params.set('sni', target.sni);
-  else params.set('sni', target.sni);
-  // REALITY never wants the address as the SNI; keep serverName-style params in sync.
-  if (params.has('host')) params.set('host', target.sni);
+  if (target.sni !== null) {
+    params.set('sni', target.sni);
+    // REALITY never wants the address as the SNI; keep serverName-style params in sync.
+    if (params.has('host')) params.set('host', target.sni);
+  }
   const q = params.toString();
   return `${scheme}${user}@${bracketIfV6(target.address)}:${target.port}${q ? `?${q}` : ''}#${encodeURIComponent(target.label)}`;
 }

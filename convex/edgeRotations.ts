@@ -41,6 +41,7 @@ import {
   progressPercent,
   pickStandby,
   pickAccount,
+  pickAccountAny,
   pickSlot,
   CANCELLABLE_PHASES,
   ROLLBACK_ON_CANCEL_PHASES,
@@ -48,6 +49,7 @@ import {
   TERMINAL_PHASES,
   type RotationEvent,
 } from './lib/relays/rotation';
+import { PROTOCOL_TRANSPORT, protocolNeedsProfile } from './lib/relays/protocols';
 import type {
   StepOutcome,
   Discovery,
@@ -291,17 +293,17 @@ export const start = internalMutation({
     }
     if (slotId) {
       const slot = await ctx.db.get(slotId);
-      const profile = slot ? await ctx.db.get(slot.profileId) : null;
-      if (
-        !slot ||
-        slot.retired ||
-        !slot.deployed ||
-        !profile?.enabled ||
-        !profile.serverNames.some((s) => s.status === 'active')
-      ) {
+      const profile = slot?.profileId ? await ctx.db.get(slot.profileId) : null;
+      const usable =
+        !!slot &&
+        !slot.retired &&
+        slot.deployed &&
+        (!protocolNeedsProfile(slot.protocol) ||
+          (!!profile?.enabled && profile.serverNames.some((s) => s.status === 'active')));
+      if (!usable) {
         throw new ConvexError({
           code: 'relay.no_compatible_profile',
-          message: 'The slot has no enabled profile with an active server name',
+          message: 'The slot is not deployed, or its REALITY profile has no active server name',
         });
       }
     }
@@ -716,7 +718,12 @@ export const commitSelection = internalMutation({
     templateHash: v.string(),
     nameNonce: v.string(),
     listeners: v.array(
-      v.object({ edgePort: v.number(), originAddress: v.string(), originPort: v.number() }),
+      v.object({
+        edgePort: v.number(),
+        originAddress: v.string(),
+        originPort: v.number(),
+        transport: v.optional(v.union(v.literal('tcp'), v.literal('udp'))),
+      }),
     ),
     steps: v.array(
       v.object({
@@ -817,7 +824,7 @@ export const applyPublish = internalMutation({
       previousBinding = {
         edgeId: target._id,
         slotId: target.slotId,
-        profileId: slot?.profileId ?? (await ctx.db.get(to.slotId))!.profileId,
+        profileId: slot?.profileId ?? (await ctx.db.get(to.slotId))?.profileId,
         poolIndex,
       };
       await ctx.db.patch(target._id, {
@@ -1227,7 +1234,7 @@ export const stepContext = internalQuery({
     const targetEdge = rotation.targetEdgeId ? await ctx.db.get(rotation.targetEdgeId) : null;
     const slotId = toEdge?.slotId ?? targetEdge?.slotId ?? null;
     const slot = slotId ? await ctx.db.get(slotId) : null;
-    const profile = slot ? await ctx.db.get(slot.profileId) : null;
+    const profile = slot?.profileId ? await ctx.db.get(slot.profileId) : null;
     const prevEdge = rotation.previousBinding
       ? await ctx.db.get(rotation.previousBinding.edgeId)
       : null;
@@ -1274,7 +1281,7 @@ async function selectionContext(
     .collect();
   const profiles = new Map<string, Doc<'realityProfiles'>>();
   for (const s of slotRows) {
-    const p = await ctx.db.get(s.profileId);
+    const p = s.profileId ? await ctx.db.get(s.profileId) : null;
     if (p) profiles.set(s._id, p);
   }
   let slot: Doc<'relaySlots'> | null = null;
@@ -1289,6 +1296,7 @@ async function selectionContext(
         return {
           slotId: s._id,
           slotKey: s.slotKey,
+          protocol: s.protocol,
           provider: p?.provider ?? '',
           deployed: s.deployed,
           retired: s.retired,
@@ -1303,7 +1311,7 @@ async function selectionContext(
     slot = pick ? (slotRows.find((s) => s._id === pick.slotId) ?? null) : null;
   }
   const profile = slot ? (profiles.get(slot._id) ?? null) : null;
-  if (!slot || !profile)
+  if (!slot || (protocolNeedsProfile(slot.protocol) && !profile))
     return {
       slot,
       profile,
@@ -1358,7 +1366,16 @@ async function selectionContext(
       liveEdges: live,
     });
   }
-  const picked = pickAccount(candidates, profile.provider);
+  // A REALITY slot is bound to its profile's provider network; a passthrough
+  // slot takes the best qualified account of any provider.
+  const picked = profile
+    ? pickAccount(candidates, profile.provider)
+    : pickAccountAny(
+        candidates,
+        publishedProviders,
+        cfg.render.preferDistinctProviders,
+        origin.providerPreference ?? null,
+      );
   if (!picked.ok)
     return {
       slot,
@@ -1372,7 +1389,7 @@ async function selectionContext(
   const { resolveTemplateFor } = await import('./edgeTemplates');
   const template = await resolveTemplateFor(
     ctx,
-    profile.provider,
+    account.provider,
     null,
     account.defaultTemplateId ?? null,
   );
@@ -1520,7 +1537,11 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     await advanceCall(ctx, r._id, sv, { type: 'selected', toEdgeId: r.toEdgeId, viaStandby: true });
     return;
   }
-  if (!selection || !selection.slot || !selection.profile) {
+  if (
+    !selection ||
+    !selection.slot ||
+    (protocolNeedsProfile(selection.slot.protocol) && !selection.profile)
+  ) {
     await advanceCall(ctx, r._id, sv, {
       type: 'fail',
       code: 'no_compatible_profile',
@@ -1547,7 +1568,12 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
   const nonce = randomHex(4);
   const name = edgeResourceName(origin.slug, nonce);
   const listeners = [
-    { edgePort: 443, originAddress: origin.originAddress, originPort: selection.slot.originPort },
+    {
+      edgePort: 443,
+      originAddress: origin.originAddress,
+      originPort: selection.slot.originPort,
+      transport: PROTOCOL_TRANSPORT[selection.slot.protocol],
+    },
   ];
   const spec = {
     name,

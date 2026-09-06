@@ -979,7 +979,10 @@ export default defineSchema({
   relaySlots: defineTable({
     relayId: v.id('relays'),
     slotKey: v.string(),
-    profileId: v.id('realityProfiles'),
+    // What the inbound speaks; decides the renderer's rewrite and whether a
+    // REALITY profile is required (lib/relays/protocols.ts).
+    protocol: v.union(v.literal('reality'), v.literal('tcp')),
+    profileId: v.optional(v.id('realityProfiles')),
     inboundTag: v.string(),
     configProfileUuid: v.string(),
     configProfileInboundUuid: v.string(),
@@ -1039,7 +1042,13 @@ export default defineSchema({
     ),
     currentOp: v.optional(relayEdgeOp),
     listeners: v.array(
-      v.object({ edgePort: v.number(), originAddress: v.string(), originPort: v.number() }),
+      v.object({
+        edgePort: v.number(),
+        originAddress: v.string(),
+        originPort: v.number(),
+        // Absent = tcp (every adapter forwards TCP; udp is reserved for future protocols).
+        transport: v.optional(v.union(v.literal('tcp'), v.literal('udp'))),
+      }),
     ),
     addresses: v.object({ v4: v.optional(v.string()), v6: v.optional(v.string()) }),
     publication: relayPublication,
@@ -1119,7 +1128,8 @@ export default defineSchema({
       v.object({
         edgeId: v.id('edges'),
         slotId: v.id('relaySlots'),
-        profileId: v.id('realityProfiles'),
+        // Absent for a slot whose protocol carries no profile.
+        profileId: v.optional(v.id('realityProfiles')),
         poolIndex: v.number(),
       }),
     ),
