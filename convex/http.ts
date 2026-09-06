@@ -1041,7 +1041,14 @@ http.route({
     const hasHwid = 'x-hwid' in hwidHeaders;
     const cached = hasHwid ? [] : parseSubCache(sub.subCache);
     const fresh = cached.find((e) => e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS);
-    if (fresh) return subscriptionResponse(fresh); // fresh + same format → cache hit
+    if (fresh) {
+      // Cache hit: the served body was generated at the entry's fetch time.
+      await ctx.runMutation(internal.subscriptions.markDelivered, {
+        subscriptionId: sub._id,
+        contentAt: fresh.at,
+      });
+      return subscriptionResponse(fresh); // fresh + same format → cache hit
+    }
     // Last-resort fallback MUST match this UA — never serve another client's
     // format (the same invariant the fresh path enforces). (Review #11.)
     const stale = cached.find((e) => e.ua === ua) ?? null;
@@ -1076,6 +1083,12 @@ http.route({
           entry: JSON.stringify(entry),
         });
       }
+      // Every successful delivery is stamped (miss AND hwid'd path) — the
+      // relay layer reads it as "has this key seen post-rotation content".
+      await ctx.runMutation(internal.subscriptions.markDelivered, {
+        subscriptionId: sub._id,
+        contentAt: now,
+      });
       // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
       return subscriptionResponse(entry, { hwid: hasHwid });
     } catch (err) {
@@ -1095,7 +1108,13 @@ http.route({
       }
       // Backend blip: serve the last-known content FOR THIS UA rather than break
       // the member's client; only fail hard when nothing is cached for it.
-      if (stale) return subscriptionResponse(stale);
+      if (stale) {
+        await ctx.runMutation(internal.subscriptions.markDelivered, {
+          subscriptionId: sub._id,
+          contentAt: stale.at,
+        });
+        return subscriptionResponse(stale);
+      }
       console.error(
         `[subscription] fronted fetch failed: ${err instanceof Error ? err.message : String(err)}`,
       );

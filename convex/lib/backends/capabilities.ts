@@ -45,6 +45,11 @@ export interface BackendCapabilities {
    *  subscription document — drives the member-facing chrome (URL noun, no
    *  one-tap import builder, no per-node pinning talk). */
   accessKeyDelivery: boolean;
+  /** Client-facing connection entries (Hosts) can be listed and repointed:
+   *  the relay-edge address flip. */
+  hostManagement: boolean;
+  /** Per-NODE load rows (the relay block detector's load signal). */
+  nodeInventory: boolean;
 }
 
 export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
@@ -58,6 +63,8 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     usageHistory: true,
     fetch404IsDeviceRejection: true,
     accessKeyDelivery: false,
+    hostManagement: true,
+    nodeInventory: true,
   },
   outline: {
     placement: false,
@@ -69,6 +76,8 @@ export const CAPABILITIES: Record<BackendId, BackendCapabilities> = {
     usageHistory: false,
     fetch404IsDeviceRejection: false,
     accessKeyDelivery: true,
+    hostManagement: false,
+    nodeInventory: false,
   },
 };
 

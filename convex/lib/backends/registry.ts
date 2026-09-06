@@ -21,6 +21,8 @@ import type {
   UpdateUserPatch,
   UsageSeries,
   UserState,
+  BackendHost,
+  NodeInventoryRow,
 } from './types';
 import {
   remnawaveDeleteDevice,
@@ -39,6 +41,9 @@ import {
   remnawaveTestConnection,
   remnawaveUpdateUser,
   type RemnawaveLoggingReport,
+  remnawaveListHosts,
+  remnawaveUpdateHost,
+  remnawaveGetNodeInventory,
 } from './remnawave';
 import {
   outlineDelete,
@@ -109,6 +114,15 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // (Remnawave config profiles: Xray log/policy). Absent for backends with no
   // such config surface (Outline). `dryRun` reports what would change, no write.
   hardenLogging?(config: C, opts: { dryRun: boolean }): Promise<RemnawaveLoggingReport>;
+  // Optional: the backend's client-facing connection entries (Remnawave Hosts)
+  // and an address/port repoint of ONE of them — the relay-edge flip. Absent for
+  // backends whose endpoint is the server itself (Outline).
+  listHosts?(config: C): Promise<BackendHost[]>;
+  updateHost?(config: C, patch: { uuid: string; address: string; port: number }): Promise<void>;
+  // Optional: per-NODE load/online rows (Remnawave /api/nodes) for the relay
+  // block detector; getNodeStats aggregates per placement and can't isolate a
+  // node behind a shared squad.
+  getNodeInventory?(config: C): Promise<NodeInventoryRow[]>;
   fetchContent(
     config: C,
     backendShortId: string,
@@ -137,6 +151,9 @@ const remnawaveProvider: BackendProvider<RemnawaveServerConfig> = {
   getFleetStats: (c) => remnawaveFleetStats(c),
   getNodeStats: (c) => remnawaveGetNodeStats(c),
   hardenLogging: (c, opts) => remnawaveHardenLogging(c, opts),
+  listHosts: (c) => remnawaveListHosts(c),
+  updateHost: (c, patch) => remnawaveUpdateHost(c, patch),
+  getNodeInventory: (c) => remnawaveGetNodeInventory(c),
   fetchContent: (c, shortId, ua, subUrl, hwid) =>
     remnawaveFetchSubscription(c, shortId, ua, subUrl, hwid),
   health: (c) => remnawaveHealth(c),

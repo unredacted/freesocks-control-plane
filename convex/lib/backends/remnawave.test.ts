@@ -15,6 +15,9 @@ import {
   remnawaveTestConnection,
   remnawaveUpdateUser,
   type RemnawaveConfig,
+  remnawaveListHosts,
+  remnawaveUpdateHost,
+  remnawaveGetNodeInventory,
 } from './remnawave';
 
 // A deliberately secret-looking token + an internal host: the error path must
@@ -780,5 +783,74 @@ describe('error redaction', () => {
     expect(blob).not.toContain('panel.internal');
     // The path alone is safe and useful for debugging.
     expect((err as Error).message).toContain(`/api/users/${UUID}`);
+  });
+});
+
+describe('hosts + node inventory (relay edges)', () => {
+  const hostRow = {
+    uuid: 'h-1',
+    remark: 'node-a-relay-a1',
+    address: '192.0.2.10',
+    port: 443,
+    sni: 'www.example',
+    isDisabled: false,
+    inbound: { configProfileUuid: 'cp-1', configProfileInboundUuid: 'in-1' },
+    fingerprint: 'chrome',
+  };
+
+  test('remnawaveListHosts tolerates a bare array and a {hosts} wrapper', async () => {
+    mockFetch(() => jsonRes({ response: [hostRow] }));
+    const a = await remnawaveListHosts(cfg);
+    expect(a).toEqual([
+      {
+        uuid: 'h-1',
+        remark: 'node-a-relay-a1',
+        address: '192.0.2.10',
+        port: 443,
+        sni: 'www.example',
+        isDisabled: false,
+        inbound: { configProfileUuid: 'cp-1', configProfileInboundUuid: 'in-1' },
+      },
+    ]);
+    expect(calls[0]).toMatchObject({ path: '/api/hosts', method: 'GET' });
+    mockFetch(() => jsonRes({ response: { hosts: [hostRow] } }));
+    const b = await remnawaveListHosts(cfg);
+    expect(b).toHaveLength(1);
+  });
+
+  test('remnawaveUpdateHost PATCHes /api/hosts with the uuid IN THE BODY and only address/port', async () => {
+    mockFetch(() => jsonRes({ response: { ...hostRow, address: '203.0.113.5' } }));
+    await remnawaveUpdateHost(cfg, { uuid: 'h-1', address: '203.0.113.5', port: 443 });
+    expect(calls[0]).toMatchObject({
+      path: '/api/hosts',
+      method: 'PATCH',
+      body: { uuid: 'h-1', address: '203.0.113.5', port: 443 },
+    });
+    expect(Object.keys(calls[0].body ?? {}).sort()).toEqual(['address', 'port', 'uuid']);
+  });
+
+  test('remnawaveUpdateHost surfaces a panel error without the URL host', async () => {
+    mockFetch(() => new Response('nope', { status: 400 }));
+    await expect(
+      remnawaveUpdateHost(cfg, { uuid: 'h-1', address: '203.0.113.5', port: 443 }),
+    ).rejects.toThrow(/400 on \/api\/hosts/);
+  });
+
+  test('remnawaveGetNodeInventory maps /api/nodes rows (name falls back to uuid)', async () => {
+    mockFetch(() =>
+      jsonRes({
+        response: [
+          { uuid: 'n-1', name: 'node-a', isConnected: true, isDisabled: false, usersOnline: 7 },
+          { uuid: 'n-2', isConnected: true, isDisabled: true, usersOnline: 3 },
+          { uuid: 'n-3', name: 'node-c', isConnected: false },
+        ],
+      }),
+    );
+    const rows = await remnawaveGetNodeInventory(cfg);
+    expect(rows).toEqual([
+      { nodeUuid: 'n-1', name: 'node-a', usersOnline: 7, online: true },
+      { nodeUuid: 'n-2', name: 'n-2', usersOnline: 3, online: false },
+      { nodeUuid: 'n-3', name: 'node-c', usersOnline: 0, online: false },
+    ]);
   });
 });
