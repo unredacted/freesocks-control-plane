@@ -19,6 +19,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { randomHex } from './lib/crypto';
 import { reserveAllocation } from './relayProviderAccounts';
+import { edgeResourceName } from './lib/relays/accountSettings';
 
 type Edge = Doc<'relayEdges'>;
 type Step = Edge['steps'][number];
@@ -209,10 +210,76 @@ async function liveCountForAccount(
 
 // --- writes ---------------------------------------------------------------------------
 
+export interface PlannedEdgeInput {
+  originId: Id<'relayOrigins'>;
+  slotId: Id<'relayOriginSlots'>;
+  accountId: Id<'relayProviderAccounts'>;
+  templateId?: Id<'relayEdgeTemplates'> | null;
+  templateHash: string;
+  listeners: Array<{ edgePort: number; originAddress: string; originPort: number }>;
+  steps: Array<{
+    id: string;
+    kind: string;
+    resourceName: string;
+    discoverability?: 'by_name' | 'by_tag' | 'none';
+  }>;
+  nameNonce?: string;
+}
+
 /**
- * Reserve capacity + one allocation and insert the planned edge, atomically.
+ * Reserve capacity + one allocation and insert the planned edge, atomically
+ * (shared by the mutation below and the rotation machine's selection commit).
  * Throws typed codes: relay.capacity, relay.budget.
  */
+export async function insertPlannedEdge(
+  ctx: { db: import('./_generated/server').DatabaseWriter },
+  a: PlannedEdgeInput,
+): Promise<{ id: Id<'relayEdges'>; name: string }> {
+  const [origin, account] = await Promise.all([ctx.db.get(a.originId), ctx.db.get(a.accountId)]);
+  if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+  if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
+  const live = await liveCountForAccount(ctx, a.accountId);
+  if (live >= account.maxLiveEdges) {
+    throw new ConvexError({ code: 'relay.capacity', message: 'Account is at its live-edge cap' });
+  }
+  if (!(await reserveAllocation(ctx, a.accountId))) {
+    throw new ConvexError({
+      code: 'relay.budget',
+      message: 'Account allocation budget exhausted for today',
+    });
+  }
+  const now = Date.now();
+  const name = edgeResourceName(origin.slug, a.nameNonce ?? randomHex(4));
+  const id = await ctx.db.insert('relayEdges', {
+    originId: a.originId,
+    slotId: a.slotId,
+    accountId: a.accountId,
+    templateId: a.templateId ?? undefined,
+    templateHash: a.templateHash,
+    provider: account.provider,
+    managed: true,
+    name,
+    steps: a.steps.map((s) => ({
+      stepId: s.id,
+      kind: s.kind,
+      resourceName: s.resourceName,
+      discoverability: s.discoverability,
+      state: 'pending' as const,
+      attempt: 0,
+    })),
+    resources: [],
+    listeners: a.listeners,
+    addresses: {},
+    publication: 'unpublished',
+    status: 'planning',
+    statusChangedAt: now,
+    health: 'unknown',
+    destroyAttempts: 0,
+    updatedAt: now,
+  });
+  return { id, name };
+}
+
 export const insertPlanned = internalMutation({
   args: {
     originId: v.id('relayOrigins'),
@@ -223,56 +290,19 @@ export const insertPlanned = internalMutation({
     listeners: v.array(
       v.object({ edgePort: v.number(), originAddress: v.string(), originPort: v.number() }),
     ),
-    steps: v.array(v.object({ id: v.string(), kind: v.string(), resourceName: v.string() })),
+    steps: v.array(
+      v.object({
+        id: v.string(),
+        kind: v.string(),
+        resourceName: v.string(),
+        discoverability: v.optional(
+          v.union(v.literal('by_name'), v.literal('by_tag'), v.literal('none')),
+        ),
+      }),
+    ),
     nameNonce: v.optional(v.string()),
   },
-  handler: async (ctx, a) => {
-    const [origin, account] = await Promise.all([ctx.db.get(a.originId), ctx.db.get(a.accountId)]);
-    if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
-    if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
-    const live = await liveCountForAccount(ctx, a.accountId);
-    if (live >= account.maxLiveEdges)
-      throw new ConvexError({ code: 'relay.capacity', message: 'Account is at its live-edge cap' });
-    if (!(await reserveAllocation(ctx, a.accountId)))
-      throw new ConvexError({
-        code: 'relay.budget',
-        message: 'Account allocation budget exhausted for today',
-      });
-    const now = Date.now();
-    const nonce = a.nameNonce ?? randomHex(4);
-    const slug = origin.slug
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, '-')
-      .slice(0, 24);
-    const name = `fcp-relay-${slug}-${nonce}`;
-    const id = await ctx.db.insert('relayEdges', {
-      originId: a.originId,
-      slotId: a.slotId,
-      accountId: a.accountId,
-      templateId: a.templateId ?? undefined,
-      templateHash: a.templateHash,
-      provider: account.provider,
-      managed: true,
-      name,
-      steps: a.steps.map((s) => ({
-        stepId: s.id,
-        kind: s.kind,
-        resourceName: s.resourceName,
-        state: 'pending' as const,
-        attempt: 0,
-      })),
-      resources: [],
-      listeners: a.listeners,
-      addresses: {},
-      publication: 'unpublished',
-      status: 'planning',
-      statusChangedAt: now,
-      health: 'unknown',
-      destroyAttempts: 0,
-      updatedAt: now,
-    });
-    return { id, name };
-  },
+  handler: (ctx, a) => insertPlannedEdge(ctx, a),
 });
 
 /**

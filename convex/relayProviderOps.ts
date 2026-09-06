@@ -72,6 +72,9 @@ const ledger = v.object({
       stepId: v.string(),
       kind: v.string(),
       resourceName: v.string(),
+      discoverability: v.optional(
+        v.union(v.literal('by_name'), v.literal('by_tag'), v.literal('none')),
+      ),
       state: v.string(),
       opRef: v.optional(v.string()),
       attempt: v.number(),

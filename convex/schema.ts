@@ -1013,6 +1013,10 @@ export default defineSchema({
         stepId: v.string(),
         kind: v.string(),
         resourceName: v.string(),
+        // How the adapter can re-find this resource after an unknown outcome.
+        discoverability: v.optional(
+          v.union(v.literal('by_name'), v.literal('by_tag'), v.literal('none')),
+        ),
         state: relayStepState,
         opRef: v.optional(v.string()),
         attempt: v.number(),
