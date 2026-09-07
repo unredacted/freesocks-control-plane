@@ -17,6 +17,8 @@
   import { apiErrorMessage } from '../../lib/errors';
   import {
     adminBackendServersQuery,
+    adminEdgeInventoryQuery,
+    adminEdgeProvidersQuery,
     adminRelayEdgesQuery,
     adminRelayNodeCandidatesQuery,
     adminRelayEndpointsQuery,
@@ -28,6 +30,7 @@
   import {
     EdgeAdoptResponse,
     EdgeIdResponse,
+    EdgeInventoryResponse,
     RelayNodeCandidatesResponse,
     EdgeOkResponse,
     ProbeRequestedResponse,
@@ -211,10 +214,56 @@
     onError: onError('Action refused'),
   }));
 
-  // --- adopt --------------------------------------------------------------------------
+  // --- import / adopt -----------------------------------------------------------------
+  // Two ways to bring an existing load balancer under FCP: pick it from a
+  // provider account's inventory (managed: FCP can describe, rotate and destroy
+  // it) or type its addresses (observe-only: never touched at the provider).
   let adoptFor = $state<string | null>(null);
-  let adopt = $state({ slotId: '', ipv4: '', ipv6: '', port: 443, publish: true });
+  let adopt = $state({
+    source: 'provider' as 'provider' | 'manual',
+    slotId: '',
+    accountId: '',
+    lbId: '',
+    ipv4: '',
+    ipv6: '',
+    port: 443,
+    publish: true,
+  });
   const slotsForAdopt = adminRelaySlotsQuery(() => adoptFor);
+  const accounts = adminEdgeProvidersQuery();
+  const inventory = adminEdgeInventoryQuery(() =>
+    adoptFor !== null && adopt.source === 'provider' && adopt.accountId ? adopt.accountId : null,
+  );
+  const adoptSlot = $derived(slotsForAdopt.data?.find((s) => s.id === adopt.slotId) ?? null);
+  // Accounts the slot's profile allows (a provider-scoped profile narrows the list).
+  const adoptAccounts = $derived(
+    (accounts.data?.accounts ?? []).filter(
+      (a) => !adoptSlot?.provider || a.provider === adoptSlot.provider,
+    ),
+  );
+  const inventoryLbs = $derived(
+    [...(inventory.data?.inventory?.loadBalancers ?? [])].sort(
+      (a, b) => Number(b.unowned ?? true) - Number(a.unowned ?? true),
+    ),
+  );
+  function pickLb(id: string) {
+    const lb = inventoryLbs.find((x) => x.id === id);
+    if (!lb) return;
+    adopt.lbId = id;
+    adopt.ipv4 = lb.addresses.v4 ?? '';
+    adopt.ipv6 = lb.addresses.v6 ?? '';
+  }
+  const refreshInventory = createMutation(() => ({
+    mutationFn: (id: string) =>
+      apiClient.post(
+        `/api/v1/admin/edges/providers/${id}/inventory/refresh`,
+        {},
+        EdgeInventoryResponse,
+      ),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: [...queryKeys.adminEdgeProviders, 'inventory'] }),
+    onError: onError('Could not pull the inventory'),
+  }));
   const adoptEdge = createMutation(() => ({
     mutationFn: () =>
       apiClient.post(
@@ -225,16 +274,27 @@
           ipv6: adopt.ipv6.trim() || null,
           port: Number(adopt.port) || 443,
           publish: adopt.publish,
+          ...(adopt.source === 'provider' && adopt.accountId && adopt.lbId
+            ? {
+                accountId: adopt.accountId,
+                resources: [{ kind: 'lb', resourceId: adopt.lbId }],
+              }
+            : {}),
         },
         EdgeAdoptResponse,
       ),
     onSuccess: () => {
       adoptFor = null;
       invalidate();
-      toast.success('Edge adopted');
+      toast.success(adopt.source === 'provider' ? 'Edge imported' : 'Edge recorded');
     },
-    onError: onError('Could not adopt the edge'),
+    onError: onError('Could not import the edge'),
   }));
+  const adoptReady = $derived(
+    !!adopt.slotId &&
+      !!adopt.ipv4.trim() &&
+      (adopt.source === 'manual' || (!!adopt.accountId && !!adopt.lbId)),
+  );
 
   // --- detail drawer (edges, rotations, endpoints) ------------------------------------------
   let detailFor = $state<string | null>(null);
@@ -343,7 +403,8 @@
             >
               {detailFor === o.id ? 'Hide detail' : 'Edges and rotations'}
             </Button>
-            <Button size="sm" variant="outline" onclick={() => (adoptFor = o.id)}>Adopt edge</Button
+            <Button size="sm" variant="outline" onclick={() => (adoptFor = o.id)}
+              >Import edge</Button
             >
             <Button
               size="sm"
@@ -827,15 +888,28 @@
 
 <!-- Adopt edge -->
 <Dialog.Root open={adoptFor !== null} onOpenChange={(v) => !v && (adoptFor = null)}>
-  <Dialog.Content>
+  <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-xl">
     <Dialog.Header>
-      <Dialog.Title>Adopt an existing edge</Dialog.Title>
+      <Dialog.Title>Import an existing edge</Dialog.Title>
       <Dialog.Description>
-        Record a load balancer that exists outside FCP's ledger (observe-only: FCP never destroys
-        it).
+        Bring a load balancer that already fronts this relay under FCP. Picked from a provider
+        account it becomes a managed edge (FCP can describe, rotate and destroy it); entered by
+        address it is observe-only and never touched at the provider.
       </Dialog.Description>
     </Dialog.Header>
     <div class="grid gap-3">
+      <div class="flex gap-1">
+        <Button
+          size="sm"
+          variant={adopt.source === 'provider' ? 'default' : 'outline'}
+          onclick={() => (adopt.source = 'provider')}>From a provider account</Button
+        >
+        <Button
+          size="sm"
+          variant={adopt.source === 'manual' ? 'default' : 'outline'}
+          onclick={() => (adopt.source = 'manual')}>By address (observe-only)</Button
+        >
+      </div>
       <label class="text-xs"
         >Slot
         <Select.Root type="single" value={adopt.slotId} onValueChange={(v) => (adopt.slotId = v)}>
@@ -850,20 +924,110 @@
           </Select.Content>
         </Select.Root>
       </label>
-      <label class="text-xs"
-        >IPv4<Input class="mt-1" bind:value={adopt.ipv4} placeholder="198.51.100.7" /></label
-      >
-      <label class="text-xs">IPv6 (optional)<Input class="mt-1" bind:value={adopt.ipv6} /></label>
-      <label class="text-xs">Port<Input class="mt-1" type="number" bind:value={adopt.port} /></label
-      >
+      {#if adopt.source === 'provider'}
+        <label class="text-xs"
+          >Provider account
+          <Select.Root
+            type="single"
+            value={adopt.accountId}
+            onValueChange={(v) => {
+              adopt.accountId = v;
+              adopt.lbId = '';
+            }}
+          >
+            <Select.Trigger class="mt-1 w-full"
+              >{adoptAccounts.find((a) => a.id === adopt.accountId)?.name ??
+                (adoptAccounts.length
+                  ? 'Select an account'
+                  : 'No account for this slot')}</Select.Trigger
+            >
+            <Select.Content>
+              {#each adoptAccounts as a (a.id)}<Select.Item value={a.id}
+                  >{a.name} · {a.provider}</Select.Item
+                >{/each}
+            </Select.Content>
+          </Select.Root>
+        </label>
+        {#if adopt.accountId}
+          <div class="rounded-md border border-border">
+            <div class="flex items-center justify-between gap-2 border-b px-3 py-2 text-xs">
+              <span class="text-muted-foreground">
+                {#if inventory.isPending}Loading the account's load balancers…{:else if inventory.data?.inventoryAt}Load
+                  balancers as of {formatDateTime(inventory.data.inventoryAt)}{:else}Not pulled yet{/if}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={refreshInventory.isPending}
+                onclick={() => refreshInventory.mutate(adopt.accountId)}>Refresh</Button
+              >
+            </div>
+            {#if inventory.isError}
+              <p class="px-3 py-2 text-xs text-destructive">{apiErrorMessage(inventory.error)}</p>
+            {:else if !inventory.isPending && inventoryLbs.length === 0}
+              <p class="px-3 py-2 text-xs text-muted-foreground">
+                No load balancers in this account. Provision one from the relay instead, or enter
+                the addresses by hand.
+              </p>
+            {:else}
+              <ul class="max-h-56 overflow-y-auto divide-y">
+                {#each inventoryLbs as lb (lb.id)}
+                  <li>
+                    <button
+                      type="button"
+                      class="flex w-full items-start justify-between gap-3 px-3 py-2 text-left text-xs hover:bg-muted/50 {adopt.lbId ===
+                      lb.id
+                        ? 'bg-muted'
+                        : ''}"
+                      onclick={() => pickLb(lb.id)}
+                    >
+                      <span>
+                        <span class="font-medium">{lb.name}</span>
+                        <span class="ml-2 font-mono text-muted-foreground"
+                          >{lb.addresses.v4 ?? 'no IPv4'}{lb.addresses.v6
+                            ? ` · ${lb.addresses.v6}`
+                            : ''}</span
+                        >
+                      </span>
+                      <span class="shrink-0 text-muted-foreground">
+                        {lb.status ?? ''}{lb.unowned === false ? ' · already an edge' : ''}
+                      </span>
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {/if}
+      {/if}
+      <div class="grid gap-3 sm:grid-cols-3">
+        <label class="text-xs"
+          >IPv4<Input
+            class="mt-1"
+            bind:value={adopt.ipv4}
+            placeholder="198.51.100.7"
+            readonly={adopt.source === 'provider'}
+          /></label
+        >
+        <label class="text-xs"
+          >IPv6 (optional)<Input
+            class="mt-1"
+            bind:value={adopt.ipv6}
+            readonly={adopt.source === 'provider'}
+          /></label
+        >
+        <label class="text-xs"
+          >Port<Input class="mt-1" type="number" bind:value={adopt.port} /></label
+        >
+      </div>
       <label class="flex items-center gap-2 text-sm"
         ><Checkbox bind:checked={adopt.publish} /> Publish at the next free pool index</label
       >
     </div>
     <Dialog.Footer>
       <Button variant="outline" onclick={() => (adoptFor = null)}>Cancel</Button>
-      <Button disabled={adoptEdge.isPending || !adopt.slotId} onclick={() => adoptEdge.mutate()}
-        >Adopt</Button
+      <Button disabled={adoptEdge.isPending || !adoptReady} onclick={() => adoptEdge.mutate()}
+        >{adopt.source === 'provider' ? 'Import' : 'Record'}</Button
       >
     </Dialog.Footer>
   </Dialog.Content>

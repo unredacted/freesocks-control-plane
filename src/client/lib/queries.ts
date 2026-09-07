@@ -72,6 +72,7 @@ import {
   RelaySlotAdmin,
   EdgeSummary,
   EdgeTemplatesResponse,
+  EdgeInventoryResponse,
 } from '../../shared/contracts/edges';
 
 // --- Cache keys --------------------------------------------------------------
@@ -714,6 +715,18 @@ export const adminEdgeProvidersQuery = () =>
     queryKey: queryKeys.adminEdgeProviders,
     queryFn: () => apiClient.get('/api/v1/admin/edges/providers', EdgeProviderAccountsResponse),
     staleTime: 30_000,
+  }));
+
+export const adminEdgeInventoryQuery = (accountId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: [...queryKeys.adminEdgeProviders, 'inventory', accountId() ?? ''] as const,
+    queryFn: () =>
+      apiClient.get(
+        `/api/v1/admin/edges/providers/${encodeURIComponent(accountId() ?? '')}/inventory`,
+        EdgeInventoryResponse,
+      ),
+    enabled: accountId() !== null,
+    staleTime: 15_000,
   }));
 
 export const adminEdgeTemplatesQuery = () =>

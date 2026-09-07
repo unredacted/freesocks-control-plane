@@ -70,13 +70,13 @@ former index-0 address, which an explicit unpublish must stop distributing.
 
 ## Operations
 
-| Operation                                | Precondition                                                                              | Spends budget                      | Writes Hosts                                  | Result                                                                      |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------- |
-| Adopt edge                               | origin + slot                                                                             | no                                 | no                                            | edge `active`, observe-only (`managed:false`, never destroyed)              |
-| Provision edge                           | qualified account (the profile's provider when scoped; any otherwise), template, capacity | yes                                | no                                            | edge `active` + `unpublished` (or published when requested)                 |
-| Publish edge                             | active, has IPv4, slot deployed (+ enabled profile with an active SNI for `reality`)      | no                                 | template Host only when taking index 0        | `published` at the lowest free index; epoch++                               |
-| Replace (rotate / burn)                  | a published target edge                                                                   | unless a compatible standby exists | template Host only if the target held index 0 | new edge `published` at the SAME index; old `draining` (burn = short drain) |
-| Unpublish / retire server name / profile | —                                                                                         | no                                 | no                                            | new selections stop; the node keeps accepting through the drain             |
+| Operation                                | Precondition                                                                               | Spends budget                      | Writes Hosts                                  | Result                                                                                                                                                                 |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Import edge                              | origin + slot; optionally a provider account + the load balancer picked from its inventory | no                                 | no                                            | edge `active`; managed when imported from an account (FCP describes, rotates and destroys it), observe-only when entered by address (`managed:false`, never destroyed) |
+| Provision edge                           | qualified account (the profile's provider when scoped; any otherwise), template, capacity  | yes                                | no                                            | edge `active` + `unpublished` (or published when requested)                                                                                                            |
+| Publish edge                             | active, has IPv4, slot deployed (+ enabled profile with an active SNI for `reality`)       | no                                 | template Host only when taking index 0        | `published` at the lowest free index; epoch++                                                                                                                          |
+| Replace (rotate / burn)                  | a published target edge                                                                    | unless a compatible standby exists | template Host only if the target held index 0 | new edge `published` at the SAME index; old `draining` (burn = short drain)                                                                                            |
+| Unpublish / retire server name / profile | —                                                                                          | no                                 | no                                            | new selections stop; the node keeps accepting through the drain                                                                                                        |
 
 `hostManaged:false` on a relay means FCP never writes the template Host: publishing at index 0
 proceeds without a flip and replacing index 0 is refused (`edge.hosts_unmanaged`).
@@ -257,9 +257,13 @@ account's default template also clears the qualification. An account-scoped prof
 provisions and publishes edges from that account only. A slot's inbound, profile or origin port
 cannot change while non-destroyed edges use the slot (register a new slot key instead).
 
-**Bootstrap a relay.** Register via the role (or create it here), adopt the hand-made edge at
-index 0 (publish), provision a second edge (published at index 1), enable rendering, preview each
-client family, then rotate index 1 and index 0 while watching the progress view.
+**Bootstrap a relay.** Add the provider account (its existing load balancers are inventoried
+automatically; "Refresh" re-pulls), register the relay from the panel node picker (or via the
+role), then "Import edge": pick the load balancer that already fronts the node from the account's
+inventory (its addresses fill in; it becomes a managed edge) and publish it at index 0. Provision
+a second edge (published at index 1), enable rendering, preview each client family, then rotate
+index 1 and index 0 while watching the progress view. A load balancer FCP must never touch can be
+recorded by address instead (observe-only).
 
 **Resolve a quarantine.** Compare the panel's template Host with the two bindings the rotation
 recorded, fix the Host by hand if needed, then resolve keeping the binding that matches what the

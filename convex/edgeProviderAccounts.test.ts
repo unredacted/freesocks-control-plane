@@ -373,7 +373,10 @@ describe('edgeTemplates', () => {
       inventoryAt: null,
     });
     const snapshot = {
-      loadBalancers: [{ id: 'lb-1', name: 'x', addresses: { v4: '198.51.100.2' }, unowned: true }],
+      loadBalancers: [
+        { id: 'lb-1', name: 'x', addresses: { v4: '198.51.100.2' } },
+        { id: 'lb-2', name: 'y', addresses: { v4: '198.51.100.3' } },
+      ],
       ips: [],
       flavors: [{ id: 'f', label: 'F' }],
     };
@@ -381,8 +384,98 @@ describe('edgeTemplates', () => {
       id,
       inventory: JSON.stringify(snapshot),
     });
+    // lb-1 is already in a live edge ledger → owned; lb-2 is free to import.
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const serverId = await ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'p',
+        slug: 'p',
+        config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: now,
+      });
+      const relayId = await ctx.db.insert('relays', {
+        slug: 'o1',
+        backendServerId: serverId,
+        nodeHostname: 'node-a',
+        originAddress: '198.51.100.7',
+        modeSlugs: [],
+        enabled: true,
+        autoRotate: false,
+        hostManaged: true,
+        providerAffinity: 'rotate',
+        desiredPublished: 1,
+        standbyPerRelay: 0,
+        cooldownMs: 1,
+        maxRotationsPerDay: 3,
+        drainMs: 1,
+        publicationEpoch: 0,
+        publishedEdgeIds: [],
+        standbyEdgeIds: [],
+        rotationsToday: 0,
+        updatedAt: now,
+      });
+      const profileId = await ctx.db.insert('protocolProfiles', {
+        slug: 'pf',
+        name: 'pf',
+        protocol: 'reality' as const,
+        targetAddress: 'target.example',
+        targetPort: 443,
+        serverNames: [{ sni: 'www.example', status: 'active' }],
+        enabled: true,
+        updatedAt: now,
+      });
+      const slotId = await ctx.db.insert('relaySlots', {
+        relayId,
+        slotKey: 'a1',
+        profileId,
+        inboundTag: 'T',
+        configProfileUuid: 'cp',
+        configProfileInboundUuid: 'in',
+        originPort: 443,
+        templateHostRemark: 'node-a-relay-a1',
+        deployed: true,
+        retired: false,
+        updatedAt: now,
+      });
+      await ctx.db.insert('edges', {
+        relayId,
+        slotId,
+        accountId: id,
+        provider: 'gcore',
+        managed: true,
+        name: 'adopted-o1',
+        steps: [],
+        resources: [
+          {
+            stepId: 'adopted',
+            kind: 'lb',
+            resourceId: 'lb-1',
+            ownership: 'adopted',
+            deleteState: 'present',
+          },
+        ],
+        listeners: [],
+        addresses: { v4: '198.51.100.2' },
+        publication: 'unpublished',
+        status: 'active',
+        statusChangedAt: now,
+        health: 'unknown',
+        destroyAttempts: 0,
+        updatedAt: now,
+      });
+    });
     const view = (await t.query(internal.edgeProviderAccounts.getInventory, { id }))!;
-    expect(view.inventory).toEqual(snapshot);
+    expect(view.inventory).toEqual({
+      ...snapshot,
+      loadBalancers: [
+        { ...snapshot.loadBalancers[0], unowned: false },
+        { ...snapshot.loadBalancers[1], unowned: true },
+      ],
+    });
     expect(typeof view.inventoryAt).toBe('string');
     expect(new Date(view.inventoryAt as string).getTime()).toBeGreaterThan(0);
   });

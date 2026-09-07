@@ -274,10 +274,19 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   const [a, b, c, d] = parts;
   const act = actor(admin);
   if (a === 'providers') {
-    if (!b)
-      return json(
-        await ctx.runMutation(internal.edgeProviderAccounts.create, { ...body, ...act } as never),
-      );
+    if (!b) {
+      const created = (await ctx.runMutation(internal.edgeProviderAccounts.create, {
+        ...body,
+        ...act,
+      } as never)) as { id: Id<'edgeProviderAccounts'> };
+      // A new account is inventoried right away so its existing load balancers
+      // show up in the relay import picker without a manual pull (fail-soft:
+      // a scheduled action; bad credentials just leave the snapshot empty).
+      await ctx.scheduler.runAfter(0, internal.edgeProviderOps.inventory, {
+        accountId: created.id,
+      });
+      return json(created);
+    }
     if (b === 'discover') {
       return json(
         await ctx.runAction(internal.edgeProviderOps.discoverOptions, {
@@ -591,14 +600,19 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
       } as never),
     );
   if (c) return notFound();
-  if (a === 'providers' && b)
-    return json(
-      await ctx.runMutation(internal.edgeProviderAccounts.update, {
-        ...body,
-        id: id<'edgeProviderAccounts'>(b),
-        ...act,
-      } as never),
-    );
+  if (a === 'providers' && b) {
+    const res = await ctx.runMutation(internal.edgeProviderAccounts.update, {
+      ...body,
+      id: id<'edgeProviderAccounts'>(b),
+      ...act,
+    } as never);
+    if (body.credentials !== undefined || body.settings !== undefined) {
+      await ctx.scheduler.runAfter(0, internal.edgeProviderOps.inventory, {
+        accountId: id<'edgeProviderAccounts'>(b),
+      });
+    }
+    return json(res);
+  }
   if (a === 'templates' && b)
     return json(
       await ctx.runMutation(internal.edgeTemplates.update, {

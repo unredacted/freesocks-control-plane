@@ -142,13 +142,32 @@ export const getInventory = internalQuery({
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
     if (!r) return null;
-    let inventory: unknown = null;
+    let inventory: { loadBalancers?: Array<Record<string, unknown>> } | null = null;
     if (r.inventorySnapshot) {
       try {
         inventory = JSON.parse(r.inventorySnapshot);
       } catch {
         inventory = null;
       }
+    }
+    if (inventory && Array.isArray(inventory.loadBalancers)) {
+      // `unowned` = no live edge ledger references the LB: what the relay import
+      // picker offers first (an owned one is already an edge).
+      const owned = new Set<string>();
+      for (const e of await ctx.db
+        .query('edges')
+        .withIndex('by_account_status', (q) => q.eq('accountId', id))
+        .collect()) {
+        if (e.status === 'destroyed') continue;
+        for (const res of e.resources) owned.add(res.resourceId);
+      }
+      inventory = {
+        ...inventory,
+        loadBalancers: inventory.loadBalancers.map((lb) => ({
+          ...lb,
+          unowned: !owned.has(String(lb.id)),
+        })),
+      };
     }
     return {
       inventory,
