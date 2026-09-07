@@ -12,7 +12,12 @@
  * subscriber holding a retired name keeps working through the drain.
  */
 import { ConvexError, v } from 'convex/values';
-import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  type DatabaseReader,
+  type MutationCtx,
+} from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
@@ -228,6 +233,32 @@ export const create = internalMutation({
   },
 });
 
+/** Published/draining edges on this profile's slots that a (provider, account) scope would exclude. */
+async function edgesOutsideScope(
+  ctx: { db: DatabaseReader },
+  profileId: Id<'protocolProfiles'>,
+  provider: string | undefined,
+  accountId: Id<'edgeProviderAccounts'> | undefined,
+): Promise<number> {
+  const slots = await ctx.db
+    .query('relaySlots')
+    .withIndex('by_profile', (q) => q.eq('profileId', profileId))
+    .collect();
+  let n = 0;
+  for (const slot of slots) {
+    const edges = await ctx.db
+      .query('edges')
+      .withIndex('by_relay_status', (q) => q.eq('relayId', slot.relayId))
+      .collect();
+    for (const e of edges) {
+      if (e.slotId !== slot._id || e.publication === 'unpublished') continue;
+      if (provider !== undefined && e.provider !== provider) n++;
+      else if (accountId !== undefined && e.accountId !== accountId) n++;
+    }
+  }
+  return n;
+}
+
 export const update = internalMutation({
   args: {
     id: v.id('protocolProfiles'),
@@ -262,6 +293,22 @@ export const update = internalMutation({
           throw new ConvexError({ code: 'validation', message: 'account/provider mismatch' });
       }
       patch.accountId = a.accountId ?? undefined;
+    }
+    // A narrower scope must not orphan live edges: provider compatibility is
+    // checked at publish time only, so an edge published under the old scope
+    // would keep rendering as "compatible" forever. Refuse while any published
+    // or draining edge of a slot on this profile falls outside the new scope.
+    const accountId = a.accountId !== undefined ? (a.accountId ?? undefined) : row.accountId;
+    if (
+      (provider !== undefined && provider !== row.provider) ||
+      (accountId !== undefined && accountId !== row.accountId)
+    ) {
+      const incompatible = await edgesOutsideScope(ctx, a.id, provider, accountId);
+      if (incompatible > 0)
+        throw new ConvexError({
+          code: 'conflict',
+          message: `${incompatible} published edge(s) fall outside the new scope; unpublish or drain them first`,
+        });
     }
     if (
       protocolNeedsTarget(row.protocol) &&

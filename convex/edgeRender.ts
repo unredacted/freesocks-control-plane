@@ -110,8 +110,10 @@ export const epochFor = internalQuery({
     if (!(await renderEnabled(ctx))) return null;
     const origin = await relayFor(ctx, backendServerId, nodeHostname);
     if (!origin || !origin.enabled) return null;
-    const { published } = await publishedEdgesOf(ctx, origin);
-    return published.length > 0 ? origin.publicationEpoch : null;
+    // The epoch stands even for an empty pool: the body is then rendered with
+    // the template entries dropped, and that render must be cached/invalidated
+    // like any other.
+    return origin.publicationEpoch;
   },
 });
 
@@ -143,8 +145,10 @@ export const contextForSubscription = internalQuery({
     if (!origin || !origin.enabled) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
     if (!cfg.render.enabled) return null;
+    // An empty eligible pool (every edge unpublished, draining, or behind a
+    // disabled profile) still renders: the template entries carry the former
+    // index-0 address and must be dropped, not distributed.
     const { published, templateRemarks } = await publishedEdgesOf(ctx, origin);
-    if (published.length === 0) return null;
     const family = a.family as RenderClientFamily;
     return {
       relayId: origin._id,

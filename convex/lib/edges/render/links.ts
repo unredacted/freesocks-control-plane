@@ -99,9 +99,15 @@ export function renderLinks(input: RenderInput): RenderOutput {
     });
     if (line) emitted.push(line);
   }
-  if (emitted.length === 0) {
+  if (emitted.length === 0 && !input.rule.dropTemplateEntries) {
     return { body: input.body, applied: false, reason: 'no_endpoints_rendered', emitted: 0 };
   }
+  // Drop-only (no endpoints, templates dropped): the marker expands to nothing.
   const joined = out.flatMap((l) => (l === '__RELAY_ENDPOINTS__' ? emitted : [l])).join('\n');
-  return { body: encoded ? btoa(joined) : joined, applied: true, emitted: emitted.length };
+  return {
+    body: encoded ? btoa(joined) : joined,
+    applied: true,
+    ...(emitted.length === 0 ? { reason: 'templates_dropped' } : {}),
+    emitted: emitted.length,
+  };
 }

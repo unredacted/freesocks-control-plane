@@ -172,24 +172,52 @@ describe('evaluate', () => {
     expect(split.edgeEvidence).toEqual([]);
   });
 
-  test('corroborated when members and probes agree; probeSourcesDown when every summary is stale', () => {
+  test('corroborated when members and FRESH probes agree; stale or probes-off evidence is ignored per edge', () => {
+    const window = { reports: 12, distinctReporters: 10, countries: { IR: 12 }, byEdge: {} };
+    const unreachableIr = [{ country: 'IR', verdict: 'unreachable' as const }];
     const ev = evaluate(
+      input({ window, edges: [edge('e1', { byCountry: unreachableIr, probeAgeMs: 60_000 })] }),
+    );
+    expect(ev.hintLevel).toBe('corroborated');
+    expect(ev.edgeEvidence).toEqual([{ edgeId: 'e1', source: 'probes', countries: ['IR'] }]);
+    expect(ev.probeSourcesDown).toBe(false);
+    // A stale summary on one edge next to a fresh one on another: the stale edge
+    // is neither evidence nor a rotation candidate, and the sources are not "down".
+    const mixed = evaluate(
       input({
-        window: { reports: 12, distinctReporters: 10, countries: { IR: 12 }, byEdge: {} },
+        window,
         edges: [
-          edge('e1', {
-            byCountry: [{ country: 'IR', verdict: 'unreachable' }],
-            probeAgeMs: 10 * 60 * 60_000,
-          }),
+          edge('stale', { byCountry: unreachableIr, probeAgeMs: 10 * 60 * 60_000 }),
+          edge('fresh', { probeAgeMs: 60_000 }),
         ],
       }),
     );
-    expect(ev.hintLevel).toBe('corroborated');
-    expect(ev.probeSourcesDown).toBe(true);
-    const fresh = evaluate(input({ edges: [edge('e1', { probeAgeMs: 60_000 })] }));
-    expect(fresh.probeSourcesDown).toBe(false);
+    expect(mixed.hintLevel).toBe('reports');
+    expect(mixed.probeScore).toBe(0);
+    expect(mixed.edgeEvidence).toEqual([]);
+    expect(mixed.probeSourcesDown).toBe(false);
+    // Every summary stale → sources down (and still no edge evidence from the stale rows).
+    const allStale = evaluate(
+      input({
+        window,
+        edges: [edge('e1', { byCountry: unreachableIr, probeAgeMs: 10 * 60 * 60_000 })],
+      }),
+    );
+    expect(allStale.hintLevel).toBe('reports');
+    expect(allStale.probeSourcesDown).toBe(true);
     const never = evaluate(input({ edges: [edge('e1', { probeAgeMs: null })] }));
     expect(never.probeSourcesDown).toBe(true);
+    // Probes disabled: whatever the summaries say, they carry no weight and there is no veto.
+    const off = evaluate(
+      input({
+        window,
+        cfg: { ...cfg, probe: { ...cfg.probe, enabled: false } },
+        edges: [edge('e1', { byCountry: unreachableIr, probeAgeMs: 60_000 })],
+      }),
+    );
+    expect(off.hintLevel).toBe('reports');
+    expect(off.edgeEvidence).toEqual([]);
+    expect(off.probeSourcesDown).toBe(false);
   });
 
   test('clearing needs clearAfterEvals quiet evaluations; a loud one resets the count', () => {

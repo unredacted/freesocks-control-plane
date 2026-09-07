@@ -1242,9 +1242,48 @@ export const resolveQuarantine = internalMutation({
       }
       await ctx.db.patch(relayId, { publishedEdgeIds: published, updatedAt: now });
     } else if (rotation?.toEdgeId) {
+      // Keep the CURRENT edge: the rolling_back pass already restored the
+      // previous binding in the DB (previous published, new unpublished), so
+      // this is the inverse — the operator aligned the panel Host with the new
+      // edge by hand, and FCP's pool must say the same: new edge published at
+      // the saved pool index, previous edge draining.
       const to = await ctx.db.get(rotation.toEdgeId);
-      if (to && to.status === 'quarantined')
-        await ctx.db.patch(to._id, { status: 'active', statusChangedAt: now, updatedAt: now });
+      if (to && to.status !== 'destroyed') {
+        const cfg = await resolveEdgeConfig(ctx.db);
+        let published = origin.publishedEdgeIds;
+        const poolIndex = rotation.previousBinding?.poolIndex ?? to.poolIndex ?? 0;
+        if (rotation.previousBinding && rotation.previousBinding.edgeId !== to._id) {
+          const prev = await ctx.db.get(rotation.previousBinding.edgeId);
+          if (prev && prev.status !== 'destroyed') {
+            await ctx.db.patch(prev._id, {
+              publication: 'draining',
+              status: 'draining',
+              poolIndex: undefined,
+              drainUntil: now + (rotation.burn ? edgeMs.burnedDrain(cfg) : edgeMs.drain(cfg)),
+              ...(rotation.burn ? { burnedAt: now } : {}),
+              statusChangedAt: now,
+              updatedAt: now,
+            });
+            published = withoutEdge(published, prev._id);
+          }
+        }
+        await ctx.db.patch(to._id, {
+          publication: 'published',
+          status: 'active',
+          poolIndex,
+          publishedAt: to.publishedAt ?? now,
+          drainUntil: undefined,
+          statusChangedAt: now,
+          updatedAt: now,
+        });
+        published = withEdgeAt(published, poolIndex, to._id);
+        await ctx.db.patch(relayId, {
+          publishedEdgeIds: published,
+          standbyEdgeIds: origin.standbyEdgeIds.filter((e) => e !== to._id),
+          lastRotatedAt: now,
+          updatedAt: now,
+        });
+      }
     }
     await ctx.db.patch(relayId, {
       quarantine: undefined,

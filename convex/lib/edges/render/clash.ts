@@ -48,7 +48,10 @@ export function renderClash(input: RenderInput): RenderOutput {
     }
     emitted.push(clone);
   }
-  if (emitted.length === 0)
+  // Drop-only: no endpoint to emit (empty pool) — remove the templates, prune
+  // their group memberships, and drop the groups that end up empty.
+  const dropOnly = emitted.length === 0;
+  if (dropOnly && !input.rule.dropTemplateEntries)
     return { body: input.body, applied: false, reason: 'no_endpoints_rendered', emitted: 0 };
   const names = emitted.map((e) => e.name as string);
 
@@ -76,7 +79,7 @@ export function renderClash(input: RenderInput): RenderOutput {
       if (typeof m === 'string' && templateSet.has(m)) {
         if (!swapped) {
           swapped = true;
-          if (input.rule.autoGroup && g.name !== input.rule.autoGroupName)
+          if (input.rule.autoGroup && !dropOnly && g.name !== input.rule.autoGroupName)
             members.push(input.rule.autoGroupName);
           members.push(...names);
         }
@@ -93,6 +96,42 @@ export function renderClash(input: RenderInput): RenderOutput {
     }
     return out;
   });
+  if (dropOnly) {
+    const removed = new Set<string>(templateSet);
+    let list = nextGroups;
+    for (let changed = true; changed; ) {
+      changed = false;
+      const keep: unknown[] = [];
+      for (const g of list) {
+        if (!isObj(g) || !Array.isArray(g.proxies)) {
+          keep.push(g);
+          continue;
+        }
+        const members = g.proxies.filter((m) => !(typeof m === 'string' && removed.has(m)));
+        if (members.length === 0) {
+          if (typeof g.name === 'string') removed.add(g.name);
+          changed = true;
+          continue;
+        }
+        keep.push({ ...g, proxies: members });
+      }
+      list = keep;
+    }
+    const rendered = YAML.stringify(
+      { ...doc, proxies: nextProxies, 'proxy-groups': list },
+      { lineWidth: 0 },
+    );
+    for (const t of removed) {
+      if (rendered.includes(t))
+        return {
+          body: input.body,
+          applied: false,
+          reason: 'dangling_template_reference',
+          emitted: 0,
+        };
+    }
+    return { body: rendered, applied: true, reason: 'templates_dropped', emitted: 0 };
+  }
   if (input.rule.autoGroup && !sawAuto) {
     nextGroups.unshift({
       name: input.rule.autoGroupName,

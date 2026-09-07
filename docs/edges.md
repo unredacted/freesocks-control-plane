@@ -63,7 +63,10 @@ subscriber's assigned endpoints:
   entries; each family has an admin-editable rule (`render.clients.<family>`).
 
 Rendering is fail-open: an unknown body shape passes through unchanged. It is off until
-`render.enabled` is set; preview any family per relay from the admin page.
+`render.enabled` is set; preview any family per relay from the admin page. When an enabled
+relay's eligible pool is **empty** (every edge unpublished or draining, or the profile disabled)
+the template entries are **dropped** rather than served: the template Host still carries the
+former index-0 address, which an explicit unpublish must stop distributing.
 
 ## Operations
 
@@ -115,7 +118,9 @@ Recovery contract:
   "converges" on a different Host.
 - **Quarantine.** A rollback that cannot converge parks the relay in `quarantine`. Nothing
   bypasses it (no rotation, no delete, no automatic action) until an operator, having checked
-  the panel by hand, resolves it keeping either the previous or the current binding.
+  the panel by hand, resolves it keeping either the previous binding (the rollback's DB half
+  already applied) or the current one (the new edge is republished at the saved pool index and
+  the previous edge drains).
 - **Audit trail.** Every audit row a rotation produces carries its `rotationId` (the operator's
   request, publish/unpublish, flips, the outcome, quarantine and its resolution); the rotation
   detail (`GET …/rotations/{id}`, the CMS drawer) merges them with the live event log.
@@ -170,12 +175,15 @@ choice resolves to exactly one edge under their own assignment (`connectionChoic
 `relayEdgeId`); it is never inferred from the primary. Each member contributes at most one
 detector weight per window via a peppered dedupe mark (`EDGE_MARK_PEPPER`, falling back to
 `IP_HASH_SALT`); the telemetry row stays unlinked. `refreshNotObserved` marks a key that has not
-fetched content since the relay's last rotation.
+fetched content since the relay's last rotation; such a report is still on the OLD pool, so it
+gets no edge attribution (it would otherwise land on the healthy replacement).
 
 ### Detector (`edge-block-detector`, 5 min, `detect.*`)
 
 Per relay: attributed reports in the window (deduplicated), the node's live user count against
-its own baseline, and probe verdicts. Relay-level evidence can only **hint** (the dashboard
+its own baseline, and probe verdicts (per edge, and only while probes are enabled and the
+edge's summary is younger than two probe intervals; a stale summary is not evidence). Relay-level
+evidence can only **hint** (the dashboard
 strip and the relay badge). An **automatic rotation** needs, in order: `edge.enabled`,
 `edge.autoRotate`, the relay's `autoRotate`, a suspected state, edge-level evidence (probes,
 or members naming the connection with enough share, counted after the per-member dedupe), the
@@ -237,8 +245,10 @@ templates pin with the node like its other Hosts.
 on a relay (unpublished); open an authenticated REALITY session through the edge with a real
 client and hold it idle for several minutes; pull the live view; then "Mark qualified". Changing
 the account's credentials or settings clears the qualification; so does changing the parameters
-of a template the account was qualified with or uses as its default (audited as
-`edge.provider_account.qualified` with `qualified:false`).
+of a template the account was qualified with, names as its default, or falls back to as the
+provider default (audited as `edge.provider_account.qualified` with `qualified:false`). Settings
+that locate resources (project, region, zone, network) cannot change while any non-destroyed
+edge references the account: destroy those edges first, or add a second account.
 
 **Bootstrap a relay.** Register via the role (or create it here), adopt the hand-made edge at
 index 0 (publish), provision a second edge (published at index 1), enable rendering, preview each

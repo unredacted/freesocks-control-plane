@@ -52,7 +52,11 @@ export function renderSingbox(input: RenderInput): RenderOutput {
     if (ep.sni !== null && isObj(clone.tls)) clone.tls = { ...clone.tls, server_name: ep.sni };
     emitted.push(clone);
   }
-  if (emitted.length === 0)
+  // Drop-only: no endpoint to emit (empty pool) — remove the templates, prune
+  // their group memberships, and drop the groups that end up empty (the auto
+  // group included: an empty urltest is not a valid outbound).
+  const dropOnly = emitted.length === 0;
+  if (dropOnly && !input.rule.dropTemplateEntries)
     return { body: input.body, applied: false, reason: 'no_endpoints_rendered', emitted: 0 };
   const emittedTags = emitted.map((e) => e.tag as string);
 
@@ -81,7 +85,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
         if (typeof m === 'string' && templateSet.has(m)) {
           if (!swapped) {
             swapped = true;
-            if (input.rule.autoGroup) members.push(input.rule.autoGroupName);
+            if (input.rule.autoGroup && !dropOnly) members.push(input.rule.autoGroupName);
             members.push(...emittedTags);
           }
           if (!input.rule.dropTemplateEntries) members.push(m);
@@ -95,7 +99,10 @@ export function renderSingbox(input: RenderInput): RenderOutput {
         group.outbounds = emittedTags;
         group.type = 'urltest';
       }
-      if (typeof ob.default === 'string' && templateSet.has(ob.default)) {
+      if (dropOnly) {
+        if (typeof group.default === 'string' && templateSet.has(group.default))
+          delete group.default;
+      } else if (typeof ob.default === 'string' && templateSet.has(ob.default)) {
         group.default = input.rule.autoGroup ? input.rule.autoGroupName : emittedTags[0];
       } else if (
         input.rule.autoGroup &&
@@ -112,6 +119,43 @@ export function renderSingbox(input: RenderInput): RenderOutput {
   }
   if (!inserted)
     return { body: input.body, applied: false, reason: 'template_not_in_outbounds', emitted: 0 };
+  if (dropOnly) {
+    // Groups left without members go too, and so does anything that pointed at
+    // them (iterate until stable; a selector of only dropped tags cascades).
+    const removed = new Set<string>(templateSet);
+    let list = next;
+    for (let changed = true; changed; ) {
+      changed = false;
+      const keep: unknown[] = [];
+      for (const ob of list) {
+        if (!isObj(ob) || !Array.isArray(ob.outbounds)) {
+          keep.push(ob);
+          continue;
+        }
+        const members = ob.outbounds.filter((m) => !(typeof m === 'string' && removed.has(m)));
+        if (members.length === 0) {
+          if (typeof ob.tag === 'string') removed.add(ob.tag);
+          changed = true;
+          continue;
+        }
+        const g: Obj = { ...ob, outbounds: members };
+        if (typeof g.default === 'string' && removed.has(g.default)) delete g.default;
+        keep.push(g);
+      }
+      list = keep;
+    }
+    const rendered = JSON.stringify({ ...cfg, outbounds: list });
+    for (const t of removed) {
+      if (rendered.includes(JSON.stringify(t)))
+        return {
+          body: input.body,
+          applied: false,
+          reason: 'dangling_template_reference',
+          emitted: 0,
+        };
+    }
+    return { body: rendered, applied: true, reason: 'templates_dropped', emitted: 0 };
+  }
   if (input.rule.autoGroup && !sawAutoGroup) {
     next.push({
       type: 'urltest',

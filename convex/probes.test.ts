@@ -271,7 +271,20 @@ describe('relayProbes', () => {
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.enabled', 'false'));
     const r4 = await t.action(internal.probes.run, {});
     expect(r4).toMatchObject({ requested: 0, skipped: 0 });
-    void edgeId;
+    // An interval above an hour still sees its last run: aged 90 min with a
+    // 120 min interval → not due; aged past the interval → due.
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.probe.hourlyBudget', '200');
+      await upsertSettingRow(ctx, 'edge.probe.intervalMinutes', '120');
+      for (const run of await ctx.db.query('probeRuns').collect())
+        await ctx.db.patch(run._id, { requestedAt: Date.now() - 90 * 60_000 });
+    });
+    const plan90 = await t.query(internal.probes.due, { now: Date.now() });
+    expect(plan90.dueTargets).toEqual([]);
+    expect(plan90.spentThisHour).toBe(0);
+    const plan130 = await t.query(internal.probes.due, { now: Date.now() + 40 * 60_000 });
+    expect(plan130.dueTargets.map((d) => d.target.ref)).toEqual([edgeId]);
   });
 
   test('stuck runs time out after the ceiling', async () => {
@@ -432,19 +445,44 @@ describe('relayProbes', () => {
     // Cron scheduling covers all three kinds.
     const plan = await t.query(internal.probes.due, { now: Date.now() + 60 * 60_000 });
     expect(plan.dueTargets.map((d) => d.target.kind).sort()).toEqual(['custom', 'edge', 'relay']);
-    // Address change resets the custom target's history; delete removes its rollups.
+    // Address change resets the custom target's history: the summary, the rollup
+    // rows (else the next finish folds the old host's verdicts back in) and any
+    // run still in flight against the old endpoint.
+    const rollupsOf = () =>
+      t.run((ctx) =>
+        ctx.db
+          .query('probeReachability')
+          .withIndex('by_target_country', (q) =>
+            q.eq('targetKind', 'custom').eq('targetRef', created.id),
+          )
+          .collect(),
+      );
+    expect((await rollupsOf()).length).toBeGreaterThan(0);
+    const inflight = await t.run((ctx) =>
+      ctx.db.insert('probeRuns', {
+        targetKind: 'custom',
+        targetRef: created.id,
+        source: 'globalping',
+        target: 'decoy.example:8443',
+        ipVersion: 4,
+        status: 'running',
+        trigger: 'manual',
+        requestedAt: Date.now(),
+        results: [],
+      }),
+    );
     await t.mutation(internal.probeTargets.update, { id: created.id, address: 'decoy-b.example' });
     expect((await t.query(internal.probeTargets.list, {}))[0].reachability.updatedAt).toBeNull();
+    expect(await rollupsOf()).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(inflight)))!.status).toBe('failed');
+    // A late result for that run cannot resurrect the old host's evidence.
+    await t.mutation(internal.probes.finishRun, {
+      runId: inflight,
+      results: [{ country: 'IR', vantageClass: 'eyeball', ok: false }],
+    });
+    expect(await rollupsOf()).toEqual([]);
     await t.mutation(internal.probeTargets.remove, { id: created.id });
-    const rows = await t.run((ctx) =>
-      ctx.db
-        .query('probeReachability')
-        .withIndex('by_target_country', (q) =>
-          q.eq('targetKind', 'custom').eq('targetRef', created.id),
-        )
-        .collect(),
-    );
-    expect(rows).toEqual([]);
+    expect(await rollupsOf()).toEqual([]);
     // The audit feed carries the request, runs, verdicts and target edits, keys only.
     const feed = await t.query(internal.probes.auditFeed, {});
     const actions = new Set(feed.map((e) => e.action));

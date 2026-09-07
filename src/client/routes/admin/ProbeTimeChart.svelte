@@ -179,7 +179,8 @@
       {/if}
       {#if s.truncated}
         <p class="text-xs text-amber-600">
-          The range holds more runs than one summary reads (5k). Narrow the range for exact numbers.
+          The range holds more runs than one summary reads (5k); the oldest were left out. Narrow
+          the range for exact numbers.
         </p>
       {/if}
     {/if}

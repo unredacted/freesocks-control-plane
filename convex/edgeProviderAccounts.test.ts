@@ -108,7 +108,7 @@ describe('edgeProviderAccounts', () => {
     expect(after).toMatchObject({ enabled: false, priority: 5, qualified: true });
   });
 
-  test('remove refuses while an edge references the account', async () => {
+  test('remove and settings changes refuse while an edge references the account', async () => {
     const t = convexTest(schema, modules);
     const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
       provider: 'upcloud',
@@ -203,6 +203,21 @@ describe('edgeProviderAccounts', () => {
     await expect(t.mutation(internal.edgeProviderAccounts.remove, { id })).rejects.toThrow(
       /Edges still reference/,
     );
+    // The zone locates the live edge's resources: it cannot move under them.
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, { id, settings: { zone: 'nl-ams1' } }),
+    ).rejects.toThrow(/still reference this account/);
+    // Re-sending the same settings is not a change; flags and credentials stay editable.
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id,
+      settings: { zone: 'de-fra1' },
+      priority: 3,
+    });
+    await t.mutation(internal.edgeProviderAccounts.update, { id, credentials: { token: 'T2' } });
+    expect(await t.query(internal.edgeProviderAccounts.getForAdmin, { id })).toMatchObject({
+      priority: 3,
+      settings: { zone: 'de-fra1' },
+    });
   });
 });
 
@@ -266,7 +281,10 @@ describe('edgeTemplates', () => {
       });
     const byHash = (await mk('by-hash')).id;
     const byDefault = (await mk('by-default')).id;
+    const implicit = (await mk('implicit')).id; // no template of its own → provider default
     const other = (await mk('other')).id;
+    await t.mutation(internal.edgeTemplates.update, { id: tplId, isDefault: true });
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id: implicit, qualified: true });
     await t.mutation(internal.edgeProviderAccounts.setQualified, {
       id: byHash,
       qualified: true,
@@ -280,6 +298,16 @@ describe('edgeTemplates', () => {
       id: byDefault,
       qualified: true,
     });
+    // `other` provisions from its OWN template, so the default's edits never touch it.
+    const { id: otherTpl } = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Tpl-other',
+      params: { flavor: 'lb1-1-2' },
+    });
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: other,
+      defaultTemplateId: otherTpl,
+    });
     await t.mutation(internal.edgeProviderAccounts.setQualified, {
       id: other,
       qualified: true,
@@ -292,18 +320,19 @@ describe('edgeTemplates', () => {
       id: tplId,
       params: { flavor: 'lb1-4-8' },
     });
-    expect(upd.requalify).toBe(2);
+    expect(upd.requalify).toBe(3);
     const q = async (id: typeof byHash) =>
       (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))!.qualified;
     expect(await q(byHash)).toBe(false);
     expect(await q(byDefault)).toBe(false);
+    expect(await q(implicit)).toBe(false);
     expect(await q(other)).toBe(true);
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(
       audit.filter(
         (a) => a.action === 'edge.provider_account.qualified' && a.payload?.qualified === false,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
   });
 
   test('getInventory decodes the stored snapshot into the admin contract shape', async () => {

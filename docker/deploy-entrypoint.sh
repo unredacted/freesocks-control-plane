@@ -116,7 +116,7 @@ fi
 # incompatible code is never published first. The very first deploy of the guard
 # can only check after its own push. DEPLOY_SKIP_NODE_FLOOR=true bypasses.
 read_backend_node() {
-  bunx convex run relayProviderOps:runtimeInfo '{}' 2>/dev/null |
+  bunx convex run edgeProviderOps:runtimeInfo '{}' 2>/dev/null |
     bun -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).nodeVersion??"")}catch{console.log("")}})' || true
 }
 check_node_floor() {
@@ -143,7 +143,7 @@ if [ "${DEPLOY_SKIP_NODE_FLOOR:-false}" != "true" ]; then
   echo "[deploy] checking the backend's Node runtime for \"use node\" actions"
   node_version="$(read_backend_node)"
   if [ -z "${node_version}" ]; then
-    echo "[deploy] ERROR: could not read the backend Node version (relayProviderOps:runtimeInfo)" >&2
+    echo "[deploy] ERROR: could not read the backend Node version (edgeProviderOps:runtimeInfo)" >&2
     exit 1
   fi
   check_node_floor "${node_version}" "after push"

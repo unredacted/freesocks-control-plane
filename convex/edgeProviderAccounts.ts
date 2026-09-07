@@ -260,10 +260,29 @@ export const update = internalMutation({
     checkLimits(a);
     const patch: Partial<Doc<'edgeProviderAccounts'>> = { updatedAt: Date.now() };
     let credentialsChanged = false;
+    let settingsChanged = false;
     if (a.settings !== undefined) {
       const settings = validateSettings(row.provider, a.settings);
       if (!settings.ok)
         throw new ConvexError({ code: 'validation', message: settings.issues.join('; ') });
+      settingsChanged = JSON.stringify(settings.settings) !== JSON.stringify(row.settings);
+      if (settingsChanged) {
+        // Edges store only resource ids; the project/region/zone/network that
+        // locate them live here and are reloaded by every describe/destroy. A
+        // change while edges exist would make their resources invisible to
+        // reconciliation and undeletable (yet still live and billable).
+        const live = (
+          await ctx.db
+            .query('edges')
+            .withIndex('by_account_status', (q) => q.eq('accountId', a.id))
+            .collect()
+        ).filter((e) => e.status !== 'destroyed');
+        if (live.length > 0)
+          throw new ConvexError({
+            code: 'conflict',
+            message: `${live.length} edge(s) still reference this account; destroy them before changing its settings`,
+          });
+      }
       patch.settings = settings.settings as never;
     }
     if (a.credentials !== undefined) {
@@ -291,7 +310,7 @@ export const update = internalMutation({
       patch.defaultTemplateId = a.defaultTemplateId ?? undefined;
     // New credentials or settings invalidate the qualification (a different
     // account/network may not carry REALITY the same way).
-    if (credentialsChanged || a.settings !== undefined) {
+    if (credentialsChanged || settingsChanged) {
       patch.qualified = false;
       patch.qualifiedTemplateHash = undefined;
     }

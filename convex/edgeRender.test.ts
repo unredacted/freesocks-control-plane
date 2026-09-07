@@ -255,7 +255,7 @@ describe('edgeRender: fronted route', () => {
     expect(other).toContain('FreeSocks%20Primary');
   });
 
-  test('contextForSubscription is null without a pin, an origin, or a published edge', async () => {
+  test('contextForSubscription is null without a pin or an origin; an emptied pool still renders and DROPS the template entry', async () => {
     stubPanel();
     const { t, subId, relayId, edgeA } = await seed();
     expect(
@@ -272,23 +272,34 @@ describe('edgeRender: fronted route', () => {
     expect(ctx1?.published.map((p) => p.edgeId)).toEqual([edgeA]);
     expect(ctx1?.templateRemarks).toEqual([`${NODE}-relay-u`]);
     expect(ctx1?.rule.autoGroup).toBe(true);
+    // Serve once with the edge published, then unpublish it: the panel body
+    // still carries the template Host (pointing at the former edge), which
+    // must now be dropped rather than distributed.
+    const before = await (await get(t)).text();
+    expect(before).toContain('FreeSocks%20Primary');
     await t.mutation(internal.relays.unpublishEdge, {
       relayId,
       edgeId: edgeA,
       keepActive: true,
     });
-    expect(
-      await t.query(internal.edgeRender.contextForSubscription, {
-        subscriptionId: subId,
-        family: 'other',
-      }),
-    ).toBeNull();
-    expect(
-      await t.query(internal.edgeRender.epochFor, {
-        backendServerId: (await t.run((ctx) => ctx.db.get(subId)))!.backendServerId!,
-        nodeHostname: NODE,
-      }),
-    ).toBeNull();
+    const ctx2 = await t.query(internal.edgeRender.contextForSubscription, {
+      subscriptionId: subId,
+      family: 'other',
+    });
+    expect(ctx2?.published).toEqual([]);
+    expect(ctx2?.templateRemarks).toEqual([`${NODE}-relay-u`]);
+    const epoch = await t.query(internal.edgeRender.epochFor, {
+      backendServerId: (await t.run((ctx) => ctx.db.get(subId)))!.backendServerId!,
+      nodeHostname: NODE,
+    });
+    expect(epoch).toBe(ctx2!.epoch);
+    // The epoch bump invalidated the cache within one request; the served body
+    // has neither the template line nor any relay entry, and keeps the direct Host.
+    const after = await (await get(t)).text();
+    expect(after).not.toContain(`#${NODE}-relay-u`);
+    expect(after).not.toContain(EDGE_A);
+    expect(after).not.toContain('FreeSocks%20Primary');
+    expect(after).toContain(`#${NODE}-reality`);
   });
 
   test('memberView: connection labels only, and a refresh nudge once the origin rotated after the last delivery', async () => {

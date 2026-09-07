@@ -237,6 +237,33 @@ describe('relayOrigins + slots + profiles', () => {
     ).rejects.toThrow(/occupied/);
   });
 
+  test('narrowing a profile scope refuses while published edges fall outside it; unpublished edges do not block', async () => {
+    const { t, relayId, slotId, profileId } = await seed();
+    const e = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId,
+      ipv4: '198.51.100.1',
+      publish: true,
+    });
+    // The adopted edge carries no provider: any provider scope excludes it while published.
+    await expect(
+      t.mutation(internal.protocolProfiles.update, { id: profileId, provider: 'upcloud' }),
+    ).rejects.toThrow(/outside the new scope/);
+    // Widening to "any provider" is always fine; so is an unrelated edit.
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, provider: null });
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, name: 'Renamed' });
+    // Drained/unpublished → the scope may narrow again.
+    await t.mutation(internal.relays.unpublishEdge, {
+      relayId,
+      edgeId: e.edgeId,
+      keepActive: true,
+    });
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, provider: 'upcloud' });
+    expect((await t.query(internal.protocolProfiles.get, { id: profileId }))?.provider).toBe(
+      'upcloud',
+    );
+  });
+
   test('publish preconditions: disabled profile / no active SNI / retired slot block publication', async () => {
     const { t, relayId, slotId, profileId } = await seed();
     const e = await t.mutation(internal.relays.adoptEdge, {

@@ -373,6 +373,8 @@ describe('relay block detector', () => {
         }),
       );
     await unreachable(s.edgeB);
+    // Probe evidence counts only while probes are enabled (stale/legacy summaries never do).
+    await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.enabled', 'true'));
     await s.t.run(async (ctx) => {
       for (let i = 0; i < 10; i++) {
         await ctx.db.insert('issueReports', {

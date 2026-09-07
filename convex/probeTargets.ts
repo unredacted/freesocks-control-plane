@@ -102,12 +102,32 @@ export const update = internalMutation({
     if (a.port !== undefined) patch.port = a.port;
     if (a.enabled !== undefined) patch.enabled = a.enabled;
     if (a.notes !== undefined) patch.notes = a.notes.slice(0, 500);
-    // A different address or port is a different target: its history no longer applies.
+    // A different address or port is a different target: its history no longer
+    // applies — the summary, the per-(country, source, family) rollup rows the
+    // next finish would otherwise fold back in, and any run still in flight
+    // against the old endpoint (settled as failed so it can never finish).
     if (
       (patch.address !== undefined && patch.address !== row.address) ||
       (patch.port !== undefined && patch.port !== row.port)
-    )
+    ) {
       patch.reachability = undefined;
+      const rollups = await ctx.db
+        .query('probeReachability')
+        .withIndex('by_target_country', (q) => q.eq('targetKind', 'custom').eq('targetRef', a.id))
+        .collect();
+      for (const r of rollups) await ctx.db.delete(r._id);
+      for (const status of ['requested', 'running'] as const) {
+        const inflight = await ctx.db
+          .query('probeRuns')
+          .withIndex('by_status', (q) => q.eq('status', status))
+          .filter((q) =>
+            q.and(q.eq(q.field('targetKind'), 'custom'), q.eq(q.field('targetRef'), a.id)),
+          )
+          .take(200);
+        for (const r of inflight)
+          await ctx.db.patch(r._id, { status: 'failed', finishedAt: Date.now() });
+      }
+    }
     await ctx.db.patch(a.id, patch);
     await writeAuditLog(ctx, {
       actorType: 'admin',

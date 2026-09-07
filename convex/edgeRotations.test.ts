@@ -351,6 +351,40 @@ describe('relayRotations: replace', () => {
     );
   });
 
+  test('resolving a quarantine with keep:current publishes the new edge at the saved index and drains the previous one', async () => {
+    vi.useFakeTimers();
+    fakeWorld({ vanishAfterFirstPatch: true });
+    const { t, relayId, oldEdgeId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+    });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('quarantined');
+    // The rollback pass restored the previous binding before the quarantine...
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publishedEdgeIds).toEqual([
+      oldEdgeId,
+    ]);
+    // ...so keeping the CURRENT edge must invert it, not merely flip a status.
+    await t.mutation(internal.edgeRotations.resolveQuarantine, { relayId, keep: 'current' });
+    const after = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(after.quarantine).toBeUndefined();
+    expect(after.publishedEdgeIds).toEqual([r.toEdgeId]);
+    expect(after.standbyEdgeIds).not.toContain(r.toEdgeId);
+    expect(after.lastRotatedAt).toBeDefined();
+    const newEdge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
+    expect(newEdge).toMatchObject({ status: 'active', publication: 'published', poolIndex: 0 });
+    const oldEdge = (await t.query(internal.edges.get, { id: oldEdgeId }))!;
+    expect(oldEdge).toMatchObject({ status: 'draining', publication: 'draining' });
+    expect(oldEdge.drainUntil).toBeGreaterThan(Date.now());
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.outcome).toBe(
+      'quarantine_resolved:current',
+    );
+  });
+
   test('panel down during the flip: attempts are capped, then a rollback restores the binding without Host writes', async () => {
     vi.useFakeTimers();
     const world = fakeWorld({ panelDown: true });

@@ -89,7 +89,12 @@ export function renderEdgeEndpoints(args: {
 }): RenderOutput {
   if (!args.rule.enabled)
     return { body: args.body, applied: false, reason: 'disabled', emitted: 0 };
-  if (!args.assigned.primary)
+  // No assignable edge (the pool is empty, or every edge is unpublished /
+  // draining / behind a disabled profile): the template entries still point at
+  // whatever the panel Host carries (typically the former index-0 edge), so
+  // they must not be distributed. With `dropTemplateEntries` the renderers run
+  // in drop-only mode and remove them; otherwise the body passes through.
+  if (!args.assigned.primary && !args.rule.dropTemplateEntries)
     return { body: args.body, applied: false, reason: 'no_assignment', emitted: 0 };
   const format = detectBodyFormat(args.body);
   const hasAutoGroup =

@@ -117,16 +117,17 @@ export function evaluate(input: EvaluationInput): Evaluation {
   const outageEdges = input.edges
     .filter((e) => e.internalVerdict === 'unreachable' || e.providerHealth === 'offline')
     .map((e) => e.edgeId);
-  const probeEdges = input.edges.filter((e) => !outageEdges.includes(e.edgeId));
+  // Probe evidence is per edge and must be FRESH: a summary older than two
+  // intervals (or one left over from before probes were disabled) says nothing
+  // about the edge now, so it neither scores nor counts as edge evidence.
+  const staleAfterMs = 2 * probe.intervalMinutes * 60_000;
+  const probeFresh = (e: EdgeProbeState) =>
+    probe.enabled && e.probeAgeMs !== null && e.probeAgeMs <= staleAfterMs;
+  const probeEdges = input.edges.filter((e) => !outageEdges.includes(e.edgeId) && probeFresh(e));
   const probeScore = probeEdges.length
     ? Math.max(...probeEdges.map((e) => probeScoreOf(e.byCountry, probe.countries)))
     : 0;
-  const probeSourcesDown =
-    probe.enabled &&
-    input.edges.length > 0 &&
-    input.edges.every(
-      (e) => e.probeAgeMs === null || e.probeAgeMs > 2 * probe.intervalMinutes * 60_000,
-    );
+  const probeSourcesDown = probe.enabled && input.edges.length > 0 && !input.edges.some(probeFresh);
 
   // --- combine -----------------------------------------------------------------------------
   const base = detect.requireLoadCorroboration

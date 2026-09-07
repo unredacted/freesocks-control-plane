@@ -244,15 +244,19 @@ export const update = internalMutation({
       patch.params = JSON.stringify(parsed.params);
       patch.paramsHash = templateHashOf(parsed.params);
       if (patch.paramsHash !== row.paramsHash) {
-        // The REALITY qualification was run with the OLD parameters: every
-        // qualified account that was qualified with them, or that would provision
-        // from this template next, must be re-qualified before automation uses it.
+        // The qualification was run with the OLD parameters: every qualified
+        // account that was qualified with them, or that would provision from this
+        // template next (explicitly, or implicitly through the provider default
+        // when it names no template of its own), must be re-qualified before
+        // automation uses it.
         const accounts = await ctx.db.query('edgeProviderAccounts').collect();
         requalify = accounts.filter(
           (acct) =>
             acct.provider === row.provider &&
             acct.qualified &&
-            (acct.defaultTemplateId === a.id || acct.qualifiedTemplateHash === row.paramsHash),
+            (acct.defaultTemplateId === a.id ||
+              (acct.defaultTemplateId === undefined && row.isDefault) ||
+              acct.qualifiedTemplateHash === row.paramsHash),
         );
       }
     }

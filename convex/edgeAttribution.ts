@@ -47,7 +47,11 @@ export async function resolveEdgeAttribution(
   const refreshNotObserved =
     origin.lastRotatedAt !== undefined && (sub.lastDeliveredContentAt ?? 0) < origin.lastRotatedAt;
   let relayEdgeId: string | null = null;
-  if (choice && choice !== 'unsure' && choice !== 'direct') {
+  // A member who has not fetched content since the last rotation is still on
+  // the OLD pool: recomputing their assignment from the current pool would pin
+  // a report about the drained edge onto its healthy replacement. No edge
+  // attribution in that state (the report still counts at origin level).
+  if (choice && choice !== 'unsure' && choice !== 'direct' && !refreshNotObserved) {
     const { published } = await publishedEdgesOf({ db }, origin);
     if (published.length === 1 && (choice === 'auto' || choice === 'primary')) {
       relayEdgeId = published[0].edgeId;

@@ -346,7 +346,9 @@ export const finishRun = internalMutation({
   args: { runId: v.id('probeRuns'), results: v.array(probeResult) },
   handler: async (ctx, { runId, results }) => {
     const run = await ctx.db.get(runId);
-    if (!run || run.status === 'finished') return null;
+    // Only an in-flight run settles: one already finished, failed (e.g. its
+    // target changed under it) or timed out keeps its state.
+    if (!run || (run.status !== 'requested' && run.status !== 'running')) return null;
     const now = Date.now();
     await ctx.db.patch(runId, { status: 'finished', finishedAt: now, results });
     const cfg = await resolveEdgeConfig(ctx.db);
@@ -606,6 +608,9 @@ export const summary = internalQuery({
       .withIndex('by_status_requested', (q) =>
         q.eq('status', 'finished').gte('requestedAt', since).lt('requestedAt', until),
       )
+      // Newest first: when the window holds more than the cap, the OLDEST
+      // measurements fall off, never the current ones (bucketing is order-free).
+      .order('desc')
       .take(5000);
     const totals = { runs: 0, ok: 0, fail: 0 };
     const byCountry: Record<string, { ok: number; fail: number }> = {};
@@ -702,6 +707,8 @@ export const due = internalQuery({
     let spentThisHour = 0;
     const hourStart = now - 60 * MIN;
     const consider = async (target: ProbeTargetRef, interval: number, suspected: boolean) => {
+      // The hour's spend (budget) and the newest run (interval) are separate
+      // reads: an interval above an hour must still see its last run.
       const recent = await ctx.db
         .query('probeRuns')
         .withIndex('by_target_requested', (q) =>
@@ -709,7 +716,14 @@ export const due = internalQuery({
         )
         .collect();
       spentThisHour += recent.length;
-      const last = recent.reduce((m, r) => Math.max(m, r.requestedAt), 0);
+      const newest = await ctx.db
+        .query('probeRuns')
+        .withIndex('by_target_requested', (q) =>
+          q.eq('targetKind', target.kind).eq('targetRef', target.ref),
+        )
+        .order('desc')
+        .first();
+      const last = newest?.requestedAt ?? 0;
       if (last === 0 || now - last >= interval) dueTargets.push({ target, suspected });
     };
     const baseInterval = cfg.probe.intervalMinutes * MIN;

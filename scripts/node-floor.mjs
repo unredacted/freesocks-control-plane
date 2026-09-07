@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs';
 
 // Packages imported from "use node" action modules. Keep in sync with the
-// imports in convex/relayProviderOps.ts / convex/relayProbeOps.ts.
+// imports in convex/edgeProviderOps.ts / convex/probeOps.ts.
 const NODE_ACTION_DEPS = [
   'globalping',
   '@scaleway/sdk-client',
