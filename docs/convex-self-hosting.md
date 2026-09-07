@@ -75,6 +75,9 @@ dashboard → Settings → Environment Variables). `bunx convex env list` shows 
 | `ADMIN_SESSION_SIGNING_KEY`                      | admin `fs_admin_session` cookie HMAC: `openssl rand -hex 32`                                                                                                                                                                    |
 | `ADMIN_BOOTSTRAP_SECRET`                         | first-run admin passkey bootstrap gate: `openssl rand -hex 32`                                                                                                                                                                  |
 | `IP_HASH_SALT`                                   | HMAC salt for free-tier IP keying + login rate-limit: `openssl rand -hex 32`                                                                                                                                                    |
+| `EDGE_MARK_PEPPER`                               | optional: HMAC pepper for the relay block detector's per-member-per-window dedupe mark (`docs/edges.md`); falls back to `IP_HASH_SALT`. `openssl rand -hex 32`                                                                  |
+| `EDGE_PROBE_GLOBALPING_TOKEN`                    | optional env fallback for the Globalping probe token (normally a write-only setting under Admin → Telemetry → Probes)                                                                                                           |
+| `EDGE_PROBE_RIPEATLAS_KEY`                       | optional env fallback for the RIPE Atlas probe key (same)                                                                                                                                                                       |
 | `ACCOUNT_ID_PEPPER`                              | keyed-hash pepper for account numbers (a leaked hash column is useless without it): `openssl rand -hex 32`. **Set once before launch; changing it invalidates every account number.**                                           |
 | `CAP_API_ENDPOINT`, `CAP_SITE_KEY`, `CAP_SECRET` | self-hosted **Cap** captcha siteverify (free issuance + account login). `CAP_API_ENDPOINT` is the backend-internal Cap URL (e.g. `http://cap:3000`); `CAP_SECRET` is the site key's secret. Replaced Cloudflare Turnstile (W1). |
 | `WEBAUTHN_RP_ID`                                 | passkey RP id = the bare domain (e.g. `freesocks.org`)                                                                                                                                                                          |
@@ -157,6 +160,18 @@ the normal subscription URL provisions one (country-tiered, capped by the
 proactively. Country tiering reads `CF-IPCountry` to prefill the picker, so it only
 helps when **`CF_FRONTED=true`** (otherwise the member just selects their region) —
 the code is transient and never stored. See `docs/threat-model-cdn-blinding.md`.
+
+### Node runtime for `"use node"` actions
+
+Actions that use npm SDKs (`convex/relayProviderOps.ts`, `convex/relayProbeOps.ts`,
+`convex/storage.ts`, …) run on the `node` binary baked into the self-hosted backend image
+(`ghcr.io/get-convex/convex-backend`, pinned by that repo's `.nvmrc`; the backend accepts
+v20/v22/v24 only). There is no per-deployment override on self-hosted; a newer Node arrives
+with the monthly image re-pin. The deploy entrypoint runs
+`bunx convex run relayProviderOps:runtimeInfo` before `convex deploy` (when the running
+deployment already has it) and again after, and fails when the runtime is below the highest
+`engines.node` floor among the node-action dependencies (`scripts/node-floor.mjs`;
+`DEPLOY_SKIP_NODE_FLOOR=true` bypasses). The observed version is shown on the admin dashboard.
 
 ## 6. Cutover to Convex (P11, start fresh)
 

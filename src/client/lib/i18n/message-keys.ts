@@ -348,6 +348,8 @@ export type MessageKey =
   | "hero.nodeUnknown"
   | "hero.qrHide"
   | "hero.qrShow"
+  | "hero.relayConnections"
+  | "hero.relayRefreshSuggested"
   | "hero.resetsInDays"
   | "hero.scanFallback"
   | "hero.scanOther"

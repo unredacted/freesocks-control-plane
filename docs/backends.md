@@ -555,6 +555,19 @@ The recommended-client catalog marks the Clash-family additions (FlClash, Mihomo
 Party) `schemeId: null` (manual paste of the subscription URL) rather than shipping
 an unverified one-tap import scheme.
 
+## Host management and node inventory (edges)
+
+Two optional provider capabilities back `docs/edges.md`: `hostManagement`
+(`listHosts` / `updateHost`: list the panel's client-facing connection entries and
+repoint ONE of them by uuid, address + port only) and `nodeInventory`
+(`getNodeInventory`: per-node online + users-online, cached in `backendNodeInventory`
+by the healthcheck cron). Remnawave implements both (`GET /api/hosts`,
+`PATCH /api/hosts { uuid, address, port }`, `GET /api/nodes`); a backend without
+them throws `backend.hosts_unsupported` from the dispatch (`convex/backends.ts`).
+The relay layer only ever writes the ONE template Host per origin slot
+(remark `<node>-relay-<slotKey>`), observe-then-write, and never touches a Host's
+inbound, SNI or fingerprint.
+
 ## Sensitive data
 
 Backends need credentials that must never leak:

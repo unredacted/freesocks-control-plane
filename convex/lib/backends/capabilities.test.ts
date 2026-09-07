@@ -21,5 +21,7 @@ describe('capability record ⇔ provider methods', () => {
     expect(caps.bulkTrafficUpdate).toBe(!!provider.bulkUpdateTrafficLimit);
     expect(caps.usageHistory).toBe(!!provider.getUserUsage);
     expect(caps.nodeStats).toBe(!!provider.getNodeStats);
+    expect(caps.hostManagement).toBe(!!provider.listHosts && !!provider.updateHost);
+    expect(caps.nodeInventory).toBe(!!provider.getNodeInventory);
   });
 });

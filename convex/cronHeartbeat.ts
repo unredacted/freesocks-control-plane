@@ -124,6 +124,27 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     everyMs: DAY,
     description: 'Prune member passkey registration challenges',
   },
+  {
+    name: 'edge-reconcile',
+    everyMs: 5 * MIN,
+    description:
+      'Relay edges: re-kick rotations, settle ledgers, health, drain → destroy, pool upkeep',
+  },
+  {
+    name: 'edge-probe',
+    everyMs: 5 * MIN,
+    description: 'Relay edges: budgeted reachability probes of published edges',
+  },
+  {
+    name: 'edge-block-detector',
+    everyMs: 5 * MIN,
+    description: 'Relay edges: score reports + load + probes per origin; opt-in auto-rotate',
+  },
+  {
+    name: 'retention-edge-probes',
+    everyMs: DAY,
+    description: 'Prune settled relay probe runs past the retention window',
+  },
 ];
 
 /**

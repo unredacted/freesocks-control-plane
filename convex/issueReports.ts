@@ -18,6 +18,11 @@ import {
   type DiagnosticsConfig,
 } from './lib/issueTelemetry';
 import { resolveRange } from './lib/timeRange';
+import {
+  claimReportMark,
+  resolveEdgeAttribution,
+  sanitizeConnectionChoice,
+} from './edgeAttribution';
 
 const DAY_MS = 86_400_000;
 
@@ -87,11 +92,21 @@ export const reportIssue = internalMutation({
     detectedCity: v.optional(v.union(v.string(), v.null())),
     detectedAsn: v.optional(v.union(v.number(), v.null())),
     requestId: v.optional(v.string()),
+    // Relay attribution (docs/edges.md): which connection the member said
+    // failed, and the peppered per-member-per-window dedupe key (computed in
+    // the HTTP action; never the member id).
+    connectionChoice: v.optional(v.union(v.string(), v.null())),
+    markKey: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, a): Promise<{ ok: boolean }> => {
     const user = await ctx.db.get(a.userId);
     if (!user) return { ok: false };
     const sub = await currentOrActiveSub(ctx.db, user);
+    const now = Date.now();
+    const choice = sanitizeConnectionChoice(a.connectionChoice);
+    const relay = await resolveEdgeAttribution(ctx.db, sub, choice, now);
+    const detectorWeight =
+      relay && a.markKey ? await claimReportMark(ctx.db, a.markKey, now) : undefined;
     // No key: still a valid report (e.g. "can't connect" before first issue
     // would be odd, but a tombstone-grace member is real) — recorded without
     // node context.
@@ -113,6 +128,15 @@ export const reportIssue = internalMutation({
         detectedCountry: opt(a.detectedCountry),
         detectedCity: opt(a.detectedCity),
         detectedAsn: opt(a.detectedAsn),
+        ...(relay
+          ? {
+              relaySlug: relay.relaySlug,
+              connectionChoice: choice ?? undefined,
+              relayEdgeId: relay.relayEdgeId ?? undefined,
+              refreshNotObserved: relay.refreshNotObserved,
+              detectorWeight,
+            }
+          : {}),
       });
     }
     await writeAuditLog(ctx, {

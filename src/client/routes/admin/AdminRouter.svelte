@@ -18,6 +18,7 @@
   import AdminBackendServers from './AdminBackendServers.svelte';
   import AdminRemnawave from './AdminRemnawave.svelte';
   import AdminConnectionModes from './AdminConnectionModes.svelte';
+  import AdminEdges from './AdminEdges.svelte';
   import AdminStatus from './AdminStatus.svelte';
   import AdminStorage from './AdminStorage.svelte';
   import AdminClients from './AdminClients.svelte';
@@ -91,6 +92,8 @@
   <AdminRemnawave />
 {:else if router.pathname === '/admin/connection-modes'}
   <AdminConnectionModes />
+{:else if router.pathname === '/admin/edges'}
+  <AdminEdges />
 {:else if router.pathname === '/admin/status'}
   <AdminStatus />
 {:else if router.pathname === '/admin/storage'}
@@ -104,7 +107,9 @@
 {:else if router.pathname === '/admin/rate-limits'}
   <AdminRateLimits />
 {:else if router.pathname === '/admin/telemetry'}
-  <AdminTelemetry />
+  <AdminTelemetry view="reports" />
+{:else if router.pathname === '/admin/telemetry/probes'}
+  <AdminTelemetry view="probes" />
 {:else if router.pathname === '/admin/audit'}
   <AdminAudit />
 {:else if router.pathname === '/admin/settings'}

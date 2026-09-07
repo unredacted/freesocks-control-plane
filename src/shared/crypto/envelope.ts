@@ -235,6 +235,11 @@ export interface RoutePolicy {
 
 const SEAL_REQ: RoutePolicy = { request: 'seal', response: 'plain' };
 const REVEAL: RoutePolicy = { request: 'plain', response: 'reveal' };
+/** Both legs: the request carries operator input (credentials, addresses, handles)
+ *  AND the response carries live infrastructure data. The response ephemeral rides
+ *  INSIDE the sealed request body (clientPrepareRequest), so the server opens the
+ *  request first and then reveals to that ephemeral. */
+const SEAL_BOTH: RoutePolicy = { request: 'seal', response: 'reveal' };
 
 /**
  * Keyed by `"METHOD /path"` (method-aware): several admin paths serve BOTH a GET
@@ -284,6 +289,15 @@ const SEALED_PREFIXES: { method: string; prefix: string; policy: RoutePolicy }[]
   { method: 'PATCH', prefix: '/api/v1/admin/mirror-providers/', policy: SEAL_REQ },
   // Member gift-code reveal (same secret class; the buyer polls this GET).
   { method: 'GET', prefix: '/api/v1/billing/order/', policy: REVEAL },
+  // Relay edges (docs/edges.md): every admin route under this prefix carries
+  // provider credentials, edge addresses, provider handles or live LB data, so
+  // the whole surface is sealed by verb class — GET reveals, POST seals both
+  // legs, PATCH/PUT seal the uploaded body. DELETE carries nothing. Dual-mode
+  // (plaintext accepted) stays for `fsv1_` IaC callers, as on backend-servers.
+  { method: 'GET', prefix: '/api/v1/admin/edges/', policy: REVEAL },
+  { method: 'POST', prefix: '/api/v1/admin/edges/', policy: SEAL_BOTH },
+  { method: 'PATCH', prefix: '/api/v1/admin/edges/', policy: SEAL_REQ },
+  { method: 'PUT', prefix: '/api/v1/admin/edges/', policy: SEAL_REQ },
 ];
 
 export function routePolicy(path: string, method: string): RoutePolicy | undefined {

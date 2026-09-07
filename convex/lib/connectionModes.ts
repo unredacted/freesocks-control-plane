@@ -66,10 +66,12 @@ export const DEFAULT_CONNECTION_MODES: readonly DefaultModeRow[] = [
   },
   {
     // Ships dark: stays off until relay squads are bound and it has been
-    // tested. The operator turns it on in the admin CMS.
+    // tested. The operator turns it on in the admin CMS. URL delivery on
+    // purpose: a subscription re-fetch picks up a relay-edge address change,
+    // a copied raw config never would (raw configs stay an expert-only path).
     slug: 'freedom-reality',
     familySlug: 'freedom',
-    deliveryStyle: 'rawConfig',
+    deliveryStyle: 'url',
     enabled: false,
     isFamilyDefault: false,
     // The geo suggestion for censored regions targets this leaf (Privacy Mode

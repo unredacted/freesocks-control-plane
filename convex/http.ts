@@ -12,6 +12,12 @@ import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
+import { registerEdgeRoutes } from './httpEdges';
+import { hmacSha256Hex } from './lib/crypto';
+import { markBucket, sanitizeConnectionChoice } from './edgeAttribution';
+import { edgeMs } from './lib/edgeConfig';
+import { classifyClient } from './lib/edges/clientFamilies';
+import { applyEdgeRender } from './lib/edges/renderPipeline';
 import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
@@ -248,6 +254,12 @@ interface SubCacheEntry {
   headers?: Record<string, string>;
   ua: string;
   at: number;
+  // Edge-render cache token (edgeRender.epochFor): the pinned node's
+  // publication epoch when the body was rendered with relay endpoints, null
+  // when it was served as the panel sent it. A hit is only valid while the
+  // current token is identical, so a pool/switch change re-renders within one
+  // request instead of one TTL.
+  relay?: number | null;
 }
 
 /** The RAW subscription Response a proxy app consumes (not the JSON envelope):
@@ -1040,11 +1052,33 @@ http.route({
     }
     const hasHwid = 'x-hwid' in hwidHeaders;
     const cached = hasHwid ? [] : parseSubCache(sub.subCache);
-    const fresh = cached.find((e) => e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS);
-    if (fresh) return subscriptionResponse(fresh); // fresh + same format → cache hit
+    // Relay rendering (docs/edges.md): the cache token for this key's pinned
+    // node, compared against the token stored on the entry.
+    const edgeToken =
+      sub.backendServerId && sub.pinnedNode
+        ? await ctx.runQuery(internal.edgeRender.epochFor, {
+            backendServerId: sub.backendServerId,
+            nodeHostname: sub.pinnedNode,
+          })
+        : null;
+    const fresh = cached.find(
+      (e) =>
+        e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS && (e.relay ?? null) === edgeToken,
+    );
+    if (fresh) {
+      // Cache hit: the served body was generated at the entry's fetch time.
+      await ctx.runMutation(internal.subscriptions.markDelivered, {
+        subscriptionId: sub._id,
+        contentAt: fresh.at,
+      });
+      return subscriptionResponse(fresh); // fresh + same format → cache hit
+    }
     // Last-resort fallback MUST match this UA — never serve another client's
     // format (the same invariant the fresh path enforces). (Review #11.)
-    const stale = cached.find((e) => e.ua === ua) ?? null;
+    // …and its edge-render token must still be current: a body rendered before
+    // a rotation/burn/unpublish carries a removed edge and must never be served
+    // as a fallback, however long the panel stays down.
+    const stale = cached.find((e) => e.ua === ua && (e.relay ?? null) === edgeToken) ?? null;
     try {
       const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
         backend: sub.backend,
@@ -1061,12 +1095,40 @@ http.route({
           node: fetched.pinnedNode,
         });
       }
+      // Relay rendering: replace the pinned node's template entries with this
+      // subscriber's assigned primary/backup edges (one SNI each). Fail-open:
+      // any unknown shape passes through unchanged.
+      let content = fetched.content;
+      let relay: number | null = null;
+      const node = fetched.pinnedNode ?? sub.pinnedNode;
+      if (node && sub.backendServerId) {
+        const rctx = await ctx.runQuery(internal.edgeRender.contextForSubscription, {
+          subscriptionId: sub._id,
+          family: classifyClient(ua).family,
+          nodeHostname: node,
+        });
+        if (rctx) {
+          const renderKey =
+            rctx.renderKey ??
+            (await ctx.runMutation(internal.subscriptions.ensureRenderKey, {
+              subscriptionId: sub._id,
+            }));
+          if (renderKey) {
+            content = applyEdgeRender(rctx, content, renderKey, {
+              now,
+              lastContentAt: rctx.lastContentAt,
+            }).body;
+            relay = rctx.epoch;
+          }
+        }
+      }
       const entry: SubCacheEntry = {
-        content: fetched.content,
+        content,
         contentType: fetched.contentType ?? 'text/plain',
         headers: fetched.headers,
         ua,
         at: now,
+        relay,
       };
       // Don't cache an hwid'd response — the next device (different hwid, same
       // UA) must reach the panel too, for its own registration + enforcement.
@@ -1076,6 +1138,12 @@ http.route({
           entry: JSON.stringify(entry),
         });
       }
+      // Every successful delivery is stamped (miss AND hwid'd path) — the
+      // relay layer reads it as "has this key seen post-rotation content".
+      await ctx.runMutation(internal.subscriptions.markDelivered, {
+        subscriptionId: sub._id,
+        contentAt: now,
+      });
       // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
       return subscriptionResponse(entry, { hwid: hasHwid });
     } catch (err) {
@@ -1095,7 +1163,13 @@ http.route({
       }
       // Backend blip: serve the last-known content FOR THIS UA rather than break
       // the member's client; only fail hard when nothing is cached for it.
-      if (stale) return subscriptionResponse(stale);
+      if (stale) {
+        await ctx.runMutation(internal.subscriptions.markDelivered, {
+          subscriptionId: sub._id,
+          contentAt: stale.at,
+        });
+        return subscriptionResponse(stale);
+      }
       console.error(
         `[subscription] fronted fetch failed: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -1321,10 +1395,25 @@ http.route({
         retryAfterMs: rl.retryAfterMs,
       });
     }
-    const body = await readJson<{ reason?: string; detail?: unknown; telemetry?: unknown }>(req);
+    const body = await readJson<{
+      reason?: string;
+      detail?: unknown;
+      telemetry?: unknown;
+      connection?: unknown;
+    }>(req);
     if (!isReportIssueReason(body.reason)) {
       return errorJson('validation', 'unknown reason', 400);
     }
+    // Relay detector dedupe mark: HMAC(pepper, member + window bucket). The
+    // member id never reaches the mark row or the telemetry row.
+    const relayCfg = await ctx.runQuery(internal.edgeReconcileMutations.configSnapshot, {});
+    const markPepper = process.env.EDGE_MARK_PEPPER ?? process.env.IP_HASH_SALT ?? '';
+    const markKey = markPepper
+      ? await hmacSha256Hex(
+          markPepper,
+          `relay-mark:${member.userId}:${markBucket(Date.now(), edgeMs.detectWindow(relayCfg))}`,
+        )
+      : null;
     const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
     const telemetry = sanitizeSubmitted(diagCfg, body.telemetry);
     // Same consent gate as switch-server: no consented payload, no header reads.
@@ -1344,6 +1433,8 @@ http.route({
       detectedCountry: detected.country,
       detectedCity: detected.city,
       detectedAsn: detected.asn,
+      connectionChoice: sanitizeConnectionChoice(body.connection),
+      markKey,
     });
     return json(result);
   }),
@@ -4008,5 +4099,9 @@ http.route({
     }
   }),
 });
+
+// Edges admin surface (docs/edges.md): one prefix route per verb, sealed by
+// verb class (envelope.ts), dispatched in httpEdges.ts.
+registerEdgeRoutes(http);
 
 export default http;

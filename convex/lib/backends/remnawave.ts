@@ -27,6 +27,8 @@ import type {
   UpdateUserPatch,
   UsageSeries,
   UserState,
+  BackendHost,
+  NodeInventoryRow,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry } from './types';
 
@@ -654,6 +656,75 @@ export async function remnawaveFleetStats(cfg: RemnawaveConfig): Promise<FleetSt
   };
 }
 
+// --- Hosts (client-facing connection entries) --------------------------------
+// The relay-edge flip repoints the ADDRESS of a slot's template Host. Hosts are
+// uuid-addressed on 2.x and 3.x alike (the 3.x numeric-id change touched users
+// only). Lenient schema: only the fields the relay layer reads.
+const HostRow = z.object({
+  uuid: z.string(),
+  remark: z.string(),
+  address: z.string(),
+  port: z.number().int(),
+  sni: z.string().nullish(),
+  isDisabled: z.boolean().nullish(),
+  inbound: z
+    .object({ configProfileUuid: z.string(), configProfileInboundUuid: z.string() })
+    .nullish(),
+});
+// (unwrapped) either a bare array or { hosts: [...] } depending on panel version.
+const HostsResponse = z.union([z.array(HostRow), z.object({ hosts: z.array(HostRow) })]);
+
+function toBackendHost(h: z.infer<typeof HostRow>): BackendHost {
+  return {
+    uuid: h.uuid,
+    remark: h.remark,
+    address: h.address,
+    port: h.port,
+    sni: h.sni ?? null,
+    isDisabled: h.isDisabled ?? false,
+    inbound: h.inbound ?? null,
+  };
+}
+
+/** GET /api/hosts — every Host on the panel (small, operator-managed list). */
+export async function remnawaveListHosts(cfg: RemnawaveConfig): Promise<BackendHost[]> {
+  const res = await call(cfg, { method: 'GET', path: '/api/hosts', schema: HostsResponse });
+  const rows = Array.isArray(res) ? res : res.hosts;
+  return rows.map(toBackendHost);
+}
+
+/**
+ * PATCH /api/hosts { uuid, address, port } — repoint one Host. The uuid travels
+ * in the BODY (the panel's update contract). Only address/port are sent so the
+ * Host's inbound/sni/fingerprint are untouched. The caller confirms by re-listing
+ * (observe-then-write); the echoed row is not trusted as proof.
+ */
+export async function remnawaveUpdateHost(
+  cfg: RemnawaveConfig,
+  patch: { uuid: string; address: string; port: number },
+): Promise<void> {
+  await call(cfg, {
+    method: 'PATCH',
+    path: '/api/hosts',
+    body: { uuid: patch.uuid, address: patch.address, port: patch.port },
+    schema: z.unknown(),
+  });
+}
+
+/** GET /api/nodes → one row per panel node (name, users online, connected). */
+export async function remnawaveGetNodeInventory(cfg: RemnawaveConfig): Promise<NodeInventoryRow[]> {
+  const nodes = await call(cfg, { method: 'GET', path: '/api/nodes', schema: NodesResponse });
+  return nodes.map((n) => ({
+    nodeUuid: n.uuid,
+    name: n.name ?? n.uuid,
+    usersOnline: n.usersOnline ?? 0,
+    online: (n.isConnected ?? false) && !(n.isDisabled ?? false),
+    address: n.address ?? undefined,
+    port: n.port ?? undefined,
+    countryCode: n.countryCode ?? undefined,
+  }));
+}
+
 // --- Node-load placement telemetry ------------------------------------------
 // FCP homes a new key to the least-loaded NODE. A key is assigned to an internal
 // SQUAD (activeInternalSquads), and a squad maps to one or more nodes; the squad's
@@ -672,6 +743,10 @@ const InternalSquadsResponse = z.object({
 const NodesResponse = z.array(
   z.object({
     uuid: z.string(),
+    name: z.string().nullish(),
+    address: z.string().nullish(),
+    port: z.number().nullish(),
+    countryCode: z.string().nullish(),
     isConnected: z.boolean().nullish(),
     isDisabled: z.boolean().nullish(),
     usersOnline: z.number().nullish(),

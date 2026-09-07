@@ -544,6 +544,21 @@ export const AdminStatusSummary = z.object({
   // CDN-blinding E2EE posture: FS_E2EE_REQUIRED rejects unsealed member
   // requests on seal/reveal routes. Additive default for a pre-deploy backend.
   e2ee: z.object({ required: z.boolean() }).default({ required: false }),
+  // Relay edges (docs/edges.md): dashboard mini-card figures. Additive default.
+  relays: z
+    .object({
+      total: z.number().int().nonnegative(),
+      published: z.number().int().nonnegative(),
+      suspected: z.number().int().nonnegative(),
+      quarantined: z.number().int().nonnegative(),
+      rotating: z.number().int().nonnegative(),
+    })
+    .default({ total: 0, published: 0, suspected: 0, quarantined: 0, rotating: 0 }),
+  // The Node runtime the "use node" actions run on (self-hosted backend image),
+  // as last observed by the relay reconcile cron. Additive default.
+  runtime: z
+    .object({ nodeVersion: z.string().nullable(), checkedAt: z.string().nullable() })
+    .default({ nodeVersion: null, checkedAt: null }),
   generatedAt: z.string().datetime(),
 });
 export type AdminStatusSummary = z.infer<typeof AdminStatusSummary>;

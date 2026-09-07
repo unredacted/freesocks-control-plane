@@ -305,6 +305,22 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   field — the old tier-level `remnawaveSquadUuid` bind was removed in Phase 5b; node placement
   is per connection mode.)
 
+- **Edges** (`/admin/edges`, `docs/edges.md`; scopes `admin:servers:*` for
+  infrastructure, `admin:settings:*` for the `edge.*` config): provider accounts (write-only
+  credentials, qualification gate, live inventory), edge templates (form from the adapter's
+  field descriptors + raw JSON, server-validated), protocol profiles (`reality` / `tls` / `plain`; target + server
+  names with retire/drain, optionally provider-scoped), relays with their slots and
+  their published pool, adoption, provision / rotate / burn with a polled live progress view
+  and a per-rotation audit trail, edge detail with a live provider snapshot, the per-family
+  render preview and the detector settings. **Telemetry → Probes** (`/admin/telemetry/probes`)
+  holds the reachability matrix over every probe target (edges, opted-in relay nodes, custom
+  host:port targets), run history, "probe now" for any selection, the probe settings and a
+  probe audit feed. **Every route under
+  `/api/v1/admin/edges/` is HPKE-sealed by verb** (GET reveal, POST seal both legs, PATCH/PUT
+  seal). IaC: `PUT/GET/DELETE …/relay/relays/by-slug/{slug}` (+ `/slots/{slotKey}`), the
+  response carrying `publishedEndpoints` for the node role. **Dormant by default** (every
+  `edge.*` switch ships off).
+
 ### 1.7 Integrations & runtime
 
 - **Self-service membership billing** (`convex/billing.ts`, `convex/lib/processors/*`,
@@ -462,6 +478,18 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 - **Automated backups** (A3, `docker/backup.sh` + the `backup` compose service): scheduled
   `pg_dump` shipped offsite to S3-compatible storage. **Live when `BACKUP_S3_*` is set** (else
   local-only with a loud warning).
+- **Edge providers + probes** (`convex/lib/edges/providers/*`, `convex/edgeProviderOps.ts`;
+  `convex/lib/edges/probes/*`, `convex/probeOps.ts`; `docs/edges.md`): TCP load-balancer
+  adapters for the supported providers (`src/shared/contracts/edgeProviderIds.ts`), a
+  resource-step ledger with four-outcome discovery and operation claims, and reachability probes
+  via the official `globalping` SDK, check-host.net and optional RIPE Atlas. Pinned deps (verified
+  against the registry at install): `yaml` 2.9.0 (Clash rendering), `@scaleway/sdk-lb` 2.13.1 +
+  `@scaleway/sdk-client` 2.7.0, `globalping` 0.4.0. **Action runtime floor:** the `"use node"`
+  actions run on the Node baked into the self-hosted backend image (22.22.2 at the pinned
+  release); `scripts/node-floor.mjs` derives the highest `engines.node` among those deps and
+  `docker/deploy-entrypoint.sh` fails the deploy below it (`DEPLOY_SKIP_NODE_FLOOR=true` to
+  bypass); the dashboard shows the observed version. **Dormant** until the operator adds
+  accounts and flips the `edge.*` switches.
 - **Email / notifications**: **intentionally absent.** Accounts are anonymous: no contact
   details are collected and the control plane sends nothing. Lifecycle transitions (grace,
   disabled) are recorded to the audit log only. There is no email subsystem, and adding one
@@ -499,6 +527,14 @@ Convex runs these natively (no Workers triggers, no node-cron):
   codes stay hash-only in `redemptionCodes`).
 - `mirror-refresh` (6h): re-fetch + re-upload active subscription mirrors (no-op unless S3
   mirroring is configured).
+- `edge-reconcile` (5 min): edges — re-kick stale rotations, settle edges with an
+  unknown provider outcome by discovery, refresh provider health, drain → destroy with a
+  claimed reverse-order ledger walk, pool upkeep (config-gated), finish origin deletes.
+- `edge-probe` (5 min): budgeted reachability probes of every probe target (published edges,
+  opted-in relay nodes, enabled custom targets) from the configured countries (no-op unless
+  `edge.probe.enabled`). `retention-edge-probes` (daily) prunes settled runs after two weeks.
+- `edge-block-detector` (5 min): per-relay scoring of attributed reports, node load and probe
+  verdicts; automatic rotation only with edge-level evidence and every gate open.
 
 Every sweep stamps a per-cron heartbeat (`convex/cronHeartbeat.ts`, `cronHeartbeats` table,
 stamped at start) surfaced as a freshness panel on the admin dashboard.
@@ -589,6 +625,10 @@ deployer container (`docs/beta-deploy.md` § One-off functions).
 Traffic-scaled tables (never `collect()` them without a selective index range): `users`,
 `sessions`, `subscriptions`, `tierHistory`, `auditLog`, `billingOrders`, `webhookEvents`,
 `redemptionCodes`, `referrals`, `rateLimits`, `replayGuard`, the WebAuthn challenge tables.
+Relay tables (`relays`, `edges`, `edgeRotations`, …) are operator-scale and may be
+collected; `probeRuns` grows with the probe budget and `relaySamples` with the 5-min detector
+cadence, so both are read through indexed ranges (`by_target_requested`, `by_relay_at`) and
+pruned (probe runs after 14 days, samples after 7 days).
 Patterns that are safe: `take(page)` + drain-chain (the sweeps), `paginate()` (admin lists,
 reconciles), `first()` on a compound index (`assertBackendServerUnused`), or a **maintained
 counter** in `appState` bumped at every transition + a daily paginated reconcile

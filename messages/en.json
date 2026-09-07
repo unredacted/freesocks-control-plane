@@ -352,6 +352,8 @@
     "nodeOffline": "Node offline",
     "nodeUnknown": "Node status unknown",
     "nodeStatusLink": "Network status",
+    "relayRefreshSuggested": "New connection details are available. Update this subscription in your app to keep connecting.",
+    "relayConnections": "Connections in your config:",
     "nodeOnlineHint": "The server behind your config is up and responding. If you still can't connect, your network or ISP is likely filtering it - try another connection mode or location.",
     "nodeOfflineBody": "The server behind your config is currently offline. This is on our side, not your network. Try again in a few minutes, or create a new config (optionally in a different location).",
     "keyLimited": "You've used all your data for this period. It resets automatically, or you can upgrade for more.",

@@ -205,6 +205,20 @@ export const NodeStatusResponse = z.object({
       location: z.object({ code: z.string(), label: z.string() }).nullable(),
       load: z.enum(['quiet', 'busy', 'crowded', 'unknown']).nullable(),
       checkedAt: z.string().nullable(),
+      // Relay edges (docs/edges.md): refresh nudge + connection labels. Additive.
+      relay: z
+        .object({
+          refreshSuggested: z.boolean(),
+          connections: z.array(
+            z.object({
+              label: z.string(),
+              role: z.enum(['primary', 'backup']),
+              family: z.enum(['v4', 'v6']),
+            }),
+          ),
+        })
+        .nullable()
+        .default(null),
     })
     .nullable(),
 });

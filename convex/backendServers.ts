@@ -285,6 +285,19 @@ export const healthcheck = internalAction({
               /* node stats unavailable this cycle; picker falls back gracefully */
             }
           }
+          // Best-effort per-NODE inventory for the relay block detector + the
+          // relay picker (same isolation: never marks the instance unhealthy).
+          if (provider.getNodeInventory) {
+            try {
+              const nodes = await provider.getNodeInventory(s.config as BackendConfig);
+              await ctx.runMutation(internal.backendNodes.markNodeInventory, {
+                backendServerId: s._id,
+                nodes,
+              });
+            } catch {
+              /* inventory unavailable this cycle; the detector reads stale/unknown */
+            }
+          }
         } catch {
           /* unhealthy: ages out of the fresh window; secret config never logged */
         }

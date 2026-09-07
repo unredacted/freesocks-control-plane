@@ -39,6 +39,7 @@ import type {
   UpdateUserPatch,
   UsageSeries,
   UserState,
+  BackendHost,
 } from './lib/backends/types';
 import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 import { backendIdValidator } from './lib/backendIds';
@@ -378,6 +379,39 @@ export const getUserUsage = internalAction({
     } catch {
       return null;
     }
+  },
+});
+
+/**
+ * Relay-edge Host management (Remnawave Hosts): list the instance's client-facing
+ * connection entries, and repoint ONE of them. Both are thin dispatches over the
+ * optional provider capability; a backend without it throws a typed error.
+ */
+export const listHosts = internalAction({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId }): Promise<BackendHost[]> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new ConvexError({ code: 'backend.not_found' });
+    const provider = PROVIDERS[server.backend];
+    if (!provider.listHosts) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    return provider.listHosts(server.config as BackendConfig);
+  },
+});
+
+export const updateHost = internalAction({
+  args: {
+    backendServerId: v.id('backendServers'),
+    uuid: v.string(),
+    address: v.string(),
+    port: v.number(),
+  },
+  handler: async (ctx, { backendServerId, uuid, address, port }): Promise<null> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new ConvexError({ code: 'backend.not_found' });
+    const provider = PROVIDERS[server.backend];
+    if (!provider.updateHost) throw new ConvexError({ code: 'backend.hosts_unsupported' });
+    await provider.updateHost(server.config as BackendConfig, { uuid, address, port });
+    return null;
   },
 });
 

@@ -18,6 +18,7 @@
   import { apiClient } from '../../lib/api';
   import { clearSessionKey } from '../../lib/pop';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
+  import Network from '@lucide/svelte/icons/network';
   import Palette from '@lucide/svelte/icons/palette';
   import Layers from '@lucide/svelte/icons/layers';
   import UsersIcon from '@lucide/svelte/icons/users';
@@ -83,6 +84,7 @@
         { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
         { to: '/admin/connection-modes', label: 'Connection modes', icon: GitBranch },
         { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
+        { to: '/admin/edges', label: 'Edges', icon: Network },
         { to: '/admin/status', label: 'Status page', icon: HeartPulse },
       ],
     },
@@ -91,7 +93,14 @@
     { to: '/admin/membership-codes', label: 'Membership codes', icon: Ticket },
     { to: '/admin/billing', label: 'Billing', icon: CreditCard },
     { to: '/admin/rate-limits', label: 'Rate limits', icon: Gauge },
-    { to: '/admin/telemetry', label: 'Telemetry', icon: Radar },
+    {
+      group: 'Telemetry',
+      icon: Radar,
+      children: [
+        { to: '/admin/telemetry', label: 'User reports', icon: Radar },
+        { to: '/admin/telemetry/probes', label: 'Probes', icon: Network },
+      ],
+    },
     { to: '/admin/audit', label: 'Audit log', icon: History },
     { to: '/admin/settings', label: 'Settings', icon: Settings },
     { to: '/admin/theme', label: 'Theme', icon: Palette },
@@ -202,7 +211,7 @@
             </Collapsible.Content>
           </Collapsible.Root>
         {:else}
-          {@const active = item.to === router.pathname}
+          {@const active = item.to === router.pathname || router.pathname.startsWith(`${item.to}/`)}
           <Link
             href={item.to}
             onclick={() => (mobileOpen = false)}

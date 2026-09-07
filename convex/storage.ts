@@ -26,6 +26,7 @@ import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client
 import { randomHex, sha256Hex } from './lib/crypto';
 import type { MirrorContext } from './subscriptions';
 import type { ActiveMirrorPage } from './subscriptions';
+import { applyEdgeRender } from './lib/edges/renderPipeline';
 
 export interface S3Provider {
   name: string;
@@ -374,7 +375,31 @@ async function refreshOneSubMirrors(
         node: fetched.pinnedNode,
       });
     };
-    const hash = await sha256Hex(fetched.content);
+    // Relay rendering (docs/edges.md): a mirror serves the same rendered
+    // endpoints as the fronted route (link-list family: no User-Agent here).
+    let content = fetched.content;
+    const node = fetched.pinnedNode ?? undefined;
+    if (node && sub.backendServerId) {
+      const rctx = await ctx.runQuery(internal.edgeRender.contextForSubscription, {
+        subscriptionId: sub.id,
+        family: 'other',
+        nodeHostname: node,
+      });
+      if (rctx) {
+        const renderKey =
+          rctx.renderKey ??
+          (await ctx.runMutation(internal.subscriptions.ensureRenderKey, {
+            subscriptionId: sub.id,
+          }));
+        if (renderKey) {
+          content = applyEdgeRender(rctx, content, renderKey, {
+            now: Date.now(),
+            lastContentAt: rctx.lastContentAt,
+          }).body;
+        }
+      }
+    }
+    const hash = await sha256Hex(content);
     if (hash === sub.rawContentHash) {
       // Nothing to re-upload — but the pin can move while the bytes stay
       // identical, and the mirror is already correct, so record it.
@@ -385,7 +410,7 @@ async function refreshOneSubMirrors(
     // pin deliberately unrecorded: the mirror still serves the old node).
     const mirrors = await uploadToProviders(targets, {
       objectPath: sub.objectPath,
-      content: fetched.content,
+      content,
       contentType: fetched.contentType,
     });
     // Providers we attempted but that didn't come back a success this round →

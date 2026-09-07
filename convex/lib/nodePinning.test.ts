@@ -32,6 +32,11 @@ describe('nodeNameFromLink', () => {
     expect(nodeNameFromLink('vless://u@x.org:443')).toBeNull();
     expect(nodeNameFromLink('vless://u@x.org:443#plainname')).toBeNull();
   });
+  test('relay template remarks (<node>-relay-<slotKey>) pin with their node', () => {
+    expect(nodeNameFromLink(`vless://u@x.org:443?security=reality#${NODE_B}-relay-a`)).toBe(NODE_B);
+    expect(nodeNameFromLink(`vless://u@x.org:443#${NODE_B}-relay-gc1`)).toBe(NODE_B);
+    expect(nodeNameFromTag(`${NODE_B}-relay-a`)).toBe(NODE_B);
+  });
 });
 
 describe('pickNode', () => {

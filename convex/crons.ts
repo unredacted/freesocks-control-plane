@@ -175,4 +175,23 @@ crons.daily(
   {},
 );
 
+// Edges (docs/edges.md): re-kick stale rotations, settle edges with an
+// unknown external outcome (discover before anything allocating runs again),
+// refresh provider health, turn drained edges into destroy runs, top the
+// published pool / standbys up (config-gated), and finish origin deletes.
+crons.interval('edge-reconcile', { minutes: 5 }, internal.edgeReconcile.run, {});
+// Reachability probes of FCP's own edge addresses from the configured countries
+// (Globalping / check-host.net / RIPE Atlas / internal), within an hourly budget.
+crons.interval('edge-probe', { minutes: 5 }, internal.probes.run, {});
+// Settled probe runs are evidence history: keep two weeks, delete in bounded pages.
+crons.daily(
+  'retention-edge-probes',
+  { hourUTC: 4, minuteUTC: 50 },
+  internal.probes.sweepFinished,
+  {},
+);
+// The block detector: per-origin scoring of attributed reports, node load and
+// probe verdicts; automatic rotation only with edge-level evidence + opt-in.
+crons.interval('edge-block-detector', { minutes: 5 }, internal.edgeDetector.run, {});
+
 export default crons;

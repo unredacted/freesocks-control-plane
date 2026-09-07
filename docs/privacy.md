@@ -283,6 +283,32 @@ one-click decline). What it does and does not do:
   and rows are deleted by a daily sweep after the admin-tunable retention
   window (default 90 days).
 
+## 8. Edges: reachability probes and report attribution
+
+The relay-edge layer (`docs/edges.md`) adds two flows that touch third parties or
+member reports. Neither adds member data anywhere.
+
+- **Reachability probes** ask measurement services (Globalping, check-host.net,
+  optionally RIPE Atlas) to open TCP connections to **FCP's own addresses** (edges, opted-in relay nodes, and
+  operator-entered targets)
+  from the configured countries, so the operator learns whether an edge is
+  blocked where it matters. The request carries an operator-owned address and a
+  country list; no member identifier, subscription, IP or traffic ever leaves
+  the deployment. Results (vantage country/ASN, reachable or not) are stored per
+  edge. Probes are off by default (`edge.probe.enabled`); tokens for the
+  services are write-only settings.
+- **Report attribution** labels a member's issue report with the relay origin
+  behind their key (the node they were pinned to) and, only when they said which
+  connection failed and that maps to exactly one edge, the edge. These are
+  operator infrastructure labels on the same UNLINKED `issueReports` row; no
+  userId, subscriptionId or IP is added. One detector contribution per member per
+  window is enforced through a peppered HMAC mark (`EDGE_MARK_PEPPER`, falling
+  back to `IP_HASH_SALT`) that is never reversible to the member and expires with
+  the window.
+- **Rendering** replaces template entries in a member's subscription with their
+  assigned edges. The assignment key (`subscriptions.renderKey`) is random,
+  server-side only, and independent of the subscription URL token.
+
 ## Downstream-deployer checklist
 
 If you deploy or fork FCP, keep the posture:

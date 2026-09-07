@@ -1,0 +1,359 @@
+/// <reference types="vite/client" />
+/**
+ * Relay rendering through the FCP-fronted subscription route: the pinned
+ * node's template entry is replaced by the subscriber's assigned edges, the
+ * cache token follows the publication epoch, and everything passes through
+ * unchanged while rendering is off.
+ */
+import { convexTest } from 'convex-test';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import schema from './schema';
+import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
+import { upsertSettingRow } from './appSettings';
+import { pickNode } from './lib/nodePinning';
+
+const modules = import.meta.glob('./**/*.*s');
+
+afterEach(() => vi.unstubAllGlobals());
+
+// Pinning is a rendezvous pick on the sub's backendShortId ('short-1'): derive
+// which of the two fixture nodes it lands on so the origin is that node.
+const NODE = pickNode('short-1', ['node-one', 'node-two'])!;
+const OTHER = NODE === 'node-one' ? 'node-two' : 'node-one';
+const ORIGIN = '203.0.113.10';
+const EDGE_A = '198.51.100.1';
+const EDGE_A6 = '2001:db8::1';
+const EDGE_B = '198.51.100.2';
+const UUID = '11111111-2222-4333-8444-555555555555';
+const REALITY_QS =
+  'encryption=none&flow=xtls-rprx-vision&security=reality&sni=target.example&fp=chrome&pbk=PUBKEY&sid=abcd&type=tcp';
+
+// What the panel serves for the shared relay squad: two nodes' relay templates
+// (the template Host points at each node's pool-index-0 edge), plus a direct
+// REALITY Host for node-one. Pinning keeps ONE node; rendering replaces its
+// relay template.
+const panelBody = [
+  `vless://${UUID}@${EDGE_A}:443?${REALITY_QS}#${NODE}-relay-u`,
+  `vless://${UUID}@${ORIGIN}:443?${REALITY_QS}#${NODE}-reality`,
+  `vless://${UUID}@198.51.100.77:443?${REALITY_QS}#${OTHER}-relay-u`,
+].join('\n');
+
+let fetchCalls = 0;
+function stubPanel(body = panelBody) {
+  fetchCalls = 0;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => {
+      fetchCalls += 1;
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/plain' } });
+    }),
+  );
+}
+
+async function seed(opts: { renderEnabled?: boolean } = {}) {
+  const t = convexTest(schema, modules);
+  const { serverId, subId } = await t.run(async (ctx) => {
+    const tierId = await ctx.db.insert('tiers', {
+      slug: 'free',
+      name: 'Free',
+      backend: 'remnawave',
+      monthlyTrafficGb: 50,
+      deviceLimit: 1,
+      hwidLimit: 1,
+      hwidEnabled: false,
+      trafficStrategy: 'MONTH',
+      isDefaultFree: true,
+      isActive: true,
+      priority: 0,
+      expirationDaysAfterMembershipLapse: 0,
+      updatedAt: Date.now(),
+    });
+    const userId = await ctx.db.insert('users', {
+      tierId,
+      status: 'active',
+      supportId: 'SUP-1',
+      updatedAt: Date.now(),
+    });
+    const serverId = await ctx.db.insert('backendServers', {
+      backend: 'remnawave',
+      name: 'panel-a',
+      slug: 'panel-a',
+      config: { type: 'remnawave', baseUrl: 'https://panel.example', apiToken: 'tok' },
+      isActive: true,
+      priority: 0,
+      keyCount: 0,
+      updatedAt: Date.now(),
+    });
+    const subId = await ctx.db.insert('subscriptions', {
+      userId,
+      backend: 'remnawave',
+      backendUserId: 'uuid-1',
+      backendShortId: 'short-1',
+      backendServerId: serverId,
+      subscriptionUrl: 'https://panel.example/sub/short-1',
+      subscriptionMirrors: [],
+      subToken: 'tok_abc',
+      state: 'active',
+      pinnedNode: NODE,
+      updatedAt: Date.now(),
+    });
+    await ctx.db.patch(userId, { currentSubscriptionId: subId });
+    if (opts.renderEnabled !== false) await upsertSettingRow(ctx, 'edge.render.enabled', 'true');
+    return { serverId, subId };
+  });
+  await t.mutation(internal.protocolProfiles.create, {
+    slug: 'prof-u',
+    name: 'Profile U',
+    provider: 'upcloud',
+    targetAddress: 'target.example',
+    serverNames: ['a.example', 'b.example', 'c.example'],
+  });
+  const { id: relayId } = await t.mutation(internal.relays.upsertBySlug, {
+    slug: NODE,
+    backendServerSlug: 'panel-a',
+    nodeHostname: NODE,
+    originAddress: ORIGIN,
+  });
+  const { id: slotId } = await t.mutation(internal.relaySlots.upsert, {
+    relayId,
+    slotKey: 'u',
+    profileSlug: 'prof-u',
+    inboundTag: 'VLESS_RELAY_U',
+    configProfileUuid: '11111111-1111-4111-8111-111111111111',
+    configProfileInboundUuid: '22222222-2222-4222-8222-222222222222',
+    originPort: 443,
+  });
+  const a = await t.mutation(internal.relays.adoptEdge, {
+    relayId,
+    slotId,
+    ipv4: EDGE_A,
+    ipv6: EDGE_A6,
+    publish: true,
+  });
+  return { t, serverId, subId, relayId, slotId, edgeA: a.edgeId as Id<'edges'> };
+}
+
+const get = (t: ReturnType<typeof convexTest>, ua = 'v2rayNG/1.9.0') =>
+  t.fetch('/api/v1/sub/tok_abc', { headers: { 'user-agent': ua } });
+
+function pickNodeFor(body: string): string[] {
+  return body.split('\n').filter((l) => l.startsWith('vless://'));
+}
+
+describe('edgeRender: fronted route', () => {
+  test('replaces the pinned node template with labelled primary (+ IPv6) entries; other nodes and the origin never appear', async () => {
+    stubPanel();
+    const { t, subId } = await seed();
+    const res = await get(t);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    const lines = pickNodeFor(body);
+    // Direct REALITY Host of the pinned node stays; node-two is pinned away; the
+    // relay template is replaced by v4 + v6 primary entries (single published edge → no backup).
+    expect(lines.some((l) => l.endsWith(`#${NODE}-reality`))).toBe(true);
+    expect(body).not.toContain(OTHER);
+    expect(body).not.toContain(`#${NODE}-relay-u`);
+    const primary = lines.filter((l) =>
+      decodeURIComponent(l.split('#')[1]).startsWith('FreeSocks Primary'),
+    );
+    expect(primary).toHaveLength(2);
+    expect(primary[0]).toContain(`@${EDGE_A}:443?`);
+    expect(primary[1]).toContain(`@[${EDGE_A6}]:443?`);
+    // One SNI per emitted connection, from the profile's active set; REALITY params kept.
+    for (const l of primary) {
+      const qs = new URLSearchParams(l.slice(l.indexOf('?') + 1, l.indexOf('#')));
+      expect(['a.example', 'b.example', 'c.example']).toContain(qs.get('sni'));
+      expect(qs.get('security')).toBe('reality');
+      expect(qs.get('pbk')).toBe('PUBKEY');
+    }
+    // The origin address appears only on its own direct line, never on a relay entry.
+    expect(primary.some((l) => l.includes(ORIGIN))).toBe(false);
+    // The sub got a render key; the cache entry carries the epoch token.
+    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    expect(sub.renderKey).toMatch(/^[0-9a-f]{64}$/);
+    const cache = JSON.parse(sub.subCache!) as Array<{ relay: number | null }>;
+    expect(cache[0].relay).toBeTypeOf('number');
+  });
+
+  test('stable per subscriber: repeated fetches (cache hit and re-fetch) emit the same SNI', async () => {
+    stubPanel();
+    const { t, subId } = await seed();
+    const first = await (await get(t)).text();
+    expect(fetchCalls).toBe(1);
+    const second = await (await get(t)).text();
+    expect(fetchCalls).toBe(1); // cache hit: same UA, same token
+    expect(second).toBe(first);
+    // Expire the cache → re-fetch + re-render → byte-identical again (same renderKey + epoch).
+    await t.run(async (ctx) => {
+      const s = (await ctx.db.get(subId))!;
+      const entries = JSON.parse(s.subCache!) as Array<{ at: number }>;
+      await ctx.db.patch(subId, {
+        subCache: JSON.stringify(entries.map((e) => ({ ...e, at: e.at - 120_000 }))),
+      });
+    });
+    const third = await (await get(t)).text();
+    expect(fetchCalls).toBe(2);
+    expect(third).toBe(first);
+  });
+
+  test('a pool change invalidates the cache within one request and adds the backup entry', async () => {
+    stubPanel();
+    const { t, relayId, slotId } = await seed();
+    const first = await (await get(t)).text();
+    expect(first).not.toContain('FreeSocks%20Backup');
+    expect(fetchCalls).toBe(1);
+    // Publish a second edge (epoch bump) → the fresh cache entry is no longer valid.
+    await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId,
+      ipv4: EDGE_B,
+      publish: true,
+    });
+    const res = await get(t);
+    const body = await res.text();
+    expect(fetchCalls).toBe(2);
+    const labels = pickNodeFor(body).map((l) => decodeURIComponent(l.split('#')[1]));
+    expect(labels.filter((l) => l.startsWith('FreeSocks Primary')).length).toBeGreaterThan(0);
+    expect(labels.filter((l) => l.startsWith('FreeSocks Backup')).length).toBeGreaterThan(0);
+    // Primary and backup are different edges.
+    const addrOf = (l: string) => l.slice(l.indexOf('@') + 1, l.indexOf(':443'));
+    const lines = pickNodeFor(body);
+    const primaryAddr = addrOf(
+      lines.find((l) => l.includes('FreeSocks%20Primary') && !l.includes('['))!,
+    );
+    const backupAddr = addrOf(lines.find((l) => l.includes('FreeSocks%20Backup'))!);
+    expect(primaryAddr).not.toBe(backupAddr);
+    expect([EDGE_A, EDGE_B]).toContain(primaryAddr);
+    expect([EDGE_A, EDGE_B]).toContain(backupAddr);
+  });
+
+  test('render switch off: the body passes through as the panel sent it (only pinned)', async () => {
+    stubPanel();
+    const { t } = await seed({ renderEnabled: false });
+    const body = await (await get(t)).text();
+    expect(body).toContain(`#${NODE}-relay-u`);
+    expect(body).toContain(`#${NODE}-reality`);
+    expect(body).not.toContain(OTHER);
+    expect(body).not.toContain('FreeSocks');
+    // Turning it on invalidates the cache (token null → epoch) without waiting for the TTL.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
+    const after = await (await get(t)).text();
+    expect(fetchCalls).toBe(2);
+    expect(after).toContain('FreeSocks%20Primary');
+  });
+
+  test('a disabled client family passes through while others render', async () => {
+    stubPanel();
+    const { t } = await seed();
+    await t.run((ctx) =>
+      upsertSettingRow(ctx, 'edge.render.clients.v2rayng', JSON.stringify({ enabled: false })),
+    );
+    const v2 = await (await get(t, 'v2rayNG/1.9.0')).text();
+    expect(v2).toContain(`#${NODE}-relay-u`);
+    const other = await (await get(t, 'curl/8.0')).text();
+    expect(other).toContain('FreeSocks%20Primary');
+  });
+
+  test('contextForSubscription is null without a pin or an origin; an emptied pool still renders and DROPS the template entry', async () => {
+    stubPanel();
+    const { t, subId, relayId, edgeA } = await seed();
+    expect(
+      await t.query(internal.edgeRender.contextForSubscription, {
+        subscriptionId: subId,
+        family: 'other',
+        nodeHostname: 'node-nine',
+      }),
+    ).toBeNull();
+    const ctx1 = await t.query(internal.edgeRender.contextForSubscription, {
+      subscriptionId: subId,
+      family: 'singbox',
+    });
+    expect(ctx1?.published.map((p) => p.edgeId)).toEqual([edgeA]);
+    expect(ctx1?.templateRemarks).toEqual([`${NODE}-relay-u`]);
+    expect(ctx1?.rule.autoGroup).toBe(true);
+    // Serve once with the edge published, then unpublish it: the panel body
+    // still carries the template Host (pointing at the former edge), which
+    // must now be dropped rather than distributed.
+    const before = await (await get(t)).text();
+    expect(before).toContain('FreeSocks%20Primary');
+    await t.mutation(internal.relays.unpublishEdge, {
+      relayId,
+      edgeId: edgeA,
+      keepActive: true,
+    });
+    const ctx2 = await t.query(internal.edgeRender.contextForSubscription, {
+      subscriptionId: subId,
+      family: 'other',
+    });
+    expect(ctx2?.published).toEqual([]);
+    expect(ctx2?.templateRemarks).toEqual([`${NODE}-relay-u`]);
+    const epoch = await t.query(internal.edgeRender.epochFor, {
+      backendServerId: (await t.run((ctx) => ctx.db.get(subId)))!.backendServerId!,
+      nodeHostname: NODE,
+    });
+    expect(epoch).toBe(ctx2!.epoch);
+    // The epoch bump invalidated the cache within one request; the served body
+    // has neither the template line nor any relay entry, and keeps the direct Host.
+    const after = await (await get(t)).text();
+    expect(after).not.toContain(`#${NODE}-relay-u`);
+    expect(after).not.toContain(EDGE_A);
+    expect(after).not.toContain('FreeSocks%20Primary');
+    expect(after).toContain(`#${NODE}-reality`);
+  });
+
+  test('panel outage: the stale fallback is served only while its edge token is still current', async () => {
+    stubPanel();
+    const { t, relayId, edgeA } = await seed();
+    const first = await (await get(t)).text();
+    expect(first).toContain('FreeSocks%20Primary');
+    // Panel down, pool unchanged → the last-known body for this UA is fine.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('connect ECONNREFUSED');
+      }),
+    );
+    await t.run(async (ctx) => {
+      // Expire the freshness window so the route must go to the panel.
+      const subs = await ctx.db.query('subscriptions').collect();
+      const s = subs[0];
+      const entries = JSON.parse(s.subCache!) as Array<{ at: number }>;
+      await ctx.db.patch(s._id, {
+        subCache: JSON.stringify(entries.map((e) => ({ ...e, at: e.at - 120_000 }))),
+      });
+    });
+    const stale = await get(t);
+    expect(stale.status).toBe(200);
+    expect(await stale.text()).toBe(first);
+    // Unpublish (epoch bump) while the panel is still down: the cached body
+    // carries the removed edge and must NOT be served as a fallback.
+    await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId: edgeA, keepActive: true });
+    const refused = await get(t);
+    expect(refused.status).toBe(502);
+  });
+
+  test('memberView: connection labels only, and a refresh nudge once the origin rotated after the last delivery', async () => {
+    stubPanel();
+    const { t, subId, relayId } = await seed();
+    // Not fetched yet: no render key → labels absent, no nudge (never rotated).
+    let view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
+    expect(view).toEqual({ refreshSuggested: false, connections: [] });
+    await get(t); // delivers + mints the render key + stamps lastDeliveredContentAt
+    view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
+    expect(view?.refreshSuggested).toBe(false);
+    expect(view?.connections.map((c) => [c.role, c.family])).toEqual([
+      ['primary', 'v4'],
+      ['primary', 'v6'],
+    ]);
+    expect(view?.connections[0].label).toContain('FreeSocks Primary');
+    expect(JSON.stringify(view)).not.toContain(EDGE_A);
+    // The origin rotates after this key's last delivery → nudge.
+    await t.run((ctx) => ctx.db.patch(relayId, { lastRotatedAt: Date.now() + 1 }));
+    view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
+    expect(view?.refreshSuggested).toBe(true);
+    // A key not behind a rendered origin gets null.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'false'));
+    expect(await t.query(internal.edgeRender.memberView, { subscriptionId: subId })).toBeNull();
+  });
+});

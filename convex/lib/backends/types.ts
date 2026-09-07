@@ -225,3 +225,34 @@ export interface NodeStats {
   online: boolean; // ≥1 mapped node connected & not disabled
   nodeCount: number; // mapped nodes: 0 = unroutable, >1 = aggregated
 }
+
+/**
+ * A client-facing connection entry the backend advertises in subscriptions
+ * (Remnawave: a Host). Relay edges repoint the ADDRESS of the template Hosts
+ * that belong to a relay slot; everything else is read-only here.
+ */
+export interface BackendHost {
+  uuid: string;
+  remark: string;
+  address: string;
+  port: number;
+  sni?: string | null;
+  isDisabled: boolean;
+  inbound?: { configProfileUuid: string; configProfileInboundUuid: string } | null;
+}
+
+/**
+ * Per-NODE load snapshot (Remnawave: one row per panel node). Distinct from
+ * NodeStats, which aggregates per PLACEMENT (squad): a shared relay squad
+ * spans several nodes, so the relay block detector needs the node grain.
+ */
+export interface NodeInventoryRow {
+  nodeUuid: string;
+  name: string;
+  usersOnline: number;
+  online: boolean;
+  /** The node's public address / port / country as the panel knows them (for the relay picker). */
+  address?: string;
+  port?: number;
+  countryCode?: string;
+}
