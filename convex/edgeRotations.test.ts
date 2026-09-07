@@ -109,7 +109,7 @@ async function seed() {
     credentials: { token: 'ucl_x' },
   });
   await t.mutation(internal.edgeProviderAccounts.setQualified, { id: accountId, qualified: true });
-  const { id: profileId } = await t.mutation(internal.realityProfiles.create, {
+  const { id: profileId } = await t.mutation(internal.protocolProfiles.create, {
     slug: 'prof-u',
     name: 'Profile U',
     provider: 'upcloud',

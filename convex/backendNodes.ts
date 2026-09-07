@@ -5,8 +5,10 @@
  * users-online here; the per-PLACEMENT cache (remnawaveNodeStats) cannot
  * isolate one node behind a shared relay squad. Stats only, no secrets.
  */
-import { internalMutation, internalQuery } from './_generated/server';
+import { internalAction, internalMutation, internalQuery } from './_generated/server';
+import { internal } from './_generated/api';
 import { v } from 'convex/values';
+import { PROVIDERS, type BackendConfig } from './lib/backends/registry';
 
 export const markNodeInventory = internalMutation({
   args: {
@@ -17,6 +19,9 @@ export const markNodeInventory = internalMutation({
         name: v.string(),
         usersOnline: v.number(),
         online: v.boolean(),
+        address: v.optional(v.string()),
+        port: v.optional(v.number()),
+        countryCode: v.optional(v.string()),
       }),
     ),
   },
@@ -37,6 +42,9 @@ export const markNodeInventory = internalMutation({
         usersOnline: n.usersOnline,
         online: n.online,
         lastStatsAt: now,
+        address: n.address,
+        port: n.port,
+        countryCode: n.countryCode,
       };
       const prev = byUuid.get(n.nodeUuid);
       if (prev) await ctx.db.patch(prev._id, row);
@@ -67,4 +75,22 @@ export const listByServer = internalQuery({
       .query('backendNodeInventory')
       .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
       .collect(),
+});
+
+/**
+ * Pull the node list from one panel now (Admin → Edges → New relay, "Refresh
+ * nodes"). Same provider call as the healthcheck cron; a failure is reported to
+ * the caller instead of being swallowed.
+ */
+export const refreshNodeInventory = internalAction({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId }): Promise<{ nodes: number }> => {
+    const server = await ctx.runQuery(internal.backendServers.getById, { id: backendServerId });
+    if (!server) throw new Error('backend server not found');
+    const provider = PROVIDERS[server.backend];
+    if (!provider.getNodeInventory) return { nodes: 0 };
+    const nodes = await provider.getNodeInventory(server.config as BackendConfig);
+    await ctx.runMutation(internal.backendNodes.markNodeInventory, { backendServerId, nodes });
+    return { nodes: nodes.length };
+  },
 });

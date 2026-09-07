@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { createClient } from '@scaleway/sdk-client';
 import { Lbv1 } from '@scaleway/sdk-lb';
 import type {
+  DiscoverResult,
   Addresses,
   ChildResource,
   EdgeDescription,
@@ -129,6 +130,11 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
 
   async listRegions() {
     return SCALEWAY_ZONES.map((z) => ({ id: z, label: z }));
+  },
+
+  /** Zones are a fixed list; the project defaults to the key's project when left empty. */
+  async discoverOptions(): Promise<DiscoverResult> {
+    return { regions: SCALEWAY_ZONES.map((z) => ({ id: z, label: z })) };
   },
 
   planProvision(_cfg, spec, tpl) {

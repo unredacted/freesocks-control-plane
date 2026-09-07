@@ -120,7 +120,7 @@ const relayProviderSettings = v.union(
   v.object({
     type: v.literal('scaleway'),
     accessKey: v.string(), // public key id (the SDK pairs it with the secret); not a secret
-    projectId: v.string(),
+    projectId: v.optional(v.string()), // absent = the key's default project
     zone: v.string(),
   }),
   v.object({
@@ -879,13 +879,19 @@ export default defineSchema({
   // A REALITY camouflage profile: the target the origin inbound impersonates and
   // the client SNIs approved for it. Provider-scoped because the target should
   // sit in the edge's network neighbourhood; operator data, never adapter code.
-  realityProfiles: defineTable({
+  protocolProfiles: defineTable({
     slug: v.string(), // unique
     name: v.string(),
-    provider: relayProviderId,
+    // What the inbound speaks (lib/relays/protocols.ts): decides whether server
+    // names / a target are required and what the renderer rewrites.
+    protocol: v.union(v.literal('reality'), v.literal('tls'), v.literal('plain')),
+    // Bound to one provider's network (REALITY server names are only plausible
+    // near the edge network); absent = usable behind any provider.
+    provider: v.optional(relayProviderId),
     accountId: v.optional(v.id('edgeProviderAccounts')),
-    targetAddress: v.string(),
-    targetPort: v.number(),
+    // REALITY only: the impersonated target.
+    targetAddress: v.optional(v.string()),
+    targetPort: v.optional(v.number()),
     serverNames: v.array(
       v.object({
         sni: v.string(),
@@ -1000,10 +1006,8 @@ export default defineSchema({
   relaySlots: defineTable({
     relayId: v.id('relays'),
     slotKey: v.string(),
-    // What the inbound speaks; decides the renderer's rewrite and whether a
-    // REALITY profile is required (lib/relays/protocols.ts).
-    protocol: v.union(v.literal('reality'), v.literal('tcp')),
-    profileId: v.optional(v.id('realityProfiles')),
+    // The protocol profile: what the inbound speaks + its server names / target.
+    profileId: v.id('protocolProfiles'),
     inboundTag: v.string(),
     configProfileUuid: v.string(),
     configProfileInboundUuid: v.string(),
@@ -1134,7 +1138,7 @@ export default defineSchema({
         edgeId: v.id('edges'),
         slotId: v.id('relaySlots'),
         // Absent for a slot whose protocol carries no profile.
-        profileId: v.optional(v.id('realityProfiles')),
+        profileId: v.optional(v.id('protocolProfiles')),
         poolIndex: v.number(),
       }),
     ),
@@ -1248,6 +1252,10 @@ export default defineSchema({
     usersOnline: v.number(),
     online: v.boolean(),
     lastStatsAt: v.number(),
+    // As the panel reports them (the relay picker pre-fills from these).
+    address: v.optional(v.string()),
+    port: v.optional(v.number()),
+    countryCode: v.optional(v.string()),
   })
     .index('by_server_name', ['backendServerId', 'name'])
     .index('by_server', ['backendServerId']),

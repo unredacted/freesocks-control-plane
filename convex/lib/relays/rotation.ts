@@ -5,6 +5,7 @@
  * capacity + budget).
  */
 
+import { protocolUsesSni, type SlotProtocol } from './protocols';
 export const ROTATION_PHASES = [
   'select',
   'provisioning',
@@ -170,9 +171,9 @@ export function pickAccount(
 export interface SlotCandidate {
   slotId: string;
   slotKey: string;
-  /** The slot's protocol; only `reality` slots need a profile with active names. */
-  protocol: 'reality' | 'tcp';
-  /** Provider the slot is bound to ('' = any provider, e.g. a tcp passthrough slot). */
+  /** The profile's protocol; SNI-presenting protocols need an active server name. */
+  protocol: SlotProtocol;
+  /** Provider the slot's profile is bound to ('' = any provider). */
   provider: string;
   deployed: boolean;
   retired: boolean;
@@ -180,10 +181,10 @@ export interface SlotCandidate {
   activeSnis: number;
 }
 
-/** A slot is publishable when deployed and, for REALITY, its profile is usable. */
+/** A slot is publishable when deployed with an enabled profile that still has a name to present. */
 export function slotEligible(s: SlotCandidate): boolean {
-  if (!s.deployed || s.retired) return false;
-  return s.protocol !== 'reality' || (s.profileEnabled && s.activeSnis > 0);
+  if (!s.deployed || s.retired || !s.profileEnabled) return false;
+  return !protocolUsesSni(s.protocol) || s.activeSnis > 0;
 }
 
 /**

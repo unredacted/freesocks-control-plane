@@ -16,6 +16,7 @@
  */
 import { z } from 'zod';
 import type {
+  DiscoverResult,
   ChildResource,
   EdgeDescription,
   EdgeSpec,
@@ -212,6 +213,11 @@ function getLb(cfg: UpcloudConfig, step: string, uuid: string) {
 
 // --- the adapter -------------------------------------------------------------------------
 
+async function upcloudZones(cfg: UpcloudConfig): Promise<Array<{ id: string; label: string }>> {
+  const z = await up(cfg, 'zones', 'GET', `/zone`, ZoneList);
+  return z.zones.zone.map((x) => ({ id: x.id, label: x.description ?? x.id }));
+}
+
 export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams> = {
   id: 'upcloud',
   templateSchema: UpcloudTemplate,
@@ -233,9 +239,24 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
     }
   },
 
-  async listRegions(cfg) {
-    const z = await up(cfg, 'zones', 'GET', `/zone`, ZoneList);
-    return z.zones.zone.map((x) => ({ id: x.id, label: x.description ?? x.id }));
+  listRegions: (cfg) => upcloudZones(cfg),
+
+  /** Only the zone is a choice; the token alone lists them. */
+  async discoverOptions(
+    partial: Partial<UpcloudConfig> & Record<string, unknown>,
+  ): Promise<DiscoverResult> {
+    try {
+      return { regions: await upcloudZones(partial as UpcloudConfig) };
+    } catch (e) {
+      return {
+        errors: {
+          regions:
+            e instanceof EdgeProviderError
+              ? (e.meta.code ?? String(e.meta.status ?? 'error'))
+              : 'error',
+        },
+      };
+    }
   },
 
   planProvision(_cfg, spec, tpl) {

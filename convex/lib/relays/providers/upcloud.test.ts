@@ -239,4 +239,14 @@ describe('upcloud: describe / destroy', () => {
     expect(errorBlob(err)).not.toContain('SECRET_UC_TOKEN');
     expect(errorBlob(err)).toContain('AUTHENTICATION_FAILED');
   });
+
+  test('discoverOptions lists the zones from the token alone', async () => {
+    mockFetch((c) => {
+      if (c.path === '/1.3/zone')
+        return jsonRes({ zones: { zone: [{ id: 'de-fra1', description: 'Frankfurt #1' }] } });
+      throw new Error(`unexpected ${c.method} ${c.url}`);
+    });
+    const r = await upcloudProvider.discoverOptions!({ type: 'upcloud', token: 'SECRET_UC_TOKEN' });
+    expect(r.regions).toEqual([{ id: 'de-fra1', label: 'Frankfurt #1' }]);
+  });
 });

@@ -49,7 +49,7 @@ import {
   TERMINAL_PHASES,
   type RotationEvent,
 } from './lib/relays/rotation';
-import { PROTOCOL_TRANSPORT, protocolNeedsProfile } from './lib/relays/protocols';
+import { PROTOCOL_TRANSPORT, protocolUsesSni } from './lib/relays/protocols';
 import type {
   StepOutcome,
   Discovery,
@@ -334,13 +334,14 @@ export const start = internalMutation({
     }
     if (slotId) {
       const slot = await ctx.db.get(slotId);
-      const profile = slot?.profileId ? await ctx.db.get(slot.profileId) : null;
+      const profile = slot ? await ctx.db.get(slot.profileId) : null;
       const usable =
         !!slot &&
         !slot.retired &&
         slot.deployed &&
-        (!protocolNeedsProfile(slot.protocol) ||
-          (!!profile?.enabled && profile.serverNames.some((s) => s.status === 'active')));
+        !!profile?.enabled &&
+        (!protocolUsesSni(profile.protocol) ||
+          profile.serverNames.some((s) => s.status === 'active'));
       if (!usable) {
         throw new ConvexError({
           code: 'relay.no_compatible_profile',
@@ -1287,7 +1288,7 @@ export const stepContext = internalQuery({
     const targetEdge = rotation.targetEdgeId ? await ctx.db.get(rotation.targetEdgeId) : null;
     const slotId = toEdge?.slotId ?? targetEdge?.slotId ?? null;
     const slot = slotId ? await ctx.db.get(slotId) : null;
-    const profile = slot?.profileId ? await ctx.db.get(slot.profileId) : null;
+    const profile = slot ? await ctx.db.get(slot.profileId) : null;
     const prevEdge = rotation.previousBinding
       ? await ctx.db.get(rotation.previousBinding.edgeId)
       : null;
@@ -1300,7 +1301,7 @@ export const stepContext = internalQuery({
 
 interface SelectionContext {
   slot: Doc<'relaySlots'> | null;
-  profile: Doc<'realityProfiles'> | null;
+  profile: Doc<'protocolProfiles'> | null;
   standbyId: Id<'edges'> | null;
   account: {
     id: Id<'edgeProviderAccounts'>;
@@ -1332,9 +1333,9 @@ async function selectionContext(
     .query('relaySlots')
     .withIndex('by_relay', (q) => q.eq('relayId', origin._id))
     .collect();
-  const profiles = new Map<string, Doc<'realityProfiles'>>();
+  const profiles = new Map<string, Doc<'protocolProfiles'>>();
   for (const s of slotRows) {
-    const p = s.profileId ? await ctx.db.get(s.profileId) : null;
+    const p = await ctx.db.get(s.profileId);
     if (p) profiles.set(s._id, p);
   }
   let slot: Doc<'relaySlots'> | null = null;
@@ -1349,7 +1350,7 @@ async function selectionContext(
         return {
           slotId: s._id,
           slotKey: s.slotKey,
-          protocol: s.protocol,
+          protocol: p?.protocol ?? 'reality',
           provider: p?.provider ?? '',
           deployed: s.deployed,
           retired: s.retired,
@@ -1364,7 +1365,7 @@ async function selectionContext(
     slot = pick ? (slotRows.find((s) => s._id === pick.slotId) ?? null) : null;
   }
   const profile = slot ? (profiles.get(slot._id) ?? null) : null;
-  if (!slot || (protocolNeedsProfile(slot.protocol) && !profile))
+  if (!slot || !profile)
     return {
       slot,
       profile,
@@ -1419,9 +1420,9 @@ async function selectionContext(
       liveEdges: live,
     });
   }
-  // A REALITY slot is bound to its profile's provider network; a passthrough
-  // slot takes the best qualified account of any provider.
-  const picked = profile
+  // A provider-scoped profile binds the slot to that network; an unscoped one
+  // takes the best qualified account of any provider.
+  const picked = profile.provider
     ? pickAccount(candidates, profile.provider)
     : pickAccountAny(
         candidates,
@@ -1590,11 +1591,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     await advanceCall(ctx, r._id, sv, { type: 'selected', toEdgeId: r.toEdgeId, viaStandby: true });
     return;
   }
-  if (
-    !selection ||
-    !selection.slot ||
-    (protocolNeedsProfile(selection.slot.protocol) && !selection.profile)
-  ) {
+  if (!selection || !selection.slot || !selection.profile) {
     await advanceCall(ctx, r._id, sv, {
       type: 'fail',
       code: 'no_compatible_profile',
@@ -1625,7 +1622,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
       edgePort: 443,
       originAddress: origin.originAddress,
       originPort: selection.slot.originPort,
-      transport: PROTOCOL_TRANSPORT[selection.slot.protocol],
+      transport: PROTOCOL_TRANSPORT[selection.profile.protocol],
     },
   ];
   const spec = {

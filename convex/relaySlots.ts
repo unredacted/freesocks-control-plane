@@ -1,26 +1,24 @@
 /**
  * Relay SLOTS: one inbound on the relay node (port + panel inbound uuid)
  * deployed by the node role, with its single template Host (stable remark
- * `<node>-relay-<slotKey>`). A slot declares the PROTOCOL its inbound speaks
- * (lib/relays/protocols.ts): a `reality` slot carries a REALITY profile (the
- * SNI pool, provider-scoped: an edge's provider must match it); a `tcp`
- * passthrough slot has no profile and accepts any provider. Edges bind to one
- * slot.
+ * `<node>-relay-<slotKey>`). The slot's PROTOCOL PROFILE says what the inbound
+ * speaks (REALITY / TLS / plain, lib/relays/protocols.ts) and carries its server
+ * names; a provider-scoped profile only accepts edges of that provider. Edges
+ * bind to one slot.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { isSlotKey, templateHostRemark } from './lib/relays/hosts';
-import { isSlotProtocol, protocolNeedsProfile, type SlotProtocol } from './lib/relays/protocols';
 
-export function mapSlotAdmin(r: Doc<'relaySlots'>, profile?: Doc<'realityProfiles'> | null) {
+export function mapSlotAdmin(r: Doc<'relaySlots'>, profile?: Doc<'protocolProfiles'> | null) {
   return {
     id: r._id as string,
     relayId: r.relayId as string,
     slotKey: r.slotKey,
-    protocol: r.protocol,
-    profileId: (r.profileId as string | undefined) ?? null,
+    protocol: profile?.protocol ?? 'reality',
+    profileId: r.profileId as string,
     profileSlug: profile?.slug ?? null,
     provider: profile?.provider ?? null,
     inboundTag: r.inboundTag,
@@ -44,8 +42,7 @@ export const listByRelay = internalQuery({
       .withIndex('by_relay', (q) => q.eq('relayId', relayId))
       .collect();
     const out = [];
-    for (const r of rows)
-      out.push(mapSlotAdmin(r, r.profileId ? await ctx.db.get(r.profileId) : null));
+    for (const r of rows) out.push(mapSlotAdmin(r, await ctx.db.get(r.profileId)));
     return out.sort((a, b) => a.slotKey.localeCompare(b.slotKey));
   },
 });
@@ -54,14 +51,13 @@ export const listByRelay = internalQuery({
 export async function slotsWithProfiles(
   ctx: { db: import('./_generated/server').DatabaseReader },
   relayId: Id<'relays'>,
-): Promise<Array<{ slot: Doc<'relaySlots'>; profile: Doc<'realityProfiles'> | null }>> {
+): Promise<Array<{ slot: Doc<'relaySlots'>; profile: Doc<'protocolProfiles'> | null }>> {
   const rows = await ctx.db
     .query('relaySlots')
     .withIndex('by_relay', (q) => q.eq('relayId', relayId))
     .collect();
   const out = [];
-  for (const slot of rows)
-    out.push({ slot, profile: slot.profileId ? await ctx.db.get(slot.profileId) : null });
+  for (const slot of rows) out.push({ slot, profile: await ctx.db.get(slot.profileId) });
   return out;
 }
 
@@ -69,18 +65,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /**
  * Idempotent upsert keyed by (relay, slotKey) — the node role's hook. The
- * protocol defaults to `reality` (the role's original contract); a REALITY
- * slot addresses its profile by slug, a `tcp` slot carries none. Re-running
- * with the same values is a no-op; changing the inbound uuid marks the slot
- * deployed again with the new binding (the template Host must be re-created
- * by the role).
+ * profile is addressed by slug. Re-running with the same values is a no-op;
+ * changing the inbound uuid marks the slot deployed again with the new
+ * binding (the template Host must be re-created by the role).
  */
 export const upsert = internalMutation({
   args: {
     relayId: v.id('relays'),
     slotKey: v.string(),
-    protocol: v.optional(v.string()),
-    profileSlug: v.optional(v.string()),
+    profileSlug: v.string(),
     inboundTag: v.string(),
     configProfileUuid: v.string(),
     configProfileInboundUuid: v.string(),
@@ -105,22 +98,13 @@ export const upsert = internalMutation({
     }
     if (!/^[A-Z0-9_]{1,64}$/.test(a.inboundTag))
       throw new ConvexError({ code: 'validation', message: 'inboundTag must be [A-Z0-9_]' });
-    const protocolRaw = a.protocol ?? 'reality';
-    if (!isSlotProtocol(protocolRaw))
-      throw new ConvexError({ code: 'validation', message: 'unknown slot protocol' });
-    const protocol: SlotProtocol = protocolRaw;
     const origin = await ctx.db.get(a.relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Relay not found' });
-    let profile: Doc<'realityProfiles'> | null = null;
-    if (protocolNeedsProfile(protocol)) {
-      if (!a.profileSlug)
-        throw new ConvexError({ code: 'validation', message: 'a REALITY slot needs profileSlug' });
-      profile = await ctx.db
-        .query('realityProfiles')
-        .withIndex('by_slug', (q) => q.eq('slug', a.profileSlug!))
-        .unique();
-      if (!profile) throw new ConvexError({ code: 'validation', message: 'unknown profile slug' });
-    }
+    const profile = await ctx.db
+      .query('protocolProfiles')
+      .withIndex('by_slug', (q) => q.eq('slug', a.profileSlug))
+      .unique();
+    if (!profile) throw new ConvexError({ code: 'validation', message: 'unknown profile slug' });
     const existing = (
       await ctx.db
         .query('relaySlots')
@@ -130,8 +114,7 @@ export const upsert = internalMutation({
     const now = Date.now();
     const remark = templateHostRemark(origin.nodeHostname, a.slotKey);
     const fields = {
-      protocol,
-      profileId: profile?._id,
+      profileId: profile._id,
       inboundTag: a.inboundTag,
       configProfileUuid: a.configProfileUuid,
       configProfileInboundUuid: a.configProfileInboundUuid,
@@ -147,8 +130,7 @@ export const upsert = internalMutation({
       id = existing._id;
       const rebound =
         existing.configProfileInboundUuid !== a.configProfileInboundUuid ||
-        existing.profileId !== profile?._id ||
-        existing.protocol !== protocol;
+        existing.profileId !== profile._id;
       await ctx.db.patch(id, {
         ...fields,
         deployedAt: rebound || !existing.deployed ? now : existing.deployedAt,

@@ -719,6 +719,9 @@ export async function remnawaveGetNodeInventory(cfg: RemnawaveConfig): Promise<N
     name: n.name ?? n.uuid,
     usersOnline: n.usersOnline ?? 0,
     online: (n.isConnected ?? false) && !(n.isDisabled ?? false),
+    address: n.address ?? undefined,
+    port: n.port ?? undefined,
+    countryCode: n.countryCode ?? undefined,
   }));
 }
 
@@ -741,6 +744,9 @@ const NodesResponse = z.array(
   z.object({
     uuid: z.string(),
     name: z.string().nullish(),
+    address: z.string().nullish(),
+    port: z.number().nullish(),
+    countryCode: z.string().nullish(),
     isConnected: z.boolean().nullish(),
     isDisabled: z.boolean().nullish(),
     usersOnline: z.number().nullish(),

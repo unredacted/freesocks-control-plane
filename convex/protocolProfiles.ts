@@ -1,7 +1,10 @@
 /**
- * Camouflage profiles: the REALITY target an origin inbound impersonates plus
- * the client SNIs approved for it, scoped to a provider (the target should sit
- * in the edge's network neighbourhood). Operator data, never adapter code.
+ * Protocol profiles: what a relay slot's inbound speaks (`reality` / `tls` /
+ * `plain`, lib/relays/protocols.ts) and the data the renderer needs for it: the
+ * approved server names (REALITY SNIs, or a real certificate's names) and, for
+ * REALITY, the impersonated target. Optionally scoped to one provider's network
+ * (REALITY names are only plausible near the edge network). Operator data,
+ * never adapter code.
  *
  * SNI lifecycle: `active` names are selectable for new assignments; `retired`
  * names stop being selected but stay accepted server-side until `drainUntil`
@@ -15,6 +18,12 @@ import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { resolveRelayConfig, relayMs } from './lib/relayConfig';
+import {
+  isSlotProtocol,
+  protocolNeedsTarget,
+  protocolUsesSni,
+  type SlotProtocol,
+} from './lib/relays/protocols';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const HOSTNAME_RE = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/i;
@@ -30,7 +39,7 @@ export function normalizeSni(s: unknown): string | null {
  * (active SNI set, enabled flag, target): bump those origins' publication
  * epoch (the /sub cache token + assignment) and refresh stored mirrors once.
  */
-async function invalidateOrigins(ctx: MutationCtx, profileId: Id<'realityProfiles'>) {
+async function invalidateOrigins(ctx: MutationCtx, profileId: Id<'protocolProfiles'>) {
   const slots = await ctx.db
     .query('relaySlots')
     .withIndex('by_profile', (q) => q.eq('profileId', profileId))
@@ -47,15 +56,16 @@ async function invalidateOrigins(ctx: MutationCtx, profileId: Id<'realityProfile
   return originIds.length;
 }
 
-export function mapProfileAdmin(r: Doc<'realityProfiles'>) {
+export function mapProfileAdmin(r: Doc<'protocolProfiles'>) {
   return {
     id: r._id as string,
     slug: r.slug,
     name: r.name,
-    provider: r.provider,
+    protocol: r.protocol,
+    provider: r.provider ?? null,
     accountId: (r.accountId as string | undefined) ?? null,
-    targetAddress: r.targetAddress,
-    targetPort: r.targetPort,
+    targetAddress: r.targetAddress ?? null,
+    targetPort: r.targetPort ?? null,
     serverNames: r.serverNames.map((s) => ({
       sni: s.sni,
       status: s.status,
@@ -81,13 +91,16 @@ export function mapProfileAdmin(r: Doc<'realityProfiles'>) {
 export const list = internalQuery({
   args: {},
   handler: async (ctx) =>
-    (await ctx.db.query('realityProfiles').collect())
-      .sort((a, b) => a.provider.localeCompare(b.provider) || a.slug.localeCompare(b.slug))
+    (await ctx.db.query('protocolProfiles').collect())
+      .sort(
+        (a, b) =>
+          (a.provider ?? '').localeCompare(b.provider ?? '') || a.slug.localeCompare(b.slug),
+      )
       .map(mapProfileAdmin),
 });
 
 export const get = internalQuery({
-  args: { id: v.id('realityProfiles') },
+  args: { id: v.id('protocolProfiles') },
   handler: async (ctx, { id }) => {
     const r = await ctx.db.get(id);
     return r ? mapProfileAdmin(r) : null;
@@ -98,14 +111,23 @@ export const getBySlug = internalQuery({
   args: { slug: v.string() },
   handler: (ctx, { slug }) =>
     ctx.db
-      .query('realityProfiles')
+      .query('protocolProfiles')
       .withIndex('by_slug', (q) => q.eq('slug', slug))
       .unique(),
 });
 
-function parseSnis(raw: unknown): string[] {
+function parseSnis(raw: unknown, protocol: SlotProtocol): string[] {
+  if (raw === undefined || raw === null) raw = [];
   if (!Array.isArray(raw))
     throw new ConvexError({ code: 'validation', message: 'serverNames must be a list' });
+  if (!protocolUsesSni(protocol)) {
+    if (raw.length > 0)
+      throw new ConvexError({
+        code: 'validation',
+        message: 'a plain profile carries no server names',
+      });
+    return [];
+  }
   const out: string[] = [];
   for (const s of raw) {
     const n = normalizeSni(s);
@@ -144,11 +166,14 @@ export const create = internalMutation({
   args: {
     slug: v.string(),
     name: v.string(),
-    provider: edgeProviderIdValidator,
+    /** Defaults to `reality` (the original contract). */
+    protocol: v.optional(v.string()),
+    /** Absent/null = usable behind any provider. */
+    provider: v.optional(v.union(edgeProviderIdValidator, v.null())),
     accountId: v.optional(v.union(v.id('edgeProviderAccounts'), v.null())),
-    targetAddress: v.string(),
-    targetPort: v.optional(v.number()),
-    serverNames: v.any(),
+    targetAddress: v.optional(v.union(v.string(), v.null())),
+    targetPort: v.optional(v.union(v.number(), v.null())),
+    serverNames: v.optional(v.any()),
     enabled: v.optional(v.boolean()),
     notes: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
@@ -159,23 +184,31 @@ export const create = internalMutation({
     if (!a.name.trim() || a.name.length > 64)
       throw new ConvexError({ code: 'validation', message: 'invalid name' });
     const dup = await ctx.db
-      .query('realityProfiles')
+      .query('protocolProfiles')
       .withIndex('by_slug', (q) => q.eq('slug', a.slug))
       .unique();
     if (dup)
       throw new ConvexError({ code: 'conflict', message: 'A profile with this slug exists' });
+    const protocolRaw = a.protocol ?? 'reality';
+    if (!isSlotProtocol(protocolRaw))
+      throw new ConvexError({ code: 'validation', message: 'unknown protocol' });
+    const protocol: SlotProtocol = protocolRaw;
+    const provider = a.provider ?? undefined;
     if (a.accountId) {
       const acct = await ctx.db.get(a.accountId);
-      if (!acct || acct.provider !== a.provider)
+      if (!acct || (provider && acct.provider !== provider))
         throw new ConvexError({ code: 'validation', message: 'account/provider mismatch' });
     }
-    const target = checkTarget(a.targetAddress, a.targetPort);
-    const snis = parseSnis(a.serverNames);
+    const target = protocolNeedsTarget(protocol)
+      ? checkTarget(a.targetAddress, a.targetPort ?? undefined)
+      : {};
+    const snis = parseSnis(a.serverNames, protocol);
     const now = Date.now();
-    const id = await ctx.db.insert('realityProfiles', {
+    const id = await ctx.db.insert('protocolProfiles', {
       slug: a.slug,
       name: a.name.trim(),
-      provider: a.provider,
+      protocol,
+      provider,
       accountId: a.accountId ?? undefined,
       ...target,
       serverNames: snis.map((sni) => ({ sni, status: 'active' as const })),
@@ -189,7 +222,7 @@ export const create = internalMutation({
       action: 'relay.profile.create',
       targetType: 'relay_profile',
       targetId: id,
-      payload: { slug: a.slug, provider: a.provider },
+      payload: { slug: a.slug, provider: provider ?? null, protocol },
     });
     return { id };
   },
@@ -197,8 +230,10 @@ export const create = internalMutation({
 
 export const update = internalMutation({
   args: {
-    id: v.id('realityProfiles'),
+    id: v.id('protocolProfiles'),
     name: v.optional(v.string()),
+    /** null = any provider. */
+    provider: v.optional(v.union(edgeProviderIdValidator, v.null())),
     accountId: v.optional(v.union(v.id('edgeProviderAccounts'), v.null())),
     targetAddress: v.optional(v.string()),
     targetPort: v.optional(v.number()),
@@ -212,22 +247,30 @@ export const update = internalMutation({
   handler: async (ctx, a) => {
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Profile not found' });
-    const patch: Partial<Doc<'realityProfiles'>> = { updatedAt: Date.now() };
+    const patch: Partial<Doc<'protocolProfiles'>> = { updatedAt: Date.now() };
     if (a.name !== undefined) {
       if (!a.name.trim() || a.name.length > 64)
         throw new ConvexError({ code: 'validation', message: 'invalid name' });
       patch.name = a.name.trim();
     }
+    if (a.provider !== undefined) patch.provider = a.provider ?? undefined;
+    const provider = a.provider !== undefined ? (a.provider ?? undefined) : row.provider;
     if (a.accountId !== undefined) {
       if (a.accountId) {
         const acct = await ctx.db.get(a.accountId);
-        if (!acct || acct.provider !== row.provider)
+        if (!acct || (provider && acct.provider !== provider))
           throw new ConvexError({ code: 'validation', message: 'account/provider mismatch' });
       }
       patch.accountId = a.accountId ?? undefined;
     }
-    if (a.targetAddress !== undefined || a.targetPort !== undefined) {
-      const t = checkTarget(a.targetAddress ?? row.targetAddress, a.targetPort ?? row.targetPort);
+    if (
+      protocolNeedsTarget(row.protocol) &&
+      (a.targetAddress !== undefined || a.targetPort !== undefined)
+    ) {
+      const t = checkTarget(
+        a.targetAddress ?? row.targetAddress,
+        a.targetPort ?? row.targetPort ?? undefined,
+      );
       patch.targetAddress = t.targetAddress;
       patch.targetPort = t.targetPort;
       // A different target invalidates the qualification facts.
@@ -235,7 +278,7 @@ export const update = internalMutation({
         patch.qualification = undefined;
     }
     if (a.serverNames !== undefined) {
-      const wanted = parseSnis(a.serverNames);
+      const wanted = parseSnis(a.serverNames, row.protocol);
       const cfg = await resolveRelayConfig(ctx.db);
       const now = Date.now();
       const next = row.serverNames.map((s) => {
@@ -271,7 +314,7 @@ export const update = internalMutation({
       action: 'relay.profile.update',
       targetType: 'relay_profile',
       targetId: a.id,
-      payload: { slug: row.slug, provider: row.provider },
+      payload: { slug: row.slug, provider: row.provider ?? null },
     });
     return { ok: true as const };
   },
@@ -279,7 +322,7 @@ export const update = internalMutation({
 
 export const retireSni = internalMutation({
   args: {
-    id: v.id('realityProfiles'),
+    id: v.id('protocolProfiles'),
     snis: v.array(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
@@ -302,7 +345,7 @@ export const retireSni = internalMutation({
       }
       return s;
     });
-    if (!next.some((s) => s.status === 'active')) {
+    if (protocolUsesSni(row.protocol) && !next.some((s) => s.status === 'active')) {
       throw new ConvexError({
         code: 'conflict',
         message: 'A profile keeps at least one active server name',
@@ -324,7 +367,7 @@ export const retireSni = internalMutation({
 
 export const reactivateSni = internalMutation({
   args: {
-    id: v.id('realityProfiles'),
+    id: v.id('protocolProfiles'),
     snis: v.array(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
@@ -356,7 +399,7 @@ export const reactivateSni = internalMutation({
 
 export const recordQualification = internalMutation({
   args: {
-    id: v.id('realityProfiles'),
+    id: v.id('protocolProfiles'),
     tlsOk: v.boolean(),
     authOk: v.boolean(),
     edgeAsn: v.optional(v.string()),
@@ -392,7 +435,7 @@ export const recordQualification = internalMutation({
 });
 
 export const remove = internalMutation({
-  args: { id: v.id('realityProfiles'), actorAdminId: v.optional(v.id('adminUsers')) },
+  args: { id: v.id('protocolProfiles'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { id, actorAdminId }) => {
     const row = await ctx.db.get(id);
     if (!row) return { ok: true as const };
@@ -408,7 +451,7 @@ export const remove = internalMutation({
       action: 'relay.profile.delete',
       targetType: 'relay_profile',
       targetId: id,
-      payload: { slug: row.slug, provider: row.provider },
+      payload: { slug: row.slug, provider: row.provider ?? null },
     });
     return { ok: true as const };
   },

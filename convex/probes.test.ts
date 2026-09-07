@@ -82,7 +82,7 @@ async function seed(
     // check-host / ripe atlas off: this test drives globalping + internal only.
     await upsertSettingRow(ctx, 'relay.probe.sources.checkhost', 'false');
   });
-  await t.mutation(internal.realityProfiles.create, {
+  await t.mutation(internal.protocolProfiles.create, {
     slug: 'prof-u',
     name: 'P',
     provider: 'upcloud',

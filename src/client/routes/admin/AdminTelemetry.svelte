@@ -1,8 +1,6 @@
 <script lang="ts">
   import AdminLayout from './AdminLayout.svelte';
   import TelemetryProbes from './TelemetryProbes.svelte';
-  import * as Select from '@client/components/ui/select';
-  import { router } from '../../stores/router.svelte';
   import TelemetryTimeChart from './TelemetryTimeChart.svelte';
   import TelemetryDimensionChart from './TelemetryDimensionChart.svelte';
   import AdminRangePicker from './AdminRangePicker.svelte';
@@ -49,10 +47,6 @@
     view?: 'reports' | 'probes';
   }
   let { view = 'reports' }: Props = $props();
-  const VIEWS = [
-    { id: 'reports', label: 'User reports', to: '/admin/telemetry' },
-    { id: 'probes', label: 'Probes', to: '/admin/telemetry/probes' },
-  ] as const;
 
   const qc = useQueryClient();
   const cfg = adminTelemetryConfigQuery();
@@ -139,32 +133,19 @@
 
 <AdminLayout>
   <div class="space-y-6">
-    <div class="flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 class="text-2xl font-display font-bold tracking-tight">Telemetry</h1>
-        <p class="text-sm text-muted-foreground mt-1">
-          {#if view === 'probes'}
-            Reachability of FCP's own edge and node addresses as measured from the configured
-            countries. Operator evidence; no member data is involved.
-          {:else}
-            What members' server switches and issue reports are saying. Rows are unlinked by design:
-            no user, no subscription, never an IP.
-          {/if}
-        </p>
-      </div>
-      <Select.Root
-        type="single"
-        value={view}
-        onValueChange={(v) => {
-          const target = VIEWS.find((x) => x.id === v);
-          if (target && target.id !== view) router.navigate(target.to);
-        }}
-      >
-        <Select.Trigger class="w-44">{VIEWS.find((x) => x.id === view)?.label}</Select.Trigger>
-        <Select.Content>
-          {#each VIEWS as v (v.id)}<Select.Item value={v.id}>{v.label}</Select.Item>{/each}
-        </Select.Content>
-      </Select.Root>
+    <div>
+      <h1 class="text-2xl font-display font-bold tracking-tight">
+        {view === 'probes' ? 'Telemetry · Probes' : 'Telemetry · User reports'}
+      </h1>
+      <p class="text-sm text-muted-foreground mt-1">
+        {#if view === 'probes'}
+          Reachability of FCP's own edge and node addresses (and any custom target) as measured from
+          the configured countries. Operator evidence; no member data is involved.
+        {:else}
+          What members' server switches and issue reports are saying. Rows are unlinked by design:
+          no user, no subscription, never an IP.
+        {/if}
+      </p>
     </div>
 
     {#if view === 'probes'}

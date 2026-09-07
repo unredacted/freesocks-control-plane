@@ -213,4 +213,52 @@ describe('gcore: describe / destroy', () => {
     expect(blob).not.toContain('api.gcore.com');
     expect(blob).toContain('401');
   });
+
+  test('discoverOptions lists projects + regions from the key alone, and networks with their subnets once both are chosen', async () => {
+    mockFetch((c) => {
+      if (c.path === '/cloud/v1/projects')
+        return jsonRes({
+          results: [
+            { id: 11, name: 'Project A' },
+            { id: 12, name: 'Project B' },
+          ],
+        });
+      if (c.path === '/cloud/v1/regions')
+        return jsonRes({ results: [{ id: 22, display_name: 'Region X' }] });
+      if (c.path === '/cloud/v1/networks/11/22')
+        return jsonRes({ results: [{ id: 'net-1', name: 'private' }] });
+      if (c.path === '/cloud/v1/subnets/11/22')
+        return jsonRes({
+          results: [{ id: 'sub-1', name: 's', network_id: 'net-1', cidr: '10.0.0.0/24' }],
+        });
+      throw new Error(`unexpected ${c.method} ${c.url}`);
+    });
+    const keyOnly = await gcoreProvider.discoverOptions!({
+      type: 'gcore',
+      apiKey: 'SECRET_GCORE_KEY',
+    });
+    expect(keyOnly.projects).toEqual([
+      { id: '11', label: 'Project A' },
+      { id: '12', label: 'Project B' },
+    ]);
+    expect(keyOnly.regions).toEqual([{ id: '22', label: 'Region X' }]);
+    expect(keyOnly.networks).toBeUndefined();
+    const full = await gcoreProvider.discoverOptions!({ ...cfg });
+    expect(full.networks).toEqual([
+      { id: 'net-1', label: 'private', subnets: [{ id: 'sub-1', label: 's (10.0.0.0/24)' }] },
+    ]);
+  });
+
+  test('discoverOptions reports a failing list as a code and still returns the others', async () => {
+    mockFetch((c) => {
+      if (c.path === '/cloud/v1/projects') return jsonRes({ message: 'nope' }, 403);
+      if (c.path === '/cloud/v1/regions')
+        return jsonRes({ results: [{ id: 22, display_name: 'R' }] });
+      throw new Error(`unexpected ${c.method} ${c.url}`);
+    });
+    const r = await gcoreProvider.discoverOptions!({ type: 'gcore', apiKey: 'k' });
+    expect(r.projects).toBeUndefined();
+    expect(r.regions).toEqual([{ id: '22', label: 'R' }]);
+    expect(r.errors?.projects).toBeDefined();
+  });
 });

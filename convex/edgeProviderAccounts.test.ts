@@ -153,10 +153,11 @@ describe('edgeProviderAccounts', () => {
       }),
     );
     const profileId = await t.run((ctx) =>
-      ctx.db.insert('realityProfiles', {
+      ctx.db.insert('protocolProfiles', {
         slug: 'pf',
         name: 'pf',
         provider: 'upcloud',
+        protocol: 'reality' as const,
         targetAddress: 'target.example',
         targetPort: 443,
         serverNames: [{ sni: 'www.example', status: 'active' }],
@@ -168,7 +169,6 @@ describe('edgeProviderAccounts', () => {
       ctx.db.insert('relaySlots', {
         relayId,
         slotKey: 'a1',
-        protocol: 'reality' as const,
         profileId,
         inboundTag: 'T',
         configProfileUuid: 'cp',

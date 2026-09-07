@@ -6,7 +6,7 @@
   import RelaysPanel from './RelaysPanel.svelte';
   import EdgeProvidersPanel from './EdgeProvidersPanel.svelte';
   import EdgeTemplatesPanel from './EdgeTemplatesPanel.svelte';
-  import RealityProfilesPanel from './RealityProfilesPanel.svelte';
+  import ProtocolProfilesPanel from './ProtocolProfilesPanel.svelte';
   import RelayConfigPanel from './RelayConfigPanel.svelte';
   import { adminRelaySummaryQuery } from '../../lib/queries';
 
@@ -74,7 +74,7 @@
         <Tabs.Trigger value="origins">Relays</Tabs.Trigger>
         <Tabs.Trigger value="providers">Providers</Tabs.Trigger>
         <Tabs.Trigger value="templates">Templates</Tabs.Trigger>
-        <Tabs.Trigger value="profiles">REALITY profiles</Tabs.Trigger>
+        <Tabs.Trigger value="profiles">Protocol profiles</Tabs.Trigger>
         <Tabs.Trigger value="config">Rendering and detector</Tabs.Trigger>
       </Tabs.List>
       <Tabs.Content value="origins">
@@ -82,7 +82,7 @@
       </Tabs.Content>
       <Tabs.Content value="providers"><EdgeProvidersPanel /></Tabs.Content>
       <Tabs.Content value="templates"><EdgeTemplatesPanel /></Tabs.Content>
-      <Tabs.Content value="profiles"><RealityProfilesPanel /></Tabs.Content>
+      <Tabs.Content value="profiles"><ProtocolProfilesPanel /></Tabs.Content>
       <Tabs.Content value="config">
         <RelayConfigPanel relays={(summary.data?.relays ?? []).map((o) => o.relay)} />
       </Tabs.Content>

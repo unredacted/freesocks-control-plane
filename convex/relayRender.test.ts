@@ -102,7 +102,7 @@ async function seed(opts: { renderEnabled?: boolean } = {}) {
     if (opts.renderEnabled !== false) await upsertSettingRow(ctx, 'relay.render.enabled', 'true');
     return { serverId, subId };
   });
-  await t.mutation(internal.realityProfiles.create, {
+  await t.mutation(internal.protocolProfiles.create, {
     slug: 'prof-u',
     name: 'Profile U',
     provider: 'upcloud',

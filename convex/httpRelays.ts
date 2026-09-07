@@ -119,10 +119,18 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     ]);
     return json({ templates, schemas });
   }
-  if (a === 'reality-profiles' && !b)
-    return json(await ctx.runQuery(internal.realityProfiles.list, {}));
+  if (a === 'profiles' && !b) return json(await ctx.runQuery(internal.protocolProfiles.list, {}));
   if (a === 'relays') {
     if (!b) return json(await ctx.runQuery(internal.relays.listForAdmin, {}));
+    if (b === 'node-candidates' && !c) {
+      const serverId = query.get('backendServerId');
+      if (!serverId) return errorJson('validation', 'backendServerId is required', 400);
+      return json(
+        await ctx.runQuery(internal.relayAdmin.nodeCandidates, {
+          backendServerId: id<'backendServers'>(serverId),
+        }),
+      );
+    }
     if (b === 'by-slug' && c) {
       const view = await ctx.runQuery(internal.relayAdmin.relayBySlugView, { slug: c });
       if (!view) return notFound();
@@ -202,6 +210,19 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       });
     }
     if (b === 'matrix' && !c) return json(await ctx.runQuery(internal.probes.matrix, {}));
+    if (b === 'summary' && !c) {
+      // ?window=<ms> ending now, or ?from=<ms>[&to=<ms>] (the query clamps the span).
+      const windowMs = Number(query.get('window') ?? '');
+      const fromMs = Number(query.get('from') ?? '');
+      const toMs = Number(query.get('to') ?? '');
+      return json(
+        await ctx.runQuery(internal.probes.summary, {
+          ...(Number.isFinite(fromMs) && fromMs > 0
+            ? { sinceMs: fromMs, ...(Number.isFinite(toMs) && toMs > 0 ? { untilMs: toMs } : {}) }
+            : { windowMs: Number.isFinite(windowMs) && windowMs > 0 ? windowMs : 7 * 86_400_000 }),
+        }),
+      );
+    }
     if (b === 'targets' && !c)
       return json({ targets: await ctx.runQuery(internal.probeTargets.list, {}) });
     if (b === 'audit' && !c)
@@ -240,6 +261,19 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       return json(
         await ctx.runMutation(internal.edgeProviderAccounts.create, { ...body, ...act } as never),
       );
+    if (b === 'discover') {
+      return json(
+        await ctx.runAction(internal.edgeProviderOps.discoverOptions, {
+          provider: String(body.provider ?? ''),
+          credentials: body.credentials ?? {},
+          settings: body.settings ?? {},
+          accountId:
+            typeof body.accountId === 'string' && body.accountId
+              ? id<'edgeProviderAccounts'>(body.accountId)
+              : undefined,
+        }),
+      );
+    }
     if (b === 'test-credentials') {
       const accountId = id<'edgeProviderAccounts'>(String(body.accountId ?? ''));
       const res = await ctx.runAction(internal.edgeProviderOps.testCredentials, { accountId });
@@ -281,15 +315,15 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       return json(await ctx.runQuery(internal.edgeTemplates.validate, body as never));
     return notFound();
   }
-  if (a === 'reality-profiles') {
+  if (a === 'profiles') {
     if (!b)
       return json(
-        await ctx.runMutation(internal.realityProfiles.create, { ...body, ...act } as never),
+        await ctx.runMutation(internal.protocolProfiles.create, { ...body, ...act } as never),
       );
-    const pid = id<'realityProfiles'>(b);
+    const pid = id<'protocolProfiles'>(b);
     if (c === 'qualify')
       return json(
-        await ctx.runMutation(internal.realityProfiles.recordQualification, {
+        await ctx.runMutation(internal.protocolProfiles.recordQualification, {
           ...body,
           id: pid,
           ...act,
@@ -297,7 +331,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       );
     if (c === 'retire-sni')
       return json(
-        await ctx.runMutation(internal.realityProfiles.retireSni, {
+        await ctx.runMutation(internal.protocolProfiles.retireSni, {
           id: pid,
           snis: snis(body),
           ...act,
@@ -305,7 +339,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       );
     if (c === 'reactivate-sni')
       return json(
-        await ctx.runMutation(internal.realityProfiles.reactivateSni, {
+        await ctx.runMutation(internal.protocolProfiles.reactivateSni, {
           id: pid,
           snis: snis(body),
           ...act,
@@ -316,6 +350,16 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   if (a === 'relays') {
     if (!b)
       return json(await ctx.runMutation(internal.relays.create, { ...body, ...act } as never));
+    if (b === 'node-candidates' && c === 'refresh') {
+      const serverId = id<'backendServers'>(String(body.backendServerId ?? ''));
+      const r = await ctx.runAction(internal.backendNodes.refreshNodeInventory, {
+        backendServerId: serverId,
+      });
+      return json({
+        ...r,
+        ...(await ctx.runQuery(internal.relayAdmin.nodeCandidates, { backendServerId: serverId })),
+      });
+    }
     const relayId = id<'relays'>(b);
     switch (c) {
       case 'adopt':
@@ -546,11 +590,11 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
         ...act,
       } as never),
     );
-  if (a === 'reality-profiles' && b)
+  if (a === 'profiles' && b)
     return json(
-      await ctx.runMutation(internal.realityProfiles.update, {
+      await ctx.runMutation(internal.protocolProfiles.update, {
         ...body,
-        id: id<'realityProfiles'>(b),
+        id: id<'protocolProfiles'>(b),
         ...act,
       } as never),
     );
@@ -614,10 +658,10 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin) => {
         ...act,
       }),
     );
-  if (a === 'reality-profiles' && b && !c)
+  if (a === 'profiles' && b && !c)
     return json(
-      await ctx.runMutation(internal.realityProfiles.remove, {
-        id: id<'realityProfiles'>(b),
+      await ctx.runMutation(internal.protocolProfiles.remove, {
+        id: id<'protocolProfiles'>(b),
         ...act,
       }),
     );

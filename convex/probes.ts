@@ -573,6 +573,76 @@ export const matrix = internalQuery({
   },
 });
 
+/**
+ * Time-bucketed probe outcomes for the Telemetry → Probes chart: per bucket
+ * (hourly on short ranges, daily otherwise) the failing and succeeding vantage
+ * counts, split per country, plus per-country totals. Reads finished runs by
+ * (status, requestedAt): bounded by the 14-day retention and the span clamp.
+ */
+export const summary = internalQuery({
+  args: {
+    windowMs: v.optional(v.number()),
+    sinceMs: v.optional(v.number()),
+    untilMs: v.optional(v.number()),
+  },
+  handler: async (ctx, a) => {
+    const DAY = 24 * 60 * MIN;
+    const now = Date.now();
+    const until = Math.min(a.untilMs ?? now, now);
+    const rawSince = a.sinceMs ?? until - Math.min(Math.max(a.windowMs ?? 7 * DAY, MIN), 366 * DAY);
+    const since = Math.max(rawSince, until - 366 * DAY);
+    const span = Math.max(until - since, MIN);
+    const bucketMs = span <= 3 * DAY ? 60 * MIN : DAY;
+    const n = Math.ceil(span / bucketMs);
+    const buckets = Array.from({ length: n }, (_, i) => ({
+      start: since + i * bucketMs,
+      ok: 0,
+      fail: 0,
+      runs: 0,
+      byCountry: {} as Record<string, { ok: number; fail: number }>,
+    }));
+    const rows = await ctx.db
+      .query('probeRuns')
+      .withIndex('by_status_requested', (q) =>
+        q.eq('status', 'finished').gte('requestedAt', since).lt('requestedAt', until),
+      )
+      .take(5000);
+    const totals = { runs: 0, ok: 0, fail: 0 };
+    const byCountry: Record<string, { ok: number; fail: number }> = {};
+    const bySource: Record<string, { runs: number; ok: number; fail: number }> = {};
+    for (const r of rows) {
+      const b = buckets[Math.floor((r.requestedAt - since) / bucketMs)];
+      if (!b) continue;
+      b.runs++;
+      totals.runs++;
+      const src = (bySource[r.source] ??= { runs: 0, ok: 0, fail: 0 });
+      src.runs++;
+      for (const x of r.results) {
+        const k = x.ok ? 'ok' : 'fail';
+        b[k]++;
+        totals[k]++;
+        src[k]++;
+        (b.byCountry[x.country] ??= { ok: 0, fail: 0 })[k]++;
+        (byCountry[x.country] ??= { ok: 0, fail: 0 })[k]++;
+      }
+    }
+    return {
+      sinceMs: since,
+      untilMs: until,
+      bucketMs,
+      buckets,
+      totals,
+      byCountry: Object.entries(byCountry)
+        .map(([country, c]) => ({ country, ...c }))
+        .sort((x, y) => x.country.localeCompare(y.country)),
+      bySource: Object.entries(bySource)
+        .map(([source, c]) => ({ source, ...c }))
+        .sort((x, y) => x.source.localeCompare(y.source)),
+      truncated: rows.length >= 5000,
+    };
+  },
+});
+
 /** Recent probe-related audit rows (the Telemetry → Probes feed), newest first. */
 export const auditFeed = internalQuery({
   args: { take: v.optional(v.number()) },

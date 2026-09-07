@@ -135,9 +135,9 @@ describe('link-list rendering', () => {
     expect(primary).toContain('pbk=PUBKEY_BASE64');
   });
 
-  test('a tcp passthrough slot renders address/port and keeps the template SNI in every format', () => {
+  test('a plain-protocol slot renders address/port and keeps the template SNI in every format', () => {
     const tcpTemplate = `vless://11111111-2222-3333-4444-555555555555@192.0.2.10:443?encryption=none&security=tls&sni=node.example&type=tcp#${encodeURIComponent(TEMPLATE)}`;
-    const tcpEdge: PublishedEdge = { ...edgeA, protocol: 'tcp', serverNames: [] };
+    const tcpEdge: PublishedEdge = { ...edgeA, protocol: 'plain', serverNames: [] };
     const tcpAssigned = {
       primary: { role: 'primary' as const, edge: tcpEdge, sni: null },
       backup: null,

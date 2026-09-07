@@ -27,7 +27,7 @@ async function seed() {
     settings: { projectId: 11, regionId: 22 },
     credentials: { apiKey: 'k' },
   });
-  const { id: profileId } = await t.mutation(internal.realityProfiles.create, {
+  const { id: profileId } = await t.mutation(internal.protocolProfiles.create, {
     slug: 'prof-a',
     name: 'Profile A',
     provider: 'gcore',
@@ -244,16 +244,16 @@ describe('relayOrigins + slots + profiles', () => {
       slotId,
       ipv4: '198.51.100.1',
     });
-    await t.mutation(internal.realityProfiles.update, { id: profileId, enabled: false });
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false });
     await expect(
       t.mutation(internal.relays.publishEdge, { relayId, edgeId: e.edgeId }),
     ).rejects.toThrow(/profile_disabled/);
-    await t.mutation(internal.realityProfiles.update, { id: profileId, enabled: true });
-    await t.mutation(internal.realityProfiles.retireSni, { id: profileId, snis: ['a.example'] });
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: true });
+    await t.mutation(internal.protocolProfiles.retireSni, { id: profileId, snis: ['a.example'] });
     // The mutation keeps ≥1 active name; force the all-retired state the way a
     // drained profile would look after an operator edit on the panel side.
     await expect(
-      t.mutation(internal.realityProfiles.retireSni, { id: profileId, snis: ['b.example'] }),
+      t.mutation(internal.protocolProfiles.retireSni, { id: profileId, snis: ['b.example'] }),
     ).rejects.toThrow(/at least one active/);
     await t.run(async (ctx) => {
       const p = (await ctx.db.get(profileId))!;
@@ -264,7 +264,7 @@ describe('relayOrigins + slots + profiles', () => {
     await expect(
       t.mutation(internal.relays.publishEdge, { relayId, edgeId: e.edgeId }),
     ).rejects.toThrow(/profile_no_active_sni/);
-    await t.mutation(internal.realityProfiles.reactivateSni, {
+    await t.mutation(internal.protocolProfiles.reactivateSni, {
       id: profileId,
       snis: ['a.example'],
     });
@@ -276,7 +276,7 @@ describe('relayOrigins + slots + profiles', () => {
 
   test('profile update replaces the active set, retiring absent names with a drain window', async () => {
     const { t, profileId } = await seed();
-    await t.mutation(internal.realityProfiles.update, {
+    await t.mutation(internal.protocolProfiles.update, {
       id: profileId,
       serverNames: ['b.example', 'c.example'],
     });
@@ -289,7 +289,7 @@ describe('relayOrigins + slots + profiles', () => {
     // Ordering is preserved for the PRF: existing names keep their position.
     expect(p.serverNames.map((s) => s.sni)).toEqual(['a.example', 'b.example', 'c.example']);
     // Removing a profile still bound to a slot is refused.
-    await expect(t.mutation(internal.realityProfiles.remove, { id: profileId })).rejects.toThrow();
+    await expect(t.mutation(internal.protocolProfiles.remove, { id: profileId })).rejects.toThrow();
   });
 
   test('requestDelete drains managed edges, forgets unmanaged ones, and finalizeDelete waits for teardown', async () => {
@@ -382,59 +382,68 @@ describe('relayOrigins + slots + profiles', () => {
       (await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch;
     const e0 = await epoch();
     expect(
-      await t.mutation(internal.realityProfiles.retireSni, { id: profileId, snis: ['a.example'] }),
+      await t.mutation(internal.protocolProfiles.retireSni, { id: profileId, snis: ['a.example'] }),
     ).toEqual({ ok: true, retired: 1 });
     expect(await epoch()).toBe(e0 + 1);
     expect(
-      await t.mutation(internal.realityProfiles.reactivateSni, {
+      await t.mutation(internal.protocolProfiles.reactivateSni, {
         id: profileId,
         snis: ['a.example'],
       }),
     ).toEqual({ ok: true, reactivated: 1 });
     expect(await epoch()).toBe(e0 + 2);
     // Retiring a name that is not active changes nothing.
-    await t.mutation(internal.realityProfiles.reactivateSni, {
+    await t.mutation(internal.protocolProfiles.reactivateSni, {
       id: profileId,
       snis: ['a.example'],
     });
     expect(await epoch()).toBe(e0 + 2);
-    await t.mutation(internal.realityProfiles.update, { id: profileId, notes: 'cosmetic' });
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, notes: 'cosmetic' });
     expect(await epoch()).toBe(e0 + 2);
-    await t.mutation(internal.realityProfiles.update, { id: profileId, enabled: false });
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false });
     expect(await epoch()).toBe(e0 + 3);
-    await t.mutation(internal.realityProfiles.update, {
+    await t.mutation(internal.protocolProfiles.update, {
       id: profileId,
       serverNames: ['a.example', 'b.example', 'c.example'],
     });
     expect(await epoch()).toBe(e0 + 4);
   });
 
-  test('a tcp passthrough slot needs no profile and publishes without one; a REALITY slot without profileSlug is refused', async () => {
+  test('a plain-protocol profile needs no target or names; its slot publishes and renders without an SNI', async () => {
     const { t, relayId, slotId } = await seed();
     await expect(
-      t.mutation(internal.relaySlots.upsert, {
-        relayId,
-        slotKey: 'r2',
-        inboundTag: 'VLESS_TLS',
-        configProfileUuid: '11111111-1111-4111-8111-111111111111',
-        configProfileInboundUuid: '44444444-4444-4444-8444-444444444444',
-        originPort: 8443,
+      t.mutation(internal.protocolProfiles.create, {
+        slug: 'prof-p',
+        name: 'Plain',
+        protocol: 'plain',
+        serverNames: ['x.example'],
       }),
-    ).rejects.toThrow(/profileSlug/);
+    ).rejects.toThrow(/plain profile/);
+    await expect(
+      t.mutation(internal.protocolProfiles.create, {
+        slug: 'prof-r',
+        name: 'R',
+        protocol: 'reality',
+      }),
+    ).rejects.toThrow(/targetAddress/);
+    await t.mutation(internal.protocolProfiles.create, {
+      slug: 'prof-p',
+      name: 'Plain',
+      protocol: 'plain',
+    });
     const tcp = await t.mutation(internal.relaySlots.upsert, {
       relayId,
       slotKey: 't',
-      protocol: 'tcp',
-      inboundTag: 'TROJAN_TLS',
+      profileSlug: 'prof-p',
+      inboundTag: 'SS_PLAIN',
       configProfileUuid: '11111111-1111-4111-8111-111111111111',
       configProfileInboundUuid: '44444444-4444-4444-8444-444444444444',
       originPort: 8443,
     });
     const slots = await t.query(internal.relaySlots.listByRelay, { relayId });
     expect(slots.find((s) => s.slotKey === 't')).toMatchObject({
-      protocol: 'tcp',
-      profileId: null,
-      profileSlug: null,
+      protocol: 'plain',
+      profileSlug: 'prof-p',
       provider: null,
     });
     expect(slots.find((s) => s.id === slotId)?.protocol).toBe('reality');
@@ -448,7 +457,7 @@ describe('relayOrigins + slots + profiles', () => {
     const edge = (await t.query(internal.edges.get, { id: e.edgeId }))!;
     expect(edge.listeners[0]).toMatchObject({ originPort: 8443, transport: 'tcp' });
     const view = (await t.query(internal.relayAdmin.endpoints, { relayId }))!;
-    expect(view.published[0]).toMatchObject({ protocol: 'tcp', activeServerNames: [] });
+    expect(view.published[0]).toMatchObject({ protocol: 'plain', activeServerNames: [] });
     expect(view.sample.primary).toEqual({ edgeId: e.edgeId, sni: null });
   });
 });

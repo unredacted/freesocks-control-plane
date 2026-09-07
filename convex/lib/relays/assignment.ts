@@ -18,6 +18,8 @@
  *  - IPv6 is an extra entry for the same endpoint, never a separate assignment.
  */
 
+import { protocolUsesSni, type SlotProtocol } from './protocols';
+
 export interface AssignableSni {
   sni: string;
   status: 'active' | 'retired';
@@ -31,8 +33,8 @@ export interface PublishedEdge {
   provider: string;
   slotId: string;
   slotRemark: string;
-  /** The slot's protocol: `reality` selects an SNI per connection, `tcp` rewrites address/port only. */
-  protocol: 'reality' | 'tcp';
+  /** The slot profile's protocol: SNI-presenting ones select a name per connection, `plain` rewrites address/port only. */
+  protocol: SlotProtocol;
   edgePort: number;
   addresses: { v4?: string; v6?: string };
   /** Empty for a non-REALITY slot. */
@@ -46,10 +48,10 @@ export interface AssignedEndpoint {
   sni: string | null;
 }
 
-/** An edge can be assigned when it has an address and, for REALITY, an active server name. */
+/** An edge can be assigned when it has an address and, when its protocol presents a name, an active one. */
 export function edgeAssignable(e: PublishedEdge): boolean {
   if (!e.addresses.v4 && !e.addresses.v6) return false;
-  return e.protocol !== 'reality' || e.serverNames.some((s) => s.status === 'active');
+  return !protocolUsesSni(e.protocol) || e.serverNames.some((s) => s.status === 'active');
 }
 
 function sniFor(
@@ -58,7 +60,7 @@ function sniFor(
   now: number,
   lastContentAt: number | null | undefined,
 ): { ok: true; sni: string | null } | { ok: false } {
-  if (edge.protocol !== 'reality') return { ok: true, sni: null };
+  if (!protocolUsesSni(edge.protocol)) return { ok: true, sni: null };
   const sni = pickSni(subscriberHash, edge.edgeId, edge.serverNames, now, lastContentAt);
   return sni ? { ok: true, sni } : { ok: false };
 }

@@ -54,6 +54,16 @@ export const EdgeTestCredentialsResponse = z.object({
 });
 export type EdgeTestCredentialsResponse = z.infer<typeof EdgeTestCredentialsResponse>;
 
+const DiscoverOption = z.object({ id: z.string(), label: z.string() });
+/** POST …/providers/discover: choice lists for the account form given credentials + partial settings. */
+export const EdgeDiscoverResponse = z.object({
+  projects: z.array(DiscoverOption).optional(),
+  regions: z.array(DiscoverOption).optional(),
+  networks: z.array(DiscoverOption.extend({ subnets: z.array(DiscoverOption) })).optional(),
+  errors: z.record(z.string(), z.string()).optional(),
+});
+export type EdgeDiscoverResponse = z.infer<typeof EdgeDiscoverResponse>;
+
 export const EdgeInventory = z.object({
   loadBalancers: z.array(
     z.object({
@@ -118,21 +128,25 @@ export type EdgeTemplateValidateResponse = z.infer<typeof EdgeTemplateValidateRe
 
 // --- camouflage profiles ------------------------------------------------------------------
 
-export const RealityServerName = z.object({
+export const ProfileServerName = z.object({
   sni: z.string(),
   status: z.enum(['active', 'retired']),
   retiredAt: isoN,
   drainUntil: isoN,
 });
-export const RealityProfileAdmin = z.object({
+export const ProtocolProfileAdmin = z.object({
   id: z.string(),
   slug: z.string(),
   name: z.string(),
-  provider: EdgeProviderId,
+  /** What the inbound speaks; decides whether server names / a target apply. */
+  protocol: z.enum(['reality', 'tls', 'plain']),
+  /** null = usable behind any provider. */
+  provider: EdgeProviderId.nullable(),
   accountId: z.string().nullable(),
-  targetAddress: z.string(),
-  targetPort: z.number(),
-  serverNames: z.array(RealityServerName),
+  /** REALITY only. */
+  targetAddress: z.string().nullable(),
+  targetPort: z.number().nullable(),
+  serverNames: z.array(ProfileServerName),
   enabled: z.boolean(),
   qualification: z
     .object({
@@ -147,8 +161,8 @@ export const RealityProfileAdmin = z.object({
   notes: z.string().nullable(),
   updatedAt: iso,
 });
-export type RealityProfileAdmin = z.infer<typeof RealityProfileAdmin>;
-export const RealityProfileList = z.array(RealityProfileAdmin);
+export type ProtocolProfileAdmin = z.infer<typeof ProtocolProfileAdmin>;
+export const ProtocolProfileList = z.array(ProtocolProfileAdmin);
 
 // --- origins / slots / edges / rotations -----------------------------------------------------
 
@@ -216,7 +230,7 @@ export const RelayAdmin = z.object({
 });
 export type RelayAdmin = z.infer<typeof RelayAdmin>;
 
-export const SLOT_PROTOCOL_IDS = ['reality', 'tcp'] as const;
+export const SLOT_PROTOCOL_IDS = ['reality', 'tls', 'plain'] as const;
 export const SlotProtocol = z.enum(SLOT_PROTOCOL_IDS);
 export type SlotProtocol = z.infer<typeof SlotProtocol>;
 
@@ -225,7 +239,7 @@ export const RelaySlotAdmin = z.object({
   relayId: z.string(),
   slotKey: z.string(),
   protocol: SlotProtocol,
-  profileId: z.string().nullable(),
+  profileId: z.string(),
   profileSlug: z.string().nullable(),
   provider: EdgeProviderId.nullable(),
   inboundTag: z.string(),
@@ -456,6 +470,28 @@ export const ProbeReachabilityMatrix = z.object({
 export type ProbeReachabilityMatrix = z.infer<typeof ProbeReachabilityMatrix>;
 
 export const ProbeRunsResponse = z.object({ runs: z.array(ProbeRunAdmin) });
+
+/** GET …/probes/summary?window=<ms> (or ?from=&to=): the Telemetry → Probes chart data. */
+const okFail = z.object({ ok: z.number().int(), fail: z.number().int() });
+export const ProbeSummary = z.object({
+  sinceMs: z.number(),
+  untilMs: z.number(),
+  bucketMs: z.number(),
+  buckets: z.array(
+    z.object({
+      start: z.number(),
+      ok: z.number().int(),
+      fail: z.number().int(),
+      runs: z.number().int(),
+      byCountry: z.record(z.string(), okFail),
+    }),
+  ),
+  totals: z.object({ runs: z.number().int(), ok: z.number().int(), fail: z.number().int() }),
+  byCountry: z.array(okFail.extend({ country: z.string() })),
+  bySource: z.array(okFail.extend({ source: z.string(), runs: z.number().int() })),
+  truncated: z.boolean(),
+});
+export type ProbeSummary = z.infer<typeof ProbeSummary>;
 export type ProbeRunsResponse = z.infer<typeof ProbeRunsResponse>;
 
 export const ProbeTargetAdmin = z.object({
@@ -546,7 +582,25 @@ export const RelayEndpointsResponse = z.object({
 });
 export type RelayEndpointsResponse = z.infer<typeof RelayEndpointsResponse>;
 
-/** The IaC (Ansible) view of an origin: origin + slots + what is published. */
+/** Panel nodes the relay picker offers (inventory cache), with any relay already bound. */
+export const RelayNodeCandidate = z.object({
+  nodeUuid: z.string(),
+  name: z.string(),
+  address: z.string().nullable(),
+  port: z.number().nullable(),
+  countryCode: z.string().nullable(),
+  online: z.boolean(),
+  usersOnline: z.number(),
+  relaySlug: z.string().nullable(),
+});
+export type RelayNodeCandidate = z.infer<typeof RelayNodeCandidate>;
+export const RelayNodeCandidatesResponse = z.object({
+  fetchedAt: isoN,
+  nodes: z.array(RelayNodeCandidate),
+});
+export type RelayNodeCandidatesResponse = z.infer<typeof RelayNodeCandidatesResponse>;
+
+/** The IaC (Ansible) view of a relay: relay + slots + what is published. */
 export const RelayBySlugResponse = z.object({
   relay: RelayAdmin,
   slots: z.array(RelaySlotAdmin),

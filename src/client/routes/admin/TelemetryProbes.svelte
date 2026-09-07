@@ -33,6 +33,7 @@
     type ProbeTargetAdmin,
   } from '../../../shared/contracts/relays';
   import { formatDateTime } from '../../lib/i18n/format';
+  import ProbeTimeChart from './ProbeTimeChart.svelte';
 
   /**
    * Telemetry → Probes: reachability of FCP's own addresses as measured from
@@ -220,6 +221,8 @@
 </script>
 
 <div class="space-y-6">
+  <ProbeTimeChart />
+
   <!-- Matrix -->
   <Card>
     <CardHeader>

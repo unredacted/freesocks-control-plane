@@ -26,7 +26,9 @@ import type { ActionCtx } from './_generated/server';
 import { edgeProviderFor, relayConfigFrom } from './lib/relays/providers/registry';
 import { EdgeProviderError } from './lib/relays/providers/http';
 import { renderTemplateValue } from './lib/relays/providers/template';
+import { isRelayProviderId } from './lib/edgeProviderIds';
 import type {
+  DiscoverResult,
   Discovery,
   EdgeDescription,
   EdgeSpec,
@@ -156,6 +158,49 @@ export const testCredentials = internalAction({
       code: res.code,
     });
     return { ok: res.ok, code: res.code };
+  },
+});
+
+/**
+ * Choice lists for the account form BEFORE an account exists: the operator's
+ * credentials + the settings chosen so far, straight from the (sealed) request.
+ * Nothing is stored; the credentials are used for this call only.
+ */
+export const discoverOptions = internalAction({
+  args: {
+    provider: v.string(),
+    credentials: v.any(),
+    settings: v.optional(v.any()),
+    /** Reuse a stored account's credentials when editing (blank form fields). */
+    accountId: v.optional(v.id('edgeProviderAccounts')),
+  },
+  handler: async (ctx, a): Promise<DiscoverResult> => {
+    if (!isRelayProviderId(a.provider)) throw new Error('unknown provider');
+    const provider = edgeProviderFor(a.provider);
+    if (!provider.discoverOptions) return {};
+    let creds: Record<string, unknown> = {
+      ...((a.credentials as Record<string, unknown> | undefined) ?? {}),
+    };
+    if (a.accountId) {
+      const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, {
+        id: a.accountId,
+      });
+      if (acct && acct.provider === a.provider) {
+        // Blank form fields fall back to the stored secret.
+        const stored = acct.credentials as Record<string, unknown>;
+        for (const [k, v] of Object.entries(stored))
+          if (typeof creds[k] !== 'string' || (creds[k] as string).trim() === '') creds[k] = v;
+      }
+    }
+    creds = Object.fromEntries(
+      Object.entries(creds).filter(([, v]) => typeof v === 'string' && v.trim() !== ''),
+    );
+    const partial = {
+      ...((a.settings as Record<string, unknown> | undefined) ?? {}),
+      ...creds,
+      type: a.provider,
+    } as Record<string, unknown>;
+    return provider.discoverOptions(partial as never);
   },
 });
 

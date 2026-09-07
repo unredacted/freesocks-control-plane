@@ -169,4 +169,46 @@ describe('ovh: polling, discovery, describe, destroy', () => {
       status: 'confirmed_gone',
     });
   });
+
+  test('discoverOptions: projects from the keys; regions + private networks (subnets filtered to the region) once a project is set', async () => {
+    mockFetch(
+      withTime((c) => {
+        if (c.path === '/1.0/cloud/project') return jsonRes(['svc-a']);
+        if (c.path === '/1.0/cloud/project/svc-a') return jsonRes({ description: 'Prod' });
+        if (c.path === '/1.0/cloud/project/svc-a/region') return jsonRes(['GRA9', 'SBG5']);
+        if (c.path === '/1.0/cloud/project/svc-a/network/private')
+          return jsonRes([
+            { id: 'pn-1', name: 'vrack-a', regions: [{ region: 'GRA9' }] },
+            { id: 'pn-2', name: 'vrack-b', regions: [{ region: 'SBG5' }] },
+          ]);
+        if (c.path === '/1.0/cloud/project/svc-a/network/private/pn-1/subnet')
+          return jsonRes([
+            { id: 'sn-1', cidr: '10.1.0.0/24', ipPools: [{ region: 'GRA9' }] },
+            { id: 'sn-2', cidr: '10.2.0.0/24', ipPools: [{ region: 'SBG5' }] },
+          ]);
+        throw new Error(`unexpected ${c.method} ${c.url}`);
+      }),
+    );
+    const keysOnly = await ovhProvider.discoverOptions!({
+      type: 'ovh',
+      applicationKey: cfg.applicationKey,
+      applicationSecret: cfg.applicationSecret,
+      consumerKey: cfg.consumerKey,
+      endpoint: 'ovh-eu',
+    });
+    expect(keysOnly.projects).toEqual([{ id: 'svc-a', label: 'Prod (svc-a)' }]);
+    expect(keysOnly.regions).toBeUndefined();
+    const withProject = await ovhProvider.discoverOptions!({
+      ...cfg,
+      serviceName: 'svc-a',
+      regionName: 'GRA9',
+    });
+    expect(withProject.regions).toEqual([
+      { id: 'GRA9', label: 'GRA9' },
+      { id: 'SBG5', label: 'SBG5' },
+    ]);
+    expect(withProject.networks).toEqual([
+      { id: 'pn-1', label: 'vrack-a', subnets: [{ id: 'sn-1', label: '10.1.0.0/24' }] },
+    ]);
+  });
 });

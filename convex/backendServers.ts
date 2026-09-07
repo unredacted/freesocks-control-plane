@@ -285,8 +285,8 @@ export const healthcheck = internalAction({
               /* node stats unavailable this cycle; picker falls back gracefully */
             }
           }
-          // Best-effort per-NODE inventory for the relay block detector (same
-          // isolation: never marks the instance unhealthy).
+          // Best-effort per-NODE inventory for the relay block detector + the
+          // relay picker (same isolation: never marks the instance unhealthy).
           if (provider.getNodeInventory) {
             try {
               const nodes = await provider.getNodeInventory(s.config as BackendConfig);

@@ -13,7 +13,7 @@ import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { resolveRelayConfig, relayMs } from './lib/relayConfig';
 import { isPublicIpLiteral, addressFamily } from './lib/relays/ip';
 import { sameAddress } from './lib/relays/hosts';
-import { PROTOCOL_TRANSPORT, protocolNeedsProfile } from './lib/relays/protocols';
+import { PROTOCOL_TRANSPORT, protocolUsesSni } from './lib/relays/protocols';
 import { nextFreePoolIndex, withEdgeAt, withoutEdge, publishedCount } from './lib/relays/pool';
 
 type Db = import('./_generated/server').DatabaseReader;
@@ -577,8 +577,8 @@ export const adoptEdge = internalMutation({
     if (a.accountId) {
       accountRow = await ctx.db.get(a.accountId);
       if (!accountRow) throw new ConvexError({ code: 'validation', message: 'unknown account' });
-      const profile = slot.profileId ? await ctx.db.get(slot.profileId) : null;
-      if (profile && profile.provider !== accountRow.provider)
+      const profile = await ctx.db.get(slot.profileId);
+      if (profile?.provider && profile.provider !== accountRow.provider)
         throw new ConvexError({
           code: 'validation',
           message: 'account provider does not match the slot profile',
@@ -606,7 +606,7 @@ export const adoptEdge = internalMutation({
           edgePort: port,
           originAddress: origin.originAddress,
           originPort: slot.originPort,
-          transport: PROTOCOL_TRANSPORT[slot.protocol],
+          transport: PROTOCOL_TRANSPORT[(await ctx.db.get(slot.profileId))?.protocol ?? 'reality'],
         },
       ],
       addresses: { v4: a.ipv4, v6: a.ipv6 ?? undefined },
@@ -674,16 +674,14 @@ export async function checkPublishable(
   if (!edge.addresses.v4) return { ok: false, code: 'no_ipv4' };
   const slot = await ctx.db.get(edge.slotId);
   if (!slot || !slot.deployed || slot.retired) return { ok: false, code: 'slot_not_deployed' };
-  if (protocolNeedsProfile(slot.protocol)) {
-    // A REALITY slot publishes only with an enabled profile that still has a
-    // selectable server name, behind the profile's own provider network.
-    const profile = slot.profileId ? await ctx.db.get(slot.profileId) : null;
-    if (!profile || !profile.enabled) return { ok: false, code: 'profile_disabled' };
-    if (!profile.serverNames.some((s) => s.status === 'active'))
-      return { ok: false, code: 'profile_no_active_sni' };
-    if (edge.provider && profile.provider !== edge.provider)
-      return { ok: false, code: 'provider_mismatch' };
-  }
+  // The slot's profile must be enabled, still have a selectable server name
+  // when its protocol presents one, and (when provider-scoped) match the edge.
+  const profile = await ctx.db.get(slot.profileId);
+  if (!profile || !profile.enabled) return { ok: false, code: 'profile_disabled' };
+  if (protocolUsesSni(profile.protocol) && !profile.serverNames.some((s) => s.status === 'active'))
+    return { ok: false, code: 'profile_no_active_sni' };
+  if (edge.provider && profile.provider && profile.provider !== edge.provider)
+    return { ok: false, code: 'provider_mismatch' };
   if (requireHealth && edge.managed && edge.health !== 'online')
     return { ok: false, code: 'edge_unhealthy' };
   return { ok: true };

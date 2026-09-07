@@ -18,6 +18,7 @@
   import {
     adminBackendServersQuery,
     adminRelayEdgesQuery,
+    adminRelayNodeCandidatesQuery,
     adminRelayEndpointsQuery,
     adminRelayRotationQuery,
     adminRelayRotationsQuery,
@@ -27,6 +28,7 @@
   import {
     RelayAdoptResponse,
     RelayIdResponse,
+    RelayNodeCandidatesResponse,
     RelayOkResponse,
     ProbeRequestedResponse,
     EdgeRotationStartedResponse,
@@ -114,6 +116,33 @@
       drainMinutes: o.drainMinutes,
     };
   }
+  // Node picker: the panel's node list (inventory cache) pre-fills hostname,
+  // uuid, origin address and location; "Refresh nodes" pulls it again now.
+  const nodeCandidates = adminRelayNodeCandidatesQuery(() =>
+    editor && !editor.id ? editor.backendServerId || null : null,
+  );
+  const refreshNodes = createMutation(() => ({
+    mutationFn: () =>
+      apiClient.post(
+        '/api/v1/admin/relay/relays/node-candidates/refresh',
+        { backendServerId: editor?.backendServerId },
+        RelayNodeCandidatesResponse,
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin', 'relays', 'node-candidates'] });
+      toast.success('Node list refreshed');
+    },
+    onError: onError('Could not pull the node list'),
+  }));
+  function pickNode(uuid: string) {
+    const n = nodeCandidates.data?.nodes.find((x) => x.nodeUuid === uuid);
+    if (!n || !editor) return;
+    editor.nodeHostname = n.name;
+    if (n.address) editor.originAddress = n.address;
+    if (n.countryCode) editor.locationCode = n.countryCode;
+    if (!editor.slug) editor.slug = n.name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  }
+
   const saveOrigin = createMutation(() => ({
     mutationFn: async () => {
       const d = editor!;
@@ -666,6 +695,50 @@
               </Select.Content>
             </Select.Root>
           </label>
+        {/if}
+        {#if !editor.id && editor.backendServerId}
+          <div class="sm:col-span-2 rounded-md border p-2">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-medium">Pick a node from the panel</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                class="h-6 px-2 text-xs"
+                disabled={refreshNodes.isPending}
+                onclick={() => refreshNodes.mutate()}
+                >{refreshNodes.isPending ? 'Refreshing…' : 'Refresh nodes'}</Button
+              >
+            </div>
+            {#if nodeCandidates.data && nodeCandidates.data.nodes.length > 0}
+              <Select.Root type="single" value="" onValueChange={(v) => pickNode(v)}>
+                <Select.Trigger class="mt-1 w-full"
+                  >Select a node to pre-fill the fields</Select.Trigger
+                >
+                <Select.Content>
+                  {#each nodeCandidates.data.nodes as n (n.nodeUuid)}
+                    <Select.Item value={n.nodeUuid} disabled={!!n.relaySlug}
+                      >{n.name} · {n.address ?? 'no address'}{n.countryCode
+                        ? ` · ${n.countryCode}`
+                        : ''} · {n.online ? 'online' : 'offline'}{n.relaySlug
+                        ? ` · already relay ${n.relaySlug}`
+                        : ''}</Select.Item
+                    >
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+              <p class="mt-1 text-[11px] text-muted-foreground">
+                From the panel's node list{nodeCandidates.data.fetchedAt
+                  ? ` as of ${formatDateTime(nodeCandidates.data.fetchedAt)}`
+                  : ''}. Fields stay editable.
+              </p>
+            {:else if nodeCandidates.isPending}
+              <p class="mt-1 text-[11px] text-muted-foreground">Loading nodes…</p>
+            {:else}
+              <p class="mt-1 text-[11px] text-muted-foreground">
+                No cached node list for this panel yet. Refresh to pull it now.
+              </p>
+            {/if}
+          </div>
         {/if}
         <label class="text-xs"
           >Node hostname (panel node name)<Input

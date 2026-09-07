@@ -91,7 +91,7 @@ import type * as referrals from "../referrals.js";
 import type * as edges from "../edges.js";
 import type * as relays from "../relays.js";
 import type * as edgeTemplates from "../edgeTemplates.js";
-import type * as realityProfiles from "../realityProfiles.js";
+import type * as protocolProfiles from "../protocolProfiles.js";
 import type * as edgeReconcile from "../edgeReconcile.js";
 import type * as edgeReconcileMutations from "../edgeReconcileMutations.js";
 import type * as relayRender from "../relayRender.js";
@@ -210,7 +210,7 @@ declare const fullApi: ApiFromModules<{
   edges: typeof edges;
   relays: typeof relays;
   edgeTemplates: typeof edgeTemplates;
-  realityProfiles: typeof realityProfiles;
+  protocolProfiles: typeof protocolProfiles;
   edgeReconcile: typeof edgeReconcile;
   edgeReconcileMutations: typeof edgeReconcileMutations;
   relayRender: typeof relayRender;

@@ -237,6 +237,19 @@ export interface CredentialTestResult {
   detail?: string;
 }
 
+export interface DiscoverOption {
+  id: string;
+  label: string;
+}
+/** Choice lists for the account form; a missing key = not applicable or not yet discoverable. */
+export interface DiscoverResult {
+  projects?: DiscoverOption[];
+  regions?: DiscoverOption[];
+  networks?: Array<DiscoverOption & { subnets: DiscoverOption[] }>;
+  /** Per-list failure codes (never bodies): the form shows the field as free text instead. */
+  errors?: Record<string, string>;
+}
+
 // --- the adapter -----------------------------------------------------------------------------
 
 export interface EdgeProvider<
@@ -251,6 +264,13 @@ export interface EdgeProvider<
 
   testCredentials(cfg: Cfg): Promise<CredentialTestResult>;
   listRegions?(cfg: Cfg): Promise<Array<{ id: string; label: string }>>;
+  /**
+   * What the account form can offer as choices, given the credentials and any
+   * settings chosen so far (a PARTIAL config: adapters return only the lists
+   * their inputs allow, e.g. OVH regions need the project first). Never throws
+   * for a missing dependency; a failing call surfaces as `errors`.
+   */
+  discoverOptions?(partial: Partial<Cfg> & Record<string, unknown>): Promise<DiscoverResult>;
 
   /** The ordered steps for one edge; each is a single provider call. */
   planProvision(cfg: Cfg, spec: EdgeSpec, tpl: Tpl): ResourceStep[];

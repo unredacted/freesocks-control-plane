@@ -143,8 +143,8 @@ describe('pickSni', () => {
     expect(pickSni(sha(1), 'e0', [], NOW)).toBeNull();
   });
 
-  test('a tcp passthrough edge is assignable without server names and carries a null sni', () => {
-    const tcp = edge({ edgeId: 't1', poolIndex: 0, protocol: 'tcp', serverNames: [] });
+  test('a plain-protocol edge is assignable without server names and carries a null sni', () => {
+    const tcp = edge({ edgeId: 't1', poolIndex: 0, protocol: 'plain', serverNames: [] });
     const a = assignEndpoints(sha(1), [tcp], opts);
     expect(a.primary).toMatchObject({ edge: { edgeId: 't1' }, sni: null });
     // A REALITY edge without an active name stays unassignable.

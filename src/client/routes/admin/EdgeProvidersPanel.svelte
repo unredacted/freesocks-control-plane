@@ -19,6 +19,7 @@
   import {
     EDGE_PROVIDER_IDS,
     RelayIdResponse,
+    EdgeDiscoverResponse,
     EdgeInventoryResponse,
     RelayOkResponse,
     EdgeTestCredentialsResponse,
@@ -29,9 +30,12 @@
   import AdminListState from './AdminListState.svelte';
 
   /**
-   * Provider accounts: credentials (write-only, keep-on-blank), the fixed
-   * settings (project/region/zone/network), the qualification gate, and a live
-   * inventory pull (load balancers + IPs the account holds, unowned ones flagged).
+   * Provider accounts. The form asks only for what an adapter cannot discover:
+   * credentials (write-only, keep-on-blank) and the public identifiers a
+   * provider's API keys need on the request. "Connect" then lists what the
+   * account can see (projects, regions or zones, private networks) so the rest
+   * is a pick, not a paste. Everything still stores as the adapter's settings
+   * shape; the raw JSON stays available under "Advanced".
    */
   const providers = adminEdgeProvidersQuery();
   const templates = adminEdgeTemplatesQuery();
@@ -40,66 +44,264 @@
   const onError = (title: string) => (err: unknown) =>
     toast.error(title, { description: apiErrorMessage(err) });
 
-  // Settings the adapters need per provider (the server validates the exact shape).
-  const SETTINGS_HINT: Record<EdgeProviderId, string> = {
-    gcore: '{ "projectId": 123, "regionId": 45, "networkId": "optional", "subnetId": "optional" }',
-    upcloud: '{ "zone": "de-fra1" }',
-    scaleway: '{ "accessKey": "SCW…", "projectId": "uuid", "zone": "fr-par-1" }',
-    ovh: '{ "applicationKey": "…", "endpoint": "ovh-eu", "serviceName": "…", "regionName": "…", "networkId": "…", "subnetId": "…", "gatewayId": "optional" }',
+  /**
+   * What each provider's settings hold and where the value comes from.
+   *  - `select`: from the discovery lists (projects / regions / networks / subnets);
+   *  - `text`: an identifier the operator types (public, non-secret);
+   *  - `advanced` fields stay collapsed and optional.
+   */
+  type Field = {
+    key: string;
+    label: string;
+    kind: 'text' | 'number' | 'select';
+    from?: 'projects' | 'regions' | 'networks' | 'subnets' | 'fixed';
+    options?: Array<{ id: string; label: string }>;
+    required: boolean;
+    advanced?: boolean;
+    help?: string;
+    /** Store as a number (Gcore ids). */
+    numeric?: boolean;
+  };
+  const FIELDS: Record<EdgeProviderId, Field[]> = {
+    gcore: [
+      {
+        key: 'projectId',
+        label: 'Project',
+        kind: 'select',
+        from: 'projects',
+        required: true,
+        numeric: true,
+      },
+      {
+        key: 'regionId',
+        label: 'Region',
+        kind: 'select',
+        from: 'regions',
+        required: true,
+        numeric: true,
+      },
+      {
+        key: 'networkId',
+        label: 'Private network',
+        kind: 'select',
+        from: 'networks',
+        required: false,
+        advanced: true,
+        help: 'Leave empty for a public VIP. Choose a network + subnet for the private-VIP + floating-IP mode.',
+      },
+      {
+        key: 'subnetId',
+        label: 'Subnet',
+        kind: 'select',
+        from: 'subnets',
+        required: false,
+        advanced: true,
+      },
+    ],
+    upcloud: [{ key: 'zone', label: 'Zone', kind: 'select', from: 'regions', required: true }],
+    scaleway: [
+      {
+        key: 'accessKey',
+        label: 'Access key (public id)',
+        kind: 'text',
+        required: true,
+        help: 'The SCW… id paired with the secret key. Not a secret.',
+      },
+      { key: 'zone', label: 'Zone', kind: 'select', from: 'regions', required: true },
+      {
+        key: 'projectId',
+        label: 'Project id',
+        kind: 'text',
+        required: false,
+        advanced: true,
+        help: "Leave empty to use the API key's default project.",
+      },
+    ],
+    ovh: [
+      { key: 'applicationKey', label: 'Application key (public id)', kind: 'text', required: true },
+      {
+        key: 'endpoint',
+        label: 'API endpoint',
+        kind: 'select',
+        from: 'fixed',
+        options: [
+          { id: 'ovh-eu', label: 'ovh-eu' },
+          { id: 'ovh-ca', label: 'ovh-ca' },
+          { id: 'ovh-us', label: 'ovh-us' },
+        ],
+        required: true,
+      },
+      {
+        key: 'serviceName',
+        label: 'Public Cloud project',
+        kind: 'select',
+        from: 'projects',
+        required: true,
+      },
+      { key: 'regionName', label: 'Region', kind: 'select', from: 'regions', required: true },
+      {
+        key: 'networkId',
+        label: 'Private network (the balancer’s VIP network)',
+        kind: 'select',
+        from: 'networks',
+        required: true,
+      },
+      { key: 'subnetId', label: 'Subnet', kind: 'select', from: 'subnets', required: true },
+      {
+        key: 'gatewayId',
+        label: 'Existing gateway id',
+        kind: 'text',
+        required: false,
+        advanced: true,
+        help: 'Leave empty to let each edge create its own gateway (template setting).',
+      },
+    ],
+  };
+  /** Which credential fields must be filled before "Connect" can list anything. */
+  const NEEDS_FOR_DISCOVERY: Record<EdgeProviderId, string[]> = {
+    gcore: [],
+    upcloud: [],
+    scaleway: ['accessKey'],
+    ovh: ['applicationKey', 'endpoint'],
   };
 
   type Draft = {
     id: string | null;
     provider: EdgeProviderId;
     name: string;
-    settings: string;
+    settings: Record<string, string>;
     credentials: Record<string, string>;
     enabled: boolean;
     priority: number;
     dailyAllocationBudget: number;
     maxLiveEdges: number;
     defaultTemplateId: string;
+    showAdvanced: boolean;
+    rawJson: string | null;
   };
   let editor = $state<Draft | null>(null);
+  let discovered = $state<EdgeDiscoverResponse | null>(null);
+
   function newDraft(): Draft {
     return {
       id: null,
       provider: 'gcore',
       name: '',
-      settings: SETTINGS_HINT.gcore,
+      settings: { endpoint: 'ovh-eu' },
       credentials: {},
       enabled: true,
       priority: 10,
       dailyAllocationBudget: 6,
       maxLiveEdges: 4,
       defaultTemplateId: '',
+      showAdvanced: false,
+      rawJson: null,
     };
   }
   function editDraft(a: EdgeProviderAccountAdmin): Draft {
+    const settings: Record<string, string> = {};
+    for (const [k, v] of Object.entries(a.settings as Record<string, unknown>))
+      if (k !== 'type' && v !== undefined && v !== null) settings[k] = String(v);
     return {
       id: a.id,
       provider: a.provider,
       name: a.name,
-      settings: JSON.stringify(a.settings, null, 2),
+      settings,
       credentials: {},
       enabled: a.enabled,
       priority: a.priority,
       dailyAllocationBudget: a.dailyAllocationBudget,
       maxLiveEdges: a.maxLiveEdges,
       defaultTemplateId: a.defaultTemplateId ?? '',
+      showAdvanced: false,
+      rawJson: null,
     };
   }
   const credentialFields = $derived(providers.data?.credentialFields ?? {});
+  const fields = $derived(editor ? FIELDS[editor.provider] : []);
+
+  /** Options for one select field from the discovery result (subnets follow the chosen network). */
+  function optionsFor(f: Field): Array<{ id: string; label: string }> {
+    if (f.from === 'fixed') return f.options ?? [];
+    if (!discovered) return [];
+    if (f.from === 'projects') return discovered.projects ?? [];
+    if (f.from === 'regions') return discovered.regions ?? [];
+    if (f.from === 'networks')
+      return (discovered.networks ?? []).map((n) => ({ id: n.id, label: n.label }));
+    if (f.from === 'subnets') {
+      const net = (discovered.networks ?? []).find((n) => n.id === editor?.settings.networkId);
+      return net?.subnets ?? [];
+    }
+    return [];
+  }
+  const canDiscover = $derived.by(() => {
+    if (!editor) return false;
+    const creds = credentialFields[editor.provider] ?? [];
+    const haveCreds = editor.id
+      ? true
+      : creds.every((c) => (editor!.credentials[c] ?? '').trim() !== '');
+    const haveIds = NEEDS_FOR_DISCOVERY[editor.provider].every(
+      (k) => (editor!.settings[k] ?? '').trim() !== '',
+    );
+    return haveCreds && haveIds;
+  });
+
+  /** Build the settings object the server validates (numbers where the adapter wants them). */
+  function settingsBody(d: Draft): Record<string, unknown> {
+    if (d.rawJson !== null) {
+      try {
+        return JSON.parse(d.rawJson) as Record<string, unknown>;
+      } catch {
+        throw new Error('Advanced JSON must be valid');
+      }
+    }
+    const out: Record<string, unknown> = {};
+    for (const f of FIELDS[d.provider]) {
+      const raw = (d.settings[f.key] ?? '').trim();
+      if (!raw) continue;
+      out[f.key] = f.numeric ? Number(raw) : raw;
+    }
+    return out;
+  }
+
+  const discover = createMutation(() => ({
+    mutationFn: () => {
+      const d = editor!;
+      const creds = Object.fromEntries(
+        Object.entries(d.credentials).filter(([, v]) => v.trim() !== ''),
+      );
+      return apiClient.post(
+        '/api/v1/admin/relay/providers/discover',
+        {
+          provider: d.provider,
+          credentials: creds,
+          settings: settingsBody(d),
+          ...(d.id ? { accountId: d.id } : {}),
+        },
+        EdgeDiscoverResponse,
+      );
+    },
+    onSuccess: (r) => {
+      discovered = r;
+      if (!editor) return;
+      // Pre-select when there is exactly one choice.
+      for (const f of fields) {
+        if (f.kind !== 'select' || f.from === 'fixed' || editor.settings[f.key]) continue;
+        const opts = optionsFor(f);
+        if (opts.length === 1 && opts[0]) editor.settings[f.key] = opts[0].id;
+      }
+      const failed = Object.keys(r.errors ?? {});
+      if (failed.length)
+        toast.warning(`Could not list: ${failed.join(', ')} (type the id instead)`);
+      else toast.success('Connected');
+    },
+    onError: onError('Could not connect'),
+  }));
 
   const save = createMutation(() => ({
     mutationFn: async () => {
       const d = editor!;
-      let settings: unknown;
-      try {
-        settings = JSON.parse(d.settings);
-      } catch {
-        throw new Error('Settings must be valid JSON');
-      }
+      const settings = settingsBody(d);
       const creds = Object.fromEntries(
         Object.entries(d.credentials).filter(([, v]) => v.trim() !== ''),
       );
@@ -122,6 +324,7 @@
     },
     onSuccess: () => {
       editor = null;
+      discovered = null;
       invalidate();
       toast.success('Account saved');
     },
@@ -195,11 +398,24 @@
     },
     onError: onError('Could not pull the inventory'),
   }));
+
+  /** Human summary of an account's settings for the card (labels from FIELDS). */
+  function settingsSummary(a: EdgeProviderAccountAdmin): string {
+    const s = a.settings as Record<string, unknown>;
+    return FIELDS[a.provider]
+      .filter((f) => s[f.key] !== undefined && s[f.key] !== null && s[f.key] !== '')
+      .map((f) => `${f.label.replace(/ \(.*\)$/, '')}: ${String(s[f.key])}`)
+      .join(' · ');
+  }
+  function openEditor(d: Draft) {
+    discovered = null;
+    editor = d;
+  }
 </script>
 
 <div class="space-y-4">
   <div class="flex justify-end">
-    <Button onclick={() => (editor = newDraft())}>New account</Button>
+    <Button onclick={() => openEditor(newDraft())}>New account</Button>
   </div>
   {#if providers.isError}<AdminListState
       error={providers.error}
@@ -207,7 +423,7 @@
     />{/if}
   {#if providers.data && providers.data.accounts.length === 0}
     <AdminListState
-      emptyText="No provider accounts. Add one, test its credentials, then qualify it after a manual REALITY check through a test edge."
+      emptyText="No provider accounts. Add one, connect it to list its projects and regions, test the credentials, then qualify it after a manual check through a test edge."
     />
   {/if}
   {#each providers.data?.accounts ?? [] as a (a.id)}
@@ -255,7 +471,7 @@
               onclick={() => qualify.mutate({ id: a.id, qualified: !a.qualified })}
               >{a.qualified ? 'Revoke qualification' : 'Mark qualified'}</Button
             >
-            <Button size="sm" variant="ghost" onclick={() => (editor = editDraft(a))}>Edit</Button>
+            <Button size="sm" variant="ghost" onclick={() => openEditor(editDraft(a))}>Edit</Button>
             <Button
               size="sm"
               variant="ghost"
@@ -266,7 +482,7 @@
         </div>
       </CardHeader>
       <CardContent class="space-y-2 text-xs">
-        <div class="font-mono text-muted-foreground">{JSON.stringify(a.settings)}</div>
+        <div class="text-muted-foreground">{settingsSummary(a) || 'no settings'}</div>
         {@const tr = testResult[a.id]}
         {#if tr}
           <div>
@@ -292,58 +508,197 @@
   {/each}
 </div>
 
-<Dialog.Root open={editor !== null} onOpenChange={(v) => !v && (editor = null)}>
+<Dialog.Root
+  open={editor !== null}
+  onOpenChange={(v) => {
+    if (!v) {
+      editor = null;
+      discovered = null;
+    }
+  }}
+>
   <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
     <Dialog.Header>
       <Dialog.Title>{editor?.id ? 'Edit account' : 'New provider account'}</Dialog.Title>
       <Dialog.Description
-        >Credentials are write-only: blank fields keep the stored value. Changing credentials or
-        settings clears the qualification.</Dialog.Description
+        >Enter the credentials, connect to list what the account can see, then pick. Credentials are
+        write-only: blank fields keep the stored value. Changing credentials or settings clears the
+        qualification.</Dialog.Description
       >
     </Dialog.Header>
     {#if editor}
       <div class="grid gap-3">
         {#if !editor.id}
-          <label class="text-xs"
-            >Provider
-            <Select.Root
-              type="single"
-              value={editor.provider}
-              onValueChange={(v) => {
-                editor!.provider = v as EdgeProviderId;
-                editor!.settings = SETTINGS_HINT[v as EdgeProviderId];
-              }}
-            >
-              <Select.Trigger class="mt-1 w-full">{editor.provider}</Select.Trigger>
-              <Select.Content
-                >{#each EDGE_PROVIDER_IDS as p (p)}<Select.Item value={p}>{p}</Select.Item
-                  >{/each}</Select.Content
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="text-xs"
+              >Provider
+              <Select.Root
+                type="single"
+                value={editor.provider}
+                onValueChange={(v) => {
+                  editor!.provider = v as EdgeProviderId;
+                  editor!.settings = { endpoint: 'ovh-eu' };
+                  editor!.rawJson = null;
+                  discovered = null;
+                }}
               >
-            </Select.Root>
-          </label>
-          <label class="text-xs"
-            >Name<Input class="mt-1" bind:value={editor.name} placeholder="account-a" /></label
-          >
+                <Select.Trigger class="mt-1 w-full">{editor.provider}</Select.Trigger>
+                <Select.Content
+                  >{#each EDGE_PROVIDER_IDS as p (p)}<Select.Item value={p}>{p}</Select.Item
+                    >{/each}</Select.Content
+                >
+              </Select.Root>
+            </label>
+            <label class="text-xs"
+              >Name<Input class="mt-1" bind:value={editor.name} placeholder="account-a" /></label
+            >
+          </div>
         {/if}
-        <label class="text-xs"
-          >Settings (JSON)
-          <textarea
-            class="mt-1 w-full rounded-md border bg-background p-2 font-mono text-xs"
-            rows="4"
-            bind:value={editor.settings}
-          ></textarea>
-        </label>
-        {#each credentialFields[editor.provider] ?? [] as field (field)}
-          <label class="text-xs"
-            >{field}<Input
-              class="mt-1 font-mono"
-              type="password"
-              autocomplete="off"
-              bind:value={editor.credentials[field]}
-              placeholder={editor.id ? '(unchanged)' : ''}
-            /></label
-          >
-        {/each}
+
+        <!-- 1. credentials + the public ids the API needs on every call -->
+        <div class="rounded-md border p-3">
+          <p class="mb-2 text-xs font-semibold">1. Credentials</p>
+          <div class="grid gap-3 sm:grid-cols-2">
+            {#each credentialFields[editor.provider] ?? [] as field (field)}
+              <label class="text-xs"
+                >{field}<Input
+                  class="mt-1 font-mono"
+                  type="password"
+                  autocomplete="off"
+                  bind:value={editor.credentials[field]}
+                  placeholder={editor.id ? '(unchanged)' : ''}
+                /></label
+              >
+            {/each}
+            {#each fields.filter((f) => f.kind !== 'select' && !f.advanced) as f (f.key)}
+              <label class="text-xs"
+                >{f.label}<Input class="mt-1 font-mono" bind:value={editor.settings[f.key]} />
+                {#if f.help}<span class="block text-[11px] text-muted-foreground">{f.help}</span
+                  >{/if}</label
+              >
+            {/each}
+            {#each fields.filter((f) => f.from === 'fixed') as f (f.key)}
+              <label class="text-xs"
+                >{f.label}
+                <Select.Root
+                  type="single"
+                  value={editor.settings[f.key] ?? ''}
+                  onValueChange={(v) => (editor!.settings[f.key] = v)}
+                >
+                  <Select.Trigger class="mt-1 w-full"
+                    >{f.options?.find((o) => o.id === editor?.settings[f.key])?.label ??
+                      'Select'}</Select.Trigger
+                  >
+                  <Select.Content
+                    >{#each f.options ?? [] as o (o.id)}<Select.Item value={o.id}
+                        >{o.label}</Select.Item
+                      >{/each}</Select.Content
+                  >
+                </Select.Root>
+              </label>
+            {/each}
+          </div>
+          <div class="mt-3 flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!canDiscover || discover.isPending}
+              onclick={() => discover.mutate()}
+              >{discover.isPending
+                ? 'Connecting…'
+                : discovered
+                  ? 'Refresh lists'
+                  : 'Connect and list options'}</Button
+            >
+            {#if !canDiscover}
+              <span class="text-[11px] text-muted-foreground"
+                >Fill the credentials{NEEDS_FOR_DISCOVERY[editor.provider].length
+                  ? ' and the public ids'
+                  : ''} first.</span
+              >
+            {/if}
+          </div>
+        </div>
+
+        <!-- 2. the choices -->
+        <div class="rounded-md border p-3">
+          <p class="mb-2 text-xs font-semibold">2. Where the edges go</p>
+          <div class="grid gap-3 sm:grid-cols-2">
+            {#each fields.filter((f) => f.kind === 'select' && f.from !== 'fixed' && (!f.advanced || editor!.showAdvanced)) as f (f.key)}
+              {@const opts = optionsFor(f)}
+              {@const err = discovered?.errors?.[f.from ?? '']}
+              <label class="text-xs"
+                >{f.label}{f.required ? '' : ' (optional)'}
+                {#if opts.length > 0 && !err}
+                  <Select.Root
+                    type="single"
+                    value={editor.settings[f.key] ?? ''}
+                    onValueChange={(v) => {
+                      editor!.settings[f.key] = v;
+                      // A new network invalidates the subnet choice; a new project/region, the lists below it.
+                      if (f.from === 'networks') editor!.settings.subnetId = '';
+                      if (f.from === 'projects' || f.from === 'regions') discover.mutate();
+                    }}
+                  >
+                    <Select.Trigger class="mt-1 w-full"
+                      >{opts.find((o) => o.id === editor?.settings[f.key])?.label ??
+                        (editor.settings[f.key]
+                          ? editor.settings[f.key]
+                          : 'Select')}</Select.Trigger
+                    >
+                    <Select.Content
+                      >{#each opts as o (o.id)}<Select.Item value={o.id}>{o.label}</Select.Item
+                        >{/each}</Select.Content
+                    >
+                  </Select.Root>
+                {:else}
+                  <Input
+                    class="mt-1 font-mono"
+                    bind:value={editor.settings[f.key]}
+                    placeholder={discovered
+                      ? err
+                        ? `could not list (${err}); type the id`
+                        : 'nothing listed yet; type the id'
+                      : 'connect to list, or type the id'}
+                  />
+                {/if}
+                {#if f.help}<span class="block text-[11px] text-muted-foreground">{f.help}</span
+                  >{/if}</label
+              >
+            {/each}
+          </div>
+          {#if fields.some((f) => f.advanced)}
+            <button
+              type="button"
+              class="mt-2 text-[11px] underline"
+              onclick={() => (editor!.showAdvanced = !editor!.showAdvanced)}
+              >{editor.showAdvanced ? 'Hide advanced' : 'Show advanced'}</button
+            >
+          {/if}
+          {#if editor.showAdvanced}
+            {#each fields.filter((f) => f.advanced && f.kind !== 'select') as f (f.key)}
+              <label class="mt-2 block text-xs"
+                >{f.label} (optional)<Input
+                  class="mt-1 font-mono"
+                  bind:value={editor.settings[f.key]}
+                />
+                {#if f.help}<span class="block text-[11px] text-muted-foreground">{f.help}</span
+                  >{/if}</label
+              >
+            {/each}
+            <label class="mt-2 block text-xs"
+              >Raw settings JSON (overrides the fields above when set)
+              <textarea
+                class="mt-1 w-full rounded-md border bg-background p-2 font-mono text-xs"
+                rows="3"
+                value={editor.rawJson ?? ''}
+                oninput={(e) => (editor!.rawJson = e.currentTarget.value.trim() || null)}
+              ></textarea>
+            </label>
+          {/if}
+        </div>
+
+        <!-- 3. limits -->
         <div class="grid gap-3 sm:grid-cols-3">
           <label class="text-xs"
             >Priority (lower first)<Input
@@ -353,7 +708,7 @@
             /></label
           >
           <label class="text-xs"
-            >Daily allocation budget<Input
+            >Daily allocation budget (0 = unlimited)<Input
               class="mt-1"
               type="number"
               bind:value={editor.dailyAllocationBudget}
@@ -376,13 +731,12 @@
           >
             <Select.Trigger class="mt-1 w-full"
               >{templates.data?.templates.find((t) => t.id === editor?.defaultTemplateId)?.name ??
-                'Provider default'}</Select.Trigger
+                "Provider's default template"}</Select.Trigger
             >
             <Select.Content>
-              <Select.Item value="">Provider default</Select.Item>
-              {#each (templates.data?.templates ?? []).filter((t) => t.provider === editor?.provider) as t (t.id)}<Select.Item
-                  value={t.id}>{t.name}</Select.Item
-                >{/each}
+              {#each (templates.data?.templates ?? []).filter((t) => t.provider === editor?.provider) as t (t.id)}
+                <Select.Item value={t.id}>{t.name}</Select.Item>
+              {/each}
             </Select.Content>
           </Select.Root>
         </label>
@@ -392,7 +746,13 @@
       </div>
     {/if}
     <Dialog.Footer>
-      <Button variant="outline" onclick={() => (editor = null)}>Cancel</Button>
+      <Button
+        variant="outline"
+        onclick={() => {
+          editor = null;
+          discovered = null;
+        }}>Cancel</Button
+      >
       <Button disabled={save.isPending} onclick={() => save.mutate()}>Save</Button>
     </Dialog.Footer>
   </Dialog.Content>

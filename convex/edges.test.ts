@@ -30,7 +30,7 @@ async function seed(opts: { maxLiveEdges?: number; dailyAllocationBudget?: numbe
       ? { dailyAllocationBudget: opts.dailyAllocationBudget }
       : {}),
   });
-  await t.mutation(internal.realityProfiles.create, {
+  await t.mutation(internal.protocolProfiles.create, {
     slug: 'prof-u',
     name: 'Profile U',
     provider: 'upcloud',

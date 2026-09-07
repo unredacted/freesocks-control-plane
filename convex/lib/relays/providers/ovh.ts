@@ -16,6 +16,7 @@
  */
 import { z } from 'zod';
 import type {
+  DiscoverResult,
   ChildResource,
   EdgeDescription,
   EdgeSpec,
@@ -61,6 +62,24 @@ const LbList = z.array(Lb);
 const FipList = z.array(FloatingIp.extend({ associatedEntity: z.unknown().nullish() }));
 const Flavors = z.array(z.object({ id: z.string(), name: z.string().nullish() }).passthrough());
 const Regions = z.array(z.string());
+const PrivateNetworks = z.array(
+  z
+    .object({
+      id: z.string(),
+      name: z.string().nullish(),
+      regions: z.array(z.object({ region: z.string() }).passthrough()).nullish(),
+    })
+    .passthrough(),
+);
+const Subnets = z.array(
+  z
+    .object({
+      id: z.string(),
+      cidr: z.string().nullish(),
+      ipPools: z.array(z.object({ region: z.string().nullish() }).passthrough()).nullish(),
+    })
+    .passthrough(),
+);
 
 // --- signed fetch -----------------------------------------------------------------
 
@@ -211,6 +230,17 @@ async function pollOperation(cfg: OvhConfig, step: string, opId: string): Promis
 const getLb = (cfg: OvhConfig, step: string, id: string) =>
   ovh(cfg, step, 'GET', `${base(cfg)}/loadbalancing/loadbalancer/${encodeURIComponent(id)}`, Lb);
 
+async function ovhRegions(cfg: OvhConfig): Promise<Array<{ id: string; label: string }>> {
+  const regions = await ovh(
+    cfg,
+    'regions',
+    'GET',
+    `/cloud/project/${encodeURIComponent(cfg.serviceName)}/region`,
+    Regions,
+  );
+  return regions.map((r) => ({ id: r, label: r }));
+}
+
 export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
   id: 'ovh',
   templateSchema: OvhTemplate,
@@ -238,15 +268,85 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
     }
   },
 
-  async listRegions(cfg) {
-    const regions = await ovh(
-      cfg,
-      'regions',
-      'GET',
-      `/cloud/project/${encodeURIComponent(cfg.serviceName)}/region`,
-      Regions,
-    );
-    return regions.map((r) => ({ id: r, label: r }));
+  listRegions: (cfg) => ovhRegions(cfg),
+
+  /**
+   * Projects need only the keys; regions and private networks (with their
+   * subnets, filtered to the chosen region when one is set) need the project.
+   */
+  async discoverOptions(
+    partial: Partial<OvhConfig> & Record<string, unknown>,
+  ): Promise<DiscoverResult> {
+    const cfg = partial as OvhConfig;
+    const out: DiscoverResult = { errors: {} };
+    const code = (e: unknown) =>
+      e instanceof EdgeProviderError ? (e.meta.code ?? String(e.meta.status ?? 'error')) : 'error';
+    try {
+      const ids = await ovh(cfg, 'projects', 'GET', `/cloud/project`, z.array(z.string()));
+      const projects: Array<{ id: string; label: string }> = [];
+      for (const id of ids.slice(0, 50)) {
+        try {
+          const p = await ovh(
+            cfg,
+            'project',
+            'GET',
+            `/cloud/project/${encodeURIComponent(id)}`,
+            z.object({ description: z.string().nullish() }).passthrough(),
+          );
+          projects.push({ id, label: p.description ? `${p.description} (${id})` : id });
+        } catch {
+          projects.push({ id, label: id });
+        }
+      }
+      out.projects = projects;
+    } catch (e) {
+      out.errors!.projects = code(e);
+    }
+    if (cfg.serviceName) {
+      try {
+        out.regions = await ovhRegions(cfg);
+      } catch (e) {
+        out.errors!.regions = code(e);
+      }
+      try {
+        const nets = await ovh(
+          cfg,
+          'networks',
+          'GET',
+          `/cloud/project/${encodeURIComponent(cfg.serviceName)}/network/private`,
+          PrivateNetworks,
+        );
+        const networks: NonNullable<DiscoverResult['networks']> = [];
+        for (const n of nets) {
+          if (cfg.regionName && !n.regions?.some((r) => r.region === cfg.regionName)) continue;
+          let subnets: Array<{ id: string; label: string }> = [];
+          try {
+            const subs = await ovh(
+              cfg,
+              'subnets',
+              'GET',
+              `/cloud/project/${encodeURIComponent(cfg.serviceName)}/network/private/${encodeURIComponent(n.id)}/subnet`,
+              Subnets,
+            );
+            subnets = subs
+              .filter(
+                (s) =>
+                  !cfg.regionName ||
+                  !s.ipPools?.length ||
+                  s.ipPools.some((p) => p.region === cfg.regionName),
+              )
+              .map((s) => ({ id: s.id, label: s.cidr ?? s.id }));
+          } catch {
+            /* subnets unavailable for this network: offer the network alone */
+          }
+          networks.push({ id: n.id, label: n.name ?? n.id, subnets });
+        }
+        out.networks = networks;
+      } catch (e) {
+        out.errors!.networks = code(e);
+      }
+    }
+    return out;
   },
 
   planProvision(_cfg, spec) {

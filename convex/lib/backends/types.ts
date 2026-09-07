@@ -251,4 +251,8 @@ export interface NodeInventoryRow {
   name: string;
   usersOnline: number;
   online: boolean;
+  /** The node's public address / port / country as the panel knows them (for the relay picker). */
+  address?: string;
+  port?: number;
+  countryCode?: string;
 }

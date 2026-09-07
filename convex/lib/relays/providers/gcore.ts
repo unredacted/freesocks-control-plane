@@ -16,6 +16,7 @@
  */
 import { z } from 'zod';
 import type {
+  DiscoverResult,
   Addresses,
   ChildResource,
   Discovery,
@@ -87,6 +88,36 @@ const Lb = z
 const LbList = z.object({ results: z.array(Lb).default([]) }).passthrough();
 const FipList = z
   .object({ results: z.array(FloatingIp.extend({ id: z.string() })).default([]) })
+  .passthrough();
+const ProjectList = z
+  .object({
+    results: z
+      .array(z.object({ id: z.number(), name: z.string().nullish() }).passthrough())
+      .default([]),
+  })
+  .passthrough();
+const NetworkList = z
+  .object({
+    results: z
+      .array(z.object({ id: z.string(), name: z.string().nullish() }).passthrough())
+      .default([]),
+  })
+  .passthrough();
+const SubnetList = z
+  .object({
+    results: z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            name: z.string().nullish(),
+            network_id: z.string().nullish(),
+            cidr: z.string().nullish(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
   .passthrough();
 const RegionList = z
   .object({
@@ -259,9 +290,53 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
     }
   },
 
-  async listRegions(cfg) {
-    const res = await gcore(cfg, 'regions', 'GET', `/cloud/v1/regions`, RegionList);
-    return res.results.map((r) => ({ id: String(r.id), label: r.display_name ?? String(r.id) }));
+  listRegions: (cfg) => gcoreRegions(cfg),
+
+  /** Projects and regions need only the API key; networks need a project + region (optional: public VIP needs none). */
+  async discoverOptions(
+    partial: Partial<GcoreConfig> & Record<string, unknown>,
+  ): Promise<DiscoverResult> {
+    const cfg = partial as GcoreConfig;
+    const out: DiscoverResult = { errors: {} };
+    try {
+      const p = await gcore(cfg, 'projects', 'GET', `/cloud/v1/projects`, ProjectList);
+      out.projects = p.results.map((x) => ({ id: String(x.id), label: x.name ?? String(x.id) }));
+    } catch (e) {
+      out.errors!.projects = codeOf(e);
+    }
+    try {
+      out.regions = await gcoreRegions(cfg);
+    } catch (e) {
+      out.errors!.regions = codeOf(e);
+    }
+    if (cfg.projectId && cfg.regionId) {
+      try {
+        const nets = await gcore(
+          cfg,
+          'networks',
+          'GET',
+          `/cloud/v1/networks/${scope(cfg)}`,
+          NetworkList,
+        );
+        const subnets = await gcore(
+          cfg,
+          'subnets',
+          'GET',
+          `/cloud/v1/subnets/${scope(cfg)}`,
+          SubnetList,
+        );
+        out.networks = nets.results.map((n) => ({
+          id: n.id,
+          label: n.name ?? n.id,
+          subnets: subnets.results
+            .filter((s) => s.network_id === n.id)
+            .map((s) => ({ id: s.id, label: `${s.name ?? s.id}${s.cidr ? ` (${s.cidr})` : ''}` })),
+        }));
+      } catch (e) {
+        out.errors!.networks = codeOf(e);
+      }
+    }
+    return out;
   },
 
   planProvision(_cfg, spec) {
@@ -447,6 +522,17 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
     }
   },
 };
+
+async function gcoreRegions(cfg: GcoreConfig): Promise<Array<{ id: string; label: string }>> {
+  const res = await gcore(cfg, 'regions', 'GET', `/cloud/v1/regions`, RegionList);
+  return res.results.map((r) => ({ id: String(r.id), label: r.display_name ?? String(r.id) }));
+}
+
+function codeOf(e: unknown): string {
+  return e instanceof EdgeProviderError
+    ? (e.meta.code ?? String(e.meta.status ?? 'error'))
+    : 'error';
+}
 
 function unknownStep(step: ResourceStep): EdgeProviderError {
   return new EdgeProviderError(`gcore: unknown step kind ${step.kind}`, {

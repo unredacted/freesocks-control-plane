@@ -516,6 +516,43 @@ export const publishedEdgeIdsOf = internalQuery({
   },
 });
 
+/**
+ * Nodes the panel currently lists (the healthcheck cron's inventory cache, or a
+ * fresh pull via backendNodes.refreshNodeInventory), with whether a relay is
+ * already registered for each: the "New relay" picker pre-fills from these.
+ */
+export const nodeCandidates = internalQuery({
+  args: { backendServerId: v.id('backendServers') },
+  handler: async (ctx, { backendServerId }) => {
+    const rows = await ctx.db
+      .query('backendNodeInventory')
+      .withIndex('by_server', (q) => q.eq('backendServerId', backendServerId))
+      .collect();
+    const relays = await ctx.db
+      .query('relays')
+      .withIndex('by_backend_server', (q) => q.eq('backendServerId', backendServerId))
+      .collect();
+    const bound = new Map(relays.map((r) => [r.nodeHostname, r.slug]));
+    return {
+      fetchedAt: rows.length
+        ? new Date(Math.max(...rows.map((r) => r.lastStatsAt))).toISOString()
+        : null,
+      nodes: rows
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((r) => ({
+          nodeUuid: r.nodeUuid,
+          name: r.name,
+          address: r.address ?? null,
+          port: r.port ?? null,
+          countryCode: r.countryCode ?? null,
+          online: r.online,
+          usersOnline: r.usersOnline,
+          relaySlug: bound.get(r.name) ?? null,
+        })),
+    };
+  },
+});
+
 export const credentialFields = internalQuery({
   args: {},
   handler: async () => EDGE_CREDENTIAL_FIELDS,

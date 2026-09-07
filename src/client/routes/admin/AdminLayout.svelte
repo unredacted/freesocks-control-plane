@@ -93,7 +93,14 @@
     { to: '/admin/membership-codes', label: 'Membership codes', icon: Ticket },
     { to: '/admin/billing', label: 'Billing', icon: CreditCard },
     { to: '/admin/rate-limits', label: 'Rate limits', icon: Gauge },
-    { to: '/admin/telemetry', label: 'Telemetry', icon: Radar },
+    {
+      group: 'Telemetry',
+      icon: Radar,
+      children: [
+        { to: '/admin/telemetry', label: 'User reports', icon: Radar },
+        { to: '/admin/telemetry/probes', label: 'Probes', icon: Network },
+      ],
+    },
     { to: '/admin/audit', label: 'Audit log', icon: History },
     { to: '/admin/settings', label: 'Settings', icon: Settings },
     { to: '/admin/theme', label: 'Theme', icon: Palette },

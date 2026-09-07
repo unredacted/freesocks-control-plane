@@ -22,7 +22,8 @@ export const RELAY_SETTINGS_SCHEMAS = {
   scaleway: z.object({
     type: z.literal('scaleway'),
     accessKey: z.string().regex(/^SCW[A-Z0-9]{17}$/, 'access key like SCWXXXXXXXXXXXXXXXXX'),
-    projectId: z.string().uuid(),
+    // Optional: the API key's default project is used when absent.
+    projectId: z.string().uuid().optional(),
     zone: z.string().regex(/^[a-z]{2}-[a-z]{3}-\d$/, 'zone like fr-par-1'),
   }),
   ovh: z.object({

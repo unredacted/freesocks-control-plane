@@ -60,11 +60,13 @@ import {
   EdgeAdmin,
   EdgeDetail,
   RelayEndpointsResponse,
-  RealityProfileList,
+  ProtocolProfileList,
   ProbeReachabilityMatrix,
   ProbeRunsResponse,
+  RelayNodeCandidatesResponse,
   ProbeTargetsResponse,
   ProbeAuditResponse,
+  ProbeSummary,
   EdgeRotationAdmin,
   EdgeRotationDetail,
   RelaySlotAdmin,
@@ -118,16 +120,19 @@ export const queryKeys = {
   adminRelayConfig: ['admin', 'relays', 'config'] as const,
   adminEdgeProviders: ['admin', 'relays', 'providers'] as const,
   adminEdgeTemplates: ['admin', 'relays', 'templates'] as const,
-  adminRealityProfiles: ['admin', 'relays', 'profiles'] as const,
+  adminProtocolProfiles: ['admin', 'relays', 'profiles'] as const,
   adminRelayEdges: (relayId: string) => ['admin', 'relays', 'edges', relayId] as const,
   adminRelayEdgeDetail: (edgeId: string) => ['admin', 'relays', 'edge', edgeId] as const,
   adminRelaySlots: (relayId: string) => ['admin', 'relays', 'slots', relayId] as const,
   adminRelayRotations: (relayId: string) => ['admin', 'relays', 'rotations', relayId] as const,
   adminRelayRotation: (id: string) => ['admin', 'relays', 'rotation', id] as const,
+  adminRelayNodeCandidates: (serverId: string) =>
+    ['admin', 'relays', 'node-candidates', serverId] as const,
   adminProbeMatrix: ['admin', 'relays', 'probes', 'matrix'] as const,
   adminProbeTargets: ['admin', 'relays', 'probes', 'targets'] as const,
   adminProbeRuns: (targetKey: string) => ['admin', 'relays', 'probes', 'runs', targetKey] as const,
   adminProbeAudit: ['admin', 'relays', 'probes', 'audit'] as const,
+  adminProbeSummary: (range: string) => ['admin', 'relays', 'probes', 'summary', range] as const,
   adminRelayEndpoints: (relayId: string) => ['admin', 'relays', 'endpoints', relayId] as const,
 };
 
@@ -718,10 +723,10 @@ export const adminEdgeTemplatesQuery = () =>
     staleTime: 60_000,
   }));
 
-export const adminRealityProfilesQuery = () =>
+export const adminProtocolProfilesQuery = () =>
   createQuery(() => ({
-    queryKey: queryKeys.adminRealityProfiles,
-    queryFn: () => apiClient.get('/api/v1/admin/relay/reality-profiles', RealityProfileList),
+    queryKey: queryKeys.adminProtocolProfiles,
+    queryFn: () => apiClient.get('/api/v1/admin/relay/profiles', ProtocolProfileList),
     staleTime: 30_000,
   }));
 
@@ -783,6 +788,18 @@ export const adminRelayRotationQuery = (id: () => string | null) =>
     refetchInterval: (q) => (q.state.data && !q.state.data.terminal ? 2_000 : false),
   }));
 
+export const adminRelayNodeCandidatesQuery = (serverId: () => string | null) =>
+  createQuery(() => ({
+    queryKey: queryKeys.adminRelayNodeCandidates(serverId() ?? ''),
+    enabled: !!serverId(),
+    queryFn: () =>
+      apiClient.get(
+        `/api/v1/admin/relay/relays/node-candidates?backendServerId=${encodeURIComponent(serverId() ?? '')}`,
+        RelayNodeCandidatesResponse,
+      ),
+    staleTime: 30_000,
+  }));
+
 export const adminProbeMatrixQuery = () =>
   createQuery(() => ({
     queryKey: queryKeys.adminProbeMatrix,
@@ -810,6 +827,16 @@ export const adminProbeRunsQuery = (targetKey: () => string | null) =>
     staleTime: 10_000,
     refetchInterval: 15_000,
   }));
+
+export const adminProbeSummaryQuery = (range: () => TelemetryRange) =>
+  createQuery(() => {
+    const qs = rangeQs(range());
+    return {
+      queryKey: queryKeys.adminProbeSummary(qs),
+      queryFn: () => apiClient.get(`/api/v1/admin/relay/probes/summary?${qs}`, ProbeSummary),
+      staleTime: 30_000,
+    };
+  });
 
 export const adminProbeAuditQuery = () =>
   createQuery(() => ({

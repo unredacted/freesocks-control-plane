@@ -176,7 +176,7 @@ describe('relay admin routes', () => {
     expect(list.accounts[0].credentialsSet).toEqual({ token: true });
     expect(list.credentialFields.upcloud).toEqual(['token']);
     expect(JSON.stringify(list)).not.toContain('SECRET_TOKEN_VALUE');
-    const prof = await call('POST', 'reality-profiles', {
+    const prof = await call('POST', 'profiles', {
       slug: 'prof-u',
       name: 'Profile U',
       provider: 'upcloud',
@@ -344,7 +344,7 @@ describe('relay admin routes', () => {
     const kp = await serverKeyPairFromSeed(SERVER_SEED);
     const kid = await kidFromPublicKey(await serializePublicKey(kp.publicKey));
     const { t, call, cookie } = await seed();
-    await call('POST', 'reality-profiles', {
+    await call('POST', 'profiles', {
       slug: 'prof-u',
       name: 'Profile U',
       provider: 'upcloud',

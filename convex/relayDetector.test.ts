@@ -61,7 +61,7 @@ async function seed() {
     await upsertSettingRow(ctx, 'relay.render.enabled', 'true');
     return { tierId, serverId };
   });
-  await t.mutation(internal.realityProfiles.create, {
+  await t.mutation(internal.protocolProfiles.create, {
     slug: 'prof-u',
     name: 'P',
     provider: 'upcloud',

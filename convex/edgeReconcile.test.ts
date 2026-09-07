@@ -61,7 +61,7 @@ async function seed() {
     credentials: { token: 'ucl_x' },
   });
   await t.mutation(internal.edgeProviderAccounts.setQualified, { id: accountId, qualified: true });
-  await t.mutation(internal.realityProfiles.create, {
+  await t.mutation(internal.protocolProfiles.create, {
     slug: 'prof-u',
     name: 'Profile U',
     provider: 'upcloud',
@@ -429,7 +429,7 @@ describe('relayReconcile', () => {
       id: accountId,
       qualified: true,
     });
-    await s.t.mutation(internal.realityProfiles.create, {
+    await s.t.mutation(internal.protocolProfiles.create, {
       slug: 'prof-g',
       name: 'Profile G',
       provider: 'gcore',
