@@ -139,10 +139,16 @@ export const resolveForProvision = internalQuery({
     resolveTemplateFor(ctx, a.provider, a.templateId ?? null, a.accountDefaultId ?? null),
 });
 
-/** Seed one default template per provider that has none (idempotent). */
+/**
+ * First-use seeding: while the table is EMPTY, one default template per
+ * provider from the adapter defaults. Runs from the templates read route, so a
+ * fresh deployment shows editable defaults instead of an empty tab; once an
+ * operator has any template (or deleted one on purpose) nothing is re-seeded.
+ */
 export const ensureDefaults = internalMutation({
   args: {},
   handler: async (ctx) => {
+    if (await ctx.db.query('edgeTemplates').first()) return { created: 0 };
     let created = 0;
     for (const provider of EDGE_PROVIDER_IDS) {
       const existing = await ctx.db

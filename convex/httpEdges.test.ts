@@ -323,6 +323,21 @@ describe('relay admin routes', () => {
     expect(await junk.json()).toEqual({ changedKeys: [] });
   });
 
+  test('templates GET seeds the adapter defaults on first use and returns the schemas', async () => {
+    const { call } = await seed();
+    const res = await call('GET', 'templates');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      templates: Array<{ provider: string; isDefault: boolean }>;
+      schemas: Record<string, unknown>;
+    };
+    expect(body.templates.filter((x) => x.isDefault)).toHaveLength(4);
+    expect(Object.keys(body.schemas).sort()).toEqual(body.templates.map((x) => x.provider).sort());
+    // Idempotent on the next read.
+    const again = (await (await call('GET', 'templates')).json()) as { templates: unknown[] };
+    expect(again.templates).toHaveLength(4);
+  });
+
   test('validation errors come back as the JSON envelope, not 500s', async () => {
     const { call } = await seed();
     const bad = await call('PUT', 'relays/by-slug/node-two', {

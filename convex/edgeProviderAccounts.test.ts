@@ -229,6 +229,15 @@ describe('edgeTemplates', () => {
     expect((await t.mutation(internal.edgeTemplates.ensureDefaults, {})).created).toBe(0);
     const all = await t.query(internal.edgeTemplates.list, {});
     expect(all.filter((x) => x.isDefault)).toHaveLength(4);
+    // Seeding is first-use only: an operator-created template on ANY provider
+    // means the table is theirs, and no defaults are added for the others.
+    const t2 = convexTest(schema, modules);
+    await t2.mutation(internal.edgeTemplates.create, {
+      provider: 'upcloud',
+      name: 'Mine',
+      params: { plan: 'development' },
+    });
+    expect((await t2.mutation(internal.edgeTemplates.ensureDefaults, {})).created).toBe(0);
     await expect(
       t.mutation(internal.edgeTemplates.create, {
         provider: 'gcore',

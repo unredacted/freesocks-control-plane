@@ -128,6 +128,8 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     return notFound();
   }
   if (a === 'templates' && !b) {
+    // First use seeds the adapter defaults (no-op once any template exists).
+    await ctx.runMutation(internal.edgeTemplates.ensureDefaults, {});
     const [templates, schemas] = await Promise.all([
       ctx.runQuery(internal.edgeTemplates.list, {}),
       ctx.runQuery(internal.edgeTemplates.describeSchemas, {}),
