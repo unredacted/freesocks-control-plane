@@ -26,8 +26,8 @@
     <div>
       <h1 class="text-2xl font-bold">Edges</h1>
       <p class="mt-1 text-sm text-muted-foreground">
-        Provider-managed L4 load balancers in front of your relay nodes: published pools,
-        rotations, protocol profiles and the block detector. Probe telemetry lives under Telemetry.
+        Provider-managed L4 load balancers in front of your relay nodes: published pools, rotations,
+        protocol profiles and the block detector. Probe telemetry lives under Telemetry.
       </p>
     </div>
     {#if summary.data}
