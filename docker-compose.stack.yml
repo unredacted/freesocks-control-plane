@@ -37,7 +37,7 @@ services:
   backend:
     # Convex ships one image per commit, and EVERY image tag is a GitHub release
     # (`precompiled-<date>-<sha7>` in get-convex/convex-backend). So the tag here
-    # is the git sha of a release: 0dda4d6 = precompiled-2026-08-14-0dda4d6 (the npm 1.44.0 anchor).
+    # is the git sha of a release: 4d58e45 = precompiled-2026-09-03-4d58e45 (the npm 1.45.0 anchor).
     #
     # The tag is what makes an upgrade auditable. Convex stopped maintaining
     # self-hosted/CHANGELOG.md in 2025-09 ("check `git log` for a detailed
@@ -62,7 +62,7 @@ services:
     # Upgrading runs in-place DB migrations. Take an export first, then watch for
     # `MigrationComplete(N)` in the backend log (self-hosted/advanced/upgrading.md).
     # Full procedure: docs/beta-deploy.md § Upgrading the Convex backend.
-    image: ghcr.io/get-convex/convex-backend:0dda4d6a68612c6ba49c755e410feca46f56f7ce@sha256:e6952cd9550fbc88bd09677b5c4f0fab5961dd0b870fca46822fb0b339ecd2bf
+    image: ghcr.io/get-convex/convex-backend:4d58e45bcf49d01ec696b31db7faec7362df45ad@sha256:a16e06c89d2b54975fecd2c7017582eda241b8791e7b9cff979e813d49319a87
     pids_limit: 512
     restart: unless-stopped
     logging: *log
@@ -195,7 +195,7 @@ services:
   # `ssh -L 6791:127.0.0.1:6791 -L 3210:127.0.0.1:3210 beta-host`).
   dashboard:
     # Same release git sha as `backend` above — required, not cosmetic.
-    image: ghcr.io/get-convex/convex-dashboard:0dda4d6a68612c6ba49c755e410feca46f56f7ce@sha256:36668f7a304b6a3fccd1a5ff28ad05a242c37944beab5f8a90f81a2d4e235de7
+    image: ghcr.io/get-convex/convex-dashboard:4d58e45bcf49d01ec696b31db7faec7362df45ad@sha256:98bd1ce161f822ff19ce7577eefcc50c6c363b01b5f0ba138f7978c3cbfd90de
     pids_limit: 256
     restart: unless-stopped
     logging: *log
@@ -343,7 +343,7 @@ services:
   # running server needed) and write it to the shared `convexkey` volume for the
   # deployer. The key is accepted by the backend because it shares INSTANCE_SECRET.
   keygen:
-    image: ghcr.io/get-convex/convex-backend:0dda4d6a68612c6ba49c755e410feca46f56f7ce@sha256:e6952cd9550fbc88bd09677b5c4f0fab5961dd0b870fca46822fb0b339ecd2bf
+    image: ghcr.io/get-convex/convex-backend:4d58e45bcf49d01ec696b31db7faec7362df45ad@sha256:a16e06c89d2b54975fecd2c7017582eda241b8791e7b9cff979e813d49319a87
     pids_limit: 128
     restart: 'no'
     logging: *log
