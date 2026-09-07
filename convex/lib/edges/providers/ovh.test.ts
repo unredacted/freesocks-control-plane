@@ -97,6 +97,12 @@ describe('ovh: polling, discovery, describe, destroy', () => {
       status: 'done',
       resources: [{ kind: 'lb', resourceId: 'lb-1', ownership: 'created' }],
     });
+    // Completed but no resourceId on the wire: never "done with nothing" — hand
+    // the step to name-based discovery instead.
+    mockFetch(withTime(() => jsonRes({ id: 'op-1', status: 'completed' })));
+    expect(
+      await ovhProvider.pollStep!(cfg, step, 'op-1', { steps: [], resources: [] }),
+    ).toMatchObject({ status: 'partial', code: 'operation_completed_without_resource' });
     mockFetch(withTime(() => jsonRes({ id: 'op-1', status: 'in-error' })));
     expect(
       await ovhProvider.pollStep!(cfg, step, 'op-1', { steps: [], resources: [] }),

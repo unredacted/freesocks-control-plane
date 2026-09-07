@@ -1075,7 +1075,10 @@ http.route({
     }
     // Last-resort fallback MUST match this UA — never serve another client's
     // format (the same invariant the fresh path enforces). (Review #11.)
-    const stale = cached.find((e) => e.ua === ua) ?? null;
+    // …and its edge-render token must still be current: a body rendered before
+    // a rotation/burn/unpublish carries a removed edge and must never be served
+    // as a fallback, however long the panel stays down.
+    const stale = cached.find((e) => e.ua === ua && (e.relay ?? null) === edgeToken) ?? null;
     try {
       const fetched = await ctx.runAction(internal.backends.fetchSubscriptionContent, {
         backend: sub.backend,

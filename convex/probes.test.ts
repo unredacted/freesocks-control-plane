@@ -184,6 +184,33 @@ describe('relayProbes', () => {
     const row = matrix.targets.find((x) => x.key === `edge:${edgeId}`)!;
     expect(row.kind).toBe('edge');
     expect(row.reachability.byCountry.find((c) => c.country === 'IR')?.verdict).toBe('unreachable');
+    // Evidence expires at two probe intervals: once the external rows are that
+    // old, an unrelated internal completion must NOT carry them forward, and a
+    // disabled source contributes nothing even while fresh.
+    await t.run(async (ctx) => {
+      for (const r of await ctx.db.query('probeReachability').collect())
+        if (r.source === 'globalping')
+          await ctx.db.patch(r._id, { updatedAt: Date.now() - 31 * 60_000 });
+    });
+    await t.mutation(internal.probes.requestMany, {
+      targets: [{ kind: 'edge', ref: edgeId }],
+      sources: ['internal'],
+    });
+    await drainRuns(t);
+    let after = (await t.query(internal.edges.get, { id: edgeId }))!;
+    expect(after.reachability!.byCountry.map((c) => c.country)).toEqual(['XX']);
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.sources.globalping', 'false'));
+    await t.run(async (ctx) => {
+      for (const r of await ctx.db.query('probeReachability').collect())
+        await ctx.db.patch(r._id, { updatedAt: Date.now() });
+    });
+    await t.mutation(internal.probes.requestMany, {
+      targets: [{ kind: 'edge', ref: edgeId }],
+      sources: ['internal'],
+    });
+    await drainRuns(t);
+    after = (await t.query(internal.edges.get, { id: edgeId }))!;
+    expect(after.reachability!.byCountry.map((c) => c.country)).toEqual(['XX']);
   });
 
   test('one failing network is not agreement: the country stays unknown, not unreachable', async () => {

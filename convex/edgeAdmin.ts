@@ -435,8 +435,14 @@ export const resolveOperator = internalMutation({
         });
       }
     } else {
+      // Back to an unpublished, selectable standby: a row that came off the
+      // drain path still carries `draining` + an expired drainUntil, which
+      // would leave it active yet invisible to the standby picker.
       await ctx.db.patch(edgeId, {
         status: 'active',
+        publication: 'unpublished',
+        poolIndex: undefined,
+        drainUntil: undefined,
         currentOp: undefined,
         failure: undefined,
         steps: e.steps.map((s) =>
@@ -447,6 +453,12 @@ export const resolveOperator = internalMutation({
         statusChangedAt: now,
         updatedAt: now,
       });
+      if (origin && !origin.standbyEdgeIds.includes(edgeId)) {
+        await ctx.db.patch(origin._id, {
+          standbyEdgeIds: [...origin.standbyEdgeIds, edgeId],
+          updatedAt: now,
+        });
+      }
     }
     await writeAuditLog(ctx, {
       actorType: 'admin',

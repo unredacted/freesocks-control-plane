@@ -125,6 +125,34 @@ describe('relayOrigins + slots + profiles', () => {
     await expect(t.mutation(internal.relaySlots.retire, { relayId, slotKey: 'a' })).rejects.toThrow(
       /published edge/,
     );
+    // The edge (and its listener) target this inbound + port: no rebind or port
+    // change under it. Same values (a role re-run) stay idempotent.
+    for (const change of [
+      { configProfileInboundUuid: '55555555-5555-4555-8555-555555555555' },
+      { originPort: 8443 },
+    ]) {
+      await expect(
+        t.mutation(internal.relaySlots.upsert, {
+          relayId,
+          slotKey: 'a',
+          profileSlug: 'prof-a',
+          inboundTag: 'VLESS_RELAY_A',
+          configProfileUuid: '11111111-1111-4111-8111-111111111111',
+          configProfileInboundUuid: '44444444-4444-4444-8444-444444444444',
+          originPort: 443,
+          ...change,
+        }),
+      ).rejects.toThrow(/still use slot/);
+    }
+    await t.mutation(internal.relaySlots.upsert, {
+      relayId,
+      slotKey: 'a',
+      profileSlug: 'prof-a',
+      inboundTag: 'VLESS_RELAY_A',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '44444444-4444-4444-8444-444444444444',
+      originPort: 443,
+    });
     await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId, keepActive: true });
     await t.mutation(internal.relaySlots.retire, { relayId, slotKey: 'a' });
     expect((await t.run((ctx) => ctx.db.get(slotId)))!.retired).toBe(true);
@@ -235,6 +263,45 @@ describe('relayOrigins + slots + profiles', () => {
     await expect(
       t.mutation(internal.relays.publishEdge, { relayId, edgeId: d.edgeId, poolIndex: 1 }),
     ).rejects.toThrow(/occupied/);
+  });
+
+  test('an account-scoped profile publishes only edges provisioned from that account', async () => {
+    const { t, relayId, slotId, profileId, accountId } = await seed();
+    const { id: otherAccount } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'gcore',
+      name: 'acct-b',
+      settings: { projectId: 33, regionId: 44 },
+      credentials: { apiKey: 'k2' },
+    });
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, accountId });
+    const mk = (acct: typeof accountId) =>
+      t.run((ctx) =>
+        ctx.db.insert('edges', {
+          relayId,
+          slotId,
+          accountId: acct,
+          provider: 'gcore',
+          managed: true,
+          name: `fcp-relay-${acct}`,
+          steps: [],
+          resources: [],
+          listeners: [],
+          addresses: { v4: acct === accountId ? '198.51.100.21' : '198.51.100.22' },
+          publication: 'unpublished',
+          status: 'active',
+          statusChangedAt: Date.now(),
+          health: 'online',
+          destroyAttempts: 0,
+          updatedAt: Date.now(),
+        }),
+      );
+    const foreign = await mk(otherAccount);
+    const own = await mk(accountId);
+    await expect(
+      t.mutation(internal.relays.publishEdge, { relayId, edgeId: foreign }),
+    ).rejects.toThrow(/account_mismatch/);
+    await t.mutation(internal.relays.publishEdge, { relayId, edgeId: own });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publishedEdgeIds).toEqual([own]);
   });
 
   test('narrowing a profile scope refuses while published edges fall outside it; unpublished edges do not block', async () => {

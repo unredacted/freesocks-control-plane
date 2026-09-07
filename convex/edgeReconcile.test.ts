@@ -290,6 +290,19 @@ describe('relayReconcile', () => {
     expect(audit.find((a) => a.action === 'edge.destroy_failed')?.payload).toMatchObject({
       attempts: 48,
     });
+    // `reactivate` on a row that came off the drain path clears the drain
+    // metadata and puts it back among the selectable standbys.
+    await s.t.run((ctx) =>
+      ctx.db.patch(edgeId, { publication: 'draining', drainUntil: Date.now() - 1 }),
+    );
+    await s.t.mutation(internal.edgeAdmin.resolveOperator, { edgeId, action: 'reactivate' });
+    const back = (await s.t.query(internal.edges.get, { id: edgeId }))!;
+    expect(back).toMatchObject({ status: 'active', publication: 'unpublished' });
+    expect(back.drainUntil).toBeUndefined();
+    expect((await s.t.query(internal.relays.get, { id: s.relayId }))!.standbyEdgeIds).toContain(
+      edgeId,
+    );
+    await s.t.run((ctx) => ctx.db.patch(edgeId, { status: 'needs_operator' }));
     expect(await s.t.mutation(internal.edgeReconcileMutations.retryDestroy, { edgeId })).toEqual({
       ok: true,
     });

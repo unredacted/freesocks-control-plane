@@ -120,6 +120,17 @@ describe('diffHosts', () => {
     );
     expect(d2.changedInbound.map((p) => p.uuid)).toEqual(['u2']);
     expect(d2.converged).toBe(false);
+    // A binding that DISAPPEARED (inbound null on the live row) is the same drift.
+    const d3 = diffHosts(
+      [
+        host({ uuid: 'u1', address: '203.0.113.5' }),
+        { ...host({ uuid: 'u2', address: '203.0.113.5' }), inbound: null },
+      ],
+      plan,
+      target,
+    );
+    expect(d3.changedInbound.map((p) => p.uuid)).toEqual(['u2']);
+    expect(d3.hostsChanged).toBe(true);
   });
 
   test('an empty plan never converges', () => {

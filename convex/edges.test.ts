@@ -231,6 +231,36 @@ describe('edges', () => {
     expect(row.health).toBe('online');
     expect(row.addresses).toEqual({ v4: '198.51.100.9', v6: '2001:db8::9' });
     expect(row.resources.map((r) => r.resourceId)).toEqual(['ip-1']);
+    // An active describe without the v6 family drops it (detached address).
+    await t.mutation(internal.edges.recordDescribe, {
+      edgeId: id,
+      state: 'active',
+      addresses: { v4: '198.51.100.9' },
+      health: 'online',
+    });
+    row = (await t.query(internal.edges.get, { id }))!;
+    expect(row.addresses).toEqual({ v4: '198.51.100.9', v6: undefined });
+    await t.mutation(internal.edges.recordDescribe, {
+      edgeId: id,
+      state: 'gone',
+      addresses: {},
+      health: 'unknown',
+    });
+    row = (await t.query(internal.edges.get, { id }))!;
+    // The LB is gone but its floating IP is still `present`: that is the destroy
+    // path (the IP stays allocated and billable), not a finished teardown.
+    expect(row.status).toBe('destroying');
+    expect(row.publication).toBe('unpublished');
+    expect(row.destroyedAt).toBeUndefined();
+    // Addresses are kept for the ledger even when the LB is gone.
+    expect(row.addresses.v4).toBe('198.51.100.9');
+    // Once every child is confirmed gone, the next gone describe finishes it.
+    await t.run(async (ctx) => {
+      const e = (await ctx.db.get(id))!;
+      await ctx.db.patch(id, {
+        resources: e.resources.map((r) => ({ ...r, deleteState: 'confirmed_gone' as const })),
+      });
+    });
     await t.mutation(internal.edges.recordDescribe, {
       edgeId: id,
       state: 'gone',
@@ -240,8 +270,6 @@ describe('edges', () => {
     row = (await t.query(internal.edges.get, { id }))!;
     expect(row.status).toBe('destroyed');
     expect(row.destroyedAt).toBeDefined();
-    // Addresses are kept for the ledger even when the LB is gone.
-    expect(row.addresses.v4).toBe('198.51.100.9');
     const admin = (await t.query(internal.edges.getForAdmin, { id }))!;
     expect(admin.progress).toEqual({ done: 1, total: 2, percent: 50 });
     expect(admin.resources[0]).not.toHaveProperty('meta');

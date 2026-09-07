@@ -24,7 +24,13 @@ const INBOUND = '22222222-2222-4222-8222-222222222222';
  * state so PATCHes are observable and the next GET reflects them.
  */
 function fakeWorld(
-  opts: { hostPresent?: boolean; vanishAfterFirstPatch?: boolean; panelDown?: boolean } = {},
+  opts: {
+    hostPresent?: boolean;
+    vanishAfterFirstPatch?: boolean;
+    panelDown?: boolean;
+    /** The template Host points at the origin itself (leak). */
+    hostLeaks?: boolean;
+  } = {},
 ) {
   const panelHosts: Array<{
     uuid: string;
@@ -37,7 +43,7 @@ function fakeWorld(
     panelHosts.push({
       uuid: HOST_UUID,
       remark: 'node-one-relay-u',
-      address: OLD_EDGE,
+      address: opts.hostLeaks ? ORIGIN : OLD_EDGE,
       port: 443,
       inbound: {
         configProfileUuid: '11111111-1111-4111-8111-111111111111',
@@ -349,6 +355,27 @@ describe('relayRotations: replace', () => {
     expect(audit.map((a) => a.action)).toEqual(
       expect.arrayContaining(['edge.quarantined', 'edge.quarantine_resolved']),
     );
+  });
+
+  test('a template Host pointing at the origin fails the flip and rolls back; it never counts as converged', async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld({ hostLeaks: true });
+    const { t, relayId, oldEdgeId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+    });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.outcome).toBe('host_leaks_origin');
+    expect(['rolled_back', 'quarantined']).toContain(r.phase);
+    expect(world.patches()).toBe(0);
+    // The leaking Host is untouched and the previous binding is back.
+    expect(world.panelHosts[0].address).toBe(ORIGIN);
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.publishedEdgeIds).toEqual([oldEdgeId]);
   });
 
   test('resolving a quarantine with keep:current publishes the new edge at the saved index and drains the previous one', async () => {

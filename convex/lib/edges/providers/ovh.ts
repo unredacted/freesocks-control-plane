@@ -215,12 +215,15 @@ async function pollOperation(cfg: OvhConfig, step: string, opId: string): Promis
   );
   const st = op.status.toLowerCase();
   if (st === 'completed') {
+    // `resourceId` is optional on the wire: a completed operation without it
+    // must not count as done with nothing created (the LB may well exist), so
+    // hand the step to discovery, which finds the LB by name.
     return op.resourceId
       ? {
           status: 'done',
           resources: [{ kind: 'lb', resourceId: op.resourceId, ownership: 'created' }],
         }
-      : { status: 'done', resources: [] };
+      : { status: 'partial', resources: [], code: 'operation_completed_without_resource' };
   }
   if (st === 'in-error' || st === 'error')
     return { status: 'partial', resources: [], code: 'operation_error' };

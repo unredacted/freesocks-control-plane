@@ -682,6 +682,10 @@ export async function checkPublishable(
     return { ok: false, code: 'profile_no_active_sni' };
   if (edge.provider && profile.provider && profile.provider !== edge.provider)
     return { ok: false, code: 'provider_mismatch' };
+  // An account-scoped profile binds the slot to ONE qualified account, not to
+  // any account of that provider.
+  if (edge.accountId && profile.accountId && profile.accountId !== edge.accountId)
+    return { ok: false, code: 'account_mismatch' };
   if (requireHealth && edge.managed && edge.health !== 'online')
     return { ok: false, code: 'edge_unhealthy' };
   return { ok: true };

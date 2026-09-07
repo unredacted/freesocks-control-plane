@@ -118,7 +118,9 @@ export function diffHosts(
       missing.push(p);
       continue;
     }
-    if (p.inboundUuid && h.inbound && h.inbound.configProfileInboundUuid !== p.inboundUuid) {
+    // A planned binding that changed OR disappeared is drift (the role re-created
+    // or detached the Host); only a plan without a binding skips the check.
+    if (p.inboundUuid && (h.inbound?.configProfileInboundUuid ?? null) !== p.inboundUuid) {
       changedInbound.push(p);
       continue;
     }

@@ -535,22 +535,47 @@ export const recordDescribe = internalMutation({
         meta: r.meta !== undefined ? JSON.stringify(r.meta) : undefined,
       });
     }
-    await ctx.db.patch(a.edgeId, {
-      addresses: {
-        v4: a.addresses.v4 ?? edge.addresses.v4,
-        v6: a.addresses.v6 ?? edge.addresses.v6,
-      },
-      health: a.health as Edge['health'],
-      lastHealthAt: now,
-      ...(added.length > 0 ? { resources: [...edge.resources, ...added] } : {}),
-      ...(a.state === 'gone' && edge.status !== 'destroyed'
+    // An ACTIVE describe is authoritative for the address set: a family the
+    // provider no longer returns (detached floating IP, dropped v6) must stop
+    // rendering. Pending/gone/unknown states keep the last known addresses
+    // (still allocating, or kept for the ledger).
+    const addressesNext =
+      a.state === 'active'
+        ? { v4: a.addresses.v4, v6: a.addresses.v6 }
+        : { v4: a.addresses.v4 ?? edge.addresses.v4, v6: a.addresses.v6 ?? edge.addresses.v6 };
+    let resources = added.length > 0 ? [...edge.resources, ...added] : edge.resources;
+    let transition: Partial<Edge> = {};
+    if (a.state === 'gone' && edge.status !== 'destroyed') {
+      // The load balancer itself is gone; its ledger entry is settled. Anything
+      // else still `present` (a floating IP, a delegated address) is billable
+      // and must go through the destroy path — only then is the edge destroyed.
+      resources = resources.map((r) =>
+        r.kind === 'lb' ? { ...r, deleteState: 'confirmed_gone' as const } : r,
+      );
+      const leftovers = resources.some((r) => r.deleteState !== 'confirmed_gone');
+      transition = leftovers
         ? {
-            status: 'destroyed' as const,
+            status: 'destroying',
+            destroyAttempts: 0,
+            currentOp: undefined,
+            statusChangedAt: now,
+            publication: 'unpublished',
+            poolIndex: undefined,
+          }
+        : {
+            status: 'destroyed',
             statusChangedAt: now,
             destroyedAt: now,
-            publication: 'unpublished' as const,
-          }
-        : {}),
+            publication: 'unpublished',
+            poolIndex: undefined,
+          };
+    }
+    await ctx.db.patch(a.edgeId, {
+      addresses: addressesNext,
+      health: a.health as Edge['health'],
+      lastHealthAt: now,
+      ...(resources !== edge.resources ? { resources } : {}),
+      ...transition,
       updatedAt: now,
     });
     return null;

@@ -100,6 +100,8 @@ export interface StandbyCandidate {
   id: string;
   slotId: string;
   provider: string | null;
+  /** Provisioning account (null for adopted, observe-only edges). */
+  accountId?: string | null;
   status: string;
   publication: string;
   health: string;
@@ -108,7 +110,8 @@ export interface StandbyCandidate {
 
 /**
  * A compatible standby: active + unpublished, on the SAME slot (same profile,
- * same inbound), with an IPv4. Prefers a provider not already published.
+ * same inbound), with an IPv4, and from the profile's account when the profile
+ * is account-scoped. Prefers a provider not already published.
  */
 export function pickStandby(
   candidates: readonly StandbyCandidate[],
@@ -116,6 +119,7 @@ export function pickStandby(
   publishedProviders: readonly string[],
   excludeEdgeId: string | null,
   requireOnline: boolean,
+  requiredAccountId: string | null = null,
 ): StandbyCandidate | null {
   const ok = candidates.filter(
     (c) =>
@@ -124,7 +128,8 @@ export function pickStandby(
       c.status === 'active' &&
       c.publication === 'unpublished' &&
       c.hasV4 &&
-      (!requireOnline || c.health === 'online'),
+      (!requireOnline || c.health === 'online') &&
+      (!requiredAccountId || !c.accountId || c.accountId === requiredAccountId),
   );
   if (ok.length === 0) return null;
   const distinct = ok.find((c) => !c.provider || !publishedProviders.includes(c.provider));

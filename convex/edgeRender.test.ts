@@ -302,6 +302,37 @@ describe('edgeRender: fronted route', () => {
     expect(after).toContain(`#${NODE}-reality`);
   });
 
+  test('panel outage: the stale fallback is served only while its edge token is still current', async () => {
+    stubPanel();
+    const { t, relayId, edgeA } = await seed();
+    const first = await (await get(t)).text();
+    expect(first).toContain('FreeSocks%20Primary');
+    // Panel down, pool unchanged → the last-known body for this UA is fine.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('connect ECONNREFUSED');
+      }),
+    );
+    await t.run(async (ctx) => {
+      // Expire the freshness window so the route must go to the panel.
+      const subs = await ctx.db.query('subscriptions').collect();
+      const s = subs[0];
+      const entries = JSON.parse(s.subCache!) as Array<{ at: number }>;
+      await ctx.db.patch(s._id, {
+        subCache: JSON.stringify(entries.map((e) => ({ ...e, at: e.at - 120_000 }))),
+      });
+    });
+    const stale = await get(t);
+    expect(stale.status).toBe(200);
+    expect(await stale.text()).toBe(first);
+    // Unpublish (epoch bump) while the panel is still down: the cached body
+    // carries the removed edge and must NOT be served as a fallback.
+    await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId: edgeA, keepActive: true });
+    const refused = await get(t);
+    expect(refused.status).toBe(502);
+  });
+
   test('memberView: connection labels only, and a refresh nudge once the origin rotated after the last delivery', async () => {
     stubPanel();
     const { t, subId, relayId } = await seed();

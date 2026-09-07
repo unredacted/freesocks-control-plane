@@ -426,14 +426,25 @@ export const finishRun = internalMutation({
 
 /** Cross-source summary per country onto the target's own row (what the detector + admin read). */
 async function refreshTargetSummary(ctx: MutationCtx, target: ProbeTargetRef, now: number) {
-  const rows = await ctx.db
+  const cfg = await resolveEdgeConfig(ctx.db);
+  const secrets = await resolveEdgeSecrets(ctx.db);
+  const sources = new Set<string>(enabledSources(cfg, secrets));
+  const allRows = await ctx.db
     .query('probeReachability')
     .withIndex('by_target_country', (q) =>
       q.eq('targetKind', target.kind).eq('targetRef', target.ref),
     )
     .collect();
-  const staleBefore = now - 6 * 60 * MIN;
-  const countries = [...new Set(rows.map((r) => r.country))].sort();
+  // Evidence expires at the detector's own freshness window (two probe
+  // intervals) and comes only from sources that are still enabled: a stale
+  // verdict from a disabled or failing source must not keep authorizing an
+  // automatic rotation because an unrelated (e.g. internal) run refreshed
+  // the summary. Countries left without fresh evidence drop out.
+  const staleBefore = now - 2 * cfg.probe.intervalMinutes * MIN;
+  const rows = allRows.filter((r) => sources.has(r.source));
+  const countries = [...new Set(rows.map((r) => r.country))]
+    .filter((c) => rows.some((r) => r.country === c && r.updatedAt >= staleBefore))
+    .sort();
   const byCountry = countries.map((country) => {
     const fresh = rows.filter((r) => r.country === country && r.updatedAt >= staleBefore);
     // The country verdict follows the IPv4 path (what every member receives);

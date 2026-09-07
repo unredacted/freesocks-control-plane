@@ -106,6 +106,22 @@ describe('edgeProviderAccounts', () => {
     await t.mutation(internal.edgeProviderAccounts.update, { id, enabled: false, priority: 5 });
     const after = await t.query(internal.edgeProviderAccounts.getForAdmin, { id });
     expect(after).toMatchObject({ enabled: false, priority: 5, qualified: true });
+    // A different effective template was never qualified: switching to it clears the flag.
+    const { id: tplId } = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'ovh',
+      name: 'Other',
+      params: {},
+    });
+    await t.mutation(internal.edgeProviderAccounts.update, { id, defaultTemplateId: tplId });
+    expect((await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))?.qualified).toBe(
+      false,
+    );
+    // Re-sending the same template is not a change.
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id, qualified: true });
+    await t.mutation(internal.edgeProviderAccounts.update, { id, defaultTemplateId: tplId });
+    expect((await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))?.qualified).toBe(
+      true,
+    );
   });
 
   test('remove and settings changes refuse while an edge references the account', async () => {

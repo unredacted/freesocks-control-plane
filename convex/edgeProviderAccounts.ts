@@ -306,11 +306,15 @@ export const update = internalMutation({
     if (a.dailyAllocationBudget !== undefined)
       patch.dailyAllocationBudget = a.dailyAllocationBudget;
     if (a.maxLiveEdges !== undefined) patch.maxLiveEdges = a.maxLiveEdges;
-    if (a.defaultTemplateId !== undefined)
+    let templateChanged = false;
+    if (a.defaultTemplateId !== undefined) {
       patch.defaultTemplateId = a.defaultTemplateId ?? undefined;
+      templateChanged = (a.defaultTemplateId ?? undefined) !== row.defaultTemplateId;
+    }
     // New credentials or settings invalidate the qualification (a different
-    // account/network may not carry REALITY the same way).
-    if (credentialsChanged || settingsChanged) {
+    // account/network may not carry the protocol the same way); so does a
+    // different effective template — its parameters were never qualified.
+    if (credentialsChanged || settingsChanged || templateChanged) {
       patch.qualified = false;
       patch.qualifiedTemplateHash = undefined;
     }

@@ -116,6 +116,8 @@ Recovery contract:
   Host that later disappears or changes inbound is `hosts_changed`: the run rolls back the
   **complete previous binding** (edge, slot, profile, pool index, Host address) and never
   "converges" on a different Host.
+- **Leak guard.** A template Host that points at the origin itself is never planned or
+  written: the flip fails (`host_leaks_origin`) and rolls back until an operator repairs it.
 - **Quarantine.** A rollback that cannot converge parks the relay in `quarantine`. Nothing
   bypasses it (no rotation, no delete, no automatic action) until an operator, having checked
   the panel by hand, resolves it keeping either the previous binding (the rollback's DB half
@@ -162,7 +164,9 @@ and a probe audit feed. No member data is involved (see
 Verdicts need agreement: within a source, `unreachable` requires `probe.agreementVantages`
 distinct failing networks and no success; across sources, a second source or a second network.
 `reachable` needs one residential success or two datacenter successes. Runs are budgeted per hour;
-suspected origins are probed at `suspectedIntervalMinutes`. A dual-stack edge is probed per
+suspected origins are probed at `suspectedIntervalMinutes`. A target's summary carries only
+verdicts from currently enabled sources younger than two probe intervals; older evidence drops
+out at the next refresh. A dual-stack edge is probed per
 address family and rolled up per family: the country verdict follows the IPv4 path (what every
 member receives) and the IPv6 path is reported alongside as `v6Verdict`. Settled runs are kept
 two weeks (`retention-edge-probes`, daily).
@@ -248,7 +252,10 @@ the account's credentials or settings clears the qualification; so does changing
 of a template the account was qualified with, names as its default, or falls back to as the
 provider default (audited as `edge.provider_account.qualified` with `qualified:false`). Settings
 that locate resources (project, region, zone, network) cannot change while any non-destroyed
-edge references the account: destroy those edges first, or add a second account.
+edge references the account: destroy those edges first, or add a second account. Switching the
+account's default template also clears the qualification. An account-scoped profile
+provisions and publishes edges from that account only. A slot's inbound, profile or origin port
+cannot change while non-destroyed edges use the slot (register a new slot key instead).
 
 **Bootstrap a relay.** Register via the role (or create it here), adopt the hand-made edge at
 index 0 (publish), provision a second edge (published at index 1), enable rendering, preview each

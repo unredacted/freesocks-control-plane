@@ -131,6 +131,23 @@ export const upsert = internalMutation({
       const rebound =
         existing.configProfileInboundUuid !== a.configProfileInboundUuid ||
         existing.profileId !== profile._id;
+      // Edges (and their provider listeners) were provisioned against this
+      // slot's inbound + origin port: a rebind or port change under them would
+      // forward to an obsolete inbound while rendering the new profile. The
+      // role must drain/destroy the slot's edges first (or use a new slotKey).
+      if (rebound || existing.originPort !== a.originPort) {
+        const live = (
+          await ctx.db
+            .query('edges')
+            .withIndex('by_relay_status', (q) => q.eq('relayId', a.relayId))
+            .collect()
+        ).filter((e) => e.slotId === existing._id && e.status !== 'destroyed');
+        if (live.length > 0)
+          throw new ConvexError({
+            code: 'conflict',
+            message: `${live.length} edge(s) still use slot ${a.slotKey}; destroy them before rebinding its inbound, profile or port`,
+          });
+      }
       await ctx.db.patch(id, {
         ...fields,
         deployedAt: rebound || !existing.deployed ? now : existing.deployedAt,

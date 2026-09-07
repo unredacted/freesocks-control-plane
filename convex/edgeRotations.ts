@@ -1418,6 +1418,7 @@ async function selectionContext(
       id: e._id,
       slotId: e.slotId,
       provider: e.provider ?? null,
+      accountId: e.accountId ?? null,
       status: e.status,
       publication: e.publication,
       health: e.health,
@@ -1427,6 +1428,7 @@ async function selectionContext(
     publishedProviders,
     targetEdge?._id ?? null,
     cfg.requireProviderHealth,
+    profile.accountId ?? null,
   );
   if (standby && (rotation.kind === 'replace' || rotation.publishOnDone)) {
     return {
@@ -1442,6 +1444,8 @@ async function selectionContext(
   const candidates = [];
   for (const a of accounts) {
     if (!a.enabled) continue;
+    // An account-scoped profile provisions from that account only.
+    if (profile.accountId && a._id !== profile.accountId) continue;
     const live = (
       await ctx.db
         .query('edges')
@@ -2197,14 +2201,26 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
       });
       return;
     }
-    if (!m.host || m.leaks) {
+    if (m.leaks) {
+      // The template Host points at the origin itself: writing it would keep the
+      // node exposed, and an empty plan would "converge" without a flip. Fail
+      // and roll back; the operator repairs the Host by hand.
+      await advanceCall(ctx, r._id, sv, {
+        type: 'fail',
+        code: 'host_leaks_origin',
+        detail: slot.templateHostRemark,
+        rollback: true,
+      });
+      return;
+    }
+    if (!m.host) {
       // No template Host to flip (bootstrap: the role creates it from publishedEndpoints[0]).
       await ctx.runMutation(internal.edgeRotations.setHostPlan, {
         rotationId: r._id,
         stepVersion: sv,
         hostPlan: [],
         slotId: slot._id,
-        templateHostUuid: m.host && !m.leaks ? m.host.uuid : null,
+        templateHostUuid: null,
       });
       return;
     }
