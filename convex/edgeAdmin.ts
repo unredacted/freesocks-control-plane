@@ -3,7 +3,7 @@
  * CMS renders, the config namespace (with write-only probe secrets), the IaC
  * by-slug view, the published-endpoint view, live LB snapshots, operator
  * resolutions for parked edges, and the per-family render preview. Route
- * plumbing is in httpRelays.ts.
+ * plumbing is in httpEdges.ts.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
@@ -11,27 +11,27 @@ import type { Doc, Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { writeAuditLog } from './lib/audit';
 import {
-  RELAY_DEFAULTS,
+  EDGE_DEFAULTS,
   RENDER_CLIENT_FAMILIES,
-  relayConfigWrites,
-  relaySecretStatus,
-  relaySecretWrites,
-  resolveRelayConfig,
-  resolveRelaySecrets,
+  edgeConfigWrites,
+  edgeSecretStatus,
+  edgeSecretWrites,
+  resolveEdgeConfig,
+  resolveEdgeSecrets,
   type RenderClientFamily,
-} from './lib/relayConfig';
-import { assignEndpoints } from './lib/relays/assignment';
-import { CLIENT_FAMILY_FORMATS } from './lib/relays/clientFamilies';
-import { previewBody } from './lib/relays/preview';
-import { applyRelayRender } from './lib/relays/renderPipeline';
-import { effectiveRule } from './lib/relays/render';
-import { publishedCount } from './lib/relays/pool';
-import { isTerminalPhase, progressPercent } from './lib/relays/rotation';
+} from './lib/edgeConfig';
+import { assignEndpoints } from './lib/edges/assignment';
+import { CLIENT_FAMILY_FORMATS } from './lib/edges/clientFamilies';
+import { previewBody } from './lib/edges/preview';
+import { applyEdgeRender } from './lib/edges/renderPipeline';
+import { effectiveRule } from './lib/edges/render';
+import { publishedCount } from './lib/edges/pool';
+import { isTerminalPhase, progressPercent } from './lib/edges/rotation';
 import { mapRelayAdmin } from './relays';
 import { mapSlotAdmin } from './relaySlots';
 import { mapEdgeAdmin } from './edges';
-import { publishedEdgesOf } from './relayRender';
-import { EDGE_CREDENTIAL_FIELDS } from './lib/relays/accountSettings';
+import { publishedEdgesOf } from './edgeRender';
+import { EDGE_CREDENTIAL_FIELDS } from './lib/edges/accountSettings';
 
 const SAMPLE_RENDER_KEY = 'sample-subscriber-0000';
 
@@ -148,20 +148,20 @@ export const configView = internalQuery({
   args: {},
   handler: async (ctx) => {
     const [config, secrets] = await Promise.all([
-      resolveRelayConfig(ctx.db),
-      resolveRelaySecrets(ctx.db),
+      resolveEdgeConfig(ctx.db),
+      resolveEdgeSecrets(ctx.db),
     ]);
     return {
       config,
-      secrets: relaySecretStatus(secrets),
+      secrets: edgeSecretStatus(secrets),
       families: [...RENDER_CLIENT_FAMILIES],
-      defaults: RELAY_DEFAULTS,
+      defaults: EDGE_DEFAULTS,
     };
   },
 });
 
 /**
- * PATCH the `relay.*` namespace. `patch` is the nested config shape (any subset);
+ * PATCH the `edge.*` namespace. `patch` is the nested config shape (any subset);
  * `patch.secrets` carries write-only probe credentials (blank = keep). Audited as
  * the list of changed keys only.
  */
@@ -170,18 +170,18 @@ export const patchConfig = internalMutation({
   handler: async (ctx, { patch, actorAdminId }) => {
     const p = (patch && typeof patch === 'object' ? patch : {}) as Record<string, unknown>;
     const { secrets, ...rest } = p;
-    const { writes, changedKeys } = relayConfigWrites(rest);
-    const secretWrites = relaySecretWrites(secrets ?? {});
+    const { writes, changedKeys } = edgeConfigWrites(rest);
+    const secretWrites = edgeSecretWrites(secrets ?? {});
     for (const w of [...writes, ...secretWrites]) {
       await upsertSettingRow(ctx, w.key, w.value, actorAdminId);
     }
     const changed = [...changedKeys, ...secretWrites.map(() => 'probe.secret')];
     if (changed.length > 0) {
       const action = changed.every((k) => k.startsWith('render.'))
-        ? 'admin.relay.render.change'
+        ? 'admin.edge.render.change'
         : changed.every((k) => k.startsWith('probe.'))
-          ? 'admin.relay.probe.change'
-          : 'admin.relay.config.change';
+          ? 'admin.edge.probe.change'
+          : 'admin.edge.config.change';
       await writeAuditLog(ctx, {
         actorType: 'admin',
         actorId: actorAdminId ?? undefined,
@@ -246,7 +246,7 @@ export const endpoints = internalQuery({
   handler: async (ctx, { relayId }) => {
     const origin = await ctx.db.get(relayId);
     if (!origin) return null;
-    const cfg = await resolveRelayConfig(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
     const { published } = await publishedEdgesOf(ctx, origin);
     const assigned = assignEndpoints(SAMPLE_RENDER_KEY, published, {
       now: Date.now(),
@@ -281,11 +281,11 @@ export const renderPreview = internalQuery({
     const fam = family as RenderClientFamily;
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
-    const cfg = await resolveRelayConfig(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
     const { published, templateRemarks } = await publishedEdgesOf(ctx, origin);
     const format = CLIENT_FAMILY_FORMATS[fam];
     const input = previewBody(format, templateRemarks);
-    const out = applyRelayRender(
+    const out = applyEdgeRender(
       {
         epoch: origin.publicationEpoch,
         templateRemarks,
@@ -378,8 +378,8 @@ export const recordLive = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.live.pulled',
-      targetType: 'relay_edge',
+      action: 'edge.live.pulled',
+      targetType: 'edge',
       targetId: edgeId,
       payload: { edgeId, accountId: e.accountId ?? null },
     });
@@ -451,8 +451,8 @@ export const resolveOperator = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.edge.delete',
-      targetType: 'relay_edge',
+      action: 'edge.delete',
+      targetType: 'edge',
       targetId: edgeId,
       payload: { relaySlug: origin?.slug ?? '', edgeId, force: action === 'forget' },
     });
@@ -498,8 +498,8 @@ export const deleteEdge = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.edge.delete',
-      targetType: 'relay_edge',
+      action: 'edge.delete',
+      targetType: 'edge',
       targetId: edgeId,
       payload: { relaySlug: origin?.slug ?? '', edgeId, force: false },
     });

@@ -8,7 +8,7 @@
  * and each action is one bounded provider round trip: it loads the account
  * (with its credentials) through an internal query, builds the adapter config,
  * performs exactly the requested operation and returns plain data. Every state
- * change goes back through the isolate mutations (relayRotations / relayEdges),
+ * change goes back through the isolate mutations (edgeRotations / edges),
  * which are the sole writers of relay state. Errors thrown here are
  * EdgeProviderError (status + short code, never a body/URL/credential); the
  * callers map them to ledger outcomes.
@@ -23,9 +23,9 @@ import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { ActionCtx } from './_generated/server';
-import { edgeProviderFor, relayConfigFrom } from './lib/relays/providers/registry';
-import { EdgeProviderError } from './lib/relays/providers/http';
-import { renderTemplateValue } from './lib/relays/providers/template';
+import { edgeProviderFor, edgeProviderConfigFrom } from './lib/edges/providers/registry';
+import { EdgeProviderError } from './lib/edges/providers/http';
+import { renderTemplateValue } from './lib/edges/providers/template';
 import { isRelayProviderId } from './lib/edgeProviderIds';
 import type {
   DiscoverResult,
@@ -37,10 +37,10 @@ import type {
   InspectResult,
   Ledger,
   EdgeProvider,
-  RelayProviderConfig,
+  EdgeProviderConfig,
   ResourceStep,
   StepOutcome,
-} from './lib/relays/providers/types';
+} from './lib/edges/providers/types';
 
 export const runtimeInfo = internalAction({
   args: {},
@@ -117,7 +117,7 @@ const ledgerResource = v.object({
 async function loadAdapter(
   ctx: ActionCtx,
   accountId: Id<'edgeProviderAccounts'>,
-): Promise<{ provider: EdgeProvider; cfg: RelayProviderConfig; providerId: string }> {
+): Promise<{ provider: EdgeProvider; cfg: EdgeProviderConfig; providerId: string }> {
   const acct = await ctx.runQuery(internal.edgeProviderAccounts.getWithSecret, { id: accountId });
   if (!acct) {
     throw new EdgeProviderError('relay account not found', {
@@ -128,7 +128,7 @@ async function loadAdapter(
       timedOut: false,
     });
   }
-  const cfg = relayConfigFrom(
+  const cfg = edgeProviderConfigFrom(
     acct.credentials as Record<string, unknown> & { type: typeof acct.provider },
     acct.settings as Record<string, unknown> & { type: typeof acct.provider },
   );

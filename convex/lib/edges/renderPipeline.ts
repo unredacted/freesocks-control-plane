@@ -7,9 +7,9 @@
  * for the same (renderKey, epoch, family).
  */
 import { assignEndpoints, type PublishedEdge } from './assignment';
-import { renderRelayEndpoints, type EffectiveRule, type RenderOutput } from './render';
+import { renderEdgeEndpoints, type EffectiveRule, type RenderOutput } from './render';
 
-export interface RelayRenderContext {
+export interface EdgeRenderContext {
   /** Publication epoch of the origin: part of the cache key. */
   epoch: number;
   /** Every slot remark of the origin (template entries to replace / drop). */
@@ -19,8 +19,8 @@ export interface RelayRenderContext {
   preferDistinctProviders: boolean;
 }
 
-export function applyRelayRender(
-  rctx: RelayRenderContext,
+export function applyEdgeRender(
+  rctx: EdgeRenderContext,
   body: string,
   renderKey: string,
   opts: { now: number; lastContentAt?: number | null },
@@ -31,7 +31,7 @@ export function applyRelayRender(
     includeBackup: rctx.rule.includeBackup,
     subscriberLastContentAt: opts.lastContentAt ?? null,
   });
-  return renderRelayEndpoints({
+  return renderEdgeEndpoints({
     body,
     templateRemarks: rctx.templateRemarks,
     assigned,

@@ -456,7 +456,7 @@ describe('relayOrigins + slots + profiles', () => {
     expect(e.poolIndex).toBe(0);
     const edge = (await t.query(internal.edges.get, { id: e.edgeId }))!;
     expect(edge.listeners[0]).toMatchObject({ originPort: 8443, transport: 'tcp' });
-    const view = (await t.query(internal.relayAdmin.endpoints, { relayId }))!;
+    const view = (await t.query(internal.edgeAdmin.endpoints, { relayId }))!;
     expect(view.published[0]).toMatchObject({ protocol: 'plain', activeServerNames: [] });
     expect(view.sample.primary).toEqual({ edgeId: e.edgeId, sni: null });
   });

@@ -8,7 +8,7 @@
  * Origin-level evidence can only HINT. Edge-level evidence (probes, or members
  * who said which connection failed) is what an automatic rotation needs.
  */
-import type { RelayConfig } from '../relayConfig';
+import type { EdgeConfig } from '../edgeConfig';
 import { probeScore as probeScoreOf, unreachableCountries, type Verdict } from './probes/verdict';
 
 export interface WindowReports {
@@ -49,7 +49,7 @@ export interface EvaluationInput {
   usersOnline: number | null;
   loadStale: boolean;
   edges: EdgeProbeState[];
-  cfg: Pick<RelayConfig, 'detect' | 'probe'>;
+  cfg: Pick<EdgeConfig, 'detect' | 'probe'>;
   prev: PrevSuspicion | null;
 }
 
@@ -218,7 +218,7 @@ export function evaluate(input: EvaluationInput): Evaluation {
 }
 
 export type AutoRotateVeto =
-  | 'relay_disabled'
+  | 'edge_disabled'
   | 'auto_rotate_off'
   | 'not_suspected'
   | 'no_edge_evidence'
@@ -235,7 +235,7 @@ export type AutoRotateVeto =
 /** Pick the edge an automatic rotation should replace, or the reason it must not run. */
 export function autoRotateDecision(args: {
   evaluation: Evaluation;
-  cfg: Pick<RelayConfig, 'enabled' | 'autoRotate' | 'detect'>;
+  cfg: Pick<EdgeConfig, 'enabled' | 'autoRotate' | 'detect'>;
   origin: {
     autoRotate: boolean;
     quarantined: boolean;
@@ -249,7 +249,7 @@ export function autoRotateDecision(args: {
   now: number;
 }): { edgeId: string; source: 'reports' | 'probes' } | { veto: AutoRotateVeto } {
   const { evaluation: ev, cfg, origin } = args;
-  if (!cfg.enabled || !cfg.autoRotate) return { veto: 'relay_disabled' };
+  if (!cfg.enabled || !cfg.autoRotate) return { veto: 'edge_disabled' };
   if (!origin.autoRotate) return { veto: 'auto_rotate_off' };
   if (ev.state !== 'suspected') return { veto: 'not_suspected' };
   if (origin.quarantined) return { veto: 'quarantined' };

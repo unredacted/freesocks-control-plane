@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
-import { jsonRes, mockFetch } from './lib/relays/testing/mockFetch';
+import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -254,7 +254,7 @@ describe('relayRotations: replace', () => {
     expect(acct.allocationsToday).toBe(1);
     // Audits: rotated with ids/providers only, never addresses.
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
-    const rotated = audit.find((a) => a.action === 'relay.rotated');
+    const rotated = audit.find((a) => a.action === 'edge.rotated');
     expect(rotated?.payload).toMatchObject({
       relaySlug: 'node-one',
       kind: 'replace',
@@ -271,10 +271,10 @@ describe('relayRotations: replace', () => {
     // The rotation's own audit trail: the request, publish/unpublish and the outcome, oldest
     // first, every row tagged with this rotation's id, addresses absent.
     const trail = admin.audit.map((a) => a.action);
-    expect(trail[0]).toBe('admin.relay.rotate');
-    for (const a of ['relay.edge.published', 'relay.edge.unpublished', 'relay.rotated'])
+    expect(trail[0]).toBe('admin.edge.rotate');
+    for (const a of ['edge.published', 'edge.unpublished', 'edge.rotated'])
       expect(trail).toContain(a);
-    expect(trail.indexOf('relay.rotated')).toBeGreaterThan(trail.indexOf('relay.edge.published'));
+    expect(trail.indexOf('edge.rotated')).toBeGreaterThan(trail.indexOf('edge.published'));
     for (const row of admin.audit)
       expect((row.payload as { rotationId?: string }).rotationId ?? rotationId).toBe(rotationId);
     expect(JSON.stringify(admin.audit)).not.toContain(NEW_EDGE);
@@ -296,8 +296,8 @@ describe('relayRotations: replace', () => {
     const oldEdge = (await t.query(internal.edges.get, { id: oldEdgeId }))!;
     expect(oldEdge.burnedAt).toBeDefined();
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
-    expect(audit.some((a) => a.action === 'relay.burned')).toBe(true);
-    expect(audit.some((a) => a.action === 'admin.relay.burn')).toBe(true);
+    expect(audit.some((a) => a.action === 'edge.burned')).toBe(true);
+    expect(audit.some((a) => a.action === 'admin.edge.burn')).toBe(true);
   });
 
   test('hosts_changed during the flip rolls back the complete binding; the new edge stays as a standby', async () => {
@@ -347,7 +347,7 @@ describe('relayRotations: replace', () => {
     expect((await t.query(internal.edges.get, { id: r.toEdgeId! }))!.status).toBe('active');
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(audit.map((a) => a.action)).toEqual(
-      expect.arrayContaining(['relay.quarantined', 'relay.quarantine_resolved']),
+      expect.arrayContaining(['edge.quarantined', 'edge.quarantine_resolved']),
     );
   });
 
@@ -559,7 +559,7 @@ describe('relayRotations: provision + publish kinds', () => {
     expect(r.outcome).toBe('no_qualified_account');
     expect(r.toEdgeId).toBeUndefined();
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
-    expect(audit.find((a) => a.action === 'relay.rotation_failed')?.payload).toMatchObject({
+    expect(audit.find((a) => a.action === 'edge.rotation_failed')?.payload).toMatchObject({
       relaySlug: 'node-one',
       code: 'no_qualified_account',
     });

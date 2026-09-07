@@ -7,15 +7,15 @@
 import { describe, expect, test } from 'vitest';
 import { EDGE_PROVIDER_IDS } from '../../edgeProviderIds';
 import { EDGE_PROVIDER_CAPABILITIES } from './capabilities';
-import { RELAY_PROVIDERS } from './registry';
-import type { EdgeSpec, RelayProviderConfig } from './types';
+import { EDGE_PROVIDERS } from './registry';
+import type { EdgeSpec, EdgeProviderConfig } from './types';
 
 const spec: EdgeSpec = {
   name: 'fcp-relay-test-0123abcd',
   listeners: [{ edgePort: 443, members: [{ address: '198.51.100.7', port: 443 }] }],
 };
 
-const CONFIGS: Record<(typeof EDGE_PROVIDER_IDS)[number], RelayProviderConfig> = {
+const CONFIGS: Record<(typeof EDGE_PROVIDER_IDS)[number], EdgeProviderConfig> = {
   gcore: { type: 'gcore', apiKey: 'k', projectId: 1, regionId: 2 },
   upcloud: { type: 'upcloud', token: 't', zone: 'de-fra1' },
   scaleway: {
@@ -43,13 +43,13 @@ describe('relay capability record ⇔ adapters', () => {
   test('every provider id has a capability row and an adapter', () => {
     for (const id of EDGE_PROVIDER_IDS) {
       expect(EDGE_PROVIDER_CAPABILITIES[id]).toBeDefined();
-      expect(RELAY_PROVIDERS[id].id).toBe(id);
+      expect(EDGE_PROVIDERS[id].id).toBe(id);
     }
   });
 
   test.each([...EDGE_PROVIDER_IDS])('%s: async flags mirror optional methods', (id) => {
     const caps = EDGE_PROVIDER_CAPABILITIES[id];
-    const p = RELAY_PROVIDERS[id];
+    const p = EDGE_PROVIDERS[id];
     expect(caps.asyncOps).toBe(!!p.pollStep);
     expect(caps.asyncDelete).toBe(!!p.confirmDestroyed);
   });
@@ -57,7 +57,7 @@ describe('relay capability record ⇔ adapters', () => {
   test.each([...EDGE_PROVIDER_IDS])(
     '%s: default template validates and steps are well-formed',
     (id) => {
-      const p = RELAY_PROVIDERS[id];
+      const p = EDGE_PROVIDERS[id];
       const tpl = p.templateSchema.parse(p.defaultTemplate);
       expect(tpl).toEqual(p.defaultTemplate);
       // Field descriptors point at real template keys.

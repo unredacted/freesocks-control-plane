@@ -1,22 +1,22 @@
 import { describe, expect, test } from 'vitest';
 import {
-  RELAY_DEFAULTS,
-  RELAY_KEYS,
+  EDGE_DEFAULTS,
+  EDGE_KEYS,
   RENDER_CLIENT_FAMILIES,
   clientRuleKey,
   defaultClientRule,
-  relayConfigWrites,
-  relaySecretWrites,
+  edgeConfigWrites,
+  edgeSecretWrites,
   sanitizeClientRule,
   sanitizeCountryList,
   sanitizeInt,
   sanitizeLabel,
   sanitizeRelayConfig,
-} from './relayConfig';
+} from './edgeConfig';
 
-describe('relayConfig sanitizers', () => {
+describe('edgeConfig sanitizers', () => {
   test('defaults when nothing is stored', () => {
-    expect(sanitizeRelayConfig({})).toEqual(RELAY_DEFAULTS);
+    expect(sanitizeRelayConfig({})).toEqual(EDGE_DEFAULTS);
   });
 
   test('ints clamp to bounds and reject garbage', () => {
@@ -55,17 +55,17 @@ describe('relayConfig sanitizers', () => {
     expect(rule.enabled).toBe(false);
   });
 
-  test('every RELAY_KEYS value is namespaced under relay.', () => {
-    for (const key of Object.values(RELAY_KEYS)) expect(key.startsWith('relay.')).toBe(true);
+  test('every EDGE_KEYS value is namespaced under edge.', () => {
+    for (const key of Object.values(EDGE_KEYS)) expect(key.startsWith('edge.')).toBe(true);
     for (const f of RENDER_CLIENT_FAMILIES) {
-      expect(clientRuleKey(f)).toBe(`relay.render.clients.${f}`);
+      expect(clientRuleKey(f)).toBe(`edge.render.clients.${f}`);
     }
   });
 });
 
-describe('relayConfigWrites', () => {
+describe('edgeConfigWrites', () => {
   test('accepts flat and nested paths, ignores unknown keys, writes only provided ones', () => {
-    const { writes, changedKeys } = relayConfigWrites({
+    const { writes, changedKeys } = edgeConfigWrites({
       enabled: true,
       'detect.windowMinutes': 15,
       probe: { countries: ['ir', 'ru'], sources: { checkhost: false } },
@@ -75,42 +75,42 @@ describe('relayConfigWrites', () => {
     const keys = writes.map((w) => w.key).sort();
     expect(keys).toEqual(
       [
-        'relay.enabled',
-        'relay.detect.windowMinutes',
-        'relay.probe.countries',
-        'relay.probe.sources.checkhost',
+        'edge.enabled',
+        'edge.detect.windowMinutes',
+        'edge.probe.countries',
+        'edge.probe.sources.checkhost',
       ].sort(),
     );
     expect(changedKeys.sort()).toEqual(
       ['enabled', 'detect.windowMinutes', 'probe.countries', 'probe.sources.checkhost'].sort(),
     );
     // Stored as given; the resolver sanitizes on read.
-    expect(writes.find((w) => w.key === 'relay.probe.countries')?.value).toBe('["ir","ru"]');
+    expect(writes.find((w) => w.key === 'edge.probe.countries')?.value).toBe('["ir","ru"]');
   });
 
   test('client rules are sanitized on write, one row per family, unknown families dropped', () => {
-    const { writes } = relayConfigWrites({
+    const { writes } = edgeConfigWrites({
       render: {
         clients: { singbox: { autoGroup: false, maxEntries: 99 }, martian: { enabled: true } },
       },
     });
     expect(writes).toHaveLength(1);
-    expect(writes[0].key).toBe('relay.render.clients.singbox');
+    expect(writes[0].key).toBe('edge.render.clients.singbox');
     const rule = JSON.parse(writes[0].value);
     expect(rule.autoGroup).toBe(false);
     expect(rule.maxEntries).toBe(20);
   });
 
   test('non-object patches write nothing', () => {
-    expect(relayConfigWrites(null).writes).toEqual([]);
-    expect(relayConfigWrites([1]).writes).toEqual([]);
+    expect(edgeConfigWrites(null).writes).toEqual([]);
+    expect(edgeConfigWrites([1]).writes).toEqual([]);
   });
 });
 
-describe('relaySecretWrites', () => {
+describe('edgeSecretWrites', () => {
   test('blank leaves a secret unchanged; set values are written', () => {
-    expect(relaySecretWrites({ globalpingToken: '  ', ripeAtlasKey: '' })).toEqual([]);
-    const w = relaySecretWrites({ globalpingToken: 'tok' });
-    expect(w).toEqual([{ key: 'relay.secret.probe.globalping.token', value: '"tok"' }]);
+    expect(edgeSecretWrites({ globalpingToken: '  ', ripeAtlasKey: '' })).toEqual([]);
+    const w = edgeSecretWrites({ globalpingToken: 'tok' });
+    expect(w).toEqual([{ key: 'edge.secret.probe.globalping.token', value: '"tok"' }]);
   });
 });

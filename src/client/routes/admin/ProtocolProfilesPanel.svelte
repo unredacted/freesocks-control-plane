@@ -19,12 +19,12 @@
   import {
     EDGE_PROVIDER_IDS,
     SLOT_PROTOCOL_IDS,
-    RelayIdResponse,
-    RelayOkResponse,
+    EdgeIdResponse,
+    EdgeOkResponse,
     type ProtocolProfileAdmin,
     type EdgeProviderId,
     type SlotProtocol,
-  } from '../../../shared/contracts/relays';
+  } from '../../../shared/contracts/edges';
   import { formatDateTime } from '../../lib/i18n/format';
   import AdminListState from './AdminListState.svelte';
 
@@ -40,7 +40,7 @@
    */
   const profiles = adminProtocolProfilesQuery();
   const qc = useQueryClient();
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'relays'] });
+  const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'edges'] });
   const onError = (title: string) => (err: unknown) =>
     toast.error(title, { description: apiErrorMessage(err) });
 
@@ -112,11 +112,11 @@
         notes: d.notes.trim(),
       };
       if (d.id)
-        return apiClient.patch(`/api/v1/admin/relay/profiles/${d.id}`, body, RelayOkResponse);
+        return apiClient.patch(`/api/v1/admin/edges/profiles/${d.id}`, body, EdgeOkResponse);
       return apiClient.post(
-        '/api/v1/admin/relay/profiles',
+        '/api/v1/admin/edges/profiles',
         { ...body, slug: d.slug.trim(), protocol: d.protocol },
-        RelayIdResponse,
+        EdgeIdResponse,
       );
     },
     onSuccess: () => {
@@ -136,7 +136,7 @@
       op: 'retire-sni' | 'reactivate-sni';
       sni: string;
     }) =>
-      apiClient.post(`/api/v1/admin/relay/profiles/${id}/${op}`, { snis: [sni] }, RelayOkResponse),
+      apiClient.post(`/api/v1/admin/edges/profiles/${id}/${op}`, { snis: [sni] }, EdgeOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Server names updated');
@@ -145,7 +145,7 @@
   }));
   const remove = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/relay/profiles/${id}`, RelayOkResponse),
+      apiClient.delete(`/api/v1/admin/edges/profiles/${id}`, EdgeOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Profile removed');

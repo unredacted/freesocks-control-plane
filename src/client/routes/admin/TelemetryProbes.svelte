@@ -21,17 +21,17 @@
     adminProbeMatrixQuery,
     adminProbeRunsQuery,
     adminProbeTargetsQuery,
-    adminRelayConfigQuery,
+    adminEdgeConfigQuery,
     queryKeys,
   } from '../../lib/queries';
   import {
     ProbeManyRequestedResponse,
     ProbeTargetCreatedResponse,
-    RelayConfigPatchResponse,
-    RelayOkResponse,
+    EdgeConfigPatchResponse,
+    EdgeOkResponse,
     type ProbeMatrixTarget,
     type ProbeTargetAdmin,
-  } from '../../../shared/contracts/relays';
+  } from '../../../shared/contracts/edges';
   import { formatDateTime } from '../../lib/i18n/format';
   import ProbeTimeChart from './ProbeTimeChart.svelte';
 
@@ -43,14 +43,14 @@
    * evidence. No member data is involved anywhere on this page.
    */
   const qc = useQueryClient();
-  const cfg = adminRelayConfigQuery();
+  const cfg = adminEdgeConfigQuery();
   const matrix = adminProbeMatrixQuery();
   const targets = adminProbeTargetsQuery();
   const audit = adminProbeAuditQuery();
   const onError = (title: string) => (err: unknown) =>
     toast.error(title, { description: apiErrorMessage(err) });
   const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ['admin', 'relays'] });
+    void qc.invalidateQueries({ queryKey: ['admin', 'edges'] });
   };
 
   // --- settings (the relay.probe.* namespace; tokens are write-only) -----------
@@ -93,11 +93,11 @@
   );
   const save = createMutation(() => ({
     mutationFn: () =>
-      apiClient.patch('/api/v1/admin/relay/config', nested(), RelayConfigPatchResponse),
+      apiClient.patch('/api/v1/admin/edges/config', nested(), EdgeConfigPatchResponse),
     onSuccess: (r) => {
       patch = {};
       secrets = { globalpingToken: '', ripeAtlasKey: '' };
-      void qc.invalidateQueries({ queryKey: queryKeys.adminRelayConfig });
+      void qc.invalidateQueries({ queryKey: queryKeys.adminEdgeConfig });
       invalidate();
       toast.success(
         r.changedKeys.length
@@ -118,7 +118,7 @@
   }
   const probeNow = createMutation(() => ({
     mutationFn: (keys: string[]) =>
-      apiClient.post('/api/v1/admin/relay/probes', { targets: keys }, ProbeManyRequestedResponse),
+      apiClient.post('/api/v1/admin/edges/probes', { targets: keys }, ProbeManyRequestedResponse),
     onSuccess: (r) => {
       selected = new Set();
       invalidate();
@@ -168,8 +168,8 @@
         notes: d.notes.trim(),
       };
       if (d.id)
-        return apiClient.patch(`/api/v1/admin/relay/probes/targets/${d.id}`, body, RelayOkResponse);
-      return apiClient.post('/api/v1/admin/relay/probes/targets', body, ProbeTargetCreatedResponse);
+        return apiClient.patch(`/api/v1/admin/edges/probes/targets/${d.id}`, body, EdgeOkResponse);
+      return apiClient.post('/api/v1/admin/edges/probes/targets', body, ProbeTargetCreatedResponse);
     },
     onSuccess: () => {
       editor = null;
@@ -180,7 +180,7 @@
   }));
   const removeTarget = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/relay/probes/targets/${id}`, RelayOkResponse),
+      apiClient.delete(`/api/v1/admin/edges/probes/targets/${id}`, EdgeOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Target removed');

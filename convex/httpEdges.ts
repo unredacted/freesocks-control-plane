@@ -1,10 +1,10 @@
 /**
- * Admin HTTP surface for relay edges: `/api/v1/admin/relay/*`. One prefix
+ * Admin HTTP surface for edges (the L4 load balancers in front of relays): `/api/v1/admin/edges/*`. One prefix
  * route per verb feeds a small dispatcher, so the HPKE policy is a clean
  * per-verb prefix rule (envelope.ts): GET reveals, POST seals both legs,
  * PATCH/PUT seal the body, DELETE carries nothing. Scopes: `admin:settings:*`
  * for the config namespace, `admin:servers:*` for everything else. Responses
- * are the shapes in src/shared/contracts/relays.ts.
+ * are the shapes in src/shared/contracts/edges.ts.
  */
 import { ConvexError } from 'convex/values';
 import type { HttpRouter } from 'convex/server';
@@ -14,10 +14,10 @@ import { internal } from './_generated/api';
 import type { Id, TableNames } from './_generated/dataModel';
 import { sealed } from './lib/e2ee';
 import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/http';
-import type { InspectResult, Inventory } from './lib/relays/providers/types';
+import type { InspectResult, Inventory } from './lib/edges/providers/types';
 import { parseTargetKey } from './probes';
 
-const PREFIX = '/api/v1/admin/relay/';
+const PREFIX = '/api/v1/admin/edges/';
 
 type Handler = (
   ctx: ActionCtx,
@@ -30,7 +30,7 @@ type Handler = (
 
 function statusFromCode(code: string): number {
   if (code === 'not_found') return 404;
-  if (code === 'conflict' || code.startsWith('relay.')) return 409;
+  if (code === 'conflict' || code.startsWith('edge.')) return 409;
   if (code === 'validation') return 400;
   return 400;
 }
@@ -41,20 +41,35 @@ function fail(err: unknown): Response {
     const code = data.code ?? 'error';
     return errorJson(code, data.message ?? 'Request failed', statusFromCode(code));
   }
-  console.error(`[relays] unhandled error: ${err instanceof Error ? err.message : String(err)}`);
+  console.error(`[edges] unhandled error: ${err instanceof Error ? err.message : String(err)}`);
   return errorJson('admin.error', 'The request could not be completed.', 400);
 }
 
 const notFound = () => errorJson('not_found', 'Not found', 404);
 const unauth = () => errorJson('auth.unauthenticated', 'Authentication required', 401);
 
+/** First segments that are collections of their own; anything else is an edge id. */
+const RESERVED = new Set([
+  'summary',
+  'config',
+  'providers',
+  'templates',
+  'profiles',
+  'relays',
+  'rotations',
+  'probes',
+  'render',
+  'edges',
+]);
+
 function segments(req: Request): { parts: string[]; query: URLSearchParams } {
   const url = new URL(req.url);
   const rest = url.pathname.startsWith(PREFIX) ? url.pathname.slice(PREFIX.length) : '';
-  return {
-    parts: rest.split('/').filter(Boolean).map(decodeURIComponent),
-    query: url.searchParams,
-  };
+  let parts = rest.split('/').filter(Boolean).map(decodeURIComponent);
+  // The edge collection sits at the prefix root: `list` lists, `<id>/…` addresses one edge.
+  if (parts[0] === 'list') parts = ['edges'];
+  else if (parts[0] && !RESERVED.has(parts[0])) parts = ['edges', ...parts];
+  return { parts, query: url.searchParams };
 }
 
 /** Config routes need the settings scope; everything else the servers scope. */
@@ -88,13 +103,13 @@ const actor = (admin: AdminAuth) => ({ actorAdminId: admin.adminUserId ?? undefi
 
 const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
   const [a, b, c, d, e] = parts;
-  if (!a || a === 'summary') return json(await ctx.runQuery(internal.relayAdmin.summary, {}));
-  if (a === 'config') return json(await ctx.runQuery(internal.relayAdmin.configView, {}));
+  if (!a || a === 'summary') return json(await ctx.runQuery(internal.edgeAdmin.summary, {}));
+  if (a === 'config') return json(await ctx.runQuery(internal.edgeAdmin.configView, {}));
   if (a === 'providers') {
     if (!b) {
       const [accounts, credentialFields] = await Promise.all([
         ctx.runQuery(internal.edgeProviderAccounts.listForAdmin, {}),
-        ctx.runQuery(internal.relayAdmin.credentialFields, {}),
+        ctx.runQuery(internal.edgeAdmin.credentialFields, {}),
       ]);
       return json({ accounts, credentialFields });
     }
@@ -126,13 +141,13 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       const serverId = query.get('backendServerId');
       if (!serverId) return errorJson('validation', 'backendServerId is required', 400);
       return json(
-        await ctx.runQuery(internal.relayAdmin.nodeCandidates, {
+        await ctx.runQuery(internal.edgeAdmin.nodeCandidates, {
           backendServerId: id<'backendServers'>(serverId),
         }),
       );
     }
     if (b === 'by-slug' && c) {
-      const view = await ctx.runQuery(internal.relayAdmin.relayBySlugView, { slug: c });
+      const view = await ctx.runQuery(internal.edgeAdmin.relayBySlugView, { slug: c });
       if (!view) return notFound();
       if (d === 'slots' && e) {
         const slot = view.slots.find((s) => s.slotKey === e);
@@ -142,7 +157,7 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       return notFound();
     }
     if (c === 'endpoints') {
-      const r = await ctx.runQuery(internal.relayAdmin.endpoints, {
+      const r = await ctx.runQuery(internal.edgeAdmin.endpoints, {
         relayId: id<'relays'>(b),
       });
       return r ? json(r) : notFound();
@@ -172,9 +187,9 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
       );
     }
     if (c === 'live')
-      return json(await ctx.runQuery(internal.relayAdmin.liveView, { edgeId: id<'edges'>(b) }));
+      return json(await ctx.runQuery(internal.edgeAdmin.liveView, { edgeId: id<'edges'>(b) }));
     if (!c) {
-      const detail = await ctx.runQuery(internal.relayAdmin.edgeDetail, {
+      const detail = await ctx.runQuery(internal.edgeAdmin.edgeDetail, {
         edgeId: id<'edges'>(b),
       });
       return detail ? json(detail) : notFound();
@@ -357,7 +372,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       });
       return json({
         ...r,
-        ...(await ctx.runQuery(internal.relayAdmin.nodeCandidates, { backendServerId: serverId })),
+        ...(await ctx.runQuery(internal.edgeAdmin.nodeCandidates, { backendServerId: serverId })),
       });
     }
     const relayId = id<'relays'>(b);
@@ -407,7 +422,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       case 'cancel': {
         const origin = await ctx.runQuery(internal.relays.get, { id: relayId });
         if (!origin?.activeRotationId)
-          return errorJson('relay.no_rotation', 'No rotation is running', 409);
+          return errorJson('edge.no_rotation', 'No rotation is running', 409);
         return json(
           await ctx.runMutation(internal.edgeRotations.requestCancel, {
             rotationId: origin.activeRotationId,
@@ -427,7 +442,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         // Every published edge of the relay (+ the node itself when it opted in).
         const relay = await ctx.runQuery(internal.relays.get, { id: relayId });
         if (!relay) return notFound();
-        const edges = await ctx.runQuery(internal.relayAdmin.publishedEdgeIdsOf, { relayId });
+        const edges = await ctx.runQuery(internal.edgeAdmin.publishedEdgeIdsOf, { relayId });
         const targets: Array<{ kind: 'edge' | 'relay' | 'custom'; ref: string }> = edges.map(
           (e) => ({ kind: 'edge', ref: e as string }),
         );
@@ -446,7 +461,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       if (!edge) return notFound();
       if (!edge.accountId)
         return errorJson(
-          'relay.unmanaged',
+          'edge.unmanaged',
           'An adopted edge has no provider account to inspect',
           409,
         );
@@ -454,12 +469,12 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
         accountId: edge.accountId,
         ledger: { steps: edge.steps, resources: edge.resources },
       });
-      await ctx.runMutation(internal.relayAdmin.recordLive, {
+      await ctx.runMutation(internal.edgeAdmin.recordLive, {
         edgeId,
         snapshot: JSON.stringify(res),
         ...act,
       });
-      return json(await ctx.runQuery(internal.relayAdmin.liveView, { edgeId }));
+      return json(await ctx.runQuery(internal.edgeAdmin.liveView, { edgeId }));
     }
     const edge = await ctx.runQuery(internal.edges.get, { id: edgeId });
     if (!edge) return notFound();
@@ -501,7 +516,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           return errorJson('validation', 'action must be destroy, forget or reactivate', 400);
         }
         return json(
-          await ctx.runMutation(internal.relayAdmin.resolveOperator, { edgeId, action, ...act }),
+          await ctx.runMutation(internal.edgeAdmin.resolveOperator, { edgeId, action, ...act }),
         );
       }
       case 'probe':
@@ -542,7 +557,7 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
   }
   if (a === 'render' && b === 'preview') {
     return json(
-      await ctx.runQuery(internal.relayAdmin.renderPreview, {
+      await ctx.runQuery(internal.edgeAdmin.renderPreview, {
         relayId: id<'relays'>(String(body.relayId ?? '')),
         family: String(body.family ?? 'other'),
         sampleKey: typeof body.sampleKey === 'string' ? body.sampleKey : undefined,
@@ -564,7 +579,7 @@ const patchHandler: Handler = async (ctx, _req, parts, admin, body) => {
   const [a, b, c] = parts;
   const act = actor(admin);
   if (a === 'config' && !b)
-    return json(await ctx.runMutation(internal.relayAdmin.patchConfig, { patch: body, ...act }));
+    return json(await ctx.runMutation(internal.edgeAdmin.patchConfig, { patch: body, ...act }));
   if (a === 'probes' && b === 'targets' && c && !parts[3])
     return json(
       await ctx.runMutation(internal.probeTargets.update, {
@@ -621,7 +636,7 @@ const putHandler: Handler = async (ctx, _req, parts, admin, body) => {
       slug: c,
       ...act,
     } as never);
-    const view = await ctx.runQuery(internal.relayAdmin.relayBySlugView, { slug: c });
+    const view = await ctx.runQuery(internal.edgeAdmin.relayBySlugView, { slug: c });
     return view ? json(view) : notFound();
   }
   if (d === 'slots' && e) {
@@ -667,7 +682,7 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin) => {
     );
   if (a === 'edges' && b && !c)
     return json(
-      await ctx.runMutation(internal.relayAdmin.deleteEdge, {
+      await ctx.runMutation(internal.edgeAdmin.deleteEdge, {
         edgeId: id<'edges'>(b),
         ...act,
       }),
@@ -705,7 +720,7 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin) => {
   return notFound();
 };
 
-export function registerRelayRoutes(http: HttpRouter): void {
+export function registerEdgeRoutes(http: HttpRouter): void {
   http.route({ pathPrefix: PREFIX, method: 'GET', handler: wrap(false, getHandler, true) });
   http.route({ pathPrefix: PREFIX, method: 'POST', handler: wrap(true, postHandler, true) });
   http.route({ pathPrefix: PREFIX, method: 'PATCH', handler: wrap(true, patchHandler, true) });

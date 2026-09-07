@@ -1,7 +1,7 @@
 /**
- * Block detector (`relay-block-detector` cron): per enabled origin, gather the
+ * Block detector (`edge-block-detector` cron): per enabled origin, gather the
  * detector window (attributed member reports, node load, probe verdicts), score
- * it (lib/relays/scoring.ts), persist the suspicion state + a baseline sample,
+ * it (lib/edges/scoring.ts), persist the suspicion state + a baseline sample,
  * audit transitions, ask for detector-triggered probes when reports alone
  * raise suspicion, and — only with edge-level evidence, every gate open and the
  * operator's opt-in — start a burn rotation of the suspected edge.
@@ -12,7 +12,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { runWithCronOutcome } from './cronHeartbeat';
-import { resolveRelayConfig, relayMs } from './lib/relayConfig';
+import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
 import { todayKey } from './relays';
 import {
   autoRotateDecision,
@@ -21,8 +21,8 @@ import {
   type EdgeProbeState,
   type Evaluation,
   type WindowReports,
-} from './lib/relays/scoring';
-import type { Verdict } from './lib/relays/probes/verdict';
+} from './lib/edges/scoring';
+import type { Verdict } from './lib/edges/probes/verdict';
 
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
@@ -37,8 +37,8 @@ export const relayWindow = internalQuery({
   handler: async (ctx, { relayId, now }) => {
     const origin = await ctx.db.get(relayId);
     if (!origin) return null;
-    const cfg = await resolveRelayConfig(ctx.db);
-    const since = now - relayMs.detectWindow(cfg);
+    const cfg = await resolveEdgeConfig(ctx.db);
+    const since = now - edgeMs.detectWindow(cfg);
     const reports = await ctx.db
       .query('issueReports')
       .withIndex('by_relay', (q) => q.eq('relaySlug', origin.slug).gte('_creationTime', since))
@@ -177,7 +177,7 @@ export const recordEvaluation = internalMutation({
     if (ev.transition === 'suspected') {
       await writeAuditLog(ctx, {
         actorType: 'system',
-        action: 'relay.block_suspected',
+        action: 'edge.block_suspected',
         targetType: 'relay',
         targetId: a.relayId,
         payload: {
@@ -193,7 +193,7 @@ export const recordEvaluation = internalMutation({
     } else if (ev.transition === 'cleared') {
       await writeAuditLog(ctx, {
         actorType: 'system',
-        action: 'relay.block_cleared',
+        action: 'edge.block_cleared',
         targetType: 'relay',
         targetId: a.relayId,
         payload: { relaySlug: origin.slug, reason: 'score_below_threshold' },
@@ -264,7 +264,7 @@ export interface DetectorReport {
 export const run = internalAction({
   args: {},
   handler: async (ctx): Promise<DetectorReport> =>
-    runWithCronOutcome(ctx, 'relay-block-detector', async () => {
+    runWithCronOutcome(ctx, 'edge-block-detector', async () => {
       const report: DetectorReport = {
         evaluated: 0,
         suspected: 0,
@@ -273,12 +273,12 @@ export const run = internalAction({
         errors: 0,
       };
       const now = Date.now();
-      await ctx.runMutation(internal.relayDetector.sweepMarks, { now });
+      await ctx.runMutation(internal.edgeDetector.sweepMarks, { now });
       const origins: Origin[] = await ctx.runQuery(internal.relays.listEnabled, {});
       for (const o of origins) {
         if (o.deleting) continue;
         try {
-          const w = await ctx.runQuery(internal.relayDetector.relayWindow, {
+          const w = await ctx.runQuery(internal.edgeDetector.relayWindow, {
             relayId: o._id,
             now,
           });
@@ -338,7 +338,7 @@ export const run = internalAction({
                   : 'error';
             }
           }
-          await ctx.runMutation(internal.relayDetector.recordEvaluation, {
+          await ctx.runMutation(internal.edgeDetector.recordEvaluation, {
             relayId: o._id,
             now,
             evaluation: ev,
@@ -346,7 +346,7 @@ export const run = internalAction({
             veto,
             ...(lastRotateError !== undefined ? { lastRotateError } : {}),
           });
-          await ctx.runMutation(internal.relayDetector.recordSampleCounts, {
+          await ctx.runMutation(internal.edgeDetector.recordSampleCounts, {
             relayId: o._id,
             at: now,
             reports: w.window.reports,

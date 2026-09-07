@@ -1,5 +1,5 @@
 /**
- * Relay-edge contracts (admin surface `/api/v1/admin/relay/*`): the zod shapes
+ * Relay-edge contracts (admin surface `/api/v1/admin/edges/*`): the zod shapes
  * the SPA parses. The provider id enum derives from EDGE_PROVIDER_IDS so it can
  * never drift from the Convex validator. Every route under the prefix is
  * HPKE-sealed by verb class (src/shared/crypto/envelope.ts).
@@ -543,7 +543,7 @@ export const RelayPoolSummary = z.object({
     .object({ id: z.string(), kind: z.string(), phase: z.string(), percent: z.number() })
     .nullable(),
 });
-export const RelaySummary = z.object({
+export const EdgeSummary = z.object({
   counts: z.object({
     relays: z.number(),
     published: z.number(),
@@ -556,7 +556,7 @@ export const RelaySummary = z.object({
   relays: z.array(RelayPoolSummary),
   generatedAt: iso,
 });
-export type RelaySummary = z.infer<typeof RelaySummary>;
+export type EdgeSummary = z.infer<typeof EdgeSummary>;
 
 export const RelayPublishedEndpoint = z.object({
   poolIndex: z.number(),
@@ -621,7 +621,7 @@ export const RENDER_CLIENT_FAMILY_IDS = [
 export const RenderClientFamily = z.enum(RENDER_CLIENT_FAMILY_IDS);
 export type RenderClientFamily = z.infer<typeof RenderClientFamily>;
 
-export const RelayRenderPreviewResponse = z.object({
+export const EdgeRenderPreviewResponse = z.object({
   family: RenderClientFamily,
   format: z.enum(['links', 'singbox-json', 'clash-yaml']),
   input: z.string(),
@@ -630,7 +630,7 @@ export const RelayRenderPreviewResponse = z.object({
   reason: z.string().nullable(),
   emitted: z.number(),
 });
-export type RelayRenderPreviewResponse = z.infer<typeof RelayRenderPreviewResponse>;
+export type EdgeRenderPreviewResponse = z.infer<typeof EdgeRenderPreviewResponse>;
 
 export const ClientRenderRule = z
   .object({
@@ -650,7 +650,7 @@ export type ClientRenderRule = z.infer<typeof ClientRenderRule>;
 
 /** The relay config namespace as the admin sees it (server-sanitized; nested passthrough
  *  so a newer backend can add knobs without breaking an older SPA). */
-export const RelayConfigView = z.object({
+export const EdgeConfigView = z.object({
   config: z
     .object({
       enabled: z.boolean(),
@@ -704,16 +704,16 @@ export const RelayConfigView = z.object({
   secrets: z.object({ globalpingToken: z.boolean(), ripeAtlasKey: z.boolean() }),
   families: z.array(z.string()),
 });
-export type RelayConfigView = z.infer<typeof RelayConfigView>;
+export type EdgeConfigView = z.infer<typeof EdgeConfigView>;
 
-export const RelayConfigPatchResponse = z.object({ changedKeys: z.array(z.string()) });
+export const EdgeConfigPatchResponse = z.object({ changedKeys: z.array(z.string()) });
 
 // --- small responses -------------------------------------------------------------------------------
 
-export const RelayOkResponse = z.object({ ok: z.boolean() }).passthrough();
-export const RelayIdResponse = z.object({ id: z.string() }).passthrough();
+export const EdgeOkResponse = z.object({ ok: z.boolean() }).passthrough();
+export const EdgeIdResponse = z.object({ id: z.string() }).passthrough();
 export const EdgeRotationStartedResponse = z.object({ rotationId: z.string() });
-export const RelayAdoptResponse = z.object({
+export const EdgeAdoptResponse = z.object({
   edgeId: z.string(),
   poolIndex: z.number().nullable(),
 });

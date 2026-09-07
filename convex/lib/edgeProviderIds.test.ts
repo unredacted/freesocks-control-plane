@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from 'vitest';
 import { EDGE_PROVIDER_IDS, isRelayProviderId, edgeProviderIdValidator } from './edgeProviderIds';
-import { EdgeProviderId as RelayProviderIdZod } from '../../src/shared/contracts/relays';
+import { EdgeProviderId as RelayProviderIdZod } from '../../src/shared/contracts/edges';
 import schema from '../schema';
 
 interface VLiteralLike {

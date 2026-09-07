@@ -14,18 +14,18 @@
   import { toast } from 'svelte-sonner';
   import { apiClient } from '../../lib/api';
   import { apiErrorMessage } from '../../lib/errors';
-  import { adminRelayConfigQuery, queryKeys } from '../../lib/queries';
+  import { adminEdgeConfigQuery, queryKeys } from '../../lib/queries';
   import {
     RENDER_CLIENT_FAMILY_IDS,
-    RelayConfigPatchResponse,
-    RelayRenderPreviewResponse,
+    EdgeConfigPatchResponse,
+    EdgeRenderPreviewResponse,
     type RelayAdmin,
-    type RelayRenderPreviewResponse as Preview,
-  } from '../../../shared/contracts/relays';
+    type EdgeRenderPreviewResponse as Preview,
+  } from '../../../shared/contracts/edges';
   import AdminListState from './AdminListState.svelte';
 
   /**
-   * The `relay.*` namespace: master switches, pool defaults and rotation limits,
+   * The `edge.*` namespace: master switches, pool defaults and rotation limits,
    * how each client family's subscription is rendered (with a live preview) and
    * the detector knobs. Probe sources / countries / budget / tokens live under
    * Telemetry → Probes. Saves send only the fields the operator touched.
@@ -34,7 +34,7 @@
     relays: RelayAdmin[];
   }
   let { relays }: Props = $props();
-  const cfg = adminRelayConfigQuery();
+  const cfg = adminEdgeConfigQuery();
   const qc = useQueryClient();
   const onError = (title: string) => (err: unknown) =>
     toast.error(title, { description: apiErrorMessage(err) });
@@ -73,11 +73,11 @@
   const dirty = $derived(Object.keys(patch).length > 0);
   const save = createMutation(() => ({
     mutationFn: () =>
-      apiClient.patch('/api/v1/admin/relay/config', nested(), RelayConfigPatchResponse),
+      apiClient.patch('/api/v1/admin/edges/config', nested(), EdgeConfigPatchResponse),
     onSuccess: (r) => {
       patch = {};
-      void qc.invalidateQueries({ queryKey: queryKeys.adminRelayConfig });
-      void qc.invalidateQueries({ queryKey: ['admin', 'relays'] });
+      void qc.invalidateQueries({ queryKey: queryKeys.adminEdgeConfig });
+      void qc.invalidateQueries({ queryKey: ['admin', 'edges'] });
       toast.success(
         r.changedKeys.length
           ? `Saved ${r.changedKeys.length} setting${r.changedKeys.length === 1 ? '' : 's'}`
@@ -94,9 +94,9 @@
   const runPreview = createMutation(() => ({
     mutationFn: () =>
       apiClient.post(
-        '/api/v1/admin/relay/render/preview',
+        '/api/v1/admin/edges/render/preview',
         { relayId: previewOrigin || relays[0]?.id, family: previewFamily },
-        RelayRenderPreviewResponse,
+        EdgeRenderPreviewResponse,
       ),
     onSuccess: (r) => (preview = r),
     onError: onError('Preview failed'),

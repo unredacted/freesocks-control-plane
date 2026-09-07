@@ -1,4 +1,4 @@
-# Relays and edges
+# Edges
 
 A **relay** is a node whose protocols need an L4 forwarder in front of it (REALITY first;
 any TCP inbound the node terminates itself works the same way). An **edge** is that
@@ -9,8 +9,9 @@ member's connection. This document describes how FCP provisions, publishes, rota
 observes edges, and the contract the node role (Ansible) follows. It is provider-neutral on
 purpose: nothing here says which providers, regions, targets or names a given deployment uses.
 
-Admin surface: **Admin → Relays** (`/admin/relays`) and `/api/v1/admin/relay/*`; probe
-telemetry lives under **Admin → Telemetry → Probes** (`/admin/telemetry/probes`). Every request
+Admin surface: **Admin → Edges** (`/admin/edges`) and `/api/v1/admin/edges/*`; probe
+telemetry lives under **Admin → Telemetry → Probes** (`/admin/telemetry/probes`, its own nav
+entry beside User reports). Every request
 under the API prefix is HPKE-sealed by verb class (see [Sealing](#sealing)).
 
 ## Model
@@ -19,9 +20,9 @@ under the API prefix is HPKE-sealed by verb class (see [Sealing](#sealing)).
 | ---------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Provider account | `edgeProviderAccounts` | One cloud account: write-only credentials, fixed settings (project/region/zone/network), priority, a daily allocation budget, a live-edge cap, `qualified`.                     |
 | Edge template    | `edgeTemplates`        | Per provider (optionally per account): the full provisioning parameters, validated by the adapter's schema. Provisioning records the template hash.                             |
-| REALITY profile  | `protocolProfiles`      | Provider-scoped REALITY target (address:port) + the approved server names (`active` / `retired` with a drain window). The protocol plugin's data; only `reality` slots use it.  |
+| Protocol profile | `protocolProfiles`     | What a slot's inbound speaks (`reality` / `tls` / `plain`) plus what the renderer needs: server names (REALITY SNIs or certificate names; none for `plain`) and, for REALITY, the impersonated target. Optionally scoped to one provider's network. |
 | Relay            | `relays`               | One node behind edges: its origin address (what edges dial), published pool, publication epoch, rotation limits, detector state, quarantine, `probeNode`.                       |
-| Slot             | `relaySlots`           | One inbound on the relay (port + panel inbound uuid) deployed by the role, with its `protocol` (`reality` needs a profile; `tcp` passthrough needs none) and ONE template Host. |
+| Slot             | `relaySlots`           | One inbound on the relay (port + panel inbound uuid) deployed by the role for one protocol profile, with ONE template Host (remark `<node>-relay-<slotKey>`).                                                                                        |
 | Edge             | `edges`                | One provider load balancer bound to a relay slot: the resource-step ledger, child resources, addresses, publication state and pool index, health, live snapshot, reachability.  |
 | Rotation         | `edgeRotations`        | One provision / publish / replace run: phase, step version, operation claim, Host plan, previous binding, live event log; its audit trail is assembled on read.                 |
 | Probe target     | `probeTargets`         | An operator-entered host:port probed alongside the derived targets (edges, relay nodes). Operator evidence only.                                                                |
@@ -29,7 +30,7 @@ under the API prefix is HPKE-sealed by verb class (see [Sealing](#sealing)).
 | Reachability     | `probeReachability`    | Per target, per country, per source, per address family: the last run's vantage counts and verdict; summarised onto the target's own row.                                       |
 
 The supported providers are listed in `src/shared/contracts/edgeProviderIds.ts`; each has an
-adapter under `convex/lib/relays/providers/` implementing `EdgeProvider`. Generic code never
+adapter under `convex/lib/edges/providers/` implementing `EdgeProvider`. Generic code never
 branches on a provider id; it reads `EDGE_PROVIDER_CAPABILITIES` and the adapter's template schema.
 
 ### Publication
@@ -51,10 +52,10 @@ subscriber's assigned endpoints:
 - assignment is a stable PRF keyed on the subscription's `renderKey` (random, never exposed):
   primary = pool index `h mod publishedCount`, backup = the next edge in pool order (a different
   provider when `render.preferDistinctProviders` is on);
-- for a `reality` slot, one server name per emitted connection, chosen from the slot profile's
-  active set; a retired name stops being selected but stays accepted by the node through its
-  drain. A `tcp` passthrough slot has no server names: only address and port are rewritten and
-  the template's own TLS name is kept;
+- for a `reality` or `tls` profile, one server name per emitted connection, chosen from the
+  profile's active set; a retired name stops being selected but stays accepted by the node
+  through its drain. A `plain` profile has no server names: only address and port are rewritten
+  and the template's own parameters are kept;
 - IPv4 entries by default, plus IPv6 literals as separate bracketed entries when the edge has one
   (`render.ipv6Mode`, per family);
 - per **client family** (sing-box, Mihomo, plain link-list clients…): auto-capable families get
@@ -69,13 +70,13 @@ Rendering is fail-open: an unknown body shape passes through unchanged. It is of
 | Operation                                | Precondition                                                                                | Spends budget                      | Writes Hosts                                  | Result                                                                      |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------- |
 | Adopt edge                               | origin + slot                                                                               | no                                 | no                                            | edge `active`, observe-only (`managed:false`, never destroyed)              |
-| Provision edge                           | qualified account (the profile's provider for `reality`; any for `tcp`), template, capacity | yes                                | no                                            | edge `active` + `unpublished` (or published when requested)                 |
+| Provision edge                           | qualified account (the profile's provider when scoped; any otherwise), template, capacity | yes                                | no                                            | edge `active` + `unpublished` (or published when requested)                 |
 | Publish edge                             | active, has IPv4, slot deployed (+ enabled profile with an active SNI for `reality`)        | no                                 | template Host only when taking index 0        | `published` at the lowest free index; epoch++                               |
 | Replace (rotate / burn)                  | a published target edge                                                                     | unless a compatible standby exists | template Host only if the target held index 0 | new edge `published` at the SAME index; old `draining` (burn = short drain) |
 | Unpublish / retire server name / profile | —                                                                                           | no                                 | no                                            | new selections stop; the node keeps accepting through the drain             |
 
 `hostManaged:false` on a relay means FCP never writes the template Host: publishing at index 0
-proceeds without a flip and replacing index 0 is refused (`relay.hosts_unmanaged`).
+proceeds without a flip and replacing index 0 is refused (`edge.hosts_unmanaged`).
 
 ### The rotation machine
 
@@ -120,28 +121,29 @@ Recovery contract:
   detail (`GET …/rotations/{id}`, the CMS drawer) merges them with the live event log.
 
 Live progress: the rotation row carries `events[]` (bounded) and the admin route
-`GET /api/v1/admin/relay/rotations/{id}` returns steps + weighted percent; the CMS polls it every
+`GET /api/v1/admin/edges/rotations/{id}` returns steps + weighted percent; the CMS polls it every
 2 s while the run is not terminal.
 
-### Reconcile cron (`relay-edge-reconcile`, 5 min)
+### Reconcile cron (`edge-reconcile`, 5 min)
 
 Re-kicks stale rotations; settles edges with unknown outcomes by discovery; refreshes provider
 health (a published edge the provider no longer has is dropped from the pool with a
-`relay.drift` audit); turns drained / failed / cancelled edges into destroy runs (the attempt
+`edge.drift` audit); turns drained / failed / cancelled edges into destroy runs (the attempt
 cap parks an edge as `needs_operator`); publishes standbys into free pool indexes
 (`autoPublishStandby`) or provisions up to `desiredPublished` / `standbyPerRelay`
 (`autoProvisionToDesired`, off by default); finishes relay deletes.
 
 ## Probes and the block detector
 
-### Probes (`relay-probe`, 5 min tick, `probe.*`)
+### Probes (`edge-probe`, 5 min tick, `probe.*`)
 
 FCP asks measurement services to open TCP connections to **its own addresses** from the
 configured countries. Targets are the published edges of every relay (the only kind the detector
 reads), relay nodes that opted in (`probeNode`, a direct-block signal) and operator-entered custom
 host:port pairs (`probeTargets`); each is addressed as `<kind>:<id>`. Everything lives under
-**Telemetry → Probes**: the matrix, run history per target, "probe now" for any selection of
-targets, target management, the settings and a probe audit feed. No member data is involved (see
+**Telemetry → Probes**: a time chart of outcomes (failing vantages by country), the matrix, run
+history per target, "probe now" for any selection of targets, target management, the settings
+and a probe audit feed. No member data is involved (see
 `docs/privacy.md`). Sources:
 
 - **Globalping** via the official SDK (TCP ping, per-country probe selection, eyeball vs
@@ -158,7 +160,7 @@ distinct failing networks and no success; across sources, a second source or a s
 suspected origins are probed at `suspectedIntervalMinutes`. A dual-stack edge is probed per
 address family and rolled up per family: the country verdict follows the IPv4 path (what every
 member receives) and the IPv6 path is reported alongside as `v6Verdict`. Settled runs are kept
-two weeks (`retention-relay-probes`, daily).
+two weeks (`retention-edge-probes`, daily).
 
 ### Attribution
 
@@ -166,16 +168,16 @@ A member issue report is attributed server-side to the relay behind the key's pi
 (`relaySlug`). The **edge** is set only when the member said which connection failed and that
 choice resolves to exactly one edge under their own assignment (`connectionChoice`,
 `relayEdgeId`); it is never inferred from the primary. Each member contributes at most one
-detector weight per window via a peppered dedupe mark (`RELAY_MARK_PEPPER`, falling back to
+detector weight per window via a peppered dedupe mark (`EDGE_MARK_PEPPER`, falling back to
 `IP_HASH_SALT`); the telemetry row stays unlinked. `refreshNotObserved` marks a key that has not
 fetched content since the relay's last rotation.
 
-### Detector (`relay-block-detector`, 5 min, `detect.*`)
+### Detector (`edge-block-detector`, 5 min, `detect.*`)
 
 Per relay: attributed reports in the window (deduplicated), the node's live user count against
 its own baseline, and probe verdicts. Relay-level evidence can only **hint** (the dashboard
-strip and the relay badge). An **automatic rotation** needs, in order: `relay.enabled`,
-`relay.autoRotate`, the relay's `autoRotate`, a suspected state, edge-level evidence (probes,
+strip and the relay badge). An **automatic rotation** needs, in order: `edge.enabled`,
+`edge.autoRotate`, the relay's `autoRotate`, a suspected state, edge-level evidence (probes,
 or members naming the connection with enough share, counted after the per-member dedupe), the
 edge not being an outage (internal
 probe and provider health say the edge itself is up), no quarantine, no running rotation,
@@ -185,15 +187,15 @@ veto so the operator sees why nothing happened.
 
 ## Configuration
 
-`relay.*` in `appSettings` (Admin → Relays → the config tab, and the probe settings under
-Telemetry → Probes; both `GET/PATCH /api/v1/admin/relay/config`). Ships fully dormant: `enabled=false`, `autoRotate=false`,
+`edge.*` in `appSettings` (Admin → Edges → the config tab, and the probe settings under
+Telemetry → Probes; both `GET/PATCH /api/v1/admin/edges/config`). Ships fully dormant: `enabled=false`, `autoRotate=false`,
 `render.enabled=false`, `probe.enabled=false`. Probe credentials are write-only
-(`relay.secret.probe.*`, env fallback `RELAY_PROBE_GLOBALPING_TOKEN` /
-`RELAY_PROBE_RIPEATLAS_KEY`). Defaults and bounds: `convex/lib/relayConfig.ts`.
+(`edge.secret.probe.*`, env fallback `EDGE_PROBE_GLOBALPING_TOKEN` /
+`EDGE_PROBE_RIPEATLAS_KEY`). Defaults and bounds: `convex/lib/edgeConfig.ts`.
 
 ## Sealing
 
-Every route under `/api/v1/admin/relay/` carries credentials, addresses, provider handles or
+Every route under `/api/v1/admin/edges/` carries credentials, addresses, provider handles or
 live LB data, so the whole prefix is sealed by verb in `src/shared/crypto/envelope.ts`: GET
 reveals the response to the caller's ephemeral key, POST seals the request AND reveals the
 response (the response ephemeral rides inside the sealed body), PATCH/PUT seal the request,
@@ -202,29 +204,28 @@ backend servers. `convex/httpRelays.test.ts` pins the policy and a seal-both rou
 
 ## Node role contract (Ansible)
 
-The role deploys, per relay node and per slot (one per REALITY profile, or one per passthrough
-inbound), one inbound and one
+The role deploys, per relay node and per slot (one per protocol profile the node serves), one
+inbound and one
 template Host, and registers both with FCP using an `fsv1_` token with `admin:servers:write`:
 
-1. `PUT /api/v1/admin/relay/relays/by-slug/{hostname}` with
+1. `PUT /api/v1/admin/edges/relays/by-slug/{hostname}` with
    `{ backendServerSlug, nodeHostname, originAddress, locationCode?, modeSlugs? }`
    (idempotent; never flips `autoRotate`). The response carries `publishedEndpoints`. One origin
-   per (backend server, node) is enforced (`relay.node_already_bound`), and `originAddress`
-   cannot change while the origin has live edges (`relay.origin_address_locked`): edges carry
+   per (backend server, node) is enforced (`edge.node_already_bound`), and `originAddress`
+   cannot change while the origin has live edges (`edge.origin_address_locked`): edges carry
    the address in their listener members, so a moved node means draining or destroying its
    edges first (or registering a new origin).
-2. `PUT /api/v1/admin/relay/relays/by-slug/{hostname}/slots/{slotKey}` with
-   `{ protocol?, profileSlug?, inboundTag, configProfileUuid, configProfileInboundUuid, originPort }`
-   per inbound. `protocol` defaults to `reality` (then `profileSlug` is required); a `tcp`
-   passthrough slot carries no profile. Changing the inbound uuid or protocol re-binds the slot
-   (the template Host must be recreated).
-3. Poll `GET /api/v1/admin/relay/relays/by-slug/{hostname}` until `publishedEndpoints[0]`
+2. `PUT /api/v1/admin/edges/relays/by-slug/{hostname}/slots/{slotKey}` with
+   `{ profileSlug, inboundTag, configProfileUuid, configProfileInboundUuid, originPort }`
+   per inbound; the profile (by slug) carries the protocol. Changing the inbound uuid or the
+   profile re-binds the slot (the template Host must be recreated).
+3. Poll `GET /api/v1/admin/edges/relays/by-slug/{hostname}` until `publishedEndpoints[0]`
    exists, then create ONE template Host per slot: remark `<hostname>-relay-<slotKey>`, address =
    the index-0 IPv4, port = its port, SNI = the first active server name,
    `overrideSniFromAddress:false`.
 4. Re-runs read FCP state first and never rewrite an FCP-owned Host address; server names are
    removed from the node only after their `drainUntil`.
-5. Teardown: `DELETE /api/v1/admin/relay/relays/by-slug/{hostname}`, then Host cleanup by the
+5. Teardown: `DELETE /api/v1/admin/edges/relays/by-slug/{hostname}`, then Host cleanup by the
    `<hostname>-relay-*` remark pattern.
 
 Node pinning understands the relay remark (`convex/lib/nodePinning.ts`), so a node's relay
@@ -237,7 +238,7 @@ on a relay (unpublished); open an authenticated REALITY session through the edge
 client and hold it idle for several minutes; pull the live view; then "Mark qualified". Changing
 the account's credentials or settings clears the qualification; so does changing the parameters
 of a template the account was qualified with or uses as its default (audited as
-`relay.provider_account.qualified` with `qualified:false`).
+`edge.provider_account.qualified` with `qualified:false`).
 
 **Bootstrap a relay.** Register via the role (or create it here), adopt the hand-made edge at
 index 0 (publish), provision a second edge (published at index 1), enable rendering, preview each

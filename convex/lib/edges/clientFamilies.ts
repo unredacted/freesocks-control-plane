@@ -4,7 +4,7 @@
  * serves it (which decides which renderer applies). Conservative: unknown UAs
  * are `other` + `links`, and the renderer confirms the format from the body.
  */
-import type { RenderClientFamily } from '../relayConfig';
+import type { RenderClientFamily } from '../edgeConfig';
 
 export type SubscriptionFormat = 'links' | 'singbox-json' | 'clash-yaml';
 

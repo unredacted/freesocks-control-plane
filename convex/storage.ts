@@ -26,7 +26,7 @@ import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client
 import { randomHex, sha256Hex } from './lib/crypto';
 import type { MirrorContext } from './subscriptions';
 import type { ActiveMirrorPage } from './subscriptions';
-import { applyRelayRender } from './lib/relays/renderPipeline';
+import { applyEdgeRender } from './lib/edges/renderPipeline';
 
 export interface S3Provider {
   name: string;
@@ -375,12 +375,12 @@ async function refreshOneSubMirrors(
         node: fetched.pinnedNode,
       });
     };
-    // Relay rendering (docs/relays.md): a mirror serves the same rendered
+    // Relay rendering (docs/edges.md): a mirror serves the same rendered
     // endpoints as the fronted route (link-list family: no User-Agent here).
     let content = fetched.content;
     const node = fetched.pinnedNode ?? undefined;
     if (node && sub.backendServerId) {
-      const rctx = await ctx.runQuery(internal.relayRender.contextForSubscription, {
+      const rctx = await ctx.runQuery(internal.edgeRender.contextForSubscription, {
         subscriptionId: sub.id,
         family: 'other',
         nodeHostname: node,
@@ -392,7 +392,7 @@ async function refreshOneSubMirrors(
             subscriptionId: sub.id,
           }));
         if (renderKey) {
-          content = applyRelayRender(rctx, content, renderKey, {
+          content = applyEdgeRender(rctx, content, renderKey, {
             now: Date.now(),
             lastContentAt: rctx.lastContentAt,
           }).body;

@@ -2,7 +2,7 @@
  * Relay SLOTS: one inbound on the relay node (port + panel inbound uuid)
  * deployed by the node role, with its single template Host (stable remark
  * `<node>-relay-<slotKey>`). The slot's PROTOCOL PROFILE says what the inbound
- * speaks (REALITY / TLS / plain, lib/relays/protocols.ts) and carries its server
+ * speaks (REALITY / TLS / plain, lib/edges/protocols.ts) and carries its server
  * names; a provider-scoped profile only accepts edges of that provider. Edges
  * bind to one slot.
  */
@@ -10,7 +10,7 @@ import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { isSlotKey, templateHostRemark } from './lib/relays/hosts';
+import { isSlotKey, templateHostRemark } from './lib/edges/hosts';
 
 export function mapSlotAdmin(r: Doc<'relaySlots'>, profile?: Doc<'protocolProfiles'> | null) {
   return {

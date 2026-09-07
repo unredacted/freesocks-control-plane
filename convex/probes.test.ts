@@ -11,7 +11,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { upsertSettingRow } from './appSettings';
 import { __setGlobalpingFactory } from './probeOps';
-import type { GlobalpingLike } from './lib/relays/probes/globalping';
+import type { GlobalpingLike } from './lib/edges/probes/globalping';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -73,14 +73,14 @@ async function seed(
       keyCount: 0,
       updatedAt: Date.now(),
     });
-    await upsertSettingRow(ctx, 'relay.probe.enabled', JSON.stringify(opts.probeEnabled ?? true));
+    await upsertSettingRow(ctx, 'edge.probe.enabled', JSON.stringify(opts.probeEnabled ?? true));
     await upsertSettingRow(
       ctx,
-      'relay.probe.countries',
+      'edge.probe.countries',
       JSON.stringify(opts.countries ?? ['IR', 'RU']),
     );
     // check-host / ripe atlas off: this test drives globalping + internal only.
-    await upsertSettingRow(ctx, 'relay.probe.sources.checkhost', 'false');
+    await upsertSettingRow(ctx, 'edge.probe.sources.checkhost', 'false');
   });
   await t.mutation(internal.protocolProfiles.create, {
     slug: 'prof-u',
@@ -176,7 +176,7 @@ describe('relayProbes', () => {
     expect(summary).toEqual({ IR: 'unreachable', RU: 'reachable', XX: 'reachable' });
     // Verdict audits carry only ids/codes.
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
-    const verdicts = audit.filter((a) => a.action === 'relay.probe.verdict');
+    const verdicts = audit.filter((a) => a.action === 'probe.verdict');
     expect(verdicts.length).toBeGreaterThan(0);
     expect(JSON.stringify(audit)).not.toContain(EDGE);
     const matrix = await t.query(internal.probes.matrix, {});
@@ -258,7 +258,7 @@ describe('relayProbes', () => {
     const r2 = await t.action(internal.probes.run, {});
     expect(r2.requested).toBe(0);
     // Budget exhausted → skipped, not requested.
-    await t.run((ctx) => upsertSettingRow(ctx, 'relay.probe.hourlyBudget', '1'));
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.hourlyBudget', '1'));
     await t.run(async (ctx) => {
       // Make the edge due again by aging its runs.
       for (const run of await ctx.db.query('probeRuns').collect()) {
@@ -268,7 +268,7 @@ describe('relayProbes', () => {
     const r3 = await t.action(internal.probes.run, {});
     expect(r3.requested).toBe(0);
     expect(r3.skipped).toBe(1);
-    await t.run((ctx) => upsertSettingRow(ctx, 'relay.probe.enabled', 'false'));
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.enabled', 'false'));
     const r4 = await t.action(internal.probes.run, {});
     expect(r4).toMatchObject({ requested: 0, skipped: 0 });
     void edgeId;
@@ -449,12 +449,12 @@ describe('relayProbes', () => {
     const feed = await t.query(internal.probes.auditFeed, {});
     const actions = new Set(feed.map((e) => e.action));
     for (const a of [
-      'relay.probe.requested',
-      'relay.probe.run',
-      'relay.probe.verdict',
-      'relay.probe.target.create',
-      'relay.probe.target.update',
-      'relay.probe.target.delete',
+      'probe.requested',
+      'probe.run',
+      'probe.verdict',
+      'probe.target.create',
+      'probe.target.update',
+      'probe.target.delete',
     ])
       expect(actions.has(a)).toBe(true);
     expect(JSON.stringify(feed)).not.toContain('decoy.example');

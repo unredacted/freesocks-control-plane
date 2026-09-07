@@ -1,6 +1,6 @@
 /**
  * Isolate mutations the reconcile cron needs beyond the row-level ones in
- * relayEdges / relayOrigins: destroy bookkeeping (audited) and the
+ * edges / relays: destroy bookkeeping (audited) and the
  * publish-a-standby decision (direct publish, or a `publish` rotation when the
  * free slot is pool index 0 on a Host-managed origin).
  */
@@ -9,10 +9,10 @@ import { internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { resolveRelayConfig } from './lib/relayConfig';
+import { resolveEdgeConfig } from './lib/edgeConfig';
 import { checkPublishable } from './relays';
-import { nextFreePoolIndex, withEdgeAt } from './lib/relays/pool';
-import { isTerminalPhase } from './lib/relays/rotation';
+import { nextFreePoolIndex, withEdgeAt } from './lib/edges/pool';
+import { isTerminalPhase } from './lib/edges/rotation';
 
 export const markDestroyed = internalMutation({
   args: { edgeId: v.id('edges') },
@@ -45,8 +45,8 @@ export const markDestroyed = internalMutation({
     }
     await writeAuditLog(ctx, {
       actorType: 'system',
-      action: 'relay.edge.destroyed',
-      targetType: 'relay_edge',
+      action: 'edge.destroyed',
+      targetType: 'edge',
       targetId: edgeId,
       payload: { relaySlug: origin?.slug ?? '', provider: edge.provider ?? null, edgeId },
     });
@@ -69,8 +69,8 @@ export const destroyExhausted = internalMutation({
     const origin = await ctx.db.get(edge.relayId);
     await writeAuditLog(ctx, {
       actorType: 'system',
-      action: 'relay.edge.destroy_failed',
-      targetType: 'relay_edge',
+      action: 'edge.destroy_failed',
+      targetType: 'edge',
       targetId: edgeId,
       payload: {
         relaySlug: origin?.slug ?? '',
@@ -124,7 +124,7 @@ export const publishStandby = internalMutation({
       const active = await ctx.db.get(origin.activeRotationId);
       if (active && !isTerminalPhase(active.phase)) return { published: false, rotationId: null };
     }
-    const cfg = await resolveRelayConfig(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
     const idx = nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished);
     if (idx === null) return { published: false, rotationId: null };
     for (const edgeId of candidates) {
@@ -158,7 +158,7 @@ export const publishStandby = internalMutation({
         await ctx.db.patch(rotationId, { nextStepAt: now });
         await writeAuditLog(ctx, {
           actorType: 'system',
-          action: 'admin.relay.provision',
+          action: 'admin.edge.provision',
           targetType: 'relay',
           targetId: relayId,
           payload: { slug: origin.slug, trigger: 'reconcile' },
@@ -181,8 +181,8 @@ export const publishStandby = internalMutation({
       });
       await writeAuditLog(ctx, {
         actorType: 'system',
-        action: 'relay.edge.published',
-        targetType: 'relay_edge',
+        action: 'edge.published',
+        targetType: 'edge',
         targetId: edgeId,
         payload: { relaySlug: origin.slug, edgeId, poolIndex: idx, epoch },
       });
@@ -195,7 +195,7 @@ export const publishStandby = internalMutation({
 // The cron reads config through a query so the action has one resolved snapshot.
 export const configSnapshot = internalQuery({
   args: {},
-  handler: (ctx) => resolveRelayConfig(ctx.db),
+  handler: (ctx) => resolveEdgeConfig(ctx.db),
 });
 
 /** The Node version the "use node" actions run on, for the admin dashboard. */
@@ -205,11 +205,11 @@ export const recordRuntime = internalMutation({
     const now = Date.now();
     const row = await ctx.db
       .query('appState')
-      .withIndex('by_key', (q) => q.eq('key', 'relay:runtime'))
+      .withIndex('by_key', (q) => q.eq('key', 'edge:runtime'))
       .unique();
     const value = JSON.stringify({ nodeVersion: nodeVersion.slice(0, 32), at: now });
     if (row) await ctx.db.patch(row._id, { value, updatedAt: now });
-    else await ctx.db.insert('appState', { key: 'relay:runtime', value, updatedAt: now });
+    else await ctx.db.insert('appState', { key: 'edge:runtime', value, updatedAt: now });
     return null;
   },
 });

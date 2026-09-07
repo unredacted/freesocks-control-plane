@@ -127,10 +127,10 @@
       </a>
     {/if}
 
-    <!-- Relay edges (docs/relays.md): a one-line status when any origin exists. -->
+    <!-- Edges (docs/edges.md): a one-line status when any origin exists. -->
     {#if s.relays.total > 0}
       <a
-        href="/admin/relays"
+        href="/admin/edges"
         class="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border px-4 py-3 text-sm hover:bg-muted/40 {s
           .relays.quarantined > 0
           ? 'border-destructive/40 bg-destructive/10'
@@ -138,7 +138,7 @@
             ? 'border-amber-500/40 bg-amber-500/10'
             : ''}"
       >
-        <span class="font-medium">Relay edges</span>
+        <span class="font-medium">Edges</span>
         <span>{s.relays.total} {s.relays.total === 1 ? 'relay' : 'relays'}</span>
         <span>{s.relays.published} published</span>
         {#if s.relays.rotating > 0}<span>{s.relays.rotating} rotating</span>{/if}

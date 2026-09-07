@@ -235,13 +235,13 @@ Highlights:
   (country × connection mode), and operator-published **incidents** — all edited in
   the CMS (**Admin → Status**) with no redeploy. The member's Access Pass shows which
   node its key is on and deep-links to that location's card.
-- **Relays and edges**: nodes whose protocols need an L4 front (REALITY, or any TCP
-  inbound) sit behind provider-managed load balancers ("edges") that FCP provisions,
+- **Edges**: nodes whose protocols need an L4 front (REALITY, TLS or plain TCP inbounds)
+  sit behind provider-managed load balancers ("edges") that FCP provisions,
   publishes as a per-relay pool (primary + backup), renders into each member's
   subscription with a stable assignment (one server name per REALITY connection), probes
   from the countries that matter, and rotates when blocked, all with a recovery-first
   ledger, per-rotation audit trails and a sealed admin surface. Ships dormant
-  ([`docs/relays.md`](docs/relays.md)).
+  ([`docs/edges.md`](docs/edges.md)).
 - **Referral program**: every member has a shareable `FSR-…` code; a sign-up through
   it binds the new account. Rewards vest only on the referee's **first paid
   membership** (any rail, gift codes included): the referee gets bonus days instantly,

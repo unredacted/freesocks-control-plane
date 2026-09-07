@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * The relay admin surface (`/api/v1/admin/relay/*`): auth + scopes, the IaC
+ * The relay admin surface (`/api/v1/admin/edges/*`): auth + scopes, the IaC
  * by-slug upsert round trip (origin → slot → adopted edge → publishedEndpoints),
  * account creation without secret echo, the render preview, config patches,
  * and the sealing policy coverage of every verb under the prefix.
@@ -21,11 +21,11 @@ import { serializePublicKey, serverKeyPairFromSeed } from '../src/shared/crypto/
 import { clientOpenResponse, clientPrepareRequest } from '../src/shared/crypto/channel';
 import {
   EdgeProviderAccountsResponse,
-  RelayConfigView,
+  EdgeConfigView,
   RelayBySlugResponse,
-  RelayRenderPreviewResponse,
-  RelaySummary,
-} from '../src/shared/contracts/relays';
+  EdgeRenderPreviewResponse,
+  EdgeSummary,
+} from '../src/shared/contracts/edges';
 
 const modules = import.meta.glob('./**/*.*s');
 const ADMIN_SIGN_KEY = 'test-admin-sign';
@@ -99,7 +99,7 @@ async function seed() {
     body?: unknown,
     headers: Record<string, string> = {},
   ) =>
-    t.fetch(`/api/v1/admin/relay/${path}`, {
+    t.fetch(`/api/v1/admin/edges/${path}`, {
       method,
       headers: { cookie, 'content-type': 'application/json', ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -117,19 +117,19 @@ const SLOT = {
 
 describe('relay admin routes', () => {
   test('sealing policy: every verb under the prefix is covered (GET reveal, POST both, PATCH/PUT seal, DELETE plain)', () => {
-    const p = '/api/v1/admin/relay/relays/by-slug/x';
+    const p = '/api/v1/admin/edges/relays/by-slug/x';
     expect(routePolicy(p, 'GET')).toEqual({ request: 'plain', response: 'reveal' });
-    expect(routePolicy('/api/v1/admin/relay/render/preview', 'POST')).toEqual({
+    expect(routePolicy('/api/v1/admin/edges/render/preview', 'POST')).toEqual({
       request: 'seal',
       response: 'reveal',
     });
-    expect(routePolicy('/api/v1/admin/relay/config', 'PATCH')).toEqual({
+    expect(routePolicy('/api/v1/admin/edges/config', 'PATCH')).toEqual({
       request: 'seal',
       response: 'plain',
     });
     expect(routePolicy(p, 'PUT')).toEqual({ request: 'seal', response: 'plain' });
     expect(routePolicy(p, 'DELETE')).toBeUndefined();
-    expect(routePolicy('/api/v1/admin/relay/summary', 'GET')).toEqual({
+    expect(routePolicy('/api/v1/admin/edges/summary', 'GET')).toEqual({
       request: 'plain',
       response: 'reveal',
     });
@@ -137,25 +137,25 @@ describe('relay admin routes', () => {
 
   test('auth: anonymous 401; a servers:read token reads but cannot write; config needs the settings scope', async () => {
     const { t } = await seed();
-    const anon = await t.fetch('/api/v1/admin/relay/summary');
+    const anon = await t.fetch('/api/v1/admin/edges/summary');
     expect(anon.status).toBe(401);
     const reader = await token(t, ['admin:servers:read']);
-    const ok = await t.fetch('/api/v1/admin/relay/summary', {
+    const ok = await t.fetch('/api/v1/admin/edges/summary', {
       headers: { authorization: `Bearer ${reader}` },
     });
     expect(ok.status).toBe(200);
-    const denied = await t.fetch('/api/v1/admin/relay/relays', {
+    const denied = await t.fetch('/api/v1/admin/edges/relays', {
       method: 'POST',
       headers: { authorization: `Bearer ${reader}`, 'content-type': 'application/json' },
       body: JSON.stringify({ slug: 'x' }),
     });
     expect([401, 403]).toContain(denied.status);
-    const cfgDenied = await t.fetch('/api/v1/admin/relay/config', {
+    const cfgDenied = await t.fetch('/api/v1/admin/edges/config', {
       headers: { authorization: `Bearer ${reader}` },
     });
     expect([401, 403]).toContain(cfgDenied.status);
     const settings = await token(t, ['admin:settings:read']);
-    const cfgOk = await t.fetch('/api/v1/admin/relay/config', {
+    const cfgOk = await t.fetch('/api/v1/admin/edges/config', {
       headers: { authorization: `Bearer ${settings}` },
     });
     expect(cfgOk.status).toBe(200);
@@ -240,7 +240,7 @@ describe('relay admin routes', () => {
     const edges = await (await call('GET', `edges?relayId=${view2.relay.id}`)).json();
     expect(edges).toHaveLength(1);
     expect(edges[0]).toMatchObject({ managed: false, publication: 'published', poolIndex: 0 });
-    const summary = RelaySummary.parse(await (await call('GET', 'summary')).json());
+    const summary = EdgeSummary.parse(await (await call('GET', 'summary')).json());
     expect(summary.counts).toMatchObject({ relays: 1, published: 1, suspected: 0, rotating: 0 });
     expect(summary.relays[0].pool[0]).toMatchObject({
       poolIndex: 0,
@@ -256,14 +256,14 @@ describe('relay admin routes', () => {
       family: 'v2rayng',
     });
     expect(prev.status).toBe(200);
-    const preview = RelayRenderPreviewResponse.parse(await prev.json());
+    const preview = EdgeRenderPreviewResponse.parse(await prev.json());
     expect(preview.format).toBe('links');
     // Rendering is off by default → passthrough with the reason.
     expect(preview.applied).toBe(false);
     expect(preview.reason).toBe('disabled');
     const patched = await call('PATCH', 'config', { render: { enabled: true } });
     expect(await patched.json()).toEqual({ changedKeys: ['render.enabled'] });
-    const preview2 = RelayRenderPreviewResponse.parse(
+    const preview2 = EdgeRenderPreviewResponse.parse(
       await (
         await call('POST', 'render/preview', { relayId: view2.relay.id, family: 'v2rayng' })
       ).json(),
@@ -272,7 +272,7 @@ describe('relay admin routes', () => {
     expect(preview2.body).toContain('198.51.100.7');
     expect(preview2.body).toContain('FreeSocks%20Primary');
     expect(preview2.body).not.toContain('node-one-relay-u');
-    const singbox = RelayRenderPreviewResponse.parse(
+    const singbox = EdgeRenderPreviewResponse.parse(
       await (
         await call('POST', 'render/preview', { relayId: view2.relay.id, family: 'singbox' })
       ).json(),
@@ -292,7 +292,7 @@ describe('relay admin routes', () => {
 
   test('config: GET returns the sanitized namespace + secret status; PATCH writes are audited as keys only', async () => {
     const { t, call } = await seed();
-    const view = RelayConfigView.parse(await (await call('GET', 'config')).json());
+    const view = EdgeConfigView.parse(await (await call('GET', 'config')).json());
     expect(view.config.render.enabled).toBe(false);
     expect(view.secrets).toEqual({ globalpingToken: false, ripeAtlasKey: false });
     expect(view.families).toContain('singbox');
@@ -306,14 +306,14 @@ describe('relay admin routes', () => {
     expect(body.changedKeys.sort()).toEqual(
       ['probe.countries', 'probe.enabled', 'probe.secret', 'render.clients.v2rayng'].sort(),
     );
-    const after = RelayConfigView.parse(await (await call('GET', 'config')).json());
+    const after = EdgeConfigView.parse(await (await call('GET', 'config')).json());
     expect(after.config.probe.enabled).toBe(true);
     expect(after.config.probe.countries).toEqual(['IR', 'RU']);
     expect(after.config.render.clients.v2rayng.enabled).toBe(false);
     expect(after.secrets.globalpingToken).toBe(true);
     expect(JSON.stringify(after)).not.toContain('gp_SECRET');
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
-    const a = audit.find((x) => x.action === 'admin.relay.config.change');
+    const a = audit.find((x) => x.action === 'admin.edge.config.change');
     expect(a?.payload).toEqual({
       changedKeys: expect.arrayContaining(['probe.enabled', 'probe.secret']),
     });
@@ -360,7 +360,7 @@ describe('relay admin routes', () => {
         })
       ).json(),
     );
-    const path = '/api/v1/admin/relay/render/preview';
+    const path = '/api/v1/admin/edges/render/preview';
     const prep = await clientPrepareRequest({
       serverPub: kp.publicKey,
       serverKid: kid,
@@ -379,7 +379,7 @@ describe('relay admin routes', () => {
     expect(res.headers.get('x-fs-sealed')).toBe('1');
     const wire = await res.json();
     expect(isSealedWire(wire)).toBe(true);
-    const opened = RelayRenderPreviewResponse.parse(
+    const opened = EdgeRenderPreviewResponse.parse(
       await clientOpenResponse({
         serverKid: kid,
         method: 'POST',

@@ -26,28 +26,28 @@
     queryKeys,
   } from '../../lib/queries';
   import {
-    RelayAdoptResponse,
-    RelayIdResponse,
+    EdgeAdoptResponse,
+    EdgeIdResponse,
     RelayNodeCandidatesResponse,
-    RelayOkResponse,
+    EdgeOkResponse,
     ProbeRequestedResponse,
     EdgeRotationStartedResponse,
     EdgeLiveResponse,
     type RelayAdmin,
-    type RelaySummary,
-  } from '../../../shared/contracts/relays';
+    type EdgeSummary,
+  } from '../../../shared/contracts/edges';
   import { formatDateTime } from '../../lib/i18n/format';
   import AdminListState from './AdminListState.svelte';
 
   interface Props {
-    summary: RelaySummary | null;
+    summary: EdgeSummary | null;
   }
   let { summary }: Props = $props();
   const qc = useQueryClient();
   const servers = adminBackendServersQuery();
 
   const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ['admin', 'relays'] });
+    void qc.invalidateQueries({ queryKey: ['admin', 'edges'] });
     void qc.invalidateQueries({ queryKey: queryKeys.adminStatus });
   };
   const onError = (title: string) => (err: unknown) =>
@@ -124,12 +124,12 @@
   const refreshNodes = createMutation(() => ({
     mutationFn: () =>
       apiClient.post(
-        '/api/v1/admin/relay/relays/node-candidates/refresh',
+        '/api/v1/admin/edges/relays/node-candidates/refresh',
         { backendServerId: editor?.backendServerId },
         RelayNodeCandidatesResponse,
       ),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['admin', 'relays', 'node-candidates'] });
+      void qc.invalidateQueries({ queryKey: ['admin', 'edges', 'node-candidates'] });
       toast.success('Node list refreshed');
     },
     onError: onError('Could not pull the node list'),
@@ -165,11 +165,11 @@
         maxRotationsPerDay: Number(d.maxRotationsPerDay),
         drainMinutes: Number(d.drainMinutes),
       };
-      if (d.id) return apiClient.patch(`/api/v1/admin/relay/relays/${d.id}`, body, RelayOkResponse);
+      if (d.id) return apiClient.patch(`/api/v1/admin/edges/relays/${d.id}`, body, EdgeOkResponse);
       return apiClient.post(
-        '/api/v1/admin/relay/relays',
+        '/api/v1/admin/edges/relays',
         { ...body, slug: d.slug.trim(), backendServerId: d.backendServerId },
-        RelayIdResponse,
+        EdgeIdResponse,
       );
     },
     onSuccess: () => {
@@ -181,7 +181,7 @@
   }));
   const deleteOrigin = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/relay/relays/${id}`, RelayOkResponse),
+      apiClient.delete(`/api/v1/admin/edges/relays/${id}`, EdgeOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Teardown requested; edges drain and destroy in the background');
@@ -193,9 +193,9 @@
   const act = createMutation(() => ({
     mutationFn: ({ id, op, body }: { id: string; op: string; body?: Record<string, unknown> }) =>
       apiClient.post(
-        `/api/v1/admin/relay/relays/${id}/${op}`,
+        `/api/v1/admin/edges/relays/${id}/${op}`,
         body ?? {},
-        EdgeRotationStartedResponse.or(RelayOkResponse).or(ProbeRequestedResponse),
+        EdgeRotationStartedResponse.or(EdgeOkResponse).or(ProbeRequestedResponse),
       ),
     onSuccess: (r, vars) => {
       invalidate();
@@ -218,7 +218,7 @@
   const adoptEdge = createMutation(() => ({
     mutationFn: () =>
       apiClient.post(
-        `/api/v1/admin/relay/relays/${adoptFor}/adopt`,
+        `/api/v1/admin/edges/relays/${adoptFor}/adopt`,
         {
           slotId: adopt.slotId,
           ipv4: adopt.ipv4.trim(),
@@ -226,7 +226,7 @@
           port: Number(adopt.port) || 443,
           publish: adopt.publish,
         },
-        RelayAdoptResponse,
+        EdgeAdoptResponse,
       ),
     onSuccess: () => {
       adoptFor = null;
@@ -249,9 +249,9 @@
   const edgeAct = createMutation(() => ({
     mutationFn: ({ id, op, body }: { id: string; op: string; body?: Record<string, unknown> }) =>
       apiClient.post(
-        `/api/v1/admin/relay/edges/${id}/${op}`,
+        `/api/v1/admin/edges/${id}/${op}`,
         body ?? {},
-        RelayOkResponse.or(EdgeRotationStartedResponse).or(ProbeRequestedResponse),
+        EdgeOkResponse.or(EdgeRotationStartedResponse).or(ProbeRequestedResponse),
       ),
     onSuccess: (r) => {
       invalidate();
@@ -261,8 +261,7 @@
     onError: onError('Edge action refused'),
   }));
   const edgeDelete = createMutation(() => ({
-    mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/relay/edges/${id}`, RelayOkResponse),
+    mutationFn: (id: string) => apiClient.delete(`/api/v1/admin/edges/${id}`, EdgeOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Edge scheduled for destruction');
@@ -271,7 +270,7 @@
   }));
   const pullLive = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.post(`/api/v1/admin/relay/edges/${id}/live/refresh`, {}, EdgeLiveResponse),
+      apiClient.post(`/api/v1/admin/edges/${id}/live/refresh`, {}, EdgeLiveResponse),
     onSuccess: (r, id) => {
       liveFor = id;
       live = (r.live as Record<string, unknown> | null) ?? null;
@@ -303,7 +302,7 @@
 
   {#if !summary || summary.relays.length === 0}
     <AdminListState
-      emptyText="No relays yet. The node role registers one per relay node (PUT /api/v1/admin/relay/relays/by-slug/<slug>), or create one here."
+      emptyText="No relays yet. The node role registers one per relay node (PUT /api/v1/admin/edges/relays/by-slug/<slug>), or create one here."
     />
   {/if}
 

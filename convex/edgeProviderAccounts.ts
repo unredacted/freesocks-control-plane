@@ -18,9 +18,9 @@ import {
   buildCredentials,
   maskCredentials,
   validateSettings,
-  type RelayCredentials,
-  type RelaySettings,
-} from './lib/relays/accountSettings';
+  type EdgeCredentials,
+  type EdgeSettings,
+} from './lib/edges/accountSettings';
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
@@ -67,8 +67,8 @@ export interface RelayAccountWithSecret {
   id: Id<'edgeProviderAccounts'>;
   provider: EdgeProviderId;
   name: string;
-  credentials: RelayCredentials;
-  settings: RelaySettings;
+  credentials: EdgeCredentials;
+  settings: EdgeSettings;
   enabled: boolean;
   qualified: boolean;
   defaultTemplateId: Id<'edgeTemplates'> | null;
@@ -79,8 +79,8 @@ function toWithSecret(r: Doc<'edgeProviderAccounts'>): RelayAccountWithSecret {
     id: r._id,
     provider: r.provider,
     name: r.name,
-    credentials: r.credentials as RelayCredentials,
-    settings: r.settings as RelaySettings,
+    credentials: r.credentials as EdgeCredentials,
+    settings: r.settings as EdgeSettings,
     enabled: r.enabled,
     qualified: r.qualified,
     defaultTemplateId: r.defaultTemplateId ?? null,
@@ -233,8 +233,8 @@ export const create = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
-      action: 'relay.provider_account.create',
-      targetType: 'relay_provider_account',
+      action: 'edge.provider_account.create',
+      targetType: 'edge_provider_account',
       targetId: id,
       payload: { name: a.name, provider: a.provider },
     });
@@ -299,8 +299,8 @@ export const update = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
-      action: 'relay.provider_account.update',
-      targetType: 'relay_provider_account',
+      action: 'edge.provider_account.update',
+      targetType: 'edge_provider_account',
       targetId: a.id,
       payload: { name: row.name, provider: row.provider },
     });
@@ -327,8 +327,8 @@ export const remove = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.provider_account.delete',
-      targetType: 'relay_provider_account',
+      action: 'edge.provider_account.delete',
+      targetType: 'edge_provider_account',
       targetId: id,
       payload: { name: row.name, provider: row.provider },
     });
@@ -354,8 +354,8 @@ export const setQualified = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.provider_account.qualified',
-      targetType: 'relay_provider_account',
+      action: 'edge.provider_account.qualified',
+      targetType: 'edge_provider_account',
       targetId: id,
       payload: { name: row.name, provider: row.provider, qualified },
     });

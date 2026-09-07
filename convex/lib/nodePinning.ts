@@ -33,7 +33,7 @@
 const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
 // Known transport suffixes the role appends to Host remarks (xhttp removed
 // 2026-07-04 but kept here so legacy remarks still parse), plus the relay-edge
-// template Host remark `<node>-relay-<slotKey>` (convex/lib/relays/hosts.ts):
+// template Host remark `<node>-relay-<slotKey>` (convex/lib/edges/hosts.ts):
 // a node's relay templates must pin WITH the node, never pass through to all.
 const TRANSPORT_SUFFIX_RE = /-(ws|reality|xhttp)(-[0-9a-f]{6})?$|-relay-[a-z0-9]{1,16}$/i;
 

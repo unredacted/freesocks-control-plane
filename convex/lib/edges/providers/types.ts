@@ -1,7 +1,7 @@
 /**
  * The relay-edge PROVIDER contract: how FCP drives one cloud load-balancer API.
  *
- * Design rules (docs/relays.md):
+ * Design rules (docs/edges.md):
  *  - Provisioning is an ordered list of RESOURCE STEPS. Each step is one provider
  *    call that may create SEVERAL billable children (a compound "create LB" call
  *    can mint an LB + a floating IP + listeners); every child is reported back
@@ -52,7 +52,7 @@ export interface OvhConfig {
   subnetId: string;
   gatewayId?: string;
 }
-export type RelayProviderConfig = GcoreConfig | UpcloudConfig | ScalewayConfig | OvhConfig;
+export type EdgeProviderConfig = GcoreConfig | UpcloudConfig | ScalewayConfig | OvhConfig;
 
 // --- what to build -----------------------------------------------------------------
 
@@ -253,7 +253,7 @@ export interface DiscoverResult {
 // --- the adapter -----------------------------------------------------------------------------
 
 export interface EdgeProvider<
-  Cfg extends RelayProviderConfig = RelayProviderConfig,
+  Cfg extends EdgeProviderConfig = EdgeProviderConfig,
   Tpl = Record<string, unknown>,
 > {
   id: EdgeProviderId;

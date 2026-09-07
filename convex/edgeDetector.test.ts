@@ -17,7 +17,7 @@ const SIGN_KEY = 'test-sign';
 beforeEach(() => {
   vi.stubEnv('SESSION_SIGNING_KEY', SIGN_KEY);
   vi.stubEnv('IP_HASH_SALT', 'test-salt');
-  vi.stubEnv('RELAY_MARK_PEPPER', 'test-mark-pepper');
+  vi.stubEnv('EDGE_MARK_PEPPER', 'test-mark-pepper');
   vi.stubEnv('ACCOUNT_ID_PEPPER', 'test-pepper');
 });
 afterEach(() => {
@@ -58,7 +58,7 @@ async function seed() {
       keyCount: 0,
       updatedAt: Date.now(),
     });
-    await upsertSettingRow(ctx, 'relay.render.enabled', 'true');
+    await upsertSettingRow(ctx, 'edge.render.enabled', 'true');
     return { tierId, serverId };
   });
   await t.mutation(internal.protocolProfiles.create, {
@@ -230,7 +230,7 @@ describe('relay block detector', () => {
         });
       }
     });
-    const w = (await s.t.query(internal.relayDetector.relayWindow, {
+    const w = (await s.t.query(internal.edgeDetector.relayWindow, {
       relayId: s.relayId,
       now: NOW,
     }))!;
@@ -279,7 +279,7 @@ describe('relay block detector', () => {
     const s = await seed();
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 100);
-    const r = await s.t.action(internal.relayDetector.run, {});
+    const r = await s.t.action(internal.edgeDetector.run, {});
     expect(r).toMatchObject({ evaluated: 1, suspected: 0, rotated: 0 });
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     // The global switch is the first gate, so it names the veto while off.
@@ -287,7 +287,7 @@ describe('relay block detector', () => {
       state: 'clear',
       hintLevel: 'none',
       baselineWarm: true,
-      veto: 'relay_disabled',
+      veto: 'edge_disabled',
     });
     const samples = await s.t.run((ctx) => ctx.db.query('relaySamples').collect());
     expect(samples.some((x) => x.at === NOW)).toBe(true);
@@ -299,8 +299,8 @@ describe('relay block detector', () => {
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 10);
     await s.t.run(async (ctx) => {
-      await upsertSettingRow(ctx, 'relay.enabled', 'true');
-      await upsertSettingRow(ctx, 'relay.autoRotate', 'true');
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
       await ctx.db.patch(s.relayId, { autoRotate: true });
       for (let i = 0; i < 10; i++) {
         await ctx.db.insert('issueReports', {
@@ -313,7 +313,7 @@ describe('relay block detector', () => {
         });
       }
     });
-    const r = await s.t.action(internal.relayDetector.run, {});
+    const r = await s.t.action(internal.edgeDetector.run, {});
     expect(r).toMatchObject({ evaluated: 1, suspected: 1, rotated: 0 });
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion).toMatchObject({
@@ -326,7 +326,7 @@ describe('relay block detector', () => {
     expect(o.suspicion!.hint).toMatch(/Possible block \(mostly IR\)/);
     expect(o.activeRotationId).toBeUndefined();
     const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
-    const sus = audit.find((a) => a.action === 'relay.block_suspected');
+    const sus = audit.find((a) => a.action === 'edge.block_suspected');
     expect(sus?.payload).toMatchObject({
       relaySlug: 'node-one',
       hintLevel: 'reports',
@@ -386,24 +386,24 @@ describe('relay block detector', () => {
       }
     });
     // Gates closed (global switch off): suspected with a veto, no rotation.
-    const r1 = await s.t.action(internal.relayDetector.run, {});
+    const r1 = await s.t.action(internal.edgeDetector.run, {});
     expect(r1).toMatchObject({ suspected: 1, rotated: 0 });
     let o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion).toMatchObject({
       state: 'suspected',
       hintLevel: 'corroborated',
-      veto: 'relay_disabled',
+      veto: 'edge_disabled',
     });
     expect(o.suspicion!.edgeEvidence).toEqual([
       { edgeId: s.edgeB, source: 'probes', countries: ['IR', 'RU'] },
     ]);
     // Open the gates: global + per-origin opt-in.
     await s.t.run(async (ctx) => {
-      await upsertSettingRow(ctx, 'relay.enabled', 'true');
-      await upsertSettingRow(ctx, 'relay.autoRotate', 'true');
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
       await ctx.db.patch(s.relayId, { autoRotate: true });
     });
-    const r2 = await s.t.action(internal.relayDetector.run, {});
+    const r2 = await s.t.action(internal.edgeDetector.run, {});
     expect(r2).toMatchObject({ suspected: 1, rotated: 1 });
     o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.activeRotationId).toBeDefined();
@@ -417,7 +417,7 @@ describe('relay block detector', () => {
       reason: 'detector:probes',
     });
     // Next tick: the running rotation is itself a veto.
-    const r3 = await s.t.action(internal.relayDetector.run, {});
+    const r3 = await s.t.action(internal.edgeDetector.run, {});
     expect(r3.rotated).toBe(0);
     o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion!.veto).toBe('rotation_active');
@@ -429,8 +429,8 @@ describe('relay block detector', () => {
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 0);
     await s.t.run(async (ctx) => {
-      await upsertSettingRow(ctx, 'relay.enabled', 'true');
-      await upsertSettingRow(ctx, 'relay.autoRotate', 'true');
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
       await ctx.db.patch(s.relayId, { autoRotate: true });
       await ctx.db.patch(s.edgeA, {
         reachability: {
@@ -451,7 +451,7 @@ describe('relay block detector', () => {
         });
       }
     });
-    const r = await s.t.action(internal.relayDetector.run, {});
+    const r = await s.t.action(internal.edgeDetector.run, {});
     expect(r.rotated).toBe(0);
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion!.state).toBe('suspected');
@@ -465,8 +465,8 @@ describe('relay block detector', () => {
     await warmBaseline(s.t, s.relayId, 100);
     await nodeLoad(s.t, s.serverId, 0);
     await s.t.run(async (ctx) => {
-      await upsertSettingRow(ctx, 'relay.enabled', 'true');
-      await upsertSettingRow(ctx, 'relay.autoRotate', 'true');
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
       await ctx.db.patch(s.relayId, { autoRotate: true });
       for (let i = 0; i < 6; i++) {
         await ctx.db.insert('issueReports', {
@@ -491,7 +491,7 @@ describe('relay block detector', () => {
         expiresAt: NOW + 3_600_000,
       });
     });
-    const r = await s.t.action(internal.relayDetector.run, {});
+    const r = await s.t.action(internal.edgeDetector.run, {});
     expect(r.rotated).toBe(1);
     const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.suspicion!.edgeEvidence).toEqual([

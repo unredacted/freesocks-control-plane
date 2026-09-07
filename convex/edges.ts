@@ -19,7 +19,7 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { randomHex } from './lib/crypto';
 import { reserveAllocation } from './edgeProviderAccounts';
-import { edgeResourceName } from './lib/relays/accountSettings';
+import { edgeResourceName } from './lib/edges/accountSettings';
 
 type Edge = Doc<'edges'>;
 type Step = Edge['steps'][number];
@@ -245,11 +245,11 @@ export async function insertPlannedEdge(
   if (!account) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
   const live = await liveCountForAccount(ctx, a.accountId);
   if (live >= account.maxLiveEdges) {
-    throw new ConvexError({ code: 'relay.capacity', message: 'Account is at its live-edge cap' });
+    throw new ConvexError({ code: 'edge.capacity', message: 'Account is at its live-edge cap' });
   }
   if (!(await reserveAllocation(ctx, a.accountId))) {
     throw new ConvexError({
-      code: 'relay.budget',
+      code: 'edge.budget',
       message: 'Account allocation budget exhausted for today',
     });
   }
@@ -339,9 +339,9 @@ export const claimOp = internalMutation({
     const now = Date.now();
     if (edge.currentOp) {
       if (edge.currentOp.expiresAt > now)
-        return { ok: false as const, code: 'relay.op_busy' as const };
+        return { ok: false as const, code: 'edge.op_busy' as const };
       if (kind === 'provision_step' || kind === 'destroy_step')
-        return { ok: false as const, code: 'relay.op_unsettled' as const };
+        return { ok: false as const, code: 'edge.op_unsettled' as const };
     }
     const prevAttempt = edge.currentOp?.target === target ? edge.currentOp.attempt : 0;
     const op = {

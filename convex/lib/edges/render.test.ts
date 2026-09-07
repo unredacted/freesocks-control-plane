@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import YAML from 'yaml';
-import { RELAY_DEFAULTS, defaultClientRule } from '../relayConfig';
+import { EDGE_DEFAULTS, defaultClientRule } from '../edgeConfig';
 import type { AssignedEndpoint, PublishedEdge } from './assignment';
-import { effectiveRule, renderEntries, renderRelayEndpoints } from './render';
+import { effectiveRule, renderEntries, renderEdgeEndpoints } from './render';
 import { rewriteVlessLine } from './render/links';
 
 const NODE = 'node-a';
@@ -38,7 +38,7 @@ const assigned: { primary: AssignedEndpoint; backup: AssignedEndpoint } = {
   backup: { role: 'backup', edge: edgeB, sni: 'cdn-b.example' },
 };
 
-const cfg = { ...RELAY_DEFAULTS.render, enabled: true };
+const cfg = { ...EDGE_DEFAULTS.render, enabled: true };
 const linksRule = effectiveRule(cfg, defaultClientRule('v2rayng'));
 const autoRule = effectiveRule(cfg, defaultClientRule('singbox'));
 
@@ -112,7 +112,7 @@ describe('renderEntries', () => {
 describe('link-list rendering', () => {
   test('plain list: template replaced by labelled primary/backup entries, other lines untouched, one SNI each', () => {
     const body = [otherLink, templateLink].join('\n');
-    const out = renderRelayEndpoints({
+    const out = renderEdgeEndpoints({
       body,
       templateRemarks: [TEMPLATE],
       assigned,
@@ -142,7 +142,7 @@ describe('link-list rendering', () => {
       primary: { role: 'primary' as const, edge: tcpEdge, sni: null },
       backup: null,
     };
-    const links = renderRelayEndpoints({
+    const links = renderEdgeEndpoints({
       body: tcpTemplate,
       templateRemarks: [TEMPLATE],
       assigned: tcpAssigned,
@@ -152,7 +152,7 @@ describe('link-list rendering', () => {
     const line = links.body.split('\n')[0];
     expect(line).toContain('@203.0.113.10:443?');
     expect(line).toContain('sni=node.example');
-    const sb = renderRelayEndpoints({
+    const sb = renderEdgeEndpoints({
       body: JSON.stringify({
         outbounds: [
           {
@@ -177,13 +177,13 @@ describe('link-list rendering', () => {
 
   test('base64-wrapped list stays base64 and renders identically for the same input', () => {
     const body = btoa([templateLink, otherLink].join('\n'));
-    const out1 = renderRelayEndpoints({
+    const out1 = renderEdgeEndpoints({
       body,
       templateRemarks: [TEMPLATE],
       assigned,
       rule: linksRule,
     });
-    const out2 = renderRelayEndpoints({
+    const out2 = renderEdgeEndpoints({
       body,
       templateRemarks: [TEMPLATE],
       assigned,
@@ -197,14 +197,14 @@ describe('link-list rendering', () => {
   });
 
   test('no template line → untouched; disabled → untouched', () => {
-    const out = renderRelayEndpoints({
+    const out = renderEdgeEndpoints({
       body: otherLink,
       templateRemarks: [TEMPLATE],
       assigned,
       rule: linksRule,
     });
     expect(out).toMatchObject({ applied: false, body: otherLink, reason: 'no_template_lines' });
-    const off = renderRelayEndpoints({
+    const off = renderEdgeEndpoints({
       body: templateLink,
       templateRemarks: [TEMPLATE],
       assigned,
@@ -253,7 +253,7 @@ describe('sing-box rendering', () => {
   };
 
   test('clones the template outbound per endpoint, adds the auto group with exactly the emitted tags, makes it the selector default', () => {
-    const out = renderRelayEndpoints({
+    const out = renderEdgeEndpoints({
       body: JSON.stringify(singbox),
       templateRemarks: [TEMPLATE],
       assigned,
@@ -304,7 +304,7 @@ describe('sing-box rendering', () => {
       ...singbox,
       outbounds: [...singbox.outbounds, { type: 'http', tag: 'helper', detour: TEMPLATE }],
     };
-    const out = renderRelayEndpoints({
+    const out = renderEdgeEndpoints({
       body: JSON.stringify(withDetour),
       templateRemarks: [TEMPLATE],
       assigned,
@@ -314,13 +314,13 @@ describe('sing-box rendering', () => {
   });
 
   test('renders are byte-identical for identical input', () => {
-    const a = renderRelayEndpoints({
+    const a = renderEdgeEndpoints({
       body: JSON.stringify(singbox),
       templateRemarks: [TEMPLATE],
       assigned,
       rule: autoRule,
     });
-    const b = renderRelayEndpoints({
+    const b = renderEdgeEndpoints({
       body: JSON.stringify(singbox),
       templateRemarks: [TEMPLATE],
       assigned,
@@ -366,7 +366,7 @@ rules:
 
   test('clones the template proxy, adds a url-test group first and keeps the rest', () => {
     const rule = effectiveRule(cfg, defaultClientRule('mihomo'));
-    const out = renderRelayEndpoints({ body: clash, templateRemarks: [TEMPLATE], assigned, rule });
+    const out = renderEdgeEndpoints({ body: clash, templateRemarks: [TEMPLATE], assigned, rule });
     expect(out.applied).toBe(true);
     const doc = YAML.parse(out.body) as {
       proxies: Array<Record<string, unknown>>;
@@ -407,7 +407,7 @@ rules:
   });
 
   test('a body without proxies passes through', () => {
-    const out = renderRelayEndpoints({
+    const out = renderEdgeEndpoints({
       body: 'mixed-port: 7890\nproxies: []\n',
       templateRemarks: [TEMPLATE],
       assigned,

@@ -1,5 +1,5 @@
 /**
- * Relay reconcile cron (`relay-edge-reconcile`): the recovery loop that makes the
+ * Relay reconcile cron (`edge-reconcile`): the recovery loop that makes the
  * rotation machine safe to interrupt anywhere.
  *
  *  1. re-kick rotations whose next step went stale (a crashed action);
@@ -24,15 +24,15 @@ import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc } from './_generated/dataModel';
 import { runWithCronOutcome } from './cronHeartbeat';
-import { relayMs, type RelayConfig } from './lib/relayConfig';
+import { edgeMs, type EdgeConfig } from './lib/edgeConfig';
 import { isDiscoverable } from './edges';
-import { publishedCount } from './lib/relays/pool';
+import { publishedCount } from './lib/edges/pool';
 import type {
   Discovery,
   EdgeDescription,
   DestroyOutcome,
   ResourceStep,
-} from './lib/relays/providers/types';
+} from './lib/edges/providers/types';
 
 type Edge = Doc<'edges'>;
 
@@ -82,7 +82,7 @@ function stepOf(s: Edge['steps'][number]): ResourceStep {
 export const run = internalAction({
   args: {},
   handler: async (ctx): Promise<ReconcileReport> =>
-    runWithCronOutcome(ctx, 'relay-edge-reconcile', () => reconcile(ctx)),
+    runWithCronOutcome(ctx, 'edge-reconcile', () => reconcile(ctx)),
 });
 
 export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
@@ -175,7 +175,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       }
       // 3. Health refresh for live edges (non-destructive).
       if (['active', 'standby', 'draining'].includes(edge.status) && !inRotation) {
-        const staleHealth = (edge.lastHealthAt ?? 0) + relayMs.poll(cfg) * 10 <= now;
+        const staleHealth = (edge.lastHealthAt ?? 0) + edgeMs.poll(cfg) * 10 <= now;
         if (!staleHealth) continue;
         const desc: EdgeDescription = await ctx.runAction(internal.edgeProviderOps.describe, {
           accountId: edge.accountId,
@@ -266,7 +266,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
 }
 
 /** Discover the first unsettled step (or the expired op's target) and record what is there. */
-async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: ReconcileReport) {
+async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: ReconcileReport) {
   const accountId = edge.accountId!;
   const now = Date.now();
   // An expired claim on a destroy step: the delete may or may not have landed → confirm.
@@ -276,7 +276,7 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
       edgeId: edge._id,
       kind: 'discover',
       target: edge.currentOp.target,
-      claimMs: relayMs.opClaim(cfg),
+      claimMs: edgeMs.opClaim(cfg),
     });
     if (!cl.ok) return;
     if (!target) {
@@ -316,7 +316,7 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
         edgeId: edge._id,
         kind: 'discover',
         target: edge.currentOp.target,
-        claimMs: relayMs.opClaim(cfg),
+        claimMs: edgeMs.opClaim(cfg),
       });
       if (cl.ok)
         await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
@@ -327,7 +327,7 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
     edgeId: edge._id,
     kind: 'discover',
     target: pending.stepId,
-    claimMs: relayMs.opClaim(cfg),
+    claimMs: edgeMs.opClaim(cfg),
   });
   if (!cl.ok) return;
   // Discovery attempts live on the step, not the claim: every pass settles and
@@ -390,7 +390,7 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
         discoverAttempts: discoverAttempt,
       },
     });
-    if ((pending.startedAt ?? edge._creationTime) + relayMs.discoveryTimeout(cfg) < now) {
+    if ((pending.startedAt ?? edge._creationTime) + edgeMs.discoveryTimeout(cfg) < now) {
       await ctx.runMutation(internal.edges.patchEdge, {
         edgeId: edge._id,
         status: 'needs_operator',
@@ -402,7 +402,7 @@ async function settleEdge(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: 
 }
 
 /** One destroy pass: confirm requested deletes, then request the next present resource (reverse order). */
-async function destroyStep(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report: ReconcileReport) {
+async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: ReconcileReport) {
   const accountId = edge.accountId!;
   if (edge.destroyAttempts >= cfg.maxDestroyAttempts) {
     await ctx.runMutation(internal.edgeReconcileMutations.destroyExhausted, { edgeId: edge._id });
@@ -427,7 +427,7 @@ async function destroyStep(ctx: ActionCtx, cfg: RelayConfig, edge: Edge, report:
     edgeId: edge._id,
     kind: 'destroy_step',
     target: target.resourceId,
-    claimMs: relayMs.opClaim(cfg),
+    claimMs: edgeMs.opClaim(cfg),
   });
   if (!cl.ok) return;
   let out: DestroyOutcome;

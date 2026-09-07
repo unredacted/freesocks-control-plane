@@ -540,7 +540,7 @@ interface NodeStatusView {
   load: 'quiet' | 'busy' | 'crowded' | 'unknown' | null;
   /** When the signal was last observed (ISO), null when never. */
   checkedAt: string | null;
-  /** Relay edges (docs/relays.md): a refresh nudge + the labels of the
+  /** Edges (docs/edges.md): a refresh nudge + the labels of the
    *  connections this key's subscription carries. Null when the key is not
    *  behind a rendered relay origin. Labels only, never addresses. */
   relay: {
@@ -573,7 +573,7 @@ export const getNodeStatus = internalAction({
     const load = location
       ? await ctx.runQuery(internal.statusPage.locationLoad, { code: location.code })
       : null;
-    const relay = await ctx.runQuery(internal.relayRender.memberView, { subscriptionId: sub._id });
+    const relay = await ctx.runQuery(internal.edgeRender.memberView, { subscriptionId: sub._id });
 
     if (capabilitiesOf(sub.backend).nodeStats && sub.backendPlacement) {
       let stats = await ctx.runQuery(internal.remnawaveNodes.getPlacementStats, {

@@ -3,7 +3,7 @@
  * Reachability probe executor — the "use node" half (the Globalping SDK and
  * outbound fetches live here). One run per invocation: start the measurement,
  * poll until it finishes or the source's ceiling passes, then hand the results
- * to relayProbes.finishRun. Nothing here reads or writes member data; the
+ * to probes.finishRun. Nothing here reads or writes member data; the
  * target is one of FCP's own edge addresses.
  */
 import { v } from 'convex/values';
@@ -16,11 +16,11 @@ import {
   globalpingPoll,
   globalpingStart,
   type GlobalpingLike,
-} from './lib/relays/probes/globalping';
-import { checkhostNodes, checkhostPoll, checkhostStart } from './lib/relays/probes/checkhost';
-import { ripeAtlasPoll, ripeAtlasStart, type AtlasStarted } from './lib/relays/probes/ripeatlas';
-import { internalProbe } from './lib/relays/probes/internal';
-import { shortError, type ProbeResult, type ProbeTarget } from './lib/relays/probes/types';
+} from './lib/edges/probes/globalping';
+import { checkhostNodes, checkhostPoll, checkhostStart } from './lib/edges/probes/checkhost';
+import { ripeAtlasPoll, ripeAtlasStart, type AtlasStarted } from './lib/edges/probes/ripeatlas';
+import { internalProbe } from './lib/edges/probes/internal';
+import { shortError, type ProbeResult, type ProbeTarget } from './lib/edges/probes/types';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 

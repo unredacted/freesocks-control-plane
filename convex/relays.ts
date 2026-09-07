@@ -10,11 +10,11 @@ import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
-import { resolveRelayConfig, relayMs } from './lib/relayConfig';
-import { isPublicIpLiteral, addressFamily } from './lib/relays/ip';
-import { sameAddress } from './lib/relays/hosts';
-import { PROTOCOL_TRANSPORT, protocolUsesSni } from './lib/relays/protocols';
-import { nextFreePoolIndex, withEdgeAt, withoutEdge, publishedCount } from './lib/relays/pool';
+import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
+import { isPublicIpLiteral, addressFamily } from './lib/edges/ip';
+import { sameAddress } from './lib/edges/hosts';
+import { PROTOCOL_TRANSPORT, protocolUsesSni } from './lib/edges/protocols';
+import { nextFreePoolIndex, withEdgeAt, withoutEdge, publishedCount } from './lib/edges/pool';
 
 type Db = import('./_generated/server').DatabaseReader;
 
@@ -35,7 +35,7 @@ async function assertNodeUnbound(
   const other = rows.find((r) => r.backendServerId === backendServerId && r._id !== selfId);
   if (other) {
     throw new ConvexError({
-      code: 'relay.node_already_bound',
+      code: 'edge.node_already_bound',
       message: `Origin ${other.slug} already covers this node on this backend`,
     });
   }
@@ -55,7 +55,7 @@ async function assertAddressChangeAllowed(db: Db, origin: Doc<'relays'>, next?: 
     .collect();
   if (edges.some((e) => e.status !== 'destroyed')) {
     throw new ConvexError({
-      code: 'relay.origin_address_locked',
+      code: 'edge.origin_address_locked',
       message: 'Drain or destroy every edge of this origin before changing originAddress',
     });
   }
@@ -313,7 +313,7 @@ async function insertOrigin(
       message: 'nodeHostname and originAddress are required',
     });
   }
-  const cfg = await resolveRelayConfig(ctx.db);
+  const cfg = await resolveEdgeConfig(ctx.db);
   const p = patchFrom(a);
   await assertNodeUnbound(ctx.db, backendServerId, p.nodeHostname!, null);
   const now = Date.now();
@@ -333,9 +333,9 @@ async function insertOrigin(
     providerPreference: p.providerPreference,
     desiredPublished: p.desiredPublished ?? cfg.desiredPublishedDefault,
     standbyPerRelay: p.standbyPerRelay ?? cfg.standbyPerRelay,
-    cooldownMs: p.cooldownMs ?? relayMs.cooldown(cfg),
+    cooldownMs: p.cooldownMs ?? edgeMs.cooldown(cfg),
     maxRotationsPerDay: p.maxRotationsPerDay ?? cfg.maxRotationsPerRelayPerDay,
-    drainMs: p.drainMs ?? relayMs.drain(cfg),
+    drainMs: p.drainMs ?? edgeMs.drain(cfg),
     publicationEpoch: 0,
     publishedEdgeIds: [],
     standbyEdgeIds: [],
@@ -449,14 +449,14 @@ export const requestDelete = internalMutation({
     if (!row) return { ok: true as const, deleted: true };
     if (row.quarantine)
       throw new ConvexError({
-        code: 'relay.quarantined',
+        code: 'edge.quarantined',
         message: 'Resolve the quarantine before deleting',
       });
     if (row.activeRotationId) {
       const rot = await ctx.db.get(row.activeRotationId);
       if (rot && ['host_flipping', 'confirming', 'rolling_back'].includes(rot.phase)) {
         throw new ConvexError({
-          code: 'relay.busy',
+          code: 'edge.busy',
           message: 'A Host flip is in progress; retry when it converges',
         });
       }
@@ -621,7 +621,7 @@ export const adoptEdge = internalMutation({
     if (a.publish) {
       const idx = nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished);
       if (idx === null)
-        throw new ConvexError({ code: 'relay.pool_full', message: 'The published pool is full' });
+        throw new ConvexError({ code: 'edge.pool_full', message: 'The published pool is full' });
       poolIndex = idx;
       await ctx.db.patch(edgeId, {
         publication: 'published',
@@ -638,7 +638,7 @@ export const adoptEdge = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
-      action: 'relay.edge.adopted',
+      action: 'edge.adopted',
       targetType: 'relay',
       targetId: a.relayId,
       payload: {
@@ -699,21 +699,21 @@ export const publishEdge = internalMutation({
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId)
       throw new ConvexError({ code: 'not_found', message: 'Origin/edge not found' });
-    const cfg = await resolveRelayConfig(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
     const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth);
     if (!check.ok)
       throw new ConvexError({
-        code: `relay.${check.code}`,
+        code: `edge.${check.code}`,
         message: `Edge cannot be published: ${check.code}`,
       });
     let idx = poolIndex ?? nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished);
     if (idx === null)
-      throw new ConvexError({ code: 'relay.pool_full', message: 'The published pool is full' });
+      throw new ConvexError({ code: 'edge.pool_full', message: 'The published pool is full' });
     if (idx < 0 || idx >= Math.max(origin.desiredPublished, origin.publishedEdgeIds.length))
       idx = nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished) ?? 0;
     const occupant = origin.publishedEdgeIds[idx];
     if (occupant && occupant !== edgeId)
-      throw new ConvexError({ code: 'relay.pool_index_taken', message: 'Pool index is occupied' });
+      throw new ConvexError({ code: 'edge.pool_index_taken', message: 'Pool index is occupied' });
     const now = Date.now();
     await ctx.db.patch(edgeId, {
       publication: 'published',
@@ -731,8 +731,8 @@ export const publishEdge = internalMutation({
     await writeAuditLog(ctx, {
       actorType: actorAdminId ? 'admin' : 'system',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.edge.published',
-      targetType: 'relay_edge',
+      action: 'edge.published',
+      targetType: 'edge',
       targetId: edgeId,
       payload: { relaySlug: origin.slug, edgeId, poolIndex: idx, epoch },
     });
@@ -786,8 +786,8 @@ export const unpublishEdge = internalMutation({
     await writeAuditLog(ctx, {
       actorType: actorAdminId ? 'admin' : 'system',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.edge.unpublished',
-      targetType: 'relay_edge',
+      action: 'edge.unpublished',
+      targetType: 'edge',
       targetId: edgeId,
       payload: { relaySlug: origin.slug, edgeId, poolIndex, epoch },
     });
@@ -827,14 +827,14 @@ export const dropFromPool = internalMutation({
     if (inPool) {
       await writeAuditLog(ctx, {
         actorType: 'system',
-        action: 'relay.edge.unpublished',
-        targetType: 'relay_edge',
+        action: 'edge.unpublished',
+        targetType: 'edge',
         targetId: edgeId,
         payload: { relaySlug: origin.slug, edgeId, poolIndex: edge?.poolIndex ?? null, epoch },
       });
       await writeAuditLog(ctx, {
         actorType: 'system',
-        action: 'relay.drift',
+        action: 'edge.drift',
         targetType: 'relay',
         targetId: relayId,
         payload: {

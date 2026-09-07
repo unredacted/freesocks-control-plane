@@ -555,9 +555,9 @@ The recommended-client catalog marks the Clash-family additions (FlClash, Mihomo
 Party) `schemeId: null` (manual paste of the subscription URL) rather than shipping
 an unverified one-tap import scheme.
 
-## Host management and node inventory (relay edges)
+## Host management and node inventory (edges)
 
-Two optional provider capabilities back `docs/relays.md`: `hostManagement`
+Two optional provider capabilities back `docs/edges.md`: `hostManagement`
 (`listHosts` / `updateHost`: list the panel's client-facing connection entries and
 repoint ONE of them by uuid, address + port only) and `nodeInventory`
 (`getNodeInventory`: per-node online + users-online, cached in `backendNodeInventory`

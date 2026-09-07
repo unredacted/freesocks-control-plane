@@ -544,7 +544,7 @@ export const AdminStatusSummary = z.object({
   // CDN-blinding E2EE posture: FS_E2EE_REQUIRED rejects unsealed member
   // requests on seal/reveal routes. Additive default for a pre-deploy backend.
   e2ee: z.object({ required: z.boolean() }).default({ required: false }),
-  // Relay edges (docs/relays.md): dashboard mini-card figures. Additive default.
+  // Relay edges (docs/edges.md): dashboard mini-card figures. Additive default.
   relays: z
     .object({
       total: z.number().int().nonnegative(),

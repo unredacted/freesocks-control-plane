@@ -8,7 +8,7 @@ import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { addressFamily, bracketIfV6 } from './lib/relays/ip';
+import { addressFamily, bracketIfV6 } from './lib/edges/ip';
 import { mapSummaryAdmin } from './probes';
 
 const LABEL_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._:/()-]{0,63}$/u;
@@ -73,7 +73,7 @@ export const create = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
-      action: 'relay.probe.target.create',
+      action: 'probe.target.create',
       targetType: 'probe_target',
       targetId: `custom:${id}`,
       payload: { label: a.label.trim() },
@@ -112,7 +112,7 @@ export const update = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
-      action: 'relay.probe.target.update',
+      action: 'probe.target.update',
       targetType: 'probe_target',
       targetId: `custom:${a.id}`,
       payload: { label: patch.label ?? row.label },
@@ -136,7 +136,7 @@ export const remove = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.probe.target.delete',
+      action: 'probe.target.delete',
       targetType: 'probe_target',
       targetId: `custom:${id}`,
       payload: { label: row.label },

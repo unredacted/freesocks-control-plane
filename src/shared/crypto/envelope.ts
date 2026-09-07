@@ -289,15 +289,15 @@ const SEALED_PREFIXES: { method: string; prefix: string; policy: RoutePolicy }[]
   { method: 'PATCH', prefix: '/api/v1/admin/mirror-providers/', policy: SEAL_REQ },
   // Member gift-code reveal (same secret class; the buyer polls this GET).
   { method: 'GET', prefix: '/api/v1/billing/order/', policy: REVEAL },
-  // Relay edges (docs/relays.md): every admin route under this prefix carries
+  // Relay edges (docs/edges.md): every admin route under this prefix carries
   // provider credentials, edge addresses, provider handles or live LB data, so
   // the whole surface is sealed by verb class — GET reveals, POST seals both
   // legs, PATCH/PUT seal the uploaded body. DELETE carries nothing. Dual-mode
   // (plaintext accepted) stays for `fsv1_` IaC callers, as on backend-servers.
-  { method: 'GET', prefix: '/api/v1/admin/relay/', policy: REVEAL },
-  { method: 'POST', prefix: '/api/v1/admin/relay/', policy: SEAL_BOTH },
-  { method: 'PATCH', prefix: '/api/v1/admin/relay/', policy: SEAL_REQ },
-  { method: 'PUT', prefix: '/api/v1/admin/relay/', policy: SEAL_REQ },
+  { method: 'GET', prefix: '/api/v1/admin/edges/', policy: REVEAL },
+  { method: 'POST', prefix: '/api/v1/admin/edges/', policy: SEAL_BOTH },
+  { method: 'PATCH', prefix: '/api/v1/admin/edges/', policy: SEAL_REQ },
+  { method: 'PUT', prefix: '/api/v1/admin/edges/', policy: SEAL_REQ },
 ];
 
 export function routePolicy(path: string, method: string): RoutePolicy | undefined {

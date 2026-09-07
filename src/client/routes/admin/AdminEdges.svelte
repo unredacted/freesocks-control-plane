@@ -7,27 +7,27 @@
   import EdgeProvidersPanel from './EdgeProvidersPanel.svelte';
   import EdgeTemplatesPanel from './EdgeTemplatesPanel.svelte';
   import ProtocolProfilesPanel from './ProtocolProfilesPanel.svelte';
-  import RelayConfigPanel from './RelayConfigPanel.svelte';
-  import { adminRelaySummaryQuery } from '../../lib/queries';
+  import EdgeConfigPanel from './EdgeConfigPanel.svelte';
+  import { adminEdgeSummaryQuery } from '../../lib/queries';
 
   /**
-   * Admin → Relays (docs/relays.md): provider-managed L4 load balancers (edges) in
+   * Admin → Edges (docs/edges.md): provider-managed L4 load balancers (edges) in
    * front of relay nodes. Relays (published pool, rotations, edges),
    * provider accounts, edge templates, camouflage profiles, and the rendering /
    * probe / detector configuration. Every request on this page is HPKE-sealed
    * by the shared route policy. English-only (admin CMS convention).
    */
-  const summary = adminRelaySummaryQuery();
+  const summary = adminEdgeSummaryQuery();
   let tab = $state('origins');
 </script>
 
 <AdminLayout>
   <div class="mb-6 flex flex-wrap items-end justify-between gap-3">
     <div>
-      <h1 class="text-2xl font-bold">Relays and edges</h1>
+      <h1 class="text-2xl font-bold">Edges</h1>
       <p class="mt-1 text-sm text-muted-foreground">
-        Provider-managed L4 edges in front of relay nodes: published pools, rotations, REALITY
-        profiles and the block detector. Probe telemetry lives under Telemetry.
+        Provider-managed L4 load balancers in front of your relay nodes: published pools,
+        rotations, protocol profiles and the block detector. Probe telemetry lives under Telemetry.
       </p>
     </div>
     {#if summary.data}
@@ -84,7 +84,7 @@
       <Tabs.Content value="templates"><EdgeTemplatesPanel /></Tabs.Content>
       <Tabs.Content value="profiles"><ProtocolProfilesPanel /></Tabs.Content>
       <Tabs.Content value="config">
-        <RelayConfigPanel relays={(summary.data?.relays ?? []).map((o) => o.relay)} />
+        <EdgeConfigPanel relays={(summary.data?.relays ?? []).map((o) => o.relay)} />
       </Tabs.Content>
     </Tabs.Root>
   {/if}

@@ -84,7 +84,7 @@
         { to: '/admin/backend-servers', label: 'Backend servers', icon: Server },
         { to: '/admin/connection-modes', label: 'Connection modes', icon: GitBranch },
         { to: '/admin/remnawave', label: 'Remnawave', icon: Waypoints },
-        { to: '/admin/relays', label: 'Relays', icon: Network },
+        { to: '/admin/edges', label: 'Edges', icon: Network },
         { to: '/admin/status', label: 'Status page', icon: HeartPulse },
       ],
     },

@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
-import { RELAY_DEFAULTS } from '../relayConfig';
+import { EDGE_DEFAULTS } from '../edgeConfig';
 import { autoRotateDecision, evaluate, type EdgeProbeState, type EvaluationInput } from './scoring';
 
-const cfg = { detect: RELAY_DEFAULTS.detect, probe: { ...RELAY_DEFAULTS.probe, enabled: true } };
+const cfg = { detect: EDGE_DEFAULTS.detect, probe: { ...EDGE_DEFAULTS.probe, enabled: true } };
 const now = 1_800_000_000_000;
 
 function warmBaseline(reports = 1, usersOnline: number | null = 100, n = 80) {
@@ -87,7 +87,7 @@ describe('evaluate', () => {
         loadStale: true,
       }),
     );
-    expect(stale.loadScore).toBeCloseTo(RELAY_DEFAULTS.detect.staleWeight);
+    expect(stale.loadScore).toBeCloseTo(EDGE_DEFAULTS.detect.staleWeight);
     const cold = evaluate(
       input({
         baseline: warmBaseline(1, 100, 5),
@@ -128,7 +128,7 @@ describe('evaluate', () => {
         edges: [
           edge('down', {
             internalVerdict: 'unreachable',
-            byCountry: RELAY_DEFAULTS.probe.countries.map((c) => ({
+            byCountry: EDGE_DEFAULTS.probe.countries.map((c) => ({
               country: c,
               verdict: 'unreachable' as const,
             })),
@@ -230,7 +230,7 @@ describe('autoRotateDecision', () => {
     maxRotationsPerDay: 3,
     hostManaged: true,
   };
-  const on = { enabled: true, autoRotate: true, detect: RELAY_DEFAULTS.detect };
+  const on = { enabled: true, autoRotate: true, detect: EDGE_DEFAULTS.detect };
   const published = [
     { edgeId: 'e1', poolIndex: 0 },
     { edgeId: 'e2', poolIndex: 1 },
@@ -245,7 +245,7 @@ describe('autoRotateDecision', () => {
         published,
         now,
       }),
-    ).toEqual({ veto: 'relay_disabled' });
+    ).toEqual({ veto: 'edge_disabled' });
     expect(
       autoRotateDecision({
         evaluation: suspectedEv,

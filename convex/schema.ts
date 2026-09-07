@@ -97,7 +97,7 @@ const billingOrderStatus = v.union(
   v.literal('expired'),
 );
 
-// Relay edges (provider-managed load balancers in front of REALITY nodes):
+// Edges (provider-managed L4 load balancers in front of relay nodes):
 // shared validators for the relay* tables below. Credentials and settings are
 // discriminated by provider `type` so EDGE_PROVIDER_IDS drift is a test failure.
 const relayProviderId = edgeProviderIdValidator;
@@ -824,8 +824,8 @@ export default defineSchema({
     .index('by_server', ['backendServerId']),
 
   // ===========================================================================
-  // Relay edges: provider-managed L4 load balancers published in front of
-  // REALITY nodes. Design notes: docs/relays.md. Everything below is additive.
+  // Edges: provider-managed L4 load balancers published in front of
+  // REALITY nodes. Design notes: docs/edges.md. Everything below is additive.
   // Secrets live ONLY in relayProviderAccounts.credentials (masked to per-field
   // booleans for the admin) and are never logged or audited.
   // ===========================================================================
@@ -882,7 +882,7 @@ export default defineSchema({
   protocolProfiles: defineTable({
     slug: v.string(), // unique
     name: v.string(),
-    // What the inbound speaks (lib/relays/protocols.ts): decides whether server
+    // What the inbound speaks (lib/edges/protocols.ts): decides whether server
     // names / a target are required and what the renderer rewrites.
     protocol: v.union(v.literal('reality'), v.literal('tls'), v.literal('plain')),
     // Bound to one provider's network (REALITY server names are only plausible
@@ -957,7 +957,7 @@ export default defineSchema({
       v.object({ rotationId: v.id('edgeRotations'), since: v.number(), reason: v.string() }),
     ),
     deleting: v.optional(v.boolean()),
-    // Block-detector state (convex/relayDetector.ts).
+    // Block-detector state (convex/edgeDetector.ts).
     suspicion: v.optional(
       v.object({
         state: v.union(v.literal('clear'), v.literal('suspected')),
@@ -1396,7 +1396,7 @@ export default defineSchema({
     connectionChoice: v.optional(v.string()),
     relayEdgeId: v.optional(v.string()),
     // FCP has not observed a fronted delivery of content generated after the
-    // origin's last rotation for this key (an approximation, see docs/relays.md).
+    // origin's last rotation for this key (an approximation, see docs/edges.md).
     refreshNotObserved: v.optional(v.boolean()),
     // 1 = this member's first eligible report for this origin inside the detector
     // window, else 0 (a deduplicated contribution, not a distinct-member count).

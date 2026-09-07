@@ -4,7 +4,7 @@
  * node's relay slots. Pure: the caller resolves assignment + rules + labels
  * and hands them in; this module only transforms text.
  */
-import type { ClientRenderRule, RelayConfig } from '../relayConfig';
+import type { ClientRenderRule, EdgeConfig } from '../edgeConfig';
 import type { AssignedEndpoint } from './assignment';
 import { detectBodyFormat } from './clientFamilies';
 import { renderClash } from './render/clash';
@@ -24,7 +24,7 @@ export interface EffectiveRule extends RenderRuleInput {
 }
 
 /** Merge the global render config with one family's rule ('' / inherit = global). */
-export function effectiveRule(cfg: RelayConfig['render'], rule: ClientRenderRule): EffectiveRule {
+export function effectiveRule(cfg: EdgeConfig['render'], rule: ClientRenderRule): EffectiveRule {
   return {
     enabled: cfg.enabled && rule.enabled,
     autoGroup: rule.autoGroup,
@@ -81,7 +81,7 @@ export function renderEntries(
 }
 
 /** Render one body; picks the renderer from the body's shape. */
-export function renderRelayEndpoints(args: {
+export function renderEdgeEndpoints(args: {
   body: string;
   templateRemarks: string[];
   assigned: { primary: AssignedEndpoint | null; backup: AssignedEndpoint | null };

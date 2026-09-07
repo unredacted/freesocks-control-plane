@@ -2,7 +2,7 @@
  * Reachability probes, DB half: probe runs (`probeRuns`), the per-target
  * per-country per-source rollup (`probeReachability`), each target's
  * cross-source summary (`edges.reachability`, `relays.reachability`,
- * `probeTargets.reachability`), scheduling (the `relay-probe` cron + manual
+ * `probeTargets.reachability`), scheduling (the `edge-probe` cron + manual
  * "probe now"), and the admin reads (Telemetry → Probes).
  *
  * A TARGET is one of: an edge (its public address, per family), a relay node
@@ -14,7 +14,7 @@
  * (probeOps.execute), so the request and its work are one transaction. Rollup
  * semantics: a reachability row describes the LAST finished run for its
  * (target, country, source, address family); the summary combines the sources
- * per country with the agreement rules in lib/relays/probes/verdict.ts.
+ * per country with the agreement rules in lib/edges/probes/verdict.ts.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -23,15 +23,15 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { recordHeartbeat, runWithCronOutcome } from './cronHeartbeat';
-import { resolveRelayConfig, resolveRelaySecrets, type RelayConfig } from './lib/relayConfig';
-import { addressFamily, bracketIfV6 } from './lib/relays/ip';
+import { resolveEdgeConfig, resolveEdgeSecrets, type EdgeConfig } from './lib/edgeConfig';
+import { addressFamily, bracketIfV6 } from './lib/edges/ip';
 import {
   countryVerdict,
   sourceVerdict,
   type SourceSummary,
   type Verdict,
-} from './lib/relays/probes/verdict';
-import type { ProbeResult, ProbeSource } from './lib/relays/probes/types';
+} from './lib/edges/probes/verdict';
+import type { ProbeResult, ProbeSource } from './lib/edges/probes/types';
 
 const MIN = 60_000;
 /** Settled probe runs are evidence history, not a ledger: 14 days is plenty for the admin view. */
@@ -124,7 +124,7 @@ export function mapSummaryAdmin(s: Summary | undefined) {
 
 /** Sources enabled by config and usable (a key-requiring source needs its key). */
 export function enabledSources(
-  cfg: RelayConfig,
+  cfg: EdgeConfig,
   secrets: { globalpingToken: string; ripeAtlasKey: string },
 ): ProbeSource[] {
   const out: ProbeSource[] = [];
@@ -211,7 +211,7 @@ async function insertRun(
   await ctx.scheduler.runAfter(0, internal.probeOps.execute, { runId });
   await writeAuditLog(ctx, {
     actorType: 'system',
-    action: 'relay.probe.run',
+    action: 'probe.run',
     targetType: 'probe_target',
     targetId: targetKeyOf(a.target),
     payload: { targetKey: targetKeyOf(a.target), source: a.source, trigger: a.trigger },
@@ -232,10 +232,10 @@ export async function requestProbesFor(
   const resolved = await resolveTarget(ctx, target);
   if (!resolved) throw new ConvexError({ code: 'not_found', message: 'Probe target not found' });
   if (!resolved.addresses.v4 && !resolved.addresses.v6) {
-    throw new ConvexError({ code: 'relay.no_address', message: 'The target has no address yet' });
+    throw new ConvexError({ code: 'edge.no_address', message: 'The target has no address yet' });
   }
-  const cfg = await resolveRelayConfig(ctx.db);
-  const secrets = await resolveRelaySecrets(ctx.db);
+  const cfg = await resolveEdgeConfig(ctx.db);
+  const secrets = await resolveEdgeSecrets(ctx.db);
   const use = sources ?? enabledSources(cfg, secrets);
   const runIds: Id<'probeRuns'>[] = [];
   for (const source of use) {
@@ -281,7 +281,7 @@ export const requestProbes = internalMutation({
 
 /**
  * Several targets at once (Telemetry → Probes "Probe now"). Audited once as the
- * operator's request; every run still writes its own `relay.probe.run` row.
+ * operator's request; every run still writes its own `edge.probe.run` row.
  */
 export const requestMany = internalMutation({
   args: {
@@ -306,7 +306,7 @@ export const requestMany = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.probe.requested',
+      action: 'probe.requested',
       targetType: 'probe_target',
       payload: {
         targets: targets.length,
@@ -349,7 +349,7 @@ export const finishRun = internalMutation({
     if (!run || run.status === 'finished') return null;
     const now = Date.now();
     await ctx.db.patch(runId, { status: 'finished', finishedAt: now, results });
-    const cfg = await resolveRelayConfig(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
     const target: ProbeTargetRef = { kind: run.targetKind, ref: run.targetRef };
     // Per-country rollup for THIS source.
     const byCountry = new Map<string, ProbeResult[]>();
@@ -404,7 +404,7 @@ export const finishRun = internalMutation({
       if (!row || row.verdict !== summary.verdict) {
         await writeAuditLog(ctx, {
           actorType: 'system',
-          action: 'relay.probe.verdict',
+          action: 'probe.verdict',
           targetType: 'probe_target',
           targetId: targetKeyOf(target),
           payload: {
@@ -496,8 +496,8 @@ export const runContext = internalQuery({
   handler: async (ctx, { runId }) => {
     const run = await ctx.db.get(runId);
     if (!run) return null;
-    const cfg = await resolveRelayConfig(ctx.db);
-    const secrets = await resolveRelaySecrets(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
+    const secrets = await resolveEdgeSecrets(ctx.db);
     return { run, cfg, secrets };
   },
 });
@@ -525,7 +525,7 @@ export const listRuns = internalQuery({
 export const matrix = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const cfg = await resolveRelayConfig(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
     const relays = (await ctx.db.query('relays').collect()).sort((a, b) =>
       a.slug.localeCompare(b.slug),
     );
@@ -649,13 +649,13 @@ export const auditFeed = internalQuery({
   handler: async (ctx, { take }) => {
     const n = Math.min(take ?? 50, 200);
     const actions = [
-      'relay.probe.requested',
-      'relay.probe.run',
-      'relay.probe.verdict',
-      'relay.probe.target.create',
-      'relay.probe.target.update',
-      'relay.probe.target.delete',
-      'admin.relay.probe.change',
+      'probe.requested',
+      'probe.run',
+      'probe.verdict',
+      'probe.target.create',
+      'probe.target.update',
+      'probe.target.delete',
+      'admin.edge.probe.change',
     ];
     const rows = [];
     for (const action of actions) {
@@ -692,8 +692,8 @@ export const auditFeed = internalQuery({
 export const due = internalQuery({
   args: { now: v.number() },
   handler: async (ctx, { now }) => {
-    const cfg = await resolveRelayConfig(ctx.db);
-    const secrets = await resolveRelaySecrets(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
+    const secrets = await resolveEdgeSecrets(ctx.db);
     const relays = await ctx.db
       .query('relays')
       .withIndex('by_enabled', (q) => q.eq('enabled', true))
@@ -772,7 +772,7 @@ export const sweepFinished = internalMutation({
   },
   handler: async (ctx, { now: nowArg, limit, rounds }) => {
     const now = nowArg ?? Date.now();
-    if ((rounds ?? 0) === 0) await recordHeartbeat(ctx, 'retention-relay-probes');
+    if ((rounds ?? 0) === 0) await recordHeartbeat(ctx, 'retention-edge-probes');
     const cutoff = now - PROBE_RUN_RETENTION_MS;
     const page = limit ?? 200;
     let removed = 0;
@@ -798,11 +798,11 @@ export const sweepFinished = internalMutation({
   },
 });
 
-/** The `relay-probe` cron tick: budget-aware round for every due target. */
+/** The `edge-probe` cron tick: budget-aware round for every due target. */
 export const run = internalAction({
   args: {},
   handler: async (ctx): Promise<{ requested: number; skipped: number; timedOut: number }> =>
-    runWithCronOutcome(ctx, 'relay-probe', async () => {
+    runWithCronOutcome(ctx, 'edge-probe', async () => {
       const now = Date.now();
       const { timedOut } = await ctx.runMutation(internal.probes.sweepStuck, { now });
       const plan = await ctx.runQuery(internal.probes.due, { now });

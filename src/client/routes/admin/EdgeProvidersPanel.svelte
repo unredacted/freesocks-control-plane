@@ -18,14 +18,14 @@
   import { adminEdgeProvidersQuery, adminEdgeTemplatesQuery } from '../../lib/queries';
   import {
     EDGE_PROVIDER_IDS,
-    RelayIdResponse,
+    EdgeIdResponse,
     EdgeDiscoverResponse,
     EdgeInventoryResponse,
-    RelayOkResponse,
+    EdgeOkResponse,
     EdgeTestCredentialsResponse,
     type EdgeProviderAccountAdmin,
     type EdgeProviderId,
-  } from '../../../shared/contracts/relays';
+  } from '../../../shared/contracts/edges';
   import { formatDateTime } from '../../lib/i18n/format';
   import AdminListState from './AdminListState.svelte';
 
@@ -40,7 +40,7 @@
   const providers = adminEdgeProvidersQuery();
   const templates = adminEdgeTemplatesQuery();
   const qc = useQueryClient();
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'relays'] });
+  const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'edges'] });
   const onError = (title: string) => (err: unknown) =>
     toast.error(title, { description: apiErrorMessage(err) });
 
@@ -271,7 +271,7 @@
         Object.entries(d.credentials).filter(([, v]) => v.trim() !== ''),
       );
       return apiClient.post(
-        '/api/v1/admin/relay/providers/discover',
+        '/api/v1/admin/edges/providers/discover',
         {
           provider: d.provider,
           credentials: creds,
@@ -315,11 +315,11 @@
         defaultTemplateId: d.defaultTemplateId || null,
       };
       if (d.id)
-        return apiClient.patch(`/api/v1/admin/relay/providers/${d.id}`, body, RelayOkResponse);
+        return apiClient.patch(`/api/v1/admin/edges/providers/${d.id}`, body, EdgeOkResponse);
       return apiClient.post(
-        '/api/v1/admin/relay/providers',
+        '/api/v1/admin/edges/providers',
         { ...body, provider: d.provider, name: d.name.trim(), credentials: creds },
-        RelayIdResponse,
+        EdgeIdResponse,
       );
     },
     onSuccess: () => {
@@ -332,7 +332,7 @@
   }));
   const remove = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/relay/providers/${id}`, RelayOkResponse),
+      apiClient.delete(`/api/v1/admin/edges/providers/${id}`, EdgeOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Account removed');
@@ -345,7 +345,7 @@
   const test = createMutation(() => ({
     mutationFn: (accountId: string) =>
       apiClient.post(
-        '/api/v1/admin/relay/providers/test-credentials',
+        '/api/v1/admin/edges/providers/test-credentials',
         { accountId },
         EdgeTestCredentialsResponse,
       ),
@@ -362,7 +362,7 @@
   }));
   const qualify = createMutation(() => ({
     mutationFn: ({ id, qualified }: { id: string; qualified: boolean }) =>
-      apiClient.post(`/api/v1/admin/relay/providers/${id}/qualify`, { qualified }, RelayOkResponse),
+      apiClient.post(`/api/v1/admin/edges/providers/${id}/qualify`, { qualified }, EdgeOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Qualification updated');
@@ -375,7 +375,7 @@
   const pullInventory = createMutation(() => ({
     mutationFn: (id: string) =>
       apiClient.post(
-        `/api/v1/admin/relay/providers/${id}/inventory/refresh`,
+        `/api/v1/admin/edges/providers/${id}/inventory/refresh`,
         {},
         EdgeInventoryResponse,
       ),

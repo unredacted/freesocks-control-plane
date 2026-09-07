@@ -1,6 +1,6 @@
 /**
  * Protocol profiles: what a relay slot's inbound speaks (`reality` / `tls` /
- * `plain`, lib/relays/protocols.ts) and the data the renderer needs for it: the
+ * `plain`, lib/edges/protocols.ts) and the data the renderer needs for it: the
  * approved server names (REALITY SNIs, or a real certificate's names) and, for
  * REALITY, the impersonated target. Optionally scoped to one provider's network
  * (REALITY names are only plausible near the edge network). Operator data,
@@ -17,13 +17,13 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
-import { resolveRelayConfig, relayMs } from './lib/relayConfig';
+import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
 import {
   isSlotProtocol,
   protocolNeedsTarget,
   protocolUsesSni,
   type SlotProtocol,
-} from './lib/relays/protocols';
+} from './lib/edges/protocols';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const HOSTNAME_RE = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/i;
@@ -219,8 +219,8 @@ export const create = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
-      action: 'relay.profile.create',
-      targetType: 'relay_profile',
+      action: 'edge.profile.create',
+      targetType: 'edge_profile',
       targetId: id,
       payload: { slug: a.slug, provider: provider ?? null, protocol },
     });
@@ -279,7 +279,7 @@ export const update = internalMutation({
     }
     if (a.serverNames !== undefined) {
       const wanted = parseSnis(a.serverNames, row.protocol);
-      const cfg = await resolveRelayConfig(ctx.db);
+      const cfg = await resolveEdgeConfig(ctx.db);
       const now = Date.now();
       const next = row.serverNames.map((s) => {
         if (wanted.includes(s.sni))
@@ -289,7 +289,7 @@ export const update = internalMutation({
             sni: s.sni,
             status: 'retired' as const,
             retiredAt: now,
-            drainUntil: now + relayMs.sniDrain(cfg),
+            drainUntil: now + edgeMs.sniDrain(cfg),
           };
         }
         return s;
@@ -311,8 +311,8 @@ export const update = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
-      action: 'relay.profile.update',
-      targetType: 'relay_profile',
+      action: 'edge.profile.update',
+      targetType: 'edge_profile',
       targetId: a.id,
       payload: { slug: row.slug, provider: row.provider ?? null },
     });
@@ -329,7 +329,7 @@ export const retireSni = internalMutation({
   handler: async (ctx, { id, snis, actorAdminId }) => {
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Profile not found' });
-    const cfg = await resolveRelayConfig(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
     const targets = new Set(snis.map((s) => normalizeSni(s)).filter((s): s is string => !!s));
     let count = 0;
@@ -340,7 +340,7 @@ export const retireSni = internalMutation({
           sni: s.sni,
           status: 'retired' as const,
           retiredAt: now,
-          drainUntil: now + relayMs.sniDrain(cfg),
+          drainUntil: now + edgeMs.sniDrain(cfg),
         };
       }
       return s;
@@ -356,8 +356,8 @@ export const retireSni = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.sni.retire',
-      targetType: 'relay_profile',
+      action: 'edge.profile.sni.retire',
+      targetType: 'edge_profile',
       targetId: id,
       payload: { profileSlug: row.slug, count },
     });
@@ -388,8 +388,8 @@ export const reactivateSni = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.sni.reactivate',
-      targetType: 'relay_profile',
+      action: 'edge.profile.sni.reactivate',
+      targetType: 'edge_profile',
       targetId: id,
       payload: { profileSlug: row.slug, count },
     });
@@ -425,8 +425,8 @@ export const recordQualification = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
-      action: 'relay.profile.qualified',
-      targetType: 'relay_profile',
+      action: 'edge.profile.qualified',
+      targetType: 'edge_profile',
       targetId: a.id,
       payload: { slug: row.slug, provider: row.provider, tlsOk: a.tlsOk, authOk: a.authOk },
     });
@@ -448,8 +448,8 @@ export const remove = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.profile.delete',
-      targetType: 'relay_profile',
+      action: 'edge.profile.delete',
+      targetType: 'edge_profile',
       targetId: id,
       payload: { slug: row.slug, provider: row.provider ?? null },
     });

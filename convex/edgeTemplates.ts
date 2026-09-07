@@ -1,7 +1,7 @@
 /**
  * Edge templates: operator-editable provisioning parameters per provider (and
  * optionally per account). `params` is JSON validated by the provider's
- * template schema (convex/lib/relays/providers/templates.ts — SDK-free, so this
+ * template schema (convex/lib/edges/providers/templates.ts — SDK-free, so this
  * isolate module can validate directly). A provider always has at least one
  * template: `ensureDefaults` seeds the adapter defaults on first use.
  * `paramsHash` is a stable content hash (FNV-1a over canonical JSON) so a
@@ -17,8 +17,8 @@ import {
   EDGE_PROVIDER_IDS,
   type EdgeProviderId,
 } from './lib/edgeProviderIds';
-import { EDGE_TEMPLATES, validateTemplateParams } from './lib/relays/providers/templates';
-import { canonicalJson } from './lib/relays/providers/template';
+import { EDGE_TEMPLATES, validateTemplateParams } from './lib/edges/providers/templates';
+import { canonicalJson } from './lib/edges/providers/template';
 
 /** FNV-1a 64-bit as 16 hex chars (isolate-safe, no WebCrypto needed). */
 export function fnv1a64Hex(input: string): string {
@@ -199,8 +199,8 @@ export const create = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
-      action: 'relay.template.create',
-      targetType: 'relay_edge_template',
+      action: 'edge.template.create',
+      targetType: 'edge_template',
       targetId: id,
       payload: { provider: a.provider, name: a.name },
     });
@@ -272,8 +272,8 @@ export const update = internalMutation({
       await writeAuditLog(ctx, {
         actorType: 'admin',
         actorId: a.actorAdminId ?? undefined,
-        action: 'relay.provider_account.qualified',
-        targetType: 'relay_provider_account',
+        action: 'edge.provider_account.qualified',
+        targetType: 'edge_provider_account',
         targetId: acct._id,
         payload: { name: acct.name, provider: acct.provider, qualified: false },
       });
@@ -281,8 +281,8 @@ export const update = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
-      action: 'relay.template.update',
-      targetType: 'relay_edge_template',
+      action: 'edge.template.update',
+      targetType: 'edge_template',
       targetId: a.id,
       payload: { provider: row.provider, name: patch.name ?? row.name },
     });
@@ -322,8 +322,8 @@ export const remove = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'relay.template.delete',
-      targetType: 'relay_edge_template',
+      action: 'edge.template.delete',
+      targetType: 'edge_template',
       targetId: id,
       payload: { provider: row.provider, name: row.name },
     });

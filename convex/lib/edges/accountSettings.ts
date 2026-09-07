@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { EdgeProviderId } from '../edgeProviderIds';
 
-export const RELAY_SETTINGS_SCHEMAS = {
+export const EDGE_SETTINGS_SCHEMAS = {
   gcore: z.object({
     type: z.literal('gcore'),
     projectId: z.number().int().positive(),
@@ -38,10 +38,8 @@ export const RELAY_SETTINGS_SCHEMAS = {
   }),
 } as const;
 
-export type RelaySettingsFor<P extends EdgeProviderId> = z.infer<
-  (typeof RELAY_SETTINGS_SCHEMAS)[P]
->;
-export type RelaySettings = RelaySettingsFor<EdgeProviderId>;
+export type EdgeSettingsFor<P extends EdgeProviderId> = z.infer<(typeof EDGE_SETTINGS_SCHEMAS)[P]>;
+export type EdgeSettings = EdgeSettingsFor<EdgeProviderId>;
 
 /** Secret credential field names per provider (everything else on the row is non-secret). */
 export const EDGE_CREDENTIAL_FIELDS: Record<EdgeProviderId, readonly string[]> = {
@@ -51,17 +49,17 @@ export const EDGE_CREDENTIAL_FIELDS: Record<EdgeProviderId, readonly string[]> =
   ovh: ['applicationSecret', 'consumerKey'],
 };
 
-export type RelayCredentials = { type: EdgeProviderId } & Record<string, string>;
+export type EdgeCredentials = { type: EdgeProviderId } & Record<string, string>;
 
 export function validateSettings(
   provider: EdgeProviderId,
   raw: unknown,
-): { ok: true; settings: RelaySettings } | { ok: false; issues: string[] } {
-  const res = RELAY_SETTINGS_SCHEMAS[provider].safeParse({
+): { ok: true; settings: EdgeSettings } | { ok: false; issues: string[] } {
+  const res = EDGE_SETTINGS_SCHEMAS[provider].safeParse({
     ...((raw ?? {}) as Record<string, unknown>),
     type: provider,
   });
-  if (res.success) return { ok: true, settings: res.data as RelaySettings };
+  if (res.success) return { ok: true, settings: res.data as EdgeSettings };
   return {
     ok: false,
     issues: res.error.issues
@@ -89,7 +87,7 @@ export function buildCredentials(
   provider: EdgeProviderId,
   incoming: Record<string, unknown> | undefined,
   existing?: Record<string, unknown>,
-): { ok: true; credentials: RelayCredentials } | { ok: false; missing: string[] } {
+): { ok: true; credentials: EdgeCredentials } | { ok: false; missing: string[] } {
   const out: Record<string, string> = {};
   const missing: string[] = [];
   for (const field of EDGE_CREDENTIAL_FIELDS[provider]) {

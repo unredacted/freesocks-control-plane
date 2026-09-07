@@ -99,7 +99,7 @@ async function seed(opts: { renderEnabled?: boolean } = {}) {
       updatedAt: Date.now(),
     });
     await ctx.db.patch(userId, { currentSubscriptionId: subId });
-    if (opts.renderEnabled !== false) await upsertSettingRow(ctx, 'relay.render.enabled', 'true');
+    if (opts.renderEnabled !== false) await upsertSettingRow(ctx, 'edge.render.enabled', 'true');
     return { serverId, subId };
   });
   await t.mutation(internal.protocolProfiles.create, {
@@ -141,7 +141,7 @@ function pickNodeFor(body: string): string[] {
   return body.split('\n').filter((l) => l.startsWith('vless://'));
 }
 
-describe('relayRender: fronted route', () => {
+describe('edgeRender: fronted route', () => {
   test('replaces the pinned node template with labelled primary (+ IPv6) entries; other nodes and the origin never appear', async () => {
     stubPanel();
     const { t, subId } = await seed();
@@ -237,7 +237,7 @@ describe('relayRender: fronted route', () => {
     expect(body).not.toContain(OTHER);
     expect(body).not.toContain('FreeSocks');
     // Turning it on invalidates the cache (token null → epoch) without waiting for the TTL.
-    await t.run((ctx) => upsertSettingRow(ctx, 'relay.render.enabled', 'true'));
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'true'));
     const after = await (await get(t)).text();
     expect(fetchCalls).toBe(2);
     expect(after).toContain('FreeSocks%20Primary');
@@ -247,7 +247,7 @@ describe('relayRender: fronted route', () => {
     stubPanel();
     const { t } = await seed();
     await t.run((ctx) =>
-      upsertSettingRow(ctx, 'relay.render.clients.v2rayng', JSON.stringify({ enabled: false })),
+      upsertSettingRow(ctx, 'edge.render.clients.v2rayng', JSON.stringify({ enabled: false })),
     );
     const v2 = await (await get(t, 'v2rayNG/1.9.0')).text();
     expect(v2).toContain(`#${NODE}-relay-u`);
@@ -259,13 +259,13 @@ describe('relayRender: fronted route', () => {
     stubPanel();
     const { t, subId, relayId, edgeA } = await seed();
     expect(
-      await t.query(internal.relayRender.contextForSubscription, {
+      await t.query(internal.edgeRender.contextForSubscription, {
         subscriptionId: subId,
         family: 'other',
         nodeHostname: 'node-nine',
       }),
     ).toBeNull();
-    const ctx1 = await t.query(internal.relayRender.contextForSubscription, {
+    const ctx1 = await t.query(internal.edgeRender.contextForSubscription, {
       subscriptionId: subId,
       family: 'singbox',
     });
@@ -278,13 +278,13 @@ describe('relayRender: fronted route', () => {
       keepActive: true,
     });
     expect(
-      await t.query(internal.relayRender.contextForSubscription, {
+      await t.query(internal.edgeRender.contextForSubscription, {
         subscriptionId: subId,
         family: 'other',
       }),
     ).toBeNull();
     expect(
-      await t.query(internal.relayRender.epochFor, {
+      await t.query(internal.edgeRender.epochFor, {
         backendServerId: (await t.run((ctx) => ctx.db.get(subId)))!.backendServerId!,
         nodeHostname: NODE,
       }),
@@ -295,10 +295,10 @@ describe('relayRender: fronted route', () => {
     stubPanel();
     const { t, subId, relayId } = await seed();
     // Not fetched yet: no render key → labels absent, no nudge (never rotated).
-    let view = await t.query(internal.relayRender.memberView, { subscriptionId: subId });
+    let view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
     expect(view).toEqual({ refreshSuggested: false, connections: [] });
     await get(t); // delivers + mints the render key + stamps lastDeliveredContentAt
-    view = await t.query(internal.relayRender.memberView, { subscriptionId: subId });
+    view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
     expect(view?.refreshSuggested).toBe(false);
     expect(view?.connections.map((c) => [c.role, c.family])).toEqual([
       ['primary', 'v4'],
@@ -308,10 +308,10 @@ describe('relayRender: fronted route', () => {
     expect(JSON.stringify(view)).not.toContain(EDGE_A);
     // The origin rotates after this key's last delivery → nudge.
     await t.run((ctx) => ctx.db.patch(relayId, { lastRotatedAt: Date.now() + 1 }));
-    view = await t.query(internal.relayRender.memberView, { subscriptionId: subId });
+    view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
     expect(view?.refreshSuggested).toBe(true);
     // A key not behind a rendered origin gets null.
-    await t.run((ctx) => upsertSettingRow(ctx, 'relay.render.enabled', 'false'));
-    expect(await t.query(internal.relayRender.memberView, { subscriptionId: subId })).toBeNull();
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'false'));
+    expect(await t.query(internal.edgeRender.memberView, { subscriptionId: subId })).toBeNull();
   });
 });

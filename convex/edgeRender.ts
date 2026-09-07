@@ -15,15 +15,15 @@ import { internalQuery } from './_generated/server';
 import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import {
-  resolveRelayConfig,
+  resolveEdgeConfig,
   RENDER_CLIENT_FAMILIES,
   type RenderClientFamily,
-} from './lib/relayConfig';
-import { effectiveRule, renderEntries } from './lib/relays/render';
-import { assignEndpoints } from './lib/relays/assignment';
-import type { PublishedEdge } from './lib/relays/assignment';
-import { protocolUsesSni } from './lib/relays/protocols';
-import type { RelayRenderContext } from './lib/relays/renderPipeline';
+} from './lib/edgeConfig';
+import { effectiveRule, renderEntries } from './lib/edges/render';
+import { assignEndpoints } from './lib/edges/assignment';
+import type { PublishedEdge } from './lib/edges/assignment';
+import { protocolUsesSni } from './lib/edges/protocols';
+import type { EdgeRenderContext } from './lib/edges/renderPipeline';
 
 const familyValidator = v.union(
   ...(RENDER_CLIENT_FAMILIES.map((f) => v.literal(f)) as [
@@ -47,7 +47,7 @@ async function relayFor(
 async function renderEnabled(ctx: QueryCtx): Promise<boolean> {
   const row = await ctx.db
     .query('appSettings')
-    .withIndex('by_key', (q) => q.eq('key', 'relay.render.enabled'))
+    .withIndex('by_key', (q) => q.eq('key', 'edge.render.enabled'))
     .unique();
   if (!row) return false;
   try {
@@ -115,7 +115,7 @@ export const epochFor = internalQuery({
   },
 });
 
-export interface SubscriptionRenderContext extends RelayRenderContext {
+export interface SubscriptionRenderContext extends EdgeRenderContext {
   relayId: Id<'relays'>;
   renderKey: string | null;
   lastContentAt: number | null;
@@ -141,7 +141,7 @@ export const contextForSubscription = internalQuery({
     if (!(await renderEnabled(ctx))) return null;
     const origin = await relayFor(ctx, sub.backendServerId, node);
     if (!origin || !origin.enabled) return null;
-    const cfg = await resolveRelayConfig(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
     if (!cfg.render.enabled) return null;
     const { published, templateRemarks } = await publishedEdgesOf(ctx, origin);
     if (published.length === 0) return null;
@@ -162,10 +162,10 @@ export const contextForSubscription = internalQuery({
 /** Admin preview / endpoint view: the published pool of one origin as the renderer sees it. */
 export const contextForRelay = internalQuery({
   args: { relayId: v.id('relays'), family: familyValidator },
-  handler: async (ctx, a): Promise<RelayRenderContext | null> => {
+  handler: async (ctx, a): Promise<EdgeRenderContext | null> => {
     const origin = await ctx.db.get(a.relayId);
     if (!origin) return null;
-    const cfg = await resolveRelayConfig(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
     const { published, templateRemarks } = await publishedEdgesOf(ctx, origin);
     const family = a.family as RenderClientFamily;
     return {
@@ -197,7 +197,7 @@ export const memberView = internalQuery({
     if (!(await renderEnabled(ctx))) return null;
     const origin = await relayFor(ctx, sub.backendServerId, sub.pinnedNode);
     if (!origin || !origin.enabled) return null;
-    const cfg = await resolveRelayConfig(ctx.db);
+    const cfg = await resolveEdgeConfig(ctx.db);
     const { published } = await publishedEdgesOf(ctx, origin);
     if (published.length === 0) return null;
     const refreshSuggested =

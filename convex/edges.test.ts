@@ -124,7 +124,7 @@ describe('edges', () => {
       target: 'lb',
       claimMs: 60_000,
     });
-    expect(c2).toEqual({ ok: false, code: 'relay.op_busy' });
+    expect(c2).toEqual({ ok: false, code: 'edge.op_busy' });
     // Settling with the wrong opId is ignored.
     expect(await t.mutation(internal.edges.settleOp, { edgeId: id, opId: 'nope' })).toEqual({
       ok: false,
@@ -140,7 +140,7 @@ describe('edges', () => {
       target: 'lb',
       claimMs: 60_000,
     });
-    expect(c3).toEqual({ ok: false, code: 'relay.op_unsettled' });
+    expect(c3).toEqual({ ok: false, code: 'edge.op_unsettled' });
     const c4 = await t.mutation(internal.edges.claimOp, {
       edgeId: id,
       kind: 'discover',

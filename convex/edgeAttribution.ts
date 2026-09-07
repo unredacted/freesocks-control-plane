@@ -7,9 +7,9 @@
  */
 import type { Doc } from './_generated/dataModel';
 import type { DatabaseReader, DatabaseWriter } from './_generated/server';
-import { resolveRelayConfig, relayMs } from './lib/relayConfig';
-import { assignEndpoints } from './lib/relays/assignment';
-import { publishedEdgesOf } from './relayRender';
+import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
+import { assignEndpoints } from './lib/edges/assignment';
+import { publishedEdgesOf } from './edgeRender';
 
 export const CONNECTION_CHOICES = ['primary', 'backup', 'auto', 'direct', 'unsure'] as const;
 export type ConnectionChoice = (typeof CONNECTION_CHOICES)[number];
@@ -20,7 +20,7 @@ export function sanitizeConnectionChoice(raw: unknown): ConnectionChoice | null 
   return (CONNECTION_CHOICES as readonly string[]).includes(s) ? (s as ConnectionChoice) : null;
 }
 
-export interface RelayAttribution {
+export interface EdgeAttribution {
   relaySlug: string;
   relayEdgeId: string | null;
   refreshNotObserved: boolean;
@@ -31,12 +31,12 @@ export interface RelayAttribution {
  * connection choice, the one edge it denotes under this subscriber's assignment.
  * `auto` resolves only when a single edge is published (nothing else to pick).
  */
-export async function resolveRelayAttribution(
+export async function resolveEdgeAttribution(
   db: DatabaseReader,
   sub: Doc<'subscriptions'> | null,
   choice: ConnectionChoice | null,
   now: number,
-): Promise<RelayAttribution | null> {
+): Promise<EdgeAttribution | null> {
   if (!sub || !sub.backendServerId || !sub.pinnedNode) return null;
   const origins = await db
     .query('relays')
@@ -56,7 +56,7 @@ export async function resolveRelayAttribution(
       sub.renderKey &&
       (choice === 'primary' || choice === 'backup')
     ) {
-      const cfg = await resolveRelayConfig(db);
+      const cfg = await resolveEdgeConfig(db);
       const assigned = assignEndpoints(sub.renderKey, published, {
         now,
         preferDistinctProviders: cfg.render.preferDistinctProviders,
@@ -85,8 +85,8 @@ export async function claimReportMark(
     .withIndex('by_key', (q) => q.eq('key', key))
     .unique();
   if (existing && existing.expiresAt > now) return 0;
-  const cfg = await resolveRelayConfig(db);
-  const expiresAt = now + relayMs.detectWindow(cfg);
+  const cfg = await resolveEdgeConfig(db);
+  const expiresAt = now + edgeMs.detectWindow(cfg);
   if (existing) await db.patch(existing._id, { firstAt: now, expiresAt });
   else await db.insert('relayReportMarks', { key, firstAt: now, expiresAt });
   return 1;

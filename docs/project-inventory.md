@@ -305,21 +305,21 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   field — the old tier-level `remnawaveSquadUuid` bind was removed in Phase 5b; node placement
   is per connection mode.)
 
-- **Relays and edges** (`/admin/relays`, `docs/relays.md`; scopes `admin:servers:*` for
-  infrastructure, `admin:settings:*` for the `relay.*` config): provider accounts (write-only
+- **Edges** (`/admin/edges`, `docs/edges.md`; scopes `admin:servers:*` for
+  infrastructure, `admin:settings:*` for the `edge.*` config): provider accounts (write-only
   credentials, qualification gate, live inventory), edge templates (form from the adapter's
-  field descriptors + raw JSON, server-validated), REALITY profiles (target + server names
-  with retire/drain), relays with protocol-typed slots (`reality` / `tcp` passthrough) and
+  field descriptors + raw JSON, server-validated), protocol profiles (`reality` / `tls` / `plain`; target + server
+  names with retire/drain, optionally provider-scoped), relays with their slots and
   their published pool, adoption, provision / rotate / burn with a polled live progress view
   and a per-rotation audit trail, edge detail with a live provider snapshot, the per-family
   render preview and the detector settings. **Telemetry → Probes** (`/admin/telemetry/probes`)
   holds the reachability matrix over every probe target (edges, opted-in relay nodes, custom
   host:port targets), run history, "probe now" for any selection, the probe settings and a
   probe audit feed. **Every route under
-  `/api/v1/admin/relay/` is HPKE-sealed by verb** (GET reveal, POST seal both legs, PATCH/PUT
+  `/api/v1/admin/edges/` is HPKE-sealed by verb** (GET reveal, POST seal both legs, PATCH/PUT
   seal). IaC: `PUT/GET/DELETE …/relay/relays/by-slug/{slug}` (+ `/slots/{slotKey}`), the
   response carrying `publishedEndpoints` for the node role. **Dormant by default** (every
-  `relay.*` switch ships off).
+  `edge.*` switch ships off).
 
 ### 1.7 Integrations & runtime
 
@@ -478,8 +478,8 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 - **Automated backups** (A3, `docker/backup.sh` + the `backup` compose service): scheduled
   `pg_dump` shipped offsite to S3-compatible storage. **Live when `BACKUP_S3_*` is set** (else
   local-only with a loud warning).
-- **Edge providers + probes** (`convex/lib/relays/providers/*`, `convex/edgeProviderOps.ts`;
-  `convex/lib/relays/probes/*`, `convex/probeOps.ts`; `docs/relays.md`): TCP load-balancer
+- **Edge providers + probes** (`convex/lib/edges/providers/*`, `convex/edgeProviderOps.ts`;
+  `convex/lib/edges/probes/*`, `convex/probeOps.ts`; `docs/edges.md`): TCP load-balancer
   adapters for the supported providers (`src/shared/contracts/edgeProviderIds.ts`), a
   resource-step ledger with four-outcome discovery and operation claims, and reachability probes
   via the official `globalping` SDK, check-host.net and optional RIPE Atlas. Pinned deps (verified
@@ -489,7 +489,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   release); `scripts/node-floor.mjs` derives the highest `engines.node` among those deps and
   `docker/deploy-entrypoint.sh` fails the deploy below it (`DEPLOY_SKIP_NODE_FLOOR=true` to
   bypass); the dashboard shows the observed version. **Dormant** until the operator adds
-  accounts and flips the `relay.*` switches.
+  accounts and flips the `edge.*` switches.
 - **Email / notifications**: **intentionally absent.** Accounts are anonymous: no contact
   details are collected and the control plane sends nothing. Lifecycle transitions (grace,
   disabled) are recorded to the audit log only. There is no email subsystem, and adding one
@@ -527,13 +527,13 @@ Convex runs these natively (no Workers triggers, no node-cron):
   codes stay hash-only in `redemptionCodes`).
 - `mirror-refresh` (6h): re-fetch + re-upload active subscription mirrors (no-op unless S3
   mirroring is configured).
-- `relay-edge-reconcile` (5 min): relay edges — re-kick stale rotations, settle edges with an
+- `edge-reconcile` (5 min): edges — re-kick stale rotations, settle edges with an
   unknown provider outcome by discovery, refresh provider health, drain → destroy with a
   claimed reverse-order ledger walk, pool upkeep (config-gated), finish origin deletes.
-- `relay-probe` (5 min): budgeted reachability probes of every probe target (published edges,
+- `edge-probe` (5 min): budgeted reachability probes of every probe target (published edges,
   opted-in relay nodes, enabled custom targets) from the configured countries (no-op unless
-  `relay.probe.enabled`). `retention-relay-probes` (daily) prunes settled runs after two weeks.
-- `relay-block-detector` (5 min): per-relay scoring of attributed reports, node load and probe
+  `edge.probe.enabled`). `retention-edge-probes` (daily) prunes settled runs after two weeks.
+- `edge-block-detector` (5 min): per-relay scoring of attributed reports, node load and probe
   verdicts; automatic rotation only with edge-level evidence and every gate open.
 
 Every sweep stamps a per-cron heartbeat (`convex/cronHeartbeat.ts`, `cronHeartbeats` table,

@@ -45,7 +45,7 @@ describe('edgeProviderAccounts', () => {
     });
     expect(JSON.stringify(list)).not.toContain('SECRET_KEY');
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
-    expect(audit.some((a) => a.action === 'relay.provider_account.create')).toBe(true);
+    expect(audit.some((a) => a.action === 'edge.provider_account.create')).toBe(true);
     expect(JSON.stringify(audit)).not.toContain('SECRET_KEY');
     // Duplicate name refused.
     await expect(
@@ -301,7 +301,7 @@ describe('edgeTemplates', () => {
     const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(
       audit.filter(
-        (a) => a.action === 'relay.provider_account.qualified' && a.payload?.qualified === false,
+        (a) => a.action === 'edge.provider_account.qualified' && a.payload?.qualified === false,
       ),
     ).toHaveLength(2);
   });

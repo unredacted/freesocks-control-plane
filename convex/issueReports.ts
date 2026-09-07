@@ -20,9 +20,9 @@ import {
 import { resolveRange } from './lib/timeRange';
 import {
   claimReportMark,
-  resolveRelayAttribution,
+  resolveEdgeAttribution,
   sanitizeConnectionChoice,
-} from './relayAttribution';
+} from './edgeAttribution';
 
 const DAY_MS = 86_400_000;
 
@@ -92,7 +92,7 @@ export const reportIssue = internalMutation({
     detectedCity: v.optional(v.union(v.string(), v.null())),
     detectedAsn: v.optional(v.union(v.number(), v.null())),
     requestId: v.optional(v.string()),
-    // Relay attribution (docs/relays.md): which connection the member said
+    // Relay attribution (docs/edges.md): which connection the member said
     // failed, and the peppered per-member-per-window dedupe key (computed in
     // the HTTP action; never the member id).
     connectionChoice: v.optional(v.union(v.string(), v.null())),
@@ -104,7 +104,7 @@ export const reportIssue = internalMutation({
     const sub = await currentOrActiveSub(ctx.db, user);
     const now = Date.now();
     const choice = sanitizeConnectionChoice(a.connectionChoice);
-    const relay = await resolveRelayAttribution(ctx.db, sub, choice, now);
+    const relay = await resolveEdgeAttribution(ctx.db, sub, choice, now);
     const detectorWeight =
       relay && a.markKey ? await claimReportMark(ctx.db, a.markKey, now) : undefined;
     // No key: still a valid report (e.g. "can't connect" before first issue

@@ -12,12 +12,12 @@ import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
-import { registerRelayRoutes } from './httpRelays';
+import { registerEdgeRoutes } from './httpEdges';
 import { hmacSha256Hex } from './lib/crypto';
-import { markBucket, sanitizeConnectionChoice } from './relayAttribution';
-import { relayMs } from './lib/relayConfig';
-import { classifyClient } from './lib/relays/clientFamilies';
-import { applyRelayRender } from './lib/relays/renderPipeline';
+import { markBucket, sanitizeConnectionChoice } from './edgeAttribution';
+import { edgeMs } from './lib/edgeConfig';
+import { classifyClient } from './lib/edges/clientFamilies';
+import { applyEdgeRender } from './lib/edges/renderPipeline';
 import type { Id } from './_generated/dataModel';
 import { ConvexError } from 'convex/values';
 import { SETTINGS_DEFAULTS } from './appSettings';
@@ -254,7 +254,7 @@ interface SubCacheEntry {
   headers?: Record<string, string>;
   ua: string;
   at: number;
-  // Relay-render cache token (relayRender.epochFor): the pinned node's
+  // Edge-render cache token (edgeRender.epochFor): the pinned node's
   // publication epoch when the body was rendered with relay endpoints, null
   // when it was served as the panel sent it. A hit is only valid while the
   // current token is identical, so a pool/switch change re-renders within one
@@ -1052,18 +1052,18 @@ http.route({
     }
     const hasHwid = 'x-hwid' in hwidHeaders;
     const cached = hasHwid ? [] : parseSubCache(sub.subCache);
-    // Relay rendering (docs/relays.md): the cache token for this key's pinned
+    // Relay rendering (docs/edges.md): the cache token for this key's pinned
     // node, compared against the token stored on the entry.
-    const relayToken =
+    const edgeToken =
       sub.backendServerId && sub.pinnedNode
-        ? await ctx.runQuery(internal.relayRender.epochFor, {
+        ? await ctx.runQuery(internal.edgeRender.epochFor, {
             backendServerId: sub.backendServerId,
             nodeHostname: sub.pinnedNode,
           })
         : null;
     const fresh = cached.find(
       (e) =>
-        e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS && (e.relay ?? null) === relayToken,
+        e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS && (e.relay ?? null) === edgeToken,
     );
     if (fresh) {
       // Cache hit: the served body was generated at the entry's fetch time.
@@ -1099,7 +1099,7 @@ http.route({
       let relay: number | null = null;
       const node = fetched.pinnedNode ?? sub.pinnedNode;
       if (node && sub.backendServerId) {
-        const rctx = await ctx.runQuery(internal.relayRender.contextForSubscription, {
+        const rctx = await ctx.runQuery(internal.edgeRender.contextForSubscription, {
           subscriptionId: sub._id,
           family: classifyClient(ua).family,
           nodeHostname: node,
@@ -1111,7 +1111,7 @@ http.route({
               subscriptionId: sub._id,
             }));
           if (renderKey) {
-            content = applyRelayRender(rctx, content, renderKey, {
+            content = applyEdgeRender(rctx, content, renderKey, {
               now,
               lastContentAt: rctx.lastContentAt,
             }).body;
@@ -1404,11 +1404,11 @@ http.route({
     // Relay detector dedupe mark: HMAC(pepper, member + window bucket). The
     // member id never reaches the mark row or the telemetry row.
     const relayCfg = await ctx.runQuery(internal.edgeReconcileMutations.configSnapshot, {});
-    const markPepper = process.env.RELAY_MARK_PEPPER ?? process.env.IP_HASH_SALT ?? '';
+    const markPepper = process.env.EDGE_MARK_PEPPER ?? process.env.IP_HASH_SALT ?? '';
     const markKey = markPepper
       ? await hmacSha256Hex(
           markPepper,
-          `relay-mark:${member.userId}:${markBucket(Date.now(), relayMs.detectWindow(relayCfg))}`,
+          `relay-mark:${member.userId}:${markBucket(Date.now(), edgeMs.detectWindow(relayCfg))}`,
         )
       : null;
     const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
@@ -4097,8 +4097,8 @@ http.route({
   }),
 });
 
-// Relay edges admin surface (docs/relays.md): one prefix route per verb, sealed by
-// verb class (envelope.ts), dispatched in httpRelays.ts.
-registerRelayRoutes(http);
+// Edges admin surface (docs/edges.md): one prefix route per verb, sealed by
+// verb class (envelope.ts), dispatched in httpEdges.ts.
+registerEdgeRoutes(http);
 
 export default http;

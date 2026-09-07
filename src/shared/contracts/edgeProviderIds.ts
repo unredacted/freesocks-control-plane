@@ -4,8 +4,8 @@
  * VALUE-import it. Everything else derives from this tuple:
  *   - the zod enum in ./relays.ts (client contracts),
  *   - the Convex validator in convex/lib/edgeProviderIds.ts (schema + fn args),
- *   - the capability record in convex/lib/relays/providers/capabilities.ts,
- *   - the adapter registry in convex/lib/relays/providers/registry.ts.
+ *   - the capability record in convex/lib/edges/providers/capabilities.ts,
+ *   - the adapter registry in convex/lib/edges/providers/registry.ts.
  * Adding a provider starts HERE; the derived `Record<EdgeProviderId, ...>`
  * maps then fail to compile until every per-provider surface has an entry.
  */

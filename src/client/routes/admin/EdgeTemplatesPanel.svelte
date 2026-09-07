@@ -18,13 +18,13 @@
   import { adminEdgeTemplatesQuery } from '../../lib/queries';
   import {
     EDGE_PROVIDER_IDS,
-    RelayIdResponse,
-    RelayOkResponse,
+    EdgeIdResponse,
+    EdgeOkResponse,
     EdgeTemplateValidateResponse,
     type EdgeProviderId,
     type EdgeTemplateAdmin,
     type EdgeTemplateField,
-  } from '../../../shared/contracts/relays';
+  } from '../../../shared/contracts/edges';
   import AdminListState from './AdminListState.svelte';
 
   /**
@@ -38,7 +38,7 @@
    */
   const templates = adminEdgeTemplatesQuery();
   const qc = useQueryClient();
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'relays'] });
+  const invalidate = () => void qc.invalidateQueries({ queryKey: ['admin', 'edges'] });
   const onError = (title: string) => (err: unknown) =>
     toast.error(title, { description: apiErrorMessage(err) });
 
@@ -130,7 +130,7 @@
   const validate = createMutation(() => ({
     mutationFn: () =>
       apiClient.post(
-        '/api/v1/admin/relay/templates/validate',
+        '/api/v1/admin/edges/templates/validate',
         { provider: editor!.provider, params: currentParams() },
         EdgeTemplateValidateResponse,
       ),
@@ -146,14 +146,14 @@
       const params = currentParams();
       if (d.id)
         return apiClient.patch(
-          `/api/v1/admin/relay/templates/${d.id}`,
+          `/api/v1/admin/edges/templates/${d.id}`,
           { name: d.name.trim(), params, isDefault: d.isDefault },
-          RelayOkResponse,
+          EdgeOkResponse,
         );
       return apiClient.post(
-        '/api/v1/admin/relay/templates',
+        '/api/v1/admin/edges/templates',
         { provider: d.provider, name: d.name.trim(), params, isDefault: d.isDefault },
-        RelayIdResponse,
+        EdgeIdResponse,
       );
     },
     onSuccess: () => {
@@ -169,7 +169,7 @@
   }));
   const remove = createMutation(() => ({
     mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/relay/templates/${id}`, RelayOkResponse),
+      apiClient.delete(`/api/v1/admin/edges/templates/${id}`, EdgeOkResponse),
     onSuccess: () => {
       invalidate();
       toast.success('Template removed');

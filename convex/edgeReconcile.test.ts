@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
 
-import { jsonRes, mockFetch } from './lib/relays/testing/mockFetch';
+import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
 import { upsertSettingRow } from './appSettings';
 
 const modules = import.meta.glob('./**/*.*s');
@@ -147,7 +147,7 @@ describe('relayReconcile', () => {
     expect(edge.currentOp).toBeUndefined();
     expect(edge.destroyAttempts).toBe(1);
     const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
-    expect(audit.find((a) => a.action === 'relay.edge.destroyed')?.payload).toMatchObject({
+    expect(audit.find((a) => a.action === 'edge.destroyed')?.payload).toMatchObject({
       relaySlug: 'node-one',
       provider: 'upcloud',
     });
@@ -189,7 +189,7 @@ describe('relayReconcile', () => {
     expect(edge.status).toBe('destroyed');
     expect(edge.publication).toBe('unpublished');
     const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
-    expect(audit.some((a) => a.action === 'relay.drift')).toBe(true);
+    expect(audit.some((a) => a.action === 'edge.drift')).toBe(true);
   });
 
   test('failed edge with an unresolved step is DISCOVERED (never re-run): absent → settled → destroyed', async () => {
@@ -287,7 +287,7 @@ describe('relayReconcile', () => {
     const edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.status).toBe('needs_operator');
     const audit = await s.t.run((ctx) => ctx.db.query('auditLog').collect());
-    expect(audit.find((a) => a.action === 'relay.edge.destroy_failed')?.payload).toMatchObject({
+    expect(audit.find((a) => a.action === 'edge.destroy_failed')?.payload).toMatchObject({
       attempts: 48,
     });
     expect(await s.t.mutation(internal.edgeReconcileMutations.retryDestroy, { edgeId })).toEqual({
@@ -352,7 +352,7 @@ describe('relayReconcile', () => {
   test('pool upkeep: autoProvisionToDesired starts at most maxReconcileStartsPerTick provisions', async () => {
     fakeUpcloud([]);
     const s = await seed();
-    await s.t.run((ctx) => upsertSettingRow(ctx, 'relay.autoProvisionToDesired', 'true'));
+    await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.autoProvisionToDesired', 'true'));
     await s.t.mutation(internal.relays.upsertBySlug, {
       slug: 'node-two',
       backendServerSlug: 'panel-a',
@@ -377,7 +377,7 @@ describe('relayReconcile', () => {
     await s.t.run(async (ctx) => {
       const row = await ctx.db
         .query('appSettings')
-        .withIndex('by_key', (q) => q.eq('key', 'relay.autoProvisionToDesired'))
+        .withIndex('by_key', (q) => q.eq('key', 'edge.autoProvisionToDesired'))
         .unique();
       if (row) await ctx.db.delete(row._id);
     });
@@ -405,7 +405,7 @@ describe('relayReconcile', () => {
     const s = await seed();
     await run(s.t);
     const hb = await s.t.run((ctx) => ctx.db.query('cronHeartbeats').collect());
-    expect(hb.some((h) => h.name === 'relay-edge-reconcile')).toBe(true);
+    expect(hb.some((h) => h.name === 'edge-reconcile')).toBe(true);
   });
 
   test('discovery attempts persist on the step: an adapter needing two quiet looks reaches confirmed_absent on the second pass', async () => {
