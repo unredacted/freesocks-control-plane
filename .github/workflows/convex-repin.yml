@@ -205,8 +205,9 @@ jobs:
             done < npm-picks.tsv
           fi
           [ -n "$tag" ] || { echo "::error::no usable anchor found — GHCR image pushes may be lagging badly; retry later, or pass an explicit release_tag whose images exist"; exit 1; }
-          [[ "$bdig" =~ ^[0-9a-f]{64}$ ]] && [[ "$ddig" =~ ^[0-9a-f]{64}$ ]] \
-            || { echo "::error::digest resolution returned an unexpected shape"; exit 1; }
+          if ! { [[ "$bdig" =~ ^[0-9a-f]{64}$ ]] && [[ "$ddig" =~ ^[0-9a-f]{64}$ ]]; }; then
+            echo "::error::digest resolution returned an unexpected shape"; exit 1
+          fi
           echo "target: $tag ($new)"
 
           if [ -n "$ver" ]; then

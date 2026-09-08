@@ -90,7 +90,9 @@ updates:
   # which Dependabot does NOT touch, since the bun ecosystem is not enrolled.
   # Both are enforced by convex/deployPins.test.ts.
   - package-ecosystem: docker
-    directory: /docker
+    # Not recursive: docker/compat/ (the client-compatibility images) must be
+    # listed explicitly or its base images never get update PRs.
+    directories: [/docker, /docker/compat]
     schedule:
       interval: weekly
       day: monday

@@ -525,15 +525,20 @@ base64 instead of YAML, fix the panel's subscription templates; the FCP front
 already does the right thing.
 
 **The ONE exception to exact-UA forwarding** (`normalizeSubscriptionUserAgent`,
-`convex/lib/backends/remnawave.ts`): a UA that starts with `SFL/` or `sing-box`
-is rewritten to a canonical `SFA/<ver> (sing-box <ver>)` before the panel fetch,
+`convex/lib/backends/remnawave.ts`): a UA that starts with `SFL/`, `SFW/`, the
+official desktop shells' `SFL (sing-box ...` / `SFW (sing-box ...` form (the app
+name is SFL on Linux and SFW elsewhere, per sing-box-for-desktop's
+`src/main/userAgent.ts`), or `sing-box` is rewritten to a canonical
+`SFA/<ver> (sing-box <ver>)` before the panel fetch,
 carrying the client's core version through. The panel keys its sing-box output
 on the app prefix and (probed live 2026-08-30) recognizes `SFA/SFI/SFM/SFT` but
 not the newer SFL client or the bare CLI — those fell through to the base64
 default, which sing-box rejects on import (`decode config: invalid character
-'d'`). Only those two UA shapes are rewritten; recognized prefixes and
-sing-box-cored apps with their own panel templates (Karing, Happ) pass through
-verbatim. The fronted route's cache stays keyed by the **original** UA, so the
+'d'`). Only those UA shapes (the official SFL/SFW shells and the bare CLI) are
+rewritten; recognized prefixes and sing-box-cored apps with their own panel
+templates (Karing, Happ) pass through verbatim. `lib/edges/clientFamilies.ts`
+(the edge-render family classifier) carries the same shell prefix list — change
+both together. The fronted route's cache stays keyed by the **original** UA, so the
 rewrite never changes which cache bucket a client hits. If a future panel
 version learns the SFL prefix and serves it something SFL-specific, this
 normalization masks that — remove it then.

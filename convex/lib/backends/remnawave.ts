@@ -1045,16 +1045,19 @@ export async function remnawaveDeleteUser(
  * them, rewrite a UA that IS sing-box but lacks a recognized prefix to a
  * canonical SFA one, carrying the core version through (the panel may pick the
  * legacy vs modern template by it). Deliberately narrow — only UAs that START
- * with "SFL/" or "sing-box" — so sing-box-CORED third-party apps with their own
- * panel templates (Karing, Happ, …) are never touched.
+ * with "SFL/" / "SFW/", the official desktop shells' "SFL (sing-box ..." /
+ * "SFW (sing-box ..." form (sing-box-for-desktop `src/main/userAgent.ts`: the
+ * app name is SFL on Linux, SFW elsewhere), or "sing-box" — so sing-box-CORED
+ * third-party apps with their own panel templates (Karing, Happ, …) are never
+ * touched. `lib/edges/clientFamilies.ts` keeps the same shell list.
  */
 const SINGBOX_RECOGNIZED_UA_RE = /^SF[AIMT]\//;
-const SINGBOX_UNRECOGNIZED_UA_RE = /^(?:SFL\/|sing-?box)/i;
+const SINGBOX_UNRECOGNIZED_UA_RE = /^(?:SF[LW](?:\/|\s+\(sing-box\s)|sing-?box)/i;
 export function normalizeSubscriptionUserAgent(ua: string | undefined): string | undefined {
   if (!ua || SINGBOX_RECOGNIZED_UA_RE.test(ua) || !SINGBOX_UNRECOGNIZED_UA_RE.test(ua)) return ua;
   const ver =
     /sing-?box[/ ]v?(\d+(?:\.\d+){1,2})/i.exec(ua)?.[1] ??
-    /^SFL\/v?(\d+(?:\.\d+){1,2})/i.exec(ua)?.[1] ??
+    /^SF[LW]\/v?(\d+(?:\.\d+){1,2})/i.exec(ua)?.[1] ??
     '1.12.0';
   return `SFA/${ver} (sing-box ${ver})`;
 }

@@ -1,0 +1,170 @@
+name: Client compatibility
+on:
+  pull_request:
+  push:
+    branches: [main, v2]
+  schedule:
+    - cron: '23 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  # Keyed on the event too: the nightly schedule and a push to main must not
+  # cancel each other (both resolve to refs/heads/main).
+  group: client-compat-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  compatibility:
+    name: Subscriptions, engines and packaged SFL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          # download.ts re-verifies every cached artifact's SHA-256 before use.
+          path: .cache/compat/bin
+          key: compat-bin-${{ hashFiles('tests/compat/manifest.ts') }}
+      - run: bunx tsc -p tests/compat/tsconfig.json --noEmit
+      - run: bunx vitest run convex/clientCompatibility.test.ts convex/subscriptionFront.test.ts convex/issueReports.test.ts convex/lib/backends/remnawave.test.ts
+      - run: bun run test:integration:remnawave
+      - run: bun run test:compat
+      - if: always()
+        run: bun --no-env-file scripts/compat/report.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: client-compatibility
+          # Only the sanitized summary. Raw configs, logs and JUnit errors can contain keys.
+          path: test-results/compat/public/
+          if-no-files-found: error
+          retention-days: 14
+
+  report-form:
+    name: Report form (Chromium and Firefox)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - run: bunx playwright install --with-deps chromium firefox
+      - run: bun run test:compat:browser
+      - if: always()
+        run: bun --no-env-file scripts/compat/report.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report-form
+          path: |
+            test-results/compat/public/
+            test-results/compat/browser/
+          retention-days: 14
+
+  latest:
+    name: Latest upstream clients (discovery)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run test:compat
+        env:
+          FCP_COMPAT_CHANNEL: latest
+          GITHUB_TOKEN: ${{ github.token }}
+      - if: always()
+        run: bun --no-env-file scripts/compat/report.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: latest-client-compatibility
+          path: test-results/compat/public/
+          retention-days: 14
+
+  legacy-panel:
+    # Production runs Remnawave 3.x; the provider stays dual-contract (2.x ids
+    # are uuids, 3.x ids are integers) for panels that have not upgraded yet.
+    # Nothing on the PR gate boots a 2.x panel, so prove that path nightly.
+    name: Provider contract vs a Remnawave 2.x panel
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run test:integration:remnawave
+        env:
+          REMNAWAVE_TEST_IMAGE: remnawave/backend:2.8.0
+
+  distro:
+    name: SFL on ${{ matrix.target.id }}
+    # These are disposable desktop VMs. Never execute untrusted PR code on them.
+    if: vars.CLIENT_COMPAT_VM_RUNNERS == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { id: debian-13-xfce, runner: fcp-debian-13-xfce }
+          - { id: mx-25.2-xfce, runner: fcp-mx-25-2-xfce }
+    runs-on: [self-hosted, linux, x64, '${{ matrix.target.runner }}']
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          # download.ts re-verifies every cached artifact's SHA-256 before use.
+          path: .cache/compat/bin
+          key: compat-bin-${{ hashFiles('tests/compat/manifest.ts') }}
+      - name: Check desktop session and install pinned package
+        run: |
+          test -n "$DISPLAY"
+          case "$XDG_CURRENT_DESKTOP" in *XFCE*|*Xfce*) ;; *) exit 1 ;; esac
+          bun --no-env-file scripts/compat/download.ts
+          sudo apt-get install -y ./.cache/compat/bin/sfl.deb
+      - run: bun run test:compat
+        env:
+          FCP_COMPAT_SFL_EXECUTABLE: /opt/sing-box/sing-box
+          FCP_COMPAT_OS: ${{ matrix.target.id }}
+      - if: always()
+        run: bun --no-env-file scripts/compat/report.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sfl-${{ matrix.target.id }}
+          path: test-results/compat/public/
+          retention-days: 14
