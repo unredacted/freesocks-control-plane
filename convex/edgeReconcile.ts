@@ -23,7 +23,7 @@
  * Every provider call runs under an edge op claim; every DB change is a
  * mutation in edges / relays / edgeRotations / edgeReconcileMutations.
  */
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import { internalAction } from './_generated/server';
 import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
@@ -63,19 +63,53 @@ export interface ReconcileReport {
   errors: number;
 }
 
+/**
+ * Short, body-free text for a thrown error. Provider ops cross the action
+ * boundary as `ConvexError<EdgeProviderOpsFailure>` (edgeProviderOps.ts): the
+ * code is `err.data.code` (a timeout shows as its own code). Anything else
+ * contributes only its message.
+ */
 function errText(err: unknown): string {
-  const meta = (err as { meta?: { code?: string } }).meta;
-  return (meta?.code ?? (err instanceof Error ? err.message : String(err))).slice(0, 120);
+  if (err instanceof ConvexError) {
+    const d = err.data as { code?: string; message?: string; timedOut?: boolean } | string;
+    if (typeof d === 'string') return d.slice(0, 120);
+    return (d.code ?? (d.timedOut ? 'timeout' : d.message) ?? 'error').slice(0, 120);
+  }
+  return (err instanceof Error ? err.message : String(err)).slice(0, 120);
 }
 
+/** The provider-facing spec; `transport` rides along so a udp slot is refused before any call. */
 function specOf(edge: Edge) {
   return {
     name: edge.name,
     listeners: edge.listeners.map((l) => ({
       edgePort: l.edgePort,
       members: [{ address: l.originAddress, port: l.originPort }],
+      ...(l.transport ? { transport: l.transport } : {}),
     })),
   };
+}
+
+/**
+ * The ledger `deleteState` after a destroy outcome. `still_present` = the
+ * delete never landed → back to `present` so the next pass RE-ISSUES the
+ * delete instead of confirming forever; `unresolved` keeps whatever the walk
+ * had (a never-issued delete stays `present`, a requested one stays requested).
+ */
+export function deleteStateAfter(
+  prior: Edge['resources'][number]['deleteState'],
+  out: DestroyOutcome,
+): Edge['resources'][number]['deleteState'] {
+  switch (out.status) {
+    case 'confirmed_gone':
+      return 'confirmed_gone';
+    case 'delete_requested':
+      return 'delete_requested';
+    case 'still_present':
+      return 'present';
+    default:
+      return prior;
+  }
 }
 
 function ledgerOf(edge: Edge) {
@@ -308,12 +342,9 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
       resourceDeleteState: [
         {
           resourceId: target.resourceId,
-          deleteState:
-            out.status === 'confirmed_gone'
-              ? 'confirmed_gone'
-              : out.status === 'delete_requested'
-                ? 'delete_requested'
-                : target.deleteState,
+          // An expired delete claim confirms against `delete_requested`: gone /
+          // still deleting / not deleting (→ `present`, re-issued next pass).
+          deleteState: deleteStateAfter('delete_requested', out),
         },
       ],
     });
@@ -435,11 +466,10 @@ export function shouldReissueDelete(
 /**
  * One destroy pass: confirm requested deletes (re-issuing the delete where
  * confirmation cannot make progress), then request the next present resource
- * (reverse order).
- *
- * Known gap (adapter contract): an adapter that answers `confirmed_gone` for a
- * resource KIND it does not know cannot be told apart from a real 404 here —
- * the DestroyOutcome carries no "unknown kind" signal; that belongs in the adapters.
+ * (reverse order). Every pass — a throw, an `unresolved` answer (adapters give
+ * it for a resource kind they do not know, never `confirmed_gone`), a
+ * `still_present` read-back — counts toward `destroyAttempts`, so an edge whose
+ * children never confirm parks as `needs_operator` at the cap.
  */
 async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: ReconcileReport) {
   const accountId = edge.accountId!;
@@ -510,15 +540,19 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     resourceDeleteState: [
       {
         resourceId: target.resourceId,
-        deleteState: out.status === 'confirmed_gone' ? 'confirmed_gone' : 'delete_requested',
+        // A confirm answers against `delete_requested`; a (re-)issued delete
+        // against the state the walk had (`unresolved` from runDestroy = the
+        // adapter never issued it, so a `present` resource stays present).
+        deleteState: deleteStateAfter(confirming ? 'delete_requested' : target.deleteState, out),
       },
     ],
   });
   await ctx.runMutation(internal.edges.patchEdge, {
     edgeId: edge._id,
     destroyAttemptsDelta: 1,
-    // A confirm that could not resolve counts; a (re-)issued delete or a gone
-    // resource resets the counter for whatever the walk targets next.
+    // A confirm that could not resolve counts; a (re-)issued delete, a gone
+    // resource or a `still_present` read-back (re-issued next pass) resets the
+    // counter for whatever the walk targets next.
     destroyConfirm:
       confirming && out.status === 'unresolved'
         ? { resourceId: target.resourceId, attempts: priorConfirms + 1 }

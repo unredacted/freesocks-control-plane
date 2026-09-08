@@ -288,7 +288,9 @@ describe('edgeRotations: replace', () => {
       poolIndex: 0,
       managed: true,
       provider: 'upcloud',
-      health: 'online',
+      // This provider exposes no member health: a running service is `unknown`
+      // (never `online`), which the verify gate accepts for it (capabilities.memberHealth).
+      health: 'unknown',
     });
     expect(newEdge.addresses.v4).toBe(NEW_EDGE);
     expect(newEdge.steps.map((s) => s.state)).toEqual(['done', 'done', 'done']);

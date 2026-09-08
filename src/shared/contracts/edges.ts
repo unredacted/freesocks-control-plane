@@ -54,6 +54,21 @@ export const EdgeTestCredentialsResponse = z.object({
 });
 export type EdgeTestCredentialsResponse = z.infer<typeof EdgeTestCredentialsResponse>;
 
+/**
+ * POST …/providers/{id}/rotate-credentials: the new secret is tested first and
+ * applied only on a pass (qualification kept). Booleans only, never a value.
+ */
+export const EdgeRotateCredentialsResponse = z.union([
+  z.object({
+    ok: z.literal(true),
+    qualified: z.boolean(),
+    credentialsChanged: z.boolean(),
+    identifiersChanged: z.boolean(),
+  }),
+  z.object({ ok: z.literal(false), code: z.string() }),
+]);
+export type EdgeRotateCredentialsResponse = z.infer<typeof EdgeRotateCredentialsResponse>;
+
 const DiscoverOption = z.object({ id: z.string(), label: z.string() });
 /** POST …/providers/discover: choice lists for the account form given credentials + partial settings. */
 export const EdgeDiscoverResponse = z.object({

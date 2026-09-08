@@ -17,6 +17,7 @@ import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
 import { isPublicIpLiteral, addressFamily } from './lib/edges/ip';
 import { sameAddress } from './lib/edges/hosts';
 import { PROTOCOL_TRANSPORT, protocolUsesSni } from './lib/edges/protocols';
+import { providerHealthSatisfies } from './lib/edges/providers/capabilities';
 import { nextFreePoolIndex, withEdgeAt, withoutEdge, publishedCount } from './lib/edges/pool';
 
 type Db = import('./_generated/server').DatabaseReader;
@@ -865,7 +866,8 @@ export async function checkPublishable(
   // any account of that provider.
   if (edge.accountId && profile.accountId && profile.accountId !== edge.accountId)
     return { ok: false, code: 'account_mismatch' };
-  if (requireHealth && edge.managed && edge.health !== 'online')
+  // A provider without member health never reports `online`; `unknown` passes for it.
+  if (edge.managed && !providerHealthSatisfies(edge.provider, edge.health, requireHealth))
     return { ok: false, code: 'edge_unhealthy' };
   return { ok: true };
 }

@@ -131,6 +131,10 @@ export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
   if (a === 'providers' && b && c === 'inventory' && d === 'refresh') {
     return 'admin.edges.provider-call';
   }
+  // Credential rotation tests the new secret against the provider first.
+  if (a === 'providers' && b && c === 'rotate-credentials' && !d) {
+    return 'admin.edges.provider-call';
+  }
   if (a === 'relays' && b === 'node-candidates' && c === 'refresh') {
     return 'admin.edges.provider-call';
   }
@@ -425,11 +429,24 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
     if (c === 'inventory' && d === 'refresh')
       return refreshInventory(ctx, id<'edgeProviderAccounts'>(b));
     if (c === 'qualify') {
+      // The effective template hash is computed server-side; a client-sent one is ignored.
       return json(
         await ctx.runMutation(internal.edgeProviderAccounts.setQualified, {
           id: id<'edgeProviderAccounts'>(b),
           qualified: body.qualified !== false,
-          templateHash: typeof body.templateHash === 'string' ? body.templateHash : undefined,
+          ...act,
+        }),
+      );
+    }
+    if (c === 'rotate-credentials' && !d) {
+      // New secret (+ its non-secret identifiers) → tested against the provider,
+      // applied only on a pass, qualification kept. The body is sealed in transit
+      // (POST under the prefix); nothing of it is logged.
+      return json(
+        await ctx.runAction(internal.edgeProviderOps.rotateCredentials, {
+          accountId: id<'edgeProviderAccounts'>(b),
+          credentials: body.credentials ?? {},
+          identifiers: body.identifiers ?? undefined,
           ...act,
         }),
       );

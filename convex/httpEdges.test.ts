@@ -251,6 +251,7 @@ describe('relay admin routes', () => {
       'providers/test-credentials',
       'providers/acc1/inventory/refresh',
       'providers/acc1/qualify',
+      'providers/acc1/rotate-credentials',
       'templates',
       'templates/validate',
       'templates/ensure-defaults',
@@ -291,6 +292,7 @@ describe('relay admin routes', () => {
     expect(scopeFor(['templates', 'ensure-defaults'], 'POST')).toBe('admin:servers:write');
     expect(scopeFor(['render', 'preview', 'x'], 'POST')).toBe('admin:servers:write');
     expect(scopeFor(['providers', 'a'], 'PATCH')).toBe('admin:servers:write');
+    expect(scopeFor(['providers', 'a', 'rotate-credentials'], 'POST')).toBe('admin:servers:write');
     expect(scopeFor(['relays', 'r'], 'DELETE')).toBe('admin:servers:write');
     expect(scopeFor(['relays', 'by-slug', 'n'], 'PUT')).toBe('admin:servers:write');
   });
@@ -300,6 +302,7 @@ describe('relay admin routes', () => {
     expect(throttlePolicyFor(['providers', 'discover'])).toBe(P);
     expect(throttlePolicyFor(['providers', 'test-credentials'])).toBe(P);
     expect(throttlePolicyFor(['providers', 'a1', 'inventory', 'refresh'])).toBe(P);
+    expect(throttlePolicyFor(['providers', 'a1', 'rotate-credentials'])).toBe(P);
     expect(throttlePolicyFor(['relays', 'node-candidates', 'refresh'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'live', 'refresh'])).toBe(P);
     expect(throttlePolicyFor(['render', 'preview'])).toBe(P);

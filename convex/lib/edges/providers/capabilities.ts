@@ -119,3 +119,25 @@ export function discoveryMaySettle(
   if (startedAt === undefined) return true;
   return now - startedAt >= EDGE_PROVIDER_CAPABILITIES[id].discoverySettleMs;
 }
+
+/**
+ * Whether an edge's described health satisfies a "provider health" gate
+ * (verify, publish, standby selection). `online` always does. A provider whose
+ * `describe()` cannot see member health (`memberHealth: false`) never answers
+ * `online`, so for it anything but `offline` passes — otherwise the gate would
+ * wait forever. With the gate off (`requireHealth` false) everything passes.
+ * An unknown provider (adopted rows) keeps the strict rule.
+ */
+export function providerHealthSatisfies(
+  id: EdgeProviderId | string | null | undefined,
+  health: string | null | undefined,
+  requireHealth: boolean,
+): boolean {
+  if (!requireHealth) return true;
+  if (health === 'online') return true;
+  const caps =
+    id && id in EDGE_PROVIDER_CAPABILITIES
+      ? EDGE_PROVIDER_CAPABILITIES[id as EdgeProviderId]
+      : undefined;
+  return !!caps && !caps.memberHealth && health !== 'offline';
+}

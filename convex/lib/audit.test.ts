@@ -6,6 +6,12 @@ import { internal } from '../_generated/api';
 import { AUDIT_PAYLOAD_ALLOWLIST, sanitizeAuditPayload } from './audit';
 
 const modules = import.meta.glob('../**/*.*s');
+/** Every backend source file as text (tests excluded), for the allowlist coverage scan. */
+const sources = import.meta.glob<string>(['../**/*.ts', '!../**/*.test.ts', '!../_generated/**'], {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -128,5 +134,29 @@ describe('audit.record (integration, via the real mutation)', () => {
     const rows = await t.run((ctx) => ctx.db.query('auditLog').collect());
     expect(rows).toHaveLength(1);
     expect(rows[0]!.payload).toBeUndefined();
+  });
+});
+
+describe('AUDIT_PAYLOAD_ALLOWLIST coverage', () => {
+  test('every relay-edge audit action (edge.* / probe.* / relay.* / admin.edge.*) written by the backend has an allowlist entry (the allowlist is fail-closed: a missing entry silently drops the payload)', () => {
+    const used = new Set<string>();
+    for (const text of Object.values(sources)) {
+      // `action: '<dotted.name>'` literals in the edge namespaces: every one is
+      // a writeAuditLog call (their payloads carry slugs/ids/codes the operator
+      // relies on). Other namespaces have actions written WITHOUT a payload, so
+      // the scan is scoped here rather than repo-wide.
+      for (const m of text.matchAll(
+        /\baction:\s*'((?:edge|probe|relay|admin\.edge)\.[a-z0-9_.]+)'/g,
+      )) {
+        used.add(m[1]);
+      }
+    }
+    expect(used.size).toBeGreaterThan(40);
+    const missing = [...used].filter((a) => !(a in AUDIT_PAYLOAD_ALLOWLIST)).sort();
+    expect(missing).toEqual([]);
+    // The rotation audit from the provider-adapter work survived the merge.
+    expect(AUDIT_PAYLOAD_ALLOWLIST['edge.provider_account.credentials_rotated']).toEqual(
+      expect.arrayContaining(['credentialsChanged', 'identifiersChanged', 'qualifiedKept']),
+    );
   });
 });

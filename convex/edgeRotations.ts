@@ -51,6 +51,7 @@ import {
   type RotationEvent,
 } from './lib/edges/rotation';
 import { PROTOCOL_TRANSPORT, protocolUsesSni } from './lib/edges/protocols';
+import { providerHealthSatisfies } from './lib/edges/providers/capabilities';
 import type {
   StepOutcome,
   Discovery,
@@ -1834,6 +1835,7 @@ async function selectionContext(
     account.provider,
     null,
     account.defaultTemplateId ?? null,
+    account._id,
   );
   return {
     slot,
@@ -1852,12 +1854,14 @@ async function stepContextHandler(ctx: ActionCtx, rotationId: Id<'edgeRotations'
   return ctx.runQuery(internal.edgeRotations.stepContext, { rotationId });
 }
 
+/** The provider-facing spec; `transport` rides along so a udp slot is refused before any call. */
 function specOf(edge: Edge) {
   return {
     name: edge.name,
     listeners: edge.listeners.map((l) => ({
       edgePort: l.edgePort,
       members: [{ address: l.originAddress, port: l.originPort }],
+      ...(l.transport ? { transport: l.transport } : {}),
     })),
   };
 }
@@ -1871,16 +1875,41 @@ function resourceStepOf(s: Edge['steps'][number]): ResourceStep {
   };
 }
 
-function errCode(err: unknown): { code: string; detail: string } {
+/**
+ * Code + short detail of a thrown error. Provider ops cross the action boundary
+ * as `ConvexError<EdgeProviderOpsFailure>` (edgeProviderOps.ts), so the code,
+ * HTTP status and retry/timeout flags are read from `err.data`; a plain Error
+ * (a panel call, a mutation refusal) contributes only its body-free message.
+ */
+function errCode(err: unknown): {
+  code: string;
+  detail: string;
+  status?: number;
+  retryable: boolean;
+  timedOut: boolean;
+} {
   if (err instanceof ConvexError) {
-    const d = err.data as { code?: string; message?: string } | string;
-    if (typeof d === 'string') return { code: 'error', detail: d.slice(0, 120) };
-    return { code: d.code ?? 'error', detail: (d.message ?? '').slice(0, 120) };
+    const d = err.data as
+      | {
+          code?: string;
+          message?: string;
+          status?: number;
+          retryable?: boolean;
+          timedOut?: boolean;
+        }
+      | string;
+    if (typeof d === 'string')
+      return { code: 'error', detail: d.slice(0, 120), retryable: false, timedOut: false };
+    return {
+      code: d.code ?? 'error',
+      detail: `${d.status ?? ''} ${d.message ?? ''}`.trim().slice(0, 120),
+      status: d.status,
+      retryable: d.retryable === true,
+      timedOut: d.timedOut === true,
+    };
   }
   const m = err instanceof Error ? err.message : String(err);
-  // Provider errors are typed with a meta code and never carry bodies/URLs.
-  const meta = (err as { meta?: { code?: string; status?: number } }).meta;
-  return { code: meta?.code ?? 'error', detail: `${meta?.status ?? ''} ${m}`.trim().slice(0, 120) };
+  return { code: 'error', detail: m.slice(0, 120), retryable: false, timedOut: false };
 }
 
 export const step = internalAction({
@@ -2057,6 +2086,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
     listeners: listeners.map((l) => ({
       edgePort: l.edgePort,
       members: [{ address: l.originAddress, port: l.originPort }],
+      ...(l.transport ? { transport: l.transport } : {}),
     })),
   };
   let steps: ResourceStep[];
@@ -2114,6 +2144,8 @@ async function phaseProvisioning(ctx: ActionCtx, c: Ctx) {
     provider: edge.provider!,
     templateId: edge.templateId ?? null,
     accountDefaultId: null,
+    // Account-scoped templates resolve only for their own account.
+    accountId: edge.accountId,
   });
   if (tpl.hash !== edge.templateHash) {
     await advanceCall(ctx, r._id, sv, { type: 'fail', code: 'template_changed', rollback: false });
@@ -2496,7 +2528,8 @@ async function phaseVerifying(ctx: ActionCtx, c: Ctx) {
       return;
     }
     const v4 = desc.addresses.v4 ?? edge.addresses.v4;
-    const healthy = !cfg.requireProviderHealth || desc.health === 'online';
+    // A provider without member health never answers `online`: `unknown` is enough from it.
+    const healthy = providerHealthSatisfies(edge.provider, desc.health, cfg.requireProviderHealth);
     if (!(desc.state === 'active' && v4 && healthy)) {
       if (r.pollAttempts + 1 >= cfg.verifyAttempts) {
         await advanceCall(ctx, r._id, sv, {
