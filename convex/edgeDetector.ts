@@ -48,8 +48,10 @@ export const relayWindow = internalQuery({
       if (r.kind !== 'report') continue;
       window.reports += 1;
       // detectorWeight 0 = a repeat by the same member inside the window (the
-      // peppered dedupe mark); it never adds a reporter, at origin OR edge level.
-      const weight = r.detectorWeight ?? 1;
+      // peppered dedupe mark), or a report recorded while no mark pepper was
+      // configured (fail closed); it never adds a reporter, at origin OR edge
+      // level. A missing weight is treated the same way.
+      const weight = r.detectorWeight ?? 0;
       window.distinctReporters += weight;
       const c = r.country ?? r.detectedCountry;
       if (c) window.countries[c] = (window.countries[c] ?? 0) + 1;
@@ -66,6 +68,7 @@ export const relayWindow = internalQuery({
       )
       .collect();
     const baseline: BaselineSample[] = samples.map((s) => ({
+      at: s.at,
       reports: s.reports,
       distinctReporters: s.distinctReporters,
       usersOnline: s.usersOnline,
@@ -78,6 +81,7 @@ export const relayWindow = internalQuery({
       .unique();
     const usersOnline = inv ? inv.usersOnline : null;
     const loadStale = inv ? now - inv.lastStatsAt > LOAD_STALE_MS : true;
+    const nodeOnline = inv ? inv.online : null;
     const edges: EdgeProbeState[] = [];
     const published: Array<{ edgeId: string; poolIndex: number }> = [];
     for (let i = 0; i < origin.publishedEdgeIds.length; i++) {
@@ -86,16 +90,33 @@ export const relayWindow = internalQuery({
       const e = await ctx.db.get(id);
       if (!e) continue;
       published.push({ edgeId: e._id, poolIndex: e.poolIndex ?? i });
-      const byCountry = (e.reachability?.byCountry ?? []).map((c) => ({
-        country: c.country,
-        verdict: c.verdict as Verdict,
-      }));
+      // Reachability history per country (bounded: countries × sources ×
+      // families): a country is block evidence only once the edge has been
+      // reachable from it before (the IPv4 path, what members receive).
+      const history = await ctx.db
+        .query('probeReachability')
+        .withIndex('by_target_country', (q) => q.eq('targetKind', 'edge').eq('targetRef', e._id))
+        .collect();
+      const wasReachable = (country: string) =>
+        history.some(
+          (r) =>
+            r.country === country && (r.ipVersion ?? 4) === 4 && r.lastReachableAt !== undefined,
+        );
+      const entries = e.reachability?.byCountry ?? [];
+      const external = entries.filter((c) => c.country !== 'XX');
       edges.push({
         edgeId: e._id,
-        byCountry: byCountry.filter((c) => c.country !== 'XX'),
-        internalVerdict: byCountry.find((c) => c.country === 'XX')?.verdict ?? 'unknown',
+        byCountry: external.map((c) => ({
+          country: c.country,
+          verdict: c.verdict as Verdict,
+          wasReachable: wasReachable(c.country),
+          // Each country's own freshness: a summary refreshed by one source
+          // must not make another country's old verdict look current.
+          ageMs: now - c.lastAt,
+        })),
+        internalVerdict: entries.find((c) => c.country === 'XX')?.verdict ?? 'unknown',
         providerHealth: e.health,
-        probeAgeMs: e.reachability ? now - e.reachability.updatedAt : null,
+        probeAgeMs: external.length ? now - Math.max(...external.map((c) => c.lastAt)) : null,
       });
     }
     const rotation = origin.activeRotationId ? await ctx.db.get(origin.activeRotationId) : null;
@@ -109,6 +130,7 @@ export const relayWindow = internalQuery({
       baseline,
       usersOnline,
       loadStale,
+      nodeOnline,
       edges,
       published,
       rotationActive,
@@ -125,12 +147,22 @@ export const recordEvaluation = internalMutation({
     usersOnline: v.union(v.number(), v.null()),
     veto: v.union(v.string(), v.null()),
     lastRotateError: v.optional(v.union(v.string(), v.null())),
+    rotationActive: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
     const origin = await ctx.db.get(a.relayId);
     if (!origin) return null;
     const ev = a.evaluation as Evaluation;
     const prev = origin.suspicion;
+    // The baseline describes NORMAL operation. A sample taken while the relay
+    // is suspected, rotating, cooling down after a rotation or behind an
+    // offline node would teach the detector that a block looks normal, so it
+    // is not appended to the ring.
+    const baselineEligible =
+      ev.state !== 'suspected' &&
+      !a.rotationActive &&
+      !ev.nodeOffline &&
+      !(origin.cooldownUntil !== undefined && origin.cooldownUntil > a.now);
     await ctx.db.patch(a.relayId, {
       suspicion: {
         state: ev.state,
@@ -159,13 +191,15 @@ export const recordEvaluation = internalMutation({
       },
       updatedAt: a.now,
     });
-    await ctx.db.insert('relaySamples', {
-      relayId: a.relayId,
-      at: a.now,
-      reports: ev.countries.reduce((acc, c) => acc + c.count, 0),
-      distinctReporters: 0,
-      usersOnline: a.usersOnline,
-    });
+    if (baselineEligible) {
+      await ctx.db.insert('relaySamples', {
+        relayId: a.relayId,
+        at: a.now,
+        reports: ev.countries.reduce((acc, c) => acc + c.count, 0),
+        distinctReporters: 0,
+        usersOnline: a.usersOnline,
+      });
+    }
     // Retention: drop the oldest samples past 7 days (bounded per tick).
     const old = await ctx.db
       .query('relaySamples')
@@ -229,6 +263,9 @@ function round3(x: number): number {
 function hintText(ev: Evaluation, veto: string | null): string | undefined {
   if (ev.state !== 'suspected') return undefined;
   const where = ev.countries[0] ? ` (mostly ${ev.countries[0].code})` : '';
+  if (ev.nodeOffline) {
+    return `Node offline: an outage, not a block${where}${veto ? `; automatic rotation held (${veto})` : ''}`;
+  }
   const how =
     ev.hintLevel === 'corroborated'
       ? 'members and probes agree'
@@ -289,6 +326,7 @@ export const run = internalAction({
             baseline: w.baseline,
             usersOnline: w.usersOnline,
             loadStale: w.loadStale,
+            nodeOnline: w.nodeOnline,
             edges: w.edges,
             cfg: w.cfg,
             prev: w.origin.suspicion
@@ -344,6 +382,7 @@ export const run = internalAction({
             evaluation: ev,
             usersOnline: w.usersOnline,
             veto,
+            rotationActive: w.rotationActive || !('veto' in decision),
             ...(lastRotateError !== undefined ? { lastRotateError } : {}),
           });
           await ctx.runMutation(internal.edgeDetector.recordSampleCounts, {
@@ -354,11 +393,12 @@ export const run = internalAction({
           });
           // Reports alone raised suspicion: ask the probes for edge-level evidence now.
           if (ev.transition === 'suspected' && ev.hintLevel === 'reports' && w.cfg.probe.enabled) {
-            for (const p of w.published) {
+            for (const [i, p] of w.published.entries()) {
               try {
                 const r = await ctx.runMutation(internal.probes.requestProbes, {
                   target: { kind: 'edge', ref: p.edgeId },
                   trigger: 'detector',
+                  staggerIndex: i,
                 });
                 report.probesRequested += r.runIds.length;
               } catch {

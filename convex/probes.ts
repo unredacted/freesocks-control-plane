@@ -38,6 +38,8 @@ const MIN = 60_000;
 const PROBE_RUN_RETENTION_MS = 14 * 24 * 60 * 60_000;
 const MAX_SWEEP_ROUNDS = 20;
 const RUN_TIMEOUT_MS = 10 * MIN;
+/** Distinct failing networks kept per rollup row (the agreement rule needs a handful). */
+const MAX_FAIL_NETWORKS = 16;
 
 export const PROBE_TARGET_KINDS = ['edge', 'relay', 'custom'] as const;
 export type ProbeTargetKind = (typeof PROBE_TARGET_KINDS)[number];
@@ -141,7 +143,8 @@ interface ResolvedTarget {
   label: string;
   /** Address per family; a hostname counts as the v4 path (the resolver decides). */
   addresses: { v4?: string; v6?: string };
-  port: number;
+  /** Every port the target listens on (one run per port: a block can be per port). */
+  ports: number[];
 }
 
 /** Resolve what a target ref points at right now, or null when it is gone. */
@@ -156,7 +159,7 @@ async function resolveTarget(
     return {
       label: `${relay?.slug ?? 'relay'} edge${edge.poolIndex !== undefined ? ` #${edge.poolIndex}` : ''}${edge.provider ? ` (${edge.provider})` : ''}`,
       addresses: { v4: edge.addresses.v4, v6: edge.addresses.v6 },
-      port: edge.listeners[0]?.edgePort ?? 443,
+      ports: distinctPorts(edge.listeners.map((l) => l.edgePort)),
     };
   }
   if (t.kind === 'relay') {
@@ -166,21 +169,36 @@ async function resolveTarget(
       .query('relaySlots')
       .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
       .collect();
-    const deployed = slots.filter((s) => s.deployed && !s.retired);
-    const port = deployed.sort((a, b) => a.slotKey.localeCompare(b.slotKey))[0]?.originPort ?? 443;
+    const deployed = slots
+      .filter((s) => s.deployed && !s.retired)
+      .sort((a, b) => a.slotKey.localeCompare(b.slotKey));
     return {
       label: `${relay.slug} node`,
       addresses: splitByFamily(relay.originAddress),
-      port,
+      ports: distinctPorts(deployed.map((s) => s.originPort)),
     };
   }
   const row = await ctx.db.get(t.ref as Id<'probeTargets'>);
   if (!row) return null;
-  return { label: row.label, addresses: splitByFamily(row.address), port: row.port };
+  return { label: row.label, addresses: splitByFamily(row.address), ports: [row.port] };
+}
+
+function distinctPorts(ports: number[]): number[] {
+  const out = [...new Set(ports.filter((p) => Number.isInteger(p) && p > 0))];
+  return out.length > 0 ? out : [443];
 }
 
 function splitByFamily(address: string): { v4?: string; v6?: string } {
   return addressFamily(address) === 'v6' ? { v6: address } : { v4: address };
+}
+
+/** Which address families a resolved target is probed over (v4 always; v6 when present and rendering allows, or v6-only). */
+function familiesOf(resolved: ResolvedTarget, cfg: EdgeConfig): Array<4 | 6> {
+  const out: Array<4 | 6> = [];
+  if (resolved.addresses.v4) out.push(4);
+  if (resolved.addresses.v6 && (cfg.render.ipv6Mode !== 'off' || !resolved.addresses.v4))
+    out.push(6);
+  return out;
 }
 
 // --- runs ---------------------------------------------------------------------------------------
@@ -194,6 +212,8 @@ async function insertRun(
     port: number;
     ipVersion: 4 | 6;
     trigger: 'cron' | 'manual' | 'detector' | 'qualification';
+    /** Executor start delay: staggers a batch's runs against one external service. */
+    delayMs: number;
   },
 ): Promise<Id<'probeRuns'>> {
   const now = Date.now();
@@ -208,7 +228,7 @@ async function insertRun(
     requestedAt: now,
     results: [],
   });
-  await ctx.scheduler.runAfter(0, internal.probeOps.execute, { runId });
+  await ctx.scheduler.runAfter(Math.max(0, a.delayMs), internal.probeOps.execute, { runId });
   await writeAuditLog(ctx, {
     actorType: 'system',
     action: 'probe.run',
@@ -220,14 +240,21 @@ async function insertRun(
 }
 
 /**
- * Start one probe round for one target from every enabled source (v4 always;
- * v6 when the target has one and IPv6 rendering is not off).
+ * Start one probe round for one target from every enabled source, for every
+ * listener port, per address family (v4 always; v6 when the target has one and
+ * IPv6 rendering is not off, or when v6 is all it has).
+ *
+ * `staggerIndex` is the target's position in the caller's batch: runs against
+ * the same EXTERNAL source are scheduled `probe.sourceSpacingMs` apart across
+ * the batch, so one tick never fires N simultaneous requests at a keyless
+ * service. The internal probe is never delayed.
  */
 export async function requestProbesFor(
   ctx: MutationCtx,
   target: ProbeTargetRef,
   trigger: 'cron' | 'manual' | 'detector' | 'qualification',
   sources?: ProbeSource[],
+  opts: { staggerIndex?: number } = {},
 ): Promise<Id<'probeRuns'>[]> {
   const resolved = await resolveTarget(ctx, target);
   if (!resolved) throw new ConvexError({ code: 'not_found', message: 'Probe target not found' });
@@ -237,46 +264,57 @@ export async function requestProbesFor(
   const cfg = await resolveEdgeConfig(ctx.db);
   const secrets = await resolveEdgeSecrets(ctx.db);
   const use = sources ?? enabledSources(cfg, secrets);
+  const families = familiesOf(resolved, cfg);
+  const runsPerSource = families.length * resolved.ports.length;
+  const staggerIndex = Math.max(0, Math.floor(opts.staggerIndex ?? 0));
   const runIds: Id<'probeRuns'>[] = [];
   for (const source of use) {
-    if (resolved.addresses.v4) {
-      runIds.push(
-        await insertRun(ctx, {
-          target,
-          source,
-          address: resolved.addresses.v4,
-          port: resolved.port,
-          ipVersion: 4,
-          trigger,
-        }),
-      );
-    }
-    if (resolved.addresses.v6 && (cfg.render.ipv6Mode !== 'off' || !resolved.addresses.v4)) {
-      runIds.push(
-        await insertRun(ctx, {
-          target,
-          source,
-          address: resolved.addresses.v6,
-          port: resolved.port,
-          ipVersion: 6,
-          trigger,
-        }),
-      );
+    const spacing = source === 'internal' ? 0 : cfg.probe.sourceSpacingMs;
+    let k = 0;
+    for (const ipVersion of families) {
+      const address = ipVersion === 4 ? resolved.addresses.v4! : resolved.addresses.v6!;
+      for (const port of resolved.ports) {
+        runIds.push(
+          await insertRun(ctx, {
+            target,
+            source,
+            address,
+            port,
+            ipVersion,
+            trigger,
+            delayMs: (staggerIndex * runsPerSource + k) * spacing,
+          }),
+        );
+        k++;
+      }
     }
   }
   return runIds;
 }
 
-/** One target (the cron, the detector, the per-edge admin button). */
+/** One target (the cron, the detector, the per-edge admin button). A manual request is audited like requestMany. */
 export const requestProbes = internalMutation({
   args: {
     target: probeTargetRef,
     trigger: probeTrigger,
     sources: v.optional(v.array(probeSource)),
+    staggerIndex: v.optional(v.number()),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { target, trigger, sources }) => ({
-    runIds: await requestProbesFor(ctx, target, trigger, sources),
-  }),
+  handler: async (ctx, { target, trigger, sources, staggerIndex, actorAdminId }) => {
+    const runIds = await requestProbesFor(ctx, target, trigger, sources, { staggerIndex });
+    if (trigger === 'manual') {
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: actorAdminId ?? undefined,
+        action: 'probe.requested',
+        targetType: 'probe_target',
+        targetId: targetKeyOf(target),
+        payload: { targets: 1, runs: runIds.length, sources: sources ?? null },
+      });
+    }
+    return { runIds };
+  },
 });
 
 /**
@@ -294,9 +332,9 @@ export const requestMany = internalMutation({
       throw new ConvexError({ code: 'validation', message: 'targets must hold 1..50 entries' });
     const runIds: Id<'probeRuns'>[] = [];
     const skipped: string[] = [];
-    for (const t of targets) {
+    for (const [i, t] of targets.entries()) {
       try {
-        runIds.push(...(await requestProbesFor(ctx, t, 'manual', sources)));
+        runIds.push(...(await requestProbesFor(ctx, t, 'manual', sources, { staggerIndex: i })));
       } catch (err) {
         skipped.push(
           `${targetKeyOf(t)}: ${err instanceof ConvexError ? String((err.data as { code?: string }).code ?? 'error') : 'error'}`,
@@ -390,6 +428,11 @@ export const finishRun = internalMutation({
         failCount: summary.failVantages,
         lastOkAt: summary.okVantages > 0 ? now : row?.lastOkAt,
         lastFailAt: summary.failVantages > 0 ? now : row?.lastFailAt,
+        // The transition marker the detector needs: this country has reached
+        // the target before, so a later `unreachable` is a change, not a constant.
+        lastReachableAt: summary.verdict === 'reachable' ? now : row?.lastReachableAt,
+        // The real distinct failing networks (bounded) behind this verdict.
+        failNetworks: summary.failNetworks.slice(0, MAX_FAIL_NETWORKS),
         verdict: summary.verdict,
         updatedAt: now,
       };
@@ -459,14 +502,11 @@ async function refreshTargetSummary(ctx: MutationCtx, target: ProbeTargetRef, no
         verdict: r.verdict as Verdict,
         okVantages: r.okCount,
         failVantages: r.failCount,
-        // An `unreachable` source verdict already proved ≥ agreementVantages
-        // distinct failing networks; reconstruct that many placeholders.
-        failNetworks:
-          r.verdict === 'unreachable'
-            ? Array.from({ length: Math.max(2, r.failCount) }, (_, i) => `${r.source}:${i}`)
-            : r.failCount > 0
-              ? [`${r.source}:0`]
-              : [],
+        // The persisted distinct failing networks. A row written before they
+        // were kept counts as ONE network (never reconstructed: the
+        // cross-source rule must count real vantages, and the row refreshes
+        // at the next run anyway).
+        failNetworks: r.failNetworks ?? (r.failCount > 0 ? [`${r.source}:legacy`] : []),
       }));
     const verdictOf = (perSource: SourceSummary[]): Verdict =>
       country === 'XX' ? internalVerdict(perSource) : countryVerdict(perSource);
@@ -478,7 +518,9 @@ async function refreshTargetSummary(ctx: MutationCtx, target: ProbeTargetRef, no
       ...(v6 ? { v6Verdict: v6 } : {}),
       okVantages: perSource.reduce((a, s) => a + s.okVantages, 0),
       failVantages: perSource.reduce((a, s) => a + s.failVantages, 0),
-      lastAt: Math.max(0, ...rows.filter((r) => r.country === country).map((r) => r.updatedAt)),
+      // THIS country's own freshness (its newest contributing row), never the
+      // summary's: the detector ages each country's evidence separately.
+      lastAt: Math.max(0, ...primaryRows.map((r) => r.updatedAt)),
     };
   });
   const reachability = { byCountry, updatedAt: now };
@@ -606,9 +648,12 @@ export const summary = internalQuery({
     const since = Math.max(rawSince, until - 366 * DAY);
     const span = Math.max(until - since, MIN);
     const bucketMs = span <= 3 * DAY ? 60 * MIN : DAY;
-    const n = Math.ceil(span / bucketMs);
+    // Buckets sit on clock boundaries of their size (whole hours / UTC days),
+    // so the first one may start before `since` and cover a partial span.
+    const alignedSince = Math.floor(since / bucketMs) * bucketMs;
+    const n = Math.ceil((until - alignedSince) / bucketMs);
     const buckets = Array.from({ length: n }, (_, i) => ({
-      start: since + i * bucketMs,
+      start: alignedSince + i * bucketMs,
       ok: 0,
       fail: 0,
       runs: 0,
@@ -627,7 +672,7 @@ export const summary = internalQuery({
     const byCountry: Record<string, { ok: number; fail: number }> = {};
     const bySource: Record<string, { runs: number; ok: number; fail: number }> = {};
     for (const r of rows) {
-      const b = buckets[Math.floor((r.requestedAt - since) / bucketMs)];
+      const b = buckets[Math.floor((r.requestedAt - alignedSince) / bucketMs)];
       if (!b) continue;
       b.runs++;
       totals.runs++;
@@ -638,6 +683,8 @@ export const summary = internalQuery({
         b[k]++;
         totals[k]++;
         src[k]++;
+        // The internal probe ('XX') is not a country: it shows under bySource only.
+        if (x.country === 'XX') continue;
         (b.byCountry[x.country] ??= { ok: 0, fail: 0 })[k]++;
         (byCountry[x.country] ??= { ok: 0, fail: 0 })[k]++;
       }
@@ -714,19 +761,30 @@ export const due = internalQuery({
       .query('relays')
       .withIndex('by_enabled', (q) => q.eq('enabled', true))
       .collect();
-    const dueTargets: Array<{ target: ProbeTargetRef; suspected: boolean }> = [];
-    let spentThisHour = 0;
+    const dueTargets: Array<{
+      target: ProbeTargetRef;
+      suspected: boolean;
+      /** Runs one source will cost for this target (ports × address families). */
+      runsPerSource: number;
+    }> = [];
+    // The hour's spend counts EVERY run of the hour — cron, manual, detector,
+    // qualification, whatever its state — not only the due candidates' runs.
+    // Bounded per status by the budget itself (anything beyond it is "spent").
     const hourStart = now - 60 * MIN;
+    const cap = cfg.probe.hourlyBudget + 1;
+    let spentThisHour = 0;
+    for (const status of ['requested', 'running', 'finished', 'failed', 'timeout'] as const) {
+      const n = (
+        await ctx.db
+          .query('probeRuns')
+          .withIndex('by_status_requested', (q) =>
+            q.eq('status', status).gte('requestedAt', hourStart),
+          )
+          .take(cap)
+      ).length;
+      spentThisHour += n;
+    }
     const consider = async (target: ProbeTargetRef, interval: number, suspected: boolean) => {
-      // The hour's spend (budget) and the newest run (interval) are separate
-      // reads: an interval above an hour must still see its last run.
-      const recent = await ctx.db
-        .query('probeRuns')
-        .withIndex('by_target_requested', (q) =>
-          q.eq('targetKind', target.kind).eq('targetRef', target.ref).gte('requestedAt', hourStart),
-        )
-        .collect();
-      spentThisHour += recent.length;
       const newest = await ctx.db
         .query('probeRuns')
         .withIndex('by_target_requested', (q) =>
@@ -735,7 +793,14 @@ export const due = internalQuery({
         .order('desc')
         .first();
       const last = newest?.requestedAt ?? 0;
-      if (last === 0 || now - last >= interval) dueTargets.push({ target, suspected });
+      if (last !== 0 && now - last < interval) return;
+      const resolved = await resolveTarget(ctx, target);
+      if (!resolved || (!resolved.addresses.v4 && !resolved.addresses.v6)) return;
+      dueTargets.push({
+        target,
+        suspected,
+        runsPerSource: Math.max(1, familiesOf(resolved, cfg).length * resolved.ports.length),
+      });
     };
     const baseInterval = cfg.probe.intervalMinutes * MIN;
     for (const relay of relays) {
@@ -744,7 +809,9 @@ export const due = internalQuery({
       for (const edgeId of relay.publishedEdgeIds) {
         if (!edgeId) continue;
         const edge = await ctx.db.get(edgeId);
-        if (!edge || edge.status !== 'active' || !edge.addresses.v4) continue;
+        // v6-only edges are probed too (over v6; requestProbesFor's family rules).
+        if (!edge || edge.status !== 'active' || (!edge.addresses.v4 && !edge.addresses.v6))
+          continue;
         await consider({ kind: 'edge', ref: edgeId }, interval, suspected);
       }
       if (relay.probeNode) await consider({ kind: 'relay', ref: relay._id }, baseInterval, false);
@@ -835,9 +902,10 @@ export const run = internalAction({
       let spent = plan.spentThisHour;
       let requested = 0;
       let skipped = 0;
+      let batchIndex = 0;
       for (const d of plan.dueTargets) {
-        // Each source is one run (two with IPv6); reserve the worst case.
-        const cost = plan.sources.length * 2;
+        // One run per source per port per address family.
+        const cost = plan.sources.length * d.runsPerSource;
         if (spent + cost > plan.hourlyBudget) {
           skipped++;
           continue;
@@ -847,6 +915,7 @@ export const run = internalAction({
             target: d.target,
             trigger: 'cron',
             sources: plan.sources,
+            staggerIndex: batchIndex++,
           });
           spent += res.runIds.length;
           requested += res.runIds.length;
