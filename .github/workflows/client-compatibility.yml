@@ -10,7 +10,9 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: client-compat-${{ github.workflow }}-${{ github.ref }}
+  # Keyed on the event too: the nightly schedule and a push to main must not
+  # cancel each other (both resolve to refs/heads/main).
+  group: client-compat-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -30,6 +32,11 @@ jobs:
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          # download.ts re-verifies every cached artifact's SHA-256 before use.
+          path: .cache/compat/bin
+          key: compat-bin-${{ hashFiles('tests/compat/manifest.ts') }}
       - run: bunx tsc -p tests/compat/tsconfig.json --noEmit
       - run: bunx vitest run convex/clientCompatibility.test.ts convex/subscriptionFront.test.ts convex/issueReports.test.ts convex/lib/backends/remnawave.test.ts
       - run: bun run test:integration:remnawave
@@ -58,6 +65,10 @@ jobs:
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bunx playwright install --with-deps chromium firefox
       - run: bun run test:compat:browser
       - if: always()
@@ -116,6 +127,11 @@ jobs:
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          # download.ts re-verifies every cached artifact's SHA-256 before use.
+          path: .cache/compat/bin
+          key: compat-bin-${{ hashFiles('tests/compat/manifest.ts') }}
       - name: Check desktop session and install pinned package
         run: |
           test -n "$DISPLAY"

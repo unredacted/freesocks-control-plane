@@ -131,8 +131,3 @@ export const clients: CompatibilityClient[] = [
       'Static ss:// key contract only; Outline application and Shadowsocks transport require device verification.',
   },
 ];
-
-export const applicationTargets = [
-  { id: 'debian-13-xfce', runner: 'fcp-debian-13-xfce', package: 'sfl' },
-  { id: 'mx-25.2-xfce', runner: 'fcp-mx-25-2-xfce', package: 'sfl' },
-] as const;

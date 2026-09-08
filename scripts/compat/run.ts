@@ -1,24 +1,18 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { compose } from '../../tests/compat/compose';
 
 const bunVersion = JSON.parse(readFileSync('package.json', 'utf8')).packageManager.split('@')[1];
-process.env.FCP_COMPAT_BUN_VERSION = bunVersion;
 const root = resolve('.cache/compat/runtime');
 mkdirSync(root, { recursive: true });
 mkdirSync('test-results/compat', { recursive: true });
-const compose = [
-  'compose',
-  '-p',
-  'fcp-compat',
-  '-f',
-  'docker-compose.remnawave-test.yml',
-  '-f',
-  'docker-compose.compat.yml',
-];
 // Pass the variable explicitly: a mutation of process.env is not reliably
 // inherited by child processes under every runtime.
 const env = { ...process.env, FCP_COMPAT_BUN_VERSION: bunVersion };
+// On the desktop-VM path the packaged app is installed on the runner itself, so
+// the container image that carries it is never used.
+const buildDesktopImage = !process.env.FCP_COMPAT_SFL_EXECUTABLE;
 const docker = (...args: string[]) =>
   execFileSync('docker', [...compose, ...args], { stdio: 'inherit', env });
 let status = 1;
@@ -45,29 +39,27 @@ try {
     ],
     { stdio: 'ignore' },
   );
-  // Server config is replaced after a real test user has been issued.
-  writeFileSync(
-    `${root}/server.json`,
-    JSON.stringify({ inbounds: [], outbounds: [{ type: 'direct' }] }),
-  );
-  docker('build', 'compat-proxy');
-  execFileSync(
-    'docker',
-    [
-      'build',
-      '--platform',
-      'linux/amd64',
-      '-f',
-      'docker/compat/desktop.Dockerfile',
-      '--build-arg',
-      `BUN_VERSION=${bunVersion}`,
-      '-t',
-      'fcp-compat-desktop:local',
-      '.',
-    ],
-    { stdio: 'inherit' },
-  );
+  // Start the panel first: its migrations + healthcheck overlap the image builds.
+  // (The compat services start later, from seedPanel, once server.json exists.)
   docker('up', '-d', 'rw-test-proxy');
+  docker('build', 'compat-proxy');
+  if (buildDesktopImage)
+    execFileSync(
+      'docker',
+      [
+        'build',
+        '--platform',
+        'linux/amd64',
+        '-f',
+        'docker/compat/desktop.Dockerfile',
+        '--build-arg',
+        `BUN_VERSION=${bunVersion}`,
+        '-t',
+        'fcp-compat-desktop:local',
+        '.',
+      ],
+      { stdio: 'inherit' },
+    );
   const bootstrap = execFileSync('bun', ['--no-env-file', 'scripts/remnawave-test-bootstrap.mjs'], {
     encoding: 'utf8',
     env: { ...process.env, REMNAWAVE_TEST_URL: 'http://localhost:3000' },

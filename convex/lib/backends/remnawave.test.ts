@@ -442,6 +442,7 @@ describe('normalizeSubscriptionUserAgent', () => {
     );
     // No parseable core version → SFL's own version, then the modern-era default.
     expect(normalizeSubscriptionUserAgent('SFL/1.14.0')).toBe('SFA/1.14.0 (sing-box 1.14.0)');
+    expect(normalizeSubscriptionUserAgent('SFW/1.14.0')).toBe('SFA/1.14.0 (sing-box 1.14.0)');
     expect(normalizeSubscriptionUserAgent('SFL (sing-box 1.14.0; language en_US)')).toBe(
       'SFA/1.14.0 (sing-box 1.14.0)',
     );

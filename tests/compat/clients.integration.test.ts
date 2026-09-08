@@ -19,6 +19,15 @@ const token = 'compat_subscription_capability';
 beforeAll(async () => {
   panel = await seedPanel();
   await t.run(async (ctx) => {
+    // Every fetch below is charged to ONE token's `subscription.fetch.token`
+    // bucket (default 60/min, enforced before the cache lookup). The suite
+    // issues ~50 per run and grows with the manifest, so lift the cap here;
+    // a 429 would otherwise surface as a bogus format regression.
+    await ctx.db.insert('appSettings', {
+      key: 'ratelimit.subscription.fetch.token',
+      value: JSON.stringify({ max: 100_000, windowMs: 60_000, enabled: true }),
+      updatedAt: Date.now(),
+    });
     const server = await ctx.db.insert('backendServers', {
       backend: 'remnawave',
       name: 'Compatibility',
@@ -79,15 +88,33 @@ describe('real panel → FCP HTTP handler → client format (Convex test runtime
       test(`${client.name}: ${ua}`, async () => {
         const body = await subscription(ua);
         assertSubscription(body, client.format);
-        // Repeat after different clients have used the same token: exact UA cache isolation.
+        // An immediate repeat is a fresh-cache hit for this UA and must be byte-identical.
         expect(await subscription(ua)).toBe(body);
       });
     }
   }
-  test('cached responses remain client-specific after all formats have been requested', async () => {
-    for (const client of clients.filter((c) => c.format !== 'outline')) {
-      assertSubscription(await subscription(client.userAgents[0]!), client.format);
-    }
+  test('a fresh cache entry is served only to its own User-Agent', async () => {
+    // The per-sub cache keeps the newest SUB_CACHE_MAX entries, newest first,
+    // and a hit is a lookup by exact UA. Prime one entry per format, then
+    // re-request the OLDEST (sing-box) while a links body is the newest entry:
+    // a lookup that ignored the UA would hand sing-box the links body.
+    const byFormat = (format: string) => clients.find((c) => c.format === format)!.userAgents[0]!;
+    const singbox = byFormat('singbox');
+    const first = await subscription(singbox);
+    assertSubscription(first, 'singbox');
+    assertSubscription(await subscription(byFormat('mihomo')), 'mihomo');
+    assertSubscription(await subscription(byFormat('links')), 'links');
+    const cache = await t.run(
+      async (ctx) => (await ctx.db.query('subscriptions').first())!.subCache,
+    );
+    expect(cache).toBeTruthy();
+    expect((JSON.parse(cache!) as Array<{ ua: string }>).map((e) => e.ua)).toEqual(
+      expect.arrayContaining([singbox, byFormat('mihomo'), byFormat('links')]),
+    );
+    const again = await subscription(singbox);
+    assertSubscription(again, 'singbox');
+    expect(again).toBe(first);
+    assertSubscription(await subscription(byFormat('mihomo')), 'mihomo');
   });
   test('unknown subscription is rejected', async () => {
     expect((await t.fetch('/api/v1/sub/unknown')).status).toBe(404);
@@ -228,100 +255,110 @@ describe('reference engines: real panel-generated REALITY connections', () => {
   });
 });
 
-test('SFL 1.14.0 package: deep link, manual URL entry, native import and refresh', async () => {
-  const requests: string[] = [];
-  const server = createServer(async (req, res) => {
-    if (req.url !== `/api/v1/sub/${token}`) {
-      res.writeHead(404).end();
-      return;
-    }
-    const ua = req.headers['user-agent'] ?? '';
-    requests.push(ua);
-    try {
-      const response = await t.fetch(req.url, { headers: { 'user-agent': ua } });
-      res.writeHead(response.status, Object.fromEntries(response.headers));
-      res.end(await response.text());
-    } catch {
-      res.writeHead(500).end();
-    }
-  });
-  await new Promise<void>((resolve) => server.listen(4179, '0.0.0.0', resolve));
-  try {
-    const executable = process.env.FCP_COMPAT_SFL_EXECUTABLE;
-    const localUrl = `http://${executable ? '127.0.0.1' : 'host.docker.internal'}:4179/api/v1/sub/${token}`;
-    const containerName = `fcp-compat-sfl-${randomUUID().slice(0, 8)}`;
-    const args = executable
-      ? ['--no-env-file', 'tests/compat/sfl.ts']
-      : [
-          'run',
-          '--rm',
-          '--name',
-          containerName,
-          '--platform',
-          'linux/amd64',
-          '--add-host',
-          'host.docker.internal:host-gateway',
-          '-v',
-          `${resolve('tests/compat')}:/repo/tests/compat:ro`,
-          '-v',
-          `${resolve('src/client/lib/appLinks.ts')}:/repo/src/client/lib/appLinks.ts:ro`,
-          '-v',
-          `${resolve('node_modules')}:/repo/node_modules:ro`,
-          '-v',
-          `${resolve('.cache/compat/resolved-artifacts.json')}:/repo/.cache/compat/resolved-artifacts.json:ro`,
-          '-v',
-          `${resolve('.cache/compat/runtime')}:/repo/.cache/compat/runtime`,
-          '-v',
-          `${resolve('test-results')}:/repo/test-results`,
-          '-e',
-          `FCP_COMPAT_SUB_URL=${localUrl}`,
-          'fcp-compat-desktop:local',
-          // Starts the app's own daemon (no systemd in the container), then Xvfb + the driver.
-          'sfl-entrypoint',
-        ];
-    // Asynchronous child: the host event loop must serve the app's real HTTP fetches.
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(executable ? 'bun' : 'docker', args, {
-        env: { ...process.env, FCP_COMPAT_SUB_URL: localUrl },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 80_000,
-      });
-      const timer = setTimeout(() => {
-        if (!executable) {
-          try {
-            execFileSync('docker', ['rm', '-f', containerName], {
-              stdio: 'ignore',
-              timeout: 10_000,
-            });
-          } catch {
-            /* already stopped */
-          }
-        }
-        child.kill('SIGKILL');
-      }, 65_000);
-      let output = '';
-      child.stdout.on('data', (chunk) => {
-        output += String(chunk);
-      });
-      child.stderr.on('data', (chunk) => {
-        output += String(chunk);
-      });
-      child.on('error', (error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-      child.on('close', (code) => {
-        clearTimeout(timer);
-        if (code === 0 && output.includes('SFL_IMPORT_REFRESH_OK')) resolve();
-        else reject(new Error(`Packaged SFL import failed (exit ${code}): ${output.slice(-2500)}`));
-      });
+// Budget: the driver alone allows 30s (DevTools endpoint) + 30s (main window) +
+// 30s per Playwright action; the container path adds image start, `bun build`,
+// the daemon socket wait and Electron boot. Cold/Rosetta runners need headroom.
+const SFL_KILL_AFTER_MS = 240_000;
+test(
+  'SFL 1.14.0 package: deep link, manual URL entry, native import and refresh',
+  async () => {
+    const requests: string[] = [];
+    const server = createServer(async (req, res) => {
+      if (req.url !== `/api/v1/sub/${token}`) {
+        res.writeHead(404).end();
+        return;
+      }
+      const ua = req.headers['user-agent'] ?? '';
+      requests.push(ua);
+      try {
+        const response = await t.fetch(req.url, { headers: { 'user-agent': ua } });
+        res.writeHead(response.status, Object.fromEntries(response.headers));
+        res.end(await response.text());
+      } catch {
+        res.writeHead(500).end();
+      }
     });
-    expect(requests.length).toBeGreaterThanOrEqual(2);
-    const version = JSON.parse(readFileSync('.cache/compat/resolved-artifacts.json', 'utf8')).sfl
-      .version;
-    expect(requests.every((ua) => ua.startsWith(`SFL (sing-box ${version}; language `))).toBe(true);
-  } finally {
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
-});
+    await new Promise<void>((resolve) => server.listen(4179, '0.0.0.0', resolve));
+    try {
+      const executable = process.env.FCP_COMPAT_SFL_EXECUTABLE;
+      const localUrl = `http://${executable ? '127.0.0.1' : 'host.docker.internal'}:4179/api/v1/sub/${token}`;
+      const containerName = `fcp-compat-sfl-${randomUUID().slice(0, 8)}`;
+      const args = executable
+        ? ['--no-env-file', 'tests/compat/sfl.ts']
+        : [
+            'run',
+            '--rm',
+            '--name',
+            containerName,
+            '--platform',
+            'linux/amd64',
+            '--add-host',
+            'host.docker.internal:host-gateway',
+            '-v',
+            `${resolve('tests/compat')}:/repo/tests/compat:ro`,
+            '-v',
+            `${resolve('src/client/lib/appLinks.ts')}:/repo/src/client/lib/appLinks.ts:ro`,
+            '-v',
+            `${resolve('node_modules')}:/repo/node_modules:ro`,
+            '-v',
+            `${resolve('.cache/compat/resolved-artifacts.json')}:/repo/.cache/compat/resolved-artifacts.json:ro`,
+            '-v',
+            `${resolve('.cache/compat/runtime')}:/repo/.cache/compat/runtime`,
+            '-v',
+            `${resolve('test-results')}:/repo/test-results`,
+            '-e',
+            `FCP_COMPAT_SUB_URL=${localUrl}`,
+            'fcp-compat-desktop:local',
+            // Starts the app's own daemon (no systemd in the container), then Xvfb + the driver.
+            'sfl-entrypoint',
+          ];
+      // Asynchronous child: the host event loop must serve the app's real HTTP fetches.
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(executable ? 'bun' : 'docker', args, {
+          env: { ...process.env, FCP_COMPAT_SUB_URL: localUrl },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        const timer = setTimeout(() => {
+          if (!executable) {
+            try {
+              execFileSync('docker', ['rm', '-f', containerName], {
+                stdio: 'ignore',
+                timeout: 10_000,
+              });
+            } catch {
+              /* already stopped */
+            }
+          }
+          child.kill('SIGKILL');
+        }, SFL_KILL_AFTER_MS);
+        let output = '';
+        child.stdout.on('data', (chunk) => {
+          output += String(chunk);
+        });
+        child.stderr.on('data', (chunk) => {
+          output += String(chunk);
+        });
+        child.on('error', (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          if (code === 0 && output.includes('SFL_IMPORT_REFRESH_OK')) resolve();
+          else
+            reject(new Error(`Packaged SFL import failed (exit ${code}): ${output.slice(-2500)}`));
+        });
+      });
+      expect(requests.length).toBeGreaterThanOrEqual(2);
+      const version = JSON.parse(readFileSync('.cache/compat/resolved-artifacts.json', 'utf8')).sfl
+        .version;
+      expect(requests.every((ua) => ua.startsWith(`SFL (sing-box ${version}; language `))).toBe(
+        true,
+      );
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+  SFL_KILL_AFTER_MS + 30_000,
+);

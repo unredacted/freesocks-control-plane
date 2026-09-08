@@ -27,8 +27,11 @@ const child = spawn(
     '--remote-debugging-port=0',
     buildImportLink('sing-box', url, profileName)!,
   ],
-  { stdio: ['ignore', 'pipe', 'pipe'] },
+  // stdout is never inspected: leave it unpiped so a chatty app can't block on
+  // a full pipe. stderr is read only until the DevTools endpoint appears.
+  { stdio: ['ignore', 'ignore', 'pipe'] },
 );
+let mainPage: Page | undefined;
 let browser: Browser | undefined;
 try {
   const endpoint = await new Promise<string>((resolve, reject) => {
@@ -37,14 +40,17 @@ try {
       30_000,
     );
     let output = '';
-    child.stderr.on('data', (chunk) => {
+    const onStderr = (chunk: Buffer) => {
       output += String(chunk);
       const match = /DevTools listening on (ws:\/\/127\.0\.0\.1:[^\s]+)/.exec(output);
       if (match) {
         clearTimeout(timer);
+        child.stderr.off('data', onStderr);
+        child.stderr.resume(); // keep draining; nothing else reads it
         resolve(match[1]!);
       }
-    });
+    };
+    child.stderr.on('data', onStderr);
     child.on('error', (error) => {
       clearTimeout(timer);
       reject(error);
@@ -64,6 +70,7 @@ try {
     page = context.pages().find(isMainWindow);
   }
   if (!page) throw new Error('SFL main window did not appear');
+  mainPage = page;
 
   page.setDefaultTimeout(30_000);
   await page.getByRole('button', { name: 'Import', exact: true }).click();
@@ -113,7 +120,7 @@ try {
   );
   console.log('SFL_IMPORT_REFRESH_OK');
 } catch (error) {
-  const page = browser?.contexts()[0]?.pages()[0];
+  const page = mainPage ?? browser?.contexts()[0]?.pages()[0];
   if (page) await page.screenshot({ path: `${output}/failure.png` }).catch(() => {});
   throw error;
 } finally {

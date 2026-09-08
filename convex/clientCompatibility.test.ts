@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { clients, artifacts } from '../tests/compat/manifest';
 import { assertSubscription } from '../tests/compat/assertions';
 import { DEFAULT_CLIENTS } from './lib/clientCatalog';
+import { classifyClient } from './lib/edges/clientFamilies';
 
 describe('client compatibility coverage', () => {
   test('every enabled recommendation has an explicit coverage entry', () => {
@@ -15,6 +16,19 @@ describe('client compatibility coverage', () => {
     for (const client of clients) expect(client.limitation.length).toBeGreaterThan(15);
     for (const artifact of Object.values(artifacts))
       expect(artifact.sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+  test('every manifest User-Agent classifies to the format the manifest expects', () => {
+    // The manifest says what the PANEL serves each UA; classifyClient is what
+    // the /api/v1/sub handler expects for edge rendering. They must agree, or a
+    // client can pass the suite while the renderer picks the wrong family.
+    const expected = { singbox: 'singbox-json', mihomo: 'clash-yaml', links: 'links' } as const;
+    for (const client of clients) {
+      if (client.format === 'outline') continue;
+      for (const ua of client.userAgents)
+        expect(classifyClient(ua).expectedFormat, `${client.name}: ${ua}`).toBe(
+          expected[client.format],
+        );
+    }
   });
   test('base64 VLESS input cannot pass as sing-box JSON', () => {
     const body = Buffer.from(

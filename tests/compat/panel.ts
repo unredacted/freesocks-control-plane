@@ -2,16 +2,8 @@ import { randomUUID, generateKeyPairSync } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { remnawaveIssueUser } from '../../convex/lib/backends/remnawave';
+import { compose } from './compose';
 
-export const compose = [
-  'compose',
-  '-p',
-  'fcp-compat',
-  '-f',
-  'docker-compose.remnawave-test.yml',
-  '-f',
-  'docker-compose.compat.yml',
-];
 export function docker(...args: string[]) {
   return execFileSync('docker', [...compose, ...args], {
     encoding: 'utf8',
