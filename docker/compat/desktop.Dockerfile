@@ -1,7 +1,7 @@
 # Packaged application smoke tests; full distro tests use disposable VM runners.
 ARG BUN_VERSION
 FROM oven/bun:${BUN_VERSION} AS bun
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS node
+FROM node:26-bookworm-slim@sha256:367679cf9792759492a486e4aa4b421764d71a9546a6dae8aab81a99eb797b3e AS node
 FROM fcp-compat-engine:local
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
