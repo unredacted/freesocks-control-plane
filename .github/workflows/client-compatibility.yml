@@ -25,14 +25,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           # download.ts re-verifies every cached artifact's SHA-256 before use.
           path: .cache/compat/bin
@@ -43,7 +43,7 @@ jobs:
       - run: bun run test:compat
       - if: always()
         run: bun --no-env-file scripts/compat/report.ts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: client-compatibility
@@ -58,14 +58,14 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
@@ -73,7 +73,7 @@ jobs:
       - run: bun run test:compat:browser
       - if: always()
         run: bun --no-env-file scripts/compat/report.ts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: report-form
@@ -89,7 +89,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - uses: oven-sh/setup-bun@v2
@@ -102,7 +102,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
       - if: always()
         run: bun --no-env-file scripts/compat/report.ts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: latest-client-compatibility
@@ -145,7 +145,7 @@ jobs:
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           # download.ts re-verifies every cached artifact's SHA-256 before use.
           path: .cache/compat/bin
@@ -162,7 +162,7 @@ jobs:
           FCP_COMPAT_OS: ${{ matrix.target.id }}
       - if: always()
         run: bun --no-env-file scripts/compat/report.ts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: sfl-${{ matrix.target.id }}
