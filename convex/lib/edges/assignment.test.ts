@@ -90,6 +90,62 @@ describe('assignEndpoints', () => {
     expect(a.backup!.edge.provider).toBe('gcore');
     expect(assignEndpoints(sha(3), edges, { ...opts, includeBackup: false }).backup).toBeNull();
   });
+
+  test('an edge turning unassignable moves ONLY its own subscribers (pool-index compaction)', () => {
+    const before = [
+      edge({ edgeId: 'e0', poolIndex: 0, provider: 'gcore' }),
+      edge({ edgeId: 'e1', poolIndex: 1, provider: 'ovh' }),
+      edge({ edgeId: 'e2', poolIndex: 2, provider: 'upcloud' }),
+    ];
+    // Three ways an edge stops being assignable while staying in the pool.
+    const variants = [
+      [before[0], { ...before[1], eligible: false }, before[2]], // profile disabled / slot retired
+      [before[0], { ...before[1], serverNames: [] }, before[2]], // no active name
+      [before[0], { ...before[1], addresses: {} }, before[2]], // no address
+    ];
+    for (const after of variants) {
+      let moved = 0;
+      for (let i = 0; i < 2000; i++) {
+        const a = assignEndpoints(sha(i), before, opts);
+        const b = assignEndpoints(sha(i), after, opts);
+        expect(b.primary!.edge.edgeId).not.toBe('e1');
+        expect(b.backup?.edge.edgeId).not.toBe('e1');
+        if (a.primary!.edge.edgeId !== 'e1') {
+          expect(b.primary!.edge.edgeId).toBe(a.primary!.edge.edgeId);
+          expect(b.primary!.sni).toBe(a.primary!.sni);
+        } else {
+          moved++;
+          // Walk-forward: the seeded index 1 lands on the next assignable (e2).
+          expect(b.primary!.edge.edgeId).toBe('e2');
+        }
+      }
+      expect(moved).toBeGreaterThan(0);
+    }
+  });
+
+  test('an IPv6-only edge is assignable only when the render can emit IPv6', () => {
+    const v6 = edge({ edgeId: 'e6', poolIndex: 0, addresses: { v6: '2001:db8::6' } });
+    expect(assignEndpoints(sha(1), [v6], opts).primary?.edge.edgeId).toBe('e6');
+    expect(assignEndpoints(sha(1), [v6], { ...opts, canEmitV6: true }).primary?.edge.edgeId).toBe(
+      'e6',
+    );
+    expect(assignEndpoints(sha(1), [v6], { ...opts, canEmitV6: false }).primary).toBeNull();
+    // With a dual-stack neighbour the v6-only edge is skipped, not the render.
+    const dual = edge({ edgeId: 'e4', poolIndex: 1 });
+    for (let i = 0; i < 200; i++) {
+      const a = assignEndpoints(sha(i), [v6, dual], { ...opts, canEmitV6: false });
+      expect(a.primary?.edge.edgeId).toBe('e4');
+      expect(a.backup).toBeNull();
+    }
+  });
+
+  test('a pool whose every name is retired yields no assignment (nothing renders, templates drop)', () => {
+    const retired = [
+      { sni: 'a.example', status: 'retired' as const, retiredAt: NOW - 1, drainUntil: NOW + 1e6 },
+    ];
+    const e = edge({ edgeId: 'e0', poolIndex: 0, serverNames: retired });
+    expect(assignEndpoints(sha(1), [e], opts)).toEqual({ primary: null, backup: null });
+  });
 });
 
 describe('pickSni', () => {
@@ -101,46 +157,52 @@ describe('pickSni', () => {
 
   test('stable, and retiring one name moves only its holders', () => {
     const picks = new Map<number, string>();
-    for (let i = 0; i < 3000; i++) picks.set(i, pickSni(sha(i), 'e0', list, NOW)!);
+    for (let i = 0; i < 3000; i++) picks.set(i, pickSni(sha(i), 'e0', list)!);
     const retired = list.map((s) =>
       s.sni === 'b.example'
         ? { ...s, status: 'retired' as const, retiredAt: NOW - 1000, drainUntil: NOW - 1 }
         : s,
     );
     for (let i = 0; i < 3000; i++) {
-      const after = pickSni(sha(i), 'e0', retired, NOW)!;
+      const after = pickSni(sha(i), 'e0', retired)!;
       if (picks.get(i) !== 'b.example') expect(after).toBe(picks.get(i));
       else expect(['a.example', 'c.example']).toContain(after);
     }
   });
 
-  test('a retired name is honoured inside its drain for a subscriber who held it, not for a newcomer', () => {
+  test('a retired name is NEVER selected for a render, drain or not, held before or not', () => {
     const retired = [
       { sni: 'a.example', status: 'active' as const },
       {
         sni: 'b.example',
         status: 'retired' as const,
         retiredAt: NOW - 1000,
-        drainUntil: NOW + 60_000,
+        drainUntil: NOW + 60_000, // still inside the drain: the node ACCEPTS it, we do not HAND IT OUT
       },
     ];
-    // Find a hash that lands on index 1.
+    // Find a key that lands on index 1 while both names are active.
     let h = sha(0);
     for (let i = 0; i < 500; i++) {
       h = sha(i);
-      if (
-        pickSni(h, 'e0', [retired[0], { sni: 'b.example', status: 'active' }], NOW) === 'b.example'
-      )
+      if (pickSni(h, 'e0', [retired[0], { sni: 'b.example', status: 'active' }]) === 'b.example')
         break;
     }
-    expect(pickSni(h, 'e0', retired, NOW, NOW - 5000)).toBe('b.example'); // held it before retirement
-    expect(pickSni(h, 'e0', retired, NOW, NOW - 10)).toBe('a.example'); // fetched after retirement → never had it
-    expect(pickSni(h, 'e0', retired, NOW + 120_000, NOW - 5000)).toBe('a.example'); // drain over
+    expect(pickSni(h, 'e0', retired)).toBe('a.example');
+    for (let i = 0; i < 500; i++) expect(pickSni(sha(i), 'e0', retired)).toBe('a.example');
+    // The legacy "held it" option is accepted and ignored.
+    const e = edge({ edgeId: 'e0', poolIndex: 0, serverNames: retired });
+    const a = assignEndpoints(h, [e], { ...opts, subscriberLastContentAt: NOW - 5000 });
+    expect(a.primary?.sni).toBe('a.example');
   });
 
-  test('no active names → null', () => {
-    expect(pickSni(sha(1), 'e0', [{ sni: 'x', status: 'retired' }], NOW)).toBeNull();
-    expect(pickSni(sha(1), 'e0', [], NOW)).toBeNull();
+  test('no active names → null (the edge is then not assignable)', () => {
+    const allRetired = [
+      { sni: 'x', status: 'retired' as const, retiredAt: NOW - 1, drainUntil: NOW + 1e6 },
+    ];
+    expect(pickSni(sha(1), 'e0', allRetired)).toBeNull();
+    expect(pickSni(sha(1), 'e0', [])).toBeNull();
+    const e = edge({ edgeId: 'e0', poolIndex: 0, serverNames: allRetired });
+    expect(assignEndpoints(sha(1), [e], opts).primary).toBeNull();
   });
 
   test('a plain-protocol edge is assignable without server names and carries a null sni', () => {
