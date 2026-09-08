@@ -218,7 +218,7 @@ async function publishedEndpoints(
   ctx: { db: import('./_generated/server').DatabaseReader },
   origin: Doc<'relays'>,
 ) {
-  const { published } = await publishedEdgesOf(ctx, origin);
+  const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
   const slots = await ctx.db
     .query('relaySlots')
     .withIndex('by_relay', (q) => q.eq('relayId', origin._id))
@@ -265,12 +265,11 @@ export const endpoints = internalQuery({
     const origin = await ctx.db.get(relayId);
     if (!origin) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published } = await publishedEdgesOf(ctx, origin);
+    const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
     const assigned = assignEndpoints(SAMPLE_RENDER_KEY, published, {
       now: Date.now(),
       preferDistinctProviders: cfg.render.preferDistinctProviders,
       includeBackup: true,
-      subscriberLastContentAt: null,
     });
     return {
       relaySlug: origin.slug,

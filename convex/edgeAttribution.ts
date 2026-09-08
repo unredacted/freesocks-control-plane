@@ -49,7 +49,7 @@ export async function resolveEdgeAttribution(
   // the relay's current one — this catches EVERY pool change (publish,
   // unpublish, adoption), not only rotations. Keys never rendered since the
   // field exists fall back to the delivery-time vs last-rotation comparison.
-  const lastRenderedEpoch = (sub as { lastRenderedEpoch?: number }).lastRenderedEpoch;
+  const lastRenderedEpoch = sub.lastRenderedEpoch;
   const refreshNotObserved =
     lastRenderedEpoch !== undefined
       ? lastRenderedEpoch < origin.publicationEpoch
@@ -74,7 +74,6 @@ export async function resolveEdgeAttribution(
         now,
         preferDistinctProviders: cfg.render.preferDistinctProviders,
         includeBackup: true,
-        subscriberLastContentAt: sub.lastDeliveredContentAt ?? null,
       });
       const ep = choice === 'primary' ? assigned.primary : assigned.backup;
       relayEdgeId = ep?.edge.edgeId ?? null;
