@@ -11,6 +11,18 @@
  * (no envelope on a 'seal' route, no fsRespEph on a 'reveal' route) passes
  * through and the response is returned in plaintext. Error responses (non-2xx)
  * are never sealed; the client treats them as plaintext.
+ *
+ * Two env knobs end dual-mode, each for one caller class, both answering
+ * `400 e2ee.sealed_required` to an unsealed request:
+ * - `FS_E2EE_REQUIRED=true` — MEMBER routes (the account number must never
+ *   transit in the clear). Admin routes are exempt.
+ * - `FS_E2EE_ADMIN_REQUIRED=true` — ADMIN routes, for COOKIE-session callers
+ *   only (the passkey-signed-in CMS, which always seals when built with the
+ *   HPKE keys). A request carrying an `Authorization: Bearer` header is an
+ *   `fsv1_` token caller (IaC / Ansible) that cannot seal and keeps plaintext.
+ *   The caller class is decided from the header BEFORE the handler runs, so a
+ *   sealed CMS request is opened and an unsealed one refused without touching
+ *   the session. Flip it only once the deployed SPA is built with the keys.
  */
 import { httpAction } from '../_generated/server';
 import type { ActionCtx } from '../_generated/server';
@@ -50,6 +62,11 @@ function proxyReq(req: Request, bodyObj: unknown, rawWireBody: string): Request 
   } as unknown as Request;
 }
 
+/** An `Authorization: Bearer …` caller (fsv1_ API token): cannot seal, keeps plaintext. */
+export function isBearerCaller(req: Request): boolean {
+  return /^Bearer\s+\S+/i.test((req.headers.get('authorization') ?? '').trim());
+}
+
 export function sealed(handler: RawHandler) {
   return httpAction(async (ctx, req): Promise<Response> => {
     try {
@@ -86,8 +103,15 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
   // Flip this on ONLY once the deployed SPA was built with the HPKE keys baked
   // (VITE_FS_SERVER_HPKE_PK/KID) — a dark client cannot seal and will be
   // refused. The e2ee.sealed_required code makes the posture debuggable.
+  //
+  // FS_E2EE_ADMIN_REQUIRED=true is the admin-side counterpart: cookie-session
+  // (passkey CMS) callers must seal admin credential writes / reveals; bearer
+  // token callers keep plaintext because they cannot seal. Caller class = the
+  // Authorization header's presence (see the module header).
+  const isAdminPath = path.startsWith('/api/v1/admin/');
   const e2eeRequired =
-    process.env.FS_E2EE_REQUIRED === 'true' && !path.startsWith('/api/v1/admin/');
+    (process.env.FS_E2EE_REQUIRED === 'true' && !isAdminPath) ||
+    (process.env.FS_E2EE_ADMIN_REQUIRED === 'true' && isAdminPath && !isBearerCaller(req));
   const sealedRequired = (): Response =>
     errorJson(
       'e2ee.sealed_required',
