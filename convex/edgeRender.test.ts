@@ -51,7 +51,7 @@ function stubPanel(body = panelBody) {
   );
 }
 
-async function seed(opts: { renderEnabled?: boolean } = {}) {
+async function seed(opts: { renderEnabled?: boolean; pinned?: boolean } = {}) {
   const t = convexTest(schema, modules);
   const { serverId, subId } = await t.run(async (ctx) => {
     const tierId = await ctx.db.insert('tiers', {
@@ -95,7 +95,7 @@ async function seed(opts: { renderEnabled?: boolean } = {}) {
       subscriptionMirrors: [],
       subToken: 'tok_abc',
       state: 'active',
-      pinnedNode: NODE,
+      ...(opts.pinned === false ? {} : { pinnedNode: NODE }),
       updatedAt: Date.now(),
     });
     await ctx.db.patch(userId, { currentSubscriptionId: subId });
@@ -348,12 +348,153 @@ describe('edgeRender: fronted route', () => {
     ]);
     expect(view?.connections[0].label).toContain('FreeSocks Primary');
     expect(JSON.stringify(view)).not.toContain(EDGE_A);
-    // The origin rotates after this key's last delivery → nudge.
+    // The delivery stamped the epoch the body was rendered against.
+    const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.lastRenderedEpoch).toBe(
+      relay.publicationEpoch,
+    );
+    // A rotation stamps lastRotatedAt but the epoch comparison is what counts
+    // now: an unchanged epoch means the member already holds the current pool.
     await t.run((ctx) => ctx.db.patch(relayId, { lastRotatedAt: Date.now() + 1 }));
     view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
+    expect(view?.refreshSuggested).toBe(false);
+    // Any epoch bump (publish/unpublish/standby swap — none of which touch
+    // lastRotatedAt) after this key's last render → nudge.
+    await t.mutation(internal.relays.bumpEpoch, { relayId });
+    view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
     expect(view?.refreshSuggested).toBe(true);
+    // …until the next delivery renders against the new epoch.
+    await get(t);
+    view = await t.query(internal.edgeRender.memberView, { subscriptionId: subId });
+    expect(view?.refreshSuggested).toBe(false);
     // A key not behind a rendered origin gets null.
     await t.run((ctx) => upsertSettingRow(ctx, 'edge.render.enabled', 'false'));
     expect(await t.query(internal.edgeRender.memberView, { subscriptionId: subId })).toBeNull();
+  });
+});
+
+// The REAL topology: one squad per node, so every member body carries exactly
+// ONE node. Pinning must still report that node (there is nothing to filter)
+// or the pin is never recorded and rendering never activates. Each body family
+// is exercised with a sub that has NO stored pin.
+describe('edgeRender: single-node bodies (one squad per node)', () => {
+  const TEMPLATE = `${NODE}-relay-u`;
+  const singleLinks = [
+    `vless://${UUID}@${EDGE_A}:443?${REALITY_QS}#${TEMPLATE}`,
+    `vless://${UUID}@${ORIGIN}:443?${REALITY_QS}#${NODE}-reality`,
+  ].join('\n');
+  const singleSingbox = JSON.stringify({
+    outbounds: [
+      {
+        type: 'selector',
+        tag: 'proxy',
+        outbounds: [TEMPLATE, `${NODE}-reality`],
+        default: TEMPLATE,
+      },
+      {
+        type: 'vless',
+        tag: TEMPLATE,
+        server: EDGE_A,
+        server_port: 443,
+        uuid: UUID,
+        tls: { enabled: true, server_name: 'target.example', reality: { enabled: true } },
+      },
+      { type: 'vless', tag: `${NODE}-reality`, server: ORIGIN, server_port: 443, uuid: UUID },
+      { type: 'direct', tag: 'direct' },
+    ],
+    route: { final: 'proxy' },
+  });
+  const singleClash = [
+    'mixed-port: 7890',
+    'proxies:',
+    `  - {name: ${TEMPLATE}, type: vless, server: ${EDGE_A}, port: 443, uuid: ${UUID}, tls: true, servername: target.example}`,
+    `  - {name: ${NODE}-reality, type: vless, server: ${ORIGIN}, port: 443, uuid: ${UUID}}`,
+    'proxy-groups:',
+    `  - {name: proxy, type: select, proxies: [${TEMPLATE}, ${NODE}-reality]}`,
+    'rules:',
+    '  - MATCH,proxy',
+  ].join('\n');
+
+  test('links: the template line is replaced by the assigned edge, the pin is recorded, the epoch token stored', async () => {
+    stubPanel(singleLinks);
+    const { t, subId, relayId } = await seed({ pinned: false });
+    const body = await (await get(t)).text();
+    const lines = pickNodeFor(body);
+    expect(body).not.toContain(`#${TEMPLATE}`);
+    expect(lines.some((l) => l.endsWith(`#${NODE}-reality`))).toBe(true);
+    const primary = lines.filter((l) => l.includes('FreeSocks%20Primary'));
+    expect(primary).toHaveLength(2); // v4 + v6 of the one published edge
+    expect(primary[0]).toContain(`@${EDGE_A}:443?`);
+    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    expect(sub.pinnedNode).toBe(NODE);
+    expect(sub.renderKey).toMatch(/^[0-9a-f]{64}$/);
+    const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
+    expect(sub.lastRenderedEpoch).toBe(relay.publicationEpoch);
+    const cache = JSON.parse(sub.subCache!) as Array<{ relay: number | null }>;
+    expect(cache[0].relay).toBe(relay.publicationEpoch);
+    // Second poll: cache hit (the token computed from the recorded pin matches).
+    await get(t);
+    expect(fetchCalls).toBe(1);
+  });
+
+  test('sing-box: the template outbound is cloned per endpoint and the auto group added', async () => {
+    stubPanel(singleSingbox);
+    const { t, subId } = await seed({ pinned: false });
+    const res = await get(t, 'SFA/1.10.0 (sing-box 1.10.0)');
+    const cfg = JSON.parse(await res.text()) as { outbounds: Array<Record<string, unknown>> };
+    const tags = cfg.outbounds.map((o) => o.tag);
+    expect(tags).not.toContain(TEMPLATE);
+    expect(tags).toContain('FreeSocks Primary');
+    expect(tags).toContain('FreeSocks Auto');
+    const emitted = cfg.outbounds.find((o) => o.tag === 'FreeSocks Primary')!;
+    expect(emitted).toMatchObject({ server: EDGE_A, server_port: 443, uuid: UUID });
+    expect(['a.example', 'b.example', 'c.example']).toContain(
+      (emitted.tls as { server_name: string }).server_name,
+    );
+    const selector = cfg.outbounds.find((o) => o.type === 'selector')!;
+    expect(selector.default).toBe('FreeSocks Auto');
+    expect(JSON.stringify(cfg)).not.toContain(JSON.stringify(TEMPLATE));
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode).toBe(NODE);
+  });
+
+  test('Clash / Mihomo: the template proxy is cloned, the url-test group listed first', async () => {
+    stubPanel(singleClash);
+    const { t, subId } = await seed({ pinned: false });
+    const res = await get(t, 'clash-verge/v1.7.0');
+    const text = await res.text();
+    expect(text).not.toContain(TEMPLATE);
+    expect(text).toContain('FreeSocks Primary');
+    expect(text).toContain('FreeSocks Auto');
+    expect(text).toContain(`server: ${EDGE_A}`);
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.pinnedNode).toBe(NODE);
+  });
+
+  test('empty pool: every family DROPS the template entry (nothing of the former edge survives)', async () => {
+    for (const [body, ua] of [
+      [singleLinks, 'v2rayNG/1.9.0'],
+      [singleSingbox, 'SFA/1.10.0 (sing-box 1.10.0)'],
+      [singleClash, 'clash-verge/v1.7.0'],
+    ] as const) {
+      stubPanel(body);
+      const { t, relayId, edgeA } = await seed({ pinned: false });
+      await t.mutation(internal.relays.unpublishEdge, { relayId, edgeId: edgeA, keepActive: true });
+      const res = await get(t, ua);
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).not.toContain(TEMPLATE);
+      expect(text).not.toContain(EDGE_A);
+      expect(text).not.toContain('FreeSocks Primary');
+      expect(text).toContain(`${NODE}-reality`); // the direct Host stays
+      if (ua.startsWith('SFA')) {
+        const cfg = JSON.parse(text) as {
+          outbounds: Array<Record<string, unknown>>;
+          route: { final: string };
+        };
+        const selector = cfg.outbounds.find((o) => o.type === 'selector')!;
+        expect(selector.outbounds).toEqual([`${NODE}-reality`]);
+        expect(selector.default).toBeUndefined();
+        expect(cfg.route.final).toBe('proxy');
+      }
+    }
   });
 });

@@ -252,6 +252,42 @@ describe('mirror refresh records the pinned node', () => {
       expect((await ctx.db.get(subId))!.pinnedNode).toBe(pinned.node);
     });
   });
+
+  test('stamps lastDeliveredContentAt once the mirror provably holds the current content (mirror-only members are not "never refreshed")', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const pinned = pinSubscriptionToNode(RAW, 'short1');
+    const subId = await seedMirroredSub(t, await sha256Hex(pinned.content));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(RAW, { status: 200 })),
+    );
+    const before = Date.now();
+    await t.action(internal.storage.refreshActiveMirrors, {});
+    await t.run(async (ctx) => {
+      const sub = (await ctx.db.get(subId))!;
+      expect(sub.lastDeliveredContentAt).toBeGreaterThanOrEqual(before);
+      // No fronted delivery happened, and no relay origin renders this node.
+      expect(sub.lastDeliveredAt).toBeUndefined();
+      expect(sub.lastRenderedEpoch).toBeUndefined();
+    });
+  });
+
+  test('a failed upload round stamps nothing (the mirror still serves the old content)', async () => {
+    vi.stubEnv('DEV_MOCK_BACKEND', '');
+    vi.stubEnv('ENVIRONMENT', 'production');
+    const t = convexTest(schema, modules);
+    const subId = await seedMirroredSub(t, 'stale-hash');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(RAW, { status: 200 })),
+    );
+    await t.action(internal.storage.refreshActiveMirrors, {});
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(subId))!.lastDeliveredContentAt).toBeUndefined();
+    });
+  }, 20_000);
 });
 
 describe('provisionMirror honours the pending node switch', () => {

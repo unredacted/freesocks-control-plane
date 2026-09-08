@@ -6,7 +6,7 @@
  */
 import type { ClientRenderRule, EdgeConfig } from '../edgeConfig';
 import type { AssignedEndpoint } from './assignment';
-import { detectBodyFormat } from './clientFamilies';
+import { detectBodyFormat, type SubscriptionFormat } from './clientFamilies';
 import { renderClash } from './render/clash';
 import { renderLinks } from './render/links';
 import { renderSingbox } from './render/singbox';
@@ -40,6 +40,22 @@ export function effectiveRule(cfg: EdgeConfig['render'], rule: ClientRenderRule)
   };
 }
 
+/** Whether a body of this format gets an auto group under the rule. */
+export function formatHasAutoGroup(
+  rule: Pick<EffectiveRule, 'autoGroup'>,
+  format: SubscriptionFormat | 'html' | 'unknown',
+): boolean {
+  return rule.autoGroup && (format === 'singbox-json' || format === 'clash-yaml');
+}
+
+/** Whether the rule lets this render emit an IPv6 entry at all (decides if an IPv6-only edge is assignable). */
+export function ruleCanEmitV6(
+  rule: Pick<EffectiveRule, 'ipv6Mode'>,
+  hasAutoGroup: boolean,
+): boolean {
+  return rule.ipv6Mode === 'both' || (rule.ipv6Mode === 'auto-group-only' && hasAutoGroup);
+}
+
 /**
  * Expand assigned endpoints into render entries: the IPv4 entry per endpoint
  * plus an IPv6 entry when the edge has one and the mode allows it. In
@@ -52,6 +68,7 @@ export function renderEntries(
   hasAutoGroup: boolean,
 ): RenderEndpoint[] {
   const out: RenderEndpoint[] = [];
+  const wantV6 = ruleCanEmitV6(rule, hasAutoGroup);
   const push = (ep: AssignedEndpoint | null) => {
     if (!ep) return;
     const label = ep.role === 'primary' ? rule.primaryLabel : rule.backupLabel;
@@ -64,8 +81,6 @@ export function renderEntries(
     };
     if (ep.edge.addresses.v4)
       out.push({ ...base, label, address: ep.edge.addresses.v4, family: 'v4' });
-    const wantV6 =
-      rule.ipv6Mode === 'both' || (rule.ipv6Mode === 'auto-group-only' && hasAutoGroup);
     if (ep.edge.addresses.v6 && wantV6) {
       out.push({
         ...base,
@@ -80,31 +95,35 @@ export function renderEntries(
   return out;
 }
 
-/** Render one body; picks the renderer from the body's shape. */
+/**
+ * Render one body; picks the renderer from the body's shape.
+ *
+ * Empty pool rule: when the subscriber has NO assignable edge (every edge
+ * unpublished / draining / ineligible, or the profile has no active name) the
+ * template entries still point at whatever the panel Host carries (typically
+ * the former index-0 edge) and must be DROPPED — regardless of the family
+ * rule's `dropTemplateEntries` or `enabled` flags, which only govern how a
+ * NON-empty pool renders. Unknown body shapes still pass through (fail-open).
+ */
 export function renderEdgeEndpoints(args: {
   body: string;
   templateRemarks: string[];
   assigned: { primary: AssignedEndpoint | null; backup: AssignedEndpoint | null };
   rule: EffectiveRule;
 }): RenderOutput {
-  if (!args.rule.enabled)
+  const emptyPool = !args.assigned.primary;
+  if (!args.rule.enabled && !emptyPool)
     return { body: args.body, applied: false, reason: 'disabled', emitted: 0 };
-  // No assignable edge (the pool is empty, or every edge is unpublished /
-  // draining / behind a disabled profile): the template entries still point at
-  // whatever the panel Host carries (typically the former index-0 edge), so
-  // they must not be distributed. With `dropTemplateEntries` the renderers run
-  // in drop-only mode and remove them; otherwise the body passes through.
-  if (!args.assigned.primary && !args.rule.dropTemplateEntries)
-    return { body: args.body, applied: false, reason: 'no_assignment', emitted: 0 };
   const format = detectBodyFormat(args.body);
-  const hasAutoGroup =
-    args.rule.autoGroup && (format === 'singbox-json' || format === 'clash-yaml');
-  const endpoints = renderEntries(args.assigned, args.rule, hasAutoGroup);
+  const rule: EffectiveRule = emptyPool ? { ...args.rule, dropTemplateEntries: true } : args.rule;
+  const endpoints = emptyPool
+    ? []
+    : renderEntries(args.assigned, rule, formatHasAutoGroup(rule, format));
   const input = {
     body: args.body,
     templateRemarks: args.templateRemarks,
     endpoints,
-    rule: args.rule,
+    rule,
   };
   switch (format) {
     case 'links':

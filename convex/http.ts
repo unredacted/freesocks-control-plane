@@ -1066,10 +1066,12 @@ http.route({
         e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS && (e.relay ?? null) === edgeToken,
     );
     if (fresh) {
-      // Cache hit: the served body was generated at the entry's fetch time.
+      // Cache hit: the served body was generated at the entry's fetch time and
+      // rendered against the entry's epoch token.
       await ctx.runMutation(internal.subscriptions.markDelivered, {
         subscriptionId: sub._id,
         contentAt: fresh.at,
+        renderedEpoch: fresh.relay ?? null,
       });
       return subscriptionResponse(fresh); // fresh + same format → cache hit
     }
@@ -1089,7 +1091,15 @@ http.route({
         excludeNode: sub.excludeNode,
         ...(hasHwid ? { hwidHeaders } : {}),
       });
-      if (fetched.pinnedNode) {
+      // ONE node value drives everything below: the pin recorded on the row,
+      // the render context, and the epoch token stored on the cache entry (so
+      // the token `epochFor` computes from `sub.pinnedNode` on the next request
+      // is for the same node the body was rendered for). The pinner reports a
+      // node for every known body shape — a single-node body included, which
+      // is the real topology (one squad per node) — so the fallback to the
+      // stored pin only covers unknown shapes.
+      const node = fetched.pinnedNode ?? sub.pinnedNode;
+      if (fetched.pinnedNode && fetched.pinnedNode !== sub.pinnedNode) {
         await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
           subscriptionId: sub._id,
           node: fetched.pinnedNode,
@@ -1100,7 +1110,6 @@ http.route({
       // any unknown shape passes through unchanged.
       let content = fetched.content;
       let relay: number | null = null;
-      const node = fetched.pinnedNode ?? sub.pinnedNode;
       if (node && sub.backendServerId) {
         const rctx = await ctx.runQuery(internal.edgeRender.contextForSubscription, {
           subscriptionId: sub._id,
@@ -1114,10 +1123,7 @@ http.route({
               subscriptionId: sub._id,
             }));
           if (renderKey) {
-            content = applyEdgeRender(rctx, content, renderKey, {
-              now,
-              lastContentAt: rctx.lastContentAt,
-            }).body;
+            content = applyEdgeRender(rctx, content, renderKey, { now }).body;
             relay = rctx.epoch;
           }
         }
@@ -1139,10 +1145,12 @@ http.route({
         });
       }
       // Every successful delivery is stamped (miss AND hwid'd path) — the
-      // relay layer reads it as "has this key seen post-rotation content".
+      // relay layer reads it as "has this key seen post-rotation content", and
+      // the epoch it was rendered against as "has it seen the current pool".
       await ctx.runMutation(internal.subscriptions.markDelivered, {
         subscriptionId: sub._id,
         contentAt: now,
+        renderedEpoch: relay,
       });
       // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
       return subscriptionResponse(entry, { hwid: hasHwid });
@@ -1167,6 +1175,7 @@ http.route({
         await ctx.runMutation(internal.subscriptions.markDelivered, {
           subscriptionId: sub._id,
           contentAt: stale.at,
+          renderedEpoch: stale.relay ?? null,
         });
         return subscriptionResponse(stale);
       }

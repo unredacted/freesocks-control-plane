@@ -61,6 +61,45 @@ async function invalidateOrigins(ctx: MutationCtx, profileId: Id<'protocolProfil
   return originIds.length;
 }
 
+/**
+ * A retired name stays ACCEPTED by the node until `drainUntil`; the moment it
+ * actually dies, every cached body / mirror rendered before the retirement
+ * (which may still carry it for clients that had not refreshed) must be
+ * invalidated. Schedule that second bump at the drain deadline.
+ */
+async function scheduleDrainElapsed(
+  ctx: MutationCtx,
+  profileId: Id<'protocolProfiles'>,
+  drainUntil: number,
+  snis: string[],
+) {
+  if (snis.length === 0) return;
+  await ctx.scheduler.runAt(drainUntil, internal.protocolProfiles.onSniDrainElapsed, {
+    id: profileId,
+    snis,
+  });
+}
+
+/** Scheduled at a retirement's `drainUntil`: bump + refresh if any of the names
+ *  is still retired with an elapsed drain (a reactivation in between is a no-op). */
+export const onSniDrainElapsed = internalMutation({
+  args: { id: v.id('protocolProfiles'), snis: v.array(v.string()) },
+  handler: async (ctx, { id, snis }) => {
+    const row = await ctx.db.get(id);
+    if (!row) return null;
+    const now = Date.now();
+    const elapsed = row.serverNames.some(
+      (s) =>
+        snis.includes(s.sni) &&
+        s.status === 'retired' &&
+        s.drainUntil !== undefined &&
+        s.drainUntil <= now,
+    );
+    if (elapsed) await invalidateOrigins(ctx, id);
+    return null;
+  },
+});
+
 export function mapProfileAdmin(r: Doc<'protocolProfiles'>) {
   return {
     id: r._id as string,
@@ -324,30 +363,32 @@ export const update = internalMutation({
       if (t.targetAddress !== row.targetAddress || t.targetPort !== row.targetPort)
         patch.qualification = undefined;
     }
+    let newlyRetired: { snis: string[]; drainUntil: number } | null = null;
     if (a.serverNames !== undefined) {
       const wanted = parseSnis(a.serverNames, row.protocol);
       const cfg = await resolveEdgeConfig(ctx.db);
       const now = Date.now();
+      const drainUntil = now + edgeMs.sniDrain(cfg);
+      const retiring: string[] = [];
       const next = row.serverNames.map((s) => {
         if (wanted.includes(s.sni))
           return s.status === 'active' ? s : { sni: s.sni, status: 'active' as const };
         if (s.status === 'active') {
-          return {
-            sni: s.sni,
-            status: 'retired' as const,
-            retiredAt: now,
-            drainUntil: now + edgeMs.sniDrain(cfg),
-          };
+          retiring.push(s.sni);
+          return { sni: s.sni, status: 'retired' as const, retiredAt: now, drainUntil };
         }
         return s;
       });
       for (const sni of wanted)
         if (!next.some((s) => s.sni === sni)) next.push({ sni, status: 'active' });
       patch.serverNames = next;
+      if (retiring.length > 0) newlyRetired = { snis: retiring, drainUntil };
     }
     if (a.enabled !== undefined) patch.enabled = a.enabled;
     if (a.notes !== undefined) patch.notes = a.notes.slice(0, 500);
     await ctx.db.patch(a.id, patch);
+    if (newlyRetired)
+      await scheduleDrainElapsed(ctx, a.id, newlyRetired.drainUntil, newlyRetired.snis);
     const affectsRender =
       (patch.enabled !== undefined && patch.enabled !== row.enabled) ||
       (patch.serverNames !== undefined &&
@@ -379,19 +420,16 @@ export const retireSni = internalMutation({
     const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
     const targets = new Set(snis.map((s) => normalizeSni(s)).filter((s): s is string => !!s));
-    let count = 0;
+    const drainUntil = now + edgeMs.sniDrain(cfg);
+    const retiring: string[] = [];
     const next = row.serverNames.map((s) => {
       if (targets.has(s.sni) && s.status === 'active') {
-        count++;
-        return {
-          sni: s.sni,
-          status: 'retired' as const,
-          retiredAt: now,
-          drainUntil: now + edgeMs.sniDrain(cfg),
-        };
+        retiring.push(s.sni);
+        return { sni: s.sni, status: 'retired' as const, retiredAt: now, drainUntil };
       }
       return s;
     });
+    const count = retiring.length;
     if (protocolUsesSni(row.protocol) && !next.some((s) => s.status === 'active')) {
       throw new ConvexError({
         code: 'conflict',
@@ -399,7 +437,10 @@ export const retireSni = internalMutation({
       });
     }
     await ctx.db.patch(id, { serverNames: next, updatedAt: now });
-    if (count > 0) await invalidateOrigins(ctx, id);
+    if (count > 0) {
+      await invalidateOrigins(ctx, id);
+      await scheduleDrainElapsed(ctx, id, drainUntil, retiring);
+    }
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,

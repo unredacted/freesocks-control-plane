@@ -57,10 +57,18 @@ async function renderEnabled(ctx: QueryCtx): Promise<boolean> {
   }
 }
 
-/** Published edges with an eligible slot + profile, in pool order. */
+/**
+ * Published edges in pool order. By default only edges with an eligible slot +
+ * profile (and an address) are returned. With `includeIneligible` every
+ * published, active edge is returned and the ineligible ones (slot retired or
+ * undeployed, profile disabled, no address) carry `eligible:false`: they keep
+ * their pool index in the assignment modulus, so one edge losing eligibility
+ * moves only its own subscribers (`lib/edges/assignment.ts`).
+ */
 export async function publishedEdgesOf(
   ctx: QueryCtx | { db: import('./_generated/server').DatabaseReader },
   origin: Doc<'relays'>,
+  opts: { includeIneligible?: boolean } = {},
 ): Promise<{ published: PublishedEdge[]; templateRemarks: string[] }> {
   const slots = await ctx.db
     .query('relaySlots')
@@ -73,28 +81,36 @@ export async function publishedEdgesOf(
     if (!edgeId) continue;
     const edge = await ctx.db.get(edgeId);
     if (!edge || edge.publication !== 'published' || edge.status !== 'active') continue;
-    if (!edge.addresses.v4 && !edge.addresses.v6) continue;
     const slot = slots.find((s) => s._id === edge.slotId);
-    if (!slot || slot.retired || !slot.deployed) continue;
-    const profile = await ctx.db.get(slot.profileId);
-    if (!profile || !profile.enabled) continue;
+    const profile = slot ? await ctx.db.get(slot.profileId) : null;
+    const eligible =
+      (!!edge.addresses.v4 || !!edge.addresses.v6) &&
+      !!slot &&
+      !slot.retired &&
+      slot.deployed &&
+      !!profile &&
+      profile.enabled;
+    if (!eligible && !opts.includeIneligible) continue;
+    const protocol = profile?.protocol ?? 'plain';
     published.push({
       edgeId: edge._id,
       poolIndex: edge.poolIndex ?? i,
       provider: edge.provider ?? 'adopted',
-      slotId: slot._id,
-      slotRemark: slot.templateHostRemark,
-      protocol: profile.protocol,
+      slotId: slot?._id ?? (edge.slotId as string),
+      slotRemark: slot?.templateHostRemark ?? '',
+      protocol,
       edgePort: edge.listeners[0]?.edgePort ?? 443,
       addresses: { v4: edge.addresses.v4, v6: edge.addresses.v6 },
-      serverNames: protocolUsesSni(profile.protocol)
-        ? profile.serverNames.map((s) => ({
-            sni: s.sni,
-            status: s.status,
-            retiredAt: s.retiredAt,
-            drainUntil: s.drainUntil,
-          }))
-        : [],
+      serverNames:
+        profile && protocolUsesSni(protocol)
+          ? profile.serverNames.map((s) => ({
+              sni: s.sni,
+              status: s.status,
+              retiredAt: s.retiredAt,
+              drainUntil: s.drainUntil,
+            }))
+          : [],
+      ...(eligible ? {} : { eligible: false }),
     });
   }
   return { published, templateRemarks };
@@ -120,7 +136,6 @@ export const epochFor = internalQuery({
 export interface SubscriptionRenderContext extends EdgeRenderContext {
   relayId: Id<'relays'>;
   renderKey: string | null;
-  lastContentAt: number | null;
 }
 
 /**
@@ -147,8 +162,11 @@ export const contextForSubscription = internalQuery({
     if (!cfg.render.enabled) return null;
     // An empty eligible pool (every edge unpublished, draining, or behind a
     // disabled profile) still renders: the template entries carry the former
-    // index-0 address and must be dropped, not distributed.
-    const { published, templateRemarks } = await publishedEdgesOf(ctx, origin);
+    // index-0 address and must be dropped, not distributed. Ineligible edges
+    // are handed in flagged so the assignment modulus stays stable.
+    const { published, templateRemarks } = await publishedEdgesOf(ctx, origin, {
+      includeIneligible: true,
+    });
     const family = a.family as RenderClientFamily;
     return {
       relayId: origin._id,
@@ -158,7 +176,6 @@ export const contextForSubscription = internalQuery({
       rule: effectiveRule(cfg.render, cfg.render.clients[family]),
       preferDistinctProviders: cfg.render.preferDistinctProviders,
       renderKey: sub.renderKey ?? null,
-      lastContentAt: sub.lastDeliveredContentAt ?? null,
     };
   },
 });
@@ -170,7 +187,9 @@ export const contextForRelay = internalQuery({
     const origin = await ctx.db.get(a.relayId);
     if (!origin) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published, templateRemarks } = await publishedEdgesOf(ctx, origin);
+    const { published, templateRemarks } = await publishedEdgesOf(ctx, origin, {
+      includeIneligible: true,
+    });
     const family = a.family as RenderClientFamily;
     return {
       epoch: origin.publicationEpoch,
@@ -202,11 +221,18 @@ export const memberView = internalQuery({
     const origin = await relayFor(ctx, sub.backendServerId, sub.pinnedNode);
     if (!origin || !origin.enabled) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published } = await publishedEdgesOf(ctx, origin);
+    const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
     if (published.length === 0) return null;
+    // The nudge compares the epoch this key's content was last RENDERED against
+    // with the origin's current one: publish/unpublish/standby swaps bump the
+    // epoch without stamping `lastRotatedAt`, so a timestamp comparison misses
+    // them. The legacy timestamp check stays as a fallback for rows that were
+    // delivered before the epoch stamp existed.
     const refreshSuggested =
-      origin.lastRotatedAt !== undefined &&
-      (sub.lastDeliveredContentAt ?? 0) < origin.lastRotatedAt;
+      (sub.lastRenderedEpoch !== undefined && sub.lastRenderedEpoch < origin.publicationEpoch) ||
+      (sub.lastRenderedEpoch === undefined &&
+        origin.lastRotatedAt !== undefined &&
+        (sub.lastDeliveredContentAt ?? 0) < origin.lastRotatedAt);
     let connections: Array<{ label: string; role: 'primary' | 'backup'; family: 'v4' | 'v6' }> = [];
     if (sub.renderKey) {
       const rule = effectiveRule(cfg.render, cfg.render.clients.other);
@@ -214,7 +240,7 @@ export const memberView = internalQuery({
         now: Date.now(),
         preferDistinctProviders: cfg.render.preferDistinctProviders,
         includeBackup: rule.includeBackup,
-        subscriberLastContentAt: sub.lastDeliveredContentAt ?? null,
+        canEmitV6: rule.ipv6Mode === 'both',
       });
       connections = renderEntries(assigned, rule, false).map((e) => ({
         label: e.label,

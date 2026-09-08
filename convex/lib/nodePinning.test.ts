@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import YAML from 'yaml';
 import { nodeNameFromLink, nodeNameFromTag, pickNode, pinSubscriptionToNode } from './nodePinning';
 
 const NODE_A = 'xray1-front-mci1-beta-fs-ce';
@@ -113,16 +114,38 @@ describe('pinSubscriptionToNode', () => {
     expect(keptNodes).toHaveLength(1);
   });
 
-  test('single-node content passes through verbatim', () => {
+  test('single-node content passes through verbatim AND reports the node (the one-squad-per-node topology)', () => {
     const body = [wsLink(NODE_A, 'a1.example.org'), wsLink(NODE_A, 'a2.example.org')].join('\n');
     const res = pinSubscriptionToNode(body, 'k');
     expect(res.content).toBe(body);
-    expect(res.node).toBeNull();
+    expect(res.node).toBe(NODE_A);
+    // excludeNode cannot empty the pool: the single node is still the answer.
+    expect(pinSubscriptionToNode(body, 'k', NODE_A)).toEqual({ content: body, node: NODE_A });
+    // Base64-wrapped single node: verbatim (still encoded), node reported.
+    const encoded = btoa(body);
+    expect(pinSubscriptionToNode(encoded, 'k')).toEqual({ content: encoded, node: NODE_A });
+  });
+
+  test('URL-safe / unpadded base64 bodies are decoded (and re-encoded standard)', () => {
+    const urlSafe = btoa(LINES.join('\n'))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+    const out = pinSubscriptionToNode(urlSafe, 'short-id-1');
+    expect(out.node).toBe(pinSubscriptionToNode(LINES.join('\n'), 'short-id-1').node);
+    const decoded = atob(out.content);
+    expect([NODE_A, NODE_B, NODE_C].filter((n) => decoded.includes(`#${n}-`))).toHaveLength(1);
   });
 
   test('unknown formats pass through verbatim', () => {
-    expect(pinSubscriptionToNode('{"outbounds": []}', 'k').content).toBe('{"outbounds": []}');
-    expect(pinSubscriptionToNode('proxies: []', 'k').content).toBe('proxies: []');
+    expect(pinSubscriptionToNode('{"outbounds": []}', 'k')).toEqual({
+      content: '{"outbounds": []}',
+      node: null,
+    });
+    expect(pinSubscriptionToNode('proxies: []', 'k')).toEqual({
+      content: 'proxies: []',
+      node: null,
+    });
     expect(pinSubscriptionToNode('<html></html>', 'k').content).toBe('<html></html>');
     expect(pinSubscriptionToNode('', 'k').content).toBe('');
   });
@@ -255,7 +278,7 @@ describe('pinSubscriptionToNode: sing-box JSON', () => {
     expect(out2.node).toBeNull();
   });
 
-  test('single-node and non-config JSON pass through verbatim', () => {
+  test('single-node JSON passes through verbatim WITH the node; non-config JSON has none', () => {
     const single = JSON.stringify({
       outbounds: [
         { type: 'selector', tag: 'proxy', outbounds: [TAG_A1, TAG_A2] },
@@ -263,8 +286,69 @@ describe('pinSubscriptionToNode: sing-box JSON', () => {
         { type: 'vless', tag: TAG_A2, server: 'x', server_port: 443 },
       ],
     });
-    expect(pinSubscriptionToNode(single, 'k').content).toBe(single);
+    expect(pinSubscriptionToNode(single, 'k')).toEqual({ content: single, node: NODE_A });
+    expect(pinSubscriptionToNode(single, 'k', NODE_A)).toEqual({ content: single, node: NODE_A });
     const envelope = '{"error":{"code":"not_found"}}';
-    expect(pinSubscriptionToNode(envelope, 'k').content).toBe(envelope);
+    expect(pinSubscriptionToNode(envelope, 'k')).toEqual({ content: envelope, node: null });
+  });
+});
+
+// --- Clash / Mihomo YAML ---------------------------------------------------------
+
+function clashConfig(names: string[], extra = ''): string {
+  return [
+    'mixed-port: 7890',
+    'proxies:',
+    ...names.map((n) => `  - {name: ${n}, type: vless, server: x, port: 443, uuid: u}`),
+    'proxy-groups:',
+    `  - {name: proxy, type: select, proxies: [auto, ${names.join(', ')}]}`,
+    `  - {name: auto, type: url-test, proxies: [${names.join(', ')}], url: http://x/}`,
+    'rules:',
+    '  - MATCH,proxy',
+    extra,
+  ].join('\n');
+}
+
+describe('pinSubscriptionToNode: Clash YAML', () => {
+  test('keeps one node, prunes groups, matches the link-list pick', () => {
+    const out = pinSubscriptionToNode(clashConfig(ALL_TAGS), 'short-id-1');
+    expect(out.node).toBe(pinSubscriptionToNode(LINES.join('\n'), 'short-id-1').node);
+    const doc = YAML.parse(out.content) as {
+      proxies: { name: string }[];
+      'proxy-groups': { name: string; proxies: string[] }[];
+      rules: string[];
+    };
+    const kept = doc.proxies.map((p) => p.name);
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.every((n) => nodeNameFromTag(n) === out.node)).toBe(true);
+    expect(doc['proxy-groups'][0].proxies).toEqual(['auto', ...kept]);
+    expect(doc['proxy-groups'][1].proxies).toEqual(kept);
+    expect(doc.rules).toEqual(['MATCH,proxy']);
+  });
+
+  test('is deterministic, honors excludeNode, and reports a single node verbatim', () => {
+    const body = clashConfig(ALL_TAGS);
+    const a = pinSubscriptionToNode(body, 'k1');
+    expect(pinSubscriptionToNode(body, 'k1')).toEqual(a);
+    expect(pinSubscriptionToNode(body, 'k1', a.node!).node).not.toBe(a.node);
+    const single = clashConfig([TAG_A1, TAG_A2]);
+    expect(pinSubscriptionToNode(single, 'k')).toEqual({ content: single, node: NODE_A });
+    expect(pinSubscriptionToNode(single, 'k', NODE_A)).toEqual({ content: single, node: NODE_A });
+  });
+
+  test('fails open when a rule targets a dropped proxy by name or a group would empty', () => {
+    // Find a key whose pick is NOT node B, so B's proxies are dropped.
+    let key = 'k';
+    for (let i = 0; i < 50; i++) {
+      key = `k${i}`;
+      if (pinSubscriptionToNode(clashConfig(ALL_TAGS), key).node !== NODE_B) break;
+    }
+    const ruled = clashConfig(ALL_TAGS, `  - DOMAIN-SUFFIX,example.com,${TAG_B1}`);
+    expect(pinSubscriptionToNode(ruled, key)).toEqual({ content: ruled, node: null });
+    const emptyGroup = clashConfig(ALL_TAGS, '').replace(
+      'rules:',
+      `  - {name: b-only, type: select, proxies: [${TAG_B1}, ${TAG_B2}]}\nrules:`,
+    );
+    expect(pinSubscriptionToNode(emptyGroup, key)).toEqual({ content: emptyGroup, node: null });
   });
 });
