@@ -5,7 +5,10 @@ export default defineConfig({
   testMatch: '**/*.spec.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: 0,
+  // One retry on CI only: a browser-launch flake must not block a merge, and a
+  // real failure still fails. Traces are retained for every failed attempt, so
+  // a passed-on-retry flake stays visible in the uploaded artifact.
+  retries: process.env.CI ? 1 : 0,
   // Absolute: Playwright resolves a relative reporter outputFile against this
   // config's directory, not the repo root that scripts/compat/report.ts reads.
   reporter: [['list'], ['junit', { outputFile: resolve('test-results/compat/browser.xml') }]],

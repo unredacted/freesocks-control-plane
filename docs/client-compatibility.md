@@ -44,6 +44,8 @@ The public artifact contains test names, statuses, artifact versions/hashes and 
 
 The Debian container smoke test is not an Xfce test. The same SFL adapter can run on disposable, signed-in Xfce VMs with labels `fcp-debian-13-xfce` and `fcp-mx-25-2-xfce`. Provision Docker, Node 24, Bun and a running Xfce desktop session; run the Actions runner inside that session so DISPLAY, XAUTHORITY and DBUS_SESSION_BUS_ADDRESS are available. Allow package installation for that disposable runner. Record and pin the OS image/checksum in the VM provisioning system.
 
+The nightly schedule also runs the provider contract test against a Remnawave 2.x panel (`REMNAWAVE_TEST_IMAGE=remnawave/backend:2.8.0`): production runs 3.x, but the provider stays dual-contract for panels that have not upgraded, and nothing on the PR gate boots a 2.x panel.
+
 Enable repository variable `CLIENT_COMPAT_VM_RUNNERS=true` only after those runners are available. The job installs the verified package and sets `FCP_COMPAT_SFL_EXECUTABLE` to drive the actual desktop application. These jobs only run trusted main-branch code, never pull-request code. Destroy or reset each VM after the job. The runner label identifies the intended OS; inspect the OS record in the application result when certifying it.
 
 ## Deployed canaries
