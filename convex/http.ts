@@ -14,8 +14,7 @@ import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { registerEdgeRoutes } from './httpEdges';
 import { hmacSha256Hex } from './lib/crypto';
-import { markBucket, sanitizeConnectionChoice } from './edgeAttribution';
-import { edgeMs } from './lib/edgeConfig';
+import { sanitizeConnectionChoice } from './edgeAttribution';
 import { classifyClient } from './lib/edges/clientFamilies';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
 import type { Id } from './_generated/dataModel';
@@ -1404,15 +1403,14 @@ http.route({
     if (!isReportIssueReason(body.reason)) {
       return errorJson('validation', 'unknown reason', 400);
     }
-    // Relay detector dedupe mark: HMAC(pepper, member + window bucket). The
-    // member id never reaches the mark row or the telemetry row.
-    const relayCfg = await ctx.runQuery(internal.edgeReconcileMutations.configSnapshot, {});
-    const markPepper = process.env.EDGE_MARK_PEPPER ?? process.env.IP_HASH_SALT ?? '';
+    // Relay detector dedupe mark: HMAC(pepper, member). Time-independent — the
+    // mark row's own expiry (first report + detector window) is the sliding
+    // window, so a report either side of an aligned bucket edge cannot count
+    // twice. The member id never reaches the mark row or the telemetry row.
+    // No pepper configured → no key → the mutation fails CLOSED (weight 0).
+    const markPepper = process.env.EDGE_MARK_PEPPER || process.env.IP_HASH_SALT || '';
     const markKey = markPepper
-      ? await hmacSha256Hex(
-          markPepper,
-          `relay-mark:${member.userId}:${markBucket(Date.now(), edgeMs.detectWindow(relayCfg))}`,
-        )
+      ? await hmacSha256Hex(markPepper, `relay-mark:${member.userId}`)
       : null;
     const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
     const telemetry = sanitizeSubmitted(diagCfg, body.telemetry);

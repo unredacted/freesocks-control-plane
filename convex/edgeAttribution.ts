@@ -44,12 +44,21 @@ export async function resolveEdgeAttribution(
     .collect();
   const origin = origins.find((o) => o.backendServerId === sub.backendServerId);
   if (!origin) return null;
+  // Preferred: the publication epoch the key's content was last rendered
+  // against (`subscriptions.lastRenderedEpoch`, stamped by the renderer) vs
+  // the relay's current one — this catches EVERY pool change (publish,
+  // unpublish, adoption), not only rotations. Keys never rendered since the
+  // field exists fall back to the delivery-time vs last-rotation comparison.
+  const lastRenderedEpoch = (sub as { lastRenderedEpoch?: number }).lastRenderedEpoch;
   const refreshNotObserved =
-    origin.lastRotatedAt !== undefined && (sub.lastDeliveredContentAt ?? 0) < origin.lastRotatedAt;
+    lastRenderedEpoch !== undefined
+      ? lastRenderedEpoch < origin.publicationEpoch
+      : origin.lastRotatedAt !== undefined &&
+        (sub.lastDeliveredContentAt ?? 0) < origin.lastRotatedAt;
   let relayEdgeId: string | null = null;
-  // A member who has not fetched content since the last rotation is still on
-  // the OLD pool: recomputing their assignment from the current pool would pin
-  // a report about the drained edge onto its healthy replacement. No edge
+  // A member who has not fetched content since the pool last changed is still
+  // on the OLD pool: recomputing their assignment from the current pool would
+  // pin a report about the drained edge onto its healthy replacement. No edge
   // attribution in that state (the report still counts at origin level).
   if (choice && choice !== 'unsure' && choice !== 'direct' && !refreshNotObserved) {
     const { published } = await publishedEdgesOf({ db }, origin);
@@ -75,8 +84,11 @@ export async function resolveEdgeAttribution(
 }
 
 /**
- * Insert-if-absent dedupe mark. `key` is a peppered HMAC computed in the HTTP
- * action (member id + window bucket); the row never carries the member id.
+ * Insert-if-absent dedupe mark. `key` is a peppered, TIME-INDEPENDENT HMAC of
+ * the member id computed in the HTTP action; the row never carries the member
+ * id. The window slides from the member's first report (`expiresAt` = first
+ * report + detector window), matching the detector's own sliding window, so a
+ * report either side of a clock-aligned boundary cannot count twice.
  * Returns 1 for the member's first contribution in the window, else 0.
  */
 export async function claimReportMark(
@@ -94,9 +106,4 @@ export async function claimReportMark(
   if (existing) await db.patch(existing._id, { firstAt: now, expiresAt });
   else await db.insert('relayReportMarks', { key, firstAt: now, expiresAt });
   return 1;
-}
-
-/** Window bucket for the mark key: the same member reports once per detector window. */
-export function markBucket(now: number, windowMs: number): number {
-  return Math.floor(now / Math.max(1, windowMs));
 }

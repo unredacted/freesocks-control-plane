@@ -1230,6 +1230,13 @@ export default defineSchema({
     failCount: v.number(),
     lastOkAt: v.optional(v.number()),
     lastFailAt: v.optional(v.number()),
+    // The last time THIS source's verdict was `reachable`: a later `unreachable`
+    // is a transition (block evidence); a country that was never reachable from
+    // this target is not.
+    lastReachableAt: v.optional(v.number()),
+    // Distinct failing networks (ASN / network name) behind the last verdict,
+    // bounded (≤16). The cross-source agreement rule counts these for real.
+    failNetworks: v.optional(v.array(v.string())),
     verdict: relayReachVerdict,
     updatedAt: v.number(),
   }).index('by_target_country', ['targetKind', 'targetRef', 'country']),

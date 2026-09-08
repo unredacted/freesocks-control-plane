@@ -105,8 +105,16 @@ export const reportIssue = internalMutation({
     const now = Date.now();
     const choice = sanitizeConnectionChoice(a.connectionChoice);
     const relay = await resolveEdgeAttribution(ctx.db, sub, choice, now);
-    const detectorWeight =
-      relay && a.markKey ? await claimReportMark(ctx.db, a.markKey, now) : undefined;
+    // Fail CLOSED without a dedupe key (no mark pepper configured): the report
+    // is stored for the operator but carries weight 0 and no edge attribution,
+    // so one member can never move the detector by repeating themselves.
+    const dedupable = relay !== null && !!a.markKey;
+    const detectorWeight = relay
+      ? dedupable
+        ? await claimReportMark(ctx.db, a.markKey!, now)
+        : 0
+      : undefined;
+    if (relay && !dedupable) relay.relayEdgeId = null;
     // No key: still a valid report (e.g. "can't connect" before first issue
     // would be odd, but a tombstone-grace member is real) — recorded without
     // node context.

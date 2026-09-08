@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
+  GLOBALPING_USER_AGENT,
   globalpingRequest,
   globalpingStart,
   globalpingPoll,
@@ -40,7 +41,12 @@ describe('globalping', () => {
     });
   });
 
-  test('results: finished with any reply → ok; 100% loss → fail; failed/offline classified/dropped; tags → vantage', () => {
+  test('user agent is generic: names neither the project nor what is probed', () => {
+    expect(GLOBALPING_USER_AGENT).not.toMatch(/fcp|freesocks|relay|edge|github|unredacted/i);
+    expect(GLOBALPING_USER_AGENT.length).toBeGreaterThan(0);
+  });
+
+  test('results: finished with any reply → ok; 100% loss → fail; failed (probe-side error) and offline are DROPPED, not fails; tags → vantage', () => {
     const out = parseGlobalpingResults([
       {
         probe: { country: 'IR', asn: 12345, network: 'ISP A', tags: ['eyeball-network'] },
@@ -76,15 +82,9 @@ describe('globalping', () => {
         rttMs: undefined,
         error: 'no_reply',
       },
-      {
-        country: 'RU',
-        asn: 'AS1',
-        network: undefined,
-        vantageClass: 'unknown',
-        ok: false,
-        error: 'failed',
-      },
     ]);
+    // A probe that could not run the command says nothing about the target.
+    expect(out.some((r) => r.country === 'RU')).toBe(false);
   });
 
   test('start + poll through an injected client', async () => {
@@ -250,25 +250,46 @@ describe('check-host.net', () => {
     expect(done.status).toBe('finished');
     expect(done.results).toHaveLength(3);
   });
+
+  test('a node that answered without a result ([null], [], junk) is dropped: not a failed target, not pending', () => {
+    const nodeCountries = {
+      'ir1.node.check-host.net': 'IR',
+      'ir2.node.check-host.net': 'IR',
+      'ru1.node.check-host.net': 'RU',
+    };
+    const p = parseCheckhostResult(
+      {
+        'ir1.node.check-host.net': [null],
+        'ir2.node.check-host.net': [],
+        'ru1.node.check-host.net': [{ time: 0.2 }],
+      },
+      nodeCountries,
+    );
+    expect(p.status).toBe('finished');
+    expect(p.results).toEqual([expect.objectContaining({ country: 'RU', ok: true })]);
+    expect(p.results.some((r) => !r.ok)).toBe(false);
+  });
 });
 
 describe('ripe atlas', () => {
-  test('body: one sslcert definition per country, capped requested probes', () => {
+  test('body: one PRIVATE sslcert definition per country with a non-identifying description, capped requested probes', () => {
     const b = ripeAtlasBody(target, 'IR', 50);
     expect(b.definitions[0]).toMatchObject({
       type: 'sslcert',
       af: 4,
       target: '198.51.100.7',
       port: 443,
+      is_public: false,
     });
+    expect(b.definitions[0].description).not.toMatch(/relay|edge|fcp|freesocks/i);
     expect(b.probes).toEqual([{ type: 'country', value: 'IR', requested: 10 }]);
   });
-  test('results: rt/cert = ok, err/alert = fail, junk skipped', () => {
+  test('results: rt/cert = ok, a TLS alert = the peer answered (ok), err = fail, junk skipped', () => {
     const out = parseRipeAtlasResults(
       [
         { prb_id: 1, rt: 120.4, cert: ['-----'] },
         { prb_id: 2, err: 'connect: timeout' },
-        { prb_id: 3, alert: { level: 1, msg: 'x' } },
+        { prb_id: 3, rt: 80.2, alert: { level: 2, description: 40 } },
         { prb_id: 4 },
       ],
       'IR',
@@ -286,8 +307,9 @@ describe('ripe atlas', () => {
         country: 'IR',
         network: 'prb-3',
         vantageClass: 'unknown',
-        ok: false,
-        error: '[object Object]',
+        ok: true,
+        rttMs: 80,
+        error: 'tls_alert',
       },
     ]);
   });
@@ -400,15 +422,22 @@ describe('verdicts', () => {
     expect(countryVerdict([gpMixed, chDown])).toBe('mixed');
   });
 
-  test('probe score + unreachable countries', () => {
+  test('probe score is the WORST once-reachable country; a never-reachable country is not evidence', () => {
     const byCountry = [
-      { country: 'IR', verdict: 'unreachable' as const },
-      { country: 'RU', verdict: 'mixed' as const },
-      { country: 'CN', verdict: 'reachable' as const },
+      { country: 'IR', verdict: 'unreachable' as const, wasReachable: true },
+      { country: 'RU', verdict: 'mixed' as const, wasReachable: true },
+      { country: 'CN', verdict: 'reachable' as const, wasReachable: true },
     ];
-    expect(probeScore(byCountry, ['IR', 'RU', 'CN', 'TR'])).toBeCloseTo(1.5 / 4);
+    // One agreed unreachable country IS the signal (no dilution across countries).
+    expect(probeScore(byCountry, ['IR', 'RU', 'CN', 'TR'])).toBe(1);
+    expect(probeScore(byCountry, ['RU', 'CN'])).toBe(0.5);
+    expect(probeScore(byCountry, ['CN'])).toBe(0);
     expect(probeScore(byCountry, [])).toBe(0);
     expect(unreachableCountries(byCountry)).toEqual(['IR']);
+    // A country that has never reached the target: neither score nor evidence.
+    const never = [{ country: 'IR', verdict: 'unreachable' as const, wasReachable: false }];
+    expect(probeScore(never, ['IR'])).toBe(0);
+    expect(unreachableCountries(never)).toEqual([]);
   });
 
   test('shortError scrubs addresses and urls', () => {
