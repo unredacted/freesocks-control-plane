@@ -10,9 +10,15 @@
  * template asks for a private VIP). Deletes are tasks too.
  *
  * Discovery: the LB list is filtered by our deterministic name. The list
- * includes PENDING_CREATE balancers, so a repeated absence (attempt >= 2, i.e.
- * two polls apart) is treated as confirmed absence; a first miss is
- * `unresolved` in case the create is still registering.
+ * includes PENDING_CREATE balancers, so a repeated absence (>= 2 quiet looks
+ * AND `discoverySettleMs` since the step was requested) is treated as
+ * confirmed absence; an earlier miss is `unresolved` in case the create is
+ * still registering. A task in ERROR that lists no created resource still
+ * falls through to the by-name listing (the task report can lag the LB).
+ *
+ * Destroy order is by kind: LB first, then the floating IP it held. Deletes are
+ * tasks, so each kind is read back: an LB that is not PENDING_DELETE after the
+ * request means the delete never landed (`still_present`).
  */
 import { z } from 'zod';
 import type {
@@ -33,9 +39,10 @@ import type {
   GcoreConfig,
   TemplateFieldDescriptor,
 } from './types';
-import { firstResource, metaOf, reverseLiveResources, stepOf } from './types';
+import { firstResource, metaOf, orderByKind, stepOf } from './types';
+import { discoveryMaySettle } from './capabilities';
 import { isProviderNotFound, providerFetch, EdgeProviderError } from './http';
-import { addressFamily } from '../ip';
+import { addressFamily, isPublicIpLiteral } from '../ip';
 import { GcoreTemplate, GCORE_TEMPLATE_FIELDS, type GcoreTemplateParams } from './templates';
 
 const BASE = 'https://api.gcore.com';
@@ -220,11 +227,20 @@ function taskResources(t: z.infer<typeof Task>): ChildResource[] {
   return out;
 }
 
-function lbAddresses(lb: z.infer<typeof Lb>): Addresses {
+/**
+ * Public addresses only. In private VIP mode `vip_address` is the private VIP
+ * (the floating IP is the public one): a non-public literal is never surfaced
+ * as the edge's address. Exported for tests.
+ */
+export function gcoreLbAddresses(lb: {
+  vip_address?: string | null;
+  vip_ipv6_address?: string | null;
+  floating_ips?: Array<{ floating_ip_address?: string | null }> | null;
+}): Addresses {
   const out: Addresses = {};
   const fip = lb.floating_ips?.find((f) => f.floating_ip_address)?.floating_ip_address ?? undefined;
   const candidates = [fip, lb.vip_address ?? undefined, lb.vip_ipv6_address ?? undefined].filter(
-    (x): x is string => !!x,
+    (x): x is string => !!x && isPublicIpLiteral(x),
   );
   for (const c of candidates) {
     const fam = addressFamily(c);
@@ -233,6 +249,7 @@ function lbAddresses(lb: z.infer<typeof Lb>): Addresses {
   }
   return out;
 }
+const lbAddresses = gcoreLbAddresses;
 
 function lbState(lb: z.infer<typeof Lb>): EdgeDescription['state'] {
   const p = (lb.provisioning_status ?? '').toUpperCase();
@@ -364,10 +381,10 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
       const out = await pollTask(cfg, step.id, ls.opRef);
       if (out.status === 'done') return { status: 'found', resources: out.resources };
       if (out.status === 'requested') return { status: 'unresolved' };
-      // The task errored: whatever it created is recorded; nothing more exists.
-      return out.resources.length > 0
-        ? { status: 'found', resources: out.resources }
-        : { status: 'confirmed_absent' };
+      // The task errored. Whatever it reported is adopted; an EMPTY report is
+      // not proof of absence (the LB can exist without the task listing it),
+      // so fall through to the by-name listing.
+      if (out.resources.length > 0) return { status: 'found', resources: out.resources };
     }
     const list = await gcore(
       cfg,
@@ -383,7 +400,9 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
         if (f.id) resources.push({ kind: 'floating_ip', resourceId: f.id, ownership: 'adopted' });
       return { status: 'found', resources, addresses: lbAddresses(hit) };
     }
-    return attempt >= 2 ? { status: 'confirmed_absent' } : { status: 'unresolved' };
+    return discoveryMaySettle('gcore', attempt, ls?.startedAt)
+      ? { status: 'confirmed_absent' }
+      : { status: 'unresolved' };
   },
 
   async describe(cfg, ledger) {
@@ -474,16 +493,13 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
     return inv;
   },
 
-  planDestroy: (_cfg, ledger) => reverseLiveResources(ledger),
+  planDestroy: (_cfg, ledger) => orderByKind(ledger, GCORE_DESTROY_ORDER),
 
   async runDestroy(cfg, r) {
-    const path =
-      r.kind === 'lb'
-        ? `/cloud/v1/loadbalancers/${scope(cfg)}/${encodeURIComponent(r.resourceId)}`
-        : r.kind === 'floating_ip'
-          ? `/cloud/v1/floatingips/${scope(cfg)}/${encodeURIComponent(r.resourceId)}`
-          : null;
-    if (!path) return { status: 'confirmed_gone' }; // listeners/pools die with the LB
+    const path = destroyPath(cfg, r.kind, r.resourceId);
+    // Listeners/pools die with the LB and are never ledgered; any other kind is
+    // not this adapter's and must not be assumed gone.
+    if (!path) return { status: 'unresolved' };
     try {
       const res = await gcore(
         cfg,
@@ -505,23 +521,43 @@ export const gcoreProvider: EdgeProvider<GcoreConfig, GcoreTemplateParams> = {
     }
   },
 
+  /**
+   * 404 → gone. An LB still PENDING_DELETE → unresolved (the task runs); any
+   * other provisioning status → still_present (the delete never landed). A
+   * floating IP that is still readable is still present (its delete is fast).
+   */
   async confirmDestroyed(cfg, r) {
-    const path =
-      r.kind === 'lb'
-        ? `/cloud/v1/loadbalancers/${scope(cfg)}/${encodeURIComponent(r.resourceId)}`
-        : r.kind === 'floating_ip'
-          ? `/cloud/v1/floatingips/${scope(cfg)}/${encodeURIComponent(r.resourceId)}`
-          : null;
-    if (!path) return { status: 'confirmed_gone' };
+    const path = destroyPath(cfg, r.kind, r.resourceId);
+    if (!path) return { status: 'unresolved' };
     try {
-      await gcore(cfg, 'confirm-destroy', 'GET', path, z.unknown());
-      return { status: 'unresolved' };
+      const obj = await gcore(
+        cfg,
+        'confirm-destroy',
+        'GET',
+        path,
+        z.object({ provisioning_status: z.string().nullish() }).passthrough(),
+      );
+      const p = (obj.provisioning_status ?? '').toUpperCase();
+      if (p === 'DELETED') return { status: 'confirmed_gone' };
+      if (p === 'PENDING_DELETE' || p === 'DELETING') return { status: 'unresolved' };
+      return { status: 'still_present' };
     } catch (e) {
       if (isProviderNotFound(e)) return { status: 'confirmed_gone' };
       throw e;
     }
   },
 };
+
+/** The floating IP is attached to the LB's VIP port: the LB goes first. */
+const GCORE_DESTROY_ORDER = ['lb', 'floating_ip'] as const;
+
+function destroyPath(cfg: GcoreConfig, kind: string, id: string): string | null {
+  return kind === 'lb'
+    ? `/cloud/v1/loadbalancers/${scope(cfg)}/${encodeURIComponent(id)}`
+    : kind === 'floating_ip'
+      ? `/cloud/v1/floatingips/${scope(cfg)}/${encodeURIComponent(id)}`
+      : null;
+}
 
 async function gcoreRegions(cfg: GcoreConfig): Promise<Array<{ id: string; label: string }>> {
   const res = await gcore(cfg, 'regions', 'GET', `/cloud/v1/regions`, RegionList);

@@ -16,11 +16,15 @@ import { writeAuditLog } from './lib/audit';
 import { edgeProviderIdValidator, type EdgeProviderId } from './lib/edgeProviderIds';
 import {
   buildCredentials,
+  locatingSettingsChanged,
   maskCredentials,
+  pickCredentialIdentifiers,
+  settingsEqual,
   validateSettings,
   type EdgeCredentials,
   type EdgeSettings,
 } from './lib/edges/accountSettings';
+import { resolveTemplateFor } from './edgeTemplates';
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
@@ -284,12 +288,23 @@ export const update = internalMutation({
       const settings = validateSettings(row.provider, a.settings);
       if (!settings.ok)
         throw new ConvexError({ code: 'validation', message: settings.issues.join('; ') });
-      settingsChanged = JSON.stringify(settings.settings) !== JSON.stringify(row.settings);
-      if (settingsChanged) {
+      // Canonical (key-order-insensitive) compare: a stored row re-sent in a
+      // different key order is not a change.
+      settingsChanged = !settingsEqual(settings.settings, row.settings);
+      if (
+        settingsChanged &&
+        locatingSettingsChanged(
+          row.provider,
+          settings.settings as Record<string, unknown>,
+          row.settings as Record<string, unknown>,
+        )
+      ) {
         // Edges store only resource ids; the project/region/zone/network that
         // locate them live here and are reloaded by every describe/destroy. A
         // change while edges exist would make their resources invisible to
-        // reconciliation and undeletable (yet still live and billable).
+        // reconciliation and undeletable (yet still live and billable). The
+        // credential identifiers (access/application key) also live in
+        // `settings` but locate nothing: they stay editable.
         const live = (
           await ctx.db
             .query('edges')
@@ -316,9 +331,8 @@ export const update = internalMutation({
           message: `missing credentials: ${creds.missing.join(', ')}`,
         });
       }
-      const before = JSON.stringify(row.credentials);
       patch.credentials = creds.credentials as never;
-      credentialsChanged = JSON.stringify(creds.credentials) !== before;
+      credentialsChanged = !settingsEqual(creds.credentials, row.credentials);
     }
     if (a.enabled !== undefined) patch.enabled = a.enabled;
     if (a.priority !== undefined) patch.priority = a.priority;
@@ -332,7 +346,9 @@ export const update = internalMutation({
     }
     // New credentials or settings invalidate the qualification (a different
     // account/network may not carry the protocol the same way); so does a
-    // different effective template — its parameters were never qualified.
+    // different effective template — its parameters were never qualified. A
+    // routine secret rotation that must KEEP the qualification goes through
+    // `edgeProviderOps.rotateCredentials` (tests the new secret first) instead.
     if (credentialsChanged || settingsChanged || templateChanged) {
       patch.qualified = false;
       patch.qualifiedTemplateHash = undefined;
@@ -378,19 +394,100 @@ export const remove = internalMutation({
   },
 });
 
+/**
+ * Credential rotation that KEEPS the qualification. Internal: the ONLY caller
+ * is `edgeProviderOps.rotateCredentials`, which has just verified the new
+ * credentials against the provider with `testCredentials`. The secret fields
+ * and the non-secret identifiers (access/application key, kept in `settings`)
+ * change together; every LOCATING setting must be untouched, so the account
+ * still points at the same resources and the qualification still holds.
+ */
+export const applyCredentialRotation = internalMutation({
+  args: {
+    id: v.id('edgeProviderAccounts'),
+    credentials: v.any(),
+    identifiers: v.optional(v.any()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, a) => {
+    const row = await ctx.db.get(a.id);
+    if (!row) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
+    const creds = buildCredentials(
+      row.provider,
+      a.credentials as Record<string, unknown>,
+      row.credentials as Record<string, unknown>,
+    );
+    if (!creds.ok)
+      throw new ConvexError({
+        code: 'validation',
+        message: `missing credentials: ${creds.missing.join(', ')}`,
+      });
+    const identifiers = pickCredentialIdentifiers(
+      row.provider,
+      a.identifiers as Record<string, unknown> | undefined,
+    );
+    const settings = validateSettings(row.provider, {
+      ...(row.settings as Record<string, unknown>),
+      ...identifiers,
+    });
+    if (!settings.ok)
+      throw new ConvexError({ code: 'validation', message: settings.issues.join('; ') });
+    if (
+      locatingSettingsChanged(
+        row.provider,
+        settings.settings as Record<string, unknown>,
+        row.settings as Record<string, unknown>,
+      )
+    )
+      throw new ConvexError({ code: 'validation', message: 'rotation cannot move the account' });
+    const credentialsChanged = !settingsEqual(creds.credentials, row.credentials);
+    const identifiersChanged = !settingsEqual(settings.settings, row.settings);
+    await ctx.db.patch(a.id, {
+      credentials: creds.credentials as never,
+      settings: settings.settings as never,
+      lastTestOkAt: Date.now(),
+      lastTestError: undefined,
+      updatedAt: Date.now(),
+    });
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: a.actorAdminId ?? undefined,
+      action: 'edge.provider_account.credentials_rotated',
+      targetType: 'edge_provider_account',
+      targetId: a.id,
+      // Booleans only: never a key, an identifier or a hash of one.
+      payload: {
+        name: row.name,
+        provider: row.provider,
+        credentialsChanged,
+        identifiersChanged,
+        qualifiedKept: row.qualified,
+      },
+    });
+    return { ok: true as const, credentialsChanged, identifiersChanged, qualified: row.qualified };
+  },
+});
+
 export const setQualified = internalMutation({
   args: {
     id: v.id('edgeProviderAccounts'),
     qualified: v.boolean(),
+    /** DEPRECATED and ignored: the effective template's hash is computed server-side. */
     templateHash: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { id, qualified, templateHash, actorAdminId }) => {
+  handler: async (ctx, { id, qualified, actorAdminId }) => {
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
+    // The hash recorded is the one of the template this account provisions
+    // with NOW (its default, else the scoped/provider default), never a
+    // client-supplied value: the template-edit invalidation keys off it.
+    const effective = qualified
+      ? await resolveTemplateFor(ctx, row.provider, null, row.defaultTemplateId ?? null, row._id)
+      : null;
     await ctx.db.patch(id, {
       qualified,
-      qualifiedTemplateHash: qualified ? templateHash : undefined,
+      qualifiedTemplateHash: effective ? effective.hash : undefined,
       updatedAt: Date.now(),
     });
     await writeAuditLog(ctx, {

@@ -14,7 +14,16 @@ export const GcoreTemplate = z.object({
   flavor: z.string().min(1).max(64).default('lb1-1-2'),
   /** public = the provider assigns a public VIP directly; private = private VIP + floating IP. */
   vipMode: z.enum(['public', 'private']).default('public'),
-  ipFamily: z.enum(['dual', 'ipv4', 'ipv6']).default('dual'),
+  /**
+   * Publishing needs an IPv4 (the template Host and every member's primary
+   * entry are v4), so an IPv6-only edge could never be published: refused.
+   */
+  ipFamily: z
+    .enum(['dual', 'ipv4', 'ipv6'])
+    .default('dual')
+    .refine((f) => f !== 'ipv6', {
+      message: 'IPv6-only edges cannot be published (an IPv4 is required): use dual or ipv4',
+    }),
   lbAlgorithm: z.enum(['ROUND_ROBIN', 'LEAST_CONNECTIONS', 'SOURCE_IP']).default('ROUND_ROBIN'),
   timeoutClientDataMs: z.number().int().min(1_000).max(3_600_000).default(300_000),
   timeoutMemberConnectMs: z.number().int().min(1_000).max(60_000).default(5_000),
@@ -57,7 +66,6 @@ export const GCORE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
     options: [
       { value: 'dual', label: 'IPv4 + IPv6' },
       { value: 'ipv4', label: 'IPv4 only' },
-      { value: 'ipv6', label: 'IPv6 only' },
     ],
   },
   {
