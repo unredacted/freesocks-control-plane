@@ -138,6 +138,8 @@ export interface EdgeConfig {
     hourlyBudget: number;
     agreementVantages: number;
     preferEyeball: boolean;
+    /** Gap between consecutive runs against the same external source within one batch (ms). */
+    sourceSpacingMs: number;
   };
 }
 
@@ -209,6 +211,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     hourlyBudget: 200,
     agreementVantages: 2,
     preferEyeball: true,
+    sourceSpacingMs: 1500,
   },
 };
 
@@ -345,6 +348,7 @@ export const EDGE_KEYS = {
   'probe.hourlyBudget': 'edge.probe.hourlyBudget',
   'probe.agreementVantages': 'edge.probe.agreementVantages',
   'probe.preferEyeball': 'edge.probe.preferEyeball',
+  'probe.sourceSpacingMs': 'edge.probe.sourceSpacingMs',
 } as const;
 export type RelayKeyPath = keyof typeof EDGE_KEYS;
 
@@ -508,13 +512,21 @@ export function sanitizeRelayConfig(
       ),
       perCountryLimit: sanitizeInt(raw['probe.perCountryLimit'], 1, 10, D.probe.perCountryLimit),
       hourlyBudget: sanitizeInt(raw['probe.hourlyBudget'], 0, 10_000, D.probe.hourlyBudget),
+      // Floor 2: "unreachable" is agreement between distinct networks; a single
+      // failing vantage can never be one.
       agreementVantages: sanitizeInt(
         raw['probe.agreementVantages'],
-        1,
+        2,
         10,
         D.probe.agreementVantages,
       ),
       preferEyeball: sanitizeBool(raw['probe.preferEyeball'], D.probe.preferEyeball),
+      sourceSpacingMs: sanitizeInt(
+        raw['probe.sourceSpacingMs'],
+        0,
+        60_000,
+        D.probe.sourceSpacingMs,
+      ),
     },
   };
 }

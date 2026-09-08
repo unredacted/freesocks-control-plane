@@ -13,6 +13,7 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import Globalping from 'globalping';
 import {
+  GLOBALPING_USER_AGENT,
   globalpingPoll,
   globalpingStart,
   type GlobalpingLike,
@@ -27,7 +28,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 let globalpingFactory: (token: string) => GlobalpingLike = (token) =>
   new Globalping({
     auth: token || undefined,
-    userAgent: 'fcp-relay-probe (+https://github.com/unredacted/freesocks-control-plane)',
+    userAgent: GLOBALPING_USER_AGENT,
     timeout: 20_000,
   }) as unknown as GlobalpingLike;
 
