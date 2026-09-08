@@ -1,5 +1,22 @@
 # Project inventory: features, open work, and code status
 
+**Updated 2026-09-08 (client-compatibility CI).** Landed: a **client-compatibility suite**
+(`tests/compat/`, `scripts/compat/`, `docker/compat/`, `docker-compose.compat.yml`; runbook
+`docs/client-compatibility.md`) run by the new **Client compatibility** workflow on every PR:
+every catalogued client's subscription rendered through FCP's real `/api/v1/sub` handler against
+a live throwaway Remnawave panel (format per User-Agent, exact-UA cache isolation, refresh after
+a Host change), pinned sing-box + Mihomo engines through a REALITY tunnel to an origin only the
+proxy can reach (HTTPS, remote DNS, UDP DNS, wrong-credential fail-closed), the checksum-verified
+**SFL 1.14.0 Linux package** imported + refreshed for real (deep link and manual URL entry, its
+own daemon started in the container), and the report-issue dialog in Chromium + Firefox. Also a
+nightly latest-upstream discovery job, a manual deployed-fronts smoke workflow (canary
+subscription), an off-by-default Xfce VM matrix, and a release-time certification gate over
+`tests/compat/application-evidence.json`. Found by the suite: the official SFL/SFW desktop
+clients send `SFL (sing-box 1.14.0; language en_US)`, which the sing-box User-Agent rewrite in
+`convex/lib/backends/remnawave.ts` did not match (the member-reported `decode config: invalid
+character 'd'` import failure on Linux); fixed + pinned by tests. The report dialog also gained
+a viewport-height cap with internal scrolling (its Send button could sit below a short screen).
+
 **Updated 2026-07-16 (status page + referrals, branch `v2`).** Landed: the **public
 network-status page** (`/status` — per-location online + coarse load bands, an
 operator-curated country × connection-mode censorship-availability matrix, and
@@ -323,6 +340,17 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
 
 ### 1.7 Integrations & runtime
 
+- **Client-compatibility CI** (`tests/compat/`, `scripts/compat/`, `docker/compat/`;
+  `docs/client-compatibility.md`): **Live** as the **Client compatibility** workflow (PR gate +
+  nightly latest-upstream discovery), plus the manual **Deployed client compatibility** smoke
+  workflow (needs the `FCP_COMPAT_SMOKE_TARGETS` canary secret) and an Xfce VM matrix that stays
+  off until the repository variable `CLIENT_COMPAT_VM_RUNNERS=true`. `tests/compat/manifest.ts`
+  is the versioned matrix (pinned engine/package SHA-256s + per-client User-Agents + an explicit
+  coverage limitation per client); `convex/clientCompatibility.test.ts` fails the offline suite
+  when an enabled default client lacks a manifest entry. Only the SFL Linux package is driven as
+  a real application; every other app is "manual verification required" until device evidence
+  lands in `tests/compat/application-evidence.json` (`scripts/compat/certify.ts`).
+
 - **Self-service membership billing** (`convex/billing.ts`, `convex/lib/processors/*`,
   `convex/lib/billingConfig.ts`; `docs/billing.md`): signed-in members buy a fixed-term
   membership via a hosted-redirect rail — **NOWPayments (crypto, Live)**, **BTCPay
@@ -582,6 +610,7 @@ the companion docs. Sizes: S/M/L.
 | **Outline WSS `accessUrl` / `ssconf://` contract** (latent): needs the FreeSocks Outline fork's real WSS create-key response shape before any WSS server is routed to.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | M    | `docs/outline-setup.md`                  |
 | **Status-page hardening follow-ups** (deferred by design): auto-derived incidents from healthcheck flapping (too noisy — incidents are operator-published only), public uptime %/SLA math (needs durable health history we deliberately don't keep), and automated censorship-matrix probing (needs in-country vantage points).                                                                                                                                                                                                                                                                                                                                                    | M    | `convex/lib/statusPage.ts`               |
 | ~~**Remnawave 3.x port**~~ — **DONE** (2026-09-01): the provider speaks both the 2.x (`uuid`) and 3.x (numeric `id`) contracts by id shape; numeric ids are stored instance-scoped (`<backendServerId>:<id>`, `convex/lib/backendUserId.ts`); the operator-run `backendServers:migrateRemnawaveUserIds` re-keys a panel's existing subscriptions after ITS upgrade (runbook: `docs/backends.md` § "Upgrading a panel to Remnawave 3.x"). What remains is operational: upgrading the real panels one at a time and running the migration per panel.                                                                                                                                 | —    | `docs/backends.md`                       |
+| **Client application certification evidence**: the automated suite proves subscription formats for every catalogued client, tunnels for the reference sing-box/Mihomo engines, and import/refresh for the packaged SFL Linux app. Every other app (Hiddify, Karing, v2rayNG/N, the Clash family, Throne, Shadowrocket, Anywhere, Outline) needs device evidence recorded in `tests/compat/application-evidence.json` for `scripts/compat/certify.ts` to pass (30-day expiry, exact FCP commit). Operational: provision the Xfce VM runners and flip `CLIENT_COMPAT_VM_RUNNERS`; create the canary subscription for `FCP_COMPAT_SMOKE_TARGETS`.                                     | M    | `docs/client-compatibility.md`           |
 | **Admin referral drill-down**: referral events are audit-visible today (`referral.*`); a per-user referral view in the CMS is a follow-up if operators want it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | S    | `convex/referrals.ts`                    |
 | ~~**Deferred P2 perf/scale**~~ — **both CLOSED** (2026-07-18): (a) all daily sweeps drain-chain pages via `runAfter` until a partial page (retention.ts pattern, bounded at 50 rounds) — no table can outgrow its daily page; (b) `appSettings.resolved` is per-key indexed reads (no table scan), which also can't load the ratelimit/billing namespaces on hot paths.                                                                                                                                                                                                                                                                                                            | —    | `retention.ts`, `appSettings.ts`         |
 

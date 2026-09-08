@@ -52,7 +52,7 @@ jobs:
       - name: shellcheck the docker and repo scripts
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck -S error docker/*.sh scripts/*.sh
+          shellcheck -S error docker/*.sh docker/compat/*.sh scripts/*.sh
       - name: Build docker images (no cache)
         run: |
           docker build -f docker/web.Dockerfile .
@@ -81,6 +81,20 @@ jobs:
   # docker/web.Dockerfile so CI validates against the exact deployed Caddy — the
   # drift guard below enforces the match (they drifted once and CI validated a
   # different Caddy than deployed for weeks).
+  # Static analysis of the workflow files themselves: expression typos, invalid
+  # `if:` conditions, unknown contexts, and shellcheck over every `run:` block.
+  # Pinned by digest; Dependabot does not track `docker run` refs in workflows,
+  # so bump this by hand alongside the other tool pins.
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 \
+            -color
+
   caddyfile:
     runs-on: ubuntu-latest
     steps:

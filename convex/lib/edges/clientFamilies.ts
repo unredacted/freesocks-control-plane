@@ -15,8 +15,10 @@ export interface ClientClassification {
 }
 
 const RULES: Array<{ re: RegExp; family: RenderClientFamily; format: SubscriptionFormat }> = [
-  // Auto-capable clients first.
-  { re: /^(?:SFA|SFI|SFM|SFT|SFL)\//i, family: 'singbox', format: 'singbox-json' },
+  // Auto-capable clients first. Keep the official-shell prefix list in step
+  // with SINGBOX_*_UA_RE in lib/backends/remnawave.ts (the sub-fetch rewrite):
+  // a shell the panel is served sing-box JSON for must classify as `singbox`.
+  { re: /^(?:SFA|SFI|SFM|SFT|SFL|SFW)\//i, family: 'singbox', format: 'singbox-json' },
   { re: /sing-?box/i, family: 'singbox', format: 'singbox-json' },
   { re: /karing/i, family: 'singbox', format: 'singbox-json' },
   {

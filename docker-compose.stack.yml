@@ -261,7 +261,7 @@ services:
     # Pinned by digest (re-pin: docker buildx imagetools inspect valkey/valkey:9-alpine).
     # Cap uses it purely as a Redis-compatible store (challenges/tokens), so the
     # 8→9 bump is transparent; the --save/--appendonly flags below are unchanged.
-    image: valkey/valkey:9-alpine@sha256:ccfa19b0d743e48927e1c8c14e39e0acb97b5cea347fef0bfe340247fea920cd
+    image: valkey/valkey:9-alpine@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b
     pids_limit: 128
     restart: unless-stopped
     logging: *log

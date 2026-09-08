@@ -26,7 +26,7 @@ fi
 cleanup() {
   echo "[integration] tearing down the Remnawave test panel"
   "${COMPOSE[@]}" down -v >/dev/null 2>&1 || true
-  [ -n "$OVERRIDE" ] && rm -f "$OVERRIDE"
+  if [ -n "$OVERRIDE" ]; then rm -f "$OVERRIDE"; fi
 }
 trap cleanup EXIT
 

@@ -4,6 +4,9 @@ import { classifyClient, detectBodyFormat } from './clientFamilies';
 describe('classifyClient', () => {
   test.each([
     ['SFA/1.12.0 (sing-box 1.12.0)', 'singbox', 'singbox-json'],
+    ['SFL/1.14.0', 'singbox', 'singbox-json'],
+    ['SFW/1.14.0', 'singbox', 'singbox-json'],
+    ['SFL (sing-box 1.14.0; language en_US)', 'singbox', 'singbox-json'],
     ['sing-box 1.13.0', 'singbox', 'singbox-json'],
     ['Karing/1.2', 'singbox', 'singbox-json'],
     ['clash-verge/v2.0.0', 'mihomo', 'clash-yaml'],

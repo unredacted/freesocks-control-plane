@@ -76,3 +76,7 @@ coverage/
 CLAUDE.md
 # Local-only Claude Code working dir (plans contain unpatched-vuln details; never commit)
 .claude/
+
+# Compatibility artifacts contain disposable credentials; never commit them.
+test-results/
+playwright-report/

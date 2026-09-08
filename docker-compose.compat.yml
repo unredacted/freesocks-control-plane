@@ -1,0 +1,28 @@
+# The client cannot reach origin's network. Only the proxy joins both networks.
+services:
+  compat-proxy:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: docker/compat/Dockerfile
+    image: fcp-compat-engine:local
+    volumes:
+      - ./.cache/compat/runtime:/work:ro
+    command: [sing-box, run, -c, /work/server.json]
+    networks: [default, compat-origin]
+  compat-client:
+    platform: linux/amd64
+    image: fcp-compat-engine:local
+    volumes:
+      - ./.cache/compat/runtime:/work
+    networks: [default]
+  compat-origin:
+    image: oven/bun:${FCP_COMPAT_BUN_VERSION:?read from packageManager by test:compat}
+    volumes:
+      - ./docker/compat/origin.mjs:/origin.mjs:ro
+      - ./.cache/compat/runtime:/work:ro
+    command: [bun, /origin.mjs]
+    networks: [compat-origin]
+networks:
+  compat-origin:
+    internal: true

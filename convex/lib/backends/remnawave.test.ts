@@ -442,6 +442,13 @@ describe('normalizeSubscriptionUserAgent', () => {
     );
     // No parseable core version → SFL's own version, then the modern-era default.
     expect(normalizeSubscriptionUserAgent('SFL/1.14.0')).toBe('SFA/1.14.0 (sing-box 1.14.0)');
+    expect(normalizeSubscriptionUserAgent('SFW/1.14.0')).toBe('SFA/1.14.0 (sing-box 1.14.0)');
+    expect(normalizeSubscriptionUserAgent('SFL (sing-box 1.14.0; language en_US)')).toBe(
+      'SFA/1.14.0 (sing-box 1.14.0)',
+    );
+    expect(normalizeSubscriptionUserAgent('SFW (sing-box 1.14.0; language zh_CN)')).toBe(
+      'SFA/1.14.0 (sing-box 1.14.0)',
+    );
     expect(normalizeSubscriptionUserAgent('SingBox pro')).toBe('SFA/1.12.0 (sing-box 1.12.0)');
   });
 
@@ -455,6 +462,8 @@ describe('normalizeSubscriptionUserAgent', () => {
       'Karing/1.0 (sing-box 1.12.0)', // sing-box-cored but has its own template
       'Happ/2.0',
       'Clash/1.0',
+      'SFL unrelated-client',
+      'CustomApp (sing-box 1.14.0)',
     ]) {
       expect(normalizeSubscriptionUserAgent(ua)).toBe(ua);
     }
