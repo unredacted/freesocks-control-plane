@@ -83,7 +83,7 @@ proceeds without a flip and replacing index 0 is refused (`edge.hosts_unmanaged`
 
 ### The rotation machine
 
-`convex/relayRotations.ts`. Phases:
+`convex/edgeRotations.ts`. Phases:
 
 ```
 select → provisioning → verifying → publishing → host_flipping → confirming → finalizing → done
@@ -212,7 +212,7 @@ live LB data, so the whole prefix is sealed by verb in `src/shared/crypto/envelo
 reveals the response to the caller's ephemeral key, POST seals the request AND reveals the
 response (the response ephemeral rides inside the sealed body), PATCH/PUT seal the request,
 DELETE carries nothing. Dual-mode (plaintext accepted) stays for `fsv1_` IaC callers, as for
-backend servers. `convex/httpRelays.test.ts` pins the policy and a seal-both round trip.
+backend servers. `convex/httpEdges.test.ts` pins the policy and a seal-both round trip.
 
 ## Node role contract (Ansible)
 
