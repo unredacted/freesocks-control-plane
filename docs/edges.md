@@ -162,13 +162,19 @@ and a probe audit feed. No member data is involved (see
   from "blocked in a country" and is never a country signal.
 
 Verdicts need agreement: within a source, `unreachable` requires `probe.agreementVantages`
-distinct failing networks and no success; across sources, a second source or a second network.
-`reachable` needs one residential success or two datacenter successes. Runs are budgeted per hour;
-suspected origins are probed at `suspectedIntervalMinutes`. A target's summary carries only
-verdicts from currently enabled sources younger than two probe intervals; older evidence drops
-out at the next refresh. A dual-stack edge is probed per
-address family and rolled up per family: the country verdict follows the IPv4 path (what every
-member receives) and the IPv6 path is reported alongside as `v6Verdict`. Settled runs are kept
+(minimum 2) distinct failing networks and no success; the failing network identifiers are
+persisted on the reachability row, so the cross-source check counts real networks. `reachable`
+needs one residential success or two datacenter successes. A probe-side error (a vantage that
+could not run, an unparsed answer) is neither; a TLS alert means the peer answered and counts as
+reachable, as for the internal check. Every listener port of an edge is probed. Runs are budgeted
+per hour, counting every run (cron, manual and detector-triggered); a batch is staggered per
+source by `probe.sourceSpacingMs` so no service sees a burst. Suspected origins are probed at
+`suspectedIntervalMinutes`. A target's summary carries only verdicts from currently enabled
+sources; each country row has its own freshness, and a country older than two probe intervals
+drops out of the detector's evidence even if another country was just refreshed. A dual-stack
+edge is probed per address family and rolled up per family: the country verdict follows the IPv4
+path (what every member receives) and the IPv6 path is reported alongside as `v6Verdict`. RIPE
+Atlas measurements are created private with a non-identifying description. Settled runs are kept
 two weeks (`retention-edge-probes`, daily).
 
 ### Attribution
@@ -177,25 +183,31 @@ A member issue report is attributed server-side to the relay behind the key's pi
 (`relaySlug`). The **edge** is set only when the member said which connection failed and that
 choice resolves to exactly one edge under their own assignment (`connectionChoice`,
 `relayEdgeId`); it is never inferred from the primary. Each member contributes at most one
-detector weight per window via a peppered dedupe mark (`EDGE_MARK_PEPPER`, falling back to
-`IP_HASH_SALT`); the telemetry row stays unlinked. `refreshNotObserved` marks a key that has not
-fetched content since the relay's last rotation; such a report is still on the OLD pool, so it
-gets no edge attribution (it would otherwise land on the healthy replacement).
+detector weight per window via a time-independent peppered dedupe mark (`EDGE_MARK_PEPPER`,
+falling back to `IP_HASH_SALT`; with neither set a report is stored with weight 0 and no edge
+attribution); the telemetry row stays unlinked. `refreshNotObserved` marks a key whose last
+rendered `publicationEpoch` is older than the relay's current one (older keys fall back to the
+last-rotation timestamp): such a report is still on the OLD pool, so it gets no edge attribution
+(it would otherwise land on the healthy replacement).
 
 ### Detector (`edge-block-detector`, 5 min, `detect.*`)
 
 Per relay: attributed reports in the window (deduplicated), the node's live user count against
-its own baseline, and probe verdicts (per edge, and only while probes are enabled and the
-edge's summary is younger than two probe intervals; a stale summary is not evidence). Relay-level
-evidence can only **hint** (the dashboard
-strip and the relay badge). An **automatic rotation** needs, in order: `edge.enabled`,
-`edge.autoRotate`, the relay's `autoRotate`, a suspected state, edge-level evidence (probes,
-or members naming the connection with enough share, counted after the per-member dedupe), the
-edge not being an outage (internal
-probe and provider health say the edge itself is up), no quarantine, no running rotation,
-cooldown and daily cap not reached, and a manageable Host when the target holds index 0. The
-resulting rotation is a **burn** (short drain). Every refusal is recorded on the relay as the
-veto so the operator sees why nothing happened.
+its own **time-of-day** baseline (the same hour on previous days; samples taken while suspected,
+rotating, in cooldown or with the node offline are not added to the baseline), and probe
+verdicts per edge. Probe evidence is a **transition**: a country that was reachable from that
+edge and is now `unreachable` with agreement scores that edge at 1.0; a country that was never
+reachable from it is not evidence. A fresh probe verdict alone can reach suspicion when
+`allowProbeOnlyAutoRotate` is on. Relay-level evidence can only **hint** (the dashboard strip and
+the relay badge). An **automatic rotation** needs, in order: `edge.enabled`, `edge.autoRotate`,
+the relay's `autoRotate`, a suspected state, edge-level evidence (probes, or members naming the
+connection with enough share, counted after the per-member dedupe), the relay node being online
+(`node_offline`), the edge not being an outage (internal probe and provider health say the edge
+itself is up), the block not affecting every published edge alike (`protocol_level_block`:
+rotating an address cannot help), no quarantine, no running rotation, cooldown and daily cap not
+reached, and a manageable Host when the target holds index 0. The resulting rotation is a
+**burn** (short drain). Every refusal is recorded on the relay as the veto so the operator sees
+why nothing happened.
 
 ## Configuration
 
