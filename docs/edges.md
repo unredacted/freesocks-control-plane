@@ -25,7 +25,7 @@ under the API prefix is HPKE-sealed by verb class (see [Sealing](#sealing)).
 | Slot             | `relaySlots`           | One inbound on the relay (port + panel inbound uuid) deployed by the role for one protocol profile, with ONE template Host (remark `<node>-relay-<slotKey>`).                                                                                       |
 | Edge             | `edges`                | One provider load balancer bound to a relay slot: the resource-step ledger, child resources, addresses, publication state and pool index, health, live snapshot, reachability.                                                                      |
 | Rotation         | `edgeRotations`        | One provision / publish / replace run: phase, step version, operation claim, Host plan, previous binding, live event log; its audit trail is assembled on read.                                                                                     |
-| Probe target     | `probeTargets`         | An operator-entered host:port probed alongside the derived targets (edges, relay nodes). Operator evidence only.                                                                                                                                    |
+| Probe target     | `probeTargets`         | An operator-entered public host:port probed alongside the derived targets (edges, relay nodes); private, loopback and link-local literals are refused. Operator evidence only.                                                                      |
 | Probe run        | `probeRuns`            | One reachability measurement of one target address (edge, relay node or custom) from one source.                                                                                                                                                    |
 | Reachability     | `probeReachability`    | Per target, per country, per source, per address family: the last run's vantage counts and verdict; summarised onto the target's own row.                                                                                                           |
 
@@ -46,27 +46,39 @@ and is the cache token of the fronted subscription route.
 
 Subscriptions are **rendered** by FCP, not rewritten on the panel. The panel keeps exactly one
 template Host per slot. When the fronted `/api/v1/sub/<token>` route (or the mirror refresh)
-fetches a body, it pins the node as before, then replaces the node's template entries with the
-subscriber's assigned endpoints:
+fetches a body, it pins the node as before (a single-node body pins to that node; Clash/Mihomo
+bodies pin by proxy name like the others), then replaces the node's template entries with the
+subscriber's assigned endpoints. The node the pin chose, the render and the stored epoch token
+share one value, and the subscription records the `publicationEpoch` it was rendered against
+(`lastRenderedEpoch`, also stamped by the mirror refresh):
 
 - assignment is a stable PRF keyed on the subscription's `renderKey` (random, never exposed):
-  primary = pool index `h mod publishedCount`, backup = the next edge in pool order (a different
-  provider when `render.preferDistinctProviders` is on);
+  primary = pool index `h mod publishedCount` over the full pool order, walking forward past an
+  edge that is not currently assignable so only that edge's subscribers move; backup = the next
+  assignable edge in pool order (a different provider when `render.preferDistinctProviders` is
+  on). An edge is assignable only with an address the family's `ipv6Mode` can emit;
 - for a `reality` or `tls` profile, one server name per emitted connection, chosen from the
-  profile's active set; a retired name stops being selected but stays accepted by the node
-  through its drain. A `plain` profile has no server names: only address and port are rewritten
-  and the template's own parameters are kept;
+  profile's active set; a retired name is never selected again (it stays accepted by the node
+  through its drain, and when `drainUntil` passes the epoch bumps and mirrors refresh). With no
+  active name left the edge is not assignable. A `plain` profile has no server names: only
+  address and port are rewritten and the template's own parameters are kept; a `tls` profile
+  sets the Clash `servername` even when the template omitted it;
 - IPv4 entries by default, plus IPv6 literals as separate bracketed entries when the edge has one
   (`render.ipv6Mode`, per family);
 - per **client family** (sing-box, Mihomo, plain link-list clients…): auto-capable families get
   one named auto group (`urltest` / `url-test`), link-list families get labelled Primary/Backup
-  entries; each family has an admin-editable rule (`render.clients.<family>`).
+  entries; each family has an admin-editable rule (`render.clients.<family>`). Rendered labels
+  and the auto-group name are de-duplicated against the template's own tags; a change to any
+  `render.*` setting bumps every enabled relay's epoch and refreshes mirrors.
 
-Rendering is fail-open: an unknown body shape passes through unchanged. It is off until
-`render.enabled` is set; preview any family per relay from the admin page. When an enabled
+Rendering is fail-open for an **unknown** body shape only: it passes through unchanged. It is off
+until `render.enabled` is set; preview any family per relay from the admin page. When an enabled
 relay's eligible pool is **empty** (every edge unpublished or draining, or the profile disabled)
-the template entries are **dropped** rather than served: the template Host still carries the
-former index-0 address, which an explicit unpublish must stop distributing.
+the template entries are **dropped** regardless of the family rule's flags, and every reference
+to the dropped tag (rules, `route.final`, group defaults, detours) is pruned structurally rather
+than the original body being served: the template Host still carries the former index-0
+address, which an explicit unpublish must stop distributing. Unpublish, drop-from-pool, slot
+retire and profile changes all bump the epoch and schedule a mirror refresh.
 
 ## Operations
 
@@ -76,7 +88,7 @@ former index-0 address, which an explicit unpublish must stop distributing.
 | Provision edge                           | qualified account (the profile's provider when scoped; any otherwise), template, capacity  | yes                                | no                                            | edge `active` + `unpublished` (or published when requested)                                                                                                            |
 | Publish edge                             | active, has IPv4, slot deployed (+ enabled profile with an active SNI for `reality`)       | no                                 | template Host only when taking index 0        | `published` at the lowest free index; epoch++                                                                                                                          |
 | Replace (rotate / burn)                  | a published target edge                                                                    | unless a compatible standby exists | template Host only if the target held index 0 | new edge `published` at the SAME index; old `draining` (burn = short drain)                                                                                            |
-| Unpublish / retire server name / profile | —                                                                                          | no                                 | no                                            | new selections stop; the node keeps accepting through the drain                                                                                                        |
+| Unpublish / retire server name / profile | no running rotation, no quarantine                                                         | no                                 | no                                            | new selections stop; the node keeps accepting through the drain; epoch++ and mirrors refresh                                                                           |
 
 `hostManaged:false` on a relay means FCP never writes the template Host: publishing at index 0
 proceeds without a flip and replacing index 0 is refused (`edge.hosts_unmanaged`).
@@ -96,13 +108,24 @@ Recovery contract:
 - **Step version.** Every mutation that advances a rotation carries the version it read; a stale
   actor's write is ignored. The `step` action does one bounded unit of work per invocation and
   never schedules itself: the mutation that records the outcome schedules the next step
-  (mutation scheduling is transactional). The reconcile cron re-kicks a rotation whose next step
-  went stale (a crashed action).
+  (mutation scheduling is transactional). Each step stamps `stepStartedAt`; the reconcile cron
+  re-kicks a rotation whose step went stale (scheduled but never started, or started and never
+  settled) and the re-kick bumps `stepVersion`, fencing the stale actor. Control flow reads
+  persisted row fields (`viaStandby`, `createdEdgeId`, `hostPlanCaptured`,
+  `forwardWriteAttempted`, `slotId`), never the bounded `events[]` log, which is display-only.
+  A run is capped by `edge.maxRotationMinutes` (default 120) and by a step-error budget: past
+  either, `publishing`/`host_flipping` roll back and `confirming`/`finalizing`/`rolling_back`
+  quarantine. Cancel during `rolling_back` is recorded and audited but not acted on until the
+  rollback settles.
 - **Resource-step ledger.** `planProvision` yields the ordered steps; every child resource an
   adapter creates is recorded on the edge before anything else happens, including on partial
-  failures. Destroy walks the ledger in reverse (`present → delete_requested → confirmed_gone`);
-  a provider without an async-delete confirmation is confirmed by re-issuing its idempotent
-  delete, never by assuming the delete landed.
+  failures. Destroy walks the ledger ordered by resource kind (load balancer, then floating IP,
+  then gateway, then network), `present → delete_requested → confirmed_gone`. A provider without
+  an async-delete confirmation is confirmed by re-issuing its idempotent delete, never by
+  assuming the delete landed; an async-delete provider that reports the resource `still_present`
+  (the delete never landed) gets the delete re-issued, as does one whose confirmation stays
+  `unresolved` for several passes. An unknown resource kind is never assumed gone: it stays
+  `unresolved` and parks the edge as `needs_operator`.
 - **Operation claims.** Every external write (a provider step, a Host PATCH) is bracketed by a
   claim with an expiry. An expired, unsettled claim blocks any further allocating or destroying
   call until the outcome is re-observed.
@@ -110,8 +133,10 @@ Recovery contract:
   resource), `confirmed_absent` (safe to run the step again), `unresolved` (keep waiting, up to
   `discoveryTimeoutMinutes`) or `ambiguous` (candidates whose ownership cannot be proven: an
   operator decides; nothing is destroyed automatically). The count of consecutive unresolved
-  looks is kept on the step (`discoverAttempts`), so adapters that want two quiet looks before
-  `confirmed_absent` get them even though each pass settles its claim.
+  looks is kept on the step (`discoverAttempts`), and `confirmed_absent` additionally needs a
+  per-provider settle time since the step started (`discoverySettleMs`), so a slow compound
+  create is never re-run 40 seconds after the request. A forward-write timeout (`timedOut`) is
+  not a quiet look.
 - **Observe-then-write Hosts.** The flip captures its plan from the live Host list first. A planned
   Host that later disappears or changes inbound is `hosts_changed`: the run rolls back the
   **complete previous binding** (edge, slot, profile, pool index, Host address) and never
@@ -121,11 +146,18 @@ Recovery contract:
 - **Quarantine.** A rollback that cannot converge parks the relay in `quarantine`. Nothing
   bypasses it (no rotation, no delete, no automatic action) until an operator, having checked
   the panel by hand, resolves it keeping either the previous binding (the rollback's DB half
-  already applied) or the current one (the new edge is republished at the saved pool index and
-  the previous edge drains).
+  already applied) or the current one (the new edge is republished at the saved pool index,
+  after a publishability check, and the previous edge drains). The same guard (`edge.quarantined`
+  / `edge.rotation_running`) refuses every direct pool or edge write while a rotation is
+  running or the relay is quarantined: publish, unpublish, import-and-publish, delete edge,
+  retry destroy, resolve `needs_operator`, publish standby. A restore that finds an unexpected
+  occupant at the saved index evicts and unpublishes it with an audit row rather than silently
+  overwriting. Toggling `hostManaged` is refused during a rotation; a replace that finds it off
+  mid-flip rolls back (`hosts_unmanaged`) instead of reporting convergence.
 - **Audit trail.** Every audit row a rotation produces carries its `rotationId` (the operator's
-  request, publish/unpublish, flips, the outcome, quarantine and its resolution); the rotation
-  detail (`GET …/rotations/{id}`, the CMS drawer) merges them with the live event log.
+  request, publish/unpublish, flips, the outcome, quarantine and its resolution) and its id is
+  kept in a bounded list on the rotation row, so the rotation detail (`GET …/rotations/{id}`,
+  the CMS drawer) is complete for old rotations too and merges them with the live event log.
 
 Live progress: the rotation row carries `events[]` (bounded) and the admin route
 `GET /api/v1/admin/edges/rotations/{id}` returns steps + weighted percent; the CMS polls it every
@@ -134,11 +166,18 @@ Live progress: the rotation row carries `events[]` (bounded) and the admin route
 ### Reconcile cron (`edge-reconcile`, 5 min)
 
 Re-kicks stale rotations; settles edges with unknown outcomes by discovery; refreshes provider
-health (a published edge the provider no longer has is dropped from the pool with a
-`edge.drift` audit); turns drained / failed / cancelled edges into destroy runs (the attempt
-cap parks an edge as `needs_operator`); publishes standbys into free pool indexes
-(`autoPublishStandby`) or provisions up to `desiredPublished` / `standbyPerRelay`
-(`autoProvisionToDesired`, off by default); finishes relay deletes.
+health (a published edge the provider reports gone on **two consecutive** passes is dropped
+from the pool, the epoch bumped and mirrors refreshed in one mutation, with an `edge.drift`
+audit; a single 404, which a narrowed credential can also produce, does nothing); turns
+drained / failed / cancelled edges into destroy runs (the attempt cap parks an edge as
+`needs_operator`; reaching `destroyed` clears the stored live snapshot); publishes standbys
+into free pool indexes (`autoPublishStandby`, through the same start guards as a manual
+publish) or provisions up to `desiredPublished` / `standbyPerRelay` (`autoProvisionToDesired`,
+off by default) — both only while `edge.enabled` is on; finishes relay deletes (the relay's
+pool drains for `drainMinutes` unless the delete is forced). A standby-only provision is
+finalized even if its slot is not publishable at that moment. Daily sweeps prune `destroyed`
+edges after 30 days and terminal rotations after 90 (`retention-edges`,
+`retention-edge-rotations`).
 
 ## Probes and the block detector
 
@@ -224,7 +263,14 @@ live LB data, so the whole prefix is sealed by verb in `src/shared/crypto/envelo
 reveals the response to the caller's ephemeral key, POST seals the request AND reveals the
 response (the response ephemeral rides inside the sealed body), PATCH/PUT seal the request,
 DELETE carries nothing. Dual-mode (plaintext accepted) stays for `fsv1_` IaC callers, as for
-backend servers. `convex/httpEdges.test.ts` pins the policy and a seal-both round trip.
+backend servers; `FS_E2EE_ADMIN_REQUIRED=true` additionally refuses plaintext from cookie-session
+(passkey CMS) callers on these routes (`e2ee.sealed_required`) while bearer callers, who cannot
+seal, keep dual-mode. A malformed percent escape in a path is a `400 validation` on every verb.
+Provider-API-calling POSTs (credential test, discover, inventory / live / node refresh, render
+preview, credential rotation) and manual probes are rate-limited per actor
+(`admin.edges.provider-call`, `admin.edges.probe`). Read-only POSTs (render preview, template
+validate) need only `admin:servers:read`; seeding default templates is an explicit
+`POST templates/ensure-defaults` rather than a side effect of GET. `convex/httpEdges.test.ts` pins the policy and a seal-both round trip.
 
 ## Node role contract (Ansible)
 
@@ -234,7 +280,12 @@ template Host, and registers both with FCP using an `fsv1_` token with `admin:se
 
 1. `PUT /api/v1/admin/edges/relays/by-slug/{hostname}` with
    `{ backendServerSlug, nodeHostname, originAddress, locationCode?, modeSlugs? }`
-   (idempotent; never flips `autoRotate`). The response carries `publishedEndpoints`. One origin
+   (idempotent). Only those fields are honored on an update: the role can never set or flip the
+   operator-owned knobs (`autoRotate`, `hostManaged`, `enabled`, `probeNode`, `desiredPublished`,
+   cooldown / drain / daily-cap limits, provider preference); a create always starts with
+   `autoRotate:false`. A PUT on a relay that is being deleted is refused (`edge.deleting`), and
+   re-parenting to another `backendServerSlug` is refused while the relay has non-destroyed
+   edges (`edge.relay_reparent_locked`). The response carries `publishedEndpoints`. One origin
    per (backend server, node) is enforced (`edge.node_already_bound`), and `originAddress`
    cannot change while the origin has live edges (`edge.origin_address_locked`): edges carry
    the address in their listener members, so a moved node means draining or destroying its
@@ -259,12 +310,17 @@ templates pin with the node like its other Hosts.
 
 **Qualify a provider account.** Add the account and test its credentials; provision a test edge
 on a relay (unpublished); open an authenticated REALITY session through the edge with a real
-client and hold it idle for several minutes; pull the live view; then "Mark qualified". Changing
-the account's credentials or settings clears the qualification; so does changing the parameters
+client and hold it idle for several minutes; pull the live view; then "Mark qualified" (the
+effective template's hash is recorded server-side). Editing the account's credentials or
+settings through the ordinary update clears the qualification; so does changing the parameters
 of a template the account was qualified with, names as its default, or falls back to as the
-provider default (audited as `edge.provider_account.qualified` with `qualified:false`). Settings
-that locate resources (project, region, zone, network) cannot change while any non-destroyed
-edge references the account: destroy those edges first, or add a second account. Switching the
+provider default (audited as `edge.provider_account.qualified` with `qualified:false`). A routine
+secret rotation goes through **Rotate credentials** (`POST …/providers/{id}/rotate-credentials`):
+the new credentials are tested first, nothing that locates resources may change, and the
+qualification is kept (audited as `edge.provider_account.credentials_rotated`, booleans only).
+Only the settings that locate resources (project, region, zone, network) are locked while any
+non-destroyed edge references the account: destroy those edges first, or add a second account.
+Non-locating identifiers that some providers pair with the secret can change at any time. Switching the
 account's default template also clears the qualification. An account-scoped profile
 provisions and publishes edges from that account only. A slot's inbound, profile or origin port
 cannot change while non-destroyed edges use the slot (register a new slot key instead).

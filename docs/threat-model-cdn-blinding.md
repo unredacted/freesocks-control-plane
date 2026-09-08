@@ -202,7 +202,10 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   member requests on those routes (`e2ee.sealed_required`), closing the leg; flip it only after the
   keyed SPA build is live (a dark client cannot seal and would be refused). Admin `fsv1_`/Ansible
   callers are unaffected (only member routes are gated). The admin status card surfaces
-  `e2ee.required`.
+  `e2ee.required`. The admin-side counterpart is `FS_E2EE_ADMIN_REQUIRED=true`: it rejects
+  unsealed requests on the sealed ADMIN routes (backend-server / mirror / edges credential writes
+  and reveals) from cookie-session (passkey CMS) callers, while `fsv1_` bearer callers, who cannot
+  seal, keep dual-mode; the caller class is decided by the Authorization header.
 - **A captured cookie can force a logout.** The logout routes are deliberately unsigned (a member who
   lost their PoP key — e.g. a wiped browser profile — must still be able to kill the session), so a
   passive CDN holding a captured cookie can replay it to `/api/v1/auth/logout`, deleting the victim's
