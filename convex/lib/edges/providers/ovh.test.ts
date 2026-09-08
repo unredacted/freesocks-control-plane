@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { OvhTemplate, __resetOvhSkewCache, ovhLbBody, ovhProvider } from './ovh';
+import { OvhTemplate, __resetOvhSkewCache, ovhGatewayName, ovhLbBody, ovhProvider } from './ovh';
 import type { Ledger, OvhConfig } from './types';
+import { EDGE_PROVIDER_CAPABILITIES } from './capabilities';
 import { errorBlob, jsonRes, mockFetch, type Captured } from '../testing/mockFetch';
 
 beforeEach(() => __resetOvhSkewCache());
@@ -113,7 +114,32 @@ describe('ovh: polling, discovery, describe, destroy', () => {
     ).toMatchObject({ status: 'requested' });
   });
 
-  test('discover: by name adopts lb + floating ip; absence confirmed on the second attempt', async () => {
+  const region = '/1.0/cloud/project/svc-1/region/GRA9';
+  const settle = EDGE_PROVIDER_CAPABILITIES.ovh.discoverySettleMs;
+  const ledgerAt = (startedAt: number, opRef?: string): Ledger => ({
+    steps: [
+      {
+        stepId: 'lb',
+        kind: 'create_lb',
+        resourceName: spec.name,
+        state: 'unresolved',
+        opRef,
+        attempt: 1,
+        startedAt,
+      },
+    ],
+    resources: [],
+  });
+  /** Empty project: no balancer, no floating ip, no gateway, no operation. */
+  const emptyProject = (c: Captured) => {
+    if (c.path === `${base}/loadbalancer`) return jsonRes([]);
+    if (c.path === `${region}/floatingip`) return jsonRes([]);
+    if (c.path === `${region}/gateway`) return jsonRes([]);
+    if (c.path === '/1.0/cloud/project/svc-1/operation') return jsonRes([]);
+    throw new Error(`unexpected ${c.method} ${c.url}`);
+  };
+
+  test('discover: by name adopts lb + floating ip (+ the FCP-named gateway when none is configured)', async () => {
     const empty: Ledger = { steps: [], resources: [] };
     mockFetch(
       withTime(() =>
@@ -128,11 +154,265 @@ describe('ovh: polling, discovery, describe, destroy', () => {
       ],
       addresses: { v4: '203.0.113.2' },
     });
-    mockFetch(withTime(() => jsonRes([])));
-    expect(await ovhProvider.discover(cfg, step, spec, empty, 1)).toEqual({ status: 'unresolved' });
-    expect(await ovhProvider.discover(cfg, step, spec, empty, 2)).toEqual({
+    const noGw = { ...cfg, gatewayId: undefined };
+    mockFetch(
+      withTime((c) => {
+        if (c.path === `${base}/loadbalancer`)
+          return jsonRes([{ id: 'lb-2', name: spec.name, floatingIp: { id: 'fip-2' } }]);
+        if (c.path === `${region}/gateway`)
+          return jsonRes([
+            { id: 'gw-other', name: 'someone-else-gw' },
+            { id: 'gw-2', name: ovhGatewayName(spec.name), status: 'active' },
+          ]);
+        throw new Error(`unexpected ${c.method} ${c.url}`);
+      }),
+    );
+    expect(await ovhProvider.discover(noGw, step, spec, empty, 1)).toMatchObject({
+      status: 'found',
+      resources: [
+        { kind: 'lb', resourceId: 'lb-2' },
+        { kind: 'floating_ip', resourceId: 'fip-2' },
+        { kind: 'gateway', resourceId: 'gw-2', ownership: 'adopted' },
+      ],
+    });
+  });
+
+  test('discover: absence needs two quiet looks AND the settle floor; an in-flight balancer operation blocks it', async () => {
+    mockFetch(withTime(emptyProject));
+    // Legacy ledger without startedAt: the look count alone applies.
+    const noStart: Ledger = { steps: [], resources: [] };
+    expect(await ovhProvider.discover(cfg, step, spec, noStart, 1)).toEqual({
+      status: 'unresolved',
+    });
+    expect(await ovhProvider.discover(cfg, step, spec, noStart, 2)).toEqual({
       status: 'confirmed_absent',
     });
+    // Two looks 40 s after the request: too early.
+    expect(await ovhProvider.discover(cfg, step, spec, ledgerAt(Date.now() - 40_000), 2)).toEqual({
+      status: 'unresolved',
+    });
+    expect(
+      await ovhProvider.discover(cfg, step, spec, ledgerAt(Date.now() - settle - 1000), 2),
+    ).toEqual({ status: 'confirmed_absent' });
+    // The project still runs a balancer operation started after our step: unresolved.
+    mockFetch(
+      withTime((c) =>
+        c.path === '/1.0/cloud/project/svc-1/operation'
+          ? jsonRes([
+              {
+                id: 'op-x',
+                status: 'in-progress',
+                action: 'loadbalancer#create',
+                createdAt: new Date().toISOString(),
+              },
+            ])
+          : emptyProject(c),
+      ),
+    );
+    expect(
+      await ovhProvider.discover(cfg, step, spec, ledgerAt(Date.now() - settle - 1000), 3),
+    ).toEqual({ status: 'unresolved' });
+    // A completed or unrelated operation does not block.
+    mockFetch(
+      withTime((c) =>
+        c.path === '/1.0/cloud/project/svc-1/operation'
+          ? jsonRes([
+              { id: 'op-y', status: 'completed', action: 'loadbalancer#create' },
+              { id: 'op-z', status: 'in-progress', action: 'instance#create' },
+            ])
+          : emptyProject(c),
+      ),
+    );
+    expect(
+      await ovhProvider.discover(cfg, step, spec, ledgerAt(Date.now() - settle - 1000), 3),
+    ).toEqual({ status: 'confirmed_absent' });
+  });
+
+  test('discover: FCP-named children without their balancer are ambiguous (ledgered for the operator, never re-run)', async () => {
+    const noGw = { ...cfg, gatewayId: undefined };
+    mockFetch(
+      withTime((c) => {
+        if (c.path === `${region}/floatingip`)
+          return jsonRes([
+            { id: 'fip-orphan', ip: '203.0.113.7', description: spec.name },
+            { id: 'fip-else', ip: '203.0.113.8', description: 'other' },
+          ]);
+        if (c.path === `${region}/gateway`)
+          return jsonRes([{ id: 'gw-orphan', name: ovhGatewayName(spec.name) }]);
+        return emptyProject(c);
+      }),
+    );
+    expect(
+      await ovhProvider.discover(noGw, step, spec, ledgerAt(Date.now() - settle - 1000), 2),
+    ).toEqual({
+      status: 'ambiguous',
+      candidates: [
+        {
+          kind: 'floating_ip',
+          resourceId: 'fip-orphan',
+          ownership: 'adopted',
+          meta: { address: '203.0.113.7' },
+        },
+        { kind: 'gateway', resourceId: 'gw-orphan', ownership: 'adopted' },
+      ],
+    });
+  });
+
+  test('gateway ledger: a completed create lists the gateway it minted; describe adopts one the ledger lacks', async () => {
+    const noGw = { ...cfg, gatewayId: undefined };
+    const gwList = jsonRes([{ id: 'gw-new', name: ovhGatewayName(spec.name), status: 'active' }]);
+    mockFetch(
+      withTime((c) => {
+        if (c.path.endsWith('/operation/op-1'))
+          return jsonRes({ id: 'op-1', status: 'completed', resourceId: 'lb-1' });
+        if (c.path === `${region}/gateway`) return gwList.clone();
+        throw new Error(`unexpected ${c.method} ${c.url}`);
+      }),
+    );
+    expect(await ovhProvider.pollStep!(noGw, step, 'op-1', { steps: [], resources: [] })).toEqual({
+      status: 'done',
+      resources: [
+        { kind: 'lb', resourceId: 'lb-1', ownership: 'created' },
+        { kind: 'gateway', resourceId: 'gw-new', ownership: 'created' },
+      ],
+    });
+    // With a configured gateway nothing is looked up or ledgered.
+    const stub = mockFetch(
+      withTime(() => jsonRes({ id: 'op-1', status: 'completed', resourceId: 'lb-1' })),
+    );
+    expect(await ovhProvider.pollStep!(cfg, step, 'op-1', { steps: [], resources: [] })).toEqual({
+      status: 'done',
+      resources: [{ kind: 'lb', resourceId: 'lb-1', ownership: 'created' }],
+    });
+    expect(stub.calls.some((c) => c.path === `${region}/gateway`)).toBe(false);
+    // An errored operation reports the FCP-named leftovers as a partial result.
+    mockFetch(
+      withTime((c) => {
+        if (c.path.endsWith('/operation/op-1')) return jsonRes({ id: 'op-1', status: 'in-error' });
+        if (c.path === `${region}/floatingip`)
+          return jsonRes([{ id: 'fip-left', ip: '203.0.113.9', description: spec.name }]);
+        if (c.path === `${region}/gateway`) return gwList.clone();
+        throw new Error(`unexpected ${c.method} ${c.url}`);
+      }),
+    );
+    expect(
+      await ovhProvider.pollStep!(noGw, step, 'op-1', { steps: [], resources: [] }),
+    ).toMatchObject({
+      status: 'partial',
+      code: 'operation_error',
+      resources: [
+        { kind: 'floating_ip', resourceId: 'fip-left' },
+        { kind: 'gateway', resourceId: 'gw-new' },
+      ],
+    });
+    // describe: the ledger holds only the lb → the floating ip AND the gateway are adopted.
+    const ledger: Ledger = {
+      steps: [
+        { stepId: 'lb', kind: 'create_lb', resourceName: spec.name, state: 'done', attempt: 1 },
+      ],
+      resources: [
+        {
+          stepId: 'lb',
+          kind: 'lb',
+          resourceId: 'lb-1',
+          ownership: 'created',
+          deleteState: 'present',
+        },
+      ],
+    };
+    mockFetch(
+      withTime((c) => {
+        if (c.path === `${base}/loadbalancer/lb-1`)
+          return jsonRes({
+            id: 'lb-1',
+            name: spec.name,
+            provisioningStatus: 'ACTIVE',
+            operatingStatus: 'ONLINE',
+            floatingIp: { id: 'fip-1', ip: '203.0.113.1' },
+          });
+        if (c.path === `${region}/gateway`) return gwList.clone();
+        throw new Error(`unexpected ${c.method} ${c.url}`);
+      }),
+    );
+    expect(await ovhProvider.describe(noGw, ledger)).toMatchObject({
+      state: 'active',
+      resources: [
+        { kind: 'floating_ip', resourceId: 'fip-1' },
+        { kind: 'gateway', resourceId: 'gw-new', ownership: 'created' },
+      ],
+    });
+    // Once ledgered, describe stops looking the gateway up.
+    ledger.resources.push({
+      stepId: 'lb',
+      kind: 'gateway',
+      resourceId: 'gw-new',
+      ownership: 'created',
+      deleteState: 'present',
+    });
+    const s3 = mockFetch(
+      withTime(() => jsonRes({ id: 'lb-1', name: spec.name, provisioningStatus: 'ACTIVE' })),
+    );
+    await ovhProvider.describe(noGw, ledger);
+    expect(s3.calls.some((c) => c.path === `${region}/gateway`)).toBe(false);
+  });
+
+  test('destroy walks lb → floating ip → gateway by kind; every kind is read back; unknown kinds are unresolved', async () => {
+    const mk = (kind: string, resourceId: string) => ({
+      stepId: 'x',
+      kind,
+      resourceId,
+      ownership: 'created' as const,
+      deleteState: 'present' as const,
+    });
+    // Ledger order is gateway, fip, lb (describe-appended children first): the plan reorders.
+    const ledger: Ledger = {
+      steps: [],
+      resources: [mk('gateway', 'gw-1'), mk('floating_ip', 'fip-1'), mk('lb', 'lb-1')],
+    };
+    expect(ovhProvider.planDestroy(cfg, ledger).map((r) => r.kind)).toEqual([
+      'lb',
+      'floating_ip',
+      'gateway',
+    ]);
+    const stub = mockFetch(withTime(() => jsonRes({ id: 'op-gw', status: 'created' })));
+    expect(await ovhProvider.runDestroy(cfg, ledger.resources[0], ledger)).toEqual({
+      status: 'delete_requested',
+      opRef: 'op-gw',
+    });
+    expect(stub.calls.find((c) => c.method === 'DELETE')?.path).toBe(`${region}/gateway/gw-1`);
+    mockFetch(withTime(() => jsonRes({ id: 'gw-1', status: 'deleting' })));
+    expect(await ovhProvider.confirmDestroyed!(cfg, ledger.resources[0], ledger)).toEqual({
+      status: 'unresolved',
+    });
+    mockFetch(withTime(() => jsonRes({ id: 'gw-1', status: 'active' })));
+    expect(await ovhProvider.confirmDestroyed!(cfg, ledger.resources[0], ledger)).toEqual({
+      status: 'still_present',
+    });
+    // The balancer: PENDING_DELETE → unresolved; ACTIVE → still_present; 404 → gone.
+    mockFetch(withTime(() => jsonRes({ id: 'lb-1', provisioningStatus: 'PENDING_DELETE' })));
+    expect(await ovhProvider.confirmDestroyed!(cfg, ledger.resources[2], ledger)).toEqual({
+      status: 'unresolved',
+    });
+    mockFetch(withTime(() => jsonRes({ id: 'lb-1', provisioningStatus: 'ACTIVE' })));
+    expect(await ovhProvider.confirmDestroyed!(cfg, ledger.resources[2], ledger)).toEqual({
+      status: 'still_present',
+    });
+    mockFetch(withTime(() => jsonRes({ message: 'gone' }, 404)));
+    expect(await ovhProvider.confirmDestroyed!(cfg, ledger.resources[2], ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    // DELETE throws (unknown outcome) → the next confirm reads 404 → gone.
+    mockFetch(withTime(() => jsonRes({ class: 'Server::InternalServerError' }, 500)));
+    await expect(ovhProvider.runDestroy(cfg, ledger.resources[2], ledger)).rejects.toMatchObject({
+      meta: { status: 500, retryable: true },
+    });
+    mockFetch(withTime(() => jsonRes({}, 404)));
+    expect(await ovhProvider.confirmDestroyed!(cfg, ledger.resources[2], ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    const odd = mk('mystery', 'm-1');
+    expect(await ovhProvider.runDestroy(cfg, odd, ledger)).toEqual({ status: 'unresolved' });
+    expect(await ovhProvider.confirmDestroyed!(cfg, odd, ledger)).toEqual({ status: 'unresolved' });
   });
 
   test('describe adopts the minted floating ip and maps statuses; destroy requests an operation', async () => {
@@ -173,6 +453,12 @@ describe('ovh: polling, discovery, describe, destroy', () => {
     mockFetch(withTime(() => jsonRes({ message: 'gone' }, 404)));
     expect(await ovhProvider.confirmDestroyed!(cfg, ledger.resources[0], ledger)).toEqual({
       status: 'confirmed_gone',
+    });
+    // The floating ip is read back too.
+    const fip = { ...ledger.resources[0], kind: 'floating_ip', resourceId: 'fip-1' };
+    mockFetch(withTime(() => jsonRes({ id: 'fip-1', ip: '203.0.113.1', status: 'active' })));
+    expect(await ovhProvider.confirmDestroyed!(cfg, fip, ledger)).toEqual({
+      status: 'still_present',
     });
   });
 

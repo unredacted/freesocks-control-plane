@@ -177,7 +177,13 @@ export interface EdgeDescription {
 export type DestroyOutcome =
   | { status: 'delete_requested'; opRef?: string }
   | { status: 'confirmed_gone' }
-  | { status: 'unresolved' };
+  /** Read back and still deleting (or the answer cannot prove either way): keep confirming. */
+  | { status: 'unresolved' }
+  /**
+   * Read back and NOT deleting (e.g. an LB still `ready`): the delete never
+   * landed. The orchestrator re-issues `runDestroy` instead of waiting.
+   */
+  | { status: 'still_present' };
 
 // --- live views ------------------------------------------------------------------------
 
@@ -285,7 +291,10 @@ export interface EdgeProvider<
   pollStep?(cfg: Cfg, step: ResourceStep, opRef: string, ledger: Ledger): Promise<StepOutcome>;
   /** REQUIRED for every allocating kind the provider plans. `attempt` counts
    *  consecutive discovery attempts, so listing-based adapters can promote a
-   *  repeated absence to `confirmed_absent` where they document it as safe. */
+   *  repeated absence to `confirmed_absent` where they document it as safe.
+   *  Adapters that also need wall-clock settling read the step's `startedAt`
+   *  from `ledger.steps` (stamped when the step was first requested) and
+   *  compare it with `EdgeProviderCapabilities.discoverySettleMs`. */
   discover(
     cfg: Cfg,
     step: ResourceStep,
@@ -298,14 +307,21 @@ export interface EdgeProvider<
   inspect(cfg: Cfg, ledger: Ledger): Promise<InspectResult>;
   inventory(cfg: Cfg): Promise<Inventory>;
 
-  /** Ledger resources in destroy order (reverse of creation), skipping gone ones. */
+  /**
+   * Ledger resources in destroy order, skipping gone ones. Ordered by KIND
+   * (what the provider's attach semantics require: the LB before the IP it
+   * holds, before the gateway/network), never by ledger position — describe()
+   * appends adopted children after the LB.
+   */
   planDestroy(cfg: Cfg, ledger: Ledger): LedgerResource[];
   runDestroy(cfg: Cfg, resource: LedgerResource, ledger: Ledger): Promise<DestroyOutcome>;
   /**
    * Async-delete providers: read the resource back after `delete_requested`
-   * (404 → `confirmed_gone`, present → `unresolved`). Providers WITHOUT this
-   * method delete synchronously; the dispatcher re-runs their idempotent
-   * `runDestroy` to confirm instead of assuming the delete landed.
+   * (404 → `confirmed_gone`, present and deleting → `unresolved`, present and
+   * NOT deleting → `still_present`). An unknown resource kind is `unresolved`
+   * (never assumed gone). Providers WITHOUT this method delete synchronously;
+   * the dispatcher re-runs their idempotent `runDestroy` to confirm instead of
+   * assuming the delete landed.
    */
   confirmDestroyed?(cfg: Cfg, resource: LedgerResource, ledger: Ledger): Promise<DestroyOutcome>;
 }
@@ -333,6 +349,23 @@ export function metaOf(r: LedgerResource | undefined): Record<string, unknown> {
 /** Default destroy order: reverse creation order, live resources only. */
 export function reverseLiveResources(ledger: Ledger): LedgerResource[] {
   return [...ledger.resources].reverse().filter((r) => r.deleteState !== 'confirmed_gone');
+}
+
+/**
+ * Destroy order by KIND: live resources sorted by their kind's position in
+ * `order` (ties keep reverse ledger order). Kinds not in `order` come LAST, so
+ * the adapter's `runDestroy` answers `unresolved` for them only after every
+ * known child is gone.
+ */
+export function orderByKind(ledger: Ledger, order: readonly string[]): LedgerResource[] {
+  const rank = (r: LedgerResource) => {
+    const i = order.indexOf(r.kind);
+    return i === -1 ? order.length : i;
+  };
+  return reverseLiveResources(ledger)
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i)
+    .map((x) => x.r);
 }
 
 export function stepOf(ledger: Ledger, stepId: string): LedgerStep | undefined {

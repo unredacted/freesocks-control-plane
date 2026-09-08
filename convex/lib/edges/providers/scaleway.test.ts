@@ -219,39 +219,108 @@ describe('scaleway: discovery / describe / destroy', () => {
     expect(await scalewayProvider.describe(cfg, ledger)).toMatchObject({ state: 'gone' });
   });
 
-  test('destroy: lb is requested then confirmed by 404; ips release synchronously; errors carry no secret', async () => {
+  const notFound = (msg = 'not found') =>
+    Object.assign(new Error(msg), { status: 404, name: 'ResourceNotFoundError' });
+  const res = (stepId: string, kind: string, resourceId: string) => ({
+    stepId,
+    kind,
+    resourceId,
+    ownership: 'created' as const,
+    deleteState: 'present' as const,
+  });
+
+  test('planDestroy orders by kind (frontend → backend → lb → ips), not by ledger position', () => {
+    // An IP adopted by describe() lands AFTER the lb in the ledger; reverse order
+    // would release it while the lb still holds it.
+    const ledger: Ledger = {
+      steps: [],
+      resources: [
+        res('lb', 'lb', 'lb-1'),
+        res('backend', 'backend', 'be-1'),
+        res('frontend', 'frontend', 'fe-1'),
+        res('describe', 'ip', 'ip4-1'),
+        { ...res('describe', 'ipv6', 'ip6-gone'), deleteState: 'confirmed_gone' },
+        res('describe', 'ipv6', 'ip6-1'),
+      ],
+    };
+    expect(scalewayProvider.planDestroy(cfg, ledger).map((r) => r.resourceId)).toEqual([
+      'fe-1',
+      'be-1',
+      'lb-1',
+      'ip4-1',
+      'ip6-1',
+    ]);
+  });
+
+  test('destroy: every delete is requested then read back; a ready lb is still_present, deleting is unresolved, 404 is gone', async () => {
     const api = fakeApi();
-    const lb = {
-      stepId: 'lb',
-      kind: 'lb',
-      resourceId: 'lb-1',
-      ownership: 'created' as const,
-      deleteState: 'present' as const,
-    };
-    const ip = {
-      stepId: 'ip4',
-      kind: 'ip',
-      resourceId: 'ip4-1',
-      ownership: 'created' as const,
-      deleteState: 'present' as const,
-    };
+    const lb = res('lb', 'lb', 'lb-1');
+    const ip = res('ip4', 'ip', 'ip4-1');
     const ledger: Ledger = { steps: [], resources: [lb, ip] };
     expect(await scalewayProvider.runDestroy(cfg, lb, ledger)).toEqual({
       status: 'delete_requested',
     });
     expect(api.deleteLb).toHaveBeenCalledWith({ lbId: 'lb-1', releaseIp: false });
     expect(await scalewayProvider.runDestroy(cfg, ip, ledger)).toEqual({
-      status: 'confirmed_gone',
+      status: 'delete_requested',
+    });
+    expect(api.releaseIp).toHaveBeenCalledWith({ ipId: 'ip4-1' });
+    // The lb reads back `ready`: the delete never landed → still_present (re-issue).
+    expect(await scalewayProvider.confirmDestroyed!(cfg, lb, ledger)).toEqual({
+      status: 'still_present',
+    });
+    api.getLb = vi.fn(async () => ({ id: 'lb-1', status: 'deleting', ip: [] }));
+    expect(await scalewayProvider.confirmDestroyed!(cfg, lb, ledger)).toEqual({
+      status: 'unresolved',
     });
     api.getLb = vi.fn(async () => {
-      throw Object.assign(new Error(`gone SECRET_SCW`), {
-        status: 404,
-        name: 'ResourceNotFoundError',
-      });
+      throw notFound('gone SECRET_SCW');
     });
     expect(await scalewayProvider.confirmDestroyed!(cfg, lb, ledger)).toEqual({
       status: 'confirmed_gone',
     });
+    // IPs are read back too: present → still_present; 404 → gone.
+    api.getIp = vi.fn(async () => ({ id: 'ip4-1', ipAddress: '203.0.113.10' }));
+    expect(await scalewayProvider.confirmDestroyed!(cfg, ip, ledger)).toEqual({
+      status: 'still_present',
+    });
+    api.getIp = vi.fn(async () => {
+      throw notFound();
+    });
+    expect(await scalewayProvider.confirmDestroyed!(cfg, ip, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    // An unknown kind is never assumed gone (operator parks the edge).
+    const odd = res('x', 'mystery', 'm-1');
+    expect(await scalewayProvider.runDestroy(cfg, odd, ledger)).toEqual({ status: 'unresolved' });
+    expect(await scalewayProvider.confirmDestroyed!(cfg, odd, ledger)).toEqual({
+      status: 'unresolved',
+    });
+  });
+
+  test('destroy: the DELETE throws (unknown outcome), then the confirm pass reads 404 → gone', async () => {
+    const api = fakeApi({
+      deleteLb: vi.fn(async () => {
+        throw Object.assign(new Error('gateway timeout'), { status: 504, name: 'GatewayTimeout' });
+      }),
+    });
+    const lb = res('lb', 'lb', 'lb-1');
+    const ledger: Ledger = { steps: [], resources: [lb] };
+    await expect(scalewayProvider.runDestroy(cfg, lb, ledger)).rejects.toMatchObject({
+      meta: { status: 504, retryable: true },
+    });
+    api.getLb = vi.fn(async () => {
+      throw notFound();
+    });
+    expect(await scalewayProvider.confirmDestroyed!(cfg, lb, ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+  });
+
+  test('errors carry no secret or host', async () => {
+    const api = fakeApi();
+    const lb = res('lb', 'lb', 'lb-1');
+    const ledger: Ledger = { steps: [], resources: [lb] };
     api.getLb = vi.fn(async () => {
       throw Object.assign(new Error(`denied for SECRET_SCW at https://api.scaleway.com`), {
         status: 403,
