@@ -62,7 +62,7 @@
 </script>
 
 <Dialog.Root bind:open {onOpenChange}>
-  <Dialog.Content class="sm:max-w-md">
+  <Dialog.Content class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
     <Dialog.Header>
       <Dialog.Title>{t('report.title')}</Dialog.Title>
       <Dialog.Description>{t('report.body')}</Dialog.Description>

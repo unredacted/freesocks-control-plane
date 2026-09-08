@@ -18,6 +18,8 @@ export default [
       'worker-configuration.d.ts',
       '.wrangler/**',
       'coverage/**',
+      '.cache/compat/**',
+      '**/test-results/**',
     ],
   },
   {

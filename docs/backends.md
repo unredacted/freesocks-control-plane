@@ -525,13 +525,14 @@ base64 instead of YAML, fix the panel's subscription templates; the FCP front
 already does the right thing.
 
 **The ONE exception to exact-UA forwarding** (`normalizeSubscriptionUserAgent`,
-`convex/lib/backends/remnawave.ts`): a UA that starts with `SFL/` or `sing-box`
+`convex/lib/backends/remnawave.ts`): a UA that starts with `SFL/`, `SFW/`, the official `SFL (sing-box ...` /
+`SFW (sing-box ...` forms, or `sing-box`
 is rewritten to a canonical `SFA/<ver> (sing-box <ver>)` before the panel fetch,
 carrying the client's core version through. The panel keys its sing-box output
 on the app prefix and (probed live 2026-08-30) recognizes `SFA/SFI/SFM/SFT` but
 not the newer SFL client or the bare CLI — those fell through to the base64
 default, which sing-box rejects on import (`decode config: invalid character
-'d'`). Only those two UA shapes are rewritten; recognized prefixes and
+'d'`). Only those official-shell UA shapes are rewritten; recognized prefixes and
 sing-box-cored apps with their own panel templates (Karing, Happ) pass through
 verbatim. The fronted route's cache stays keyed by the **original** UA, so the
 rewrite never changes which cache bucket a client hits. If a future panel

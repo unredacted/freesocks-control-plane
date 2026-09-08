@@ -78,6 +78,7 @@ the API surface. Keep the client and the Convex HTTP handlers in agreement.
 - **Vite 8** builds the SPA (the only build artifact; the backend is `convex/`).
 - **Vitest 4** with **`convex-test`** for an in-memory Convex test harness (no backend needed).
 - **svelte-check** alongside `tsc -b` in the typecheck pipeline; **ESLint 10** + **Prettier 3**.
+- **Playwright 1.58** (dev-only) for the report-form browser tests and for driving the packaged SFL Electron app over CDP in the client-compatibility suite.
 
 ## Project layout
 
@@ -131,6 +132,11 @@ src/
 docker-compose.yml                 self-hosted Convex backend + dashboard (compose project "fcp")
 .env.docker.example                docker env template (copy to .env.docker)
 verifier-extension/                MV3 bundle-verifier scaffold (CDN-blinding Phase 4)
+tests/compat/                      client-compatibility suite: manifest, real-panel integration test,
+                                   SFL app driver, report-form Playwright specs
+scripts/compat/                    its runner, pinned downloads, deployed smoke, coverage report, certify gate
+docker/compat/                     engine + packaged-SFL images, isolated origin, SFL daemon entrypoint
+docker-compose.compat.yml          proxy/client/origin networks layered on docker-compose.remnawave-test.yml
 ```
 
 ## Prerequisites
@@ -337,7 +343,22 @@ bun run test         # vitest + convex-test (in-memory; no running backend neede
 bun run typecheck    # tsc -b (client+shared) + tsc on convex/ + svelte-check
 bun run lint         # eslint + prettier --check
 bun run build        # tsc -b + vite build → static SPA in dist/
+
+# Integration suites (Docker; disposable fixtures only, nothing touches a deployment)
+bun run test:integration:remnawave   # provider contract against a throwaway Remnawave panel
+bun run test:compat                  # client compatibility: real panel → FCP handler → pinned client engines + the packaged SFL app
+bun run test:compat:browser          # report-issue dialog in Chromium + Firefox (Playwright)
 ```
+
+The client-compatibility suite (`docs/client-compatibility.md`) is the **Client compatibility**
+GitHub workflow. On every PR it renders each catalogued client's subscription through FCP's real
+HTTP handler against a live throwaway Remnawave panel (exact User-Agent cache isolation, refresh
+after a Host change), drives pinned sing-box and Mihomo engines through a REALITY tunnel to an
+origin only the proxy can reach (HTTPS, remote DNS, UDP DNS, wrong-credential fail-closed), and
+imports + refreshes the subscription in the checksum-verified SFL Linux package (deep link and
+manual URL entry). A nightly job repeats it against the latest upstream releases; a manual
+workflow smoke-tests deployed fronts with a dedicated canary subscription. Apps the suite cannot
+drive stay explicitly "manual verification required" (`scripts/compat/certify.ts`).
 
 ## Frontend conventions
 

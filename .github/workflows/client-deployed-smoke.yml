@@ -1,0 +1,28 @@
+name: Deployed client compatibility
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Configure this environment with dedicated, non-user canary subscriptions.
+    environment: client-compatibility
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun --no-env-file scripts/compat/download.ts
+      - run: bun --no-env-file scripts/compat/smoke.ts
+        env:
+          FCP_COMPAT_SMOKE_TARGETS: ${{ secrets.FCP_COMPAT_SMOKE_TARGETS }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deployed-client-compatibility
+          path: test-results/compat/deployed.json
+          if-no-files-found: error
+          retention-days: 14
