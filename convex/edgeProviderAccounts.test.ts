@@ -3,10 +3,105 @@ import { convexTest } from 'convex-test';
 import { describe, expect, test } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 
 const modules = import.meta.glob('./**/*.*s');
 
 const gcoreSettings = { projectId: 11, regionId: 22 };
+
+type T = ReturnType<typeof convexTest>;
+
+/** A minimal live edge referencing `accountId` (relay/slot/profile fixtures included). */
+async function insertLiveEdge(
+  t: T,
+  accountId: Id<'edgeProviderAccounts'>,
+  provider: 'gcore' | 'upcloud' | 'scaleway' | 'ovh',
+) {
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    const serverId = await ctx.db.insert('backendServers', {
+      backend: 'remnawave',
+      name: `p-${accountId}`,
+      slug: `p-${accountId}`,
+      config: { type: 'remnawave', baseUrl: 'https://panel.test', apiToken: 'tok' },
+      isActive: true,
+      priority: 0,
+      keyCount: 0,
+      updatedAt: now,
+    });
+    const relayId = await ctx.db.insert('relays', {
+      slug: `o-${accountId}`,
+      backendServerId: serverId,
+      nodeHostname: 'node-a',
+      originAddress: '198.51.100.7',
+      modeSlugs: [],
+      enabled: true,
+      autoRotate: false,
+      hostManaged: true,
+      providerAffinity: 'rotate',
+      desiredPublished: 1,
+      standbyPerRelay: 0,
+      cooldownMs: 1,
+      maxRotationsPerDay: 3,
+      drainMs: 1,
+      publicationEpoch: 0,
+      publishedEdgeIds: [],
+      standbyEdgeIds: [],
+      rotationsToday: 0,
+      updatedAt: now,
+    });
+    const profileId = await ctx.db.insert('protocolProfiles', {
+      slug: `pf-${accountId}`,
+      name: 'pf',
+      protocol: 'reality' as const,
+      targetAddress: 'target.example',
+      targetPort: 443,
+      serverNames: [{ sni: 'www.example', status: 'active' }],
+      enabled: true,
+      updatedAt: now,
+    });
+    const slotId = await ctx.db.insert('relaySlots', {
+      relayId,
+      slotKey: 'a1',
+      profileId,
+      inboundTag: 'T',
+      configProfileUuid: 'cp',
+      configProfileInboundUuid: 'in',
+      originPort: 443,
+      templateHostRemark: 'node-a-relay-a1',
+      deployed: true,
+      retired: false,
+      updatedAt: now,
+    });
+    await ctx.db.insert('edges', {
+      relayId,
+      slotId,
+      accountId,
+      provider,
+      managed: true,
+      name: `fcp-relay-x-${String(accountId).slice(-8)}`,
+      steps: [],
+      resources: [],
+      listeners: [],
+      addresses: {},
+      publication: 'unpublished',
+      status: 'active',
+      statusChangedAt: now,
+      health: 'unknown',
+      destroyAttempts: 0,
+      updatedAt: now,
+    });
+  });
+}
+
+const ovhSettings = {
+  applicationKey: 'AK',
+  endpoint: 'ovh-eu',
+  serviceName: 'svc',
+  regionName: 'GRA9',
+  networkId: 'n',
+  subnetId: 's',
+};
 
 describe('edgeProviderAccounts', () => {
   test('create validates settings + credentials, masks secrets, audits name/provider only', async () => {
@@ -237,7 +332,199 @@ describe('edgeProviderAccounts', () => {
   });
 });
 
+describe('edgeProviderAccounts: change detection + qualification hash', () => {
+  test('settings compare canonically: a stored row in another key order re-sent is not a change (no refusal, qualification kept)', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'ovh',
+      name: 'acct-o',
+      settings: ovhSettings,
+      credentials: { applicationSecret: 'AS1', consumerKey: 'CK1' },
+    });
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id, qualified: true });
+    await insertLiveEdge(t, id, 'ovh');
+    // Simulate a row whose stored key order differs from the schema's.
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.get(id))!;
+      const reversed = Object.fromEntries(Object.entries(row.settings).reverse());
+      await ctx.db.patch(id, { settings: reversed as never });
+    });
+    // Re-sending the same values (in yet another order) is not a change.
+    const shuffled = Object.fromEntries(Object.entries(ovhSettings).sort(() => -1));
+    await t.mutation(internal.edgeProviderAccounts.update, { id, settings: shuffled, priority: 2 });
+    const view = await t.query(internal.edgeProviderAccounts.getForAdmin, { id });
+    expect(view).toMatchObject({ qualified: true, priority: 2, settings: ovhSettings });
+    // Same for credentials: stored order differs, same values re-sent → no change.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(id, {
+        credentials: { consumerKey: 'CK1', applicationSecret: 'AS1', type: 'ovh' } as never,
+      });
+    });
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id,
+      credentials: { applicationSecret: 'AS1', consumerKey: 'CK1' },
+    });
+    expect((await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))?.qualified).toBe(
+      true,
+    );
+  });
+
+  test('only LOCATING settings are locked by live edges; the credential identifier stays editable (but unverified: qualification drops)', async () => {
+    const t = convexTest(schema, modules);
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'ovh',
+      name: 'acct-o',
+      settings: ovhSettings,
+      credentials: { applicationSecret: 'AS1', consumerKey: 'CK1' },
+    });
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id, qualified: true });
+    await insertLiveEdge(t, id, 'ovh');
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, {
+        id,
+        settings: { ...ovhSettings, regionName: 'SBG5' },
+      }),
+    ).rejects.toThrow(/still reference this account/);
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, {
+        id,
+        settings: { ...ovhSettings, gatewayId: 'gw-9' },
+      }),
+    ).rejects.toThrow(/still reference this account/);
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id,
+      settings: { ...ovhSettings, applicationKey: 'AK-rotated' },
+    });
+    const view = await t.query(internal.edgeProviderAccounts.getForAdmin, { id });
+    expect(view?.settings).toMatchObject({ applicationKey: 'AK-rotated', regionName: 'GRA9' });
+    expect(view?.qualified).toBe(false);
+    // Scaleway's access key is the same kind of identifier.
+    const { id: sid } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'scaleway',
+      name: 'acct-s',
+      settings: { accessKey: 'SCWAAAAAAAAAAAAAAAAA', zone: 'fr-par-1' },
+      credentials: { secretKey: 'S' },
+    });
+    await insertLiveEdge(t, sid, 'scaleway');
+    await t.mutation(internal.edgeProviderAccounts.update, {
+      id: sid,
+      settings: { accessKey: 'SCWBBBBBBBBBBBBBBBBB', zone: 'fr-par-1' },
+    });
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, {
+        id: sid,
+        settings: { accessKey: 'SCWBBBBBBBBBBBBBBBBB', zone: 'nl-ams-1' },
+      }),
+    ).rejects.toThrow(/still reference this account/);
+  });
+
+  test('setQualified records the EFFECTIVE template hash server-side and ignores a client-supplied one', async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.edgeTemplates.ensureDefaults, {});
+    const { id } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'gcore',
+      name: 'acct-g',
+      settings: gcoreSettings,
+      credentials: { apiKey: 'k' },
+    });
+    const providerDefault = (
+      await t.query(internal.edgeTemplates.list, { provider: 'gcore' })
+    ).find((x) => x.isDefault)!;
+    await t.mutation(internal.edgeProviderAccounts.setQualified, {
+      id,
+      qualified: true,
+      templateHash: 'client-says-so',
+    });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))?.qualifiedTemplateHash,
+    ).toBe(providerDefault.paramsHash);
+    // With an account default, THAT template's hash is recorded.
+    const { id: tplId, paramsHash } = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Big',
+      params: { flavor: 'lb1-2-4' },
+    });
+    await t.mutation(internal.edgeProviderAccounts.update, { id, defaultTemplateId: tplId });
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id, qualified: true });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))?.qualifiedTemplateHash,
+    ).toBe(paramsHash);
+    // ...so editing that template's params is what invalidates it.
+    await t.mutation(internal.edgeTemplates.update, { id: tplId, params: { flavor: 'lb1-4-8' } });
+    expect((await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))?.qualified).toBe(
+      false,
+    );
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id, qualified: false });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))?.qualifiedTemplateHash,
+    ).toBeNull();
+  });
+});
+
 describe('edgeTemplates', () => {
+  test("an account-scoped default template is that account's default only, never another account's provider default", async () => {
+    const t = convexTest(schema, modules);
+    const mk = (name: string) =>
+      t.mutation(internal.edgeProviderAccounts.create, {
+        provider: 'gcore',
+        name,
+        settings: gcoreSettings,
+        credentials: { apiKey: 'k' },
+      });
+    const a = (await mk('acct-a')).id;
+    const b = (await mk('acct-b')).id;
+    const base = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Base',
+      params: { flavor: 'lb1-1-2' },
+      isDefault: true,
+    });
+    const mine = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Mine',
+      params: { flavor: 'lb1-2-4' },
+      accountId: a,
+      isDefault: true,
+    });
+    // One default per scope: A's scoped default did not clear the provider-wide one.
+    const rows = await t.query(internal.edgeTemplates.list, { provider: 'gcore' });
+    expect(
+      rows
+        .filter((r) => r.isDefault)
+        .map((r) => r.name)
+        .sort(),
+    ).toEqual(['Base', 'Mine']);
+    const resolve = (accountId: typeof a, templateId?: typeof base.id) =>
+      t.query(internal.edgeTemplates.resolveForProvision, {
+        provider: 'gcore',
+        accountId,
+        templateId: templateId ?? null,
+      });
+    expect((await resolve(a)).id).toBe(mine.id);
+    expect((await resolve(b)).id).toBe(base.id);
+    // B may not use A's template even when named explicitly.
+    expect((await resolve(b, mine.id)).id).toBe(base.id);
+    expect((await resolve(a, base.id)).id).toBe(base.id);
+    // A provider with ONLY scoped templates falls back to the compiled defaults for other accounts.
+    await t.mutation(internal.edgeTemplates.remove, { id: base.id });
+    expect((await resolve(b)).id).toBeNull();
+    expect((await resolve(a)).id).toBe(mine.id);
+    // Requalification on a scoped default edit touches only the accounts it is the default FOR.
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id: a, qualified: true });
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id: b, qualified: true });
+    const upd = await t.mutation(internal.edgeTemplates.update, {
+      id: mine.id,
+      params: { flavor: 'lb1-4-8' },
+    });
+    expect(upd.requalify).toBe(1);
+    expect((await t.query(internal.edgeProviderAccounts.getForAdmin, { id: a }))?.qualified).toBe(
+      false,
+    );
+    expect((await t.query(internal.edgeProviderAccounts.getForAdmin, { id: b }))?.qualified).toBe(
+      true,
+    );
+  });
+
   test('ensureDefaults seeds one default per provider; create/update validate through the adapter schema', async () => {
     const t = convexTest(schema, modules);
     const seeded = await t.mutation(internal.edgeTemplates.ensureDefaults, {});

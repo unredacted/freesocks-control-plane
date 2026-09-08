@@ -273,6 +273,14 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.provider_account.delete': ['name', 'provider'],
   'edge.provider_account.upsert': ['name', 'provider', 'created'],
   'edge.provider_account.qualified': ['name', 'provider', 'qualified'],
+  // Rotation keeps the qualification: booleans only, never a key or identifier.
+  'edge.provider_account.credentials_rotated': [
+    'name',
+    'provider',
+    'credentialsChanged',
+    'identifiersChanged',
+    'qualifiedKept',
+  ],
   'edge.template.create': ['provider', 'name'],
   'edge.template.update': ['provider', 'name'],
   'edge.template.delete': ['provider', 'name'],

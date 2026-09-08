@@ -91,9 +91,20 @@ export const describeSchemas = internalQuery({
     ),
 });
 
+/** A template is usable by an account when unscoped or scoped to THAT account. */
+function visibleTo(
+  row: Pick<Doc<'edgeTemplates'>, 'accountId'>,
+  accountId: Doc<'edgeProviderAccounts'>['_id'] | null | undefined,
+): boolean {
+  return !row.accountId || (!!accountId && row.accountId === accountId);
+}
+
 /**
- * Resolve the template to provision with: an explicit id, else the account's
- * default, else the provider's default row (seeded if missing). Returns the
+ * Resolve the template to provision with, for ONE account: an explicit id, else
+ * the account's default, else the account's own scoped default, else the
+ * provider-wide (unscoped) default, else the first unscoped row, else the
+ * compiled defaults. A template scoped to ANOTHER account is never used — its
+ * `isDefault` flag is that account's default, not the provider's. Returns the
  * parsed params + hash.
  */
 export async function resolveTemplateFor(
@@ -101,6 +112,7 @@ export async function resolveTemplateFor(
   provider: EdgeProviderId,
   explicitId: Doc<'edgeTemplates'>['_id'] | null | undefined,
   accountDefaultId: Doc<'edgeTemplates'>['_id'] | null | undefined,
+  accountId?: Doc<'edgeProviderAccounts'>['_id'] | null,
 ): Promise<{
   id: Doc<'edgeTemplates'>['_id'] | null;
   params: Record<string, unknown>;
@@ -111,7 +123,7 @@ export async function resolveTemplateFor(
   );
   for (const id of candidates) {
     const row = await ctx.db.get(id);
-    if (row && row.provider === provider) {
+    if (row && row.provider === provider && visibleTo(row, accountId)) {
       const parsed = validateTemplateParams(provider, JSON.parse(row.params));
       if (parsed.ok) return { id: row._id, params: parsed.params, hash: row.paramsHash };
     }
@@ -120,7 +132,11 @@ export async function resolveTemplateFor(
     .query('edgeTemplates')
     .withIndex('by_provider', (q) => q.eq('provider', provider))
     .collect();
-  const dflt = rows.find((r) => r.isDefault) ?? rows[0];
+  const scopedDefault = accountId
+    ? rows.find((r) => r.isDefault && r.accountId === accountId)
+    : undefined;
+  const unscoped = rows.filter((r) => !r.accountId);
+  const dflt = scopedDefault ?? unscoped.find((r) => r.isDefault) ?? unscoped[0];
   if (dflt) {
     const parsed = validateTemplateParams(provider, JSON.parse(dflt.params));
     if (parsed.ok) return { id: dflt._id, params: parsed.params, hash: dflt.paramsHash };
@@ -134,9 +150,17 @@ export const resolveForProvision = internalQuery({
     provider: edgeProviderIdValidator,
     templateId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
     accountDefaultId: v.optional(v.union(v.id('edgeTemplates'), v.null())),
+    /** The provisioning account: scopes which templates may be used (see resolveTemplateFor). */
+    accountId: v.optional(v.union(v.id('edgeProviderAccounts'), v.null())),
   },
   handler: (ctx, a) =>
-    resolveTemplateFor(ctx, a.provider, a.templateId ?? null, a.accountDefaultId ?? null),
+    resolveTemplateFor(
+      ctx,
+      a.provider,
+      a.templateId ?? null,
+      a.accountDefaultId ?? null,
+      a.accountId ?? null,
+    ),
 });
 
 /**
@@ -192,7 +216,7 @@ export const create = internalMutation({
         throw new ConvexError({ code: 'validation', message: 'account/provider mismatch' });
     }
     const now = Date.now();
-    if (a.isDefault) await clearDefault(ctx, a.provider);
+    if (a.isDefault) await clearDefault(ctx, a.provider, a.accountId ?? undefined);
     const id = await ctx.db.insert('edgeTemplates', {
       provider: a.provider,
       accountId: a.accountId ?? undefined,
@@ -214,15 +238,22 @@ export const create = internalMutation({
   },
 });
 
+/**
+ * One default per SCOPE: the provider-wide default (unscoped rows) and each
+ * account's own default (rows scoped to it) are independent.
+ */
 async function clearDefault(
   ctx: { db: import('./_generated/server').DatabaseWriter },
   provider: EdgeProviderId,
+  accountId: Doc<'edgeProviderAccounts'>['_id'] | undefined,
 ) {
   const rows = await ctx.db
     .query('edgeTemplates')
     .withIndex('by_provider', (q) => q.eq('provider', provider))
     .collect();
-  for (const r of rows) if (r.isDefault) await ctx.db.patch(r._id, { isDefault: false });
+  for (const r of rows)
+    if (r.isDefault && (r.accountId ?? undefined) === accountId)
+      await ctx.db.patch(r._id, { isDefault: false });
 }
 
 export const update = internalMutation({
@@ -252,22 +283,23 @@ export const update = internalMutation({
       if (patch.paramsHash !== row.paramsHash) {
         // The qualification was run with the OLD parameters: every qualified
         // account that was qualified with them, or that would provision from this
-        // template next (explicitly, or implicitly through the provider default
-        // when it names no template of its own), must be re-qualified before
-        // automation uses it.
+        // template next (explicitly, or implicitly through the default it falls
+        // back to when it names no template of its own — its own scoped default
+        // or the provider-wide one), must be re-qualified before automation
+        // uses it.
         const accounts = await ctx.db.query('edgeProviderAccounts').collect();
         requalify = accounts.filter(
           (acct) =>
             acct.provider === row.provider &&
             acct.qualified &&
             (acct.defaultTemplateId === a.id ||
-              (acct.defaultTemplateId === undefined && row.isDefault) ||
+              (acct.defaultTemplateId === undefined && row.isDefault && visibleTo(row, acct._id)) ||
               acct.qualifiedTemplateHash === row.paramsHash),
         );
       }
     }
     if (a.isDefault === true) {
-      await clearDefault(ctx, row.provider);
+      await clearDefault(ctx, row.provider, row.accountId ?? undefined);
       patch.isDefault = true;
     } else if (a.isDefault === false) {
       patch.isDefault = false;
@@ -326,7 +358,10 @@ export const remove = internalMutation({
     }
     await ctx.db.delete(id);
     if (row.isDefault) {
-      const next = siblings.find((s) => s._id !== id);
+      // The default hands off within the same scope only.
+      const next = siblings.find(
+        (s) => s._id !== id && (s.accountId ?? undefined) === (row.accountId ?? undefined),
+      );
       if (next) await ctx.db.patch(next._id, { isDefault: true, updatedAt: Date.now() });
     }
     await writeAuditLog(ctx, {
