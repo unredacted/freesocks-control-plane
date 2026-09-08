@@ -1,5 +1,5 @@
 /**
- * Pure helpers for an origin's PUBLISHED pool (`relayOrigins.publishedEdgeIds`,
+ * Pure helpers for an origin's PUBLISHED pool (`relays.publishedEdgeIds`,
  * ordered by pool index, nulls are gaps). Generic over the id type so the
  * `Id<'edges'>` brand survives a round trip.
  */

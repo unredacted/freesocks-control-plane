@@ -1083,10 +1083,16 @@ export default defineSchema({
     statusChangedAt: v.number(),
     health: relayHealth,
     lastHealthAt: v.optional(v.number()),
-    liveSnapshot: v.optional(v.string()), // JSON from the adapter's inspect()
+    liveSnapshot: v.optional(v.string()), // JSON from the adapter's inspect(); cleared on destroy
     liveAt: v.optional(v.number()),
     reachability: v.optional(probeReachabilitySummary),
     destroyAttempts: v.number(),
+    // Consecutive `gone` describes (reset by any other state). The pool drop +
+    // status transition need TWO so an auth-shaped 404 or one blip cannot act.
+    goneObservations: v.optional(v.number()),
+    // Consecutive `unresolved` confirmDestroyed passes for the resource the
+    // destroy walk is currently on; past the cap the idempotent delete is re-issued.
+    destroyConfirm: v.optional(v.object({ resourceId: v.string(), attempts: v.number() })),
     failure: v.optional(
       v.object({ step: v.string(), code: v.optional(v.string()), status: v.optional(v.number()) }),
     ),
@@ -1101,8 +1107,11 @@ export default defineSchema({
     .index('by_account_status', ['accountId', 'status'])
     .index('by_name', ['name']),
 
-  // The rotation ledger + saga state. Advanced ONLY through relayRotations.advance
-  // (step version) and the claimOp/settleOp pair (external writes).
+  // The rotation ledger + saga state. Advanced ONLY through edgeRotations.advance
+  // (step version) and the claimOp/settleOp pair (external writes). Control flow
+  // reads the explicit row fields below, never the bounded `events[]` log
+  // (display-only); rows created before those fields existed fall back to the
+  // event inference in edgeRotations.ts.
   edgeRotations: defineTable({
     relayId: v.id('relays'),
     kind: v.union(v.literal('provision'), v.literal('publish'), v.literal('replace')),
@@ -1124,6 +1133,26 @@ export default defineSchema({
     currentOp: v.optional(relayHostOp),
     outcome: v.optional(v.string()),
     reason: v.optional(v.string()),
+    // The slot the operator asked for (provision) / the target's slot (replace,
+    // publish). A retired or missing requested slot FAILS the run (slot_not_found).
+    slotId: v.optional(v.id('relaySlots')),
+    // Selection outcome: the new edge came from an existing standby (true) or was
+    // provisioned by this run (`createdEdgeId`, the only edge a failure may mark).
+    viaStandby: v.optional(v.boolean()),
+    createdEdgeId: v.optional(v.id('edges')),
+    // The Host plan was captured from the live list (an empty plan is then final).
+    hostPlanCaptured: v.optional(v.boolean()),
+    // A forward Host PATCH was CLAIMED (set in the same mutation as the claim): the
+    // panel may hold the new address even without a settle, so the rollback must
+    // re-observe instead of taking the "nothing written" shortcut.
+    forwardWriteAttempted: v.optional(v.boolean()),
+    // Unexpected throws in the step action (bounded; past the cap the run fails).
+    stepErrors: v.optional(v.number()),
+    // When the current step's action began (stale detection: scheduled-not-started
+    // vs started-too-long-ago).
+    stepStartedAt: v.optional(v.number()),
+    // Every audit row this run produced (bounded), so the trail is complete.
+    auditIds: v.optional(v.array(v.id('auditLog'))),
     hostPlan: v.array(
       v.object({
         uuid: v.string(),
@@ -1163,7 +1192,9 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_relay', ['relayId', 'startedAt'])
-    .index('by_phase', ['phase', 'nextStepAt']),
+    .index('by_phase', ['phase', 'nextStepAt'])
+    // Retention: terminal rows by finish time.
+    .index('by_phase_finished', ['phase', 'finishedAt']),
 
   // External / internal reachability probe requests against one edge.
   // Operator-entered probe targets (any host:port), alongside the derived ones

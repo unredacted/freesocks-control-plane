@@ -193,5 +193,19 @@ crons.daily(
 // The block detector: per-origin scoring of attributed reports, node load and
 // probe verdicts; automatic rotation only with edge-level evidence + opt-in.
 crons.interval('edge-block-detector', { minutes: 5 }, internal.edgeDetector.run, {});
+// Destroyed edge rows (ledgers of what existed) and terminal rotation rows are
+// history: bounded daily deletes past their windows (30 / 90 days).
+crons.daily(
+  'retention-edges',
+  { hourUTC: 4, minuteUTC: 55 },
+  internal.retention.sweepDestroyedEdges,
+  {},
+);
+crons.daily(
+  'retention-edge-rotations',
+  { hourUTC: 5, minuteUTC: 0 },
+  internal.retention.sweepEdgeRotations,
+  {},
+);
 
 export default crons;

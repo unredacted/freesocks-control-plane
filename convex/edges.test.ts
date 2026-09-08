@@ -240,6 +240,17 @@ describe('edges', () => {
     });
     row = (await t.query(internal.edges.get, { id }))!;
     expect(row.addresses).toEqual({ v4: '198.51.100.9', v6: undefined });
+    // ONE gone observation only counts (an auth-shaped 404 or a blip must not act).
+    await t.mutation(internal.edges.recordDescribe, {
+      edgeId: id,
+      state: 'gone',
+      addresses: {},
+      health: 'unknown',
+    });
+    row = (await t.query(internal.edges.get, { id }))!;
+    expect(row.status).toBe('planning');
+    expect(row.goneObservations).toBe(1);
+    // The second consecutive one acts.
     await t.mutation(internal.edges.recordDescribe, {
       edgeId: id,
       state: 'gone',
@@ -261,17 +272,114 @@ describe('edges', () => {
         resources: e.resources.map((r) => ({ ...r, deleteState: 'confirmed_gone' as const })),
       });
     });
-    await t.mutation(internal.edges.recordDescribe, {
-      edgeId: id,
-      state: 'gone',
-      addresses: {},
-      health: 'unknown',
-    });
+    await t.run((ctx) => ctx.db.patch(id, { liveSnapshot: '{"summary":{}}', liveAt: Date.now() }));
+    for (let i = 0; i < 2; i++)
+      await t.mutation(internal.edges.recordDescribe, {
+        edgeId: id,
+        state: 'gone',
+        addresses: {},
+        health: 'unknown',
+      });
     row = (await t.query(internal.edges.get, { id }))!;
     expect(row.status).toBe('destroyed');
     expect(row.destroyedAt).toBeDefined();
+    // Destroyed rows carry no large blobs.
+    expect(row.liveSnapshot).toBeUndefined();
+    expect(row.liveAt).toBeUndefined();
     const admin = (await t.query(internal.edges.getForAdmin, { id }))!;
     expect(admin.progress).toEqual({ done: 1, total: 2, percent: 50 });
     expect(admin.resources[0]).not.toHaveProperty('meta');
+  });
+
+  test('patchEdge → destroyed clears the live snapshot', async () => {
+    const { t, accountId, relayId, slotId } = await seed();
+    const { id } = await t.mutation(internal.edges.insertPlanned, {
+      relayId,
+      slotId,
+      accountId,
+      ...plan,
+    });
+    await t.mutation(internal.edges.patchEdge, { edgeId: id, liveSnapshot: '{"raw":1}' });
+    expect((await t.query(internal.edges.get, { id }))!.liveSnapshot).toBeDefined();
+    await t.mutation(internal.edges.patchEdge, { edgeId: id, status: 'destroyed' });
+    const row = (await t.query(internal.edges.get, { id }))!;
+    expect(row.status).toBe('destroyed');
+    expect(row.liveSnapshot).toBeUndefined();
+    expect(row.liveAt).toBeUndefined();
+  });
+
+  test('retention: destroyed edges past 30 days and terminal rotations past 90 days are swept; a live quarantine keeps its rotation', async () => {
+    const { t, accountId, relayId, slotId } = await seed();
+    const DAY = 86_400_000;
+    const now = Date.now();
+    const mk = async (statusChangedAt: number) => {
+      const { id } = await t.mutation(internal.edges.insertPlanned, {
+        relayId,
+        slotId,
+        accountId,
+        ...plan,
+      });
+      await t.run((ctx) =>
+        ctx.db.patch(id, { status: 'destroyed', statusChangedAt, destroyedAt: statusChangedAt }),
+      );
+      return id;
+    };
+    const old = await mk(now - 40 * DAY);
+    const recent = await mk(now - 2 * DAY);
+    const live = await t.mutation(internal.edges.insertPlanned, {
+      relayId,
+      slotId,
+      accountId,
+      ...plan,
+    });
+    await t.run((ctx) => ctx.db.patch(live.id, { statusChangedAt: now - 400 * DAY }));
+    const swept = await t.mutation(internal.retention.sweepDestroyedEdges, {});
+    expect(swept.removed).toBe(1);
+    expect(await t.query(internal.edges.get, { id: old })).toBeNull();
+    expect(await t.query(internal.edges.get, { id: recent })).not.toBeNull();
+    expect(await t.query(internal.edges.get, { id: live.id })).not.toBeNull();
+
+    const rot = (phase: string, finishedAt: number | undefined) =>
+      t.run((ctx) =>
+        ctx.db.insert('edgeRotations', {
+          relayId,
+          kind: 'provision',
+          trigger: 'manual',
+          burn: false,
+          force: false,
+          phase: phase as 'done',
+          stepVersion: 1,
+          cancelRequested: false,
+          hostPlan: [],
+          flipAttempts: 0,
+          rollbackAttempts: 0,
+          pollAttempts: 0,
+          events: [],
+          startedAt: now - 200 * DAY,
+          finishedAt,
+          updatedAt: now,
+        }),
+      );
+    const oldDone = await rot('done', now - 100 * DAY);
+    const recentDone = await rot('done', now - 10 * DAY);
+    const running = await rot('provisioning', undefined);
+    const oldQuarantined = await rot('quarantined', now - 100 * DAY);
+    const keptQuarantined = await rot('quarantined', now - 100 * DAY);
+    await t.run((ctx) =>
+      ctx.db.patch(relayId, {
+        quarantine: { rotationId: keptQuarantined, since: now - 100 * DAY, reason: 'x' },
+      }),
+    );
+    const r = await t.mutation(internal.retention.sweepEdgeRotations, {});
+    expect(r.removed).toBe(2);
+    expect(await t.run((ctx) => ctx.db.get(oldDone))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(oldQuarantined))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(recentDone))).not.toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(running))).not.toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(keptQuarantined))).not.toBeNull();
+    const hb = await t.run((ctx) => ctx.db.query('cronHeartbeats').collect());
+    expect(hb.map((h) => h.name)).toEqual(
+      expect.arrayContaining(['retention-edges', 'retention-edge-rotations']),
+    );
   });
 });

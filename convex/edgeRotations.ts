@@ -26,11 +26,12 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { writeAuditLog } from './lib/audit';
+import { sanitizeAuditPayload, type AuditEntry } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import { resolveEdgeConfig, edgeMs, type EdgeConfig } from './lib/edgeConfig';
-import { checkPublishable, todayKey } from './relays';
+import { checkPublishable, scheduleMirrorRefresh, todayKey } from './relays';
 import { insertPlannedEdge } from './edges';
+import { dayKey } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/edges/accountSettings';
 import { matchSlotHosts, planFromMatches, diffHosts, sameAddress } from './lib/edges/hosts';
 import type { BackendHost } from './lib/backends/types';
@@ -64,6 +65,49 @@ type Phase = Rotation['phase'];
 
 const MAX_STEP_RETRIES = 3;
 const STALE_KICK_GRACE_MS = 30_000;
+/** A step whose action began this long ago and never recorded an outcome is stale (Convex kills actions well before). */
+const STALE_STARTED_MS = 10 * 60_000;
+/** Unexpected throws in `step` before the run is failed / quarantined. */
+export const MAX_STEP_ERRORS = 30;
+/** Audit rows remembered per rotation (the trail also reads rows targeting the rotation itself). */
+const MAX_AUDIT_IDS = 200;
+
+/**
+ * Every audit row a rotation produces goes through here: the allowlist is
+ * applied exactly as in `writeAuditLog`, and the row id is remembered on the
+ * rotation so `rotationAuditTrail` is complete instead of "the newest N rows".
+ */
+async function auditRotation(
+  ctx: MutationCtx,
+  rotationId: Id<'edgeRotations'>,
+  entry: AuditEntry,
+): Promise<void> {
+  const { payload, ...rest } = entry;
+  const id = await ctx.db.insert('auditLog', {
+    ...rest,
+    payload: sanitizeAuditPayload(entry.action, payload),
+  });
+  const r = await ctx.db.get(rotationId);
+  if (!r) return;
+  const ids = [...(r.auditIds ?? []), id];
+  await ctx.db.patch(rotationId, {
+    auditIds: ids.length > MAX_AUDIT_IDS ? ids.slice(ids.length - MAX_AUDIT_IDS) : ids,
+  });
+}
+
+// --- row-field readers (with the event-log fallback for rows created before the fields) ----
+
+/** Whether a forward Host write was ever CLAIMED (the panel may hold it even without a settle). */
+function forwardWriteAttempted(r: Rotation): boolean {
+  if (r.forwardWriteAttempted !== undefined) return r.forwardWriteAttempted;
+  return !!r.flippedAt || r.events.some((e) => e.code === 'host_forward_written');
+}
+
+/** Whether the Host plan was captured from the live list (an empty captured plan is final). */
+function hostPlanCaptured(r: Rotation): boolean {
+  if (r.hostPlanCaptured !== undefined) return r.hostPlanCaptured;
+  return r.hostPlan.length > 0 || r.events.some((e) => e.code === 'host_plan');
+}
 
 // --- admin mapping -----------------------------------------------------------------------
 
@@ -145,9 +189,11 @@ export const getForAdmin = internalQuery({
 
 /**
  * Every audit row this rotation produced, oldest first: rows targeting the
- * rotation itself, plus relay- and edge-targeted rows that carry its id in
- * their payload (start, cancel, publish/unpublish, rotated, burned, quarantine).
- * Bounded reads: a relay or edge accumulates few audit rows per rotation.
+ * rotation itself, plus the rows the run remembered by id (`auditIds`: the
+ * operator's request, publish/unpublish, rotated, burned, quarantine and its
+ * resolution). Rows created before `auditIds` existed fall back to scanning the
+ * relay's and edges' newest rows for a matching `rotationId` payload
+ * (`auditLog.payload` is untyped, so it cannot be indexed).
  */
 async function rotationAuditTrail(ctx: QueryCtx, r: Rotation) {
   const id = r._id as string;
@@ -157,20 +203,30 @@ async function rotationAuditTrail(ctx: QueryCtx, r: Rotation) {
     .order('desc')
     .take(100);
   const related: Array<Doc<'auditLog'>> = [];
-  const scan = async (targetType: string, targetId: string, take: number) => {
-    const rows = await ctx.db
-      .query('auditLog')
-      .withIndex('by_target', (q) => q.eq('targetType', targetType).eq('targetId', targetId))
-      .order('desc')
-      .take(take);
-    for (const row of rows) {
-      const p = row.payload as { rotationId?: unknown } | undefined;
-      if (p && typeof p === 'object' && p.rotationId === id) related.push(row);
+  if (r.auditIds) {
+    for (const auditId of r.auditIds) {
+      const row = await ctx.db.get(auditId);
+      if (row) related.push(row);
     }
-  };
-  await scan('relay', r.relayId as string, 300);
-  for (const e of [r.toEdgeId, r.targetEdgeId]) if (e) await scan('edge', e as string, 100);
-  const all = [...own, ...related].sort((a, b) => a._creationTime - b._creationTime);
+  } else {
+    const scan = async (targetType: string, targetId: string, take: number) => {
+      const rows = await ctx.db
+        .query('auditLog')
+        .withIndex('by_target', (q) => q.eq('targetType', targetType).eq('targetId', targetId))
+        .order('desc')
+        .take(take);
+      for (const row of rows) {
+        const p = row.payload as { rotationId?: unknown } | undefined;
+        if (p && typeof p === 'object' && p.rotationId === id) related.push(row);
+      }
+    };
+    await scan('relay', r.relayId as string, 300);
+    for (const e of [r.toEdgeId, r.targetEdgeId]) if (e) await scan('edge', e as string, 100);
+  }
+  const seen = new Set<string>();
+  const all = [...own, ...related]
+    .filter((row) => (seen.has(row._id) ? false : (seen.add(row._id), true)))
+    .sort((a, b) => a._creationTime - b._creationTime);
   return all.map((row) => ({
     id: row._id as string,
     actorType: row.actorType,
@@ -199,7 +255,7 @@ export const listByRelay = internalQuery({
   },
 });
 
-async function countActiveRotations(ctx: {
+export async function countActiveRotations(ctx: {
   db: import('./_generated/server').DatabaseReader;
 }): Promise<number> {
   let n = 0;
@@ -212,6 +268,22 @@ async function countActiveRotations(ctx: {
     n += rows.length;
   }
   return n;
+}
+
+/**
+ * A rotation is stale when its step was scheduled more than the grace ago AND
+ * never started (`stepStartedAt` predates the schedule), or when it started
+ * more than STALE_STARTED_MS ago without recording an outcome (a crashed or
+ * killed action). Rows without `stepStartedAt` (older runs) count as not started.
+ */
+export function isStaleRotation(
+  r: Pick<Rotation, 'nextStepAt' | 'stepStartedAt'>,
+  now: number,
+): boolean {
+  if (r.nextStepAt === undefined || r.nextStepAt >= now - STALE_KICK_GRACE_MS) return false;
+  const started = r.stepStartedAt !== undefined && r.stepStartedAt >= r.nextStepAt;
+  if (!started) return true;
+  return r.stepStartedAt! < now - STALE_STARTED_MS;
 }
 
 /** Non-terminal rotations whose next step is overdue (crashed action): reconcile re-kicks them. */
@@ -227,7 +299,7 @@ export const listStale = internalQuery({
           q.eq('phase', phase).lt('nextStepAt', now - STALE_KICK_GRACE_MS),
         )
         .take(50);
-      for (const r of rows) out.push(r._id);
+      for (const r of rows) if (isStaleRotation(r, now)) out.push(r._id);
     }
     return out;
   },
@@ -240,167 +312,211 @@ async function scheduleStep(ctx: MutationCtx, rotationId: Id<'edgeRotations'>, d
   await ctx.db.patch(rotationId, { nextStepAt: Date.now() + delayMs });
 }
 
+const startArgs = {
+  relayId: v.id('relays'),
+  kind: v.union(v.literal('provision'), v.literal('publish'), v.literal('replace')),
+  trigger: v.union(
+    v.literal('manual'),
+    v.literal('detector'),
+    v.literal('api'),
+    v.literal('reconcile'),
+  ),
+  burn: v.optional(v.boolean()),
+  force: v.optional(v.boolean()),
+  targetEdgeId: v.optional(v.id('edges')),
+  toEdgeId: v.optional(v.id('edges')),
+  slotId: v.optional(v.id('relaySlots')),
+  publishOnDone: v.optional(v.boolean()),
+  reason: v.optional(v.string()),
+  actorAdminId: v.optional(v.id('adminUsers')),
+};
+
+export interface StartRotationArgs {
+  relayId: Id<'relays'>;
+  kind: 'provision' | 'publish' | 'replace';
+  trigger: 'manual' | 'detector' | 'api' | 'reconcile';
+  burn?: boolean;
+  force?: boolean;
+  targetEdgeId?: Id<'edges'>;
+  toEdgeId?: Id<'edges'>;
+  slotId?: Id<'relaySlots'>;
+  publishOnDone?: boolean;
+  reason?: string;
+  actorAdminId?: Id<'adminUsers'>;
+}
+
 export const start = internalMutation({
-  args: {
-    relayId: v.id('relays'),
-    kind: v.union(v.literal('provision'), v.literal('publish'), v.literal('replace')),
-    trigger: v.union(
-      v.literal('manual'),
-      v.literal('detector'),
-      v.literal('api'),
-      v.literal('reconcile'),
-    ),
-    burn: v.optional(v.boolean()),
-    force: v.optional(v.boolean()),
-    targetEdgeId: v.optional(v.id('edges')),
-    toEdgeId: v.optional(v.id('edges')),
-    slotId: v.optional(v.id('relaySlots')),
-    publishOnDone: v.optional(v.boolean()),
-    reason: v.optional(v.string()),
-    actorAdminId: v.optional(v.id('adminUsers')),
-  },
-  handler: async (ctx, a) => {
-    const origin = await ctx.db.get(a.relayId);
-    if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
-    const cfg = await resolveEdgeConfig(ctx.db);
-    const now = Date.now();
-    const force = a.force ?? false;
-    if (origin.quarantine)
-      throw new ConvexError({
-        code: 'edge.quarantined',
-        message: 'Origin is quarantined; resolve it first',
-      });
-    if (origin.deleting)
-      throw new ConvexError({ code: 'edge.deleting', message: 'Origin is being deleted' });
-    if (origin.activeRotationId) {
-      const active = await ctx.db.get(origin.activeRotationId);
-      if (active && !isTerminalPhase(active.phase))
-        throw new ConvexError({ code: 'edge.busy', message: 'A rotation is already running' });
-    }
-    if (a.trigger === 'detector' && !(cfg.enabled && cfg.autoRotate && origin.autoRotate)) {
-      throw new ConvexError({
-        code: 'edge.auto_rotate_disabled',
-        message: 'Automatic rotation is not enabled for this origin',
-      });
-    }
-    if ((await countActiveRotations(ctx)) >= cfg.maxConcurrentRotations) {
-      throw new ConvexError({ code: 'edge.concurrency', message: 'Too many rotations in flight' });
-    }
-    let targetEdge: Edge | null = null;
-    let slotId: Id<'relaySlots'> | undefined = a.slotId;
-    if (a.kind === 'replace') {
-      if (!a.targetEdgeId)
-        throw new ConvexError({ code: 'validation', message: 'targetEdgeId is required' });
-      targetEdge = await ctx.db.get(a.targetEdgeId);
-      if (
-        !targetEdge ||
-        targetEdge.relayId !== a.relayId ||
-        targetEdge.publication !== 'published'
-      ) {
-        throw new ConvexError({
-          code: 'edge.target_not_published',
-          message: 'The target edge is not published on this origin',
-        });
-      }
-      if (targetEdge.poolIndex === 0 && !origin.hostManaged) {
-        throw new ConvexError({
-          code: 'edge.hosts_unmanaged',
-          message: 'This origin does not let FCP manage the template Host',
-        });
-      }
-      if (!force) {
-        if (origin.cooldownUntil && origin.cooldownUntil > now)
-          throw new ConvexError({ code: 'edge.cooldown', message: 'Origin is cooling down' });
-        const today = todayKey(now);
-        const used = origin.rotationsDayKey === today ? origin.rotationsToday : 0;
-        if (used >= origin.maxRotationsPerDay)
-          throw new ConvexError({ code: 'edge.daily_cap', message: 'Daily rotation cap reached' });
-      }
-      slotId = targetEdge.slotId;
-    }
-    if (a.kind === 'publish') {
-      if (!a.toEdgeId)
-        throw new ConvexError({ code: 'validation', message: 'toEdgeId is required' });
-      const to = await ctx.db.get(a.toEdgeId);
-      if (!to || to.relayId !== a.relayId)
-        throw new ConvexError({ code: 'not_found', message: 'Edge not found on this origin' });
-      const check = await checkPublishable(ctx, to, false);
-      if (!check.ok)
-        throw new ConvexError({
-          code: `edge.${check.code}`,
-          message: `Edge cannot be published: ${check.code}`,
-        });
-      slotId = to.slotId;
-    }
-    if (slotId) {
-      const slot = await ctx.db.get(slotId);
-      const profile = slot ? await ctx.db.get(slot.profileId) : null;
-      const usable =
-        !!slot &&
-        !slot.retired &&
-        slot.deployed &&
-        !!profile?.enabled &&
-        (!protocolUsesSni(profile.protocol) ||
-          profile.serverNames.some((s) => s.status === 'active'));
-      if (!usable) {
-        throw new ConvexError({
-          code: 'edge.no_compatible_profile',
-          message: 'The slot is not deployed, or its REALITY profile has no active server name',
-        });
-      }
-    }
-    const id = await ctx.db.insert('edgeRotations', {
-      relayId: a.relayId,
-      kind: a.kind,
-      trigger: a.trigger,
-      burn: a.burn ?? false,
-      force,
-      publishOnDone: a.kind === 'provision' ? (a.publishOnDone ?? false) : undefined,
-      targetEdgeId: a.targetEdgeId,
-      toEdgeId: a.kind === 'publish' ? a.toEdgeId : undefined,
-      phase: 'select',
-      stepVersion: 1,
-      cancelRequested: false,
-      reason: a.reason?.slice(0, 200) ?? (slotId ? `slot:${slotId}` : undefined),
-      hostPlan: [],
-      flipAttempts: 0,
-      rollbackAttempts: 0,
-      pollAttempts: 0,
-      events: [{ at: now, level: 'info', code: 'started', detail: `${a.kind} (${a.trigger})` }],
-      actorAdminId: a.actorAdminId,
-      startedAt: now,
-      updatedAt: now,
-    });
-    const today = todayKey(now);
-    await ctx.db.patch(a.relayId, {
-      activeRotationId: id,
-      ...(a.kind === 'replace'
-        ? {
-            rotationsDayKey: today,
-            rotationsToday: (origin.rotationsDayKey === today ? origin.rotationsToday : 0) + 1,
-          }
-        : {}),
-      updatedAt: now,
-    });
-    await writeAuditLog(ctx, {
-      actorType: a.actorAdminId ? 'admin' : 'system',
-      actorId: a.actorAdminId ?? undefined,
-      action:
-        a.kind === 'replace'
-          ? a.burn
-            ? 'admin.edge.burn'
-            : 'admin.edge.rotate'
-          : 'admin.edge.provision',
-      targetType: 'relay',
-      targetId: a.relayId,
-      payload: { slug: origin.slug, trigger: a.trigger, force, rotationId: id },
-    });
-    await scheduleStep(ctx, id, 0);
-    return { rotationId: id };
-  },
+  args: startArgs,
+  handler: (ctx, a) => startRotation(ctx, a),
 });
 
-/** Reconcile: a non-terminal rotation whose next step never ran (crashed action). */
+/**
+ * The ONLY way a rotation row comes into being (the `start` mutation and the
+ * reconcile cron's standby publish both call this): every guard — quarantine,
+ * deleting, one rotation per origin, the global concurrency cap, publishability,
+ * slot usability — applies to every caller.
+ */
+export async function startRotation(
+  ctx: MutationCtx,
+  a: StartRotationArgs,
+): Promise<{ rotationId: Id<'edgeRotations'> }> {
+  const origin = await ctx.db.get(a.relayId);
+  if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
+  const cfg = await resolveEdgeConfig(ctx.db);
+  const now = Date.now();
+  const force = a.force ?? false;
+  if (origin.quarantine)
+    throw new ConvexError({
+      code: 'edge.quarantined',
+      message: 'Origin is quarantined; resolve it first',
+    });
+  if (origin.deleting)
+    throw new ConvexError({ code: 'edge.deleting', message: 'Origin is being deleted' });
+  if (origin.activeRotationId) {
+    const active = await ctx.db.get(origin.activeRotationId);
+    if (active && !isTerminalPhase(active.phase))
+      throw new ConvexError({ code: 'edge.busy', message: 'A rotation is already running' });
+  }
+  if (a.trigger === 'detector' && !(cfg.enabled && cfg.autoRotate && origin.autoRotate)) {
+    throw new ConvexError({
+      code: 'edge.auto_rotate_disabled',
+      message: 'Automatic rotation is not enabled for this origin',
+    });
+  }
+  if ((await countActiveRotations(ctx)) >= cfg.maxConcurrentRotations) {
+    throw new ConvexError({ code: 'edge.concurrency', message: 'Too many rotations in flight' });
+  }
+  let targetEdge: Edge | null = null;
+  let slotId: Id<'relaySlots'> | undefined = a.slotId;
+  if (a.kind === 'replace') {
+    if (!a.targetEdgeId)
+      throw new ConvexError({ code: 'validation', message: 'targetEdgeId is required' });
+    targetEdge = await ctx.db.get(a.targetEdgeId);
+    if (!targetEdge || targetEdge.relayId !== a.relayId || targetEdge.publication !== 'published') {
+      throw new ConvexError({
+        code: 'edge.target_not_published',
+        message: 'The target edge is not published on this origin',
+      });
+    }
+    if (targetEdge.poolIndex === 0 && !origin.hostManaged) {
+      throw new ConvexError({
+        code: 'edge.hosts_unmanaged',
+        message: 'This origin does not let FCP manage the template Host',
+      });
+    }
+    if (!force) {
+      if (origin.cooldownUntil && origin.cooldownUntil > now)
+        throw new ConvexError({ code: 'edge.cooldown', message: 'Origin is cooling down' });
+      const today = todayKey(now);
+      const used = origin.rotationsDayKey === today ? origin.rotationsToday : 0;
+      if (used >= origin.maxRotationsPerDay)
+        throw new ConvexError({ code: 'edge.daily_cap', message: 'Daily rotation cap reached' });
+    }
+    slotId = targetEdge.slotId;
+  }
+  if (a.kind === 'publish') {
+    if (!a.toEdgeId) throw new ConvexError({ code: 'validation', message: 'toEdgeId is required' });
+    const to = await ctx.db.get(a.toEdgeId);
+    if (!to || to.relayId !== a.relayId)
+      throw new ConvexError({ code: 'not_found', message: 'Edge not found on this origin' });
+    const check = await checkPublishable(ctx, to, false);
+    if (!check.ok)
+      throw new ConvexError({
+        code: `edge.${check.code}`,
+        message: `Edge cannot be published: ${check.code}`,
+      });
+    slotId = to.slotId;
+  }
+  if (slotId) {
+    const slot = await ctx.db.get(slotId);
+    if (!slot || slot.relayId !== a.relayId || slot.retired) {
+      throw new ConvexError({
+        code: 'edge.slot_not_found',
+        message: 'The requested slot does not exist on this origin or is retired',
+      });
+    }
+    const profile = await ctx.db.get(slot.profileId);
+    const usable =
+      slot.deployed &&
+      !!profile?.enabled &&
+      (!protocolUsesSni(profile.protocol) ||
+        profile.serverNames.some((s) => s.status === 'active'));
+    if (!usable) {
+      throw new ConvexError({
+        code: 'edge.no_compatible_profile',
+        message: 'The slot is not deployed, or its REALITY profile has no active server name',
+      });
+    }
+  }
+  const id = await ctx.db.insert('edgeRotations', {
+    relayId: a.relayId,
+    kind: a.kind,
+    trigger: a.trigger,
+    burn: a.burn ?? false,
+    force,
+    publishOnDone: a.kind === 'provision' ? (a.publishOnDone ?? false) : undefined,
+    targetEdgeId: a.targetEdgeId,
+    toEdgeId: a.kind === 'publish' ? a.toEdgeId : undefined,
+    slotId,
+    viaStandby: a.kind === 'publish' ? true : undefined,
+    phase: 'select',
+    stepVersion: 1,
+    cancelRequested: false,
+    reason: a.reason?.slice(0, 200),
+    hostPlan: [],
+    hostPlanCaptured: false,
+    forwardWriteAttempted: false,
+    flipAttempts: 0,
+    rollbackAttempts: 0,
+    pollAttempts: 0,
+    stepErrors: 0,
+    auditIds: [],
+    events: [{ at: now, level: 'info', code: 'started', detail: `${a.kind} (${a.trigger})` }],
+    actorAdminId: a.actorAdminId,
+    startedAt: now,
+    updatedAt: now,
+  });
+  const today = todayKey(now);
+  await ctx.db.patch(a.relayId, {
+    activeRotationId: id,
+    ...(a.kind === 'replace'
+      ? {
+          rotationsDayKey: today,
+          rotationsToday: (origin.rotationsDayKey === today ? origin.rotationsToday : 0) + 1,
+        }
+      : {}),
+    updatedAt: now,
+  });
+  await auditRotation(ctx, id, {
+    actorType: a.actorAdminId ? 'admin' : 'system',
+    actorId: a.actorAdminId ?? undefined,
+    action:
+      a.kind === 'replace'
+        ? a.burn
+          ? 'admin.edge.burn'
+          : 'admin.edge.rotate'
+        : a.kind === 'publish'
+          ? 'admin.edge.publish'
+          : 'admin.edge.provision',
+    targetType: 'relay',
+    targetId: a.relayId,
+    payload: {
+      slug: origin.slug,
+      trigger: a.trigger,
+      force,
+      rotationId: id,
+      edgeId: a.kind === 'publish' ? a.toEdgeId : undefined,
+    },
+  });
+  await scheduleStep(ctx, id, 0);
+  return { rotationId: id };
+}
+
+/**
+ * Reconcile: a non-terminal rotation whose next step never ran (crashed action).
+ * Bumps the step version so a stale actor that is somehow still alive has every
+ * later write ignored by `guard` (fencing), then schedules a fresh step.
+ */
 export const rekick = internalMutation({
   args: { rotationId: v.id('edgeRotations') },
   handler: async (ctx, { rotationId }) => {
@@ -408,10 +524,23 @@ export const rekick = internalMutation({
     if (!r || isTerminalPhase(r.phase)) return null;
     const now = Date.now();
     await ctx.db.patch(rotationId, {
+      stepVersion: r.stepVersion + 1,
+      stepStartedAt: undefined,
       events: appendEvent(r.events, { at: now, level: 'warn', code: 'rekicked' }),
       updatedAt: now,
     });
     await scheduleStep(ctx, rotationId, 0);
+    return null;
+  },
+});
+
+/** The step action stamps its start so `listStale` can tell "never started" from "started and hung". */
+export const markStepStarted = internalMutation({
+  args: { rotationId: v.id('edgeRotations'), stepVersion: v.number() },
+  handler: async (ctx, { rotationId, stepVersion }) => {
+    const r = await ctx.db.get(rotationId);
+    if (!r || r.stepVersion !== stepVersion || isTerminalPhase(r.phase)) return null;
+    await ctx.db.patch(rotationId, { stepStartedAt: Date.now() });
     return null;
   },
 });
@@ -421,30 +550,55 @@ export const requestCancel = internalMutation({
   handler: async (ctx, { rotationId, actorAdminId }) => {
     const r = await ctx.db.get(rotationId);
     if (!r) throw new ConvexError({ code: 'not_found', message: 'Rotation not found' });
-    if (isTerminalPhase(r.phase)) return { ok: true as const, phase: r.phase };
-    if (r.phase === 'confirming' || r.phase === 'finalizing' || r.phase === 'rolling_back') {
+    if (isTerminalPhase(r.phase)) return { ok: true as const, phase: r.phase, deferred: false };
+    if (r.phase === 'confirming' || r.phase === 'finalizing') {
       throw new ConvexError({
         code: 'edge.too_late',
         message: 'The rotation is past the point of cancellation',
       });
     }
     const now = Date.now();
+    const origin = await ctx.db.get(r.relayId);
+    if (r.phase === 'rolling_back') {
+      // A rollback is never aborted half-way (the panel Host must land on the
+      // previous binding), but the request is RECORDED and audited so the
+      // operator is not locked out silently: the rollback finishes on its own
+      // (rolled_back) or parks the origin (quarantined) within its attempt caps.
+      await ctx.db.patch(rotationId, {
+        cancelRequested: true,
+        events: appendEvent(r.events, {
+          at: now,
+          level: 'warn',
+          code: 'cancel_requested',
+          detail: 'recorded; a rollback completes or quarantines, it is not aborted',
+        }),
+        updatedAt: now,
+      });
+      await auditRotation(ctx, rotationId, {
+        actorType: 'admin',
+        actorId: actorAdminId ?? undefined,
+        action: 'admin.edge.cancel',
+        targetType: 'relay',
+        targetId: r.relayId,
+        payload: { slug: origin?.slug ?? '', rotationId, deferred: true },
+      });
+      return { ok: true as const, phase: r.phase, deferred: true };
+    }
     await ctx.db.patch(rotationId, {
       cancelRequested: true,
       events: appendEvent(r.events, { at: now, level: 'warn', code: 'cancel_requested' }),
       updatedAt: now,
     });
-    const origin = await ctx.db.get(r.relayId);
-    await writeAuditLog(ctx, {
+    await auditRotation(ctx, rotationId, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
       action: 'admin.edge.cancel',
       targetType: 'relay',
       targetId: r.relayId,
-      payload: { slug: origin?.slug ?? '', rotationId },
+      payload: { slug: origin?.slug ?? '', rotationId, deferred: false },
     });
     await scheduleStep(ctx, rotationId, 0);
-    return { ok: true as const, phase: r.phase };
+    return { ok: true as const, phase: r.phase, deferred: false };
   },
 });
 
@@ -457,6 +611,7 @@ const advanceEvent = v.union(
     delayMs: v.number(),
     detail: v.optional(v.string()),
     countPoll: v.optional(v.boolean()),
+    countError: v.optional(v.boolean()),
   }),
   v.object({ type: v.literal('provisioned') }),
   v.object({ type: v.literal('verified') }),
@@ -502,7 +657,7 @@ async function auditFailure(
   code: string,
 ) {
   const origin = await ctx.db.get(r.relayId);
-  await writeAuditLog(ctx, {
+  await auditRotation(ctx, r._id, {
     actorType: 'system',
     action: 'edge.rotation_failed',
     targetType: 'edge_rotation',
@@ -518,11 +673,81 @@ async function auditFailure(
   });
 }
 
-/** The new edge this rotation created (never a pre-existing standby / publish target). */
+/**
+ * The new edge this rotation created (never a pre-existing standby / publish
+ * target). Read from the row (`createdEdgeId` / `viaStandby`); rows created
+ * before those fields existed fall back to the event log.
+ */
 function createdEdgeId(r: Rotation): Id<'edges'> | null {
+  if (r.createdEdgeId) return r.createdEdgeId;
+  if (r.viaStandby !== undefined) return r.viaStandby ? null : (r.toEdgeId ?? null);
   if (!r.toEdgeId) return null;
   if (r.kind === 'publish') return null;
   return r.events.some((e) => e.code === 'selected_standby') ? null : r.toEdgeId;
+}
+
+/**
+ * Give an allocation back when a provision failed BEFORE any provider call
+ * (nothing was created, so the day's budget was not spent). Only when every
+ * step is still pending and the ledger is empty; same-day only.
+ */
+async function refundAllocation(ctx: MutationCtx, edge: Edge): Promise<boolean> {
+  if (!edge.accountId) return false;
+  if (edge.resources.length > 0) return false;
+  if (edge.steps.some((s) => s.state !== 'pending' || s.attempt > 0 || s.startedAt)) return false;
+  const acct = await ctx.db.get(edge.accountId);
+  if (!acct || acct.allocationsDayKey !== dayKey() || acct.allocationsToday <= 0) return false;
+  await ctx.db.patch(acct._id, {
+    allocationsToday: acct.allocationsToday - 1,
+    updatedAt: Date.now(),
+  });
+  return true;
+}
+
+/**
+ * Put `edgeId` at `index` of the published pool. An UNEXPECTED occupant (not
+ * the edge itself) is evicted explicitly — unpublished, audited with this
+ * rotation's id, returned so the caller can list it as a standby — rather than
+ * silently overwritten.
+ */
+async function placeAt(
+  ctx: MutationCtx,
+  origin: Origin,
+  published: readonly (Id<'edges'> | null)[],
+  index: number,
+  edgeId: Id<'edges'>,
+  rotationId: Id<'edgeRotations'>,
+  now: number,
+): Promise<{ published: (Id<'edges'> | null)[]; evicted: Id<'edges'> | null }> {
+  const occupant = published[index] ?? null;
+  if (!occupant || occupant === edgeId) {
+    return { published: withEdgeAt(published, index, edgeId), evicted: null };
+  }
+  const occ = await ctx.db.get(occupant);
+  if (occ && occ.publication === 'published') {
+    await ctx.db.patch(occ._id, {
+      publication: 'unpublished',
+      poolIndex: undefined,
+      updatedAt: now,
+    });
+  }
+  await auditRotation(ctx, rotationId, {
+    actorType: 'system',
+    action: 'edge.unpublished',
+    targetType: 'edge',
+    targetId: occupant,
+    payload: {
+      relaySlug: origin.slug,
+      edgeId: occupant,
+      poolIndex: index,
+      epoch: origin.publicationEpoch + 1,
+      rotationId,
+    },
+  });
+  return {
+    published: withEdgeAt(withoutEdge(published, occupant), index, edgeId),
+    evicted: occ && occ.status !== 'destroyed' ? occupant : null,
+  };
 }
 
 export const advance = internalMutation({
@@ -540,6 +765,8 @@ export const advance = internalMutation({
       case 'selected': {
         await ctx.db.patch(rotationId, {
           toEdgeId: event.toEdgeId,
+          viaStandby: event.viaStandby,
+          createdEdgeId: event.viaStandby ? undefined : event.toEdgeId,
           phase: event.viaStandby ? 'verifying' : 'provisioning',
           stepVersion: next,
           events: ev('info', event.viaStandby ? 'selected_standby' : 'selected_provision'),
@@ -558,7 +785,10 @@ export const advance = internalMutation({
         await ctx.db.patch(rotationId, {
           stepVersion: next,
           pollAttempts: event.countPoll ? r.pollAttempts + 1 : r.pollAttempts,
-          events: event.detail ? ev('info', 'progress', event.detail) : r.events,
+          stepErrors: event.countError ? (r.stepErrors ?? 0) + 1 : r.stepErrors,
+          events: event.detail
+            ? ev(event.countError ? 'warn' : 'info', 'progress', event.detail)
+            : r.events,
           updatedAt: now,
         });
         await scheduleStep(ctx, rotationId, event.delayMs);
@@ -645,9 +875,13 @@ export const advance = internalMutation({
           return { ok: true as const };
         }
         const created = createdEdgeId(r);
+        let refunded = false;
         if (created) {
           const e = await ctx.db.get(created);
           if (e && !['needs_operator', 'destroyed'].includes(e.status)) {
+            // The template changed under a provision that had not called the
+            // provider yet: nothing exists, so the day's allocation is given back.
+            if (event.code === 'template_changed') refunded = await refundAllocation(ctx, e);
             await ctx.db.patch(created, {
               status: 'failed',
               statusChangedAt: now,
@@ -662,7 +896,11 @@ export const advance = internalMutation({
           outcome: event.code,
           finishedAt: now,
           nextStepAt: undefined,
-          events: ev('error', event.code, event.detail),
+          events: appendEvent(ev('error', event.code, event.detail), {
+            at: now,
+            level: 'info',
+            code: refunded ? 'allocation_refunded' : 'failed',
+          }),
           updatedAt: now,
         });
         await releaseOrigin(ctx, r);
@@ -680,7 +918,7 @@ export const advance = internalMutation({
         });
         await releaseOrigin(ctx, r);
         const origin = await ctx.db.get(r.relayId);
-        await writeAuditLog(ctx, {
+        await auditRotation(ctx, r._id, {
           actorType: 'system',
           action: 'edge.rolled_back',
           targetType: 'edge_rotation',
@@ -712,7 +950,7 @@ export const advance = internalMutation({
           quarantine: { rotationId, since: now, reason: event.reason },
         });
         const origin = await ctx.db.get(r.relayId);
-        await writeAuditLog(ctx, {
+        await auditRotation(ctx, r._id, {
           actorType: 'system',
           action: 'edge.quarantined',
           targetType: 'relay',
@@ -801,6 +1039,8 @@ export const commitSelection = internalMutation({
     const now = Date.now();
     await ctx.db.patch(a.rotationId, {
       toEdgeId: inserted.id,
+      createdEdgeId: inserted.id,
+      viaStandby: false,
       phase: 'provisioning',
       stepVersion: a.stepVersion + 1,
       events: appendEvent(r.events, {
@@ -837,13 +1077,13 @@ export const applyPublish = internalMutation({
     if (!origin || !to) return { ok: false as const, code: 'missing' as const };
     const now = Date.now();
     const next = stepVersion + 1;
-    const check = await checkPublishable(ctx, to, cfg.requireProviderHealth);
-    if (!check.ok) return { ok: false as const, code: check.code ?? 'not_publishable' };
     let published = origin.publishedEdgeIds;
     let poolIndex: number | null = null;
     let previousBinding: Rotation['previousBinding'] = undefined;
     if (r.kind === 'provision' && !r.publishOnDone) {
-      // Standby provision: verified, paid for, deliberately not rendered.
+      // Standby provision: verified, paid for, deliberately not rendered — it is
+      // finalized whatever its publishability right now (a profile disabled
+      // mid-run must not destroy a freshly provisioned edge).
       await ctx.db.patch(rotationId, {
         phase: 'finalizing',
         stepVersion: next,
@@ -857,6 +1097,8 @@ export const applyPublish = internalMutation({
       await scheduleStep(ctx, rotationId, 0);
       return { ok: true as const, poolIndex: null, needsHostFlip: false };
     }
+    const check = await checkPublishable(ctx, to, cfg.requireProviderHealth);
+    if (!check.ok) return { ok: false as const, code: check.code ?? 'not_publishable' };
     if (r.kind === 'replace') {
       const target = r.targetEdgeId ? await ctx.db.get(r.targetEdgeId) : null;
       if (!target || target.publication !== 'published' || target.poolIndex === undefined)
@@ -909,7 +1151,7 @@ export const applyPublish = internalMutation({
       publicationEpoch: epoch,
       updatedAt: now,
     });
-    await writeAuditLog(ctx, {
+    await auditRotation(ctx, rotationId, {
       actorType: 'system',
       action: 'edge.published',
       targetType: 'edge',
@@ -917,7 +1159,7 @@ export const applyPublish = internalMutation({
       payload: { relaySlug: origin.slug, edgeId: to._id, poolIndex, epoch, rotationId },
     });
     if (previousBinding) {
-      await writeAuditLog(ctx, {
+      await auditRotation(ctx, rotationId, {
         actorType: 'system',
         action: 'edge.unpublished',
         targetType: 'edge',
@@ -971,6 +1213,7 @@ export const setHostPlan = internalMutation({
     const now = Date.now();
     await ctx.db.patch(a.rotationId, {
       hostPlan: a.hostPlan,
+      hostPlanCaptured: true,
       stepVersion: a.stepVersion + 1,
       events: appendEvent(r.events, {
         at: now,
@@ -1019,7 +1262,11 @@ export const claimHostOp = internalMutation({
     };
     await ctx.db.patch(a.rotationId, {
       currentOp: op,
-      ...(a.direction === 'forward' ? { flipAttempts: attempts } : { rollbackAttempts: attempts }),
+      // Set with the claim, not the settle: a PATCH that lands but times out
+      // before its settle still counts as "the panel may hold the new address".
+      ...(a.direction === 'forward'
+        ? { flipAttempts: attempts, forwardWriteAttempted: true }
+        : { rollbackAttempts: attempts }),
       updatedAt: now,
     });
     return { ok: true as const, opId: op.opId };
@@ -1080,6 +1327,7 @@ export const applyRollbackBinding = internalMutation({
         changed = true;
       }
     }
+    let evicted: Id<'edges'> | null = null;
     if (r.previousBinding) {
       const prev = await ctx.db.get(r.previousBinding.edgeId);
       if (prev && prev.status !== 'destroyed' && prev.publication !== 'published') {
@@ -1091,23 +1339,46 @@ export const applyRollbackBinding = internalMutation({
           statusChangedAt: now,
           updatedAt: now,
         });
-        published = withEdgeAt(published, r.previousBinding.poolIndex, prev._id);
+        const placed = await placeAt(
+          ctx,
+          origin,
+          published,
+          r.previousBinding.poolIndex,
+          prev._id,
+          rotationId,
+          now,
+        );
+        published = placed.published;
+        evicted = placed.evicted;
         changed = true;
       }
     }
     if (changed) {
+      const standbys = origin.standbyEdgeIds.filter((e) => e !== r.toEdgeId && e !== evicted);
+      if (r.toEdgeId) standbys.push(r.toEdgeId);
+      if (evicted) standbys.push(evicted);
       await ctx.db.patch(r.relayId, {
         publishedEdgeIds: published,
-        standbyEdgeIds: r.toEdgeId
-          ? [...origin.standbyEdgeIds.filter((e) => e !== r.toEdgeId), r.toEdgeId]
-          : origin.standbyEdgeIds,
+        standbyEdgeIds: standbys,
         publicationEpoch: origin.publicationEpoch + 1,
         updatedAt: now,
       });
+      const latest = (await ctx.db.get(rotationId)) ?? r;
       await ctx.db.patch(rotationId, {
-        events: appendEvent(r.events, { at: now, level: 'warn', code: 'binding_restored' }),
+        events: appendEvent(
+          evicted
+            ? appendEvent(latest.events, {
+                at: now,
+                level: 'warn',
+                code: 'occupant_evicted',
+                detail: `pool index ${r.previousBinding?.poolIndex ?? '?'}`,
+              })
+            : latest.events,
+          { at: now, level: 'warn', code: 'binding_restored' },
+        ),
         updatedAt: now,
       });
+      await scheduleMirrorRefresh(ctx);
     }
     return { ok: true as const, changed };
   },
@@ -1157,7 +1428,7 @@ export const finalize = internalMutation({
         : {}),
     });
     if (r.kind === 'replace') {
-      await writeAuditLog(ctx, {
+      await auditRotation(ctx, r._id, {
         actorType: 'system',
         action: 'edge.rotated',
         targetType: 'relay',
@@ -1177,7 +1448,7 @@ export const finalize = internalMutation({
         },
       });
       if (r.burn && from) {
-        await writeAuditLog(ctx, {
+        await auditRotation(ctx, r._id, {
           actorType: 'system',
           action: 'edge.burned',
           targetType: 'edge',
@@ -1210,6 +1481,14 @@ export const resolveQuarantine = internalMutation({
     if (!origin.quarantine) return { ok: true as const };
     const rotation = await ctx.db.get(origin.quarantine.rotationId);
     const now = Date.now();
+    const standbys = [...origin.standbyEdgeIds];
+    const standbyAdd = (id: Id<'edges'> | null) => {
+      if (id && !standbys.includes(id)) standbys.push(id);
+    };
+    const standbyDrop = (id: Id<'edges'>) => {
+      const i = standbys.indexOf(id);
+      if (i >= 0) standbys.splice(i, 1);
+    };
     if (keep === 'previous' && rotation) {
       // DB half of the rollback; the operator has fixed the panel Hosts by hand.
       let published = origin.publishedEdgeIds;
@@ -1224,6 +1503,7 @@ export const resolveQuarantine = internalMutation({
             updatedAt: now,
           });
           published = withoutEdge(published, to._id);
+          standbyAdd(to._id);
         }
       }
       if (rotation.previousBinding) {
@@ -1237,10 +1517,25 @@ export const resolveQuarantine = internalMutation({
             statusChangedAt: now,
             updatedAt: now,
           });
-          published = withEdgeAt(published, rotation.previousBinding.poolIndex, prev._id);
+          const placed = await placeAt(
+            ctx,
+            origin,
+            published,
+            rotation.previousBinding.poolIndex,
+            prev._id,
+            rotation._id,
+            now,
+          );
+          published = placed.published;
+          standbyAdd(placed.evicted);
+          standbyDrop(prev._id);
         }
       }
-      await ctx.db.patch(relayId, { publishedEdgeIds: published, updatedAt: now });
+      await ctx.db.patch(relayId, {
+        publishedEdgeIds: published,
+        standbyEdgeIds: standbys,
+        updatedAt: now,
+      });
     } else if (rotation?.toEdgeId) {
       // Keep the CURRENT edge: the rolling_back pass already restored the
       // previous binding in the DB (previous published, new unpublished), so
@@ -1252,6 +1547,23 @@ export const resolveQuarantine = internalMutation({
         const cfg = await resolveEdgeConfig(ctx.db);
         let published = origin.publishedEdgeIds;
         const poolIndex = rotation.previousBinding?.poolIndex ?? to.poolIndex ?? 0;
+        // The new edge must still be publishable (slot deployed, profile enabled
+        // with a name to present, provider/account match, health): the check runs
+        // on the edge as it will be — active and unpublished — since the
+        // quarantine itself parked its status.
+        if (!(to.publication === 'published' && to.poolIndex === poolIndex)) {
+          const check = await checkPublishable(
+            ctx,
+            { ...to, status: 'active', publication: 'unpublished' },
+            cfg.requireProviderHealth,
+          );
+          if (!check.ok) {
+            throw new ConvexError({
+              code: `edge.${check.code}`,
+              message: `The current edge cannot be kept: ${check.code}`,
+            });
+          }
+        }
         if (rotation.previousBinding && rotation.previousBinding.edgeId !== to._id) {
           const prev = await ctx.db.get(rotation.previousBinding.edgeId);
           if (prev && prev.status !== 'destroyed') {
@@ -1265,6 +1577,7 @@ export const resolveQuarantine = internalMutation({
               updatedAt: now,
             });
             published = withoutEdge(published, prev._id);
+            standbyDrop(prev._id);
           }
         }
         await ctx.db.patch(to._id, {
@@ -1276,10 +1589,13 @@ export const resolveQuarantine = internalMutation({
           statusChangedAt: now,
           updatedAt: now,
         });
-        published = withEdgeAt(published, poolIndex, to._id);
+        const placed = await placeAt(ctx, origin, published, poolIndex, to._id, rotation._id, now);
+        published = placed.published;
+        standbyAdd(placed.evicted);
+        standbyDrop(to._id);
         await ctx.db.patch(relayId, {
           publishedEdgeIds: published,
-          standbyEdgeIds: origin.standbyEdgeIds.filter((e) => e !== to._id),
+          standbyEdgeIds: standbys,
           lastRotatedAt: now,
           updatedAt: now,
         });
@@ -1290,10 +1606,11 @@ export const resolveQuarantine = internalMutation({
       publicationEpoch: origin.publicationEpoch + 1,
       updatedAt: now,
     });
-    if (rotation)
+    if (rotation) {
+      const latest = (await ctx.db.get(rotation._id)) ?? rotation;
       await ctx.db.patch(rotation._id, {
         outcome: `quarantine_resolved:${keep}`,
-        events: appendEvent(rotation.events, {
+        events: appendEvent(latest.events, {
           at: now,
           level: 'info',
           code: 'quarantine_resolved',
@@ -1301,14 +1618,26 @@ export const resolveQuarantine = internalMutation({
         }),
         updatedAt: now,
       });
-    await writeAuditLog(ctx, {
+    }
+    const entry: AuditEntry = {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
       action: 'edge.quarantine_resolved',
       targetType: 'relay',
       targetId: relayId,
       payload: { relaySlug: origin.slug, keep, rotationId: rotation?._id ?? null },
-    });
+    };
+    if (rotation) await auditRotation(ctx, rotation._id, entry);
+    else
+      await ctx.db.insert('auditLog', {
+        actorType: entry.actorType,
+        actorId: entry.actorId,
+        action: entry.action,
+        targetType: entry.targetType,
+        targetId: entry.targetId,
+        payload: sanitizeAuditPayload(entry.action, entry.payload),
+      });
+    await scheduleMirrorRefresh(ctx);
     return { ok: true as const };
   },
 });
@@ -1378,10 +1707,26 @@ async function selectionContext(
     if (p) profiles.set(s._id, p);
   }
   let slot: Doc<'relaySlots'> | null = null;
+  // A requested slot (the row field; `reason` carried it before the field
+  // existed) is binding: a retired or vanished one FAILS the run instead of
+  // silently falling back to another slot.
+  const requestedSlotId: string | null =
+    (rotation.slotId as string | undefined) ??
+    (rotation.reason?.startsWith('slot:') ? rotation.reason.slice(5) : null);
   if (rotation.kind === 'replace' && targetEdge)
     slot = slotRows.find((s) => s._id === targetEdge.slotId) ?? null;
-  else if (rotation.reason?.startsWith('slot:'))
-    slot = slotRows.find((s) => (s._id as string) === rotation.reason!.slice(5)) ?? null;
+  else if (requestedSlotId) {
+    slot = slotRows.find((s) => (s._id as string) === requestedSlotId && !s.retired) ?? null;
+    if (!slot)
+      return {
+        slot: null,
+        profile: null,
+        standbyId: null,
+        account: null,
+        accountFailure: 'slot_not_found',
+        template: null,
+      };
+  }
   if (!slot) {
     const pick = pickSlot(
       slotRows.map((s) => {
@@ -1545,6 +1890,7 @@ export const step = internalAction({
     if (!c || isTerminalPhase(c.rotation.phase)) return null;
     const { rotation: r, cfg } = c;
     const sv = r.stepVersion;
+    await ctx.runMutation(internal.edgeRotations.markStepStarted, { rotationId, stepVersion: sv });
     const adv = (event: Parameters<typeof advanceCall>[3]) =>
       advanceCall(ctx, rotationId, sv, event);
     // Cancel handling first.
@@ -1557,6 +1903,36 @@ export const step = internalAction({
         await adv({ type: 'fail', code: 'cancelled', rollback: true });
         return null;
       }
+    }
+    // Bounded retries: a run that exceeds its wall clock or keeps throwing must
+    // end somewhere. Early phases fail; publishing / flipping roll back; once
+    // the panel may hold the new binding (confirming / rolling back) the
+    // origin is quarantined with the reason spelled out.
+    // (A rollback the wall clock itself triggered must be allowed to run: in
+    // `rolling_back` only the error budget + the Host attempt caps apply.)
+    const now = Date.now();
+    const cap =
+      r.phase !== 'rolling_back' && now - r.startedAt > edgeMs.maxRotation(cfg)
+        ? 'rotation_timeout'
+        : (r.stepErrors ?? 0) >= MAX_STEP_ERRORS
+          ? 'step_errors_exhausted'
+          : null;
+    if (cap) {
+      if ((ROLLBACK_ON_CANCEL_PHASES as readonly string[]).includes(r.phase)) {
+        await adv({ type: 'fail', code: cap, rollback: true });
+      } else if (['confirming', 'finalizing', 'rolling_back'].includes(r.phase)) {
+        if (r.phase === 'rolling_back')
+          await ctx.runMutation(internal.edgeRotations.applyRollbackBinding, {
+            rotationId: r._id,
+          });
+        await adv({
+          type: 'quarantine',
+          reason: `${cap} during ${r.phase} (${Math.round((now - r.startedAt) / 60_000)} min, ${r.stepErrors ?? 0} step errors)`,
+        });
+      } else {
+        await adv({ type: 'fail', code: cap, rollback: false });
+      }
+      return null;
     }
     try {
       switch (r.phase) {
@@ -1594,13 +1970,15 @@ export const step = internalAction({
           return null;
       }
     } catch (err) {
-      // An unexpected throw must not strand the rotation: record and retry after a poll.
+      // An unexpected throw must not strand the rotation: record and retry after
+      // a poll. Counted (`stepErrors`) so the cap above ends a run that keeps throwing.
       const { code, detail } = errCode(err);
       await adv({
         type: 'progress',
         delayMs: edgeMs.poll(cfg),
         detail: `step error: ${code} ${detail}`.trim(),
         countPoll: true,
+        countError: true,
       });
       return null;
     }
@@ -1613,7 +1991,13 @@ async function advanceCall(
   stepVersion: number,
   event:
     | { type: 'selected'; toEdgeId: Id<'edges'>; viaStandby: boolean }
-    | { type: 'progress'; delayMs: number; detail?: string; countPoll?: boolean }
+    | {
+        type: 'progress';
+        delayMs: number;
+        detail?: string;
+        countPoll?: boolean;
+        countError?: boolean;
+      }
     | { type: 'provisioned' }
     | { type: 'verified' }
     | { type: 'host_converged'; flipped: number }
@@ -1637,7 +2021,7 @@ async function phaseSelect(ctx: ActionCtx, c: Ctx) {
   if (!selection || !selection.slot || !selection.profile) {
     await advanceCall(ctx, r._id, sv, {
       type: 'fail',
-      code: 'no_compatible_profile',
+      code: selection?.accountFailure ?? 'no_compatible_profile',
       rollback: false,
     });
     return;
@@ -2159,6 +2543,19 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     return;
   }
   if (!origin.hostManaged) {
+    if (r.kind === 'replace') {
+      // The flip was decided with hostManaged=true at publish time; an operator
+      // flipped it since. Replacing index 0 without a Host write would leave the
+      // panel pointing at the old edge: roll back rather than "converge".
+      await advanceCall(ctx, r._id, sv, {
+        type: 'fail',
+        code: 'hosts_unmanaged',
+        detail: 'hostManaged turned off during the rotation',
+        rollback: true,
+      });
+      return;
+    }
+    // Publishing at index 0 on an unmanaged origin proceeds without a flip.
     await advanceCall(ctx, r._id, sv, { type: 'host_converged', flipped: 0 });
     return;
   }
@@ -2185,7 +2582,7 @@ async function phaseHostFlip(ctx: ActionCtx, c: Ctx) {
     return;
   }
   const target = { address: edge.addresses.v4, port: edge.listeners[0]?.edgePort ?? 443 };
-  if (r.hostPlan.length === 0 && !r.events.some((e) => e.code === 'host_plan')) {
+  if (!hostPlanCaptured(r)) {
     const matches = matchSlotHosts(
       hosts,
       [{ slotId: slot._id, slotKey: slot.slotKey, templateHostRemark: slot.templateHostRemark }],
@@ -2374,11 +2771,10 @@ async function phaseRollingBack(ctx: ActionCtx, c: Ctx) {
   const sv = r.stepVersion;
   const poll = edgeMs.poll(cfg);
   await ctx.runMutation(internal.edgeRotations.applyRollbackBinding, { rotationId: r._id });
-  if (
-    r.hostPlan.length === 0 ||
-    (!r.flippedAt && !r.events.some((e) => e.code === 'host_forward_written'))
-  ) {
-    // Nothing was written to the panel: the DB restore is the whole rollback.
+  if (r.hostPlan.length === 0 || !forwardWriteAttempted(r)) {
+    // No forward Host write was ever claimed: the DB restore is the whole
+    // rollback. (A claimed write whose settle was lost is NOT a shortcut: the
+    // panel may hold the new address, so it is re-observed below.)
     await advanceCall(ctx, r._id, sv, { type: 'rolled_back' });
     return;
   }

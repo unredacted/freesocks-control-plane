@@ -11,12 +11,17 @@
  *     resource walks `present → delete_requested → confirmed_gone` under a
  *     claim, reverse allocation order; the edge is `destroyed` only when every
  *     child is confirmed gone; the attempt cap parks it as `needs_operator`;
- *  5. pool upkeep (config-gated): publish a compatible standby into a free pool
- *     slot, or start a provision to reach `desiredPublished` / `standbyPerRelay`;
+ *  5. pool upkeep (config-gated: `edge.enabled` AND the per-action flag —
+ *     `autoPublishStandby` / `autoProvisionToDesired`; a manual `start` runs
+ *     regardless): publish a compatible standby into a free pool slot, or start
+ *     a provision to reach `desiredPublished` / `standbyPerRelay`;
  *  6. finish origin deletes once every managed edge is destroyed.
  *
+ * A quarantined origin is hands-off: nothing here describes, drops, destroys or
+ * publishes on it until the operator resolves the quarantine.
+ *
  * Every provider call runs under an edge op claim; every DB change is a
- * mutation in relayEdges / relayOrigins / relayRotations.
+ * mutation in edges / relays / edgeRotations / edgeReconcileMutations.
  */
 import { v } from 'convex/values';
 import { internalAction } from './_generated/server';
@@ -27,6 +32,7 @@ import { runWithCronOutcome } from './cronHeartbeat';
 import { edgeMs, type EdgeConfig } from './lib/edgeConfig';
 import { isDiscoverable } from './edges';
 import { publishedCount } from './lib/edges/pool';
+import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import type {
   Discovery,
   EdgeDescription,
@@ -37,6 +43,12 @@ import type {
 type Edge = Doc<'edges'>;
 
 const MAX_DISCOVER_ATTEMPTS = 3;
+/**
+ * Consecutive `unresolved` confirmDestroyed passes on one resource before the
+ * idempotent delete is re-issued (a thrown runDestroy may never have reached the
+ * provider, so confirming alone could wait forever).
+ */
+export const MAX_CONFIRM_ATTEMPTS = 3;
 
 export interface ReconcileReport {
   rekicked: number;
@@ -108,7 +120,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       nodeVersion: info.nodeVersion,
     });
   } catch (err) {
-    console.warn(`[relay-reconcile] runtimeInfo unavailable: ${errText(err)}`);
+    console.warn(`[edge-reconcile] runtimeInfo unavailable: ${errText(err)}`);
   }
 
   // 1. Re-kick stale rotations.
@@ -123,8 +135,13 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
   const rotatingOrigins = new Set(
     origins.filter((o) => o.activeRotationId).map((o) => o._id as string),
   );
+  const quarantinedOrigins = new Set(
+    origins.filter((o) => o.quarantine).map((o) => o._id as string),
+  );
 
   for (const edge of edges) {
+    // Nothing bypasses a quarantine: no describe, drop, destroy or forget.
+    if (quarantinedOrigins.has(edge.relayId as string)) continue;
     if (!edge.managed || !edge.accountId) {
       // Observe-only edges: nothing to discover, describe or destroy. A failed/
       // cancelled adopted row is simply forgotten.
@@ -181,7 +198,9 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           accountId: edge.accountId,
           ledger: ledgerOf(edge),
         });
-        await ctx.runMutation(internal.edges.recordDescribe, {
+        // A `gone` describe acts (status transition + pool drop + epoch bump, in
+        // that ONE mutation) only on the second consecutive observation.
+        const rec = await ctx.runMutation(internal.edges.recordDescribe, {
           edgeId: edge._id,
           state: desc.state,
           addresses: desc.addresses,
@@ -189,18 +208,11 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           resources: desc.resources,
         });
         report.described++;
-        if (desc.state === 'gone' && edge.publication !== 'unpublished') {
-          const r = await ctx.runMutation(internal.relays.dropFromPool, {
-            relayId: edge.relayId,
-            edgeId: edge._id,
-            reason: 'provider_gone',
-          });
-          if (r.ok && r.dropped) report.dropped++;
-        }
+        if (rec?.dropped) report.dropped++;
       }
     } catch (err) {
       report.errors++;
-      console.warn(`[relay-reconcile] edge ${edge._id}: ${errText(err)}`);
+      console.warn(`[edge-reconcile] edge ${edge._id}: ${errText(err)}`);
     }
   }
 
@@ -214,6 +226,8 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         continue;
       }
       if (!origin.enabled || origin.quarantine || origin.activeRotationId) continue;
+      // Automatic pool actions need the master switch; a manual start does not.
+      if (!cfg.enabled) continue;
       if (starts >= cfg.maxReconcileStartsPerTick) continue;
       const originEdges = edges.filter((e) => e.relayId === origin._id);
       const publishedNow = publishedCount(origin.publishedEdgeIds);
@@ -259,7 +273,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       }
     } catch (err) {
       report.errors++;
-      console.warn(`[relay-reconcile] origin ${origin.slug}: ${errText(err)}`);
+      console.warn(`[edge-reconcile] origin ${origin.slug}: ${errText(err)}`);
     }
   }
   return report;
@@ -401,7 +415,32 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
   report.settled++;
 }
 
-/** One destroy pass: confirm requested deletes, then request the next present resource (reverse order). */
+/**
+ * Whether the next pass on a `delete_requested` resource should RE-ISSUE the
+ * idempotent delete instead of only confirming: always for a provider without
+ * async-delete confirmation (its "confirm" is the delete anyway), and after
+ * MAX_CONFIRM_ATTEMPTS consecutive `unresolved` confirms on the same resource
+ * (a thrown runDestroy may never have reached the provider). Exported for tests.
+ */
+export function shouldReissueDelete(
+  edge: Pick<Edge, 'provider' | 'destroyConfirm'>,
+  resourceId: string,
+): boolean {
+  const caps = edge.provider ? EDGE_PROVIDER_CAPABILITIES[edge.provider] : undefined;
+  if (caps && !caps.asyncDelete) return true;
+  const c = edge.destroyConfirm;
+  return !!c && c.resourceId === resourceId && c.attempts >= MAX_CONFIRM_ATTEMPTS;
+}
+
+/**
+ * One destroy pass: confirm requested deletes (re-issuing the delete where
+ * confirmation cannot make progress), then request the next present resource
+ * (reverse order).
+ *
+ * Known gap (adapter contract): an adapter that answers `confirmed_gone` for a
+ * resource KIND it does not know cannot be told apart from a real 404 here —
+ * the DestroyOutcome carries no "unknown kind" signal; that belongs in the adapters.
+ */
 async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: ReconcileReport) {
   const accountId = edge.accountId!;
   if (edge.destroyAttempts >= cfg.maxDestroyAttempts) {
@@ -430,22 +469,26 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     claimMs: edgeMs.opClaim(cfg),
   });
   if (!cl.ok) return;
+  const confirming =
+    target.deleteState === 'delete_requested' && !shouldReissueDelete(edge, target.resourceId);
+  const priorConfirms =
+    edge.destroyConfirm?.resourceId === target.resourceId ? edge.destroyConfirm.attempts : 0;
   let out: DestroyOutcome;
   try {
-    out =
-      target.deleteState === 'delete_requested'
-        ? await ctx.runAction(internal.edgeProviderOps.confirmDestroyed, {
-            accountId,
-            resource: target,
-            ledger,
-          })
-        : await ctx.runAction(internal.edgeProviderOps.runDestroy, {
-            accountId,
-            resource: target,
-            ledger,
-          });
+    out = confirming
+      ? await ctx.runAction(internal.edgeProviderOps.confirmDestroyed, {
+          accountId,
+          resource: target,
+          ledger,
+        })
+      : await ctx.runAction(internal.edgeProviderOps.runDestroy, {
+          accountId,
+          resource: target,
+          ledger,
+        });
   } catch (err) {
-    // Unknown outcome: keep the claim's target; the next pass confirms (not re-deletes).
+    // Unknown outcome: keep the claim's target as `delete_requested`; the next
+    // pass confirms — or re-issues the delete once confirming cannot progress.
     await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
       opId: cl.opId,
@@ -455,6 +498,9 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     await ctx.runMutation(internal.edges.patchEdge, {
       edgeId: edge._id,
       destroyAttemptsDelta: 1,
+      destroyConfirm: confirming
+        ? { resourceId: target.resourceId, attempts: priorConfirms + 1 }
+        : { resourceId: target.resourceId, attempts: 0 },
     });
     throw err;
   }
@@ -471,6 +517,12 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
   await ctx.runMutation(internal.edges.patchEdge, {
     edgeId: edge._id,
     destroyAttemptsDelta: 1,
+    // A confirm that could not resolve counts; a (re-)issued delete or a gone
+    // resource resets the counter for whatever the walk targets next.
+    destroyConfirm:
+      confirming && out.status === 'unresolved'
+        ? { resourceId: target.resourceId, attempts: priorConfirms + 1 }
+        : null,
   });
   if (out.status === 'confirmed_gone' && remaining.length === 1) {
     await ctx.runMutation(internal.edgeReconcileMutations.markDestroyed, { edgeId: edge._id });
