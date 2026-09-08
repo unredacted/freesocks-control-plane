@@ -36,6 +36,7 @@
     ProbeRequestedResponse,
     EdgeRotationStartedResponse,
     EdgeLiveResponse,
+    type EdgeLive,
     type RelayAdmin,
     type EdgeSummary,
   } from '../../../shared/contracts/edges';
@@ -55,6 +56,40 @@
   };
   const onError = (title: string) => (err: unknown) =>
     toast.error(title, { description: apiErrorMessage(err) });
+
+  /**
+   * The relay / edge action POSTs answer one of three shapes. Handle each
+   * explicitly: a started rotation opens the drawer; a probe request reports its
+   * run count; a plain `{ ok }` is read for `ok:false` (a refusal the mutation
+   * returned instead of throwing, e.g. retry-destroy on a published edge) and
+   * surfaced by its code, never toasted as success.
+   */
+  const ActionResponse = EdgeRotationStartedResponse.or(ProbeRequestedResponse).or(EdgeOkResponse);
+  // No index signature on the `{ ok }` arm: the passthrough's `[k]: unknown`
+  // would defeat the `in` narrowing below.
+  type ActionResponse =
+    | { rotationId: string }
+    | { runIds: string[] }
+    | { ok: boolean; code?: string };
+  function onActionResponse(r: ActionResponse, okMessage: string) {
+    invalidate();
+    if ('rotationId' in r) {
+      openRotation = r.rotationId;
+      toast.success(okMessage);
+      return;
+    }
+    if ('runIds' in r) {
+      toast.success(
+        `Probe round requested (${r.runIds.length} run${r.runIds.length === 1 ? '' : 's'})`,
+      );
+      return;
+    }
+    if (r.ok === false) {
+      toast.error('Action refused', { description: r.code ?? 'refused' });
+      return;
+    }
+    toast.success(okMessage);
+  }
 
   // --- relay editor -------------------------------------------------------------
   type OriginDraft = {
@@ -195,22 +230,9 @@
   // --- relay actions ---------------------------------------------------------------
   const act = createMutation(() => ({
     mutationFn: ({ id, op, body }: { id: string; op: string; body?: Record<string, unknown> }) =>
-      apiClient.post(
-        `/api/v1/admin/edges/relays/${id}/${op}`,
-        body ?? {},
-        EdgeRotationStartedResponse.or(EdgeOkResponse).or(ProbeRequestedResponse),
-      ),
-    onSuccess: (r, vars) => {
-      invalidate();
-      if ('rotationId' in r && typeof r.rotationId === 'string') openRotation = r.rotationId;
-      toast.success(
-        vars.op === 'probe'
-          ? 'Probe round requested'
-          : vars.op === 'cancel'
-            ? 'Cancel requested'
-            : `${vars.op} started`,
-      );
-    },
+      apiClient.post(`/api/v1/admin/edges/relays/${id}/${op}`, body ?? {}, ActionResponse),
+    onSuccess: (r, vars) =>
+      onActionResponse(r, vars.op === 'cancel' ? 'Cancel requested' : `${vars.op} started`),
     onError: onError('Action refused'),
   }));
 
@@ -301,23 +323,21 @@
   const edges = adminRelayEdgesQuery(() => detailFor);
   const rotations = adminRelayRotationsQuery(() => detailFor);
   const endpoints = adminRelayEndpointsQuery(() => detailFor);
+  // The rotation drawer polls every 2s ONLY while the run is not terminal
+  // (adminRelayRotationQuery's refetchInterval returns false once `terminal`),
+  // and the query is disabled (`enabled: id() !== null`) when the drawer closes;
+  // unmounting this panel unsubscribes the observer, which stops the interval.
   let openRotation = $state<string | null>(null);
   const rotation = adminRelayRotationQuery(() => openRotation);
   let liveFor = $state<string | null>(null);
-  let live = $state<Record<string, unknown> | null>(null);
+  let live = $state<EdgeLive | null>(null);
+  // The provider's raw describe() payload is diagnostics-only: hidden until asked.
+  let showRawLive = $state(false);
 
   const edgeAct = createMutation(() => ({
     mutationFn: ({ id, op, body }: { id: string; op: string; body?: Record<string, unknown> }) =>
-      apiClient.post(
-        `/api/v1/admin/edges/${id}/${op}`,
-        body ?? {},
-        EdgeOkResponse.or(EdgeRotationStartedResponse).or(ProbeRequestedResponse),
-      ),
-    onSuccess: (r) => {
-      invalidate();
-      if ('rotationId' in r && typeof r.rotationId === 'string') openRotation = r.rotationId;
-      toast.success('Done');
-    },
+      apiClient.post(`/api/v1/admin/edges/${id}/${op}`, body ?? {}, ActionResponse),
+    onSuccess: (r, vars) => onActionResponse(r, `${vars.op.replace(/-/g, ' ')} done`),
     onError: onError('Edge action refused'),
   }));
   const edgeDelete = createMutation(() => ({
@@ -333,7 +353,8 @@
       apiClient.post(`/api/v1/admin/edges/${id}/live/refresh`, {}, EdgeLiveResponse),
     onSuccess: (r, id) => {
       liveFor = id;
-      live = (r.live as Record<string, unknown> | null) ?? null;
+      live = r.live;
+      showRawLive = false;
       invalidate();
     },
     onError: onError('Could not pull live data'),
@@ -654,8 +675,20 @@
                       {#if liveFor === e.id && live}
                         <tr class="border-t bg-muted/30"
                           ><td colspan="8" class="p-2">
+                            <div class="mb-1 flex items-center justify-between text-[11px]">
+                              <span class="text-muted-foreground"
+                                >Live at {formatDateTime(live.liveAt)}</span
+                              >
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                class="h-6 px-2 text-[11px]"
+                                onclick={() => (showRawLive = !showRawLive)}
+                                >{showRawLive ? 'Hide raw' : 'Show raw'}</Button
+                              >
+                            </div>
                             <pre class="max-h-64 overflow-auto text-[11px]">{JSON.stringify(
-                                live,
+                                showRawLive ? live.raw : live.summary,
                                 null,
                                 2,
                               )}</pre>

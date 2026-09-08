@@ -146,6 +146,14 @@ export const RATE_LIMIT_DEFAULTS = {
   // config.fetch/status.fetch because the same shared-exit/CGNAT populations
   // hit all three; a real user generates well under 20 route changes a minute.
   'telemetry.send': { max: 120, windowMs: MINUTE, enabled: true },
+  // Admin edges surface (per actor: admin id / API token / IP). Every call behind
+  // `provider-call` reaches a cloud provider's API (credential tests, option
+  // discovery, inventory + live-LB pulls, panel node refresh, render preview);
+  // `probe` requests measurement runs that spend third-party probe credits.
+  // Interactive operator use stays far below both; a leaked admin token or a
+  // hot CMS loop is what these bound.
+  'admin.edges.provider-call': { max: 30, windowMs: MINUTE, enabled: true },
+  'admin.edges.probe': { max: 30, windowMs: HOUR, enabled: true },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export type RateLimitPolicyKey = keyof typeof RATE_LIMIT_DEFAULTS;

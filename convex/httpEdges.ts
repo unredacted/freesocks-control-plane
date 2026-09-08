@@ -3,8 +3,11 @@
  * route per verb feeds a small dispatcher, so the HPKE policy is a clean
  * per-verb prefix rule (envelope.ts): GET reveals, POST seals both legs,
  * PATCH/PUT seal the body, DELETE carries nothing. Scopes: `admin:settings:*`
- * for the config namespace, `admin:servers:*` for everything else. Responses
- * are the shapes in src/shared/contracts/edges.ts.
+ * for the config namespace, `admin:servers:*` for everything else; the two
+ * POSTs that only compute (`render/preview`, `templates/validate`) need the
+ * READ scope. The POSTs that reach a cloud provider / spend probe credits are
+ * rate-limited per actor (`admin.edges.provider-call` / `admin.edges.probe`).
+ * Responses are the shapes in src/shared/contracts/edges.ts.
  */
 import { ConvexError } from 'convex/values';
 import type { HttpRouter } from 'convex/server';
@@ -13,7 +16,18 @@ import type { ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Id, TableNames } from './_generated/dataModel';
 import { sealed } from './lib/e2ee';
-import { errorJson, json, readJson, resolveAdmin, type AdminAuth } from './lib/http';
+import { sha256Hex } from './lib/crypto';
+import {
+  errorJson,
+  ipHashSubject,
+  json,
+  newRequestId,
+  readJson,
+  resolveAdmin,
+  resolveClientIp,
+  type AdminAuth,
+} from './lib/http';
+import type { RateLimitPolicyKey } from './lib/rateLimitPolicy';
 import type { InspectResult, Inventory } from './lib/edges/providers/types';
 import { parseTargetKey } from './probes';
 
@@ -41,8 +55,13 @@ function fail(err: unknown): Response {
     const code = data.code ?? 'error';
     return errorJson(code, data.message ?? 'Request failed', statusFromCode(code));
   }
-  console.error(`[edges] unhandled error: ${err instanceof Error ? err.message : String(err)}`);
-  return errorJson('admin.error', 'The request could not be completed.', 400);
+  // Never log the message of a non-ConvexError: Convex's ArgumentValidationError
+  // text embeds the offending argument VALUES (addresses, credentials, ids the
+  // caller typed). The class name + a request id is enough to correlate.
+  const requestId = newRequestId();
+  const kind = err instanceof Error ? err.constructor.name || err.name : typeof err;
+  console.error(`[edges] unhandled error kind=${kind} requestId=${requestId}`);
+  return errorJson('admin.error', 'The request could not be completed.', 400, { requestId });
 }
 
 const notFound = () => errorJson('not_found', 'Not found', 404);
@@ -62,29 +81,113 @@ const RESERVED = new Set([
   'edges',
 ]);
 
-function segments(req: Request): { parts: string[]; query: URLSearchParams } {
+/**
+ * Path → segments. Decoding happens BEFORE the scope check (a percent-encoded
+ * `config` must still resolve to the settings scope) and returns null on a
+ * malformed escape so the caller answers 400 instead of throwing (which was a
+ * 500 on the unsealed DELETE route).
+ */
+function segments(req: Request): { parts: string[]; query: URLSearchParams } | null {
   const url = new URL(req.url);
   const rest = url.pathname.startsWith(PREFIX) ? url.pathname.slice(PREFIX.length) : '';
-  let parts = rest.split('/').filter(Boolean).map(decodeURIComponent);
+  let parts: string[];
+  try {
+    parts = rest.split('/').filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return null;
+  }
   // The edge collection sits at the prefix root: `list` lists, `<id>/…` addresses one edge.
   if (parts[0] === 'list') parts = ['edges'];
   else if (parts[0] && !RESERVED.has(parts[0])) parts = ['edges', ...parts];
   return { parts, query: url.searchParams };
 }
 
+/** POSTs that only compute over stored state (no write, no provider call): read scope. */
+function isReadOnlyPost(parts: string[]): boolean {
+  return (
+    parts.length === 2 &&
+    ((parts[0] === 'render' && parts[1] === 'preview') ||
+      (parts[0] === 'templates' && parts[1] === 'validate'))
+  );
+}
+
 /** Config routes need the settings scope; everything else the servers scope. */
-function scopeFor(parts: string[], write: boolean): string {
+export function scopeFor(parts: string[], method: string): string {
   const ns = parts[0] === 'config' ? 'settings' : 'servers';
+  const write = method !== 'GET' && !(method === 'POST' && isReadOnlyPost(parts));
   return `admin:${ns}:${write ? 'write' : 'read'}`;
 }
 
-function wrap(write: boolean, handler: Handler, sealedRoute: boolean) {
+/**
+ * Which POSTs are throttled, and under which policy. `provider-call` = a live
+ * call to a cloud provider / the panel (or a CPU-bound preview render);
+ * `probe` = measurement runs that spend third-party credits.
+ */
+export function throttlePolicyFor(parts: string[]): RateLimitPolicyKey | null {
+  const [a, b, c, d] = parts;
+  if (a === 'providers' && (b === 'discover' || b === 'test-credentials') && !c) {
+    return 'admin.edges.provider-call';
+  }
+  if (a === 'providers' && b && c === 'inventory' && d === 'refresh') {
+    return 'admin.edges.provider-call';
+  }
+  if (a === 'relays' && b === 'node-candidates' && c === 'refresh') {
+    return 'admin.edges.provider-call';
+  }
+  if (a === 'edges' && b && c === 'live' && d === 'refresh') return 'admin.edges.provider-call';
+  if (a === 'render' && b === 'preview') return 'admin.edges.provider-call';
+  if (a === 'edges' && b && c === 'probe') return 'admin.edges.probe';
+  if (a === 'relays' && b && c === 'probe') return 'admin.edges.probe';
+  if (a === 'probes' && !b) return 'admin.edges.probe';
+  return null;
+}
+
+/**
+ * Per-actor rate-limit subject: the admin id for a cookie session, a hash of
+ * the bearer token for an `fsv1_` caller, else the (hashed) client IP. The
+ * token plaintext is never the subject (bucket names land in the DB).
+ */
+async function actorSubject(req: Request, admin: AdminAuth): Promise<string> {
+  if (admin.adminUserId) return `admin:${admin.adminUserId}`;
+  const m = /^Bearer\s+(\S+)$/i.exec((req.headers.get('authorization') ?? '').trim());
+  if (m) return `tok:${(await sha256Hex(m[1])).slice(0, 32)}`;
+  const ip = resolveClientIp(req);
+  return ip ? `ip:${await ipHashSubject(ip)}` : 'unknown';
+}
+
+async function throttle(
+  ctx: ActionCtx,
+  req: Request,
+  admin: AdminAuth,
+  policyKey: RateLimitPolicyKey,
+): Promise<Response | null> {
+  const rl = await ctx.runMutation(internal.rateLimits.enforce, {
+    policyKey,
+    subject: await actorSubject(req, admin),
+  });
+  if (rl.allowed) return null;
+  return errorJson('rate_limit.exceeded', 'Too many requests. Please slow down.', 429, {
+    retryAfterMs: rl.retryAfterMs,
+  });
+}
+
+function wrap(handler: Handler, sealedRoute: boolean) {
   const inner = async (ctx: ActionCtx, req: Request): Promise<Response> => {
-    const { parts, query } = segments(req);
-    const admin = await resolveAdmin(ctx, req, scopeFor(parts, write));
+    const seg = segments(req);
+    if (!seg) return errorJson('validation', 'Malformed path encoding', 400);
+    const { parts, query } = seg;
+    const method = req.method.toUpperCase();
+    const admin = await resolveAdmin(ctx, req, scopeFor(parts, method));
     if (!admin) return unauth();
+    if (method === 'POST') {
+      const policyKey = throttlePolicyFor(parts);
+      if (policyKey) {
+        const limited = await throttle(ctx, req, admin, policyKey);
+        if (limited) return limited;
+      }
+    }
     let body: Record<string, unknown> = {};
-    if (req.method !== 'GET' && req.method !== 'DELETE') {
+    if (method !== 'GET' && method !== 'DELETE') {
       body = await readJson<Record<string, unknown>>(req);
     }
     try {
@@ -128,8 +231,9 @@ const getHandler: Handler = async (ctx, _req, parts, _admin, _body, query) => {
     return notFound();
   }
   if (a === 'templates' && !b) {
-    // First use seeds the adapter defaults (no-op once any template exists).
-    await ctx.runMutation(internal.edgeTemplates.ensureDefaults, {});
+    // Read-only: provisioning falls back to the compiled adapter defaults when
+    // no row exists (edgeTemplates.resolveTemplateFor); seeding rows is the
+    // explicit `POST templates/ensure-defaults` (write scope).
     const [templates, schemas] = await Promise.all([
       ctx.runQuery(internal.edgeTemplates.list, {}),
       ctx.runQuery(internal.edgeTemplates.describeSchemas, {}),
@@ -339,6 +443,8 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
       );
     if (b === 'validate')
       return json(await ctx.runQuery(internal.edgeTemplates.validate, body as never));
+    if (b === 'ensure-defaults' && !c)
+      return json(await ctx.runMutation(internal.edgeTemplates.ensureDefaults, {}));
     return notFound();
   }
   if (a === 'profiles') {
@@ -530,13 +636,19 @@ const postHandler: Handler = async (ctx, _req, parts, admin, body) => {
           await ctx.runMutation(internal.edgeAdmin.resolveOperator, { edgeId, action, ...act }),
         );
       }
-      case 'probe':
-        return json(
-          await ctx.runMutation(internal.probes.requestProbes, {
-            target: { kind: 'edge', ref: edgeId as string },
-            trigger: 'manual',
-          }),
-        );
+      case 'probe': {
+        // Through requestMany so the operator's request is audited with the
+        // actor (requestProbes takes no actor arg). One target: a skip is an error.
+        const r = await ctx.runMutation(internal.probes.requestMany, {
+          targets: [{ kind: 'edge', ref: edgeId as string }],
+          ...act,
+        });
+        if (r.runIds.length === 0 && r.skipped.length > 0) {
+          const code = r.skipped[0].split(': ').pop() ?? 'error';
+          return errorJson(code, 'The probe could not be requested', statusFromCode(code));
+        }
+        return json({ runIds: r.runIds });
+      }
       default:
         return notFound();
     }
@@ -737,9 +849,9 @@ const deleteHandler: Handler = async (ctx, _req, parts, admin) => {
 };
 
 export function registerEdgeRoutes(http: HttpRouter): void {
-  http.route({ pathPrefix: PREFIX, method: 'GET', handler: wrap(false, getHandler, true) });
-  http.route({ pathPrefix: PREFIX, method: 'POST', handler: wrap(true, postHandler, true) });
-  http.route({ pathPrefix: PREFIX, method: 'PATCH', handler: wrap(true, patchHandler, true) });
-  http.route({ pathPrefix: PREFIX, method: 'PUT', handler: wrap(true, putHandler, true) });
-  http.route({ pathPrefix: PREFIX, method: 'DELETE', handler: wrap(true, deleteHandler, false) });
+  http.route({ pathPrefix: PREFIX, method: 'GET', handler: wrap(getHandler, true) });
+  http.route({ pathPrefix: PREFIX, method: 'POST', handler: wrap(postHandler, true) });
+  http.route({ pathPrefix: PREFIX, method: 'PATCH', handler: wrap(patchHandler, true) });
+  http.route({ pathPrefix: PREFIX, method: 'PUT', handler: wrap(putHandler, true) });
+  http.route({ pathPrefix: PREFIX, method: 'DELETE', handler: wrap(deleteHandler, false) });
 }
