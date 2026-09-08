@@ -5,6 +5,8 @@ import schema from './schema';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { jsonRes, mockFetch } from './lib/edges/testing/mockFetch';
+import { upsertSettingRow } from './appSettings';
+import { isStaleRotation, MAX_STEP_ERRORS } from './edgeRotations';
 
 const modules = import.meta.glob('./**/*.*s');
 
@@ -167,7 +169,61 @@ async function drain(t: ReturnType<typeof convexTest>, rotationId: Id<'edgeRotat
   throw new Error('drain: the rotation did not settle');
 }
 
-describe('relayRotations: replace', () => {
+/** Drive one step at a time until the rotation reaches `phase` (throws on a terminal one). */
+async function driveUntil(
+  t: ReturnType<typeof convexTest>,
+  rotationId: Id<'edgeRotations'>,
+  phase: string,
+) {
+  for (let i = 0; i < 400; i++) {
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    if (r.phase === phase) return r;
+    if (['done', 'failed', 'rolled_back', 'quarantined', 'cancelled'].includes(r.phase))
+      throw new Error(`driveUntil: reached terminal ${r.phase} before ${phase}`);
+    // Run exactly one step by hand: the scheduled copies run later (in `drain`)
+    // and are harmless — each step does one bounded unit of work off fresh state.
+    await t.action(internal.edgeRotations.step, { rotationId });
+  }
+  throw new Error(`driveUntil: never reached ${phase}`);
+}
+
+/** Every rotation start-guard (quarantine / running rotation) must hold for these writers too. */
+async function expectPoolWritersRefused(
+  t: ReturnType<typeof convexTest>,
+  relayId: Id<'relays'>,
+  slotId: Id<'relaySlots'>,
+  edgeId: Id<'edges'>,
+  code: RegExp,
+) {
+  await expect(
+    t.mutation(internal.relays.publishEdge, { relayId, edgeId, poolIndex: 1 }),
+  ).rejects.toThrow(code);
+  await expect(t.mutation(internal.relays.unpublishEdge, { relayId, edgeId })).rejects.toThrow(
+    code,
+  );
+  await expect(
+    t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId,
+      ipv4: '198.51.100.77',
+      publish: true,
+    }),
+  ).rejects.toThrow(code);
+  await expect(
+    t.mutation(internal.relays.dropFromPool, { relayId, edgeId, reason: 'test' }),
+  ).rejects.toThrow(code);
+  await expect(t.mutation(internal.edgeAdmin.deleteEdge, { edgeId })).rejects.toThrow(
+    /Unpublish|quarantin|rotation/,
+  );
+  await expect(
+    t.mutation(internal.edgeAdmin.resolveOperator, { edgeId, action: 'reactivate' }),
+  ).rejects.toThrow(/Unpublish|quarantin|rotation/);
+  await expect(
+    t.mutation(internal.edgeReconcileMutations.retryDestroy, { edgeId }),
+  ).rejects.toThrow(/Unpublish|quarantin|rotation|published/);
+}
+
+describe('edgeRotations: replace', () => {
   test('full replace: provisions, verifies, publishes at index 0, flips the template Host, drains the old edge', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
@@ -284,6 +340,13 @@ describe('relayRotations: replace', () => {
     for (const row of admin.audit)
       expect((row.payload as { rotationId?: string }).rotationId ?? rotationId).toBe(rotationId);
     expect(JSON.stringify(admin.audit)).not.toContain(NEW_EDGE);
+    // The row remembers every audit id it produced (the trail no longer scans "newest N").
+    expect(r.auditIds!.length).toBeGreaterThanOrEqual(4);
+    expect(r.viaStandby).toBe(false);
+    expect(r.createdEdgeId).toBe(r.toEdgeId);
+    expect(r.hostPlanCaptured).toBe(true);
+    expect(r.forwardWriteAttempted).toBe(true);
+    expect(r.slotId).toBeDefined();
   });
 
   test('burn: the old edge is marked burned with the shorter drain', async () => {
@@ -345,6 +408,18 @@ describe('relayRotations: replace', () => {
     await expect(t.mutation(internal.relays.requestDelete, { id: relayId })).rejects.toThrow(
       /quarantine/,
     );
+    // ...including every other pool / edge writer.
+    const slot = (await t.query(internal.relaySlots.listByRelay, { relayId }))[0];
+    await expectPoolWritersRefused(
+      t,
+      relayId,
+      slot.id as Id<'relaySlots'>,
+      r.toEdgeId!,
+      /quarantin/,
+    );
+    await expect(
+      t.mutation(internal.edgeAdmin.deleteEdge, { edgeId: r.toEdgeId! }),
+    ).rejects.toThrow(/quarantin/);
     // Operator resolves keeping the previous binding.
     await t.mutation(internal.edgeRotations.resolveQuarantine, { relayId, keep: 'previous' });
     const after = (await t.query(internal.relays.get, { id: relayId }))!;
@@ -540,7 +615,7 @@ describe('relayRotations: replace', () => {
   });
 });
 
-describe('relayRotations: provision + publish kinds', () => {
+describe('edgeRotations: provision + publish kinds', () => {
   test('provision with publishOnDone fills the next free pool index (index 1: no Host flip)', async () => {
     vi.useFakeTimers();
     const world = fakeWorld();
@@ -623,6 +698,434 @@ describe('relayRotations: provision + publish kinds', () => {
     expect(audit.find((a) => a.action === 'edge.rotation_failed')?.payload).toMatchObject({
       relaySlug: 'node-one',
       code: 'no_qualified_account',
+    });
+  });
+});
+
+describe('edgeRotations: recovery, guards and bounds', () => {
+  /** A rotation parked in `rolling_back` with a captured plan; the caller sets the panel state. */
+  async function rollingBackRow(
+    t: ReturnType<typeof convexTest>,
+    relayId: Id<'relays'>,
+    slotId: Id<'relaySlots'>,
+    oldEdgeId: Id<'edges'>,
+    extra: Record<string, unknown>,
+  ) {
+    const { edgeId: newEdgeId } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId,
+      ipv4: NEW_EDGE,
+    });
+    const now = Date.now();
+    const rotationId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert('edgeRotations', {
+        relayId,
+        kind: 'replace',
+        trigger: 'manual',
+        burn: false,
+        force: false,
+        targetEdgeId: oldEdgeId,
+        toEdgeId: newEdgeId,
+        viaStandby: true,
+        phase: 'rolling_back',
+        stepVersion: 7,
+        cancelRequested: false,
+        outcome: 'hosts_changed',
+        hostPlan: [{ uuid: HOST_UUID, oldAddress: OLD_EDGE, oldPort: 443, inboundUuid: INBOUND }],
+        hostPlanCaptured: true,
+        previousBinding: { edgeId: oldEdgeId, slotId, poolIndex: 0 },
+        flipAttempts: 1,
+        rollbackAttempts: 0,
+        pollAttempts: 0,
+        events: [],
+        startedAt: now,
+        updatedAt: now,
+        ...extra,
+      } as never);
+      await ctx.db.patch(relayId, { activeRotationId: id, updatedAt: now });
+      // The pool already says "new edge at index 0" (the publish landed).
+      await ctx.db.patch(oldEdgeId, {
+        publication: 'draining',
+        status: 'draining',
+        poolIndex: undefined,
+        drainUntil: now + 60_000,
+        updatedAt: now,
+      });
+      await ctx.db.patch(newEdgeId, { publication: 'published', poolIndex: 0, updatedAt: now });
+      await ctx.db.patch(relayId, { publishedEdgeIds: [newEdgeId], updatedAt: now });
+      await ctx.scheduler.runAfter(0, internal.edgeRotations.step, { rotationId: id });
+      await ctx.db.patch(id, { nextStepAt: now });
+      return id;
+    });
+    return { rotationId, newEdgeId };
+  }
+
+  test('rollback after a forward PATCH that landed but never settled re-observes the panel and writes the old address back', async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld();
+    const { t, relayId, slotId, oldEdgeId } = await seed();
+    // The PATCH reached the panel (Host now points at the new edge)...
+    world.panelHosts[0].address = NEW_EDGE;
+    // ...but the action died before settling: no flippedAt, no success event,
+    // only the claim-time flag says a write was attempted.
+    const { rotationId } = await rollingBackRow(t, relayId, slotId, oldEdgeId, {
+      forwardWriteAttempted: true,
+    });
+    // A cancel during the rollback is recorded, not honoured.
+    const cancel = await t.mutation(internal.edgeRotations.requestCancel, { rotationId });
+    expect(cancel).toMatchObject({ ok: true, phase: 'rolling_back', deferred: true });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('rolled_back');
+    expect(r.events.map((e) => e.code)).toContain('cancel_requested');
+    // The panel and the DB agree on the previous binding again.
+    expect(world.panelHosts[0].address).toBe(OLD_EDGE);
+    expect(world.patches()).toBe(1);
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.publishedEdgeIds).toEqual([oldEdgeId]);
+    expect(origin.activeRotationId).toBeUndefined();
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((a) => a.action === 'admin.edge.cancel')?.payload).toMatchObject({
+      deferred: true,
+    });
+  });
+
+  test('legacy rows without the flag still take the "nothing written" shortcut (event inference)', async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld();
+    const { t, relayId, slotId, oldEdgeId } = await seed();
+    const { rotationId } = await rollingBackRow(t, relayId, slotId, oldEdgeId, {});
+    await drain(t, rotationId);
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe(
+      'rolled_back',
+    );
+    expect(world.patches()).toBe(0);
+  });
+
+  test('a running rotation blocks every other pool writer and a hostManaged flip', async () => {
+    fakeWorld();
+    const { t, relayId, slotId, oldEdgeId } = await seed();
+    const { edgeId: standby } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId,
+      ipv4: NEW_EDGE,
+    });
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+    });
+    await expectPoolWritersRefused(t, relayId, slotId, standby, /rotation is running/);
+    await expect(
+      t.mutation(internal.relays.update, { id: relayId, hostManaged: false }),
+    ).rejects.toThrow(/rotation is running/);
+    // Other relay edits are fine.
+    await t.mutation(internal.relays.update, { id: relayId, probeNode: true });
+    await t.mutation(internal.edgeRotations.requestCancel, { rotationId });
+  });
+
+  test('hostManaged turned off mid-rotation fails the replace with a rollback instead of "converging"', async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld();
+    const { t, relayId, oldEdgeId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+    });
+    await driveUntil(t, rotationId, 'host_flipping');
+    await t.run((ctx) => ctx.db.patch(relayId, { hostManaged: false }));
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('rolled_back');
+    expect(r.outcome).toBe('hosts_unmanaged');
+    expect(world.patches()).toBe(0);
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.publishedEdgeIds).toEqual([oldEdgeId]);
+  });
+
+  test('a standby provision is finalized even when its profile was disabled mid-run', async () => {
+    vi.useFakeTimers();
+    fakeWorld();
+    const { t, relayId, profileId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      publishOnDone: false,
+    });
+    await driveUntil(t, rotationId, 'provisioning');
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('done');
+    expect(r.outcome).toBe('standby');
+    const edge = (await t.query(internal.edges.get, { id: r.toEdgeId! }))!;
+    expect(edge).toMatchObject({ status: 'active', publication: 'unpublished' });
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.standbyEdgeIds).toEqual([r.toEdgeId]);
+  });
+
+  test('a requested slot that is retired fails the run (slot_not_found) instead of picking another slot', async () => {
+    vi.useFakeTimers();
+    fakeWorld();
+    const { t, relayId, slotId, profileId } = await seed();
+    // A second, healthy slot the picker would otherwise fall back to.
+    await t.mutation(internal.relaySlots.upsert, {
+      relayId,
+      slotKey: 'v',
+      profileSlug: 'prof-u',
+      inboundTag: 'VLESS_RELAY_V',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '44444444-4444-4444-8444-444444444444',
+      originPort: 8443,
+    });
+    void profileId;
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+      publishOnDone: false,
+      slotId,
+    });
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.slotId).toBe(slotId);
+    // Retire it between start and select.
+    await t.run((ctx) => ctx.db.patch(slotId, { retired: true, updatedAt: Date.now() }));
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('failed');
+    expect(r.outcome).toBe('slot_not_found');
+    expect(r.toEdgeId).toBeUndefined();
+    // And a start naming a retired slot is refused outright.
+    await expect(
+      t.mutation(internal.edgeRotations.start, {
+        relayId,
+        kind: 'provision',
+        trigger: 'manual',
+        slotId,
+      }),
+    ).rejects.toThrow(/slot_not_found|retired/);
+  });
+
+  test('wall-clock cap: an over-long flip rolls back; a confirming run past the cap quarantines', async () => {
+    vi.useFakeTimers();
+    const world = fakeWorld();
+    const { t, relayId, oldEdgeId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+    });
+    await driveUntil(t, rotationId, 'host_flipping');
+    await t.run((ctx) => ctx.db.patch(rotationId, { startedAt: Date.now() - 3 * 3600_000 }));
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('rolled_back');
+    expect(r.outcome).toBe('rotation_timeout');
+    expect(world.patches()).toBe(0);
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publishedEdgeIds).toEqual([
+      oldEdgeId,
+    ]);
+
+    // Second run: reach confirming, then exhaust the step-error budget.
+    const second = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+      force: true,
+    });
+    await driveUntil(t, second.rotationId, 'confirming');
+    await t.run((ctx) => ctx.db.patch(second.rotationId, { stepErrors: MAX_STEP_ERRORS }));
+    await drain(t, second.rotationId);
+    const r2 = (await t.query(internal.edgeRotations.get, { id: second.rotationId }))!;
+    expect(r2.phase).toBe('quarantined');
+    const origin = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(origin.quarantine?.reason).toMatch(/step_errors_exhausted during confirming/);
+  });
+
+  test('an unexpected step throw is counted on the row (stepErrors)', async () => {
+    fakeWorld();
+    const { t, relayId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+    });
+    const before = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    await t.mutation(internal.edgeRotations.advance, {
+      rotationId,
+      stepVersion: before.stepVersion,
+      event: { type: 'progress', delayMs: 0, detail: 'step error: boom', countError: true },
+    });
+    const after = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(after.stepErrors).toBe(1);
+    expect(after.stepVersion).toBe(before.stepVersion + 1);
+    await t.mutation(internal.edgeRotations.requestCancel, { rotationId });
+  });
+
+  test('rekick fences the stale actor: the step version bumps and its later write is ignored', async () => {
+    fakeWorld();
+    const { t, relayId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+    });
+    const before = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    await t.mutation(internal.edgeRotations.rekick, { rotationId });
+    const after = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(after.stepVersion).toBe(before.stepVersion + 1);
+    expect(after.events.map((e) => e.code)).toContain('rekicked');
+    // The actor that read the old version gets nothing through.
+    const stale = await t.mutation(internal.edgeRotations.advance, {
+      rotationId,
+      stepVersion: before.stepVersion,
+      event: { type: 'fail', code: 'stale_actor', rollback: false },
+    });
+    expect(stale).toEqual({ ok: false });
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe('select');
+    await t.mutation(internal.edgeRotations.requestCancel, { rotationId });
+  });
+
+  test('isStaleRotation: scheduled-not-started vs started-and-hung', () => {
+    const now = 10_000_000;
+    // Scheduled long ago, never started → stale.
+    expect(isStaleRotation({ nextStepAt: now - 120_000, stepStartedAt: undefined }, now)).toBe(
+      true,
+    );
+    // Scheduled long ago, but the step started recently → running, not stale.
+    expect(isStaleRotation({ nextStepAt: now - 120_000, stepStartedAt: now - 5_000 }, now)).toBe(
+      false,
+    );
+    // Started, but too long ago → the action died → stale.
+    expect(
+      isStaleRotation({ nextStepAt: now - 20 * 60_000, stepStartedAt: now - 15 * 60_000 }, now),
+    ).toBe(true);
+    // A start that predates the schedule belongs to the previous step → not started.
+    expect(isStaleRotation({ nextStepAt: now - 120_000, stepStartedAt: now - 130_000 }, now)).toBe(
+      true,
+    );
+    // Within grace → never stale.
+    expect(isStaleRotation({ nextStepAt: now - 1_000, stepStartedAt: undefined }, now)).toBe(false);
+  });
+
+  test('template changed before any provider call: the run fails and the allocation is refunded', async () => {
+    vi.useFakeTimers();
+    fakeWorld();
+    const { t, relayId, accountId } = await seed();
+    const { id: templateId } = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'upcloud',
+      name: 'tpl-u',
+      params: {},
+      accountId,
+      isDefault: true,
+    });
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'provision',
+      trigger: 'manual',
+    });
+    await driveUntil(t, rotationId, 'provisioning');
+    expect((await t.run((ctx) => ctx.db.get(accountId)))!.allocationsToday).toBe(1);
+    await t.mutation(internal.edgeTemplates.update, {
+      id: templateId,
+      params: { plan: 'production-small' },
+    });
+    await drain(t, rotationId);
+    const r = (await t.query(internal.edgeRotations.get, { id: rotationId }))!;
+    expect(r.phase).toBe('failed');
+    expect(r.outcome).toBe('template_changed');
+    expect(r.events.map((e) => e.code)).toContain('allocation_refunded');
+    expect((await t.run((ctx) => ctx.db.get(accountId)))!.allocationsToday).toBe(0);
+  });
+
+  test('keep:current at resolve time re-checks publishability of the new edge', async () => {
+    vi.useFakeTimers();
+    fakeWorld({ vanishAfterFirstPatch: true });
+    const { t, relayId, oldEdgeId, profileId } = await seed();
+    const { rotationId } = await t.mutation(internal.edgeRotations.start, {
+      relayId,
+      kind: 'replace',
+      trigger: 'manual',
+      targetEdgeId: oldEdgeId,
+    });
+    await drain(t, rotationId);
+    expect((await t.query(internal.edgeRotations.get, { id: rotationId }))!.phase).toBe(
+      'quarantined',
+    );
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: false });
+    await expect(
+      t.mutation(internal.edgeRotations.resolveQuarantine, { relayId, keep: 'current' }),
+    ).rejects.toThrow(/profile_disabled/);
+    await t.mutation(internal.protocolProfiles.update, { id: profileId, enabled: true });
+    await t.mutation(internal.edgeRotations.resolveQuarantine, { relayId, keep: 'current' });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.quarantine).toBeUndefined();
+  });
+
+  test('publishStandby goes through the start guards: the concurrency cap holds and the run is audited as a publish', async () => {
+    fakeWorld();
+    const { t, relayId, slotId } = await seed();
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.enabled', 'true'));
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.maxConcurrentRotations', '1'));
+    // Free index 0 on a Host-managed origin + a publishable standby.
+    await t.mutation(internal.relays.unpublishEdge, {
+      relayId,
+      edgeId: (await t.query(internal.relays.get, { id: relayId }))!.publishedEdgeIds[0]!,
+      keepActive: true,
+    });
+    const { edgeId: standby } = await t.mutation(internal.relays.adoptEdge, {
+      relayId,
+      slotId,
+      ipv4: NEW_EDGE,
+    });
+    // Another origin already holds the single allowed rotation.
+    const { id: other } = await t.mutation(internal.relays.upsertBySlug, {
+      slug: 'node-two',
+      backendServerSlug: 'panel-a',
+      nodeHostname: 'node-two',
+      originAddress: '203.0.113.11',
+    });
+    await t.mutation(internal.relaySlots.upsert, {
+      relayId: other,
+      slotKey: 'u',
+      profileSlug: 'prof-u',
+      inboundTag: 'VLESS_RELAY_U',
+      configProfileUuid: '11111111-1111-4111-8111-111111111111',
+      configProfileInboundUuid: '55555555-5555-4555-8555-555555555555',
+      originPort: 443,
+    });
+    const busy = await t.mutation(internal.edgeRotations.start, {
+      relayId: other,
+      kind: 'provision',
+      trigger: 'manual',
+    });
+    const blocked = await t.mutation(internal.edgeReconcileMutations.publishStandby, {
+      relayId,
+      candidates: [standby],
+    });
+    expect(blocked).toEqual({ published: false, rotationId: null });
+    await t.mutation(internal.edgeRotations.requestCancel, { rotationId: busy.rotationId });
+    await t.run((ctx) =>
+      ctx.db.patch(busy.rotationId, { phase: 'cancelled', finishedAt: Date.now() }),
+    );
+    const started = await t.mutation(internal.edgeReconcileMutations.publishStandby, {
+      relayId,
+      candidates: [standby],
+    });
+    expect(started.published).toBe(false);
+    expect(started.rotationId).not.toBeNull();
+    const rot = (await t.query(internal.edgeRotations.get, { id: started.rotationId! }))!;
+    expect(rot).toMatchObject({ kind: 'publish', trigger: 'reconcile', toEdgeId: standby });
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((a) => a.action === 'admin.edge.publish')?.payload).toMatchObject({
+      slug: 'node-one',
+      trigger: 'reconcile',
+      rotationId: started.rotationId,
+      edgeId: standby,
     });
   });
 });

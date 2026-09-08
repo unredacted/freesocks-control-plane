@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the rotation machine (convex/relayRotations.ts): phase
+ * Pure helpers for the rotation machine (convex/edgeRotations.ts): phase
  * bookkeeping, the weighted progress bar, the bounded live log, and the
  * selection rules (compatible standby first, then a qualified account with
  * capacity + budget).

@@ -283,9 +283,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.profile.sni.retire': ['profileSlug', 'count'],
   'edge.profile.sni.reactivate': ['profileSlug', 'count'],
   'relay.create': ['slug'],
-  'relay.update': ['slug'],
-  'relay.delete': ['slug'],
-  'relay.upsert': ['slug', 'created'],
+  // `changed` = names of the fields the write touched (never their values);
+  // the three booleans are the operator-owned knob flips, when they changed.
+  'relay.update': ['slug', 'changed', 'autoRotate', 'hostManaged', 'enabled'],
+  'relay.delete': ['slug', 'force'],
+  'relay.upsert': ['slug', 'created', 'changed'],
   'edge.adopted': ['slug', 'edgeId', 'managed', 'publication'],
   'relay.slot.upsert': ['relaySlug', 'slotKey', 'created'],
   'relay.slot.retire': ['relaySlug', 'slotKey'],
@@ -294,6 +296,11 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'edge.destroyed': ['relaySlug', 'provider', 'edgeId'],
   'edge.destroy_failed': ['relaySlug', 'provider', 'edgeId', 'attempts'],
   'edge.delete': ['relaySlug', 'edgeId', 'force'],
+  // Operator resolutions of a parked (`needs_operator`) edge.
+  'edge.destroy': ['relaySlug', 'edgeId', 'provider'],
+  'edge.forget': ['relaySlug', 'edgeId', 'provider'],
+  'edge.reactivate': ['relaySlug', 'edgeId', 'provider'],
+  'edge.retry_destroy': ['relaySlug', 'edgeId', 'provider'],
   'edge.burned': ['relaySlug', 'trigger', 'edgeId', 'rotationId'],
   'edge.rotated': [
     'relaySlug',
@@ -337,7 +344,8 @@ export const AUDIT_PAYLOAD_ALLOWLIST: Readonly<Record<string, readonly string[]>
   'admin.edge.rotate': ['slug', 'trigger', 'force', 'rotationId'],
   'admin.edge.burn': ['slug', 'trigger', 'force', 'rotationId'],
   'admin.edge.provision': ['slug', 'trigger', 'rotationId'],
-  'admin.edge.cancel': ['slug', 'rotationId'],
+  'admin.edge.publish': ['slug', 'trigger', 'rotationId', 'edgeId'],
+  'admin.edge.cancel': ['slug', 'rotationId', 'deferred'],
 };
 
 /**
