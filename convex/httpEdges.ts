@@ -45,6 +45,8 @@ type Handler = (
 function statusFromCode(code: string): number {
   if (code === 'not_found') return 404;
   if (code === 'conflict' || code.startsWith('edge.')) return 409;
+  // The hourly probe budget is a quota: answer like a rate limit.
+  if (code === 'probe.budget_exhausted') return 429;
   if (code === 'validation') return 400;
   return 400;
 }
