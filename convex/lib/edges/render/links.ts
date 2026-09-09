@@ -6,13 +6,10 @@
  * list (other transports, comments) passes through untouched.
  */
 import { bracketIfV6 } from '../ip';
+import { decodeBase64Loose } from './base64';
 import { orderEndpoints, type RenderInput, type RenderOutput } from './types';
 
 const PROXY_LINE_RE = /^(vless|vmess|trojan|ss|ssr|hy2|hysteria2|tuic):\/\//i;
-
-function looksLikeBase64(s: string): boolean {
-  return /^[A-Za-z0-9+/=\r\n]+$/.test(s) && s.replace(/[\r\n]/g, '').length % 4 === 0;
-}
 
 export function remarkOf(line: string): string | null {
   const i = line.indexOf('#');
@@ -53,15 +50,13 @@ export function renderLinks(input: RenderInput): RenderOutput {
   if (!trimmed) return { body: input.body, applied: false, reason: 'empty', emitted: 0 };
   let encoded = false;
   let body = trimmed;
-  if (looksLikeBase64(trimmed) && !PROXY_LINE_RE.test(trimmed)) {
-    try {
-      const decoded = atob(trimmed.replace(/[\r\n]/g, ''));
-      if (PROXY_LINE_RE.test(decoded.trim())) {
-        encoded = true;
-        body = decoded;
-      }
-    } catch {
-      /* not base64 */
+  if (!PROXY_LINE_RE.test(trimmed)) {
+    // Either alphabet, padded or not (mirrors and some panels emit URL-safe,
+    // unpadded bodies); anything that does not decode to a link list is text.
+    const decoded = decodeBase64Loose(trimmed);
+    if (decoded !== null && PROXY_LINE_RE.test(decoded.trim())) {
+      encoded = true;
+      body = decoded;
     }
   }
   const lines = body.split('\n').map((l) => l.trim());
@@ -79,6 +74,9 @@ export function renderLinks(input: RenderInput): RenderOutput {
         replacedAny = true;
         out.push('__RELAY_ENDPOINTS__');
       }
+      // With drop on, the template line goes whatever its scheme: it carries
+      // the origin/index-0 address, and an unrewritable scheme (vmess blob)
+      // is no reason to hand it out.
       if (!input.rule.dropTemplateEntries) out.push(line);
       continue;
     }
@@ -100,6 +98,8 @@ export function renderLinks(input: RenderInput): RenderOutput {
     if (line) emitted.push(line);
   }
   if (emitted.length === 0 && !input.rule.dropTemplateEntries) {
+    // Endpoints were assigned but none could be rendered from this template
+    // and the operator keeps templates: nothing to change.
     return { body: input.body, applied: false, reason: 'no_endpoints_rendered', emitted: 0 };
   }
   // Drop-only (no endpoints, templates dropped): the marker expands to nothing.

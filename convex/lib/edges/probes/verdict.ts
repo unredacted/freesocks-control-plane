@@ -66,26 +66,57 @@ export function countryVerdict(perSource: readonly SourceSummary[]): Verdict {
 }
 
 /**
- * Share of the configured countries where the edge is unreachable (mixed
- * counts half). Countries without a verdict count as nothing (not as ok).
+ * One country across a target's listener PORTS (each port's verdict is the
+ * cross-source `countryVerdict` of that port's rows). A blocked listener
+ * blocks that slot, so any `unreachable` port makes the country unreachable;
+ * `mixed` passes through next (a single-port target keeps its verdict);
+ * `reachable` needs every port with a verdict to be reachable; otherwise
+ * `unknown`. Ports without a verdict (`unknown`) never veto the others.
  */
-export function probeScore(
-  byCountry: ReadonlyArray<{ country: string; verdict: Verdict }>,
-  configured: readonly string[],
-): number {
-  if (configured.length === 0) return 0;
-  let acc = 0;
-  for (const c of configured) {
-    const v = byCountry.find((b) => b.country === c)?.verdict;
-    if (v === 'unreachable') acc += 1;
-    else if (v === 'mixed') acc += 0.5;
-  }
-  return Math.min(1, acc / configured.length);
+export function portRollup(perPort: readonly Verdict[]): Verdict {
+  const decided = perPort.filter((v) => v !== 'unknown');
+  if (decided.length === 0) return 'unknown';
+  if (decided.includes('unreachable')) return 'unreachable';
+  if (decided.includes('mixed')) return 'mixed';
+  return 'reachable';
 }
 
-/** Countries where the edge is unreachable (the detector's edge-level evidence). */
-export function unreachableCountries(
-  byCountry: ReadonlyArray<{ country: string; verdict: Verdict }>,
-): string[] {
-  return byCountry.filter((b) => b.verdict === 'unreachable').map((b) => b.country);
+/** One country's cross-source verdict plus whether the target was ever reachable from there. */
+export interface CountryVerdict {
+  country: string;
+  verdict: Verdict;
+  /**
+   * The target had a `reachable` verdict from this country earlier. Only a
+   * TRANSITION reachable → unreachable is block evidence: a country that has
+   * never reached the target says nothing about a block (a provider range the
+   * country never carried, a fresh edge nobody has tried yet).
+   */
+  wasReachable: boolean;
+}
+
+/**
+ * Worst configured country: 1 when any configured country the target was once
+ * reachable from is now `unreachable` (an agreed verdict IS the block signal; a
+ * share across countries would only dilute a single-country block), 0.5 when
+ * the worst is `mixed`, else 0. Countries without a verdict count as nothing.
+ */
+export function probeScore(
+  byCountry: ReadonlyArray<CountryVerdict>,
+  configured: readonly string[],
+): number {
+  let worst = 0;
+  for (const c of configured) {
+    const b = byCountry.find((x) => x.country === c);
+    if (!b || !b.wasReachable) continue;
+    if (b.verdict === 'unreachable') return 1;
+    if (b.verdict === 'mixed') worst = Math.max(worst, 0.5);
+  }
+  return worst;
+}
+
+/** Countries where a once-reachable target is now unreachable (the detector's edge-level evidence). */
+export function unreachableCountries(byCountry: ReadonlyArray<CountryVerdict>): string[] {
+  return byCountry
+    .filter((b) => b.verdict === 'unreachable' && b.wasReachable)
+    .map((b) => b.country);
 }

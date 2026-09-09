@@ -27,6 +27,18 @@ describe('edgeConfig sanitizers', () => {
     expect(sanitizeInt(2.6, 1, 10, 3)).toBe(3);
   });
 
+  test('probe agreement needs at least two networks; source spacing is bounded', () => {
+    expect(sanitizeRelayConfig({ 'probe.agreementVantages': 1 }).probe.agreementVantages).toBe(2);
+    expect(sanitizeRelayConfig({ 'probe.agreementVantages': 0 }).probe.agreementVantages).toBe(2);
+    expect(sanitizeRelayConfig({ 'probe.agreementVantages': 4 }).probe.agreementVantages).toBe(4);
+    expect(EDGE_DEFAULTS.probe.sourceSpacingMs).toBe(1500);
+    expect(sanitizeRelayConfig({ 'probe.sourceSpacingMs': -5 }).probe.sourceSpacingMs).toBe(0);
+    expect(sanitizeRelayConfig({ 'probe.sourceSpacingMs': 1e9 }).probe.sourceSpacingMs).toBe(
+      60_000,
+    );
+    expect(EDGE_KEYS['probe.sourceSpacingMs']).toBe('edge.probe.sourceSpacingMs');
+  });
+
   test('clearBelow is forced under suspectAt (hysteresis)', () => {
     const cfg = sanitizeRelayConfig({ 'detect.suspectAt': 0.5, 'detect.clearBelow': 0.9 });
     expect(cfg.detect.suspectAt).toBe(0.5);

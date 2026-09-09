@@ -27,6 +27,36 @@ import { randomHex, sha256Hex } from './lib/crypto';
 import type { MirrorContext } from './subscriptions';
 import type { ActiveMirrorPage } from './subscriptions';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
+import type { Id } from './_generated/dataModel';
+
+/**
+ * Relay rendering for a mirror body (docs/edges.md): a mirror serves the same
+ * rendered endpoints as the fronted route (link-list family: no User-Agent
+ * here). Returns the body to upload plus the origin's publication epoch it was
+ * rendered against (null when rendering is inactive for the node).
+ */
+async function renderMirrorBody(
+  ctx: ActionCtx,
+  sub: { id: Id<'subscriptions'>; backendServerId: Id<'backendServers'> | null | undefined },
+  node: string | undefined,
+  content: string,
+): Promise<{ content: string; renderedEpoch: number | null }> {
+  if (!node || !sub.backendServerId) return { content, renderedEpoch: null };
+  const rctx = await ctx.runQuery(internal.edgeRender.contextForSubscription, {
+    subscriptionId: sub.id,
+    family: 'other',
+    nodeHostname: node,
+  });
+  if (!rctx) return { content, renderedEpoch: null };
+  const renderKey =
+    rctx.renderKey ??
+    (await ctx.runMutation(internal.subscriptions.ensureRenderKey, { subscriptionId: sub.id }));
+  if (!renderKey) return { content, renderedEpoch: null };
+  const out = applyEdgeRender(rctx, content, renderKey, { now: Date.now() });
+  // A failed-open render (unknown shape, no template entry) is the panel's
+  // body: it must not be recorded as having received the current pool.
+  return { content: out.body, renderedEpoch: out.applied ? rctx.epoch : null };
+}
 
 export interface S3Provider {
   name: string;
@@ -186,7 +216,17 @@ export const provisionMirror = internalAction({
     } catch {
       return { status: 'error', remaining: Math.max(0, cap - used) };
     }
-    const hash = await sha256Hex(fetched.content);
+    // The first upload is rendered like every later refresh: a mirror must
+    // never hold the template entries (the origin / index-0 address) until the
+    // sweep comes round.
+    const rendered = await renderMirrorBody(
+      ctx,
+      { id: context.subscriptionId, backendServerId: context.backendServerId },
+      fetched.pinnedNode,
+      fetched.content,
+    );
+    const contentAt = Date.now();
+    const hash = await sha256Hex(rendered.content);
     // One capability token per sub, reused across providers (stable + unguessable).
     const objectPath = context.objectPath ?? `mirrors/${randomHex(16)}`;
 
@@ -194,7 +234,7 @@ export const provisionMirror = internalAction({
     try {
       const mirrors = await uploadToProviders([provider], {
         objectPath,
-        content: fetched.content,
+        content: rendered.content,
         contentType: fetched.contentType,
       });
       entry = mirrors[0];
@@ -230,6 +270,11 @@ export const provisionMirror = internalAction({
         node: fetched.pinnedNode,
       });
     }
+    await ctx.runMutation(internal.subscriptions.markMirrorRefreshed, {
+      subscriptionId: context.subscriptionId,
+      contentAt,
+      renderedEpoch: rendered.renderedEpoch,
+    });
     return {
       status: 'ok',
       publicUrl: entry.publicUrl,
@@ -377,33 +422,30 @@ async function refreshOneSubMirrors(
     };
     // Relay rendering (docs/edges.md): a mirror serves the same rendered
     // endpoints as the fronted route (link-list family: no User-Agent here).
-    let content = fetched.content;
-    const node = fetched.pinnedNode ?? undefined;
-    if (node && sub.backendServerId) {
-      const rctx = await ctx.runQuery(internal.edgeRender.contextForSubscription, {
+    const rendered = await renderMirrorBody(
+      ctx,
+      sub,
+      fetched.pinnedNode ?? undefined,
+      fetched.content,
+    );
+    const content = rendered.content;
+    const contentAt = Date.now();
+    // The mirror now provably holds content generated at `contentAt` (and
+    // rendered against the current epoch): stamp it exactly where the pin is
+    // recorded, so a mirror-only member is not "never refreshed" forever to
+    // the relay heuristics.
+    const stampContent = () =>
+      ctx.runMutation(internal.subscriptions.markMirrorRefreshed, {
         subscriptionId: sub.id,
-        family: 'other',
-        nodeHostname: node,
+        contentAt,
+        renderedEpoch: rendered.renderedEpoch,
       });
-      if (rctx) {
-        const renderKey =
-          rctx.renderKey ??
-          (await ctx.runMutation(internal.subscriptions.ensureRenderKey, {
-            subscriptionId: sub.id,
-          }));
-        if (renderKey) {
-          content = applyEdgeRender(rctx, content, renderKey, {
-            now: Date.now(),
-            lastContentAt: rctx.lastContentAt,
-          }).body;
-        }
-      }
-    }
     const hash = await sha256Hex(content);
     if (hash === sub.rawContentHash) {
       // Nothing to re-upload — but the pin can move while the bytes stay
       // identical, and the mirror is already correct, so record it.
       await recordPin();
+      await stampContent();
       return false;
     }
     // Throws only if EVERY provider failed (caught below → sub skipped,
@@ -436,7 +478,10 @@ async function refreshOneSubMirrors(
       failedProviders,
       ...(allSucceeded ? { rawContentHash: hash } : {}),
     });
-    if (allSucceeded) await recordPin();
+    if (allSucceeded) {
+      await recordPin();
+      await stampContent();
+    }
     return true;
   } catch {
     /* best-effort per sub: one backend/S3 hiccup must not stall the sweep */

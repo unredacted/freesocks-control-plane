@@ -66,41 +66,114 @@ export interface ProviderFetchArgs<T> {
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+/** Largest response body read (provider objects are small; a listing is paged). */
+export const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Read at most `limit` bytes of a body; `null` when the body is larger. Reads
+ * the stream incrementally so an oversized answer never fully buffers.
+ */
+async function readBounded(res: Response, limit: number): Promise<string | null> {
+  const declared = Number(res.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > limit) return null;
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+    }
+  }
+  const joined = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    joined.set(c, off);
+    off += c.byteLength;
+  }
+  return new TextDecoder().decode(joined);
+}
 
 /**
  * One provider call: JSON in/out, AbortController timeout, schema-validated
  * response, body-free errors. A 2xx with an empty body parses as `undefined`
  * (callers of such routes use `z.unknown()`).
+ *
+ * Redirects are never followed (`redirect: 'manual'` + a refusal): the request
+ * carries credentials in its headers and a redirect would replay them against
+ * another host. The body read is capped at `MAX_RESPONSE_BYTES`. There is NO
+ * retry here on purpose — POST/DELETE are not idempotent at every provider;
+ * the orchestrator retries through discovery instead.
  */
 export async function providerFetch<T>(a: ProviderFetchArgs<T>): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), a.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   let res: Response;
-  try {
-    res = await fetch(a.url, {
-      method: a.method,
-      headers: {
-        accept: 'application/json',
-        ...(a.body !== undefined ? { 'content-type': 'application/json' } : {}),
-        ...a.headers,
-      },
-      body: a.body !== undefined ? JSON.stringify(a.body) : undefined,
-      signal: controller.signal,
-    });
-  } catch (err) {
-    const timedOut = err instanceof Error && err.name === 'AbortError';
-    throw new EdgeProviderError(
-      `${a.provider} ${timedOut ? 'timeout' : 'network error'} on ${a.step}`,
-      { provider: a.provider, step: a.step, retryable: true, timedOut },
-    );
-  } finally {
-    clearTimeout(timer);
-  }
   let text = '';
   try {
-    text = await res.text();
-  } catch {
-    text = '';
+    try {
+      res = await fetch(a.url, {
+        method: a.method,
+        headers: {
+          accept: 'application/json',
+          ...(a.body !== undefined ? { 'content-type': 'application/json' } : {}),
+          ...a.headers,
+        },
+        body: a.body !== undefined ? JSON.stringify(a.body) : undefined,
+        signal: controller.signal,
+        redirect: 'manual',
+      });
+    } catch (err) {
+      const timedOut = err instanceof Error && err.name === 'AbortError';
+      throw new EdgeProviderError(
+        `${a.provider} ${timedOut ? 'timeout' : 'network error'} on ${a.step}`,
+        { provider: a.provider, step: a.step, retryable: true, timedOut },
+      );
+    }
+    if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
+      throw new EdgeProviderError(`${a.provider} redirect refused on ${a.step}`, {
+        provider: a.provider,
+        step: a.step,
+        status: res.status || undefined,
+        code: 'redirect_refused',
+        retryable: false,
+        timedOut: false,
+      });
+    }
+    let bounded: string | null;
+    try {
+      bounded = await readBounded(res, MAX_RESPONSE_BYTES);
+    } catch (err) {
+      const timedOut = err instanceof Error && err.name === 'AbortError';
+      if (timedOut)
+        throw new EdgeProviderError(`${a.provider} timeout on ${a.step}`, {
+          provider: a.provider,
+          step: a.step,
+          retryable: true,
+          timedOut: true,
+        });
+      bounded = '';
+    }
+    if (bounded === null) {
+      throw new EdgeProviderError(`${a.provider} response too large on ${a.step}`, {
+        provider: a.provider,
+        step: a.step,
+        status: res.status,
+        code: 'response_too_large',
+        retryable: false,
+        timedOut: false,
+      });
+    }
+    text = bounded;
+  } finally {
+    clearTimeout(timer);
   }
   let json: unknown = undefined;
   if (text.trim().length > 0) {

@@ -5,14 +5,25 @@
  * CommonJS and untyped. The legacy IP Load Balancing product is not supported.
  *
  * Model: ONE compound step. Creating the balancer with its network (private
- * network + subnet, a floating IP the provider mints, an existing gateway) and
- * the TCP listener/pool inline returns an OPERATION that is polled at
- * `GET /cloud/project/{sn}/operation/{id}`; the balancer's floating IP becomes
- * visible on the balancer object and is adopted into the ledger by describe().
+ * network + subnet, a floating IP the provider mints, an existing gateway OR a
+ * gateway the operation creates under the FCP-chosen name `<edge>-gw`) and the
+ * TCP listener/pool inline returns an OPERATION that is polled at
+ * `GET /cloud/project/{sn}/operation/{id}`. The children the compound call
+ * mints (floating IP, gateway) are ledgered as soon as they are discoverable:
+ * the poll that sees the operation complete looks them up by their FCP names,
+ * and describe()/discover() adopt any the ledger still lacks.
  *
- * Discovery: balancers are listed by our deterministic name; a repeated absence
- * (attempt >= 2) is treated as confirmed while an operation may still be
- * registering the object on the first look.
+ * Discovery: balancers are listed by our deterministic name; absence is
+ * confirmed only after >= 2 quiet looks AND `discoverySettleMs` since the step
+ * was requested, and never while the project reports an in-flight balancer
+ * operation. FCP-named children found WITHOUT their balancer (the partial
+ * failure window) are reported `ambiguous`: re-running the step would mint
+ * duplicates and there is no balancer to adopt, so the operator decides with
+ * the orphans already ledgered for destroy.
+ *
+ * Destroy order is by kind: balancer → floating IP → gateway (the balancer's
+ * VIP sits behind the gateway). Every kind is read back after its delete; a
+ * balancer that is not PENDING_DELETE means the delete never landed.
  */
 import { z } from 'zod';
 import type {
@@ -27,7 +38,8 @@ import type {
   StepOutcome,
   TemplateFieldDescriptor,
 } from './types';
-import { firstResource, reverseLiveResources, stepOf } from './types';
+import { firstResource, orderByKind, stepOf } from './types';
+import { discoveryMaySettle } from './capabilities';
 import { isProviderNotFound, providerFetch, EdgeProviderError } from './http';
 import { OVH_ENDPOINTS, ovhSignedHeaders } from './ovhSign';
 import { OvhTemplate, OVH_TEMPLATE_FIELDS, type OvhTemplateParams } from './templates';
@@ -43,9 +55,23 @@ const Operation = z
     status: z.string(),
     resourceId: z.string().nullish(),
     action: z.string().nullish(),
+    createdAt: z.string().nullish(),
   })
   .passthrough();
-const FloatingIp = z.object({ id: z.string(), ip: z.string().nullish() }).passthrough();
+const OperationList = z.array(Operation);
+const FloatingIp = z
+  .object({
+    id: z.string(),
+    ip: z.string().nullish(),
+    /** `floatingIpCreate.description` carries the edge name: our ownership mark. */
+    description: z.string().nullish(),
+    status: z.string().nullish(),
+  })
+  .passthrough();
+const Gateway = z
+  .object({ id: z.string(), name: z.string().nullish(), status: z.string().nullish() })
+  .passthrough();
+const GatewayList = z.array(Gateway);
 const Lb = z
   .object({
     id: z.string(),
@@ -140,6 +166,85 @@ async function ovh<T>(
 
 const base = (cfg: OvhConfig) =>
   `/cloud/project/${encodeURIComponent(cfg.serviceName)}/region/${encodeURIComponent(cfg.regionName)}`;
+const projectBase = (cfg: OvhConfig) => `/cloud/project/${encodeURIComponent(cfg.serviceName)}`;
+
+/** The FCP-chosen name of the gateway the compound create mints when no gateway id is configured. */
+export function ovhGatewayName(edgeName: string): string {
+  return `${edgeName}-gw`;
+}
+
+/**
+ * The gateway the create step minted for this edge, when the account has no
+ * fixed gateway: looked up by its FCP name. Fail-soft (a listing error yields
+ * nothing; describe/discover adopt it later).
+ */
+async function findOwnedGateway(
+  cfg: OvhConfig,
+  step: string,
+  edgeName: string,
+  ownership: ChildResource['ownership'],
+): Promise<ChildResource[]> {
+  if (cfg.gatewayId) return [];
+  try {
+    const list = await ovh(cfg, step, 'GET', `${base(cfg)}/gateway`, GatewayList);
+    const name = ovhGatewayName(edgeName);
+    return list
+      .filter((g) => g.name === name)
+      .map((g) => ({ kind: 'gateway', resourceId: g.id, ownership }));
+  } catch {
+    return [];
+  }
+}
+
+/** Floating IPs whose description carries this edge's name (minted by `floatingIpCreate`). Fail-soft. */
+async function findOwnedFloatingIps(
+  cfg: OvhConfig,
+  step: string,
+  edgeName: string,
+  ownership: ChildResource['ownership'],
+): Promise<ChildResource[]> {
+  try {
+    const list = await ovh(cfg, step, 'GET', `${base(cfg)}/floatingip`, FipList);
+    return list
+      .filter((f) => f.description === edgeName)
+      .map((f) => ({
+        kind: 'floating_ip',
+        resourceId: f.id,
+        ownership,
+        ...(f.ip ? { meta: { address: f.ip } } : {}),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+const OP_TERMINAL = new Set(['completed', 'in-error', 'error']);
+
+/**
+ * True when the project reports a balancer operation that is still running and
+ * started no earlier than `since` (when known): the object may be registering,
+ * so absence cannot be confirmed yet. Fail-soft: an unreadable listing is "no".
+ */
+async function hasInFlightLbOperation(
+  cfg: OvhConfig,
+  step: string,
+  since: number | undefined,
+): Promise<boolean> {
+  try {
+    const ops = await ovh(cfg, step, 'GET', `${projectBase(cfg)}/operation`, OperationList);
+    return ops.some((op) => {
+      if (OP_TERMINAL.has(op.status.toLowerCase())) return false;
+      if (!/loadbalanc/i.test(op.action ?? '')) return false;
+      if (since !== undefined && op.createdAt) {
+        const t = Date.parse(op.createdAt);
+        if (Number.isFinite(t) && t < since - 60_000) return false;
+      }
+      return true;
+    });
+  } catch {
+    return false;
+  }
+}
 
 /** The create-LB request body (exported for tests). */
 export function ovhLbBody(cfg: OvhConfig, spec: EdgeSpec, tpl: OvhTemplateParams) {
@@ -205,12 +310,23 @@ function lbHealth(lb: z.infer<typeof Lb>): EdgeDescription['health'] {
   return 'unknown';
 }
 
-async function pollOperation(cfg: OvhConfig, step: string, opId: string): Promise<StepOutcome> {
+/**
+ * Advance the compound create by its operation. On completion the children it
+ * minted (a gateway under the FCP name, the floating IP) are looked up and
+ * listed alongside the balancer so the ledger records them at once; on an
+ * error the same lookups report whatever was left behind (`partial`).
+ */
+async function pollOperation(
+  cfg: OvhConfig,
+  step: string,
+  opId: string,
+  edgeName: string,
+): Promise<StepOutcome> {
   const op = await ovh(
     cfg,
     step,
     'GET',
-    `/cloud/project/${encodeURIComponent(cfg.serviceName)}/operation/${encodeURIComponent(opId)}`,
+    `${projectBase(cfg)}/operation/${encodeURIComponent(opId)}`,
     Operation,
   );
   const st = op.status.toLowerCase();
@@ -218,15 +334,21 @@ async function pollOperation(cfg: OvhConfig, step: string, opId: string): Promis
     // `resourceId` is optional on the wire: a completed operation without it
     // must not count as done with nothing created (the LB may well exist), so
     // hand the step to discovery, which finds the LB by name.
-    return op.resourceId
-      ? {
-          status: 'done',
-          resources: [{ kind: 'lb', resourceId: op.resourceId, ownership: 'created' }],
-        }
-      : { status: 'partial', resources: [], code: 'operation_completed_without_resource' };
+    if (!op.resourceId)
+      return { status: 'partial', resources: [], code: 'operation_completed_without_resource' };
+    const children = await findOwnedGateway(cfg, step, edgeName, 'created');
+    return {
+      status: 'done',
+      resources: [{ kind: 'lb', resourceId: op.resourceId, ownership: 'created' }, ...children],
+    };
   }
-  if (st === 'in-error' || st === 'error')
-    return { status: 'partial', resources: [], code: 'operation_error' };
+  if (st === 'in-error' || st === 'error') {
+    const leftovers = [
+      ...(await findOwnedFloatingIps(cfg, step, edgeName, 'created')),
+      ...(await findOwnedGateway(cfg, step, edgeName, 'created')),
+    ];
+    return { status: 'partial', resources: leftovers, code: 'operation_error' };
+  }
   return { status: 'requested', opRef: opId, resources: [] };
 }
 
@@ -376,12 +498,13 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
     return { status: 'requested', opRef: op.id, resources: [] };
   },
 
-  pollStep: (cfg, step, opRef) => pollOperation(cfg, step.id, opRef),
+  // The create step's resourceName IS the edge name (see planProvision).
+  pollStep: (cfg, step, opRef) => pollOperation(cfg, step.id, opRef, step.resourceName),
 
   async discover(cfg, step, spec, ledger, attempt) {
     const ls = stepOf(ledger, step.id);
     if (ls?.opRef) {
-      const out = await pollOperation(cfg, step.id, ls.opRef);
+      const out = await pollOperation(cfg, step.id, ls.opRef, spec.name);
       if (out.status === 'requested') return { status: 'unresolved' };
       if (out.status === 'done' && out.resources.length > 0)
         return { status: 'found', resources: out.resources };
@@ -397,13 +520,25 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
           resourceId: hit.floatingIp.id,
           ownership: 'adopted',
         });
+      resources.push(...(await findOwnedGateway(cfg, step.id, spec.name, 'adopted')));
       return {
         status: 'found',
         resources,
         addresses: hit.floatingIp?.ip ? { v4: hit.floatingIp.ip } : {},
       };
     }
-    return attempt >= 2 ? { status: 'confirmed_absent' } : { status: 'unresolved' };
+    // No balancer. FCP-named children left behind by a failed compound create
+    // are orphans: ledger them, but neither re-run (duplicates) nor adopt (no
+    // balancer) — the operator decides.
+    const orphans = [
+      ...(await findOwnedFloatingIps(cfg, step.id, spec.name, 'adopted')),
+      ...(await findOwnedGateway(cfg, step.id, spec.name, 'adopted')),
+    ];
+    if (orphans.length > 0) return { status: 'ambiguous', candidates: orphans };
+    if (await hasInFlightLbOperation(cfg, step.id, ls?.startedAt)) return { status: 'unresolved' };
+    return discoveryMaySettle('ovh', attempt, ls?.startedAt)
+      ? { status: 'confirmed_absent' }
+      : { status: 'unresolved' };
   },
 
   async describe(cfg, ledger) {
@@ -416,9 +551,17 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
       if (isProviderNotFound(e)) return { state: 'gone', addresses: {}, health: 'unknown' };
       throw e;
     }
+    const known = new Set(ledger.resources.map((r) => r.resourceId));
     const resources: ChildResource[] = [];
-    if (obj.floatingIp?.id && !ledger.resources.some((r) => r.resourceId === obj.floatingIp?.id)) {
+    if (obj.floatingIp?.id && !known.has(obj.floatingIp.id)) {
       resources.push({ kind: 'floating_ip', resourceId: obj.floatingIp.id, ownership: 'created' });
+    }
+    // A gateway the compound create minted and the ledger does not hold yet.
+    if (!cfg.gatewayId && !ledger.resources.some((r) => r.kind === 'gateway')) {
+      const edgeName = obj.name ?? stepOf(ledger, lb.stepId)?.resourceName;
+      if (edgeName)
+        for (const g of await findOwnedGateway(cfg, 'describe', edgeName, 'created'))
+          if (!known.has(g.resourceId)) resources.push(g);
     }
     return {
       state: lbState(obj),
@@ -484,61 +627,73 @@ export const ovhProvider: EdgeProvider<OvhConfig, OvhTemplateParams> = {
     };
   },
 
-  planDestroy: (_cfg, ledger) => reverseLiveResources(ledger),
+  planDestroy: (_cfg, ledger) => orderByKind(ledger, OVH_DESTROY_ORDER),
 
+  /** Deletes return an operation (or nothing); a kind this adapter never creates is `unresolved`. */
   async runDestroy(cfg, r) {
+    const path = resourcePath(cfg, r.kind, r.resourceId);
+    if (!path) return { status: 'unresolved' };
     try {
-      if (r.kind === 'lb') {
-        const res = await ovh(
-          cfg,
-          'destroy',
-          'DELETE',
-          `${base(cfg)}/loadbalancing/loadbalancer/${encodeURIComponent(r.resourceId)}`,
-          Operation.or(z.unknown()),
-          undefined,
-          [404],
-        );
-        const opRef =
-          res && typeof res === 'object' && 'id' in res
-            ? String((res as { id: unknown }).id)
-            : undefined;
-        return { status: 'delete_requested', opRef };
-      }
-      if (r.kind === 'floating_ip') {
-        await ovh(
-          cfg,
-          'destroy',
-          'DELETE',
-          `${base(cfg)}/floatingip/${encodeURIComponent(r.resourceId)}`,
-          z.unknown(),
-          undefined,
-          [404],
-        );
-        return { status: 'delete_requested' };
-      }
-      return { status: 'confirmed_gone' };
+      const res = await ovh(
+        cfg,
+        'destroy',
+        'DELETE',
+        path,
+        Operation.or(z.unknown()),
+        undefined,
+        [404],
+      );
+      const opRef =
+        res && typeof res === 'object' && 'id' in res
+          ? String((res as { id: unknown }).id)
+          : undefined;
+      return { status: 'delete_requested', opRef };
     } catch (e) {
       if (isProviderNotFound(e)) return { status: 'confirmed_gone' };
       throw e;
     }
   },
 
+  /**
+   * Read back: 404 → gone; a balancer/gateway whose status says deleting →
+   * unresolved; anything else readable → still_present (the delete never landed).
+   */
   async confirmDestroyed(cfg, r) {
-    const path =
-      r.kind === 'lb'
-        ? `${base(cfg)}/loadbalancing/loadbalancer/${encodeURIComponent(r.resourceId)}`
-        : r.kind === 'floating_ip'
-          ? `${base(cfg)}/floatingip/${encodeURIComponent(r.resourceId)}`
-          : null;
-    if (!path) return { status: 'confirmed_gone' };
+    const path = resourcePath(cfg, r.kind, r.resourceId);
+    if (!path) return { status: 'unresolved' };
     try {
-      await ovh(cfg, 'confirm-destroy', 'GET', path, z.unknown());
-      return { status: 'unresolved' };
+      const obj = await ovh(
+        cfg,
+        'confirm-destroy',
+        'GET',
+        path,
+        z
+          .object({ provisioningStatus: z.string().nullish(), status: z.string().nullish() })
+          .passthrough(),
+      );
+      const st = (obj.provisioningStatus ?? obj.status ?? '').toUpperCase();
+      if (st === 'DELETED') return { status: 'confirmed_gone' };
+      if (st.includes('DELET')) return { status: 'unresolved' };
+      return { status: 'still_present' };
     } catch (e) {
       if (isProviderNotFound(e)) return { status: 'confirmed_gone' };
       throw e;
     }
   },
 };
+
+/** The balancer holds the floating IP and sits behind the gateway. */
+const OVH_DESTROY_ORDER = ['lb', 'floating_ip', 'gateway'] as const;
+
+function resourcePath(cfg: OvhConfig, kind: string, id: string): string | null {
+  const enc = encodeURIComponent(id);
+  return kind === 'lb'
+    ? `${base(cfg)}/loadbalancing/loadbalancer/${enc}`
+    : kind === 'floating_ip'
+      ? `${base(cfg)}/floatingip/${enc}`
+      : kind === 'gateway'
+        ? `${base(cfg)}/gateway/${enc}`
+        : null;
+}
 
 export type { Ledger as OvhLedger, ResourceStep as OvhResourceStep };

@@ -7,10 +7,24 @@
  * bind to one slot.
  */
 import { ConvexError, v } from 'convex/values';
-import { internalMutation, internalQuery } from './_generated/server';
+import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { isSlotKey, templateHostRemark } from './lib/edges/hosts';
+import { scheduleMirrorRefresh } from './relays';
+
+/**
+ * A slot change alters what renders for the origin (its template remark set,
+ * its profile): bump the publication epoch (the /sub cache token) and refresh
+ * stored mirrors once so they stop carrying the previous shape.
+ */
+async function invalidateOrigin(ctx: MutationCtx, origin: Doc<'relays'>) {
+  await ctx.db.patch(origin._id, {
+    publicationEpoch: origin.publicationEpoch + 1,
+    updatedAt: Date.now(),
+  });
+  await scheduleMirrorRefresh(ctx);
+}
 
 export function mapSlotAdmin(r: Doc<'relaySlots'>, profile?: Doc<'protocolProfiles'> | null) {
   return {
@@ -163,10 +177,7 @@ export const upsert = internalMutation({
       });
       created = true;
     }
-    await ctx.db.patch(a.relayId, {
-      publicationEpoch: origin.publicationEpoch + 1,
-      updatedAt: now,
-    });
+    await invalidateOrigin(ctx, origin);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
@@ -208,10 +219,9 @@ export const retire = internalMutation({
       });
     }
     await ctx.db.patch(slot._id, { retired: true, deployed: false, updatedAt: Date.now() });
-    await ctx.db.patch(relayId, {
-      publicationEpoch: origin.publicationEpoch + 1,
-      updatedAt: Date.now(),
-    });
+    // The retired slot's template entry must vanish from every stored mirror,
+    // not just from the next fronted fetch.
+    await invalidateOrigin(ctx, origin);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,

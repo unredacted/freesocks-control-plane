@@ -11,7 +11,7 @@
  *    `setResourceDeleteState`) record every child resource before anything else
  *    happens.
  *
- * The reconcile cron itself lives in relayReconcile.ts (it needs the Node
+ * The reconcile cron itself lives in edgeReconcile.ts (it needs the Node
  * provider actions and the rotation machine).
  */
 import { ConvexError, v } from 'convex/values';
@@ -20,6 +20,30 @@ import type { Doc, Id } from './_generated/dataModel';
 import { randomHex } from './lib/crypto';
 import { reserveAllocation } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/edges/accountSettings';
+import { dropEdgeFromPool } from './relays';
+
+/** Consecutive `gone` describes before the pool drop + status transition act. */
+export const GONE_OBSERVATIONS_REQUIRED = 2;
+
+/**
+ * The terminal row shape: every large blob (the live snapshot) is cleared so a
+ * destroyed edge costs nothing to keep until the retention sweep removes it.
+ */
+export function destroyedPatch(now: number): Partial<Edge> {
+  return {
+    status: 'destroyed',
+    publication: 'unpublished',
+    poolIndex: undefined,
+    currentOp: undefined,
+    liveSnapshot: undefined,
+    liveAt: undefined,
+    destroyConfirm: undefined,
+    goneObservations: undefined,
+    destroyedAt: now,
+    statusChangedAt: now,
+    updatedAt: now,
+  };
+}
 
 type Edge = Doc<'edges'>;
 type Step = Edge['steps'][number];
@@ -437,7 +461,7 @@ export const settleOp = internalMutation({
     if (a.status && a.status !== edge.status) {
       patch.status = a.status as Edge['status'];
       patch.statusChangedAt = now;
-      if (a.status === 'destroyed') patch.destroyedAt = now;
+      if (a.status === 'destroyed') Object.assign(patch, destroyedPatch(now));
     }
     if (a.health) {
       patch.health = a.health as Edge['health'];
@@ -470,6 +494,10 @@ export const patchEdge = internalMutation({
       v.object({ step: v.string(), code: v.optional(v.string()), status: v.optional(v.number()) }),
     ),
     destroyAttemptsDelta: v.optional(v.number()),
+    /** Consecutive unresolved confirms for the destroy walk's current resource (null = clear). */
+    destroyConfirm: v.optional(
+      v.union(v.object({ resourceId: v.string(), attempts: v.number() }), v.null()),
+    ),
     stepStates: v.optional(v.array(v.object({ stepId: v.string(), state: v.string() }))),
     liveSnapshot: v.optional(v.string()),
     reachability: v.optional(v.any()),
@@ -482,8 +510,9 @@ export const patchEdge = internalMutation({
     if (a.status && a.status !== edge.status) {
       patch.status = a.status as Edge['status'];
       patch.statusChangedAt = now;
-      if (a.status === 'destroyed') patch.destroyedAt = now;
+      if (a.status === 'destroyed') Object.assign(patch, destroyedPatch(now));
     }
+    if (a.destroyConfirm !== undefined) patch.destroyConfirm = a.destroyConfirm ?? undefined;
     if (a.publication) patch.publication = a.publication as Edge['publication'];
     if (a.poolIndex !== undefined) patch.poolIndex = a.poolIndex ?? undefined;
     if (a.drainUntil !== undefined) patch.drainUntil = a.drainUntil ?? undefined;
@@ -507,7 +536,14 @@ export const patchEdge = internalMutation({
   },
 });
 
-/** Record a describe() result: addresses, health, and any newly visible child resources. */
+/**
+ * Record a describe() result: addresses, health, and any newly visible child
+ * resources. A `gone` state is acted on only after GONE_OBSERVATIONS_REQUIRED
+ * consecutive gone describes (an auth-shaped 404 or one blip must not drop a
+ * published edge); when it acts, the pool drop + epoch bump happen in THIS
+ * mutation together with the status transition, never in a second one.
+ * Returns whether the edge was dropped from the published pool.
+ */
 export const recordDescribe = internalMutation({
   args: {
     edgeId: v.id('edges'),
@@ -545,39 +581,47 @@ export const recordDescribe = internalMutation({
         : { v4: a.addresses.v4 ?? edge.addresses.v4, v6: a.addresses.v6 ?? edge.addresses.v6 };
     let resources = added.length > 0 ? [...edge.resources, ...added] : edge.resources;
     let transition: Partial<Edge> = {};
-    if (a.state === 'gone' && edge.status !== 'destroyed') {
-      // The load balancer itself is gone; its ledger entry is settled. Anything
-      // else still `present` (a floating IP, a delegated address) is billable
-      // and must go through the destroy path — only then is the edge destroyed.
-      resources = resources.map((r) =>
-        r.kind === 'lb' ? { ...r, deleteState: 'confirmed_gone' as const } : r,
-      );
-      const leftovers = resources.some((r) => r.deleteState !== 'confirmed_gone');
-      transition = leftovers
-        ? {
-            status: 'destroying',
-            destroyAttempts: 0,
-            currentOp: undefined,
-            statusChangedAt: now,
-            publication: 'unpublished',
-            poolIndex: undefined,
-          }
-        : {
-            status: 'destroyed',
-            statusChangedAt: now,
-            destroyedAt: now,
-            publication: 'unpublished',
-            poolIndex: undefined,
-          };
+    const gone = a.state === 'gone' && edge.status !== 'destroyed';
+    const goneObservations = gone ? (edge.goneObservations ?? 0) + 1 : 0;
+    let dropped = false;
+    let acted = false;
+    if (gone && goneObservations >= GONE_OBSERVATIONS_REQUIRED) {
+      const origin = await ctx.db.get(edge.relayId);
+      // Nothing bypasses a quarantine, not even a drift drop: keep counting and
+      // act once the operator has resolved it.
+      if (origin && !origin.quarantine) {
+        acted = true;
+        // The load balancer itself is gone; its ledger entry is settled. Anything
+        // else still `present` (a floating IP, a delegated address) is billable
+        // and must go through the destroy path — only then is the edge destroyed.
+        resources = resources.map((r) =>
+          r.kind === 'lb' ? { ...r, deleteState: 'confirmed_gone' as const } : r,
+        );
+        const leftovers = resources.some((r) => r.deleteState !== 'confirmed_gone');
+        transition = leftovers
+          ? {
+              status: 'destroying',
+              destroyAttempts: 0,
+              currentOp: undefined,
+              statusChangedAt: now,
+              publication: 'unpublished',
+              poolIndex: undefined,
+            }
+          : destroyedPatch(now);
+        // Same transaction: out of the pool / standby list, epoch bumped, audited.
+        const r = await dropEdgeFromPool(ctx, origin, edge, { reason: 'provider_gone' });
+        dropped = r.inPool && r.dropped;
+      }
     }
     await ctx.db.patch(a.edgeId, {
       addresses: addressesNext,
       health: a.health as Edge['health'],
       lastHealthAt: now,
       ...(resources !== edge.resources ? { resources } : {}),
+      goneObservations: acted || !gone ? undefined : goneObservations,
       ...transition,
       updatedAt: now,
     });
-    return null;
+    return { dropped, goneObservations: acted ? 0 : goneObservations, acted };
   },
 });

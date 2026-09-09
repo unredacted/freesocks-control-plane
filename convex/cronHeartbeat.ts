@@ -145,6 +145,16 @@ export const CRON_META: { name: string; everyMs: number; description: string }[]
     everyMs: DAY,
     description: 'Prune settled relay probe runs past the retention window',
   },
+  {
+    name: 'retention-edges',
+    everyMs: DAY,
+    description: 'Prune destroyed relay edges past the retention window',
+  },
+  {
+    name: 'retention-edge-rotations',
+    everyMs: DAY,
+    description: 'Prune terminal relay rotations past the retention window',
+  },
 ];
 
 /**

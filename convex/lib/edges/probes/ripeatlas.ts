@@ -22,8 +22,11 @@ export function ripeAtlasBody(target: ProbeTarget, country: string, requested: n
         af: target.ipVersion,
         target: target.address,
         port: target.port,
-        description: 'relay edge reachability',
+        // Non-identifying, and PRIVATE: Atlas measurements are public by
+        // default, which would publish the probed addresses.
+        description: 'tcp reachability',
         is_oneoff: true,
+        is_public: false,
       },
     ],
     probes: [{ type: 'country', value: country, requested: Math.max(1, Math.min(requested, 10)) }],
@@ -57,15 +60,28 @@ export async function ripeAtlasStart(
   return { measurements };
 }
 
-/** Parse one measurement's `/results/`: `rt`/`cert` = reachable, `err`/`alert` = not. */
+/**
+ * Parse one measurement's `/results/`: `rt`/`cert` = reachable; a TLS `alert`
+ * ALSO means reachable (the peer answered on the port — a REALITY edge will not
+ * present a certificate for a random SNI; same rule as the internal probe);
+ * only `err` (connection-level) = not.
+ */
 export function parseRipeAtlasResults(body: unknown, country: string): ProbeResult[] {
   if (!Array.isArray(body)) return [];
   const out: ProbeResult[] = [];
   for (const raw of body as Array<Record<string, unknown>>) {
     const prb = raw.prb_id != null ? `prb-${String(raw.prb_id)}` : undefined;
     const base = { country, network: prb, vantageClass: 'unknown' as const };
-    if (raw.err !== undefined || raw.alert !== undefined) {
-      out.push({ ...base, ok: false, error: shortError(raw.err ?? raw.alert) });
+    if (raw.err !== undefined) {
+      out.push({ ...base, ok: false, error: shortError(raw.err) });
+    } else if (raw.alert !== undefined) {
+      const rt = Number(raw.rt);
+      out.push({
+        ...base,
+        ok: true,
+        rttMs: Number.isFinite(rt) ? Math.round(rt) : undefined,
+        error: 'tls_alert',
+      });
     } else if (raw.rt !== undefined || Array.isArray(raw.cert)) {
       const rt = Number(raw.rt);
       out.push({ ...base, ok: true, rttMs: Number.isFinite(rt) ? Math.round(rt) : undefined });

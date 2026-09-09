@@ -14,8 +14,7 @@ import type { ActionCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { registerEdgeRoutes } from './httpEdges';
 import { hmacSha256Hex } from './lib/crypto';
-import { markBucket, sanitizeConnectionChoice } from './edgeAttribution';
-import { edgeMs } from './lib/edgeConfig';
+import { sanitizeConnectionChoice } from './edgeAttribution';
 import { classifyClient } from './lib/edges/clientFamilies';
 import { applyEdgeRender } from './lib/edges/renderPipeline';
 import type { Id } from './_generated/dataModel';
@@ -260,6 +259,11 @@ interface SubCacheEntry {
   // current token is identical, so a pool/switch change re-renders within one
   // request instead of one TTL.
   relay?: number | null;
+  // The epoch the body was actually RENDERED against (relay endpoints applied
+  // or template entries dropped), null when the render failed open and the
+  // body is the panel's. Only this is stamped on the subscription: a
+  // passthrough body says nothing about which pool the member received.
+  renderedEpoch?: number | null;
 }
 
 /** The RAW subscription Response a proxy app consumes (not the JSON envelope):
@@ -1066,10 +1070,12 @@ http.route({
         e.ua === ua && now - e.at < SUBSCRIPTION_CACHE_TTL_MS && (e.relay ?? null) === edgeToken,
     );
     if (fresh) {
-      // Cache hit: the served body was generated at the entry's fetch time.
+      // Cache hit: the served body was generated at the entry's fetch time and
+      // rendered against the entry's epoch token.
       await ctx.runMutation(internal.subscriptions.markDelivered, {
         subscriptionId: sub._id,
         contentAt: fresh.at,
+        renderedEpoch: fresh.renderedEpoch ?? null,
       });
       return subscriptionResponse(fresh); // fresh + same format → cache hit
     }
@@ -1089,7 +1095,15 @@ http.route({
         excludeNode: sub.excludeNode,
         ...(hasHwid ? { hwidHeaders } : {}),
       });
-      if (fetched.pinnedNode) {
+      // ONE node value drives everything below: the pin recorded on the row,
+      // the render context, and the epoch token stored on the cache entry (so
+      // the token `epochFor` computes from `sub.pinnedNode` on the next request
+      // is for the same node the body was rendered for). The pinner reports a
+      // node for every known body shape — a single-node body included, which
+      // is the real topology (one squad per node) — so the fallback to the
+      // stored pin only covers unknown shapes.
+      const node = fetched.pinnedNode ?? sub.pinnedNode;
+      if (fetched.pinnedNode && fetched.pinnedNode !== sub.pinnedNode) {
         await ctx.runMutation(internal.subscriptions.recordPinnedNode, {
           subscriptionId: sub._id,
           node: fetched.pinnedNode,
@@ -1100,7 +1114,7 @@ http.route({
       // any unknown shape passes through unchanged.
       let content = fetched.content;
       let relay: number | null = null;
-      const node = fetched.pinnedNode ?? sub.pinnedNode;
+      let renderedEpoch: number | null = null;
       if (node && sub.backendServerId) {
         const rctx = await ctx.runQuery(internal.edgeRender.contextForSubscription, {
           subscriptionId: sub._id,
@@ -1114,11 +1128,10 @@ http.route({
               subscriptionId: sub._id,
             }));
           if (renderKey) {
-            content = applyEdgeRender(rctx, content, renderKey, {
-              now,
-              lastContentAt: rctx.lastContentAt,
-            }).body;
+            const out = applyEdgeRender(rctx, content, renderKey, { now });
+            content = out.body;
             relay = rctx.epoch;
+            renderedEpoch = out.applied ? rctx.epoch : null;
           }
         }
       }
@@ -1129,6 +1142,7 @@ http.route({
         ua,
         at: now,
         relay,
+        renderedEpoch,
       };
       // Don't cache an hwid'd response — the next device (different hwid, same
       // UA) must reach the panel too, for its own registration + enforcement.
@@ -1139,10 +1153,12 @@ http.route({
         });
       }
       // Every successful delivery is stamped (miss AND hwid'd path) — the
-      // relay layer reads it as "has this key seen post-rotation content".
+      // relay layer reads it as "has this key seen post-rotation content", and
+      // the epoch it was rendered against as "has it seen the current pool".
       await ctx.runMutation(internal.subscriptions.markDelivered, {
         subscriptionId: sub._id,
         contentAt: now,
+        renderedEpoch,
       });
       // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
       return subscriptionResponse(entry, { hwid: hasHwid });
@@ -1167,6 +1183,7 @@ http.route({
         await ctx.runMutation(internal.subscriptions.markDelivered, {
           subscriptionId: sub._id,
           contentAt: stale.at,
+          renderedEpoch: stale.renderedEpoch ?? null,
         });
         return subscriptionResponse(stale);
       }
@@ -1404,15 +1421,14 @@ http.route({
     if (!isReportIssueReason(body.reason)) {
       return errorJson('validation', 'unknown reason', 400);
     }
-    // Relay detector dedupe mark: HMAC(pepper, member + window bucket). The
-    // member id never reaches the mark row or the telemetry row.
-    const relayCfg = await ctx.runQuery(internal.edgeReconcileMutations.configSnapshot, {});
-    const markPepper = process.env.EDGE_MARK_PEPPER ?? process.env.IP_HASH_SALT ?? '';
+    // Relay detector dedupe mark: HMAC(pepper, member). Time-independent — the
+    // mark row's own expiry (first report + detector window) is the sliding
+    // window, so a report either side of an aligned bucket edge cannot count
+    // twice. The member id never reaches the mark row or the telemetry row.
+    // No pepper configured → no key → the mutation fails CLOSED (weight 0).
+    const markPepper = process.env.EDGE_MARK_PEPPER || process.env.IP_HASH_SALT || '';
     const markKey = markPepper
-      ? await hmacSha256Hex(
-          markPepper,
-          `relay-mark:${member.userId}:${markBucket(Date.now(), edgeMs.detectWindow(relayCfg))}`,
-        )
+      ? await hmacSha256Hex(markPepper, `relay-mark:${member.userId}`)
       : null;
     const diagCfg = await ctx.runQuery(internal.issueReports.getConfig, {});
     const telemetry = sanitizeSubmitted(diagCfg, body.telemetry);

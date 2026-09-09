@@ -8,11 +8,13 @@ import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
-import { addressFamily, bracketIfV6 } from './lib/edges/ip';
+import { addressFamily, bracketIfV6, isPublicIpLiteral } from './lib/edges/ip';
 import { mapSummaryAdmin } from './probes';
 
 const LABEL_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._:/()-]{0,63}$/u;
 const HOSTNAME_RE = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*$/i;
+/** Names that resolve to the local machine / a private zone by convention (RFC 6761 / mDNS). */
+const LOCAL_NAME_RE = /^(localhost|.+\.(localhost|local|internal|localdomain|home\.arpa))\.?$/i;
 
 export function mapTargetAdmin(t: Doc<'probeTargets'>) {
   return {
@@ -34,8 +36,17 @@ function checkFields(a: { label?: string; address?: string; port?: number }) {
     throw new ConvexError({ code: 'validation', message: 'label must be 1-64 printable chars' });
   if (a.address !== undefined) {
     const s = a.address.trim();
-    if (!addressFamily(s) && !HOSTNAME_RE.test(s))
+    const fam = addressFamily(s);
+    if (!fam && !HOSTNAME_RE.test(s))
       throw new ConvexError({ code: 'validation', message: 'address must be an IP or hostname' });
+    // The internal probe connects from FCP's own host: a loopback, private,
+    // link-local or unspecified target would turn it into a port scanner of
+    // the control plane's network. Public literals (and public names) only.
+    if ((fam && !isPublicIpLiteral(s)) || LOCAL_NAME_RE.test(s))
+      throw new ConvexError({
+        code: 'validation',
+        message: 'address must be a public IP or hostname',
+      });
   }
   if (a.port !== undefined && (!Number.isInteger(a.port) || a.port < 1 || a.port > 65535))
     throw new ConvexError({ code: 'validation', message: 'port out of range' });

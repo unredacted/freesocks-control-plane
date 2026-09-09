@@ -11,11 +11,34 @@
  * (no envelope on a 'seal' route, no fsRespEph on a 'reveal' route) passes
  * through and the response is returned in plaintext. Error responses (non-2xx)
  * are never sealed; the client treats them as plaintext.
+ *
+ * Two env knobs end dual-mode, each for one caller class, both answering
+ * `400 e2ee.sealed_required` to an unsealed request:
+ * - `FS_E2EE_REQUIRED=true` — MEMBER routes (the account number must never
+ *   transit in the clear). Admin routes are exempt.
+ * - `FS_E2EE_ADMIN_REQUIRED=true` — ADMIN routes, for COOKIE-session callers
+ *   only (the passkey-signed-in CMS, which always seals when built with the
+ *   HPKE keys). An `fsv1_` token caller (IaC / Ansible) cannot seal and keeps
+ *   plaintext: a bearer header when the admin cookie is absent or does not
+ *   authenticate (the identity `resolveAdmin` would fall through to). A request
+ *   whose cookie DOES authenticate is a cookie caller whatever bearer it adds:
+ *   the handler would run with the cookie's privileges (`isBearerCaller`).
+ *   The caller class is decided BEFORE the handler
+ *   runs, so a sealed CMS request is opened and an unsealed one refused without
+ *   touching the session. Flip it only once the deployed SPA is built with the
+ *   keys.
  */
 import { httpAction } from '../_generated/server';
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
-import { errorJson, PayloadTooLargeError, readBodyTextCapped } from './http';
+import {
+  ADMIN_COOKIE,
+  errorJson,
+  PayloadTooLargeError,
+  readBodyTextCapped,
+  resolveAdminCookie,
+} from './http';
+import { parseCookies } from './cookies';
 import {
   RESP_EPH_FIELD,
   isSealedWire,
@@ -48,6 +71,29 @@ function proxyReq(req: Request, bodyObj: unknown, rawWireBody: string): Request 
     text: async () => text,
     __fsWireBody: rawWireBody,
   } as unknown as Request;
+}
+
+/** A syntactically present `Authorization: Bearer <token>` header. */
+export function bearerHeaderPresent(req: Request): boolean {
+  return /^Bearer\s+\S+/i.test((req.headers.get('authorization') ?? '').trim());
+}
+
+/**
+ * Is this an `fsv1_` API-token caller (cannot seal, keeps plaintext)?
+ * Decided exactly as `resolveAdmin` decides WHO the request is: the admin
+ * session cookie is tried first, and only when it does not authenticate (no
+ * cookie, stale / malformed / expired, inactive admin, failed PoP) does the
+ * bearer become the credential. So a passkey session cannot downgrade itself
+ * by adding ANY bearer header — bogus or a real low-privilege token observed
+ * elsewhere — because the handler would still run with the cookie's
+ * privileges; while a valid token is never refused for a dead browser cookie
+ * riding along. A bearer alone is a token caller; the handler's own scope
+ * check decides whether it may act.
+ */
+export async function isBearerCaller(ctx: ActionCtx, req: Request): Promise<boolean> {
+  if (!bearerHeaderPresent(req)) return false;
+  if (!parseCookies(req.headers.get('cookie'))[ADMIN_COOKIE]) return true;
+  return (await resolveAdminCookie(ctx, req)) === null;
 }
 
 export function sealed(handler: RawHandler) {
@@ -86,8 +132,17 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
   // Flip this on ONLY once the deployed SPA was built with the HPKE keys baked
   // (VITE_FS_SERVER_HPKE_PK/KID) — a dark client cannot seal and will be
   // refused. The e2ee.sealed_required code makes the posture debuggable.
+  //
+  // FS_E2EE_ADMIN_REQUIRED=true is the admin-side counterpart: cookie-session
+  // (passkey CMS) callers must seal admin credential writes / reveals; bearer
+  // token callers keep plaintext because they cannot seal. Caller class = the
+  // credential that would authenticate the request (see `isBearerCaller`).
+  const isAdminPath = path.startsWith('/api/v1/admin/');
   const e2eeRequired =
-    process.env.FS_E2EE_REQUIRED === 'true' && !path.startsWith('/api/v1/admin/');
+    (process.env.FS_E2EE_REQUIRED === 'true' && !isAdminPath) ||
+    (process.env.FS_E2EE_ADMIN_REQUIRED === 'true' &&
+      isAdminPath &&
+      !(await isBearerCaller(ctx, req)));
   const sealedRequired = (): Response =>
     errorJson(
       'e2ee.sealed_required',

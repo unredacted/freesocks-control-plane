@@ -13,6 +13,8 @@ export interface Captured {
   headers: Record<string, string>;
   body: unknown;
   rawBody: string | undefined;
+  /** The `redirect` fetch option (adapters must send `manual`). */
+  redirect: RequestRedirect | undefined;
 }
 
 export interface FetchStub {
@@ -77,6 +79,7 @@ export function mockFetch(handler: Handler): FetchStub {
         headers: hdrs,
         body,
         rawBody,
+        redirect: init.redirect,
       };
       calls.push(captured);
       return current(captured, calls.length - 1);

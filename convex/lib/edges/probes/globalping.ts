@@ -55,7 +55,15 @@ interface ResultItem {
   result?: { status?: unknown; stats?: { loss?: unknown; avg?: unknown }; rawOutput?: unknown };
 }
 
-/** Map one finished measurement's result items to probe results (offline probes are dropped). */
+/** A generic User-Agent: the measurement service learns nothing about who probes what. */
+export const GLOBALPING_USER_AGENT = 'tcp-reachability-probe/1.0';
+
+/**
+ * Map one finished measurement's result items to probe results. Only a probe
+ * that actually ran the test is evidence: `offline` / `in-progress` probes and
+ * `failed` ones (a PROBE-side error: the probe could not run the command) are
+ * dropped rather than counted as an unreachable target.
+ */
 export function parseGlobalpingResults(items: unknown): ProbeResult[] {
   if (!Array.isArray(items)) return [];
   const out: ProbeResult[] = [];
@@ -63,23 +71,19 @@ export function parseGlobalpingResults(items: unknown): ProbeResult[] {
     const country = normalizeCountry(raw.probe?.country);
     if (!country) continue;
     const status = String(raw.result?.status ?? '');
-    if (status === 'offline' || status === 'in-progress') continue;
+    if (status !== 'finished') continue;
     const asn = raw.probe?.asn != null ? `AS${String(raw.probe.asn)}` : undefined;
     const network = typeof raw.probe?.network === 'string' ? raw.probe.network : undefined;
     const base = { country, asn, network, vantageClass: vantageOf(raw.probe?.tags) };
-    if (status === 'finished') {
-      const loss = Number(raw.result?.stats?.loss ?? 100);
-      const ok = Number.isFinite(loss) && loss < 100;
-      const avg = raw.result?.stats?.avg;
-      out.push({
-        ...base,
-        ok,
-        rttMs: ok && typeof avg === 'number' ? Math.round(avg) : undefined,
-        error: ok ? undefined : 'no_reply',
-      });
-    } else {
-      out.push({ ...base, ok: false, error: shortError(status || 'failed') });
-    }
+    const loss = Number(raw.result?.stats?.loss ?? 100);
+    const ok = Number.isFinite(loss) && loss < 100;
+    const avg = raw.result?.stats?.avg;
+    out.push({
+      ...base,
+      ok,
+      rttMs: ok && typeof avg === 'number' ? Math.round(avg) : undefined,
+      error: ok ? undefined : 'no_reply',
+    });
   }
   return out;
 }

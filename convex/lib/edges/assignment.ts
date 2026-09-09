@@ -1,20 +1,26 @@
 /**
  * Subscriber → endpoint ASSIGNMENT for relay origins (pure, deterministic).
  *
- * Inputs: the subscriber's opaque hash (sha-256 of the subscription's renderKey,
- * computed by the caller) and the origin's PUBLISHED edges ordered by pool
- * index, each with its slot's camouflage profile (the ordered serverNames list,
- * active + retired). Output: a primary and, when another published edge
- * exists, a backup (preferring a different provider), each with exactly ONE
- * SNI.
+ * Inputs: the subscriber's opaque `renderKey` (a random 64-hex secret minted
+ * per subscription and never exposed — passed RAW, its first 32 bits seed the
+ * pool pick and the whole string feeds the SNI PRF) and the origin's PUBLISHED
+ * edges ordered by pool index, each with its slot's camouflage profile (the
+ * ordered serverNames list, active + retired). Output: a primary and, when
+ * another assignable edge exists, a backup (preferring a different provider),
+ * each with exactly ONE SNI.
  *
  * Stability rules:
- *  - primary = published[ h0 mod publishedCount ]; a replacement edge inherits
+ *  - primary = published[ h0 mod publishedCount ] over the FULL pool order
+ *    (ineligible edges included in the modulus); when that edge is not
+ *    assignable the walk continues forward in pool order, so an edge losing
+ *    eligibility (profile disabled, no active name, no emittable address)
+ *    moves only the subscribers that were on it. A replacement edge inherits
  *    its predecessor's pool index, so only subscribers on that index move.
  *  - the SNI PRF runs over the profile's FULL ordered serverNames list (retired
  *    entries keep their index) so a retirement never shifts other subscribers;
- *    a subscriber whose pick is retired past its drain (or never held it)
- *    re-hashes over the ACTIVE set only.
+ *    a subscriber whose pick is retired re-hashes over the ACTIVE set only. A
+ *    retired name is NEVER selected for a render — the drain only means the
+ *    node keeps ACCEPTING it for clients that have not refreshed yet.
  *  - IPv6 is an extra entry for the same endpoint, never a separate assignment.
  */
 
@@ -39,6 +45,12 @@ export interface PublishedEdge {
   addresses: { v4?: string; v6?: string };
   /** Empty for a non-REALITY slot. */
   serverNames: AssignableSni[];
+  /**
+   * False when the edge is published but must not be selected (slot retired or
+   * undeployed, profile disabled). It still occupies its pool index so the
+   * modulus does not shift the other subscribers. Absent = eligible.
+   */
+  eligible?: boolean;
 }
 
 export interface AssignedEndpoint {
@@ -48,20 +60,29 @@ export interface AssignedEndpoint {
   sni: string | null;
 }
 
-/** An edge can be assigned when it has an address and, when its protocol presents a name, an active one. */
-export function edgeAssignable(e: PublishedEdge): boolean {
-  if (!e.addresses.v4 && !e.addresses.v6) return false;
+export interface AssignableOptions {
+  /** Whether the current render rule can emit an IPv6-only edge (false → such an edge is not assignable). */
+  canEmitV6?: boolean;
+}
+
+/**
+ * An edge can be assigned when it is eligible, has an address the render can
+ * emit (IPv4 always; IPv6 only when the rule allows it) and, when its protocol
+ * presents a name, at least one ACTIVE server name.
+ */
+export function edgeAssignable(e: PublishedEdge, opts: AssignableOptions = {}): boolean {
+  if (e.eligible === false) return false;
+  const hasAddress = !!e.addresses.v4 || (opts.canEmitV6 !== false && !!e.addresses.v6);
+  if (!hasAddress) return false;
   return !protocolUsesSni(e.protocol) || e.serverNames.some((s) => s.status === 'active');
 }
 
 function sniFor(
-  subscriberHash: string,
+  subscriberKey: string,
   edge: PublishedEdge,
-  now: number,
-  lastContentAt: number | null | undefined,
 ): { ok: true; sni: string | null } | { ok: false } {
   if (!protocolUsesSni(edge.protocol)) return { ok: true, sni: null };
-  const sni = pickSni(subscriberHash, edge.edgeId, edge.serverNames, now, lastContentAt);
+  const sni = pickSni(subscriberKey, edge.edgeId, edge.serverNames);
   return sni ? { ok: true, sni } : { ok: false };
 }
 
@@ -80,69 +101,88 @@ export function fnv1a32(s: string): number {
   return h >>> 0;
 }
 
-/** First 8 hex chars of the subscriber hash as a uint32 (the pool-index seed). */
-export function poolSeed(subscriberHash: string): number {
-  const n = parseInt(subscriberHash.slice(0, 8), 16);
-  return Number.isFinite(n) ? n >>> 0 : fnv1a32(subscriberHash);
+/** First 8 hex chars of the subscriber key as a uint32 (the pool-index seed). */
+export function poolSeed(subscriberKey: string): number {
+  const n = parseInt(subscriberKey.slice(0, 8), 16);
+  return Number.isFinite(n) ? n >>> 0 : fnv1a32(subscriberKey);
 }
 
 /**
- * Pick one SNI for (subscriber, edge). `now` decides whether a retired pick is
- * still honoured (inside its drain window and the subscriber could have held
- * it) or re-hashed over the active set.
+ * Pick one SNI for (subscriber, edge): the PRF index over the FULL list keeps
+ * everyone else stable when a name is retired; a retired pick re-hashes over
+ * the active set. Null when no name is active (the edge is then not
+ * assignable — a retired name is never handed out, drain or not).
  */
 export function pickSni(
-  subscriberHash: string,
+  subscriberKey: string,
   edgeId: string,
   serverNames: readonly AssignableSni[],
-  now: number,
-  subscriberLastContentAt?: number | null,
 ): string | null {
   if (serverNames.length === 0) return null;
-  const idx = fnv1a32(`${subscriberHash}:${edgeId}`) % serverNames.length;
-  const pick = serverNames[idx];
+  const pick = serverNames[fnv1a32(`${subscriberKey}:${edgeId}`) % serverNames.length];
   if (pick.status === 'active') return pick.sni;
-  const heldIt =
-    pick.retiredAt !== undefined &&
-    subscriberLastContentAt !== undefined &&
-    subscriberLastContentAt !== null &&
-    subscriberLastContentAt < pick.retiredAt;
-  const inDrain = pick.drainUntil !== undefined && now < pick.drainUntil;
-  if (heldIt && inDrain) return pick.sni;
   const active = serverNames.filter((s) => s.status === 'active');
   if (active.length === 0) return null;
-  return active[fnv1a32(`${subscriberHash}:${edgeId}:active`) % active.length].sni;
+  return active[fnv1a32(`${subscriberKey}:${edgeId}:active`) % active.length].sni;
 }
 
 export interface AssignOptions {
   now: number;
   preferDistinctProviders: boolean;
   includeBackup: boolean;
+  /** Whether the render can emit IPv6 (default true). An IPv6-only edge is skipped otherwise. */
+  canEmitV6?: boolean;
+  /**
+   * @deprecated No longer consulted: a retired server name is never selected,
+   * whoever held it. Kept so existing callers type-check; remove at will.
+   */
   subscriberLastContentAt?: number | null;
 }
 
-/** Assign primary (+ backup) over the published edges sorted by pool index. */
+/**
+ * Assign primary (+ backup) over the published edges in pool order. The seed
+ * indexes the FULL pool (assignable or not) and walks forward to the first
+ * assignable edge, so a single edge turning ineligible moves only its own
+ * subscribers; the backup is the next assignable edge after the primary,
+ * preferring a different provider.
+ */
 export function assignEndpoints(
-  subscriberHash: string,
+  subscriberKey: string,
   published: readonly PublishedEdge[],
   opts: AssignOptions,
 ): Assignment {
-  const edges = [...published].filter(edgeAssignable).sort((a, b) => a.poolIndex - b.poolIndex);
-  if (edges.length === 0) return { primary: null, backup: null };
-  const pIdx = poolSeed(subscriberHash) % edges.length;
-  const primaryEdge = edges[pIdx];
-  const primarySni = sniFor(subscriberHash, primaryEdge, opts.now, opts.subscriberLastContentAt);
+  const pool = [...published].sort((a, b) => a.poolIndex - b.poolIndex);
+  if (pool.length === 0) return { primary: null, backup: null };
+  const assignable = (e: PublishedEdge) => edgeAssignable(e, { canEmitV6: opts.canEmitV6 });
+  const start = poolSeed(subscriberKey) % pool.length;
+  // Walk forward (wrapping) from the seeded index to the first assignable edge.
+  let pIdx = -1;
+  for (let step = 0; step < pool.length; step++) {
+    const i = (start + step) % pool.length;
+    if (assignable(pool[i])) {
+      pIdx = i;
+      break;
+    }
+  }
+  if (pIdx < 0) return { primary: null, backup: null };
+  const primaryEdge = pool[pIdx];
+  const primarySni = sniFor(subscriberKey, primaryEdge);
   if (!primarySni.ok) return { primary: null, backup: null };
   const primary: AssignedEndpoint = { role: 'primary', edge: primaryEdge, sni: primarySni.sni };
-  if (!opts.includeBackup || edges.length < 2) return { primary, backup: null };
-  // Backup: the next edge by pool order, preferring a different provider.
-  const rest = edges.filter((_, i) => i !== pIdx);
-  const ordered = [...rest.slice(pIdx), ...rest.slice(0, pIdx)];
+  if (!opts.includeBackup) return { primary, backup: null };
+  // Backup: the next assignable edge after the primary in pool order,
+  // preferring a different provider.
+  const ordered: PublishedEdge[] = [];
+  for (let step = 1; step < pool.length; step++) {
+    const e = pool[(pIdx + step) % pool.length];
+    if (assignable(e)) ordered.push(e);
+  }
+  if (ordered.length === 0) return { primary, backup: null };
   const backupEdge =
     (opts.preferDistinctProviders
       ? ordered.find((e) => e.provider !== primaryEdge.provider)
       : undefined) ?? ordered[0];
-  const backupSni = sniFor(subscriberHash, backupEdge, opts.now, opts.subscriberLastContentAt);
+  const backupSni = sniFor(subscriberKey, backupEdge);
   return {
     primary,
     backup: backupSni.ok ? { role: 'backup', edge: backupEdge, sni: backupSni.sni } : null,

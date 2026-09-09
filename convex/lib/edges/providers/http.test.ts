@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { z } from 'zod';
-import { extractErrorCode, providerFetch, EdgeProviderError, toProviderError } from './http';
+import {
+  extractErrorCode,
+  providerFetch,
+  EdgeProviderError,
+  MAX_RESPONSE_BYTES,
+  toProviderError,
+} from './http';
 import { errorBlob, jsonRes, mockFetch } from '../testing/mockFetch';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -74,6 +80,56 @@ describe('providerFetch', () => {
     await expect(
       providerFetch(args({ method: 'DELETE', schema: z.unknown(), okStatuses: [404] })),
     ).resolves.toBeUndefined();
+  });
+
+  test('redirects are never followed: manual mode + a non-retryable refusal (auth headers stay home)', async () => {
+    const stub = mockFetch(
+      () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://evil.example/collect?token=SECRET_HEADER' },
+        }),
+    );
+    let err: unknown;
+    try {
+      await providerFetch(args());
+    } catch (e) {
+      err = e;
+    }
+    expect(stub.calls[0].redirect).toBe('manual');
+    expect(err).toBeInstanceOf(EdgeProviderError);
+    expect((err as EdgeProviderError).meta).toMatchObject({
+      code: 'redirect_refused',
+      status: 302,
+      retryable: false,
+    });
+    expect(errorBlob(err)).not.toContain('evil.example');
+    // A 2xx still parses; only 3xx is refused.
+    mockFetch(() => jsonRes({ ok: true }));
+    await expect(providerFetch(args())).resolves.toEqual({ ok: true });
+  });
+
+  test('an oversized body is refused without buffering it into the error', async () => {
+    const big = `{"ok":true,"pad":"${'x'.repeat(MAX_RESPONSE_BYTES + 16)}"}`;
+    mockFetch(() => new Response(big, { status: 200 }));
+    await expect(providerFetch(args())).rejects.toMatchObject({
+      meta: { code: 'response_too_large', retryable: false },
+    });
+    // A declared content-length over the cap is refused before reading.
+    mockFetch(
+      () =>
+        new Response('{}', {
+          status: 200,
+          headers: { 'content-length': String(MAX_RESPONSE_BYTES + 1) },
+        }),
+    );
+    await expect(providerFetch(args())).rejects.toMatchObject({
+      meta: { code: 'response_too_large' },
+    });
+    // Just under the cap is fine.
+    const fits = `{"ok":true,"pad":"${'x'.repeat(1024)}"}`;
+    mockFetch(() => new Response(fits, { status: 200 }));
+    await expect(providerFetch(args())).resolves.toEqual({ ok: true });
   });
 
   test('schema mismatch names paths only', async () => {

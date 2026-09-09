@@ -13,8 +13,15 @@
  * A run is started by a mutation that also schedules the "use node" executor
  * (probeOps.execute), so the request and its work are one transaction. Rollup
  * semantics: a reachability row describes the LAST finished run for its
- * (target, country, source, address family); the summary combines the sources
- * per country with the agreement rules in lib/edges/probes/verdict.ts.
+ * (target, country, source, address family, listener port); the summary
+ * combines the sources per port with the agreement rules in
+ * lib/edges/probes/verdict.ts, then the ports per country (`portRollup`: a
+ * blocked listener blocks that slot).
+ *
+ * The hourly budget (`probe.hourlyBudget`) is reserved INSIDE the requesting
+ * mutation for every path (cron, manual, detector): the hour's runs are counted
+ * and the inserts are the reservation, so two concurrent requests cannot both
+ * spend the last slot.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalAction, internalMutation, internalQuery } from './_generated/server';
@@ -27,6 +34,7 @@ import { resolveEdgeConfig, resolveEdgeSecrets, type EdgeConfig } from './lib/ed
 import { addressFamily, bracketIfV6 } from './lib/edges/ip';
 import {
   countryVerdict,
+  portRollup,
   sourceVerdict,
   type SourceSummary,
   type Verdict,
@@ -38,6 +46,8 @@ const MIN = 60_000;
 const PROBE_RUN_RETENTION_MS = 14 * 24 * 60 * 60_000;
 const MAX_SWEEP_ROUNDS = 20;
 const RUN_TIMEOUT_MS = 10 * MIN;
+/** Distinct failing networks kept per rollup row (the agreement rule needs a handful). */
+const MAX_FAIL_NETWORKS = 16;
 
 export const PROBE_TARGET_KINDS = ['edge', 'relay', 'custom'] as const;
 export type ProbeTargetKind = (typeof PROBE_TARGET_KINDS)[number];
@@ -91,6 +101,7 @@ export function mapRunAdmin(r: Doc<'probeRuns'>) {
     target: { kind: r.targetKind, ref: r.targetRef, key: `${r.targetKind}:${r.targetRef}` },
     source: r.source,
     ipVersion: r.ipVersion,
+    port: portOfRun(r) ?? null,
     status: r.status,
     trigger: r.trigger,
     requestedAt: new Date(r.requestedAt).toISOString(),
@@ -141,7 +152,8 @@ interface ResolvedTarget {
   label: string;
   /** Address per family; a hostname counts as the v4 path (the resolver decides). */
   addresses: { v4?: string; v6?: string };
-  port: number;
+  /** Every port the target listens on (one run per port: a block can be per port). */
+  ports: number[];
 }
 
 /** Resolve what a target ref points at right now, or null when it is gone. */
@@ -156,7 +168,7 @@ async function resolveTarget(
     return {
       label: `${relay?.slug ?? 'relay'} edge${edge.poolIndex !== undefined ? ` #${edge.poolIndex}` : ''}${edge.provider ? ` (${edge.provider})` : ''}`,
       addresses: { v4: edge.addresses.v4, v6: edge.addresses.v6 },
-      port: edge.listeners[0]?.edgePort ?? 443,
+      ports: distinctPorts(edge.listeners.map((l) => l.edgePort)),
     };
   }
   if (t.kind === 'relay') {
@@ -166,24 +178,95 @@ async function resolveTarget(
       .query('relaySlots')
       .withIndex('by_relay', (q) => q.eq('relayId', relay._id))
       .collect();
-    const deployed = slots.filter((s) => s.deployed && !s.retired);
-    const port = deployed.sort((a, b) => a.slotKey.localeCompare(b.slotKey))[0]?.originPort ?? 443;
+    const deployed = slots
+      .filter((s) => s.deployed && !s.retired)
+      .sort((a, b) => a.slotKey.localeCompare(b.slotKey));
     return {
       label: `${relay.slug} node`,
       addresses: splitByFamily(relay.originAddress),
-      port,
+      ports: distinctPorts(deployed.map((s) => s.originPort)),
     };
   }
   const row = await ctx.db.get(t.ref as Id<'probeTargets'>);
   if (!row) return null;
-  return { label: row.label, addresses: splitByFamily(row.address), port: row.port };
+  return { label: row.label, addresses: splitByFamily(row.address), ports: [row.port] };
+}
+
+function distinctPorts(ports: number[]): number[] {
+  const out = [...new Set(ports.filter((p) => Number.isInteger(p) && p > 0))];
+  return out.length > 0 ? out : [443];
 }
 
 function splitByFamily(address: string): { v4?: string; v6?: string } {
   return addressFamily(address) === 'v6' ? { v6: address } : { v4: address };
 }
 
+/** Which address families a resolved target is probed over (v4 always; v6 when present and rendering allows, or v6-only). */
+function familiesOf(resolved: ResolvedTarget, cfg: EdgeConfig): Array<4 | 6> {
+  const out: Array<4 | 6> = [];
+  if (resolved.addresses.v4) out.push(4);
+  if (resolved.addresses.v6 && (cfg.render.ipv6Mode !== 'off' || !resolved.addresses.v4))
+    out.push(6);
+  return out;
+}
+
 // --- runs ---------------------------------------------------------------------------------------
+
+/** Listener port of a run: the stored field, else parsed out of a legacy row's "ip:port" target. */
+function portOfRun(run: { port?: number; target: string }): number | undefined {
+  if (run.port !== undefined) return run.port;
+  const m = /:(\d+)$/.exec(run.target);
+  return m ? Number(m[1]) : undefined;
+}
+
+/**
+ * Runs requested in the last hour — EVERY trigger (cron, manual, detector,
+ * qualification) in EVERY state — bounded per status by the budget itself
+ * (anything beyond it is simply "spent"; never an unbounded collect).
+ */
+async function spentThisHour(
+  db: QueryCtx['db'],
+  now: number,
+  hourlyBudget: number,
+): Promise<number> {
+  const hourStart = now - 60 * MIN;
+  const cap = hourlyBudget + 1;
+  let spent = 0;
+  for (const status of ['requested', 'running', 'finished', 'failed', 'timeout'] as const) {
+    spent += (
+      await db
+        .query('probeRuns')
+        .withIndex('by_status_requested', (q) =>
+          q.eq('status', status).gte('requestedAt', hourStart),
+        )
+        .take(cap)
+    ).length;
+  }
+  return spent;
+}
+
+/**
+ * What the hour's budget still allows, read inside the requesting mutation.
+ * Serializable: the inserts that follow ARE the reservation, so a concurrent
+ * request over the same slot retries and sees them.
+ */
+async function remainingBudget(db: QueryCtx['db'], cfg: EdgeConfig, now: number): Promise<number> {
+  const spent = await spentThisHour(db, now, cfg.probe.hourlyBudget);
+  return Math.max(0, cfg.probe.hourlyBudget - spent);
+}
+
+const budgetExhausted = () =>
+  new ConvexError({
+    code: 'probe.budget_exhausted',
+    message:
+      'The hourly probe budget is spent; wait for the hour to roll or raise probe.hourlyBudget',
+  });
+
+function codeOf(err: unknown): string {
+  return err instanceof ConvexError
+    ? String((err.data as { code?: string }).code ?? 'error')
+    : 'error';
+}
 
 async function insertRun(
   ctx: MutationCtx,
@@ -194,21 +277,26 @@ async function insertRun(
     port: number;
     ipVersion: 4 | 6;
     trigger: 'cron' | 'manual' | 'detector' | 'qualification';
+    /** Executor start delay: staggers a batch's runs against one external service. */
+    delayMs: number;
   },
 ): Promise<Id<'probeRuns'>> {
   const now = Date.now();
+  const delayMs = Math.max(0, Math.floor(a.delayMs));
   const runId = await ctx.db.insert('probeRuns', {
     targetKind: a.target.kind,
     targetRef: a.target.ref,
     source: a.source,
     target: `${bracketIfV6(a.address)}:${a.port}`,
+    port: a.port,
     ipVersion: a.ipVersion,
     status: 'requested',
     trigger: a.trigger,
     requestedAt: now,
+    scheduledAt: now + delayMs,
     results: [],
   });
-  await ctx.scheduler.runAfter(0, internal.probeOps.execute, { runId });
+  await ctx.scheduler.runAfter(delayMs, internal.probeOps.execute, { runId });
   await writeAuditLog(ctx, {
     actorType: 'system',
     action: 'probe.run',
@@ -219,16 +307,24 @@ async function insertRun(
   return runId;
 }
 
-/**
- * Start one probe round for one target from every enabled source (v4 always;
- * v6 when the target has one and IPv6 rendering is not off).
- */
-export async function requestProbesFor(
-  ctx: MutationCtx,
+/** One target's probe round, resolved and costed but not yet inserted. */
+interface TargetPlan {
+  target: ProbeTargetRef;
+  resolved: ResolvedTarget;
+  cfg: EdgeConfig;
+  sources: ProbeSource[];
+  families: Array<4 | 6>;
+  /** Runs one source costs for this target (ports × address families). */
+  runsPerSource: number;
+  /** Runs the round costs in total (sources × runsPerSource): its hourly-budget reservation. */
+  cost: number;
+}
+
+async function planTarget(
+  ctx: { db: import('./_generated/server').DatabaseReader },
   target: ProbeTargetRef,
-  trigger: 'cron' | 'manual' | 'detector' | 'qualification',
   sources?: ProbeSource[],
-): Promise<Id<'probeRuns'>[]> {
+): Promise<TargetPlan> {
   const resolved = await resolveTarget(ctx, target);
   if (!resolved) throw new ConvexError({ code: 'not_found', message: 'Probe target not found' });
   if (!resolved.addresses.v4 && !resolved.addresses.v6) {
@@ -237,51 +333,168 @@ export async function requestProbesFor(
   const cfg = await resolveEdgeConfig(ctx.db);
   const secrets = await resolveEdgeSecrets(ctx.db);
   const use = sources ?? enabledSources(cfg, secrets);
+  const families = familiesOf(resolved, cfg);
+  const runsPerSource = families.length * resolved.ports.length;
+  return {
+    target,
+    resolved,
+    cfg,
+    sources: use,
+    families,
+    runsPerSource,
+    cost: use.length * runsPerSource,
+  };
+}
+
+/**
+ * How a target's runs are staggered inside the caller's batch. Runs against
+ * the same EXTERNAL source are scheduled `probe.sourceSpacingMs` apart across
+ * the batch, so one tick never fires N simultaneous requests at a keyless
+ * service; the internal probe is never delayed.
+ */
+export interface StaggerOpts {
+  /** The target's position in the batch (each position = this target's own runsPerSource). */
+  staggerIndex?: number;
+  /** Runs-per-source scheduled ahead of this target in the batch (exact; wins over staggerIndex). */
+  staggerOffset?: number;
+  /**
+   * The batch's total runs per source. When known, the spacing SHRINKS so the
+   * whole batch fits inside one probe interval; when unknown, each run's delay
+   * is clamped to that span instead.
+   */
+  batchRunsPerSource?: number;
+}
+
+/** A batch's last run is never scheduled further out than one probe interval. */
+function staggerSpanCap(cfg: EdgeConfig): number {
+  return cfg.probe.intervalMinutes * MIN;
+}
+
+function staggerSpacing(cfg: EdgeConfig, source: ProbeSource, batchRunsPerSource?: number): number {
+  if (source === 'internal') return 0;
+  const total = Math.floor(batchRunsPerSource ?? 0);
+  if (total > 1)
+    return Math.min(cfg.probe.sourceSpacingMs, Math.floor(staggerSpanCap(cfg) / (total - 1)));
+  return cfg.probe.sourceSpacingMs;
+}
+
+/** Insert a planned round: one run per source per port per address family. */
+async function insertPlanned(
+  ctx: MutationCtx,
+  plan: TargetPlan,
+  trigger: 'cron' | 'manual' | 'detector' | 'qualification',
+  opts: StaggerOpts,
+): Promise<Id<'probeRuns'>[]> {
+  const offset = Math.max(
+    0,
+    Math.floor(opts.staggerOffset ?? (opts.staggerIndex ?? 0) * plan.runsPerSource),
+  );
+  const spanCap = staggerSpanCap(plan.cfg);
   const runIds: Id<'probeRuns'>[] = [];
-  for (const source of use) {
-    if (resolved.addresses.v4) {
-      runIds.push(
-        await insertRun(ctx, {
-          target,
-          source,
-          address: resolved.addresses.v4,
-          port: resolved.port,
-          ipVersion: 4,
-          trigger,
-        }),
-      );
-    }
-    if (resolved.addresses.v6 && (cfg.render.ipv6Mode !== 'off' || !resolved.addresses.v4)) {
-      runIds.push(
-        await insertRun(ctx, {
-          target,
-          source,
-          address: resolved.addresses.v6,
-          port: resolved.port,
-          ipVersion: 6,
-          trigger,
-        }),
-      );
+  for (const source of plan.sources) {
+    const spacing = staggerSpacing(plan.cfg, source, opts.batchRunsPerSource);
+    let k = 0;
+    for (const ipVersion of plan.families) {
+      const address = ipVersion === 4 ? plan.resolved.addresses.v4! : plan.resolved.addresses.v6!;
+      for (const port of plan.resolved.ports) {
+        runIds.push(
+          await insertRun(ctx, {
+            target: plan.target,
+            source,
+            address,
+            port,
+            ipVersion,
+            trigger,
+            delayMs: Math.min((offset + k) * spacing, spanCap),
+          }),
+        );
+        k++;
+      }
     }
   }
   return runIds;
 }
 
-/** One target (the cron, the detector, the per-edge admin button). */
+/**
+ * Start one probe round for one target from every enabled source, for every
+ * listener port, per address family (v4 always; v6 when the target has one and
+ * IPv6 rendering is not off, or when v6 is all it has). Reserves the round's
+ * cost from the hourly budget first: a round that does not fit is refused
+ * whole (`probe.budget_exhausted`), never partially inserted.
+ */
+export async function requestProbesFor(
+  ctx: MutationCtx,
+  target: ProbeTargetRef,
+  trigger: 'cron' | 'manual' | 'detector' | 'qualification',
+  sources?: ProbeSource[],
+  opts: StaggerOpts = {},
+): Promise<{ runIds: Id<'probeRuns'>[]; runsPerSource: number }> {
+  const plan = await planTarget(ctx, target, sources);
+  if (plan.cost > (await remainingBudget(ctx.db, plan.cfg, Date.now()))) throw budgetExhausted();
+  const runIds = await insertPlanned(ctx, plan, trigger, opts);
+  return { runIds, runsPerSource: plan.runsPerSource };
+}
+
+/** One target (the cron, the detector, the per-edge admin button). A manual request is audited like requestMany. */
 export const requestProbes = internalMutation({
   args: {
     target: probeTargetRef,
     trigger: probeTrigger,
     sources: v.optional(v.array(probeSource)),
+    staggerIndex: v.optional(v.number()),
+    staggerOffset: v.optional(v.number()),
+    batchRunsPerSource: v.optional(v.number()),
+    actorAdminId: v.optional(v.id('adminUsers')),
   },
-  handler: async (ctx, { target, trigger, sources }) => ({
-    runIds: await requestProbesFor(ctx, target, trigger, sources),
-  }),
+  handler: async (ctx, { target, trigger, sources, actorAdminId, ...stagger }) => {
+    const { runIds, runsPerSource } = await requestProbesFor(
+      ctx,
+      target,
+      trigger,
+      sources,
+      stagger,
+    );
+    if (trigger === 'manual') {
+      await writeAuditLog(ctx, {
+        actorType: 'admin',
+        actorId: actorAdminId ?? undefined,
+        action: 'probe.requested',
+        targetType: 'probe_target',
+        targetId: targetKeyOf(target),
+        payload: { targets: 1, runs: runIds.length, sources: sources ?? null },
+      });
+    }
+    // The batch caller (detector) accumulates this into the next target's offset.
+    return { runIds, runsPerSource };
+  },
 });
 
 /**
- * Several targets at once (Telemetry → Probes "Probe now"). Audited once as the
- * operator's request; every run still writes its own `edge.probe.run` row.
+ * The cost of one round for one target WITHOUT inserting anything: how many
+ * runs per source it will schedule (0 when it cannot be probed). A batch
+ * caller sums these first so every target's stagger offset is cumulative and
+ * the whole batch is spaced inside one interval, like the cron pass.
+ */
+export const planFor = internalQuery({
+  args: { target: probeTargetRef, sources: v.optional(v.array(probeSource)) },
+  handler: async (ctx, { target, sources }): Promise<{ runsPerSource: number }> => {
+    try {
+      const plan = await planTarget(ctx, target, sources);
+      return { runsPerSource: plan.runsPerSource };
+    } catch (err) {
+      if (err instanceof ConvexError) return { runsPerSource: 0 };
+      throw err;
+    }
+  },
+});
+
+/**
+ * Several targets at once (Telemetry → Probes "Probe now"). Duplicates collapse
+ * to one target; the batch is truncated to what the hourly budget still allows
+ * (whole targets, in request order; the rest come back in `skipped` as
+ * `<key>: probe.budget_exhausted`) and refused outright when nothing fits.
+ * Audited once as the operator's request; every run still writes its own
+ * `probe.run` row.
  */
 export const requestMany = internalMutation({
   args: {
@@ -292,16 +505,40 @@ export const requestMany = internalMutation({
   handler: async (ctx, { targets, sources, actorAdminId }) => {
     if (targets.length === 0 || targets.length > 50)
       throw new ConvexError({ code: 'validation', message: 'targets must hold 1..50 entries' });
-    const runIds: Id<'probeRuns'>[] = [];
+    // The same target twice is one request (a duplicate would double-spend the budget).
+    const unique = [...new Map(targets.map((t) => [targetKeyOf(t), t])).values()];
+    const cfg = await resolveEdgeConfig(ctx.db);
+    let remaining = await remainingBudget(ctx.db, cfg, Date.now());
+    if (remaining <= 0) throw budgetExhausted();
     const skipped: string[] = [];
-    for (const t of targets) {
+    // Resolve everything first: the batch's total decides the stagger spacing.
+    const plans: TargetPlan[] = [];
+    for (const t of unique) {
       try {
-        runIds.push(...(await requestProbesFor(ctx, t, 'manual', sources)));
+        plans.push(await planTarget(ctx, t, sources));
       } catch (err) {
-        skipped.push(
-          `${targetKeyOf(t)}: ${err instanceof ConvexError ? String((err.data as { code?: string }).code ?? 'error') : 'error'}`,
-        );
+        skipped.push(`${targetKeyOf(t)}: ${codeOf(err)}`);
       }
+    }
+    // Reserve whole targets in request order; one that no longer fits is skipped, not split.
+    const fitting: TargetPlan[] = [];
+    for (const p of plans) {
+      if (p.cost > remaining) {
+        skipped.push(`${targetKeyOf(p.target)}: probe.budget_exhausted`);
+        continue;
+      }
+      remaining -= p.cost;
+      fitting.push(p);
+    }
+    if (fitting.length === 0 && plans.length > 0) throw budgetExhausted();
+    const batchRunsPerSource = fitting.reduce((a, p) => a + p.runsPerSource, 0);
+    const runIds: Id<'probeRuns'>[] = [];
+    let offset = 0;
+    for (const p of fitting) {
+      runIds.push(
+        ...(await insertPlanned(ctx, p, 'manual', { staggerOffset: offset, batchRunsPerSource })),
+      );
+      offset += p.runsPerSource;
     }
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -309,7 +546,7 @@ export const requestMany = internalMutation({
       action: 'probe.requested',
       targetType: 'probe_target',
       payload: {
-        targets: targets.length,
+        targets: unique.length,
         runs: runIds.length,
         sources: sources ?? null,
       },
@@ -323,7 +560,11 @@ export const markRunning = internalMutation({
   handler: async (ctx, { runId, externalId }) => {
     const run = await ctx.db.get(runId);
     if (!run || run.status !== 'requested') return null;
-    await ctx.db.patch(runId, { status: 'running', externalId: externalId?.slice(0, 200) });
+    await ctx.db.patch(runId, {
+      status: 'running',
+      startedAt: Date.now(),
+      externalId: externalId?.slice(0, 200),
+    });
     return null;
   },
 });
@@ -379,17 +620,29 @@ export const finishRun = internalMutation({
               failNetworks: rs.some((r) => !r.ok) ? ['internal'] : [],
             }
           : sourceVerdict(run.source, rs, cfg.probe.agreementVantages);
-      // One rollup row per (country, source, address family): a dual-stack
-      // target's v6 result must never overwrite its v4 verdict or vice versa.
-      const row = existing.find(
+      // One rollup row per (country, source, address family, listener port): a
+      // dual-stack target's v6 result must never overwrite its v4 verdict, and
+      // a multi-port edge's ports must not overwrite each other in completion
+      // order. A row written before ports were kept (no `port`) is the legacy
+      // single-port row: the first run on its path adopts and stamps it.
+      const port = portOfRun(run);
+      const samePath = existing.filter(
         (x) =>
           x.country === country && x.source === run.source && (x.ipVersion ?? 4) === run.ipVersion,
       );
+      const row =
+        samePath.find((x) => x.port === port) ?? samePath.find((x) => x.port === undefined);
       const patch = {
+        port,
         okCount: summary.okVantages,
         failCount: summary.failVantages,
         lastOkAt: summary.okVantages > 0 ? now : row?.lastOkAt,
         lastFailAt: summary.failVantages > 0 ? now : row?.lastFailAt,
+        // The transition marker the detector needs: this country has reached
+        // the target before, so a later `unreachable` is a change, not a constant.
+        lastReachableAt: summary.verdict === 'reachable' ? now : row?.lastReachableAt,
+        // The real distinct failing networks (bounded) behind this verdict.
+        failNetworks: summary.failNetworks.slice(0, MAX_FAIL_NETWORKS),
         verdict: summary.verdict,
         updatedAt: now,
       };
@@ -459,26 +712,50 @@ async function refreshTargetSummary(ctx: MutationCtx, target: ProbeTargetRef, no
         verdict: r.verdict as Verdict,
         okVantages: r.okCount,
         failVantages: r.failCount,
-        // An `unreachable` source verdict already proved ≥ agreementVantages
-        // distinct failing networks; reconstruct that many placeholders.
-        failNetworks:
-          r.verdict === 'unreachable'
-            ? Array.from({ length: Math.max(2, r.failCount) }, (_, i) => `${r.source}:${i}`)
-            : r.failCount > 0
-              ? [`${r.source}:0`]
-              : [],
+        // The persisted distinct failing networks. A row written before they
+        // were kept counts as ONE network (never reconstructed: the
+        // cross-source rule must count real vantages, and the row refreshes
+        // at the next run anyway).
+        failNetworks: r.failNetworks ?? (r.failCount > 0 ? [`${r.source}:legacy`] : []),
       }));
     const verdictOf = (perSource: SourceSummary[]): Verdict =>
       country === 'XX' ? internalVerdict(perSource) : countryVerdict(perSource);
+    // Sources agree PER PORT (a source's rows for different ports are different
+    // measurements), then the ports roll up: any blocked listener blocks the
+    // slot (portRollup). Legacy rows without a port form their own group.
+    const acrossPorts = (subset: typeof fresh): Verdict => {
+      const ports = [...new Set(subset.map((r) => r.port ?? -1))];
+      return portRollup(
+        ports.map((p) => verdictOf(summarise(subset.filter((r) => (r.port ?? -1) === p)))),
+      );
+    };
     const perSource = summarise(primaryRows);
-    const v6 = v4Rows.length > 0 && v6Rows.length > 0 ? verdictOf(summarise(v6Rows)) : undefined;
+    const v6 = v4Rows.length > 0 && v6Rows.length > 0 ? acrossPorts(v6Rows) : undefined;
+    const verdict = acrossPorts(primaryRows);
+    // The reachable→unreachable transition is judged PER PORT: a port that is
+    // unreachable now counts only if THAT port was reached from this country
+    // before. Another port's reachable history must not make a listener that
+    // was blocked since it appeared look like a fresh block.
+    const wasReachable = (() => {
+      const ports = [...new Set(primaryRows.map((r) => r.port ?? -1))];
+      const portRows = (p: number) => primaryRows.filter((r) => (r.port ?? -1) === p);
+      const reachedBefore = (rs: typeof primaryRows) =>
+        rs.some((r) => r.lastReachableAt !== undefined);
+      if (verdict !== 'unreachable') return reachedBefore(primaryRows);
+      return ports.some(
+        (p) => verdictOf(summarise(portRows(p))) === 'unreachable' && reachedBefore(portRows(p)),
+      );
+    })();
     return {
       country,
-      verdict: verdictOf(perSource),
+      verdict,
+      wasReachable,
       ...(v6 ? { v6Verdict: v6 } : {}),
       okVantages: perSource.reduce((a, s) => a + s.okVantages, 0),
       failVantages: perSource.reduce((a, s) => a + s.failVantages, 0),
-      lastAt: Math.max(0, ...rows.filter((r) => r.country === country).map((r) => r.updatedAt)),
+      // THIS country's own freshness (its newest contributing row), never the
+      // summary's: the detector ages each country's evidence separately.
+      lastAt: Math.max(0, ...primaryRows.map((r) => r.updatedAt)),
     };
   });
   const reachability = { byCountry, updatedAt: now };
@@ -606,9 +883,12 @@ export const summary = internalQuery({
     const since = Math.max(rawSince, until - 366 * DAY);
     const span = Math.max(until - since, MIN);
     const bucketMs = span <= 3 * DAY ? 60 * MIN : DAY;
-    const n = Math.ceil(span / bucketMs);
+    // Buckets sit on clock boundaries of their size (whole hours / UTC days),
+    // so the first one may start before `since` and cover a partial span.
+    const alignedSince = Math.floor(since / bucketMs) * bucketMs;
+    const n = Math.ceil((until - alignedSince) / bucketMs);
     const buckets = Array.from({ length: n }, (_, i) => ({
-      start: since + i * bucketMs,
+      start: alignedSince + i * bucketMs,
       ok: 0,
       fail: 0,
       runs: 0,
@@ -627,7 +907,7 @@ export const summary = internalQuery({
     const byCountry: Record<string, { ok: number; fail: number }> = {};
     const bySource: Record<string, { runs: number; ok: number; fail: number }> = {};
     for (const r of rows) {
-      const b = buckets[Math.floor((r.requestedAt - since) / bucketMs)];
+      const b = buckets[Math.floor((r.requestedAt - alignedSince) / bucketMs)];
       if (!b) continue;
       b.runs++;
       totals.runs++;
@@ -638,6 +918,8 @@ export const summary = internalQuery({
         b[k]++;
         totals[k]++;
         src[k]++;
+        // The internal probe ('XX') is not a country: it shows under bySource only.
+        if (x.country === 'XX') continue;
         (b.byCountry[x.country] ??= { ok: 0, fail: 0 })[k]++;
         (byCountry[x.country] ??= { ok: 0, fail: 0 })[k]++;
       }
@@ -714,19 +996,17 @@ export const due = internalQuery({
       .query('relays')
       .withIndex('by_enabled', (q) => q.eq('enabled', true))
       .collect();
-    const dueTargets: Array<{ target: ProbeTargetRef; suspected: boolean }> = [];
-    let spentThisHour = 0;
-    const hourStart = now - 60 * MIN;
+    const dueTargets: Array<{
+      target: ProbeTargetRef;
+      suspected: boolean;
+      /** Runs one source will cost for this target (ports × address families). */
+      runsPerSource: number;
+    }> = [];
+    // The hour's spend counts EVERY run of the hour — cron, manual, detector,
+    // qualification, whatever its state — not only the due candidates' runs.
+    // (The plan's estimate; requestProbes re-checks and reserves atomically.)
+    const spent = await spentThisHour(ctx.db, now, cfg.probe.hourlyBudget);
     const consider = async (target: ProbeTargetRef, interval: number, suspected: boolean) => {
-      // The hour's spend (budget) and the newest run (interval) are separate
-      // reads: an interval above an hour must still see its last run.
-      const recent = await ctx.db
-        .query('probeRuns')
-        .withIndex('by_target_requested', (q) =>
-          q.eq('targetKind', target.kind).eq('targetRef', target.ref).gte('requestedAt', hourStart),
-        )
-        .collect();
-      spentThisHour += recent.length;
       const newest = await ctx.db
         .query('probeRuns')
         .withIndex('by_target_requested', (q) =>
@@ -735,7 +1015,14 @@ export const due = internalQuery({
         .order('desc')
         .first();
       const last = newest?.requestedAt ?? 0;
-      if (last === 0 || now - last >= interval) dueTargets.push({ target, suspected });
+      if (last !== 0 && now - last < interval) return;
+      const resolved = await resolveTarget(ctx, target);
+      if (!resolved || (!resolved.addresses.v4 && !resolved.addresses.v6)) return;
+      dueTargets.push({
+        target,
+        suspected,
+        runsPerSource: Math.max(1, familiesOf(resolved, cfg).length * resolved.ports.length),
+      });
     };
     const baseInterval = cfg.probe.intervalMinutes * MIN;
     for (const relay of relays) {
@@ -744,7 +1031,9 @@ export const due = internalQuery({
       for (const edgeId of relay.publishedEdgeIds) {
         if (!edgeId) continue;
         const edge = await ctx.db.get(edgeId);
-        if (!edge || edge.status !== 'active' || !edge.addresses.v4) continue;
+        // v6-only edges are probed too (over v6; requestProbesFor's family rules).
+        if (!edge || edge.status !== 'active' || (!edge.addresses.v4 && !edge.addresses.v6))
+          continue;
         await consider({ kind: 'edge', ref: edgeId }, interval, suspected);
       }
       if (relay.probeNode) await consider({ kind: 'relay', ref: relay._id }, baseInterval, false);
@@ -761,13 +1050,18 @@ export const due = internalQuery({
       enabled: cfg.probe.enabled,
       sources: enabledSources(cfg, secrets),
       hourlyBudget: cfg.probe.hourlyBudget,
-      spentThisHour,
+      spentThisHour: spent,
       dueTargets,
     };
   },
 });
 
-/** Runs stuck in requested/running past the executor's ceiling → timeout. */
+/**
+ * Runs stuck in requested/running past the executor's ceiling → timeout. The
+ * clock starts when the executor was DUE (`scheduledAt`: a staggered run may
+ * sit `requested` for most of a probe interval by design) or, once running,
+ * when it started — never at the request itself.
+ */
 export const sweepStuck = internalMutation({
   args: { now: v.number() },
   handler: async (ctx, { now }) => {
@@ -778,7 +1072,8 @@ export const sweepStuck = internalMutation({
         .withIndex('by_status', (q) => q.eq('status', status))
         .take(200);
       for (const r of rows) {
-        if (r.requestedAt + RUN_TIMEOUT_MS <= now) {
+        const since = Math.max(r.requestedAt, r.scheduledAt ?? 0, r.startedAt ?? 0);
+        if (since + RUN_TIMEOUT_MS <= now) {
           await ctx.db.patch(r._id, { status: 'timeout', finishedAt: now });
           n++;
         }
@@ -832,27 +1127,41 @@ export const run = internalAction({
       const { timedOut } = await ctx.runMutation(internal.probes.sweepStuck, { now });
       const plan = await ctx.runQuery(internal.probes.due, { now });
       if (!plan.enabled || plan.sources.length === 0) return { requested: 0, skipped: 0, timedOut };
+      // Fit the batch to the budget first (the plan's estimate; each request
+      // re-checks and reserves for real), so its total is known and the
+      // stagger spacing can shrink to keep the whole tick inside one interval.
       let spent = plan.spentThisHour;
-      let requested = 0;
       let skipped = 0;
+      const batch: typeof plan.dueTargets = [];
       for (const d of plan.dueTargets) {
-        // Each source is one run (two with IPv6); reserve the worst case.
-        const cost = plan.sources.length * 2;
+        // One run per source per port per address family.
+        const cost = plan.sources.length * d.runsPerSource;
         if (spent + cost > plan.hourlyBudget) {
           skipped++;
           continue;
         }
+        spent += cost;
+        batch.push(d);
+      }
+      const batchRunsPerSource = batch.reduce((a, d) => a + d.runsPerSource, 0);
+      let requested = 0;
+      let offset = 0;
+      for (const d of batch) {
         try {
           const res = await ctx.runMutation(internal.probes.requestProbes, {
             target: d.target,
             trigger: 'cron',
             sources: plan.sources,
+            staggerOffset: offset,
+            batchRunsPerSource,
           });
-          spent += res.runIds.length;
           requested += res.runIds.length;
         } catch {
-          skipped++; // a target that vanished between the plan and the request
+          // A target that vanished between the plan and the request, or the
+          // budget moved under the plan (the mutation is authoritative).
+          skipped++;
         }
+        offset += d.runsPerSource;
       }
       return { requested, skipped, timedOut };
     }),

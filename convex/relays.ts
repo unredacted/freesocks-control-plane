@@ -3,17 +3,21 @@
  * the origin CRUD (admin + the Ansible by-slug upsert), edge adoption, and the
  * PUBLISHED-pool bookkeeping (publish/unpublish with pool-index inheritance and
  * the publication epoch the render cache keys on). Rotation/provisioning state
- * lives in relayRotations.ts; edge rows in relayEdges.ts.
+ * lives in edgeRotations.ts; edge rows in edges.ts.
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery } from './_generated/server';
+import type { MutationCtx } from './_generated/server';
+import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
+import { isTerminalPhase } from './lib/edges/rotation';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
 import { isPublicIpLiteral, addressFamily } from './lib/edges/ip';
 import { sameAddress } from './lib/edges/hosts';
 import { PROTOCOL_TRANSPORT, protocolUsesSni } from './lib/edges/protocols';
+import { providerHealthSatisfies } from './lib/edges/providers/capabilities';
 import { nextFreePoolIndex, withEdgeAt, withoutEdge, publishedCount } from './lib/edges/pool';
 
 type Db = import('./_generated/server').DatabaseReader;
@@ -59,6 +63,102 @@ async function assertAddressChangeAllowed(db: Db, origin: Doc<'relays'>, next?: 
       message: 'Drain or destroy every edge of this origin before changing originAddress',
     });
   }
+}
+
+/** Nothing bypasses a quarantine (docs/edges.md): the operator resolves it first. */
+export function assertNotQuarantined(origin: Doc<'relays'>) {
+  if (origin.quarantine) {
+    throw new ConvexError({
+      code: 'edge.quarantined',
+      message: 'Origin is quarantined; resolve it first',
+    });
+  }
+}
+
+/**
+ * The shared gate for every pool / edge write that is NOT the running rotation
+ * itself (publish, unpublish, adopt+publish, delete, operator resolutions, pool
+ * drops): refused while the origin is quarantined or a rotation is in flight,
+ * so no two writers touch the published pool or the template Host at once.
+ */
+export async function assertNoRotationOrQuarantine(db: Db, origin: Doc<'relays'>) {
+  assertNotQuarantined(origin);
+  if (origin.activeRotationId) {
+    const rot = await db.get(origin.activeRotationId);
+    if (rot && !isTerminalPhase(rot.phase)) {
+      throw new ConvexError({
+        code: 'edge.rotation_running',
+        message: 'A rotation is running on this origin; wait for it to finish',
+      });
+    }
+  }
+}
+
+/** Members must stop receiving an edge that left the pool: refresh the S3 mirrors once. */
+export async function scheduleMirrorRefresh(ctx: MutationCtx) {
+  await ctx.scheduler.runAfter(0, internal.storage.refreshActiveMirrors, {});
+}
+
+/**
+ * Remove an edge from the published pool / standby list WITHOUT a drain (the
+ * provider no longer has it, or an operator forgot it) and bump the epoch so
+ * renders stop emitting it. Shared by `dropFromPool` and the describe(gone)
+ * transition in edges.ts so the drop happens in the SAME mutation as the status
+ * change. Audits `edge.unpublished` + `edge.drift` when it held a pool index.
+ */
+export async function dropEdgeFromPool(
+  ctx: MutationCtx,
+  origin: Doc<'relays'>,
+  edge: Doc<'edges'>,
+  opts: { reason: string; rotationId?: Id<'edgeRotations'> } = { reason: 'drift' },
+): Promise<{ dropped: boolean; epoch: number; inPool: boolean }> {
+  const now = Date.now();
+  const inPool = origin.publishedEdgeIds.includes(edge._id);
+  const inStandby = origin.standbyEdgeIds.includes(edge._id);
+  if (!inPool && !inStandby) return { dropped: false, epoch: origin.publicationEpoch, inPool };
+  if (edge.publication !== 'unpublished') {
+    await ctx.db.patch(edge._id, {
+      publication: 'unpublished',
+      poolIndex: undefined,
+      updatedAt: now,
+    });
+  }
+  const epoch = origin.publicationEpoch + 1;
+  await ctx.db.patch(origin._id, {
+    publishedEdgeIds: withoutEdge(origin.publishedEdgeIds, edge._id),
+    standbyEdgeIds: origin.standbyEdgeIds.filter((e) => e !== edge._id),
+    publicationEpoch: epoch,
+    updatedAt: now,
+  });
+  if (inPool) {
+    await writeAuditLog(ctx, {
+      actorType: 'system',
+      action: 'edge.unpublished',
+      targetType: 'edge',
+      targetId: edge._id,
+      payload: {
+        relaySlug: origin.slug,
+        edgeId: edge._id,
+        poolIndex: edge.poolIndex ?? null,
+        epoch,
+        rotationId: opts.rotationId,
+      },
+    });
+    await writeAuditLog(ctx, {
+      actorType: 'system',
+      action: 'edge.drift',
+      targetType: 'relay',
+      targetId: origin._id,
+      payload: {
+        relaySlug: origin.slug,
+        edgeId: edge._id,
+        mismatched: 1,
+        total: publishedCount(origin.publishedEdgeIds),
+      },
+    });
+    await scheduleMirrorRefresh(ctx);
+  }
+  return { dropped: true, epoch, inPool };
 }
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
@@ -300,6 +400,38 @@ function patchFrom(a: OriginWrite): Partial<Doc<'relays'>> {
   return p;
 }
 
+/**
+ * Audit view of a write: the names of the fields it actually changed (never
+ * their values — addresses stay out of the log) plus the operator-owned boolean
+ * knobs' new values when they flipped.
+ */
+function changedFields(
+  before: Doc<'relays'> | null,
+  p: Partial<Doc<'relays'>>,
+): { changed: string[]; autoRotate?: boolean; hostManaged?: boolean; enabled?: boolean } {
+  const changed: string[] = [];
+  for (const [k, val] of Object.entries(p)) {
+    if (val === undefined) continue;
+    const prev = before ? (before as unknown as Record<string, unknown>)[k] : undefined;
+    if (before && JSON.stringify(prev) === JSON.stringify(val)) continue;
+    changed.push(k);
+  }
+  const flips: { autoRotate?: boolean; hostManaged?: boolean; enabled?: boolean } = {};
+  for (const k of ['autoRotate', 'hostManaged', 'enabled'] as const) {
+    if (changed.includes(k) && typeof p[k] === 'boolean') flips[k] = p[k];
+  }
+  return { changed: changed.sort(), ...flips };
+}
+
+/** Fields the Ansible role may set through the by-slug upsert (docs/edges.md, node role contract). */
+const ROLE_UPDATE_FIELDS = new Set<string>([
+  'nodeHostname',
+  'nodeUuid',
+  'originAddress',
+  'locationCode',
+  'modeSlugs',
+]);
+
 async function insertOrigin(
   ctx: { db: import('./_generated/server').DatabaseWriter },
   slug: string,
@@ -379,6 +511,17 @@ export const update = internalMutation({
     await assertAddressChangeAllowed(ctx.db, row, p.originAddress);
     if (p.nodeHostname !== undefined && p.nodeHostname !== row.nodeHostname)
       await assertNodeUnbound(ctx.db, row.backendServerId, p.nodeHostname, id);
+    // The flip decision was taken from `hostManaged` at publish time: flipping
+    // it under a running rotation would change what the run must do mid-way.
+    if (p.hostManaged !== undefined && p.hostManaged !== row.hostManaged && row.activeRotationId) {
+      const rot = await ctx.db.get(row.activeRotationId);
+      if (rot && !isTerminalPhase(rot.phase)) {
+        throw new ConvexError({
+          code: 'edge.rotation_running',
+          message: 'hostManaged cannot change while a rotation is running',
+        });
+      }
+    }
     // Publication-affecting edits bump the epoch (render cache + assignment).
     const affects =
       p.desiredPublished !== undefined || p.modeSlugs !== undefined || p.enabled !== undefined;
@@ -387,13 +530,16 @@ export const update = internalMutation({
       ...(affects ? { publicationEpoch: row.publicationEpoch + 1 } : {}),
       updatedAt: Date.now(),
     });
+    // The epoch bump re-renders the fronted route within one request; S3
+    // mirrors only change when refreshed, so every epoch bump schedules one.
+    if (affects) await scheduleMirrorRefresh(ctx);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
       action: 'relay.update',
       targetType: 'relay',
       targetId: id,
-      payload: { slug: row.slug },
+      payload: { slug: row.slug, ...changedFields(row, p) },
     });
     return { ok: true as const };
   },
@@ -415,18 +561,55 @@ export const upsertBySlug = internalMutation({
       .unique();
     let id: Id<'relays'>;
     let created = false;
+    let changed: string[] = [];
     if (existing) {
       id = existing._id;
-      const p = patchFrom(a);
-      // The role must not silently flip operator-owned automation knobs.
-      delete p.autoRotate;
+      if (existing.deleting) {
+        throw new ConvexError({
+          code: 'edge.deleting',
+          message: 'This relay is being deleted; wait for the teardown to finish',
+        });
+      }
+      // The role owns the node's identity only. Every operator-owned knob
+      // (automation, Host management, pool sizing, limits) is dropped from a
+      // role write; the documented body never carries them.
+      const full = patchFrom(a) as Record<string, unknown>;
+      const p: Partial<Doc<'relays'>> = {};
+      for (const k of Object.keys(full)) {
+        if (ROLE_UPDATE_FIELDS.has(k)) (p as Record<string, unknown>)[k] = full[k];
+      }
       await assertAddressChangeAllowed(ctx.db, existing, p.originAddress);
       const host = p.nodeHostname ?? existing.nodeHostname;
+      if (server._id !== existing.backendServerId) {
+        // Edges dial the node behind ONE panel; moving the relay to another
+        // panel while any edge still exists would strand them.
+        const edges = await ctx.db
+          .query('edges')
+          .withIndex('by_relay_status', (q) => q.eq('relayId', id))
+          .collect();
+        if (edges.some((e) => e.status !== 'destroyed')) {
+          throw new ConvexError({
+            code: 'edge.relay_reparent_locked',
+            message: 'Destroy every edge of this relay before moving it to another backend server',
+          });
+        }
+        p.backendServerId = server._id;
+      }
       if (host !== existing.nodeHostname || server._id !== existing.backendServerId)
         await assertNodeUnbound(ctx.db, server._id, host, id);
-      await ctx.db.patch(id, { ...p, backendServerId: server._id, updatedAt: Date.now() });
+      changed = changedFields(existing, p).changed;
+      await ctx.db.patch(id, { ...p, updatedAt: Date.now() });
     } else {
-      id = await insertOrigin(ctx, slug, server._id, a);
+      // A fresh registration is filtered like an update: the role never sets an
+      // operator-owned knob, and never opts a relay into automatic rotation.
+      const fresh: Record<string, unknown> = {};
+      for (const k of Object.keys(a)) {
+        if (ROLE_UPDATE_FIELDS.has(k)) fresh[k] = (a as Record<string, unknown>)[k];
+      }
+      id = await insertOrigin(ctx, slug, server._id, {
+        ...(fresh as OriginWrite),
+        autoRotate: false,
+      });
       created = true;
     }
     await writeAuditLog(ctx, {
@@ -435,23 +618,27 @@ export const upsertBySlug = internalMutation({
       action: 'relay.upsert',
       targetType: 'relay',
       targetId: id,
-      payload: { slug, created },
+      payload: { slug, created, changed },
     });
     return { id, created };
   },
 });
 
-/** Mark an origin for teardown; relayEdges.reconcile drains/destroys and removes it. */
+/**
+ * Mark an origin for teardown; the edge-reconcile cron drains/destroys its
+ * edges and removes the row. Live edges drain for the relay's `drainMs` (members
+ * still hold them) unless `force` skips the drain.
+ */
 export const requestDelete = internalMutation({
-  args: { id: v.id('relays'), actorAdminId: v.optional(v.id('adminUsers')) },
-  handler: async (ctx, { id, actorAdminId }) => {
+  args: {
+    id: v.id('relays'),
+    force: v.optional(v.boolean()),
+    actorAdminId: v.optional(v.id('adminUsers')),
+  },
+  handler: async (ctx, { id, force, actorAdminId }) => {
     const row = await ctx.db.get(id);
     if (!row) return { ok: true as const, deleted: true };
-    if (row.quarantine)
-      throw new ConvexError({
-        code: 'edge.quarantined',
-        message: 'Resolve the quarantine before deleting',
-      });
+    assertNotQuarantined(row);
     if (row.activeRotationId) {
       const rot = await ctx.db.get(row.activeRotationId);
       if (rot && ['host_flipping', 'confirming', 'rolling_back'].includes(rot.phase)) {
@@ -488,7 +675,7 @@ export const requestDelete = internalMutation({
         await ctx.db.patch(e._id, {
           status: 'draining',
           publication: 'draining',
-          drainUntil: now,
+          drainUntil: force ? now : now + row.drainMs,
           statusChangedAt: now,
           updatedAt: now,
         });
@@ -508,8 +695,9 @@ export const requestDelete = internalMutation({
       action: 'relay.delete',
       targetType: 'relay',
       targetId: id,
-      payload: { slug: row.slug },
+      payload: { slug: row.slug, force: force ?? false },
     });
+    await scheduleMirrorRefresh(ctx);
     return { ok: true as const, deleted: false };
   },
 });
@@ -530,7 +718,19 @@ export const finalizeDelete = internalMutation({
       .withIndex('by_relay', (q) => q.eq('relayId', id))
       .collect();
     for (const s of slots) await ctx.db.delete(s._id);
-    for (const e of edges) await ctx.db.delete(e._id);
+    // Probe rollups are keyed by target id strings and never cascade.
+    const dropRollups = async (kind: 'edge' | 'relay', ref: string) => {
+      const rows = await ctx.db
+        .query('probeReachability')
+        .withIndex('by_target_country', (q) => q.eq('targetKind', kind).eq('targetRef', ref))
+        .collect();
+      for (const x of rows) await ctx.db.delete(x._id);
+    };
+    for (const e of edges) {
+      await dropRollups('edge', e._id);
+      await ctx.db.delete(e._id);
+    }
+    await dropRollups('relay', id);
     await ctx.db.delete(id);
     return { removed: true };
   },
@@ -584,6 +784,9 @@ export const adoptEdge = internalMutation({
           message: 'account provider does not match the slot profile',
         });
     }
+    // Adopting is a bookkeeping insert; PUBLISHING touches the pool, so it takes
+    // the same gate as every other pool writer.
+    if (a.publish) await assertNoRotationOrQuarantine(ctx.db, origin);
     const managed = !!accountRow && (a.resources?.length ?? 0) > 0;
     const now = Date.now();
     const edgeId = await ctx.db.insert('edges', {
@@ -686,7 +889,8 @@ export async function checkPublishable(
   // any account of that provider.
   if (edge.accountId && profile.accountId && profile.accountId !== edge.accountId)
     return { ok: false, code: 'account_mismatch' };
-  if (requireHealth && edge.managed && edge.health !== 'online')
+  // A provider without member health never reports `online`; `unknown` passes for it.
+  if (edge.managed && !providerHealthSatisfies(edge.provider, edge.health, requireHealth))
     return { ok: false, code: 'edge_unhealthy' };
   return { ok: true };
 }
@@ -703,6 +907,7 @@ export const publishEdge = internalMutation({
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId)
       throw new ConvexError({ code: 'not_found', message: 'Origin/edge not found' });
+    await assertNoRotationOrQuarantine(ctx.db, origin);
     const cfg = await resolveEdgeConfig(ctx.db);
     const check = await checkPublishable(ctx, edge, cfg.requireProviderHealth);
     if (!check.ok)
@@ -757,6 +962,7 @@ export const unpublishEdge = internalMutation({
     const edge = await ctx.db.get(edgeId);
     if (!origin || !edge || edge.relayId !== relayId)
       throw new ConvexError({ code: 'not_found', message: 'Origin/edge not found' });
+    await assertNoRotationOrQuarantine(ctx.db, origin);
     if (edge.publication !== 'published')
       return { ok: true as const, epoch: origin.publicationEpoch };
     const now = Date.now();
@@ -795,6 +1001,7 @@ export const unpublishEdge = internalMutation({
       targetId: edgeId,
       payload: { relaySlug: origin.slug, edgeId, poolIndex, epoch },
     });
+    await scheduleMirrorRefresh(ctx);
     return { ok: true as const, epoch };
   },
 });
@@ -803,54 +1010,37 @@ export const unpublishEdge = internalMutation({
  * A published edge that vanished at the provider (describe → gone) or was
  * destroyed by an operator: remove it from the pool without a drain (there is
  * nothing left to drain to) and bump the epoch so renders stop emitting it.
+ * Gated like every pool writer; `force` is for internal callers that already
+ * hold the origin (the describe(gone) path drops inside its own mutation).
  */
 export const dropFromPool = internalMutation({
-  args: { relayId: v.id('relays'), edgeId: v.id('edges'), reason: v.string() },
-  handler: async (ctx, { relayId, edgeId, reason }) => {
+  args: {
+    relayId: v.id('relays'),
+    edgeId: v.id('edges'),
+    reason: v.string(),
+    force: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { relayId, edgeId, reason, force }) => {
     const origin = await ctx.db.get(relayId);
     if (!origin) return { ok: false as const };
-    const now = Date.now();
-    const inPool = origin.publishedEdgeIds.includes(edgeId);
-    const inStandby = origin.standbyEdgeIds.includes(edgeId);
-    if (!inPool && !inStandby) return { ok: true as const, dropped: false };
+    if (!force) await assertNoRotationOrQuarantine(ctx.db, origin);
     const edge = await ctx.db.get(edgeId);
-    if (edge && edge.publication !== 'unpublished') {
-      await ctx.db.patch(edgeId, {
-        publication: 'unpublished',
-        poolIndex: undefined,
-        updatedAt: now,
+    if (!edge) {
+      // A vanished row: heal the lists without an edge to patch.
+      const inPool = origin.publishedEdgeIds.includes(edgeId);
+      const inStandby = origin.standbyEdgeIds.includes(edgeId);
+      if (!inPool && !inStandby) return { ok: true as const, dropped: false };
+      await ctx.db.patch(relayId, {
+        publishedEdgeIds: withoutEdge(origin.publishedEdgeIds, edgeId),
+        standbyEdgeIds: origin.standbyEdgeIds.filter((e) => e !== edgeId),
+        publicationEpoch: origin.publicationEpoch + 1,
+        updatedAt: Date.now(),
       });
+      if (inPool) await scheduleMirrorRefresh(ctx);
+      return { ok: true as const, dropped: true };
     }
-    const epoch = origin.publicationEpoch + 1;
-    await ctx.db.patch(relayId, {
-      publishedEdgeIds: withoutEdge(origin.publishedEdgeIds, edgeId),
-      standbyEdgeIds: origin.standbyEdgeIds.filter((e) => e !== edgeId),
-      publicationEpoch: epoch,
-      updatedAt: now,
-    });
-    if (inPool) {
-      await writeAuditLog(ctx, {
-        actorType: 'system',
-        action: 'edge.unpublished',
-        targetType: 'edge',
-        targetId: edgeId,
-        payload: { relaySlug: origin.slug, edgeId, poolIndex: edge?.poolIndex ?? null, epoch },
-      });
-      await writeAuditLog(ctx, {
-        actorType: 'system',
-        action: 'edge.drift',
-        targetType: 'relay',
-        targetId: relayId,
-        payload: {
-          relaySlug: origin.slug,
-          edgeId,
-          mismatched: 1,
-          total: publishedCount(origin.publishedEdgeIds),
-        },
-      });
-    }
-    void reason;
-    return { ok: true as const, dropped: true };
+    const r = await dropEdgeFromPool(ctx, origin, edge, { reason });
+    return { ok: true as const, dropped: r.dropped };
   },
 });
 

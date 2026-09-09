@@ -10,6 +10,10 @@
  *
  * Discovery: every resource carries our deterministic name or tag and the
  * listings are authoritative, so each step answers found / confirmed_absent.
+ *
+ * Destroy order is by kind: frontend → backend → LB → flexible IPs (an IP
+ * cannot be released while an LB holds it). Every kind is read back after its
+ * delete: an LB still `ready` means the delete never landed (`still_present`).
  */
 import { z } from 'zod';
 import { createClient } from '@scaleway/sdk-client';
@@ -27,7 +31,7 @@ import type {
   StepOutcome,
   TemplateFieldDescriptor,
 } from './types';
-import { firstResource, resourcesOfKind, reverseLiveResources } from './types';
+import { firstResource, orderByKind, resourcesOfKind } from './types';
 import { EdgeProviderError, toProviderError } from './http';
 import { addressFamily } from '../ip';
 import {
@@ -457,27 +461,32 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
     };
   },
 
-  planDestroy: (_cfg, ledger) => reverseLiveResources(ledger),
+  planDestroy: (_cfg, ledger) => orderByKind(ledger, SCALEWAY_DESTROY_ORDER),
 
+  /**
+   * Every delete is reported `delete_requested` and confirmed by a read-back
+   * (`confirmDestroyed`), never assumed from a 2xx. A kind this adapter never
+   * creates is `unresolved`, never assumed gone.
+   */
   async runDestroy(cfg, r) {
     const api = apiFactory(cfg);
     try {
       switch (r.kind) {
         case 'frontend':
           await sdk('destroy', () => api.deleteFrontend({ frontendId: r.resourceId }));
-          return { status: 'confirmed_gone' };
+          return { status: 'delete_requested' };
         case 'backend':
           await sdk('destroy', () => api.deleteBackend({ backendId: r.resourceId }));
-          return { status: 'confirmed_gone' };
+          return { status: 'delete_requested' };
         case 'lb':
           await sdk('destroy', () => api.deleteLb({ lbId: r.resourceId, releaseIp: false }));
           return { status: 'delete_requested' };
         case 'ip':
         case 'ipv6':
           await sdk('destroy', () => api.releaseIp({ ipId: r.resourceId }));
-          return { status: 'confirmed_gone' };
+          return { status: 'delete_requested' };
         default:
-          return { status: 'confirmed_gone' };
+          return { status: 'unresolved' };
       }
     } catch (e) {
       if (isNotFound(e)) return { status: 'confirmed_gone' };
@@ -485,19 +494,39 @@ export const scalewayProvider: EdgeProvider<ScalewayConfig, ScalewayTemplatePara
     }
   },
 
+  /** Read back: 404 → gone; an LB deleting → unresolved; anything readable otherwise → still present. */
   async confirmDestroyed(cfg, r) {
-    if (r.kind !== 'lb') return { status: 'confirmed_gone' };
+    const api = apiFactory(cfg);
     try {
-      const lb = await sdk('confirm-destroy', () => apiFactory(cfg).getLb({ lbId: r.resourceId }));
-      return lb.status === 'deleting' || lb.status === 'to_delete'
-        ? { status: 'unresolved' }
-        : { status: 'unresolved' };
+      switch (r.kind) {
+        case 'lb': {
+          const lb = await sdk('confirm-destroy', () => api.getLb({ lbId: r.resourceId }));
+          return lb.status === 'deleting' || lb.status === 'to_delete'
+            ? { status: 'unresolved' }
+            : { status: 'still_present' };
+        }
+        case 'ip':
+        case 'ipv6':
+          await sdk('confirm-destroy', () => api.getIp({ ipId: r.resourceId }));
+          return { status: 'still_present' };
+        case 'frontend':
+          await sdk('confirm-destroy', () => api.getFrontend({ frontendId: r.resourceId }));
+          return { status: 'still_present' };
+        case 'backend':
+          await sdk('confirm-destroy', () => api.getBackend({ backendId: r.resourceId }));
+          return { status: 'still_present' };
+        default:
+          return { status: 'unresolved' };
+      }
     } catch (e) {
       if (isNotFound(e)) return { status: 'confirmed_gone' };
       throw e;
     }
   },
 };
+
+/** Attach semantics: a frontend needs its backend, both need the LB, the LB holds the IPs. */
+const SCALEWAY_DESTROY_ORDER = ['frontend', 'backend', 'lb', 'ip', 'ipv6'] as const;
 
 function ledgerIncomplete(step: ResourceStep): EdgeProviderError {
   return new EdgeProviderError(`scaleway ${step.id}: ledger missing a prerequisite resource`, {

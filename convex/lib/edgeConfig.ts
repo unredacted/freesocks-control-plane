@@ -96,6 +96,8 @@ export interface EdgeConfig {
   requireProviderHealth: boolean;
   maxFlipAttempts: number;
   maxRollbackAttempts: number;
+  /** Wall-clock cap for one rotation run; past it the run rolls back / quarantines. */
+  maxRotationMinutes: number;
   maxDestroyAttempts: number;
   opClaimSeconds: number;
   settleGraceSeconds: number;
@@ -138,6 +140,8 @@ export interface EdgeConfig {
     hourlyBudget: number;
     agreementVantages: number;
     preferEyeball: boolean;
+    /** Gap between consecutive runs against the same external source within one batch (ms). */
+    sourceSpacingMs: number;
   };
 }
 
@@ -168,6 +172,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
   requireProviderHealth: true,
   maxFlipAttempts: 6,
   maxRollbackAttempts: 6,
+  maxRotationMinutes: 120,
   maxDestroyAttempts: 48,
   opClaimSeconds: 60,
   settleGraceSeconds: 30,
@@ -209,6 +214,7 @@ export const EDGE_DEFAULTS: EdgeConfig = {
     hourlyBudget: 200,
     agreementVantages: 2,
     preferEyeball: true,
+    sourceSpacingMs: 1500,
   },
 };
 
@@ -307,6 +313,7 @@ export const EDGE_KEYS = {
   requireProviderHealth: 'edge.requireProviderHealth',
   maxFlipAttempts: 'edge.maxFlipAttempts',
   maxRollbackAttempts: 'edge.maxRollbackAttempts',
+  maxRotationMinutes: 'edge.maxRotationMinutes',
   maxDestroyAttempts: 'edge.maxDestroyAttempts',
   opClaimSeconds: 'edge.opClaimSeconds',
   settleGraceSeconds: 'edge.settleGraceSeconds',
@@ -345,6 +352,7 @@ export const EDGE_KEYS = {
   'probe.hourlyBudget': 'edge.probe.hourlyBudget',
   'probe.agreementVantages': 'edge.probe.agreementVantages',
   'probe.preferEyeball': 'edge.probe.preferEyeball',
+  'probe.sourceSpacingMs': 'edge.probe.sourceSpacingMs',
 } as const;
 export type RelayKeyPath = keyof typeof EDGE_KEYS;
 
@@ -431,6 +439,7 @@ export function sanitizeRelayConfig(
     requireProviderHealth: sanitizeBool(raw.requireProviderHealth, D.requireProviderHealth),
     maxFlipAttempts: sanitizeInt(raw.maxFlipAttempts, 1, 20, D.maxFlipAttempts),
     maxRollbackAttempts: sanitizeInt(raw.maxRollbackAttempts, 1, 20, D.maxRollbackAttempts),
+    maxRotationMinutes: sanitizeInt(raw.maxRotationMinutes, 10, 24 * 60, D.maxRotationMinutes),
     maxDestroyAttempts: sanitizeInt(raw.maxDestroyAttempts, 1, 500, D.maxDestroyAttempts),
     opClaimSeconds: sanitizeInt(raw.opClaimSeconds, 15, 300, D.opClaimSeconds),
     settleGraceSeconds: sanitizeInt(raw.settleGraceSeconds, 5, 600, D.settleGraceSeconds),
@@ -508,13 +517,21 @@ export function sanitizeRelayConfig(
       ),
       perCountryLimit: sanitizeInt(raw['probe.perCountryLimit'], 1, 10, D.probe.perCountryLimit),
       hourlyBudget: sanitizeInt(raw['probe.hourlyBudget'], 0, 10_000, D.probe.hourlyBudget),
+      // Floor 2: "unreachable" is agreement between distinct networks; a single
+      // failing vantage can never be one.
       agreementVantages: sanitizeInt(
         raw['probe.agreementVantages'],
-        1,
+        2,
         10,
         D.probe.agreementVantages,
       ),
       preferEyeball: sanitizeBool(raw['probe.preferEyeball'], D.probe.preferEyeball),
+      sourceSpacingMs: sanitizeInt(
+        raw['probe.sourceSpacingMs'],
+        0,
+        60_000,
+        D.probe.sourceSpacingMs,
+      ),
     },
   };
 }
@@ -654,6 +671,7 @@ export const edgeMs = {
   burnedDrain: (cfg: EdgeConfig) => cfg.burnedDrainMinutes * MIN,
   cooldown: (cfg: EdgeConfig) => cfg.cooldownMinutes * MIN,
   provisionTimeout: (cfg: EdgeConfig) => cfg.provisionTimeoutMinutes * MIN,
+  maxRotation: (cfg: EdgeConfig) => cfg.maxRotationMinutes * MIN,
   discoveryTimeout: (cfg: EdgeConfig) => cfg.discoveryTimeoutMinutes * MIN,
   detectWindow: (cfg: EdgeConfig) => cfg.detect.windowMinutes * MIN,
   sniDrain: (cfg: EdgeConfig) => cfg.sniDrainMinutes * MIN,

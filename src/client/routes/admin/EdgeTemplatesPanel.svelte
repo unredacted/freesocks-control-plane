@@ -20,6 +20,7 @@
     EDGE_PROVIDER_IDS,
     EdgeIdResponse,
     EdgeOkResponse,
+    EdgeTemplatesSeedResponse,
     EdgeTemplateValidateResponse,
     type EdgeProviderId,
     type EdgeTemplateAdmin,
@@ -176,11 +177,38 @@
     },
     onError: onError('Could not remove the template'),
   }));
+  // Listing templates is a pure read (a servers:read token can do it); seeding
+  // the compiled adapter defaults as editable rows is this explicit write.
+  // Provisioning uses the compiled defaults anyway while no row exists.
+  const seedDefaults = createMutation(() => ({
+    mutationFn: () =>
+      apiClient.post(
+        '/api/v1/admin/edges/templates/ensure-defaults',
+        {},
+        EdgeTemplatesSeedResponse,
+      ),
+    onSuccess: (r) => {
+      invalidate();
+      toast.success(
+        r.created > 0
+          ? `Seeded ${r.created} default template${r.created === 1 ? '' : 's'}`
+          : 'Nothing to seed',
+      );
+    },
+    onError: onError('Could not seed the defaults'),
+  }));
   const fields = $derived((editor && templates.data?.schemas[editor.provider]?.fields) ?? []);
 </script>
 
 <div class="space-y-4">
-  <div class="flex justify-end">
+  <div class="flex justify-end gap-2">
+    {#if templates.data && templates.data.templates.length === 0}
+      <Button
+        variant="outline"
+        onclick={() => seedDefaults.mutate()}
+        disabled={seedDefaults.isPending}>Seed provider defaults</Button
+      >
+    {/if}
     <Button onclick={() => (editor = newDraft())}>New template</Button>
   </div>
   {#if templates.isError}<AdminListState
