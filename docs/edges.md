@@ -176,7 +176,7 @@ publish) or provisions up to `desiredPublished` / `standbyPerRelay` (`autoProvis
 off by default) — both only while `edge.enabled` is on; finishes relay deletes (the relay's
 pool drains for `drainMinutes` unless the delete is forced). A standby-only provision is
 finalized even if its slot is not publishable at that moment. Daily sweeps prune `destroyed`
-edges after 30 days and terminal rotations after 90 (`retention-edges`,
+edges (with their probe rollups, which never cascade) after 30 days and terminal rotations after 90 (`retention-edges`,
 `retention-edge-rotations`).
 
 ## Probes and the block detector
@@ -244,9 +244,10 @@ last-rotation timestamp): such a report is still on the OLD pool, so it gets no 
 Per relay: attributed reports in the window (deduplicated), the node's live user count against
 its own **time-of-day** baseline (the same hour on previous days; samples taken while suspected,
 rotating, in cooldown or with the node offline are not added to the baseline), and probe
-verdicts per edge. Probe evidence is a **transition**: a country that was reachable from that
-edge and is now `unreachable` with agreement scores that edge at 1.0; a country that was never
-reachable from it is not evidence. A fresh probe verdict alone can reach suspicion when
+verdicts per edge. Probe evidence is a **transition**, judged per listener port before the ports roll up: a
+country that reached a port before and now finds that same port `unreachable` with agreement
+scores that edge at 1.0; a port that has never been reached from that country is not evidence,
+however long another port's reachable history is (`wasReachable` on the summary). A fresh probe verdict alone can reach suspicion when
 `allowProbeOnlyAutoRotate` is on. Relay-level evidence can only **hint** (the dashboard strip and
 the relay badge). An **automatic rotation** needs, in order: `edge.enabled`, `edge.autoRotate`,
 the relay's `autoRotate`, a suspected state, edge-level evidence (probes, or members naming the
@@ -275,7 +276,10 @@ response (the response ephemeral rides inside the sealed body), PATCH/PUT seal t
 DELETE carries nothing. Dual-mode (plaintext accepted) stays for `fsv1_` IaC callers, as for
 backend servers; `FS_E2EE_ADMIN_REQUIRED=true` additionally refuses plaintext from cookie-session
 (passkey CMS) callers on these routes (`e2ee.sealed_required`) while bearer callers, who cannot
-seal, keep dual-mode. A malformed percent escape in a path is a `400 validation` on every verb.
+seal, keep dual-mode. The caller class follows the credential that would authenticate the
+request, as `resolveAdmin` does: a bearer with no admin cookie, or a bearer that resolves to a
+real token when a stale browser cookie rides along; a passkey session cannot downgrade itself by
+adding a bogus bearer header. A malformed percent escape in a path is a `400 validation` on every verb.
 Provider-API-calling POSTs (credential test, discover, inventory / live / node refresh, render
 preview, credential rotation) and manual probes are rate-limited per actor
 (`admin.edges.provider-call`, `admin.edges.probe`). Read-only POSTs (render preview, template

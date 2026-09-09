@@ -321,7 +321,7 @@ interface TargetPlan {
 }
 
 async function planTarget(
-  ctx: MutationCtx,
+  ctx: { db: import('./_generated/server').DatabaseReader },
   target: ProbeTargetRef,
   sources?: ProbeSource[],
 ): Promise<TargetPlan> {
@@ -446,7 +446,9 @@ export const requestProbes = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { target, trigger, sources, actorAdminId, ...stagger }) => {
-    const runIds = await requestProbesFor(ctx, target, trigger, sources, stagger);
+    const plan = await planTarget(ctx, target, sources);
+    if (plan.cost > (await remainingBudget(ctx.db, plan.cfg, Date.now()))) throw budgetExhausted();
+    const runIds = await insertPlanned(ctx, plan, trigger, stagger);
     if (trigger === 'manual') {
       await writeAuditLog(ctx, {
         actorType: 'admin',
@@ -457,7 +459,27 @@ export const requestProbes = internalMutation({
         payload: { targets: 1, runs: runIds.length, sources: sources ?? null },
       });
     }
-    return { runIds };
+    // The batch caller (detector) accumulates this into the next target's offset.
+    return { runIds, runsPerSource: plan.runsPerSource };
+  },
+});
+
+/**
+ * The cost of one round for one target WITHOUT inserting anything: how many
+ * runs per source it will schedule (0 when it cannot be probed). A batch
+ * caller sums these first so every target's stagger offset is cumulative and
+ * the whole batch is spaced inside one interval, like the cron pass.
+ */
+export const planFor = internalQuery({
+  args: { target: probeTargetRef, sources: v.optional(v.array(probeSource)) },
+  handler: async (ctx, { target, sources }): Promise<{ runsPerSource: number }> => {
+    try {
+      const plan = await planTarget(ctx, target, sources);
+      return { runsPerSource: plan.runsPerSource };
+    } catch (err) {
+      if (err instanceof ConvexError) return { runsPerSource: 0 };
+      throw err;
+    }
   },
 });
 
@@ -704,9 +726,25 @@ async function refreshTargetSummary(ctx: MutationCtx, target: ProbeTargetRef, no
     };
     const perSource = summarise(primaryRows);
     const v6 = v4Rows.length > 0 && v6Rows.length > 0 ? acrossPorts(v6Rows) : undefined;
+    const verdict = acrossPorts(primaryRows);
+    // The reachable→unreachable transition is judged PER PORT: a port that is
+    // unreachable now counts only if THAT port was reached from this country
+    // before. Another port's reachable history must not make a listener that
+    // was blocked since it appeared look like a fresh block.
+    const wasReachable = (() => {
+      const ports = [...new Set(primaryRows.map((r) => r.port ?? -1))];
+      const portRows = (p: number) => primaryRows.filter((r) => (r.port ?? -1) === p);
+      const reachedBefore = (rs: typeof primaryRows) =>
+        rs.some((r) => r.lastReachableAt !== undefined);
+      if (verdict !== 'unreachable') return reachedBefore(primaryRows);
+      return ports.some(
+        (p) => verdictOf(summarise(portRows(p))) === 'unreachable' && reachedBefore(portRows(p)),
+      );
+    })();
     return {
       country,
-      verdict: acrossPorts(primaryRows),
+      verdict,
+      wasReachable,
       ...(v6 ? { v6Verdict: v6 } : {}),
       okVantages: perSource.reduce((a, s) => a + s.okVantages, 0),
       failVantages: perSource.reduce((a, s) => a + s.failVantages, 0),

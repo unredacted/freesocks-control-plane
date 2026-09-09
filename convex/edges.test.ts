@@ -333,11 +333,32 @@ describe('edges', () => {
       ...plan,
     });
     await t.run((ctx) => ctx.db.patch(live.id, { statusChangedAt: now - 400 * DAY }));
+    // Probe rollups are keyed by the edge id as a string and never cascade:
+    // the sweep must take the expired edge's rows with it and leave the others.
+    const rollup = (edgeId: string, country: string) =>
+      t.run((ctx) =>
+        ctx.db.insert('probeReachability', {
+          targetKind: 'edge',
+          targetRef: edgeId,
+          country,
+          source: 'globalping',
+          ipVersion: 4,
+          okCount: 0,
+          failCount: 3,
+          verdict: 'unreachable',
+          updatedAt: now,
+        }),
+      );
+    await rollup(old, 'IR');
+    await rollup(old, 'RU');
+    await rollup(recent, 'IR');
     const swept = await t.mutation(internal.retention.sweepDestroyedEdges, {});
     expect(swept.removed).toBe(1);
     expect(await t.query(internal.edges.get, { id: old })).toBeNull();
     expect(await t.query(internal.edges.get, { id: recent })).not.toBeNull();
     expect(await t.query(internal.edges.get, { id: live.id })).not.toBeNull();
+    const rollupsLeft = await t.run((ctx) => ctx.db.query('probeReachability').collect());
+    expect(rollupsLeft.map((r) => r.targetRef)).toEqual([recent]);
 
     const rot = (phase: string, finishedAt: number | undefined) =>
       t.run((ctx) =>

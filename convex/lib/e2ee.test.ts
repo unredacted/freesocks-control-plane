@@ -12,7 +12,7 @@ import schema from '../schema';
 import { internal } from '../_generated/api';
 import { signValue } from './cookies';
 import { sha256Hex } from './crypto';
-import { isBearerCaller } from './e2ee';
+import { bearerHeaderPresent } from './e2ee';
 import {
   bytesToB64Url,
   isSealedWire,
@@ -81,22 +81,14 @@ const PREVIEW = '/api/v1/admin/edges/render/preview';
 const CONFIG = '/api/v1/admin/edges/config';
 
 describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
-  test('isBearerCaller: only an Authorization: Bearer header marks a token caller', () => {
+  test('bearerHeaderPresent: only a well-formed Authorization: Bearer header counts', () => {
     const mk = (h: Record<string, string>) => new Request('https://x/', { headers: h });
-    expect(isBearerCaller(mk({ authorization: 'Bearer fsv1_abc' }))).toBe(true);
-    expect(isBearerCaller(mk({ Authorization: 'bearer fsv1_abc' }))).toBe(true);
-    expect(isBearerCaller(mk({ authorization: 'Bearer' }))).toBe(false);
-    expect(isBearerCaller(mk({ authorization: 'Basic abc' }))).toBe(false);
-    expect(isBearerCaller(mk({ cookie: 'fs_admin_session=x' }))).toBe(false);
-    // A cookie holder cannot downgrade itself by adding a bearer header:
-    // resolveAdmin authenticates the cookie first and ignores the bearer.
-    expect(
-      isBearerCaller(mk({ authorization: 'Bearer fsv1_abc', cookie: 'fs_admin_session=x' })),
-    ).toBe(false);
-    expect(
-      isBearerCaller(mk({ authorization: 'Bearer fsv1_abc', cookie: 'other=1; fs_session=m' })),
-    ).toBe(true);
-    expect(isBearerCaller(mk({}))).toBe(false);
+    expect(bearerHeaderPresent(mk({ authorization: 'Bearer fsv1_abc' }))).toBe(true);
+    expect(bearerHeaderPresent(mk({ Authorization: 'bearer fsv1_abc' }))).toBe(true);
+    expect(bearerHeaderPresent(mk({ authorization: 'Bearer' }))).toBe(false);
+    expect(bearerHeaderPresent(mk({ authorization: 'Basic abc' }))).toBe(false);
+    expect(bearerHeaderPresent(mk({ cookie: 'fs_admin_session=x' }))).toBe(false);
+    expect(bearerHeaderPresent(mk({}))).toBe(false);
   });
 
   test('knob off (default): cookie plaintext passes through on every verb class', async () => {
@@ -169,6 +161,13 @@ describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
     vi.stubEnv('FS_E2EE_ADMIN_REQUIRED', 'true');
     const { t, bearer } = await setup();
     expect((await t.fetch(SUMMARY, { headers: { authorization: bearer } })).status).toBe(200);
+    // A stale / malformed / expired browser cookie riding along must not refuse
+    // a VALID token: resolveAdmin falls through to the bearer when the cookie
+    // fails, so the class follows the credential that authenticates.
+    for (const stale of ['fs_admin_session=garbage', 'fs_admin_session=', 'fs_admin_session=a.b']) {
+      const r = await t.fetch(SUMMARY, { headers: { authorization: bearer, cookie: stale } });
+      expect(r.status).toBe(200);
+    }
     const patch = await t.fetch(CONFIG, {
       method: 'PATCH',
       headers: { authorization: bearer, 'content-type': 'application/json' },

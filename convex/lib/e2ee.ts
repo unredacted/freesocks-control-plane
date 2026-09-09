@@ -18,19 +18,25 @@
  *   transit in the clear). Admin routes are exempt.
  * - `FS_E2EE_ADMIN_REQUIRED=true` — ADMIN routes, for COOKIE-session callers
  *   only (the passkey-signed-in CMS, which always seals when built with the
- *   HPKE keys). A request carrying an `Authorization: Bearer` header and NO
- *   admin session cookie is an `fsv1_` token caller (IaC / Ansible) that cannot
- *   seal and keeps plaintext; with the cookie present it is a cookie caller
- *   (`resolveAdmin` authenticates the cookie first and ignores the bearer, so
- *   a bogus header must not downgrade a passkey session). The caller class is
- *   decided from the headers BEFORE the handler runs, so a sealed CMS request
- *   is opened and an unsealed one refused without touching the session. Flip it
- *   only once the deployed SPA is built with the keys.
+ *   HPKE keys). An `fsv1_` token caller (IaC / Ansible) cannot seal and keeps
+ *   plaintext: a bearer header with no admin cookie, or a bearer that resolves
+ *   to a real token when a cookie is also present (a stale browser cookie must
+ *   not refuse a valid token; a bogus header must not downgrade a passkey
+ *   session — `isBearerCaller`). The caller class is decided BEFORE the handler
+ *   runs, so a sealed CMS request is opened and an unsealed one refused without
+ *   touching the session. Flip it only once the deployed SPA is built with the
+ *   keys.
  */
 import { httpAction } from '../_generated/server';
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
-import { ADMIN_COOKIE, errorJson, PayloadTooLargeError, readBodyTextCapped } from './http';
+import {
+  ADMIN_COOKIE,
+  errorJson,
+  PayloadTooLargeError,
+  readBodyTextCapped,
+  resolveBearer,
+} from './http';
 import { parseCookies } from './cookies';
 import {
   RESP_EPH_FIELD,
@@ -66,18 +72,26 @@ function proxyReq(req: Request, bodyObj: unknown, rawWireBody: string): Request 
   } as unknown as Request;
 }
 
+/** A syntactically present `Authorization: Bearer <token>` header. */
+export function bearerHeaderPresent(req: Request): boolean {
+  return /^Bearer\s+\S+/i.test((req.headers.get('authorization') ?? '').trim());
+}
+
 /**
- * An `Authorization: Bearer …` caller (fsv1_ API token): cannot seal, keeps
- * plaintext. A request that ALSO carries the admin session cookie is a cookie
- * caller: `resolveAdmin` authenticates the cookie first and never looks at the
- * bearer, so a passkey session with a bogus bearer header must not be able to
- * downgrade itself to plaintext by adding one.
+ * Is this an `fsv1_` API-token caller (cannot seal, keeps plaintext)?
+ * Decided by the credential that would AUTHENTICATE the request, mirroring
+ * `resolveAdmin`: with no admin session cookie the bearer is the only
+ * credential; with a cookie present the bearer counts only when it resolves
+ * to a real token — a passkey session cannot downgrade itself to plaintext by
+ * adding a bogus header, while a valid token is not refused because a stale,
+ * expired or malformed browser cookie happens to ride along (resolveAdmin
+ * falls through to the token when the cookie fails). A caller holding BOTH a
+ * valid cookie and a valid token is a token holder and keeps plaintext.
  */
-export function isBearerCaller(req: Request): boolean {
-  const bearer = /^Bearer\s+\S+/i.test((req.headers.get('authorization') ?? '').trim());
-  if (!bearer) return false;
-  const cookies = parseCookies(req.headers.get('cookie'));
-  return !cookies[ADMIN_COOKIE];
+export async function isBearerCaller(ctx: ActionCtx, req: Request): Promise<boolean> {
+  if (!bearerHeaderPresent(req)) return false;
+  if (!parseCookies(req.headers.get('cookie'))[ADMIN_COOKIE]) return true;
+  return (await resolveBearer(ctx, req)) !== null;
 }
 
 export function sealed(handler: RawHandler) {
@@ -119,12 +133,14 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
   //
   // FS_E2EE_ADMIN_REQUIRED=true is the admin-side counterpart: cookie-session
   // (passkey CMS) callers must seal admin credential writes / reveals; bearer
-  // token callers keep plaintext because they cannot seal. Caller class = a
-  // bearer header WITHOUT an admin session cookie (see `isBearerCaller`).
+  // token callers keep plaintext because they cannot seal. Caller class = the
+  // credential that would authenticate the request (see `isBearerCaller`).
   const isAdminPath = path.startsWith('/api/v1/admin/');
   const e2eeRequired =
     (process.env.FS_E2EE_REQUIRED === 'true' && !isAdminPath) ||
-    (process.env.FS_E2EE_ADMIN_REQUIRED === 'true' && isAdminPath && !isBearerCaller(req));
+    (process.env.FS_E2EE_ADMIN_REQUIRED === 'true' &&
+      isAdminPath &&
+      !(await isBearerCaller(ctx, req)));
   const sealedRequired = (): Response =>
     errorJson(
       'e2ee.sealed_required',

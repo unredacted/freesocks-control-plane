@@ -195,6 +195,57 @@ export const ensureDefaults = internalMutation({
   },
 });
 
+/**
+ * The effective template hash of every QUALIFIED account of a provider that
+ * provisions from a default (it names no template of its own). Taken before a
+ * write that can move a default and compared after it: an account whose
+ * effective default changed was qualified with parameters it will no longer
+ * provision with, so its qualification is revoked (audited) until re-run.
+ */
+async function effectiveDefaultHashes(
+  ctx: { db: import('./_generated/server').DatabaseReader },
+  provider: EdgeProviderId,
+): Promise<Map<string, { acct: Doc<'edgeProviderAccounts'>; hash: string }>> {
+  const out = new Map<string, { acct: Doc<'edgeProviderAccounts'>; hash: string }>();
+  const accounts = await ctx.db.query('edgeProviderAccounts').collect();
+  for (const acct of accounts) {
+    if (acct.provider !== provider || !acct.qualified || acct.defaultTemplateId) continue;
+    const eff = await resolveTemplateFor(ctx, provider, null, null, acct._id);
+    out.set(acct._id, { acct, hash: eff.hash });
+  }
+  return out;
+}
+
+async function revokeMovedDefaults(
+  ctx: import('./_generated/server').MutationCtx,
+  provider: EdgeProviderId,
+  before: Map<string, { acct: Doc<'edgeProviderAccounts'>; hash: string }>,
+  actorAdminId: Doc<'adminUsers'>['_id'] | undefined,
+): Promise<number> {
+  let revoked = 0;
+  for (const [id, prev] of before) {
+    const eff = await resolveTemplateFor(ctx, provider, null, null, prev.acct._id);
+    if (eff.hash === prev.hash) continue;
+    const fresh = await ctx.db.get(prev.acct._id);
+    if (!fresh || !fresh.qualified) continue; // already revoked by another rule
+    await ctx.db.patch(fresh._id, {
+      qualified: false,
+      qualifiedTemplateHash: undefined,
+      updatedAt: Date.now(),
+    });
+    await writeAuditLog(ctx, {
+      actorType: 'admin',
+      actorId: actorAdminId,
+      action: 'edge.provider_account.qualified',
+      targetType: 'edge_provider_account',
+      targetId: id as Doc<'edgeProviderAccounts'>['_id'],
+      payload: { name: fresh.name, provider: fresh.provider, qualified: false },
+    });
+    revoked++;
+  }
+  return revoked;
+}
+
 export const create = internalMutation({
   args: {
     provider: edgeProviderIdValidator,
@@ -216,6 +267,8 @@ export const create = internalMutation({
         throw new ConvexError({ code: 'validation', message: 'account/provider mismatch' });
     }
     const now = Date.now();
+    // A new default changes what qualified accounts provision with next.
+    const before = a.isDefault ? await effectiveDefaultHashes(ctx, a.provider) : null;
     if (a.isDefault) await clearDefault(ctx, a.provider, a.accountId ?? undefined);
     const id = await ctx.db.insert('edgeTemplates', {
       provider: a.provider,
@@ -234,7 +287,10 @@ export const create = internalMutation({
       targetId: id,
       payload: { provider: a.provider, name: a.name },
     });
-    return { id, paramsHash: templateHashOf(parsed.params) };
+    const requalify = before
+      ? await revokeMovedDefaults(ctx, a.provider, before, a.actorAdminId ?? undefined)
+      : 0;
+    return { id, paramsHash: templateHashOf(parsed.params), requalify };
   },
 });
 
@@ -274,6 +330,7 @@ export const update = internalMutation({
       patch.name = a.name;
     }
     let requalify: Doc<'edgeProviderAccounts'>[] = [];
+    const before = await effectiveDefaultHashes(ctx, row.provider);
     if (a.params !== undefined) {
       const parsed = validateTemplateParams(row.provider, a.params);
       if (!parsed.ok)
@@ -328,10 +385,14 @@ export const update = internalMutation({
       targetId: a.id,
       payload: { provider: row.provider, name: patch.name ?? row.name },
     });
+    // Any account whose EFFECTIVE default moved (this template became or
+    // stopped being its default, or its default's parameters changed) must
+    // re-qualify — `selectionContext` trusts `qualified` alone.
+    const moved = await revokeMovedDefaults(ctx, row.provider, before, a.actorAdminId ?? undefined);
     return {
       ok: true as const,
       paramsHash: patch.paramsHash ?? row.paramsHash,
-      requalify: requalify.length,
+      requalify: requalify.length + moved,
     };
   },
 });

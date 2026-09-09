@@ -190,6 +190,11 @@ const probeReachabilitySummary = v.object({
       okVantages: v.number(),
       failVantages: v.number(),
       lastAt: v.number(),
+      // Transition marker, evaluated PER PORT before the ports roll up: some
+      // listener port that is now unreachable from this country was reachable
+      // from it before. A port that has never been reached is not evidence,
+      // however long another port's reachable history is.
+      wasReachable: v.optional(v.boolean()),
     }),
   ),
   updatedAt: v.number(),

@@ -718,7 +718,19 @@ export const finalizeDelete = internalMutation({
       .withIndex('by_relay', (q) => q.eq('relayId', id))
       .collect();
     for (const s of slots) await ctx.db.delete(s._id);
-    for (const e of edges) await ctx.db.delete(e._id);
+    // Probe rollups are keyed by target id strings and never cascade.
+    const dropRollups = async (kind: 'edge' | 'relay', ref: string) => {
+      const rows = await ctx.db
+        .query('probeReachability')
+        .withIndex('by_target_country', (q) => q.eq('targetKind', kind).eq('targetRef', ref))
+        .collect();
+      for (const x of rows) await ctx.db.delete(x._id);
+    };
+    for (const e of edges) {
+      await dropRollups('edge', e._id);
+      await ctx.db.delete(e._id);
+    }
+    await dropRollups('relay', id);
     await ctx.db.delete(id);
     return { removed: true };
   },

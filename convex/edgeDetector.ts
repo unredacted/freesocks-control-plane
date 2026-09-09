@@ -109,7 +109,11 @@ export const relayWindow = internalQuery({
         byCountry: external.map((c) => ({
           country: c.country,
           verdict: c.verdict as Verdict,
-          wasReachable: wasReachable(c.country),
+          // The summary judges the transition PER PORT (a port blocked since it
+          // appeared is not evidence even if another port was reached); the
+          // country-wide history is only the fallback for summaries written
+          // before the marker existed.
+          wasReachable: c.wasReachable ?? wasReachable(c.country),
           // Each country's own freshness: a summary refreshed by one source
           // must not make another country's old verdict look current.
           ageMs: now - c.lastAt,
@@ -393,16 +397,33 @@ export const run = internalAction({
           });
           // Reports alone raised suspicion: ask the probes for edge-level evidence now.
           if (ev.transition === 'suspected' && ev.hintLevel === 'reports' && w.cfg.probe.enabled) {
+            // Stagger like a batch: offsets are CUMULATIVE runs-per-source of the
+            // targets scheduled ahead (a two-port dual-stack edge occupies four
+            // slots, not one), and the batch total is known up front so the
+            // spacing shrinks to fit one interval instead of piling up at the cap.
+            const costs: number[] = [];
+            for (const p of w.published) {
+              const plan = await ctx.runQuery(internal.probes.planFor, {
+                target: { kind: 'edge', ref: p.edgeId },
+              });
+              costs.push(plan.runsPerSource);
+            }
+            const batchRunsPerSource = costs.reduce((a, b) => a + b, 0);
+            let staggerOffset = 0;
             for (const [i, p] of w.published.entries()) {
+              if (costs[i] === 0) continue;
               try {
                 const r = await ctx.runMutation(internal.probes.requestProbes, {
                   target: { kind: 'edge', ref: p.edgeId },
                   trigger: 'detector',
-                  staggerIndex: i,
+                  staggerOffset,
+                  batchRunsPerSource,
                 });
                 report.probesRequested += r.runIds.length;
+                staggerOffset += r.runsPerSource;
               } catch {
                 /* budget/edge state: best effort */
+                staggerOffset += costs[i] ?? 0;
               }
             }
           }

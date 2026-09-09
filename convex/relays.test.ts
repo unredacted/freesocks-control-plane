@@ -601,11 +601,30 @@ describe('relays + slots + profiles', () => {
       removed: false,
     });
     await t.mutation(internal.edges.patchEdge, { edgeId: planned.id, status: 'destroyed' });
+    // Probe rollups of the relay node and of its edges go with the teardown.
+    const rollup = (kind: 'edge' | 'relay', ref: string) =>
+      t.run((ctx) =>
+        ctx.db.insert('probeReachability', {
+          targetKind: kind,
+          targetRef: ref,
+          country: 'IR',
+          source: 'globalping',
+          ipVersion: 4,
+          okCount: 1,
+          failCount: 0,
+          verdict: 'reachable',
+          updatedAt: Date.now(),
+        }),
+      );
+    await rollup('relay', relayId);
+    await rollup('edge', planned.id);
+    await rollup('edge', adopted.edgeId);
     expect(await t.mutation(internal.relays.finalizeDelete, { id: relayId })).toEqual({
       removed: true,
     });
     expect(await t.query(internal.relays.get, { id: relayId })).toBeNull();
     expect(await t.run((ctx) => ctx.db.get(slotId))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query('probeReachability').collect())).toEqual([]);
   });
 
   test('originAddress is locked while the origin has live edges; one origin per backend node', async () => {

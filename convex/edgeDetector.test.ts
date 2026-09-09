@@ -431,6 +431,44 @@ describe('relay block detector', () => {
     expect(samples.some((x) => x.at === NOW)).toBe(true);
   });
 
+  test('reports-only suspicion asks the probes for evidence with CUMULATIVE stagger offsets: no two runs of one external source share a slot', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await seed();
+    await warmBaseline(s.t, s.relayId, 100);
+    await nodeLoad(s.t, s.serverId, 10);
+    await s.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.probe.sourceSpacingMs', '1500');
+      for (let i = 0; i < 10; i++) {
+        await ctx.db.insert('issueReports', {
+          kind: 'report',
+          reason: 'cant-connect',
+          backend: 'remnawave',
+          relaySlug: 'node-one',
+          country: 'IR',
+          detectorWeight: 1,
+        });
+      }
+    });
+    const r = await s.t.action(internal.edgeDetector.run, {});
+    expect(r.suspected).toBe(1);
+    expect(r.probesRequested).toBeGreaterThan(0);
+    const runs = await s.t.run((ctx) => ctx.db.query('probeRuns').collect());
+    expect(runs.length).toBe(r.probesRequested);
+    // Both published edges were asked; per external source every run has its
+    // own slot (offsets accumulate across targets instead of restarting at 0).
+    expect(new Set(runs.map((x) => x.targetRef)).size).toBe(2);
+    const external = [...new Set(runs.map((x) => x.source))].filter((src) => src !== 'internal');
+    expect(external.length).toBeGreaterThan(0);
+    for (const src of external) {
+      const at = runs.filter((x) => x.source === src).map((x) => x.scheduledAt ?? x.requestedAt);
+      expect(new Set(at).size).toBe(at.length);
+      const sorted = [...at].sort((a, b) => a - b);
+      for (let i = 1; i < sorted.length; i++) expect(sorted[i]! - sorted[i - 1]!).toBe(1500);
+    }
+  });
+
   test('reports + load drop suspect the origin (hint), but without edge evidence nothing rotates', async () => {
     vi.useFakeTimers({ now: NOW });
     const s = await seed();

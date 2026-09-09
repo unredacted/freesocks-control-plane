@@ -333,7 +333,18 @@ export const sweepDestroyedEdges = internalMutation({
       .query('edges')
       .withIndex('by_status', (q) => q.eq('status', 'destroyed').lt('statusChangedAt', cutoff))
       .take(page);
-    for (const r of rows) await ctx.db.delete(r._id);
+    for (const r of rows) {
+      // Nothing cascades in Convex: the edge's probe rollups (keyed by its id
+      // as a string, bounded per target: countries × sources × families ×
+      // ports) would otherwise outlive it forever, unreachable through any
+      // live edge.
+      const rollups = await ctx.db
+        .query('probeReachability')
+        .withIndex('by_target_country', (q) => q.eq('targetKind', 'edge').eq('targetRef', r._id))
+        .collect();
+      for (const x of rollups) await ctx.db.delete(x._id);
+      await ctx.db.delete(r._id);
+    }
     if (rows.length === page) {
       const n = rounds ?? 0;
       if (n >= MAX_DRAIN_ROUNDS)

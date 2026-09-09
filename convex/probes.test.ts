@@ -888,6 +888,69 @@ describe('relayProbes', () => {
     expect(again.skipped).toEqual([]);
   });
 
+  test('the reachable→unreachable transition marker is judged PER PORT: a listener blocked since it appeared is not evidence', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, edgeId } = await seed();
+    const finish = async (port: number, ok: boolean) => {
+      const runId = await t.run((ctx) =>
+        ctx.db.insert('probeRuns', {
+          targetKind: 'edge',
+          targetRef: edgeId,
+          source: 'globalping',
+          target: `${EDGE}:${port}`,
+          port,
+          ipVersion: 4,
+          status: 'running',
+          trigger: 'manual',
+          requestedAt: Date.now(),
+          results: [],
+        }),
+      );
+      await t.mutation(internal.probes.finishRun, {
+        runId,
+        results: [1, 2].map((k) => ({
+          country: 'IR',
+          asn: `AS${1000 + k}`,
+          network: `net-${k}`,
+          vantageClass: 'eyeball' as const,
+          ok,
+        })),
+      });
+    };
+    const ir = async () =>
+      (await t.query(internal.edges.get, { id: edgeId }))!.reachability!.byCountry.find(
+        (c) => c.country === 'IR',
+      )!;
+    // 443 has a reachable history; 8443 has been unreachable since it appeared.
+    await finish(443, true);
+    await finish(8443, false);
+    expect(await ir()).toMatchObject({ verdict: 'unreachable', wasReachable: false });
+    // Once 8443 ITSELF was reached and then fails, the country is a transition.
+    await finish(8443, true);
+    expect(await ir()).toMatchObject({ verdict: 'reachable', wasReachable: true });
+    await finish(8443, false);
+    expect(await ir()).toMatchObject({ verdict: 'unreachable', wasReachable: true });
+  });
+
+  test('planFor reports the runs per source a round will cost without inserting; requestProbes returns the same number', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, edgeId } = await seed();
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.enabled', 'true'));
+    const plan = await t.query(internal.probes.planFor, {
+      target: { kind: 'edge', ref: edgeId },
+      sources: ['globalping'],
+    });
+    expect(plan.runsPerSource).toBeGreaterThan(0);
+    expect(await t.run((ctx) => ctx.db.query('probeRuns').collect())).toHaveLength(0);
+    const r = await t.mutation(internal.probes.requestProbes, {
+      target: { kind: 'edge', ref: edgeId },
+      trigger: 'manual',
+      sources: ['globalping'],
+    });
+    expect(r.runsPerSource).toBe(plan.runsPerSource);
+    expect(r.runIds).toHaveLength(plan.runsPerSource);
+  });
+
   test('per-port rollup rows: a blocked listener makes the country unreachable; ports never overwrite each other', async () => {
     __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
     const { t, edgeId } = await seed();

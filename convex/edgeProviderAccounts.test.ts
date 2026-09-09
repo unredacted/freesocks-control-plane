@@ -462,6 +462,74 @@ describe('edgeProviderAccounts: change detection + qualification hash', () => {
 });
 
 describe('edgeTemplates', () => {
+  test('a new or switched DEFAULT revokes the qualification of every account whose effective template moved', async () => {
+    const t = convexTest(schema, modules);
+    const mk = (name: string) =>
+      t.mutation(internal.edgeProviderAccounts.create, {
+        provider: 'gcore',
+        name,
+        settings: gcoreSettings,
+        credentials: { apiKey: 'k' },
+      });
+    const a = (await mk('acct-a')).id;
+    const b = (await mk('acct-b')).id;
+    const base = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Base',
+      params: { flavor: 'lb1-1-2' },
+      isDefault: true,
+    });
+    const qualified = async (id: typeof a) =>
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))!.qualified;
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id: a, qualified: true });
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id: b, qualified: true });
+    // CREATE of an account-scoped default for A: A's effective template moved,
+    // B still provisions from Base.
+    const created = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Mine',
+      params: { flavor: 'lb1-2-4' },
+      accountId: a,
+      isDefault: true,
+    });
+    expect(created.requalify).toBe(1);
+    expect(await qualified(a)).toBe(false);
+    expect(await qualified(b)).toBe(true);
+    // A provider-wide default switch via UPDATE moves B (no template of its own);
+    // A keeps its scoped default, so nothing changes for it.
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id: a, qualified: true });
+    const other = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Other',
+      params: { flavor: 'lb1-4-8' },
+    });
+    const upd = await t.mutation(internal.edgeTemplates.update, { id: other.id, isDefault: true });
+    expect(upd.requalify).toBe(1);
+    expect(await qualified(b)).toBe(false);
+    expect(await qualified(a)).toBe(true);
+    // Re-flagging the SAME effective default is a no-op for qualification.
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id: b, qualified: true });
+    const noop = await t.mutation(internal.edgeTemplates.update, { id: other.id, isDefault: true });
+    expect(noop.requalify).toBe(0);
+    expect(await qualified(b)).toBe(true);
+    // A default whose parameters equal the previous default's changes nothing either.
+    const twin = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Twin',
+      params: { flavor: 'lb1-4-8' },
+      isDefault: true,
+    });
+    expect(twin.requalify).toBe(0);
+    expect(await qualified(b)).toBe(true);
+    // Every revocation is audited as qualified:false.
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    const revocations = audit.filter(
+      (x) => x.action === 'edge.provider_account.qualified' && x.payload?.qualified === false,
+    );
+    expect(revocations.length).toBeGreaterThanOrEqual(2);
+    void base;
+  });
+
   test("an account-scoped default template is that account's default only, never another account's provider default", async () => {
     const t = convexTest(schema, modules);
     const mk = (name: string) =>
