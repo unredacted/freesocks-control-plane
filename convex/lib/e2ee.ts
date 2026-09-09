@@ -18,16 +18,20 @@
  *   transit in the clear). Admin routes are exempt.
  * - `FS_E2EE_ADMIN_REQUIRED=true` — ADMIN routes, for COOKIE-session callers
  *   only (the passkey-signed-in CMS, which always seals when built with the
- *   HPKE keys). A request carrying an `Authorization: Bearer` header is an
- *   `fsv1_` token caller (IaC / Ansible) that cannot seal and keeps plaintext.
- *   The caller class is decided from the header BEFORE the handler runs, so a
- *   sealed CMS request is opened and an unsealed one refused without touching
- *   the session. Flip it only once the deployed SPA is built with the keys.
+ *   HPKE keys). A request carrying an `Authorization: Bearer` header and NO
+ *   admin session cookie is an `fsv1_` token caller (IaC / Ansible) that cannot
+ *   seal and keeps plaintext; with the cookie present it is a cookie caller
+ *   (`resolveAdmin` authenticates the cookie first and ignores the bearer, so
+ *   a bogus header must not downgrade a passkey session). The caller class is
+ *   decided from the headers BEFORE the handler runs, so a sealed CMS request
+ *   is opened and an unsealed one refused without touching the session. Flip it
+ *   only once the deployed SPA is built with the keys.
  */
 import { httpAction } from '../_generated/server';
 import type { ActionCtx } from '../_generated/server';
 import { internal } from '../_generated/api';
-import { errorJson, PayloadTooLargeError, readBodyTextCapped } from './http';
+import { ADMIN_COOKIE, errorJson, PayloadTooLargeError, readBodyTextCapped } from './http';
+import { parseCookies } from './cookies';
 import {
   RESP_EPH_FIELD,
   isSealedWire,
@@ -62,9 +66,18 @@ function proxyReq(req: Request, bodyObj: unknown, rawWireBody: string): Request 
   } as unknown as Request;
 }
 
-/** An `Authorization: Bearer …` caller (fsv1_ API token): cannot seal, keeps plaintext. */
+/**
+ * An `Authorization: Bearer …` caller (fsv1_ API token): cannot seal, keeps
+ * plaintext. A request that ALSO carries the admin session cookie is a cookie
+ * caller: `resolveAdmin` authenticates the cookie first and never looks at the
+ * bearer, so a passkey session with a bogus bearer header must not be able to
+ * downgrade itself to plaintext by adding one.
+ */
 export function isBearerCaller(req: Request): boolean {
-  return /^Bearer\s+\S+/i.test((req.headers.get('authorization') ?? '').trim());
+  const bearer = /^Bearer\s+\S+/i.test((req.headers.get('authorization') ?? '').trim());
+  if (!bearer) return false;
+  const cookies = parseCookies(req.headers.get('cookie'));
+  return !cookies[ADMIN_COOKIE];
 }
 
 export function sealed(handler: RawHandler) {
@@ -106,8 +119,8 @@ async function sealedInner(ctx: ActionCtx, req: Request, handler: RawHandler): P
   //
   // FS_E2EE_ADMIN_REQUIRED=true is the admin-side counterpart: cookie-session
   // (passkey CMS) callers must seal admin credential writes / reveals; bearer
-  // token callers keep plaintext because they cannot seal. Caller class = the
-  // Authorization header's presence (see the module header).
+  // token callers keep plaintext because they cannot seal. Caller class = a
+  // bearer header WITHOUT an admin session cookie (see `isBearerCaller`).
   const isAdminPath = path.startsWith('/api/v1/admin/');
   const e2eeRequired =
     (process.env.FS_E2EE_REQUIRED === 'true' && !isAdminPath) ||

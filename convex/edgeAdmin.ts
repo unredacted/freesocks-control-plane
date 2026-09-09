@@ -299,7 +299,9 @@ export const renderPreview = internalQuery({
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published, templateRemarks } = await publishedEdgesOf(ctx, origin);
+    const { published, templateRemarks } = await publishedEdgesOf(ctx, origin, {
+      includeIneligible: true,
+    });
     const format = CLIENT_FAMILY_FORMATS[fam];
     const input = previewBody(format, templateRemarks);
     const out = applyEdgeRender(

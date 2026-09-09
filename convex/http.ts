@@ -259,6 +259,11 @@ interface SubCacheEntry {
   // current token is identical, so a pool/switch change re-renders within one
   // request instead of one TTL.
   relay?: number | null;
+  // The epoch the body was actually RENDERED against (relay endpoints applied
+  // or template entries dropped), null when the render failed open and the
+  // body is the panel's. Only this is stamped on the subscription: a
+  // passthrough body says nothing about which pool the member received.
+  renderedEpoch?: number | null;
 }
 
 /** The RAW subscription Response a proxy app consumes (not the JSON envelope):
@@ -1070,7 +1075,7 @@ http.route({
       await ctx.runMutation(internal.subscriptions.markDelivered, {
         subscriptionId: sub._id,
         contentAt: fresh.at,
-        renderedEpoch: fresh.relay ?? null,
+        renderedEpoch: fresh.renderedEpoch ?? null,
       });
       return subscriptionResponse(fresh); // fresh + same format → cache hit
     }
@@ -1109,6 +1114,7 @@ http.route({
       // any unknown shape passes through unchanged.
       let content = fetched.content;
       let relay: number | null = null;
+      let renderedEpoch: number | null = null;
       if (node && sub.backendServerId) {
         const rctx = await ctx.runQuery(internal.edgeRender.contextForSubscription, {
           subscriptionId: sub._id,
@@ -1122,8 +1128,10 @@ http.route({
               subscriptionId: sub._id,
             }));
           if (renderKey) {
-            content = applyEdgeRender(rctx, content, renderKey, { now }).body;
+            const out = applyEdgeRender(rctx, content, renderKey, { now });
+            content = out.body;
             relay = rctx.epoch;
+            renderedEpoch = out.applied ? rctx.epoch : null;
           }
         }
       }
@@ -1134,6 +1142,7 @@ http.route({
         ua,
         at: now,
         relay,
+        renderedEpoch,
       };
       // Don't cache an hwid'd response — the next device (different hwid, same
       // UA) must reach the panel too, for its own registration + enforcement.
@@ -1149,7 +1158,7 @@ http.route({
       await ctx.runMutation(internal.subscriptions.markDelivered, {
         subscriptionId: sub._id,
         contentAt: now,
-        renderedEpoch: relay,
+        renderedEpoch,
       });
       // hwid'd → `private, no-store` (device-specific); otherwise public + Vary: UA.
       return subscriptionResponse(entry, { hwid: hasHwid });
@@ -1174,7 +1183,7 @@ http.route({
         await ctx.runMutation(internal.subscriptions.markDelivered, {
           subscriptionId: sub._id,
           contentAt: stale.at,
-          renderedEpoch: stale.relay ?? null,
+          renderedEpoch: stale.renderedEpoch ?? null,
         });
         return subscriptionResponse(stale);
       }

@@ -52,10 +52,10 @@ async function renderMirrorBody(
     rctx.renderKey ??
     (await ctx.runMutation(internal.subscriptions.ensureRenderKey, { subscriptionId: sub.id }));
   if (!renderKey) return { content, renderedEpoch: null };
-  return {
-    content: applyEdgeRender(rctx, content, renderKey, { now: Date.now() }).body,
-    renderedEpoch: rctx.epoch,
-  };
+  const out = applyEdgeRender(rctx, content, renderKey, { now: Date.now() });
+  // A failed-open render (unknown shape, no template entry) is the panel's
+  // body: it must not be recorded as having received the current pool.
+  return { content: out.body, renderedEpoch: out.applied ? rctx.epoch : null };
 }
 
 export interface S3Provider {

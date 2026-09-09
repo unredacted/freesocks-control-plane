@@ -437,6 +437,29 @@ describe('edgeRender: single-node bodies (one squad per node)', () => {
     expect(fetchCalls).toBe(1);
   });
 
+  test('a failed-open render (no template entry in the body) keeps the cache token but stamps NO rendered epoch', async () => {
+    // The panel body carries the node but not this slot's template line: the
+    // renderer passes it through. The member did not receive the current pool,
+    // so attribution must not believe they did.
+    stubPanel(`vless://${UUID}@${ORIGIN}:443?${REALITY_QS}#${NODE}-reality`);
+    const { t, subId, relayId } = await seed({ pinned: false });
+    await get(t);
+    const sub = (await t.run((ctx) => ctx.db.get(subId)))!;
+    const relay = (await t.run((ctx) => ctx.db.get(relayId)))!;
+    expect(sub.pinnedNode).toBe(NODE);
+    expect(sub.lastRenderedEpoch).toBeUndefined();
+    const cache = JSON.parse(sub.subCache!) as Array<{
+      relay: number | null;
+      renderedEpoch: number | null;
+    }>;
+    expect(cache[0].relay).toBe(relay.publicationEpoch);
+    expect(cache[0].renderedEpoch).toBeNull();
+    // The cache still works (token matches) and the hit stamps nothing either.
+    await get(t);
+    expect(fetchCalls).toBe(1);
+    expect((await t.run((ctx) => ctx.db.get(subId)))!.lastRenderedEpoch).toBeUndefined();
+  });
+
   test('sing-box: the template outbound is cloned per endpoint and the auto group added', async () => {
     stubPanel(singleSingbox);
     const { t, subId } = await seed({ pinned: false });

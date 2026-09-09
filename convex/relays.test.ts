@@ -90,9 +90,23 @@ describe('relays + slots + profiles', () => {
       nodeHostname: 'node-three',
       originAddress: '203.0.113.13',
       autoRotate: true,
+      // Operator-owned knobs in a role body are dropped on CREATE too.
+      enabled: false,
+      hostManaged: false,
+      probeNode: true,
+      desiredPublished: 7,
+      maxRotationsPerDay: 99,
+      providerAffinity: 'sticky',
     });
     expect(fresh.created).toBe(true);
-    expect((await t.query(internal.relays.get, { id: fresh.id }))!.autoRotate).toBe(false);
+    const freshRow = (await t.query(internal.relays.get, { id: fresh.id }))!;
+    expect(freshRow.autoRotate).toBe(false);
+    expect(freshRow.enabled).toBe(true);
+    expect(freshRow.hostManaged).toBe(true);
+    expect(freshRow.probeNode).toBe(false);
+    expect(freshRow.desiredPublished).toBe(2);
+    expect(freshRow.maxRotationsPerDay).toBe(3);
+    expect(freshRow.providerAffinity).toBe('rotate');
     // The audit says WHICH fields changed, never their values.
     const changed = await t.mutation(internal.relays.upsertBySlug, {
       slug: 'node-one',
@@ -130,6 +144,25 @@ describe('relays + slots + profiles', () => {
         originAddress: '203.0.113.11',
       }),
     ).rejects.toThrow(/backendServerSlug/);
+  });
+
+  test('a publication-affecting update bumps the epoch AND schedules a mirror refresh; an unrelated one does neither', async () => {
+    const { t, relayId } = await seed();
+    const mirrorRefreshes = () =>
+      t.run(async (ctx) => {
+        const rows = await ctx.db.system.query('_scheduled_functions').collect();
+        return rows.filter((r) => r.name === 'storage:refreshActiveMirrors').length;
+      });
+    const before = (await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch;
+    const scheduled0 = await mirrorRefreshes();
+    await t.mutation(internal.relays.update, { id: relayId, cooldownMinutes: 45 });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch).toBe(before);
+    expect(await mirrorRefreshes()).toBe(scheduled0);
+    await t.mutation(internal.relays.update, { id: relayId, enabled: false });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch).toBe(
+      before + 1,
+    );
+    expect(await mirrorRefreshes()).toBe(scheduled0 + 1);
   });
 
   test('slot upsert derives the template remark and bumps the epoch; retire refuses while published', async () => {

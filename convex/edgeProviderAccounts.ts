@@ -76,6 +76,8 @@ export interface RelayAccountWithSecret {
   enabled: boolean;
   qualified: boolean;
   defaultTemplateId: Id<'edgeTemplates'> | null;
+  /** Row version for compare-and-set writes (a rotation applies only to the row it tested). */
+  updatedAt: number;
 }
 
 function toWithSecret(r: Doc<'edgeProviderAccounts'>): RelayAccountWithSecret {
@@ -88,6 +90,7 @@ function toWithSecret(r: Doc<'edgeProviderAccounts'>): RelayAccountWithSecret {
     enabled: r.enabled,
     qualified: r.qualified,
     defaultTemplateId: r.defaultTemplateId ?? null,
+    updatedAt: r.updatedAt,
   };
 }
 
@@ -405,31 +408,33 @@ export const remove = internalMutation({
 export const applyCredentialRotation = internalMutation({
   args: {
     id: v.id('edgeProviderAccounts'),
+    /** The FULL credential set that passed the provider test (not a partial patch). */
     credentials: v.any(),
-    identifiers: v.optional(v.any()),
+    /** The FULL settings that were tested alongside them. */
+    settings: v.any(),
+    /** `updatedAt` of the row the test was built from; a newer row refuses the write. */
+    expectedUpdatedAt: v.number(),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Account not found' });
-    const creds = buildCredentials(
-      row.provider,
-      a.credentials as Record<string, unknown>,
-      row.credentials as Record<string, unknown>,
-    );
+    // Compare-and-set: the action tested ONE exact credential+settings pair.
+    // If the row moved meanwhile (a concurrent rotation or edit), re-merging
+    // here could store a pair nobody tested (one request's secret with the
+    // other's access key); refuse instead and let the caller retry.
+    if (row.updatedAt !== a.expectedUpdatedAt)
+      throw new ConvexError({
+        code: 'conflict',
+        message: 'The account changed while its credentials were being tested; retry',
+      });
+    const creds = buildCredentials(row.provider, a.credentials as Record<string, unknown>, {});
     if (!creds.ok)
       throw new ConvexError({
         code: 'validation',
         message: `missing credentials: ${creds.missing.join(', ')}`,
       });
-    const identifiers = pickCredentialIdentifiers(
-      row.provider,
-      a.identifiers as Record<string, unknown> | undefined,
-    );
-    const settings = validateSettings(row.provider, {
-      ...(row.settings as Record<string, unknown>),
-      ...identifiers,
-    });
+    const settings = validateSettings(row.provider, a.settings as Record<string, unknown>);
     if (!settings.ok)
       throw new ConvexError({ code: 'validation', message: settings.issues.join('; ') });
     if (

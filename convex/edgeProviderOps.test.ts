@@ -234,6 +234,45 @@ describe('edgeProviderOps.rotateCredentials', () => {
     for (const s of ['AS1', 'AS2', 'CK1', 'AK1', 'AK2']) expect(blob).not.toContain(`"${s}"`);
   });
 
+  test('the apply step is compare-and-set: a row that moved during the provider test is refused, nothing stored', async () => {
+    const t = newT();
+    const id = await ovhAccount(t);
+    const secret = (await t.query(internal.edgeProviderAccounts.getWithSecret, { id }))!;
+    // Simulate a concurrent edit landing between the test and the apply.
+    await t.run((ctx) => ctx.db.patch(id, { updatedAt: secret.updatedAt + 1 }));
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.applyCredentialRotation, {
+        id,
+        credentials: { type: 'ovh', applicationSecret: 'AS9', consumerKey: 'CK9' },
+        settings: { ...secret.settings, applicationKey: 'AK9' },
+        expectedUpdatedAt: secret.updatedAt,
+        actorAdminId: undefined,
+      }),
+    ).rejects.toMatchObject({ data: { code: 'conflict' } });
+    const after = (await t.query(internal.edgeProviderAccounts.getWithSecret, { id }))!;
+    expect(after.credentials).toEqual({
+      type: 'ovh',
+      applicationSecret: 'AS1',
+      consumerKey: 'CK1',
+    });
+    expect(after.settings).toMatchObject({ applicationKey: 'AK1' });
+    // The apply stores the EXACT tested set (no re-merge against the row).
+    await t.mutation(internal.edgeProviderAccounts.applyCredentialRotation, {
+      id,
+      credentials: { type: 'ovh', applicationSecret: 'AS9', consumerKey: 'CK9' },
+      settings: { ...secret.settings, applicationKey: 'AK9' },
+      expectedUpdatedAt: after.updatedAt,
+      actorAdminId: undefined,
+    });
+    const stored = (await t.query(internal.edgeProviderAccounts.getWithSecret, { id }))!;
+    expect(stored.credentials).toEqual({
+      type: 'ovh',
+      applicationSecret: 'AS9',
+      consumerKey: 'CK9',
+    });
+    expect(stored.settings).toMatchObject({ applicationKey: 'AK9', regionName: 'GRA9' });
+  });
+
   test('a failing test changes nothing (stored credentials, identifier, qualification) and reports the code', async () => {
     const t = newT();
     const id = await ovhAccount(t);

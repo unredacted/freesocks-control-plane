@@ -88,6 +88,14 @@ describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
     expect(isBearerCaller(mk({ authorization: 'Bearer' }))).toBe(false);
     expect(isBearerCaller(mk({ authorization: 'Basic abc' }))).toBe(false);
     expect(isBearerCaller(mk({ cookie: 'fs_admin_session=x' }))).toBe(false);
+    // A cookie holder cannot downgrade itself by adding a bearer header:
+    // resolveAdmin authenticates the cookie first and ignores the bearer.
+    expect(
+      isBearerCaller(mk({ authorization: 'Bearer fsv1_abc', cookie: 'fs_admin_session=x' })),
+    ).toBe(false);
+    expect(
+      isBearerCaller(mk({ authorization: 'Bearer fsv1_abc', cookie: 'other=1; fs_session=m' })),
+    ).toBe(true);
     expect(isBearerCaller(mk({}))).toBe(false);
   });
 
@@ -147,6 +155,14 @@ describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
     expect(rows.find((r) => r.key === 'edge.render.enabled')).toBeUndefined();
     // Anonymous plaintext is refused the same way (no bearer → sealing is required first).
     expect((await t.fetch(SUMMARY)).status).toBe(400);
+    // A cookie session that ADDS a bogus bearer header is still a cookie caller:
+    // the handler would authenticate the cookie and never check the bearer, so
+    // the header must not buy a plaintext downgrade.
+    const downgrade = await t.fetch(SUMMARY, {
+      headers: { cookie, authorization: 'Bearer fsv1_bogus' },
+    });
+    expect(downgrade.status).toBe(400);
+    expect(await downgrade.json()).toMatchObject({ error: { code: 'e2ee.sealed_required' } });
   });
 
   test('knob on: an fsv1_ bearer caller keeps plaintext on every verb class', async () => {

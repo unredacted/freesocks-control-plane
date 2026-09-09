@@ -180,27 +180,6 @@ export const contextForSubscription = internalQuery({
   },
 });
 
-/** Admin preview / endpoint view: the published pool of one origin as the renderer sees it. */
-export const contextForRelay = internalQuery({
-  args: { relayId: v.id('relays'), family: familyValidator },
-  handler: async (ctx, a): Promise<EdgeRenderContext | null> => {
-    const origin = await ctx.db.get(a.relayId);
-    if (!origin) return null;
-    const cfg = await resolveEdgeConfig(ctx.db);
-    const { published, templateRemarks } = await publishedEdgesOf(ctx, origin, {
-      includeIneligible: true,
-    });
-    const family = a.family as RenderClientFamily;
-    return {
-      epoch: origin.publicationEpoch,
-      templateRemarks,
-      published,
-      rule: effectiveRule(cfg.render, cfg.render.clients[family]),
-      preferDistinctProviders: cfg.render.preferDistinctProviders,
-    };
-  },
-});
-
 /**
  * The member-facing nudge (account node status): whether this key has fetched
  * content since its origin last rotated, and the LABELS of the connections its

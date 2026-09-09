@@ -530,6 +530,9 @@ export const update = internalMutation({
       ...(affects ? { publicationEpoch: row.publicationEpoch + 1 } : {}),
       updatedAt: Date.now(),
     });
+    // The epoch bump re-renders the fronted route within one request; S3
+    // mirrors only change when refreshed, so every epoch bump schedules one.
+    if (affects) await scheduleMirrorRefresh(ctx);
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
@@ -597,8 +600,16 @@ export const upsertBySlug = internalMutation({
       changed = changedFields(existing, p).changed;
       await ctx.db.patch(id, { ...p, updatedAt: Date.now() });
     } else {
-      // Never let the role opt a fresh relay into automatic rotation.
-      id = await insertOrigin(ctx, slug, server._id, { ...a, autoRotate: false });
+      // A fresh registration is filtered like an update: the role never sets an
+      // operator-owned knob, and never opts a relay into automatic rotation.
+      const fresh: Record<string, unknown> = {};
+      for (const k of Object.keys(a)) {
+        if (ROLE_UPDATE_FIELDS.has(k)) fresh[k] = (a as Record<string, unknown>)[k];
+      }
+      id = await insertOrigin(ctx, slug, server._id, {
+        ...(fresh as OriginWrite),
+        autoRotate: false,
+      });
       created = true;
     }
     await writeAuditLog(ctx, {

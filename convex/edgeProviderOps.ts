@@ -315,10 +315,12 @@ export const rotateCredentials = internalAction({
       const res = await edgeProviderFor(acct.provider).testCredentials(cfg);
       // The stored (still valid) credentials are untouched on a failed test.
       if (!res.ok) return { ok: false, code: res.code ?? 'error' };
+      // Apply EXACTLY what was tested, against the row version it was built from.
       const applied = await ctx.runMutation(internal.edgeProviderAccounts.applyCredentialRotation, {
         id: a.accountId,
-        credentials: a.credentials,
-        identifiers: a.identifiers,
+        credentials: creds.credentials,
+        settings: settings.settings,
+        expectedUpdatedAt: acct.updatedAt,
         actorAdminId: a.actorAdminId,
       });
       return {
