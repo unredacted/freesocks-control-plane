@@ -428,10 +428,11 @@ export async function requestProbesFor(
   trigger: 'cron' | 'manual' | 'detector' | 'qualification',
   sources?: ProbeSource[],
   opts: StaggerOpts = {},
-): Promise<Id<'probeRuns'>[]> {
+): Promise<{ runIds: Id<'probeRuns'>[]; runsPerSource: number }> {
   const plan = await planTarget(ctx, target, sources);
   if (plan.cost > (await remainingBudget(ctx.db, plan.cfg, Date.now()))) throw budgetExhausted();
-  return insertPlanned(ctx, plan, trigger, opts);
+  const runIds = await insertPlanned(ctx, plan, trigger, opts);
+  return { runIds, runsPerSource: plan.runsPerSource };
 }
 
 /** One target (the cron, the detector, the per-edge admin button). A manual request is audited like requestMany. */
@@ -446,9 +447,13 @@ export const requestProbes = internalMutation({
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, { target, trigger, sources, actorAdminId, ...stagger }) => {
-    const plan = await planTarget(ctx, target, sources);
-    if (plan.cost > (await remainingBudget(ctx.db, plan.cfg, Date.now()))) throw budgetExhausted();
-    const runIds = await insertPlanned(ctx, plan, trigger, stagger);
+    const { runIds, runsPerSource } = await requestProbesFor(
+      ctx,
+      target,
+      trigger,
+      sources,
+      stagger,
+    );
     if (trigger === 'manual') {
       await writeAuditLog(ctx, {
         actorType: 'admin',
@@ -460,7 +465,7 @@ export const requestProbes = internalMutation({
       });
     }
     // The batch caller (detector) accumulates this into the next target's offset.
-    return { runIds, runsPerSource: plan.runsPerSource };
+    return { runIds, runsPerSource };
   },
 });
 

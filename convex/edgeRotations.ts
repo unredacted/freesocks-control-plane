@@ -26,7 +26,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { sanitizeAuditPayload, type AuditEntry } from './lib/audit';
+import { sanitizeAuditPayload, writeAuditLog, type AuditEntry } from './lib/audit';
 import { randomHex } from './lib/crypto';
 import { resolveEdgeConfig, edgeMs, type EdgeConfig } from './lib/edgeConfig';
 import { checkPublishable, scheduleMirrorRefresh, todayKey } from './relays';
@@ -1629,15 +1629,7 @@ export const resolveQuarantine = internalMutation({
       payload: { relaySlug: origin.slug, keep, rotationId: rotation?._id ?? null },
     };
     if (rotation) await auditRotation(ctx, rotation._id, entry);
-    else
-      await ctx.db.insert('auditLog', {
-        actorType: entry.actorType,
-        actorId: entry.actorId,
-        action: entry.action,
-        targetType: entry.targetType,
-        targetId: entry.targetId,
-        payload: sanitizeAuditPayload(entry.action, entry.payload),
-      });
+    else await writeAuditLog(ctx, entry);
     await scheduleMirrorRefresh(ctx);
     return { ok: true as const };
   },

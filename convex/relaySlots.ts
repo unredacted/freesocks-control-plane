@@ -8,10 +8,10 @@
  */
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
-import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { isSlotKey, templateHostRemark } from './lib/edges/hosts';
+import { scheduleMirrorRefresh } from './relays';
 
 /**
  * A slot change alters what renders for the origin (its template remark set,
@@ -23,7 +23,7 @@ async function invalidateOrigin(ctx: MutationCtx, origin: Doc<'relays'>) {
     publicationEpoch: origin.publicationEpoch + 1,
     updatedAt: Date.now(),
   });
-  await ctx.scheduler.runAfter(0, internal.storage.refreshActiveMirrors, {});
+  await scheduleMirrorRefresh(ctx);
 }
 
 export function mapSlotAdmin(r: Doc<'relaySlots'>, profile?: Doc<'protocolProfiles'> | null) {
