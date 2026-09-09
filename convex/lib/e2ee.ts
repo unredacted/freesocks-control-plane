@@ -19,10 +19,11 @@
  * - `FS_E2EE_ADMIN_REQUIRED=true` — ADMIN routes, for COOKIE-session callers
  *   only (the passkey-signed-in CMS, which always seals when built with the
  *   HPKE keys). An `fsv1_` token caller (IaC / Ansible) cannot seal and keeps
- *   plaintext: a bearer header with no admin cookie, or a bearer that resolves
- *   to a real token when a cookie is also present (a stale browser cookie must
- *   not refuse a valid token; a bogus header must not downgrade a passkey
- *   session — `isBearerCaller`). The caller class is decided BEFORE the handler
+ *   plaintext: a bearer header when the admin cookie is absent or does not
+ *   authenticate (the identity `resolveAdmin` would fall through to). A request
+ *   whose cookie DOES authenticate is a cookie caller whatever bearer it adds:
+ *   the handler would run with the cookie's privileges (`isBearerCaller`).
+ *   The caller class is decided BEFORE the handler
  *   runs, so a sealed CMS request is opened and an unsealed one refused without
  *   touching the session. Flip it only once the deployed SPA is built with the
  *   keys.
@@ -35,7 +36,7 @@ import {
   errorJson,
   PayloadTooLargeError,
   readBodyTextCapped,
-  resolveBearer,
+  resolveAdminCookie,
 } from './http';
 import { parseCookies } from './cookies';
 import {
@@ -79,19 +80,20 @@ export function bearerHeaderPresent(req: Request): boolean {
 
 /**
  * Is this an `fsv1_` API-token caller (cannot seal, keeps plaintext)?
- * Decided by the credential that would AUTHENTICATE the request, mirroring
- * `resolveAdmin`: with no admin session cookie the bearer is the only
- * credential; with a cookie present the bearer counts only when it resolves
- * to a real token — a passkey session cannot downgrade itself to plaintext by
- * adding a bogus header, while a valid token is not refused because a stale,
- * expired or malformed browser cookie happens to ride along (resolveAdmin
- * falls through to the token when the cookie fails). A caller holding BOTH a
- * valid cookie and a valid token is a token holder and keeps plaintext.
+ * Decided exactly as `resolveAdmin` decides WHO the request is: the admin
+ * session cookie is tried first, and only when it does not authenticate (no
+ * cookie, stale / malformed / expired, inactive admin, failed PoP) does the
+ * bearer become the credential. So a passkey session cannot downgrade itself
+ * by adding ANY bearer header — bogus or a real low-privilege token observed
+ * elsewhere — because the handler would still run with the cookie's
+ * privileges; while a valid token is never refused for a dead browser cookie
+ * riding along. A bearer alone is a token caller; the handler's own scope
+ * check decides whether it may act.
  */
 export async function isBearerCaller(ctx: ActionCtx, req: Request): Promise<boolean> {
   if (!bearerHeaderPresent(req)) return false;
   if (!parseCookies(req.headers.get('cookie'))[ADMIN_COOKIE]) return true;
-  return (await resolveBearer(ctx, req)) !== null;
+  return (await resolveAdminCookie(ctx, req)) === null;
 }
 
 export function sealed(handler: RawHandler) {

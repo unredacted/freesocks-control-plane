@@ -196,22 +196,29 @@ export const ensureDefaults = internalMutation({
 });
 
 /**
- * The effective template hash of every QUALIFIED account of a provider that
- * provisions from a default (it names no template of its own). Taken before a
- * write that can move a default and compared after it: an account whose
- * effective default changed was qualified with parameters it will no longer
- * provision with, so its qualification is revoked (audited) until re-run.
+ * The effective template hash of every QUALIFIED account of a provider — the
+ * template it names, else the default it falls back to. Taken before a write
+ * that can move a template (create / update / remove) and compared after it:
+ * an account whose effective template changed was qualified with parameters
+ * it will no longer provision with, so its qualification is revoked
+ * (audited) until re-run. `selectionContext` trusts `qualified` alone.
  */
 async function effectiveDefaultHashes(
   ctx: { db: import('./_generated/server').DatabaseReader },
   provider: EdgeProviderId,
-): Promise<Map<string, { acct: Doc<'edgeProviderAccounts'>; hash: string }>> {
-  const out = new Map<string, { acct: Doc<'edgeProviderAccounts'>; hash: string }>();
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
   const accounts = await ctx.db.query('edgeProviderAccounts').collect();
   for (const acct of accounts) {
-    if (acct.provider !== provider || !acct.qualified || acct.defaultTemplateId) continue;
-    const eff = await resolveTemplateFor(ctx, provider, null, null, acct._id);
-    out.set(acct._id, { acct, hash: eff.hash });
+    if (acct.provider !== provider || !acct.qualified) continue;
+    const eff = await resolveTemplateFor(
+      ctx,
+      provider,
+      null,
+      acct.defaultTemplateId ?? null,
+      acct._id,
+    );
+    out.set(acct._id, eff.hash);
   }
   return out;
 }
@@ -219,15 +226,21 @@ async function effectiveDefaultHashes(
 async function revokeMovedDefaults(
   ctx: import('./_generated/server').MutationCtx,
   provider: EdgeProviderId,
-  before: Map<string, { acct: Doc<'edgeProviderAccounts'>; hash: string }>,
+  before: Map<string, string>,
   actorAdminId: Doc<'adminUsers'>['_id'] | undefined,
 ): Promise<number> {
   let revoked = 0;
-  for (const [id, prev] of before) {
-    const eff = await resolveTemplateFor(ctx, provider, null, null, prev.acct._id);
-    if (eff.hash === prev.hash) continue;
-    const fresh = await ctx.db.get(prev.acct._id);
+  for (const [id, prevHash] of before) {
+    const fresh = await ctx.db.get(id as Doc<'edgeProviderAccounts'>['_id']);
     if (!fresh || !fresh.qualified) continue; // already revoked by another rule
+    const eff = await resolveTemplateFor(
+      ctx,
+      provider,
+      null,
+      fresh.defaultTemplateId ?? null,
+      fresh._id,
+    );
+    if (eff.hash === prevHash) continue;
     await ctx.db.patch(fresh._id, {
       qualified: false,
       qualifiedTemplateHash: undefined,
@@ -238,7 +251,7 @@ async function revokeMovedDefaults(
       actorId: actorAdminId,
       action: 'edge.provider_account.qualified',
       targetType: 'edge_provider_account',
-      targetId: id as Doc<'edgeProviderAccounts'>['_id'],
+      targetId: fresh._id,
       payload: { name: fresh.name, provider: fresh.provider, qualified: false },
     });
     revoked++;
@@ -412,6 +425,9 @@ export const remove = internalMutation({
         message: 'A provider keeps at least one template',
       });
     }
+    // Accounts naming this template, or falling back to it as a default, will
+    // provision from something else next: snapshot before anything moves.
+    const before = await effectiveDefaultHashes(ctx, row.provider);
     const referencing = await ctx.db.query('edgeProviderAccounts').collect();
     for (const acct of referencing) {
       if (acct.defaultTemplateId === id)
@@ -433,7 +449,13 @@ export const remove = internalMutation({
       targetId: id,
       payload: { provider: row.provider, name: row.name },
     });
-    return { ok: true as const };
+    const requalify = await revokeMovedDefaults(
+      ctx,
+      row.provider,
+      before,
+      actorAdminId ?? undefined,
+    );
+    return { ok: true as const, requalify };
   },
 });
 

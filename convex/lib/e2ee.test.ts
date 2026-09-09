@@ -155,6 +155,13 @@ describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
     });
     expect(downgrade.status).toBe(400);
     expect(await downgrade.json()).toMatchObject({ error: { code: 'e2ee.sealed_required' } });
+    // ...nor by adding a REAL token: the cookie still authenticates, so the
+    // handler would run with the cookie's privileges — the class is the
+    // credential that authenticates, not any bearer that happens to be valid.
+    const { bearer } = await setup();
+    const realToken = await t.fetch(SUMMARY, { headers: { cookie, authorization: bearer } });
+    expect(realToken.status).toBe(400);
+    expect(await realToken.json()).toMatchObject({ error: { code: 'e2ee.sealed_required' } });
   });
 
   test('knob on: an fsv1_ bearer caller keeps plaintext on every verb class', async () => {

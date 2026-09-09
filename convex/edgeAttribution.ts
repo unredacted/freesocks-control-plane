@@ -61,8 +61,15 @@ export async function resolveEdgeAttribution(
   // pin a report about the drained edge onto its healthy replacement. No edge
   // attribution in that state (the report still counts at origin level).
   if (choice && choice !== 'unsure' && choice !== 'direct' && !refreshNotObserved) {
-    const { published } = await publishedEdgesOf({ db }, origin);
-    if (published.length === 1 && (choice === 'auto' || choice === 'primary')) {
+    // The SAME pool view the renderer used (ineligible edges kept, flagged) so
+    // the recomputed primary/backup is the one the member actually received;
+    // a compressed pool would shift the modulus onto a different, healthy edge.
+    const { published } = await publishedEdgesOf({ db }, origin, { includeIneligible: true });
+    if (
+      published.length === 1 &&
+      published[0].eligible !== false &&
+      (choice === 'auto' || choice === 'primary')
+    ) {
       relayEdgeId = published[0].edgeId;
     } else if (
       published.length > 1 &&

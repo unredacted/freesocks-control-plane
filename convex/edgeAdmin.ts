@@ -218,7 +218,11 @@ async function publishedEndpoints(
   ctx: { db: import('./_generated/server').DatabaseReader },
   origin: Doc<'relays'>,
 ) {
-  const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
+  // Role-usable endpoints ONLY: the node role bootstraps its template Host from
+  // publishedEndpoints[0]'s address/port/SNI, so an index-0 edge that lost its
+  // address, slot or profile must make it keep waiting, not configure a dud.
+  // (Assignment and preview use the full, flagged pool elsewhere.)
+  const { published } = await publishedEdgesOf(ctx, origin);
   const slots = await ctx.db
     .query('relaySlots')
     .withIndex('by_relay', (q) => q.eq('relayId', origin._id))

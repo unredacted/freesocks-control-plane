@@ -217,6 +217,28 @@ function checkLimits(a: {
   }
 }
 
+/**
+ * A default template must belong to the account's provider and be visible to
+ * it: unscoped, or scoped to THIS account. A template scoped to another account
+ * would be silently skipped by `resolveTemplateFor`, so the operator's pick and
+ * what provisions/qualifies would differ.
+ */
+async function assertTemplateUsable(
+  db: import('./_generated/server').DatabaseReader,
+  templateId: Id<'edgeTemplates'>,
+  provider: EdgeProviderId,
+  accountId: Id<'edgeProviderAccounts'> | null,
+) {
+  const tpl = await db.get(templateId);
+  if (!tpl || tpl.provider !== provider)
+    throw new ConvexError({ code: 'validation', message: 'unknown template for this provider' });
+  if (tpl.accountId && tpl.accountId !== accountId)
+    throw new ConvexError({
+      code: 'validation',
+      message: 'that template is scoped to another account',
+    });
+}
+
 export const create = internalMutation({
   args: upsertArgs,
   handler: async (ctx, a) => {
@@ -241,6 +263,9 @@ export const create = internalMutation({
         message: `missing credentials: ${creds.missing.join(', ')}`,
       });
     }
+    // A template picked at creation can only be unscoped (the account has no id yet).
+    if (a.defaultTemplateId)
+      await assertTemplateUsable(ctx.db, a.defaultTemplateId, a.provider, null);
     const now = Date.now();
     const id = await ctx.db.insert('edgeProviderAccounts', {
       provider: a.provider,
@@ -344,6 +369,8 @@ export const update = internalMutation({
     if (a.maxLiveEdges !== undefined) patch.maxLiveEdges = a.maxLiveEdges;
     let templateChanged = false;
     if (a.defaultTemplateId !== undefined) {
+      if (a.defaultTemplateId)
+        await assertTemplateUsable(ctx.db, a.defaultTemplateId, row.provider, row._id);
       patch.defaultTemplateId = a.defaultTemplateId ?? undefined;
       templateChanged = (a.defaultTemplateId ?? undefined) !== row.defaultTemplateId;
     }

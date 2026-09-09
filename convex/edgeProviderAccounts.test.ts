@@ -530,6 +530,105 @@ describe('edgeTemplates', () => {
     void base;
   });
 
+  test('REMOVING a template an account provisions from (named, or its scoped default) revokes its qualification', async () => {
+    const t = convexTest(schema, modules);
+    const mk = (name: string) =>
+      t.mutation(internal.edgeProviderAccounts.create, {
+        provider: 'gcore',
+        name,
+        settings: gcoreSettings,
+        credentials: { apiKey: 'k' },
+      });
+    const a = (await mk('acct-a')).id;
+    const b = (await mk('acct-b')).id;
+    await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Base',
+      params: { flavor: 'lb1-1-2' },
+      isDefault: true,
+    });
+    const mine = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Mine',
+      params: { flavor: 'lb1-2-4' },
+      accountId: a,
+      isDefault: true,
+    });
+    const named = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Named',
+      params: { flavor: 'lb1-4-8' },
+    });
+    await t.mutation(internal.edgeProviderAccounts.update, { id: b, defaultTemplateId: named.id });
+    const qualified = async (id: typeof a) =>
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id }))!.qualified;
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id: a, qualified: true });
+    await t.mutation(internal.edgeProviderAccounts.setQualified, { id: b, qualified: true });
+    // A's scoped default goes away with no same-scope sibling: A falls back to
+    // the provider default it was never qualified with.
+    const r1 = await t.mutation(internal.edgeTemplates.remove, { id: mine.id });
+    expect(r1).toEqual({ ok: true, requalify: 1 });
+    expect(await qualified(a)).toBe(false);
+    expect(await qualified(b)).toBe(true);
+    // B named a template explicitly; deleting it clears the reference AND the
+    // qualification (B now provisions from the provider default).
+    const r2 = await t.mutation(internal.edgeTemplates.remove, { id: named.id });
+    expect(r2).toEqual({ ok: true, requalify: 1 });
+    expect(await qualified(b)).toBe(false);
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: b }))!.defaultTemplateId,
+    ).toBeNull();
+  });
+
+  test('an account cannot name a template scoped to ANOTHER account (or another provider) as its default', async () => {
+    const t = convexTest(schema, modules);
+    const mk = (name: string) =>
+      t.mutation(internal.edgeProviderAccounts.create, {
+        provider: 'gcore',
+        name,
+        settings: gcoreSettings,
+        credentials: { apiKey: 'k' },
+      });
+    const a = (await mk('acct-a')).id;
+    const b = (await mk('acct-b')).id;
+    const mine = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Mine',
+      params: { flavor: 'lb1-2-4' },
+      accountId: a,
+    });
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.update, { id: b, defaultTemplateId: mine.id }),
+    ).rejects.toMatchObject({ data: { code: 'validation' } });
+    // The owner may.
+    await t.mutation(internal.edgeProviderAccounts.update, { id: a, defaultTemplateId: mine.id });
+    // On CREATE the account has no id yet, so only an unscoped template is usable.
+    await expect(
+      t.mutation(internal.edgeProviderAccounts.create, {
+        provider: 'gcore',
+        name: 'acct-c',
+        settings: gcoreSettings,
+        credentials: { apiKey: 'k' },
+        defaultTemplateId: mine.id,
+      }),
+    ).rejects.toMatchObject({ data: { code: 'validation' } });
+    const base = await t.mutation(internal.edgeTemplates.create, {
+      provider: 'gcore',
+      name: 'Base',
+      params: { flavor: 'lb1-1-2' },
+    });
+    const c = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'gcore',
+      name: 'acct-c',
+      settings: gcoreSettings,
+      credentials: { apiKey: 'k' },
+      defaultTemplateId: base.id,
+    });
+    expect(
+      (await t.query(internal.edgeProviderAccounts.getForAdmin, { id: c.id }))!.defaultTemplateId,
+    ).toBe(base.id);
+  });
+
   test("an account-scoped default template is that account's default only, never another account's provider default", async () => {
     const t = convexTest(schema, modules);
     const mk = (name: string) =>

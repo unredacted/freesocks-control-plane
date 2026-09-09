@@ -277,9 +277,11 @@ DELETE carries nothing. Dual-mode (plaintext accepted) stays for `fsv1_` IaC cal
 backend servers; `FS_E2EE_ADMIN_REQUIRED=true` additionally refuses plaintext from cookie-session
 (passkey CMS) callers on these routes (`e2ee.sealed_required`) while bearer callers, who cannot
 seal, keep dual-mode. The caller class follows the credential that would authenticate the
-request, as `resolveAdmin` does: a bearer with no admin cookie, or a bearer that resolves to a
-real token when a stale browser cookie rides along; a passkey session cannot downgrade itself by
-adding a bogus bearer header. A malformed percent escape in a path is a `400 validation` on every verb.
+request, exactly as `resolveAdmin` does: the admin cookie is tried first, and only when it does
+not authenticate (absent, stale, malformed, inactive admin, failed proof of possession) is the
+bearer the caller. A passkey session therefore cannot downgrade itself to plaintext by adding any
+bearer header, bogus or a real low-privilege token, while a valid token is never refused for a
+dead browser cookie riding along. A malformed percent escape in a path is a `400 validation` on every verb.
 Provider-API-calling POSTs (credential test, discover, inventory / live / node refresh, render
 preview, credential rotation) and manual probes are rate-limited per actor
 (`admin.edges.provider-call`, `admin.edges.probe`). Read-only POSTs (render preview, template
@@ -311,7 +313,9 @@ template Host, and registers both with FCP using an `fsv1_` token with `admin:se
 3. Poll `GET /api/v1/admin/edges/relays/by-slug/{hostname}` until `publishedEndpoints[0]`
    exists, then create ONE template Host per slot: remark `<hostname>-relay-<slotKey>`, address =
    the index-0 IPv4, port = its port, SNI = the first active server name,
-   `overrideSniFromAddress:false`.
+   `overrideSniFromAddress:false`. `publishedEndpoints` lists role-usable edges only (an
+   address, a deployed slot, an enabled profile): a published edge that is not usable is omitted
+   so the role keeps waiting instead of configuring a dud.
 4. Re-runs read FCP state first and never rewrite an FCP-owned Host address; server names are
    removed from the node only after their `drainUntil`.
 5. Teardown: `DELETE /api/v1/admin/edges/relays/by-slug/{hostname}`, then Host cleanup by the
@@ -326,9 +330,12 @@ templates pin with the node like its other Hosts.
 on a relay (unpublished); open an authenticated REALITY session through the edge with a real
 client and hold it idle for several minutes; pull the live view; then "Mark qualified" (the
 effective template's hash is recorded server-side). Editing the account's credentials or
-settings through the ordinary update clears the qualification; so does changing the parameters
-of a template the account was qualified with, names as its default, or falls back to as the
-provider default (audited as `edge.provider_account.qualified` with `qualified:false`). A routine
+settings through the ordinary update clears the qualification; so does any template change that
+moves the account's **effective** template: the parameters of the template it names or falls
+back to, a new or switched default in its scope, or the removal of the template it used (the
+effective template hash is compared before and after every template write; audited as
+`edge.provider_account.qualified` with `qualified:false`). An account may name only an unscoped
+template or one scoped to itself as its default. A routine
 secret rotation goes through **Rotate credentials** (`POST …/providers/{id}/rotate-credentials`):
 the new credentials are tested first, nothing that locates resources may change, and the
 qualification is kept (audited as `edge.provider_account.credentials_rotated`, booleans only).

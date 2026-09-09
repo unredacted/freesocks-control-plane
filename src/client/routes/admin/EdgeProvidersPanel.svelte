@@ -771,7 +771,7 @@
                 "Provider's default template"}</Select.Trigger
             >
             <Select.Content>
-              {#each (templates.data?.templates ?? []).filter((t) => t.provider === editor?.provider) as t (t.id)}
+              {#each (templates.data?.templates ?? []).filter((t) => t.provider === editor?.provider && (!t.accountId || t.accountId === editor?.id)) as t (t.id)}
                 <Select.Item value={t.id}>{t.name}</Select.Item>
               {/each}
             </Select.Content>

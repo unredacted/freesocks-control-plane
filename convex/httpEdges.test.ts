@@ -9,6 +9,7 @@ import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import schema from './schema';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { sha256Hex } from './lib/crypto';
 import {
@@ -572,6 +573,20 @@ describe('relay admin routes', () => {
     const edges = await (await call('GET', `edges?relayId=${view2.relay.id}`)).json();
     expect(edges).toHaveLength(1);
     expect(edges[0]).toMatchObject({ managed: false, publication: 'published', poolIndex: 0 });
+    // The role bootstraps its template Host from publishedEndpoints[0]: an
+    // index-0 edge that is not usable (here: no address) must keep it waiting
+    // rather than hand it a dud, even though the edge stays in the pool.
+    await t.run((ctx) => ctx.db.patch(edges[0].id as Id<'edges'>, { addresses: {} }));
+    const viewDud = RelayBySlugResponse.parse(
+      await (await call('GET', 'relays/by-slug/node-one')).json(),
+    );
+    expect(viewDud.publishedEndpoints).toEqual([]);
+    expect(viewDud.relay.publishedEdgeIds ?? [edges[0].id]).toContain(edges[0].id);
+    await t.run((ctx) =>
+      ctx.db.patch(edges[0].id as Id<'edges'>, {
+        addresses: { v4: '198.51.100.7', v6: '2001:db8::7' },
+      }),
+    );
     const summary = EdgeSummary.parse(await (await call('GET', 'summary')).json());
     expect(summary.counts).toMatchObject({ relays: 1, published: 1, suspected: 0, rotating: 0 });
     expect(summary.relays[0].pool[0]).toMatchObject({

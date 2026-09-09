@@ -413,35 +413,47 @@ export interface AdminAuth {
  * `required` arg fall back to "any admin:* scope", used only by the unauth-
  * tolerant bootstrap-status endpoint.)
  */
+/**
+ * The cookie half of `resolveAdmin`: the fs_admin_session cookie, verified,
+ * mapped to a live admin session of an ACTIVE admin, with a valid proof of
+ * possession. Null when any of that fails — `resolveAdmin` then falls through
+ * to the bearer, and the sealing wrapper classifies the caller the same way.
+ */
+export async function resolveAdminCookie(
+  ctx: ActionCtx,
+  req: Request,
+): Promise<{ adminUserId: Id<'adminUsers'>; sid: string } | null> {
+  const raw = parseCookies(req.headers.get('cookie'))[ADMIN_COOKIE];
+  const key = process.env.ADMIN_SESSION_SIGNING_KEY;
+  if (!raw || !key) return null;
+  const sid = await verifySignedValue(raw, key);
+  if (!sid) return null;
+  const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
+  if (!sess || sess.kind !== 'admin' || !sess.adminUserId) return null;
+  // A deactivated admin's session must stop authorizing immediately
+  // (W3-8a): re-check isActive on every request, so revoking access does
+  // not wait for the session TTL.
+  const adminRow = await ctx.runQuery(internal.admins.getById, {
+    adminUserId: sess.adminUserId,
+  });
+  if (
+    adminRow?.isActive &&
+    (await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken, sess.popAlg))
+  ) {
+    return { adminUserId: sess.adminUserId, sid };
+  }
+  // Inactive admin, or a bound session without valid PoP: the caller falls
+  // through to the token path (no admin token present -> unauthenticated).
+  return null;
+}
+
 export async function resolveAdmin(
   ctx: ActionCtx,
   req: Request,
   required?: string,
 ): Promise<AdminAuth | null> {
-  const raw = parseCookies(req.headers.get('cookie'))[ADMIN_COOKIE];
-  const key = process.env.ADMIN_SESSION_SIGNING_KEY;
-  if (raw && key) {
-    const sid = await verifySignedValue(raw, key);
-    if (sid) {
-      const sess = await ctx.runQuery(internal.sessions.bySid, { sid });
-      if (sess && sess.kind === 'admin' && sess.adminUserId) {
-        // A deactivated admin's session must stop authorizing immediately
-        // (W3-8a): re-check isActive on every request, so revoking access does
-        // not wait for the session TTL.
-        const adminRow = await ctx.runQuery(internal.admins.getById, {
-          adminUserId: sess.adminUserId,
-        });
-        if (
-          adminRow?.isActive &&
-          (await sessionPopOk(ctx, req, sid, sess.popPublicKey, sess.popSessionToken, sess.popAlg))
-        ) {
-          return { adminUserId: sess.adminUserId, sid };
-        }
-        // Inactive admin, or a bound session without valid PoP: fall through to
-        // the token path (no admin token present -> unauthenticated -> re-auth).
-      }
-    }
-  }
+  const viaCookie = await resolveAdminCookie(ctx, req);
+  if (viaCookie) return viaCookie;
   const tok = await resolveBearer(ctx, req);
   if (!tok) return null;
   if (required) {

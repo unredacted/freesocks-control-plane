@@ -11,6 +11,8 @@ import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { upsertSettingRow } from './appSettings';
 import { resolveEdgeAttribution } from './edgeAttribution';
+import { publishedEdgesOf } from './edgeRender';
+import { assignEndpoints } from './lib/edges/assignment';
 
 const modules = import.meta.glob('./**/*.*s');
 const SIGN_KEY = 'test-sign';
@@ -197,6 +199,46 @@ describe('relay attribution on member reports', () => {
     const issue = audit.filter((a) => a.action === 'subscription.issue_reported');
     expect(issue).toHaveLength(4);
     expect(JSON.stringify(issue)).not.toContain('node-one');
+  });
+
+  test('attribution recomputes the assignment over the FULL pool (ineligible edges keep their index), exactly as the renderer did', async () => {
+    const s = await seed();
+    // A third edge, then the middle one loses its address: the renderer keeps
+    // it in the modulus and walks forward; attribution must do the same.
+    await s.t.run((ctx) => ctx.db.patch(s.relayId, { desiredPublished: 3 }));
+    const c = await s.t.mutation(internal.relays.adoptEdge, {
+      relayId: s.relayId,
+      slotId: s.slotId,
+      ipv4: '198.51.100.99',
+      publish: true,
+    });
+    await s.t.run((ctx) => ctx.db.patch(s.edgeB, { addresses: {} }));
+    const now = Date.now();
+    let discriminating = false;
+    for (let i = 40; i < 56; i++) {
+      const m = await member(s.t, s.tierId, s.serverId, i);
+      await s.t.run(async (ctx) => {
+        const origin = (await ctx.db.get(s.relayId))!;
+        const sub = (await ctx.db.get(m.subId))!;
+        const full = (await publishedEdgesOf(ctx, origin, { includeIneligible: true })).published;
+        const compressed = (await publishedEdgesOf(ctx, origin)).published;
+        expect(full.map((e) => e.edgeId)).toEqual([s.edgeA, s.edgeB, c.edgeId]);
+        expect(compressed.map((e) => e.edgeId)).toEqual([s.edgeA, c.edgeId]);
+        const opts = { now, preferDistinctProviders: false, includeBackup: true };
+        const expectFull = assignEndpoints(sub.renderKey!, full, opts);
+        const wrong = assignEndpoints(sub.renderKey!, compressed, opts);
+        const current = { ...sub, lastRenderedEpoch: origin.publicationEpoch } as typeof sub;
+        const primary = await resolveEdgeAttribution(ctx.db, current, 'primary', now);
+        const backup = await resolveEdgeAttribution(ctx.db, current, 'backup', now);
+        expect(primary!.relayEdgeId).toBe(expectFull.primary!.edge.edgeId);
+        expect(backup!.relayEdgeId).toBe(expectFull.backup?.edge.edgeId ?? null);
+        expect(primary!.relayEdgeId).not.toBe(s.edgeB);
+        if (wrong.primary!.edge.edgeId !== expectFull.primary!.edge.edgeId) discriminating = true;
+      });
+    }
+    // At least one member's compressed-pool answer differs, so the assertion
+    // above genuinely pins the full-pool behaviour.
+    expect(discriminating).toBe(true);
   });
 
   test('refreshNotObserved when the key has not fetched content since the origin last rotated', async () => {

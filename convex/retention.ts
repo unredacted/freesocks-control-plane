@@ -13,6 +13,8 @@ import { recordHeartbeat } from './cronHeartbeat';
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const PAGE = 1000;
+// Rows with per-row child cleanup (destroyed edges → probe rollups) page smaller.
+const EDGE_PAGE = 50;
 
 /**
  * A sweep that deletes a FULL page has more to drain: re-run immediately (each
@@ -328,7 +330,10 @@ export const sweepDestroyedEdges = internalMutation({
   handler: async (ctx, { limit, rounds }) => {
     await recordHeartbeat(ctx, 'retention-edges');
     const cutoff = Date.now() - num('EDGE_RETENTION_DAYS', 30) * DAY;
-    const page = limit ?? PAGE;
+    // Each edge drags its probe rollups (countries × sources × families ×
+    // ports) into the same transaction, so the page is small; the drain rounds
+    // still clear a backlog instead of retrying one oversized page.
+    const page = limit ?? EDGE_PAGE;
     const rows = await ctx.db
       .query('edges')
       .withIndex('by_status', (q) => q.eq('status', 'destroyed').lt('statusChangedAt', cutoff))
