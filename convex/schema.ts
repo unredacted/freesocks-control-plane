@@ -1217,6 +1217,9 @@ export default defineSchema({
     targetRef: v.string(),
     source: relayProbeSource,
     target: v.string(), // "ip:port" as probed
+    // The listener port probed (also inside `target`; absent on rows written
+    // before per-port rollups, which parse it out of `target`).
+    port: v.optional(v.number()),
     ipVersion: v.union(v.literal(4), v.literal(6)),
     externalId: v.optional(v.string()),
     status: v.union(
@@ -1233,6 +1236,13 @@ export default defineSchema({
       v.literal('qualification'),
     ),
     requestedAt: v.number(),
+    // When the executor was scheduled to start (requestedAt + the batch
+    // stagger delay); absent = requestedAt. The stuck-run timeout counts from
+    // here, never from the request, so a staggered run is not timed out
+    // before its executor fires.
+    scheduledAt: v.optional(v.number()),
+    // When the executor actually started the measurement (`running`).
+    startedAt: v.optional(v.number()),
     finishedAt: v.optional(v.number()),
     results: v.array(
       v.object({
@@ -1250,7 +1260,9 @@ export default defineSchema({
     .index('by_status', ['status'])
     .index('by_status_requested', ['status', 'requestedAt']),
 
-  // Rolled-up per-target, per-country, per-source (per address family) reachability counts.
+  // Rolled-up per-target, per-country, per-source, per address family, PER
+  // LISTENER PORT reachability counts (one row per such key; the index prefix
+  // covers a target, the rest is matched in memory — bounded per target).
   probeReachability: defineTable({
     targetKind: probeTargetKind,
     targetRef: v.string(),
@@ -1258,6 +1270,9 @@ export default defineSchema({
     source: relayProbeSource,
     // Address family probed; absent = 4 (rows written before dual-stack rollups).
     ipVersion: v.optional(v.union(v.literal(4), v.literal(6))),
+    // Listener port probed; absent = the legacy single-port row, adopted (and
+    // stamped) by the first per-port run that lands on its path.
+    port: v.optional(v.number()),
     okCount: v.number(),
     failCount: v.number(),
     lastOkAt: v.optional(v.number()),

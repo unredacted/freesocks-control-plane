@@ -464,6 +464,8 @@ export const ProbeRunAdmin = z.object({
   target: ProbeTargetRef,
   source: z.enum(['globalping', 'checkhost', 'ripeatlas', 'internal']),
   ipVersion: z.union([z.literal(4), z.literal(6)]),
+  /** The listener port this run probed (a multi-port edge gets one run per port). */
+  port: z.number().int().nullable().optional(),
   status: z.enum(['requested', 'running', 'finished', 'failed', 'timeout']),
   trigger: z.enum(['cron', 'manual', 'detector', 'qualification']),
   requestedAt: iso,
