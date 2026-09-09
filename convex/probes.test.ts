@@ -831,4 +831,250 @@ describe('relayProbes', () => {
     expect(by.RU.verdict).toBe('unknown');
     expect(by.XX.lastAt).toBe(edge.reachability!.updatedAt);
   });
+
+  test('the hourly budget gates EVERY request path: zero refuses, N truncates to whole targets, duplicates collapse', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, edgeId } = await seed();
+    const c1 = await t.mutation(internal.probeTargets.create, { label: 'A', address: 'a.example' });
+    const c2 = await t.mutation(internal.probeTargets.create, { label: 'B', address: 'b.example' });
+    const edge = { kind: 'edge' as const, ref: edgeId as string };
+    const t1 = { kind: 'custom' as const, ref: c1.id };
+    const t2 = { kind: 'custom' as const, ref: c2.id };
+    const runCount = () => t.run(async (ctx) => (await ctx.db.query('probeRuns').collect()).length);
+    // Budget zero: the manual batch, a detector request and the cron all refuse; nothing is inserted.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.hourlyBudget', '0'));
+    await expect(t.mutation(internal.probes.requestMany, { targets: [edge] })).rejects.toThrow(
+      /probe\.budget_exhausted/,
+    );
+    await expect(
+      t.mutation(internal.probes.requestProbes, { target: edge, trigger: 'detector' }),
+    ).rejects.toThrow(/probe\.budget_exhausted/);
+    // (all three targets are due: the published edge and both enabled customs)
+    expect(await t.action(internal.probes.run, {})).toMatchObject({ requested: 0, skipped: 3 });
+    expect(await runCount()).toBe(0);
+    // Budget 4, three targets costing 2 each (globalping + internal): the first two
+    // fit whole, the third is skipped with the budget reason — exactly 4 runs.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.hourlyBudget', '4'));
+    const r = await t.mutation(internal.probes.requestMany, { targets: [edge, t1, t2] });
+    expect(r.runIds).toHaveLength(4);
+    expect(r.skipped).toEqual([`custom:${c2.id}: probe.budget_exhausted`]);
+    expect(await runCount()).toBe(4);
+    // Spent 4 of 4 (the runs are still `requested`; state does not matter): any
+    // further request is refused, whichever path asks.
+    await expect(t.mutation(internal.probes.requestMany, { targets: [t2] })).rejects.toThrow(
+      /probe\.budget_exhausted/,
+    );
+    await expect(
+      t.mutation(internal.probes.requestProbes, { target: t2, trigger: 'cron' }),
+    ).rejects.toThrow(/probe\.budget_exhausted/);
+    expect(await runCount()).toBe(4);
+    // Duplicates collapse to one target: budget 6 leaves room for ONE round of
+    // 2, and [t2, t2, t2] is that one round, nothing skipped, audited as 1 target.
+    await t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.hourlyBudget', '6'));
+    const d = await t.mutation(internal.probes.requestMany, { targets: [t2, t2, t2] });
+    expect(d.runIds).toHaveLength(2);
+    expect(d.skipped).toEqual([]);
+    expect(await runCount()).toBe(6);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    const requested = audit.filter((a) => a.action === 'probe.requested');
+    expect(requested[requested.length - 1].payload).toMatchObject({ targets: 1, runs: 2 });
+    // Runs older than the hour no longer count.
+    await t.run(async (ctx) => {
+      for (const run of await ctx.db.query('probeRuns').collect())
+        await ctx.db.patch(run._id, { requestedAt: run.requestedAt - 61 * 60_000 });
+    });
+    const again = await t.mutation(internal.probes.requestMany, { targets: [edge, t1, t2] });
+    expect(again.runIds).toHaveLength(6);
+    expect(again.skipped).toEqual([]);
+  });
+
+  test('per-port rollup rows: a blocked listener makes the country unreachable; ports never overwrite each other', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, edgeId } = await seed();
+    const insertRun = (port: number) =>
+      t.run((ctx) =>
+        ctx.db.insert('probeRuns', {
+          targetKind: 'edge',
+          targetRef: edgeId,
+          source: 'globalping',
+          target: `${EDGE}:${port}`,
+          port,
+          ipVersion: 4,
+          status: 'running',
+          trigger: 'manual',
+          requestedAt: Date.now(),
+          results: [],
+        }),
+      );
+    const results = (ok: boolean, country = 'IR') =>
+      [1, 2].map((k) => ({
+        country,
+        asn: `AS${1000 + k}`,
+        network: `net-${k}`,
+        vantageClass: 'eyeball' as const,
+        ok,
+      }));
+    const finish = (port: number, ok: boolean, country?: string) =>
+      insertRun(port).then((runId) =>
+        t.mutation(internal.probes.finishRun, { runId, results: results(ok, country) }),
+      );
+    const rows = () =>
+      t.run(async (ctx) =>
+        (await ctx.db.query('probeReachability').collect())
+          .map((r) => [r.country, r.port, r.verdict] as const)
+          .sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`)),
+      );
+    const irVerdict = async () =>
+      (await t.query(internal.edges.get, { id: edgeId }))!.reachability!.byCountry.find(
+        (c) => c.country === 'IR',
+      )!.verdict;
+    // Two ports, one blocked: two rows, and the country is unreachable.
+    await finish(443, true);
+    await finish(8443, false);
+    expect(await rows()).toEqual([
+      ['IR', 443, 'reachable'],
+      ['IR', 8443, 'unreachable'],
+    ]);
+    expect(await irVerdict()).toBe('unreachable');
+    // Completion order is irrelevant: the open port finishing again leaves the block in place.
+    await finish(443, true);
+    expect(await rows()).toHaveLength(2);
+    expect(await irVerdict()).toBe('unreachable');
+    // Both reachable → reachable, still two rows.
+    await finish(8443, true);
+    expect(await rows()).toEqual([
+      ['IR', 443, 'reachable'],
+      ['IR', 8443, 'reachable'],
+    ]);
+    expect(await irVerdict()).toBe('reachable');
+    // The run history shows which port each run hit.
+    const runs = await t.query(internal.probes.listRuns, { target: { kind: 'edge', ref: edgeId } });
+    expect(runs.map((r) => r.port).sort()).toEqual([443, 443, 8443, 8443]);
+    // A legacy row (written before ports were kept) is adopted by the first run
+    // on its path — stamped with the port, not duplicated.
+    await t.run((ctx) =>
+      ctx.db.insert('probeReachability', {
+        targetKind: 'edge',
+        targetRef: edgeId,
+        country: 'RU',
+        source: 'globalping',
+        ipVersion: 4,
+        okCount: 0,
+        failCount: 2,
+        failNetworks: ['AS1', 'AS2'],
+        verdict: 'unreachable',
+        updatedAt: Date.now() - 60_000,
+      }),
+    );
+    await finish(443, true, 'RU');
+    expect((await rows()).filter((r) => r[0] === 'RU')).toEqual([['RU', 443, 'reachable']]);
+  });
+
+  test('the stuck-run timeout counts from the scheduled start, not the request; a started run still times out', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, edgeId } = await seed();
+    const MIN = 60_000;
+    const now = Date.now();
+    const insert = (over: Record<string, unknown>) =>
+      t.run((ctx) =>
+        ctx.db.insert('probeRuns', {
+          targetKind: 'edge',
+          targetRef: edgeId,
+          source: 'checkhost',
+          target: `${EDGE}:443`,
+          port: 443,
+          ipVersion: 4,
+          status: 'requested',
+          trigger: 'manual',
+          requestedAt: now,
+          results: [],
+          ...over,
+        }),
+      );
+    const staggered = await insert({ scheduledAt: now + 11 * MIN });
+    const plain = await insert({});
+    const started = await insert({
+      status: 'running',
+      scheduledAt: now + 5 * MIN,
+      startedAt: now + 5 * MIN,
+    });
+    const statusOf = async (id: Id<'probeRuns'>) => (await t.run((ctx) => ctx.db.get(id)))!.status;
+    // Minute 10: the plain request timed out; the staggered run is not even due yet.
+    expect(await t.mutation(internal.probes.sweepStuck, { now: now + 10 * MIN })).toEqual({
+      timedOut: 1,
+    });
+    expect(await statusOf(plain)).toBe('timeout');
+    expect(await statusOf(staggered)).toBe('requested');
+    expect(await statusOf(started)).toBe('running');
+    // Minute 15: the run started at minute 5 times out; the one due at 11 is inside its window.
+    expect(await t.mutation(internal.probes.sweepStuck, { now: now + 15 * MIN })).toEqual({
+      timedOut: 1,
+    });
+    expect(await statusOf(started)).toBe('timeout');
+    expect(await statusOf(staggered)).toBe('requested');
+    // Minute 21: the staggered run, never started, finally times out.
+    expect(await t.mutation(internal.probes.sweepStuck, { now: now + 21 * MIN })).toEqual({
+      timedOut: 1,
+    });
+    expect(await statusOf(staggered)).toBe('timeout');
+  });
+
+  test('a batch is never staggered past one probe interval: the spacing shrinks to fit, a lone delay is clamped', async () => {
+    __setGlobalpingFactory(() => fakeGlobalping(() => 'ok'));
+    const { t, edgeId } = await seed();
+    const MIN = 60_000;
+    await t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.probe.sourceSpacingMs', '60000');
+      await upsertSettingRow(ctx, 'edge.probe.intervalMinutes', '5');
+    });
+    const customs = [];
+    for (let i = 0; i < 7; i++)
+      customs.push(
+        await t.mutation(internal.probeTargets.create, {
+          label: `T${i}`,
+          address: `t${i}.example`,
+        }),
+      );
+    const offsets = async (source: 'globalping' | 'internal') => {
+      const runs = await t.run((ctx) => ctx.db.query('probeRuns').collect());
+      const scheduled = await t.run((ctx) => ctx.db.system.query('_scheduled_functions').collect());
+      return runs
+        .filter((r) => r.source === source)
+        .map((r) => {
+          const f = scheduled.find((s) => (s.args[0] as { runId: string }).runId === r._id)!;
+          // The persisted scheduledAt IS the executor's scheduled time.
+          expect(r.scheduledAt).toBe(f.scheduledTime);
+          return f.scheduledTime - r.requestedAt;
+        })
+        .sort((a, b) => a - b);
+    };
+    // 7 targets × 1 run per source at 60 s spacing would span 6 minutes; the
+    // spacing shrinks to floor(5 min / 6) = 50 s so the last run lands ON the cap.
+    await t.mutation(internal.probes.requestMany, {
+      targets: customs.map((c) => ({ kind: 'custom' as const, ref: c.id })),
+      sources: ['globalping'],
+    });
+    expect(await offsets('globalping')).toEqual([0, 1, 2, 3, 4, 5, 6].map((i) => i * 50_000));
+    // The cron tick fits its batch the same way (8 targets here: the edge + 7 customs).
+    await t.run(async (ctx) => {
+      for (const run of await ctx.db.query('probeRuns').collect()) await ctx.db.delete(run._id);
+    });
+    const tick = await t.action(internal.probes.run, {});
+    expect(tick.requested).toBe(16); // 8 targets × (globalping + internal)
+    const gp = await offsets('globalping');
+    expect(gp).toEqual([0, 1, 2, 3, 4, 5, 6, 7].map((i) => i * Math.floor((5 * MIN) / 7)));
+    expect(gp[gp.length - 1]).toBeLessThanOrEqual(5 * MIN);
+    expect(await offsets('internal')).toEqual(new Array(8).fill(0));
+    // A lone request with no batch context clamps its delay to the span instead.
+    await t.run(async (ctx) => {
+      for (const run of await ctx.db.query('probeRuns').collect()) await ctx.db.delete(run._id);
+    });
+    await t.mutation(internal.probes.requestProbes, {
+      target: { kind: 'edge', ref: edgeId },
+      trigger: 'detector',
+      sources: ['globalping'],
+      staggerIndex: 100,
+    });
+    expect(await offsets('globalping')).toEqual([5 * MIN]);
+  });
 });

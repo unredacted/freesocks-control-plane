@@ -205,16 +205,26 @@ Verdicts need agreement: within a source, `unreachable` requires `probe.agreemen
 persisted on the reachability row, so the cross-source check counts real networks. `reachable`
 needs one residential success or two datacenter successes. A probe-side error (a vantage that
 could not run, an unparsed answer) is neither; a TLS alert means the peer answered and counts as
-reachable, as for the internal check. Every listener port of an edge is probed. Runs are budgeted
-per hour, counting every run (cron, manual and detector-triggered); a batch is staggered per
-source by `probe.sourceSpacingMs` so no service sees a burst. Suspected origins are probed at
-`suspectedIntervalMinutes`. A target's summary carries only verdicts from currently enabled
-sources; each country row has its own freshness, and a country older than two probe intervals
-drops out of the detector's evidence even if another country was just refreshed. A dual-stack
-edge is probed per address family and rolled up per family: the country verdict follows the IPv4
-path (what every member receives) and the IPv6 path is reported alongside as `v6Verdict`. RIPE
-Atlas measurements are created private with a non-identifying description. Settled runs are kept
-two weeks (`retention-edge-probes`, daily).
+reachable, as for the internal check. Every listener port of an edge is probed and rolled up per
+(country, source, address family, port); sources agree per port, then the ports roll up per
+country: any `unreachable` port makes the country unreachable (a blocked listener blocks that
+slot), `mixed` passes through next, `reachable` needs every port with a verdict to be reachable,
+else `unknown`. Runs are budgeted per hour (`probe.hourlyBudget`) on every path alike — cron,
+"probe now" and detector-triggered: the requesting mutation counts the hour's runs (any trigger,
+any state) and reserves its round atomically, refuses with `probe.budget_exhausted` when nothing
+fits, and otherwise truncates a batch to whole targets in request order (duplicates collapse; the
+rest come back in `skipped` as `<key>: probe.budget_exhausted`). A batch is staggered per source
+by `probe.sourceSpacingMs` so no service sees a burst; the spacing shrinks so the batch's last run
+is scheduled no further out than one probe interval (a lone request clamps each delay to that
+span). A run records `scheduledAt`, and the stuck-run timeout (10 min) counts from there — or from
+`startedAt` once it runs — never from the request, so a staggered run is not timed out before its
+executor fires. Suspected origins are probed at `suspectedIntervalMinutes`. A target's summary
+carries only verdicts from currently enabled sources; each country row has its own freshness, and
+a country older than two probe intervals drops out of the detector's evidence even if another
+country was just refreshed. A dual-stack edge is probed per address family and rolled up per
+family: the country verdict follows the IPv4 path (what every member receives) and the IPv6 path
+is reported alongside as `v6Verdict`. RIPE Atlas measurements are created private with a
+non-identifying description. Settled runs are kept two weeks (`retention-edge-probes`, daily).
 
 ### Attribution
 

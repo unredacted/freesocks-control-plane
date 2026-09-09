@@ -65,6 +65,22 @@ export function countryVerdict(perSource: readonly SourceSummary[]): Verdict {
   return 'unknown';
 }
 
+/**
+ * One country across a target's listener PORTS (each port's verdict is the
+ * cross-source `countryVerdict` of that port's rows). A blocked listener
+ * blocks that slot, so any `unreachable` port makes the country unreachable;
+ * `mixed` passes through next (a single-port target keeps its verdict);
+ * `reachable` needs every port with a verdict to be reachable; otherwise
+ * `unknown`. Ports without a verdict (`unknown`) never veto the others.
+ */
+export function portRollup(perPort: readonly Verdict[]): Verdict {
+  const decided = perPort.filter((v) => v !== 'unknown');
+  if (decided.length === 0) return 'unknown';
+  if (decided.includes('unreachable')) return 'unreachable';
+  if (decided.includes('mixed')) return 'mixed';
+  return 'reachable';
+}
+
 /** One country's cross-source verdict plus whether the target was ever reachable from there. */
 export interface CountryVerdict {
   country: string;

@@ -16,7 +16,13 @@ import {
 } from './checkhost';
 import { parseRipeAtlasResults, ripeAtlasBody } from './ripeatlas';
 import { classifyInternalError, internalProbe } from './internal';
-import { countryVerdict, probeScore, sourceVerdict, unreachableCountries } from './verdict';
+import {
+  countryVerdict,
+  portRollup,
+  probeScore,
+  sourceVerdict,
+  unreachableCountries,
+} from './verdict';
 import { shortError } from './types';
 import type { ProbeResult } from './types';
 
@@ -438,6 +444,21 @@ describe('verdicts', () => {
     const never = [{ country: 'IR', verdict: 'unreachable' as const, wasReachable: false }];
     expect(probeScore(never, ['IR'])).toBe(0);
     expect(unreachableCountries(never)).toEqual([]);
+  });
+
+  test('portRollup: any blocked listener blocks the country; reachable needs every decided port', () => {
+    expect(portRollup([])).toBe('unknown');
+    expect(portRollup(['unknown', 'unknown'])).toBe('unknown');
+    // A single-port target keeps its own verdict, whatever it is.
+    for (const v of ['reachable', 'unreachable', 'mixed', 'unknown'] as const)
+      expect(portRollup([v])).toBe(v);
+    expect(portRollup(['reachable', 'unreachable'])).toBe('unreachable');
+    expect(portRollup(['mixed', 'unreachable', 'reachable'])).toBe('unreachable');
+    expect(portRollup(['reachable', 'mixed'])).toBe('mixed');
+    expect(portRollup(['reachable', 'reachable'])).toBe('reachable');
+    // An undecided port never vetoes the others.
+    expect(portRollup(['reachable', 'unknown'])).toBe('reachable');
+    expect(portRollup(['unknown', 'unreachable'])).toBe('unreachable');
   });
 
   test('shortError scrubs addresses and urls', () => {
