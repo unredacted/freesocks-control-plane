@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { GcoreTemplate, gcoreLbBody, gcoreProvider } from './gcore';
+import { GcoreTemplate, gcoreLbAddresses, gcoreLbBody, gcoreProvider } from './gcore';
+import { EDGE_PROVIDER_CAPABILITIES } from './capabilities';
 import type { GcoreConfig, Ledger } from './types';
 import { errorBlob, jsonRes, mockFetch } from '../testing/mockFetch';
 
@@ -30,6 +31,27 @@ describe('gcore: request shapes', () => {
       lb_algorithm: 'ROUND_ROBIN',
       members: [{ address: '198.51.100.7', protocol_port: 443, weight: 1 }],
       healthmonitor: { type: 'TCP', delay: 10, timeout: 5, max_retries: 3, max_retries_down: 3 },
+    });
+  });
+
+  test('an IPv6-only family is refused at template validation (publishing needs an IPv4)', () => {
+    expect(GcoreTemplate.safeParse({ ipFamily: 'ipv6' }).success).toBe(false);
+    expect(GcoreTemplate.safeParse({ ipFamily: 'ipv4' }).success).toBe(true);
+    expect(GcoreTemplate.safeParse({ ipFamily: 'dual' }).success).toBe(true);
+  });
+
+  test('a private VIP is never surfaced as the public v4; the floating ip is', () => {
+    expect(gcoreLbAddresses({ vip_address: '10.0.0.5', vip_ipv6_address: '2001:db8::5' })).toEqual({
+      v6: '2001:db8::5',
+    });
+    expect(
+      gcoreLbAddresses({
+        vip_address: '10.0.0.5',
+        floating_ips: [{ floating_ip_address: '203.0.113.50' }],
+      }),
+    ).toEqual({ v4: '203.0.113.50' });
+    expect(gcoreLbAddresses({ vip_address: '203.0.113.9', vip_ipv6_address: 'fd00::1' })).toEqual({
+      v4: '203.0.113.9',
     });
   });
 
@@ -137,6 +159,81 @@ describe('gcore: discovery', () => {
       status: 'confirmed_absent',
     });
   });
+
+  test('absence needs BOTH two quiet looks AND the settle floor since the step started', async () => {
+    const settle = EDGE_PROVIDER_CAPABILITIES.gcore.discoverySettleMs;
+    const ledgerAt = (startedAt: number): Ledger => ({
+      steps: [
+        {
+          stepId: 'lb',
+          kind: 'create_lb',
+          resourceName: spec.name,
+          state: 'unresolved',
+          attempt: 1,
+          startedAt,
+        },
+      ],
+      resources: [],
+    });
+    mockFetch(() => jsonRes({ results: [] }));
+    // Two looks ~40s apart are not enough: the create may still be registering.
+    expect(await gcoreProvider.discover(cfg, step, spec, ledgerAt(Date.now() - 40_000), 2)).toEqual(
+      { status: 'unresolved' },
+    );
+    expect(await gcoreProvider.discover(cfg, step, spec, ledgerAt(Date.now() - 40_000), 5)).toEqual(
+      { status: 'unresolved' },
+    );
+    // Enough wall clock but only one look: still unresolved.
+    expect(
+      await gcoreProvider.discover(cfg, step, spec, ledgerAt(Date.now() - settle - 1000), 1),
+    ).toEqual({ status: 'unresolved' });
+    expect(
+      await gcoreProvider.discover(cfg, step, spec, ledgerAt(Date.now() - settle - 1000), 2),
+    ).toEqual({ status: 'confirmed_absent' });
+  });
+
+  test('a task in ERROR with no created resources still consults the by-name listing', async () => {
+    const ledger: Ledger = {
+      steps: [
+        {
+          stepId: 'lb',
+          kind: 'create_lb',
+          resourceName: spec.name,
+          state: 'unresolved',
+          opRef: 'task-err',
+          attempt: 1,
+          startedAt: Date.now(),
+        },
+      ],
+      resources: [],
+    };
+    const stub = mockFetch((c) => {
+      if (c.path === '/cloud/v1/tasks/task-err')
+        return jsonRes({ id: 'task-err', state: 'ERROR', created_resources: {} });
+      if (c.path === '/cloud/v1/loadbalancers/11/22')
+        return jsonRes({
+          results: [{ id: 'lb-late', name: spec.name, vip_address: '203.0.113.11' }],
+        });
+      throw new Error(`unexpected ${c.method} ${c.url}`);
+    });
+    expect(await gcoreProvider.discover(cfg, step, spec, ledger, 1)).toMatchObject({
+      status: 'found',
+      resources: [{ kind: 'lb', resourceId: 'lb-late', ownership: 'adopted' }],
+    });
+    expect(stub.calls.map((c) => c.path)).toEqual([
+      '/cloud/v1/tasks/task-err',
+      '/cloud/v1/loadbalancers/11/22',
+    ]);
+    // Same errored task, nothing listed, just started: unresolved (not absent).
+    mockFetch((c) =>
+      c.path === '/cloud/v1/tasks/task-err'
+        ? jsonRes({ id: 'task-err', state: 'ERROR' })
+        : jsonRes({ results: [] }),
+    );
+    expect(await gcoreProvider.discover(cfg, step, spec, ledger, 1)).toEqual({
+      status: 'unresolved',
+    });
+  });
 });
 
 describe('gcore: describe / destroy', () => {
@@ -182,7 +279,24 @@ describe('gcore: describe / destroy', () => {
     expect(await gcoreProvider.describe(cfg, ledger)).toMatchObject({ state: 'gone' });
   });
 
-  test('destroy requests a delete task; confirmDestroyed reads 404 as gone', async () => {
+  test('planDestroy: the lb goes before a floating ip describe() appended after it', () => {
+    const l: Ledger = {
+      steps: [],
+      resources: [
+        ledger.resources[0],
+        {
+          stepId: 'describe',
+          kind: 'floating_ip',
+          resourceId: 'fip-2',
+          ownership: 'created',
+          deleteState: 'present',
+        },
+      ],
+    };
+    expect(gcoreProvider.planDestroy(cfg, l).map((r) => r.resourceId)).toEqual(['lb-1', 'fip-2']);
+  });
+
+  test('destroy requests a delete task; confirm reads PENDING_DELETE as unresolved, ACTIVE as still_present, 404 as gone', async () => {
     const stub = mockFetch(() => jsonRes({ tasks: ['del-1'] }));
     const out = await gcoreProvider.runDestroy(cfg, ledger.resources[0], ledger);
     expect(out).toEqual({ status: 'delete_requested', opRef: 'del-1' });
@@ -190,9 +304,44 @@ describe('gcore: describe / destroy', () => {
       method: 'DELETE',
       path: '/cloud/v1/loadbalancers/11/22/lb-1',
     });
-    mockFetch(() => jsonRes({ id: 'lb-1' }));
+    mockFetch(() => jsonRes({ id: 'lb-1', provisioning_status: 'PENDING_DELETE' }));
     expect(await gcoreProvider.confirmDestroyed!(cfg, ledger.resources[0], ledger)).toEqual({
       status: 'unresolved',
+    });
+    // Still ACTIVE after the request: the delete never landed → re-issue.
+    mockFetch(() => jsonRes({ id: 'lb-1', provisioning_status: 'ACTIVE' }));
+    expect(await gcoreProvider.confirmDestroyed!(cfg, ledger.resources[0], ledger)).toEqual({
+      status: 'still_present',
+    });
+    mockFetch(() => jsonRes({}, 404));
+    expect(await gcoreProvider.confirmDestroyed!(cfg, ledger.resources[0], ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    // A floating ip is read back the same way.
+    const fip = {
+      stepId: 'lb',
+      kind: 'floating_ip',
+      resourceId: 'fip-1',
+      ownership: 'created' as const,
+      deleteState: 'delete_requested' as const,
+    };
+    const s2 = mockFetch(() => jsonRes({ id: 'fip-1', status: 'ACTIVE' }));
+    expect(await gcoreProvider.confirmDestroyed!(cfg, fip, ledger)).toEqual({
+      status: 'still_present',
+    });
+    expect(s2.calls[0].path).toBe('/cloud/v1/floatingips/11/22/fip-1');
+    // Unknown kinds are never assumed gone.
+    const odd = { ...fip, kind: 'mystery' };
+    expect(await gcoreProvider.runDestroy(cfg, odd, ledger)).toEqual({ status: 'unresolved' });
+    expect(await gcoreProvider.confirmDestroyed!(cfg, odd, ledger)).toEqual({
+      status: 'unresolved',
+    });
+  });
+
+  test('destroy: DELETE throws (unknown outcome), then confirm reads 404 → gone', async () => {
+    mockFetch(() => jsonRes({ message: 'busy' }, 503));
+    await expect(gcoreProvider.runDestroy(cfg, ledger.resources[0], ledger)).rejects.toMatchObject({
+      meta: { status: 503, retryable: true },
     });
     mockFetch(() => jsonRes({}, 404));
     expect(await gcoreProvider.confirmDestroyed!(cfg, ledger.resources[0], ledger)).toEqual({

@@ -201,27 +201,77 @@ describe('upcloud: describe / destroy', () => {
     ],
   };
 
-  test('running → active/online with the delegated floating ip as the address', async () => {
-    mockFetch(() => jsonRes({ uuid: 'lb-uuid', operational_state: 'running', nodes: [] }));
+  test('running → active with the delegated floating ip as the address; health is never online (no member health on the wire)', async () => {
+    mockFetch(() =>
+      jsonRes({
+        uuid: 'lb-uuid',
+        operational_state: 'running',
+        nodes: [{ operational_state: 'running' }, { operational_state: 'running' }],
+      }),
+    );
     expect(await upcloudProvider.describe(cfg, ledger)).toMatchObject({
       state: 'active',
-      health: 'online',
+      health: 'unknown',
       addresses: { v4: '203.0.113.20' },
     });
+    mockFetch(() =>
+      jsonRes({
+        uuid: 'lb-uuid',
+        operational_state: 'running',
+        nodes: [{ operational_state: 'running' }, { operational_state: 'setup-lb' }],
+      }),
+    );
+    expect(await upcloudProvider.describe(cfg, ledger)).toMatchObject({ health: 'degraded' });
+    mockFetch(() =>
+      jsonRes({
+        uuid: 'lb-uuid',
+        operational_state: 'running',
+        nodes: [{ operational_state: 'error' }],
+      }),
+    );
+    expect(await upcloudProvider.describe(cfg, ledger)).toMatchObject({ health: 'offline' });
     mockFetch(() => jsonRes({ uuid: 'lb-uuid', operational_state: 'setup-lb' }));
     expect(await upcloudProvider.describe(cfg, ledger)).toMatchObject({ state: 'pending' });
     mockFetch(() => emptyRes(404));
     expect(await upcloudProvider.describe(cfg, ledger)).toMatchObject({ state: 'gone' });
   });
 
-  test('destroy is synchronous; 404 is gone; errors carry no token', async () => {
+  test('planDestroy: the service before the floating ip, whatever the ledger order', () => {
+    const swapped: Ledger = {
+      steps: [],
+      resources: [ledger.resources[1], ledger.resources[0]],
+    };
+    expect(upcloudProvider.planDestroy(cfg, swapped).map((r) => r.kind)).toEqual([
+      'lb',
+      'floating_ip',
+    ]);
+  });
+
+  test('destroy: a 2xx is only delete_requested; the re-issued DELETE reading 404 confirms; unknown kinds are unresolved', async () => {
     const stub = mockFetch(() => emptyRes(204));
     expect(await upcloudProvider.runDestroy(cfg, ledger.resources[0], ledger)).toEqual({
-      status: 'confirmed_gone',
+      status: 'delete_requested',
     });
     expect(stub.calls[0]).toMatchObject({ method: 'DELETE', path: '/1.3/load-balancer/lb-uuid' });
     mockFetch(() => emptyRes(404));
+    expect(await upcloudProvider.runDestroy(cfg, ledger.resources[0], ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
     expect(await upcloudProvider.runDestroy(cfg, ledger.resources[1], ledger)).toEqual({
+      status: 'confirmed_gone',
+    });
+    expect(
+      await upcloudProvider.runDestroy(cfg, { ...ledger.resources[1], kind: 'mystery' }, ledger),
+    ).toEqual({ status: 'unresolved' });
+  });
+
+  test('destroy: DELETE throws (unknown outcome), then the re-issue reads 404 → gone; errors carry no token', async () => {
+    mockFetch(() => jsonRes({ error: { error_code: 'SERVER_ERROR' } }, 500));
+    await expect(
+      upcloudProvider.runDestroy(cfg, ledger.resources[0], ledger),
+    ).rejects.toMatchObject({ meta: { status: 500, retryable: true } });
+    mockFetch(() => emptyRes(404));
+    expect(await upcloudProvider.runDestroy(cfg, ledger.resources[0], ledger)).toEqual({
       status: 'confirmed_gone',
     });
     mockFetch(() =>

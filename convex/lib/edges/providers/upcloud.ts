@@ -13,6 +13,13 @@
  * allocation is `ambiguous` whenever the account holds any unattached floating
  * IPv4 in the zone (an operator adopts or releases it), and `confirmed_absent`
  * when it holds none.
+ *
+ * Deletes are synchronous HTTP calls but the service tears down in the
+ * background, so a 2xx is reported as `delete_requested` and the dispatcher
+ * re-issues the idempotent DELETE until it answers 404 (`confirmed_gone`).
+ * Destroy order is by kind: the service first, then the floating IP delegated
+ * to it. The API exposes no per-member health, so a running service reports
+ * `unknown` (never `online`) — see `memberHealth` in capabilities.ts.
  */
 import { z } from 'zod';
 import type {
@@ -27,7 +34,7 @@ import type {
   TemplateFieldDescriptor,
   UpcloudConfig,
 } from './types';
-import { firstResource, metaOf, reverseLiveResources } from './types';
+import { firstResource, metaOf, orderByKind } from './types';
 import { isProviderNotFound, providerFetch, EdgeProviderError } from './http';
 import { UpcloudTemplate, UPCLOUD_TEMPLATE_FIELDS, type UpcloudTemplateParams } from './templates';
 
@@ -409,10 +416,21 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
     const attachDone = ledger.steps.some((s) => s.kind === 'attach_ip' && s.state === 'done');
     const v4 =
       fip && attachDone ? String(metaOf(fip).address ?? fip.resourceId) : nodePublicV4(obj);
+    // No member/backend health on the wire: a running service whose nodes all
+    // run is `unknown` (never `online`); a node not running degrades it.
+    const nodeStates = (obj.nodes ?? []).map((n) => (n.operational_state ?? '').toLowerCase());
+    const health: EdgeDescription['health'] =
+      state !== 'active'
+        ? 'unknown'
+        : nodeStates.some((n) => n === 'error')
+          ? 'offline'
+          : nodeStates.some((n) => n !== '' && n !== 'running')
+            ? 'degraded'
+            : 'unknown';
     return {
       state,
       addresses: v4 ? { v4 } : {},
-      health: state === 'active' ? 'online' : 'unknown',
+      health,
       ...(fip && !attachDone && ledger.steps.some((s) => s.kind === 'attach_ip')
         ? { code: 'floating_ip_not_attached' }
         : {}),
@@ -474,8 +492,13 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
     };
   },
 
-  planDestroy: (_cfg, ledger) => reverseLiveResources(ledger),
+  planDestroy: (_cfg, ledger) => orderByKind(ledger, UPCLOUD_DESTROY_ORDER),
 
+  /**
+   * Idempotent DELETE: 404 → gone; a 2xx only means accepted (the service
+   * tears down afterwards) → `delete_requested`, confirmed by the next re-issue.
+   * A kind this adapter never creates is `unresolved`, never assumed gone.
+   */
   async runDestroy(cfg, r) {
     const path =
       r.kind === 'lb'
@@ -483,13 +506,25 @@ export const upcloudProvider: EdgeProvider<UpcloudConfig, UpcloudTemplateParams>
         : r.kind === 'floating_ip'
           ? `/ip_address/${encodeURIComponent(r.resourceId)}`
           : null;
-    if (!path) return { status: 'confirmed_gone' };
+    if (!path) return { status: 'unresolved' };
     try {
-      await up(cfg, 'destroy', 'DELETE', path, z.unknown(), undefined, [404]);
-      return { status: 'confirmed_gone' };
+      // `okStatuses` turns a 404 into an `undefined` result; a 2xx yields the marker.
+      const res = await up(
+        cfg,
+        'destroy',
+        'DELETE',
+        path,
+        z.unknown().transform(() => 'accepted' as const),
+        undefined,
+        [404],
+      );
+      return res === undefined ? { status: 'confirmed_gone' } : { status: 'delete_requested' };
     } catch (e) {
       if (isProviderNotFound(e)) return { status: 'confirmed_gone' };
       throw e;
     }
   },
 };
+
+/** The floating IP is delegated to the service: the service goes first. */
+const UPCLOUD_DESTROY_ORDER = ['lb', 'floating_ip'] as const;

@@ -10,6 +10,9 @@ import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import { signValue } from './lib/cookies';
 import { upsertSettingRow } from './appSettings';
+import { resolveEdgeAttribution } from './edgeAttribution';
+import { publishedEdgesOf } from './edgeRender';
+import { assignEndpoints } from './lib/edges/assignment';
 
 const modules = import.meta.glob('./**/*.*s');
 const SIGN_KEY = 'test-sign';
@@ -198,6 +201,46 @@ describe('relay attribution on member reports', () => {
     expect(JSON.stringify(issue)).not.toContain('node-one');
   });
 
+  test('attribution recomputes the assignment over the FULL pool (ineligible edges keep their index), exactly as the renderer did', async () => {
+    const s = await seed();
+    // A third edge, then the middle one loses its address: the renderer keeps
+    // it in the modulus and walks forward; attribution must do the same.
+    await s.t.run((ctx) => ctx.db.patch(s.relayId, { desiredPublished: 3 }));
+    const c = await s.t.mutation(internal.relays.adoptEdge, {
+      relayId: s.relayId,
+      slotId: s.slotId,
+      ipv4: '198.51.100.99',
+      publish: true,
+    });
+    await s.t.run((ctx) => ctx.db.patch(s.edgeB, { addresses: {} }));
+    const now = Date.now();
+    let discriminating = false;
+    for (let i = 40; i < 56; i++) {
+      const m = await member(s.t, s.tierId, s.serverId, i);
+      await s.t.run(async (ctx) => {
+        const origin = (await ctx.db.get(s.relayId))!;
+        const sub = (await ctx.db.get(m.subId))!;
+        const full = (await publishedEdgesOf(ctx, origin, { includeIneligible: true })).published;
+        const compressed = (await publishedEdgesOf(ctx, origin)).published;
+        expect(full.map((e) => e.edgeId)).toEqual([s.edgeA, s.edgeB, c.edgeId]);
+        expect(compressed.map((e) => e.edgeId)).toEqual([s.edgeA, c.edgeId]);
+        const opts = { now, preferDistinctProviders: false, includeBackup: true };
+        const expectFull = assignEndpoints(sub.renderKey!, full, opts);
+        const wrong = assignEndpoints(sub.renderKey!, compressed, opts);
+        const current = { ...sub, lastRenderedEpoch: origin.publicationEpoch } as typeof sub;
+        const primary = await resolveEdgeAttribution(ctx.db, current, 'primary', now);
+        const backup = await resolveEdgeAttribution(ctx.db, current, 'backup', now);
+        expect(primary!.relayEdgeId).toBe(expectFull.primary!.edge.edgeId);
+        expect(backup!.relayEdgeId).toBe(expectFull.backup?.edge.edgeId ?? null);
+        expect(primary!.relayEdgeId).not.toBe(s.edgeB);
+        if (wrong.primary!.edge.edgeId !== expectFull.primary!.edge.edgeId) discriminating = true;
+      });
+    }
+    // At least one member's compressed-pool answer differs, so the assertion
+    // above genuinely pins the full-pool behaviour.
+    expect(discriminating).toBe(true);
+  });
+
   test('refreshNotObserved when the key has not fetched content since the origin last rotated', async () => {
     const s = await seed();
     await s.t.run((ctx) => ctx.db.patch(s.relayId, { lastRotatedAt: Date.now() }));
@@ -207,6 +250,83 @@ describe('relay attribution on member reports', () => {
     expect(row.refreshNotObserved).toBe(true);
     expect(row.relayEdgeId).toBeUndefined();
     expect(row.connectionChoice).toBeUndefined();
+  });
+
+  test('refreshNotObserved prefers the rendered publication epoch (any pool change), falling back to the rotation timestamp', async () => {
+    const s = await seed();
+    const m = await member(s.t, s.tierId, s.serverId, 30);
+    const now = Date.now();
+    await s.t.run(async (ctx) => {
+      const origin = (await ctx.db.get(s.relayId))!;
+      // A non-rotation pool change bumped the epoch; no rotation ever happened.
+      await ctx.db.patch(s.relayId, { publicationEpoch: origin.publicationEpoch + 1 });
+      const sub = (await ctx.db.get(m.subId))!;
+      const epoch = (await ctx.db.get(s.relayId))!.publicationEpoch;
+      const withEpoch = (lastRenderedEpoch: number) =>
+        ({ ...sub, lastRenderedEpoch }) as typeof sub;
+      // Rendered against an older epoch → still on the old pool → no edge attribution.
+      const behind = await resolveEdgeAttribution(ctx.db, withEpoch(epoch - 1), 'primary', now);
+      expect(behind).toMatchObject({ relaySlug: 'node-one', refreshNotObserved: true });
+      expect(behind!.relayEdgeId).toBeNull();
+      // Rendered against the current epoch → attributable, even though
+      // lastDeliveredContentAt is unset.
+      const current = await resolveEdgeAttribution(ctx.db, withEpoch(epoch), 'primary', now);
+      expect(current!.refreshNotObserved).toBe(false);
+      expect(current!.relayEdgeId).not.toBeNull();
+      // No epoch on the sub (never rendered since the field exists): the old
+      // comparison against lastRotatedAt decides.
+      const legacy = await resolveEdgeAttribution(ctx.db, sub, 'primary', now);
+      expect(legacy!.refreshNotObserved).toBe(false);
+      await ctx.db.patch(s.relayId, { lastRotatedAt: now });
+      const legacyRotated = await resolveEdgeAttribution(ctx.db, sub, 'primary', now);
+      expect(legacyRotated!.refreshNotObserved).toBe(true);
+      // An epoch-bearing sub ignores lastRotatedAt entirely.
+      const epochWins = await resolveEdgeAttribution(ctx.db, withEpoch(epoch), 'primary', now);
+      expect(epochWins!.refreshNotObserved).toBe(false);
+    });
+  });
+
+  test('the dedupe mark is a sliding window from the first report: two reports 1s apart across an aligned bucket edge weigh 1 then 0', async () => {
+    const windowMs = 30 * 60_000; // detect.windowMinutes default
+    // One second before a clock-aligned boundary of the old bucket scheme.
+    const boundary = Math.ceil(1_800_000_000_000 / windowMs) * windowMs;
+    vi.useFakeTimers({ now: boundary - 1000 });
+    const s = await seed();
+    const m = await member(s.t, s.tierId, s.serverId, 40);
+    expect((await report(s.t, m.cookie, { reason: 'cant-connect' })).status).toBe(200);
+    vi.setSystemTime(boundary + 1000);
+    expect((await report(s.t, m.cookie, { reason: 'cant-connect' })).status).toBe(200);
+    const rows = await s.t.run((ctx) => ctx.db.query('issueReports').collect());
+    expect(rows.map((r) => r.detectorWeight)).toEqual([1, 0]);
+    const marks = await s.t.run((ctx) => ctx.db.query('relayReportMarks').collect());
+    expect(marks).toHaveLength(1);
+    expect(marks[0].expiresAt).toBe(boundary - 1000 + windowMs);
+    // Once the member's own window has elapsed, a new report counts again.
+    vi.setSystemTime(boundary - 1000 + windowMs + 1);
+    expect((await report(s.t, m.cookie, { reason: 'cant-connect' })).status).toBe(200);
+    const rows2 = await s.t.run((ctx) => ctx.db.query('issueReports').collect());
+    expect(rows2.map((r) => r.detectorWeight)).toEqual([1, 0, 1]);
+  });
+
+  test('no mark pepper configured → fail CLOSED: the report is stored with weight 0 and no edge attribution', async () => {
+    vi.stubEnv('EDGE_MARK_PEPPER', '');
+    vi.stubEnv('IP_HASH_SALT', '');
+    const s = await seed();
+    const m = await member(s.t, s.tierId, s.serverId, 50);
+    const r = await report(s.t, m.cookie, { reason: 'cant-connect', connection: 'primary' });
+    expect(r.status).toBe(200);
+    const rows = await s.t.run((ctx) => ctx.db.query('issueReports').collect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ relaySlug: 'node-one', detectorWeight: 0 });
+    expect(rows[0].relayEdgeId).toBeUndefined();
+    expect(await s.t.run((ctx) => ctx.db.query('relayReportMarks').collect())).toEqual([]);
+    // The detector sees no reporter from it.
+    const w = (await s.t.query(internal.edgeDetector.relayWindow, {
+      relayId: s.relayId,
+      now: Date.now(),
+    }))!;
+    expect(w.window.reports).toBe(1);
+    expect(w.window.distinctReporters).toBe(0);
   });
 });
 
@@ -244,14 +364,41 @@ describe('relay block detector', () => {
     relayId: Id<'relays'>,
     usersOnline: number,
   ) {
+    // A week of samples every two hours: warm (≥72) and with the same clock
+    // hour on every previous day for the time-of-day baseline.
     await t.run(async (ctx) => {
-      for (let i = 1; i <= 80; i++) {
+      for (let i = 1; i <= 84; i++) {
         await ctx.db.insert('relaySamples', {
           relayId,
-          at: NOW - i * 5 * 60_000,
+          at: NOW - i * 2 * 60 * 60_000,
           reports: 0,
           distinctReporters: 0,
           usersOnline,
+        });
+      }
+    });
+  }
+
+  /** The edge has been reachable from these countries before (the transition marker). */
+  async function reachableHistory(
+    t: ReturnType<typeof convexTest>,
+    edgeId: Id<'edges'>,
+    countries: string[],
+  ) {
+    await t.run(async (ctx) => {
+      for (const country of countries) {
+        await ctx.db.insert('probeReachability', {
+          targetKind: 'edge',
+          targetRef: edgeId,
+          country,
+          source: 'globalping',
+          ipVersion: 4,
+          okCount: 0,
+          failCount: 4,
+          lastReachableAt: NOW - 3 * 60 * 60_000,
+          failNetworks: ['AS1', 'AS2'],
+          verdict: 'unreachable',
+          updatedAt: NOW - 60_000,
         });
       }
     });
@@ -261,6 +408,7 @@ describe('relay block detector', () => {
     t: ReturnType<typeof convexTest>,
     serverId: Id<'backendServers'>,
     usersOnline: number,
+    online = true,
   ) {
     await t.run((ctx) =>
       ctx.db.insert('backendNodeInventory', {
@@ -268,11 +416,43 @@ describe('relay block detector', () => {
         nodeUuid: 'n1',
         name: 'node-one',
         usersOnline,
-        online: true,
+        online,
         lastStatsAt: NOW - 60_000,
       }),
     );
   }
+
+  test('an OFFLINE node is an outage: suspected, but the veto is node_offline and no sample joins the baseline', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await seed();
+    await warmBaseline(s.t, s.relayId, 100);
+    await nodeLoad(s.t, s.serverId, 0, false);
+    await s.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.autoRotate', 'true');
+      await ctx.db.patch(s.relayId, { autoRotate: true });
+      for (let i = 0; i < 6; i++) {
+        await ctx.db.insert('issueReports', {
+          kind: 'report',
+          reason: 'cant-connect',
+          backend: 'remnawave',
+          relaySlug: 'node-one',
+          country: 'IR',
+          detectorWeight: 1,
+          connectionChoice: 'primary',
+          relayEdgeId: s.edgeA,
+        });
+      }
+    });
+    const r = await s.t.action(internal.edgeDetector.run, {});
+    expect(r).toMatchObject({ suspected: 1, rotated: 0 });
+    const o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
+    expect(o.suspicion).toMatchObject({ state: 'suspected', veto: 'node_offline' });
+    expect(o.suspicion!.hint).toMatch(/Node offline/);
+    expect(o.activeRotationId).toBeUndefined();
+    const samples = await s.t.run((ctx) => ctx.db.query('relaySamples').collect());
+    expect(samples.some((x) => x.at === NOW)).toBe(false);
+  });
 
   test('quiet origin: evaluated, clear, a sample recorded', async () => {
     vi.useFakeTimers({ now: NOW });
@@ -291,6 +471,44 @@ describe('relay block detector', () => {
     });
     const samples = await s.t.run((ctx) => ctx.db.query('relaySamples').collect());
     expect(samples.some((x) => x.at === NOW)).toBe(true);
+  });
+
+  test('reports-only suspicion asks the probes for evidence with CUMULATIVE stagger offsets: no two runs of one external source share a slot', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const s = await seed();
+    await warmBaseline(s.t, s.relayId, 100);
+    await nodeLoad(s.t, s.serverId, 10);
+    await s.t.run(async (ctx) => {
+      await upsertSettingRow(ctx, 'edge.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.probe.enabled', 'true');
+      await upsertSettingRow(ctx, 'edge.probe.sourceSpacingMs', '1500');
+      for (let i = 0; i < 10; i++) {
+        await ctx.db.insert('issueReports', {
+          kind: 'report',
+          reason: 'cant-connect',
+          backend: 'remnawave',
+          relaySlug: 'node-one',
+          country: 'IR',
+          detectorWeight: 1,
+        });
+      }
+    });
+    const r = await s.t.action(internal.edgeDetector.run, {});
+    expect(r.suspected).toBe(1);
+    expect(r.probesRequested).toBeGreaterThan(0);
+    const runs = await s.t.run((ctx) => ctx.db.query('probeRuns').collect());
+    expect(runs.length).toBe(r.probesRequested);
+    // Both published edges were asked; per external source every run has its
+    // own slot (offsets accumulate across targets instead of restarting at 0).
+    expect(new Set(runs.map((x) => x.targetRef)).size).toBe(2);
+    const external = [...new Set(runs.map((x) => x.source))].filter((src) => src !== 'internal');
+    expect(external.length).toBeGreaterThan(0);
+    for (const src of external) {
+      const at = runs.filter((x) => x.source === src).map((x) => x.scheduledAt ?? x.requestedAt);
+      expect(new Set(at).size).toBe(at.length);
+      const sorted = [...at].sort((a, b) => a - b);
+      for (let i = 1; i < sorted.length; i++) expect(sorted[i]! - sorted[i - 1]!).toBe(1500);
+    }
   });
 
   test('reports + load drop suspect the origin (hint), but without edge evidence nothing rotates', async () => {
@@ -373,6 +591,7 @@ describe('relay block detector', () => {
         }),
       );
     await unreachable(s.edgeB);
+    await reachableHistory(s.t, s.edgeB, ['IR', 'RU']);
     // Probe evidence counts only while probes are enabled (stale/legacy summaries never do).
     await s.t.run((ctx) => upsertSettingRow(ctx, 'edge.probe.enabled', 'true'));
     await s.t.run(async (ctx) => {
@@ -410,6 +629,9 @@ describe('relay block detector', () => {
     o = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(o.activeRotationId).toBeDefined();
     expect(o.suspicion!.veto).toBeNull();
+    // Samples taken while suspected never join the baseline ring.
+    const samples = await s.t.run((ctx) => ctx.db.query('relaySamples').collect());
+    expect(samples.some((x) => x.at === NOW)).toBe(false);
     const rot = (await s.t.query(internal.edgeRotations.get, { id: o.activeRotationId! }))!;
     expect(rot).toMatchObject({
       kind: 'replace',

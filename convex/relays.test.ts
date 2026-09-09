@@ -52,7 +52,7 @@ async function seed() {
   return { t, serverId, accountId, profileId, relayId, slotId };
 }
 
-describe('relayOrigins + slots + profiles', () => {
+describe('relays + slots + profiles', () => {
   test('upsertBySlug is idempotent, resolves the panel by slug and never flips autoRotate', async () => {
     const { t, relayId, serverId } = await seed();
     const again = await t.mutation(internal.relays.upsertBySlug, {
@@ -61,12 +61,81 @@ describe('relayOrigins + slots + profiles', () => {
       nodeHostname: 'node-one',
       originAddress: '203.0.113.10',
       autoRotate: true,
+      // Operator-owned knobs a role body must not be able to set.
+      hostManaged: false,
+      enabled: false,
+      probeNode: true,
+      desiredPublished: 4,
+      cooldownMinutes: 999,
+      maxRotationsPerDay: 12,
+      drainMinutes: 5,
+      providerAffinity: 'sticky',
+      providerPreference: 'gcore',
     });
     expect(again).toEqual({ id: relayId, created: false });
-    const row = await t.query(internal.relays.get, { id: relayId });
-    expect(row?.backendServerId).toBe(serverId);
-    expect(row?.autoRotate).toBe(false);
-    expect(row?.hostManaged).toBe(true);
+    const row = (await t.query(internal.relays.get, { id: relayId }))!;
+    expect(row.backendServerId).toBe(serverId);
+    expect(row.autoRotate).toBe(false);
+    expect(row.hostManaged).toBe(true);
+    expect(row.enabled).toBe(true);
+    expect(row.probeNode).toBe(false);
+    expect(row.desiredPublished).toBe(2);
+    expect(row.maxRotationsPerDay).toBe(3);
+    expect(row.providerAffinity).toBe('rotate');
+    expect(row.providerPreference).toBeUndefined();
+    // Nor on CREATE.
+    const fresh = await t.mutation(internal.relays.upsertBySlug, {
+      slug: 'node-three',
+      backendServerSlug: 'panel-a',
+      nodeHostname: 'node-three',
+      originAddress: '203.0.113.13',
+      autoRotate: true,
+      // Operator-owned knobs in a role body are dropped on CREATE too.
+      enabled: false,
+      hostManaged: false,
+      probeNode: true,
+      desiredPublished: 7,
+      maxRotationsPerDay: 99,
+      providerAffinity: 'sticky',
+    });
+    expect(fresh.created).toBe(true);
+    const freshRow = (await t.query(internal.relays.get, { id: fresh.id }))!;
+    expect(freshRow.autoRotate).toBe(false);
+    expect(freshRow.enabled).toBe(true);
+    expect(freshRow.hostManaged).toBe(true);
+    expect(freshRow.probeNode).toBe(false);
+    expect(freshRow.desiredPublished).toBe(2);
+    expect(freshRow.maxRotationsPerDay).toBe(3);
+    expect(freshRow.providerAffinity).toBe('rotate');
+    // The audit says WHICH fields changed, never their values.
+    const changed = await t.mutation(internal.relays.upsertBySlug, {
+      slug: 'node-one',
+      backendServerSlug: 'panel-a',
+      nodeHostname: 'node-one',
+      originAddress: '203.0.113.10',
+      locationCode: 'FRA',
+      modeSlugs: ['freedom-reality', 'other'],
+    });
+    expect(changed.created).toBe(false);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    const upserts = audit.filter((a) => a.action === 'relay.upsert');
+    expect(upserts[upserts.length - 1].payload).toEqual({
+      slug: 'node-one',
+      created: false,
+      changed: ['locationCode', 'modeSlugs'],
+    });
+    expect(JSON.stringify(audit)).not.toContain('203.0.113');
+    // Operator update: knobs flip + the changed list carries the flips.
+    await t.mutation(internal.relays.update, { id: relayId, autoRotate: true, hostManaged: false });
+    const upd = (await t.run((ctx) => ctx.db.query('auditLog').collect())).find(
+      (a) => a.action === 'relay.update',
+    );
+    expect(upd?.payload).toEqual({
+      slug: 'node-one',
+      changed: ['autoRotate', 'hostManaged'],
+      autoRotate: true,
+      hostManaged: false,
+    });
     await expect(
       t.mutation(internal.relays.upsertBySlug, {
         slug: 'node-two',
@@ -75,6 +144,25 @@ describe('relayOrigins + slots + profiles', () => {
         originAddress: '203.0.113.11',
       }),
     ).rejects.toThrow(/backendServerSlug/);
+  });
+
+  test('a publication-affecting update bumps the epoch AND schedules a mirror refresh; an unrelated one does neither', async () => {
+    const { t, relayId } = await seed();
+    const mirrorRefreshes = () =>
+      t.run(async (ctx) => {
+        const rows = await ctx.db.system.query('_scheduled_functions').collect();
+        return rows.filter((r) => r.name === 'storage:refreshActiveMirrors').length;
+      });
+    const before = (await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch;
+    const scheduled0 = await mirrorRefreshes();
+    await t.mutation(internal.relays.update, { id: relayId, cooldownMinutes: 45 });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch).toBe(before);
+    expect(await mirrorRefreshes()).toBe(scheduled0);
+    await t.mutation(internal.relays.update, { id: relayId, enabled: false });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch).toBe(
+      before + 1,
+    );
+    expect(await mirrorRefreshes()).toBe(scheduled0 + 1);
   });
 
   test('slot upsert derives the template remark and bumps the epoch; retire refuses while published', async () => {
@@ -386,6 +474,105 @@ describe('relayOrigins + slots + profiles', () => {
     await expect(t.mutation(internal.protocolProfiles.remove, { id: profileId })).rejects.toThrow();
   });
 
+  test('by-slug upsert: refused on a deleting relay; re-parenting is locked while edges exist', async () => {
+    const { t, relayId, slotId } = await seed();
+    await t.run((ctx) =>
+      ctx.db.insert('backendServers', {
+        backend: 'remnawave',
+        name: 'panel-b',
+        slug: 'panel-b',
+        config: { type: 'remnawave', baseUrl: 'https://panel-b.example', apiToken: 'tok' },
+        isActive: true,
+        priority: 0,
+        keyCount: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.mutation(internal.relays.adoptEdge, { relayId, slotId, ipv4: '198.51.100.1' });
+    await expect(
+      t.mutation(internal.relays.upsertBySlug, {
+        slug: 'node-one',
+        backendServerSlug: 'panel-b',
+        nodeHostname: 'node-one',
+        originAddress: '203.0.113.10',
+      }),
+    ).rejects.toThrow(/relay_reparent_locked|another backend server/);
+    await t.mutation(internal.relays.requestDelete, { id: relayId });
+    await expect(
+      t.mutation(internal.relays.upsertBySlug, {
+        slug: 'node-one',
+        backendServerSlug: 'panel-a',
+        nodeHostname: 'node-one',
+        originAddress: '203.0.113.10',
+      }),
+    ).rejects.toThrow(/being deleted/);
+  });
+
+  test('requestDelete honours the relay drain window unless forced', async () => {
+    const { t, relayId, slotId, accountId } = await seed();
+    const mk = async () => {
+      const planned = await t.mutation(internal.edges.insertPlanned, {
+        relayId,
+        slotId,
+        accountId,
+        templateHash: 'h',
+        listeners: [{ edgePort: 443, originAddress: '203.0.113.10', originPort: 443 }],
+        steps: [{ id: 'lb', kind: 'loadbalancer', resourceName: 'x' }],
+      });
+      await t.mutation(internal.edges.patchEdge, { edgeId: planned.id, status: 'active' });
+      return planned.id;
+    };
+    const a = await mk();
+    const relay = (await t.query(internal.relays.get, { id: relayId }))!;
+    await t.mutation(internal.relays.requestDelete, { id: relayId });
+    const drained = (await t.query(internal.edges.get, { id: a }))!;
+    expect(drained.drainUntil).toBeGreaterThanOrEqual(Date.now() + relay.drainMs - 5_000);
+    const audit = await t.run((ctx) => ctx.db.query('auditLog').collect());
+    expect(audit.find((x) => x.action === 'relay.delete')?.payload).toEqual({
+      slug: 'node-one',
+      force: false,
+    });
+    // Forced: the drain is skipped (the edge is destroyable at once).
+    const { t: t2, relayId: r2, slotId: s2, accountId: acc2 } = await seed();
+    const planned = await t2.mutation(internal.edges.insertPlanned, {
+      relayId: r2,
+      slotId: s2,
+      accountId: acc2,
+      templateHash: 'h',
+      listeners: [{ edgePort: 443, originAddress: '203.0.113.10', originPort: 443 }],
+      steps: [{ id: 'lb', kind: 'loadbalancer', resourceName: 'x' }],
+    });
+    await t2.mutation(internal.edges.patchEdge, { edgeId: planned.id, status: 'active' });
+    await t2.mutation(internal.relays.requestDelete, { id: r2, force: true });
+    expect(
+      (await t2.query(internal.edges.get, { id: planned.id }))!.drainUntil,
+    ).toBeLessThanOrEqual(Date.now());
+  });
+
+  test('a render.* config change bumps every enabled relay epoch (and only those)', async () => {
+    const { t, relayId } = await seed();
+    const { id: off } = await t.mutation(internal.relays.upsertBySlug, {
+      slug: 'node-off',
+      backendServerSlug: 'panel-a',
+      nodeHostname: 'node-off',
+      originAddress: '203.0.113.99',
+    });
+    await t.mutation(internal.relays.update, { id: off, enabled: false });
+    const before = (await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch;
+    const beforeOff = (await t.query(internal.relays.get, { id: off }))!.publicationEpoch;
+    // A non-render key does not touch epochs.
+    await t.mutation(internal.edgeAdmin.patchConfig, { patch: { pollSeconds: 30 } });
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch).toBe(before);
+    const res = await t.mutation(internal.edgeAdmin.patchConfig, {
+      patch: { render: { enabled: true, ipv6Mode: 'off' } },
+    });
+    expect(res.changedKeys.sort()).toEqual(['render.enabled', 'render.ipv6Mode']);
+    expect((await t.query(internal.relays.get, { id: relayId }))!.publicationEpoch).toBe(
+      before + 1,
+    );
+    expect((await t.query(internal.relays.get, { id: off }))!.publicationEpoch).toBe(beforeOff);
+  });
+
   test('requestDelete drains managed edges, forgets unmanaged ones, and finalizeDelete waits for teardown', async () => {
     const { t, relayId, slotId, accountId } = await seed();
     const adopted = await t.mutation(internal.relays.adoptEdge, {
@@ -414,11 +601,30 @@ describe('relayOrigins + slots + profiles', () => {
       removed: false,
     });
     await t.mutation(internal.edges.patchEdge, { edgeId: planned.id, status: 'destroyed' });
+    // Probe rollups of the relay node and of its edges go with the teardown.
+    const rollup = (kind: 'edge' | 'relay', ref: string) =>
+      t.run((ctx) =>
+        ctx.db.insert('probeReachability', {
+          targetKind: kind,
+          targetRef: ref,
+          country: 'IR',
+          source: 'globalping',
+          ipVersion: 4,
+          okCount: 1,
+          failCount: 0,
+          verdict: 'reachable',
+          updatedAt: Date.now(),
+        }),
+      );
+    await rollup('relay', relayId);
+    await rollup('edge', planned.id);
+    await rollup('edge', adopted.edgeId);
     expect(await t.mutation(internal.relays.finalizeDelete, { id: relayId })).toEqual({
       removed: true,
     });
     expect(await t.query(internal.relays.get, { id: relayId })).toBeNull();
     expect(await t.run((ctx) => ctx.db.get(slotId))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query('probeReachability').collect())).toEqual([]);
   });
 
   test('originAddress is locked while the origin has live edges; one origin per backend node', async () => {

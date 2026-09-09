@@ -1,11 +1,12 @@
 /**
- * Pure helpers for the rotation machine (convex/relayRotations.ts): phase
+ * Pure helpers for the rotation machine (convex/edgeRotations.ts): phase
  * bookkeeping, the weighted progress bar, the bounded live log, and the
  * selection rules (compatible standby first, then a qualified account with
  * capacity + budget).
  */
 
 import { protocolUsesSni, type SlotProtocol } from './protocols';
+import { providerHealthSatisfies } from './providers/capabilities';
 export const ROTATION_PHASES = [
   'select',
   'provisioning',
@@ -128,7 +129,7 @@ export function pickStandby(
       c.status === 'active' &&
       c.publication === 'unpublished' &&
       c.hasV4 &&
-      (!requireOnline || c.health === 'online') &&
+      providerHealthSatisfies(c.provider, c.health, requireOnline) &&
       (!requiredAccountId || !c.accountId || c.accountId === requiredAccountId),
   );
   if (ok.length === 0) return null;

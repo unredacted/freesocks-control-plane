@@ -3,9 +3,20 @@
  * `settings` variant per provider (zod), the secret `credentials` field list,
  * the admin-safe mask (per-field set/not-set booleans) and the keep-on-blank
  * merge. Isolate-safe (no SDK imports).
+ *
+ * `settings` holds two kinds of non-secret fields, told apart by name lists:
+ *  - LOCATING settings (project / region / zone / network / gateway) decide
+ *    where the account's resources live. Edges store only resource ids, so a
+ *    locating change while edges exist would make them invisible to
+ *    reconciliation and undeletable: locked by the account update mutation.
+ *  - credential IDENTIFIERS (the public half of a key pair: Scaleway access
+ *    key, OVH application key). They rotate with the secret and locate nothing,
+ *    so they stay editable while edges exist.
+ * `accountSettings.test.ts` pins that the two lists cover every schema key.
  */
 import { z } from 'zod';
 import type { EdgeProviderId } from '../edgeProviderIds';
+import { canonicalJson } from './providers/template';
 
 export const EDGE_SETTINGS_SCHEMAS = {
   gcore: z.object({
@@ -49,6 +60,22 @@ export const EDGE_CREDENTIAL_FIELDS: Record<EdgeProviderId, readonly string[]> =
   ovh: ['applicationSecret', 'consumerKey'],
 };
 
+/** Settings that LOCATE resources: locked while any non-destroyed edge references the account. */
+export const EDGE_LOCATING_SETTINGS: Record<EdgeProviderId, readonly string[]> = {
+  gcore: ['projectId', 'regionId', 'networkId', 'subnetId'],
+  upcloud: ['zone'],
+  scaleway: ['projectId', 'zone'],
+  ovh: ['endpoint', 'serviceName', 'regionName', 'networkId', 'subnetId', 'gatewayId'],
+};
+
+/** Non-secret credential identifiers kept in `settings`: rotate with the secret, locate nothing. */
+export const EDGE_CREDENTIAL_IDENTIFIER_FIELDS: Record<EdgeProviderId, readonly string[]> = {
+  gcore: [],
+  upcloud: [],
+  scaleway: ['accessKey'],
+  ovh: ['applicationKey'],
+};
+
 export type EdgeCredentials = { type: EdgeProviderId } & Record<string, string>;
 
 export function validateSettings(
@@ -66,6 +93,40 @@ export function validateSettings(
       .slice(0, 10)
       .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`),
   };
+}
+
+/** Key-order-insensitive, recursive equality (stored rows may reorder keys). */
+export function settingsEqual(a: unknown, b: unknown): boolean {
+  return canonicalJson(a) === canonicalJson(b);
+}
+
+function pick(obj: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (obj[k] !== undefined) out[k] = obj[k];
+  return out;
+}
+
+/** True when any LOCATING setting differs between two settings objects (order-insensitive). */
+export function locatingSettingsChanged(
+  provider: EdgeProviderId,
+  next: Record<string, unknown>,
+  prev: Record<string, unknown>,
+): boolean {
+  const keys = EDGE_LOCATING_SETTINGS[provider];
+  return !settingsEqual(pick(next, keys), pick(prev, keys));
+}
+
+/** Only the credential-identifier fields of an admin payload (unknown keys dropped). */
+export function pickCredentialIdentifiers(
+  provider: EdgeProviderId,
+  incoming: Record<string, unknown> | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of EDGE_CREDENTIAL_IDENTIFIER_FIELDS[provider]) {
+    const v = incoming?.[k];
+    if (typeof v === 'string' && v.trim().length > 0) out[k] = v.trim();
+  }
+  return out;
 }
 
 /** Admin-safe view: `{ apiKey: true }` style booleans, never a value. */

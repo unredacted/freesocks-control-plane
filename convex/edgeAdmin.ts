@@ -27,9 +27,14 @@ import { applyEdgeRender } from './lib/edges/renderPipeline';
 import { effectiveRule } from './lib/edges/render';
 import { publishedCount } from './lib/edges/pool';
 import { isTerminalPhase, progressPercent } from './lib/edges/rotation';
-import { mapRelayAdmin } from './relays';
+import {
+  assertNoRotationOrQuarantine,
+  dropEdgeFromPool,
+  mapRelayAdmin,
+  scheduleMirrorRefresh,
+} from './relays';
 import { mapSlotAdmin } from './relaySlots';
-import { mapEdgeAdmin } from './edges';
+import { destroyedPatch, mapEdgeAdmin } from './edges';
 import { publishedEdgesOf } from './edgeRender';
 import { EDGE_CREDENTIAL_FIELDS } from './lib/edges/accountSettings';
 
@@ -163,7 +168,9 @@ export const configView = internalQuery({
 /**
  * PATCH the `edge.*` namespace. `patch` is the nested config shape (any subset);
  * `patch.secrets` carries write-only probe credentials (blank = keep). Audited as
- * the list of changed keys only.
+ * the list of changed keys only. A `render.*` change alters what every member
+ * receives, so it bumps every enabled relay's publication epoch (the /sub cache
+ * token) and refreshes the stored mirrors once.
  */
 export const patchConfig = internalMutation({
   args: { patch: v.any(), actorAdminId: v.optional(v.id('adminUsers')) },
@@ -176,6 +183,17 @@ export const patchConfig = internalMutation({
       await upsertSettingRow(ctx, w.key, w.value, actorAdminId);
     }
     const changed = [...changedKeys, ...secretWrites.map(() => 'probe.secret')];
+    if (changedKeys.some((k) => k.startsWith('render.'))) {
+      const now = Date.now();
+      const relays = await ctx.db
+        .query('relays')
+        .withIndex('by_enabled', (q) => q.eq('enabled', true))
+        .collect();
+      for (const r of relays) {
+        await ctx.db.patch(r._id, { publicationEpoch: r.publicationEpoch + 1, updatedAt: now });
+      }
+      await scheduleMirrorRefresh(ctx);
+    }
     if (changed.length > 0) {
       const action = changed.every((k) => k.startsWith('render.'))
         ? 'admin.edge.render.change'
@@ -200,6 +218,10 @@ async function publishedEndpoints(
   ctx: { db: import('./_generated/server').DatabaseReader },
   origin: Doc<'relays'>,
 ) {
+  // Role-usable endpoints ONLY: the node role bootstraps its template Host from
+  // publishedEndpoints[0]'s address/port/SNI, so an index-0 edge that lost its
+  // address, slot or profile must make it keep waiting, not configure a dud.
+  // (Assignment and preview use the full, flagged pool elsewhere.)
   const { published } = await publishedEdgesOf(ctx, origin);
   const slots = await ctx.db
     .query('relaySlots')
@@ -247,12 +269,11 @@ export const endpoints = internalQuery({
     const origin = await ctx.db.get(relayId);
     if (!origin) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published } = await publishedEdgesOf(ctx, origin);
+    const { published } = await publishedEdgesOf(ctx, origin, { includeIneligible: true });
     const assigned = assignEndpoints(SAMPLE_RENDER_KEY, published, {
       now: Date.now(),
       preferDistinctProviders: cfg.render.preferDistinctProviders,
       includeBackup: true,
-      subscriberLastContentAt: null,
     });
     return {
       relaySlug: origin.slug,
@@ -282,7 +303,9 @@ export const renderPreview = internalQuery({
     const origin = await ctx.db.get(relayId);
     if (!origin) throw new ConvexError({ code: 'not_found', message: 'Origin not found' });
     const cfg = await resolveEdgeConfig(ctx.db);
-    const { published, templateRemarks } = await publishedEdgesOf(ctx, origin);
+    const { published, templateRemarks } = await publishedEdgesOf(ctx, origin, {
+      includeIneligible: true,
+    });
     const format = CLIENT_FAMILY_FORMATS[fam];
     const input = previewBody(format, templateRemarks);
     const out = applyEdgeRender(
@@ -392,6 +415,9 @@ export const recordLive = internalMutation({
  *  - `destroy`: the ledger is trusted; walk the destroy path again;
  *  - `forget`: the operator cleaned the provider by hand; mark destroyed with no calls;
  *  - `reactivate`: the resource turned out fine; back to an unpublished active edge.
+ * Refused while the origin is quarantined or a rotation runs (the shared gate);
+ * `forget` also heals the pool lists (an id that was still listed is removed and
+ * the epoch bumped). Audited as `edge.destroy` / `edge.forget` / `edge.reactivate`.
  */
 export const resolveOperator = internalMutation({
   args: {
@@ -407,33 +433,25 @@ export const resolveOperator = internalMutation({
     }
     const now = Date.now();
     const origin = await ctx.db.get(e.relayId);
+    if (origin) await assertNoRotationOrQuarantine(ctx.db, origin);
     if (action === 'destroy') {
       await ctx.db.patch(edgeId, {
         status: 'destroying',
         destroyAttempts: 0,
+        destroyConfirm: undefined,
         currentOp: undefined,
         failure: undefined,
         steps: e.steps.map((s) => (s.state === 'ambiguous' ? { ...s, state: 'done' as const } : s)),
         statusChangedAt: now,
         updatedAt: now,
       });
+      if (origin) await dropEdgeFromPool(ctx, origin, e, { reason: 'operator_destroy' });
     } else if (action === 'forget') {
       await ctx.db.patch(edgeId, {
-        status: 'destroyed',
-        publication: 'unpublished',
-        poolIndex: undefined,
-        currentOp: undefined,
+        ...destroyedPatch(now),
         resources: e.resources.map((r) => ({ ...r, deleteState: 'confirmed_gone' as const })),
-        destroyedAt: now,
-        statusChangedAt: now,
-        updatedAt: now,
       });
-      if (origin) {
-        await ctx.db.patch(origin._id, {
-          standbyEdgeIds: origin.standbyEdgeIds.filter((x) => x !== edgeId),
-          updatedAt: now,
-        });
-      }
+      if (origin) await dropEdgeFromPool(ctx, origin, e, { reason: 'operator_forget' });
     } else {
       // Back to an unpublished, selectable standby: a row that came off the
       // drain path still carries `draining` + an expired drainUntil, which
@@ -463,16 +481,24 @@ export const resolveOperator = internalMutation({
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,
-      action: 'edge.delete',
+      action:
+        action === 'destroy'
+          ? 'edge.destroy'
+          : action === 'forget'
+            ? 'edge.forget'
+            : 'edge.reactivate',
       targetType: 'edge',
       targetId: edgeId,
-      payload: { relaySlug: origin?.slug ?? '', edgeId, force: action === 'forget' },
+      payload: { relaySlug: origin?.slug ?? '', edgeId, provider: e.provider ?? null },
     });
     return { ok: true as const };
   },
 });
 
-/** DELETE an edge: refuses while published; unmanaged rows are forgotten, managed ones destroyed. */
+/**
+ * DELETE an edge: refuses while published, quarantined or rotating; unmanaged
+ * rows are forgotten, managed ones destroyed. Heals the pool lists on the way out.
+ */
 export const deleteEdge = internalMutation({
   args: { edgeId: v.id('edges'), actorAdminId: v.optional(v.id('adminUsers')) },
   handler: async (ctx, { edgeId, actorAdminId }) => {
@@ -483,13 +509,11 @@ export const deleteEdge = internalMutation({
     }
     const now = Date.now();
     const origin = await ctx.db.get(e.relayId);
+    if (origin) await assertNoRotationOrQuarantine(ctx.db, origin);
     if (!e.managed || e.status === 'destroyed') {
       await ctx.db.patch(edgeId, {
-        status: 'destroyed',
-        publication: 'unpublished',
+        ...destroyedPatch(now),
         destroyedAt: e.destroyedAt ?? now,
-        statusChangedAt: now,
-        updatedAt: now,
       });
     } else {
       await ctx.db.patch(edgeId, {
@@ -497,16 +521,12 @@ export const deleteEdge = internalMutation({
         publication: 'unpublished',
         poolIndex: undefined,
         destroyAttempts: 0,
+        destroyConfirm: undefined,
         statusChangedAt: now,
         updatedAt: now,
       });
     }
-    if (origin) {
-      await ctx.db.patch(origin._id, {
-        standbyEdgeIds: origin.standbyEdgeIds.filter((x) => x !== edgeId),
-        updatedAt: now,
-      });
-    }
+    if (origin) await dropEdgeFromPool(ctx, origin, e, { reason: 'operator_delete' });
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: actorAdminId ?? undefined,

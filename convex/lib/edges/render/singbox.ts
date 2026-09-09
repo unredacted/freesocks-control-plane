@@ -6,13 +6,33 @@
  * membership in every group with the emitted tags, and (per rule) ensure a
  * `urltest` group named after the auto group that contains exactly the
  * emitted tags and is the selector's default. Fail-open on any unknown shape.
+ *
+ * Removing a template never leaves a dangling reference: every other mention
+ * of its tag (route rules, `route.final`, DNS/outbound `detour`s, group
+ * `default`s) is rewritten to the rendered fallback or pruned structurally
+ * (`refs.ts`), so the config stays valid instead of falling back to the
+ * original body — which would hand the template's address back out.
  */
+import { cloneJson, pruneRefs, uniqueName } from './refs';
 import { AUTO_GROUP_TEST_URL, orderEndpoints, type RenderInput, type RenderOutput } from './types';
 
 type Obj = Record<string, unknown>;
 
 function isObj(v: unknown): v is Obj {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+const NON_PROXY_TYPES = new Set(['direct', 'block', 'dns']);
+
+/** The outbound a dangling reference falls back to: a proxy or group first, any tag otherwise. */
+function fallbackTag(list: unknown[]): string | null {
+  let any: string | null = null;
+  for (const ob of list) {
+    if (!isObj(ob) || typeof ob.tag !== 'string') continue;
+    any ??= ob.tag;
+    if (!NON_PROXY_TYPES.has(String(ob.type))) return ob.tag;
+  }
+  return any;
 }
 
 export function renderSingbox(input: RenderInput): RenderOutput {
@@ -28,25 +48,35 @@ export function renderSingbox(input: RenderInput): RenderOutput {
   const outbounds = cfg.outbounds as unknown[];
   const templateSet = new Set(input.templateRemarks);
   const templates = new Map<string, Obj>();
+  const taken = new Set<string>();
+  let autoGroupIsGroup = false;
   for (const ob of outbounds) {
-    if (
-      isObj(ob) &&
-      typeof ob.tag === 'string' &&
-      templateSet.has(ob.tag) &&
-      !templates.has(ob.tag)
-    ) {
-      templates.set(ob.tag, ob);
+    if (!isObj(ob) || typeof ob.tag !== 'string') continue;
+    if (templateSet.has(ob.tag)) {
+      if (!templates.has(ob.tag)) templates.set(ob.tag, ob);
+      continue;
     }
+    taken.add(ob.tag);
+    if (ob.tag === input.rule.autoGroupName && Array.isArray(ob.outbounds)) autoGroupIsGroup = true;
   }
   if (templates.size === 0)
     return { body: input.body, applied: false, reason: 'no_template_outbounds', emitted: 0 };
+
+  // The auto group reuses an existing GROUP of that name; a non-group outbound
+  // already holding the name forces a suffixed one so tags stay unique.
+  const autoName = autoGroupIsGroup
+    ? input.rule.autoGroupName
+    : uniqueName(input.rule.autoGroupName, taken);
+  if (input.rule.autoGroup) taken.add(autoName);
 
   const emitted: Obj[] = [];
   for (const ep of orderEndpoints(input.endpoints, input.rule)) {
     const tpl = templates.get(ep.slotRemark);
     if (!tpl) continue;
-    const clone = structuredClone(tpl) as Obj;
-    clone.tag = ep.label;
+    const clone = cloneJson(tpl);
+    const tag = uniqueName(ep.label, taken);
+    taken.add(tag);
+    clone.tag = tag;
     clone.server = ep.address;
     clone.server_port = ep.port;
     if (ep.sni !== null && isObj(clone.tls)) clone.tls = { ...clone.tls, server_name: ep.sni };
@@ -59,6 +89,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
   if (dropOnly && !input.rule.dropTemplateEntries)
     return { body: input.body, applied: false, reason: 'no_endpoints_rendered', emitted: 0 };
   const emittedTags = emitted.map((e) => e.tag as string);
+  const useAuto = input.rule.autoGroup && !dropOnly;
 
   const next: unknown[] = [];
   let inserted = false;
@@ -85,7 +116,7 @@ export function renderSingbox(input: RenderInput): RenderOutput {
         if (typeof m === 'string' && templateSet.has(m)) {
           if (!swapped) {
             swapped = true;
-            if (input.rule.autoGroup && !dropOnly) members.push(input.rule.autoGroupName);
+            if (useAuto && tag !== autoName) members.push(autoName);
             members.push(...emittedTags);
           }
           if (!input.rule.dropTemplateEntries) members.push(m);
@@ -94,23 +125,16 @@ export function renderSingbox(input: RenderInput): RenderOutput {
         members.push(m);
       }
       const group: Obj = { ...ob, outbounds: members };
-      if (tag === input.rule.autoGroupName) {
+      if (tag === autoName && autoGroupIsGroup) {
         sawAutoGroup = true;
         group.outbounds = emittedTags;
         group.type = 'urltest';
       }
-      if (dropOnly) {
-        if (typeof group.default === 'string' && templateSet.has(group.default))
-          delete group.default;
-      } else if (typeof ob.default === 'string' && templateSet.has(ob.default)) {
-        group.default = input.rule.autoGroup ? input.rule.autoGroupName : emittedTags[0];
-      } else if (
-        input.rule.autoGroup &&
-        ob.type === 'selector' &&
-        swapped &&
-        ob.default === undefined
-      ) {
-        group.default = input.rule.autoGroupName;
+      if (typeof ob.default === 'string' && templateSet.has(ob.default)) {
+        if (dropOnly) delete group.default;
+        else group.default = useAuto ? autoName : emittedTags[0];
+      } else if (useAuto && ob.type === 'selector' && swapped && ob.default === undefined) {
+        group.default = autoName;
       }
       next.push(group);
       continue;
@@ -119,47 +143,10 @@ export function renderSingbox(input: RenderInput): RenderOutput {
   }
   if (!inserted)
     return { body: input.body, applied: false, reason: 'template_not_in_outbounds', emitted: 0 };
-  if (dropOnly) {
-    // Groups left without members go too, and so does anything that pointed at
-    // them (iterate until stable; a selector of only dropped tags cascades).
-    const removed = new Set<string>(templateSet);
-    let list = next;
-    for (let changed = true; changed; ) {
-      changed = false;
-      const keep: unknown[] = [];
-      for (const ob of list) {
-        if (!isObj(ob) || !Array.isArray(ob.outbounds)) {
-          keep.push(ob);
-          continue;
-        }
-        const members = ob.outbounds.filter((m) => !(typeof m === 'string' && removed.has(m)));
-        if (members.length === 0) {
-          if (typeof ob.tag === 'string') removed.add(ob.tag);
-          changed = true;
-          continue;
-        }
-        const g: Obj = { ...ob, outbounds: members };
-        if (typeof g.default === 'string' && removed.has(g.default)) delete g.default;
-        keep.push(g);
-      }
-      list = keep;
-    }
-    const rendered = JSON.stringify({ ...cfg, outbounds: list });
-    for (const t of removed) {
-      if (rendered.includes(JSON.stringify(t)))
-        return {
-          body: input.body,
-          applied: false,
-          reason: 'dangling_template_reference',
-          emitted: 0,
-        };
-    }
-    return { body: rendered, applied: true, reason: 'templates_dropped', emitted: 0 };
-  }
-  if (input.rule.autoGroup && !sawAutoGroup) {
+  if (useAuto && !sawAutoGroup) {
     next.push({
       type: 'urltest',
-      tag: input.rule.autoGroupName,
+      tag: autoName,
       outbounds: emittedTags,
       url: AUTO_GROUP_TEST_URL,
       interval: '3m',
@@ -167,19 +154,49 @@ export function renderSingbox(input: RenderInput): RenderOutput {
       interrupt_exist_connections: false,
     });
   }
-  // Nothing may still reference a dropped template tag (route rules, detours).
-  const rendered = JSON.stringify({ ...cfg, outbounds: next });
-  if (input.rule.dropTemplateEntries) {
-    for (const t of templateSet) {
-      if (rendered.includes(JSON.stringify(t))) {
-        return {
-          body: input.body,
-          applied: false,
-          reason: 'dangling_template_reference',
-          emitted: 0,
-        };
-      }
-    }
+  if (!input.rule.dropTemplateEntries) {
+    return {
+      body: JSON.stringify({ ...cfg, outbounds: next }),
+      applied: true,
+      emitted: emitted.length,
+    };
   }
-  return { body: rendered, applied: true, emitted: emitted.length };
+
+  // Templates were removed: nothing may still reference them. Groups left
+  // without members go too, and so does anything that pointed at them
+  // (iterate until stable; a selector of only dropped tags cascades).
+  const removed = new Set<string>(templateSet);
+  let list = next;
+  for (let changed = true; changed; ) {
+    changed = false;
+    const keep: unknown[] = [];
+    for (const ob of list) {
+      if (!isObj(ob) || !Array.isArray(ob.outbounds)) {
+        keep.push(ob);
+        continue;
+      }
+      const members = ob.outbounds.filter((m) => !(typeof m === 'string' && removed.has(m)));
+      if (members.length === 0) {
+        if (typeof ob.tag === 'string') removed.add(ob.tag);
+        changed = true;
+        continue;
+      }
+      const g: Obj = { ...ob, outbounds: members };
+      if (typeof g.default === 'string' && removed.has(g.default)) delete g.default;
+      keep.push(g);
+    }
+    list = keep;
+  }
+  // Every remaining mention (route rules, `route.final`, detours) is rewritten
+  // to the fallback — the auto group / first emitted entry when rendering, the
+  // first remaining proxy-ish outbound when dropping — or pruned outright.
+  const fallback =
+    useAuto && !removed.has(autoName) ? autoName : (emittedTags[0] ?? fallbackTag(list));
+  const pruned = pruneRefs({ ...cfg, outbounds: list }, removed, fallback) as Obj;
+  return {
+    body: JSON.stringify(pruned),
+    applied: true,
+    ...(dropOnly ? { reason: 'templates_dropped' } : {}),
+    emitted: emitted.length,
+  };
 }

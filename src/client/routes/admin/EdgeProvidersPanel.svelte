@@ -22,6 +22,7 @@
     EdgeDiscoverResponse,
     EdgeInventoryResponse,
     EdgeOkResponse,
+    EdgeRotateCredentialsResponse,
     EdgeTestCredentialsResponse,
     type EdgeProviderAccountAdmin,
     type EdgeProviderId,
@@ -329,6 +330,42 @@
       toast.success('Account saved');
     },
     onError: onError('Could not save the account'),
+  }));
+  /** Whether the editor holds a typed (non-blank) credential to rotate to. */
+  const hasNewCredentials = $derived(
+    !!editor?.id && Object.values(editor.credentials).some((v) => v.trim() !== ''),
+  );
+  /**
+   * Rotate the secret WITHOUT losing the qualification (a plain Save with new
+   * credentials clears it). The server tests the new secret first and applies
+   * it only on a pass; it picks the credential-identifier fields (an access /
+   * application key) out of the settings and ignores everything else.
+   */
+  const rotateCredentials = createMutation(() => ({
+    mutationFn: () => {
+      const d = editor!;
+      const creds = Object.fromEntries(
+        Object.entries(d.credentials).filter(([, v]) => v.trim() !== ''),
+      );
+      return apiClient.post(
+        `/api/v1/admin/edges/providers/${d.id}/rotate-credentials`,
+        { credentials: creds, identifiers: settingsBody(d) },
+        EdgeRotateCredentialsResponse,
+      );
+    },
+    onSuccess: (r) => {
+      if (!r.ok) {
+        toast.error('New credentials rejected; nothing changed', { description: r.code });
+        return;
+      }
+      editor = null;
+      discovered = null;
+      invalidate();
+      toast.success(
+        r.qualified ? 'Credentials rotated (qualification kept)' : 'Credentials rotated',
+      );
+    },
+    onError: onError('Could not rotate the credentials'),
   }));
   const remove = createMutation(() => ({
     mutationFn: (id: string) =>
@@ -734,7 +771,7 @@
                 "Provider's default template"}</Select.Trigger
             >
             <Select.Content>
-              {#each (templates.data?.templates ?? []).filter((t) => t.provider === editor?.provider) as t (t.id)}
+              {#each (templates.data?.templates ?? []).filter((t) => t.provider === editor?.provider && (!t.accountId || t.accountId === editor?.id)) as t (t.id)}
                 <Select.Item value={t.id}>{t.name}</Select.Item>
               {/each}
             </Select.Content>
@@ -753,7 +790,17 @@
           discovered = null;
         }}>Cancel</Button
       >
-      <Button disabled={save.isPending} onclick={() => save.mutate()}>Save</Button>
+      {#if editor?.id}
+        <Button
+          variant="secondary"
+          disabled={!hasNewCredentials || rotateCredentials.isPending || save.isPending}
+          title="Test the typed secret against the provider and swap it in, keeping the qualification"
+          onclick={() => rotateCredentials.mutate()}>Rotate credentials</Button
+        >
+      {/if}
+      <Button disabled={save.isPending || rotateCredentials.isPending} onclick={() => save.mutate()}
+        >Save</Button
+      >
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

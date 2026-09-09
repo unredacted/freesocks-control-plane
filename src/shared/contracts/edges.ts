@@ -54,6 +54,21 @@ export const EdgeTestCredentialsResponse = z.object({
 });
 export type EdgeTestCredentialsResponse = z.infer<typeof EdgeTestCredentialsResponse>;
 
+/**
+ * POST …/providers/{id}/rotate-credentials: the new secret is tested first and
+ * applied only on a pass (qualification kept). Booleans only, never a value.
+ */
+export const EdgeRotateCredentialsResponse = z.union([
+  z.object({
+    ok: z.literal(true),
+    qualified: z.boolean(),
+    credentialsChanged: z.boolean(),
+    identifiersChanged: z.boolean(),
+  }),
+  z.object({ ok: z.literal(false), code: z.string() }),
+]);
+export type EdgeRotateCredentialsResponse = z.infer<typeof EdgeRotateCredentialsResponse>;
+
 const DiscoverOption = z.object({ id: z.string(), label: z.string() });
 /** POST …/providers/discover: choice lists for the account form given credentials + partial settings. */
 export const EdgeDiscoverResponse = z.object({
@@ -353,13 +368,30 @@ export const EdgeLive = z.object({
         .optional(),
     })
     .passthrough(),
+  /**
+   * The provider's own describe() payload as recorded by the last live pull.
+   * Operator-only diagnostics: the CMS never renders it by default (the summary
+   * is the view); it sits behind an explicit "show raw" toggle. The server is
+   * expected to prune it to a curated key set before storing — treat it as
+   * potentially containing provider-internal identifiers, never credentials.
+   */
   raw: z.unknown(),
   liveAt: iso,
+});
+export type EdgeLive = z.infer<typeof EdgeLive>;
+/** The last probe runs against one edge, as the detail view lists them. */
+export const EdgeDetailProbe = z.object({
+  id: z.string(),
+  source: z.string(),
+  status: z.string(),
+  requestedAt: iso,
+  okVantages: z.number().int(),
+  failVantages: z.number().int(),
 });
 export const EdgeDetail = z.object({
   edge: EdgeAdmin,
   live: EdgeLive.nullable(),
-  probes: z.array(z.unknown()),
+  probes: z.array(EdgeDetailProbe),
 });
 export type EdgeDetail = z.infer<typeof EdgeDetail>;
 export const EdgeLiveResponse = z.object({ live: EdgeLive.nullable() });
@@ -432,6 +464,8 @@ export const ProbeRunAdmin = z.object({
   target: ProbeTargetRef,
   source: z.enum(['globalping', 'checkhost', 'ripeatlas', 'internal']),
   ipVersion: z.union([z.literal(4), z.literal(6)]),
+  /** The listener port this run probed (a multi-port edge gets one run per port). */
+  port: z.number().int().nullable().optional(),
   status: z.enum(['requested', 'running', 'finished', 'failed', 'timeout']),
   trigger: z.enum(['cron', 'manual', 'detector', 'qualification']),
   requestedAt: iso,
@@ -608,6 +642,54 @@ export const RelayBySlugResponse = z.object({
 });
 export type RelayBySlugResponse = z.infer<typeof RelayBySlugResponse>;
 
+/**
+ * What the node role actually needs from `GET/PUT …/relays/by-slug/{slug}`
+ * (docs/edges.md § "Node role contract"): per slot, the index-0 IPv4, its port
+ * and the first active server name — nothing else. The full RelayBySlugResponse
+ * also ships the relay's detector state (suspicion / quarantine / veto), its
+ * rotation limits and the pool-wide provider names, none of which the role
+ * reads; a leaked role token should not learn them either. Proposed narrower
+ * projection for the by-slug route (the CMS does not consume that route, so the
+ * server can switch to it without a client change; the role's parser must
+ * tolerate both while the two coexist). Every field is a strict subset of the
+ * full response, so this schema also parses today's payload.
+ */
+export const RelayBySlugMinimalResponse = z.object({
+  relay: z.object({
+    id: z.string(),
+    slug: z.string(),
+    nodeHostname: z.string(),
+    originAddress: z.string(),
+    publicationEpoch: z.number(),
+    enabled: z.boolean(),
+    hostManaged: z.boolean(),
+    deleting: z.boolean(),
+  }),
+  slots: z.array(
+    z.object({
+      slotKey: z.string(),
+      protocol: SlotProtocol,
+      profileSlug: z.string().nullable(),
+      originPort: z.number(),
+      templateHostRemark: z.string(),
+      deployed: z.boolean(),
+      retired: z.boolean(),
+    }),
+  ),
+  publishedEndpoints: z.array(
+    z.object({
+      poolIndex: z.number(),
+      slotKey: z.string(),
+      slotRemark: z.string(),
+      protocol: SlotProtocol,
+      port: z.number(),
+      addresses: z.object({ v4: z.string().nullable(), v6: z.string().nullable() }),
+      activeServerNames: z.array(z.string()),
+    }),
+  ),
+});
+export type RelayBySlugMinimalResponse = z.infer<typeof RelayBySlugMinimalResponse>;
+
 export const RENDER_CLIENT_FAMILY_IDS = [
   'singbox',
   'mihomo',
@@ -710,7 +792,16 @@ export const EdgeConfigPatchResponse = z.object({ changedKeys: z.array(z.string(
 
 // --- small responses -------------------------------------------------------------------------------
 
-export const EdgeOkResponse = z.object({ ok: z.boolean() }).passthrough();
+/**
+ * `{ ok }` plus whatever the mutation adds. `ok:false` with a 200 is a refusal
+ * the mutation chose not to throw (e.g. retry-destroy on a published edge, which
+ * adds `code`); the CMS must read `ok` and surface `code`, never assume success.
+ */
+export const EdgeOkResponse = z
+  .object({ ok: z.boolean(), code: z.string().optional() })
+  .passthrough();
+/** Seed the compiled adapter defaults as template rows (`POST templates/ensure-defaults`). */
+export const EdgeTemplatesSeedResponse = z.object({ created: z.number().int() });
 export const EdgeIdResponse = z.object({ id: z.string() }).passthrough();
 export const EdgeRotationStartedResponse = z.object({ rotationId: z.string() });
 export const EdgeAdoptResponse = z.object({

@@ -3,6 +3,7 @@ import YAML from 'yaml';
 import { EDGE_DEFAULTS, defaultClientRule } from '../edgeConfig';
 import type { AssignedEndpoint, PublishedEdge } from './assignment';
 import { effectiveRule, renderEntries, renderEdgeEndpoints } from './render';
+import { applyEdgeRender } from './renderPipeline';
 import { rewriteVlessLine } from './render/links';
 
 const NODE = 'node-a';
@@ -212,6 +213,103 @@ describe('link-list rendering', () => {
     });
     expect(off).toMatchObject({ applied: false, reason: 'disabled' });
   });
+
+  test('empty pool: the template line is DROPPED whatever the family flags say (drop off, family disabled)', () => {
+    const body = [otherLink, templateLink].join('\n');
+    for (const rule of [
+      linksRule,
+      { ...linksRule, dropTemplateEntries: false },
+      { ...linksRule, enabled: false },
+      { ...linksRule, enabled: false, dropTemplateEntries: false },
+    ]) {
+      const out = renderEdgeEndpoints({
+        body,
+        templateRemarks: [TEMPLATE],
+        assigned: { primary: null, backup: null },
+        rule,
+      });
+      expect(out).toMatchObject({ applied: true, emitted: 0, reason: 'templates_dropped' });
+      expect(out.body).toBe(otherLink);
+    }
+  });
+
+  test('a template with a scheme the renderer cannot rewrite (vmess blob) is still dropped', () => {
+    const vmessTemplate = `vmess://eyJhZGQiOiIxOTIuMC4yLjEwIn0=#${encodeURIComponent(TEMPLATE)}`;
+    const out = renderEdgeEndpoints({
+      body: [otherLink, vmessTemplate].join('\n'),
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: linksRule,
+    });
+    expect(out).toMatchObject({ applied: true, emitted: 0 });
+    expect(out.body).toBe(otherLink);
+  });
+
+  test('URL-safe, unpadded base64 bodies render and come back standard base64', () => {
+    const plain = [templateLink, otherLink].join('\n');
+    const urlSafe = btoa(plain).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const out = renderEdgeEndpoints({
+      body: urlSafe,
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: linksRule,
+    });
+    expect(out.applied).toBe(true);
+    expect(out.body).toMatch(/^[A-Za-z0-9+/]+=*$/);
+    const decoded = atob(out.body);
+    expect(decoded).toContain('FreeSocks%20Primary');
+    expect(decoded).not.toContain(encodeURIComponent(TEMPLATE));
+  });
+});
+
+describe('applyEdgeRender: IPv6-only edges', () => {
+  const v6Only: PublishedEdge = {
+    ...edgeA,
+    edgeId: 'e6',
+    poolIndex: 0,
+    addresses: { v6: '2001:db8::6' },
+  };
+  const dual: PublishedEdge = { ...edgeB, poolIndex: 1 };
+  const ctxFor = (rule: typeof linksRule, published: PublishedEdge[]) => ({
+    epoch: 1,
+    templateRemarks: [TEMPLATE],
+    published,
+    rule,
+    preferDistinctProviders: true,
+  });
+
+  test('ipv6Mode off: a v6-only edge is not assignable — the dual-stack neighbour renders instead', () => {
+    const rule = { ...linksRule, ipv6Mode: 'off' as const };
+    const out = applyEdgeRender(ctxFor(rule, [v6Only, dual]), templateLink, 'ab'.repeat(32), {
+      now: Date.now(),
+    });
+    expect(out.applied).toBe(true);
+    expect(out.emitted).toBe(1);
+    expect(out.body).toContain(`@${edgeB.addresses.v4}:443?`);
+    expect(out.body).not.toContain('2001:db8::6');
+  });
+
+  test('ipv6Mode off with ONLY a v6-only edge: nothing is assignable, so the template is dropped', () => {
+    const rule = { ...linksRule, ipv6Mode: 'off' as const };
+    const out = applyEdgeRender(
+      ctxFor(rule, [v6Only]),
+      [otherLink, templateLink].join('\n'),
+      'ab'.repeat(32),
+      {
+        now: Date.now(),
+      },
+    );
+    expect(out).toMatchObject({ applied: true, emitted: 0, reason: 'templates_dropped' });
+    expect(out.body).toBe(otherLink);
+  });
+
+  test('ipv6Mode both: the v6-only edge renders as a single bracketed entry', () => {
+    const out = applyEdgeRender(ctxFor(linksRule, [v6Only]), templateLink, 'ab'.repeat(32), {
+      now: Date.now(),
+    });
+    expect(out.emitted).toBe(1);
+    expect(out.body).toContain('@[2001:db8::6]:443?');
+  });
 });
 
 describe('sing-box rendering', () => {
@@ -299,18 +397,97 @@ describe('sing-box rendering', () => {
     expect(JSON.parse(out.body).route).toEqual(singbox.route);
   });
 
-  test('a template tag still referenced elsewhere → fail-open untouched', () => {
-    const withDetour = {
+  test('a template tag still referenced elsewhere (detour, route.final, rules) is rewritten to the rendered fallback, never served', () => {
+    const withRefs = {
       ...singbox,
       outbounds: [...singbox.outbounds, { type: 'http', tag: 'helper', detour: TEMPLATE }],
+      route: {
+        final: TEMPLATE,
+        rules: [
+          { outbound: 'direct', ip_is_private: true },
+          { outbound: TEMPLATE, domain_suffix: ['example.org'] },
+        ],
+      },
     };
     const out = renderEdgeEndpoints({
-      body: JSON.stringify(withDetour),
+      body: JSON.stringify(withRefs),
       templateRemarks: [TEMPLATE],
       assigned,
       rule: autoRule,
     });
-    expect(out).toMatchObject({ applied: false, reason: 'dangling_template_reference' });
+    expect(out.applied).toBe(true);
+    expect(out.body).not.toContain(JSON.stringify(TEMPLATE));
+    const cfg = JSON.parse(out.body) as {
+      outbounds: Array<Record<string, unknown>>;
+      route: { final: string; rules: Array<{ outbound: string }> };
+    };
+    expect(cfg.outbounds.find((o) => o.tag === 'helper')?.detour).toBe('FreeSocks Auto');
+    expect(cfg.route.final).toBe('FreeSocks Auto');
+    expect(cfg.route.rules.map((r) => r.outbound)).toEqual(['direct', 'FreeSocks Auto']);
+  });
+
+  test('empty pool: the template outbound is dropped and every reference pruned to a remaining outbound — regardless of the family flags', () => {
+    const withRefs = {
+      ...singbox,
+      route: { final: TEMPLATE, rules: [{ outbound: TEMPLATE, domain_suffix: ['example.org'] }] },
+    };
+    for (const rule of [
+      autoRule,
+      { ...autoRule, dropTemplateEntries: false },
+      { ...autoRule, enabled: false },
+    ]) {
+      const out = renderEdgeEndpoints({
+        body: JSON.stringify(withRefs),
+        templateRemarks: [TEMPLATE],
+        assigned: { primary: null, backup: null },
+        rule,
+      });
+      expect(out).toMatchObject({ applied: true, emitted: 0, reason: 'templates_dropped' });
+      expect(out.body).not.toContain(JSON.stringify(TEMPLATE));
+      const cfg = JSON.parse(out.body) as {
+        outbounds: Array<Record<string, unknown>>;
+        route: { final: string; rules: Array<{ outbound: string }> };
+      };
+      // The selector survives with the other node's outbound; final/rules
+      // fall back to the first remaining proxy-ish outbound (the selector).
+      const selector = cfg.outbounds.find((o) => o.type === 'selector')!;
+      expect(selector.outbounds).toEqual([OTHER_NODE_WS]);
+      expect(selector.default).toBeUndefined();
+      expect(cfg.route.final).toBe('→ Remnawave');
+      expect(cfg.route.rules[0].outbound).toBe('→ Remnawave');
+    }
+  });
+
+  test('label / auto-group collisions with existing tags are suffixed deterministically', () => {
+    const colliding = {
+      ...singbox,
+      outbounds: [
+        ...singbox.outbounds,
+        { type: 'vless', tag: 'FreeSocks Primary', server: 'z', server_port: 1 },
+        { type: 'vless', tag: 'FreeSocks Auto', server: 'z', server_port: 1 }, // NOT a group
+      ],
+    };
+    const out = renderEdgeEndpoints({
+      body: JSON.stringify(colliding),
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: autoRule,
+    });
+    expect(out.applied).toBe(true);
+    const cfg = JSON.parse(out.body) as { outbounds: Array<Record<string, unknown>> };
+    const tags = cfg.outbounds.map((o) => o.tag as string);
+    expect(new Set(tags).size).toBe(tags.length); // every tag unique
+    expect(tags).toContain('FreeSocks Primary (2)');
+    expect(tags).toContain('FreeSocks Auto (2)');
+    const auto = cfg.outbounds.find((o) => o.tag === 'FreeSocks Auto (2)')!;
+    expect(auto.type).toBe('urltest');
+    expect(auto.outbounds).toEqual([
+      'FreeSocks Primary (2)',
+      'FreeSocks Primary (IPv6)',
+      'FreeSocks Backup',
+    ]);
+    const selector = cfg.outbounds.find((o) => o.type === 'selector')!;
+    expect(selector.default).toBe('FreeSocks Auto (2)');
   });
 
   test('renders are byte-identical for identical input', () => {
@@ -414,5 +591,114 @@ rules:
       rule: autoRule,
     });
     expect(out.applied).toBe(false);
+  });
+
+  const mihomoRule = effectiveRule(cfg, defaultClientRule('mihomo'));
+
+  test('a rule targeting the template by name is rewritten to the auto group (token match, never a substring scan)', () => {
+    // A proxy whose name merely CONTAINS the template remark must survive the
+    // rewrite untouched — the old substring guard would have failed open here.
+    const superset = `${TEMPLATE}-mirror`;
+    const body = clash
+      .replace(
+        'rules:\n  - MATCH,→ Remnawave\n',
+        `rules:\n  - DOMAIN-SUFFIX,example.org,${TEMPLATE}\n  - MATCH,→ Remnawave\n`,
+      )
+      .replace(
+        `  - name: ${OTHER_NODE_WS}`,
+        `  - name: ${superset}\n    type: vless\n    server: s.example\n    port: 443\n    uuid: y\n  - name: ${OTHER_NODE_WS}`,
+      );
+    const out = renderEdgeEndpoints({
+      body,
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: mihomoRule,
+    });
+    expect(out.applied).toBe(true);
+    const doc = YAML.parse(out.body) as { proxies: Array<{ name: string }>; rules: string[] };
+    expect(doc.rules).toEqual(['DOMAIN-SUFFIX,example.org,FreeSocks Auto', 'MATCH,→ Remnawave']);
+    expect(doc.proxies.map((p) => p.name)).toContain(superset);
+    expect(doc.proxies.map((p) => p.name)).not.toContain(TEMPLATE);
+  });
+
+  test('empty pool: template proxy dropped, its rule targets fall back to a remaining group — whatever the family flags', () => {
+    const body = clash.replace('rules:\n', `rules:\n  - DOMAIN-SUFFIX,example.org,${TEMPLATE}\n`);
+    for (const rule of [
+      mihomoRule,
+      { ...mihomoRule, dropTemplateEntries: false },
+      { ...mihomoRule, enabled: false },
+    ]) {
+      const out = renderEdgeEndpoints({
+        body,
+        templateRemarks: [TEMPLATE],
+        assigned: { primary: null, backup: null },
+        rule,
+      });
+      expect(out).toMatchObject({ applied: true, emitted: 0, reason: 'templates_dropped' });
+      const doc = YAML.parse(out.body) as {
+        proxies: Array<{ name: string }>;
+        'proxy-groups': Array<{ name: string; proxies: string[] }>;
+        rules: string[];
+      };
+      expect(doc.proxies.map((p) => p.name)).toEqual([OTHER_NODE_WS]);
+      expect(doc['proxy-groups']).toEqual([
+        { name: '→ Remnawave', type: 'select', proxies: [OTHER_NODE_WS] },
+      ]);
+      expect(doc.rules).toEqual(['DOMAIN-SUFFIX,example.org,→ Remnawave', 'MATCH,→ Remnawave']);
+      expect(out.body).not.toContain(TEMPLATE);
+    }
+  });
+
+  test('a tls template without servername gets one set (Mihomo would otherwise present the edge IP)', () => {
+    const body = clash.replace('    servername: old.example\n', '');
+    const out = renderEdgeEndpoints({
+      body,
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: mihomoRule,
+    });
+    const doc = YAML.parse(out.body) as { proxies: Array<Record<string, unknown>> };
+    expect(doc.proxies[0]).toMatchObject({ server: '203.0.113.10', servername: 'cdn-a.example' });
+    // trojan-style proxies use `sni`.
+    const trojan = clash
+      .replace(
+        '    type: vless\n    server: 192.0.2.10',
+        '    type: trojan\n    server: 192.0.2.10',
+      )
+      .replace('    servername: old.example\n', '');
+    const out2 = renderEdgeEndpoints({
+      body: trojan,
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: mihomoRule,
+    });
+    const doc2 = YAML.parse(out2.body) as { proxies: Array<Record<string, unknown>> };
+    expect(doc2.proxies[0]).toMatchObject({ type: 'trojan', sni: 'cdn-a.example' });
+    expect(doc2.proxies[0].servername).toBeUndefined();
+  });
+
+  test('label / auto-group collisions with existing proxy names are suffixed', () => {
+    const body = clash.replace(
+      `  - name: ${OTHER_NODE_WS}`,
+      `  - name: FreeSocks Primary\n    type: vless\n    server: s.example\n    port: 443\n    uuid: y\n  - name: FreeSocks Auto\n    type: vless\n    server: s.example\n    port: 443\n    uuid: y\n  - name: ${OTHER_NODE_WS}`,
+    );
+    const out = renderEdgeEndpoints({
+      body,
+      templateRemarks: [TEMPLATE],
+      assigned,
+      rule: mihomoRule,
+    });
+    expect(out.applied).toBe(true);
+    const doc = YAML.parse(out.body) as {
+      proxies: Array<{ name: string }>;
+      'proxy-groups': Array<{ name: string; type: string; proxies: string[] }>;
+    };
+    const names = [...doc.proxies.map((p) => p.name), ...doc['proxy-groups'].map((g) => g.name)];
+    expect(new Set(names).size).toBe(names.length);
+    expect(doc['proxy-groups'][0]).toMatchObject({
+      name: 'FreeSocks Auto (2)',
+      type: 'url-test',
+      proxies: ['FreeSocks Primary (2)', 'FreeSocks Primary (IPv6)', 'FreeSocks Backup'],
+    });
   });
 });

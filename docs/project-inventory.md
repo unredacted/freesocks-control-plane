@@ -334,7 +334,7 @@ report new issues via [`SECURITY.md`](../SECURITY.md).)
   host:port targets), run history, "probe now" for any selection, the probe settings and a
   probe audit feed. **Every route under
   `/api/v1/admin/edges/` is HPKE-sealed by verb** (GET reveal, POST seal both legs, PATCH/PUT
-  seal). IaC: `PUT/GET/DELETE …/relay/relays/by-slug/{slug}` (+ `/slots/{slotKey}`), the
+  seal). IaC: `PUT/GET/DELETE …/edges/relays/by-slug/{slug}` (+ `/slots/{slotKey}`), the
   response carrying `publishedEndpoints` for the node role. **Dormant by default** (every
   `edge.*` switch ships off).
 

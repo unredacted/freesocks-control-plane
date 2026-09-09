@@ -7,7 +7,14 @@
  * for the same (renderKey, epoch, family).
  */
 import { assignEndpoints, type PublishedEdge } from './assignment';
-import { renderEdgeEndpoints, type EffectiveRule, type RenderOutput } from './render';
+import { detectBodyFormat } from './clientFamilies';
+import {
+  formatHasAutoGroup,
+  renderEdgeEndpoints,
+  ruleCanEmitV6,
+  type EffectiveRule,
+  type RenderOutput,
+} from './render';
 
 export interface EdgeRenderContext {
   /** Publication epoch of the origin: part of the cache key. */
@@ -23,13 +30,18 @@ export function applyEdgeRender(
   rctx: EdgeRenderContext,
   body: string,
   renderKey: string,
-  opts: { now: number; lastContentAt?: number | null },
+  opts: { now: number },
 ): RenderOutput {
+  // The body's format decides whether an IPv6-only edge can be emitted at all
+  // (auto-group-only mode needs an auto-capable format), so it is resolved
+  // BEFORE assignment: an edge the render cannot emit is not assignable.
+  const format = detectBodyFormat(body);
+  const canEmitV6 = ruleCanEmitV6(rctx.rule, formatHasAutoGroup(rctx.rule, format));
   const assigned = assignEndpoints(renderKey, rctx.published, {
     now: opts.now,
     preferDistinctProviders: rctx.preferDistinctProviders,
     includeBackup: rctx.rule.includeBackup,
-    subscriberLastContentAt: opts.lastContentAt ?? null,
+    canEmitV6,
   });
   return renderEdgeEndpoints({
     body,

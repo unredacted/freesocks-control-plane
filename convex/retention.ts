@@ -13,6 +13,8 @@ import { recordHeartbeat } from './cronHeartbeat';
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const PAGE = 1000;
+// Rows with per-row child cleanup (destroyed edges → probe rollups) page smaller.
+const EDGE_PAGE = 50;
 
 /**
  * A sweep that deletes a FULL page has more to drain: re-run immediately (each
@@ -310,6 +312,100 @@ export const sweepBillingOrders = internalMutation({
         console.warn('[retention-billing-orders] drain cap hit; remainder next run');
       else
         await ctx.scheduler.runAfter(0, internal.retention.sweepBillingOrders, { rounds: n + 1 });
+    }
+    return { removed };
+  },
+});
+
+// --- relay edges ------------------------------------------------------------------------------
+
+/**
+ * Destroyed edges: the row is a ledger of what existed; keep ~30 days
+ * (EDGE_RETENTION_DAYS), then delete in bounded pages via the `by_status`
+ * index (status + statusChangedAt = an exact range). Rotations keep referring
+ * to the id; every reader treats a missing edge as null.
+ */
+export const sweepDestroyedEdges = internalMutation({
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
+    await recordHeartbeat(ctx, 'retention-edges');
+    const cutoff = Date.now() - num('EDGE_RETENTION_DAYS', 30) * DAY;
+    // Each edge drags its probe rollups (countries × sources × families ×
+    // ports) into the same transaction, so the page is small; the drain rounds
+    // still clear a backlog instead of retrying one oversized page.
+    const page = limit ?? EDGE_PAGE;
+    const rows = await ctx.db
+      .query('edges')
+      .withIndex('by_status', (q) => q.eq('status', 'destroyed').lt('statusChangedAt', cutoff))
+      .take(page);
+    for (const r of rows) {
+      // Nothing cascades in Convex: the edge's probe rollups (keyed by its id
+      // as a string, bounded per target: countries × sources × families ×
+      // ports) would otherwise outlive it forever, unreachable through any
+      // live edge.
+      const rollups = await ctx.db
+        .query('probeReachability')
+        .withIndex('by_target_country', (q) => q.eq('targetKind', 'edge').eq('targetRef', r._id))
+        .collect();
+      for (const x of rollups) await ctx.db.delete(x._id);
+      await ctx.db.delete(r._id);
+    }
+    if (rows.length === page) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-edges] drain cap hit; remainder next run');
+      else
+        await ctx.scheduler.runAfter(0, internal.retention.sweepDestroyedEdges, { rounds: n + 1 });
+    }
+    return { removed: rows.length };
+  },
+});
+
+const TERMINAL_ROTATION_PHASES = [
+  'done',
+  'failed',
+  'rolled_back',
+  'quarantined',
+  'cancelled',
+] as const;
+
+/**
+ * Terminal rotations: keep ~90 days (EDGE_ROTATION_RETENTION_DAYS) via the
+ * `by_phase_finished` index (phase + finishedAt). A `quarantined` row that a
+ * relay's live quarantine still points at is kept whatever its age (it is the
+ * operator's evidence until resolved).
+ */
+export const sweepEdgeRotations = internalMutation({
+  args: { limit: v.optional(v.number()), rounds: v.optional(v.number()) },
+  handler: async (ctx, { limit, rounds }) => {
+    await recordHeartbeat(ctx, 'retention-edge-rotations');
+    const cutoff = Date.now() - num('EDGE_ROTATION_RETENTION_DAYS', 90) * DAY;
+    const page = limit ?? PAGE;
+    let removed = 0;
+    let full = false;
+    for (const phase of TERMINAL_ROTATION_PHASES) {
+      const rows = await ctx.db
+        .query('edgeRotations')
+        .withIndex('by_phase_finished', (q) =>
+          q.eq('phase', phase).gt('finishedAt', 0).lt('finishedAt', cutoff),
+        )
+        .take(page);
+      for (const r of rows) {
+        if (phase === 'quarantined') {
+          const relay = await ctx.db.get(r.relayId);
+          if (relay?.quarantine?.rotationId === r._id) continue;
+        }
+        await ctx.db.delete(r._id);
+        removed++;
+      }
+      if (rows.length === page) full = true;
+    }
+    if (full) {
+      const n = rounds ?? 0;
+      if (n >= MAX_DRAIN_ROUNDS)
+        console.warn('[retention-edge-rotations] drain cap hit; remainder next run');
+      else
+        await ctx.scheduler.runAfter(0, internal.retention.sweepEdgeRotations, { rounds: n + 1 });
     }
     return { removed };
   },

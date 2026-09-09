@@ -99,7 +99,9 @@ export async function checkhostStart(
 
 /**
  * Parse `GET /check-result/<id>`: per node `null` (pending), `[{time}]` (ok) or
- * `[{error}]` (fail). Pending nodes leave the poll `running`.
+ * `[{error}]` (fail). Pending nodes leave the poll `running`. A node that
+ * answered with no result (`[null]`, an empty array or an unparsable shape)
+ * could not run the check: it is dropped, never counted as a failed target.
  */
 export function parseCheckhostResult(
   body: unknown,
@@ -132,9 +134,8 @@ export function parseCheckhostResult(
         ok: true,
         rttMs: Number.isFinite(t) ? Math.round(t * 1000) : undefined,
       });
-    } else {
-      results.push({ ...base, ok: false, error: 'unparsed' });
     }
+    // else: node-side error / unparsed → no evidence either way.
   }
   return { status: pending ? 'running' : 'finished', results };
 }
