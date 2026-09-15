@@ -110,7 +110,8 @@ export const AdminTelemetryEvents = z.object({
       at: z.string(),
       kind: z.enum(['switch', 'report']),
       reason: z.string(),
-      /** Member-typed free text (report kind, "other" reason). Defaulted for skew. */
+      /** DEPRECATED (2026-09-15): free text is no longer collected; non-null
+       *  only on rows written before then, until retention drains them. */
       detail: z.string().nullable().optional().default(null),
       backend: z.string(),
       locationCode: z.string().nullable(),

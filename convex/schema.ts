@@ -1431,9 +1431,11 @@ export default defineSchema({
   issueReports: defineTable({
     kind: v.union(v.literal('switch'), v.literal('report')),
     reason: v.string(),
-    // Member-typed problem description (the "other" report reason offers a text
-    // box). Free text, so it follows the same privacy rule as `city`: sanitized
-    // + length-capped, stored only on this UNLINKED row, never the audit log.
+    // DEPRECATED (2026-09-15): the report dialog's free-text box was removed;
+    // members are pointed at `site.supportEmail` instead. Nothing writes this
+    // field any more. Kept only so rows written before then still validate;
+    // the `issue-telemetry-retention` sweep (default 90d) drains them — drop
+    // the field once no row carries it.
     detail: v.optional(v.string()),
     backend: v.string(),
     // Where the key lived when the event fired (server-resolved, not client-claimed).

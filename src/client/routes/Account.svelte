@@ -391,19 +391,12 @@
   // Mutation: report a connection problem. Records the reason (+ optional
   // consented network context) and changes nothing about the key.
   const reportIssue = createMutation(() => ({
-    mutationFn: ({
-      telemetry,
-      detail,
-    }: {
-      telemetry: TelemetryPayload | null;
-      detail: string | null;
-    }) => {
+    mutationFn: (telemetry: TelemetryPayload | null) => {
       if (!reportIssueReason) throw new Error('No reason selected');
       return apiClient.post(
         '/api/v1/account/report-issue',
         {
           reason: reportIssueReason,
-          ...(detail ? { detail } : {}),
           ...(telemetry ? { telemetry } : {}),
         },
         ReportIssueResponse,
@@ -1464,11 +1457,13 @@
         bind:open={reportIssueOpen}
         bind:reason={reportIssueReason}
         telemetryContext={telemetryContext.data}
+        supportEmail={config.data?.site?.supportEmail}
+        supportId={data.user.supportId}
         onCancel={() => {
           reportIssueOpen = false;
           reportIssueReason = null;
         }}
-        onConfirm={(telemetry, detail) => reportIssue.mutate({ telemetry, detail })}
+        onConfirm={(telemetry) => reportIssue.mutate(telemetry)}
         busy={reportIssue.isPending}
       />
       {#if pendingSwitchTarget && config.data}

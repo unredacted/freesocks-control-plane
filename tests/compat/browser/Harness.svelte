@@ -15,12 +15,12 @@
     fields: { country: true, city: true, asn: true },
     detected: { country: 'US', city: 'Chicago', asn: 64512 },
   };
-  async function submit(telemetry: TelemetryPayload | null, detail: string | null) {
+  async function submit(telemetry: TelemetryPayload | null) {
     busy = true;
     try {
       await apiClient.post(
         '/api/v1/account/report-issue',
-        { reason, ...(telemetry ? { telemetry } : {}), ...(detail ? { detail } : {}) },
+        { reason, ...(telemetry ? { telemetry } : {}) },
         ReportIssueResponse,
       );
       result = 'Report sent';
@@ -45,6 +45,8 @@
   bind:open
   bind:reason
   telemetryContext={context}
+  supportEmail="support@example.test"
+  supportId="W3-TEST"
   {busy}
   onCancel={() => {
     open = false;

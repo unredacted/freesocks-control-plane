@@ -114,6 +114,9 @@
     staleTime: 30_000,
   }));
   const allEvents = $derived((events.data?.pages ?? []).flatMap((p) => p.events));
+  // Free-text collection ended 2026-09-15; show the column only while a loaded
+  // row from before then still carries text (retention drains them).
+  const hasLegacyDetail = $derived(allEvents.some((e) => e.detail !== null));
 
   const fmtAt = (iso: string) =>
     new Date(iso).toLocaleString('en-US', {
@@ -312,7 +315,9 @@
                     <th class="py-1.5 pe-4 text-start font-medium">Country</th>
                     <th class="py-1.5 pe-4 text-start font-medium">City</th>
                     <th class="py-1.5 pe-4 text-start font-medium">ASN</th>
-                    <th class="py-1.5 text-start font-medium">Detail</th>
+                    {#if hasLegacyDetail}
+                      <th class="py-1.5 text-start font-medium">Detail</th>
+                    {/if}
                   </tr>
                 </thead>
                 <tbody>
@@ -333,11 +338,14 @@
                           e.detectedAsn !== null ? `AS${e.detectedAsn}` : null,
                         )}
                       </td>
-                      <!-- Member-typed text ("other" reports): truncated in the row,
-                         full text on hover. -->
-                      <td class="max-w-[18rem] truncate py-1.5" title={e.detail ?? undefined}>
-                        {e.detail ?? '·'}
-                      </td>
+                      {#if hasLegacyDetail}
+                        <!-- Legacy free text (collection ended 2026-09-15): truncated
+                           in the row, full text on hover. The column disappears once
+                           retention has drained the last such row. -->
+                        <td class="max-w-[18rem] truncate py-1.5" title={e.detail ?? undefined}>
+                          {e.detail ?? '·'}
+                        </td>
+                      {/if}
                     </tr>
                   {/each}
                 </tbody>
