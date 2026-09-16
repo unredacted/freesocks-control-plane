@@ -302,6 +302,32 @@ describe('edgeRender: fronted route', () => {
     expect(after).toContain(`#${NODE}-reality`);
   });
 
+  test('an L7 (hostname) edge is eligible without an IP literal and renders as ONE hostname entry', async () => {
+    stubPanel();
+    const { t, subId, edgeA } = await seed();
+    const HOSTNAME = 'front-a.example';
+    // What the CDN provider's adapter leaves on the row: a hostname, no literal.
+    await t.run((ctx) => ctx.db.patch(edgeA, { layer: 'l7', addresses: { hostname: HOSTNAME } }));
+    const rctx = await t.query(internal.edgeRender.contextForSubscription, {
+      subscriptionId: subId,
+      family: 'other',
+    });
+    expect(rctx?.published).toHaveLength(1);
+    expect(rctx?.published[0]).toMatchObject({ layer: 'l7', addresses: { hostname: HOSTNAME } });
+    expect(rctx?.published[0].eligible).toBeUndefined(); // a hostname IS a publish address
+    const lines = pickNodeFor(await (await get(t)).text());
+    const primary = lines.filter((l) => l.includes('FreeSocks%20Primary'));
+    // One entry only: an L7 front has no address families of its own.
+    expect(primary).toHaveLength(1);
+    expect(primary[0]).toContain(`@${HOSTNAME}:443?`);
+    const qs = new URLSearchParams(
+      primary[0].slice(primary[0].indexOf('?') + 1, primary[0].indexOf('#')),
+    );
+    // The hostname is the SNI, whatever the profile's origin-facing names say.
+    expect(qs.get('sni')).toBe(HOSTNAME);
+    expect(qs.get('pbk')).toBe('PUBKEY');
+  });
+
   test('panel outage: the stale fallback is served only while its edge token is still current', async () => {
     stubPanel();
     const { t, relayId, edgeA } = await seed();

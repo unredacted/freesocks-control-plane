@@ -32,6 +32,7 @@ import { writeAuditLog } from './lib/audit';
 import { recordHeartbeat, runWithCronOutcome } from './cronHeartbeat';
 import { resolveEdgeConfig, resolveEdgeSecrets, type EdgeConfig } from './lib/edgeConfig';
 import { addressFamily, bracketIfV6 } from './lib/edges/ip';
+import { isValidHostname } from './lib/edges/hostname';
 import {
   countryVerdict,
   portRollup,
@@ -39,7 +40,13 @@ import {
   type SourceSummary,
   type Verdict,
 } from './lib/edges/probes/verdict';
-import type { ProbeResult, ProbeSource } from './lib/edges/probes/types';
+import type {
+  ProbeAddressKind,
+  ProbeProtocol,
+  ProbeResult,
+  ProbeSource,
+  RequestedFamily,
+} from './lib/edges/probes/types';
 
 const MIN = 60_000;
 /** Settled probe runs are evidence history, not a ledger: 14 days is plenty for the admin view. */
@@ -100,7 +107,11 @@ export function mapRunAdmin(r: Doc<'probeRuns'>) {
     id: r._id as string,
     target: { kind: r.targetKind, ref: r.targetRef, key: `${r.targetKind}:${r.targetRef}` },
     source: r.source,
-    ipVersion: r.ipVersion,
+    /** The OBSERVED family; null for a run addressed by name. */
+    ipVersion: r.ipVersion ?? null,
+    addressKind: r.addressKind ?? 'ip',
+    probeProtocol: r.probeProtocol ?? 'tcp',
+    requestedFamily: r.requestedFamily ?? r.ipVersion ?? 4,
     port: portOfRun(r) ?? null,
     status: r.status,
     trigger: r.trigger,
@@ -127,6 +138,7 @@ export function mapSummaryAdmin(s: Summary | undefined) {
     byCountry: (s?.byCountry ?? []).map((c) => ({
       ...c,
       v6Verdict: c.v6Verdict ?? undefined,
+      nameVerdict: c.nameVerdict ?? undefined,
       lastAt: new Date(c.lastAt).toISOString(),
     })),
     updatedAt: s ? new Date(s.updatedAt).toISOString() : null,
@@ -148,12 +160,19 @@ export function enabledSources(
 
 // --- targets -----------------------------------------------------------------------------------
 
-interface ResolvedTarget {
+export interface ResolvedTarget {
+  kind: ProbeTargetKind;
   label: string;
-  /** Address per family; a hostname counts as the v4 path (the resolver decides). */
-  addresses: { v4?: string; v6?: string };
+  /**
+   * What is probed: IP literals per family, or a NAME (an L7 edge's fronted
+   * hostname, a relay whose origin is a name, a custom name target). A name has
+   * no family of its own: the vantage's resolver picks one.
+   */
+  addresses: { v4?: string; v6?: string; name?: string };
   /** Every port the target listens on (one run per port: a block can be per port). */
   ports: number[];
+  /** What the probe speaks against this target (see `ProbeProtocol`). */
+  probeProtocol: ProbeProtocol;
 }
 
 /** Resolve what a target ref points at right now, or null when it is gone. */
@@ -165,10 +184,22 @@ async function resolveTarget(
     const edge = await ctx.db.get(t.ref as Id<'edges'>);
     if (!edge) return null;
     const relay = await ctx.db.get(edge.relayId);
+    const label = `${relay?.slug ?? 'relay'} edge${edge.poolIndex !== undefined ? ` #${edge.poolIndex}` : ''}${edge.provider ? ` (${edge.provider})` : ''}`;
+    const ports = distinctPorts(edge.listeners.map((l) => l.edgePort));
+    // An L7 edge IS a hostname, and the front only answers for its own name:
+    // the probe must complete a real TLS handshake with that SNI, so a
+    // certificate or handshake failure is a genuine outage rather than the
+    // "something answered" signal a REALITY listener gives on bare TCP.
+    const hostname = edge.addresses.hostname;
+    if (hostname && isValidHostname(hostname)) {
+      return { kind: t.kind, label, addresses: { name: hostname }, ports, probeProtocol: 'tls' };
+    }
     return {
-      label: `${relay?.slug ?? 'relay'} edge${edge.poolIndex !== undefined ? ` #${edge.poolIndex}` : ''}${edge.provider ? ` (${edge.provider})` : ''}`,
+      kind: t.kind,
+      label,
       addresses: { v4: edge.addresses.v4, v6: edge.addresses.v6 },
-      ports: distinctPorts(edge.listeners.map((l) => l.edgePort)),
+      ports,
+      probeProtocol: 'tcp',
     };
   }
   if (t.kind === 'relay') {
@@ -182,32 +213,72 @@ async function resolveTarget(
       .filter((s) => s.deployed && !s.retired)
       .sort((a, b) => a.slotKey.localeCompare(b.slotKey));
     return {
+      kind: t.kind,
       label: `${relay.slug} node`,
-      addresses: splitByFamily(relay.originAddress),
+      // A relay origin keeps the bare connect whatever its address kind: a
+      // REALITY or plaintext origin would fail a handshake probe and look
+      // blocked when it is serving members perfectly well.
+      addresses: splitByKind(relay.originAddress),
       ports: distinctPorts(deployed.map((s) => s.originPort)),
+      probeProtocol: 'tcp',
     };
   }
   const row = await ctx.db.get(t.ref as Id<'probeTargets'>);
   if (!row) return null;
-  return { label: row.label, addresses: splitByFamily(row.address), ports: [row.port] };
+  return {
+    kind: t.kind,
+    label: row.label,
+    addresses: splitByKind(row.address),
+    ports: [row.port],
+    probeProtocol: row.probeProtocol ?? 'tcp',
+  };
 }
 
+/**
+ * The target's distinct listener ports. EMPTY when it has none: a target with
+ * no listeners (an edge whose slots were retired, a relay with nothing
+ * deployed) is not probeable, and guessing 443 would measure a port nobody
+ * serves and record its silence as a block.
+ */
 function distinctPorts(ports: number[]): number[] {
-  const out = [...new Set(ports.filter((p) => Number.isInteger(p) && p > 0))];
-  return out.length > 0 ? out : [443];
+  return [...new Set(ports.filter((p) => Number.isInteger(p) && p > 0))];
 }
 
-function splitByFamily(address: string): { v4?: string; v6?: string } {
-  return addressFamily(address) === 'v6' ? { v6: address } : { v4: address };
+function splitByKind(address: string): { v4?: string; v6?: string; name?: string } {
+  const fam = addressFamily(address);
+  if (fam === 'v6') return { v6: address };
+  if (fam === 'v4') return { v4: address };
+  return { name: address };
 }
 
-/** Which address families a resolved target is probed over (v4 always; v6 when present and rendering allows, or v6-only). */
-function familiesOf(resolved: ResolvedTarget, cfg: EdgeConfig): Array<4 | 6> {
-  const out: Array<4 | 6> = [];
+/**
+ * Which address families a resolved target is probed over. A NAME is probed
+ * once with no family requested (`any`): whichever record the vantage's
+ * resolver follows is the path its members would take. For literals, v4 always,
+ * and v6 when the deployment probes it: the RENDER setting for edges (a family
+ * members are never handed is not evidence about them) and the probe's own
+ * `probe.ipv6` knob for relay origins and custom targets, which are operator
+ * evidence and have nothing to do with what is rendered. A v6-only target is
+ * probed over v6 either way.
+ */
+export function familiesOf(resolved: ResolvedTarget, cfg: EdgeConfig): RequestedFamily[] {
+  if (resolved.addresses.name) return ['any'];
+  const out: RequestedFamily[] = [];
   if (resolved.addresses.v4) out.push(4);
-  if (resolved.addresses.v6 && (cfg.render.ipv6Mode !== 'off' || !resolved.addresses.v4))
-    out.push(6);
+  const v6Allowed = resolved.kind === 'edge' ? cfg.render.ipv6Mode !== 'off' : cfg.probe.ipv6;
+  if (resolved.addresses.v6 && (v6Allowed || !resolved.addresses.v4)) out.push(6);
   return out;
+}
+
+/** The rollup key a run or a row belongs to: the observed family, else the name path. */
+export function familyKeyOf(r: {
+  ipVersion?: 4 | 6;
+  addressKind?: ProbeAddressKind;
+}): 4 | 6 | 'name' {
+  if (r.ipVersion !== undefined) return r.ipVersion;
+  // Rows written before families were kept are the v4 path; only an explicit
+  // `name` means "probed by name, no family".
+  return r.addressKind === 'name' ? 'name' : 4;
 }
 
 // --- runs ---------------------------------------------------------------------------------------
@@ -275,7 +346,9 @@ async function insertRun(
     source: ProbeSource;
     address: string;
     port: number;
-    ipVersion: 4 | 6;
+    addressKind: ProbeAddressKind;
+    probeProtocol: ProbeProtocol;
+    requestedFamily: RequestedFamily;
     trigger: 'cron' | 'manual' | 'detector' | 'qualification';
     /** Executor start delay: staggers a batch's runs against one external service. */
     delayMs: number;
@@ -289,7 +362,12 @@ async function insertRun(
     source: a.source,
     target: `${bracketIfV6(a.address)}:${a.port}`,
     port: a.port,
-    ipVersion: a.ipVersion,
+    // The OBSERVED family: a literal's own, absent for a name (the vantage's
+    // resolver decides, and FCP never learns which record it followed).
+    ...(a.requestedFamily === 'any' ? {} : { ipVersion: a.requestedFamily }),
+    addressKind: a.addressKind,
+    probeProtocol: a.probeProtocol,
+    requestedFamily: a.requestedFamily,
     status: 'requested',
     trigger: a.trigger,
     requestedAt: now,
@@ -313,7 +391,7 @@ interface TargetPlan {
   resolved: ResolvedTarget;
   cfg: EdgeConfig;
   sources: ProbeSource[];
-  families: Array<4 | 6>;
+  families: RequestedFamily[];
   /** Runs one source costs for this target (ports × address families). */
   runsPerSource: number;
   /** Runs the round costs in total (sources × runsPerSource): its hourly-budget reservation. */
@@ -327,8 +405,14 @@ async function planTarget(
 ): Promise<TargetPlan> {
   const resolved = await resolveTarget(ctx, target);
   if (!resolved) throw new ConvexError({ code: 'not_found', message: 'Probe target not found' });
-  if (!resolved.addresses.v4 && !resolved.addresses.v6) {
+  if (!hasAddress(resolved)) {
     throw new ConvexError({ code: 'edge.no_address', message: 'The target has no address yet' });
+  }
+  if (resolved.ports.length === 0) {
+    throw new ConvexError({
+      code: 'probe.no_listeners',
+      message: 'The target has no listener port to probe',
+    });
   }
   const cfg = await resolveEdgeConfig(ctx.db);
   const secrets = await resolveEdgeSecrets(ctx.db);
@@ -394,8 +478,8 @@ async function insertPlanned(
   for (const source of plan.sources) {
     const spacing = staggerSpacing(plan.cfg, source, opts.batchRunsPerSource);
     let k = 0;
-    for (const ipVersion of plan.families) {
-      const address = ipVersion === 4 ? plan.resolved.addresses.v4! : plan.resolved.addresses.v6!;
+    for (const requestedFamily of plan.families) {
+      const address = addressForFamily(plan.resolved, requestedFamily);
       for (const port of plan.resolved.ports) {
         runIds.push(
           await insertRun(ctx, {
@@ -403,7 +487,9 @@ async function insertPlanned(
             source,
             address,
             port,
-            ipVersion,
+            addressKind: requestedFamily === 'any' ? 'name' : 'ip',
+            probeProtocol: plan.resolved.probeProtocol,
+            requestedFamily,
             trigger,
             delayMs: Math.min((offset + k) * spacing, spanCap),
           }),
@@ -413,6 +499,15 @@ async function insertPlanned(
     }
   }
   return runIds;
+}
+
+function hasAddress(r: ResolvedTarget): boolean {
+  return !!(r.addresses.v4 || r.addresses.v6 || r.addresses.name);
+}
+
+function addressForFamily(r: ResolvedTarget, family: RequestedFamily): string {
+  if (family === 'any') return r.addresses.name!;
+  return family === 4 ? r.addresses.v4! : r.addresses.v6!;
 }
 
 /**
@@ -620,26 +715,32 @@ export const finishRun = internalMutation({
               failNetworks: rs.some((r) => !r.ok) ? ['internal'] : [],
             }
           : sourceVerdict(run.source, rs, cfg.probe.agreementVantages);
-      // One rollup row per (country, source, address family, listener port): a
-      // dual-stack target's v6 result must never overwrite its v4 verdict, and
-      // a multi-port edge's ports must not overwrite each other in completion
-      // order. A row written before ports were kept (no `port`) is the legacy
-      // single-port row: the first run on its path adopts and stamps it.
+      // One rollup row per (country, source, family, listener port), where the
+      // family is the observed one or `name`: a dual-stack target's v6 result
+      // must never overwrite its v4 verdict, a hostname's result is neither,
+      // and a multi-port edge's ports must not overwrite each other in
+      // completion order. A row written before ports were kept (no `port`) is
+      // the legacy single-port row: the first run on its path adopts and
+      // stamps it.
       const port = portOfRun(run);
+      const runFamily = familyKeyOf(run);
       const samePath = existing.filter(
-        (x) =>
-          x.country === country && x.source === run.source && (x.ipVersion ?? 4) === run.ipVersion,
+        (x) => x.country === country && x.source === run.source && familyKeyOf(x) === runFamily,
       );
       const row =
         samePath.find((x) => x.port === port) ?? samePath.find((x) => x.port === undefined);
       const patch = {
         port,
+        addressKind: run.addressKind ?? 'ip',
+        probeProtocol: run.probeProtocol ?? 'tcp',
         okCount: summary.okVantages,
         failCount: summary.failVantages,
         lastOkAt: summary.okVantages > 0 ? now : row?.lastOkAt,
         lastFailAt: summary.failVantages > 0 ? now : row?.lastFailAt,
-        // The transition marker the detector needs: this country has reached
-        // the target before, so a later `unreachable` is a change, not a constant.
+        // Kept for the admin view ("last fully reachable"). The transition
+        // marker the detector needs is `lastOkAt`: a country that only ever
+        // reached the target through a degraded (`mixed`) verdict never gets a
+        // `lastReachableAt`, and would otherwise be unable to ever arm.
         lastReachableAt: summary.verdict === 'reachable' ? now : row?.lastReachableAt,
         // The real distinct failing networks (bounded) behind this verdict.
         failNetworks: summary.failNetworks.slice(0, MAX_FAIL_NETWORKS),
@@ -700,12 +801,18 @@ async function refreshTargetSummary(ctx: MutationCtx, target: ProbeTargetRef, no
     .sort();
   const byCountry = countries.map((country) => {
     const fresh = rows.filter((r) => r.country === country && r.updatedAt >= staleBefore);
-    // The country verdict follows the IPv4 path (what every member receives);
-    // IPv6 rows summarise separately as `v6Verdict` and only stand in for the
-    // verdict when the target was probed over v6 alone.
-    const v4Rows = fresh.filter((r) => (r.ipVersion ?? 4) === 4);
-    const v6Rows = fresh.filter((r) => r.ipVersion === 6);
-    const primaryRows = v4Rows.length > 0 ? v4Rows : v6Rows;
+    // The country verdict follows the IPv4 path (what every member receives),
+    // or the NAME path for a target that is a hostname (an L7 front has no
+    // family of its own). IPv6 and name rows summarise separately as
+    // `v6Verdict` / `nameVerdict` and only stand in for the verdict when the
+    // target was probed over that path alone.
+    const ofFamily = (subset: typeof fresh, family: 4 | 6 | 'name') =>
+      subset.filter((r) => familyKeyOf(r) === family);
+    const v4Rows = ofFamily(fresh, 4);
+    const v6Rows = ofFamily(fresh, 6);
+    const nameRows = ofFamily(fresh, 'name');
+    const primaryFamily: 4 | 6 | 'name' = v4Rows.length > 0 ? 4 : nameRows.length > 0 ? 'name' : 6;
+    const primaryRows = v4Rows.length > 0 ? v4Rows : nameRows.length > 0 ? nameRows : v6Rows;
     const summarise = (subset: typeof fresh): SourceSummary[] =>
       subset.map((r) => ({
         source: r.source,
@@ -730,20 +837,35 @@ async function refreshTargetSummary(ctx: MutationCtx, target: ProbeTargetRef, no
       );
     };
     const perSource = summarise(primaryRows);
-    const v6 = v4Rows.length > 0 && v6Rows.length > 0 ? acrossPorts(v6Rows) : undefined;
+    const v6 = primaryFamily !== 6 && v6Rows.length > 0 ? acrossPorts(v6Rows) : undefined;
+    const name =
+      primaryFamily !== 'name' && nameRows.length > 0 ? acrossPorts(nameRows) : undefined;
     const verdict = acrossPorts(primaryRows);
     // The reachable→unreachable transition is judged PER PORT: a port that is
     // unreachable now counts only if THAT port was reached from this country
     // before. Another port's reachable history must not make a listener that
     // was blocked since it appeared look like a fresh block.
+    //
+    // History is read over the UNFILTERED rows (any source, any age) while
+    // the verdict above stays on fresh rows from enabled sources. Otherwise
+    // disabling a source, or simply letting its rows age out, erases the
+    // target's reachable history and silently disarms the transition marker
+    // exactly when the evidence matters. `lastOkAt` is the signal, not
+    // `lastReachableAt`: a country that only ever saw a degraded (`mixed`)
+    // verdict still reached the target.
+    const history = allRows.filter(
+      (r) => r.country === country && familyKeyOf(r) === primaryFamily,
+    );
+    const reachedBefore = (rs: typeof allRows) =>
+      rs.some((r) => r.lastOkAt !== undefined || r.lastReachableAt !== undefined);
     const wasReachable = (() => {
-      const ports = [...new Set(primaryRows.map((r) => r.port ?? -1))];
-      const portRows = (p: number) => primaryRows.filter((r) => (r.port ?? -1) === p);
-      const reachedBefore = (rs: typeof primaryRows) =>
-        rs.some((r) => r.lastReachableAt !== undefined);
-      if (verdict !== 'unreachable') return reachedBefore(primaryRows);
+      const portKey = (r: { port?: number }) => r.port ?? -1;
+      if (verdict !== 'unreachable') return reachedBefore(history);
+      const ports = [...new Set(primaryRows.map(portKey))];
       return ports.some(
-        (p) => verdictOf(summarise(portRows(p))) === 'unreachable' && reachedBefore(portRows(p)),
+        (p) =>
+          verdictOf(summarise(primaryRows.filter((r) => portKey(r) === p))) === 'unreachable' &&
+          reachedBefore(history.filter((r) => portKey(r) === p)),
       );
     })();
     return {
@@ -751,6 +873,7 @@ async function refreshTargetSummary(ctx: MutationCtx, target: ProbeTargetRef, no
       verdict,
       wasReachable,
       ...(v6 ? { v6Verdict: v6 } : {}),
+      ...(name ? { nameVerdict: name } : {}),
       okVantages: perSource.reduce((a, s) => a + s.okVantages, 0),
       failVantages: perSource.reduce((a, s) => a + s.failVantages, 0),
       // THIS country's own freshness (its newest contributing row), never the
@@ -1017,12 +1140,12 @@ export const due = internalQuery({
       const last = newest?.requestedAt ?? 0;
       if (last !== 0 && now - last < interval) return;
       const resolved = await resolveTarget(ctx, target);
-      if (!resolved || (!resolved.addresses.v4 && !resolved.addresses.v6)) return;
-      dueTargets.push({
-        target,
-        suspected,
-        runsPerSource: Math.max(1, familiesOf(resolved, cfg).length * resolved.ports.length),
-      });
+      // No address, or no listener port to aim at: not probeable (probing a
+      // guessed port would record its silence as a block).
+      if (!resolved || !hasAddress(resolved) || resolved.ports.length === 0) return;
+      const runsPerSource = familiesOf(resolved, cfg).length * resolved.ports.length;
+      if (runsPerSource === 0) return;
+      dueTargets.push({ target, suspected, runsPerSource });
     };
     const baseInterval = cfg.probe.intervalMinutes * MIN;
     for (const relay of relays) {
@@ -1031,8 +1154,13 @@ export const due = internalQuery({
       for (const edgeId of relay.publishedEdgeIds) {
         if (!edgeId) continue;
         const edge = await ctx.db.get(edgeId);
-        // v6-only edges are probed too (over v6; requestProbesFor's family rules).
-        if (!edge || edge.status !== 'active' || (!edge.addresses.v4 && !edge.addresses.v6))
+        // v6-only and hostname (L7) edges are probed too; `consider` applies
+        // the family rules and skips a target with nothing to aim at.
+        if (
+          !edge ||
+          edge.status !== 'active' ||
+          (!edge.addresses.v4 && !edge.addresses.v6 && !edge.addresses.hostname)
+        )
           continue;
         await consider({ kind: 'edge', ref: edgeId }, interval, suspected);
       }

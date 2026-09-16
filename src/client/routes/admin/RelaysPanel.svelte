@@ -37,10 +37,18 @@
     EdgeRotationStartedResponse,
     EdgeLiveResponse,
     type EdgeLive,
+    type EdgeAdmin,
     type RelayAdmin,
+    type RelaySlotAdmin,
     type EdgeSummary,
   } from '../../../shared/contracts/edges';
   import { formatDateTime } from '../../lib/i18n/format';
+  import {
+    addressLine,
+    layerLabel,
+    providerAddressKind,
+    providerLabel,
+  } from '../../lib/edgeProviderMeta';
   import AdminListState from './AdminListState.svelte';
 
   interface Props {
@@ -248,6 +256,7 @@
     lbId: '',
     ipv4: '',
     ipv6: '',
+    hostname: '',
     port: 443,
     publish: true,
   });
@@ -268,12 +277,24 @@
       (a, b) => Number(b.unowned ?? true) - Number(a.unowned ?? true),
     ),
   );
+  /**
+   * How the edge is addressed. From a provider account the account's kind
+   * decides; entered by hand, a slot that only an L7 front can carry is named by
+   * hostname (an observe-only record of a CDN front).
+   */
+  const adoptAccount = $derived(adoptAccounts.find((a) => a.id === adopt.accountId) ?? null);
+  const adoptByHostname = $derived(
+    adopt.source === 'provider'
+      ? adoptAccount !== null && providerAddressKind(adoptAccount.provider) === 'hostname'
+      : (adoptSlot?.layers ?? ['l4']).every((l) => l === 'l7'),
+  );
   function pickLb(id: string) {
     const lb = inventoryLbs.find((x) => x.id === id);
     if (!lb) return;
     adopt.lbId = id;
     adopt.ipv4 = lb.addresses.v4 ?? '';
     adopt.ipv6 = lb.addresses.v6 ?? '';
+    adopt.hostname = lb.addresses.hostname ?? lb.hostnames?.[0] ?? '';
   }
   const refreshInventory = createMutation(() => ({
     mutationFn: (id: string) =>
@@ -292,8 +313,9 @@
         `/api/v1/admin/edges/relays/${adoptFor}/adopt`,
         {
           slotId: adopt.slotId,
-          ipv4: adopt.ipv4.trim(),
-          ipv6: adopt.ipv6.trim() || null,
+          ...(adoptByHostname
+            ? { hostname: adopt.hostname.trim() }
+            : { ipv4: adopt.ipv4.trim(), ipv6: adopt.ipv6.trim() || null }),
           port: Number(adopt.port) || 443,
           publish: adopt.publish,
           ...(adopt.source === 'provider' && adopt.accountId && adopt.lbId
@@ -314,13 +336,14 @@
   }));
   const adoptReady = $derived(
     !!adopt.slotId &&
-      !!adopt.ipv4.trim() &&
+      !!(adoptByHostname ? adopt.hostname.trim() : adopt.ipv4.trim()) &&
       (adopt.source === 'manual' || (!!adopt.accountId && !!adopt.lbId)),
   );
 
   // --- detail drawer (edges, rotations, endpoints) ------------------------------------------
   let detailFor = $state<string | null>(null);
   const edges = adminRelayEdgesQuery(() => detailFor);
+  const slots = adminRelaySlotsQuery(() => detailFor);
   const rotations = adminRelayRotationsQuery(() => detailFor);
   const endpoints = adminRelayEndpointsQuery(() => detailFor);
   // The rotation drawer polls every 2s ONLY while the run is not terminal
@@ -348,6 +371,75 @@
     },
     onError: onError('Could not delete the edge'),
   }));
+  /**
+   * An L7 edge is published only on a fresh end-to-end proof through the
+   * deployed transport ("Qualify now" runs it). The geographic gate is a second,
+   * separate requirement: evidence from the countries the detector flagged. Only
+   * that gate can be forced, and the forcing is audited.
+   */
+  const qualifyFront = createMutation(() => ({
+    mutationFn: (id: string) =>
+      apiClient.post(`/api/v1/admin/edges/${id}/qualify`, {}, EdgeOkResponse),
+    onSuccess: (r) => {
+      invalidate();
+      if (r.ok) toast.success('Front qualified');
+      else toast.error('Front not qualified', { description: r.code ?? 'failed' });
+    },
+    onError: onError('Could not qualify the front'),
+  }));
+  /**
+   * The qualification credential is a capped panel account FCP mints on the
+   * relay's placement; the session authenticates with it, so the proof travels
+   * a member's path. Only a boolean reaches the UI.
+   */
+  const mintCredential = createMutation(() => ({
+    mutationFn: (id: string) =>
+      apiClient.post(
+        `/api/v1/admin/edges/relays/${id}/qualification-credential`,
+        {},
+        EdgeOkResponse,
+      ),
+    onSuccess: (r) => {
+      invalidate();
+      if (r.ok) toast.success('Qualification credential minted');
+      else toast.error('Could not mint the credential', { description: r.code ?? 'failed' });
+    },
+    onError: onError('Could not mint the credential'),
+  }));
+  const revokeCredential = createMutation(() => ({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/api/v1/admin/edges/relays/${id}/qualification-credential`, EdgeOkResponse),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Qualification credential revoked');
+    },
+    onError: onError('Could not revoke the credential'),
+  }));
+  let publishFor = $state<EdgeAdmin | null>(null);
+  let forceGeoEvidence = $state(false);
+  function openPublish(e: EdgeAdmin) {
+    // L4 edges publish straight away; only an L7 publish has a choice to make.
+    if (e.layer !== 'l7') {
+      edgeAct.mutate({ id: e.id, op: 'publish' });
+      return;
+    }
+    forceGeoEvidence = false;
+    publishFor = e;
+  }
+  const readinessClass = (s: string) =>
+    s === 'ready'
+      ? 'border-emerald-500/40 bg-emerald-500/10'
+      : s === 'failed'
+        ? 'border-destructive/40 bg-destructive/10 text-destructive'
+        : 'border-amber-500/40 bg-amber-500/10';
+  /** What the node role declared about the slot's origin, in one line. */
+  function originTransportLine(s: RelaySlotAdmin): string {
+    const t = s.originTransport;
+    if (!t) return 'origin transport not registered (legacy L4 slot)';
+    const names = t.certNames.length > 0 ? t.certNames.join(', ') : 'none';
+    return `${t.scheme} · certificate ${t.certPublic ? 'publicly trusted' : 'not publicly trusted'} · names ${names} · Host header ${t.acceptsHostHeader === 'any' ? 'any' : 'those names only'}`;
+  }
+
   const pullLive = createMutation(() => ({
     mutationFn: (id: string) =>
       apiClient.post(`/api/v1/admin/edges/${id}/live/refresh`, {}, EdgeLiveResponse),
@@ -512,7 +604,8 @@
                 <span class="font-medium"
                   >{p.poolIndex === 0 ? 'Primary slot' : `Pool ${p.poolIndex}`}</span
                 >
-                <span class="rounded-full border px-1.5">{p.provider ?? 'adopted'}</span>
+                <span class="rounded-full border px-1.5">{providerLabel(p.provider)}</span>
+                <span class="rounded-full border px-1.5">{layerLabel(p.layer)}</span>
                 <span
                   class="rounded-full border px-1.5 {p.health === 'online'
                     ? 'border-emerald-500/40'
@@ -529,9 +622,7 @@
                   >
                 {/if}
               </div>
-              <div class="mt-1 font-mono">
-                {p.addresses.v4 ?? '-'}{p.addresses.v6 ? ` · ${p.addresses.v6}` : ''}
-              </div>
+              <div class="mt-1 font-mono">{addressLine(p.addresses)}</div>
               <div class="mt-1.5 flex gap-1">
                 <Button
                   size="sm"
@@ -579,16 +670,19 @@
                     {#each edges.data ?? [] as e (e.id)}
                       <tr class="border-t">
                         <td class="py-1.5 pr-3 font-mono">{e.name}</td>
-                        <td class="pr-3">{e.provider ?? (e.managed ? '-' : 'adopted')}</td>
+                        <td class="pr-3"
+                          >{e.provider ? providerLabel(e.provider) : e.managed ? '-' : 'adopted'}
+                          <span class="ms-1 rounded-full border px-1.5 text-[10px]"
+                            >{layerLabel(e.layer)}</span
+                          ></td
+                        >
                         <td class="pr-3"
                           >{e.status}{e.failure ? ` (${e.failure.code ?? e.failure.step})` : ''}</td
                         >
                         <td class="pr-3"
                           >{e.publication}{e.poolIndex !== null ? ` #${e.poolIndex}` : ''}</td
                         >
-                        <td class="pr-3 font-mono"
-                          >{e.addresses.v4 ?? '-'}{e.addresses.v6 ? ` / ${e.addresses.v6}` : ''}</td
-                        >
+                        <td class="pr-3 font-mono">{addressLine(e.addresses, ' / ')}</td>
                         <td class="pr-3">{e.health}</td>
                         <td class="pr-3">{e.progress.done}/{e.progress.total}</td>
                         <td class="whitespace-nowrap">
@@ -609,8 +703,7 @@
                               size="sm"
                               variant="ghost"
                               class="h-6 px-2 text-xs"
-                              onclick={() => edgeAct.mutate({ id: e.id, op: 'publish' })}
-                              >Publish</Button
+                              onclick={() => openPublish(e)}>Publish</Button
                             >
                           {/if}
                           {#if e.status === 'needs_operator'}
@@ -672,6 +765,59 @@
                           {/if}
                         </td>
                       </tr>
+                      {#if e.layer === 'l7'}
+                        <tr class="border-t border-border/40">
+                          <td colspan="8" class="pb-2 ps-0 pe-3 text-[11px]">
+                            <div class="flex flex-wrap items-center gap-2">
+                              {#if e.readiness}
+                                {#each [{ what: 'DNS', state: e.readiness.dns }, { what: 'certificate', state: e.readiness.certificate }, { what: 'front', state: e.readiness.front }] as r (r.what)}
+                                  <span class="rounded-full border px-1.5 {readinessClass(r.state)}"
+                                    >{r.what} {r.state}</span
+                                  >
+                                {/each}
+                                <span class="text-muted-foreground"
+                                  >checked {formatDateTime(e.readiness.checkedAt)}</span
+                                >
+                              {:else}
+                                <span class="text-muted-foreground"
+                                  >Readiness not observed yet.</span
+                                >
+                              {/if}
+                              {#if e.frontQualification}
+                                {@const q = e.frontQualification}
+                                <span
+                                  class="rounded-full border px-1.5 {q.ok && q.current
+                                    ? 'border-emerald-500/40 bg-emerald-500/10'
+                                    : 'border-destructive/40 bg-destructive/10 text-destructive'}"
+                                  >transport proof {q.ok
+                                    ? 'passed'
+                                    : `failed (${q.code ?? 'no code'})`}</span
+                                >
+                                <span class="text-muted-foreground"
+                                  >{q.current
+                                    ? 'current'
+                                    : 'stale: qualify again before publishing'}
+                                  · checked {formatDateTime(q.checkedAt)} · expires {formatDateTime(
+                                    q.expiresAt,
+                                  )}</span
+                                >
+                              {:else}
+                                <span class="text-muted-foreground"
+                                  >No transport proof yet: an L7 edge is publishable only once one
+                                  passes.</span
+                                >
+                              {/if}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                class="h-6 px-2 text-[11px]"
+                                disabled={qualifyFront.isPending}
+                                onclick={() => qualifyFront.mutate(e.id)}>Qualify now</Button
+                              >
+                            </div>
+                          </td>
+                        </tr>
+                      {/if}
                       {#if liveFor === e.id && live}
                         <tr class="border-t bg-muted/30"
                           ><td colspan="8" class="p-2">
@@ -707,8 +853,12 @@
                   {#each endpoints.data.published as p (p.edgeId)}
                     <li class="font-mono">
                       #{p.poolIndex}
-                      {p.addresses.v4 ?? '-'}{p.addresses.v6 ? ` [${p.addresses.v6}]` : ''}:{p.port} ·
-                      slot {p.slotKey} ({p.protocol}) · {p.provider}{p.protocol === 'reality'
+                      {p.hostname ?? addressLine(p.addresses, ' / ')}:{p.port} · {layerLabel(
+                        p.layer,
+                      )} · slot {p.slotKey} ({p.protocol}) · {p.provider}{p.sni
+                        ? ` · SNI: ${p.sni}`
+                        : ''}{p.hostHeader ? ` · Host: ${p.hostHeader}` : ''}{p.protocol ===
+                        'reality' && p.activeServerNames.length > 0
                         ? ` · SNIs: ${p.activeServerNames.join(', ')}`
                         : ''}
                     </li>
@@ -721,6 +871,57 @@
                     ? endpoints.data.sample.backup.sni
                     : '-'}. Each subscriber gets a stable pick.
                 </p>
+              {/if}
+            </div>
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+              <span class="font-semibold">L7 qualification credential:</span>
+              <span class="text-muted-foreground"
+                >{o.qualificationCredential
+                  ? 'minted (a capped panel account on this relay)'
+                  : 'none; L7 fronts cannot be qualified until one exists'}</span
+              >
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={mintCredential.isPending}
+                onclick={() => mintCredential.mutate(o.id)}
+                >{o.qualificationCredential ? 'Re-mint' : 'Mint'}</Button
+              >
+              {#if o.qualificationCredential}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={revokeCredential.isPending}
+                  onclick={() => revokeCredential.mutate(o.id)}>Revoke</Button
+                >
+              {/if}
+            </div>
+            <div>
+              <h3 class="mb-2 text-sm font-semibold">Slots (registered by the node role)</h3>
+              {#if (slots.data ?? []).length === 0}
+                <p class="text-xs text-muted-foreground">
+                  No slots yet. The role registers one per inbound it deploys.
+                </p>
+              {:else}
+                <ul class="space-y-1 text-xs">
+                  {#each slots.data ?? [] as s (s.id)}
+                    <li class="rounded border px-2 py-1.5 {s.retired ? 'opacity-60' : ''}">
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="font-mono">{s.slotKey}</span>
+                        <span class="rounded-full border px-1.5">{s.protocol}</span>
+                        {#each s.layers as l (l)}
+                          <span class="rounded-full border px-1.5">{layerLabel(l)}</span>
+                        {/each}
+                        <span class="text-muted-foreground"
+                          >port {s.originPort} · {s.profileSlug ?? 'no profile'} · {s.deployed
+                            ? 'deployed'
+                            : 'not deployed'}{s.retired ? ' · retired' : ''}</span
+                        >
+                      </div>
+                      <div class="mt-0.5 text-muted-foreground">{originTransportLine(s)}</div>
+                    </li>
+                  {/each}
+                </ul>
               {/if}
             </div>
             <div>
@@ -976,7 +1177,7 @@
             >
             <Select.Content>
               {#each adoptAccounts as a (a.id)}<Select.Item value={a.id}
-                  >{a.name} · {a.provider}</Select.Item
+                  >{a.name} · {providerLabel(a.provider)}</Select.Item
                 >{/each}
             </Select.Content>
           </Select.Root>
@@ -1017,10 +1218,15 @@
                       <span>
                         <span class="font-medium">{lb.name}</span>
                         <span class="ml-2 font-mono text-muted-foreground"
-                          >{lb.addresses.v4 ?? 'no IPv4'}{lb.addresses.v6
-                            ? ` · ${lb.addresses.v6}`
-                            : ''}</span
+                          >{(lb.hostnames ?? []).length > 0
+                            ? lb.hostnames?.join(', ')
+                            : addressLine(lb.addresses)}</span
                         >
+                        {#if lb.content}
+                          <span class="ml-2 text-muted-foreground"
+                            >dials <span class="font-mono">{lb.content}</span></span
+                          >
+                        {/if}
                       </span>
                       <span class="shrink-0 text-muted-foreground">
                         {lb.status ?? ''}{lb.unowned === false ? ' · already an edge' : ''}
@@ -1034,21 +1240,36 @@
         {/if}
       {/if}
       <div class="grid gap-3 sm:grid-cols-3">
-        <label class="text-xs"
-          >IPv4<Input
-            class="mt-1"
-            bind:value={adopt.ipv4}
-            placeholder="198.51.100.7"
-            readonly={adopt.source === 'provider'}
-          /></label
-        >
-        <label class="text-xs"
-          >IPv6 (optional)<Input
-            class="mt-1"
-            bind:value={adopt.ipv6}
-            readonly={adopt.source === 'provider'}
-          /></label
-        >
+        {#if adoptByHostname}
+          <label class="text-xs sm:col-span-2"
+            >Hostname<Input
+              class="mt-1 font-mono"
+              bind:value={adopt.hostname}
+              placeholder="front.example"
+              readonly={adopt.source === 'provider'}
+            />
+            <span class="mt-1 block text-[11px] text-muted-foreground"
+              >This front is reached by name: members receive the hostname as the address, the SNI
+              and the Host header.</span
+            ></label
+          >
+        {:else}
+          <label class="text-xs"
+            >IPv4<Input
+              class="mt-1"
+              bind:value={adopt.ipv4}
+              placeholder="198.51.100.7"
+              readonly={adopt.source === 'provider'}
+            /></label
+          >
+          <label class="text-xs"
+            >IPv6 (optional)<Input
+              class="mt-1"
+              bind:value={adopt.ipv6}
+              readonly={adopt.source === 'provider'}
+            /></label
+          >
+        {/if}
         <label class="text-xs"
           >Port<Input class="mt-1" type="number" bind:value={adopt.port} /></label
         >
@@ -1061,6 +1282,66 @@
       <Button variant="outline" onclick={() => (adoptFor = null)}>Cancel</Button>
       <Button disabled={adoptEdge.isPending || !adoptReady} onclick={() => adoptEdge.mutate()}
         >{adopt.source === 'provider' ? 'Import' : 'Record'}</Button
+      >
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<!-- Publish an L7 edge -->
+<Dialog.Root open={publishFor !== null} onOpenChange={(v) => !v && (publishFor = null)}>
+  <Dialog.Content class="sm:max-w-lg">
+    <Dialog.Header>
+      <Dialog.Title>Publish this front</Dialog.Title>
+      <Dialog.Description>
+        Publishing sends members to <span class="font-mono"
+          >{publishFor ? addressLine(publishFor.addresses) : ''}</span
+        >. The transport proof, the TLS chain, ownership, layer compatibility and the configuration
+        binding are all re-checked inside the publish itself.
+      </Dialog.Description>
+    </Dialog.Header>
+    {#if publishFor}
+      {@const q = publishFor.frontQualification}
+      <div class="space-y-3 text-xs">
+        <p class={q?.ok && q.current ? 'text-muted-foreground' : 'text-destructive'}>
+          {#if !q}
+            No transport proof on record. Run "Qualify now" first.
+          {:else if !q.ok}
+            The last transport proof failed ({q.code ?? 'no code'}).
+          {:else if !q.current}
+            The transport proof no longer matches the current slot, profile or plan. Qualify again.
+          {:else}
+            Transport proof passed {formatDateTime(q.checkedAt)}, valid until {formatDateTime(
+              q.expiresAt,
+            )}.
+          {/if}
+        </p>
+        <label class="flex items-start gap-2"
+          ><Checkbox bind:checked={forceGeoEvidence} />
+          <span
+            >Force the geographic evidence gate
+            <span class="block text-[11px] text-muted-foreground"
+              >Publishes without probe evidence from the countries the detector flagged. It never
+              bypasses the transport proof, the TLS chain, ownership or the configuration checks,
+              and the choice is recorded in the audit log.</span
+            ></span
+          ></label
+        >
+      </div>
+    {/if}
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (publishFor = null)}>Cancel</Button>
+      <Button
+        disabled={act.isPending}
+        onclick={() => {
+          const e = publishFor!;
+          publishFor = null;
+          // The relay route carries the gate flag; the rotation it starts is the same one.
+          act.mutate({
+            id: e.relayId,
+            op: 'publish',
+            body: { edgeId: e.id, forceGeoEvidence },
+          });
+        }}>Publish</Button
       >
     </Dialog.Footer>
   </Dialog.Content>
@@ -1100,12 +1381,8 @@
         </div>
         {#if r.edge}
           <div class="text-xs">
-            New edge: {r.edge.provider ?? '-'} ·
-            <span class="font-mono"
-              >{r.edge.addresses.v4 ?? '-'}{r.edge.addresses.v6
-                ? ` / ${r.edge.addresses.v6}`
-                : ''}</span
-            >
+            New edge: {providerLabel(r.edge.provider)} ·
+            <span class="font-mono">{addressLine(r.edge.addresses, ' / ')}</span>
             · {r.edge.health} · {r.edge.status}
           </div>
         {/if}

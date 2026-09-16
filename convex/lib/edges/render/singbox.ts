@@ -80,6 +80,21 @@ export function renderSingbox(input: RenderInput): RenderOutput {
     clone.server = ep.address;
     clone.server_port = ep.port;
     if (ep.sni !== null && isObj(clone.tls)) clone.tls = { ...clone.tls, server_name: ep.sni };
+    // The HTTP transports carry their own Host, which an L7 front must see as
+    // its own hostname (and an L4 edge as the name it presents). `path` /
+    // `service_name` stay exactly as the panel wrote them: they are the node's
+    // routing, not the front's.
+    if (ep.hostHeader !== null && isObj(clone.transport)) {
+      const transport = clone.transport;
+      if (transport.type === 'ws') {
+        const headers = isObj(transport.headers) ? { ...transport.headers } : {};
+        headers.Host = ep.hostHeader;
+        clone.transport = { ...transport, headers };
+      } else if (transport.type === 'httpupgrade') {
+        clone.transport = { ...transport, host: ep.hostHeader };
+      }
+      // gRPC takes the authority from the server name; nothing to write.
+    }
     emitted.push(clone);
   }
   // Drop-only: no endpoint to emit (empty pool) — remove the templates, prune
@@ -125,7 +140,9 @@ export function renderSingbox(input: RenderInput): RenderOutput {
         members.push(m);
       }
       const group: Obj = { ...ob, outbounds: members };
-      if (tag === autoName && autoGroupIsGroup) {
+      // Only ADOPT an operator group of that name when the auto group is on:
+      // with `autoGroup` off the name is the operator's, not ours.
+      if (useAuto && tag === autoName && autoGroupIsGroup) {
         sawAutoGroup = true;
         group.outbounds = emittedTags;
         group.type = 'urltest';

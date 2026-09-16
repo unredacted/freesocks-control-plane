@@ -564,14 +564,25 @@ an unverified one-tap import scheme.
 
 Two optional provider capabilities back `docs/edges.md`: `hostManagement`
 (`listHosts` / `updateHost`: list the panel's client-facing connection entries and
-repoint ONE of them by uuid, address + port only) and `nodeInventory`
+repoint ONE of them by uuid) and `nodeInventory`
 (`getNodeInventory`: per-node online + users-online, cached in `backendNodeInventory`
 by the healthcheck cron). Remnawave implements both (`GET /api/hosts`,
-`PATCH /api/hosts { uuid, address, port }`, `GET /api/nodes`); a backend without
-them throws `backend.hosts_unsupported` from the dispatch (`convex/backends.ts`).
+`PATCH /api/hosts { uuid, address, port, sni?, host? }`, `GET /api/nodes`); a backend
+without them throws `backend.hosts_unsupported` from the dispatch (`convex/backends.ts`).
 The relay layer only ever writes the ONE template Host per origin slot
 (remark `<node>-relay-<slotKey>`), observe-then-write, and never touches a Host's
-inbound, SNI or fingerprint.
+inbound, path or fingerprint.
+
+`updateHost` takes `{ uuid, address, port, sni?, host? }`. `address` and `port`
+always move. `sni` and `host` are three-valued: **absent** leaves the field alone
+(the field is omitted from the PATCH body), a **string** sets it, and **null**
+CLEARS it. A clear is sent as `''`, never `null`: the panel's update DTO
+validates these as optional strings, so a null would 400 and reject the whole
+PATCH, losing the address move with it. `''` and `null` read back alike
+(`listHosts` normalises both to `null`), so a cleared field compares equal
+whichever the panel returns. An edge layer change (an L4 IP front to an L7
+hostname front or back) rewrites the whole `{address, port, sni, host}` tuple, so
+no stale name from the previous layer is left behind.
 
 ## Sensitive data
 

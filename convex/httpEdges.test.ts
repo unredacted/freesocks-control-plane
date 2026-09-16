@@ -260,6 +260,7 @@ describe('relay admin routes', () => {
       'relays',
       'relays/node-candidates/refresh',
       'relays/r1/adopt',
+      'relays/r1/qualification-credential',
       'relays/r1/burn',
       'relays/r1/probe',
       'e1/publish',
@@ -295,6 +296,8 @@ describe('relay admin routes', () => {
     expect(scopeFor(['providers', 'a'], 'PATCH')).toBe('admin:servers:write');
     expect(scopeFor(['providers', 'a', 'rotate-credentials'], 'POST')).toBe('admin:servers:write');
     expect(scopeFor(['relays', 'r'], 'DELETE')).toBe('admin:servers:write');
+    // Qualifying writes a verdict onto the edge: a write scope, not a read one.
+    expect(scopeFor(['edges', 'e1', 'qualify'], 'POST')).toBe('admin:servers:write');
     expect(scopeFor(['relays', 'by-slug', 'n'], 'PUT')).toBe('admin:servers:write');
   });
 
@@ -306,6 +309,9 @@ describe('relay admin routes', () => {
     expect(throttlePolicyFor(['providers', 'a1', 'rotate-credentials'])).toBe(P);
     expect(throttlePolicyFor(['relays', 'node-candidates', 'refresh'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'live', 'refresh'])).toBe(P);
+    // An authenticated session through the front is an outbound call too.
+    expect(throttlePolicyFor(['edges', 'e1', 'qualify'])).toBe(P);
+    expect(throttlePolicyFor(['relays', 'r1', 'qualification-credential'])).toBe(P);
     expect(throttlePolicyFor(['render', 'preview'])).toBe(P);
     expect(throttlePolicyFor(['edges', 'e1', 'probe'])).toBe('admin.edges.probe');
     expect(throttlePolicyFor(['relays', 'r1', 'probe'])).toBe('admin.edges.probe');

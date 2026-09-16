@@ -1,0 +1,6 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/auth-tokens/user/#get-token-current (read 2026-09-16)",
+  "id": "5Yo3XXnjUZaqup1zmDDo9x",
+  "name": "purge only",
+  "scope": "purge_select purge_all"
+}

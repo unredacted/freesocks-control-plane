@@ -225,6 +225,81 @@
 
     <Card>
       <CardHeader class="pb-2">
+        <CardTitle class="text-base">L7 fronts</CardTitle>
+        <CardDescription>
+          An L7 edge is a hostname fronted by a CDN, so it is published only after an end-to-end
+          proof through the deployed transport. Automatic selection stays off until the node role
+          registers the origin transport and the HTTP-transport profiles, and a qualification run
+          has passed.
+        </CardDescription>
+      </CardHeader>
+      <CardContent class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label class="flex items-start gap-2 text-sm sm:col-span-2 lg:col-span-3"
+          ><Checkbox
+            checked={get('l7.autoSelect', false)}
+            onCheckedChange={(v) => set('l7.autoSelect', Boolean(v))}
+          />
+          <span
+            >Let rotations pick L7 accounts by themselves
+            <span class="block text-xs text-muted-foreground"
+              >Off: L7 edges are provisioned and published by hand, and a detector-triggered
+              replacement for an L7-only slot is vetoed rather than routed to an L4 account. Turn it
+              on only once the node role update is deployed everywhere.</span
+            ></span
+          ></label
+        >
+        <label class="text-xs"
+          >Same-provider replacements per day<Input
+            class="mt-1"
+            type="number"
+            value={num('l7.maxSameProviderReplacementsPerDay', 2)}
+            oninput={(e) =>
+              set('l7.maxSameProviderReplacementsPerDay', Number(e.currentTarget.value))}
+          />
+          <span class="mt-1 block text-[11px] text-muted-foreground"
+            >A new hostname on the same provider may keep the same frontend addresses, so repeated
+            attempts are bounded.</span
+          ></label
+        >
+        <label class="text-xs"
+          >Qualification timeout (minutes)<Input
+            class="mt-1"
+            type="number"
+            value={num('l7.qualifyTimeoutMinutes', 15)}
+            oninput={(e) => set('l7.qualifyTimeoutMinutes', Number(e.currentTarget.value))}
+          />
+          <span class="mt-1 block text-[11px] text-muted-foreground"
+            >How long a rotation waits for evidence from the affected countries.</span
+          ></label
+        >
+        <label class="text-xs"
+          >Qualification step timeout (ms)<Input
+            class="mt-1"
+            type="number"
+            value={num('l7.qualifyStepTimeoutMs', 10000)}
+            oninput={(e) => set('l7.qualifyStepTimeoutMs', Number(e.currentTarget.value))}
+          />
+          <span class="mt-1 block text-[11px] text-muted-foreground"
+            >Per step of the test session: TLS, the transport handshake, the tunnelled request.</span
+          ></label
+        >
+        <label class="text-xs"
+          >Qualification lifetime (minutes)<Input
+            class="mt-1"
+            type="number"
+            value={num('l7.qualificationTtlMinutes', 60)}
+            oninput={(e) => set('l7.qualificationTtlMinutes', Number(e.currentTarget.value))}
+          />
+          <span class="mt-1 block text-[11px] text-muted-foreground"
+            >After this, and after any slot or profile change, the edge must qualify again before it
+            can be published.</span
+          ></label
+        >
+      </CardContent>
+    </Card>
+
+    <Card>
+      <CardHeader class="pb-2">
         <CardTitle class="text-base">Client rendering</CardTitle>
         <CardDescription
           >How each client family's subscription is rewritten: template entries become the
@@ -501,6 +576,18 @@
             value={num('detect.probeWeight', 0.5)}
             oninput={(e) => set('detect.probeWeight', Number(e.currentTarget.value))}
           /></label
+        >
+        <label class="text-xs"
+          >Max report rows per evaluation<Input
+            class="mt-1"
+            type="number"
+            value={num('detect.maxReportRowsPerEval', 2000)}
+            oninput={(e) => set('detect.maxReportRowsPerEval', Number(e.currentTarget.value))}
+          />
+          <span class="mt-1 block text-[11px] text-muted-foreground"
+            >The window is read up to this many rows. Beyond it the evidence is marked incomplete
+            and nothing rotates on it.</span
+          ></label
         >
         <label class="flex items-center gap-2 text-sm"
           ><Checkbox

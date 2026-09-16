@@ -71,16 +71,42 @@ export function matchSlotHosts(
   });
 }
 
+/** Plan snapshot version 2 also captured the Host's SNI and Host header. */
+export const HOST_PLAN_SNAPSHOT_VERSION = 2;
+
 export interface HostPlanEntry {
   uuid: string;
   oldAddress: string;
   oldPort: number;
   inboundUuid?: string;
+  /**
+   * 2 = the SNI/Host below were read from the live Host. ABSENT = a legacy plan
+   * whose historical SNI/Host are UNKNOWN, which is not the same as a known
+   * `null` (= the Host carried none): a legacy rollback restores address and
+   * port only and never clears operator configuration.
+   */
+  snapshotVersion?: number;
+  oldSni?: string | null;
+  oldHost?: string | null;
 }
 
+/**
+ * The Host tuple a flip writes. `null` = the field must be CLEARED on the
+ * panel; `undefined` = the field is not part of this target (not compared, not
+ * written), which keeps legacy callers that only move address/port working.
+ */
 export interface HostTarget {
   address: string;
   port: number;
+  sni?: string | null;
+  host?: string | null;
+}
+
+/** `''` and `null` mean the same thing on the panel: the field carries nothing. */
+function sameOptional(live: string | null | undefined, want: string | null): boolean {
+  const l = live === undefined || live === null || live === '' ? null : live.trim().toLowerCase();
+  const w = want === null || want === '' ? null : want.trim().toLowerCase();
+  return l === w;
 }
 
 export interface HostDiff {
@@ -99,8 +125,11 @@ export interface HostDiff {
 }
 
 /**
- * Compare the planned Hosts against the live list for one target address/port.
+ * Compare the planned Hosts against the live list for one target tuple.
  * Convergence requires a NON-EMPTY plan with every entry present and at target.
+ * SNI / Host are compared only when the target defines them, so an L4 → L7
+ * transition (which must also rewrite them) is not reported converged while the
+ * panel still carries the previous layer's names.
  */
 export function diffHosts(
   live: readonly BackendHost[],
@@ -124,7 +153,12 @@ export function diffHosts(
       changedInbound.push(p);
       continue;
     }
-    if (sameAddress(h.address, target.address) && h.port === target.port) atTarget.push(p);
+    const at =
+      sameAddress(h.address, target.address) &&
+      h.port === target.port &&
+      (target.sni === undefined || sameOptional(h.sni, target.sni)) &&
+      (target.host === undefined || sameOptional(h.host, target.host));
+    if (at) atTarget.push(p);
     else needsWrite.push(p);
   }
   const hostsChanged = missing.length > 0 || changedInbound.length > 0;
@@ -138,7 +172,11 @@ export function diffHosts(
   };
 }
 
-/** Build the plan entries from matched template Hosts (skipping leaking ones). */
+/**
+ * Build the plan entries from matched template Hosts (skipping leaking ones).
+ * Captures the FULL previous tuple at version 2: `''` on the panel is recorded
+ * as `null` (the Host carried nothing), which a rollback then clears again.
+ */
 export function planFromMatches(matches: readonly SlotHostMatch[]): HostPlanEntry[] {
   const out: HostPlanEntry[] = [];
   for (const m of matches) {
@@ -148,9 +186,29 @@ export function planFromMatches(matches: readonly SlotHostMatch[]): HostPlanEntr
       oldAddress: m.host.address,
       oldPort: m.host.port,
       inboundUuid: m.host.inbound?.configProfileInboundUuid ?? undefined,
+      snapshotVersion: HOST_PLAN_SNAPSHOT_VERSION,
+      oldSni: m.host.sni ? m.host.sni : null,
+      oldHost: m.host.host ? m.host.host : null,
     });
   }
   return out;
+}
+
+/**
+ * The tuple a rollback must restore for one plan entry. A version-2 entry
+ * restores address, port, SNI and Host (clears included); a LEGACY entry
+ * restores address and port only: its historical SNI/Host are unknown, and
+ * "unknown" must never be written as "clear it".
+ */
+export function rollbackTargetFor(entry: HostPlanEntry): HostTarget {
+  if ((entry.snapshotVersion ?? 0) < HOST_PLAN_SNAPSHOT_VERSION)
+    return { address: entry.oldAddress, port: entry.oldPort };
+  return {
+    address: entry.oldAddress,
+    port: entry.oldPort,
+    sni: entry.oldSni ?? null,
+    host: entry.oldHost ?? null,
+  };
 }
 
 /** Case-insensitive, bracket-tolerant address equality (IPv6 literals). */

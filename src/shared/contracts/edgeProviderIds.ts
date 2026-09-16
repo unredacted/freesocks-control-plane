@@ -10,7 +10,14 @@
  * Adding a provider starts HERE; the derived `Record<EdgeProviderId, ...>`
  * maps then fail to compile until every per-provider surface has an entry.
  */
-export const EDGE_PROVIDER_IDS = ['gcore', 'upcloud', 'scaleway', 'ovh', 'cloudflare', 'fastly'] as const;
+export const EDGE_PROVIDER_IDS = [
+  'gcore',
+  'upcloud',
+  'scaleway',
+  'ovh',
+  'cloudflare',
+  'fastly',
+] as const;
 export type EdgeProviderId = (typeof EDGE_PROVIDER_IDS)[number];
 
 export function isRelayProviderId(v: unknown): v is EdgeProviderId {

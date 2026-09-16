@@ -1,0 +1,11 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/tls/subscriptions/#get-tls-sub (read 2026-09-16)",
+  "data": {
+    "id": "C0cuTFmLzMCiyMcOZuLEZ1",
+    "type": "tls_subscription",
+    "attributes": {
+      "state": "issued",
+      "certificate_authority": "certainly"
+    }
+  }
+}

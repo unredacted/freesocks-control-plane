@@ -213,7 +213,8 @@ export const NodeStatusResponse = z.object({
             z.object({
               label: z.string(),
               role: z.enum(['primary', 'backup']),
-              family: z.enum(['v4', 'v6']),
+              // `name` = a hostname-fronted connection (no address family).
+              family: z.enum(['v4', 'v6', 'name']),
             }),
           ),
         })

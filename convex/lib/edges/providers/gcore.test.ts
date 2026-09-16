@@ -155,8 +155,11 @@ describe('gcore: discovery', () => {
     expect(await gcoreProvider.discover(cfg, step, spec, emptyLedger, 1)).toEqual({
       status: 'unresolved',
     });
+    // Without any reference time the settle floor cannot be proven (a lost
+    // settle must not let a 40-second-old create be declared absent): stays
+    // unresolved. The orchestrator always supplies a fallback startedAt.
     expect(await gcoreProvider.discover(cfg, step, spec, emptyLedger, 2)).toEqual({
-      status: 'confirmed_absent',
+      status: 'unresolved',
     });
   });
 

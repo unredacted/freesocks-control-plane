@@ -28,6 +28,7 @@ import type {
   UsageSeries,
   UserState,
   BackendHost,
+  BackendHostPatch,
   NodeInventoryRow,
 } from './types';
 import { farFutureExpiryIso, isFarFutureExpiry } from './types';
@@ -54,6 +55,9 @@ const RemnawaveUser = z
     uuid: z.string().uuid().optional(),
     id: z.number().int().nonnegative().optional(),
     shortUuid: z.string(),
+    // The VLESS credential (present on create and get); the L7 front
+    // qualification authenticates with it. Lenient: absent on exotic panels.
+    vlessUuid: z.string().uuid().nullish(),
     username: z.string(),
     status: RemnawaveUserStatus,
     trafficLimitBytes: z.number().int().nonnegative().nullable(),
@@ -528,6 +532,7 @@ export async function remnawaveIssueUser(
     backendShortId: user.shortUuid,
     subscriptionUrl: pinnedSubscriptionUrl(cfg, user.subscriptionUrl, user.shortUuid),
     raw: user,
+    protocolUuid: user.vlessUuid ?? undefined,
   };
 }
 
@@ -666,6 +671,7 @@ const HostRow = z.object({
   address: z.string(),
   port: z.number().int(),
   sni: z.string().nullish(),
+  host: z.string().nullish(),
   isDisabled: z.boolean().nullish(),
   inbound: z
     .object({ configProfileUuid: z.string(), configProfileInboundUuid: z.string() })
@@ -680,7 +686,10 @@ function toBackendHost(h: z.infer<typeof HostRow>): BackendHost {
     remark: h.remark,
     address: h.address,
     port: h.port,
-    sni: h.sni ?? null,
+    // The panel returns an unset field as `null` on some versions and `''` on
+    // others; both mean "the Host carries none", so they read back the same.
+    sni: h.sni ? h.sni : null,
+    host: h.host ? h.host : null,
     isDisabled: h.isDisabled ?? false,
     inbound: h.inbound ?? null,
   };
@@ -694,21 +703,30 @@ export async function remnawaveListHosts(cfg: RemnawaveConfig): Promise<BackendH
 }
 
 /**
- * PATCH /api/hosts { uuid, address, port } — repoint one Host. The uuid travels
- * in the BODY (the panel's update contract). Only address/port are sent so the
- * Host's inbound/sni/fingerprint are untouched. The caller confirms by re-listing
- * (observe-then-write); the echoed row is not trusted as proof.
+ * PATCH /api/hosts { uuid, address, port, sni?, host? } repoints one Host. The
+ * uuid travels in the BODY (the panel's update contract). Fields the patch
+ * leaves `undefined` are OMITTED, so the Host's inbound/fingerprint/path and any
+ * name the caller did not ask about are untouched. The caller confirms by
+ * re-listing (observe-then-write); the echoed row is not trusted as proof.
+ *
+ * Clearing sends `''`, not `null`: the panel's update DTO validates these
+ * fields as optional STRINGS (the same shape as the user DTO documented at
+ * `remnawaveUpdateUser`), so a null would 400 and reject the whole PATCH,
+ * losing the address move with it. `''` and `null` read back alike
+ * (`toBackendHost`), so a cleared field compares equal either way.
  */
 export async function remnawaveUpdateHost(
   cfg: RemnawaveConfig,
-  patch: { uuid: string; address: string; port: number },
+  patch: BackendHostPatch,
 ): Promise<void> {
-  await call(cfg, {
-    method: 'PATCH',
-    path: '/api/hosts',
-    body: { uuid: patch.uuid, address: patch.address, port: patch.port },
-    schema: z.unknown(),
-  });
+  const body: Record<string, unknown> = {
+    uuid: patch.uuid,
+    address: patch.address,
+    port: patch.port,
+  };
+  if (patch.sni !== undefined) body.sni = patch.sni ?? '';
+  if (patch.host !== undefined) body.host = patch.host ?? '';
+  await call(cfg, { method: 'PATCH', path: '/api/hosts', body, schema: z.unknown() });
 }
 
 /** GET /api/nodes → one row per panel node (name, users online, connected). */

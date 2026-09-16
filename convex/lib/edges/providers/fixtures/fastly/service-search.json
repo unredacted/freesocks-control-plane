@@ -1,0 +1,25 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/services/service/#search-service (read 2026-09-16)",
+  "id": "SU1Z0isxPaozGVKXdv0eY",
+  "name": "fcp-relay-o1-deadbeef",
+  "type": "vcl",
+  "comment": "relay edge",
+  "created_at": "2026-09-16T10:00:00Z",
+  "deleted_at": null,
+  "versions": [
+    {
+      "number": 1,
+      "active": false,
+      "locked": true,
+      "comment": "",
+      "created_at": "2026-09-16T10:00:00Z"
+    },
+    {
+      "number": 2,
+      "active": false,
+      "locked": false,
+      "comment": "",
+      "created_at": "2026-09-16T10:05:00Z"
+    }
+  ]
+}

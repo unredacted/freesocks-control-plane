@@ -190,11 +190,15 @@ describe('relay capability record ⇔ adapters', () => {
   });
 
   test('a DNS account reference always points at a providesDns provider', () => {
-    const dnsProviders = EDGE_PROVIDER_IDS.filter((id) => EDGE_PROVIDER_CAPABILITIES[id].providesDns);
+    const dnsProviders = EDGE_PROVIDER_IDS.filter(
+      (id) => EDGE_PROVIDER_CAPABILITIES[id].providesDns,
+    );
     expect(dnsProviders.length).toBeGreaterThan(0);
     for (const id of EDGE_PROVIDER_IDS)
       if (EDGE_PROVIDER_CAPABILITIES[id].needsDnsAccount)
-        expect(EDGE_SETTINGS_SCHEMAS[id].safeParse({ ...SETTINGS_WITH_NETWORK[id], type: id }).success).toBe(true);
+        expect(
+          EDGE_SETTINGS_SCHEMAS[id].safeParse({ ...SETTINGS_WITH_NETWORK[id], type: id }).success,
+        ).toBe(true);
   });
 
   test.each([...EDGE_PROVIDER_IDS])(
@@ -298,29 +302,25 @@ describe('relay capability record ⇔ adapters', () => {
     expect(discoveryMaySettle('scaleway', 2, now, now)).toBe(true);
   });
 
-  test.each([...L4_IDS])(
-    '%s: default template validates and steps are well-formed',
-    (id) => {
-      const p = EDGE_PROVIDERS[id];
-      const tpl = p.templateSchema.parse(p.defaultTemplate);
-      expect(tpl).toEqual(p.defaultTemplate);
-      // Field descriptors point at real template keys.
-      for (const f of p.templateFields) {
-        const head = f.key.split('.')[0];
-        expect(Object.keys(tpl as Record<string, unknown>)).toContain(head);
-      }
-      // OVH's default lacks the required flavor; give it one for planning.
-      const planTpl =
-        id === 'ovh' ? { ...(tpl as Record<string, unknown>), flavorId: 'small' } : tpl;
-      const steps = p.planProvision(CONFIGS[id], spec, planTpl);
-      expect(steps.length).toBeGreaterThan(0);
-      expect(new Set(steps.map((s) => s.id)).size).toBe(steps.length);
-      for (const s of steps) {
-        expect(['by_name', 'by_tag', 'none']).toContain(s.discoverability);
-        expect(s.resourceName.startsWith(spec.name)).toBe(true);
-      }
-      // At most one undiscoverable allocating step per plan (operator-resolved).
-      expect(steps.filter((s) => s.discoverability === 'none').length).toBeLessThanOrEqual(1);
-    },
-  );
+  test.each([...L4_IDS])('%s: default template validates and steps are well-formed', (id) => {
+    const p = EDGE_PROVIDERS[id];
+    const tpl = p.templateSchema.parse(p.defaultTemplate);
+    expect(tpl).toEqual(p.defaultTemplate);
+    // Field descriptors point at real template keys.
+    for (const f of p.templateFields) {
+      const head = f.key.split('.')[0];
+      expect(Object.keys(tpl as Record<string, unknown>)).toContain(head);
+    }
+    // OVH's default lacks the required flavor; give it one for planning.
+    const planTpl = id === 'ovh' ? { ...(tpl as Record<string, unknown>), flavorId: 'small' } : tpl;
+    const steps = p.planProvision(CONFIGS[id], spec, planTpl);
+    expect(steps.length).toBeGreaterThan(0);
+    expect(new Set(steps.map((s) => s.id)).size).toBe(steps.length);
+    for (const s of steps) {
+      expect(['by_name', 'by_tag', 'none']).toContain(s.discoverability);
+      expect(s.resourceName.startsWith(spec.name)).toBe(true);
+    }
+    // At most one undiscoverable allocating step per plan (operator-resolved).
+    expect(steps.filter((s) => s.discoverability === 'none').length).toBeLessThanOrEqual(1);
+  });
 });

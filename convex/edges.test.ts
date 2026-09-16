@@ -229,9 +229,11 @@ describe('edges', () => {
     });
     row = (await t.query(internal.edges.get, { id }))!;
     expect(row.health).toBe('online');
-    expect(row.addresses).toEqual({ v4: '198.51.100.9', v6: '2001:db8::9' });
+    expect(row.addresses).toEqual({ v4: '198.51.100.9', v6: '2001:db8::9', hostname: undefined });
     expect(row.resources.map((r) => r.resourceId)).toEqual(['ip-1']);
-    // An active describe without the v6 family drops it (detached address).
+    // An active describe without the v6 family only COUNTS the first time: a
+    // narrowed credential or a truncated answer must not wipe a rendered
+    // address on one observation (same rule as a `gone` transition).
     await t.mutation(internal.edges.recordDescribe, {
       edgeId: id,
       state: 'active',
@@ -239,7 +241,18 @@ describe('edges', () => {
       health: 'online',
     });
     row = (await t.query(internal.edges.get, { id }))!;
-    expect(row.addresses).toEqual({ v4: '198.51.100.9', v6: undefined });
+    expect(row.addresses.v6).toBe('2001:db8::9');
+    expect(row.addressLossObservations).toBe(1);
+    // The SECOND consecutive omission drops it (detached address).
+    await t.mutation(internal.edges.recordDescribe, {
+      edgeId: id,
+      state: 'active',
+      addresses: { v4: '198.51.100.9' },
+      health: 'online',
+    });
+    row = (await t.query(internal.edges.get, { id }))!;
+    expect(row.addresses).toEqual({ v4: '198.51.100.9', v6: undefined, hostname: undefined });
+    expect(row.addressLossObservations).toBeUndefined();
     // ONE gone observation only counts (an auth-shaped 404 or a blip must not act).
     await t.mutation(internal.edges.recordDescribe, {
       edgeId: id,
@@ -402,5 +415,215 @@ describe('edges', () => {
     expect(hb.map((h) => h.name)).toEqual(
       expect.arrayContaining(['retention-edges', 'retention-edge-rotations']),
     );
+  });
+});
+
+describe('edges: the operation claim stamps the step', () => {
+  test('a provision_step claim stamps startedAt, so a lost settle still leaves a reference time', async () => {
+    const { t, accountId, relayId, slotId } = await seed();
+    const { id } = await t.mutation(internal.edges.insertPlanned, {
+      relayId,
+      slotId,
+      accountId,
+      ...plan,
+    });
+    expect((await t.query(internal.edges.get, { id }))!.steps[0].startedAt).toBeUndefined();
+    const cl = await t.mutation(internal.edges.claimOp, {
+      edgeId: id,
+      kind: 'provision_step',
+      target: 'lb',
+      claimMs: 60_000,
+    });
+    expect(cl.ok).toBe(true);
+    // The request is about to leave: discovery's settle floor is measured from
+    // here, not from a settle that may never arrive.
+    const stamped = (await t.query(internal.edges.get, { id }))!.steps.find(
+      (s) => s.stepId === 'lb',
+    )!;
+    expect(stamped.startedAt).toBeGreaterThan(0);
+    expect(
+      (await t.query(internal.edges.get, { id }))!.steps.find((s) => s.stepId === 'ip')!.startedAt,
+    ).toBeUndefined();
+  });
+
+  test('an OBSERVING claim never stamps a step (it allocates nothing)', async () => {
+    const { t, accountId, relayId, slotId } = await seed();
+    const { id } = await t.mutation(internal.edges.insertPlanned, {
+      relayId,
+      slotId,
+      accountId,
+      ...plan,
+    });
+    await t.mutation(internal.edges.claimOp, {
+      edgeId: id,
+      kind: 'discover',
+      target: 'lb',
+      claimMs: 60_000,
+    });
+    expect((await t.query(internal.edges.get, { id }))!.steps[0].startedAt).toBeUndefined();
+  });
+});
+
+describe('edges: external locks', () => {
+  async function twoEdges() {
+    const s = await seed({ maxLiveEdges: 5 });
+    const a = await s.t.mutation(internal.edges.insertPlanned, {
+      relayId: s.relayId,
+      slotId: s.slotId,
+      accountId: s.accountId,
+      ...plan,
+    });
+    const b = await s.t.mutation(internal.edges.insertPlanned, {
+      relayId: s.relayId,
+      slotId: s.slotId,
+      accountId: s.accountId,
+      ...plan,
+    });
+    return { ...s, a: a.id, b: b.id };
+  }
+
+  test('two edges on one key: the second WAITS, it never takes the shared object', async () => {
+    const { t, a, b } = await twoEdges();
+    const key = 'cloudflare-zone:z1';
+    expect(
+      await t.mutation(internal.edges.claimExternalLock, {
+        key,
+        edgeId: a,
+        opId: 'op-a',
+        ttlMs: 60_000,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      await t.mutation(internal.edges.claimExternalLock, {
+        key,
+        edgeId: b,
+        opId: 'op-b',
+        ttlMs: 60_000,
+      }),
+    ).toMatchObject({ ok: false, code: 'edge.lock_busy' });
+    // Released by its holder, the next writer gets it.
+    expect(
+      await t.mutation(internal.edges.settleExternalLock, { key, opId: 'op-b' }),
+    ).toMatchObject({ ok: false });
+    await t.mutation(internal.edges.settleExternalLock, { key, opId: 'op-a' });
+    expect(
+      await t.mutation(internal.edges.claimExternalLock, {
+        key,
+        edgeId: b,
+        opId: 'op-b',
+        ttlMs: 60_000,
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  test('a LOST response (expired, unsettled) blocks: the outcome must be re-observed first', async () => {
+    const { t, a, b } = await twoEdges();
+    const key = 'cloudflare-zone:z1';
+    await t.mutation(internal.edges.claimExternalLock, {
+      key,
+      edgeId: a,
+      opId: 'op-a',
+      ttlMs: 60_000,
+    });
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query('externalLocks')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique();
+      await ctx.db.patch(row!._id, { expiresAt: Date.now() - 1 });
+    });
+    // Expiry is NOT a licence to write: the previous holder's write is unknown.
+    expect(
+      await t.mutation(internal.edges.claimExternalLock, {
+        key,
+        edgeId: b,
+        opId: 'op-b',
+        ttlMs: 60_000,
+      }),
+    ).toMatchObject({ ok: false, code: 'edge.lock_unsettled' });
+    // The holder re-observes (its discovery pass) and releases; then it is free.
+    expect(
+      await t.mutation(internal.edges.releaseExternalLocksOf, { edgeId: a, keys: [key] }),
+    ).toEqual({ released: 1 });
+    expect(
+      await t.mutation(internal.edges.claimExternalLock, {
+        key,
+        edgeId: b,
+        opId: 'op-b',
+        ttlMs: 60_000,
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  test('the holder re-entering its own claim extends it instead of deadlocking itself', async () => {
+    const { t, a } = await twoEdges();
+    const key = 'fastly-service:svc-1';
+    await t.mutation(internal.edges.claimExternalLock, {
+      key,
+      edgeId: a,
+      opId: 'op-1',
+      ttlMs: 1,
+    });
+    expect(
+      await t.mutation(internal.edges.claimExternalLock, {
+        key,
+        edgeId: a,
+        opId: 'op-2',
+        ttlMs: 60_000,
+      }),
+    ).toMatchObject({ ok: true });
+    // Only the current opId may release it.
+    expect(
+      await t.mutation(internal.edges.settleExternalLock, { key, opId: 'op-1' }),
+    ).toMatchObject({ ok: false });
+    expect(
+      await t.mutation(internal.edges.settleExternalLock, { key, opId: 'op-2' }),
+    ).toMatchObject({ ok: true });
+  });
+
+  test('releasing another edge’s lock is a no-op', async () => {
+    const { t, a, b } = await twoEdges();
+    const key = 'cloudflare-zone:z2';
+    await t.mutation(internal.edges.claimExternalLock, {
+      key,
+      edgeId: a,
+      opId: 'op-a',
+      ttlMs: 60_000,
+    });
+    expect(
+      await t.mutation(internal.edges.releaseExternalLocksOf, { edgeId: b, keys: [key] }),
+    ).toEqual({ released: 0 });
+  });
+});
+
+describe('edges: capacity counts only what FCP provisioned', () => {
+  test('an observe-only edge does not consume the account’s live-edge cap', async () => {
+    const { t, accountId, relayId, slotId } = await seed({ maxLiveEdges: 1 });
+    // An adopted edge recorded against the account, not provisioned by FCP.
+    await t.run((ctx) =>
+      ctx.db.insert('edges', {
+        relayId,
+        slotId,
+        accountId,
+        provider: 'upcloud',
+        managed: false,
+        name: 'adopted-x',
+        steps: [],
+        resources: [],
+        listeners: [],
+        addresses: { v4: '198.51.100.8' },
+        publication: 'unpublished',
+        status: 'active',
+        statusChangedAt: Date.now(),
+        health: 'unknown',
+        destroyAttempts: 0,
+        updatedAt: Date.now(),
+      }),
+    );
+    // The cap of 1 is still free: FCP never pays for or destroys that edge.
+    await t.mutation(internal.edges.insertPlanned, { relayId, slotId, accountId, ...plan });
+    await expect(
+      t.mutation(internal.edges.insertPlanned, { relayId, slotId, accountId, ...plan }),
+    ).rejects.toThrow(/capacity/);
   });
 });

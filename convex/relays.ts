@@ -14,13 +14,78 @@ import { writeAuditLog } from './lib/audit';
 import { isTerminalPhase } from './lib/edges/rotation';
 import { edgeProviderIdValidator } from './lib/edgeProviderIds';
 import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
-import { isPublicIpLiteral, addressFamily } from './lib/edges/ip';
+import {
+  isPublicIpLiteral,
+  addressFamily,
+  publishAddressOf,
+  hasPublishableAddress,
+} from './lib/edges/ip';
 import { sameAddress } from './lib/edges/hosts';
+import { isValidHostname } from './lib/edges/hostname';
+import { slotAllowsLayer } from './lib/edges/layers';
 import { PROTOCOL_TRANSPORT, protocolUsesSni } from './lib/edges/protocols';
-import { providerHealthSatisfies } from './lib/edges/providers/capabilities';
-import { nextFreePoolIndex, withEdgeAt, withoutEdge, publishedCount } from './lib/edges/pool';
+import {
+  edgeAddressKindOf,
+  edgeLayerOf,
+  protocolCarriedBy,
+  providerHealthSatisfies,
+} from './lib/edges/providers/capabilities';
+import { parseIntent } from './lib/edges/intent';
+// The binding derivation is shared with the checker that records the
+// qualification (lib/edges/frontCheck/binding.ts): one entry point, so the
+// proof and the gate cannot hash the same configuration differently.
+import {
+  qualificationBinding,
+  qualificationRefusal,
+  qualificationVerdict,
+} from './lib/edges/frontCheck/binding';
+import {
+  nextFreePoolIndex,
+  withEdgeAt,
+  withoutEdge,
+  publishedCount,
+  EDGE_LIVE_STATUSES,
+  LIVE_EDGE_SCAN_LIMIT,
+} from './lib/edges/pool';
 
 type Db = import('./_generated/server').DatabaseReader;
+
+/**
+ * Every NON-DESTROYED edge of a relay, read through the `(relayId, status)`
+ * index one status at a time and bounded per status. A relay keeps its
+ * destroyed edges until the retention sweep prunes them, so collecting the
+ * relay's whole edge list grows without limit; the callers here only ever care
+ * about live rows.
+ */
+export async function liveEdgesOfRelay(db: Db, relayId: Id<'relays'>): Promise<Doc<'edges'>[]> {
+  const out: Doc<'edges'>[] = [];
+  for (const status of EDGE_LIVE_STATUSES) {
+    out.push(
+      ...(await db
+        .query('edges')
+        .withIndex('by_relay_status', (q) => q.eq('relayId', relayId).eq('status', status))
+        .take(LIVE_EDGE_SCAN_LIMIT)),
+    );
+  }
+  return out;
+}
+
+/** The same bounded read per provider account (the capacity / lock questions). */
+export async function liveEdgesOfAccount(
+  db: Db,
+  accountId: Id<'edgeProviderAccounts'>,
+): Promise<Doc<'edges'>[]> {
+  const out: Doc<'edges'>[] = [];
+  for (const status of EDGE_LIVE_STATUSES) {
+    out.push(
+      ...(await db
+        .query('edges')
+        .withIndex('by_account_status', (q) => q.eq('accountId', accountId).eq('status', status))
+        .take(LIVE_EDGE_SCAN_LIMIT)),
+    );
+  }
+  return out;
+}
 
 /**
  * One origin per backend node: rendering and report attribution resolve the
@@ -53,11 +118,8 @@ async function assertNodeUnbound(
  */
 async function assertAddressChangeAllowed(db: Db, origin: Doc<'relays'>, next?: string) {
   if (next === undefined || sameAddress(next, origin.originAddress)) return;
-  const edges = await db
-    .query('edges')
-    .withIndex('by_relay_status', (q) => q.eq('relayId', origin._id))
-    .collect();
-  if (edges.some((e) => e.status !== 'destroyed')) {
+  const edges = await liveEdgesOfRelay(db, origin._id);
+  if (edges.length > 0) {
     throw new ConvexError({
       code: 'edge.origin_address_locked',
       message: 'Drain or destroy every edge of this origin before changing originAddress',
@@ -178,6 +240,7 @@ export function mapRelayAdmin(r: Doc<'relays'>) {
     autoRotate: r.autoRotate,
     hostManaged: r.hostManaged,
     probeNode: r.probeNode ?? false,
+    qualificationCredential: !!r.qualificationUserId,
     reachability: r.reachability
       ? {
           byCountry: r.reachability.byCountry.map((c) => ({
@@ -583,11 +646,8 @@ export const upsertBySlug = internalMutation({
       if (server._id !== existing.backendServerId) {
         // Edges dial the node behind ONE panel; moving the relay to another
         // panel while any edge still exists would strand them.
-        const edges = await ctx.db
-          .query('edges')
-          .withIndex('by_relay_status', (q) => q.eq('relayId', id))
-          .collect();
-        if (edges.some((e) => e.status !== 'destroyed')) {
+        const edges = await liveEdgesOfRelay(ctx.db, id);
+        if (edges.length > 0) {
           throw new ConvexError({
             code: 'edge.relay_reparent_locked',
             message: 'Destroy every edge of this relay before moving it to another backend server',
@@ -655,12 +715,8 @@ export const requestDelete = internalMutation({
       }
     }
     const now = Date.now();
-    const edges = await ctx.db
-      .query('edges')
-      .withIndex('by_relay_status', (q) => q.eq('relayId', id))
-      .collect();
+    const edges = await liveEdgesOfRelay(ctx.db, id);
     for (const e of edges) {
-      if (e.status === 'destroyed') continue;
       if (!e.managed) {
         await ctx.db.patch(e._id, {
           status: 'destroyed',
@@ -731,6 +787,16 @@ export const finalizeDelete = internalMutation({
       await ctx.db.delete(e._id);
     }
     await dropRollups('relay', id);
+    // The qualification credential is a panel user: deactivate it after the row
+    // is gone (best effort; an orphan is a capped, expiring test account).
+    if (row.qualificationBackendUserId) {
+      const server = await ctx.db.get(row.backendServerId);
+      if (server)
+        await ctx.scheduler.runAfter(0, internal.relayQualification.removeBackendUser, {
+          backend: server.backend,
+          backendUserId: row.qualificationBackendUserId,
+        });
+    }
     await ctx.db.delete(id);
     return { removed: true };
   },
@@ -740,15 +806,20 @@ export const finalizeDelete = internalMutation({
 
 /**
  * Adopt an edge that exists outside FCP's ledger: observe-only (`managed:false`,
- * only {ip, port} known; never destroyed) or managed (account + resource ids
- * supplied). Optionally publish it right away at the next free pool index.
+ * only the address + port known; never destroyed) or managed (account +
+ * resource ids supplied). The address is of the ACCOUNT's kind: an IPv4 literal
+ * for an L4 provider, a hostname for an L7 front (and, with no account, of
+ * whichever kind the operator supplied). Optionally publish it right away at the
+ * next free pool index.
  */
 export const adoptEdge = internalMutation({
   args: {
     relayId: v.id('relays'),
     slotId: v.id('relaySlots'),
-    ipv4: v.string(),
+    ipv4: v.optional(v.string()),
     ipv6: v.optional(v.union(v.string(), v.null())),
+    /** L7: the fronted hostname (never an IP literal, never the origin itself). */
+    hostname: v.optional(v.string()),
     port: v.optional(v.number()),
     accountId: v.optional(v.union(v.id('edgeProviderAccounts'), v.null())),
     resources: v.optional(v.array(v.object({ kind: v.string(), resourceId: v.string() }))),
@@ -761,15 +832,6 @@ export const adoptEdge = internalMutation({
     const slot = await ctx.db.get(a.slotId);
     if (!slot || slot.relayId !== a.relayId)
       throw new ConvexError({ code: 'validation', message: 'slot does not belong to the origin' });
-    if (!isPublicIpLiteral(a.ipv4) || addressFamily(a.ipv4) !== 'v4')
-      throw new ConvexError({ code: 'validation', message: 'ipv4 must be a public IPv4 literal' });
-    if (a.ipv6 && (!isPublicIpLiteral(a.ipv6) || addressFamily(a.ipv6) !== 'v6'))
-      throw new ConvexError({ code: 'validation', message: 'ipv6 must be a public IPv6 literal' });
-    if (sameAddress(a.ipv4, origin.originAddress))
-      throw new ConvexError({
-        code: 'validation',
-        message: 'the edge address is the origin itself (anti-leak)',
-      });
     const port = a.port ?? 443;
     if (!Number.isInteger(port) || port < 1 || port > 65535)
       throw new ConvexError({ code: 'validation', message: 'port out of range' });
@@ -782,6 +844,55 @@ export const adoptEdge = internalMutation({
         throw new ConvexError({
           code: 'validation',
           message: 'account provider does not match the slot profile',
+        });
+    }
+    // The address kind follows the ACCOUNT's provider: an L7 front is a
+    // hostname and has no IP of its own to adopt, an L4 balancer is a literal.
+    // Without an account (observe-only) the operator's own input decides.
+    const kind = accountRow
+      ? edgeAddressKindOf(accountRow.provider)
+      : a.hostname
+        ? 'hostname'
+        : 'ip';
+    const layer = accountRow ? edgeLayerOf(accountRow.provider) : kind === 'hostname' ? 'l7' : 'l4';
+    let hostname: string | undefined;
+    if (kind === 'hostname') {
+      const h = (a.hostname ?? '').trim().toLowerCase().replace(/\.$/, '');
+      // A hostname, not an IP typed into the hostname field: an IP literal here
+      // would be adopted as an L7 front and published without a name to present.
+      if (!h || !isValidHostname(h))
+        throw new ConvexError({ code: 'validation', message: 'hostname must be a valid hostname' });
+      if (sameAddress(h, origin.originAddress))
+        throw new ConvexError({
+          code: 'validation',
+          message: 'the edge hostname is the origin itself (anti-leak)',
+        });
+      hostname = h;
+      if (a.ipv4 || a.ipv6)
+        throw new ConvexError({
+          code: 'validation',
+          message: 'an L7 edge is addressed by hostname only',
+        });
+    } else {
+      if (a.hostname)
+        throw new ConvexError({
+          code: 'validation',
+          message: 'an L4 edge is addressed by IP literal only',
+        });
+      if (!a.ipv4 || !isPublicIpLiteral(a.ipv4) || addressFamily(a.ipv4) !== 'v4')
+        throw new ConvexError({
+          code: 'validation',
+          message: 'ipv4 must be a public IPv4 literal',
+        });
+      if (a.ipv6 && (!isPublicIpLiteral(a.ipv6) || addressFamily(a.ipv6) !== 'v6'))
+        throw new ConvexError({
+          code: 'validation',
+          message: 'ipv6 must be a public IPv6 literal',
+        });
+      if (sameAddress(a.ipv4, origin.originAddress))
+        throw new ConvexError({
+          code: 'validation',
+          message: 'the edge address is the origin itself (anti-leak)',
         });
     }
     // Adopting is a bookkeeping insert; PUBLISHING touches the pool, so it takes
@@ -812,7 +923,8 @@ export const adoptEdge = internalMutation({
           transport: PROTOCOL_TRANSPORT[(await ctx.db.get(slot.profileId))?.protocol ?? 'reality'],
         },
       ],
-      addresses: { v4: a.ipv4, v6: a.ipv6 ?? undefined },
+      addresses: { v4: a.ipv4, v6: a.ipv6 ?? undefined, hostname },
+      layer,
       publication: 'unpublished',
       status: 'active',
       statusChangedAt: now,
@@ -825,6 +937,18 @@ export const adoptEdge = internalMutation({
       const idx = nextFreePoolIndex(origin.publishedEdgeIds, origin.desiredPublished);
       if (idx === null)
         throw new ConvexError({ code: 'edge.pool_full', message: 'The published pool is full' });
+      // Adoption is not a way around the publish preconditions: an adopted edge
+      // whose slot is undeployed, whose profile has no name to present or whose
+      // layer the slot cannot carry would be rendered to members as a working
+      // endpoint. Same check every other publisher runs.
+      const cfg = await resolveEdgeConfig(ctx.db);
+      const fresh = (await ctx.db.get(edgeId))!;
+      const check = await checkPublishable(ctx, fresh, cfg.requireProviderHealth);
+      if (!check.ok)
+        throw new ConvexError({
+          code: `edge.${check.code}`,
+          message: `Edge cannot be published: ${check.code}`,
+        });
       poolIndex = idx;
       await ctx.db.patch(edgeId, {
         publication: 'published',
@@ -837,6 +961,9 @@ export const adoptEdge = internalMutation({
         publicationEpoch: origin.publicationEpoch + 1,
         updatedAt: now,
       });
+      // The epoch bump only re-renders the fronted route; stored mirrors need
+      // an explicit refresh to start carrying the adopted edge.
+      await scheduleMirrorRefresh(ctx);
     }
     await writeAuditLog(ctx, {
       actorType: 'admin',
@@ -863,9 +990,15 @@ export interface PublishCheck {
 }
 
 /**
- * Publication preconditions: the edge is active + unpublished, has an IPv4,
- * its slot is deployed (not retired) and its profile is enabled with ≥1 active
- * SNI, and the edge's provider matches the profile's.
+ * Publication preconditions: the edge is active + unpublished, has the address
+ * of ITS layer's kind, its slot is deployed (not retired) and its profile is
+ * enabled with ≥1 active SNI, the edge's provider matches the profile's, the
+ * provider can actually carry the slot's protocol at the slot's layer, and,
+ * for an L7 front, an authenticated end-to-end session has proven exactly
+ * this configuration and has not expired.
+ *
+ * `forceGeoEvidence` is NOT an input here: it waives only the geographic
+ * evidence gate in the rotation, never the transport proof below.
  */
 export async function checkPublishable(
   ctx: { db: import('./_generated/server').DatabaseReader },
@@ -874,7 +1007,7 @@ export async function checkPublishable(
 ): Promise<PublishCheck> {
   if (edge.status !== 'active') return { ok: false, code: 'edge_not_active' };
   if (edge.publication === 'published') return { ok: false, code: 'already_published' };
-  if (!edge.addresses.v4) return { ok: false, code: 'no_ipv4' };
+  if (!hasPublishableAddress(edge)) return { ok: false, code: 'no_address' };
   const slot = await ctx.db.get(edge.slotId);
   if (!slot || !slot.deployed || slot.retired) return { ok: false, code: 'slot_not_deployed' };
   // The slot's profile must be enabled, still have a selectable server name
@@ -885,6 +1018,31 @@ export async function checkPublishable(
     return { ok: false, code: 'profile_no_active_sni' };
   if (edge.provider && profile.provider && profile.provider !== edge.provider)
     return { ok: false, code: 'provider_mismatch' };
+  if (edge.provider) {
+    // Two independent questions: can this provider carry the protocol at all
+    // (an L7 front carries only the HTTP transports it declares), and does the
+    // complete client-to-origin chain allow this LAYER in front of the slot
+    // (a plaintext origin cannot sit behind a raw TCP forwarder).
+    if (!protocolCarriedBy(edge.provider, profile.protocol))
+      return { ok: false, code: 'protocol_not_carried' };
+    if (!slotAllowsLayer(slot, profile, edgeLayerOf(edge.provider)))
+      return { ok: false, code: 'layer_mismatch' };
+  }
+  const layer = edge.layer ?? edgeLayerOf(edge.provider);
+  if (layer === 'l7') {
+    // The binding is re-derived HERE, inside the publishing transaction, from
+    // the current slot/profile/intent: a proof taken against an older
+    // configuration is not a proof of what would now be published.
+    const intent = parseIntent(edge.provisionIntent);
+    if (!intent) return { ok: false, code: 'front_unqualified' };
+    const verdict = qualificationVerdict(
+      edge.frontQualification,
+      qualificationBinding({ slot, profile, intent, params: slot.transportParams ?? {} }),
+      Date.now(),
+    );
+    const refusal = qualificationRefusal(verdict);
+    if (refusal) return { ok: false, code: refusal };
+  }
   // An account-scoped profile binds the slot to ONE qualified account, not to
   // any account of that provider.
   if (edge.accountId && profile.accountId && profile.accountId !== edge.accountId)
@@ -923,6 +1081,18 @@ export const publishEdge = internalMutation({
     const occupant = origin.publishedEdgeIds[idx];
     if (occupant && occupant !== edgeId)
       throw new ConvexError({ code: 'edge.pool_index_taken', message: 'Pool index is occupied' });
+    // Pool index 0 is the index the template Host points at. On a Host-managed
+    // origin this direct path would publish the edge WITHOUT the flip, leaving
+    // the panel sending everyone to the previous address while FCP reports the
+    // new one: that is the rotation machine's job (kind `publish`), not a
+    // direct pool write.
+    if (idx === 0 && origin.hostManaged) {
+      throw new ConvexError({
+        code: 'edge.needs_rotation',
+        message:
+          'Publishing at pool index 0 needs the template-Host flip; start a publish rotation',
+      });
+    }
     const now = Date.now();
     await ctx.db.patch(edgeId, {
       publication: 'published',
@@ -945,6 +1115,10 @@ export const publishEdge = internalMutation({
       targetId: edgeId,
       payload: { relaySlug: origin.slug, edgeId, poolIndex: idx, epoch },
     });
+    // The epoch bump re-renders the fronted route within one request; S3 mirrors
+    // only change when refreshed, so a new pool member needs one too, or
+    // mirror readers keep receiving the pool without it until something else bumps.
+    await scheduleMirrorRefresh(ctx);
     return { poolIndex: idx, epoch };
   },
 });

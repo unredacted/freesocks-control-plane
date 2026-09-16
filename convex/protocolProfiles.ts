@@ -29,6 +29,7 @@ import {
   protocolUsesSni,
   type SlotProtocol,
 } from './lib/edges/protocols';
+import { assertNoRotationOrQuarantine, liveEdgesOfRelay } from './relays';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const HOSTNAME_RE = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/i;
@@ -45,11 +46,7 @@ export function normalizeSni(s: unknown): string | null {
  * epoch (the /sub cache token + assignment) and refresh stored mirrors once.
  */
 async function invalidateOrigins(ctx: MutationCtx, profileId: Id<'protocolProfiles'>) {
-  const slots = await ctx.db
-    .query('relaySlots')
-    .withIndex('by_profile', (q) => q.eq('profileId', profileId))
-    .collect();
-  const originIds = [...new Set(slots.map((s) => s.relayId))];
+  const originIds = await originsUsing(ctx, profileId);
   if (originIds.length === 0) return 0;
   const now = Date.now();
   for (const relayId of originIds) {
@@ -59,6 +56,34 @@ async function invalidateOrigins(ctx: MutationCtx, profileId: Id<'protocolProfil
   }
   await ctx.scheduler.runAfter(0, internal.storage.refreshActiveMirrors, {});
   return originIds.length;
+}
+
+/** Every relay with a slot on this profile (its writes change what they render). */
+async function originsUsing(
+  ctx: { db: DatabaseReader },
+  profileId: Id<'protocolProfiles'>,
+): Promise<Id<'relays'>[]> {
+  const slots = await ctx.db
+    .query('relaySlots')
+    .withIndex('by_profile', (q) => q.eq('profileId', profileId))
+    .collect();
+  return [...new Set(slots.map((s) => s.relayId))];
+}
+
+/**
+ * A profile write changes what every relay on it renders (the selectable server
+ * names, the enabled flag, the target). docs/edges.md promises that nothing
+ * touches a relay's published pool while a rotation runs or it is quarantined,
+ * and this is exactly such a change: a name retired mid-flip could leave the
+ * run publishing an edge whose profile has nothing left to present. Refuse with
+ * the same codes every other pool writer uses (`edge.rotation_running`,
+ * `edge.quarantined`).
+ */
+async function assertProfileWritable(ctx: MutationCtx, profileId: Id<'protocolProfiles'>) {
+  for (const relayId of await originsUsing(ctx, profileId)) {
+    const origin = await ctx.db.get(relayId);
+    if (origin) await assertNoRotationOrQuarantine(ctx.db, origin);
+  }
 }
 
 /**
@@ -128,6 +153,7 @@ export function mapProfileAdmin(r: Doc<'protocolProfiles'>) {
         }
       : null,
     notes: r.notes ?? null,
+    revision: r.revision ?? 0,
     updatedAt: new Date(r.updatedAt).toISOString(),
   };
 }
@@ -258,6 +284,7 @@ export const create = internalMutation({
       serverNames: snis.map((sni) => ({ sni, status: 'active' as const })),
       enabled: a.enabled ?? true,
       notes: a.notes?.slice(0, 500),
+      revision: 1,
       updatedAt: now,
     });
     await writeAuditLog(ctx, {
@@ -285,10 +312,7 @@ async function edgesOutsideScope(
     .collect();
   let n = 0;
   for (const slot of slots) {
-    const edges = await ctx.db
-      .query('edges')
-      .withIndex('by_relay_status', (q) => q.eq('relayId', slot.relayId))
-      .collect();
+    const edges = await liveEdgesOfRelay(ctx.db, slot.relayId);
     for (const e of edges) {
       if (e.slotId !== slot._id || e.publication === 'unpublished') continue;
       if (provider !== undefined && e.provider !== provider) n++;
@@ -317,7 +341,12 @@ export const update = internalMutation({
   handler: async (ctx, a) => {
     const row = await ctx.db.get(a.id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Profile not found' });
-    const patch: Partial<Doc<'protocolProfiles'>> = { updatedAt: Date.now() };
+    await assertProfileWritable(ctx, a.id);
+    const patch: Partial<Doc<'protocolProfiles'>> = {
+      // Every write bumps the revision: a front qualification binds to it.
+      revision: (row.revision ?? 0) + 1,
+      updatedAt: Date.now(),
+    };
     if (a.name !== undefined) {
       if (!a.name.trim() || a.name.length > 64)
         throw new ConvexError({ code: 'validation', message: 'invalid name' });
@@ -417,6 +446,7 @@ export const retireSni = internalMutation({
   handler: async (ctx, { id, snis, actorAdminId }) => {
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Profile not found' });
+    await assertProfileWritable(ctx, id);
     const cfg = await resolveEdgeConfig(ctx.db);
     const now = Date.now();
     const targets = new Set(snis.map((s) => normalizeSni(s)).filter((s): s is string => !!s));
@@ -436,7 +466,11 @@ export const retireSni = internalMutation({
         message: 'A profile keeps at least one active server name',
       });
     }
-    await ctx.db.patch(id, { serverNames: next, updatedAt: now });
+    await ctx.db.patch(id, {
+      serverNames: next,
+      revision: (row.revision ?? 0) + 1,
+      updatedAt: now,
+    });
     if (count > 0) {
       await invalidateOrigins(ctx, id);
       await scheduleDrainElapsed(ctx, id, drainUntil, retiring);
@@ -462,6 +496,7 @@ export const reactivateSni = internalMutation({
   handler: async (ctx, { id, snis, actorAdminId }) => {
     const row = await ctx.db.get(id);
     if (!row) throw new ConvexError({ code: 'not_found', message: 'Profile not found' });
+    await assertProfileWritable(ctx, id);
     const targets = new Set(snis.map((s) => normalizeSni(s)).filter((s): s is string => !!s));
     let count = 0;
     const next = row.serverNames.map((s) => {
@@ -471,7 +506,11 @@ export const reactivateSni = internalMutation({
       }
       return s;
     });
-    await ctx.db.patch(id, { serverNames: next, updatedAt: Date.now() });
+    await ctx.db.patch(id, {
+      serverNames: next,
+      revision: (row.revision ?? 0) + 1,
+      updatedAt: Date.now(),
+    });
     if (count > 0) await invalidateOrigins(ctx, id);
     await writeAuditLog(ctx, {
       actorType: 'admin',

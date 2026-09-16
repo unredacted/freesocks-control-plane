@@ -17,7 +17,12 @@
  * and emitted by assignment, so a flip and a render never disagree.
  */
 import type { EdgeLayer } from './providers/capabilities';
-import { protocolIsHttpTransport, protocolUsesHostHeader, protocolUsesSni, type SlotProtocol } from './protocols';
+import {
+  protocolIsHttpTransport,
+  protocolUsesHostHeader,
+  protocolUsesSni,
+  type SlotProtocol,
+} from './protocols';
 
 export interface OriginTransport {
   scheme: 'http' | 'https';
@@ -86,7 +91,12 @@ export function slotLayers(slot: SlotLike, profile: ProfileLike): SlotLayers {
     const active = profile.serverNames.filter((s) => s.status === 'active').map((s) => s.sni);
     if (!ot.certPublic) excluded.l4 = 'cert_not_public';
     else if (active.some((n) => !certCovers(n, ot.certNames))) excluded.l4 = 'cert_name_uncovered';
-    else if (http && protocolUsesHostHeader(profile.protocol) && ot.acceptsHostHeader === 'names' && active.some((n) => !certCovers(n, ot.certNames)))
+    else if (
+      http &&
+      protocolUsesHostHeader(profile.protocol) &&
+      ot.acceptsHostHeader === 'names' &&
+      active.some((n) => !certCovers(n, ot.certNames))
+    )
       excluded.l4 = 'host_header_rejected';
     else layers.push('l4');
   } else layers.push('l4');
@@ -114,7 +124,11 @@ export interface HostTuple {
  * name; L4 reality/tls → SNI only; plain → neither.
  */
 export function hostTargetFor(
-  edge: { layer?: EdgeLayer | null; addresses: { v4?: string | null; hostname?: string | null }; edgePort: number },
+  edge: {
+    layer?: EdgeLayer | null;
+    addresses: { v4?: string | null; hostname?: string | null };
+    edgePort: number;
+  },
   protocol: SlotProtocol,
   selectedSni: string | null,
 ): HostTuple | null {

@@ -20,10 +20,18 @@ import type { Doc, Id } from './_generated/dataModel';
 import { randomHex } from './lib/crypto';
 import { reserveAllocation } from './edgeProviderAccounts';
 import { edgeResourceName } from './lib/edges/accountSettings';
-import { dropEdgeFromPool } from './relays';
+import { dropEdgeFromPool, liveEdgesOfAccount } from './relays';
+import { EDGE_LIVE_STATUSES } from './lib/edges/pool';
+import type { ProvisionIntent } from './lib/edges/intent';
 
 /** Consecutive `gone` describes before the pool drop + status transition act. */
 export const GONE_OBSERVATIONS_REQUIRED = 2;
+/**
+ * Consecutive `active` describes that OMIT a known address before it is
+ * dropped. Same reasoning as GONE: one truncated or narrowed answer must not
+ * stop a published edge from rendering.
+ */
+export const ADDRESS_LOSS_OBSERVATIONS_REQUIRED = 2;
 
 /**
  * The terminal row shape: every large blob (the live snapshot) is cleared so a
@@ -39,6 +47,7 @@ export function destroyedPatch(now: number): Partial<Edge> {
     liveAt: undefined,
     destroyConfirm: undefined,
     goneObservations: undefined,
+    addressLossObservations: undefined,
     destroyedAt: now,
     statusChangedAt: now,
     updatedAt: now,
@@ -49,19 +58,8 @@ type Edge = Doc<'edges'>;
 type Step = Edge['steps'][number];
 type Resource = Edge['resources'][number];
 
-export const LIVE_STATUSES = [
-  'planning',
-  'provisioning',
-  'verifying',
-  'standby',
-  'active',
-  'draining',
-  'destroying',
-  'failed',
-  'cancelled',
-  'quarantined',
-  'needs_operator',
-] as const;
+/** Re-exported for the callers that iterate statuses (the single list lives in lib/edges/pool.ts). */
+export const LIVE_STATUSES = EDGE_LIVE_STATUSES;
 
 const childResource = v.object({
   kind: v.string(),
@@ -69,7 +67,12 @@ const childResource = v.object({
   ownership: v.union(v.literal('created'), v.literal('adopted')),
   meta: v.optional(v.any()),
 });
-const addresses = v.object({ v4: v.optional(v.string()), v6: v.optional(v.string()) });
+const addresses = v.object({
+  v4: v.optional(v.string()),
+  v6: v.optional(v.string()),
+  /** L7: the fronted hostname, the only address its members receive. */
+  hostname: v.optional(v.string()),
+});
 
 /** Ledger view for the provider actions (steps + resources only). */
 export function ledgerOf(edge: Edge): { steps: Edge['steps']; resources: Edge['resources'] } {
@@ -126,7 +129,37 @@ export function mapEdgeAdmin(e: Edge) {
         }
       : null,
     listeners: e.listeners,
-    addresses: { v4: e.addresses.v4 ?? null, v6: e.addresses.v6 ?? null },
+    addresses: {
+      v4: e.addresses.v4 ?? null,
+      v6: e.addresses.v6 ?? null,
+      hostname: e.addresses.hostname ?? null,
+    },
+    layer: e.layer ?? 'l4',
+    readiness: e.readiness
+      ? {
+          dns: e.readiness.dns,
+          certificate: e.readiness.certificate,
+          front: e.readiness.front,
+          checkedAt: new Date(e.readiness.checkedAt).toISOString(),
+        }
+      : null,
+    // The binding itself stays server-side (ids + hashes). `current` is the
+    // cheap display answer: passing, unexpired and taken against the hostname
+    // the edge now carries. The authoritative gate re-derives the WHOLE binding
+    // inside the publishing mutation (relays.checkPublishable), which can also
+    // see a slot or profile write this view cannot.
+    frontQualification: e.frontQualification
+      ? {
+          ok: e.frontQualification.ok,
+          code: e.frontQualification.code ?? null,
+          checkedAt: new Date(e.frontQualification.checkedAt).toISOString(),
+          expiresAt: new Date(e.frontQualification.expiresAt).toISOString(),
+          current:
+            e.frontQualification.ok &&
+            e.frontQualification.expiresAt > Date.now() &&
+            e.frontQualification.binding.hostname === (e.addresses.hostname ?? ''),
+        }
+      : null,
     publication: e.publication,
     poolIndex: e.poolIndex ?? null,
     publishedAt: e.publishedAt ? new Date(e.publishedAt).toISOString() : null,
@@ -220,16 +253,18 @@ export const listLive = internalQuery({
   },
 });
 
-/** Live edge count per account (capacity), excluding destroyed. */
-async function liveCountForAccount(
+/**
+ * Live edge count per account (the `maxLiveEdges` capacity gate), excluding
+ * destroyed rows AND observe-only ones: an unmanaged edge was not provisioned
+ * by FCP, is never destroyed by FCP and costs the account nothing FCP decided
+ * to spend, so counting it would shrink the account's usable capacity for good.
+ */
+export async function liveCountForAccount(
   ctx: { db: import('./_generated/server').DatabaseReader },
   accountId: Id<'edgeProviderAccounts'>,
 ): Promise<number> {
-  const rows = await ctx.db
-    .query('edges')
-    .withIndex('by_account_status', (q) => q.eq('accountId', accountId))
-    .collect();
-  return rows.filter((e) => e.status !== 'destroyed').length;
+  const rows = await liveEdgesOfAccount(ctx.db, accountId);
+  return rows.filter((e) => e.managed).length;
 }
 
 // --- writes ---------------------------------------------------------------------------
@@ -253,6 +288,9 @@ export interface PlannedEdgeInput {
     discoverability?: 'by_name' | 'by_tag' | 'none';
   }>;
   nameNonce?: string;
+  /** L7 only: the frozen intent + its layer (lib/edges/intent.ts). */
+  layer?: 'l4' | 'l7';
+  provisionIntent?: ProvisionIntent | null;
 }
 
 /**
@@ -299,6 +337,10 @@ export async function insertPlannedEdge(
     resources: [],
     listeners: a.listeners,
     addresses: {},
+    layer: a.layer ?? 'l4',
+    // Frozen here and never recomputed: every later step, discovery, describe
+    // and destroy reads this instead of the account settings or the template.
+    provisionIntent: a.provisionIntent ? JSON.stringify(a.provisionIntent) : undefined,
     publication: 'unpublished',
     status: 'planning',
     statusChangedAt: now,
@@ -335,8 +377,14 @@ export const insertPlanned = internalMutation({
       }),
     ),
     nameNonce: v.optional(v.string()),
+    layer: v.optional(v.union(v.literal('l4'), v.literal('l7'))),
+    provisionIntent: v.optional(v.any()),
   },
-  handler: (ctx, a) => insertPlannedEdge(ctx, a),
+  handler: (ctx, a) =>
+    insertPlannedEdge(ctx, {
+      ...a,
+      provisionIntent: (a.provisionIntent as ProvisionIntent | undefined) ?? null,
+    }),
 });
 
 /**
@@ -376,7 +424,21 @@ export const claimOp = internalMutation({
       claimedAt: now,
       expiresAt: now + claimMs,
     };
-    await ctx.db.patch(edgeId, { currentOp: op, updatedAt: now });
+    // A provision step's `startedAt` is stamped WITH THE CLAIM, not with its
+    // settle: the request is about to leave, and a lost settle would otherwise
+    // leave discovery without a reference time. Discovery's settle floor
+    // ("has enough time passed that an empty listing proves absence?") is
+    // measured from it, so an unstamped step would let a slow compound create
+    // be re-run seconds later and allocate a second, orphaned resource.
+    const stamped =
+      kind === 'provision_step' && edge.steps.some((s) => s.stepId === target && !s.startedAt);
+    await ctx.db.patch(edgeId, {
+      currentOp: op,
+      ...(stamped
+        ? { steps: edge.steps.map((s) => (s.stepId === target ? { ...s, startedAt: now } : s)) }
+        : {}),
+      updatedAt: now,
+    });
     return { ok: true as const, opId: op.opId, attempt: op.attempt };
   },
 });
@@ -457,6 +519,7 @@ export const settleOp = internalMutation({
       patch.addresses = {
         v4: a.addresses.v4 ?? edge.addresses.v4,
         v6: a.addresses.v6 ?? edge.addresses.v6,
+        hostname: a.addresses.hostname ?? edge.addresses.hostname,
       };
     if (a.status && a.status !== edge.status) {
       patch.status = a.status as Edge['status'];
@@ -544,6 +607,21 @@ export const patchEdge = internalMutation({
  * mutation together with the status transition, never in a second one.
  * Returns whether the edge was dropped from the published pool.
  */
+const readinessState = v.union(
+  v.literal('ready'),
+  v.literal('pending'),
+  v.literal('failed'),
+  v.literal('unknown'),
+);
+
+/** The `front` readiness dimension: only a current, passing qualification is `ready`. */
+function frontReadiness(edge: Edge, now: number): 'ready' | 'pending' | 'failed' | 'unknown' {
+  const q = edge.frontQualification;
+  if (!q) return 'unknown';
+  if (!q.ok) return 'failed';
+  return q.expiresAt > now ? 'ready' : 'pending';
+}
+
 export const recordDescribe = internalMutation({
   args: {
     edgeId: v.id('edges'),
@@ -551,6 +629,8 @@ export const recordDescribe = internalMutation({
     addresses,
     health: v.string(),
     resources: v.optional(v.array(childResource)),
+    /** L7 adapters only: the DNS + certificate dimensions they can observe. */
+    readiness: v.optional(v.object({ dns: readinessState, certificate: readinessState })),
   },
   handler: async (ctx, a) => {
     const edge = await ctx.db.get(a.edgeId);
@@ -575,10 +655,31 @@ export const recordDescribe = internalMutation({
     // provider no longer returns (detached floating IP, dropped v6) must stop
     // rendering. Pending/gone/unknown states keep the last known addresses
     // (still allocating, or kept for the ledger).
+    //
+    // Losing an address is as consequential as losing the whole edge (it stops
+    // rendering and can unpublish it), so it takes the same TWO consecutive
+    // observations a `gone` transition does: a single narrowed credential, a
+    // truncated listing or one API blip must not wipe a published address. The
+    // first such describe only counts; the second applies it.
+    const known4 = edge.addresses.v4;
+    const known6 = edge.addresses.v6;
+    const knownName = edge.addresses.hostname;
+    const losesAddress =
+      a.state === 'active' &&
+      ((!!known4 && !a.addresses.v4) ||
+        (!!known6 && !a.addresses.v6) ||
+        (!!knownName && !a.addresses.hostname));
+    const addressLossObservations = losesAddress ? (edge.addressLossObservations ?? 0) + 1 : 0;
+    const applyLoss = addressLossObservations >= ADDRESS_LOSS_OBSERVATIONS_REQUIRED;
+    const keepKnown = losesAddress && !applyLoss;
     const addressesNext =
-      a.state === 'active'
-        ? { v4: a.addresses.v4, v6: a.addresses.v6 }
-        : { v4: a.addresses.v4 ?? edge.addresses.v4, v6: a.addresses.v6 ?? edge.addresses.v6 };
+      a.state === 'active' && !keepKnown
+        ? { v4: a.addresses.v4, v6: a.addresses.v6, hostname: a.addresses.hostname }
+        : {
+            v4: a.addresses.v4 ?? known4,
+            v6: a.addresses.v6 ?? known6,
+            hostname: a.addresses.hostname ?? knownName,
+          };
     let resources = added.length > 0 ? [...edge.resources, ...added] : edge.resources;
     let transition: Partial<Edge> = {};
     const gone = a.state === 'gone' && edge.status !== 'destroyed';
@@ -619,9 +720,113 @@ export const recordDescribe = internalMutation({
       lastHealthAt: now,
       ...(resources !== edge.resources ? { resources } : {}),
       goneObservations: acted || !gone ? undefined : goneObservations,
+      addressLossObservations: keepKnown ? addressLossObservations : undefined,
+      // `front` is not the adapter's to judge (DNS existence is not a working
+      // front): it follows the stored end-to-end qualification.
+      ...(a.readiness
+        ? {
+            readiness: {
+              dns: a.readiness.dns,
+              certificate: a.readiness.certificate,
+              front: frontReadiness(edge, now),
+              checkedAt: now,
+            },
+          }
+        : {}),
       ...transition,
       updatedAt: now,
     });
-    return { dropped, goneObservations: acted ? 0 : goneObservations, acted };
+    return {
+      dropped,
+      goneObservations: acted ? 0 : goneObservations,
+      acted,
+      addressLossObservations: keepKnown ? addressLossObservations : 0,
+    };
+  },
+});
+
+// --- external locks ---------------------------------------------------------------------
+//
+// `claimOp` serialises work on ONE edge. Some provider writes touch something
+// SEVERAL edges share: a zone's rulesets, a service's version chain. Two edges
+// provisioning at once would each read the shared object, each write it, and the
+// second would silently replace the first's change. `externalLocks` is the claim
+// on the shared thing, with the same unknown-outcome discipline as `currentOp`:
+// an EXPIRED, unsettled lock is not stolen: the holder must re-observe what its
+// write did first, so the second edge waits rather than writing over a result
+// nobody has read.
+
+/** How an expired lock surfaces to the caller (the rotation logs it and retries). */
+export const LOCK_UNSETTLED = 'edge.lock_unsettled' as const;
+
+export const claimExternalLock = internalMutation({
+  args: {
+    key: v.string(),
+    edgeId: v.id('edges'),
+    opId: v.string(),
+    ttlMs: v.number(),
+  },
+  handler: async (ctx, { key, edgeId, opId, ttlMs }) => {
+    const now = Date.now();
+    const existing = await ctx.db
+      .query('externalLocks')
+      .withIndex('by_key', (q) => q.eq('key', key))
+      .unique();
+    if (existing) {
+      // The holder re-entering its own claim extends it (one edge, one op).
+      if (existing.holderEdgeId === edgeId) {
+        await ctx.db.patch(existing._id, { opId, claimedAt: now, expiresAt: now + ttlMs });
+        return { ok: true as const, opId };
+      }
+      if (existing.expiresAt > now) return { ok: false as const, code: 'edge.lock_busy' as const };
+      // Expired and never settled: the previous holder's outcome is UNKNOWN.
+      // Blocking here is the whole point: its discovery pass settles the lock.
+      return { ok: false as const, code: LOCK_UNSETTLED };
+    }
+    await ctx.db.insert('externalLocks', {
+      key,
+      holderEdgeId: edgeId,
+      opId,
+      claimedAt: now,
+      expiresAt: now + ttlMs,
+    });
+    return { ok: true as const, opId };
+  },
+});
+
+/** Release a lock; only its holder (by opId) may, so a stale actor cannot free it. */
+export const settleExternalLock = internalMutation({
+  args: { key: v.string(), opId: v.string() },
+  handler: async (ctx, { key, opId }) => {
+    const row = await ctx.db
+      .query('externalLocks')
+      .withIndex('by_key', (q) => q.eq('key', key))
+      .unique();
+    if (!row || row.opId !== opId) return { ok: false as const };
+    await ctx.db.delete(row._id);
+    return { ok: true as const };
+  },
+});
+
+/**
+ * Release every lock an edge holds, whatever their opId: used when the edge's
+ * own op is settled after a lost response (the outcome has been re-observed, so
+ * the shared object is safe for the next writer) and when it is destroyed.
+ */
+export const releaseExternalLocksOf = internalMutation({
+  args: { edgeId: v.id('edges'), keys: v.optional(v.array(v.string())) },
+  handler: async (ctx, { edgeId, keys }) => {
+    let released = 0;
+    for (const key of keys ?? []) {
+      const row = await ctx.db
+        .query('externalLocks')
+        .withIndex('by_key', (q) => q.eq('key', key))
+        .unique();
+      if (row && row.holderEdgeId === edgeId) {
+        await ctx.db.delete(row._id);
+        released++;
+      }
+    }
+    return { released };
   },
 });

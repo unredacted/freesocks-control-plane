@@ -32,6 +32,9 @@ import { runWithCronOutcome } from './cronHeartbeat';
 import { edgeMs, type EdgeConfig } from './lib/edgeConfig';
 import { isDiscoverable } from './edges';
 import { publishedCount } from './lib/edges/pool';
+import { hasPublishableAddress } from './lib/edges/ip';
+import { parseIntent } from './lib/edges/intent';
+import { sharedTeardownLockKey } from './edgeRotations';
 import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
 import type {
   Discovery,
@@ -49,6 +52,8 @@ const MAX_DISCOVER_ATTEMPTS = 3;
  * provider, so confirming alone could wait forever).
  */
 export const MAX_CONFIRM_ATTEMPTS = 3;
+/** Front qualifications re-run per tick (each is an outbound session, not a cheap read). */
+export const MAX_REQUALIFY_PER_TICK = 3;
 
 export interface ReconcileReport {
   rekicked: number;
@@ -78,8 +83,14 @@ function errText(err: unknown): string {
   return (err instanceof Error ? err.message : String(err)).slice(0, 120);
 }
 
-/** The provider-facing spec; `transport` rides along so a udp slot is refused before any call. */
+/**
+ * The provider-facing spec; `transport` rides along so a udp slot is refused
+ * before any call. An L7 edge's hostname and origin transport come from its
+ * FROZEN intent, so a settings edit since the edge was planned cannot make
+ * discovery look for a different host than the one that was created.
+ */
 function specOf(edge: Edge) {
+  const intent = parseIntent(edge.provisionIntent);
   return {
     name: edge.name,
     listeners: edge.listeners.map((l) => ({
@@ -87,6 +98,7 @@ function specOf(edge: Edge) {
       members: [{ address: l.originAddress, port: l.originPort }],
       ...(l.transport ? { transport: l.transport } : {}),
     })),
+    ...(intent ? { hostname: intent.hostname, originTransport: intent.originTransport } : {}),
   };
 }
 
@@ -164,6 +176,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     report.rekicked++;
   }
 
+  let requalified = 0;
   const edges = await ctx.runQuery(internal.edges.listLive, {});
   const origins = await ctx.runQuery(internal.relays.listAll, {});
   const rotatingOrigins = new Set(
@@ -177,9 +190,14 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
     // Nothing bypasses a quarantine: no describe, drop, destroy or forget.
     if (quarantinedOrigins.has(edge.relayId as string)) continue;
     if (!edge.managed || !edge.accountId) {
-      // Observe-only edges: nothing to discover, describe or destroy. A failed/
-      // cancelled adopted row is simply forgotten.
-      if (['failed', 'cancelled', 'destroying'].includes(edge.status)) {
+      // Observe-only edges: nothing to discover, describe or destroy. A failed /
+      // cancelled adopted row is simply forgotten, and so is a DRAINING one once
+      // its drain has elapsed: FCP never calls a provider for it, so without
+      // this it would stay `draining` for good, keep its relay's delete from
+      // finishing and keep counting against the account's live-edge cap.
+      const drained =
+        edge.status === 'draining' && edge.drainUntil !== undefined && edge.drainUntil <= now;
+      if (drained || ['failed', 'cancelled', 'destroying'].includes(edge.status)) {
         await ctx.runMutation(internal.edges.patchEdge, {
           edgeId: edge._id,
           status: 'destroyed',
@@ -231,6 +249,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
         const desc: EdgeDescription = await ctx.runAction(internal.edgeProviderOps.describe, {
           accountId: edge.accountId,
           ledger: ledgerOf(edge),
+          edgeId: edge._id,
         });
         // A `gone` describe acts (status transition + pool drop + epoch bump, in
         // that ONE mutation) only on the second consecutive observation.
@@ -240,9 +259,24 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
           addresses: desc.addresses,
           health: desc.health,
           resources: desc.resources,
+          // L7 adapters report DNS + certificate readiness; the `front`
+          // dimension follows the stored qualification, not the adapter.
+          readiness: desc.readiness,
         });
         report.described++;
         if (rec?.dropped) report.dropped++;
+        // A published L7 front whose proof expired is re-proven here, bounded
+        // per tick: the proof is what publication depends on, so letting it
+        // lapse silently would leave the pool carrying an unverified front.
+        if (
+          (edge.layer ?? 'l4') === 'l7' &&
+          edge.publication === 'published' &&
+          requalified < MAX_REQUALIFY_PER_TICK &&
+          (edge.frontQualification?.expiresAt ?? 0) <= now
+        ) {
+          requalified++;
+          await ctx.runAction(internal.frontQualifyOps.run, { edgeId: edge._id });
+        }
       }
     } catch (err) {
       report.errors++;
@@ -266,7 +300,7 @@ export async function reconcile(ctx: ActionCtx): Promise<ReconcileReport> {
       const originEdges = edges.filter((e) => e.relayId === origin._id);
       const publishedNow = publishedCount(origin.publishedEdgeIds);
       const standbys = originEdges.filter(
-        (e) => e.status === 'active' && e.publication === 'unpublished' && !!e.addresses.v4,
+        (e) => e.status === 'active' && e.publication === 'unpublished' && hasPublishableAddress(e),
       );
       if (publishedNow < origin.desiredPublished) {
         if (cfg.autoPublishStandby && standbys.length > 0) {
@@ -335,6 +369,7 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
       accountId,
       resource: target,
       ledger: ledgerOf(edge),
+      edgeId: edge._id,
     });
     await ctx.runMutation(internal.edges.settleOp, {
       edgeId: edge._id,
@@ -386,6 +421,10 @@ async function settleEdge(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: R
       step: stepOf(pending),
       ledger: ledgerOf(edge),
       attempt: discoverAttempt,
+      edgeId: edge._id,
+      // Never `undefined`: without a reference time an adapter cannot prove its
+      // settle floor elapsed, and a slow compound create would be re-run.
+      stepStartedAt: pending.startedAt ?? edge.currentOp?.claimedAt ?? edge._creationTime,
     });
   } catch (err) {
     await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
@@ -483,6 +522,7 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
       ? ((await ctx.runAction(internal.edgeProviderOps.planDestroy, {
           accountId,
           ledger,
+          edgeId: edge._id,
         })) as Edge['resources'])
       : [];
   const remaining = plan.filter((r) => r.deleteState !== 'confirmed_gone');
@@ -499,6 +539,31 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     claimMs: edgeMs.opClaim(cfg),
   });
   if (!cl.ok) return;
+  // A SHARED-service teardown (an adopted domain on a service FCP does not own)
+  // rewrites that service's version chain, which other adopted domains on the
+  // same service also rewrite. The per-edge claim cannot serialise that, so the
+  // service itself is locked; an expired unsettled lock blocks until its holder
+  // re-observes what its clone or activation did.
+  const sharedLockKey = sharedTeardownLockKey(edge);
+  if (sharedLockKey) {
+    const lk = await ctx.runMutation(internal.edges.claimExternalLock, {
+      key: sharedLockKey,
+      edgeId: edge._id,
+      opId: cl.opId,
+      ttlMs: edgeMs.opClaim(cfg),
+    });
+    if (!lk.ok) {
+      await ctx.runMutation(internal.edges.settleOp, { edgeId: edge._id, opId: cl.opId });
+      return;
+    }
+  }
+  const releaseShared = async () => {
+    if (sharedLockKey)
+      await ctx.runMutation(internal.edges.settleExternalLock, {
+        key: sharedLockKey,
+        opId: cl.opId,
+      });
+  };
   const confirming =
     target.deleteState === 'delete_requested' && !shouldReissueDelete(edge, target.resourceId);
   const priorConfirms =
@@ -510,11 +575,13 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
           accountId,
           resource: target,
           ledger,
+          edgeId: edge._id,
         })
       : await ctx.runAction(internal.edgeProviderOps.runDestroy, {
           accountId,
           resource: target,
           ledger,
+          edgeId: edge._id,
         });
   } catch (err) {
     // Unknown outcome: keep the claim's target as `delete_requested`; the next
@@ -534,6 +601,7 @@ async function destroyStep(ctx: ActionCtx, cfg: EdgeConfig, edge: Edge, report: 
     });
     throw err;
   }
+  await releaseShared();
   await ctx.runMutation(internal.edges.settleOp, {
     edgeId: edge._id,
     opId: cl.opId,

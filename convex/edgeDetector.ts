@@ -14,6 +14,7 @@ import { writeAuditLog } from './lib/audit';
 import { runWithCronOutcome } from './cronHeartbeat';
 import { resolveEdgeConfig, edgeMs } from './lib/edgeConfig';
 import { todayKey } from './relays';
+import { familyKeyOf } from './probes';
 import {
   autoRotateDecision,
   evaluate,
@@ -28,6 +29,8 @@ const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
 const SAMPLE_RETENTION_MS = 7 * DAY;
 const LOAD_STALE_MS = 20 * MIN;
+/** Report rows read per page while aggregating one detector window. */
+const REPORT_PAGE_SIZE = 200;
 
 type Origin = Doc<'relays'>;
 
@@ -39,27 +42,50 @@ export const relayWindow = internalQuery({
     if (!origin) return null;
     const cfg = await resolveEdgeConfig(ctx.db);
     const since = now - edgeMs.detectWindow(cfg);
-    const reports = await ctx.db
-      .query('issueReports')
-      .withIndex('by_relay', (q) => q.eq('relaySlug', origin.slug).gte('_creationTime', since))
-      .collect();
     const window: WindowReports = { reports: 0, distinctReporters: 0, countries: {}, byEdge: {} };
-    for (const r of reports) {
-      if (r.kind !== 'report') continue;
-      window.reports += 1;
-      // detectorWeight 0 = a repeat by the same member inside the window (the
-      // peppered dedupe mark), or a report recorded while no mark pepper was
-      // configured (fail closed); it never adds a reporter, at origin OR edge
-      // level. A missing weight is treated the same way.
-      const weight = r.detectorWeight ?? 0;
-      window.distinctReporters += weight;
-      const c = r.country ?? r.detectedCountry;
-      if (c) window.countries[c] = (window.countries[c] ?? 0) + 1;
-      if (r.relayEdgeId && weight > 0) {
-        const e = (window.byEdge[r.relayEdgeId] ??= { count: 0, countries: {} });
-        e.count += weight;
-        if (c) e.countries[c] = (e.countries[c] ?? 0) + weight;
+    // The window is aggregated PAGE BY PAGE up to `detect.maxReportRowsPerEval`
+    // instead of collecting it: a busy origin (or a flood) can hold far more
+    // rows than one transaction may read. A plain `.take(N)` is not enough:
+    // zero-weight duplicates can fill N before the first distinct reporter
+    // appears, so the pages are walked with a cursor, and when the cap is
+    // reached the window is marked INCOMPLETE rather than scored truncated.
+    const cap = Math.max(1, cfg.detect.maxReportRowsPerEval);
+    let cursor: string | null = null;
+    let scanned = 0;
+    for (;;) {
+      // Never read past the cap, so the cap really is the transaction's read
+      // budget. A window that ends exactly ON it counts as truncated (the
+      // paginator cannot tell "exactly the last row" from "one more page"),
+      // which is the safe direction.
+      const remaining = cap - scanned;
+      if (remaining <= 0) {
+        window.incomplete = true;
+        break;
       }
+      const page = await ctx.db
+        .query('issueReports')
+        .withIndex('by_relay', (q) => q.eq('relaySlug', origin.slug).gte('_creationTime', since))
+        .paginate({ cursor, numItems: Math.min(REPORT_PAGE_SIZE, remaining) });
+      for (const r of page.page) {
+        if (r.kind !== 'report') continue;
+        window.reports += 1;
+        // detectorWeight 0 = a repeat by the same member inside the window (the
+        // peppered dedupe mark), or a report recorded while no mark pepper was
+        // configured (fail closed); it never adds a reporter, at origin OR edge
+        // level. A missing weight is treated the same way.
+        const weight = r.detectorWeight ?? 0;
+        window.distinctReporters += weight;
+        const c = r.country ?? r.detectedCountry;
+        if (c) window.countries[c] = (window.countries[c] ?? 0) + 1;
+        if (r.relayEdgeId && weight > 0) {
+          const e = (window.byEdge[r.relayEdgeId] ??= { count: 0, countries: {} });
+          e.count += weight;
+          if (c) e.countries[c] = (e.countries[c] ?? 0) + weight;
+        }
+      }
+      scanned += page.page.length;
+      if (page.isDone) break;
+      cursor = page.continueCursor;
     }
     const samples = await ctx.db
       .query('relaySamples')
@@ -97,10 +123,15 @@ export const relayWindow = internalQuery({
         .query('probeReachability')
         .withIndex('by_target_country', (q) => q.eq('targetKind', 'edge').eq('targetRef', e._id))
         .collect();
+      // The member-facing path: IPv4 for an L4 edge, the NAME for an L7 one
+      // (`familyKeyOf`). `lastOkAt` is the signal, so a country that only ever
+      // saw a degraded verdict still counts as having reached the edge.
       const wasReachable = (country: string) =>
         history.some(
           (r) =>
-            r.country === country && (r.ipVersion ?? 4) === 4 && r.lastReachableAt !== undefined,
+            r.country === country &&
+            familyKeyOf(r) !== 6 &&
+            (r.lastOkAt !== undefined || r.lastReachableAt !== undefined),
         );
       const entries = e.reachability?.byCountry ?? [];
       const external = entries.filter((c) => c.country !== 'XX');
@@ -152,6 +183,12 @@ export const recordEvaluation = internalMutation({
     veto: v.union(v.string(), v.null()),
     lastRotateError: v.optional(v.union(v.string(), v.null())),
     rotationActive: v.optional(v.boolean()),
+    /** The node's stats were stale for this evaluation (no live user count). */
+    loadStale: v.optional(v.boolean()),
+    /** The window's own counts: the only place `relaySamples` is written from. */
+    windowReports: v.optional(v.number()),
+    windowDistinctReporters: v.optional(v.number()),
+    windowIncomplete: v.optional(v.boolean()),
   },
   handler: async (ctx, a) => {
     const origin = await ctx.db.get(a.relayId);
@@ -161,11 +198,15 @@ export const recordEvaluation = internalMutation({
     // The baseline describes NORMAL operation. A sample taken while the relay
     // is suspected, rotating, cooling down after a rotation or behind an
     // offline node would teach the detector that a block looks normal, so it
-    // is not appended to the ring.
+    // is not appended to the ring. Nor is one whose numbers are not the truth:
+    // a stale node reading has no live user count to compare against, and an
+    // incomplete window undercounts its reports.
     const baselineEligible =
       ev.state !== 'suspected' &&
       !a.rotationActive &&
       !ev.nodeOffline &&
+      !a.loadStale &&
+      !a.windowIncomplete &&
       !(origin.cooldownUntil !== undefined && origin.cooldownUntil > a.now);
     await ctx.db.patch(a.relayId, {
       suspicion: {
@@ -196,11 +237,17 @@ export const recordEvaluation = internalMutation({
       updatedAt: a.now,
     });
     if (baselineEligible) {
+      // Written ONCE, with one meaning: `reports` is the window's row count and
+      // `distinctReporters` its deduplicated member count, both straight from
+      // the window. (They used to be inserted as a country total with a zero
+      // reporter count and then patched by a second mutation, so a sample read
+      // between the two (or one whose patch never landed) carried a different
+      // quantity than the rest of the ring.)
       await ctx.db.insert('relaySamples', {
         relayId: a.relayId,
         at: a.now,
-        reports: ev.countries.reduce((acc, c) => acc + c.count, 0),
-        distinctReporters: 0,
+        reports: a.windowReports ?? 0,
+        distinctReporters: a.windowDistinctReporters ?? 0,
         usersOnline: a.usersOnline,
       });
     }
@@ -237,25 +284,6 @@ export const recordEvaluation = internalMutation({
         payload: { relaySlug: origin.slug, reason: 'score_below_threshold' },
       });
     }
-    return null;
-  },
-});
-
-/** The real sample counts come from the window (the evaluation only carries country totals). */
-export const recordSampleCounts = internalMutation({
-  args: {
-    relayId: v.id('relays'),
-    at: v.number(),
-    reports: v.number(),
-    distinctReporters: v.number(),
-  },
-  handler: async (ctx, a) => {
-    const row = await ctx.db
-      .query('relaySamples')
-      .withIndex('by_relay_at', (q) => q.eq('relayId', a.relayId).eq('at', a.at))
-      .unique();
-    if (row)
-      await ctx.db.patch(row._id, { reports: a.reports, distinctReporters: a.distinctReporters });
     return null;
   },
 });
@@ -387,13 +415,11 @@ export const run = internalAction({
             usersOnline: w.usersOnline,
             veto,
             rotationActive: w.rotationActive || !('veto' in decision),
+            loadStale: w.loadStale,
+            windowReports: w.window.reports,
+            windowDistinctReporters: w.window.distinctReporters,
+            windowIncomplete: w.window.incomplete ?? false,
             ...(lastRotateError !== undefined ? { lastRotateError } : {}),
-          });
-          await ctx.runMutation(internal.edgeDetector.recordSampleCounts, {
-            relayId: o._id,
-            at: now,
-            reports: w.window.reports,
-            distinctReporters: w.window.distinctReporters,
           });
           // Reports alone raised suspicion: ask the probes for edge-level evidence now.
           if (ev.transition === 'suspected' && ev.hintLevel === 'reports' && w.cfg.probe.enabled) {

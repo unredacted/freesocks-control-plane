@@ -1,0 +1,11 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/vcl/snippet/#create-snippet (read 2026-09-16)",
+  "name": "ws-upgrade",
+  "id": "3ABc8kEgnHHAJnRJGvueDh",
+  "type": "recv",
+  "content": "if (req.http.Upgrade) { return(upgrade); }",
+  "priority": "100",
+  "dynamic": "0",
+  "service_id": "SU1Z0isxPaozGVKXdv0eY",
+  "version": 1
+}

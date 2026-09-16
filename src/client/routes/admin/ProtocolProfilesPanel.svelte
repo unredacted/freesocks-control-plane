@@ -32,7 +32,9 @@
    * Protocol profiles: what a relay slot's inbound speaks and what the renderer
    * needs for it. REALITY carries the impersonated target and approved server
    * names; TLS carries the certificate's names; plain carries nothing (address
-   * and port only). A profile may be scoped to one provider's network (REALITY
+   * and port only); the HTTP transports (WebSocket, HTTPUpgrade, gRPC) are TLS
+   * plus that transport, which is what an L7 front can carry. A profile may be
+   * scoped to one provider's network (REALITY
    * names are only plausible near the edge) or left open to any provider. One
    * SNI per emitted connection is chosen per subscriber; retiring a name stops
    * new selections and starts its drain. The node role deploys one inbound per
@@ -48,7 +50,14 @@
     reality: 'REALITY',
     tls: 'TLS (real certificate)',
     plain: 'Plain (no TLS name)',
+    ws: 'WebSocket over TLS',
+    httpupgrade: 'HTTPUpgrade over TLS',
+    grpc: 'gRPC over TLS',
   };
+  /** The one thing an operator has to know before choosing an HTTP transport. */
+  const HTTP_TRANSPORT_HELP =
+    'HTTP transport over TLS. Behind an L7 edge the edge hostname is the SNI and Host header; behind an L4 edge these behave like TLS and the server names must be on the origin certificate.';
+  const isHttpTransport = (p: SlotProtocol) => p === 'ws' || p === 'httpupgrade' || p === 'grpc';
   const ANY = 'any';
 
   type Draft = {
@@ -164,7 +173,7 @@
     />{/if}
   {#if profiles.data && profiles.data.length === 0}
     <AdminListState
-      emptyText="No protocol profiles. A profile says what a slot's inbound speaks (REALITY, TLS or plain) and which server names members may present, optionally for one provider's network."
+      emptyText="No protocol profiles. A profile says what a slot's inbound speaks (REALITY, TLS, plain, or an HTTP transport such as WebSocket) and which server names members may present, optionally for one provider's network."
     />
   {/if}
   {#each profiles.data ?? [] as p (p.id)}
@@ -188,6 +197,9 @@
                 target <span class="font-mono">{p.targetAddress}:{p.targetPort}</span>
               {:else if p.protocol === 'tls'}
                 the node terminates TLS with its own certificate
+              {:else if isHttpTransport(p.protocol)}
+                {PROTOCOL_LABELS[p.protocol]}: behind an L7 edge the edge hostname is the SNI and
+                Host header
               {:else}
                 no TLS name: address and port only
               {/if}
@@ -284,6 +296,11 @@
                     >{/each}</Select.Content
                 >
               </Select.Root>
+              {#if isHttpTransport(editor.protocol)}
+                <span class="mt-1 block text-[11px] text-muted-foreground"
+                  >{HTTP_TRANSPORT_HELP}</span
+                >
+              {/if}
             </label>
           {/if}
           <label class="text-xs">Name<Input class="mt-1" bind:value={editor.name} /></label>
@@ -326,6 +343,12 @@
               rows="5"
               bind:value={editor.serverNames}
             ></textarea>
+            {#if isHttpTransport(editor.protocol)}
+              <span class="mt-1 block text-[11px] text-muted-foreground"
+                >Used behind an L4 edge. Behind an L7 edge the edge hostname is the only name, and
+                these are not consulted.</span
+              >
+            {/if}
           </label>
         {:else}
           <p class="text-xs text-muted-foreground">

@@ -311,3 +311,152 @@ describe('edgeProviderOps.rotateCredentials', () => {
     );
   });
 });
+
+describe('edgeProviderOps: contract + layer refusals', () => {
+  test('pollStep on an adapter with no poller is a CONTRACT VIOLATION, never a fabricated done', async () => {
+    const t = newT();
+    // UpCloud is synchronous: it has no `pollStep`. Answering `done` with an
+    // empty ledger would mark an allocating step complete while the resource it
+    // created stayed unrecorded, undeletable and billable.
+    const { id: accountId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'upcloud',
+      name: 'acct-u',
+      settings: { zone: 'de-fra1' },
+      credentials: { token: 'ucl' },
+    });
+    mockFetch(() => jsonRes({}));
+    try {
+      await t.action(internal.edgeProviderOps.pollStep, {
+        accountId,
+        step: { id: 'lb', kind: 'create_lb', resourceName: 'x', discoverability: 'by_name' },
+        opRef: 'op-1',
+        ledger: { steps: [], resources: [] },
+      });
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ConvexError);
+      expect((err as ConvexError<EdgeProviderOpsFailure>).data.code).toBe('contract_violation');
+    }
+  });
+
+  test('a protocol the provider cannot carry is refused before any call', async () => {
+    const t = newT();
+    const { id: dnsId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    const { id: fastlyId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      settings: { dnsAccountId: dnsId, certificateAuthority: 'certainly' },
+      credentials: { apiToken: 'f' },
+    });
+    const calls: string[] = [];
+    mockFetch((c) => {
+      calls.push(c.url);
+      return jsonRes({});
+    });
+    const l7Spec = {
+      ...spec,
+      hostname: 'front.example.org',
+      originTransport: {
+        scheme: 'https' as const,
+        certPublic: true,
+        certNames: ['origin.example'],
+        acceptsHostHeader: 'any' as const,
+      },
+    };
+    await expect(
+      t.action(internal.edgeProviderOps.planProvision, {
+        accountId: fastlyId,
+        spec: l7Spec,
+        templateParams: {},
+        protocol: 'grpc',
+      }),
+    ).rejects.toThrow(/protocol_not_carried/);
+    expect(calls).toEqual([]);
+  });
+
+  test('an L7 spec without its hostname or origin transport is refused before any call', async () => {
+    const t = newT();
+    const { id: cfId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    mockFetch(() => jsonRes({}));
+    await expect(
+      t.action(internal.edgeProviderOps.planProvision, {
+        accountId: cfId,
+        spec,
+        templateParams: {},
+        protocol: 'ws',
+      }),
+    ).rejects.toThrow(/hostname_missing/);
+    await expect(
+      t.action(internal.edgeProviderOps.planProvision, {
+        accountId: cfId,
+        spec: { ...spec, hostname: 'front.example.org' },
+        templateParams: {},
+        protocol: 'ws',
+      }),
+    ).rejects.toThrow(/origin_transport_missing/);
+  });
+
+  test('a provider that needs a DNS account refuses to act without a usable one', async () => {
+    const t = newT();
+    const { id: dnsId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    const { id: fastlyId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      settings: { dnsAccountId: dnsId, certificateAuthority: 'certainly' },
+      credentials: { apiToken: 'f' },
+    });
+    // The DNS account disappears under it.
+    await t.run((ctx) => ctx.db.delete(dnsId));
+    mockFetch(() => jsonRes({}));
+    await expect(
+      t.action(internal.edgeProviderOps.describe, {
+        accountId: fastlyId,
+        ledger: { steps: [], resources: [] },
+      }),
+    ).rejects.toThrow(/dns_account_missing/);
+  });
+
+  test('a DISABLED DNS account still serves existing edges (reconcile and destroy keep working)', async () => {
+    const t = newT();
+    const { id: dnsId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'cloudflare',
+      name: 'acct-cf',
+      settings: { zoneId: 'a'.repeat(32), zoneName: 'example.org' },
+      credentials: { apiToken: 'cf' },
+    });
+    const { id: fastlyId } = await t.mutation(internal.edgeProviderAccounts.create, {
+      provider: 'fastly',
+      name: 'acct-fastly',
+      settings: { dnsAccountId: dnsId, certificateAuthority: 'certainly' },
+      credentials: { apiToken: 'f' },
+    });
+    await t.mutation(internal.edgeProviderAccounts.update, { id: dnsId, enabled: false });
+    mockFetch((c) =>
+      // Enough of a Fastly answer for `describe` to resolve the config first.
+      c.url.includes('/service/') ? jsonRes({}, 404) : jsonRes({}),
+    );
+    // Disabling stops NEW allocations, not the config resolution: the adapter
+    // runs and answers about the edge, instead of the load being refused.
+    expect(
+      await t.action(internal.edgeProviderOps.describe, {
+        accountId: fastlyId,
+        ledger: { steps: [], resources: [] },
+      }),
+    ).toMatchObject({ state: 'pending' });
+  });
+});

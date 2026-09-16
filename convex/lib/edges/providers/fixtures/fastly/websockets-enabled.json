@@ -1,0 +1,15 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/products/websockets/#enable-product-websockets (read 2026-09-16)",
+  "product": {
+    "id": "websockets",
+    "object": "product"
+  },
+  "service": {
+    "id": "SU1Z0isxPaozGVKXdv0eY",
+    "object": "service"
+  },
+  "_links": {
+    "self": "/enabled-products/v1/websockets/services/SU1Z0isxPaozGVKXdv0eY",
+    "service": "/service/SU1Z0isxPaozGVKXdv0eY"
+  }
+}

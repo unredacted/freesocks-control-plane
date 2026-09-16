@@ -52,6 +52,31 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  front-qualification:
+    # The L7 front check is the gate that decides whether an edge may be
+    # published, so it is proved against the software the relay nodes run
+    # (a pinned Xray-core), not only against the fake servers in the unit tests.
+    name: Front qualification vs pinned Xray-core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - name: Start the pinned Xray-core inbounds
+        run: bash docker/compat/frontcheck-up.sh
+      - name: Front qualification end to end
+        run: >-
+          bunx vitest run --config vitest.integration.config.ts
+          convex/lib/edges/frontCheck/frontCheck.integration.test.ts
+        env:
+          FCP_FRONTCHECK_XRAY_URL: https://127.0.0.1:18443
+      - if: always()
+        # No container logs are kept: they echo the test client id.
+        run: bash docker/compat/frontcheck-down.sh
+
   report-form:
     name: Report form (Chromium and Firefox)
     runs-on: ubuntu-24.04

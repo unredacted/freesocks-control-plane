@@ -244,6 +244,10 @@ describe('edgeReconcile', () => {
     fakeUpcloud([]); // lb-1 does not exist any more
     const s = await seed();
     const edgeId = await managedEdge(s, 'lb-1', { lastHealthAt: undefined });
+    // Pool index 0 is the template Host's index: a direct publish there is the
+    // rotation machine's job on a Host-managed relay, and these tests are about
+    // the reconcile loop, not the flip.
+    await s.t.mutation(internal.relays.update, { id: s.relayId, hostManaged: false });
     await s.t.mutation(internal.relays.publishEdge, { relayId: s.relayId, edgeId });
     const before = (await s.t.query(internal.relays.get, { id: s.relayId }))!;
     expect(before.publishedEdgeIds).toEqual([edgeId]);
@@ -285,6 +289,10 @@ describe('edgeReconcile', () => {
     const world = fakeUpcloud([]);
     const s = await seed();
     const edgeId = await managedEdge(s, 'lb-1', { lastHealthAt: undefined });
+    // Pool index 0 is the template Host's index: a direct publish there is the
+    // rotation machine's job on a Host-managed relay, and these tests are about
+    // the reconcile loop, not the flip.
+    await s.t.mutation(internal.relays.update, { id: s.relayId, hostManaged: false });
     await s.t.mutation(internal.relays.publishEdge, { relayId: s.relayId, edgeId });
     const rotationId = await s.t.run((ctx) =>
       ctx.db.insert('edgeRotations', {
@@ -657,13 +665,30 @@ describe('edgeReconcile', () => {
     let edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.steps[0]).toMatchObject({ state: 'unresolved', discoverAttempts: 1 });
     expect(edge.currentOp).toBeUndefined();
+    // Two quiet looks are not enough on their own: this provider also needs its
+    // SETTLE FLOOR to have passed since the step was first requested, so a slow
+    // compound create is never declared absent seconds after the request. The
+    // reconcile always supplies a reference time (the step's own `startedAt`,
+    // else the claim, else the edge's creation), so the floor is provable.
+    const r1b = await run(s.t);
+    expect(r1b.settled).toBe(1);
+    edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
+    expect(edge.steps[0]).toMatchObject({ state: 'unresolved', discoverAttempts: 2 });
+    // Age the step past the floor.
+    await s.t.run(async (ctx) => {
+      const e = (await ctx.db.get(edgeId))!;
+      await ctx.db.patch(edgeId, {
+        steps: e.steps.map((st) => ({ ...st, startedAt: Date.now() - 5 * 60_000 })),
+      });
+    });
     const r2 = await run(s.t);
     expect(r2.settled).toBe(1);
     edge = (await s.t.query(internal.edges.get, { id: edgeId }))!;
     expect(edge.steps[0].state).toBe('done');
     expect(edge.steps[0].discoverAttempts).toBeUndefined();
-    // Two LISTs, never a POST.
+    // Only LISTs, never a POST.
     expect(stub.calls.filter((c) => c.path.startsWith('/cloud/')).map((c) => c.method)).toEqual([
+      'GET',
       'GET',
       'GET',
     ]);
@@ -904,5 +929,45 @@ describe('edgeReconcile', () => {
       templateParams: {},
     });
     expect(steps.length).toBeGreaterThan(0);
+  });
+});
+
+describe('edgeReconcile: observe-only edges', () => {
+  /** An adopted, unmanaged edge in the given state. */
+  async function adopted(s: Awaited<ReturnType<typeof seed>>, patch: Record<string, unknown>) {
+    const { edgeId } = await s.t.mutation(internal.relays.adoptEdge, {
+      relayId: s.relayId,
+      slotId: s.slotId,
+      ipv4: '198.51.100.60',
+    });
+    await s.t.run((ctx) => ctx.db.patch(edgeId, patch));
+    return edgeId;
+  }
+
+  test('a DRAINED observe-only edge is destroyed after its drain, without a provider call', async () => {
+    const world = fakeUpcloud([]);
+    const s = await seed();
+    const edgeId = await adopted(s, {
+      status: 'draining',
+      publication: 'draining',
+      drainUntil: Date.now() - 1,
+    });
+    const r = await run(s.t);
+    expect(r.destroyed).toBe(1);
+    expect((await s.t.query(internal.edges.get, { id: edgeId }))!.status).toBe('destroyed');
+    // FCP never created it, so it never deletes it either.
+    expect(world.deletes).toEqual([]);
+  });
+
+  test('an observe-only edge still inside its drain is left alone', async () => {
+    fakeUpcloud([]);
+    const s = await seed();
+    const edgeId = await adopted(s, {
+      status: 'draining',
+      publication: 'draining',
+      drainUntil: Date.now() + 60_000,
+    });
+    await run(s.t);
+    expect((await s.t.query(internal.edges.get, { id: edgeId }))!.status).toBe('draining');
   });
 });

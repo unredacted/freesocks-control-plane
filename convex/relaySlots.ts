@@ -11,7 +11,9 @@ import { internalMutation, internalQuery, type MutationCtx } from './_generated/
 import type { Doc, Id } from './_generated/dataModel';
 import { writeAuditLog } from './lib/audit';
 import { isSlotKey, templateHostRemark } from './lib/edges/hosts';
-import { scheduleMirrorRefresh } from './relays';
+import { isValidHostname } from './lib/edges/hostname';
+import { slotLayers } from './lib/edges/layers';
+import { assertNoRotationOrQuarantine, liveEdgesOfRelay, scheduleMirrorRefresh } from './relays';
 
 /**
  * A slot change alters what renders for the origin (its template remark set,
@@ -26,12 +28,70 @@ async function invalidateOrigin(ctx: MutationCtx, origin: Doc<'relays'>) {
   await scheduleMirrorRefresh(ctx);
 }
 
+/**
+ * `originTransport` declares how the node is reached BEHIND a front: the scheme,
+ * whether the origin certificate is publicly trusted, the names it carries and
+ * whether the node accepts an arbitrary Host header. The whole client-to-origin
+ * chain is decided from it (lib/edges/layers.ts), so it is validated strictly:
+ * certificate names are hostnames or single leftmost wildcards, never IPs.
+ */
+const originTransportValidator = v.object({
+  scheme: v.union(v.literal('http'), v.literal('https')),
+  certPublic: v.boolean(),
+  certNames: v.array(v.string()),
+  acceptsHostHeader: v.union(v.literal('any'), v.literal('names')),
+});
+
+const transportParamsValidator = v.object({
+  path: v.optional(v.string()),
+  host: v.optional(v.string()),
+  serviceName: v.optional(v.string()),
+  upgradeToken: v.optional(v.string()),
+});
+
+type OriginTransportArg = {
+  scheme: 'http' | 'https';
+  certPublic: boolean;
+  certNames: string[];
+  acceptsHostHeader: 'any' | 'names';
+};
+
+function checkOriginTransport(t: OriginTransportArg): OriginTransportArg {
+  if (t.certNames.length > 16)
+    throw new ConvexError({ code: 'validation', message: 'certNames takes at most 16 entries' });
+  const names: string[] = [];
+  for (const raw of t.certNames) {
+    const n = raw.trim().toLowerCase().replace(/\.$/, '');
+    // A wildcard is exactly one leftmost `*` label (RFC 6125); `f*.example` and
+    // `*.*.example` are not names a certificate can carry that way.
+    const body = n.startsWith('*.') ? n.slice(2) : n;
+    if (n.includes('*') && !n.startsWith('*.'))
+      throw new ConvexError({ code: 'validation', message: `invalid certificate name: ${n}` });
+    if (!isValidHostname(body))
+      throw new ConvexError({ code: 'validation', message: `invalid certificate name: ${n}` });
+    if (!names.includes(n)) names.push(n);
+  }
+  if (t.scheme === 'https' && t.certPublic && names.length === 0) {
+    throw new ConvexError({
+      code: 'validation',
+      message: 'a publicly trusted origin must name its certificate',
+    });
+  }
+  return { ...t, certNames: names };
+}
+
 export function mapSlotAdmin(r: Doc<'relaySlots'>, profile?: Doc<'protocolProfiles'> | null) {
   return {
     id: r._id as string,
     relayId: r.relayId as string,
     slotKey: r.slotKey,
     protocol: profile?.protocol ?? 'reality',
+    originTransport: r.originTransport ?? null,
+    transportParams: r.transportParams ?? null,
+    // Which edge layers can front this slot given the complete chain; empty
+    // means nothing can (the operator sees why in the exclusions).
+    layers: profile ? slotLayers(r, profile).layers : ['l4'],
+    revision: r.revision ?? 0,
     profileId: r.profileId as string,
     profileSlug: profile?.slug ?? null,
     provider: profile?.provider ?? null,
@@ -92,6 +152,15 @@ export const upsert = internalMutation({
     configProfileUuid: v.string(),
     configProfileInboundUuid: v.string(),
     originPort: v.number(),
+    /** How the node is reached behind an L7 front; absent = a legacy raw-TCP slot. */
+    originTransport: v.optional(v.union(originTransportValidator, v.null())),
+    /**
+     * The HTTP-transport parameters the inbound is deployed with (path + upgrade
+     * token for ws/httpupgrade, service name for grpc). The front qualification
+     * sends exactly these and binds to their hash, so a change here expires the
+     * proof through the revision bump below.
+     */
+    transportParams: v.optional(v.union(transportParamsValidator, v.null())),
     deployed: v.optional(v.boolean()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
@@ -127,15 +196,30 @@ export const upsert = internalMutation({
     ).find((s) => s.slotKey === a.slotKey);
     const now = Date.now();
     const remark = templateHostRemark(origin.nodeHostname, a.slotKey);
+    const originTransport =
+      a.originTransport === undefined
+        ? existing?.originTransport
+        : a.originTransport === null
+          ? undefined
+          : checkOriginTransport(a.originTransport);
+    const transportParams =
+      a.transportParams === undefined
+        ? existing?.transportParams
+        : (a.transportParams ?? undefined);
     const fields = {
       profileId: profile._id,
       inboundTag: a.inboundTag,
       configProfileUuid: a.configProfileUuid,
       configProfileInboundUuid: a.configProfileInboundUuid,
       originPort: a.originPort,
+      originTransport,
+      transportParams,
       templateHostRemark: remark,
       deployed: a.deployed ?? true,
       retired: false,
+      // Every write bumps the revision: a front qualification binds to it, so a
+      // slot edited after a proof was taken invalidates that proof by itself.
+      revision: (existing?.revision ?? 0) + 1,
       updatedAt: now,
     };
     let id: Id<'relaySlots'>;
@@ -150,12 +234,9 @@ export const upsert = internalMutation({
       // forward to an obsolete inbound while rendering the new profile. The
       // role must drain/destroy the slot's edges first (or use a new slotKey).
       if (rebound || existing.originPort !== a.originPort) {
-        const live = (
-          await ctx.db
-            .query('edges')
-            .withIndex('by_relay_status', (q) => q.eq('relayId', a.relayId))
-            .collect()
-        ).filter((e) => e.slotId === existing._id && e.status !== 'destroyed');
+        const live = (await liveEdgesOfRelay(ctx.db, a.relayId)).filter(
+          (e) => e.slotId === existing._id,
+        );
         if (live.length > 0)
           throw new ConvexError({
             code: 'conflict',
@@ -206,6 +287,11 @@ export const retire = internalMutation({
         .collect()
     ).find((s) => s.slotKey === slotKey);
     if (!slot) return { ok: true as const };
+    // A rotation in flight on this relay is about to publish, flip or roll back
+    // against a slot: retiring it underneath would strand the run (its target
+    // slot is gone) or leave the panel pointing at an edge the pool no longer
+    // renders. Same gate every other pool writer takes.
+    await assertNoRotationOrQuarantine(ctx.db, origin);
     const live = await ctx.db
       .query('edges')
       .withIndex('by_relay_publication', (q) =>
@@ -218,7 +304,12 @@ export const retire = internalMutation({
         message: 'A published edge still uses this slot; unpublish it first',
       });
     }
-    await ctx.db.patch(slot._id, { retired: true, deployed: false, updatedAt: Date.now() });
+    await ctx.db.patch(slot._id, {
+      retired: true,
+      deployed: false,
+      revision: (slot.revision ?? 0) + 1,
+      updatedAt: Date.now(),
+    });
     // The retired slot's template entry must vanish from every stored mirror,
     // not just from the next fronted fetch.
     await invalidateOrigin(ctx, origin);

@@ -1,21 +1,25 @@
 import { describe, expect, test } from 'vitest';
 import {
   GLOBALPING_USER_AGENT,
+  globalpingKind,
   globalpingRequest,
   globalpingStart,
   globalpingPoll,
+  parseGlobalpingHttpResults,
   parseGlobalpingResults,
   type GlobalpingLike,
 } from './globalping';
 import {
+  checkhostEndpoint,
+  checkhostHostParam,
   parseCheckhostNodes,
   selectCheckhostNodes,
   parseCheckhostResult,
   checkhostStart,
   type FetchLike,
 } from './checkhost';
-import { parseRipeAtlasResults, ripeAtlasBody } from './ripeatlas';
-import { classifyInternalError, internalProbe } from './internal';
+import { fetchAtlasProbeAsns, parseRipeAtlasResults, ripeAtlasBody } from './ripeatlas';
+import { classifyInternalError, internalProbe, resolvePublic } from './internal';
 import {
   countryVerdict,
   portRollup,
@@ -24,9 +28,24 @@ import {
   unreachableCountries,
 } from './verdict';
 import { shortError } from './types';
-import type { ProbeResult } from './types';
+import type { ProbeResult, ProbeTarget } from './types';
 
-const target = { address: '198.51.100.7', port: 443, ipVersion: 4 as const };
+const target: ProbeTarget = {
+  address: '198.51.100.7',
+  port: 443,
+  addressKind: 'ip',
+  protocol: 'tcp',
+  requestedFamily: 4,
+  ipVersion: 4,
+};
+/** An L7 (hostname) target: probed by name, no family requested, TLS handshake. */
+const nameTarget: ProbeTarget = {
+  address: 'front.example',
+  port: 443,
+  addressKind: 'name',
+  protocol: 'tls',
+  requestedFamily: 'any',
+};
 const opts = { countries: ['IR', 'RU'], perCountryLimit: 3, preferEyeball: true };
 
 describe('globalping', () => {
@@ -91,6 +110,53 @@ describe('globalping', () => {
     ]);
     // A probe that could not run the command says nothing about the target.
     expect(out.some((r) => r.country === 'RU')).toBe(false);
+  });
+
+  test('a tls/https target becomes an http measurement: GET / over HTTPS with the name as Host', () => {
+    expect(globalpingKind(target)).toBe('ping');
+    expect(globalpingKind(nameTarget)).toBe('http');
+    const req = globalpingRequest(nameTarget, opts);
+    expect(req).toMatchObject({
+      type: 'http',
+      target: 'front.example',
+      measurementOptions: {
+        protocol: 'HTTPS',
+        port: 443,
+        request: { method: 'GET', path: '/', host: 'front.example' },
+      },
+    });
+    // A name pins no family: the vantage's own resolver decides.
+    expect(req.measurementOptions).not.toHaveProperty('ipVersion');
+    expect(globalpingRequest(target, opts).measurementOptions).toMatchObject({ ipVersion: 4 });
+  });
+
+  test('http results: any status = the handshake completed (reachable); a failed item is a real connect/TLS failure, scrubbed of the name', () => {
+    const out = parseGlobalpingHttpResults(
+      [
+        {
+          probe: { country: 'IR', asn: 1, tags: ['eyeball-network'] },
+          result: { status: 'finished', statusCode: 403, timings: { total: 91.6 } },
+        },
+        {
+          probe: { country: 'RU', asn: 2, tags: [] },
+          result: {
+            status: 'failed',
+            rawOutput: 'unable to verify the first certificate for front.example',
+          },
+        },
+        { probe: { country: 'RU', asn: 3, tags: [] }, result: { status: 'in-progress' } },
+        {
+          probe: { country: 'RU', asn: 4, tags: [] },
+          result: { status: 'finished' }, // answered, no status code: no evidence
+        },
+      ],
+      ['front.example'],
+    );
+    expect(out).toHaveLength(2);
+    // A 403 from the front still proves the connection and handshake worked.
+    expect(out[0]).toMatchObject({ country: 'IR', ok: true, rttMs: 92 });
+    expect(out[1]).toMatchObject({ country: 'RU', ok: false });
+    expect(out[1].error).not.toContain('front.example');
   });
 
   test('start + poll through an injected client', async () => {
@@ -207,8 +273,51 @@ describe('check-host.net', () => {
     ]);
     expect((seen[0].init?.headers as Record<string, string>).accept).toBe('application/json');
     expect(started.nodeCountries['ru1.node.check-host.net']).toBe('RU');
-    await checkhostStart(fetchFn, { address: '2001:db8::7', port: 443, ipVersion: 6 }, opts, nodes);
+    await checkhostStart(
+      fetchFn,
+      {
+        address: '2001:db8::7',
+        port: 443,
+        addressKind: 'ip',
+        protocol: 'tcp',
+        requestedFamily: 6,
+        ipVersion: 6,
+      },
+      opts,
+      nodes,
+    );
     expect(new URL(seen[1].url).searchParams.get('host')).toBe('[2001:db8::7]:443');
+  });
+
+  test('a tls/https target uses check-http against the https URL; tcp keeps check-tcp with host:port', async () => {
+    expect(checkhostEndpoint(target)).toBe('check-tcp');
+    expect(checkhostHostParam(target)).toBe('198.51.100.7:443');
+    expect(checkhostEndpoint(nameTarget)).toBe('check-http');
+    expect(checkhostHostParam(nameTarget)).toBe('https://front.example:443/');
+    const seen: string[] = [];
+    const fetchFn: FetchLike = async (url) => {
+      seen.push(url);
+      return new Response(JSON.stringify({ ok: 1, request_id: 'req-2' }), { status: 200 });
+    };
+    await checkhostStart(fetchFn, nameTarget, opts, parseCheckhostNodes(nodesBody));
+    expect(new URL(seen[0]).pathname).toBe('/check-http');
+    expect(new URL(seen[0]).searchParams.get('host')).toBe('https://front.example:443/');
+  });
+
+  test('check-http results: [1, s, msg, status, ip] = reachable, [0, ...] = fail with the name scrubbed', () => {
+    const p = parseCheckhostResult(
+      {
+        'ir1.node.check-host.net': [[1, 0.212, 'OK', '403', '198.51.100.7']],
+        'ru1.node.check-host.net': [[0, 0.0, 'SSL error for front.example']],
+      },
+      { 'ir1.node.check-host.net': 'IR', 'ru1.node.check-host.net': 'RU' },
+      {},
+      ['front.example'],
+    );
+    expect(p.status).toBe('finished');
+    expect(p.results[0]).toMatchObject({ country: 'IR', ok: true, rttMs: 212 });
+    expect(p.results[1]).toMatchObject({ country: 'RU', ok: false });
+    expect(p.results[1].error).not.toContain('front.example');
   });
 
   test('result parse: null = pending, [{time}] = ok (seconds → ms), [{error}] = fail', () => {
@@ -299,25 +408,93 @@ describe('ripe atlas', () => {
         { prb_id: 4 },
       ],
       'IR',
+      { asnByProbe: { 1: 'AS1', 2: 'AS2', 3: 'AS3' } },
     );
     expect(out).toEqual([
-      { country: 'IR', network: 'prb-1', vantageClass: 'unknown', ok: true, rttMs: 120 },
+      { country: 'IR', asn: 'AS1', vantageClass: 'unknown', ok: true, rttMs: 120 },
       {
         country: 'IR',
-        network: 'prb-2',
+        asn: 'AS2',
         vantageClass: 'unknown',
         ok: false,
         error: 'connect: timeout',
       },
       {
         country: 'IR',
-        network: 'prb-3',
+        asn: 'AS3',
         vantageClass: 'unknown',
         ok: true,
         rttMs: 80,
         error: 'tls_alert',
       },
     ]);
+  });
+
+  test('a probe id is NOT a network: without an ASN the results carry neither asn nor network, so they cannot fake agreement', () => {
+    const out = parseRipeAtlasResults(
+      [
+        { prb_id: 11, err: 'timeout' },
+        { prb_id: 12, err: 'timeout' },
+      ],
+      'IR',
+    );
+    expect(out.every((r) => r.asn === undefined && r.network === undefined)).toBe(true);
+    // Two network-less failures are ONE bucket, so the source stays undecided.
+    expect(sourceVerdict('ripeatlas', out, 2)).toMatchObject({
+      verdict: 'unknown',
+      failNetworks: ['ripeatlas:unknown'],
+    });
+    // With the registry's ASNs they are two real networks and agreement holds.
+    const withAsn = parseRipeAtlasResults(
+      [
+        { prb_id: 11, err: 'timeout' },
+        { prb_id: 12, err: 'timeout' },
+      ],
+      'IR',
+      { asnByProbe: { 11: 'AS11', 12: 'AS12' } },
+    );
+    expect(sourceVerdict('ripeatlas', withAsn, 2).verdict).toBe('unreachable');
+  });
+
+  test('inline asn fields win over the registry; the registry lookup asks for ids only and tolerates failure', async () => {
+    const inline = parseRipeAtlasResults([{ prb_id: 5, asn_v4: 64500, rt: 10 }], 'IR', {
+      af: 4,
+      asnByProbe: { 5: 'AS999' },
+    });
+    expect(inline[0].asn).toBe('AS64500');
+    const seen: string[] = [];
+    const asns = await fetchAtlasProbeAsns(
+      async (url) => {
+        seen.push(url);
+        return new Response(
+          JSON.stringify({ results: [{ id: 7, asn_v4: 64501, asn_v6: 64601 }] }),
+          { status: 200 },
+        );
+      },
+      'key',
+      [7],
+      6,
+    );
+    expect(asns).toEqual({ 7: 'AS64601' });
+    const u = new URL(seen[0]);
+    expect(u.pathname).toBe('/api/v2/probes/');
+    expect(u.searchParams.get('id__in')).toBe('7');
+    // A registry outage leaves the probes network-less rather than guessing.
+    expect(
+      await fetchAtlasProbeAsns(async () => new Response(null, { status: 503 }), 'key', [7], 4),
+    ).toEqual({});
+  });
+
+  test('a name target is dialled by name with the hostname as SNI', () => {
+    const b = ripeAtlasBody(nameTarget, 'IR', 2);
+    expect(b.definitions[0]).toMatchObject({
+      type: 'sslcert',
+      af: 4,
+      target: 'front.example',
+      hostname: 'front.example',
+    });
+    // An IP target carries no SNI override.
+    expect(ripeAtlasBody(target, 'IR', 2).definitions[0]).not.toHaveProperty('hostname');
   });
 });
 
@@ -360,12 +537,95 @@ describe('internal probe', () => {
     ).toBe(true);
   });
   test('any HTTP response is reachable; results never carry a country signal', async () => {
-    const ok = await internalProbe(async () => new Response(null, { status: 400 }), target);
+    const ok = await internalProbe(
+      { fetchFn: async () => new Response(null, { status: 400 }) },
+      target,
+    );
     expect(ok).toMatchObject({ country: 'XX', ok: true, vantageClass: 'datacenter' });
-    const down = await internalProbe(async () => {
-      throw Object.assign(new Error('fetch failed'), { cause: { code: 'EHOSTUNREACH' } });
-    }, target);
+    const down = await internalProbe(
+      {
+        fetchFn: async () => {
+          throw Object.assign(new Error('fetch failed'), { cause: { code: 'EHOSTUNREACH' } });
+        },
+      },
+      target,
+    );
     expect(down).toMatchObject({ country: 'XX', ok: false, error: 'EHOSTUNREACH' });
+  });
+
+  test('a tls target handshakes with SNI = the name, and a certificate failure IS unreachable', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const probe = (handshake: { ok: boolean; error?: string }) =>
+      internalProbe(
+        {
+          fetchFn: async () => {
+            throw new Error('the tls probe must not use fetch');
+          },
+          lookup: async () => ['198.51.100.7'],
+          tlsConnect: async (o) => {
+            seen.push(o);
+            return handshake;
+          },
+        },
+        nameTarget,
+      );
+    expect(await probe({ ok: true })).toMatchObject({ country: 'XX', ok: true });
+    expect(seen[0]).toMatchObject({
+      host: 'front.example',
+      port: 443,
+      servername: 'front.example',
+    });
+    // Unlike the `tcp` rule, a certificate error is a failure here.
+    expect(await probe({ ok: false, error: 'cert_invalid' })).toMatchObject({
+      ok: false,
+      error: 'cert_invalid',
+    });
+  });
+
+  test('a name that resolves into private space is refused before anything is dialled', async () => {
+    const calls: string[] = [];
+    const run = (addresses: string[]) =>
+      internalProbe(
+        {
+          fetchFn: async () => {
+            calls.push('fetch');
+            return new Response(null, { status: 200 });
+          },
+          lookup: async () => addresses,
+          tlsConnect: async () => {
+            calls.push('tls');
+            return { ok: true };
+          },
+        },
+        nameTarget,
+      );
+    expect(await run(['10.0.0.5'])).toMatchObject({ ok: false, error: 'private_address' });
+    // One private answer among public ones is enough to refuse the whole name.
+    expect(await run(['198.51.100.7', '127.0.0.1'])).toMatchObject({
+      ok: false,
+      error: 'private_address',
+    });
+    expect(calls).toEqual([]);
+    expect(await run(['198.51.100.7'])).toMatchObject({ ok: true });
+    expect(calls).toEqual(['tls']);
+    // A resolver failure never leaks the name into the stored error.
+    const failed = await internalProbe(
+      {
+        fetchFn: async () => new Response(null, { status: 200 }),
+        lookup: async () => {
+          throw Object.assign(new Error('getaddrinfo ENOTFOUND front.example'), {
+            code: 'ENOTFOUND',
+          });
+        },
+      },
+      nameTarget,
+    );
+    expect(failed.ok).toBe(false);
+    expect(failed.error).not.toContain('front.example');
+    expect(await resolvePublic('front.example', async () => [])).toEqual({
+      ok: false,
+      error: 'no_address',
+    });
   });
 });
 
@@ -461,10 +721,38 @@ describe('verdicts', () => {
     expect(portRollup(['unknown', 'unreachable'])).toBe('unreachable');
   });
 
-  test('shortError scrubs addresses and urls', () => {
+  test('results with no asn and no network are ONE bucket, not one per result', () => {
+    const anon = (ok: boolean): ProbeResult => ({ country: 'IR', ok, vantageClass: 'datacenter' });
+    const s = sourceVerdict('checkhost', [anon(false), anon(false), anon(false)], 2);
+    expect(s.failNetworks).toEqual(['checkhost:unknown']);
+    expect(s.verdict).toBe('unknown');
+    // The bucket is per source, so two sources still disagree independently.
+    expect(sourceVerdict('globalping', [anon(false)], 1).failNetworks).toEqual([
+      'globalping:unknown',
+    ]);
+    // A named network still counts for itself alongside the unknown bucket.
+    const mixedIds = sourceVerdict(
+      'checkhost',
+      [anon(false), { ...anon(false), network: 'ir1' }],
+      2,
+    );
+    expect(mixedIds.failNetworks.sort()).toEqual(['checkhost:unknown', 'ir1']);
+    expect(mixedIds.verdict).toBe('unreachable');
+  });
+
+  test('shortError scrubs addresses, urls and hostnames', () => {
     expect(shortError('connect to 203.0.113.9 failed via https://x.example/y')).toBe(
       'connect to <ip> failed via <url>',
     );
     expect(shortError('peer [2001:db8::1] reset')).toBe('peer <ip6> reset');
+    // A stored error must never carry the fronted hostname it was measuring.
+    expect(shortError('no cert for abc123.front.example')).toBe('no cert for <host>');
+    // Short codes and plain prose survive untouched.
+    expect(shortError('ECONNREFUSED')).toBe('ECONNREFUSED');
+    expect(shortError('Connection timed out')).toBe('Connection timed out');
+    // An explicit redaction list catches names the generic shape misses.
+    expect(shortError('handshake with intranet failed', 60, ['intranet'])).toBe(
+      'handshake with <host> failed',
+    );
   });
 });

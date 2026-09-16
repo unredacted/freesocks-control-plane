@@ -1,0 +1,33 @@
+{
+  "_source": {
+    "api": "GET /zones/{zone_id}/ssl/certificate_packs?status=all&per_page=50",
+    "doc": "https://developers.cloudflare.com/api/resources/ssl/subresources/certificate_packs/methods/list/",
+    "sdk": "node_modules/cloudflare/resources/ssl/certificate-packs/certificate-packs.d.ts (CertificatePackListResponse)",
+    "note": "Universal SSL covers the apex and ONE level below it, which is why edge hostnames are first-level labels",
+    "taken": "2026-09-16"
+  },
+  "result": [
+    {
+      "id": "3822ff90-ea29-44df-9e55-21300bb9419b",
+      "type": "universal",
+      "hosts": ["example.net", "*.example.net"],
+      "status": "active",
+      "certificate_authority": "google",
+      "validation_method": "txt",
+      "validity_days": 90,
+      "certificates": [
+        {
+          "id": "7e7b8deba8538af625850b7b2530034c",
+          "hosts": ["example.net", "*.example.net"],
+          "status": "active",
+          "issuer": "GoogleTrustServices",
+          "expires_on": "2026-12-15T00:00:00Z"
+        }
+      ]
+    }
+  ],
+  "result_info": { "page": 1, "per_page": 50, "count": 1, "total_count": 1, "total_pages": 1 },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

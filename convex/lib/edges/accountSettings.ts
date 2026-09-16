@@ -60,8 +60,14 @@ export const EDGE_SETTINGS_SCHEMAS = {
       .string()
       .min(1)
       .max(253)
-      .regex(/^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/, 'zone name like example.org'),
-    accountId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
+      .regex(
+        /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/,
+        'zone name like example.org',
+      ),
+    accountId: z
+      .string()
+      .regex(/^[0-9a-f]{32}$/)
+      .optional(),
   }),
   // L7: Fastly services; the hostnames' DNS lives in a Cloudflare account FCP
   // also manages (`dnsAccountId`, an edgeProviderAccounts id of provider

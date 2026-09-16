@@ -1,0 +1,33 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/services/service/#list-services (read 2026-09-16)",
+  "_body": [
+    {
+      "id": "SU1Z0isxPaozGVKXdv0eY",
+      "name": "fcp-relay-o1-deadbeef",
+      "type": "vcl",
+      "customer_id": "x4x",
+      "version": 1,
+      "versions": [
+        {
+          "number": 1,
+          "active": true,
+          "locked": true
+        }
+      ]
+    },
+    {
+      "id": "SHAREDsvc0000000000001",
+      "name": "legacy front",
+      "type": "vcl",
+      "customer_id": "x4x",
+      "version": 4,
+      "versions": [
+        {
+          "number": 4,
+          "active": true,
+          "locked": true
+        }
+      ]
+    }
+  ]
+}

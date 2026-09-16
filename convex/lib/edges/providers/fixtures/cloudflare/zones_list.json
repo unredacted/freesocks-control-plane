@@ -1,0 +1,26 @@
+{
+  "_source": {
+    "api": "GET /zones?per_page=50",
+    "doc": "https://developers.cloudflare.com/api/resources/zones/methods/list/",
+    "sdk": "node_modules/cloudflare/resources/zones/zones.d.ts (ZoneListParams, V4PagePaginationArray)",
+    "taken": "2026-09-16"
+  },
+  "result": [
+    {
+      "id": "023e105f4ecef8ad9ca31a8372d0c353",
+      "name": "example.net",
+      "status": "active",
+      "paused": false
+    },
+    {
+      "id": "7c1a1e4f9d2b4f8a9c3d5e6f7a8b9c0d",
+      "name": "example.org",
+      "status": "pending",
+      "paused": false
+    }
+  ],
+  "result_info": { "page": 1, "per_page": 50, "count": 2, "total_count": 2, "total_pages": 1 },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

@@ -236,6 +236,10 @@ const probeReachabilitySummary = v.object({
       verdict: relayReachVerdict,
       // The IPv6 path, when the target has one and it was probed.
       v6Verdict: v.optional(relayReachVerdict),
+      // The BY-NAME path, when the target was also probed by hostname (an L7
+      // front has no family of its own; for such a target the name path IS
+      // `verdict` and this stays absent).
+      nameVerdict: v.optional(relayReachVerdict),
       okVantages: v.number(),
       failVantages: v.number(),
       lastAt: v.number(),
@@ -1007,6 +1011,11 @@ export default defineSchema({
     cooldownUntil: v.optional(v.number()),
     rotationsDayKey: v.optional(v.string()),
     rotationsToday: v.number(),
+    // L7 replacements that went to the SAME provider today. Minting another CDN
+    // hostname does not guarantee a different frontend IP, so repeated
+    // same-provider replacements are bounded (edge.l7.maxSameProviderReplacementsPerDay).
+    l7ReplacementsDayKey: v.optional(v.string()),
+    l7ReplacementsToday: v.optional(v.number()),
     lastRotatedAt: v.optional(v.number()),
     // A rotation whose rollback could not converge parks the origin here; nothing
     // bypasses it (resolveQuarantine is the only exit).
@@ -1054,6 +1063,9 @@ export default defineSchema({
     // by FCP through the backend provider on the relay's placement; a member-
     // shaped credential so the proof travels a member's path).
     qualificationUserId: v.optional(v.string()),
+    // The panel user behind that credential (the stored backendUserId form), so
+    // it can be deactivated when the relay goes or the credential is re-minted.
+    qualificationBackendUserId: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index('by_slug', ['slug'])
@@ -1080,6 +1092,19 @@ export default defineSchema({
     retired: v.boolean(),
     // How the inbound is reached behind an L7 front (lib/edges/layers.ts).
     originTransport: v.optional(relaySlotOriginTransport),
+    // HTTP-transport parameters of the inbound, as the node role deploys them:
+    // what the front qualification must send to reach it (path + upgrade token
+    // for ws/httpupgrade, service name for grpc) and what the renderer keeps in
+    // sync. Absent = the transport's defaults. A qualification binds to their
+    // hash, so changing one here expires the proof (lib/edges/frontCheck).
+    transportParams: v.optional(
+      v.object({
+        path: v.optional(v.string()),
+        host: v.optional(v.string()),
+        serviceName: v.optional(v.string()),
+        upgradeToken: v.optional(v.string()),
+      }),
+    ),
     // Bumped on every write; a front qualification binds to it (absent = 0).
     revision: v.optional(v.number()),
     updatedAt: v.number(),
@@ -1216,6 +1241,10 @@ export default defineSchema({
     // Consecutive `gone` describes (reset by any other state). The pool drop +
     // status transition need TWO so an auth-shaped 404 or one blip cannot act.
     goneObservations: v.optional(v.number()),
+    // Consecutive `active` describes that OMITTED a previously known address.
+    // Dropping an address stops rendering it, so it needs the same two
+    // observations a `gone` transition does (one truncated answer is not proof).
+    addressLossObservations: v.optional(v.number()),
     // Consecutive `unresolved` confirmDestroyed passes for the resource the
     // destroy walk is currently on; past the cap the idempotent delete is re-issued.
     destroyConfirm: v.optional(v.object({ resourceId: v.string(), attempts: v.number() })),
@@ -1249,6 +1278,10 @@ export default defineSchema({
     ),
     burn: v.boolean(),
     force: v.boolean(),
+    // An operator waived the affected-country evidence gate for this run (and
+    // ONLY that gate: the transport proof, TLS chain, ownership, layer and
+    // configuration-binding checks all still apply). Audited at the request.
+    forceGeoEvidence: v.optional(v.boolean()),
     // provision kind: publish the new edge when it verifies (bootstrap / pool fill).
     publishOnDone: v.optional(v.boolean()),
     targetEdgeId: v.optional(v.id('edges')), // the edge being replaced
@@ -1348,6 +1381,10 @@ export default defineSchema({
     label: v.string(),
     address: v.string(), // IP literal or hostname
     port: v.number(),
+    // What the probe speaks. Default `tcp` (a bare connect): a hostname does
+    // not imply HTTPS, and a REALITY or plaintext decoy would fail a handshake
+    // probe while serving perfectly well. `tls` / `https` are opt-in per target.
+    probeProtocol: v.optional(v.union(v.literal('tcp'), v.literal('tls'), v.literal('https'))),
     enabled: v.boolean(),
     notes: v.optional(v.string()),
     reachability: v.optional(probeReachabilitySummary),
@@ -1467,9 +1504,12 @@ export default defineSchema({
     .index('by_server_name', ['backendServerId', 'name'])
     .index('by_server', ['backendServerId']),
 
-  // Detector dedupe marks: one contribution per member per relay origin per
-  // detector window. `key` is a peppered HMAC computed in the HTTP action; the
-  // issueReports row itself carries only the resulting 0/1 weight.
+  // Detector dedupe marks: one contribution per member per detector window,
+  // ACROSS relays: the key is a peppered HMAC of the member alone (see
+  // `http.ts`: `relay-mark:<userId>`), with no relay in it, so a member who
+  // reports about two origins inside one window is counted once. `key` is
+  // computed in the HTTP action; the issueReports row itself carries only the
+  // resulting 0/1 weight.
   relayReportMarks: defineTable({
     key: v.string(),
     firstAt: v.number(),

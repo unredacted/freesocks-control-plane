@@ -1,0 +1,89 @@
+{
+  "_comment": [
+    "Xray-core inbounds for the front-qualification integration test",
+    "(convex/lib/edges/frontCheck/frontCheck.integration.test.ts).",
+    "",
+    "One inbound per HTTP transport an L7 edge can front, each on its own port",
+    "because a listener speaks exactly one of them. Xray terminates TLS itself:",
+    "the compat stack has no separate TLS terminator, and what the test has to",
+    "prove is that the real software accepts our transport handshake, our VLESS",
+    "request and our framing, not that a reverse proxy can be configured.",
+    "",
+    "The freedom outbound is pinned with `redirect`, so the proxied destination",
+    "is the test origin whatever name the client asks for. That keeps the test",
+    "off the public internet and out of the container's resolver (the image is",
+    "distroless), while the client still sends the real request it would send.",
+    "",
+    "The client id is a fixed, public test value: it authenticates nothing but",
+    "this throwaway container."
+  ],
+  "log": { "loglevel": "warning" },
+  "inbounds": [
+    {
+      "tag": "vless-ws-tls",
+      "listen": "0.0.0.0",
+      "port": 18443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{ "id": "01234567-89ab-cdef-0123-456789abcdef" }],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": ["http/1.1"],
+          "certificates": [
+            { "certificateFile": "/etc/xray/tls/cert.pem", "keyFile": "/etc/xray/tls/key.pem" }
+          ]
+        },
+        "wsSettings": { "path": "/relay-ws" }
+      }
+    },
+    {
+      "tag": "vless-httpupgrade-tls",
+      "listen": "0.0.0.0",
+      "port": 18444,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{ "id": "01234567-89ab-cdef-0123-456789abcdef" }],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "httpupgrade",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": ["http/1.1"],
+          "certificates": [
+            { "certificateFile": "/etc/xray/tls/cert.pem", "keyFile": "/etc/xray/tls/key.pem" }
+          ]
+        },
+        "httpupgradeSettings": { "path": "/relay-hu" }
+      }
+    },
+    {
+      "tag": "vless-grpc-tls",
+      "listen": "0.0.0.0",
+      "port": 18445,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{ "id": "01234567-89ab-cdef-0123-456789abcdef" }],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": ["h2"],
+          "certificates": [
+            { "certificateFile": "/etc/xray/tls/cert.pem", "keyFile": "/etc/xray/tls/key.pem" }
+          ]
+        },
+        "grpcSettings": { "serviceName": "relay-svc" }
+      }
+    }
+  ],
+  "outbounds": [
+    { "tag": "to-origin", "protocol": "freedom", "settings": { "redirect": "10.89.71.10:8080" } }
+  ]
+}

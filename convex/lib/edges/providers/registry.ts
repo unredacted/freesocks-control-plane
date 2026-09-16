@@ -24,8 +24,23 @@ export const EDGE_PROVIDERS: Record<EdgeProviderId, EdgeProvider> = {
   fastly: fastlyProvider as unknown as EdgeProvider,
 };
 
+/**
+ * Test seam: swap one provider's adapter for a fake. The orchestration tests
+ * (the rotation machine, the reconcile loop) are about the STATE MACHINE, not
+ * about one vendor's wire format, which its own contract tests pin. Without
+ * this they would have to re-encode a vendor's request shapes, and would then
+ * fail whenever that vendor's adapter changed for reasons the machine does not
+ * care about. Production code never calls this.
+ */
+const overrides = new Map<EdgeProviderId, EdgeProvider>();
+
+export function __setEdgeProviderForTests(id: EdgeProviderId, provider: EdgeProvider | null): void {
+  if (provider) overrides.set(id, provider);
+  else overrides.delete(id);
+}
+
 export function edgeProviderFor(id: EdgeProviderId): EdgeProvider {
-  return EDGE_PROVIDERS[id];
+  return overrides.get(id) ?? EDGE_PROVIDERS[id];
 }
 
 /** Merge an account's credentials + settings into the adapter config shape. */

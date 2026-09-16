@@ -10,6 +10,7 @@
   import { Checkbox } from '@client/components/ui/checkbox';
   import { Input } from '@client/components/ui/input';
   import * as Dialog from '@client/components/ui/dialog';
+  import * as Select from '@client/components/ui/select';
   import { Skeleton } from '@client/components/ui/skeleton';
   import InlineError from '../../components/InlineError.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
@@ -132,20 +133,31 @@
   }));
 
   // --- custom targets ------------------------------------------------------------------
+  type ProbeProtocol = ProbeTargetAdmin['probeProtocol'];
   type Draft = {
     id: string | null;
     label: string;
     address: string;
     port: number;
+    probeProtocol: ProbeProtocol;
     enabled: boolean;
     notes: string;
   };
+  /** What each check proves, in the one sentence that decides the verdict. */
+  const PROBE_PROTOCOLS: Array<{ id: ProbeProtocol; label: string }> = [
+    { id: 'tcp', label: 'tcp (connect only)' },
+    { id: 'tls', label: 'tls (handshake with SNI)' },
+    { id: 'https', label: 'https (HTTP GET)' },
+  ];
+  const PROBE_PROTOCOL_HELP =
+    'tls = TLS handshake with SNI, a certificate error counts as unreachable; https = HTTP GET, any status counts as reachable.';
   let editor = $state<Draft | null>(null);
   const newDraft = (): Draft => ({
     id: null,
     label: '',
     address: '',
     port: 443,
+    probeProtocol: 'tcp',
     enabled: true,
     notes: '',
   });
@@ -154,6 +166,7 @@
     label: t.label,
     address: t.address,
     port: t.port,
+    probeProtocol: t.probeProtocol,
     enabled: t.enabled,
     notes: t.notes ?? '',
   });
@@ -164,6 +177,7 @@
         label: d.label.trim(),
         address: d.address.trim(),
         port: Number(d.port) || 443,
+        probeProtocol: d.probeProtocol,
         enabled: d.enabled,
         notes: d.notes.trim(),
       };
@@ -211,6 +225,12 @@
     };
   };
   const kindLabel: Record<string, string> = { edge: 'Edge', relay: 'Relay node', custom: 'Custom' };
+  /**
+   * A run that dialled a hostname has no observed family of its own: the vantage
+   * resolved the name and the source rarely says which record it used.
+   */
+  const familyLabel = (ipVersion: 4 | 6 | null) =>
+    ipVersion === null ? 'by name' : `v${ipVersion}`;
   const fmtAt = (iso: string) =>
     new Date(iso).toLocaleString('en-US', {
       month: 'short',
@@ -231,8 +251,8 @@
           <CardTitle class="text-base">Reachability matrix</CardTitle>
           <CardDescription>
             Last verdict per target and country: IPv4 path, with the IPv6 path in brackets where
-            probed. "FCP" is the internal connect check (outage vs block). Only edge rows feed the
-            block detector.
+            probed. A fronted hostname is probed by name instead, with a TLS handshake. "FCP" is the
+            internal connect check (outage vs block). Only edge rows feed the block detector.
           </CardDescription>
         </div>
         <div class="flex items-center gap-2">
@@ -329,9 +349,11 @@
                               <tr
                                 ><th class="pr-3">When</th><th class="pr-3">Source</th><th
                                   class="pr-3">Family</th
-                                ><th class="pr-3">Status</th><th class="pr-3">Trigger</th><th
-                                  class="pr-3">ok / fail</th
-                                ><th>Per country</th></tr
+                                ><th class="pr-3">Addressed</th><th class="pr-3">Check</th><th
+                                  class="pr-3">Status</th
+                                ><th class="pr-3">Trigger</th><th class="pr-3">ok / fail</th><th
+                                  >Per country</th
+                                ></tr
                               >
                             </thead>
                             <tbody>
@@ -341,7 +363,9 @@
                                     >{fmtAt(r.requestedAt)}</td
                                   >
                                   <td class="pr-3">{r.source}</td>
-                                  <td class="pr-3">v{r.ipVersion}</td>
+                                  <td class="pr-3">{familyLabel(r.ipVersion)}</td>
+                                  <td class="pr-3">{r.addressKind === 'name' ? 'name' : 'IP'}</td>
+                                  <td class="pr-3">{r.probeProtocol}</td>
                                   <td class="pr-3">{r.status}</td>
                                   <td class="pr-3">{r.trigger}</td>
                                   <td class="pr-3 tabular-nums"
@@ -409,6 +433,7 @@
               <div>
                 <span class="font-medium">{t.label}</span>
                 <span class="ms-2 font-mono text-xs">{t.display}</span>
+                <span class="ms-2 rounded-full border px-2 py-0.5 text-xs">{t.probeProtocol}</span>
                 {#if !t.enabled}<span class="ms-2 rounded-full border px-2 py-0.5 text-xs"
                     >disabled</span
                   >{/if}
@@ -490,6 +515,15 @@
               checked={get('probe.preferEyeball', true)}
               onCheckedChange={(v) => set('probe.preferEyeball', Boolean(v))}
             /> Prefer residential (eyeball) vantages</label
+          >
+          <label
+            class="flex items-center gap-2"
+            title="Relay nodes and custom targets; an edge is probed over the families its rendering emits."
+          >
+            <Checkbox
+              checked={get('probe.ipv6', false)}
+              onCheckedChange={(v) => set('probe.ipv6', Boolean(v))}
+            /> Probe IPv6 addresses too</label
           >
           <label class="text-xs"
             >Countries (comma separated)<Input
@@ -642,6 +676,25 @@
             >Port<Input class="mt-1" type="number" bind:value={editor.port} /></label
           >
         </div>
+        <label class="text-xs"
+          >Check
+          <Select.Root
+            type="single"
+            value={editor.probeProtocol}
+            onValueChange={(v) => (editor!.probeProtocol = v as ProbeProtocol)}
+          >
+            <Select.Trigger class="mt-1 w-full"
+              >{PROBE_PROTOCOLS.find((p) => p.id === editor?.probeProtocol)?.label ??
+                editor.probeProtocol}</Select.Trigger
+            >
+            <Select.Content>
+              {#each PROBE_PROTOCOLS as p (p.id)}<Select.Item value={p.id}>{p.label}</Select.Item
+                >{/each}
+            </Select.Content>
+          </Select.Root>
+          <span class="mt-1 block text-[11px] text-muted-foreground">{PROBE_PROTOCOL_HELP}</span
+          ></label
+        >
         <label class="text-xs">Notes<Input class="mt-1" bind:value={editor.notes} /></label>
         <label class="flex items-center gap-2 text-sm"
           ><Checkbox bind:checked={editor.enabled} /> Probe on the cron schedule</label

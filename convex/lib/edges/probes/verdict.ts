@@ -14,12 +14,18 @@ export interface SourceSummary {
   verdict: Verdict;
   okVantages: number;
   failVantages: number;
-  /** Distinct failing networks (ASN, else network name, else a per-result key). */
+  /** Distinct failing networks (ASN, else network name, else one shared "unknown" bucket). */
   failNetworks: string[];
 }
 
-function networkKey(r: ProbeResult, i: number): string {
-  return r.asn ?? r.network ?? `v${i}`;
+/**
+ * The failing network a result belongs to. A result that identifies neither an
+ * ASN nor a network is NOT its own network: counting one bucket per result
+ * would let a single source fabricate agreement out of N vantages that may all
+ * sit in the same AS, so every such result collapses into `<source>:unknown`.
+ */
+function networkKey(r: ProbeResult, source: ProbeSource): string {
+  return r.asn ?? r.network ?? `${source}:unknown`;
 }
 
 /** One country, one source, results inside the window. */
@@ -30,7 +36,7 @@ export function sourceVerdict(
 ): SourceSummary {
   const ok = results.filter((r) => r.ok);
   const fail = results.filter((r) => !r.ok);
-  const failNetworks = [...new Set(fail.map((r, i) => networkKey(r, i)))];
+  const failNetworks = [...new Set(fail.map((r) => networkKey(r, source)))];
   let verdict: Verdict = 'unknown';
   if (ok.length === 0 && fail.length > 0 && failNetworks.length >= Math.max(1, agreementVantages)) {
     verdict = 'unreachable';

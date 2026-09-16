@@ -11,8 +11,9 @@
   import { adminEdgeSummaryQuery } from '../../lib/queries';
 
   /**
-   * Admin → Edges (docs/edges.md): provider-managed L4 load balancers (edges) in
-   * front of relay nodes. Relays (published pool, rotations, edges),
+   * Admin → Edges (docs/edges.md): provider-managed fronts for relay nodes,
+   * either an L4 load balancer (an IP literal) or an L7 CDN front (a hostname).
+   * Relays (published pool, rotations, edges),
    * provider accounts, edge templates, camouflage profiles, and the rendering /
    * probe / detector configuration. Every request on this page is HPKE-sealed
    * by the shared route policy. English-only (admin CMS convention).
@@ -26,7 +27,8 @@
     <div>
       <h1 class="text-2xl font-bold">Edges</h1>
       <p class="mt-1 text-sm text-muted-foreground">
-        Provider-managed L4 load balancers in front of your relay nodes.
+        Provider-managed fronts for your relay nodes: L4 load balancers addressed by IP, or L7 CDN
+        fronts addressed by hostname.
       </p>
     </div>
     {#if summary.data}

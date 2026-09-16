@@ -1,0 +1,17 @@
+{
+  "_source": {
+    "api": "GET /user/tokens/verify",
+    "doc": "https://developers.cloudflare.com/api/resources/user/subresources/tokens/methods/verify/",
+    "sdk": "node_modules/cloudflare/resources/user/tokens/tokens.d.ts (TokenVerifyResponse)",
+    "taken": "2026-09-16"
+  },
+  "result": {
+    "id": "ed17574386854bf78a67040be0a770b0",
+    "status": "active",
+    "not_before": "2026-01-01T00:00:00Z",
+    "expires_on": "2027-01-01T00:00:00Z"
+  },
+  "success": true,
+  "errors": [],
+  "messages": [{ "code": 10000, "message": "This API Token is valid and active" }]
+}

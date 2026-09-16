@@ -231,6 +231,8 @@ export const RelayAdmin = z.object({
   autoRotate: z.boolean(),
   hostManaged: z.boolean(),
   probeNode: z.boolean().default(false),
+  /** An L7 front-qualification credential is minted for this relay. */
+  qualificationCredential: z.boolean().default(false),
   reachability: z
     .object({ byCountry: z.array(z.unknown()), updatedAt: isoN })
     .nullable()
@@ -319,6 +321,12 @@ export const ProbeReachabilityCountry = z.object({
   verdict: z.enum(['reachable', 'unreachable', 'mixed', 'unknown']),
   /** The IPv6 path, when the edge has one and it was probed. */
   v6Verdict: z.enum(['reachable', 'unreachable', 'mixed', 'unknown']).optional(),
+  /**
+   * The by-name path, when the target was also probed by hostname. A hostname
+   * (L7) target has no family of its own: there the name path IS `verdict` and
+   * this stays absent.
+   */
+  nameVerdict: z.enum(['reachable', 'unreachable', 'mixed', 'unknown']).optional(),
   okVantages: z.number(),
   failVantages: z.number(),
   lastAt: iso,
@@ -524,9 +532,14 @@ export const ProbeRunAdmin = z.object({
   target: ProbeTargetRef,
   source: z.enum(['globalping', 'checkhost', 'ripeatlas', 'internal']),
   /** Observed address family; null when probed by name. */
-  ipVersion: z.union([z.literal(4), z.literal(6)]).nullable().default(null),
+  ipVersion: z
+    .union([z.literal(4), z.literal(6)])
+    .nullable()
+    .default(null),
   addressKind: z.enum(['ip', 'name']).default('ip'),
   probeProtocol: z.enum(['tcp', 'tls', 'https']).default('tcp'),
+  /** The family FCP asked for; `any` for a name (the vantage's resolver picks). */
+  requestedFamily: z.union([z.literal(4), z.literal(6), z.literal('any')]).default(4),
   /** The listener port this run probed (a multi-port edge gets one run per port). */
   port: z.number().int().nullable().optional(),
   status: z.enum(['requested', 'running', 'finished', 'failed', 'timeout']),
@@ -597,6 +610,8 @@ export const ProbeTargetAdmin = z.object({
   label: z.string(),
   address: z.string(),
   port: z.number(),
+  /** What the probe speaks against this target; `tcp` (a bare connect) by default. */
+  probeProtocol: z.enum(['tcp', 'tls', 'https']).default('tcp'),
   display: z.string(),
   enabled: z.boolean(),
   notes: z.string().nullable(),

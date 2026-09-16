@@ -22,6 +22,7 @@ import type {
   UsageSeries,
   UserState,
   BackendHost,
+  BackendHostPatch,
   NodeInventoryRow,
 } from './types';
 import {
@@ -118,7 +119,7 @@ export interface BackendProvider<C extends BackendConfig = BackendConfig> {
   // and an address/port repoint of ONE of them — the relay-edge flip. Absent for
   // backends whose endpoint is the server itself (Outline).
   listHosts?(config: C): Promise<BackendHost[]>;
-  updateHost?(config: C, patch: { uuid: string; address: string; port: number }): Promise<void>;
+  updateHost?(config: C, patch: BackendHostPatch): Promise<void>;
   // Optional: per-NODE load/online rows (Remnawave /api/nodes) for the relay
   // block detector; getNodeStats aggregates per placement and can't isolate a
   // node behind a shared squad.

@@ -1,0 +1,29 @@
+{
+  "_source": {
+    "api": "POST /zones/{zone_id}/dns_records",
+    "doc": "https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/create/",
+    "sdk": "node_modules/cloudflare/resources/dns/records.d.ts (RecordCreateParams.ARecord, RecordResponse.ARecord)",
+    "note": "name comes back lowercased and in Punycode; ttl 1 means automatic (required for proxied records)",
+    "taken": "2026-09-16"
+  },
+  "result": {
+    "id": "372e67954025e0ba6aaa6d586b9e0b59",
+    "zone_id": "023e105f4ecef8ad9ca31a8372d0c353",
+    "zone_name": "example.net",
+    "name": "k7m2x9qp4n3f.example.net",
+    "type": "A",
+    "content": "198.51.100.7",
+    "proxiable": true,
+    "proxied": true,
+    "ttl": 1,
+    "settings": {},
+    "meta": {},
+    "comment": "fcp:fcp-relay-o1-0badf00d",
+    "tags": [],
+    "created_on": "2026-09-16T10:00:00.000000Z",
+    "modified_on": "2026-09-16T10:00:00.000000Z"
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

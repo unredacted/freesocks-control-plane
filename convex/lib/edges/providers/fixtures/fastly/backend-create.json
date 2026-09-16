@@ -1,0 +1,16 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/services/backend/#create-backend (read 2026-09-16)",
+  "name": "origin",
+  "address": "node-7.origin.example.net",
+  "hostname": "node-7.origin.example.net",
+  "port": 443,
+  "use_ssl": true,
+  "override_host": "k3m7q9zb.example.org",
+  "comment": "fcp-relay-o1-deadbeef",
+  "service_id": "SU1Z0isxPaozGVKXdv0eY",
+  "version": 1,
+  "auto_loadbalance": false,
+  "shield": null,
+  "ssl_check_cert": true,
+  "deleted_at": null
+}

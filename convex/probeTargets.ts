@@ -12,9 +12,18 @@ import { addressFamily, bracketIfV6, isPublicIpLiteral } from './lib/edges/ip';
 import { mapSummaryAdmin } from './probes';
 
 const LABEL_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._:/()-]{0,63}$/u;
-const HOSTNAME_RE = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*$/i;
+/**
+ * A dotted name only: a single label (`intranet`, `wpad`) resolves through the
+ * control plane's own search domains, which is a search-domain SSRF the
+ * internal probe would then dial. The probe itself refuses names that resolve
+ * into private space (`lib/edges/probes/internal.ts`); this refuses the shape
+ * up front so such a target cannot be stored at all.
+ */
+const HOSTNAME_RE = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/i;
 /** Names that resolve to the local machine / a private zone by convention (RFC 6761 / mDNS). */
 const LOCAL_NAME_RE = /^(localhost|.+\.(localhost|local|internal|localdomain|home\.arpa))\.?$/i;
+const PROBE_PROTOCOLS = ['tcp', 'tls', 'https'] as const;
+const probeProtocol = v.union(v.literal('tcp'), v.literal('tls'), v.literal('https'));
 
 export function mapTargetAdmin(t: Doc<'probeTargets'>) {
   return {
@@ -23,6 +32,7 @@ export function mapTargetAdmin(t: Doc<'probeTargets'>) {
     label: t.label,
     address: t.address,
     port: t.port,
+    probeProtocol: t.probeProtocol ?? 'tcp',
     display: `${bracketIfV6(t.address)}:${t.port}`,
     enabled: t.enabled,
     notes: t.notes ?? null,
@@ -31,14 +41,30 @@ export function mapTargetAdmin(t: Doc<'probeTargets'>) {
   };
 }
 
-function checkFields(a: { label?: string; address?: string; port?: number }) {
+function checkFields(a: {
+  label?: string;
+  address?: string;
+  port?: number;
+  probeProtocol?: string;
+}) {
   if (a.label !== undefined && !LABEL_RE.test(a.label.trim()))
     throw new ConvexError({ code: 'validation', message: 'label must be 1-64 printable chars' });
+  if (
+    a.probeProtocol !== undefined &&
+    !(PROBE_PROTOCOLS as readonly string[]).includes(a.probeProtocol)
+  )
+    throw new ConvexError({
+      code: 'validation',
+      message: 'probeProtocol must be tcp, tls or https',
+    });
   if (a.address !== undefined) {
     const s = a.address.trim();
     const fam = addressFamily(s);
     if (!fam && !HOSTNAME_RE.test(s))
-      throw new ConvexError({ code: 'validation', message: 'address must be an IP or hostname' });
+      throw new ConvexError({
+        code: 'validation',
+        message: 'address must be an IP or a dotted hostname',
+      });
     // The internal probe connects from FCP's own host: a loopback, private,
     // link-local or unspecified target would turn it into a port scanner of
     // the control plane's network. Public literals (and public names) only.
@@ -65,18 +91,20 @@ export const create = internalMutation({
     label: v.string(),
     address: v.string(),
     port: v.optional(v.number()),
+    probeProtocol: v.optional(probeProtocol),
     enabled: v.optional(v.boolean()),
     notes: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
   },
   handler: async (ctx, a) => {
     const port = a.port ?? 443;
-    checkFields({ label: a.label, address: a.address, port });
+    checkFields({ label: a.label, address: a.address, port, probeProtocol: a.probeProtocol });
     const now = Date.now();
     const id = await ctx.db.insert('probeTargets', {
       label: a.label.trim(),
       address: a.address.trim(),
       port,
+      probeProtocol: a.probeProtocol ?? 'tcp',
       enabled: a.enabled ?? true,
       notes: a.notes?.slice(0, 500),
       updatedAt: now,
@@ -99,6 +127,7 @@ export const update = internalMutation({
     label: v.optional(v.string()),
     address: v.optional(v.string()),
     port: v.optional(v.number()),
+    probeProtocol: v.optional(probeProtocol),
     enabled: v.optional(v.boolean()),
     notes: v.optional(v.string()),
     actorAdminId: v.optional(v.id('adminUsers')),
@@ -111,15 +140,18 @@ export const update = internalMutation({
     if (a.label !== undefined) patch.label = a.label.trim();
     if (a.address !== undefined) patch.address = a.address.trim();
     if (a.port !== undefined) patch.port = a.port;
+    if (a.probeProtocol !== undefined) patch.probeProtocol = a.probeProtocol;
     if (a.enabled !== undefined) patch.enabled = a.enabled;
     if (a.notes !== undefined) patch.notes = a.notes.slice(0, 500);
-    // A different address or port is a different target: its history no longer
-    // applies — the summary, the per-(country, source, family) rollup rows the
-    // next finish would otherwise fold back in, and any run still in flight
-    // against the old endpoint (settled as failed so it can never finish).
+    // A different address, port or protocol is a different measurement: its
+    // history no longer applies: the summary, the per-(country, source,
+    // family) rollup rows the next finish would otherwise fold back in, and any
+    // run still in flight against the old endpoint (settled as failed so it can
+    // never finish).
     if (
       (patch.address !== undefined && patch.address !== row.address) ||
-      (patch.port !== undefined && patch.port !== row.port)
+      (patch.port !== undefined && patch.port !== row.port) ||
+      (patch.probeProtocol !== undefined && patch.probeProtocol !== (row.probeProtocol ?? 'tcp'))
     ) {
       patch.reachability = undefined;
       const rollups = await ctx.db

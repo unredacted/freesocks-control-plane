@@ -1,0 +1,13 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/services/domain/#check-domain (read 2026-09-16)",
+  "_body": [
+    {
+      "name": "k3m7q9zb.example.org",
+      "comment": "",
+      "service_id": "SU1Z0isxPaozGVKXdv0eY",
+      "version": 1
+    },
+    "k3m7q9zb.example.org.global.prod.fastly.net",
+    false
+  ]
+}

@@ -44,7 +44,9 @@ describe('hostname minting', () => {
   test('refuses invalid zones, prefixes and deeper labels', () => {
     expect(() => edgeHostnameFor('x', 'not a zone', { labelLength: 8 })).toThrow();
     expect(() => edgeHostnameFor('x', '203.0.113.1', { labelLength: 8 })).toThrow();
-    expect(() => edgeHostnameFor('x', 'example.org', { labelLength: 8, labelPrefix: 'a.b' })).toThrow();
+    expect(() =>
+      edgeHostnameFor('x', 'example.org', { labelLength: 8, labelPrefix: 'a.b' }),
+    ).toThrow();
     expect(isFirstLevelUnder('a.b.example.org', 'example.org')).toBe(false);
     expect(isFirstLevelUnder('example.org', 'example.org')).toBe(false);
     expect(isFirstLevelUnder('a.example.org', 'ample.org')).toBe(false);

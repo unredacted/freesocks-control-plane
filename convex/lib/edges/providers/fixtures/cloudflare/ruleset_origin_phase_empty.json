@@ -1,0 +1,20 @@
+{
+  "_source": {
+    "api": "GET /zones/{zone_id}/rulesets/phases/http_request_origin/entrypoint (ruleset exists, our rule does not)",
+    "doc": "https://developers.cloudflare.com/api/resources/rulesets/subresources/phases/methods/get/",
+    "taken": "2026-09-16"
+  },
+  "result": {
+    "id": "3c0b456bc2aa443089c5f40defb5fdc9",
+    "name": "default",
+    "description": "",
+    "kind": "zone",
+    "version": "1",
+    "phase": "http_request_origin",
+    "last_updated": "2026-09-16T09:00:00.000000Z",
+    "rules": []
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

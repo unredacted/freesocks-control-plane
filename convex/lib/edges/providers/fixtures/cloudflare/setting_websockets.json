@@ -1,0 +1,16 @@
+{
+  "_source": {
+    "api": "GET /zones/{zone_id}/settings/websockets",
+    "doc": "https://developers.cloudflare.com/api/resources/zones/subresources/settings/methods/get/",
+    "taken": "2026-09-16"
+  },
+  "result": {
+    "id": "websockets",
+    "value": "on",
+    "editable": true,
+    "modified_on": "2026-01-02T00:01:00.12345Z"
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

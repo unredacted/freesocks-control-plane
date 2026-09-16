@@ -256,8 +256,18 @@ export const CloudflareTemplate = z.object({
 export type CloudflareTemplateParams = z.infer<typeof CloudflareTemplate>;
 
 export const CLOUDFLARE_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
-  { key: 'labelLength', label: 'Hostname label length', type: 'number', help: '8 to 16 characters.' },
-  { key: 'labelPrefix', label: 'Hostname label prefix', type: 'string', help: 'Optional; up to 8 lowercase characters.' },
+  {
+    key: 'labelLength',
+    label: 'Hostname label length',
+    type: 'number',
+    help: '8 to 16 characters.',
+  },
+  {
+    key: 'labelPrefix',
+    label: 'Hostname label prefix',
+    type: 'string',
+    help: 'Optional; up to 8 lowercase characters.',
+  },
   { key: 'commentPrefix', label: 'DNS comment prefix', type: 'string' },
   {
     key: 'allowOriginPortOverride',
@@ -282,8 +292,18 @@ export const FastlyTemplate = z.object({
 export type FastlyTemplateParams = z.infer<typeof FastlyTemplate>;
 
 export const FASTLY_TEMPLATE_FIELDS: TemplateFieldDescriptor[] = [
-  { key: 'labelLength', label: 'Hostname label length', type: 'number', help: '8 to 16 characters.' },
-  { key: 'labelPrefix', label: 'Hostname label prefix', type: 'string', help: 'Optional; up to 8 lowercase characters.' },
+  {
+    key: 'labelLength',
+    label: 'Hostname label length',
+    type: 'number',
+    help: '8 to 16 characters.',
+  },
+  {
+    key: 'labelPrefix',
+    label: 'Hostname label prefix',
+    type: 'string',
+    help: 'Optional; up to 8 lowercase characters.',
+  },
   {
     key: 'overrideHost',
     label: 'Origin Host header',

@@ -68,7 +68,11 @@ export function normalizeZoneName(zone: string): string {
  * `<prefix><label>.<zone>`: deterministic for (specName, zone, options).
  * Throws on an invalid zone or when the result is not a first-level label.
  */
-export function edgeHostnameFor(specName: string, zoneName: string, opts: HostnameLabelOptions): string {
+export function edgeHostnameFor(
+  specName: string,
+  zoneName: string,
+  opts: HostnameLabelOptions,
+): string {
   const zone = normalizeZoneName(zoneName);
   if (!isValidHostname(zone)) throw new Error('hostname: invalid zone name');
   const prefix = (opts.labelPrefix ?? '').toLowerCase();

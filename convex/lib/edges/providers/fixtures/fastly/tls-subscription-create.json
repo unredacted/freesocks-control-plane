@@ -1,0 +1,37 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/tls/subscriptions/#create-tls-sub (read 2026-09-16)",
+  "data": {
+    "id": "C0cuTFmLzMCiyMcOZuLEZ1",
+    "type": "tls_subscription",
+    "attributes": {
+      "state": "pending",
+      "certificate_authority": "certainly",
+      "created_at": "2026-09-16T10:10:00Z",
+      "updated_at": "2026-09-16T10:10:00Z"
+    },
+    "relationships": {
+      "tls_domains": {
+        "data": [
+          {
+            "id": "k3m7q9zb.example.org",
+            "type": "tls_domain"
+          }
+        ]
+      },
+      "tls_configuration": {
+        "data": {
+          "id": "TLSCONFIG01",
+          "type": "tls_configuration"
+        }
+      },
+      "tls_authorizations": {
+        "data": [
+          {
+            "id": "AUTH01",
+            "type": "tls_authorization"
+          }
+        ]
+      }
+    }
+  }
+}

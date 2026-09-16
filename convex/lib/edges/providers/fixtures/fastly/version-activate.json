@@ -1,0 +1,9 @@
+{
+  "_source": "https://www.fastly.com/documentation/reference/api/services/version/#activate-service-version (read 2026-09-16)",
+  "number": 1,
+  "active": true,
+  "locked": true,
+  "deployed": true,
+  "service_id": "SU1Z0isxPaozGVKXdv0eY",
+  "created_at": "2026-09-16T10:00:00Z"
+}

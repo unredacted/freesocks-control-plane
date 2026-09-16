@@ -91,6 +91,31 @@ export function isPublicIpLiteral(s: string): boolean {
   return false;
 }
 
+// --- the address an edge PUBLISHES -------------------------------------------------------
+
+/**
+ * What members are actually sent to, by the edge's layer: an L7 (CDN) edge
+ * publishes its hostname and never an IP literal (its frontend addresses are
+ * the CDN's and change under it); an L4 edge publishes its IPv4 literal (the
+ * v6 literal rides along as a separate rendered entry, it is never the primary).
+ *
+ * Every gate that used to read `addresses.v4` reads this instead, so a layer
+ * that addresses by name is not silently unpublishable.
+ */
+export interface PublishableEdge {
+  layer?: 'l4' | 'l7' | null;
+  addresses: { v4?: string | null; v6?: string | null; hostname?: string | null };
+}
+
+export function publishAddressOf(edge: PublishableEdge): string | null {
+  if ((edge.layer ?? 'l4') === 'l7') return edge.addresses.hostname ?? null;
+  return edge.addresses.v4 ?? null;
+}
+
+export function hasPublishableAddress(edge: PublishableEdge): boolean {
+  return publishAddressOf(edge) !== null;
+}
+
 /** `[v6]` for host:port and URI contexts; v4 unchanged. */
 export function bracketIfV6(addr: string): string {
   return isIpv6Literal(addr) && !addr.startsWith('[') ? `[${addr}]` : addr;

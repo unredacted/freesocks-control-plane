@@ -4,6 +4,32 @@
  * `Id<'edges'>` brand survives a round trip.
  */
 
+/**
+ * Every edge status that is NOT `destroyed`. Reads that must exclude destroyed
+ * rows iterate these against the `(relayId|accountId, status)` indexes instead
+ * of collecting the whole table and filtering: a relay accumulates destroyed
+ * edges forever (they are pruned after 30 days), so an unbounded collect grows
+ * without limit and eventually crosses Convex's read cap.
+ */
+export const EDGE_LIVE_STATUSES = [
+  'planning',
+  'provisioning',
+  'verifying',
+  'standby',
+  'active',
+  'draining',
+  'destroying',
+  'failed',
+  'cancelled',
+  'quarantined',
+  'needs_operator',
+] as const;
+
+export type EdgeLiveStatus = (typeof EDGE_LIVE_STATUSES)[number];
+
+/** Rows read per status per live-edge scan: an origin/account far past this is a bug, not a pool. */
+export const LIVE_EDGE_SCAN_LIMIT = 200;
+
 export function nextFreePoolIndex(
   published: readonly (string | null)[],
   desired: number,

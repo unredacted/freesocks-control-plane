@@ -22,8 +22,13 @@
  *    retired name is NEVER selected for a render — the drain only means the
  *    node keeps ACCEPTING it for clients that have not refreshed yet.
  *  - IPv6 is an extra entry for the same endpoint, never a separate assignment.
+ *  - an L7 (CDN-fronted) edge is ONE hostname: it is the address, the SNI and
+ *    the HTTP Host header at once, so the profile's server names play no part
+ *    in its assignment and it never carries an IPv6 entry.
  */
 
+import { hostTargetFor } from './layers';
+import type { EdgeLayer } from './providers/capabilities';
 import { protocolUsesSni, type SlotProtocol } from './protocols';
 
 export interface AssignableSni {
@@ -42,7 +47,10 @@ export interface PublishedEdge {
   /** The slot profile's protocol: SNI-presenting ones select a name per connection, `plain` rewrites address/port only. */
   protocol: SlotProtocol;
   edgePort: number;
-  addresses: { v4?: string; v6?: string };
+  /** Absent = `l4` (rows written before edges could be L7 fronts). */
+  layer?: EdgeLayer;
+  /** L4: IP literals. L7: the fronted hostname members connect to. */
+  addresses: { v4?: string; v6?: string; hostname?: string };
   /** Empty for a non-REALITY slot. */
   serverNames: AssignableSni[];
   /**
@@ -58,6 +66,13 @@ export interface AssignedEndpoint {
   edge: PublishedEdge;
   /** The selected server name; null for a slot whose protocol carries none. */
   sni: string | null;
+  /**
+   * The HTTP Host header the renderer must write (null = the protocol carries
+   * none, leave the template's own parameters alone). Comes from the same
+   * `hostTargetFor` tuple the panel Host flip writes, so a render and a flip
+   * can never disagree.
+   */
+  hostHeader: string | null;
 }
 
 export interface AssignableOptions {
@@ -66,12 +81,28 @@ export interface AssignableOptions {
 }
 
 /**
- * An edge can be assigned when it is eligible, has an address the render can
- * emit (IPv4 always; IPv6 only when the rule allows it) and, when its protocol
- * presents a name, at least one ACTIVE server name.
+ * The edge's layer: `layer` when the row carries one, else inferred from the
+ * address shape (a hostname is only ever an L7 front's address).
+ */
+export function edgeLayer(e: Pick<PublishedEdge, 'layer' | 'addresses'>): EdgeLayer {
+  return e.layer ?? (e.addresses.hostname ? 'l7' : 'l4');
+}
+
+/** The fronted hostname of an L7 edge; null for an L4 edge (or an L7 one still without a hostname). */
+export function edgeHostname(e: Pick<PublishedEdge, 'layer' | 'addresses'>): string | null {
+  return edgeLayer(e) === 'l7' ? (e.addresses.hostname ?? null) : null;
+}
+
+/**
+ * An edge can be assigned when it is eligible and it has something to emit: an
+ * L7 edge needs its hostname (which is also its only server name, so the
+ * profile's names are not consulted); an L4 edge needs an address the render
+ * can emit (IPv4 always; IPv6 only when the rule allows it) and, when its
+ * protocol presents a name, at least one ACTIVE server name.
  */
 export function edgeAssignable(e: PublishedEdge, opts: AssignableOptions = {}): boolean {
   if (e.eligible === false) return false;
+  if (edgeLayer(e) === 'l7') return !!e.addresses.hostname;
   const hasAddress = !!e.addresses.v4 || (opts.canEmitV6 !== false && !!e.addresses.v6);
   if (!hasAddress) return false;
   return !protocolUsesSni(e.protocol) || e.serverNames.some((s) => s.status === 'active');
@@ -81,9 +112,44 @@ function sniFor(
   subscriberKey: string,
   edge: PublishedEdge,
 ): { ok: true; sni: string | null } | { ok: false } {
+  // An L7 front terminates TLS on the CDN under its own hostname: that name is
+  // the SNI, whatever the profile's (origin-facing) names say.
+  const hostname = edgeHostname(edge);
+  if (hostname) return { ok: true, sni: hostname };
   if (!protocolUsesSni(edge.protocol)) return { ok: true, sni: null };
   const sni = pickSni(subscriberKey, edge.edgeId, edge.serverNames);
   return sni ? { ok: true, sni } : { ok: false };
+}
+
+/**
+ * The Host header for (edge, selected name), from the shared tuple. Assignment
+ * is address-family agnostic (the render expands one endpoint into a v4 and a
+ * v6 entry), so an L4 edge with only a v6 literal feeds that literal in: the
+ * tuple's `host` never depends on which literal was used.
+ */
+function hostHeaderFor(edge: PublishedEdge, sni: string | null): string | null {
+  return (
+    hostTargetFor(
+      {
+        layer: edgeLayer(edge),
+        addresses: {
+          v4: edge.addresses.v4 ?? edge.addresses.v6,
+          hostname: edge.addresses.hostname,
+        },
+        edgePort: edge.edgePort,
+      },
+      edge.protocol,
+      sni,
+    )?.host ?? null
+  );
+}
+
+function endpointFor(
+  role: 'primary' | 'backup',
+  edge: PublishedEdge,
+  sni: string | null,
+): AssignedEndpoint {
+  return { role, edge, sni, hostHeader: hostHeaderFor(edge, sni) };
 }
 
 export interface Assignment {
@@ -168,7 +234,7 @@ export function assignEndpoints(
   const primaryEdge = pool[pIdx];
   const primarySni = sniFor(subscriberKey, primaryEdge);
   if (!primarySni.ok) return { primary: null, backup: null };
-  const primary: AssignedEndpoint = { role: 'primary', edge: primaryEdge, sni: primarySni.sni };
+  const primary = endpointFor('primary', primaryEdge, primarySni.sni);
   if (!opts.includeBackup) return { primary, backup: null };
   // Backup: the next assignable edge after the primary in pool order,
   // preferring a different provider.
@@ -185,6 +251,6 @@ export function assignEndpoints(
   const backupSni = sniFor(subscriberKey, backupEdge);
   return {
     primary,
-    backup: backupSni.ok ? { role: 'backup', edge: backupEdge, sni: backupSni.sni } : null,
+    backup: backupSni.ok ? endpointFor('backup', backupEdge, backupSni.sni) : null,
   };
 }

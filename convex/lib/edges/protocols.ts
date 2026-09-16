@@ -44,7 +44,11 @@ export const PROTOCOL_LABELS: Record<SlotProtocol, string> = {
 };
 
 /** The HTTP-carried transports an L7 (CDN) edge can front. */
-export const HTTP_TRANSPORT_PROTOCOLS = ['ws', 'httpupgrade', 'grpc'] as const satisfies readonly SlotProtocol[];
+export const HTTP_TRANSPORT_PROTOCOLS = [
+  'ws',
+  'httpupgrade',
+  'grpc',
+] as const satisfies readonly SlotProtocol[];
 
 export function isSlotProtocol(v: unknown): v is SlotProtocol {
   return typeof v === 'string' && (SLOT_PROTOCOLS as readonly string[]).includes(v);

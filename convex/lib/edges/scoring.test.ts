@@ -431,6 +431,26 @@ describe('autoRotateDecision', () => {
     expect(decide()).toEqual({ edgeId: 'e1', source: 'probes' });
   });
 
+  test('a truncated report window never rotates, whatever the evidence says', () => {
+    const incompleteEv = evaluate(
+      input({
+        window: { ...loud, incomplete: true },
+        usersOnline: 0,
+        edges: [edge('e1', { byCountry: [c('IR', 'unreachable')] }), edge('e2')],
+      }),
+    );
+    expect(incompleteEv.windowIncomplete).toBe(true);
+    // Same inputs, complete window: this one rotates.
+    expect(decide()).toEqual({ edgeId: 'e1', source: 'probes' });
+    expect(decide({ evaluation: incompleteEv })).toEqual({ veto: 'evidence_incomplete' });
+    // It is still only a veto: a relay that is not suspected reports that first.
+    expect(decide({ evaluation: { ...evaluate(input()), windowIncomplete: true } })).toEqual({
+      veto: 'not_suspected',
+    });
+    // A complete window keeps the flag off.
+    expect(suspectedEv.windowIncomplete).toBe(false);
+  });
+
   test('origin-level suspicion alone never rotates; probe-only evidence needs the allow flag and live sources', () => {
     const originOnly = evaluate(input({ window: loud, usersOnline: 0 }));
     expect(decide({ evaluation: originOnly })).toEqual({ veto: 'no_edge_evidence' });

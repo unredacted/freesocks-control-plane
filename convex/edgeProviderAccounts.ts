@@ -25,6 +25,9 @@ import {
   type EdgeSettings,
 } from './lib/edges/accountSettings';
 import { resolveTemplateFor } from './edgeTemplates';
+import { EDGE_PROVIDER_CAPABILITIES } from './lib/edges/providers/capabilities';
+import { parseIntent } from './lib/edges/intent';
+import { liveEdgesOfAccount } from './relays';
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
@@ -239,6 +242,107 @@ async function assertTemplateUsable(
     });
 }
 
+// --- DNS-account references ------------------------------------------------------------
+//
+// A Fastly-style account writes its records through ANOTHER account's
+// credentials (`settings.dnsAccountId` → a Cloudflare account). That makes the
+// referenced account load-bearing for edges that never name it directly: their
+// DNS records live in ITS zone, addressed by ITS credentials. So every rule that
+// protects an account from being moved or removed under its own edges has to
+// see through the reference too.
+
+/** Accounts that name `id` as their DNS account (the small, operator-managed table). */
+async function fastlyAccountsUsing(
+  db: import('./_generated/server').DatabaseReader,
+  id: Id<'edgeProviderAccounts'>,
+): Promise<Doc<'edgeProviderAccounts'>[]> {
+  const rows = await db.query('edgeProviderAccounts').collect();
+  return rows.filter((r) => (r.settings as { dnsAccountId?: string }).dnsAccountId === id);
+}
+
+/**
+ * Non-destroyed edges that depend on this account for DNS: the ones provisioned
+ * from an account that references it, whose FROZEN intent names it as the DNS
+ * account or names its zone. The intent is what makes this complete: an edge is
+ * covered from `insertPlanned` onward, including one whose DNS create response
+ * was lost and has no recorded resource yet.
+ */
+async function edgesDependingOnDnsAccount(
+  db: import('./_generated/server').DatabaseReader,
+  account: Doc<'edgeProviderAccounts'>,
+): Promise<number> {
+  const zoneId = (account.settings as { zoneId?: string }).zoneId;
+  let n = 0;
+  for (const referencing of await fastlyAccountsUsing(db, account._id)) {
+    for (const e of await liveEdgesOfAccount(db, referencing._id)) {
+      const intent = parseIntent(e.provisionIntent);
+      if (!intent) {
+        // No intent yet is not "no dependency": the edge belongs to an account
+        // that names this one, so it is counted.
+        n++;
+        continue;
+      }
+      if (intent.dnsAccountId === (account._id as string) || (zoneId && intent.zoneId === zoneId))
+        n++;
+    }
+  }
+  return n;
+}
+
+/**
+ * Editing a DNS account's credentials or settings invalidates every Fastly
+ * account that writes through it: their qualification was taken with the old
+ * token against the old zone, and neither is what would be used now.
+ */
+async function clearQualificationOfReferencing(
+  ctx: { db: import('./_generated/server').DatabaseWriter },
+  id: Id<'edgeProviderAccounts'>,
+  actorAdminId: Id<'adminUsers'> | undefined,
+  write: (entry: Parameters<typeof writeAuditLog>[1]) => Promise<void>,
+): Promise<number> {
+  let n = 0;
+  for (const r of await fastlyAccountsUsing(ctx.db, id)) {
+    if (!r.qualified) continue;
+    await ctx.db.patch(r._id, {
+      qualified: false,
+      qualifiedTemplateHash: undefined,
+      updatedAt: Date.now(),
+    });
+    n++;
+    await write({
+      actorType: 'admin',
+      actorId: actorAdminId ?? undefined,
+      action: 'edge.provider_account.qualified',
+      targetType: 'edge_provider_account',
+      targetId: r._id,
+      payload: { name: r.name, provider: r.provider, qualified: false },
+    });
+  }
+  return n;
+}
+
+/**
+ * Validate `settings.dnsAccountId`: it must name an existing account whose
+ * provider can host DNS. A dangling or wrong-kind reference would only surface
+ * at provision time, with a paid-for edge half-created.
+ */
+async function assertDnsAccountUsable(
+  db: import('./_generated/server').DatabaseReader,
+  provider: EdgeProviderId,
+  settings: Record<string, unknown>,
+) {
+  if (!EDGE_PROVIDER_CAPABILITIES[provider].needsDnsAccount) return;
+  const ref = settings.dnsAccountId;
+  if (typeof ref !== 'string' || ref.length === 0)
+    throw new ConvexError({ code: 'validation', message: 'a DNS account is required' });
+  const row = await db.get(ref as Id<'edgeProviderAccounts'>);
+  if (!row || !EDGE_PROVIDER_CAPABILITIES[row.provider].providesDns)
+    throw new ConvexError({
+      code: 'validation',
+      message: 'dnsAccountId must name an account that can host DNS records',
+    });
+}
+
 export const create = internalMutation({
   args: upsertArgs,
   handler: async (ctx, a) => {
@@ -263,6 +367,7 @@ export const create = internalMutation({
         message: `missing credentials: ${creds.missing.join(', ')}`,
       });
     }
+    await assertDnsAccountUsable(ctx.db, a.provider, settings.settings as Record<string, unknown>);
     // A template picked at creation can only be unscoped (the account has no id yet).
     if (a.defaultTemplateId)
       await assertTemplateUsable(ctx.db, a.defaultTemplateId, a.provider, null);
@@ -333,18 +438,23 @@ export const update = internalMutation({
         // reconciliation and undeletable (yet still live and billable). The
         // credential identifiers (access/application key) also live in
         // `settings` but locate nothing: they stay editable.
-        const live = (
-          await ctx.db
-            .query('edges')
-            .withIndex('by_account_status', (q) => q.eq('accountId', a.id))
-            .collect()
-        ).filter((e) => e.status !== 'destroyed');
-        if (live.length > 0)
+        const live = await liveEdgesOfAccount(ctx.db, a.id);
+        // An account that hosts DNS for another provider's edges also locates
+        // THEIR records; moving it would strand records this account's own edge
+        // list never mentions.
+        const transitive = await edgesDependingOnDnsAccount(ctx.db, row);
+        const total = live.length + transitive;
+        if (total > 0)
           throw new ConvexError({
             code: 'conflict',
-            message: `${live.length} edge(s) still reference this account; destroy them before changing its settings`,
+            message: `${total} edge(s) still reference this account; destroy them before changing its settings`,
           });
       }
+      await assertDnsAccountUsable(
+        ctx.db,
+        row.provider,
+        settings.settings as Record<string, unknown>,
+      );
       patch.settings = settings.settings as never;
     }
     if (a.credentials !== undefined) {
@@ -384,6 +494,14 @@ export const update = internalMutation({
       patch.qualifiedTemplateHash = undefined;
     }
     await ctx.db.patch(a.id, patch);
+    // A DNS account's new token or zone was never qualified by the accounts
+    // that write THROUGH it either: clear theirs too, audited per account.
+    let requalify = 0;
+    if (credentialsChanged || settingsChanged) {
+      requalify = await clearQualificationOfReferencing(ctx, a.id, a.actorAdminId, (entry) =>
+        writeAuditLog(ctx, entry),
+      );
+    }
     await writeAuditLog(ctx, {
       actorType: 'admin',
       actorId: a.actorAdminId ?? undefined,
@@ -392,7 +510,7 @@ export const update = internalMutation({
       targetId: a.id,
       payload: { name: row.name, provider: row.provider },
     });
-    return { ok: true as const };
+    return { ok: true as const, requalify };
   },
 });
 
@@ -410,6 +528,15 @@ export const remove = internalMutation({
       .first();
     if (live) {
       throw new ConvexError({ code: 'conflict', message: 'Edges still reference this account' });
+    }
+    // An account other accounts write DNS through cannot go either: their
+    // records live in its zone and are addressed with its credentials.
+    const referencing = await fastlyAccountsUsing(ctx.db, id);
+    if (referencing.length > 0 || (await edgesDependingOnDnsAccount(ctx.db, row)) > 0) {
+      throw new ConvexError({
+        code: 'edge.account_referenced',
+        message: 'Another provider account uses this one for DNS; repoint or remove it first',
+      });
     }
     await ctx.db.delete(id);
     await writeAuditLog(ctx, {

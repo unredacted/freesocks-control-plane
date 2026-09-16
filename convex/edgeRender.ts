@@ -83,13 +83,11 @@ export async function publishedEdgesOf(
     if (!edge || edge.publication !== 'published' || edge.status !== 'active') continue;
     const slot = slots.find((s) => s._id === edge.slotId);
     const profile = slot ? await ctx.db.get(slot.profileId) : null;
+    // An edge is only usable once it has an address to publish: an IP literal
+    // for an L4 forwarder, the fronted hostname for an L7 (CDN) edge.
+    const hasAddress = !!edge.addresses.v4 || !!edge.addresses.v6 || !!edge.addresses.hostname;
     const eligible =
-      (!!edge.addresses.v4 || !!edge.addresses.v6) &&
-      !!slot &&
-      !slot.retired &&
-      slot.deployed &&
-      !!profile &&
-      profile.enabled;
+      hasAddress && !!slot && !slot.retired && slot.deployed && !!profile && profile.enabled;
     if (!eligible && !opts.includeIneligible) continue;
     const protocol = profile?.protocol ?? 'plain';
     published.push({
@@ -100,7 +98,12 @@ export async function publishedEdgesOf(
       slotRemark: slot?.templateHostRemark ?? '',
       protocol,
       edgePort: edge.listeners[0]?.edgePort ?? 443,
-      addresses: { v4: edge.addresses.v4, v6: edge.addresses.v6 },
+      layer: edge.layer ?? 'l4',
+      addresses: {
+        v4: edge.addresses.v4,
+        v6: edge.addresses.v6,
+        hostname: edge.addresses.hostname,
+      },
       serverNames:
         profile && protocolUsesSni(protocol)
           ? profile.serverNames.map((s) => ({
@@ -192,7 +195,12 @@ export const memberView = internalQuery({
     { subscriptionId },
   ): Promise<{
     refreshSuggested: boolean;
-    connections: Array<{ label: string; role: 'primary' | 'backup'; family: 'v4' | 'v6' }>;
+    // `name` = a hostname-fronted (L7) connection: one entry, no address family.
+    connections: Array<{
+      label: string;
+      role: 'primary' | 'backup';
+      family: 'v4' | 'v6' | 'name';
+    }>;
   } | null> => {
     const sub = await ctx.db.get(subscriptionId);
     if (!sub || !sub.backendServerId || !sub.pinnedNode) return null;
@@ -212,7 +220,11 @@ export const memberView = internalQuery({
       (sub.lastRenderedEpoch === undefined &&
         origin.lastRotatedAt !== undefined &&
         (sub.lastDeliveredContentAt ?? 0) < origin.lastRotatedAt);
-    let connections: Array<{ label: string; role: 'primary' | 'backup'; family: 'v4' | 'v6' }> = [];
+    let connections: Array<{
+      label: string;
+      role: 'primary' | 'backup';
+      family: 'v4' | 'v6' | 'name';
+    }> = [];
     if (sub.renderKey) {
       const rule = effectiveRule(cfg.render, cfg.render.clients.other);
       const assigned = assignEndpoints(sub.renderKey, published, {

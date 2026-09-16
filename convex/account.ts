@@ -545,7 +545,12 @@ interface NodeStatusView {
    *  behind a rendered relay origin. Labels only, never addresses. */
   relay: {
     refreshSuggested: boolean;
-    connections: Array<{ label: string; role: 'primary' | 'backup'; family: 'v4' | 'v6' }>;
+    /** `name` = a hostname-fronted connection (one entry, no address family). */
+    connections: Array<{
+      label: string;
+      role: 'primary' | 'backup';
+      family: 'v4' | 'v6' | 'name';
+    }>;
   } | null;
 }
 
