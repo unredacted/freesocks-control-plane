@@ -5,6 +5,10 @@
  * while an `fsv1_` bearer caller (IaC, cannot seal) keeps plaintext. The member
  * knob (FS_E2EE_REQUIRED) never touches admin routes. Exercised through the
  * edges prefix (GET reveal / POST seal-both / PATCH seal-request).
+ *
+ * Plus the MEMBER knob on the three routes that were wrapped in `sealed()` but
+ * had no policy entry until 2026-09 (raw-config copy, code redeem, mirror
+ * request): the gate now refuses their plaintext and opens their sealed form.
  */
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -21,6 +25,7 @@ import {
 } from '../../src/shared/crypto/envelope';
 import { serializePublicKey, serverKeyPairFromSeed } from '../../src/shared/crypto/hpke';
 import { clientOpenResponse, clientPrepareRequest } from '../../src/shared/crypto/channel';
+import type { Id } from '../_generated/dataModel';
 
 // convex-test resolves `ctx.runAction(internal.lib.e2eeCrypto…)` as
 // `<root>lib/e2eeCrypto` where <root> comes from the `_generated` key (`../`).
@@ -231,5 +236,142 @@ describe('e2ee: FS_E2EE_ADMIN_REQUIRED', () => {
     });
     expect(patch.status).toBe(200);
     expect(await patch.json()).toEqual({ changedKeys: ['render.enabled'] });
+  });
+});
+
+// --- member knob ---------------------------------------------------------------
+
+const CONTENT = '/api/v1/subscription/content';
+const REDEEM = '/api/v1/account/redeem-code';
+const MIRROR = '/api/v1/mirror/request';
+
+/** A signed-in member (free tier, no subscription row) + their cookie. */
+async function memberSetup() {
+  const { t, kp, kid } = await setup();
+  const userId = await t.run(async (ctx) => {
+    const tierId = await ctx.db.insert('tiers', {
+      slug: 'free',
+      name: 'Free',
+      backend: 'remnawave',
+      monthlyTrafficGb: 50,
+      deviceLimit: 1,
+      hwidLimit: 1,
+      hwidEnabled: true,
+      trafficStrategy: 'MONTH',
+      isDefaultFree: true,
+      isActive: true,
+      priority: 0,
+      expirationDaysAfterMembershipLapse: 0,
+      updatedAt: Date.now(),
+    });
+    return ctx.db.insert('users', { tierId, status: 'active', updatedAt: Date.now() });
+  });
+  const sid = `sid-${Math.random().toString(36).slice(2)}`;
+  await t.mutation(internal.sessions.create, {
+    sid,
+    kind: 'member',
+    userId: userId as Id<'users'>,
+    ttlMs: 3_600_000,
+  });
+  const cookie = `fs_session=${await signValue(sid, 'test-sign')}`;
+  return { t, kp, kid, cookie };
+}
+
+const JSON_HDR = { 'content-type': 'application/json' };
+
+describe('e2ee: FS_E2EE_REQUIRED on the member routes sealed in 2026-09', () => {
+  test('knob off (dual-mode): plaintext reaches the handlers', async () => {
+    const { t, cookie } = await memberSetup();
+    // No subscription row -> the handler's own 404, i.e. the gate let it through.
+    const content = await t.fetch(CONTENT, { headers: { cookie } });
+    expect(content.status).toBe(404);
+    expect(await content.json()).toMatchObject({ error: { code: 'not_found' } });
+    // The handler read the plaintext code (a bogus one -> the generic envelope).
+    const redeem = await t.fetch(REDEEM, {
+      method: 'POST',
+      headers: { cookie, ...JSON_HDR },
+      body: JSON.stringify({ code: 'not-a-real-code' }),
+    });
+    expect(redeem.status).toBe(400);
+    expect(await redeem.json()).toMatchObject({ error: { code: 'code.invalid' } });
+    const mirror = await t.fetch(MIRROR, { method: 'POST', headers: JSON_HDR, body: '{}' });
+    expect(mirror.status).toBe(401);
+  });
+
+  test('knob on: plaintext is refused with e2ee.sealed_required BEFORE auth, even for a signed-in member', async () => {
+    vi.stubEnv('FS_E2EE_REQUIRED', 'true');
+    const { t, cookie } = await memberSetup();
+    for (const [path, init] of [
+      [CONTENT, { headers: { cookie } }],
+      [CONTENT, {}],
+      [
+        REDEEM,
+        { method: 'POST', headers: { cookie, ...JSON_HDR }, body: JSON.stringify({ code: 'x' }) },
+      ],
+      [REDEEM, { method: 'POST', headers: JSON_HDR, body: JSON.stringify({ code: 'x' }) }],
+      [MIRROR, { method: 'POST', headers: { cookie, ...JSON_HDR }, body: '{}' }],
+      [MIRROR, { method: 'POST', headers: JSON_HDR, body: '{}' }],
+    ] as [string, RequestInit][]) {
+      const res = await t.fetch(path, init);
+      expect(res.status, `${init.method ?? 'GET'} ${path}`).toBe(400);
+      expect(await res.json()).toMatchObject({ error: { code: 'e2ee.sealed_required' } });
+    }
+  });
+
+  test('knob on: the sealed forms pass the gate and the handlers see the opened plaintext', async () => {
+    vi.stubEnv('FS_E2EE_REQUIRED', 'true');
+    const { t, kp, kid, cookie } = await memberSetup();
+
+    // GET reveal: the ephemeral rides the x-fs-resp-eph header (as the SPA sends it).
+    const prepGet = await clientPrepareRequest({
+      serverPub: kp.publicKey,
+      serverKid: kid,
+      method: 'GET',
+      path: CONTENT,
+      policy: routePolicy(CONTENT, 'GET')!,
+    });
+    const anon = await t.fetch(CONTENT, { headers: { 'x-fs-resp-eph': prepGet.respEphPubB64! } });
+    expect(anon.status).toBe(401); // past the gate, into auth
+    const content = await t.fetch(CONTENT, {
+      headers: { cookie, 'x-fs-resp-eph': prepGet.respEphPubB64! },
+    });
+    expect(content.status).toBe(404); // the handler ran (no subscription row); errors stay plaintext
+    expect(content.headers.get('x-fs-sealed')).toBeNull();
+
+    // SEAL_REQ: the code travels only inside the envelope; the handler gets the
+    // opened body (a present-but-bogus code -> code.invalid, NOT the
+    // 'code is required' validation error an unopened envelope would produce).
+    const prepRedeem = await clientPrepareRequest({
+      serverPub: kp.publicKey,
+      serverKid: kid,
+      method: 'POST',
+      path: REDEEM,
+      policy: routePolicy(REDEEM, 'POST')!,
+      bodyObj: { code: 'not-a-real-code' },
+    });
+    expect(isSealedWire(prepRedeem.body)).toBe(true);
+    const redeem = await t.fetch(REDEEM, {
+      method: 'POST',
+      headers: { cookie, ...JSON_HDR },
+      body: JSON.stringify(prepRedeem.body),
+    });
+    expect(redeem.status).toBe(400);
+    expect(await redeem.json()).toMatchObject({ error: { code: 'code.invalid' } });
+
+    // POST reveal: fsRespEph inside the plain body satisfies the gate.
+    const prepMirror = await clientPrepareRequest({
+      serverPub: kp.publicKey,
+      serverKid: kid,
+      method: 'POST',
+      path: MIRROR,
+      policy: routePolicy(MIRROR, 'POST')!,
+      bodyObj: { countryCode: null },
+    });
+    const mirror = await t.fetch(MIRROR, {
+      method: 'POST',
+      headers: JSON_HDR,
+      body: JSON.stringify(prepMirror.body),
+    });
+    expect(mirror.status).toBe(401); // past the gate, into auth
   });
 });

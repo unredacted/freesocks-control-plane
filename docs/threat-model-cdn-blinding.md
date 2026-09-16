@@ -52,11 +52,15 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
   `httpAction`s delegate via `ctx.runAction`. The browser uses native WebCrypto.
 - **Login request leg:** the client HPKE-seals the login body (the account number). It seals to the
   current **epoch key** when one is available (Layer 3), else to the pinned static key. Defeats a
-  passive log of the login.
-- **Reveal response leg:** for every sensitive response (issuance / account / subscription / rotate /
-  switch-backend), the client puts a fresh ephemeral public key inside the request, and the server
-  seals the response to that ephemeral. This is forward-secret against later server-key compromise
-  (the static key cannot decrypt a reveal response).
+  passive log of the login. The membership-code redeem (`POST /api/v1/account/redeem-code`) seals
+  its request the same way: the code is a bearer secret.
+- **Reveal response leg:** for every sensitive response (issuance / account view with the
+  subscription URL / regenerate / rotate / switch-backend / switch-mode / switch-server / the raw
+  proxy config on `GET /api/v1/subscription/content` / the mirror URL on `POST /api/v1/mirror/request`
+  / the gift-code order poll), the client puts a fresh ephemeral public key inside the request (in
+  the `x-fs-resp-eph` header for a GET, PoP-bound), and the server seals the response to that
+  ephemeral. This is forward-secret against later server-key compromise (the static key cannot
+  decrypt a reveal response).
 - **Dual-mode:** plaintext requests pass through unchanged, so this rolled out without a flag day and
   works in builds where the pinned key was not baked.
 - **Admin secret surface (2026-06-29):** the same seal/reveal legs now also cover the admin plane's
@@ -70,6 +74,21 @@ captured session cookie from being replayed. Call it **CDN-blinding for sensitiv
   defense there is out-of-band bundle verification + the (planned) verifier extension / native app, not
   sealing. The passkey login ceremony is left unsealed on purpose (the assertion is single-use +
   origin-bound + non-exfiltratable, so a passive CDN can do nothing with it).
+- **The policy table decides, not the wrapper.** `SEALED_ROUTES` / `SEALED_PREFIXES` in
+  `src/shared/crypto/envelope.ts` is the single source of truth for both the SPA seam and the
+  server's `sealed()` wrapper; a wrapped `httpAction` with no entry passes plaintext straight
+  through. Three member routes sat in exactly that state until 2026-09 (wrapped, commented as sealed,
+  plaintext on the wire): the raw-config copy path, the code redeem and the mirror request. They now
+  have entries, and `convex/sealedRoutePolicy.test.ts` fails the build if a wrapped route lacks an
+  entry (or an entry lacks a wrapped handler) unless the route is on that test's explicit
+  intentionally-unsealed list. **Deliberately unsealed member routes** (PoP-signed, plaintext bodies,
+  because nothing on them is a crown-jewel secret): the passkey login ceremony and the passkey
+  management routes (`/api/v1/account/passkey/*`, `GET /api/v1/account/passkeys`: challenges,
+  attestations, credential ids), device revoke (`POST /api/v1/account/devices/revoke`: a hwid the
+  proxy client already reports to the panel over its own TLS), usage / node-status / referrals /
+  codes reads, logout, and `DELETE /api/v1/mirror`. Sealing is confidentiality for account numbers,
+  proxy config / URLs, bearer codes and infra credentials; it is not applied to identifiers or
+  single-use ceremonies.
 
 See `convex/lib/e2ee.ts`, `convex/lib/e2eeCrypto.ts`, `src/shared/crypto/{envelope,hpke,channel}.ts`,
 `src/client/lib/e2ee.ts`.
@@ -199,8 +218,11 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
   the deployed SPA is built with the HPKE public pins (`VITE_FS_SERVER_HPKE_PK`/`KID`) the account
   number still transits TLS-terminating infrastructure in plaintext on every login — PoP binds only the
   resulting session, not the permanent credential. Setting `FS_E2EE_REQUIRED=true` REJECTS unsealed
-  member requests on those routes (`e2ee.sealed_required`), closing the leg; flip it only after the
-  keyed SPA build is live (a dark client cannot seal and would be refused). Admin `fsv1_`/Ansible
+  member requests on every member route in the policy table (`e2ee.sealed_required`), including the
+  raw-config copy, code redeem and mirror request; flip it only after the
+  keyed SPA build is live (a dark client cannot seal and would be refused). The SPA and the backend
+  read the same table, so ship them together: adding a member entry while the knob is on refuses any
+  still-cached older bundle on that route until it reloads. Admin `fsv1_`/Ansible
   callers are unaffected (only member routes are gated). The admin status card surfaces
   `e2ee.required`. The admin-side counterpart is `FS_E2EE_ADMIN_REQUIRED=true`: it rejects
   unsealed requests on the sealed ADMIN routes (backend-server / mirror / edges credential writes
@@ -291,6 +313,11 @@ remove POP_REQUIRED` where the CLI is configured). Takes effect on the next requ
 ## Verification (tests)
 
 - HPKE channel round-trips, info-binding, tamper rejection: `src/shared/crypto/{hpke,channel}.test.ts`.
+- Wrapper-vs-policy drift (every `sealed()` route has an entry or is explicitly listed as intentionally
+  unsealed; every entry has a wrapped handler): `convex/sealedRoutePolicy.test.ts`. The member knob on
+  the raw-config / redeem / mirror routes (plaintext refused, sealed forms opened): `convex/lib/e2ee.test.ts`.
+  The SPA seam for those routes (GET ephemeral in `x-fs-resp-eph`, SEAL_REQ body sealed, POST reveal
+  body carrying `fsRespEph`): `src/client/lib/e2ee.test.ts`.
 - PoP canonical message + WebCrypto->noble round-trip incl. high-S (`lowS:false`):
   `src/shared/crypto/pop.test.ts`.
 - Server PoP evaluation (freshness window, tamper, wrong key, version): `convex/lib/pop.test.ts`.
